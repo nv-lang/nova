@@ -1,5 +1,5 @@
 // Plan 103.6 — Mutex.try_lock_for inside realtime{} triggers W_REALTIME_TRY_LOCK_FOR_TIMER.
-// try_lock_for uses a libuv timer; annotated #realtime_safe but emits a warning.
+// try_lock_for uses a libuv timer; annotated #realtime but emits a warning.
 //
 // EXPECT_COMPILE_WARNING W_REALTIME_TRY_LOCK_FOR_TIMER
 

@@ -1,4 +1,4 @@
-// Plan 103.6 — OnceCell.set and OnceCell.take are #realtime_safe; allowed in realtime{}.
+// Plan 103.6 — OnceCell.set and OnceCell.take are #realtime; allowed in realtime{}.
 // set() is a leaf CAS operation; take() is atomic reset.
 //
 // EXPECT_TIMEOUT_MS 60000

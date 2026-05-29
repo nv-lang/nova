@@ -25,7 +25,7 @@ pub(crate) struct ContractAttrs {
     pub fuel: Option<u32>,
     /// Plan 33.7 Ф.4: `#nooverflow` — emit overflow VCs for BitVec arithmetic.
     pub no_overflow: bool,
-    /// Plan 103.6: sync interaction class from #realtime_safe/#parks/#wakes.
+    /// Plan 103.6 / Plan 113: sync interaction class from #realtime/#parks/#wakes.
     pub sync_class: Option<crate::ast::SyncClass>,
 }
 
@@ -1075,9 +1075,9 @@ impl Parser {
         // Несколько подряд — собираются в Vec; передаются в parse_fn /
         // parse_type_decl / parse_const_decl через pending_doc_attrs.
         //
-        // Plan 103.6: sync-class attrs (#realtime_safe/#parks/#wakes) also
+        // Plan 103.6 / Plan 113: sync-class attrs (#realtime/#parks/#wakes) also
         // appear BEFORE `export external fn`.  They may interleave with doc
-        // attrs (e.g. `#realtime_safe\n#stable(since="0.1")\nexport…`), so
+        // attrs (e.g. `#realtime\n#stable(since="0.1")\nexport…`), so
         // we alternate the two parsers until neither makes progress.
         let mut pending_doc_attrs = self.parse_doc_attrs()?;
         let mut pre_sync_class: Option<crate::ast::SyncClass> = self.parse_sync_class_attr()?;
@@ -1141,11 +1141,22 @@ impl Parser {
         // отдельно от `#realtime`, могут идти в любом порядке.
         // Не keyword'ы в лексере (контекстный разбор после `#`).
         let mut contract_attrs = self.parse_contract_attrs()?;
-        // Plan 103.6: merge pre-export sync-class attr (if any) into contract_attrs.
+        // Plan 103.6 / Plan 113: merge pre-export sync-class attr (if any) into contract_attrs.
         // Pre-export attrs take precedence over any (invalid) post-export ones.
+        // Plan 113: `#realtime` on any fn (external or not) also sets realtime_attr
+        // so the body restriction is enforced even for non-external fns.
         if pre_sync_class.is_some() {
             contract_attrs.sync_class = pre_sync_class;
         }
+        // Plan 113: if #realtime was consumed by parse_sync_class_attr before export/external,
+        // promote to realtime_attr so fn body gets the realtime restriction enforced.
+        let realtime_attr = if matches!(pre_sync_class, Some(crate::ast::SyncClass::Realtime))
+            && matches!(realtime_attr, RealtimeAttr::None)
+        {
+            RealtimeAttr::Realtime
+        } else {
+            realtime_attr
+        };
         if !contract_attrs.is_empty()
             && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal)
         {
@@ -1609,9 +1620,10 @@ impl Parser {
         Ok(attr)
     }
 
-    /// Plan 103.6: Parse optional sync-class attribute (`#realtime_safe` /
+    /// Plan 103.6 / Plan 113: Parse optional sync-class attribute (`#realtime` /
     /// `#parks` / `#wakes`) that appears BEFORE `export external fn`.
     ///
+    /// `#realtime` is `KwRealtime` (keyword); `#parks` / `#wakes` are idents.
     /// These attrs occupy the same syntactic position as doc-attrs (before
     /// `export`) and must be parsed BEFORE `is_export` is consumed.  Multiple
     /// sync-class attrs on one fn are rejected (last-one-wins is confusing);
@@ -1623,18 +1635,18 @@ impl Parser {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
             }
-            let next_name = match &self.peek_at(1).kind {
-                TokenKind::Ident(n) => n.clone(),
+            // `#realtime` uses KwRealtime; `#parks`/`#wakes` use Ident.
+            let cls = match &self.peek_at(1).kind {
+                TokenKind::KwRealtime => SyncClass::Realtime,
+                TokenKind::Ident(n) => match n.as_str() {
+                    "parks" => SyncClass::Parks,
+                    "wakes" => SyncClass::Wakes,
+                    _       => break,
+                },
                 _ => break,
             };
-            let cls = match next_name.as_str() {
-                "realtime_safe" => SyncClass::RealtimeSafe,
-                "parks"         => SyncClass::Parks,
-                "wakes"         => SyncClass::Wakes,
-                _               => break,
-            };
             self.bump(); // #
-            self.bump(); // realtime_safe / parks / wakes
+            self.bump(); // realtime / parks / wakes
             result = Some(cls);
             self.skip_newlines();
         }

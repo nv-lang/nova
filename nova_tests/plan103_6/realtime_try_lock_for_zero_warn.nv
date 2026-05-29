@@ -10,7 +10,7 @@ test "Mutex.try_lock_for warns in realtime block" {
     let m = Mutex.new()
     let mut got = false
     realtime {
-        // try_lock_for is #realtime_safe (w/ warning) — does NOT park
+        // try_lock_for is #realtime (w/ warning) — does NOT park
         got = m.try_lock_for(Duration.from_millis(1))
     }
     // If we got the lock, unlock it outside the realtime block

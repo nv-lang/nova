@@ -23224,7 +23224,7 @@ Branch: plan-103.6 (merged into main)
 Worktree: nova-p103-rt-blocking
 
 Summary: Annotation-driven sync-class enforcement for realtime{}/blocking{} blocks.
-Implements #parks/#wakes/#realtime_safe bare attributes on ~85 external fn decls in
+Implements #parks/#wakes/#realtime bare attributes on ~85 external fn decls in
 std/runtime/sync.nv. Replaces hardcoded is_realtime_blocking match in emit_c.rs with
 ExternalRegistry-driven lookup. 6 error/warning codes, D172 spec.
 
@@ -23245,7 +23245,7 @@ ExternalRegistry-driven lookup. 6 error/warning codes, D172 spec.
 Key findings:
   - fence() as trailing block expression generates void-to-nova_int cast; fixed by
     using fence() as statement (not trailing) in tests.
-  - try_lock_for annotation: #parks > #realtime_safe (emits warning, not error).
+  - try_lock_for annotation: #parks > #realtime (emits warning, not error).
   - Generic type methods (OnceCell[T], Lazy[T]) need sync_class check in the
     generic_type_methods dispatch branch (before ExternalRegistry fallback).
   - Non-generic user fns with #parks must be stored in mono_fn_decls for call-site check.
@@ -24975,3 +24975,4 @@ Regression:
 - basics 8/0, modules 31/0, protocols 25/1 (flaky baseline)
 
 Commit: TBD
+

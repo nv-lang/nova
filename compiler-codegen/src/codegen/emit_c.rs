@@ -7486,7 +7486,7 @@ impl CEmitter {
             }
             return Ok(());
         }
-        // Plan 103.6: Non-generic free functions annotated with #parks/#wakes/#realtime_safe
+        // Plan 103.6 / Plan 113: Non-generic free functions annotated with #parks/#wakes/#realtime
         // are also stored in mono_fn_decls so emit_call can check sync_class at call sites
         // (E_REALTIME_NESTED_SYNC_VIA_FN / E_BLOCKING_SYNC_PARK via user fn annotation).
         if f.sync_class.is_some() && f.generics.is_empty() && f.receiver.is_none() && !f.is_external {
@@ -16732,8 +16732,8 @@ _cp++; \
                         return Err(format!(
                             "[E_REALTIME_NESTED_SYNC_VIA_FN] \
                              function `{}` is annotated `#parks` (may park fiber) and \
-                             cannot be called inside `realtime {{ }}` blocks. \
-                             Suggestion: remove the call from the realtime block or \
+                             cannot be called inside `#realtime` context. \
+                             Suggestion: remove the call from the realtime context or \
                              refactor `{}` to not park.",
                             fn_name, fn_name
                         ));
@@ -16741,8 +16741,8 @@ _cp++; \
                         return Err(format!(
                             "[E_BLOCKING_SYNC_PARK] \
                              function `{}` is annotated `#parks` (may park fiber) and \
-                             cannot be called inside `blocking {{ }}` blocks. \
-                             Move the call outside the blocking block.",
+                             cannot be called inside `#blocking` context. \
+                             Move the call outside the blocking context.",
                             fn_name
                         ));
                     }
@@ -17799,7 +17799,7 @@ _cp++; \
                                                  `Mutex.try_lock_for()` uses a libuv timer (potential \
                                                  suspend) and may block even with a short timeout. \
                                                  Suggestion: use `try_lock()` for non-blocking attempt \
-                                                 or move outside the `realtime {{ }}` block."
+                                                 or move outside the `#realtime` context."
                                             ));
                                         }
                                         // W_BLOCKING_NOTIFY_RISK: notify_* in blocking{}
@@ -17809,17 +17809,17 @@ _cp++; \
                                         {
                                             self.warnings.borrow_mut().push(format!(
                                                 "[W_BLOCKING_NOTIFY_RISK] \
-                                                 `Condvar.{}()` in `blocking {{ }}` may wake a fiber \
+                                                 `Condvar.{}()` in `#blocking` context may wake a fiber \
                                                  on the blocking thread (M:N safety risk). \
                                                  Suggestion: use an AtomicBool flag + fence() pattern \
-                                                 and notify outside the blocking block.",
+                                                 and notify outside the blocking context.",
                                                 method
                                             ));
                                         }
                                         // E_REALTIME_SYNC_PARK: Parks method in realtime{}
                                         if self.in_realtime
                                             && matches!(sync_class, None | Some(SyncClass::Parks))
-                                            && sync_class != Some(SyncClass::RealtimeSafe)
+                                            && sync_class != Some(SyncClass::Realtime)
                                             && sync_class != Some(SyncClass::Wakes)
                                         {
                                             // Only error for known sync types — don't fire on non-sync ext fns.
@@ -17838,7 +17838,7 @@ _cp++; \
                                                 return Err(format!(
                                                     "[E_REALTIME_SYNC_PARK] \
                                                      `{}.{}()` may park the fiber and is forbidden inside \
-                                                     `realtime {{ }}` blocks. Move outside the realtime context.{}",
+                                                     `#realtime` context. Move outside the realtime context.{}",
                                                     recv_ty, method, suggestion
                                                 ));
                                             } else if is_sync_type && sync_class.is_none() {
@@ -17846,8 +17846,8 @@ _cp++; \
                                                 return Err(format!(
                                                     "[E_REALTIME_SYNC_PARK] \
                                                      `{}.{}()` has no sync annotation and is conservatively \
-                                                     treated as park-ing; forbidden inside `realtime {{ }}` blocks. \
-                                                     Add `#parks` / `#realtime_safe` annotation to declare intent.",
+                                                     treated as park-ing; forbidden inside `#realtime` context. \
+                                                     Add `#parks` / `#realtime` annotation to declare intent.",
                                                     recv_ty, method
                                                 ));
                                             }
@@ -17861,8 +17861,8 @@ _cp++; \
                                                 return Err(format!(
                                                     "[E_REALTIME_SYNC_WAKE] \
                                                      `{}.{}()` may wake a waiting fiber (scheduler interaction) \
-                                                     and is forbidden inside `realtime {{ }}` blocks. \
-                                                     Suggestion: defer the wake call outside the realtime block.",
+                                                     and is forbidden inside `#realtime` context. \
+                                                     Suggestion: defer the wake call outside the realtime context.",
                                                     recv_ty, method
                                                 ));
                                             }
@@ -17876,8 +17876,8 @@ _cp++; \
                                             if is_sync_type {
                                                 return Err(format!(
                                                     "[E_BLOCKING_SYNC_PARK] \
-                                                     `{}.{}()` may park the fiber inside `blocking {{ }}` \
-                                                     (leaf-execution only). Move the call outside the blocking block.",
+                                                     `{}.{}()` may park the fiber inside `#blocking` context \
+                                                     (leaf-execution only). Move the call outside the blocking context.",
                                                     recv_ty, method
                                                 ));
                                             }
@@ -18996,22 +18996,22 @@ _cp++; \
                             // (OnceCell[T], Lazy[T]).  fn_decl comes from
                             // generic_type_methods (populated from external fn
                             // declarations); sync_class is set by the parser from
-                            // #parks/#wakes/#realtime_safe attrs.
+                            // #parks/#wakes/#realtime attrs.
                             {
                                 use crate::ast::SyncClass;
                                 if self.in_realtime && fn_decl.sync_class == Some(SyncClass::Parks) {
                                     return Err(format!(
                                         "[E_REALTIME_SYNC_PARK] \
                                          `{}.{}()` may park the fiber and is forbidden inside \
-                                         `realtime {{ }}` blocks. Move outside the realtime context.",
+                                         `#realtime` context. Move outside the realtime context.",
                                         base_name, method_stripped
                                     ));
                                 }
                                 if self.in_blocking && fn_decl.sync_class == Some(SyncClass::Parks) {
                                     return Err(format!(
                                         "[E_BLOCKING_SYNC_PARK] \
-                                         `{}.{}()` may park the fiber inside `blocking {{ }}` \
-                                         (leaf-execution only). Move the call outside the blocking block.",
+                                         `{}.{}()` may park the fiber inside `blocking` context \
+                                         (leaf-execution only). Move the call outside the blocking context.",
                                         base_name, method_stripped
                                     ));
                                 }
@@ -19151,15 +19151,15 @@ _cp++; \
                                         return Err(format!(
                                             "[E_REALTIME_SYNC_PARK] \
                                              `{}.{}()` may park the fiber and is forbidden inside \
-                                             `realtime {{ }}` blocks. Move outside the realtime context.",
+                                             `#realtime` context. Move outside the realtime context.",
                                             base_name, method_stripped
                                         ));
                                     }
                                     if self.in_blocking && sync_class == Some(SyncClass::Parks) {
                                         return Err(format!(
                                             "[E_BLOCKING_SYNC_PARK] \
-                                             `{}.{}()` may park the fiber inside `blocking {{ }}` \
-                                             (leaf-execution only). Move the call outside the blocking block.",
+                                             `{}.{}()` may park the fiber inside `#blocking` context \
+                                             (leaf-execution only). Move the call outside the blocking context.",
                                             base_name, method_stripped
                                         ));
                                     }

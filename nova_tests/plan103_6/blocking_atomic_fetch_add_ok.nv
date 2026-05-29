@@ -1,4 +1,4 @@
-// Plan 103.6 — AtomicI64.fetch_add is #realtime_safe; allowed in blocking{}.
+// Plan 103.6 — AtomicI64.fetch_add is #realtime; allowed in blocking{}.
 //
 // EXPECT_TIMEOUT_MS 60000
 // ENV NOVA_AUTOARM=0

@@ -1,4 +1,4 @@
-// Plan 103.6 — OnceCell.get and OnceCell.is_initialized are #realtime_safe.
+// Plan 103.6 — OnceCell.get and OnceCell.is_initialized are #realtime.
 //
 // EXPECT_TIMEOUT_MS 60000
 

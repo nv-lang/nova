@@ -26844,7 +26844,7 @@ ova_int for ence() calls not found in
 - **Plan 103.6: try_lock_for reclassification** — initially annotated #parks 
   (causing E_REALTIME_SYNC_PARK hard error in realtime{}), but try_lock_for does 
   NOT park fiber — it uses a libuv timer and returns after timeout. Reclassified to 
-  #realtime_safe with W_REALTIME_TRY_LOCK_FOR_TIMER warning (timer overhead 
+  #realtime with W_REALTIME_TRY_LOCK_FOR_TIMER warning (timer overhead 
   discouraged but not forbidden in realtime{}).
 
 - **Plan 103.6: V1 function propagation** — transitive #parks inference NOT implemented 
@@ -27430,3 +27430,4 @@ default methods explicit как boilerplate compatibility. Part 2 даёт
 **Why migrate existing tests vs feature-flag:** opt-in change breaks structural assumption. Tests using bare call without `#impl` were ОТ ИДЕИ structural (TypeScript-style). Migration enforces new semantics — type-authors объявляют intent. Feature-flagging оставил бы магию доступной → confused mental model. Trade-off: 6 test fixtures touched, mechanical edits, +1 line `#impl(...)` per type. Acceptable churn для ideological correctness.
 
 **Why gate_on_impl=false для vtable thunk:** coercion `let g Greetable = u` IS the explicit opt-in. User says «I want u as Greetable». Compiler не должен повторно спрашивать «но опт-инил ли тип Greetable?» — user-site authorization sufficient. This makes thunk generation work для всех coerced types regardless `#impl`. Same logic: bound `[T P]` is use-site opt-in (caller asserts T satisfies P).
+

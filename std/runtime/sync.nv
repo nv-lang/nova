@@ -10,7 +10,7 @@
 // fence()     — memory fence function; ordered by MemOrdering (Plan 103.1).
 //
 // Sync-class annotations (Plan 103.6):
-//   #realtime_safe — leaf method; allowed in realtime{} and blocking{}.
+//   #realtime — leaf method; allowed in realtime{} and blocking{}.
 //   #parks         — may park the calling fiber; forbidden in realtime{} and blocking{}.
 //   #wakes         — leaf wake (no self-park, but wakes waiters); forbidden in realtime{}.
 //
@@ -84,7 +84,7 @@ export type MemOrdering
 ///     destroy(data)
 /// }
 /// ```
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn fence(ord MemOrdering)
 
@@ -105,98 +105,98 @@ export external fn fence(ord MemOrdering)
 /// - `[AtomicInt]` — deprecated alias; migrate to `AtomicI64`
 /// - `[AtomicBool]` — atomic boolean
 /// - `[MemOrdering]` — ordering parameter enum
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64.new(v i64) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 @load(ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 @load() -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @store(v i64, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @store(v i64)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @swap(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @swap(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @compare_exchange(expected i64, desired i64) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_add(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_add(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_sub(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_sub(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_or(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_or(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_and(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_and(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_xor(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_xor(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_max(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_max(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_min(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_min(v i64) -> i64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_nand(v i64, ord MemOrdering) -> i64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI64 mut @fetch_nand(v i64) -> i64
 
@@ -206,98 +206,98 @@ export external fn AtomicI64 mut @fetch_nand(v i64) -> i64
 ///
 /// Most common signed atomic; fits in single cache slot.
 /// Wraparound: signed overflow — modular arithmetic.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32.new(v i32) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 @load(ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 @load() -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @store(v i32, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @store(v i32)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @swap(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @swap(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @compare_exchange(expected i32, desired i32) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_add(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_add(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_sub(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_sub(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_or(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_or(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_and(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_and(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_xor(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_xor(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_max(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_max(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_min(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_min(v i32) -> i32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_nand(v i32, ord MemOrdering) -> i32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI32 mut @fetch_nand(v i32) -> i32
 
@@ -307,98 +307,98 @@ export external fn AtomicI32 mut @fetch_nand(v i32) -> i32
 ///
 /// For compact counters and sized flags.
 /// Wraparound: signed overflow — modular arithmetic.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16.new(v i16) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 @load(ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 @load() -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @store(v i16, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @store(v i16)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @swap(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @swap(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @compare_exchange(expected i16, desired i16) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_add(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_add(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_sub(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_sub(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_or(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_or(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_and(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_and(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_xor(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_xor(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_max(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_max(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_min(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_min(v i16) -> i16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_nand(v i16, ord MemOrdering) -> i16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI16 mut @fetch_nand(v i16) -> i16
 
@@ -408,98 +408,98 @@ export external fn AtomicI16 mut @fetch_nand(v i16) -> i16
 ///
 /// Byte-sized flags and narrow counters.
 /// Wraparound: i8 [-128, 127]; overflow wraps modularly (D168).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8.new(v i8) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 @load(ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 @load() -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @store(v i8, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @store(v i8)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @swap(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @swap(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @compare_exchange(expected i8, desired i8) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_add(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_add(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_sub(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_sub(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_or(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_or(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_and(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_and(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_xor(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_xor(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_max(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_max(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_min(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_min(v i8) -> i8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_nand(v i8, ord MemOrdering) -> i8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicI8 mut @fetch_nand(v i8) -> i8
 
@@ -509,98 +509,98 @@ export external fn AtomicI8 mut @fetch_nand(v i8) -> i8
 ///
 /// Wide unsigned counters, timestamps.
 /// Wraparound: unsigned overflow wraps modularly (D168).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64.new(v u64) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 @load(ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 @load() -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @store(v u64, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @store(v u64)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @swap(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @swap(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @compare_exchange(expected u64, desired u64) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_add(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_add(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_sub(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_sub(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_or(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_or(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_and(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_and(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_xor(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_xor(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_max(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_max(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_min(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_min(v u64) -> u64
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_nand(v u64, ord MemOrdering) -> u64
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU64 mut @fetch_nand(v u64) -> u64
 
@@ -610,98 +610,98 @@ export external fn AtomicU64 mut @fetch_nand(v u64) -> u64
 ///
 /// Bitset slots, refcount. Most common unsigned atomic.
 /// Wraparound: unsigned overflow wraps modularly (D168).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32.new(v u32) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 @load(ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 @load() -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @store(v u32, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @store(v u32)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @swap(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @swap(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @compare_exchange(expected u32, desired u32) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_add(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_add(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_sub(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_sub(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_or(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_or(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_and(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_and(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_xor(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_xor(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_max(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_max(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_min(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_min(v u32) -> u32
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_nand(v u32, ord MemOrdering) -> u32
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU32 mut @fetch_nand(v u32) -> u32
 
@@ -711,98 +711,98 @@ export external fn AtomicU32 mut @fetch_nand(v u32) -> u32
 ///
 /// Sized unsigned counters.
 /// Wraparound: unsigned overflow wraps modularly (D168).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16.new(v u16) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 @load(ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 @load() -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @store(v u16, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @store(v u16)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @swap(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @swap(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @compare_exchange(expected u16, desired u16) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_add(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_add(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_sub(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_sub(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_or(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_or(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_and(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_and(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_xor(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_xor(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_max(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_max(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_min(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_min(v u16) -> u16
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_nand(v u16, ord MemOrdering) -> u16
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU16 mut @fetch_nand(v u16) -> u16
 
@@ -812,98 +812,98 @@ export external fn AtomicU16 mut @fetch_nand(v u16) -> u16
 ///
 /// Byte-sized unsigned flags, bitmap bytes.
 /// Wraparound: u8 [0, 255]; overflow wraps modularly (D168).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8.new(v u8) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 @load(ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 @load() -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @store(v u8, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @store(v u8)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @swap(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @swap(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @compare_exchange(expected u8, desired u8) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_add(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_add(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_sub(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_sub(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_or(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_or(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_and(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_and(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_xor(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_xor(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_max(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_max(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_min(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_min(v u8) -> u8
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_nand(v u8, ord MemOrdering) -> u8
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicU8 mut @fetch_nand(v u8) -> u8
 
@@ -913,98 +913,98 @@ export external fn AtomicU8 mut @fetch_nand(v u8) -> u8
 ///
 /// `int` = `i64` (Plan 70.4 D129). Platform-word signed atomic.
 /// Useful for signed indexes and offsets.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize.new(v int) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize @load(ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize @load() -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @store(v int, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @store(v int)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @swap(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @swap(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @compare_exchange(expected int, desired int) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @compare_exchange_weak(expected int, desired int) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_add(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_add(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_sub(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_sub(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_or(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_or(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_and(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_and(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_xor(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_xor(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_max(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_max(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_min(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_min(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_nand(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicIsize mut @fetch_nand(v int) -> int
 
@@ -1014,98 +1014,98 @@ export external fn AtomicIsize mut @fetch_nand(v int) -> int
 ///
 /// `uint` = `u64` (Plan 70.5). Platform-word unsigned atomic.
 /// Useful for array indexes, buffer sizes.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize.new(v uint) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize @load(ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize @load() -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @store(v uint, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @store(v uint)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @swap(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @swap(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @compare_exchange(expected uint, desired uint) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_add(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_add(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_sub(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_sub(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_or(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_or(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_and(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_and(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_xor(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_xor(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_max(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_max(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_min(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_min(v uint) -> uint
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_nand(v uint, ord MemOrdering) -> uint
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicUsize mut @fetch_nand(v uint) -> uint
 
@@ -1128,34 +1128,34 @@ export external fn AtomicUsize mut @fetch_nand(v uint) -> uint
 ///
 /// - `[AtomicBool]` — атомарный boolean
 /// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicInt.new(v int) -> Self
 
 /// Загрузить текущее значение (acquire ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicInt @load() -> int
 
 /// Записать новое значение (release ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicInt mut @store(v int)
 
 /// Атомарно добавить `delta`, вернуть предыдущее значение (acq_rel).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicInt mut @fetch_add(delta int) -> int
 
 /// Атомарно вычесть `delta`, вернуть предыдущее значение (acq_rel).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicInt mut @fetch_sub(delta int) -> int
 
 /// Compare-and-swap: если значение == `expected`, записать `desired`.
 ///
 /// Возвращает `true` при успехе. Использует acq_rel ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
 
@@ -1175,83 +1175,83 @@ export external fn AtomicInt mut @compare_exchange(expected int, desired int) ->
 /// - `[AtomicI64]` — preferred integer atomic
 /// - `[Once]` — barrier для exactly-once execution
 /// - `[MemOrdering]` — ordering parameter enum
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool.new(v bool) -> Self
 
 /// Загрузить текущее значение с explicit ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool @load(ord MemOrdering) -> bool
 /// Загрузить текущее значение (SeqCst ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool @load() -> bool
 
 /// Записать новое значение с explicit ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @store(v bool, ord MemOrdering)
 /// Записать новое значение (SeqCst ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @store(v bool)
 
 /// Compare-and-swap с explicit orderings.
 /// Возвращает `true` при успехе.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
 /// Compare-and-swap (SeqCst/SeqCst ordering).
 /// Возвращает `true` при успехе.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
 
 /// Compare-and-swap weak с explicit orderings. Может spuriously fail на ARM.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
 /// Compare-and-swap weak (SeqCst/SeqCst ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool) -> bool
 
 /// Атомарно установить `v`, вернуть предыдущее значение с explicit ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @swap(v bool, ord MemOrdering) -> bool
 /// Атомарно установить `v`, вернуть предыдущее значение (SeqCst ordering).
 ///
 /// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @swap(v bool) -> bool
 
 /// Атомарный bitwise-OR, returns previous value. With explicit ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @fetch_or(v bool, ord MemOrdering) -> bool
 /// Атомарный bitwise-OR, returns previous value (SeqCst ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @fetch_or(v bool) -> bool
 
 /// Атомарный bitwise-AND, returns previous value. With explicit ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @fetch_and(v bool, ord MemOrdering) -> bool
 /// Атомарный bitwise-AND, returns previous value (SeqCst ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @fetch_and(v bool) -> bool
 
 /// Атомарный bitwise-XOR, returns previous value. With explicit ordering.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bool
 /// Атомарный bitwise-XOR, returns previous value (SeqCst ordering).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicBool mut @fetch_xor(v bool) -> bool
 
@@ -1273,45 +1273,45 @@ export external fn AtomicBool mut @fetch_xor(v bool) -> bool
 ///
 /// - `[AtomicI64]` — integer atomic
 /// - `[MemOrdering]` — ordering enum
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr.null() -> Self
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr.new(v int) -> Self
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr @load(ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr @load() -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @store(v int, ord MemOrdering)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @store(v int)
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @swap(v int, ord MemOrdering) -> int
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @swap(v int) -> int
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @compare_exchange(expected int, desired int) -> bool
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> bool
 
@@ -1442,7 +1442,7 @@ export external fn OnceGuard consume @abort()
 ///
 /// - `[WaitGroup]` — ожидание завершения нескольких fiber'ов
 /// - `[Once]` — exactly-once execution barrier
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Mutex.new() -> Self
 
@@ -1470,7 +1470,7 @@ export external fn Mutex mut @unlock()
 /// Попытаться захватить mutex без блокировки.
 ///
 /// Возвращает `true` если lock успешно захвачен, `false` если занят.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Mutex mut @try_lock() -> bool
 
@@ -1483,7 +1483,7 @@ export external fn Mutex mut @try_lock() -> bool
 /// с короткими критическими секциями.
 ///
 /// **PREFERRED PATTERN (M15):** используй `with_lock { }` вместо lock/unlock.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Mutex.new_unfair() -> Self
 
@@ -1506,9 +1506,9 @@ export external fn Mutex.new_unfair() -> Self
 ///
 /// Inside `realtime { }` blocks the compiler emits W_REALTIME_TRY_LOCK_FOR_TIMER
 /// because try_lock_for uses a libuv timer that may park even for short timeouts.
-/// Annotated `#realtime_safe` (not `#parks`) because failure path is non-parking;
+/// Annotated `#realtime` (not `#parks`) because failure path is non-parking;
 /// compiler enforces via dedicated warning, not an error.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
 
@@ -1516,7 +1516,7 @@ export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
 ///
 /// Состояние может измениться между вызовом и использованием результата.
 /// Используй для observability (debugging, metrics), не для синхронизации.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Mutex @is_locked() -> bool
 
@@ -1574,7 +1574,7 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 ///
 /// - `[Mutex]` — эксклюзивный доступ (проще, меньше overhead)
 /// - `[ReentrantMutex]` — рекурсивный mutex
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn RwLock.new() -> Self
 
@@ -1582,7 +1582,7 @@ export external fn RwLock.new() -> Self
 ///
 /// **Внимание:** возможен starvation писателей при непрерывном потоке читателей.
 /// Используй только в read-heavy сценариях после бенчмарка.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn RwLock.new_reader_priority() -> Self
 
@@ -1603,7 +1603,7 @@ export external fn RwLock mut @read() -> ReadGuard consume
 export external fn RwLock mut @read_unlock()
 
 /// Попытаться захватить read lock без блокировки.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn RwLock mut @try_read() -> bool
 
@@ -1629,7 +1629,7 @@ export external fn RwLock mut @write() -> WriteGuard consume
 export external fn RwLock mut @write_unlock()
 
 /// Попытаться захватить write lock без блокировки.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn RwLock mut @try_write() -> bool
 
@@ -1639,12 +1639,12 @@ export external fn RwLock mut @try_write() -> bool
 export external fn RwLock mut @try_write_for(timeout Duration) -> bool
 
 /// Текущее количество активных читателей. Best-effort.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn RwLock @reader_count() -> int
 
 /// `true` если write lock активен. Best-effort.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn RwLock @is_write_locked() -> bool
 
@@ -1695,7 +1695,7 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// rm.unlock()
 /// rm.unlock()         // освобождён когда count = 0
 /// ```
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn ReentrantMutex.new() -> Self
 
@@ -1712,7 +1712,7 @@ export external fn ReentrantMutex mut @lock()
 export external fn ReentrantMutex mut @unlock()
 
 /// Попытаться захватить без блокировки.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn ReentrantMutex mut @try_lock() -> bool
 
@@ -1722,7 +1722,7 @@ export external fn ReentrantMutex mut @try_lock() -> bool
 export external fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
 
 /// Recursion depth для текущего fiber. 0 если не owner.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn ReentrantMutex @lock_count() -> int
 
@@ -1759,12 +1759,12 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 ///
 /// - `[Mutex]` — взаимное исключение
 /// - `[Once]` — exactly-once barrier
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn WaitGroup.new() -> Self
 
 /// Увеличить счётчик на `delta`. Вызывать перед spawn'ом workers.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn WaitGroup mut @add(delta int)
 
@@ -1818,7 +1818,7 @@ export type OnceState
 ///
 /// - `[OnceCell]` — value-capturing one-time init
 /// - `[Lazy]` — auto-init on first access
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Once.new() -> Self
 
@@ -1832,12 +1832,12 @@ export external fn Once.new() -> Self
 export external fn Once mut @call_once(body fn() -> ())
 
 /// Returns `true` if Once has successfully completed (state == Done).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Once @is_completed() -> bool
 
 /// Returns the current state of the Once barrier.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Once @state() -> OnceState
 
@@ -1873,7 +1873,7 @@ export external fn Once mut @try_start_won() -> bool
 ///
 /// Called by `try_start()` after `try_start_won()` returns `true`.
 /// Not for direct use — the guard is opaque; call `.commit()` or `.abort()`.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Once mut @make_guard() -> OnceGuard consume
 
@@ -1934,19 +1934,19 @@ export fn Once mut @try_start() -> Option[OnceGuard consume] {
 export external type OnceCell[T]
 
 /// Create an empty OnceCell.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn OnceCell[T].new() -> Self
 
 /// Get the value if initialized, or `None` if empty.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn OnceCell[T] @get() -> Option[T]
 
 /// Set the value if the cell is empty.
 ///
 /// Returns `true` on success, `false` if already initialized.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn OnceCell[T] mut @set(v T) -> bool
 
@@ -1962,12 +1962,12 @@ export external fn OnceCell[T] mut @get_or_init(init fn() -> T) -> T
 ///
 /// Returns `Some(v)` if initialized, `None` if already empty.
 /// After take(), the cell can be set or initialized again.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn OnceCell[T] mut @take() -> Option[T]
 
 /// Returns `true` if the cell has been initialized.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn OnceCell[T] @is_initialized() -> bool
 
@@ -1995,7 +1995,7 @@ export external fn OnceCell[T] @is_initialized() -> bool
 export external type Lazy[T]
 
 /// Create a Lazy[T] with the given initializer closure.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Lazy[T].new(init fn() -> T) -> Self
 
@@ -2008,7 +2008,7 @@ export external fn Lazy[T].new(init fn() -> T) -> Self
 export external fn Lazy[T] mut @force() -> T
 
 /// Returns `true` if the value has been successfully initialized.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Lazy[T] @is_forced() -> bool
 
@@ -2035,7 +2035,7 @@ export external fn Lazy[T] @is_forced() -> bool
 ///
 /// # Memory model
 /// Allocated uncollectable (GC-race fix Plan 103.3 M6).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Barrier.new(parties int) -> Self
 
@@ -2065,7 +2065,7 @@ export external fn Barrier mut @wait_for(timeout Duration) -> Option[int]
 
 /// Returns `true` if the barrier is currently broken.
 /// Best-effort (no mutex); state may change concurrently.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Barrier @is_broken() -> bool
 
@@ -2133,7 +2133,7 @@ export type WaitResult
 export external type Condvar
 
 /// Create a new `Condvar`.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Condvar.new() -> Self
 
@@ -2218,7 +2218,7 @@ export external fn Condvar mut @notify_all()
 ///
 /// - `[WaitGroup]` — mutable-count variant (add/done/wait)
 /// - `[Barrier]` — N-party reusable rendezvous (Plan 103.4)
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn CountDownLatch.new(count int) -> Self
 
@@ -2251,7 +2251,7 @@ export external fn CountDownLatch @await()
 ///
 /// Best-effort — the count may reach 0 concurrently between the check
 /// and the caller acting on the result.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn CountDownLatch @try_await() -> bool
 
@@ -2267,7 +2267,7 @@ export external fn CountDownLatch @try_await_for(timeout Duration) -> bool
 /// Best-effort current count. May be stale by the time the caller reads it.
 ///
 /// For observability (debugging, metrics) only — not for synchronization.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn CountDownLatch @current_count() -> int
 
@@ -2300,7 +2300,7 @@ export external fn CountDownLatch @current_count() -> int
 ///
 /// - `[Mutex]` — mutual exclusion (binary semaphore with ownership)
 /// - `[WaitGroup]` — count-down rendezvous
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Semaphore.new(permits int) -> Self
 
@@ -2328,7 +2328,7 @@ export external fn Semaphore mut @release()
 /// Try to acquire 1 permit without parking. Returns `true` if acquired.
 ///
 /// Only succeeds if permits > 0 AND no waiters are queued (FIFO fairness).
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Semaphore mut @try_acquire() -> bool
 
@@ -2347,7 +2347,7 @@ export external fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
 ///
 /// The value may be stale by the time the caller uses it.
 /// Use for observability (metrics, debugging) only.
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Semaphore @available_permits() -> int
 
