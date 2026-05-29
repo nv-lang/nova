@@ -24332,3 +24332,31 @@ Regression baseline maintained.
 - Followup для proper user-type preservation в mono'd bound contexts
 
 Commit: TBD next merge
+
+=== Plan 91.8c part 3 closed 2026-05-29: callback-based min_by/max_by/find ===
+
+Generic algorithms с custom callbacks (T не requires Comparable):
+- fn[T] []T @min_by_of(cmp fn(T, T) -> int) -> Option[T]
+- fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T]
+- fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T]
+
+Tests min_max_by_find_test (6 sub-tests PASS):
+- min_by_of/max_by_of по string length / absolute value
+- find_of first match / not found / empty
+
+plan91_8c: 4/0 PASS (was 3 — added 1 new test file с 6 sub-tests)
+
+Plan 91.8c summary (3 parts закрыто):
+- Part 1: min_of/max_of/sort_of/binary_search_of для [T Comparable]
+- Part 2: sort_by_of callback
+- Part 3: min_by_of/max_by_of/find_of callbacks
+- 4 test files, 16+ sub-tests, all PASS
+- D185 first delivery
+
+Followups (remain):
+- [M-91.8c-user-types-in-bound]: user types в generic Comparable bound
+- [M-91.8c-direct-index-method]: @[i].method() mono dispatch
+- [M-91.8c-pdq-sort]: better algorithm для large arrays
+- [M-91.8c-overload-resolution]: unified naming (@sort via generic)
+
+Commit: 658628356fe
