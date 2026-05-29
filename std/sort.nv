@@ -242,6 +242,66 @@ export fn[T Comparable] []T mut @sort_of() -> @ {
     @
 }
 
+/// Generic min_by с custom comparator. T не обязан satisfying Comparable.
+/// `None` для empty.
+///
+/// # Examples
+/// ```nova
+/// // Pick word with shortest length
+/// let words []str = ["apple", "kiwi", "banana"]
+/// match words.min_by_of(|a, b| a.len() - b.len()) {
+///     Some(w) => assert(w == "kiwi")
+///     _       => assert(false)
+/// }
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @min_by_of(cmp fn(T, T) -> int) -> Option[T] {
+    let n = @len()
+    if n == 0 { return None }
+    let mut m = @[0]
+    let mut i = 1
+    while i < n {
+        let v = @[i]
+        if cmp(v, m) < 0 { m = v }
+        i = i + 1
+    }
+    Some(m)
+}
+
+/// Generic max_by с custom comparator.
+#stable(since = "0.1")
+export fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T] {
+    let n = @len()
+    if n == 0 { return None }
+    let mut m = @[0]
+    let mut i = 1
+    while i < n {
+        let v = @[i]
+        if cmp(v, m) > 0 { m = v }
+        i = i + 1
+    }
+    Some(m)
+}
+
+/// Generic find_of — первый элемент удовлетворяющий predicate. `None` если нет.
+///
+/// # Examples
+/// ```nova
+/// let xs []int = [1, 3, 4, 7, 8]
+/// assert(xs.find_of(|x| x > 3) == Some(4))
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
+    let n = @len()
+    let mut i = 0
+    while i < n {
+        let v = @[i]
+        if pred(v) { return Some(v) }
+        i = i + 1
+    }
+    None
+}
+
 /// Generic sort_by с custom comparator. T не обязан satisfying Comparable —
 /// порядок задаётся через `cmp(a, b) -> int` (negative/0/positive convention).
 ///
