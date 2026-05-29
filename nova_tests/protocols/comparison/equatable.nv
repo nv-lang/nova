@@ -1,20 +1,15 @@
 // Plan 85.4 Ф.1 — Equatable протокол.
-// Plan 91.8a (D183): protocol method renamed eq→equals.
-// Operator `==` все ещё dispatches к `@eq` (D46) — будет изменено в 91.8b
-// (D184). До 91.8b тип-author пишет оба: @equals (для protocol satisfaction)
-// и @eq (для оператора `==`).
+// Plan 91.8a.2 part 3 (D183 amendment): magic methods @eq/@lt/@le/@gt/@ge
+// удалены. == operator synthesized через @equals OR @compare. Type-author
+// пишет только @equals (для Equatable) или @compare (Comparable bound).
 
 module comparison.equatable
 
 
 type Point { x int, y int }
 
-// Plan 91.8a: protocol method (D183).
+// Single explicit method — operators ==/!= synthesized.
 fn Point @equals(other Point) -> bool => @x == other.x && @y == other.y
-
-// Pre-91.8b: оператор `==` dispatches to @eq (D46). Boilerplate до 91.8b
-// (когда operator dispatch перейдёт на @equals и @eq можно будет удалить).
-fn Point @eq(other Point) -> bool => @equals(other)
 
 
 test "equals — рефлексивность: x.equals(x)" {

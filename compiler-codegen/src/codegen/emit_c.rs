@@ -14379,27 +14379,29 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // этого record-типы (у них нет `->tag`) давали невалидный
                     // C, а sum-типы с кастомным `@eq` его игнорировали.
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        let eq_key = (type_name_sum.clone(), "eq".to_string());
-                        if let Some(sigs) = self.method_overloads.get(&eq_key) {
-                            if let Some(sig) = sigs.iter()
-                                .find(|s| s.is_instance && s.param_c_types.len() == 1)
-                            {
-                                let call = format!("{}({}, {})", sig.c_name, l, r);
-                                return Ok(match op {
-                                    BinOp::Eq  => call,
-                                    BinOp::Neq => format!("(!{})", call),
-                                    _ => unreachable!(),
-                                });
+                        // Plan 91.8a.2 part 3 (D183 amendment): try @equals first,
+                        // then legacy @eq (для compatibility до stdlib миграции),
+                        // then synthesis via @compare.
+                        for method_name in &["equals", "eq"] {
+                            let key = (type_name_sum.clone(), method_name.to_string());
+                            if let Some(sigs) = self.method_overloads.get(&key) {
+                                if let Some(sig) = sigs.iter()
+                                    .find(|s| s.is_instance && s.param_c_types.len() == 1)
+                                {
+                                    let call = format!("{}({}, {})", sig.c_name, l, r);
+                                    return Ok(match op {
+                                        BinOp::Eq  => call,
+                                        BinOp::Neq => format!("(!{})", call),
+                                        _ => unreachable!(),
+                                    });
+                                }
                             }
                         }
-                        // Plan 91.8a.2 part 3 (D183 amendment): `==`/`!=` synthesis
-                        // через @compare если type не имеет @eq/@equals но имеет @compare.
+                        // Synthesis через @compare если type не имеет @equals/@eq но имеет @compare.
                         // Equatable.equals default body = @compare(other) == 0.
-                        let has_equals = self.all_methods
-                            .contains(&(type_name_sum.clone(), "equals".to_string()));
                         let has_compare = self.all_methods
                             .contains(&(type_name_sum.clone(), "compare".to_string()));
-                        if has_compare && !has_equals {
+                        if has_compare {
                             let call = format!("Nova_{}_method_compare({}, {})",
                                 Self::sanitize_c_for_ident(&type_name_sum), l, r);
                             return Ok(match op {
