@@ -24309,3 +24309,26 @@ Followups:
 - [M-91.8c-user-types-in-bound]: user types с @compare в [T Comparable]
 
 Commit: d8639ce0af5
+
+=== Plan 91.8c part 2 closed 2026-05-29: sort_by_of callback API ===
+
+Generic sort_by_of(cmp fn(T,T) -> int) для arbitrary T:
+- T НЕ requires Comparable — порядок задаётся callback
+- Insertion sort, stable, O(n²)
+- Memcmp convention
+
+Tests sort_by_callback_test (3 sub-tests PASS):
+- Descending, ascending, by absolute value (custom transformation)
+
+plan91_8c: 3/0 PASS
+Regression baseline maintained.
+
+[M-91.8c-user-types-in-bound] documented:
+- Direct user type @compare works (e.g. score1.compare(score2))
+- Direct == / < / > operators synthesized correctly through @compare
+- BUT generic [T Comparable] bound mono pass erases user type → nova_int
+  (NovaArray_nova_int_method_min_of___nova_int receives Nova_Score* values
+  but treats them as nova_int — type confusion)
+- Followup для proper user-type preservation в mono'd bound contexts
+
+Commit: TBD next merge
