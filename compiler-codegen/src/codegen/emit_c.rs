@@ -14392,6 +14392,40 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 });
                             }
                         }
+                        // Plan 91.8a.2 part 3 (D183 amendment): `==`/`!=` synthesis
+                        // через @compare если type не имеет @eq/@equals но имеет @compare.
+                        // Equatable.equals default body = @compare(other) == 0.
+                        let has_equals = self.all_methods
+                            .contains(&(type_name_sum.clone(), "equals".to_string()));
+                        let has_compare = self.all_methods
+                            .contains(&(type_name_sum.clone(), "compare".to_string()));
+                        if has_compare && !has_equals {
+                            let call = format!("Nova_{}_method_compare({}, {})",
+                                Self::sanitize_c_for_ident(&type_name_sum), l, r);
+                            return Ok(match op {
+                                BinOp::Eq  => format!("(({}) == 0)", call),
+                                BinOp::Neq => format!("(({}) != 0)", call),
+                                _ => unreachable!(),
+                            });
+                        }
+                    }
+                    // Plan 91.8a.2 part 3 (D183 amendment): ordering operators
+                    // `<`/`<=`/`>`/`>=` через @compare если type satisfies Comparable.
+                    // Раньше fallback на `(a < b)` pointer comparison — semantically broken.
+                    if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                        let has_compare = self.all_methods
+                            .contains(&(type_name_sum.clone(), "compare".to_string()));
+                        if has_compare {
+                            let call = format!("Nova_{}_method_compare({}, {})",
+                                Self::sanitize_c_for_ident(&type_name_sum), l, r);
+                            return Ok(match op {
+                                BinOp::Lt => format!("(({}) < 0)", call),
+                                BinOp::Le => format!("(({}) <= 0)", call),
+                                BinOp::Gt => format!("(({}) > 0)", call),
+                                BinOp::Ge => format!("(({}) >= 0)", call),
+                                _ => unreachable!(),
+                            });
+                        }
                     }
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
                         let type_name = type_name_sum;
