@@ -1,0 +1,28 @@
+module nova_tests.plan91_8a_2.impl_explicit_fmt_test
+
+// Plan 91.9 acceptance: #impl(Printable) с explicit @fmt method (not via
+// default body). Verification finds @fmt directly, no default-body
+// satisfiability check needed.
+
+#impl(Printable)
+type Tag { name str }
+
+fn Tag @fmt(sb StringBuilder) -> () {
+    sb.append("Tag(")
+    sb.append(@name)
+    sb.append(")")
+}
+
+test "verified #impl(Printable) with explicit @fmt" {
+    let t = Tag { name: "hello" }
+    // Bare call works (explicit method, не synth)
+    let mut sb = StringBuilder.new()
+    t.fmt(sb)
+    assert(sb.to_str() == "Tag(hello)")
+}
+
+test "explicit @fmt routes through interpolation directly" {
+    let t = Tag { name: "world" }
+    let s = "got ${t}"
+    assert(s == "got Tag(world)")
+}

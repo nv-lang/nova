@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_IMPL_NOT_PROTOCOL
+
+module nova_tests.plan91_8a_2.impl_not_protocol_err
+
+// Plan 91.9: #impl(SomeRecord) где SomeRecord — не protocol (record-type).
+// Должно дать E_IMPL_NOT_PROTOCOL.
+
+type Helper { val int }
+
+#impl(Helper)
+type Bar { x int }
+
+test "marker" {
+    assert(true)
+}
