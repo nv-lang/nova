@@ -1,0 +1,60 @@
+module nova_tests.plan91_8c.reverse_sum_test
+
+import std.sort
+
+// Plan 91.8c part 5: reverse_of (generic) + sum/product (для []int).
+
+test "reverse_of []int" {
+    let mut xs []int = [1, 2, 3, 4, 5]
+    xs.reverse_of()
+    assert(xs[0] == 5)
+    assert(xs[1] == 4)
+    assert(xs[2] == 3)
+    assert(xs[3] == 2)
+    assert(xs[4] == 1)
+}
+
+test "reverse_of []str" {
+    let mut xs []str = ["apple", "banana", "cherry"]
+    xs.reverse_of()
+    assert(xs[0] == "cherry")
+    assert(xs[1] == "banana")
+    assert(xs[2] == "apple")
+}
+
+test "reverse_of single element" {
+    let mut xs []int = [42]
+    xs.reverse_of()
+    assert(xs[0] == 42)
+}
+
+test "reverse_of empty array" {
+    let mut xs []int = []
+    xs.reverse_of()
+    assert(xs.len() == 0)
+}
+
+test "reverse_of returns receiver (chain)" {
+    let mut xs []int = [1, 2, 3]
+    let r = xs.reverse_of()
+    assert(r.len() == 3)
+    assert(xs[0] == 3)
+}
+
+test "sum для []int" {
+    let xs []int = [1, 2, 3, 4, 5]
+    assert(xs.sum() == 15)
+    let empty []int = []
+    assert(empty.sum() == 0)
+    let single []int = [42]
+    assert(single.sum() == 42)
+}
+
+test "product для []int" {
+    let xs []int = [1, 2, 3, 4]
+    assert(xs.product() == 24)
+    let empty []int = []
+    assert(empty.product() == 1)   // multiplicative identity
+    let with_zero []int = [1, 2, 0, 3]
+    assert(with_zero.product() == 0)
+}
