@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_BLANKET_IDENTITY_OVERRIDE
+// Plan 91.8a.2 part 3 (D183 amendment Q4 strict): override identity From
+// blanket — compile error.
+
+module nova_tests.plan91_8a_2.from_blanket_override_err
+
+type Money { cents int }
+
+// Identity blanket уже declared в prelude (fn[T] T.from(t T) -> T => t).
+// Этот override должен дать E_BLANKET_IDENTITY_OVERRIDE.
+fn Money.from(m Money) -> Money => m
+
+test "blanket identity override должно failing" {
+    let m = Money { cents: 100 }
+    let r = Money.from(m)
+    assert(r.cents == 100)
+}
