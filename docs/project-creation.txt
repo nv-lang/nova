@@ -24507,3 +24507,74 @@ Regression:
 - basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
 
 Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: protocol coercion via vtable (MVP) ===
+
+`let x Printable = m` теперь работает — coercion в protocol-тип создаёт
+fat pointer (data + vtable), virtual dispatch через `x.fmt(sb)`
+diff'ит к correct concrete-method без compile-time knowledge of T.
+
+Два fix'a:
+
+1. emit_c.rs Stmt::Let (line ~13232): убрана условие
+   `!type_args.is_empty()` для emit_protocol_vtable_companion. Plan 97.1
+   уже сделал generation infrastructure non-generic-protocol-aware (для
+   typedef + vtable struct), но assignment site дублировал ограничение и
+   silently fell through на `NovaBox_P x = m;` (invalid C).
+
+2. emit_c.rs emit_protocol_vtable_companion (line ~3594): thunk emission
+   получил synthesis fallback. Раньше thunk звал `Nova_T_method_X` напрямую
+   — функция могла не существовать если T satisfies protocol через default
+   body. Теперь:
+   - method == "equals" + T has @compare → thunk emits
+     `return (Nova_T_method_compare((T*)self, a0) == 0)` (Equatable default)
+   - method == "fmt" + T has `fn str.from(T) -> str` overload → thunk emits
+     `Nova_StringBuilder_method_append(a0, Nova_str_static_from__T_p(...)); return NOVA_UNIT`
+   - method == "fmt" + T has @into() -> str → thunk emits
+     `Nova_StringBuilder_method_append(a0, Nova_T_method_into(...)); return NOVA_UNIT`
+
+Mirror existing bare-call synthesis fallback в method dispatch (line 18814).
+Same MVP discipline: hardcoded для двух protocols (Equatable/Printable).
+
+Tests plan91_8a_2/coercion_test (3 sub-tests PASS):
+- Money coerced to Printable via str.from(Money), virtual fmt() — works
+- Coin coerced to Printable via @into→str, virtual fmt() — works
+- Multiple Printable values composed в same StringBuilder — works
+
+Generated C verified:
+  NovaBox_Printable x = { .data = (void*)(m), .vtable = &_vt_Printable__Money };
+  /* thunk */
+  static nova_unit _thunk_Printable_fmt__Money(void* self, Nova_StringBuilder* a0) {
+      Nova_StringBuilder_method_append(a0,
+          Nova_str_static_from__Nova_Money_p((Nova_Money*)self));
+      return NOVA_UNIT;
+  }
+  /* virtual dispatch */
+  x.vtable->fmt(x.data, sb);
+
+NOT в scope MVP:
+- Coercion с Self-typed params (Equatable.equals(other Self)) — vtable
+  struct lowers Self → drops the param из signature, но thunk эмитит с
+  full Self-resolved type → arity mismatch. Followup
+  [M-91.8a.2-vtable-self-in-param]: lower Self → void* в vtable struct
+  + thunk cast + call-site unwrap eb.data.
+- `[]Printable` heterogeneous array (substantial array-of-fat-pointer infra)
+- `"${m}"` interpolation через Printable (Plan 91.10)
+
+Coverage matrix:
+| Pattern | Status |
+|---|---|
+| `[T Printable]` / `[T Equatable]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion (params без Self) | ✅ (этот commit) |
+| `let x Equatable = m` coercion (params с Self) | ❌ M-vtable-self-in-param |
+| `[]Printable` heterogeneous | ❌ |
+| `"${m}"` interpolation | ❌ Plan 91.10 |
+
+Regression:
+- plan91_8a_2: 13/0 PASS (+1 coercion_test 3 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Commit: TBD
