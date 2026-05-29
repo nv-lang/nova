@@ -339,6 +339,10 @@ pub struct Capabilities {
     /// `TypeDecl.consume`. Renderers emit a `[consume]` badge and a
     /// "Resource lifecycle" section explaining ownership obligations.
     pub consume: bool,
+    /// Plan 91.9 / D186: `#impl(P1 + P2 + ...)` — type-author declared
+    /// protocols. Populated from `TypeDecl.impl_protocols`. Renderers emit
+    /// `implements: P1, P2, ...` line в type summary section.
+    pub impl_protocols: Vec<String>,
 }
 
 /// Plan 45 Ф.3 / D105: deprecation marker.

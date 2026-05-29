@@ -308,6 +308,17 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out, "{}", render_type_definition(&it.name, def, it.capabilities.consume));
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
+            // Plan 91.9 / D186: `implements: P, Q, R` line from #impl(...)
+            // annotation. Compiler-verified — type author declared opt-in,
+            // verification pass guaranteed methods соответствуют (3 error
+            // codes catch missing / wrong-sig / unknown protocol).
+            if !it.capabilities.impl_protocols.is_empty() {
+                let _ = writeln!(out, "**Implements:** {}",
+                    it.capabilities.impl_protocols.iter()
+                        .map(|p| format!("`{}`", p))
+                        .collect::<Vec<_>>().join(", "));
+                let _ = writeln!(out);
+            }
             // Plan 100.8 / D166: Resource lifecycle section for consume types.
             if it.capabilities.consume {
                 let _ = writeln!(out, "#### Resource lifecycle");

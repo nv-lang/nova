@@ -205,6 +205,11 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
         });
         // Plan 100.8 / D166: consume — must-be-consumed type marker (D133).
         w.field_bool("consume", it.capabilities.consume);
+        // Plan 91.9 / D186: impl_protocols — declared opt-in list from
+        // #impl(P + Q + ...) annotation. Compiler-verified.
+        w.field_array("impl_protocols", |w| {
+            for p in &it.capabilities.impl_protocols { w.array_str(p); }
+        });
         w.field_array("forbid", |w| {
             for f in &it.capabilities.forbid { w.array_str(f); }
         });
