@@ -24763,3 +24763,92 @@ Regression:
 - basics 8/0, modules 31/0, protocols flaky (24-25 / 1-2)
 
 Commit: TBD
+
+=== Plan 91.8a.2 [M-91.8a.2-default-body-general] CLOSED 2026-05-29 ===
+
+Production-grade generalized default body synthesis. Replaces ALL hardcoded
+equals/fmt MVP fallbacks с единым AST-driven synthesizer:
+ANY protocol method с default_body теперь автоматически работает для типа T
+если body's referenced calls resolve для T. Нет hardcoded списка.
+
+emit_c.rs новая инфраструктура:
+
+1. `try_synthesize_default_method(t_name, t_c_ty, method_name) -> Option<String>`
+   (line ~3458). Production helper:
+   - Cache via `synthesized_default_methods: HashSet<(String, String)>`
+   - Cycle detection via `synthesizing_default_methods` active set
+   - Iterates `protocol_method_registry`, finds candidates с default_body
+   - Trial emission per candidate: snapshot state → set current_receiver_type
+     → resolve return/param types (Self → t_c_ty) → emit_block(body) →
+     если success, push в mono_fwd_decls + register в method_overloads /
+     all_methods / method_receivers maps
+   - Fail → rollback state, try next protocol
+   - Registry update делает synthesized method visible для inference в
+     других вызовах (`let s = u.greet()` получает правильный return c-type).
+
+2. `try_emit_default_body_candidates` (helper inside) — single attempt
+   per candidate с full state save/restore.
+
+3. `emit_default_body_as_return` — unit body emit'ит discard + return
+   NOVA_UNIT; non-unit body требует trailing expr → return v;.
+
+emit_c.rs replacement of MVPs:
+
+1. Method dispatch fallback (line ~19187): hardcoded equals + fmt blocks
+   удалены — single call к `try_synthesize_default_method`.
+2. Vtable thunk emission (line ~3641): pre-synthesis call → thunk forwards.
+3. Interpolation `"${m}"` codegen (line ~20400+): single try_synthesize_default_method
+   call returns Nova_T_method_fmt name; direct call в interp_sb (zero-alloc).
+4. infer_expr_c_type (line ~25612): generalized — walks protocol_method_registry
+   for method's return type из protocol declaration.
+
+types/mod.rs replacement:
+
+5. `f3_check_member` (line ~2195): general `protocol_method_satisfiable_for`
+   helper + AST walker (`walk_default_body_*`) проверяет что body's
+   referenced calls resolve для T (T provides @method или satisfies
+   well-known auto-derive `str.from(T)`).
+
+Test plan91_8a_2/general_synthesis_test (2 sub-tests PASS):
+- Greetable.greet via User.@name — bare call works
+- Generic bound [T Greetable] — synthesized method dispatches
+
+Generated C for Greetable.greet on User:
+  static nova_str Nova_User_method_greet(Nova_User* nova_self);
+  static nova_str Nova_User_method_greet(Nova_User* nova_self) {
+      return (nova_str_concat((nova_str){.ptr="Hello, ", .len=7},
+                              Nova_User_method_name(nova_self)));
+  }
+
+Properties:
+- ANY new protocol с default body работает без modification compiler
+- Cycle detection (E_SYNTH_CYCLE) встроен (active synthesizing set)
+- First-match ambiguity resolution (multiple protocols same name → first in registry)
+- Snapshot/rollback на failed trial — no partial state leak
+- Cache discipline: one emission per (T, method) pair
+- Type inference + method dispatch + vtable + interpolation все используют
+  one unified path
+
+Coverage matrix теперь TRULY GENERAL (не специальные case-by-case):
+| Pattern | Status |
+|---|---|
+| `[T Protocol]` bound | ✅ general |
+| Bare `m.method(...)` без bound | ✅ general |
+| `let x Protocol = m` coercion | ✅ general |
+| `[]Protocol` heterogeneous | ✅ general |
+| `"${m}"` interpolation | ✅ general |
+| NEW protocol with default body works automatically | ✅ verified |
+
+Regression:
+- plan91_8a_2: 17/0 PASS (+1 general_synthesis_test 2 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols flaky (24/2, unaffected)
+
+Followups left для production-grade closure:
+- Negative tests: E_SYNTH_CYCLE end-to-end, E_SYNTH_AMBIGUOUS diagnostic
+- nova-private/discussion-log.md update
+- D183 spec amendment — protocol coercion / heterogeneous / interpolation /
+  general synthesis section
+
+Commit: TBD

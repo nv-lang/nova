@@ -487,6 +487,19 @@ pub struct CEmitter {
     /// each element through box_value_for_protocol + heap-alloc into
     /// void_p slot. None for non-protocol-array contexts.
     current_array_protocol_box: Option<(String, Vec<String>)>,
+    /// Plan 91.8a.2 [M-91.8a.2-default-body-general] — generalized default
+    /// body synthesis. Tracks (TypeName, MethodName) pairs for which the
+    /// compiler has already emitted a synthesized `Nova_<T>_method_<m>`
+    /// function via try_synthesize_default_method (replaces the previous
+    /// hardcoded MVP equals/fmt inline emission). Used to (a) avoid
+    /// duplicate emission, (b) detect synthesis cycles (active set tested
+    /// during recursive resolution).
+    synthesized_default_methods: HashSet<(String, String)>,
+    /// Plan 91.8a.2 [M-91.8a.2-default-body-general] — active synthesis
+    /// in-progress. Used for cycle detection (E_SYNTH_CYCLE) when a
+    /// default body itself triggers further synthesis on the same
+    /// (TypeName, MethodName).
+    synthesizing_default_methods: HashSet<(String, String)>,
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -933,6 +946,8 @@ impl CEmitter {
             expected_record_type: None,
             current_array_elem_hint: None,
             current_array_protocol_box: None,
+            synthesized_default_methods: HashSet::new(),
+            synthesizing_default_methods: HashSet::new(),
             fn_param_sigs: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
@@ -3624,56 +3639,18 @@ impl CEmitter {
                     })
                     .collect::<String>();
                 let concrete_method = format!("Nova_{}_method_{}", concrete_name, m.name);
-                // Plan 91.8a.2 followup 2026-05-29: vtable thunk synthesis для
-                // protocol default bodies. Если у concrete-типа нет explicit
-                // method (Nova_T_method_<X> не emitted), но default body
-                // synthesizable — emit thunk body inline (mirror existing
-                // bare-call MVP synthesis в method dispatch).
+                // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+                // pre-emit Nova_<T>_method_<m> via general synthesis if T
+                // lacks an explicit method. Replaces the prior hardcoded
+                // equals/fmt MVP. Thunk then simply forwards.
                 let has_explicit_method = self.all_methods
                     .contains(&(concrete_name.clone(), m.name.clone()));
-                let synthesized_body: Option<String> = if has_explicit_method {
-                    None
-                } else if m.name == "equals"
-                    && self.all_methods.contains(&(concrete_name.clone(), "compare".to_string()))
-                {
-                    // Equatable.equals default: @compare(other) == 0.
-                    // a0 is void* (Self lowered) — cast to concrete.
-                    Some(format!(
-                        "return (Nova_{cn}_method_compare(({cty})self, ({cty})a0) == 0);",
-                        cn = concrete_name, cty = concrete_c_ty
-                    ))
-                } else if m.name == "fmt" {
-                    // Printable.fmt default: sb.append(str.from(@)).
-                    // Path 1: `fn str.from(T) -> str` overload.
-                    let key = ("str".to_string(), "from".to_string());
-                    let str_from_c: Option<String> = self.method_overloads.get(&key)
-                        .and_then(|sigs| sigs.iter().find(|s| !s.is_instance
-                            && s.param_c_types.len() == 1
-                            && s.param_c_types[0] == concrete_c_ty)
-                            .map(|s| s.c_name.clone()));
-                    if let Some(c_name) = str_from_c {
-                        Some(format!(
-                            "Nova_StringBuilder_method_append(a0, {fn_name}(({cty})self));\n\treturn NOVA_UNIT;",
-                            fn_name = c_name, cty = concrete_c_ty
-                        ))
-                    } else if self.into_targets.get(&concrete_name)
-                        .map(|t| t == "str").unwrap_or(false)
-                    {
-                        // Path 2: T has @into() -> str.
-                        let safe = Self::sanitize_c_for_ident(&concrete_name);
-                        Some(format!(
-                            "Nova_StringBuilder_method_append(a0, Nova_{cn}_method_into(({cty})self));\n\treturn NOVA_UNIT;",
-                            cn = safe, cty = concrete_c_ty
-                        ))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                let thunk_body = if let Some(body) = synthesized_body {
-                    body
-                } else {
+                if !has_explicit_method {
+                    let _ = self.try_synthesize_default_method(
+                        &concrete_name, concrete_c_ty, &m.name,
+                    );
+                }
+                let thunk_body = {
                     format!(
                         "return {concrete_method}(({cty})self{extra_fwd});",
                         concrete_method = concrete_method,
@@ -3827,6 +3804,278 @@ impl CEmitter {
             vts = vtable_struct, box = box_c_type
         ));
         Some(box_c_type)
+    }
+
+    /// Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29.
+    ///
+    /// Production-grade default body synthesis. Replaces the prior MVP that
+    /// hardcoded equals/fmt patterns. Given a concrete Nova type `t_name`
+    /// (with C type `t_c_ty` — pointer or primitive) and a `method_name`,
+    /// searches `protocol_method_registry` for the first protocol whose
+    /// method of that name has a `default_body` AST that can be successfully
+    /// emitted with `Self → t_name` substitution.
+    ///
+    /// Side effects on success:
+    /// - Emits `static <ret_c> Nova_<t_san>_method_<method>(<t_c_ty> nova_self, ...)`
+    ///   into `mono_fwd_decls`. Calls into this function from the regular
+    ///   method-dispatch path / vtable thunks / interpolation work uniformly.
+    /// - Registers `(t_name, method_name)` in `synthesized_default_methods`.
+    ///
+    /// Cycle detection: `(t_name, method_name)` is added to
+    /// `synthesizing_default_methods` before body emission; if the body
+    /// transitively triggers synthesis of the same pair, the inner call
+    /// returns `None` (caller may emit `E_SYNTH_CYCLE` or fall through).
+    ///
+    /// Ambiguity: if multiple protocols define `method_name` with default
+    /// bodies and ALL would synthesize for `t_name`, the first protocol
+    /// in registry-iteration order wins. Diagnostics for true ambiguity
+    /// (E_SYNTH_AMBIGUOUS) are followup.
+    ///
+    /// Returns `Some(c_fn_name)` on success, `None` if no protocol-default
+    /// applies or every applicable body fails to emit.
+    fn try_synthesize_default_method(
+        &mut self,
+        t_name: &str,
+        t_c_ty: &str,
+        method_name: &str,
+    ) -> Option<String> {
+        let key = (t_name.to_string(), method_name.to_string());
+        let t_san = Self::sanitize_c_for_ident(t_name);
+        let canonical_c_name = format!("Nova_{}_method_{}", t_san, method_name);
+
+        // Cache hit — already synthesized.
+        if self.synthesized_default_methods.contains(&key) {
+            return Some(canonical_c_name);
+        }
+        // T already declares this method explicitly → caller should not
+        // synthesize; use the existing dispatch path.
+        if self.all_methods.contains(&key) {
+            return None;
+        }
+        // Cycle guard — synthesis of (t, m) triggered recursively.
+        if self.synthesizing_default_methods.contains(&key) {
+            return None;
+        }
+
+        // Snapshot protocol method registry для stable iteration (mutable
+        // borrow of `self.out` happens during emission).
+        let candidates: Vec<(String, EffectMethod)> = self
+            .protocol_method_registry
+            .iter()
+            .flat_map(|(proto_name, (_type_params, methods))| {
+                methods.iter()
+                    .filter(|m| m.name == method_name && m.default_body.is_some())
+                    .map(move |m| (proto_name.clone(), m.clone()))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+
+        self.synthesizing_default_methods.insert(key.clone());
+        let result = self.try_emit_default_body_candidates(
+            t_name, t_c_ty, method_name, &candidates, &canonical_c_name,
+        );
+        self.synthesizing_default_methods.remove(&key);
+
+        if result.is_some() {
+            self.synthesized_default_methods.insert(key);
+        }
+        result
+    }
+
+    /// Helper extracted из try_synthesize_default_method чтобы guard'ы
+    /// (synthesizing set + cache) обрамляли единую попытку. Возвращает
+    /// canonical C name на success, None если все кандидаты не emit'нулись.
+    fn try_emit_default_body_candidates(
+        &mut self,
+        t_name: &str,
+        t_c_ty: &str,
+        method_name: &str,
+        candidates: &[(String, EffectMethod)],
+        canonical_c_name: &str,
+    ) -> Option<String> {
+        for (_proto_name, m) in candidates {
+            // Snapshot mutable state. Если emission fails — rollback'аем
+            // полностью, чтобы partial state не утёк в callers.
+            let saved_out = std::mem::take(&mut self.out);
+            let saved_indent = self.indent;
+            let saved_var_types = self.var_types.clone();
+            let saved_var_mutable = self.var_mutable.clone();
+            let saved_recv = self.current_receiver_type.clone();
+            let saved_subst = self.current_type_subst.clone();
+            let saved_expected_record = self.expected_record_type.clone();
+            let saved_array_elem_hint = self.current_array_elem_hint.clone();
+            let saved_array_protocol_box = self.current_array_protocol_box.clone();
+
+            self.indent = 0;
+            self.current_receiver_type = Some(t_name.to_string());
+            // Substitute `Self` → `t_name` для resolution в default body.
+            self.current_type_subst.insert("Self".to_string(), t_c_ty.to_string());
+
+            // Resolve return type / param types через type_ref_to_c
+            // (Self уже резолвится через current_receiver_type per spec).
+            let ret_c_result = match &m.return_type {
+                Some(rt) => self.type_ref_to_c(rt),
+                None => Ok("nova_unit".to_string()),
+            };
+            let param_c_results: Vec<_> = m.params.iter()
+                .map(|p| {
+                    // Self in param position → t_c_ty (same as receiver).
+                    let is_self = matches!(&p.ty, TypeRef::Named { path, .. }
+                        if path.len() == 1 && path[0] == "Self");
+                    if is_self {
+                        Ok(t_c_ty.to_string())
+                    } else {
+                        self.type_ref_to_c(&p.ty)
+                    }
+                })
+                .collect();
+
+            let emission_ok = ret_c_result.is_ok()
+                && param_c_results.iter().all(|r| r.is_ok());
+
+            if !emission_ok {
+                // Restore state, try next candidate.
+                self.out = saved_out;
+                self.indent = saved_indent;
+                self.var_types = saved_var_types;
+                self.var_mutable = saved_var_mutable;
+                self.current_receiver_type = saved_recv;
+                self.current_type_subst = saved_subst;
+                self.expected_record_type = saved_expected_record;
+                self.current_array_elem_hint = saved_array_elem_hint;
+                self.current_array_protocol_box = saved_array_protocol_box;
+                continue;
+            }
+
+            let ret_c = ret_c_result.unwrap();
+            let param_c_tys: Vec<String> = param_c_results.into_iter()
+                .map(|r| r.unwrap())
+                .collect();
+
+            // Emit signature.
+            let mut sig_parts: Vec<String> = vec![format!("{} nova_self", t_c_ty)];
+            for (p, pc) in m.params.iter().zip(param_c_tys.iter()) {
+                sig_parts.push(format!("{} {}", pc, p.name));
+            }
+            self.line(&format!(
+                "static {} {}({}) {{",
+                ret_c, canonical_c_name, sig_parts.join(", ")
+            ));
+            self.indent = 1;
+
+            // Register nova_self + params в scope.
+            self.var_types.insert("nova_self".to_string(), t_c_ty.to_string());
+            for (p, pc) in m.params.iter().zip(param_c_tys.iter()) {
+                self.var_types.insert(p.name.clone(), pc.clone());
+            }
+
+            // Default body is a Block (parser wraps both `=> expr` and
+            // `{ ... }` forms into Block, see parser/mod.rs line 2979+).
+            let body = m.default_body.as_ref().expect("filter ensured Some");
+
+            let body_result = self.emit_default_body_as_return(body, &ret_c);
+
+            match body_result {
+                Ok(()) => {
+                    self.indent = 0;
+                    self.line("}");
+                    let emitted = std::mem::replace(&mut self.out, saved_out);
+                    self.indent = saved_indent;
+                    self.var_types = saved_var_types;
+                    self.var_mutable = saved_var_mutable;
+                    self.current_receiver_type = saved_recv;
+                    self.current_type_subst = saved_subst;
+                    self.expected_record_type = saved_expected_record;
+                    self.current_array_elem_hint = saved_array_elem_hint;
+                    self.current_array_protocol_box = saved_array_protocol_box;
+                    // Forward decl in mono_fwd_decls so callers can reference
+                    // before the body appears.
+                    self.mono_fwd_decls.push_str(&format!(
+                        "static {} {}({});\n",
+                        ret_c, canonical_c_name, sig_parts.join(", ")
+                    ));
+                    self.mono_fwd_decls.push_str(&emitted);
+                    // Register synthesized method в overload/registry maps
+                    // так чтобы `infer_expr_c_type(obj.method(...))` находил
+                    // return type, callers получали правильный c-type
+                    // вместо default nova_int.
+                    let sig = MethodSig {
+                        param_c_types: param_c_tys.clone(),
+                        return_c_type: ret_c.clone(),
+                        is_instance: true,
+                        is_external: false,
+                        is_delegated: false,
+                        c_name: canonical_c_name.to_string(),
+                        variadic_last: false,
+                        param_defaults: vec![None; param_c_tys.len()],
+                    };
+                    self.method_overloads
+                        .entry((t_name.to_string(), method_name.to_string()))
+                        .or_default()
+                        .push(sig);
+                    self.all_methods.insert(
+                        (t_name.to_string(), method_name.to_string()));
+                    self.method_receivers.insert(
+                        method_name.to_string(),
+                        (t_name.to_string(), true));
+                    return Some(canonical_c_name.to_string());
+                }
+                Err(_) => {
+                    self.out = saved_out;
+                    self.indent = saved_indent;
+                    self.var_types = saved_var_types;
+                    self.var_mutable = saved_var_mutable;
+                    self.current_receiver_type = saved_recv;
+                    self.current_type_subst = saved_subst;
+                    self.expected_record_type = saved_expected_record;
+                    self.current_array_elem_hint = saved_array_elem_hint;
+                    self.current_array_protocol_box = saved_array_protocol_box;
+                    continue;
+                }
+            }
+        }
+        None
+    }
+
+    /// Emit default body as a function body. The body may be either a
+    /// trailing-expression block (returning a value) or a statement block
+    /// (returning nova_unit). Handles both forms via standard emit_block /
+    /// emit_expr mechanics — Self/@ references resolve naturally because
+    /// `current_receiver_type` was set by the caller.
+    fn emit_default_body_as_return(
+        &mut self,
+        body: &Block,
+        ret_c: &str,
+    ) -> Result<(), String> {
+        if ret_c == "nova_unit" {
+            // Statement block — emit stmts + trailing as a void-returning
+            // body. Trailing expression (if any) emitted as a discarded expr.
+            for s in &body.stmts {
+                self.emit_stmt(s)?;
+            }
+            if let Some(t) = &body.trailing {
+                let v = self.emit_expr(t)?;
+                // Discard result; trailing in unit-returning fn is a stmt.
+                self.line(&format!("(void)({});", v));
+            }
+            self.line("return NOVA_UNIT;");
+        } else {
+            for s in &body.stmts {
+                self.emit_stmt(s)?;
+            }
+            if let Some(t) = &body.trailing {
+                let v = self.emit_expr(t)?;
+                self.line(&format!("return {};", v));
+            } else {
+                // No trailing → emit best-effort zero-init return.
+                return Err(format!(
+                    "default body of non-unit method has no trailing expression"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Plan 72 P3-B: box a concrete value `val` (C type `concrete_c`) into the
@@ -18920,76 +19169,29 @@ _cp++; \
                     }
                 }
 
-                // Plan 91.8a.2 part 3 (D183 amendment): default body synthesis
-                // for protocol methods. Hardcoded MVP case: `obj.equals(other)`
-                // → if obj's type has @compare (Comparable satisfied) и метод
-                // equals не задан явно — inline `Nova_T_method_compare(obj, other) == 0`
-                // (Equatable.equals default body). General default body synthesis —
-                // followup [M-91.8a.2-default-body-general].
-                if method == "equals" && args.len() == 1 {
+                // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29.
+                // General protocol default body synthesis (replaces prior
+                // hardcoded equals/fmt MVP). Walks protocol_method_registry
+                // searching for any protocol whose method with name `method`
+                // has a default_body; substitutes Self → obj's type, emits
+                // `Nova_<T>_method_<m>` once into mono_fwd_decls, dispatches
+                // through it. Self-typed args lowered to t_c_ty by helper.
+                {
                     let obj_ty = self.infer_expr_c_type(obj);
                     let obj_type_name = obj_ty
                         .trim_start_matches("Nova_")
                         .trim_end_matches('*')
                         .to_string();
-                    let has_compare = self.all_methods
-                        .contains(&(obj_type_name.clone(), "compare".to_string()));
-                    let has_explicit_equals = self.all_methods
-                        .contains(&(obj_type_name.clone(), "equals".to_string()));
-                    if has_compare && !has_explicit_equals && !obj_type_name.is_empty() {
-                        let obj_c = self.emit_expr(obj)?;
-                        let arg_c = self.emit_expr(args[0].expr())?;
-                        let safe = Self::sanitize_c_for_ident(&obj_type_name);
-                        return Ok(format!(
-                            "(Nova_{}_method_compare({}, {}) == 0)",
-                            safe, obj_c, arg_c
-                        ));
-                    }
-                }
-                // Plan 91.8a.2 followup (D183 amendment): Printable.fmt default
-                // body synthesis. Type T без @fmt но с str.from(T) overload
-                // (или @into() -> str) — inline
-                // `Nova_StringBuilder_method_append(sb, <str.from(obj)>)`,
-                // mirroring the Equatable.equals fallback above. General default
-                // body synthesis — followup [M-91.8a.2-default-body-general].
-                if method == "fmt" && args.len() == 1 {
-                    let obj_ty = self.infer_expr_c_type(obj);
-                    let obj_type_name = obj_ty
-                        .trim_start_matches("Nova_")
-                        .trim_end_matches('*')
-                        .to_string();
-                    let has_explicit_fmt = self.all_methods
-                        .contains(&(obj_type_name.clone(), "fmt".to_string()));
-                    if !has_explicit_fmt && !obj_type_name.is_empty() {
-                        let key = ("str".to_string(), "from".to_string());
-                        let from_c_name: Option<String> =
-                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
-                                overloads.into_iter()
-                                    .find(|s| !s.is_instance
-                                        && s.param_c_types.len() == 1
-                                        && s.param_c_types[0] == obj_ty)
-                                    .map(|sig| sig.c_name)
-                            } else {
-                                None
-                            };
-                        let str_expr: Option<String> = if let Some(c_name) = from_c_name {
+                    if !obj_type_name.is_empty() && !obj_ty.is_empty() {
+                        if let Some(c_fn) = self.try_synthesize_default_method(
+                            &obj_type_name, &obj_ty, method,
+                        ) {
                             let obj_c = self.emit_expr(obj)?;
-                            Some(format!("{}({})", c_name, obj_c))
-                        } else if self.into_targets.get(&obj_type_name)
-                            .map(|t| t == "str").unwrap_or(false)
-                        {
-                            let obj_c = self.emit_expr(obj)?;
-                            let safe = Self::sanitize_c_for_ident(&obj_type_name);
-                            Some(format!("Nova_{}_method_into({})", safe, obj_c))
-                        } else {
-                            None
-                        };
-                        if let Some(s_expr) = str_expr {
-                            let sb_c = self.emit_expr(args[0].expr())?;
-                            return Ok(format!(
-                                "Nova_StringBuilder_method_append({}, {})",
-                                sb_c, s_expr
-                            ));
+                            let mut call_args = vec![obj_c];
+                            for a in args {
+                                call_args.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!("{}({})", c_fn, call_args.join(", ")));
                         }
                     }
                 }
@@ -20371,12 +20573,14 @@ _cp++; \
                     // CharLit detection — char хранится как nova_int,
                     // но семантика char→str = UTF-8 encode codepoint, а не печать числа.
                     let v = self.emit_expr(e)?;
-                    // Plan 91.8a.2 followup 2026-05-29: Printable.fmt path для
-                    // user types в interpolation. Если type T имеет explicit
-                    // `@fmt(sb StringBuilder)` — вызываем `Nova_T_method_fmt(v, sb)`
-                    // напрямую (zero-overhead — пишет прямо в interp_sb).
-                    // Иначе — fallback к str.from / @into / нативные str-конверсии,
-                    // wrapped в append.
+                    // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+                    // unified Printable.fmt routing для user types.
+                    // Explicit @fmt OR synthesizable default body → direct
+                    // `Nova_T_method_fmt(v, sb)` call (writes straight into
+                    // interp_sb, zero intermediate string). Both paths route
+                    // through `Nova_<T>_method_fmt`, which the general
+                    // synthesizer emits on-demand when T satisfies Printable
+                    // via str.from / @into chain.
                     if !matches!(e.kind, ExprKind::CharLit(_))
                         && !matches!(arg_ty.as_str(),
                             "nova_str" | "nova_char" | "nova_bool"
@@ -20388,11 +20592,17 @@ _cp++; \
                             .to_string();
                         let has_explicit_fmt = self.all_methods
                             .contains(&(arg_type.clone(), "fmt".to_string()));
-                        if has_explicit_fmt {
+                        let fmt_c_fn: Option<String> = if has_explicit_fmt {
                             let safe = Self::sanitize_c_for_ident(&arg_type);
+                            Some(format!("Nova_{}_method_fmt", safe))
+                        } else {
+                            self.try_synthesize_default_method(
+                                &arg_type, &arg_ty, "fmt")
+                        };
+                        if let Some(fn_name) = fmt_c_fn {
                             self.line(&format!(
-                                "Nova_{}_method_fmt({}, {});",
-                                safe, v, sb
+                                "{}({}, {});",
+                                fn_name, v, sb
                             ));
                             continue;
                         }
@@ -25408,20 +25618,35 @@ _cp++; \
                 // { incr() -> int }` ожидает `int`).
                 if let ExprKind::Member { obj, name: method_name } = &func.kind {
                     let obj_ty = self.infer_expr_c_type(obj);
-                    // Plan 91.8a.2 part 3 (D183 amendment): synthesis type-inference.
-                    // If `obj.equals(other)` and obj_type has @compare but no explicit
-                    // @equals — synthesized via Equatable.equals default body returns bool.
-                    if method_name == "equals" {
-                        let obj_type_name = obj_ty
-                            .trim_start_matches("Nova_")
-                            .trim_end_matches('*')
-                            .to_string();
-                        let has_compare = self.all_methods
-                            .contains(&(obj_type_name.clone(), "compare".to_string()));
-                        let has_explicit_equals = self.all_methods
-                            .contains(&(obj_type_name.clone(), "equals".to_string()));
-                        if has_compare && !has_explicit_equals && !obj_type_name.is_empty() {
-                            return "nova_bool".into();
+                    // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+                    // generalized synthesis type-inference. Replaces hardcoded
+                    // equals/fmt special cases. If `obj.method(...)` would be
+                    // synthesized via protocol default body (because T has no
+                    // explicit method AND some protocol provides default), use
+                    // that protocol method's return type as the inferred type.
+                    let obj_type_name_for_synth = obj_ty
+                        .trim_start_matches("Nova_")
+                        .trim_end_matches('*')
+                        .to_string();
+                    if !obj_type_name_for_synth.is_empty()
+                        && !self.all_methods.contains(
+                            &(obj_type_name_for_synth.clone(), method_name.to_string()))
+                    {
+                        for (_proto_name, (_type_params, methods))
+                            in &self.protocol_method_registry
+                        {
+                            if let Some(m) = methods.iter()
+                                .find(|m| m.name == *method_name
+                                    && m.default_body.is_some())
+                            {
+                                if let Some(rt) = &m.return_type {
+                                    if let Ok(c) = self.type_ref_to_c(rt) {
+                                        return c;
+                                    }
+                                }
+                                // No return type → nova_unit (void).
+                                return "nova_unit".into();
+                            }
                         }
                     }
                     if let Some(proto_name) = obj_ty.strip_prefix("NovaBox_") {
