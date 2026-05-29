@@ -2305,7 +2305,11 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             };
             // Per-method check: T provides explicit method OR synthesizable from default body.
+            // Plan 91.9 also enforces signature match для explicit methods —
+            // E_IMPL_WRONG_SIGNATURE если T provides method с wrong arity /
+            // param types / return type vs protocol declaration.
             let mut missing: Vec<String> = Vec::new();
+            let mut wrong_sig: Vec<(String, String, String)> = Vec::new();
             for m in proto_methods {
                 let has_explicit = self.t_provides_method(&td.name, &m.name);
                 let has_default = if let Some(body) = &m.default_body {
@@ -2313,9 +2317,33 @@ impl<'a> TypeCheckCtx<'a> {
                 } else {
                     false
                 };
-                if !has_explicit && !has_default {
+                if has_explicit {
+                    // Compare signature. Find T's fn for method name.
+                    if let Some(t_method) = self.find_method_decl(&td.name, &m.name) {
+                        if let Some(reason) = check_signature_match(t_method, m) {
+                            wrong_sig.push((
+                                m.name.clone(),
+                                render_method_sig(&m.name, &m.params, &m.return_type),
+                                reason,
+                            ));
+                        }
+                    }
+                } else if !has_default {
                     missing.push(render_method_sig(&m.name, &m.params, &m.return_type));
                 }
+            }
+            for (name, expected, reason) in &wrong_sig {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPL_WRONG_SIGNATURE] type `{}` has method `{}` but its \
+                         signature does not match the requirement from `#impl({})`. \
+                         Expected: `{}`. {}\n  \
+                         note: protocol method signatures must match exactly \
+                         (arity, param types, return type — modulo Self ↔ {}).",
+                        td.name, name, proto_name, expected, reason, td.name,
+                    ),
+                    td.span,
+                ));
             }
             if !missing.is_empty() {
                 let hint = missing.iter()
@@ -2474,6 +2502,18 @@ impl<'a> TypeCheckCtx<'a> {
         self.method_table.get(tname).map_or(false, |m| {
             m.keys().any(|k| k.trim_start_matches('@') == name)
         })
+    }
+
+    /// Find the FnDecl of T's method with given name. Returns first match
+    /// (overloads not typical для protocol methods — strict 1-to-1 match).
+    fn find_method_decl(&self, tname: &str, name: &str) -> Option<&FnDecl> {
+        let methods = self.method_table.get(tname)?;
+        for (k, fns) in methods.iter() {
+            if k.trim_start_matches('@') == name {
+                return fns.first().copied();
+            }
+        }
+        None
     }
 
     fn t_provides_field(&self, tname: &str, name: &str) -> bool {
@@ -6285,6 +6325,86 @@ impl NameResCtx {
 }
 
 /// Render method signature `name(p1 T1, p2 T2) -> Ret` вЂ” РґР»СЏ diagnostic'Р°.
+/// Plan 91.9 (D186): compare T's explicit method signature vs protocol's
+/// method requirement. Returns Some(reason) если mismatch, None если ok.
+///
+/// Strict check:
+/// - arity (param count) must match
+/// - each param type must match (modulo Self ↔ T receiver-coercion)
+/// - return type must match (modulo Self)
+///
+/// Self в protocol method ↔ T's own type name — допустимо. Generic params
+/// в protocol — допустимо в принципе (treated as wildcards), но bootstrap
+/// strict-match для simple cases.
+fn check_signature_match(
+    t_method: &FnDecl,
+    proto_method: &crate::ast::EffectMethod,
+) -> Option<String> {
+    if t_method.params.len() != proto_method.params.len() {
+        return Some(format!(
+            "arity mismatch: T's `{}` has {} param(s), protocol expects {}",
+            t_method.name, t_method.params.len(), proto_method.params.len(),
+        ));
+    }
+    for (tp, pp) in t_method.params.iter().zip(proto_method.params.iter()) {
+        let tt = &tp.ty;
+        let pt = &pp.ty;
+        if !type_refs_equiv_modulo_self(tt, pt, &t_method.receiver.as_ref()
+            .map(|r| r.type_name.as_str())
+            .unwrap_or(""))
+        {
+            return Some(format!(
+                "param `{}`: T has `{}`, protocol expects `{}`",
+                tp.name, render_type_ref(tt), render_type_ref(pt),
+            ));
+        }
+    }
+    let t_ret = t_method.return_type.as_ref();
+    let p_ret = proto_method.return_type.as_ref();
+    let recv_name = t_method.receiver.as_ref()
+        .map(|r| r.type_name.as_str()).unwrap_or("");
+    // None ↔ Unit equivalence: both forms `fn foo()` и `fn foo() -> ()`
+    // declare unit-returning method. Treated identically.
+    let is_unit_or_none = |r: Option<&TypeRef>| -> bool {
+        match r {
+            None => true,
+            Some(TypeRef::Unit(_)) => true,
+            _ => false,
+        }
+    };
+    if is_unit_or_none(t_ret) && is_unit_or_none(p_ret) {
+        return None;
+    }
+    match (t_ret, p_ret) {
+        (Some(a), Some(b)) => {
+            if !type_refs_equiv_modulo_self(a, b, recv_name) {
+                return Some(format!(
+                    "return type: T returns `{}`, protocol expects `{}`",
+                    render_type_ref(a), render_type_ref(b),
+                ));
+            }
+        }
+        _ => return Some(format!(
+            "return type: T returns `{}`, protocol expects `{}`",
+            t_ret.map(render_type_ref).unwrap_or_else(|| "()".into()),
+            p_ret.map(render_type_ref).unwrap_or_else(|| "()".into()),
+        )),
+    }
+    None
+}
+
+/// Two TypeRefs are equivalent if textually equal, OR one is `Self`
+/// and the other is `recv_name` (or vice versa).
+fn type_refs_equiv_modulo_self(a: &TypeRef, b: &TypeRef, recv_name: &str) -> bool {
+    let is_self = |t: &TypeRef| matches!(t, TypeRef::Named { path, .. }
+        if path.len() == 1 && path[0] == "Self");
+    let is_recv = |t: &TypeRef| matches!(t, TypeRef::Named { path, .. }
+        if path.len() == 1 && path[0] == recv_name);
+    if is_self(a) && (is_self(b) || is_recv(b)) { return true; }
+    if is_self(b) && (is_self(a) || is_recv(a)) { return true; }
+    render_type_ref(a) == render_type_ref(b)
+}
+
 fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> String {
     let p_strs: Vec<String> = params.iter().map(|p| {
         format!("{} {}", p.name, render_type_ref(&p.ty))
