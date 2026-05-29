@@ -2035,12 +2035,35 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {
-                match self
+                let overloads = self
                     .method_table
                     .get(&parts[0])
                     .and_then(|m| m.get(&parts[1]))
-                    .map(|v| v.as_slice())
-                {
+                    .map(|v| v.as_slice());
+                // Plan 91.8a.2 followup 2026-05-29: для receiver-types,
+                // у которых ЧАСТЬ overload'ов лежит вне method_table
+                // (external fn в другом stdlib-модуле, codegen builtins,
+                // hidden D73 auto-derive paths) — single-overload arg-check
+                // даёт ложные positives. Symptom: `let fill_s = str.from(fill)`
+                // в std/runtime/string.nv падает с E7301 "cannot pass char as bool"
+                // когда пользователь добавил `fn str.from(b bool) -> str` —
+                // type-checker видит ЕДИНСТВЕННЫЙ overload (bool) и ругается
+                // на arg типа char, не зная про external `str.from(c char)`.
+                //
+                // Фикс: для primitive-receiver'ов (str/int/char/bool/f*/u*/i*/uint)
+                // **никогда** не делать arg-check на single-overload в Path-форме.
+                // Codegen overload resolution в `external_registry` +
+                // `method_overloads` корректно резолвит за нас.
+                let is_primitive_recv = matches!(
+                    parts[0].as_str(),
+                    "str" | "int" | "char" | "bool" | "f32" | "f64"
+                    | "u8" | "u16" | "u32" | "u64" | "uint"
+                    | "i8" | "i16" | "i32" | "i64"
+                );
+                if is_primitive_recv {
+                    return;
+                }
+                match overloads {
                     Some([single]) => single,
                     _ => return,
                 }
