@@ -1,0 +1,39 @@
+module nova_tests.plan91_8c.sort_by_callback_test
+
+import std.sort
+
+// Plan 91.8c (D185): generic sort_by_of с custom comparator callback.
+
+test "sort_by_of descending []int" {
+    let mut xs []int = [3, 1, 4, 1, 5]
+    xs.sort_by_of(|a, b| b - a)
+    assert(xs[0] == 5)
+    assert(xs[1] == 4)
+    assert(xs[2] == 3)
+    assert(xs[3] == 1)
+    assert(xs[4] == 1)
+}
+
+test "sort_by_of ascending []int" {
+    let mut xs []int = [3, 1, 4, 1, 5]
+    xs.sort_by_of(|a, b| a - b)
+    assert(xs[0] == 1)
+    assert(xs[1] == 1)
+    assert(xs[2] == 3)
+    assert(xs[3] == 4)
+    assert(xs[4] == 5)
+}
+
+test "sort_by_of by absolute value" {
+    let mut xs []int = [-3, 1, -4, 2, -5]
+    xs.sort_by_of(|a, b| {
+        let aa = if a < 0 { -a } else { a }
+        let bb = if b < 0 { -b } else { b }
+        aa - bb
+    })
+    assert(xs[0] == 1)
+    assert(xs[1] == 2)
+    assert(xs[2] == -3)
+    assert(xs[3] == -4)
+    assert(xs[4] == -5)
+}
