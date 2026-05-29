@@ -167,3 +167,94 @@ export fn []int @max() -> Option[int] {
     }
     Some(m)
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 91.8c: Generic [T Comparable] versions (D185)
+//
+// Любой тип satisfying Comparable (имеет @compare(other Self) -> int)
+// автоматически получает min_of/max_of через mono pass + synthesis.
+// Concrete []int @min/@max выше остаются как fast-path для int (без mono overhead).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Generic min для любого `[T Comparable]`. `None` для empty.
+///
+/// # Examples
+/// ```nova
+/// assert([3, 1, 4].min_of() == Some(1))
+/// assert(["zebra", "apple", "mango"].min_of() == Some("apple"))
+/// ```
+#stable(since = "0.1")
+export fn[T Comparable] []T @min_of() -> Option[T] {
+    let n = @len()
+    if n == 0 { return None }
+    let mut m = @[0]
+    let mut i = 1
+    while i < n {
+        let v = @[i]
+        if v.compare(m) < 0 { m = v }
+        i = i + 1
+    }
+    Some(m)
+}
+
+/// Generic max для любого `[T Comparable]`. `None` для empty.
+#stable(since = "0.1")
+export fn[T Comparable] []T @max_of() -> Option[T] {
+    let n = @len()
+    if n == 0 { return None }
+    let mut m = @[0]
+    let mut i = 1
+    while i < n {
+        let v = @[i]
+        if v.compare(m) > 0 { m = v }
+        i = i + 1
+    }
+    Some(m)
+}
+
+/// Generic insertion sort для `[T Comparable]` (stable, O(n²)).
+///
+/// # Examples
+/// ```nova
+/// let mut xs []str = ["zebra", "apple", "mango"]
+/// xs.sort_of()
+/// assert(xs == ["apple", "mango", "zebra"])
+/// ```
+#stable(since = "0.1")
+export fn[T Comparable] []T mut @sort_of() -> @ {
+    let n = @len()
+    let mut i = 1
+    while i < n {
+        let key = @[i]
+        let mut j = i - 1
+        // Note: binding `cur = @[j]` workaround — direct @[j].method
+        // не диспатчится правильно в mono пути (followup [M-91.8c-direct-index-method]).
+        let mut cur = @[j]
+        while j >= 0 && cur.compare(key) > 0 {
+            @[j + 1] = cur
+            j = j - 1
+            if j >= 0 { cur = @[j] }
+        }
+        @[j + 1] = key
+        i = i + 1
+    }
+    @
+}
+
+/// Generic binary_search для отсортированного `[T Comparable]`.
+/// Возвращает `Some(idx)` где `@[idx] == target` (через @compare == 0), или `None`.
+#stable(since = "0.1")
+export fn[T Comparable] []T @binary_search_of(target T) -> Option[int] {
+    let mut lo = 0
+    let mut hi = @len() - 1
+    while lo <= hi {
+        let mid = (lo + hi) / 2
+        let v = @[mid]
+        let cmp = v.compare(target)
+        if cmp == 0 { return Some(mid) }
+        if cmp < 0 { lo = mid + 1 }
+        else       { hi = mid - 1 }
+    }
+    None
+}
