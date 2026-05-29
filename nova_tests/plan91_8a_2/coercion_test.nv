@@ -1,0 +1,46 @@
+module nova_tests.plan91_8a_2.coercion_test
+
+// Plan 91.8a.2 followup: protocol coercion via vtable + virtual dispatch.
+// `let x Printable = m` → fat pointer; `x.fmt(sb)` → virtual dispatch
+// через synthesized vtable thunk (mirror existing bare-call synthesis).
+//
+// Scope MVP: Printable coercion (params без Self-types).
+// Equatable coercion (`other Self` param) — followup
+// [M-91.8a.2-vtable-self-in-param]: requires lowering Self-typed params
+// to void* в vtable struct + thunk cast + call-site unwrap.
+
+type Money { cents int }
+fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+
+type Coin { value int }
+fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+
+test "Money coerced to Printable via str.from, virtual fmt() call" {
+    let m = Money { cents: 99 }
+    let x Printable = m
+    let mut sb = StringBuilder.new()
+    x.fmt(sb)
+    assert(sb.to_str() == "Money(99)")
+}
+
+test "Coin coerced to Printable via @into, virtual fmt() call" {
+    let c = Coin { value: 5 }
+    let x Printable = c
+    let mut sb = StringBuilder.new()
+    x.fmt(sb)
+    assert(sb.to_str() == "Coin(5)")
+}
+
+test "multiple Printable values composed in same StringBuilder" {
+    let m = Money { cents: 10 }
+    let c = Coin { value: 3 }
+    let xm Printable = m
+    let xc Printable = c
+    let mut sb = StringBuilder.new()
+    sb.append("[")
+    xm.fmt(sb)
+    sb.append(", ")
+    xc.fmt(sb)
+    sb.append("]")
+    assert(sb.to_str() == "[Money(10), Coin(3)]")
+}
