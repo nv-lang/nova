@@ -354,9 +354,8 @@ pub struct FnDecl {
     pub returns_receiver: bool,
     pub body: FnBody,
     pub span: Span,
-    /// Plan 16 (D64 sugar §3697): `@realtime` атрибут перед `fn`.
-    /// Эквивалентен оборачиванию body в `realtime { ... }`. Type-checker
-    /// (CapabilityCtx) применяет realtime-проверки ко всему телу fn.
+    /// Plan 16 (D64 sugar §3697) / Plan 113: `#realtime` / `#realtime nogc` атрибут перед `fn`.
+    /// Fn-level callee guarantee — body can only call other `#realtime` fns/primitives.
     pub realtime_attr: RealtimeAttr,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
@@ -403,7 +402,7 @@ pub struct FnDecl {
     /// в теле fn генерируется overflow VC. Если доказательство неудачно →
     /// compile error. Без атрибута: wrap-around семантика (2's complement).
     pub no_overflow: bool,
-    /// Plan 103.6: sync interaction class — parsed from #realtime_safe/#parks/#wakes.
+    /// Plan 103.6 / Plan 113: sync interaction class — parsed from #realtime/#parks/#wakes.
     /// None = no annotation (conservative: treated as Parks in realtime context).
     /// Stored in ExternalDecl for O(1) lookup during emit_call.
     pub sync_class: Option<SyncClass>,
@@ -516,20 +515,19 @@ pub enum RealtimeAttr {
     RealtimeNogc,
 }
 
-/// Plan 103.6: sync interaction class for external fn declarations.
+/// Plan 103.6 / Plan 113: sync interaction class for external fn declarations.
 ///
-/// Controls type-checker enforcement in `realtime { }` and `blocking { }` bodies.
-/// Parsed from `#realtime_safe` / `#parks` / `#wakes` attributes in sync.nv.
+/// Parsed from `#realtime` / `#parks` / `#wakes` attributes in sync.nv.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncClass {
-    /// Leaf method — no fiber park/wake. Allowed in realtime{} and blocking{}.
-    /// Annotation: `#realtime_safe`.
-    RealtimeSafe,
-    /// May park the calling fiber. Forbidden in realtime{} and blocking{}.
+    /// Leaf method — no fiber park/wake. Callee guarantee: body is realtime-safe.
+    /// Annotation: `#realtime` (Plan 113 rename from `#realtime_safe`).
+    Realtime,
+    /// May park the calling fiber. Forbidden in #realtime fns and blocking{}.
     /// Annotation: `#parks`.
     Parks,
-    /// Wakes other fibers (no self-park). Forbidden in realtime{} (scheduler
-    /// interaction); allowed in blocking{} as leaf operation.
+    /// Wakes other fibers (no self-park). Forbidden in #realtime context
+    /// (scheduler interaction); allowed in blocking{} as leaf operation.
     /// Annotation: `#wakes`.
     Wakes,
 }

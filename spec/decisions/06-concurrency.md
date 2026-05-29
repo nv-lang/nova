@@ -21,7 +21,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D168](#d168-sized-atomic-types--api-contract-plan-1032) | Sized atomic types API contract: 12 types × 13 ops, MemOrdering-aware overloads, wraparound semantics |
 | [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) | `Mutex` / `RwLock` / `ReentrantMutex` family — fiber-aware locking, fair FIFO default, writer-priority RwLock, recursive ReentrantMutex |
 | [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) | Coordination primitives — `Semaphore` (bounded permits), `Barrier` (reusable N-party rendezvous), `CountDownLatch` (one-shot), `Condvar` (tied to Mutex) |
-| [D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036) | `realtime { }` / `blocking { }` × sync-primitive enforcement: `#parks` / `#wakes` / `#realtime_safe` annotation system |
+| [D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036) | `realtime { }` / `blocking { }` × sync-primitive enforcement: `#parks` / `#wakes` / `#realtime` annotation system |
 | [D174](#d174-sync-primitives-consume-integration-plan-1039) | Consume guards V2 — `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit`, `OnceGuard` consume types; guard-returning API; D169–D171 cross-refs updated |
 
 ---
@@ -4873,20 +4873,31 @@ N-party rendezvous (Barrier/CountDownLatch), wait-until-predicate (Condvar) —
 
 ---
 
-## D172. `realtime { }` / `blocking { }` × sync-class annotation system (Plan 103.6)
+## D172. `#realtime` / `#blocking` attribute-only model + sync-class annotations (Plan 103.6, amended Plan 113)
 
-> **Статус:** ✅ final (Plan 103.7, 2026-05-27). Реализован в Plan 103.6. V2 inference — Plan 103.8.
+> **Статус:** ✅ final (Plan 103.7, 2026-05-27). **Amended by Plan 113** (2026-05-29): block-forms removed, `#realtime_safe` → `#realtime`, `#blocking fn` replaces `blocking { }`. V2 inference — Plan 103.8.
 
 ### Что
 
-Nova предоставляет два execution-context блока, каждый с разными ограничениями
-на вызовы sync-примитивов:
+**Plan 113 (2026-05-29) — attribute-only simplification.** Две исходных формы
+заменены единым механизмом — attribute на функции:
 
-- **`realtime { }` (D64)** — выполнение без остановок fiber: GC-pause-free,
-  scheduler-interaction-free. Запрещены все операции, способные парковать fiber.
-- **`blocking { }` (D50 §4, Plan 83.3)** — обременительная работа, выполняемая
-  в libuv threadpool. Разрешены блокирующие операции ОС, но запрещены
-  операции, которые пытаются парковать nova-fiber изнутри thread-pool worker.
+- **`#realtime fn`** — callee guarantee: тело fn может вызывать только другие
+  `#realtime` fns/primitives. GC-pause-free, scheduler-interaction-free.
+  Caller unrestricted — любая fn свободно вызывает `#realtime` fn.
+  _До Plan 113: `realtime { }` block (D64 — retracted) и `#realtime_safe` SyncClass._
+- **`#blocking fn`** — runtime threadpool offload: вся fn выполняется на
+  libuv threadpool worker, fiber паркуется до завершения.
+  _До Plan 113: `blocking { }` block (D50 §4, Plan 83.3)._
+
+**Аналогия (Plan 113):** `#realtime` — как C++ `constexpr`: вызываема из
+runtime-кода, но внутри только constexpr/realtime ops. Callee guarantee,
+не caller constraint.
+
+Исходные execution-context блоки (до Plan 113):
+
+- **`realtime { }` (D64)** — *(retracted, Plan 113)* заменён на `#realtime fn`.
+- **`blocking { }` (D50 §4, Plan 83.3)** — *(retracted, Plan 113)* заменён на `#blocking fn`.
 
 ### Проблема (до Plan 103.6)
 
@@ -4911,7 +4922,7 @@ Plan 103.6 вводит **SyncClass attribute system**:
 #### §1. Annotations (bare `#`-attributes)
 
 ```nova
-#realtime_safe  // Leaf op: no scheduler interaction. Safe in realtime{} and blocking{}.
+#realtime  // Leaf op: no scheduler interaction. Safe in realtime{} and blocking{}.
 #parks          // May park the current fiber. Forbidden in realtime{}. Error in blocking{}.
 #wakes          // May wake another fiber (scheduler signal). Forbidden in realtime{}.
 ```
@@ -4923,7 +4934,7 @@ Plan 103.6 вводит **SyncClass attribute system**:
 #stable(since = "0.1")
 export external fn Mutex mut @lock()
 
-#realtime_safe
+#realtime
 #stable(since = "0.1")
 export external fn Mutex @try_lock() -> bool
 
@@ -4937,14 +4948,14 @@ export external fn Mutex mut @unlock()
 | Примитив | Метод | SyncClass | realtime{} | blocking{} |
 |---|---|---|---|---|
 | `Mutex` | `lock()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
-| `Mutex` | `try_lock()` | `#realtime_safe` | ✅ | ✅ |
-| `Mutex` | `try_lock_for(d)` | `#realtime_safe` ¹ | ⚠️ W_REALTIME_TRY_LOCK_FOR_TIMER | ✅ |
+| `Mutex` | `try_lock()` | `#realtime` | ✅ | ✅ |
+| `Mutex` | `try_lock_for(d)` | `#realtime` ¹ | ⚠️ W_REALTIME_TRY_LOCK_FOR_TIMER | ✅ |
 | `Mutex` | `unlock()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
 | `RwLock` | `read()` / `write()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
-| `RwLock` | `try_read()` / `try_write()` | `#realtime_safe` | ✅ | ✅ |
+| `RwLock` | `try_read()` / `try_write()` | `#realtime` | ✅ | ✅ |
 | `RwLock` | `unlock_read()` / `unlock_write()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
 | `Semaphore` | `acquire()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
-| `Semaphore` | `try_acquire()` | `#realtime_safe` | ✅ | ✅ |
+| `Semaphore` | `try_acquire()` | `#realtime` | ✅ | ✅ |
 | `Semaphore` | `release()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
 | `Barrier` | `wait()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
 | `CountDownLatch` | `await()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
@@ -4954,15 +4965,15 @@ export external fn Mutex mut @unlock()
 | `WaitGroup` | `wait()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
 | `WaitGroup` | `done()` | `#wakes` | ❌ E_REALTIME_SYNC_WAKE | ✅ |
 | `OnceCell[T]` | `get_or_init(f)` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
-| `OnceCell[T]` | `get()` / `set(v)` | `#realtime_safe` | ✅ | ✅ |
+| `OnceCell[T]` | `get()` / `set(v)` | `#realtime` | ✅ | ✅ |
 | `Lazy[T]` | `force()` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
-| `Lazy[T]` | `is_forced()` | `#realtime_safe` | ✅ | ✅ |
+| `Lazy[T]` | `is_forced()` | `#realtime` | ✅ | ✅ |
 | `Once` | `call_once(f)` | `#parks` | ❌ E_REALTIME_SYNC_PARK | ❌ E_BLOCKING_SYNC_PARK |
-| `Once` | `is_completed()` | `#realtime_safe` | ✅ | ✅ |
-| `fence(ord)` | — | `#realtime_safe` | ✅ | ✅ |
-| `AtomicX.*` | все методы | `#realtime_safe` | ✅ | ✅ |
+| `Once` | `is_completed()` | `#realtime` | ✅ | ✅ |
+| `fence(ord)` | — | `#realtime` | ✅ | ✅ |
+| `AtomicX.*` | все методы | `#realtime` | ✅ | ✅ |
 
-¹ `try_lock_for` является `#realtime_safe` технически (не парков fiber),
+¹ `try_lock_for` является `#realtime` технически (не парков fiber),
   но использует libuv timer → W_REALTIME_TRY_LOCK_FOR_TIMER предупреждает
   об overhead таймера внутри realtime-блока.
 
@@ -4983,7 +4994,7 @@ export external fn Mutex mut @unlock()
 
 #### §4. User-defined function propagation (V1)
 
-В V1 (Plan 103.6) propagation **только explicit**:
+В V1 (Plan 103.6 / Plan 113) propagation **только explicit**:
 
 ```nova
 #parks
@@ -4991,48 +5002,51 @@ fn my_critical_wait() {
     mutex.lock()  // внутри — парков, поэтому fn annotated #parks
 }
 
-realtime {
+#realtime
+fn audio_callback() {
     my_critical_wait()  // ❌ E_REALTIME_NESTED_SYNC_VIA_FN
 }
 ```
 
 V1 не поддерживает автоматический inference (transitive propagation): если `fn A`
-вызывает `fn B` которая `#parks`, но `A` не annotated — вызов `A` из realtime{}
+вызывает `fn B` которая `#parks`, но `A` не annotated — вызов `A` из `#realtime` fn
 **не** даёт ошибку. V2 (Plan 103.8) добавит inference-based propagation.
 
 #### §5. Unseen / uninstrumented methods
 
-Методы без явной аннотации (`#parks`/`#wakes`/`#realtime_safe`) внутри
+Методы без явной аннотации (`#parks`/`#wakes`/`#realtime`) внутри
 realtime{} консервативно трактуются как `#parks` (worst-case):
 
 ```
 [E_REALTIME_SYNC_PARK] `T.method()` has no sync annotation and is conservatively
 treated as park-ing; forbidden inside realtime{}.
-Add #parks / #realtime_safe annotation to declare intent.
+Add #parks / #realtime annotation to declare intent.
 ```
 
 Это предотвращает silent miscompilation при добавлении новых методов без аннотации.
 
-#### §6. Implementation (V1)
+#### §6. Implementation (V1, updated Plan 113)
 
 **Compiler-side:**
-- `SyncClass` enum в AST: `RealtimeSafe | Parks | Wakes`
-- `ContractAttrs.sync_class: Option<SyncClass>` — parsed из `#realtime_safe`/`#parks`/`#wakes`
-- `CEmitter.in_realtime: bool` / `CEmitter.in_blocking: bool` — flags set при входе в блоки
+- `SyncClass` enum в AST: `Realtime | Parks | Wakes` _(Plan 113: `RealtimeSafe` → `Realtime`)_
+- `ContractAttrs.sync_class: Option<SyncClass>` — parsed из `#realtime`/`#parks`/`#wakes`
+- `RealtimeAttr` enum на `FnDecl` — body-restriction enforcement для `#realtime fn` bodies
+- `CEmitter.in_realtime: bool` / `CEmitter.in_blocking: bool` — flags set при входе в fn bodies
 - `mono_fn_decls` расширен: non-generic `#parks`-annotated fns хранятся для lookup в emit_call
 - Generic-type methods (OnceCell[T], Lazy[T]) — проверяются в `generic_type_methods` dispatch
 
 **Runtime-side:**
 - Нет runtime overhead: все проверки compile-time.
 - `nova_fn_fence` / атомарные операции — безусловно safe (нет park/wake).
+- `#blocking fn` — codegen wrap'ает вызов в `uv_queue_work` (Plan 113, Ф.3).
 
 ### Правило
 
-1. **Annotate все external fn** в `.nv` stdlib с `#parks`/`#wakes`/`#realtime_safe`.
+1. **Annotate все external fn** в `.nv` stdlib с `#parks`/`#wakes`/`#realtime`.
 2. **Compile-time enforcement**: `in_realtime` / `in_blocking` flags в CEmitter.
 3. **Conservative default**: unannotated method inside realtime{} → E_REALTIME_SYNC_PARK.
 4. **User fns**: explicit `#parks` annotation triggers E_REALTIME_NESTED_SYNC_VIA_FN.
-5. **try_lock_for**: `#realtime_safe` (no park) + W_REALTIME_TRY_LOCK_FOR_TIMER (timer overhead).
+5. **try_lock_for**: `#realtime` (no park) + W_REALTIME_TRY_LOCK_FOR_TIMER (timer overhead).
 
 ### Тесты
 
@@ -5050,15 +5064,22 @@ realtime_{try_lock_for_zero_warn,mutex_try_lock_for_neg} (warnings)
 
 - **[D64](04-effects.md#d64)** — `realtime { }` semantics (GC-pause-free, no scheduler yield)
 - **[D50](#d50-concurrency-model-spawn-detach-blocking)** — `blocking { }` semantics (threadpool offload)
-- **[D168](#d168-sized-atomic-types--api-contract-plan-1032)** — AtomicX ops: все `#realtime_safe`
-- **[D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033)** — Mutex/RwLock: lock → `#parks`, try_lock → `#realtime_safe`, unlock → `#wakes`
+- **[D168](#d168-sized-atomic-types--api-contract-plan-1032)** — AtomicX ops: все `#realtime`
+- **[D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033)** — Mutex/RwLock: lock → `#parks`, try_lock → `#realtime`, unlock → `#wakes`
 - **[D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034)** — Coordination primitives sync-class matrix
-- **[D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035)** — Once/OnceCell/Lazy: force/get_or_init/call_once → `#parks`, is_*/get/set → `#realtime_safe`
+- **[D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035)** — Once/OnceCell/Lazy: force/get_or_init/call_once → `#parks`, is_*/get/set → `#realtime`
 - **[Plan 103.8](../../docs/plans/103.8-sync-propagation-v2.md)** — V2: transitive `#parks` inference (planned)
 
 ### Эволюция
 
 D172 введён как draft (Plan 103.6, 2026-05-27). Финализирован в Plan 103.7.
+
+**Amended Plan 113 (2026-05-29):**
+- `#realtime_safe` → `#realtime` (rename SyncClass).
+- `realtime { }` / `blocking { }` block forms **retracted** — заменены на `#realtime fn` / `#blocking fn`.
+- `#blocking fn` — fn-level threadpool offload (вся fn выполняется на threadpool).
+- `#realtime fn` — callee guarantee model: caller unrestricted; body restriction only.
+- D64 retracted (block-form removed); D50 §4 blocking-block removed.
 
 Отложено в Plan 103.8 (V2 sync propagation):
 - Автоматический inference: если `fn A` вызывает `#parks`-fn, A также помечается `#parks`.
@@ -5345,7 +5366,7 @@ fn handle_request(req Request) {
 | `Mutex` вместо `RwLock` на read-heavy | Serializes всех readers | `RwLock.with_read / with_write` |
 | `condvar.wait(mu)` без predicate | Spurious wakeup UB | `condvar.wait_until(mu, predicate)` |
 | `ReentrantMutex` по умолчанию | Скрывает re-entrancy bugs | `Mutex` default; `ReentrantMutex` opt-in |
-| Mutex в `realtime { }` | E_REALTIME_SYNC_PARK | `AtomicX` ops (`#realtime_safe`) |
+| Mutex в `realtime { }` | E_REALTIME_SYNC_PARK | `AtomicX` ops (`#realtime`) |
 | Mutex в `blocking { }` (lock) | E_BLOCKING_SYNC_PARK | Restructure: lock вне blocking, pass result |
 
 ### Связь

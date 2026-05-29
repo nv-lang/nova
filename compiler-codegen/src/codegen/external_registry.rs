@@ -7,7 +7,7 @@
 //!
 //! См. spec/decisions/08-runtime.md → D82 (extended), Plan 12.
 //!
-//! Plan 103.6: SyncClass annotation driven by #realtime_safe/#parks/#wakes
+//! Plan 103.6 / Plan 113: SyncClass annotation driven by #realtime/#parks/#wakes
 //! attributes in sync.nv. Replaces hardcoded is_realtime_blocking lists.
 
 use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind, SyncClass, TypeDecl, TypeDeclKind, TypeRef};
@@ -40,7 +40,7 @@ pub struct ExternalDecl {
     /// `Nova_<RecvType>_method_<name>`. Plan 11 mangling по
     /// param-types применяется при коллизии overload'ов.
     pub c_name: String,
-    /// Plan 103.6: Sync interaction class parsed from #realtime_safe/#parks/#wakes.
+    /// Plan 103.6 / Plan 113: Sync interaction class parsed from #realtime/#parks/#wakes.
     /// None = no annotation (conservative: treated as Parks in realtime context).
     pub sync_class: Option<SyncClass>,
     /// Plan 83.12: если return_c_type — `NovaRes_*` с non-trivial ok/err

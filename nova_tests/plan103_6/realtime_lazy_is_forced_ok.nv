@@ -1,4 +1,4 @@
-// Plan 103.6 — Lazy.is_forced is #realtime_safe; allowed in realtime{}.
+// Plan 103.6 — Lazy.is_forced is #realtime; allowed in realtime{}.
 //
 // EXPECT_TIMEOUT_MS 60000
 

@@ -1,4 +1,4 @@
-// Plan 103.6 — AtomicI64.load is #realtime_safe; allowed in realtime{}.
+// Plan 103.6 — AtomicI64.load is #realtime; allowed in realtime{}.
 //
 // EXPECT_TIMEOUT_MS 60000
 

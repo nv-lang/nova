@@ -3758,9 +3758,19 @@ Pure-fn (callee.effects пустой) — всегда OK.
 
 ---
 
-## D64. `realtime { body }` — гарантия не-приостановки
+## D64. `realtime { body }` / `blocking { body }` — гарантия не-приостановки _(RETRACTED by Plan 113)_
 
-### Что
+> **⚠️ RETRACTED (Plan 113, 2026-05-29).** Block-forms `realtime { }` и `blocking { }`
+> **удалены из языка**. Логика и семантика переехали в D172 attribute-only model:
+> - `realtime { body }` → extract в `#realtime fn` (callee guarantee)
+> - `blocking { body }` → extract в `#blocking fn` (fn-level threadpool offload)
+>
+> Атрибут `#realtime` на функции — **сохранён** (callee guarantee модель, D172).
+> D64 retract'ирован как block-form spec.
+>
+> _История ниже сохранена для понимания эволюции._
+
+### Что (историческое, retracted)
 
 Runtime-блок, гарантирующий что код внутри **не приостанавливается**
 на yield-point'ах fiber-runtime'а. Применяется для real-time-зон,
