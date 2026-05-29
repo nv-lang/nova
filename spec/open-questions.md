@@ -6541,6 +6541,91 @@ phase Ф.0 нужна — это значительное расширение s
 
 ---
 
+## Q-char-arithmetic. Арифметика на `char` — advance/retreat by codepoint count
+
+> **Статус: 🟡 ОТКРЫТО — discussed 2026-05-29, дизайн не зафиксирован.**
+
+**Контекст.** В Plan 91.8a.2 part 3 добавлены **comparison operators** на `char`
+(codepoint-based, через native operators + `char.@compare(other char) -> int`).
+Открыт вопрос про **арифметику**.
+
+User asked про возможность:
+- `char + n -> char` (advance codepoint by N)
+- `char - n -> char` (retreat)
+- `char - char -> int` (distance, useful для ranges)
+
+**Issues:**
+
+1. **Overflow / invalid codepoints.** Unicode max = U+10FFFF. `'a' + 1000000`
+   даёт invalid codepoint. Поведение?
+   - Panic при invalid → runtime check overhead
+   - Wrap-around → silent corruption
+   - Return Option[char] → typed safety, чуть громоздко
+
+2. **Surrogate gap U+D800-DFFF.** Invalid Unicode чтобы char туда попал.
+   Arithmetic должна пропускать surrogates? Или ошибаться?
+
+3. **Semantic surprise.** `'9' + 1 == ':'` (не `'10'`!). Программисты могут
+   ожидать decimal increment.
+
+4. **Implicit promotion (Java style)** — `'a' + 1 == 98` (int), теряя char type.
+   Nova избегает silent type changes — отвергнуто как anti-pattern.
+
+### Предлагаемые варианты
+
+**Variant A. Explicit fallible API (Rust-style):**
+```nova
+fn char @try_advance(n int) -> Option[char] {
+    let cp = (@ as int) + n
+    if cp < 0 || cp > 0x10FFFF { return None }
+    if cp >= 0xD800 && cp <= 0xDFFF { return None }
+    Some(cp as char)
+}
+fn char @minus(other char) -> int =>
+    (@ as int) - (other as int)
+// `c + n` operator — НЕ добавляем (forces explicit `c.try_advance(n)`)
+```
+
+Pros: explicit, safe, no silent corruption. Cons: verbose.
+
+**Variant B. Operator overload с panic:**
+```nova
+fn char @plus(n int) -> char Fail[OverflowError] {
+    let cp = (@ as int) + n
+    if cp < 0 || cp > 0x10FFFF { panic }
+    cp as char
+}
+```
+
+Pros: ergonomic. Cons: hidden panics в hot loop.
+
+**Variant C. Operator overload с wrap-around:**
+```nova
+fn char @plus(n int) -> char =>
+    (((@ as int) + n) & 0x10FFFF) as char
+```
+
+Pros: no runtime check. Cons: silent invalid codepoints.
+
+### Рекомендация
+
+**Variant A (explicit fallible API)** — соответствует Nova design philosophy
+(D9 «один очевидный путь», D131 safety > convenience, аналогично Result-based
+`try_*` convention в std).
+
+### Когда решать
+
+Не блокирует release 0.1 — workaround `(c as int) + n` доступен для arithmetic.
+Решать в рамках dedicated подплана **Plan 91.X char-ops** или **string processing
+followup**.
+
+### Связь
+
+- [Plan 91.8a.2 part 3](../../docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md) — char @compare добавлен.
+- [D183 amendment](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) — Comparable + synthesis chain.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
