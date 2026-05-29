@@ -4,6 +4,7 @@ module nova_tests.plan91_8a_2.bound_satisfaction_default_test
 // via default body fallback. Type Money имеет только @compare; @equals
 // будет synthesized из Equatable.equals default body.
 
+#impl(Equatable + Comparable)
 type Money { cents int }
 
 fn Money @compare(other Self) -> int =>

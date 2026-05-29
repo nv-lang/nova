@@ -6,12 +6,17 @@ module nova_tests.plan91_8a_2.interpolation_printable_test
 //   Path 2: `fn str.from(T) -> str` overload — append result.
 //   Path 3: `fn T @into() -> str` — append result.
 
+#impl(Printable)
 type Money { cents int }
 fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
+#impl(Printable)
 type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
+// Point has explicit @fmt — `#impl(Printable)` not required (type-checker
+// finds method directly без synthesis). Annotation добавлен для verification.
+#impl(Printable)
 type Point { x int, y int }
 fn Point @fmt(sb StringBuilder) -> () {
     sb.append("Point(")

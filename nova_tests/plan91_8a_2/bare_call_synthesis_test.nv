@@ -5,6 +5,7 @@ module nova_tests.plan91_8a_2.bare_call_synthesis_test
 // `m.equals(other)` / `m.fmt(sb)` работает без обёртки в generic fn.
 
 // Equatable.equals via @compare default body — bare call.
+#impl(Equatable)
 type Score { value int }
 fn Score @compare(other Self) -> int =>
     if @value < other.value { -1 }
@@ -20,6 +21,7 @@ test "bare call: m.equals(other) для Score (только @compare)" {
 }
 
 // Printable.fmt via str.from(T) overload — bare call.
+#impl(Printable)
 type Money { cents int }
 fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
@@ -31,6 +33,7 @@ test "bare call: m.fmt(sb) для Money (через fn str.from)" {
 }
 
 // Printable.fmt via @into → str chain — bare call.
+#impl(Printable)
 type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 

@@ -4,6 +4,7 @@ module nova_tests.plan91_8a_2.synthesis_via_bound_test
 // Type with only @compare → @equals synthesized → используется через
 // generic bound → produces correct result.
 
+#impl(Equatable)
 type Score { value int }
 
 fn Score @compare(other Self) -> int =>
