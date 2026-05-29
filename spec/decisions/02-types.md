@@ -6007,3 +6007,164 @@ compatibility). Это работает но дублирует код.
 - [D58](#d58-protocol-structural-typing) — structural typing.
 - [D77](08-runtime.md#d77-fromtryfrom-auto-derive) — From/Into 4-way auto-derive.
 - [Plan 91.8a.2](../../docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md).
+
+---
+
+## D186 — `#impl(P1 + P2 + ...)` opt-in annotation для protocols
+
+**Когда:** 2026-05-29 (Plan 91.9).
+**Plan:** [91.9-impl-annotation.md](../../docs/plans/91.9-impl-annotation.md).
+**Зависит от:** [D58](#d58-protocols-structural-typing) (structural protocols),
+[D72](#d72-bounds) (generic bounds), [D183](#d183-canonical-protocols)
+(canonical protocols Equatable/Comparable/Printable + default body).
+
+### Проблема
+
+Nova protocols — structural ([D58](#d58)). Compiler разрешает `obj.method()`
+если у типа есть соответствующий метод, без явного opt-in. С добавлением
+default body synthesis (D183) ситуация ухудшилась:
+
+```nova
+type Greetable protocol {
+    greet() -> str { "Hello, " + @name() }
+}
+type User { display_name str }
+fn User @name() -> str => @display_name
+
+u.greet()  // ??? — без D186 это работало structurally (TypeScript-style)
+```
+
+Проблемы:
+1. **Невидимая мутация behavior:** добавление протокола в одном модуле
+   тихо добавляет методы всем типам подходящей сигнатуры.
+2. **Reader-hostile:** глядя на `type User`, нельзя понять что у него
+   есть метод `greet` (он синтезирован).
+3. **Ambiguity:** два протокола с methods одинакового имени и default
+   bodies — порядок resolution не детерминирован.
+4. **Verification:** type-author не получает feedback что type соответствует
+   intended protocol.
+
+### Решение
+
+`#impl(P1 + P2 + ...)` annotation **перед** type declaration. Меняет
+**два** аспекта:
+
+#### 1. Gate semantics (bare-call / interpolation требуют opt-in)
+
+Контексты, где synthesis fires:
+
+| Context | Требует `#impl(P)`? | Почему |
+|---|---|---|
+| Bare call `u.method()` | ✅ да | Ambient — type-author opt-in нужен |
+| Interpolation `"${u}"` | ✅ да | Ambient — Printable.fmt synthesis |
+| Generic bound `[T P]` | ❌ нет | Caller opted in через bound |
+| Coercion `let x P = u` | ❌ нет | Caller opted in через annotation |
+| Cast `(u as P).method()` | ❌ нет | Caller opted in через cast |
+| Param `func(...args []P)` | ❌ нет | Caller opted in (signature) |
+
+**Принцип симметрии:** хотя бы один из (type-author, use-site) должен
+opt'нуться явно. Структура `#impl` — type-author side; bound/coercion/cast/
+param — use-site side.
+
+#### 2. Verification (auto-check соответствия)
+
+При декларации `#impl(P)` compiler проверяет:
+
+1. **E_UNKNOWN_PROTOCOL** — `P` не найдено как type name.
+2. **E_IMPL_NOT_PROTOCOL** — `P` найдено, но не protocol kind.
+3. **E_IMPL_MISSING_METHODS** — T не provides метод P:
+   - не имеет explicit `fn T @method(...)`,
+   - и default body P.method не synthesizable для T (зависит от другого
+     метода которого T не имеет).
+
+Verification работает **at type-declaration site** — error появляется
+сразу, не при первом использовании.
+
+### Синтаксис
+
+```nova
+#impl(Equatable + Comparable + Printable)
+type Coin { value int }
+
+fn Coin @compare(other Self) -> int => ...
+fn str.from(c Coin) -> str => ...
+// equals auto-derived через Equatable.equals default (uses @compare)
+// fmt auto-derived через Printable.fmt default (uses str.from)
+```
+
+`+` separator consistent с multi-bound `[T A + B + C]` ([D72](#d72), Plan 101.3).
+
+Order arbitrary: `#impl(A + B)` ≡ `#impl(B + A)`.
+
+Multiple `#impl` annotations не разрешены — single annotation with `+`.
+
+#### Position
+
+`#impl(...)` ставится **перед** `type T` (рядом с `#stable`, `#from_fields`):
+
+```nova
+#stable(since = "0.1")
+#impl(Hashable + Equatable)
+type UserId { value u64 }
+```
+
+### Семантика
+
+**Use-site остаётся structural** (D58 preserved). `#impl` не делает тип
+nominal. Он добавляет:
+- **Gate** на ambient synthesis (bare call / interpolation).
+- **Verification** в точке декларации.
+
+Через bound / coercion / cast / param-coercion использование любого
+structurally-подходящего типа всё ещё работает — `#impl` не требуется.
+
+### Что НЕ делает
+
+- НЕ создаёт nominal typing (use-site structural preserved).
+- НЕ обязателен — opt-in, existing types работают через use-site coercion.
+- НЕ меняет runtime — `#impl` только compile-time проверка/gate.
+
+### Codegen
+
+`emit_c.rs::try_synthesize_default_method_with_gate(t, c, m, gate_on_impl)`:
+- `gate_on_impl = true` — bare call / interpolation; restricts candidates
+  к protocols в `type_impl_protocols[t]`.
+- `gate_on_impl = false` — vtable thunk (coercion), bound mono; structural.
+
+`type_impl_protocols: HashMap<String, HashSet<String>>` populated в
+forward-decl pass из `TypeDecl.impl_protocols`.
+
+### Type-checker verification
+
+`types/mod.rs::verify_impl_protocols` walks каждый `Item::Type` с
+non-empty `impl_protocols`:
+
+1. Each `P` lookup в `self.types`. None → E_UNKNOWN_PROTOCOL.
+2. Kind check — must be `TypeDeclKind::Protocol`. Иначе → E_IMPL_NOT_PROTOCOL.
+3. Each required method `m` в `P.methods`:
+   - `t_provides_method(T, m.name)` → ok (explicit).
+   - `m.default_body.is_some() && default_body_calls_satisfy_for(body, T)`
+     → ok (synthesizable).
+   - Else → list в missing, emit E_IMPL_MISSING_METHODS с hint.
+
+`default_body_calls_satisfy_for` — AST walker проверяет body's referenced
+calls resolve for T (через `t_provides_method` + `t_satisfies_str_from` для
+auto-derive `str.from(@)` pattern).
+
+### Compatibility
+
+- Existing structural use-sites (bound `[T P]`, coercion `let x P = u`,
+  cast `(u as P)`, parameter coercion) continue работать без `#impl`.
+- Existing types **без** `#impl` могут потерять bare-call:
+  `fn User @name() -> str => ...; u.greet()` (Greetable.greet default) —
+  раньше работало, теперь error (без `#impl(Greetable)`).
+- Migration trivial: добавить `#impl(Protocol)` перед type decl.
+
+### Связь
+
+- [D58](#d58-protocols-structural-typing) — structural protocols (use-site preserved).
+- [D72](#d72-bounds) — generic bounds (use-site opt-in alternative).
+- [D183](#d183-canonical-protocols) — canonical protocols + default body
+  synthesis (что gate'ится).
+- [D109 split policy](#d109-split-policy).
+- Plan 101.3 — multi-bound `+` syntax.

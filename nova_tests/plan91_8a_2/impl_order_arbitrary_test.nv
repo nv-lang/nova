@@ -1,0 +1,29 @@
+module nova_tests.plan91_8a_2.impl_order_arbitrary_test
+
+// Plan 91.9 acceptance: #impl(A + B) vs #impl(B + A) — order arbitrary,
+// equivalent verification + behavior.
+
+#impl(Comparable + Equatable)
+type ItemA { value int }
+fn ItemA @compare(other Self) -> int =>
+    if @value < other.value { -1 }
+    else if @value > other.value { 1 }
+    else { 0 }
+
+#impl(Equatable + Comparable)
+type ItemB { value int }
+fn ItemB @compare(other Self) -> int =>
+    if @value < other.value { -1 }
+    else if @value > other.value { 1 }
+    else { 0 }
+
+test "order in #impl list — irrelevant" {
+    let a1 = ItemA { value: 7 }
+    let a2 = ItemA { value: 7 }
+    let b1 = ItemB { value: 7 }
+    let b2 = ItemB { value: 7 }
+    assert(a1.equals(a2))
+    assert(b1.equals(b2))
+    assert(a1.compare(a2) == 0)
+    assert(b1.compare(b2) == 0)
+}

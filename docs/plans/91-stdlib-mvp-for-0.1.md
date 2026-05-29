@@ -402,7 +402,7 @@ roadmap'ом, подпланы — историей закрытых фаз.
 | 91.8a.2 | [Default body codegen synthesis + protocols refactor + From identity blanket (D183 amendment)](91.8a.2-default-body-codegen-and-from-blanket.md) | Orthogonal protocols (Equatable holds equals default, Comparable standalone), Printable.fmt default, `fn[T] T.from(t T) -> T => t` blanket, lazy synthesis at use-site, Self в param-type | ✅ part 1 + part 3 MVP synthesis 2026-05-29 (Equatable.equals + Printable.fmt MVP inline fallbacks); general lazy synthesis + cache + Plan 101 mono extension — followup [M-91.8a.2-default-body-general] |
 | 91.8b | [Operator dispatch через protocols (D184)](91.8b-operator-dispatch-protocols.md) | `==`→`@equals`, `<`/`>`/`<=`/`>=`→`@compare`; удалить `@eq/@lt/@le/@gt/@ge` magic methods | 🔴 OPEN (зависит от 91.8a) |
 | 91.8c | [Generic array API: sort/min/max + _by (D185)](91.8c-generic-array-api.md) | `fn[T Comparable]` sort/binary_search/min/max + callback `_by` variants | 🔴 OPEN (зависит от 91.8a) |
-| 91.9 | [`#impl(Protocol1 + Protocol2)` annotation (D186)](91.9-impl-annotation.md) | opt-in compile-time verification; `nova doc` improvement; structural typing preserved | 🔴 OPEN (зависит от 91.8a) |
+| 91.9 | [`#impl(Protocol1 + Protocol2)` annotation (D186)](91.9-impl-annotation.md) | opt-in: gate bare-call/interpolation + verification (E_UNKNOWN_PROTOCOL / E_IMPL_NOT_PROTOCOL / E_IMPL_MISSING_METHODS); structural typing preserved для bound/coercion/cast | ✅ core 2026-05-29 (nova doc + E_IMPL_WRONG_SIGNATURE — followups) |
 
 ## Открытые фазы
 
