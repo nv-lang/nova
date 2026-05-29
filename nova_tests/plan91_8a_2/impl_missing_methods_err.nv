@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_IMPL_MISSING_METHODS
+
+module nova_tests.plan91_8a_2.impl_missing_methods_err
+
+// Plan 91.9 (D186) negative test: #impl(Greetable) на типе без @name —
+// Greetable.greet's default body требует @name. T doesn't provide
+// @name → E_IMPL_MISSING_METHODS в точке type декларации.
+
+type Greetable protocol {
+    greet() -> str {
+        "Hello, " + @name()
+    }
+}
+
+#impl(Greetable)
+type Empty { x int }
+// Empty не имеет @name → должно дать E_IMPL_MISSING_METHODS
+
+test "marker" {
+    assert(true)
+}
