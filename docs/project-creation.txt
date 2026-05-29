@@ -24411,3 +24411,54 @@ Followup [M-91.8a.2-default-body-general]: general default body synthesis
 shipping 0.1; general synthesis в Plan 0.2.
 
 Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: f1_check_call false-positive fix для primitive receivers ===
+
+Closes [M-fmt-synthesis-str-from-overload] и pre-existing baseline-fail
+methods_on_primitives.nv (syntax 57/2 → 58/1).
+
+Bug: type-checker's `f1_check_call` (types/mod.rs:2030+) для Path-формы
+`Type.method(args)` делает arg-type check когда в method_table ровно ОДИН
+overload. Но для primitive-receiver'ов (str, int, char, ...) часть
+overload'ов живёт ВНЕ method_table:
+- external fn в другом stdlib-модуле (char.nv `external fn str.from(c char)`)
+- codegen builtins (str.from(int) hardcoded в emit_c.rs)
+- D73 auto-derive paths
+
+Symptom: пользователь объявил `fn str.from(b bool) -> str` в своём модуле.
+method_table["str"]["from"] = [bool overload] — единственный. Type-checker
+walks std/runtime/string.nv `pad_left` body, видит `let fill_s = str.from(fill)`
+с `fill: char`, резолвит к bool overload, ругается «cannot pass char as bool».
+То же при объявлении `fn str.from(m Money) -> str`.
+
+Fix: в f1_check_call ExprKind::Path branch — если parts[0] is primitive type
+(str/int/char/bool/f32/f64/u*/i*/uint), сразу `return` без arg-check.
+Codegen overload resolution (external_registry + method_overloads + D77
+auto-derive в emit_c.rs) выполняет полный поиск, type-checker'у не нужно
+дублировать.
+
+Tradeoff: false-negatives на primitive receivers (wrong arg types слипнутся
+до codegen). Acceptable — codegen в итоге всё равно фильтрует.
+
+Test plan91_8a_2/printable_fmt_synthesis_test:
+- Расширен до 3 sub-tests (было 2):
+  1. Money satisfies Printable via `fn str.from(Money) -> str` (NEW path)
+  2. Coin satisfies Printable via `fn Coin @into() -> str` (existing)
+  3. Multi-step composition
+
+Generated C verified — оба path работают:
+- Money: Nova_StringBuilder_method_append(sb, Nova_str_static_from__Nova_Money_p(x))
+- Coin:  Nova_StringBuilder_method_append(sb, Nova_Coin_method_into(x))
+
+Regression sweep:
+- syntax: 58/1 (было 57/2; methods_on_primitives 1.0 PASS)
+- plan91_8a_2: 11/0 (test расширен с 2 до 3 sub-tests)
+- plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0, plan108 6/0
+- plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0
+- basics 8/0, modules 31/0, protocols 25/1 (flaky from_multi)
+
+Closes [M-fmt-synthesis-str-from-overload] which was opened в предыдущем
+commit (3865300c7de) что fmt synthesis path 1 (str.from overload) нельзя
+протестировать из-за этой baseline-failure.
+
+Commit: TBD
