@@ -24707,3 +24707,59 @@ Regression:
 - basics 8/0, modules 31/0, protocols flaky (24-25 / 1-2)
 
 Commit: TBD
+
+=== Plan 91.8a.2 followup 2026-05-29: interpolation "${m}" через Printable ===
+
+String interpolation `"${m}"` теперь поддерживает user types через все
+три Printable paths:
+- Path 1: explicit `fn T @fmt(sb StringBuilder)` — **direct call** в
+  interpolation's StringBuilder (zero-overhead, no intermediate str)
+- Path 2: `fn str.from(T) -> str` overload — append результат
+- Path 3: `fn T @into() -> str` — append результат
+
+emit_c.rs::emit_interpolated_str (~20338) изменения:
+1. До match arg_ty — check user type (non-primitive, non-charlit) на
+   explicit @fmt. Если есть — emit `Nova_T_method_fmt(v, sb)` напрямую
+   и continue (skip append step).
+2. В user-type fallback расширил resolution priority:
+   1) method_overloads[("str","from")] static с param[0]==arg_ty
+   2) into_targets[T] == "str" — D77 chain
+   3) fallback `nova_int_to_str((nova_int)v)` (junk — каб CC-FAIL для
+      unsupported types)
+
+Test plan91_8a_2/interpolation_printable_test (4 sub-tests PASS):
+- "${m}" with `fn str.from(Money)` overload → works
+- "${c}" with `fn Coin @into() -> str` → works
+- "${p}" with explicit `fn Point @fmt(sb)` → works (direct fmt call)
+- Multiple interpolations в одной строке — works
+
+Generated C verified:
+- Money: `Nova_StringBuilder_method_append(sb, Nova_str_static_from__Nova_Money_p(m))`
+- Coin:  `Nova_StringBuilder_method_append(sb, Nova_Coin_method_into(c))`
+- Point: `Nova_Point_method_fmt(p, sb)` ← direct, no intermediate str
+
+Coverage matrix теперь ПОЛНОСТЬЮ ЗАКРЫТА:
+| Pattern | Status |
+|---|---|
+| `[T Protocol]` bound | ✅ |
+| Bare `m.fmt(sb)` / `m.equals(other)` | ✅ |
+| `let x Printable = m` coercion | ✅ |
+| `let x Equatable = m` coercion (Self в params) | ✅ |
+| `let x Comparable = m` coercion | ✅ |
+| `[]Printable` heterogeneous | ✅ |
+| `"${m}"` interpolation через Printable | ✅ (этот commit) |
+
+Все Plan 91.8a.2 followup cases ЗАКРЫТЫ. Protocol coverage complete:
+- compile-time bound check
+- bare method call
+- single coercion (fat pointer)
+- collection coercion (fat-pointer-array)
+- interpolation (Printable-aware)
+
+Regression:
+- plan91_8a_2: 16/0 PASS (+1 interpolation_printable_test 4 sub-tests)
+- syntax 58/1, plan62 31/5, plan65 19/0, plan73 12/0, plan77 7/0
+- plan108 6/0, plan91_7 5/0, plan91_8a 2/0, plan91_8c 6/0, plan91 2/0
+- basics 8/0, modules 31/0, protocols flaky (24-25 / 1-2)
+
+Commit: TBD
