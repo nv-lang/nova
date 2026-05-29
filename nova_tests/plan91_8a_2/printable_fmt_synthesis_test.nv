@@ -1,0 +1,38 @@
+module nova_tests.plan91_8a_2.printable_fmt_synthesis_test
+
+// Plan 91.8a.2 followup: Printable.fmt default body synthesis (MVP).
+// Type T без explicit @fmt но с `fn T @into() -> str` (D73/D77) satisfies
+// Printable through default body fallback. Codegen inline-synthesizes
+// `obj.fmt(sb)` as `Nova_StringBuilder_method_append(sb, Nova_T_method_into(obj))`.
+// Mirror of the Equatable.equals MVP synthesis pattern.
+//
+// Note: using @into() instead of `fn str.from(T)` overload — the latter
+// approach hits a pre-existing type-checker issue with Self resolution in
+// Printable.fmt default body (`str.from(@)` resolves wrong overload at
+// protocol decl time).
+
+type Money { cents int }
+
+// D73 conversion Money → str. Sets into_targets[Money] = "str".
+fn Money @into() -> str => "Money(" + str.from(@cents) + ")"
+
+// Generic bound — body calls .fmt() который synthesized из default body.
+fn show[T Printable](x T, sb StringBuilder) -> () => x.fmt(sb)
+
+test "Money satisfies Printable bound via @into → str synthesis" {
+    let m = Money { cents: 1250 }
+    let mut sb = StringBuilder.new()
+    show(m, sb)
+    assert(sb.to_str() == "Money(1250)")
+}
+
+test "synthesized fmt composable with explicit appends" {
+    let m1 = Money { cents: 100 }
+    let m2 = Money { cents: 250 }
+    let mut sb = StringBuilder.new()
+    sb.append("first=")
+    show(m1, sb)
+    sb.append(", second=")
+    show(m2, sb)
+    assert(sb.to_str() == "first=Money(100), second=Money(250)")
+}

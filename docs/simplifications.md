@@ -27358,3 +27358,11 @@ default methods explicit как boilerplate compatibility. Part 2 даёт
 **Why all_methods registry для lookup:** `self.all_methods: HashSet<(String, String)>` уже existing — registered при method overload registration. Lookup O(1). Не нужно walk type tables.
 
 **Why proceed past existing dispatch:** MVP fallback inserted ПЕРЕД `method_receivers.get(method)` check на line 18703. Если method_receivers has entry (existing dispatch) — uses it. MVP fallback fires только когда existing dispatch produces wrong result OR doesn't have entry для method on this type. Edge case safe.
+
+## Plan 91.8a.2 followup MVP — Printable.fmt synthesis (zerkalo Equatable.equals)
+
+**Why @into → str path rather than fn str.from(T) overload в первой версии:** declaring `fn str.from(UserType) -> str` triggers pre-existing type-check failure at Printable.fmt default body level. Default body `sb.append(str.from(@))` тип-чекается на protocol declaration time где @ — Self abstract. Overload resolution в этом контексте picks user-type overload и затем fails arg-type check ("cannot pass char as argument of type X"). Same root cause у baseline-failing methods_on_primitives.nv (declares `fn str.from(b bool)`). До fix в overload resolution на abstract Self, путь через `fn T @into() -> str` (D73 conversion) даёт идентичный observable behavior без падения type-check.
+
+**Why two resolution priorities (overloads then into_targets):** D73 `@into() -> str` registers into_targets[T]="str" automatic when user declares the conversion. `fn str.from(T) -> str` is the formal counter-path (T as static arg вместо instance method). Обе равнозначны для D77 4-way conversion infrastructure. Synthesis checks обе: explicit overload first (precise param-type match), into_targets fallback second (auto-derived). Future fix in overload resolution на abstract Self unlocks first path; до того момента второй path delivers shipping behavior.
+
+**Why same line-after-equals positioning:** оба fallback'a имеют identical structure: detect bare protocol method call, check explicit version absent, check default-body-input present, emit inline. Placing them adjacent в emit_c.rs делает the pattern self-documenting. Когда part 3 general synthesis закроет [M-91.8a.2-default-body-general], обе MVP'шки удаляются одновременно за одну операцию.

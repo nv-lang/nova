@@ -18811,6 +18811,53 @@ _cp++; \
                         ));
                     }
                 }
+                // Plan 91.8a.2 followup (D183 amendment): Printable.fmt default
+                // body synthesis. Type T без @fmt но с str.from(T) overload
+                // (или @into() -> str) — inline
+                // `Nova_StringBuilder_method_append(sb, <str.from(obj)>)`,
+                // mirroring the Equatable.equals fallback above. General default
+                // body synthesis — followup [M-91.8a.2-default-body-general].
+                if method == "fmt" && args.len() == 1 {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    let obj_type_name = obj_ty
+                        .trim_start_matches("Nova_")
+                        .trim_end_matches('*')
+                        .to_string();
+                    let has_explicit_fmt = self.all_methods
+                        .contains(&(obj_type_name.clone(), "fmt".to_string()));
+                    if !has_explicit_fmt && !obj_type_name.is_empty() {
+                        let key = ("str".to_string(), "from".to_string());
+                        let from_c_name: Option<String> =
+                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                                overloads.into_iter()
+                                    .find(|s| !s.is_instance
+                                        && s.param_c_types.len() == 1
+                                        && s.param_c_types[0] == obj_ty)
+                                    .map(|sig| sig.c_name)
+                            } else {
+                                None
+                            };
+                        let str_expr: Option<String> = if let Some(c_name) = from_c_name {
+                            let obj_c = self.emit_expr(obj)?;
+                            Some(format!("{}({})", c_name, obj_c))
+                        } else if self.into_targets.get(&obj_type_name)
+                            .map(|t| t == "str").unwrap_or(false)
+                        {
+                            let obj_c = self.emit_expr(obj)?;
+                            let safe = Self::sanitize_c_for_ident(&obj_type_name);
+                            Some(format!("Nova_{}_method_into({})", safe, obj_c))
+                        } else {
+                            None
+                        };
+                        if let Some(s_expr) = str_expr {
+                            let sb_c = self.emit_expr(args[0].expr())?;
+                            return Ok(format!(
+                                "Nova_StringBuilder_method_append({}, {})",
+                                sb_c, s_expr
+                            ));
+                        }
+                    }
+                }
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
                     // Plan 82 followup (2026-05-23, fail-loudly): single-key
                     // method_receivers — last-wins fallback. Для STATIC-метода
