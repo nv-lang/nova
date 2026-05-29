@@ -24064,3 +24064,43 @@ D183 amendment в spec/decisions/02-types.md (main nova repo).
 Commits (nova-p91, plan-91-stdmvp):
 - 858a957e156 — protocols.nv refactor
 - a62fd048e6d — Self в param fix + plan91_8a_2/self_in_param_test
+
+=== Plan 91.8a.2 part 3 MVP closed 2026-05-29: default body synthesis (Equatable.equals → @compare) ===
+
+End-to-end default body synthesis works для hardcoded case:
+- Equatable.equals default body (=> @compare(other) == 0)
+- Type T with only @compare (no explicit @equals)
+- Bound [T Equatable] satisfaction (Part 2 changes)
+- a.equals(b) inline emits (Nova_T_method_compare(a, b) == 0)
+
+Test bound_satisfaction_default_test PASS:
+- fn eq_via_bound[T Equatable](a T, b T) -> bool => a.equals(b)
+- Mono'd для T=Money → (Nova_Money_method_compare(a, b) == 0)
+- Compiles + runtime correct
+
+emit_c.rs: hardcoded MVP fallback в method call dispatch (line 18703 area)
+- Checks: method == "equals" AND args.len() == 1
+- Looks up obj's type via infer_expr_c_type
+- Checks all_methods registry: has @compare AND no explicit @equals
+- Inlines synthesis: (Nova_T_method_compare(obj, arg0) == 0)
+
+protocols.nv: default body simplified to direct form (=> @compare(other) == 0)
+для MVP synthesis compatibility. Canonical coercion form (let cmp Comparable = @)
+semantically equivalent — devirtualization-based coercion-form support — followup.
+
+Followups (post-MVP generalization):
+- [M-91.8a.2-default-body-general]: walk protocol_specs default body AST,
+  substitute Self/@, emit with substitutions. General mechanism для любого
+  protocol default body (Printable.fmt и др.).
+- [M-91.8a.2-coercion-devirt]: coercion-form default body devirtualization
+  (let cmp Protocol = expr → direct call when type statically known)
+- [M-91.8a.2-printable-synthesis]: Printable.fmt default emission
+- [M-91.8a.2-cache]: SynthCache per compilation unit (deduplication)
+- [M-91.8a.2-from-blanket-mono]: Plan 101 mono extension для fn[T] T.method static
+- [M-91.8a.2-blanket-override]: E_BLANKET_IDENTITY_OVERRIDE enforcement
+- [M-91.8a.2-diagnostics]: E_SYNTH_CYCLE, E_SYNTH_AMBIGUOUS, W_DEVIRT_FAILED
+
+Regression: plan62 31/5, plan91 12/0, plan91_7 5/0, plan91_8a 5/0,
+plan91_8a_2 3/0, protocols 27/2, syntax 59/2, plan65 19/0 (D46 operators).
+
+Commit (nova-p91, plan-91-stdmvp): f47f14c5424
