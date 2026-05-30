@@ -8174,6 +8174,12 @@ struct ConsumeCtx<'a> {
     /// Заполняется при входе в функцию.  Includes consume-params
     /// (is_mut=true since consume implies ownership+mut).
     param_mut: HashMap<String, bool>,
+    /// Plan 108.2 (D36 enforcement): local `let` bindings с `is_mut: bool`.
+    /// HashMap<binding_name, is_mut>.  Используется для проверки
+    /// `local.mut_method(...)` / `local.field = ...` / `local[i] = ...`
+    /// → E_LOCAL_NOT_MUT при is_mut=false.
+    /// `consume X = ...` неявно is_mut=true (ownership transfer).
+    local_mut: HashMap<String, bool>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -8192,6 +8198,7 @@ impl<'a> ConsumeCtx<'a> {
             consume_closures: HashMap::new(),
             self_type: None,
             param_mut: HashMap::new(),
+            local_mut: HashMap::new(),
         }
     }
 
@@ -9259,6 +9266,15 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, &decl.value, errors);
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
+            // Plan 108.2 (D36 enforcement): track local-binding mutability.
+            // `let mut x` → is_mut=true; `let x` → false;
+            // `consume x` → implicit mut (ownership transfer).
+            let effective_mut = decl.mutable || decl.consume;
+            for n in &names {
+                if n != "_" {
+                    ctx.local_mut.insert(n.clone(), effective_mut);
+                }
+            }
             // alias-форма `let <name> = <rhs>` — `name` ссылается на тот
             // же объект:
             //   (a) Plan 73 followup: `let a = b` — RHS голый идентификатор.
@@ -9925,6 +9941,46 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                         message: format!("add `mut` to param `{}`", recv),
                                         span: e.span,
                                         replacement: format!("mut {}", recv),
+                                        applicability: crate::diag::Applicability::MaybeIncorrect,
+                                    }));
+                                }
+                            }
+                        }
+                        // Plan 108.2 (D36 enforcement): mut-method on non-mut local
+                        // → E_LOCAL_NOT_MUT.  Parallel к param check выше.
+                        if let Some(&is_mut) = ctx.local_mut.get(&recv) {
+                            if !is_mut {
+                                let recv_ty = ctx.var_types.get(&ctx.canonical(&recv))
+                                    .or_else(|| ctx.var_types.get(&recv))
+                                    .cloned();
+                                let registered = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let builtin_mut_method = matches!(
+                                    method.as_str(),
+                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    | "clear" | "truncate" | "reserve" | "swap"
+                                    | "sort" | "sort_by" | "set" | "extend" | "extend_from"
+                                    | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
+                                    | "drain" | "dedup" | "reverse" | "shuffle"
+                                );
+                                if registered || builtin_mut_method {
+                                    let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_LOCAL_NOT_MUT] local-binding `{}` не помечен `mut`, \
+                                             но вызывается mut-метод `{}` (тип `{}`).  \
+                                             Default для `let`-binding'ов — read-only (D36 enforcement, Plan 108.2).",
+                                            recv, method, ty_str),
+                                        e.span,
+                                    ).with_note(
+                                        "добавь `mut` к binding'у: `let mut <name> = ...` — \
+                                         разрешит вызов mut-методов и field/index-assignment."
+                                            .to_string(),
+                                    ).with_suggestion(crate::diag::Suggestion {
+                                        message: format!("add `mut` to `let {}`", recv),
+                                        span: e.span,
+                                        replacement: format!("let mut {}", recv),
                                         applicability: crate::diag::Applicability::MaybeIncorrect,
                                     }));
                                 }
