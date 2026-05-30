@@ -2240,43 +2240,32 @@ impl Parser {
             ));
         }
 
-        // Plan 100.5 (D163): `needs <Cap1>, <Cap2>` clause on `external fn`.
-        // Parsed as contextual ident (not keyword) on a separate line after
-        // the signature, similar to contracts. Only valid on `external fn`.
-        // `needs Fs` / `needs Sys` / `needs Net` declare capability requirements
-        // for the FFI function. Required when the function returns or consumes
-        // consume-typed values (checked in type-checker, not parser).
+        // Plan 91.10 (D163 RETRACTED 2026-05-30): `needs <Cap>` clause удалён.
+        // Capability tracking via отдельный syntax — redundant с effect system
+        // (Plan 33). Если в будущем нужен capability gating — использовать
+        // formal effect declarations (`type Fs effect { ... }`) с handler'ами.
+        // Parser отвергает `needs <Cap>` hard-error'ом с migration hint.
         let needs_caps: Vec<String> = if is_external {
-            let mut caps = Vec::new();
-            // Skip newlines to peek at next line.
             let saved_pos = self.pos;
             self.skip_newlines();
             if matches!(&self.peek().kind, TokenKind::Ident(n) if n == "needs") {
-                self.bump(); // consume "needs"
-                // Parse comma-separated capability names (identifiers).
-                loop {
-                    self.skip_newlines();
-                    let (cap_name, _) = self.parse_ident()
-                        .map_err(|_| Diagnostic::new(
-                            format!(
-                                "expected capability name after `needs` in `external fn {}`; \
-                                 example: `needs Fs` or `needs Sys, Net`",
-                                name
-                            ),
-                            self.peek().span,
-                        ))?;
-                    caps.push(cap_name);
-                    if matches!(self.peek().kind, TokenKind::Comma) {
-                        self.bump(); // consume ','
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                // Not a needs clause — restore position.
-                self.pos = saved_pos;
+                let needs_span = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "`needs <Cap>` clause is retracted (Plan 91.10, D163 retract). \
+                         Capability tracking via отдельный syntax merged into effect system. \
+                         If capability gating needed для `external fn {}`, declare an \
+                         effect (`type Fs effect {{ ... }}`) и используйте standard effect \
+                         syntax между params и `->`. См. docs/plans/91.10-d163-retract-capability-syntax.md.",
+                        name
+                    ),
+                    needs_span,
+                ));
             }
-            caps
+            // Not a needs clause — restore position. needs_caps всегда empty
+            // (поле сохранено в AST для backward-compat — удаление followup).
+            self.pos = saved_pos;
+            vec![]
         } else {
             vec![]
         };

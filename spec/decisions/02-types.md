@@ -4616,13 +4616,40 @@ Nova **превосходит Rust** на одной оси — backward-compat:
 
 ## D163. FFI consume integration — type-driven, без отдельного keyword'а
 
-> **Plan 100.5.** Принято 2026-05-23. Ред. 2 (2026-05-24):
-> drop `external consume fn` keyword — consume-ownership определяется
-> через type, как у regular fn. Ред. 3 (2026-05-27): **РЕАЛИЗОВАНО** —
-> parser `needs` clause, type-checker D163-missing-cap, C codegen стабы
-> для user-defined external fn, `opaque_ffi_types` registry.
-> Extends [D82](08-runtime.md#d82) `external fn` + [D126](03-syntax.md#d126)
-> `external type` + [D63](04-effects.md#d63) capability.
+> **🔴 RETRACTED 2026-05-30 (Plan 91.10).** `needs <Cap>` syntax удалён.
+> Capability tracking via отдельный mechanism — **redundant** с effect system
+> (Plan 33). Structurally `needs Cap` ≡ effect-без-операций: same propagation,
+> same static tracking, different syntax. Если в будущем понадобится
+> capability gating — вводить как formal effect declarations
+> (`type Fs effect { ... }`) с handler'ами. Конкретный pain: `consume`
+> (ownership/linearity) vs capability (authority) — orthogonal concerns,
+> D163 их жёстко связал. См. [docs/plans/91.10-d163-retract-capability-syntax.md].
+>
+> **Что осталось от D163:**
+> - `external type X consume` в любом module — продолжает работать (D126 +
+>   опаковая FFI-семантика).
+> - `consume` keyword на параметрах external fn — продолжает работать (D131
+>   ownership). Но external fn остаётся stdlib-only (D82) — user-module
+>   external fn через D163 capability path больше не валидны.
+>
+> **Plan 100.5 historical original record:** Принято 2026-05-23. Ред. 2
+> (2026-05-24): drop `external consume fn` keyword. Ред. 3 (2026-05-27):
+> **РЕАЛИЗОВАНО** — parser `needs` clause, type-checker D163-missing-cap,
+> C codegen стабы. Extends [D82](08-runtime.md#d82) `external fn` +
+> [D126](03-syntax.md#d126) `external type` + [D63](04-effects.md#d63)
+> capability.
+>
+> **Удалено (Plan 91.10):**
+> - Parser `needs` clause (hard error w/ migration hint).
+> - `check_external_fn_needs_caps` (D163-missing-cap diagnostic).
+> - `emit_d163_external_stub` (C codegen стаб generator).
+> - `FnDecl.needs_caps` AST field — сохранён как always-empty, удаление
+>   followup `[M-91.10-remove-needs-caps-field]`.
+> - Test fixtures `nova_tests/plan100_5/external_*` (6 files) и
+>   `nova_tests/plan100_7/{file_open_read_close,mutex_lock_release,
+>   socket_listen_accept}.nv` (3 files).
+>
+> Текст ниже — historical reference для контекста.
 
 ### Что
 

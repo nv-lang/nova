@@ -183,8 +183,8 @@ pub enum ModuleAttrKind {
     AllowPreludeShadow,
     /// **Plan 90.1 D141 amend:** `#allow(view_extend_detach)` before `module`.
     /// Suppresses `W_VIEW_EXTEND_DETACH` warnings emitted by
-    /// `lints::lint_view_extend_detach` when a grow-method (extend_from /
-    /// insert_from / reserve) is called on a parent array after a slice-view
+    /// `lints::lint_view_extend_detach` when a grow-method (append / insert /
+    /// reserve) is called on a parent array after a slice-view
     /// of that parent was created in the same function scope.
     ///
     /// **When to apply:**
