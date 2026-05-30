@@ -41,10 +41,10 @@ export fn StringBuilder.with_capacity(n int) -> Self {
 export fn StringBuilder.from(s str) -> Self => { buf: s.to_bytes() }
 
 // StringBuilder из одного codepoint (UTF-8 encode).
-export fn StringBuilder.from(c char) -> Self {
-    let mut sb = StringBuilder.new()
-    sb.append(c)
-}
+// Plan 73.1 D180: rewritten — старый pattern `let mut sb = StringBuilder.new()
+// + sb.append(c)` нарушал D180 (sb consume-obligation не satisfied при
+// implicit fluent-return). Delegate to from(str) preserves semantic identity.
+export fn StringBuilder.from(c char) -> Self => StringBuilder.from(str.from(c))
 
 // ─── Query methods ───
 

@@ -1,20 +1,23 @@
-// Plan 73 followup: alias — позитивный случай. consume через alias
-// один раз, без повторного использования ни одного имени → ошибки нет.
+// Plan 73 + 73.1 (D180): move-semantics — позитивный случай.
+//
+// Старый pattern `let view = sb` (alias) теперь запрещён D180
+// (E_VIEW_BINDING_FORBIDDEN). Эквивалент с move: `consume view = sb`
+// transfers ownership; sb становится dead, view — owner; consume через view.
 
 module nova_tests.plan73.consume_ok_alias
 
-fn build_via_factory() -> str {
-    let sb = make_sb()
-    let view = sb              // alias
-    view.to_str()                // consume через alias; sb/view дальше не used
+fn build_via_move() -> str {
+    consume sb = make_sb()
+    consume moved = sb              // move (Rule 3 D180); sb dead
+    moved.to_str()                   // consume через moved
 }
 
 fn make_sb() -> StringBuilder {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("from-factory")
-    sb
+    sb                              // implicit fluent return (Plan 77 D132)
 }
 
-test "alias + factory-return — корректный consume" {
-    assert(build_via_factory() == "from-factory")
+test "move-semantics + factory-return — корректный consume" {
+    assert(build_via_move() == "from-factory")
 }

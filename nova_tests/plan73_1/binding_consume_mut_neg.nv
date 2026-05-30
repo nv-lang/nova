@@ -1,0 +1,14 @@
+// Plan 73.1 (D180 Rule 4 / D131 carry-over): consume mut rejected by parser.
+
+// EXPECT_COMPILE_ERROR consume mut
+
+module nova_tests.plan73_1.binding_consume_mut_neg
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+test "consume mut binding — parser error" {
+    consume mut tok = Token.new(1)  // PARSER ERROR
+    assert(tok.val == 1)
+}
