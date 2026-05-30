@@ -25174,7 +25174,28 @@ Test results V3 (per-suite):
 - plan73_1/: 13/13 PASS (V1 9 + V3 4 new)
 - plan100_1/: 23/23 PASS
 - plan103_9/: 20/20 PASS
-- Full nova test regression: TBD (in progress at commit time)
+- plan11_followup/: 20/20 PASS (post-migration)
+- plan77/: 7/7 PASS
+- plan91_8a_2/: 27/27 PASS
+- Full nova test: 1571 PASS / 65 FAIL / 56 SKIP
+- Pre-V3 baseline: 1559 PASS / 74 FAIL / 56 SKIP
+- Net: +12 PASS / -9 FAIL (V3 IMPROVES baseline)
+- Remaining FAILs: almost entirely pre-existing (str_builder/* pre-Plan-109,
+  buffers/* read_buffer stale API, plan100.3 D29 violation, concurrency
+  flakiness).
+
+Migration sweep V3:
+- 30 test fixtures (plan11_followup, plan73, plan77, plan62, plan91_8a*,
+  plan100_6, protocols) — let mut|let → consume.
+- 16 stdlib files (std/runtime, std/time, std/encoding/base64,
+  std/testing/property, std/_experimental/*) — let mut buf → consume buf.
+
+M3 helper scope-fix (post-discovery):
+- consume_walk_block split into wrapper + _inner(is_fn_body_trailing).
+- Only FnBody::Block trailing applies M3 fluent-chain detection;
+  nested blocks retain V1 Ident-only semantics.
+- Added complementary chain-into-consume-method detection in
+  consume_walk_expr Call obj-not-Ident branch.
 
 Plan 73.1 V3 ✅ ЗАКРЫТ.
 
