@@ -562,7 +562,7 @@ fn Parser mut @parse_object() Fail[ParseJsonError] -> JsonValue {
     Object(fields)
 }
 
-fn Parser mut @parse_member(fields HashMap[str, JsonValue]) Fail[ParseJsonError] -> () {
+fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) Fail[ParseJsonError] -> () {
     // ключ — string token
     let key_tp = @cur
     let key = match key_tp.tok {
