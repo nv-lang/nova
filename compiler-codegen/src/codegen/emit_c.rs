@@ -7424,28 +7424,10 @@ impl CEmitter {
     fn emit_fn_forward_decl(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
         // уже включена через preamble #include).
-        // Plan 100.5 (D163): Exception — user-defined D163 external fn (with
-        // `needs_caps`) need forward decls + type registration. These are NOT
-        // stdlib external fn — they have no corresponding nova_rt/*.h entry.
-        // We emit a `static` stub wrapper so generated code can call them.
-        if f.is_external && f.needs_caps.is_empty() {
-            return Ok(());
-        }
-        if f.is_external && !f.needs_caps.is_empty() {
-            // D163 external fn: emit forward decl + register return type info.
-            self.current_receiver_type = None;
-            let ret = self.return_type_c(f)?;
-            // Register result type params for Result-returning D163 external fn.
-            if let Some(rt) = &f.return_type {
-                if let Some(rparams) = self.extract_result_type_params(rt) {
-                    self.fn_result_type_params.insert(f.name.clone(), rparams);
-                }
-            }
-            self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
-            let params = self.params_c(f)?;
-            let mangled = self.mangle_fn(f);
-            // Forward declare the static stub wrapper.
-            self.line(&format!("static {} {}({});", ret, mangled, params));
+        // Plan 91.10 (D163 retracted): branch для D163 external fn удалён.
+        // needs_caps всегда empty после retract; non-stdlib external fn
+        // отвергаются type-checker'ом раньше.
+        if f.is_external {
             return Ok(());
         }
         if f.name == "main" {
@@ -12270,103 +12252,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
-    /// Plan 100.5 (D163): Emit a static stub body for a user-defined external fn
-    /// declared with a `needs <Cap>` clause. The stub provides:
-    ///
-    /// 1. A correct C function signature matching the forward declaration.
-    /// 2. A minimal mock implementation that satisfies the type system:
-    ///    - For `-> T consume` (opaque FFI type): allocate a zeroed `Nova_T` and return it.
-    ///    - For `-> Result[File, IoErr]`: return `Ok(mock_file)`.
-    ///    - For `-> ()` (consume param only): zero out the handle and return NOVA_UNIT.
-    ///
-    /// **Testing semantics**: The stub allows the consume-tracking static analysis to be
-    /// tested end-to-end without requiring actual OS file/socket/mutex implementations.
-    /// Real implementations are provided by the C runtime (nova_rt/*.h or user C code)
-    /// when deployed; the stub is a test scaffold only.
-    ///
-    /// **Limitation**: If a consume-param fn receives NULL (e.g. because the caller
-    /// passed a "closed" handle), the stub silently no-ops. This is fine for static
-    /// analysis tests — the compiler guarantees the param is Live (not Consumed) at
-    /// the call site.
-    fn emit_d163_external_stub(&mut self, f: &FnDecl) -> Result<(), String> {
-        self.current_receiver_type = None;
-        let ret = self.return_type_c(f)?;
-        let params = self.params_c(f)?;
-        let mangled = self.mangle_fn(f);
-        self.line(&format!("static {} {}({}) {{", ret, mangled, params));
-        self.indent += 1;
-        self.line("/* D163 stub — mock implementation for static-analysis testing. */");
-        // Determine what to return based on return type:
-        if ret == "nova_unit" {
-            // consume-param only fn (e.g. nova_file_close): zero the handle if possible.
-            for p in &f.params {
-                if p.consume {
-                    let p_c_ty = self.type_ref_to_c(&p.ty)?;
-                    if p_c_ty.ends_with('*') {
-                        // Pointer type — zero the _nv_handle field for D4 defense-in-depth.
-                        let p_name = &p.name;
-                        self.line(&format!("if ({0}) {{ {0}->_nv_handle = NULL; }}", p_name));
-                    }
-                }
-            }
-            self.line("return NOVA_UNIT;");
-        } else if Self::is_result_like(&ret) {
-            // Result[T, E] return — return Ok(mock_T).
-            // Extract the ok/err C types from the return type name.
-            if let Some((ok_c, _err_c)) = self.novares_ok_err(&ret) {
-                let suffix = Self::novares_name(&ok_c, &_err_c);
-                if ok_c.ends_with('*') && ok_c.starts_with("Nova_") {
-                    // Opaque pointer type — allocate a mock instance.
-                    let tmp = "_nv_d163_mock";
-                    self.line(&format!("{} {} = ({})nova_alloc(sizeof(*{}));", ok_c, tmp, ok_c, tmp));
-                    self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
-                    self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, tmp));
-                } else {
-                    // Primitive/struct ok type — return Ok(zero value).
-                    // Plan 100.7 (D165): struct types (e.g. nova_str) cannot
-                    // be cast from integer 0 in C — use compound literal {0}
-                    // instead. Pointer/scalar types keep the (T)0 cast form.
-                    let is_scalar = ok_c.ends_with('*')
-                        || matches!(ok_c.as_str(),
-                            "nova_int" | "nova_bool" | "nova_f64"
-                            | "nova_byte" | "nova_unit" | "nova_char");
-                    let zero_init = if is_scalar {
-                        format!("({})0", ok_c)
-                    } else {
-                        format!("({}){{}}", ok_c)
-                    };
-                    self.line(&format!("return nova_make_NovaRes_{}_Ok({});", suffix, zero_init));
-                }
-            } else {
-                // Erased fallback — return NULL result.
-                self.line("return NULL;");
-            }
-        } else if ret.ends_with('*') && ret.starts_with("Nova_") {
-            // Opaque consume pointer return — allocate a mock.
-            let tmp = "_nv_d163_mock";
-            self.line(&format!("{} {} = ({})nova_alloc(sizeof(*{}));", ret, tmp, ret, tmp));
-            self.line(&format!("if ({tmp}) {{ {tmp}->_nv_handle = (void*)(uintptr_t)1; }}", tmp = tmp));
-            self.line(&format!("return {};", tmp));
-        } else {
-            // Primitive return — return zero.
-            self.line(&format!("return ({})0;", ret));
-        }
-        self.indent -= 1;
-        self.line("}");
-        self.line("");
-        Ok(())
-    }
+    // Plan 91.10 (D163 retracted, 2026-05-30): emit_d163_external_stub удалён
+    // вместе с D163 capability machinery. Если в будущем понадобится stub
+    // generation для test scaffolding non-stdlib external fn — вводить через
+    // effect-based mechanism.
 
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
-        // Plan 100.5 (D163): User-defined external fn with `needs_caps` get
-        // a static stub body — see emit_d163_external_stub for details.
-        if f.is_external && f.needs_caps.is_empty() {
+        // Plan 91.10 (D163 retracted): D163 stub generation удалён.
+        if f.is_external {
             return Ok(());
-        }
-        if f.is_external && !f.needs_caps.is_empty() {
-            return self.emit_d163_external_stub(f);
         }
         if f.name == "main" {
             return self.emit_nova_main(f);
