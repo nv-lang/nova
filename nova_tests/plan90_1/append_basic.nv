@@ -1,12 +1,13 @@
-// Plan 90.1 — позитив: extend_from — append with growth.
+// Plan 90.1 — позитив: append — append with growth.
 // D141 amend: 2x cap growth, memmove, self-extend safe.
 
-module nova_tests.plan90_1.extend_from_basic
+module nova_tests.plan90_1.append_basic
 
-test "extend_from basic []int" {
+
+test "append basic []int" {
     let mut dst []int = [1, 2]
     let src []int = [3, 4, 5]
-    dst.extend_from(src)
+    dst.append(src)
     assert(dst.len() == 5)
     assert(dst[0] == 1)
     assert(dst[1] == 2)
@@ -15,21 +16,21 @@ test "extend_from basic []int" {
     assert(dst[4] == 5)
 }
 
-test "extend_from []u8 bytes" {
+test "append []u8 bytes" {
     let mut buf []u8 = [0x48, 0x65]     // "He"
     let more []u8 = [0x6c, 0x6c, 0x6f]  // "llo"
-    buf.extend_from(more)
+    buf.append(more)
     assert(buf.len() == 5)
     assert(buf[0] == 0x48)
     assert(buf[2] == 0x6c)
     assert(buf[4] == 0x6f)
 }
 
-test "extend_from triggers growth (cap doubling)" {
+test "append triggers growth (cap doubling)" {
     // Start with exactly capacity 8 (default initial cap).
     let mut dst []int = [1, 2, 3, 4, 5, 6, 7, 8]
     let src []int = [9, 10, 11]
-    dst.extend_from(src)
+    dst.append(src)
     assert(dst.len() == 11)
     assert(dst[8] == 9)
     assert(dst[10] == 11)

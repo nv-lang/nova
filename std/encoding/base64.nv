@@ -170,7 +170,7 @@ fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
         }
     }
 
-    buf.to_str()
+    buf.as_str()
 }
 
 

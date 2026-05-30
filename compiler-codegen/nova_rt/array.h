@@ -104,8 +104,9 @@
                 .len = sizeof("copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)") - 1 }); } \
         memmove(dst->data, src->data, (size_t)(dst->len) * sizeof(T)); \
     } \
-    /* Plan 90.1: extend_from — append with 2x growth, memmove (self-extend safe). */ \
-    static void nova_array_extend_from_##T(NovaArray_##T* dst, NovaArray_##T* src) { \
+    /* Plan 90.1 (D141 amendment): append — bulk-add to end with 2x growth, memmove (self-extend safe). \
+     * Renamed from extend_from. */ \
+    static void nova_array_append_##T(NovaArray_##T* dst, NovaArray_##T* src) { \
         int64_t src_len = src->len;         /* snapshot before potential realloc */  \
         T* src_data = src->data;            /* snapshot before potential realloc */  \
         int64_t needed = dst->len + src_len; \
@@ -123,8 +124,9 @@
         memmove(dst->data + dst->len, src_data, (size_t)src_len * sizeof(T)); \
         dst->len = needed; \
     } \
-    /* Plan 90.1: insert_from — insert at position i with growth + memmove tail. */ \
-    static void nova_array_insert_from_##T(NovaArray_##T* dst, int64_t i, NovaArray_##T* src) { \
+    /* Plan 90.1 (D141 amendment): insert — bulk-insert at position i with growth + memmove tail. \
+     * Renamed from insert_from. */ \
+    static void nova_array_insert_##T(NovaArray_##T* dst, int64_t i, NovaArray_##T* src) { \
         if (i < 0 || i > dst->len) nv_panic_insert_oob(i, dst->len); \
         int64_t src_len = src->len;         /* snapshot before potential realloc */  \
         T* src_data = src->data;            /* snapshot before potential realloc */  \
@@ -970,12 +972,12 @@ static inline NovaOpt_nova_int nova_str_parse_int(nova_str s) {
     return r;
 }
 
-/* Plan 90.1 — bounds-check для insert_from(i, src) position.
+/* Plan 90.1 — bounds-check для insert(i, src) position.
  * i должен быть в [0, dst.len] (включая len — append-at-end допустим). */
 static inline void nv_panic_insert_oob(nova_int i, nova_int len) {
     char* buf = (char*)nova_alloc(96);
     int n = snprintf(buf, 96,
-        "insert_from: index %lld out of bounds for length %lld (valid range [0, len])",
+        "insert: index %lld out of bounds for length %lld (valid range [0, len])",
         (long long)i, (long long)len);
     if (n < 0) n = 0;
     if (n > 95) n = 95;

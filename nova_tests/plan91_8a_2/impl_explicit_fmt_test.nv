@@ -18,7 +18,7 @@ test "verified #impl(Printable) with explicit @fmt" {
     // Bare call works (explicit method, не synth)
     let mut sb = StringBuilder.new()
     t.fmt(sb)
-    assert(sb.to_str() == "Tag(hello)")
+    assert(sb.as_str() == "Tag(hello)")
 }
 
 test "explicit @fmt routes through interpolation directly" {

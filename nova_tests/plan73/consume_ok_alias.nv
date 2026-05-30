@@ -9,7 +9,7 @@ module nova_tests.plan73.consume_ok_alias
 fn build_via_move() -> str {
     consume sb = make_sb()
     consume moved = sb              // move (Rule 3 D180); sb dead
-    moved.to_str()                   // consume через moved
+    moved.as_str()                   // consume через moved
 }
 
 fn make_sb() -> StringBuilder {

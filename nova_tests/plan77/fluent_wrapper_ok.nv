@@ -1,5 +1,6 @@
 // Plan 77 (D132) amendment: wrapper-метод `-> @` правильно делегирует
-// в другой `-> @` метод. StringBuilder.@plus → @append — эталонный пример.
+// в другой `-> @` метод. StringBuilder.@append chain — эталонный пример.
+// Plan 91 followup: @plus убран, заменён на explicit .append() chain.
 
 module nova_tests.plan77.fluent_wrapper_ok
 
@@ -21,8 +22,8 @@ test "fluent wrapper -> @ делегирует в -> @" {
     assert(r.n == 3)
 }
 
-test "StringBuilder @plus -> @ chain" {
+test "StringBuilder @append -> @ chain" {
     let sb = StringBuilder.new()
-    let s = (sb + "hello" + " " + "world").to_str()
+    let s = sb.append("hello").append(" ").append("world").as_str()
     assert(s == "hello world")
 }

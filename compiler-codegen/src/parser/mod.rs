@@ -2298,43 +2298,32 @@ impl Parser {
             ));
         }
 
-        // Plan 100.5 (D163): `needs <Cap1>, <Cap2>` clause on `external fn`.
-        // Parsed as contextual ident (not keyword) on a separate line after
-        // the signature, similar to contracts. Only valid on `external fn`.
-        // `needs Fs` / `needs Sys` / `needs Net` declare capability requirements
-        // for the FFI function. Required when the function returns or consumes
-        // consume-typed values (checked in type-checker, not parser).
+        // Plan 91.10 (D163 RETRACTED 2026-05-30): `needs <Cap>` clause удалён.
+        // Capability tracking via отдельный syntax — redundant с effect system
+        // (Plan 33). Если в будущем нужен capability gating — использовать
+        // formal effect declarations (`type Fs effect { ... }`) с handler'ами.
+        // Parser отвергает `needs <Cap>` hard-error'ом с migration hint.
         let needs_caps: Vec<String> = if is_external {
-            let mut caps = Vec::new();
-            // Skip newlines to peek at next line.
             let saved_pos = self.pos;
             self.skip_newlines();
             if matches!(&self.peek().kind, TokenKind::Ident(n) if n == "needs") {
-                self.bump(); // consume "needs"
-                // Parse comma-separated capability names (identifiers).
-                loop {
-                    self.skip_newlines();
-                    let (cap_name, _) = self.parse_ident()
-                        .map_err(|_| Diagnostic::new(
-                            format!(
-                                "expected capability name after `needs` in `external fn {}`; \
-                                 example: `needs Fs` or `needs Sys, Net`",
-                                name
-                            ),
-                            self.peek().span,
-                        ))?;
-                    caps.push(cap_name);
-                    if matches!(self.peek().kind, TokenKind::Comma) {
-                        self.bump(); // consume ','
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                // Not a needs clause — restore position.
-                self.pos = saved_pos;
+                let needs_span = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "`needs <Cap>` clause is retracted (Plan 91.10, D163 retract). \
+                         Capability tracking via отдельный syntax merged into effect system. \
+                         If capability gating needed для `external fn {}`, declare an \
+                         effect (`type Fs effect {{ ... }}`) и используйте standard effect \
+                         syntax между params и `->`. См. docs/plans/91.10-d163-retract-capability-syntax.md.",
+                        name
+                    ),
+                    needs_span,
+                ));
             }
-            caps
+            // Not a needs clause — restore position. needs_caps всегда empty
+            // (поле сохранено в AST для backward-compat — удаление followup).
+            self.pos = saved_pos;
+            vec![]
         } else {
             vec![]
         };
@@ -4793,6 +4782,39 @@ impl Parser {
                     let ty = self.parse_type()?;
                     let span = expr.span.merge(ty.span());
                     expr = Expr::new(ExprKind::Is(Box::new(expr), ty), span);
+                }
+                // Plan 91 followup (2026-05-30): multi-line method chain
+                // continuation. После expression-statement newline, если
+                // следующий значимый token — `.` (member access), продолжаем
+                // chain. Не: implicit statement-end + orphan `.` parse error.
+                //
+                // Example:
+                //   @buf.push((cp >> 6) as u8)
+                //       .push((cp & 0x3F) as u8)   // <-- continuation
+                //
+                // Conservative scope: только `.` после newline. Не охватывает
+                // `?.` / `!.` / wrapping call args / etc. (separate followup).
+                // Spec: см. docs/plans/91-stdlib-mvp-for-0.1.md секцию
+                // «multi-line chain continuation» + D-block для expression
+                // line-continuation.
+                TokenKind::Newline | TokenKind::Semicolon => {
+                    let mut look_pos = self.pos + 1;
+                    while look_pos < self.tokens.len()
+                        && matches!(
+                            self.tokens[look_pos].kind,
+                            TokenKind::Newline | TokenKind::Semicolon
+                        )
+                    {
+                        look_pos += 1;
+                    }
+                    if look_pos < self.tokens.len()
+                        && matches!(self.tokens[look_pos].kind, TokenKind::Dot)
+                    {
+                        // Multi-line chain — skip whitespace, продолжаем loop.
+                        self.pos = look_pos;
+                        continue;
+                    }
+                    break;
                 }
                 _ => break,
             }
