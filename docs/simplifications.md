@@ -27438,3 +27438,39 @@ default methods explicit как boilerplate compatibility. Part 2 даёт
 **Why both md + JSON render:** markdown — human-readable doc (`nova doc` CLI output, mdBook integration). JSON — programmatic consumers (mcp protocol, nova-lsp completion suggestions «this type implements X — show methods of X here»). Both required для full coverage; markdown rendering alone оставит JSON consumers blind, JSON alone оставит users without visual cue.
 
 **Why type-only (not fn) `impl_protocols`:** `#impl(...)` annotation lives на `TypeDecl`, не на `FnDecl`. Capabilities struct shared между type и fn collection — поле `impl_protocols` всегда `Vec::new()` для fns (empty default). Could split into separate TypeCapabilities — overkill для one extra field; existing `consume: bool` flag has same shape (type-only, false for fns) — consistent pattern.
+
+## Plan 91.10 — D163 retract (capability syntax → effects)
+
+**Why retract D163 instead of fixing the trigger:** конкретный pain (`from_bytes_unchecked_steal(consume []u8)` требует `needs Cap` для pure memory ops) — это symptom of deeper conflation. D163 жёстко связал `consume` (ownership/linearity contract) с `needs Cap` (authority gate) — orthogonal concerns. Fix-the-trigger (добавить `needs Mem`/`needs Sys` placeholder) сохранил бы conflation; retract — устраняет root cause.
+
+**Why capability ≡ effect (Koka insight):** structural equivalence — обе аннотации на signature, обе propagate вверх по call graph, обе statically tracked. Effect = capability + operations + handler. Capability = effect-без-операций. Поддерживая parallel tracking systems (effects + capabilities), Nova дублировала bookkeeping без явного benefit. Koka language (Daan Leijen, effect handlers literature) формализовал: capabilities ARE effects, нет смысла в раздельной syntax.
+
+**Why stdlib amnesty убивала D163 security:** `is_stdlib_runtime_module` exempt'ил весь stdlib от D163 check. Любой stdlib wrapper обходил guarantee. Security work только для user code → bureaucratic overhead без teeth. Worst of both worlds — friction для user, no real protection.
+
+**Why keep `consume`+`external type X consume` (D131/D126):** ownership tracking (consume) — orthogonal from authority. Useful as standalone discipline (use-after-consume prevention, defer integration). Type-level consume marker (D131) remains; opaque consume FFI types (D126) remain. Только capability syntax удалён.
+
+**Why hard-error parser instead of silent ignore:** silent ignore оставил бы `needs Cap` clauses в user code как vestigial — confusion source («это работает или нет?»). Hard error с migration hint forces immediate cleanup, prevents code rot. Acceptable churn — D163 был недавно введён (2026-05-25), небольшой adoption.
+
+**Why delete fixtures vs migrate:** plan100_5 fixtures валидировали D163 mechanism end-to-end. После retract — нет mechanism'а для валидации. Migration к "use effects instead" требует formal `effect Fs/Sys/Net { ... }` declarations — отдельная work (followup `[M-91.10-fs-net-effects-formal]`), не блокирует 0.1. Чище — delete obsolete tests, не оставлять placeholder shells.
+
+**Why preserve `needs_caps: Vec<String>` AST field:** sum_schema_registry имеет ~10 construction sites с `needs_caps: vec![]` — удаление поля требует cascading edits во всех. Сохранение always-empty field — минимальная churn, поведенчески идентично (никто больше не читает). Удаление followup `[M-91.10-remove-needs-caps-field]` после стабилизации.
+
+## Plan 91.11 — SB rename + zero-copy steal + parser multi-line chain
+
+**Why rename `extend_from → append` (and `insert_from → insert`):** `_from`-family склеивал ops по dispatch-детали ("берёт source array"), а не по semantic class. `extend_from` vs `copy_from` — звучат как same bucket, на деле разные классы (extend = bulk-append-grow vs copy_from = overwrite-equal-len). Semantic verbs (`append`, `insert`) обнажают class из имени, парят с single-element ops (push/insert), match cross-language idiom (Python list.append/insert, Rust Vec extend/insert overload). `copy_from` остаётся isolated (Rust-style copy_from_slice — там `_from` маркирует source-direction, не family).
+
+**Why merge `@append_bytes` into `@append` overload:** после rename `[]T.append(src)`, `StringBuilder.@append_bytes(arr)` стал redundant — параллельное имя для тот же semantic class (add bytes to end). Overload by arg type (`@append(str)` / `@append(char)` / `@append([]u8)`) — single API surface, three implementations dispatched by type. Cleaner mental model: «append что-угодно к buffer'у», not three separate verbs.
+
+**Why remove `@plus(s)`/`@plus(c)`:** `+` operator на StringBuilder через `@plus` desugaring (D46) был ergonomic shortcut для `.append()`. Но: (1) mutable receiver + value-overload syntactically confusing (`sb + "x"` looks pure expression, на деле mutates), (2) после `@append` overload — `.append(x)` уже короткое и явное, (3) D46 desugaring stays valid для str+str (string concat — pure). Net: SB-side API меньше surprise, str-side concat preserved.
+
+**Why `@to_str` → `@as_str` rename:** semantic precision. `to_X` обычно означает «convert/copy», `as_X` — «view/cast/reinterpret». StringBuilder.@as_str now does zero-copy steal (reuse buf->data ptr) — это semantically `as_str` (view of existing memory), not `to_str` (copy/conversion). Rename signals to caller: «no allocation» (when cap > len). Pre-rename `to_str` misled про memory cost.
+
+**Why zero-copy steal via consume:** StringBuilder это consume-type (Plan 100.1 D131 + D179). После `@as_str()` SB consumed → @buf unusable → safe to steal its data pointer. Без consume guarantee, alias через SB могло бы потом mutate @buf и corrupt the returned nova_str.ptr. Linearity check (Plan 100.1) даёт static guarantee — steal безопасен.
+
+**Why steal с fallback alloc если cap == len:** nova_str требует null-terminator (C-string FFI). Если buf->cap > buf->len, есть свободный байт для `\0` in-place — zero-copy. Если cap == len (buffer заполнен впритык), некуда писать `\0` → alloc+copy fallback. Happy path: SB.with_capacity(N) с явной cap'ой обычно даёт slack → zero-copy hits часто.
+
+**Why parser multi-line chain lookahead:** Plan 91.7 D181 ввёл `-> @` fluent return специально для chains (`arr.push(1).push(2)`). Но grammar терминировал expression на newline → `obj.method()\n    .method2()` парс-ошибка. Design implied multi-line work, grammar не закрепил — gap. Lookahead через newline на `.` token — conservative scope (только member-access continuation), не ломает existing parsing, разблокирует idiomatic fluent style. Cross-language matches Swift/Kotlin/Scala (leading-dot continuation).
+
+**Why conservative scope (только `.` postfix, не `?.`/`!.`/wrapping args):** YAGNI + safety. `.method()` chain — dominant fluent use case (Plan 91.7 actual API). `?.` / `!.` — niche. Wrapping call args `f(\n a,\n b\n)` — уже работают через bracket-balancing в `(...)`. Расширение scope — отдельный followup при actual demand. Minimal change = minimal risk for parser.
+
+**Why var_boxed save/restore in `emit_monomorphized_method` (mirror lambda body pattern):** `emit_lambda_body` уже делал save/restore через `std::mem::take` — proven pattern. var_boxed (heap-promotion map) — caller-local context that must be isolated when emitting separate function body (mono'd method generates own C function with own variables). Без save/restore — identifier resolution in mono body leaked to caller's box-prefixed names → CC-FAIL «undeclared _box_X». Same pattern, same problem, same fix.
