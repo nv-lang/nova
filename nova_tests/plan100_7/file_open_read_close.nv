@@ -1,0 +1,26 @@
+// Plan 100.7 (D165): pilot File migration — open / read / close.
+// Probe 1 of 5: basic resource lifecycle.
+
+module nova_tests.plan100_7.file_open_read_close
+
+type IoErr { msg str }
+
+external type File consume
+
+external fn nova_file_open(path str) -> Result[File, IoErr] needs Fs
+external fn nova_file_close(consume f File) -> () needs Fs
+// D157: view is default — no `view` qualifier needed on params
+external fn nova_file_read_all(f File) -> Result[str, IoErr] needs Fs
+
+fn File consume @close() -> () { nova_file_close(@) }
+
+fn read_config(path str) Fail[IoErr] -> str {
+    consume f File = nova_file_open(path)?       // explicit type annotation (D165)
+    defer { f.close() }                          // covered (D158 + D162)
+    let data = nova_file_read_all(f)?
+    return data
+}
+
+test "file open/read/close pilot — canonical pattern" {
+    read_config("config.txt")
+}

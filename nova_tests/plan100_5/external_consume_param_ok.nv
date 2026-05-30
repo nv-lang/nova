@@ -1,0 +1,15 @@
+// Plan 100.5 (D163): external fn param-side — caller передаёт
+// consume-var; callee owns transfer.
+
+module nova_tests.plan100_5.external_consume_param_ok
+
+external type File consume
+
+external fn nova_file_open(path str) -> File needs Fs
+external fn nova_file_close(consume f File) -> () needs Fs
+
+test "external param-side consume — explicit transfer" {
+    consume f = nova_file_open("x.txt")
+    nova_file_close(f)                          // f Consumed (через consume-param)
+    // f теперь Consumed; нельзя использовать.
+}
