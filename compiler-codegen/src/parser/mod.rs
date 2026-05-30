@@ -4724,6 +4724,39 @@ impl Parser {
                     let span = expr.span.merge(ty.span());
                     expr = Expr::new(ExprKind::Is(Box::new(expr), ty), span);
                 }
+                // Plan 91 followup (2026-05-30): multi-line method chain
+                // continuation. После expression-statement newline, если
+                // следующий значимый token — `.` (member access), продолжаем
+                // chain. Не: implicit statement-end + orphan `.` parse error.
+                //
+                // Example:
+                //   @buf.push((cp >> 6) as u8)
+                //       .push((cp & 0x3F) as u8)   // <-- continuation
+                //
+                // Conservative scope: только `.` после newline. Не охватывает
+                // `?.` / `!.` / wrapping call args / etc. (separate followup).
+                // Spec: см. docs/plans/91-stdlib-mvp-for-0.1.md секцию
+                // «multi-line chain continuation» + D-block для expression
+                // line-continuation.
+                TokenKind::Newline | TokenKind::Semicolon => {
+                    let mut look_pos = self.pos + 1;
+                    while look_pos < self.tokens.len()
+                        && matches!(
+                            self.tokens[look_pos].kind,
+                            TokenKind::Newline | TokenKind::Semicolon
+                        )
+                    {
+                        look_pos += 1;
+                    }
+                    if look_pos < self.tokens.len()
+                        && matches!(self.tokens[look_pos].kind, TokenKind::Dot)
+                    {
+                        // Multi-line chain — skip whitespace, продолжаем loop.
+                        self.pos = look_pos;
+                        continue;
+                    }
+                    break;
+                }
                 _ => break,
             }
         }

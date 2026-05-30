@@ -9,7 +9,7 @@ module nova_tests.plan77.fluent_chain_alias_err
 test "use after consume через builder-chain alias" {
     let sb = StringBuilder.new()
     let sb2 = sb.append("a")   // sb2 — алиас sb (append: -> @)
-    let s = sb2.to_str()       // consume через alias
+    let s = sb2.as_str()       // consume через alias
     sb.append("b")             // ОШИБКА D131: sb — алиас потреблённого
     assert(s == "a")
 }

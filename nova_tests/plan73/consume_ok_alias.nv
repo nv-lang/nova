@@ -6,7 +6,7 @@ module nova_tests.plan73.consume_ok_alias
 fn build_via_factory() -> str {
     let sb = make_sb()
     let view = sb              // alias
-    view.to_str()                // consume через alias; sb/view дальше не used
+    view.as_str()                // consume через alias; sb/view дальше не used
 }
 
 fn make_sb() -> StringBuilder {

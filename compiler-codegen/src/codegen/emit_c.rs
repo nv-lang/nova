@@ -11026,6 +11026,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Buffer body
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
+        // Plan 91-stdmvp followup 2026-05-30 (root-cause fix for
+        // [M-mono-method-var-boxed-leak]): mono'd method bodies emitted via
+        // worklist drain inherit caller's `var_boxed` map (heap-promotion
+        // for closure captures). Without isolation, identifier `count` в
+        // mono'd body может резолвиться через caller'скую (*_box_count) →
+        // CC-FAIL «undeclared _box_count». Reset for clean emission;
+        // restore at function end. Same pattern as `emit_lambda_body`
+        // (line ~23846).
+        let saved_var_boxed = std::mem::take(&mut self.var_boxed);
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
         self.indent += 1;
@@ -11292,6 +11301,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent -= 1;
         self.line("}");
         self.line("");
+        // Plan 91-stdmvp followup 2026-05-30: restore caller-scope var_boxed
+        // (paired with `take` at line ~11055). Same pattern as
+        // `emit_lambda_body` (line ~23890).
+        self.var_boxed = saved_var_boxed;
         let fn_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         if !self.lambda_forward_decls.is_empty() {
@@ -18071,13 +18084,14 @@ _cp++; \
                 //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
                     // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
-                    if prim == "str" && (method == "from_bytes_lossy" || method == "from_bytes_unchecked") {
+                    // Plan 91 followup: str.from_bytes_unchecked_steal — zero-copy для consume []u8.
+                    if prim == "str" && (method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") {
                         if let Some(arg) = args.first() {
                             let v = self.emit_expr(arg.expr())?;
-                            let c_fn = if method == "from_bytes_lossy" {
-                                "nova_str_from_bytes_lossy"
-                            } else {
-                                "nova_str_from_bytes_unchecked"
+                            let c_fn = match method.as_str() {
+                                "from_bytes_lossy" => "nova_str_from_bytes_lossy",
+                                "from_bytes_unchecked_steal" => "nova_str_steal_bytes",
+                                _ => "nova_str_from_bytes_unchecked",
                             };
                             return Ok(format!("{}({})", c_fn, v));
                         }
@@ -18300,10 +18314,11 @@ _cp++; \
                             return Ok(format!("nova_array_pop_{}({})", elem_ty, obj_c));
                         }
                         // Plan 90: bulk slice-операции.
-                        // Plan 90.1: extend_from/insert_from/reserve — extend-family.
+                        // Plan 90.1 (D141 amendment): append/insert (renamed from
+                        // extend_from/insert_from); copy_from/copy_within/fill/reserve/truncate.
                         // Plan 91.7 (D181): возвращают `@` для fluent chain.
                         "copy_from" | "copy_within" | "fill" |
-                        "extend_from" | "insert_from" | "reserve" | "truncate" => {
+                        "append" | "insert" | "reserve" | "truncate" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c.clone()];
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -19676,16 +19691,17 @@ _cp++; \
                     }
                 }
                 // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
-                // Both take a single `readonly []u8` arg → same C type NovaArray_nova_byte*.
+                // Plan 91 followup: str.from_bytes_unchecked_steal — zero-copy для consume []u8.
+                // Все три take single `[]u8` arg (readonly или consume) → same C signature.
                 if parts.len() == 2 && parts[0] == "str"
-                    && (parts[1] == "from_bytes_lossy" || parts[1] == "from_bytes_unchecked")
+                    && (parts[1] == "from_bytes_lossy" || parts[1] == "from_bytes_unchecked" || parts[1] == "from_bytes_unchecked_steal")
                 {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
-                        let c_fn = if parts[1] == "from_bytes_lossy" {
-                            "nova_str_from_bytes_lossy"
-                        } else {
-                            "nova_str_from_bytes_unchecked"
+                        let c_fn = match parts[1].as_str() {
+                            "from_bytes_lossy" => "nova_str_from_bytes_lossy",
+                            "from_bytes_unchecked_steal" => "nova_str_steal_bytes",
+                            _ => "nova_str_from_bytes_unchecked",
                         };
                         return Ok(format!("{}({})", c_fn, v));
                     }
@@ -20610,9 +20626,10 @@ _cp++; \
             }
         }
         let result = self.fresh_tmp_named("interp_str");
-        // Plan 109 (D179): consume @to_str() — Nova-generated: Nova_StringBuilder_consume_to_str.
+        // Plan 109 (D179) + Plan 91 followup: consume @as_str() — Nova-generated:
+        // Nova_StringBuilder_consume_as_str. Renamed from @to_str().
         self.line(&format!(
-            "nova_str {} = Nova_StringBuilder_consume_to_str({});",
+            "nova_str {} = Nova_StringBuilder_consume_as_str({});",
             result, sb
         ));
         self.var_types
@@ -26439,8 +26456,9 @@ _cp++; \
                     }
                     // Built-in primitive `str.from(x) -> str` (D35 + D73).
                     // Plan 108: also from_bytes_lossy / from_bytes_unchecked → nova_str.
+                    // Plan 91 followup: from_bytes_unchecked_steal → nova_str (zero-copy).
                     if let ExprKind::Ident(n) = &obj.kind {
-                        if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked") { return "nova_str".into(); }
+                        if n == "str" && (method == "from" || method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") { return "nova_str".into(); }
                         // User-defined `T.from(v)` returns Nova_T* (most cases).
                         if method == "from"
                             && (self.record_schemas.contains_key(n)
@@ -26520,7 +26538,7 @@ _cp++; \
                             // Type-check: return type = receiver type (NovaArray_T*).
                             "push" |
                             "copy_from" | "copy_within" | "fill" |
-                            "extend_from" | "insert_from" | "reserve" | "truncate"
+                            "append" | "insert" | "reserve" | "truncate"
                                 => return obj_ty.clone(),
                             // Plan 90: compare → int (-1/0/1).
                             "compare" => return "nova_int".into(),
@@ -26754,7 +26772,8 @@ _cp++; \
                             return "nova_str".into();
                         }
                         // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked → nova_str.
-                        if eff == "str" && (method_name == "from_bytes_lossy" || method_name == "from_bytes_unchecked") {
+                        // Plan 91 followup: from_bytes_unchecked_steal — zero-copy consume variant.
+                        if eff == "str" && (method_name == "from_bytes_lossy" || method_name == "from_bytes_unchecked" || method_name == "from_bytes_unchecked_steal") {
                             return "nova_str".into();
                         }
                         // User-defined `T.from(v)` returns Nova_T* (most cases).
