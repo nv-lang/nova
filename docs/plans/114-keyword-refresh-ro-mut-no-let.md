@@ -25,12 +25,20 @@
 >   - Plan 108.1 ✅ closed — `readonly param` synonym default.
 >   - Plan 113 ✅ closed — attribute-only `#realtime` (zero overlap, упоминается
 >     только как пример «keyword-cleanup как класс задач»).
-> **D-блоки:** **новый D184** (keyword refresh master); **новый D185** (associated
->   constants — `const` field в `type X`); **новый D186** (`const fn` — comptime
+> **D-блоки:** **новый D184** (keyword refresh master); **новый D200** (associated
+>   constants — `const` field в `type X`); **новый D199** (`const fn` — comptime
 >   evaluable functions); **D33 rewrite целиком** (три **реальные** оси:
 >   binding mutability + hard constexpr + per-field freeze); амендменты
 >   **D32, D34, D36, D175, D176, D180**. **D27, D30, D102 — НЕ меняются**
 >   (`const` остаётся, narrower-meaning compatible со старыми формулировками).
+>
+> **Renumbering note (audit 2026-05-31):** ранее план использовал D184/D185/D186
+> для master/assoc-const/const-fn. Audit обнаружил: **D186 уже занят** в spec'е
+> (Plan 91.9 — `#impl(P+Q+...)` annotation, orthogonal к keyword refresh), **D185
+> имеет text-reference** в D183 body (Plan 91.8c планировал promote до full block).
+> Renumber: D186→D199 (const fn), D185→D200 (assoc const). D184 свободен —
+> оставлен как есть. Также Plan 110 commit'нулся раньше с claim D188-D198 +
+> dangling refs на D184-D187 (cleanup-семейство, никогда не landed).
 > **Safety hatch для Ф.10 (`const` generalization to scope/field) и Ф.11
 >   (`const fn`):** обе self-contained, extractable each в Plan 115 одним
 >   revert'ом независимо. Plan 114 может шипиться с Ф.9 только (минимальный
@@ -955,8 +963,8 @@ errors достаточны.
   - **D27 amend small (Ф.10):** «`[N]T` требует `const N`» обновлён — «`const N`
     из visible scope (module-level **или** scope-local)»; visible scope-rule
     natural из block-scoping. Семантика не меняется, только wording.
-  - **Новый D185 (Ф.10):** «Associated constants — `const` field в `type X`».
-  - **Новый D186 (Ф.11):** «`const fn` — comptime evaluable functions».
+  - **Новый D200 (Ф.10):** «Associated constants — `const` field в `type X`».
+  - **Новый D199 (Ф.11):** «`const fn` — comptime evaluable functions».
   - **D30 и D102 — НЕ меняются** (`const` остаётся keyword'ом со strict
     constexpr-only semantics; старые формулировки compatible).
 - **Ф.8.3** `nova doc` regen: prelude doc html должен отображать `ro`/`mut`.
@@ -1068,7 +1076,7 @@ errors достаточны.
   - Cross-link `Type.FOO` в API docs.
   - Для generic T-dependent: render «`const SIZE int = sizeof(T)` — computed
     per monomorphization».
-- **Ф.10.5** Spec D-block: новый **D185** (Associated constants — `const`
+- **Ф.10.5** Spec D-block: новый **D200** (Associated constants — `const`
   field в `type X`, расширенный sum-types + generic-types); амендмент **D27**
   (small: scope-local const для `[N]T`).
 - **Ф.10.6** Tests T9 series (см. §«Tests»).
@@ -1127,7 +1135,7 @@ errors достаточны.
   - Side-effect: dead `const fn` (без call site'ов) — silently dropped из output.
 - **Ф.11.6** First-class использование reject'ится в Ф.11.2 checker:
   `ro f = calc` где `calc` — `const fn` → `E_CONST_FN_FIRST_CLASS`.
-- **Ф.11.7** Spec D-block: новый **D186** (`const fn` — comptime evaluable
+- **Ф.11.7** Spec D-block: новый **D199** (`const fn` — comptime evaluable
   functions).
 - **Ф.11.8** Tests T10 series (см. §«Tests»).
 
@@ -1297,7 +1305,7 @@ default» → «`ro param T` synonym default». Error codes `E_READONLY_CONTENT`
 Только cross-ref в D184: «`consume X = …` теперь часть симметричной триады
 `ro`/`mut`/`consume`».
 
-### D185 (NEW) — Associated constants — `const` field в `type X` (Ф.10)
+### D200 (NEW) — Associated constants — `const` field в `type X` (Ф.10)
 
 **Локация:** `spec/decisions/02-types.md` (новый раздел после D184 cross-ref;
 рядом с D36 field-decl).
@@ -1434,7 +1442,7 @@ Nova V2 — самый компактный синтаксис (`const` directly
 
 **Acceptance.** См. A14/T9 в этом плане.
 
-### D186 (NEW) — `const fn` — comptime evaluable functions (Ф.11)
+### D199 (NEW) — `const fn` — comptime evaluable functions (Ф.11)
 
 **Локация:** `spec/decisions/03-syntax.md` (новый раздел после D184 cross-ref;
 рядом с D33 binding-axes).
@@ -1476,7 +1484,7 @@ ro buf [calc(2, '0')]u8 = …         // ✓ array size → [482]u8
 evaluable functions» этого плана. Nova V2 ближе всего к Zig (`const` per-
 param как `comptime` per-param), но без runtime-call-mode (всегда comptime).
 
-**Cross-ref:** D184 (master); D185 (associated const — могут reference `const fn`
+**Cross-ref:** D184 (master); D200 (associated const — могут reference `const fn`
 для constexpr-eligible RHS, например `type T { const SIZE int = calc_size() }`).
 
 **Acceptance.** См. A16/T10 в этом плане.
@@ -1855,7 +1863,7 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
   — `if let` / `while let`, amend → `if ro`/`if mut`/`while ro`/`while mut`.
 - **D36** ([02-types.md#d36](../../spec/decisions/02-types.md#d36))
   — field modifiers, amend (добавлен третий kind: `const` field associated
-  const, см. D185).
+  const, см. D200).
 - **D102** ([03-syntax.md](../../spec/decisions/03-syntax.md))
   — default-param-values (Plan 46), **НЕ меняется** — `const` остаётся valid
   referencee; new strict-constexpr enforcement compatible с старой формулировкой.
@@ -1870,7 +1878,7 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
   — `consume` binding, cross-ref.
 - **D184** (new, [03-syntax.md](../../spec/decisions/03-syntax.md))
   — keyword refresh master decision (этот план).
-- **D185** (new, [02-types.md](../../spec/decisions/02-types.md))
+- **D200** (new, [02-types.md](../../spec/decisions/02-types.md))
   — associated constants (`const` field в `type X`); Ф.10.
-- **D186** (new, [03-syntax.md](../../spec/decisions/03-syntax.md))
+- **D199** (new, [03-syntax.md](../../spec/decisions/03-syntax.md))
   — `const fn` comptime evaluable functions; Ф.11.
