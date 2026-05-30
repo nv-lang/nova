@@ -7,14 +7,14 @@ module nova_tests.plan90_1.lint_view_extend_suppressed_no_warn
 fn extend_with_view() -> () {
     let mut parent []int = [1, 2, 3, 4, 5]
     let view = parent[1..4]
-    parent.extend_from([6, 7, 8])  // no W_VIEW_EXTEND_DETACH because #allow
+    parent.append([6, 7, 8])  // no W_VIEW_EXTEND_DETACH because #allow
     let _ = view.len()
 }
 
-test "allow(view_extend_detach) suppresses lint — extend_from" {
+test "allow(view_extend_detach) suppresses lint — append" {
     let mut arr []int = [1, 2, 3]
     let v = arr[0..2]
-    arr.extend_from([4, 5])
+    arr.append([4, 5])
     assert(arr.len() == 5)
     assert(v.len() == 2)
 }

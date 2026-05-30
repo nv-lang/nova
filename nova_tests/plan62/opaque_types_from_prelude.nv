@@ -26,7 +26,7 @@ test "StringBuilder visible через prelude (no explicit import)" {
     let mut sb = StringBuilder.new()
     sb.append("hello, ")
     sb.append("world")
-    let s = sb.to_str()
+    let s = sb.as_str()
     assert(s == "hello, world")
     // Plan 62.B.bis bump 6 → 7: print / println formally declared.
     // Маркер монотонный (`>=`) — 62.E.bis поднял PRELUDE_VERSION до 8.
@@ -62,7 +62,7 @@ test "ReadBuffer visible через prelude (no explicit import)" {
 // в parameter position. До 62.D.bis такой annotation резолвился через
 // implicit builtin recognition; теперь — через cross-file resolve
 // (R26 prelude facade re-export + R27 auto-import).
-fn takes_sb(consume sb StringBuilder) -> str => sb.to_str()
+fn takes_sb(consume sb StringBuilder) -> str => sb.as_str()
 
 
 test "StringBuilder usable as function parameter type" {

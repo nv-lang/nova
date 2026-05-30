@@ -172,7 +172,7 @@ export fn Pair @fmt(sb StringBuilder) -> () {
 fn fmt_to_string[T Printable](v T) -> str {
     let mut sb = StringBuilder.new()
     v.fmt(sb)
-    sb.to_str()
+    sb.as_str()
 }
 
 test "Printable bound — Pair.fmt() in StringBuilder" {

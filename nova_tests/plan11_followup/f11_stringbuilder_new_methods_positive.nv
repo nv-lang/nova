@@ -38,7 +38,7 @@ test "non-consuming: append после starts_with/ends_with работает" {
     let _ = sb.ends_with("o")             // не consume
     sb.append("/bar")                     // должен compile + run
     assert(sb.ends_with("bar"))
-    let final = sb.to_str()               // consume
+    let final = sb.as_str()               // consume
     assert(final == "foo/bar")
 }
 
@@ -56,5 +56,5 @@ test "Path.join pattern (real use case ends_with-based logic)" {
         buf.append(part)
         first = false
     }
-    assert(buf.to_str() == "/usr/local/bin")
+    assert(buf.as_str() == "/usr/local/bin")
 }

@@ -11,8 +11,8 @@ test "реассайн aliased-переменной — alias корректно
     let twin = sb                  // twin — алиас sb (старый объект)
     sb = StringBuilder.new()       // sb → новый объект; alias развязан
     sb.append("second")
-    let a = twin.to_str()            // consume старого объекта через twin
-    let b = sb.to_str()              // consume нового объекта — НЕ ошибка
+    let a = twin.as_str()            // consume старого объекта через twin
+    let b = sb.as_str()              // consume нового объекта — НЕ ошибка
     assert(a == "first")
     assert(b == "second")
 }

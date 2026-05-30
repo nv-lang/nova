@@ -28,7 +28,7 @@ test "verified #impl multi: Equatable + Comparable + Printable" {
     assert(a.compare(b) == 0)
     let mut sb = StringBuilder.new()
     a.fmt(sb)
-    assert(sb.to_str() == "Coin(5)")
+    assert(sb.as_str() == "Coin(5)")
 }
 
 #impl(Equatable + Comparable + Printable)

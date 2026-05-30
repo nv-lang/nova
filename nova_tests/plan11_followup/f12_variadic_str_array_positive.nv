@@ -15,7 +15,7 @@ export fn join_strings(...parts []str) -> str {
         buf.append(p)
         first = false
     }
-    buf.to_str()
+    buf.as_str()
 }
 
 test "variadic str: positional args" {

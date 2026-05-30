@@ -10,7 +10,7 @@ test "use after consume через alias" {
     let sb = StringBuilder.new()
     sb.append("hi")
     let twin = sb              // twin и sb — один и тот же объект
-    let s = twin.to_str()       // consume через alias-имя
+    let s = twin.as_str()       // consume через alias-имя
     sb.append("oops")         // ОШИБКА D131: sb — алиас потреблённого
     assert(s == "hi")
 }

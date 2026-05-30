@@ -1,19 +1,24 @@
 // Plan 109 (D179): StringBuilder реализован полностью на Nova.
 // Тип: consume record с полем `mut buf []u8`.
 // Ранее: external type + C runtime (Nova_StringBuilder / Rust String).
-// Теперь: Nova record; методы на Nova; единственный external — append(c char)
-// (UTF-8 encoding через Nova битовые операции реализован на Nova-body).
+// Теперь: Nova record; все методы на Nova-body.
 //
 // API-изменения (Plan 109 / D179):
 //   @len()    → bytes (O(1)), как str
 //   @char_len() → codepoints (O(n) UTF-8 walk), новый метод
 //   - @byte_len() удалён (дублировал @len())
 //   - @peek() удалён (unsound: pointer aliasing с realloc)
-//   @into() переименован → @to_str() (consume)
-//   @append_bytes(arr) → @append_bytes(readonly arr)
+//   @into() переименован → @as_str() (consume)
+//   @append_bytes(arr) удалён → @append(readonly arr []u8) overload
+//   @plus(s) / @plus(c) удалены — используйте @append напрямую
 //   type StringBuilder consume  — тип требует явного consume
 
+// #no_prelude — break import cycle (prelude → collections → string_builder).
+// Explicit imports cover only what we need.
+#no_prelude
 module runtime.string_builder
+
+// no explicit imports — #no_prelude breaks all auto-injection.
 
 // ─── Type ───
 
@@ -24,34 +29,27 @@ export type StringBuilder consume {
 // ─── Constructors ───
 
 // Пустой StringBuilder с pre-allocated capacity 16.
-export fn StringBuilder.new() -> Self {
-    let mut buf []u8 = []
-    buf.reserve(16)
-    { buf }
-}
+export fn StringBuilder.new() -> Self => StringBuilder.with_capacity(16)
 
 // StringBuilder с pre-allocated capacity n байт.
-export fn StringBuilder.with_capacity(n int) -> Self {
-    let mut buf []u8 = []
-    buf.reserve(n)
-    { buf }
-}
+export fn StringBuilder.with_capacity(n int) -> Self => { buf: []u8.with_capacity(n) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
 export fn StringBuilder.from(s str) -> Self => { buf: s.to_bytes() }
 
 // StringBuilder из одного codepoint (UTF-8 encode).
-export fn StringBuilder.from(c char) -> Self {
-    let mut sb = StringBuilder.new()
-    sb.append(c)
-}
+// Capacity 4 = max UTF-8 length (vs new()=16 overkill для single-char).
+export fn StringBuilder.from(c char) -> Self =>
+    StringBuilder.with_capacity(4).append(c)
 
 // ─── Query methods ───
 
 // Длина буфера в байтах. O(1). Как str.len (D26 school B).
 export fn StringBuilder @len() -> int => @buf.len()
 
-// Длина в codepoints. O(n) UTF-8 walk.
+// Длина в codepoints. O(n) UTF-8 walk: counting start-bytes
+// (high bits != 10xxxxxx). Manual loop — std.sort.@count_of сюда
+// нельзя import'нуть (cycle через prelude); followup [M-stringbuilder-count_of-after-sort-no-prelude].
 export fn StringBuilder @char_len() -> int {
     let mut count = 0
     for b in @buf {
@@ -69,101 +67,74 @@ export fn StringBuilder @capacity() -> int => @buf.capacity()
 export fn StringBuilder @is_empty() -> bool => @buf.is_empty()
 
 // Независимая копия (deep copy buffer). Нужен для consume-типа при разветвлении.
-export fn StringBuilder @clone() -> Self {
-    let mut new_buf []u8 = []
-    new_buf.reserve(@buf.len())
-    new_buf.extend_from(@buf)
-    { buf: new_buf }
-}
+export fn StringBuilder @clone() -> Self =>
+    StringBuilder.with_capacity(@buf.len()).append(@buf)
 
-// Проверить prefix буфера.
+// Проверить prefix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @starts_with(prefix str) -> bool {
-    let pbytes = prefix.to_bytes()
+    let pbytes = prefix.as_bytes()
     let plen = pbytes.len()
-    if plen > @buf.len() { return false }
-    let mut i = 0
-    while i < plen {
-        if @buf[i] != pbytes[i] { return false }
-        i = i + 1
-    }
-    true
+    plen <= @buf.len() && @buf[0..plen].compare(pbytes) == 0
 }
 
-// Проверить suffix буфера.
+// Проверить suffix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @ends_with(suffix str) -> bool {
-    let sbytes = suffix.to_bytes()
+    let sbytes = suffix.as_bytes()
     let slen = sbytes.len()
     let blen = @buf.len()
-    if slen > blen { return false }
-    let offset = blen - slen
-    let mut i = 0
-    while i < slen {
-        if @buf[offset + i] != sbytes[i] { return false }
-        i = i + 1
-    }
-    true
+    slen <= blen && @buf[blen - slen..blen].compare(sbytes) == 0
 }
 
 // ─── Mutating (-> @) ───
 
-// Append UTF-8 bytes из str.
-export fn StringBuilder mut @append(s str) -> @ {
-    @buf.extend_from(s.to_bytes())
-    @
-}
+// Append UTF-8 bytes из str. Zero-copy view (as_bytes).
+export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.as_bytes()); @ }
 
-// Append codepoint как UTF-8 (1-4 байта).
+// Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
+// + multi-line continuation (Plan 91 followup parser fix).
 export fn StringBuilder mut @append(c char) -> @ {
     let cp = c as int
     if cp < 0x80 {
         @buf.push(cp as u8)
     } else if cp < 0x800 {
         @buf.push((0xC0 | (cp >> 6)) as u8)
-        @buf.push((0x80 | (cp & 0x3F)) as u8)
+            .push((0x80 | (cp & 0x3F)) as u8)
     } else if cp < 0x10000 {
         @buf.push((0xE0 | (cp >> 12)) as u8)
-        @buf.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
-        @buf.push((0x80 | (cp & 0x3F)) as u8)
+            .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
+            .push((0x80 | (cp & 0x3F)) as u8)
     } else {
         @buf.push((0xF0 | (cp >> 18)) as u8)
-        @buf.push((0x80 | ((cp >> 12) & 0x3F)) as u8)
-        @buf.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
-        @buf.push((0x80 | (cp & 0x3F)) as u8)
+            .push((0x80 | ((cp >> 12) & 0x3F)) as u8)
+            .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
+            .push((0x80 | (cp & 0x3F)) as u8)
     }
     @
 }
 
-// Оператор `+`: `sb + s == sb.@plus(s)` → @append (D46).
-export fn StringBuilder mut @plus(s str) -> @ => @append(s)
-
-// Оператор `+`: `sb + c == sb.@plus(c)` → @append (D46, char overload).
-export fn StringBuilder mut @plus(c char) -> @ => @append(c)
-
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.
-export fn StringBuilder mut @append_bytes(readonly arr []u8) -> @ {
-    @buf.extend_from(arr)
-    @
-}
+export fn StringBuilder mut @append(readonly arr []u8) -> @ { @buf.append(arr); @ }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
+// Single reserve(total) → один realloc вместо n× амортизированного doubling.
+// `as_bytes()` — zero-copy view; `append` в loop без indirection.
 export fn StringBuilder mut @append_repeat(s str, n int) -> @ {
     if n <= 0 { return @ }
-    let mut i = 0
-    while i < n {
-        @append(s)
-        i = i + 1
+    let bytes = s.as_bytes()
+    @buf.reserve(bytes.len() * n)
+    for _ in 0..n {
+        @buf.append(bytes)
     }
     @
 }
 
 // Обрезать буфер до len байт. len >= @len() → no-op. Caller отвечает за UTF-8 границы.
-export fn StringBuilder mut @truncate(len int) -> @ {
-    @buf.truncate(len)
-    @
-}
+export fn StringBuilder mut @truncate(len int) -> @ { @buf.truncate(len); @ }
 
 // ─── Consume ───
 
-// Финализировать в str. После @to_str() StringBuilder consumed.
+// Финализировать в str. После @as_str() StringBuilder consumed.
+// Zero-copy steal: reuse @buf data ptr напрямую (writes '\0' in-place
+// если cap > len, иначе alloc+copy fallback).
 // Infallible: UTF-8 invariant поддерживается append-методами.
-export fn StringBuilder consume @to_str() -> str => str.from_bytes_unchecked(@buf)
+export fn StringBuilder consume @as_str() -> str => str.from_bytes_unchecked_steal(@buf)

@@ -42,8 +42,8 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                 // Plan 96.1 Ф.1: W_VIEW_PUSH_DETACH — warning при push на
                 // slice-view binding (let X = arr[range]; X.push(...)).
                 lint_view_push_detach(f, &mut warnings);
-                // Plan 90.1 Ф.5: W_VIEW_EXTEND_DETACH — warning при вызове
-                // grow-метода (extend_from/insert_from/reserve) на parent-массиве
+                // Plan 90.1 Ф.5 (D141 amendment): W_VIEW_EXTEND_DETACH — warning при вызове
+                // grow-метода (append/insert/reserve) на parent-массиве
                 // после создания slice-view из него.
                 lint_view_extend_detach(f, view_extend_suppressed, &mut warnings);
                 // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
@@ -1164,16 +1164,16 @@ fn walk_view_push_expr(
     }
 }
 
-/// Plan 90.1 Ф.5 — W_VIEW_EXTEND_DETACH lint.
+/// Plan 90.1 Ф.5 (D141 amendment) — W_VIEW_EXTEND_DETACH lint.
 ///
-/// Detects pattern: `let view = parent[Range]; ...; parent.extend_from(...)`.
-/// Warning: calling extend_from / insert_from / reserve on a parent array
+/// Detects pattern: `let view = parent[Range]; ...; parent.append(...)`.
+/// Warning: calling append / insert / reserve on a parent array
 /// that has a live slice-view may trigger realloc, making the view point to
 /// freed/stale memory (D-cap-len: grow detaches from parent backing, Plan 96).
 ///
 /// Per-function walker maintains HashMap<parent_name, span_of_view_binding>
-/// of parent arrays that have a slice-view binding. On `parent.extend_from(...)` /
-/// `.insert_from(...)` / `.reserve(...)` on tracked parent → emit warning.
+/// of parent arrays that have a slice-view binding. On `parent.append(...)` /
+/// `.insert(...)` / `.reserve(...)` on tracked parent → emit warning.
 ///
 /// Suppressed by `#allow(view_extend_detach)` at module level.
 fn lint_view_extend_detach(f: &FnDecl, suppressed: bool, out: &mut Vec<LintWarning>) {
@@ -1244,7 +1244,7 @@ fn walk_view_extend_stmt(
 
 /// Grow-methods that may cause realloc, invalidating existing slice views.
 fn is_grow_method(name: &str) -> bool {
-    matches!(name, "extend_from" | "insert_from" | "reserve")
+    matches!(name, "append" | "insert" | "reserve")
 }
 
 fn walk_view_extend_expr(
@@ -1253,7 +1253,7 @@ fn walk_view_extend_expr(
     out: &mut Vec<LintWarning>,
 ) {
     match &e.kind {
-        // Detect: parent.extend_from(...) / parent.insert_from(...) / parent.reserve(...)
+        // Detect: parent.append(...) / parent.insert(...) / parent.reserve(...)
         // where `parent` is a tracked view-parent.
         ExprKind::Call { func, .. } => {
             if let ExprKind::Member { obj, name } = &func.kind {

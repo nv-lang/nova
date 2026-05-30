@@ -1,9 +1,9 @@
-// Plan 90.1 — stress: extend_from bulk 1M elements smoke perf test.
-// Single extend_from of 1M elements — verify correctness, should complete < 5s.
+// Plan 90.1 — stress: append bulk 1M elements smoke perf test.
+// Single append of 1M elements — verify correctness, should complete < 5s.
 
-module nova_tests.plan90_1.extend_from_bulk_1M
+module nova_tests.plan90_1.append_bulk_1M
 
-test "extend_from 1M elements" {
+test "append 1M elements" {
     // Build source array of 1M elements
     let mut src []int = []
     src.reserve(1000000)
@@ -16,7 +16,7 @@ test "extend_from 1M elements" {
 
     // Extend empty dst by 1M elements in one call
     let mut dst []int = []
-    dst.extend_from(src)
+    dst.append(src)
     assert(dst.len() == 1000000)
     assert(dst[0] == 0)
     assert(dst[999999] == 999999)

@@ -9,13 +9,13 @@ test "StringBuilder.into — consume без последующего испол�
     let sb = StringBuilder.new()
     sb.append("hi")
     sb.append(" there")
-    let s = sb.to_str()
+    let s = sb.as_str()
     // sb после @into() НЕ используется — D131 не нарушен.
     assert(s == "hi there")
 }
 
 test "into сразу после new — пустой буфер" {
     let sb = StringBuilder.new()
-    let s = sb.to_str()
+    let s = sb.as_str()
     assert(s == "")
 }
