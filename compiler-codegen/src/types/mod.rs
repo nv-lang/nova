@@ -8896,12 +8896,11 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     FnBody::Expr(e) => {
                         consume_walk_expr(&mut ctx, e, errors);
                         // Plan 100.2: FnBody::Expr trailing ident = implicit return.
-                        // If it's a consume-obligation var → mark consumed (like
-                        // consume_walk_block's trailing handling).
-                        if let ExprKind::Ident(name) = &e.kind {
-                            if ctx.consume_obligations.contains(name.as_str()) {
-                                ctx.mark_consumed(name, e.span);
-                            }
+                        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]: also
+                        // covers fluent-return method-chains (parity with
+                        // `consume_walk_block` trailing path).
+                        if let Some(name) = implicit_return_consume_var(&ctx, e) {
+                            ctx.mark_consumed(&name, e.span);
                         }
                         ctx.check_obligations_at_exit(e.span, errors);
                     }
@@ -9119,6 +9118,45 @@ fn consume_join(saved: &HashMap<String, VarState>,
     out
 }
 
+/// Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]:
+/// Determine whether a trailing/return expression evaluates to a consume-
+/// obligation variable directly OR via a fluent (`-> @`) method-chain.
+///
+/// Example: `sb.append(c)` where `mut @append(c char) -> @` (fluent) and
+/// `sb` is a consume-obligation → returns `Some("sb")` because the chain
+/// value IS `sb`.  Recurses through arbitrarily long chains
+/// (`sb.append(x).append(y).truncate(n)`).
+///
+/// Returns the binding name to mark Consumed; `None` when the expression
+/// does not transitively return a consume-obligation var.
+fn implicit_return_consume_var(ctx: &ConsumeCtx, e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if ctx.consume_obligations.contains(name.as_str()) {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        }
+        ExprKind::Call { func, .. } => {
+            let ExprKind::Member { obj, name: method } = &func.kind else {
+                return None;
+            };
+            // Chain root must transitively reduce to a consume-obligation var.
+            let root = implicit_return_consume_var(ctx, obj)?;
+            // Fluent chain preserves receiver type — look up receiver type by
+            // the chain root.  Match in `recv_returning` registry.
+            let ty = ctx.var_types.get(&root)?.clone();
+            if ctx.reg.recv_returning.contains(&(ty, method.clone())) {
+                Some(root)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
     // Plan 100.1 (D133): track consume-obligations introduced in this block.
     // На exit'е блока проверяем только NEW obligations (не было до входа).
@@ -9130,11 +9168,11 @@ fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnost
     if let Some(t) = &b.trailing {
         consume_walk_expr(ctx, t, errors);
         // Plan 100.1 (D133 / D9): trailing expr = implicit return.
-        // Если это consume-obligation var → obligation satisfied.
-        if let ExprKind::Ident(name) = &t.kind {
-            if ctx.consume_obligations.contains(name.as_str()) {
-                ctx.mark_consumed(name, t.span);
-            }
+        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]: extended to
+        // cover fluent-return method-chains (`sb.append(c)` where `append`
+        // returns `@`).  Ident-trailing remains supported (direct path).
+        if let Some(name) = implicit_return_consume_var(ctx, t) {
+            ctx.mark_consumed(&name, t.span);
         }
     }
 
