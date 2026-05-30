@@ -293,7 +293,7 @@ export fn HashMap[K, V] @clone() -> HashMap[K, V] {
 ///
 /// ```nova
 /// let mut a = HashMap[str, int].from([("x", 1)])
-/// let b = HashMap[str, int].from([("x", 99), ("y", 2)])
+/// let mut b = HashMap[str, int].from([("x", 99), ("y", 2)])
 /// a.merge_from(b)
 /// assert(a.get("x") == Some(99))
 /// assert(a.get("y") == Some(2))

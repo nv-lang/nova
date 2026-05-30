@@ -119,7 +119,7 @@ test "AtomicBool: new false and load" {
 }
 
 test "AtomicBool: new true and load" {
-    let b = AtomicBool.new(true)
+    let mut b = AtomicBool.new(true)
     assert(b.load() == true)
 }
 

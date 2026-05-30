@@ -20,7 +20,7 @@ test "AtomicI64.load allowed in #realtime fn" {
 }
 
 test "AtomicBool.load allowed in #realtime fn" {
-    let b = AtomicBool.new(true)
+    let mut b = AtomicBool.new(true)
     let v = _rt_load_bool(b)
     assert(v == true)
 }

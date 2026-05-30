@@ -267,7 +267,7 @@ test "GC: array len grows correctly" {
 
 test "GC: array spread creates correct length" {
     let mut a = [1, 2, 3]
-    let b = [0, ...a, 4, 5, 6]
+    let mut b = [0, ...a, 4, 5, 6]
     assert(b.len() == 7)
 }
 

@@ -46,7 +46,7 @@ test "batch acquire/release with multiple fibers" {
 test "acquire_n blocks until N permits available" {
     // acquire_n(3) blocks when only 2 permits present; unblocks on release_n(1)
     let mut sem = Semaphore.new(2)
-    let done = AtomicInt.new(0)
+    let mut done = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(1)
 
