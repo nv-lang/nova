@@ -29,7 +29,7 @@ export type StringBuilder consume {
 // ─── Constructors ───
 
 // Default capacity для StringBuilder.new() — 16 bytes (1-line string).
-const INITIAL_CAPACITY int = 16
+const INITIAL_CAPACITY = 16
 
 // Пустой StringBuilder с pre-allocated capacity 16.
 export fn StringBuilder.new() -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY)
@@ -38,7 +38,7 @@ export fn StringBuilder.new() -> Self => StringBuilder.with_capacity(INITIAL_CAP
 export fn StringBuilder.with_capacity(n int) -> Self => { buf: []u8.with_capacity(n) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
-export fn StringBuilder.from(s str) -> Self => { buf: s.to_bytes() }
+export fn StringBuilder.from(s str) -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY).append(s)
 
 // StringBuilder из одного codepoint (UTF-8 encode).
 // Plan 73.1 D180: delegate to from(str) — старый pattern `let mut sb = StringBuilder.new()
