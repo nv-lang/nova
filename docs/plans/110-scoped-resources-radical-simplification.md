@@ -38,7 +38,22 @@
 > **D195** (Application nesting + finalizer scoping), **D196** (init type
 > constraints), **D197** (cleanup re-entrance), **D198** (realtime+Application
 > conflict).
-> Amends/retracts: D158, D160, D161, D162, D184, D185, D186, D187, D90 §7.
+> Amends/retracts: D158, D160, D161, D162, D90 §7.
+>
+> **Historical note (audit 2026-05-31):** ранние drafts Plan 110 (v3.0-v3.3)
+> ссылались на «amends/retracts D184/D185/D186/D187» с интентами:
+> *D184 retract (explicit cancel-shielding API), D185 amend (Cleanup effect →
+> observability-only), D186 retract (module-level finalizers), D187 amend →
+> D190 (specific rejected design)*. **Эти D-блоки никогда не landed в spec**
+> — они были planned в design-итерации между Plan 100.4 closure (2026-05-26)
+> и Plan 110 создания (2026-05-29), но соответствующий spec-commit не
+> произошёл (design итерация ушла напрямую в Plan 110 без промежуточного
+> spec-merge). Текущие spec D184 = empty, D185 = text-reference only в
+> D183 body (Plan 91.8c), D186 = `#impl(P+Q+...)` annotation (Plan 91.9 —
+> orthogonal к cleanup), D187 = empty. Эти amends/retracts были **no-op**
+> (нельзя retract то, чего не существует) и удалены из active amends list.
+> Семантически Plan 110 self-contained через NEW D188-D198 — design intent
+> сохранён, intermediate D-блоки не нужны.
 >
 > **Acceptance:** A1–A30.
 
@@ -537,22 +552,35 @@ D160 помечается «withdrawn in favor of D188».
 - Raw `consume + defer` — single rule (defer body должен содержать consume call)
 - Убираются: `D162-double-cover`, `D162-conditional-cover-warning`
 
-### D184 retract — cancel-shielding встроен
+### Historical: D184/D185/D186/D187 (never landed in spec)
 
-Implementation-detail `consume {}`. Per-resource timeout через `exit_timeout()`.
+> **Audit note 2026-05-31:** ранние drafts ссылались на amends/retracts
+> D184/D185/D186/D187 — эти D-блоки **никогда не landed в spec**. Секции
+> ниже задокументированы как **historical design intent** (что бы делалось
+> если бы D-блоки были созданы); они не actionable amendments. Семантически
+> эти намерения **уже incorporated** в D188-D198 этого плана.
 
-### D185 amend — `Cleanup` effect стал observability-only
+**D184 (планировался: explicit cancel-shielding API; never landed):**
+intent был — retract. Realized: cancel-shielding теперь implementation-detail
+`consume {}` (D188 R2); per-resource timeout через `exit_timeout()` (D192).
 
-Operations: `on_scope_enter(label, timeout)` / `on_scope_exit(label, outcome)`.
-Default no-op. Zero-overhead если не использован.
+**D185 (планировался: full `Cleanup` effect handler dispatch; never landed):**
+intent был — amend → observability-only. Realized напрямую в Ф.7 этого плана:
+`effect Cleanup { on_scope_enter(label, timeout); on_scope_exit(label, outcome) }`
+default no-op, zero-overhead если не использован. **Внимание:** актуальный
+D185 в spec'е (text-reference в D183 body — `Generic sort/min/max (D185,
+Plan 91.8c)`) — это **другой** D-блок (orthogonal к cleanup), не имеет
+отношения к этому плану.
 
-### D186 retract — module finalizers через паттерн
+**D186 (планировался: module-level finalizers как primitive; never landed):**
+intent был — retract. Realized: не отдельный language primitive;
+`Consumable[Application]` idiom (D195). **Внимание:** актуальный D186 в spec'е
+— `#impl(P1 + P2 + ...)` opt-in annotation (Plan 91.9, orthogonal к cleanup).
 
-Не отдельный language primitive. `Consumable[Application]` idiom.
-
-### D187 amend → D190
-
-REJECTED расширяется через D190.
+**D187 (планировался: specific rejected design; never landed):**
+intent был — amend → D190. Realized: rejected designs документированы прямо
+в D190 (errdefer/okdefer/defer-result removed + lifetime-based cleanup
+rejected + try/finally syntax rejected).
 
 ### D90 §7 amend — cancel/interrupt как `Failure(CancelError)`
 
@@ -1075,7 +1103,7 @@ Cancel/interrupt в body приходит как `Failure(CancelError)` в outco
 | A19 | Cross-platform PASS | Windows + Linux × clang + MSVC |
 | A20 | Performance regression < +5% | benchmark suite |
 | A21 | Spec D188-D198 written | files exist + cross-ref |
-| A22 | Spec amends/retracts: D158/D161/D162/D185/D90 §7 + retracts D160/D184/D186 | review checklist |
+| A22 | Spec amends: D158/D161/D162/D90 §7; retracts: D160 | review checklist (D184/D185/D186/D187 references obsolete — never landed; см. Historical note в Header + body) |
 | A23 | Q-blocks (11 шт) written | files exist |
 | A24 | `docs/project-creation.txt` updated | sprint section |
 | A25 | `docs/simplifications.md` updated | M-markers reclassified |
