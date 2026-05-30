@@ -1,0 +1,10 @@
+// Plan 108.3 (D36 amend): `let mut (a, b)` — group mut на pattern запрещён.
+
+// EXPECT_COMPILE_ERROR E_PATTERN_GROUP_MUT
+
+module nova_tests.plan108_3.group_mut_pattern_tuple_neg
+
+test "let mut (a, b) — group mut → error" {
+    let mut (a, b) = ([1], [2])
+    a.push(99)
+}

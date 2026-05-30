@@ -1,0 +1,11 @@
+// Plan 108.3 (D36 amend): pattern `(mut a, b)` — b остаётся immutable.
+
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module nova_tests.plan108_3.pattern_b_immut_push_neg
+
+test "(mut a, b) — b.push → error" {
+    let (mut a, b) = ([1], [2])
+    a.push(99)
+    b.push(99)
+}
