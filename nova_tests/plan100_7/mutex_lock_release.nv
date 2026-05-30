@@ -1,0 +1,34 @@
+// Plan 100.7 (D165): pilot Mutex Lock-guard migration.
+// Probe 1 of 5: basic lock/release.
+
+module nova_tests.plan100_7.mutex_lock_release
+
+// AppMutex — shared (non-consume) reference to a user mutex handle.
+// LockGuard — consume: must be released on all exit paths.
+// This models the Plan 103.9 Mutex+LockGuard consume pilot (D174).
+//
+// Note: `external type AppMutex consume` would be wrong (Mutex is shared);
+// instead, AppMutex is a Nova record and LockGuard is the consume RAII guard.
+// Note: name `Mutex` avoided to prevent collision with nova_rt `Nova_Mutex`.
+type AppMutex { id int }
+external type LockGuard consume
+
+// D157: view is default — no `view` qualifier needed on params
+external fn nova_mutex_lock(m AppMutex) -> LockGuard needs Sys
+external fn nova_lock_release(consume g LockGuard) -> () needs Sys
+
+fn LockGuard consume @release() -> () { nova_lock_release(@) }
+fn AppMutex.new() -> AppMutex => { id: 1 }
+
+fn critical_section(m AppMutex) -> int {
+    consume guard LockGuard = nova_mutex_lock(m)  // explicit type annotation (D165)
+    defer { guard.release() }                      // auto-unlock на любом exit
+    // critical work
+    42
+}
+
+test "Mutex lock-guard pilot" {
+    let m = AppMutex.new()
+    let r = critical_section(m)
+    assert(r == 42)
+}
