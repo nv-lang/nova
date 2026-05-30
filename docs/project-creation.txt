@@ -25123,6 +25123,83 @@ D-block numbering: D175-D179 заняты; D180 next free.
 Plan 73.1 ✅ ЗАКРЫТ. 7 commits на ветке plan-73-v2.
 
 ================================================================================
+2026-05-30 — Plan 73.1 V3 — close 4 honest-defer markers + V3 docs
+================================================================================
+
+V3 закрывает 4 из 5 markers V1 (последний — comprehensive-negatives —
+out-of-scope).  Branch plan-73-v3, worktree nova-p73v3.
+
+M1+M2 — [M-73.1-warning-needs-project-wide-registry]
+       + [M-73.1-cross-module-consume-detection] ✅:
+  LinearityRegistry::build теперь parses external_sources
+  (ExternalRegistry::SYNC_SRC) — consume_types + consume_methods seeded
+  cross-module.  MutexGuard/ReadGuard/WriteGuard/Permit/OnceGuard теперь
+  видны в user-code → E_CONSUME_KEYWORD_MISSING срабатывает на
+  `let g = mu.lock()`; W_CONSUME_KEYWORD_UNNECESSARY restored без
+  false-positives.  Verification:
+  nova_tests/plan73_1/binding_cross_module_consume_neg.nv.
+
+M3 — [M-73.1-fluent-return-implicit-consume] ✅:
+  Helper `implicit_return_consume_var` (types/mod.rs ~line 9120)
+  detects trailing fluent-chain (Ident root → -> @ методы) recursively.
+  Integrated в FnBody::Block trailing + FnBody::Expr.  Chain root
+  marked Consumed при implicit return.  Removes need для delegate
+  workaround в StringBuilder.from(char) (kept anyway — cleaner code).
+  Verification: binding_fluent_return_implicit_consume_ok.nv (3 sub-tests
+  1-deep / 2-deep / 3-deep chains).
+
+M4 — [M-73.1-property-tests] ✅:
+  3 property fixtures в plan73_1/:
+  - binding_consume_obligation_scope_prop.nv — instrumented AtomicInt
+    counter cross-checks runtime drops vs static obligations across
+    5 scenarios (basic / alias-move / branch / fluent-stmt / loop).
+  - binding_no_dangling_view_prop.nv — view-borrow via function-param
+    bounded by call; runtime witness через 4 tests.
+  - binding_migration_completeness_prop.nv — stdlib consume-types
+    (Mutex, RwLock, StringBuilder) compile + commit cleanly under D180.
+
+M5 — [M-73.1-user-doc] + [M-73.1-migration-guide] ✅:
+  - docs/consume-types.md (~120 строк) — user guide: Rules 1-4,
+    consume operations, fluent-return chains, diagnostics table.
+  - docs/migration/d180-binding-syntax.md (~180 строк) — migration
+    guide: 4 recipes (let→consume, alias→move/remove, view via param,
+    fluent chain), diagnostic examples, automated migration via
+    Plan 100.7.
+
+Open: [M-73.1-comprehensive-negatives] (returned view, generic-
+propagation D156 deep cases) — out-of-scope для V3.
+
+Test results V3 (per-suite):
+- plan73/: 12/12 PASS (unchanged)
+- plan73_1/: 13/13 PASS (V1 9 + V3 4 new)
+- plan100_1/: 23/23 PASS
+- plan103_9/: 20/20 PASS
+- plan11_followup/: 20/20 PASS (post-migration)
+- plan77/: 7/7 PASS
+- plan91_8a_2/: 27/27 PASS
+- Full nova test: 1571 PASS / 65 FAIL / 56 SKIP
+- Pre-V3 baseline: 1559 PASS / 74 FAIL / 56 SKIP
+- Net: +12 PASS / -9 FAIL (V3 IMPROVES baseline)
+- Remaining FAILs: almost entirely pre-existing (str_builder/* pre-Plan-109,
+  buffers/* read_buffer stale API, plan100.3 D29 violation, concurrency
+  flakiness).
+
+Migration sweep V3:
+- 30 test fixtures (plan11_followup, plan73, plan77, plan62, plan91_8a*,
+  plan100_6, protocols) — let mut|let → consume.
+- 16 stdlib files (std/runtime, std/time, std/encoding/base64,
+  std/testing/property, std/_experimental/*) — let mut buf → consume buf.
+
+M3 helper scope-fix (post-discovery):
+- consume_walk_block split into wrapper + _inner(is_fn_body_trailing).
+- Only FnBody::Block trailing applies M3 fluent-chain detection;
+  nested blocks retain V1 Ident-only semantics.
+- Added complementary chain-into-consume-method detection in
+  consume_walk_expr Call obj-not-Ident branch.
+
+Plan 73.1 V3 ✅ ЗАКРЫТ.
+
+================================================================================
 2026-05-30 — Plan 91.10 + 91.11: D163 retract + SB cleanup + rename family
 ================================================================================
 

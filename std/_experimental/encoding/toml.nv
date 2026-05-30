@@ -186,7 +186,7 @@ fn TomlParser mut @parse_key() Fail[ParseTomlError] -> str {
 }
 
 fn TomlParser mut @parse_bare_key() -> str {
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     let mut done = false
     while !done {
         match @peek() {
@@ -248,7 +248,7 @@ fn is_num_start(c char) -> bool =>
 
 fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
     @advance()          // open "
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     let mut done = false
     while !done {
         match @advance() {

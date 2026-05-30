@@ -23,7 +23,7 @@ test "fluent wrapper -> @ делегирует в -> @" {
 }
 
 test "StringBuilder @append -> @ chain" {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     let s = sb.append("hello").append(" ").append("world").as_str()
     assert(s == "hello world")
 }

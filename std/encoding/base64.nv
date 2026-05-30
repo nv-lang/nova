@@ -132,7 +132,7 @@ fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
     let remainder = n - chunks * 3
     let out_len = chunks * 4 + (if remainder > 0 { 4 } else { 0 })
 
-    let mut buf = StringBuilder.with_capacity(out_len)
+    consume buf = StringBuilder.with_capacity(out_len)
 
     // Полные chunks по 3 байта = 24 бита = 4 × 6 бит.
     for i in 0..chunks {

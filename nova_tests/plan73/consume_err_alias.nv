@@ -1,16 +1,18 @@
-// EXPECT_COMPILE_ERROR D131
+// EXPECT_COMPILE_ERROR E_VIEW_BINDING_FORBIDDEN
 //
-// Plan 73 followup: use-after-consume через alias. `let alias = sb`
-// создаёт второе имя на тот же объект — consume через любое имя
-// инвалидирует весь alias-класс.
+// Plan 73 followup: use-after-consume через alias.
+// Plan 73.1 V3: D180 Rule 2 catches alias `let twin = sb` syntactically
+// (E_VIEW_BINDING_FORBIDDEN) — dangling-view impossible by construction.
+// Previously this fixture relied on D131-use-after-consume firing later;
+// V3 cross-module enforcement detects alias-binding earlier.
 
 module nova_tests.plan73.consume_err_alias
 
 test "use after consume через alias" {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hi")
-    let twin = sb              // twin и sb — один и тот же объект
-    let s = twin.as_str()       // consume через alias-имя
-    sb.append("oops")         // ОШИБКА D131: sb — алиас потреблённого
+    let twin = sb              // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
+    let s = twin.as_str()
+    sb.append("oops")
     assert(s == "hi")
 }

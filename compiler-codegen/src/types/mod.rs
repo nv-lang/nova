@@ -7693,6 +7693,7 @@ impl LinearityRegistry {
         let mut consume_types = HashSet::new();
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
 
+        // 1. Local module: consume-types + consume-methods.
         for item in &module.items {
             if let Item::Type(td) = item {
                 if td.consume {
@@ -7710,6 +7711,38 @@ impl LinearityRegistry {
                 }
             }
         }
+
+        // 2. Plan 73.1 [M-73.1-warning-needs-project-wide-registry] fix:
+        //    external stdlib modules (sync.nv) declare cross-module consume-types
+        //    (MutexGuard, ReadGuard, WriteGuard, Permit, OnceGuard). Без них
+        //    project-wide check ложно классифицирует RHS типа MutexGuard как
+        //    "не-consume" → W_CONSUME_KEYWORD_UNNECESSARY false positives.
+        //    Mirrors ConsumeRegistry::build §3 (см. line ~8043).
+        let external_sources: &[&str] = &[
+            crate::codegen::external_registry::ExternalRegistry::SYNC_SRC,
+        ];
+        for src in external_sources {
+            if let Ok(ext_module) = crate::parser::parse(src) {
+                for item in &ext_module.items {
+                    if let Item::Type(td) = item {
+                        if td.consume {
+                            consume_types.insert(td.name.clone());
+                        }
+                    }
+                    if let Item::Fn(fd) = item {
+                        if let Some(recv) = &fd.receiver {
+                            if recv.consume {
+                                consume_methods
+                                    .entry(recv.type_name.clone())
+                                    .or_default()
+                                    .push(fd.name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         LinearityRegistry { consume_types, consume_methods }
     }
 
@@ -8842,7 +8875,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 }
                 match &f.body {
                     FnBody::Block(b) => {
-                        consume_walk_block(&mut ctx, b, errors);
+                        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]:
+                        // FnBody-level trailing fluent-chain → mark chain root
+                        // Consumed via the `is_fn_body_trailing` variant.
+                        consume_walk_block_inner(&mut ctx, b, errors, true);
                         // Plan 100.1 (D133): exit-point checks.
                         let exit_span = b.span;
                         ctx.check_obligations_at_exit(exit_span, errors);
@@ -8863,12 +8899,11 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     FnBody::Expr(e) => {
                         consume_walk_expr(&mut ctx, e, errors);
                         // Plan 100.2: FnBody::Expr trailing ident = implicit return.
-                        // If it's a consume-obligation var → mark consumed (like
-                        // consume_walk_block's trailing handling).
-                        if let ExprKind::Ident(name) = &e.kind {
-                            if ctx.consume_obligations.contains(name.as_str()) {
-                                ctx.mark_consumed(name, e.span);
-                            }
+                        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]: also
+                        // covers fluent-return method-chains (parity with
+                        // `consume_walk_block` trailing path).
+                        if let Some(name) = implicit_return_consume_var(&ctx, e) {
+                            ctx.mark_consumed(&name, e.span);
                         }
                         ctx.check_obligations_at_exit(e.span, errors);
                     }
@@ -9086,7 +9121,62 @@ fn consume_join(saved: &HashMap<String, VarState>,
     out
 }
 
+/// Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]:
+/// Determine whether a trailing/return expression evaluates to a consume-
+/// obligation variable directly OR via a fluent (`-> @`) method-chain.
+///
+/// Example: `sb.append(c)` where `mut @append(c char) -> @` (fluent) and
+/// `sb` is a consume-obligation → returns `Some("sb")` because the chain
+/// value IS `sb`.  Recurses through arbitrarily long chains
+/// (`sb.append(x).append(y).truncate(n)`).
+///
+/// Returns the binding name to mark Consumed; `None` when the expression
+/// does not transitively return a consume-obligation var.
+fn implicit_return_consume_var(ctx: &ConsumeCtx, e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if ctx.consume_obligations.contains(name.as_str()) {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        }
+        ExprKind::Call { func, .. } => {
+            let ExprKind::Member { obj, name: method } = &func.kind else {
+                return None;
+            };
+            // Chain root must transitively reduce to a consume-obligation var.
+            let root = implicit_return_consume_var(ctx, obj)?;
+            // Fluent chain preserves receiver type — look up receiver type by
+            // the chain root.  Match in `recv_returning` registry.
+            let ty = ctx.var_types.get(&root)?.clone();
+            if ctx.reg.recv_returning.contains(&(ty, method.clone())) {
+                Some(root)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    consume_walk_block_inner(ctx, b, errors, false);
+}
+
+/// Plan 73.1 V3: variant taking `is_fn_body_trailing` flag.  When true,
+/// the block's trailing expression is treated as the function's implicit
+/// return value, so a fluent-chain trailing
+/// (`sb.append(x).append(y)`) marks its consume-obligation root Consumed.
+/// Nested blocks (if-then, loop-body, regular `{}`) call with `false`
+/// because their trailing value is usually discarded by the outer
+/// statement / if-without-else.
+fn consume_walk_block_inner(
+    ctx: &mut ConsumeCtx,
+    b: &Block,
+    errors: &mut Vec<Diagnostic>,
+    is_fn_body_trailing: bool,
+) {
     // Plan 100.1 (D133): track consume-obligations introduced in this block.
     // На exit'е блока проверяем только NEW obligations (не было до входа).
     let obligations_before = ctx.consume_obligations.clone();
@@ -9097,8 +9187,15 @@ fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnost
     if let Some(t) = &b.trailing {
         consume_walk_expr(ctx, t, errors);
         // Plan 100.1 (D133 / D9): trailing expr = implicit return.
-        // Если это consume-obligation var → obligation satisfied.
-        if let ExprKind::Ident(name) = &t.kind {
+        // Ident-trailing always counts as implicit-return-of-value (existing
+        // V1 semantics — preserved for compatibility).  Fluent-chain
+        // trailing only counts when this block is the function body
+        // (Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]).
+        if is_fn_body_trailing {
+            if let Some(name) = implicit_return_consume_var(ctx, t) {
+                ctx.mark_consumed(&name, t.span);
+            }
+        } else if let ExprKind::Ident(name) = &t.kind {
             if ctx.consume_obligations.contains(name.as_str()) {
                 ctx.mark_consumed(name, t.span);
             }
@@ -9229,11 +9326,40 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     applicability: crate::diag::Applicability::MachineApplicable,
                 }));
             }
-            // W_CONSUME_KEYWORD_UNNECESSARY: deferred V2 — требует project-wide
-            // consume_types registry для precision. lin_reg.consume_types
-            // module-local; cross-module consume-types (`MutexGuard` в sync.nv)
-            // ложно flag'ятся как "non-consume". Followup:
-            // [M-73.1-warning-needs-project-wide-registry].
+            // W_CONSUME_KEYWORD_UNNECESSARY: V2 RESTORED — `consume` keyword
+            // на binding с не-consume RHS. Cross-module false positives устранены
+            // через расширенный LinearityRegistry::build (M-73.1-warning-needs-
+            // project-wide-registry CLOSED — теперь sync.nv consume-types
+            // в registry'е).
+            //
+            // Conservative: emit только когда inferred_ty_d180.is_some() —
+            // т.е. тип известен и НЕ consume. Если тип неизвестен (None),
+            // skip (sound: false-negative permissive, не false-positive).
+            else if decl.consume && !rhs_yields_consume_type && !alias_obligated
+                && names.len() == 1 && inferred_ty_d180.is_some()
+            {
+                let consume_kw_span = crate::diag::Span {
+                    file_id: decl.span.file_id,
+                    start: decl.span.start,
+                    end: decl.span.start + 8, // "consume " = 8 chars
+                };
+                errors.push(crate::diag::Diagnostic::new(
+                    format!(
+                        "[W_CONSUME_KEYWORD_UNNECESSARY] keyword `consume` на binding \
+                         `{}` избыточен — RHS типа `{}` не consume-обязателен (D180).",
+                        names[0],
+                        inferred_ty_d180.as_deref().unwrap_or("?")
+                    ),
+                    consume_kw_span,
+                ).with_note(
+                    "удали `consume ` для regular let-binding.".to_string(),
+                ).with_suggestion(crate::diag::Suggestion {
+                    message: "delete `consume ` keyword".to_string(),
+                    span: consume_kw_span,
+                    replacement: "let".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }));
+            }
 
             // Rule 3 (D180): `consume X = consume_var` = move semantics
             // (mark source Consumed, transfer obligation to X).
@@ -9831,6 +9957,23 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         consume_walk_expr(ctx, obj, errors);
                         for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                         if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume] extension:
+                        // chain `var.fluent1(...).fluent2(...).consume_method(...)` —
+                        // detect chain root, check that root + method matches a consume
+                        // method on root's type, mark root Consumed.
+                        if let Some(root) = implicit_return_consume_var(ctx, obj) {
+                            if let Some(ty) = ctx.var_types.get(&root).cloned() {
+                                if ctx.reg.methods.contains(&(ty.clone(), method.clone())) {
+                                    ctx.mark_consumed(&root, e.span);
+                                }
+                                // Also: consume-param indexes for chain-receiver consume args.
+                                if let Some(idxs) = ctx.reg.method_params
+                                    .get(&(ty, method.clone())).cloned()
+                                {
+                                    ctx.consume_args(args, &idxs, e.span);
+                                }
+                            }
+                        }
                     }
                 }
                 // Free-fn call: f(args).

@@ -27,7 +27,7 @@ fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
 test "bare call: m.fmt(sb) для Money (через fn str.from)" {
     let m = Money { cents: 500 }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     m.fmt(sb)
     assert(sb.as_str() == "Money(500)")
 }
@@ -39,7 +39,7 @@ fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
 test "bare call: c.fmt(sb) для Coin (через @into)" {
     let c = Coin { value: 7 }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     c.fmt(sb)
     assert(sb.as_str() == "Coin(7)")
 }

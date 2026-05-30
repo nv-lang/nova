@@ -5,34 +5,39 @@ module plan11_followup.f11_stringbuilder_new_methods_positive
 // прочитать buffer был @into() — consuming. Это ломало Path.join (read-modify pattern).
 //
 // Эти тесты verify что все 4 метода работают корректно + не consume buffer.
+// Plan 73.1 V3: `let sb` → `consume sb` (cross-module consume detection
+// требует ownership-bound); каждый тест завершается consume `as_str()`.
 
 test "is_empty: true для свежего, false после append" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     assert(sb.is_empty())
     sb.append("x")
     assert(!sb.is_empty())
+    let _ = sb.as_str()
 }
 
 test "starts_with: matches префикс" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello world")
     assert(sb.starts_with("hello"))
     assert(sb.starts_with(""))           // пустой префикс всегда true
     assert(!sb.starts_with("world"))
     assert(!sb.starts_with("HELLO"))     // case-sensitive
+    let _ = sb.as_str()
 }
 
 test "ends_with: matches суффикс" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello world")
     assert(sb.ends_with("world"))
     assert(sb.ends_with(""))
     assert(!sb.ends_with("hello"))
     assert(!sb.ends_with("WORLD"))
+    let _ = sb.as_str()
 }
 
 test "non-consuming: append после starts_with/ends_with работает" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("foo")
     let _ = sb.starts_with("f")           // не consume
     let _ = sb.ends_with("o")             // не consume
@@ -46,7 +51,7 @@ test "non-consuming: append после starts_with/ends_with работает" {
 // starts_with/ends_with заменяют peek-based inspection.
 
 test "Path.join pattern (real use case ends_with-based logic)" {
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     let parts []str = ["/usr", "local", "bin"]
     let mut first = true
     for part in parts {

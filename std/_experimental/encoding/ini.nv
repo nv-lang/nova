@@ -90,7 +90,7 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
 /// (key `""`) выводится без `[section]` header'а сверху.
 #stable(since = "0.1")
 export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
-    let mut buf = StringBuilder.with_capacity(256)
+    consume buf = StringBuilder.with_capacity(256)
     // Сначала top-level ("")
     match data.get("") {
         Some(top) => {

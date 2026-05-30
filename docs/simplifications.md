@@ -27491,6 +27491,57 @@ registry. `let g = mu.lock()` cross-module не fail'ит. Consistent с D131
 Two paths forward: (a) extend D131 flow для detecting implicit-return как
 consume operation (real engineering work), (b) rewrite function. V1 went
 with (b) via delegation `from(c) => from(str.from(c))`. Semantic identity
+
+## Plan 73.1 V3 — closure 4 honest-defer markers (2026-05-30)
+
+**Closes:** [M-73.1-warning-needs-project-wide-registry],
+[M-73.1-cross-module-consume-detection],
+[M-73.1-fluent-return-implicit-consume],
+[M-73.1-property-tests].  Plus M5 (`docs/consume-types.md` +
+`docs/migration/d180-binding-syntax.md`).
+
+**Why project-wide registry via external_sources parsing
+(M1+M2 closure):** `LinearityRegistry::build` was module-local —
+seeing only types declared in the current parsed module.  Cross-module
+consume-types (MutexGuard в `std/runtime/sync.nv`) invisible →
+`E_CONSUME_KEYWORD_MISSING` skipped (M2) AND `W_CONSUME_KEYWORD_UNNECESSARY`
+emitted false-positives on `consume g = mu.lock()` (M1).  Fix: extend
+`build` to parse `ExternalRegistry::SYNC_SRC` (and future
+external_sources) for consume_types + consume_methods seeding.  Same
+pattern that `ConsumeRegistry §3` was already using — applied to
+linearity registry symmetrically.  No new infrastructure; just teach
+the registry where to look.
+
+**Why M3 closure via `implicit_return_consume_var` helper:** D131 flow
+analysis treated only Ident-trailing as implicit-return consume.  Plan
+77 D132 fluent return (`-> @`) chains (`sb.append(c)`) were dead-end:
+chain root never marked Consumed by trailing-path detection.  Fix: recursive
+helper that follows the chain — Ident root + sequence of fluent (`-> @`)
+methods → root is the implicit-return value.  Mark Consumed at trailing
+position (`consume_walk_block` trailing + `FnBody::Expr`).  Conservative
+scope: only consume-method-as-chain-receiver still requires Ident
+receiver (out-of-scope for M3 — separate followup if needed).  This
+removes the workaround in `string_builder.nv` BUT we keep the existing
+chain-form (it's still cleaner code), so no stdlib churn.
+
+**Why 3 property tests as runtime-witness pattern, not metamorphic:**
+property #1 (obligation_scope) instruments AtomicInt counter from the
+consume-method body and compares against statically-expected count
+across 5 scenarios → cross-check between compiler's static obligations
+and runtime drops.  Property #2 (no_dangling_view) compiles a battery
+of valid view patterns — if any incorrectly bypassed D180, the fixture
+wouldn't compile (witness == compilation success).  Property #3
+(migration_completeness) exercises stdlib consume-types (Mutex,
+RwLock, StringBuilder) under D180 regime — runtime witness that
+stdlib bindings compose cleanly.  Pure metamorphic property tests
+(generate random valid programs and check invariants) deferred — the
+chosen runtime-witness pattern is consistent with Plan 103.4 style and
+sufficient for the acceptance criterion.
+
+**Remaining open:** `[M-73.1-comprehensive-negatives]` (returned view,
+generic-propagation D156 deep cases) — out-of-scope for V3, requires
+new analyzer territory.  No silent regressions.
+
 ## Plan 91.10 — D163 retract (capability syntax → effects)
 
 **Why retract D163 instead of fixing the trigger:** конкретный pain (`from_bytes_unchecked_steal(consume []u8)` требует `needs Cap` для pure memory ops) — это symptom of deeper conflation. D163 жёстко связал `consume` (ownership/linearity contract) с `needs Cap` (authority gate) — orthogonal concerns. Fix-the-trigger (добавить `needs Mem`/`needs Sys` placeholder) сохранил бы conflation; retract — устраняет root cause.

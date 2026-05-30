@@ -31,7 +31,7 @@ export fn Hex.encode_upper(data []u8) -> str =>
     encode_with(data, true)
 
 fn encode_with(data []u8, upper bool) -> str {
-    let mut buf = StringBuilder.with_capacity(data.len() * 2)
+    consume buf = StringBuilder.with_capacity(data.len() * 2)
     for b in data {
         let hi = (b as int) / 16
         let lo = (b as int) % 16

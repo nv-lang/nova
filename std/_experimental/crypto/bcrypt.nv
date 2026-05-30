@@ -176,7 +176,7 @@ const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 
 
 fn bcrypt_base64_encode(data []u8) -> str {
-    let mut buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
+    consume buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
     let mut i = 0
     while i + 2 < data.len() {
         let b0 = data[i] as u32

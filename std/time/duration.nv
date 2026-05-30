@@ -390,7 +390,7 @@ export fn Duration @into_human() -> str {
     if @is_zero() { return "0s" }
 
     let p = @parts()
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     let sign = if @nanos < 0 { "-" } else { "" }
     buf.append(sign)
 

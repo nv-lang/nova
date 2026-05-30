@@ -228,7 +228,7 @@ fn is_scheme_char(c char) -> bool =>
 /// `Into[str]` — serialize Url обратно в string. Round-trip с `Url.from`.
 #stable(since = "0.1")
 export fn Url @into() -> str {
-    let mut buf = StringBuilder.with_capacity(64)
+    consume buf = StringBuilder.with_capacity(64)
     buf = buf + @scheme + ":"
 
     if @host != None {
@@ -302,7 +302,7 @@ export fn Url @into() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    let mut buf = StringBuilder.with_capacity(s.len() * 2)    // worst case
+    consume buf = StringBuilder.with_capacity(s.len() * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)

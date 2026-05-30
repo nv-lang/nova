@@ -40,7 +40,7 @@ test "#impl(A + B + C): multi-protocol opt-in" {
     // Comparable.compare — explicit method (always works)
     assert(a.compare(c) < 0)
     // Printable.fmt via str.from(Coin) default — opted in
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     a.fmt(sb)
     assert(sb.as_str() == "Coin(5)")
 }
