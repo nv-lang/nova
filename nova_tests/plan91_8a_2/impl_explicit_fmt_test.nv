@@ -7,7 +7,7 @@ module nova_tests.plan91_8a_2.impl_explicit_fmt_test
 #impl(Printable)
 type Tag { name str }
 
-fn Tag @fmt(sb StringBuilder) -> () {
+fn Tag @fmt(mut sb StringBuilder) -> () {
     sb.append("Tag(")
     sb.append(@name)
     sb.append(")")

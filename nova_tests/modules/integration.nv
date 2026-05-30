@@ -47,7 +47,7 @@ type Op
     | OpMul
     | OpDup
 
-fn pop_or_zero(stack []int) -> int {
+fn pop_or_zero(mut stack []int) -> int {
     let v = stack.pop()
     match v {
         Some(x) => x

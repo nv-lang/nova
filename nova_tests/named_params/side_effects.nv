@@ -11,7 +11,7 @@
 
 module named_params.side_effects
 
-fn rec(sink []int, v int) -> int {
+fn rec(mut sink []int, v int) -> int {
     sink.push(v)
     v
 }

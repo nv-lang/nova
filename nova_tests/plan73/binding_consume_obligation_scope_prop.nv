@@ -18,7 +18,7 @@ type Token consume { val int }
 
 fn Token.new(v int) -> Token => { val: v }
 
-fn Token consume @release(counter AtomicInt) -> int {
+fn Token consume @release(mut counter AtomicInt) -> int {
     counter.fetch_add(1)
     @val
 }
