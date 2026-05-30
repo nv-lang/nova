@@ -25200,6 +25200,48 @@ M3 helper scope-fix (post-discovery):
 Plan 73.1 V3 ✅ ЗАКРЫТ.
 
 ================================================================================
+2026-05-30 — Plan 108.1 — Параметры readonly по умолчанию (D176 amend)
+================================================================================
+
+Sub-plan Plan 108.  Закрытие 1 из 2 honest-defer markers D176 enforcement.
+
+Что shipped:
+- Spec D176 amend: «Параметры функций (Plan 108.1)» — default = read-only,
+  opt-in `mut`, 3 запрещённых сочетания.
+- AST: Param.is_mut: bool новое поле.
+- Parser: принимает `mut name T` / `name mut T`; E_PARAM_MOD_CONFLICT для
+  `mut`+`consume`, `mut`+`readonly` (any order).
+- Type-checker:
+  - ConsumeRegistry.mut_methods registry (runtime + user + extern).
+  - ConsumeCtx.param_mut HashMap tracking.
+  - E_PARAM_NOT_MUT при вызове mut-метода на не-mut param + machine-
+    applicable Suggestion.
+  - Builtin collection mut-методы (push/pop/append/insert/clear/etc.) —
+    hardcoded HashSet (covers []T, [K:V], {T}).
+  - consume param → is_mut=true implicit.
+- 16 fixtures (7 pos + 8 neg + 1 prop) — 16/16 PASS.
+- Migration: 1 stdlib file (std/encoding/json.nv) + 9 test fixtures.
+- Docs: docs/parameters.md (~140 строк) + docs/migration/
+  d176-param-readonly-default.md (~120 строк).
+
+Тест результаты:
+- plan108_1/: 16/16 PASS
+- Полная регрессия: ~70 FAIL (vs baseline 65; концurrency flakiness,
+  0 новых E_PARAM_NOT_MUT).
+
+Honest-defer:
+- ✅ [M-108-readonly-mut-method-check] — CLOSED через E_PARAM_NOT_MUT.
+- 🔴 [M-108-readonly-coerce-on-param] — NOT CLOSED. Требует расширения
+  category-based assignability. Followup [M-108.1-readonly-coerce-arg-
+  boundary].
+- 🟡 [M-108.1-locals-readonly] — для Plan 108.2 (отдельный sub-plan).
+
+Branch: plan-108.1
+Worktree: D:\Sources\nv-lang\nova-p108-1
+
+Plan 108.1 ✅ ЗАКРЫТ.
+
+================================================================================
 2026-05-30 — Plan 91.10 + 91.11: D163 retract + SB cleanup + rename family
 ================================================================================
 

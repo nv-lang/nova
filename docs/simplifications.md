@@ -27542,6 +27542,46 @@ sufficient for the acceptance criterion.
 generic-propagation D156 deep cases) — out-of-scope for V3, requires
 new analyzer territory.  No silent regressions.
 
+## Plan 108.1 — параметры readonly по умолчанию (D176 amend, 2026-05-30)
+
+**Closes:** `[M-108-readonly-mut-method-check]` (mut-method вызов на
+non-mut param теперь даёт E_PARAM_NOT_MUT).
+
+**Why default = readonly (а не default = mutable):** «явность мутации» —
+mutation должна требовать opt-in keyword (как в Rust `&mut T`), а не быть
+silent default (Java/Go-style).  Согласует param-semantics с consume-
+системой D157 (там view-borrow уже default).  Без этого D176 был
+неполный: `readonly` существовал как явный модификатор, но фактический
+default тоже был «по сути readonly» по интуиции пользователя — поэтому
+изменение реализует то, что spec обещал de-facto.
+
+**Why два места проверки (registered mut_methods + hardcoded builtin
+collection names):** Registered методы (`mut_methods` HashSet) ловят
+все user-defined `mut @method` + stdlib `StringBuilder`/`WriteBuffer` —
+точные пары (type, method).  Builtin collection методы (`push`/`pop`/
+`append`/`insert`/etc.) на `[]T`/`[K:V]`/`{T}` не registered в runtime
+(handled специально в codegen), но distinguishable по method-name.
+Hardcoded HashSet (~20 names) — pragmatic compromise: covers 99% случаев
+без рискованного refactor'а builtin-method-resolution.
+
+**Why consume implies mut implicit (а не отдельный `consume mut`):**
+`consume` подразумевает ownership transfer — callee владеет полностью,
+включая право мутировать.  Требовать `consume mut` дублирует
+семантику; запрет `consume mut` (`E_PARAM_MOD_CONFLICT`) делает
+keywords orthogonal.
+
+**Why E_READONLY_COERCE отложен:** требует расширения category-based
+`assignable()` check'а в `types/mod.rs` для tracking `Readonly(T)`
+wrapper через TypeRef-категории.  Существующий код использует TyCat
+enum который не differentiates readonly от mutable.  Полная реализация —
+отдельная engineering задача на ~3-4 часа.  Followup
+`[M-108.1-readonly-coerce-arg-boundary]` documented; не silent.
+
+**Why locals (`let x = ...`) deferred to Plan 108.2:** scope (locals
+sweep) в 2-3 раза больше параметров; согласован с user.  Plan 108.1
+ships как меньший vertical slice.  Plan 108.2 будет mirror'нуть с
+extended sweep.
+
 ## Plan 91.10 — D163 retract (capability syntax → effects)
 
 **Why retract D163 instead of fixing the trigger:** конкретный pain (`from_bytes_unchecked_steal(consume []u8)` требует `needs Cap` для pure memory ops) — это symptom of deeper conflation. D163 жёстко связал `consume` (ownership/linearity contract) с `needs Cap` (authority gate) — orthogonal concerns. Fix-the-trigger (добавить `needs Mem`/`needs Sys` placeholder) сохранил бы conflation; retract — устраняет root cause.
