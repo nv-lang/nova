@@ -9282,33 +9282,11 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     applicability: crate::diag::Applicability::MachineApplicable,
                 }));
             }
-            // W_CONSUME_KEYWORD_UNNECESSARY: `consume` на non-consume RHS.
-            // Conservative: only emit if inferred type known AND not consume.
-            else if decl.consume && !rhs_yields_consume_type && !alias_obligated
-                && names.len() == 1 && inferred_ty_d180.is_some()
-            {
-                let consume_kw_span = crate::diag::Span {
-                    file_id: decl.span.file_id,
-                    start: decl.span.start,
-                    end: decl.span.start + 8, // "consume " = 8 chars (with trailing space)
-                };
-                errors.push(crate::diag::Diagnostic::new(
-                    format!(
-                        "[W_CONSUME_KEYWORD_UNNECESSARY] keyword `consume` на binding \
-                         `{}` избыточен — RHS типа `{}` не consume-обязателен (D180).",
-                        names[0],
-                        inferred_ty_d180.as_deref().unwrap_or("?")
-                    ),
-                    consume_kw_span,
-                ).with_note(
-                    "удали `consume ` для regular let-binding.".to_string(),
-                ).with_suggestion(crate::diag::Suggestion {
-                    message: "delete `consume ` keyword".to_string(),
-                    span: consume_kw_span,
-                    replacement: "let".to_string(),
-                    applicability: crate::diag::Applicability::MachineApplicable,
-                }));
-            }
+            // W_CONSUME_KEYWORD_UNNECESSARY: deferred V2 — требует project-wide
+            // consume_types registry для precision. lin_reg.consume_types
+            // module-local; cross-module consume-types (`MutexGuard` в sync.nv)
+            // ложно flag'ятся как "non-consume". Followup:
+            // [M-73.1-warning-needs-project-wide-registry].
 
             // Rule 3 (D180): `consume X = consume_var` = move semantics
             // (mark source Consumed, transfer obligation to X).
