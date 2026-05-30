@@ -24,7 +24,7 @@ test "[]Printable holds Money + Coin + Tag, iterate + fmt all" {
         x.fmt(sb)
         sb.append("|")
     }
-    assert(sb.to_str() == "Money(10)|Coin(5)|Tag(x)|")
+    assert(sb.as_str() == "Money(10)|Coin(5)|Tag(x)|")
 }
 
 test "[]Printable single element works" {
@@ -34,7 +34,7 @@ test "[]Printable single element works" {
     for x in xs {
         x.fmt(sb)
     }
-    assert(sb.to_str() == "Money(42)")
+    assert(sb.as_str() == "Money(42)")
 }
 
 test "[]Printable пустой массив — for-loop не выполняется" {
@@ -45,5 +45,5 @@ test "[]Printable пустой массив — for-loop не выполняет
         x.fmt(sb)
     }
     sb.append("after")
-    assert(sb.to_str() == "beforeafter")
+    assert(sb.as_str() == "beforeafter")
 }

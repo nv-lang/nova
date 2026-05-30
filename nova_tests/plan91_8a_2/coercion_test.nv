@@ -20,7 +20,7 @@ test "Money coerced to Printable via str.from, virtual fmt() call" {
     let x Printable = m
     let mut sb = StringBuilder.new()
     x.fmt(sb)
-    assert(sb.to_str() == "Money(99)")
+    assert(sb.as_str() == "Money(99)")
 }
 
 test "Coin coerced to Printable via @into, virtual fmt() call" {
@@ -28,7 +28,7 @@ test "Coin coerced to Printable via @into, virtual fmt() call" {
     let x Printable = c
     let mut sb = StringBuilder.new()
     x.fmt(sb)
-    assert(sb.to_str() == "Coin(5)")
+    assert(sb.as_str() == "Coin(5)")
 }
 
 test "multiple Printable values composed in same StringBuilder" {
@@ -42,5 +42,5 @@ test "multiple Printable values composed in same StringBuilder" {
     sb.append(", ")
     xc.fmt(sb)
     sb.append("]")
-    assert(sb.to_str() == "[Money(10), Coin(3)]")
+    assert(sb.as_str() == "[Money(10), Coin(3)]")
 }

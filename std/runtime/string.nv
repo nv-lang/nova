@@ -80,6 +80,11 @@ export external fn str @as_bytes() -> readonly []u8
 export external fn str.from_bytes_lossy(readonly bytes []u8) -> str
 // Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
 export external fn str.from_bytes_unchecked(readonly bytes []u8) -> str
+// Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
+// (writes '\0' at data[len] in-place); falls back to alloc+copy if cap == len.
+// Caller must consume the source array — array unusable after call.
+// Plan 91.10: D163 `needs <Cap>` retracted, plain external fn syntax.
+export external fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str
 
 // Codepoints как []char (allocating). D178: renamed from @chars().
 export external fn str @to_chars() -> []char
@@ -130,7 +135,7 @@ export fn str @pad_left(width int, fill char) -> str {
     let pad = width - @len()
     if pad <= 0 { return @ }
     let fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).to_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
 }
 
 // Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
@@ -138,13 +143,13 @@ export fn str @pad_right(width int, fill char) -> str {
     let pad = width - @len()
     if pad <= 0 { return @ }
     let fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).to_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
 export fn str @repeat(n int) -> str {
     if n <= 0 { return "" }
-    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).to_str()
+    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).as_str()
 }
 
 // Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.

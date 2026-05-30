@@ -106,12 +106,27 @@ static inline nova_str nova_str_from_bytes_unchecked(NovaArray_nova_byte* arr) {
     return (nova_str){.ptr = buf, .len = (size_t)arr->len};
 }
 
+/* str.from_bytes_unchecked_steal(consume bytes []u8) -> str.
+ * Zero-copy steal: reuse arr->data ptr, write '\0' at data[len] in-place
+ * if capacity allows; else fall back to alloc+copy. Caller MUST consume
+ * the source array (consume parameter — array unusable after call). */
+static inline nova_str nova_str_steal_bytes(NovaArray_nova_byte* arr) {
+    if (arr->cap > arr->len) {
+        arr->data[arr->len] = '\0';
+        return (nova_str){.ptr = (char*)arr->data, .len = (size_t)arr->len};
+    }
+    char* buf = (char*)nova_alloc((size_t)arr->len + 1);
+    if (arr->len > 0) memcpy(buf, arr->data, (size_t)arr->len);
+    buf[arr->len] = '\0';
+    return (nova_str){.ptr = buf, .len = (size_t)arr->len};
+}
+
 /* str.from_bytes_lossy(bytes readonly []u8) -> str.
  * Replaces invalid UTF-8 sequences with U+FFFD. */
 static inline nova_str nova_str_from_bytes_lossy(NovaArray_nova_byte* arr) {
     static const nova_byte FFFD[3] = {0xEF, 0xBF, 0xBD};
     if (_nova_validate_utf8(arr->data, arr->len)) {
-        return nova_str_from_bytes_unchecked(arr);
+        return nova_str_from_bytes_unchecked(arr);  // readonly path: copy is required
     }
     int64_t cap = arr->len * 3 + 1;
     char* out = (char*)nova_alloc((size_t)cap);

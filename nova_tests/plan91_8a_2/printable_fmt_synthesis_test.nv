@@ -25,14 +25,14 @@ test "Money satisfies Printable bound via str.from(T) overload" {
     let m = Money { cents: 1250 }
     let mut sb = StringBuilder.new()
     show(m, sb)
-    assert(sb.to_str() == "Money(1250)")
+    assert(sb.as_str() == "Money(1250)")
 }
 
 test "Coin satisfies Printable bound via @into → str chain" {
     let c = Coin { value: 7 }
     let mut sb = StringBuilder.new()
     show(c, sb)
-    assert(sb.to_str() == "Coin(7)")
+    assert(sb.as_str() == "Coin(7)")
 }
 
 test "synthesized fmt composable with explicit appends" {
@@ -43,5 +43,5 @@ test "synthesized fmt composable with explicit appends" {
     show(m1, sb)
     sb.append(", second=")
     show(m2, sb)
-    assert(sb.to_str() == "first=Money(100), second=Money(250)")
+    assert(sb.as_str() == "first=Money(100), second=Money(250)")
 }
