@@ -21,7 +21,7 @@ test "MP litmus: Acquire/Release -- payload visible after flag observed" {
 
     for _iter in 0..n_iters {
         let payload = AtomicI64.new(0)
-        let flag    = AtomicBool.new(false)
+        let mut flag = AtomicBool.new(false)
 
         supervised {
             // Writer: publish payload under Release
@@ -96,7 +96,7 @@ test "MP litmus: SeqCst store/load is also correct for message passing" {
 
     for _iter in 0..n_iters {
         let payload = AtomicI64.new(0)
-        let flag    = AtomicBool.new(false)
+        let mut flag = AtomicBool.new(false)
 
         supervised {
             spawn {

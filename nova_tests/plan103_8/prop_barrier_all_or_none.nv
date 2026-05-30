@@ -17,7 +17,7 @@ module nova_tests.plan103_8.prop_barrier_all_or_none
 test "prop barrier all-or-none: 8 fibers × 10 rounds, all indices covered each round" {
     let n        = 8
     let n_rounds = 10
-    let barrier  = Barrier.new(n)
+    let mut barrier = Barrier.new(n)
     let round_sum = AtomicI64.new(0)  // sum of all arrival indices across all rounds
     let mut wg = WaitGroup.new()
     wg.add(n)
@@ -43,7 +43,7 @@ test "prop barrier all-or-none: 8 fibers × 10 rounds, all indices covered each 
 
 test "prop barrier: cyclic reuse — two consecutive rounds both complete" {
     let n       = 4
-    let barrier = Barrier.new(n)
+    let mut barrier = Barrier.new(n)
     let r1_sum  = AtomicI64.new(0)
     let r2_sum  = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
@@ -67,7 +67,7 @@ test "prop barrier: cyclic reuse — two consecutive rounds both complete" {
 
 test "prop barrier: wait_with_action — action runs exactly once per round" {
     let n             = 4
-    let barrier       = Barrier.new(n)
+    let mut barrier = Barrier.new(n)
     let action_count  = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(n)
@@ -86,7 +86,7 @@ test "prop barrier: wait_with_action — action runs exactly once per round" {
 
 test "prop barrier: is_broken stays false when no timeout" {
     let n       = 4
-    let barrier = Barrier.new(n)
+    let mut barrier = Barrier.new(n)
     let mut wg = WaitGroup.new()
     wg.add(n)
 

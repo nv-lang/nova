@@ -166,7 +166,7 @@ test "AtomicBool: swap true→false returns previous" {
 // the previous value — the "winner" of the one-shot ownership race.
 // This is the canonical once-flag pattern without Once.
 test "AtomicBool: swap one-shot ownership — exactly one winner" {
-    let flag = AtomicBool.new(false)
+    let mut flag = AtomicBool.new(false)
     let winners = AtomicInt.new(0)
     supervised {
         spawn {

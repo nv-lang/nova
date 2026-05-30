@@ -23,7 +23,7 @@ test "IRIW AcqRel: 1000 iterations complete without crash, all values valid {0,1
 
     for _iter in 0..n_iters {
         let mut x = AtomicI64.new(0)
-        let y = AtomicI64.new(0)
+        let mut y = AtomicI64.new(0)
         let r1 = AtomicI64.new(-1)
         let r2 = AtomicI64.new(-1)
         let r3 = AtomicI64.new(-1)

@@ -30,7 +30,7 @@ test "Once.call_once stress: 16 fibers × 100 calls, init executes exactly once"
 test "OnceCell stress: 16 fibers × 100 get_or_init calls, init once, value stable" {
     let mut cell = OnceCell[int].new()
     let mut init_count = AtomicInt.new(0)
-    let wrong_count = AtomicInt.new(0)
+    let mut wrong_count = AtomicInt.new(0)
 
     parallel for _i in 0..16 {
         for _j in 0..100 {
@@ -54,7 +54,7 @@ test "Lazy stress: 16 fibers × 100 force calls, init once, value stable" {
         init_count.fetch_add(1)
         8888
     }
-    let wrong_count = AtomicInt.new(0)
+    let mut wrong_count = AtomicInt.new(0)
 
     parallel for _i in 0..16 {
         for _j in 0..100 {

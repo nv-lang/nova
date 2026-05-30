@@ -28,7 +28,7 @@ test "IRIW SeqCst: forbidden observation (1,0)/(1,0) never occurs over 1000 iter
 
     for _iter in 0..n_iters {
         let mut x = AtomicI64.new(0)
-        let y = AtomicI64.new(0)
+        let mut y = AtomicI64.new(0)
 
         // Results from readers
         let r1 = AtomicI64.new(-1)  // Reader1 sees X

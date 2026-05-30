@@ -9,8 +9,8 @@ module nova_tests.plan103_8.prop_semaphore_bounded_concurrency
 
 test "prop semaphore bounded: K=3, N=8 fibers — max in-flight never exceeds 3" {
     let mut sem = Semaphore.new(3)
-    let in_flight = AtomicI64.new(0)
-    let violation = AtomicI64.new(0)
+    let mut in_flight = AtomicI64.new(0)
+    let mut violation = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(8)
 
@@ -40,8 +40,8 @@ test "prop semaphore bounded: K=3, N=8 fibers — max in-flight never exceeds 3"
 
 test "prop semaphore bounded: K=2, N=8 fibers — explicit acquire/release" {
     let mut sem = Semaphore.new(2)
-    let in_flight = AtomicI64.new(0)
-    let violation = AtomicI64.new(0)
+    let mut in_flight = AtomicI64.new(0)
+    let mut violation = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(8)
 

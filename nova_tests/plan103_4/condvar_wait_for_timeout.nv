@@ -32,7 +32,7 @@ test "wait_for times out when no notify arrives" {
 test "wait_for returns Notified when notify arrives before timeout" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
-    let n_waiting = AtomicInt.new(0)
+    let mut n_waiting = AtomicInt.new(0)
     let mut result = AtomicInt.new(-1)
 
     supervised {

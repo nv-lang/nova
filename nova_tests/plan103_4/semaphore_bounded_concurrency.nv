@@ -10,8 +10,8 @@ module nova_tests.plan103_4.semaphore_bounded_concurrency
 
 test "Semaphore: bounded concurrency observable — max in-flight <= permits" {
     let mut sem = Semaphore.new(3)
-    let in_flight = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
+    let mut in_flight = AtomicInt.new(0)
+    let mut violation = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     let n_fibers  = 10
     wg.add(n_fibers)

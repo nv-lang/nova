@@ -15,7 +15,7 @@ test "no-overcommit: concurrent_in_region never exceeds N (16 fibers, 3 permits,
     let n_iters   = 100
     let mut sem = Semaphore.new(n_permits)
     let mut inside = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
+    let mut violation = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(n_fibers)
 
@@ -43,7 +43,7 @@ test "no-overcommit: acquire/defer-release variant (8 fibers, 2 permits, 200 ite
     let n_iters   = 200
     let mut sem = Semaphore.new(n_permits)
     let mut inside = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
+    let mut violation = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(n_fibers)
 

@@ -42,7 +42,7 @@ test "fence внутри parallel for — каждая итерация" {
 }
 
 test "fence(Relaxed) — no-op, не нарушает fiber scheduling" {
-    let flag = AtomicBool.new(false)
+    let mut flag = AtomicBool.new(false)
     supervised {
         spawn {
             fence(Relaxed)

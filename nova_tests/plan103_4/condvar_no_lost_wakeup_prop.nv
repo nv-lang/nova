@@ -18,7 +18,7 @@ test "no lost wakeup: producer/consumer over 100 iterations" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
     let produced = AtomicInt.new(0)
-    let consumed = AtomicInt.new(0)
+    let mut consumed = AtomicInt.new(0)
     let n_iters  = 100
 
     supervised {

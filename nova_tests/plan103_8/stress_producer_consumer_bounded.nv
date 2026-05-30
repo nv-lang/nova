@@ -82,7 +82,7 @@ test "bounded buffer: 2 producers + 2 consumers Ð“â€” 100 items Ð²Ð�
     let not_full   = Condvar.new()
     let pending    = AtomicI64.new(0)
     let produced   = AtomicI64.new(0)
-    let consumed   = AtomicI64.new(0)
+    let mut consumed = AtomicI64.new(0)
     let cap        = 4
     let items_each = 100
     let mut wg = WaitGroup.new()

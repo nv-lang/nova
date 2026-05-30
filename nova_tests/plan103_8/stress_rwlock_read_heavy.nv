@@ -15,7 +15,7 @@ test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
     let mut rw = RwLock.new()
     let mut shared = AtomicI64.new(0)   // always even (writer adds 2)
     let mut torn = AtomicI64.new(0)
-    let written = AtomicI64.new(0)
+    let mut written = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(5)   // 4 readers + 1 writer
 

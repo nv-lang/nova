@@ -23,7 +23,7 @@ test "Semaphore: M:N bounded concurrency with explicit Permit" {
     let k = 3
     let mut sem = Semaphore.new(k)
     let mut inside = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
+    let mut violation = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     let n = 8
     wg.add(n)

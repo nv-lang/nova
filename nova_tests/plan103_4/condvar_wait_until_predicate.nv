@@ -72,7 +72,7 @@ test "wait_until survives multiple spurious wakes before predicate true" {
     let mut cv = Condvar.new()
     let target    = AtomicInt.new(0)  // consumer wants target == 3
     let done_flag = AtomicBool.new(false)
-    let n_waiting = AtomicInt.new(0)
+    let mut n_waiting = AtomicInt.new(0)
 
     supervised {
         spawn {

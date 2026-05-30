@@ -13,7 +13,7 @@ import std.time.duration
 
 test "8 fibers all pass barrier simultaneously" {
     let n = 8
-    let barrier = Barrier.new(n)
+    let mut barrier = Barrier.new(n)
     let indices = AtomicInt.new(0)   // bitmask of seen arrival indices
     let mut wg = WaitGroup.new()
     wg.add(n)

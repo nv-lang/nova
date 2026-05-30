@@ -15,7 +15,7 @@ test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore
     let n_iters   = 200
     let mut sem = Semaphore.new(2)
     let mut mu = Mutex.new()
-    let barrier   = Barrier.new(4)
+    let mut barrier = Barrier.new(4)
 
     // Counters we verify at end
     let atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers

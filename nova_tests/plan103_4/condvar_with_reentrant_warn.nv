@@ -15,7 +15,7 @@ test "Condvar.wait(ReentrantMutex) emits W_REENTRANT_CONDVAR_RECOMMEND and works
     let mut rm = ReentrantMutex.new()
     let mut cv = Condvar.new()
     let done = AtomicBool.new(false)
-    let n_waiting = AtomicInt.new(0)
+    let mut n_waiting = AtomicInt.new(0)
 
     supervised {
         spawn {
