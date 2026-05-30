@@ -2676,7 +2676,11 @@ acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
 
 ## D176. `readonly T` — тип-модификатор
 
-> Status: active (Plan 108, 2026-05-28)
+> Status: active (Plan 108, 2026-05-28); amended (Plan 108.1, 2026-05-30)
+>
+> **Amendment 108.1:** параметры функций default = read-only. Hочешь
+> menять — `fn f(mut b T)`. Подробности в разделе «Параметры функций
+> (Plan 108.1)» ниже.
 
 ### Что
 
@@ -2720,11 +2724,60 @@ Zero overhead — `readonly` только compile-time проверка, не в
 `str.as_bytes() -> readonly []u8` — zero-copy view в UTF-8 буфер строки
 без memcpy. UTF-8 invariant защищён: записать в буфер нельзя.
 
+### Параметры функций (Plan 108.1)
+
+**Default = read-only.** Параметр без явного модификатора эквивалентен
+`readonly param T` — callee может только читать, не вызывать `mut`-методы,
+не присваивать через индекс.
+
+```nova
+fn f(b []int) { b.push(1) }       // ✗ E_PARAM_NOT_MUT — нет `mut`
+fn f(mut b []int) { b.push(1) }   // ✓ explicit mut
+fn f(readonly b []int) { ... }    // ✓ synonym default (для документации)
+fn f(consume b []int) { ... }     // ✓ owned move — mut по умолчанию
+```
+
+**Правила сочетания модификаторов:**
+
+| Сочетание | Результат |
+|---|---|
+| `param T` | readonly (default) |
+| `mut param T` | mutable view |
+| `readonly param T` | readonly (явно) — synonym default |
+| `consume param T` | owned move, mut by default |
+| `mut consume param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
+| `consume mut param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
+| `mut readonly param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
+| `readonly mut param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
+
+**Coercion (передача аргумента в параметр):**
+
+| caller-type → callee-param-type | OK? |
+|---|---|
+| `T → T` (default readonly) | ✓ |
+| `T → readonly T` | ✓ (явная readonly) |
+| `T → mut T` | ✓ (caller разрешает mut доступ) |
+| `readonly T → T` | ✗ `E_READONLY_COERCE` |
+| `readonly T → mut T` | ✗ `E_READONLY_COERCE` |
+| `readonly T → readonly T` | ✓ |
+| `mut T → T` | ✓ (сужение, mutable аргумент может быть readonly виден callee'у) |
+
+**Closure-параметры** — аналогично функциональным.
+
+### Закрытые маркеры (Plan 108.1)
+
+- ✅ `[M-108-readonly-mut-method-check]` — вызов `mut`-метода на
+  параметре без `mut` теперь даёт `E_PARAM_NOT_MUT`.
+- ✅ `[M-108-readonly-coerce-on-param]` — передача `readonly T` в
+  `T`-параметр теперь даёт `E_READONLY_COERCE`.
+
 ### Связь
 - [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — `readonly field` предшественник
 - [D175](#d175-readonly-field--полный-freeze-амендмент-d36) — readonly field enforcement
 - [D144](#d144-sub-slice-views-для-t-и-str--arra-b--sa-b) — слайсы `arr[a..b]`
-- Plan 108 — реализация
+- [D157](#d157) — view-borrow для consume-типов (Plan 108.1 распространяет принцип на не-consume)
+- Plan 108 — реализация D175/D176
+- Plan 108.1 — params readonly by default + закрытие 2 markers
 
 ---
 
