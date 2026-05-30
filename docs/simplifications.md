@@ -27452,3 +27452,43 @@ default methods explicit как boilerplate compatibility. Part 2 даёт
 **Why parameter-passing вместо capture в migrated `blocking` tests:** `blocking { result = compute(n) }` block-form поддерживал capture mutable outer vars (через addr-of). Это leaked memory semantics в effect-system (parking offload should NOT have shared mutable state). `#blocking fn` — обычная fn signature, args by value. Migration `concurrency/blocking_test.nv`: 17 capture tests переписаны на param-passing fn helpers. Это правильнее семантически (no race condition on captured vars across worker boundary) и unifies model с обычным Nova call.
 
 **Why `nogc` ident consume in `parse_item` (not `parse_sync_class_attr`):** `parse_sync_class_attr` runs ДО `is_export`/`is_external` consumption, parses `#realtime` (KwRealtime) as SyncClass annotation. Тогда `nogc` (обычный Ident, не keyword) остаётся в потоке token'ов и confuses subsequent parsers (`parse_type_attrs` пытается интерпретировать как `#nogc` type-attr но fails because no `#` prefix). Fix — после `parse_sync_class_attr` явно consume optional `nogc` если SyncClass::Realtime был распознан. Альтернатива — promote `nogc` в keyword (breaking) или объединить sync_class и realtime_attr parsers (architectural change). Targeted fix keeps surface minimal.
+
+## Plan 73.1 — `consume` binding syntax (D180 V2, 2026-05-28)
+
+**Why view-binding в теле fn запрещён вместо lifetime tracking (Rust-style):**
+Nova's design philosophy — без lifetime annotations (D157 view-default).
+Чтобы добавить view-binding в теле (`let view = consume_var`), нужен Rust-style
+borrow checker с lifetimes. Этого Nova не делает by design.
+Restriction-based решение: views существуют ТОЛЬКО как function-params
+(lifetime ограничен временем call by stack semantics). Тяжёлый restriction,
+но dangling-view невозможен by construction — нулевая complexity для user'а.
+
+**Why новый D180 (не D131 amend):** D131 закрыт. Plan 73.1 вводит 3 новых
+semantic rule'а (require keyword on RHS, forbid alias-binding, move semantics
+on consume keyword) — это design additions, не уточнения. Отдельный D-block —
+чище historical record + cross-refs работают по anchor'у.
+
+**Why W_CONSUME_KEYWORD_UNNECESSARY removed в V1
+([M-73.1-warning-needs-project-wide-registry]):** `lin_reg.consume_types`
+module-local; cross-module consume-types (MutexGuard в std/runtime/sync.nv)
+не видны из тестовых модулей → ложно flag'ятся как «non-consume».
+В исходной реализации warning срабатывал на ВСЕХ
+`consume X = mu.lock()` тестах в plan103_9/. Removal для V1 stability.
+V2 fix: project-wide consume_types registry (большая работа, отдельный план).
+
+**Why E_CONSUME_KEYWORD_MISSING conservative для cross-module
+([M-73.1-cross-module-consume-detection]):** Same root cause — module-local
+registry. `let g = mu.lock()` cross-module не fail'ит. Consistent с D131
+§«Границы»: sound (false-negative permissive), не false-positive.
+
+**Why StringBuilder.from(c char) rewritten via delegation
+([M-73.1-fluent-return-implicit-consume]):** Old pattern
+`{ let mut sb = StringBuilder.new(); sb.append(c) }` нарушал D180:
+- `let mut sb = consume-type` → E_CONSUME_KEYWORD_MISSING
+- Fix to `consume sb = ...` → sb consume-obligation, но `sb.append(c)`
+  (fluent `-> @`) НЕ consumes sb; implicit return value тоже не считается
+  consume в текущем D131 flow.
+Two paths forward: (a) extend D131 flow для detecting implicit-return как
+consume operation (real engineering work), (b) rewrite function. V1 went
+with (b) via delegation `from(c) => from(str.from(c))`. Semantic identity
+preserved through str-based ctor. V2 fix path (a).
