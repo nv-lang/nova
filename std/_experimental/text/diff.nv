@@ -87,7 +87,7 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
 /// Pretty-print: `+` для Insert, `-` для Delete, ` ` для Equal. Newline-separated.
 #stable(since = "0.1")
 export fn Diff.format(ops []DiffOp) -> str {
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     for op in ops {
         match op {
             Equal(s) => { buf.append(' '); buf.append(s) }

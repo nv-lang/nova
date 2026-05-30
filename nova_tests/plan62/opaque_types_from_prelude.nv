@@ -23,7 +23,7 @@ module plan62.opaque_types_from_prelude
 
 
 test "StringBuilder visible через prelude (no explicit import)" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello, ")
     sb.append("world")
     let s = sb.as_str()
@@ -66,7 +66,7 @@ fn takes_sb(consume sb StringBuilder) -> str => sb.as_str()
 
 
 test "StringBuilder usable as function parameter type" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("ok")
     assert(takes_sb(sb) == "ok")
 }

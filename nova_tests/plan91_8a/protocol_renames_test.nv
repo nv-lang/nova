@@ -72,7 +72,7 @@ fn Buffer @fmt(sb StringBuilder) -> () {
 
 test "Printable.fmt — StringBuilder formatting" {
     let b = Buffer { data: "hello" }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     b.fmt(sb)
     assert(sb.as_str() == "Buffer(hello)")
 }

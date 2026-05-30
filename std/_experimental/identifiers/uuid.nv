@@ -222,7 +222,7 @@ export fn Uuid @hash() -> u64 => @hi ^ @lo
 /// Round-trip с `Uuid.from`.
 #stable(since = "0.1")
 export fn Uuid @into() -> str {
-    let mut buf = StringBuilder.with_capacity(36)
+    consume buf = StringBuilder.with_capacity(36)
 
     // 4 байта hi MSB → 8 hex
     write_hex_u32(buf, (@hi >> 32) as u32)

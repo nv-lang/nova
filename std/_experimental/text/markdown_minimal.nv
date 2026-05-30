@@ -39,12 +39,12 @@ module text.markdown_minimal
 /// ```
 #stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
-    let mut buf = StringBuilder.with_capacity(md.len() * 2)
+    consume buf = StringBuilder.with_capacity(md.len() * 2)
     let lines = md.split("\n")
     let mut i = 0
     let mut in_code_block = false
     let mut in_list = false
-    let mut paragraph = StringBuilder.new()
+    consume paragraph = StringBuilder.new()
 
     while i < lines.len() {
         let line = lines[i]
@@ -142,7 +142,7 @@ fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
 
 // Inline parsing: **bold**, *italic*, `code`, [text](url)
 fn render_inline(s str) -> str {
-    let mut buf = StringBuilder.with_capacity(s.len())
+    consume buf = StringBuilder.with_capacity(s.len())
     let mut i = 0
     while i < s.len() {
         let c = match s.char_at(i) { Some(ch) => ch, None => break }
@@ -238,7 +238,7 @@ fn find_in(s str, target char, start int) -> Option[int] {
 
 
 fn escape_html(s str) -> str {
-    let mut buf = StringBuilder.with_capacity(s.len())
+    consume buf = StringBuilder.with_capacity(s.len())
     for c in s.chars() {
         match c {
             '<' => buf.append("&lt;")

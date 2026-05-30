@@ -170,7 +170,7 @@ export fn Pair @fmt(sb StringBuilder) -> () {
 // напрямую (бойлерплейт через bound dispatch — Plan 56 effect-free
 // разрешает mutating receiver через `mut @method`).
 fn fmt_to_string[T Printable](v T) -> str {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     v.fmt(sb)
     sb.as_str()
 }

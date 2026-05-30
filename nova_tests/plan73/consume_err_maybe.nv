@@ -7,7 +7,7 @@
 module nova_tests.plan73.consume_err_maybe
 
 fn run(flag bool) -> int {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("data")
     if flag {
         let _gone = sb.as_str()

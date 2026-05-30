@@ -184,7 +184,7 @@ export fn StrGen.default() -> StrGen =>
 #stable(since = "0.1")
 export fn StrGen @generate() Random -> str {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     for i in 0..len {
         // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char.
         // Plan 34 Ф.5.2: `int as char` запрещён D54.

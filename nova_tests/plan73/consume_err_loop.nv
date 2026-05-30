@@ -7,7 +7,7 @@
 module nova_tests.plan73.consume_err_loop
 
 fn drain_loop() -> int {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("x")
     let mut n = 0
     while n < 3 {

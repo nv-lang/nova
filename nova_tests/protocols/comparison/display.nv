@@ -20,21 +20,21 @@ fn Point @fmt(mut sb StringBuilder) -> () {
 
 test "Point @fmt — пишет representation в StringBuilder" {
     let p = Point { x: 3, y: 4 }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     p.fmt(sb)
     assert(sb.as_str() == "(3, 4)")
 }
 
 test "Point @fmt — отрицательные координаты" {
     let p = Point { x: -1, y: -20 }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     p.fmt(sb)
     assert(sb.as_str() == "(-1, -20)")
 }
 
 test "Point @fmt — в непустой буфер дописывает" {
     let p = Point { x: 0, y: 0 }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("origin: ")
     p.fmt(sb)
     assert(sb.as_str() == "origin: (0, 0)")
@@ -58,7 +58,7 @@ test "вложенный Printable — Segment делегирует Point.fmt" {
         a: Point { x: 1, y: 1 },
         b: Point { x: 5, y: 9 },
     }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     seg.fmt(sb)
     assert(sb.as_str() == "[(1, 1) -> (5, 9)]")
 }
@@ -69,7 +69,7 @@ test "вложенный Printable — Segment делегирует Point.fmt" {
 test "Printable — несколько объектов в один буфер" {
     let p1 = Point { x: 1, y: 2 }
     let p2 = Point { x: 3, y: 4 }
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     p1.fmt(sb)
     sb.append(" ")
     p2.fmt(sb)

@@ -8875,7 +8875,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 }
                 match &f.body {
                     FnBody::Block(b) => {
-                        consume_walk_block(&mut ctx, b, errors);
+                        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]:
+                        // FnBody-level trailing fluent-chain → mark chain root
+                        // Consumed via the `is_fn_body_trailing` variant.
+                        consume_walk_block_inner(&mut ctx, b, errors, true);
                         // Plan 100.1 (D133): exit-point checks.
                         let exit_span = b.span;
                         ctx.check_obligations_at_exit(exit_span, errors);
@@ -9158,6 +9161,22 @@ fn implicit_return_consume_var(ctx: &ConsumeCtx, e: &Expr) -> Option<String> {
 }
 
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    consume_walk_block_inner(ctx, b, errors, false);
+}
+
+/// Plan 73.1 V3: variant taking `is_fn_body_trailing` flag.  When true,
+/// the block's trailing expression is treated as the function's implicit
+/// return value, so a fluent-chain trailing
+/// (`sb.append(x).append(y)`) marks its consume-obligation root Consumed.
+/// Nested blocks (if-then, loop-body, regular `{}`) call with `false`
+/// because their trailing value is usually discarded by the outer
+/// statement / if-without-else.
+fn consume_walk_block_inner(
+    ctx: &mut ConsumeCtx,
+    b: &Block,
+    errors: &mut Vec<Diagnostic>,
+    is_fn_body_trailing: bool,
+) {
     // Plan 100.1 (D133): track consume-obligations introduced in this block.
     // На exit'е блока проверяем только NEW obligations (не было до входа).
     let obligations_before = ctx.consume_obligations.clone();
@@ -9168,11 +9187,18 @@ fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnost
     if let Some(t) = &b.trailing {
         consume_walk_expr(ctx, t, errors);
         // Plan 100.1 (D133 / D9): trailing expr = implicit return.
-        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]: extended to
-        // cover fluent-return method-chains (`sb.append(c)` where `append`
-        // returns `@`).  Ident-trailing remains supported (direct path).
-        if let Some(name) = implicit_return_consume_var(ctx, t) {
-            ctx.mark_consumed(&name, t.span);
+        // Ident-trailing always counts as implicit-return-of-value (existing
+        // V1 semantics — preserved for compatibility).  Fluent-chain
+        // trailing only counts when this block is the function body
+        // (Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]).
+        if is_fn_body_trailing {
+            if let Some(name) = implicit_return_consume_var(ctx, t) {
+                ctx.mark_consumed(&name, t.span);
+            }
+        } else if let ExprKind::Ident(name) = &t.kind {
+            if ctx.consume_obligations.contains(name.as_str()) {
+                ctx.mark_consumed(name, t.span);
+            }
         }
     }
 
@@ -9931,6 +9957,23 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         consume_walk_expr(ctx, obj, errors);
                         for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                         if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
+                        // Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume] extension:
+                        // chain `var.fluent1(...).fluent2(...).consume_method(...)` —
+                        // detect chain root, check that root + method matches a consume
+                        // method on root's type, mark root Consumed.
+                        if let Some(root) = implicit_return_consume_var(ctx, obj) {
+                            if let Some(ty) = ctx.var_types.get(&root).cloned() {
+                                if ctx.reg.methods.contains(&(ty.clone(), method.clone())) {
+                                    ctx.mark_consumed(&root, e.span);
+                                }
+                                // Also: consume-param indexes for chain-receiver consume args.
+                                if let Some(idxs) = ctx.reg.method_params
+                                    .get(&(ty, method.clone())).cloned()
+                                {
+                                    ctx.consume_args(args, &idxs, e.span);
+                                }
+                            }
+                        }
                     }
                 }
                 // Free-fn call: f(args).

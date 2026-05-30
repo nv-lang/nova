@@ -1,15 +1,18 @@
-// EXPECT_COMPILE_ERROR D131
+// EXPECT_COMPILE_ERROR E_VIEW_BINDING_FORBIDDEN
 //
-// Plan 77 (D132) + Plan 73 (D131): builder-chain alias.
+// Plan 77 (D132) + Plan 73.1 V3 (D180 Rule 2): builder-chain alias.
 // `append` объявлен `-> @` → `let sb2 = sb.append(...)` делает `sb2`
-// алиасом `sb`. consume через `sb2` инвалидирует и `sb`.
+// view-alias на consume-obligation `sb` → E_VIEW_BINDING_FORBIDDEN.
+// (V1 caught this later as D131-use-after-consume; V3 catches at the
+// alias-binding site syntactically — dangling-view impossible by
+// construction.)
 
 module nova_tests.plan77.fluent_chain_alias_err
 
 test "use after consume через builder-chain alias" {
-    let sb = StringBuilder.new()
-    let sb2 = sb.append("a")   // sb2 — алиас sb (append: -> @)
-    let s = sb2.as_str()       // consume через alias
-    sb.append("b")             // ОШИБКА D131: sb — алиас потреблённого
+    consume sb = StringBuilder.new()
+    let sb2 = sb.append("a")   // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
+    let s = sb2.as_str()
+    sb.append("b")
     assert(s == "a")
 }

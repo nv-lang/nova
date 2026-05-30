@@ -16,7 +16,7 @@ fn Tag @fmt(sb StringBuilder) -> () {
 test "verified #impl(Printable) with explicit @fmt" {
     let t = Tag { name: "hello" }
     // Bare call works (explicit method, не synth)
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     t.fmt(sb)
     assert(sb.as_str() == "Tag(hello)")
 }

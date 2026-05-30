@@ -5,7 +5,7 @@
 module nova_tests.plan77.fluent_stdlib_ok
 
 test "StringBuilder fluent chain через -> @" {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     let s = sb.append("a").append("b").append("c").as_str()
     assert(s == "abc")
 }

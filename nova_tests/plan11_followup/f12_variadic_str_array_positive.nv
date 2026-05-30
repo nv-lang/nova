@@ -8,7 +8,7 @@ module plan11_followup.f12_variadic_str_array_positive
 // Эти тесты verify оба варианта (positional + spread) для variadic str-fn.
 
 export fn join_strings(...parts []str) -> str {
-    let mut buf = StringBuilder.new()
+    consume buf = StringBuilder.new()
     let mut first = true
     for p in parts {
         if !first { buf.append(",") }
