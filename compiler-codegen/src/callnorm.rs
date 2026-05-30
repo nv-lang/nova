@@ -502,7 +502,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
 fn let_stmt(name: &str, value: Expr, span: Span) -> Stmt {
     Stmt::Let(LetDecl {
         mutable: false,
-        pattern: Pattern::Ident { name: name.to_string(), span },
+        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
         ty: None,
         value,
         span,

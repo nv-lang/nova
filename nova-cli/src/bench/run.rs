@@ -664,6 +664,7 @@ pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
                         pattern: Pattern::Ident {
                             name: params.var_name.clone(),
                             span: params.span,
+                            is_mut: false,
                         },
                         ty: None,
                         value: int_lit,

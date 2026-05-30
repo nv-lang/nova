@@ -3310,6 +3310,21 @@ impl Parser {
         } else { false };
         self.expect(&TokenKind::KwLet)?;
         let mutable = self.eat(&TokenKind::KwMut).is_some();
+        // Plan 108.3 (D36 amend): запрет group-mut на pattern.
+        // `let mut (a, b) = ...` — `mut` относится к pattern целиком,
+        // что неоднозначно (a mutable? b mutable? оба?).  Правильная
+        // форма — per-name: `let (mut a, b) = ...`.
+        if mutable && matches!(self.peek().kind,
+            TokenKind::LParen | TokenKind::LBrace | TokenKind::LBracket)
+        {
+            return Err(Diagnostic::new(
+                "[E_PATTERN_GROUP_MUT] `let mut` не может применяться к pattern \
+                 (tuple/record/array).  Используй per-name `mut` внутри pattern: \
+                 `let (mut a, b) = ...` (D36 amend Plan 108.3)."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
         let pattern = self.parse_pattern()?;
         let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
             Some(self.parse_type()?)
@@ -6036,13 +6051,20 @@ impl Parser {
         // Mutually exclusive with `mut` (view and consume are different modes).
         // Must be checked BEFORE `mut` since consume is a distinct mode.
         let iter_consume = self.eat(&TokenKind::KwConsume).is_some();
-        // Plan 87: `for mut x [TYPE] in` — `mut` помечает loop-переменную
-        // мутабельной (D32/D33). `parse_pattern` не съедает `mut`, поэтому
-        // обрабатываем здесь. В bootstrap'е binding-иммутабельность нигде
-        // не enforce'ится — `mut` информационен (см. simplifications.md
-        // `[M-for-loop-var-mut]`).
-        let _loop_var_mut = if !iter_consume { self.eat(&TokenKind::KwMut).is_some() } else { false };
-        let pattern = self.parse_pattern()?;
+        // Plan 87 → Plan 108.3: `for mut x [TYPE] in` — `mut` помечает
+        // loop-переменную мутабельной (D32/D33).  После Plan 108.3
+        // `mut` semantic: enforce'ится type-checker'ом через `local_mut`.
+        // `parse_pattern` ТОЖЕ принимает `mut` для per-name в pattern
+        // (`for (mut a, b) in pairs`); здесь съедаем leading mut на
+        // for-уровне для backward compat и инжектим в pattern.
+        let loop_var_mut = if !iter_consume { self.eat(&TokenKind::KwMut).is_some() } else { false };
+        let mut pattern = self.parse_pattern()?;
+        // Plan 108.3: leading `for mut x` распространяется на pattern's Ident.
+        if loop_var_mut {
+            if let Pattern::Ident { is_mut, .. } = &mut pattern {
+                *is_mut = true;
+            }
+        }
         // Plan 87: явный тип элемента — `for x TYPE in iter`. Если после
         // loop-pattern сразу не `in` — это аннотация типа по правилу
         // «name type» (как `let x int`, `fn(x int)`, `[T Bound]`).
@@ -6205,7 +6227,7 @@ impl Parser {
         // Synthesize: let _nova_decr_old = <d>
         let snapshot_let = Stmt::Let(LetDecl {
             mutable: false,
-            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span },
+            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span, is_mut: false },
             ty: None,
             value: d.clone(),
             span,
@@ -7076,9 +7098,21 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> Result<Pattern, Diagnostic> {
         let start = self.peek().span;
+        // Plan 108.3 (D36 amend): `mut name` in pattern position —
+        // per-name mutability marker для destructure (tuple/record) и
+        // loop-var.  `let (mut a, b) = pair` → a mutable, b immutable.
+        // Запрет group-mut `let mut (a, b)` обрабатывается parse_let'ом
+        // на верхнем уровне (E_PATTERN_GROUP_MUT).
+        let pat_is_mut = self.eat(&TokenKind::KwMut).is_some();
         match self.peek().kind.clone() {
             TokenKind::Ident(s) if s == "_" => {
                 self.bump();
+                if pat_is_mut {
+                    return Err(Diagnostic::new(
+                        "[E_PATTERN_GROUP_MUT] `mut _` бессмысленно (wildcard не bind'ит).",
+                        start,
+                    ));
+                }
                 Ok(Pattern::Wildcard(start))
             }
             TokenKind::Int(n) => {
@@ -7196,7 +7230,7 @@ impl Parser {
                             span: start,
                         })
                     } else {
-                        Ok(Pattern::Ident { name, span: start })
+                        Ok(Pattern::Ident { name, span: start, is_mut: pat_is_mut })
                     }
                 } else {
                     Ok(Pattern::Variant {

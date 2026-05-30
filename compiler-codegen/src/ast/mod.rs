@@ -1952,10 +1952,13 @@ pub enum Pattern {
     Wildcard(Span),
     /// `42`, `"hello"`, `true`
     Literal(Literal, Span),
-    /// `name` — связывает (или enum unit-variant без скобок)
+    /// `name` — связывает (или enum unit-variant без скобок).
+    /// Plan 108.3 (D36 amend): `is_mut` — `mut name` форма (per-name
+    /// в pattern: `let (mut a, b) = ...`; для loop-var `for mut x in ...`).
     Ident {
         name: String,
         span: Span,
+        is_mut: bool,
     },
     /// `Variant`, `Variant(p1, p2)`, `Cons(h, ..)` — D59
     Variant {

@@ -8149,6 +8149,50 @@ fn consume_pattern_names(p: &Pattern, out: &mut Vec<String>) {
     }
 }
 
+/// Plan 108.3 (D36 amend): аналог `consume_pattern_names` но возвращает
+/// pairs `(name, is_mut)` для per-name mut в pattern.
+/// `let (mut a, b) = ...` → `[("a", true), ("b", false)]`.
+fn consume_pattern_names_with_mut(p: &Pattern, out: &mut Vec<(String, bool)>) {
+    match p {
+        Pattern::Ident { name, is_mut, .. } => out.push((name.clone(), *is_mut)),
+        Pattern::Binding { name, inner, .. } => {
+            out.push((name.clone(), false));
+            consume_pattern_names_with_mut(inner, out);
+        }
+        Pattern::Tuple(ps, _) => {
+            for sp in ps { consume_pattern_names_with_mut(sp, out); }
+        }
+        Pattern::Variant { kind, .. } => {
+            if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                for sp in patterns { consume_pattern_names_with_mut(sp, out); }
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(sp) => consume_pattern_names_with_mut(sp, out),
+                    None => out.push((f.name.clone(), false)),
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for el in elems {
+                match el {
+                    ArrayPatternElem::Item(sp) => consume_pattern_names_with_mut(sp, out),
+                    ArrayPatternElem::RestBind(n) => out.push((n.clone(), false)),
+                    ArrayPatternElem::Rest => {}
+                }
+            }
+        }
+        Pattern::Or { alternatives, .. } => {
+            if let Some(first) = alternatives.first() {
+                consume_pattern_names_with_mut(first, out);
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(..) => {}
+    }
+}
+
 /// Flow-context consume-анализа одной функции / теста.
 struct ConsumeCtx<'a> {
     reg: &'a ConsumeRegistry,
@@ -9336,13 +9380,17 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, &decl.value, errors);
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
-            // Plan 108.2 (D36 enforcement): track local-binding mutability.
+            // Plan 108.2 (D36 enforcement) + 108.3 (per-name mut):
             // `let mut x` → is_mut=true; `let x` → false;
             // `consume x` → implicit mut (ownership transfer).
-            let effective_mut = decl.mutable || decl.consume;
-            for n in &names {
+            // `let (mut a, b) = ...` → per-name (a=true, b=false).
+            let outer_effective_mut = decl.mutable || decl.consume;
+            let mut name_mut_pairs = Vec::new();
+            consume_pattern_names_with_mut(&decl.pattern, &mut name_mut_pairs);
+            for (n, pat_mut) in &name_mut_pairs {
                 if n != "_" {
-                    ctx.local_mut.insert(n.clone(), effective_mut);
+                    // outer `let mut` || per-name `mut` || consume.
+                    ctx.local_mut.insert(n.clone(), outer_effective_mut || *pat_mut);
                 }
             }
             // Plan 108.1 followup: track readonly-annotated locals.
@@ -10407,6 +10455,17 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         ExprKind::For { pattern, iter, body, iter_consume, .. } => {
             let mut names = Vec::new();
             consume_pattern_names(pattern, &mut names);
+            // Plan 108.3 (D36 amend): track loop-var mutability.
+            // `for x in iter` → x immutable.  `for mut x in iter` → x mutable.
+            // `for (mut a, b) in pairs` → per-name a mutable, b immutable.
+            // `for consume x in iter` → implicit mut.
+            let mut name_mut_pairs = Vec::new();
+            consume_pattern_names_with_mut(pattern, &mut name_mut_pairs);
+            for (n, pat_mut) in &name_mut_pairs {
+                if n != "_" {
+                    ctx.local_mut.insert(n.clone(), *iter_consume || *pat_mut);
+                }
+            }
             if *iter_consume {
                 // Plan 100.2 (D156): consume-iteration — each loop var is an
                 // obligation; iter marked Consumed after loop.
