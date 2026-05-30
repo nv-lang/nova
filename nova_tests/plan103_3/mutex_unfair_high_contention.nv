@@ -5,9 +5,9 @@
 module nova_tests.plan103_3.mutex_unfair_high_contention
 
 test "unfair mutex: 8 fibers contend, no deadlock, counter correct" {
-    let mu = Mutex.new_unfair()
-    let counter = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut mu = Mutex.new_unfair()
+    let mut counter = AtomicInt.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     parallel for _i in 0..8 {

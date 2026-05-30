@@ -10,8 +10,8 @@
 module nova_tests.plan103_8.stress_cas_loop_high_contention
 
 test "CAS loop high contention: 16 fibers × 20 compare_exchange — final = 320" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut counter = AtomicI64.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -37,8 +37,8 @@ test "CAS loop high contention: 16 fibers × 20 compare_exchange — final = 320
 }
 
 test "CAS loop high contention: 16 fibers × 20 compare_exchange_weak — final = 320" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut counter = AtomicI64.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -64,8 +64,8 @@ test "CAS loop high contention: 16 fibers × 20 compare_exchange_weak — final 
 }
 
 test "CAS mixed: 8 strong + 8 weak fibers x 20 each — final = 320" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut counter = AtomicI64.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {

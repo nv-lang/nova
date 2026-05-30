@@ -11,7 +11,7 @@
 module nova_tests.plan103_1.fence_in_supervised
 
 test "fence(SeqCst) внутри spawn body" {
-    let counter = AtomicInt.new(0)
+    let mut counter = AtomicInt.new(0)
     supervised {
         spawn {
             fence(SeqCst)
@@ -22,7 +22,7 @@ test "fence(SeqCst) внутри spawn body" {
 }
 
 test "fence в координаторе до и после supervised" {
-    let counter = AtomicInt.new(0)
+    let mut counter = AtomicInt.new(0)
     fence(Release)
     supervised {
         spawn { counter.fetch_add(1) }
@@ -33,7 +33,7 @@ test "fence в координаторе до и после supervised" {
 }
 
 test "fence внутри parallel for — каждая итерация" {
-    let counter = AtomicInt.new(0)
+    let mut counter = AtomicInt.new(0)
     parallel for i in 0..3 {
         fence(AcqRel)
         counter.fetch_add(1)
@@ -42,7 +42,7 @@ test "fence внутри parallel for — каждая итерация" {
 }
 
 test "fence(Relaxed) — no-op, не нарушает fiber scheduling" {
-    let flag = AtomicBool.new(false)
+    let mut flag = AtomicBool.new(false)
     supervised {
         spawn {
             fence(Relaxed)
@@ -53,7 +53,7 @@ test "fence(Relaxed) — no-op, не нарушает fiber scheduling" {
 }
 
 test "разные orderings в разных spawn'ах" {
-    let counter = AtomicInt.new(0)
+    let mut counter = AtomicInt.new(0)
     supervised {
         spawn {
             fence(Acquire)

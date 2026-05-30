@@ -7,7 +7,7 @@ module nova_tests.plan103_2.atomic_property_additive
 
 /// fetch_add(n) then fetch_sub(n) must restore the original value.
 fn check_add_sub_inverse_i64(init int, delta int) -> bool {
-    let a = AtomicI64.new(init)
+    let mut a = AtomicI64.new(init)
     let prev = a.fetch_add(delta)
     let prev2 = a.fetch_sub(delta)
     let final = a.load()
@@ -15,7 +15,7 @@ fn check_add_sub_inverse_i64(init int, delta int) -> bool {
 }
 
 fn check_add_sub_inverse_i32(init int, delta int) -> bool {
-    let a = AtomicI32.new(init)
+    let mut a = AtomicI32.new(init)
     let prev = a.fetch_add(delta)
     let prev2 = a.fetch_sub(delta)
     let final = a.load()
@@ -23,7 +23,7 @@ fn check_add_sub_inverse_i32(init int, delta int) -> bool {
 }
 
 fn check_add_sub_inverse_u64(init int, delta int) -> bool {
-    let a = AtomicU64.new(init)
+    let mut a = AtomicU64.new(init)
     let prev = a.fetch_add(delta)
     let prev2 = a.fetch_sub(delta)
     let final = a.load()
@@ -55,7 +55,7 @@ test "property: u64 fetch_add/sub inverse" {
 }
 
 test "property: CAS failure leaves value unchanged" {
-    let a = AtomicI64.new(7)
+    let mut a = AtomicI64.new(7)
     let v = a.load()
     let ok = a.compare_exchange(v + 1, 0)  // wrong expected
     assert(!ok)
@@ -63,7 +63,7 @@ test "property: CAS failure leaves value unchanged" {
 }
 
 test "property: CAS success sets expected value" {
-    let a = AtomicI64.new(42)
+    let mut a = AtomicI64.new(42)
     let ok = a.compare_exchange(42, 99)
     assert(ok)
     assert(a.load() == 99)

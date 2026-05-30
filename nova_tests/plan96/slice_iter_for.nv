@@ -4,7 +4,7 @@
 module nova_tests.plan96.slice_iter_for
 
 test "for-in over slice view" {
-    let arr = [10, 20, 30, 40, 50]
+    let mut arr = [10, 20, 30, 40, 50]
     let view = arr[1..4]
     let mut sum = 0
     for x in view {
@@ -14,7 +14,7 @@ test "for-in over slice view" {
 }
 
 test "for-in over open-ended slice" {
-    let arr = [1, 2, 3, 4, 5]
+    let mut arr = [1, 2, 3, 4, 5]
     let view = arr[2..]
     let mut count = 0
     for _ in view {

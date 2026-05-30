@@ -20,7 +20,7 @@ fn combine(first int, second int, third int) -> int =>
     first * 100 + second * 10 + third
 
 test "переставленные named: side-effects в source-order" {
-    let sink = []int.new()
+    let mut sink = []int.new()
     // Source-order записи: rec(sink,7), rec(sink,8), rec(sink,9).
     // Param-order: first, second, third → first=9, second=8, third=7.
     // combine = 9*100 + 8*10 + 7 = 987.
@@ -34,7 +34,7 @@ test "переставленные named: side-effects в source-order" {
 }
 
 test "смешанно: позиционный + переставленные named" {
-    let sink = []int.new()
+    let mut sink = []int.new()
     // first позиционно = rec(sink,1), named third=rec(sink,2), second=rec(sink,3).
     // source-order: 1, 2, 3.
     let r = combine(rec(sink, 1), third: rec(sink, 2), second: rec(sink, 3))

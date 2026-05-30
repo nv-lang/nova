@@ -2634,6 +2634,51 @@ type Account {
 Семантика параметров (D32) не менялась. Подробно — в
 `history/evolution.md`.
 
+### Enforcement (Plan 108.2, 2026-05-30)
+
+Плановое поведение D36 («`let` без `mut` — immutable») de-facto
+существовало с самого начала, но компилятор не enforce'ил его
+строго: на binding'е без `mut` можно было вызывать mut-методы
+(`.push`, `.append`, `.insert` и т.п.) и присваивать поля
+(`b.field = ...`).  Plan 108.2 закрывает этот gap:
+
+```nova
+let b = Box.new(1)
+b.value = 99                  // ✗ E_LOCAL_NOT_MUT
+b.push(2)                     // ✗ E_LOCAL_NOT_MUT
+
+let mut b2 = Box.new(1)
+b2.value = 99                 // ✓
+b2.push(2)                    // ✓
+```
+
+**Правила (Plan 108.2):**
+
+| Операция | `let x = ...` | `let mut x = ...` | `consume x = ...` |
+|---|---|---|---|
+| read field | ✓ | ✓ | ✓ |
+| non-mut method | ✓ | ✓ | ✓ |
+| `x.field = ...` | ✗ `E_LOCAL_NOT_MUT` | ✓ | ✓ |
+| `x.mut_method()` | ✗ `E_LOCAL_NOT_MUT` | ✓ | ✓ |
+| `x[i] = ...` | ✗ `E_LOCAL_NOT_MUT` | ✓ | ✓ |
+| rebind `x = newval` | ✗ existing E_REBIND | ✓ | n/a (move) |
+
+`consume X = ...` неявно подразумевает mut (как `consume` param в D176
+amend Plan 108.1) — ownership transfer → владелец может мутировать.
+
+**Symmetry с D176 (Plan 108.1):**
+
+| Контекст | Default = readonly? | Opt-in mut |
+|---|---|---|
+| Param | ✓ (Plan 108.1) | `mut name T` |
+| Local binding | ✓ (Plan 108.2) | `let mut x = ...` |
+| Field | ✓ (D36 default = mutable у mut-binding) | n/a |
+
+### Связь
+- [02-types.md → D175](#d175-readonly-field--полный-freeze-амендмент-d36) — readonly field полный freeze.
+- [02-types.md → D176](#d176-readonly-t--тип-модификатор) — readonly T modifier + Plan 108.1 param default flip.
+- [03-syntax.md → D33](03-syntax.md#d33) — `let` это immutable binding.
+
 ---
 
 ## D175. `readonly field` — полный freeze (амендмент D36)

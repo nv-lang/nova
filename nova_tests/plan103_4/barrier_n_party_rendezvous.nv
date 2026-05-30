@@ -13,9 +13,9 @@ import std.time.duration
 
 test "8 fibers all pass barrier simultaneously" {
     let n = 8
-    let barrier = Barrier.new(n)
+    let mut barrier = Barrier.new(n)
     let indices = AtomicInt.new(0)   // bitmask of seen arrival indices
-    let wg = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(n)
 
     parallel for _i in 0..n {
@@ -38,9 +38,9 @@ test "8 fibers all pass barrier simultaneously" {
 
 test "barrier wait returns index in range 0..parties-1" {
     let parties = 4
-    let b = Barrier.new(parties)
+    let mut b = Barrier.new(parties)
     let sum = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {

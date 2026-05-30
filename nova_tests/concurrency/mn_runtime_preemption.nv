@@ -69,7 +69,7 @@ test "preemption: peer fiber progresses while CPU-bound fiber loops (1 worker)" 
 // что ни один increment не потерян из-за yield'ов посреди работы.
 test "preemption: shared state stays exact across many preemptions" {
     runtime.init(2)
-    let total = AtomicInt.new(0)
+    let mut total = AtomicInt.new(0)
     supervised {
         spawn {
             let mut i = 0

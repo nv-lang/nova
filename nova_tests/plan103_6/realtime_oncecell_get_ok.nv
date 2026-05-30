@@ -15,14 +15,14 @@ module nova_tests.plan103_6.realtime_oncecell_get_ok
 }
 
 test "OnceCell.get allowed in #realtime fn" {
-    let c = OnceCell[int].new()
+    let mut c = OnceCell[int].new()
     let _ = c.set(99)
     let got = _rt_oncecell_get_check(c)
     assert(got)
 }
 
 test "OnceCell.is_initialized allowed in #realtime fn" {
-    let c = OnceCell[int].new()
+    let mut c = OnceCell[int].new()
     let before = _rt_oncecell_is_initialized(c)
     let _ = c.set(1)
     let after = _rt_oncecell_is_initialized(c)

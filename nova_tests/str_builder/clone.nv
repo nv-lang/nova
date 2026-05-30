@@ -34,7 +34,7 @@ test "clone — содержимое идентично на момент коп
 }
 
 test "clone пустого — пустой клон" {
-    let a = StringBuilder.new()
+    let mut a = StringBuilder.new()
     let b = a.clone()
     assert(b.is_empty())
     assert(b.len() == 0)

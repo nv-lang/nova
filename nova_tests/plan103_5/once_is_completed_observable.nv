@@ -3,14 +3,14 @@
 module nova_tests.plan103_5.once_is_completed_observable
 
 test "Once.is_completed: false initially, true after call_once" {
-    let once = Once.new()
+    let mut once = Once.new()
     assert(once.is_completed() == false)
     once.call_once() { () }
     assert(once.is_completed() == true)
 }
 
 test "Once.state: transitions Fresh → Done" {
-    let once = Once.new()
+    let mut once = Once.new()
     let s0 = once.state()
     assert(match s0 { OnceState.Fresh => true, _ => false })
     once.call_once() { () }
@@ -19,7 +19,7 @@ test "Once.state: transitions Fresh → Done" {
 }
 
 test "Once.is_completed: returns false while still fresh" {
-    let once = Once.new()
+    let mut once = Once.new()
     assert(once.is_completed() == false)
     // Call it — now it should be true
     once.call_once() { () }

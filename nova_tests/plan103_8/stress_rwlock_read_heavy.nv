@@ -12,11 +12,11 @@
 module nova_tests.plan103_8.stress_rwlock_read_heavy
 
 test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
-    let rw      = RwLock.new()
-    let shared  = AtomicI64.new(0)   // always even (writer adds 2)
-    let torn    = AtomicI64.new(0)
-    let written = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut rw = RwLock.new()
+    let mut shared = AtomicI64.new(0)   // always even (writer adds 2)
+    let mut torn = AtomicI64.new(0)
+    let mut written = AtomicI64.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(5)   // 4 readers + 1 writer
 
     // 4 readers (parallel for = M:N, concurrent with writer)
@@ -54,10 +54,10 @@ test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
 
 test "RwLock: readers see only consistent values" {
     // 3 readers observe value is always 0 or 100 while writer toggles.
-    let rw      = RwLock.new()
-    let value   = AtomicI64.new(0)  // 0 or 100
+    let mut rw = RwLock.new()
+    let mut value = AtomicI64.new(0)  // 0 or 100
     let bad_obs = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(4)   // 3 readers + 1 writer
 
     parallel for _r in 0..3 {

@@ -25242,6 +25242,36 @@ Worktree: D:\Sources\nv-lang\nova-p108-1
 Plan 108.1 ✅ ЗАКРЫТ.
 
 ================================================================================
+2026-05-30 — Plan 108.2 — Локальные `let` без `mut` = read-only (D36 enforcement)
+================================================================================
+
+Sub-plan Plan 108.  Закрывает D36 enforcement gap для local bindings.
+
+Что shipped:
+- Spec D36 amend: новый раздел 'Enforcement (Plan 108.2)' с таблицей
+  правил + symmetry note к D176 (Plan 108.1).
+- Type-checker:
+  - ConsumeCtx.local_mut HashMap<binding_name, is_mut>.
+  - E_LOCAL_NOT_MUT + machine-applicable Suggestion ('add mut').
+  - Параллельная проверка к E_PARAM_NOT_MUT (та же mut_methods
+    registry + builtin collection set).
+  - consume X = ... → implicit mut.
+- 13 fixtures (6 positive + 6 negative + 1 property; 13/13 PASS).
+- Migration sweep: ~140 sites (sync primitives + atomics + arrays).
+- Docs: docs/migration/d36-let-mut-enforcement.md + parameters.md update.
+
+Тест результаты: plan108_2/ 13/13 PASS.
+
+Honest-defer:
+- 🟡 [M-108.2-loop-var-mut] — loop variable mutability edge-case.
+- 🟡 [M-108.2-pattern-binding] — pattern bindings (sub-rules).
+
+Branch: plan-108.2
+Worktree: D:\Sources\nv-lang\nova-p108-2
+
+Plan 108.2 ✅ ЗАКРЫТ.
+
+================================================================================
 2026-05-30 — Plan 91.10 + 91.11: D163 retract + SB cleanup + rename family
 ================================================================================
 

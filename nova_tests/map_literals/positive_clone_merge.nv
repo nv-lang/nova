@@ -34,7 +34,7 @@ test "merge_from — override semantics" {
 }
 
 test "HashMap.from — построение из массива пар" {
-    let m = HashMap[str, int].from([("a", 1), ("b", 2)])
+    let mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
     assert(m.len() == 2)
     assert(m.get("a") == Some(1))
     assert(m.get("b") == Some(2))

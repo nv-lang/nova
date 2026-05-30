@@ -10,7 +10,7 @@
 module nova_tests.concurrency.sync_mutex_guard
 
 test "MutexGuard: lock and unlock single fiber" {
-    let m = Mutex.new()
+    let mut m = Mutex.new()
     let mut counter = 0
     supervised {
         spawn {
@@ -26,7 +26,7 @@ test "MutexGuard: lock and unlock single fiber" {
 }
 
 test "MutexGuard: mutual exclusion — inside never > 1" {
-    let m = Mutex.new()
+    let mut m = Mutex.new()
     let mut inside = 0
     let mut violations = 0
 
@@ -61,7 +61,7 @@ test "MutexGuard: mutual exclusion — inside never > 1" {
 }
 
 test "MutexGuard: explicit lock/unlock preserves V1 compat (bare API)" {
-    let m = Mutex.new()
+    let mut m = Mutex.new()
     let mut counter = 0
     supervised {
         spawn {
@@ -88,7 +88,7 @@ test "MutexGuard: explicit lock/unlock preserves V1 compat (bare API)" {
 }
 
 test "MutexGuard: explicit lock/unlock frees mutex for reuse" {
-    let m = Mutex.new()
+    let mut m = Mutex.new()
     let mut counter = 0
     supervised {
         spawn {

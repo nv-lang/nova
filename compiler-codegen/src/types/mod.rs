@@ -7921,6 +7921,14 @@ struct ConsumeRegistry {
     /// методов с `mut`-receiver (`fn T mut @method(...)`).  Вызов такого
     /// метода на параметре без `mut` → E_PARAM_NOT_MUT.
     mut_methods: HashSet<(String, String)>,
+    /// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
+    /// free-fn name → indices of `mut`-params.  Используется при call
+    /// site: если arg в этой позиции имеет тип `readonly T` (или
+    /// помечен readonly в `readonly_locals`), → E_READONLY_COERCE.
+    fn_mut_params: HashMap<String, Vec<usize>>,
+    /// Plan 108.1 followup: `(receiver_type, method_name)` → indices of
+    /// `mut`-params.  Parallel free-fn `fn_mut_params`.
+    method_mut_params: HashMap<(String, String), Vec<usize>>,
 }
 
 impl ConsumeRegistry {
@@ -7935,6 +7943,9 @@ impl ConsumeRegistry {
         let mut method_return_types: HashMap<(String, String), String> = HashMap::new();
         // Plan 108.1 (D176 amend): mut-receiver methods registry.
         let mut mut_methods: HashSet<(String, String)> = HashSet::new();
+        // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
+        let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -7975,6 +7986,11 @@ impl ConsumeRegistry {
                     .filter(|(_, p)| p.consume)
                     .map(|(i, _)| i)
                     .collect();
+                // Plan 108.1 followup: mut-params indices.
+                let mut_idx: Vec<usize> = fd.params.iter().enumerate()
+                    .filter(|(_, p)| p.is_mut)
+                    .map(|(i, _)| i)
+                    .collect();
                 match &fd.receiver {
                     Some(r) => {
                         if r.consume {
@@ -7983,6 +7999,10 @@ impl ConsumeRegistry {
                         // Plan 108.1 (D176 amend): mut-receiver methods registry.
                         if r.mutable {
                             mut_methods.insert((r.type_name.clone(), fd.name.clone()));
+                        }
+                        if !mut_idx.is_empty() {
+                            method_mut_params.insert(
+                                (r.type_name.clone(), fd.name.clone()), mut_idx.clone());
                         }
                         // Plan 103.9 (D174): track method return-type for inference.
                         // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
@@ -8007,6 +8027,10 @@ impl ConsumeRegistry {
                     None => {
                         if !consume_idx.is_empty() {
                             fn_params.insert(fd.name.clone(), consume_idx);
+                        }
+                        // Plan 108.1 followup: mut-params indices.
+                        if !mut_idx.is_empty() {
+                            fn_mut_params.insert(fd.name.clone(), mut_idx);
                         }
                         // Plan 73 followup: return-тип свободной функции.
                         if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
@@ -8076,6 +8100,7 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods,
+            fn_mut_params, method_mut_params,
         }
     }
 }
@@ -8174,6 +8199,17 @@ struct ConsumeCtx<'a> {
     /// Заполняется при входе в функцию.  Includes consume-params
     /// (is_mut=true since consume implies ownership+mut).
     param_mut: HashMap<String, bool>,
+    /// Plan 108.2 (D36 enforcement): local `let` bindings с `is_mut: bool`.
+    /// HashMap<binding_name, is_mut>.  Используется для проверки
+    /// `local.mut_method(...)` / `local.field = ...` / `local[i] = ...`
+    /// → E_LOCAL_NOT_MUT при is_mut=false.
+    /// `consume X = ...` неявно is_mut=true (ownership transfer).
+    local_mut: HashMap<String, bool>,
+    /// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
+    /// HashSet локальных binding'ов, объявленных как `readonly T`
+    /// (explicit readonly annotation на let-binding или fn-param).
+    /// Передача такого binding'а в `mut`-параметр → E_READONLY_COERCE.
+    readonly_locals: HashSet<String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -8192,6 +8228,8 @@ impl<'a> ConsumeCtx<'a> {
             consume_closures: HashMap::new(),
             self_type: None,
             param_mut: HashMap::new(),
+            local_mut: HashMap::new(),
+            readonly_locals: HashSet::new(),
         }
     }
 
@@ -8844,6 +8882,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // consume params получают неявно mut (по spec).
                     let effective_mut = p.is_mut || p.consume;
                     ctx.param_mut.insert(p.name.clone(), effective_mut);
+                    // Plan 108.1 followup: track readonly-annotated params.
+                    if matches!(&p.ty, TypeRef::Readonly(..)) {
+                        ctx.readonly_locals.insert(p.name.clone());
+                    }
                     let pty = match &p.ty {
                         TypeRef::Named { path, .. } if path.len() == 1 =>
                             Some(path[0].clone()),
@@ -9151,6 +9193,41 @@ fn consume_join(saved: &HashMap<String, VarState>,
     out
 }
 
+/// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
+/// Check args at mut-param positions for readonly-binding source.
+/// Передача readonly-binding (через `readonly_locals`) в `mut`-param
+/// → E_READONLY_COERCE с machine-applicable Suggestion.
+fn check_readonly_coerce_args(
+    ctx: &ConsumeCtx,
+    args: &[CallArg],
+    mut_param_idxs: &[usize],
+    errors: &mut Vec<Diagnostic>,
+) {
+    for &idx in mut_param_idxs {
+        if let Some(CallArg::Item(arg)) = args.get(idx) {
+            if let ExprKind::Ident(name) = &arg.kind {
+                if ctx.readonly_locals.contains(name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_COERCE] аргумент `{}` имеет тип `readonly T`, но \
+                             передаётся в `mut`-параметр — нарушение sound subtyping (D176, \
+                             Plan 108.1 followup).  readonly binding гарантирует immutability \
+                             у caller'а; передача в mut позволила бы callee'у мутировать.",
+                            name),
+                        arg.span,
+                    ).with_note(
+                        "решения: (a) убрать `readonly` annotation у source binding'а \
+                         (если значение действительно мутируемое); (b) сделать callee-param \
+                         non-mut (default readonly) или `readonly`; (c) скопировать значение \
+                         в новый mutable binding перед передачей."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]:
 /// Determine whether a trailing/return expression evaluates to a consume-
 /// obligation variable directly OR via a fluent (`-> @`) method-chain.
@@ -9259,6 +9336,25 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, &decl.value, errors);
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
+            // Plan 108.2 (D36 enforcement): track local-binding mutability.
+            // `let mut x` → is_mut=true; `let x` → false;
+            // `consume x` → implicit mut (ownership transfer).
+            let effective_mut = decl.mutable || decl.consume;
+            for n in &names {
+                if n != "_" {
+                    ctx.local_mut.insert(n.clone(), effective_mut);
+                }
+            }
+            // Plan 108.1 followup: track readonly-annotated locals.
+            // `let view readonly T = ...` → readonly_locals.contains("view").
+            let is_readonly_annotated = matches!(&decl.ty, Some(TypeRef::Readonly(..)));
+            if is_readonly_annotated {
+                for n in &names {
+                    if n != "_" {
+                        ctx.readonly_locals.insert(n.clone());
+                    }
+                }
+            }
             // alias-форма `let <name> = <rhs>` — `name` ссылается на тот
             // же объект:
             //   (a) Plan 73 followup: `let a = b` — RHS голый идентификатор.
@@ -9930,6 +10026,46 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 }
                             }
                         }
+                        // Plan 108.2 (D36 enforcement): mut-method on non-mut local
+                        // → E_LOCAL_NOT_MUT.  Parallel к param check выше.
+                        if let Some(&is_mut) = ctx.local_mut.get(&recv) {
+                            if !is_mut {
+                                let recv_ty = ctx.var_types.get(&ctx.canonical(&recv))
+                                    .or_else(|| ctx.var_types.get(&recv))
+                                    .cloned();
+                                let registered = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let builtin_mut_method = matches!(
+                                    method.as_str(),
+                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    | "clear" | "truncate" | "reserve" | "swap"
+                                    | "sort" | "sort_by" | "set" | "extend" | "extend_from"
+                                    | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
+                                    | "drain" | "dedup" | "reverse" | "shuffle"
+                                );
+                                if registered || builtin_mut_method {
+                                    let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_LOCAL_NOT_MUT] local-binding `{}` не помечен `mut`, \
+                                             но вызывается mut-метод `{}` (тип `{}`).  \
+                                             Default для `let`-binding'ов — read-only (D36 enforcement, Plan 108.2).",
+                                            recv, method, ty_str),
+                                        e.span,
+                                    ).with_note(
+                                        "добавь `mut` к binding'у: `let mut <name> = ...` — \
+                                         разрешит вызов mut-методов и field/index-assignment."
+                                            .to_string(),
+                                    ).with_suggestion(crate::diag::Suggestion {
+                                        message: format!("add `mut` to `let {}`", recv),
+                                        span: e.span,
+                                        replacement: format!("let mut {}", recv),
+                                        applicability: crate::diag::Applicability::MaybeIncorrect,
+                                    }));
+                                }
+                            }
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -9958,9 +10094,16 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         // consume-параметры метода.
                         if let Some(ty) = ctx.var_types.get(&ctx.canonical(&recv)).cloned() {
                             if let Some(idxs) = ctx.reg
-                                .method_params.get(&(ty, method.clone())).cloned()
+                                .method_params.get(&(ty.clone(), method.clone())).cloned()
                             {
                                 ctx.consume_args(args, &idxs, e.span);
+                            }
+                            // Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
+                            // E_READONLY_COERCE — передача readonly-binding в mut-param метода.
+                            if let Some(mut_idxs) = ctx.reg
+                                .method_mut_params.get(&(ty, method.clone())).cloned()
+                            {
+                                check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
                             }
                         }
                     } else if let ExprKind::Member {
@@ -10062,6 +10205,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     let view_idxs = ctx.reg.fn_view_params.get(fname.as_str())
                         .cloned()
                         .unwrap_or_default();
+                    // Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
+                    // E_READONLY_COERCE — передача readonly-binding в mut-param.
+                    if let Some(mut_idxs) = ctx.reg.fn_mut_params.get(fname.as_str()).cloned() {
+                        check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                    }
                     for (i, a) in args.iter().enumerate() {
                         let is_consume_param = consume_idxs.contains(&i);
                         let is_view_param = view_idxs.contains(&i) || (!is_consume_param);

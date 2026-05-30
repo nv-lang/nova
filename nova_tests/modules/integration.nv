@@ -56,7 +56,7 @@ fn pop_or_zero(mut stack []int) -> int {
 }
 
 fn run(program []Op) -> int {
-    let stack = []
+    let mut stack = []
     for op in program {
         match op {
             Push(n) => stack.push(n)

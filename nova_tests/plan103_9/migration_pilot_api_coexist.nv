@@ -7,8 +7,8 @@
 module nova_tests.plan103_9.migration_pilot_api_coexist
 
 test "V1 bare lock/unlock still works after V2 upgrade" {
-    let mu = Mutex.new()
-    let count = AtomicInt.new(0)
+    let mut mu = Mutex.new()
+    let mut count = AtomicInt.new(0)
 
     // V1 style (unchanged bare API):
     mu.lock()
@@ -18,8 +18,8 @@ test "V1 bare lock/unlock still works after V2 upgrade" {
 }
 
 test "V2 guard-based lock works alongside V1 bare lock" {
-    let mu = Mutex.new()
-    let count = AtomicInt.new(0)
+    let mut mu = Mutex.new()
+    let mut count = AtomicInt.new(0)
 
     // V2 style with explicit guard:
     consume g = mu.lock()
@@ -35,8 +35,8 @@ test "V2 guard-based lock works alongside V1 bare lock" {
 }
 
 test "RwLock explicit read and write guards" {
-    let rw = RwLock.new()
-    let val = AtomicInt.new(0)
+    let mut rw = RwLock.new()
+    let mut val = AtomicInt.new(0)
 
     consume wg = rw.write()
     val.fetch_add(100)
@@ -49,8 +49,8 @@ test "RwLock explicit read and write guards" {
 }
 
 test "Semaphore explicit acquire/release" {
-    let sem = Semaphore.new(2)
-    let count = AtomicInt.new(0)
+    let mut sem = Semaphore.new(2)
+    let mut count = AtomicInt.new(0)
 
     consume p1 = sem.acquire()
     count.fetch_add(1)
@@ -65,7 +65,7 @@ test "Semaphore explicit acquire/release" {
 }
 
 test "Once call_once still works" {
-    let once = Once.new()
+    let mut once = Once.new()
     let ran = AtomicInt.new(0)
 
     once.call_once() { ran.fetch_add(1) }

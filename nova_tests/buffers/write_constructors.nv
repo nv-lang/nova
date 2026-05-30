@@ -8,7 +8,7 @@ module buffers.write_constructors
 // ── new ────────────────────────────────────────────────────────────
 
 test "new — пустой, capacity >= 16" {
-    let wb = WriteBuffer.new()
+    let mut wb = WriteBuffer.new()
     assert(wb.len() == 0)
     assert(wb.capacity() >= 16)
 }
@@ -17,13 +17,13 @@ test "new — пустой, capacity >= 16" {
 // ── with_capacity ──────────────────────────────────────────────────
 
 test "with_capacity(0) — валиден, len 0" {
-    let wb = WriteBuffer.with_capacity(0)
+    let mut wb = WriteBuffer.with_capacity(0)
     assert(wb.len() == 0)
     assert(wb.capacity() >= 0)
 }
 
 test "with_capacity(256) — capacity >= 256" {
-    let wb = WriteBuffer.with_capacity(256)
+    let mut wb = WriteBuffer.with_capacity(256)
     assert(wb.len() == 0)
     assert(wb.capacity() >= 256)
 }
@@ -33,13 +33,13 @@ test "with_capacity(256) — capacity >= 256" {
 
 test "from([]u8) — преднаполненный буфер" {
     let bytes []u8 = [0x11, 0x22, 0x33]
-    let wb = WriteBuffer.from(bytes)
+    let mut wb = WriteBuffer.from(bytes)
     assert(wb.len() == 3)
 }
 
 test "from([]u8) — пустой массив" {
     let bytes []u8 = []
-    let wb = WriteBuffer.from(bytes)
+    let mut wb = WriteBuffer.from(bytes)
     assert(wb.len() == 0)
 }
 
@@ -96,7 +96,7 @@ test "clone — содержимое идентично на момент коп
 }
 
 test "clone пустого буфера" {
-    let a = WriteBuffer.new()
+    let mut a = WriteBuffer.new()
     let b = a.clone()
     assert(b.len() == 0)
     assert(b.into().len() == 0)

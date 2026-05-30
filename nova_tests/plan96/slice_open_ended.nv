@@ -4,7 +4,7 @@
 module nova_tests.plan96.slice_open_ended
 
 test "open-end arr[a..]" {
-    let arr = [10, 20, 30, 40, 50]
+    let mut arr = [10, 20, 30, 40, 50]
     let suffix = arr[2..]
     assert(suffix.len() == 3)
     assert(suffix[0] == 30)
@@ -12,7 +12,7 @@ test "open-end arr[a..]" {
 }
 
 test "open-start arr[..b]" {
-    let arr = [10, 20, 30, 40, 50]
+    let mut arr = [10, 20, 30, 40, 50]
     let prefix = arr[..3]
     assert(prefix.len() == 3)
     assert(prefix[0] == 10)
@@ -20,7 +20,7 @@ test "open-start arr[..b]" {
 }
 
 test "full slice arr[..]" {
-    let arr = [10, 20, 30]
+    let mut arr = [10, 20, 30]
     let all = arr[..]
     assert(all.len() == 3)
     assert(all[0] == 10)
@@ -28,7 +28,7 @@ test "full slice arr[..]" {
 }
 
 test "open-end inclusive arr[..=b]" {
-    let arr = [10, 20, 30, 40, 50]
+    let mut arr = [10, 20, 30, 40, 50]
     let prefix = arr[..=2]
     assert(prefix.len() == 3)
     assert(prefix[0] == 10)

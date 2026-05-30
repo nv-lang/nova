@@ -10,7 +10,7 @@ module nova_tests.plan103_6.realtime_semaphore_acquire_neg
 }
 
 test "Semaphore.acquire banned in #realtime fn" {
-    let s = Semaphore.new(1)
+    let mut s = Semaphore.new(1)
     _rt_check_semaphore_acquire(s)
     s.release()
 }

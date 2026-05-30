@@ -105,7 +105,7 @@ test "стек реверсирует массив (через known size)" {
     for x in [1, 2, 3, 4, 5] {
         s.push(x)
     }
-    let r = []
+    let mut r = []
     for _ in 0..5 {
         let popped = s.pop()
         let v = match popped {

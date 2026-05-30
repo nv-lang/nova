@@ -11,6 +11,6 @@ fn append_99(b []int) -> int {
 }
 
 test "no-mut + array push → error" {
-    let arr = [1, 2]
+    let mut arr = [1, 2]
     let _ = append_99(arr)
 }

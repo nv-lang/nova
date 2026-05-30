@@ -21,13 +21,13 @@
 module nova_tests.plan73.binding_migration_completeness_prop
 
 test "property: Mutex consume-bind compiles + commits" {
-    let m = Mutex.new()
+    let mut m = Mutex.new()
     consume g = m.lock()
     g.unlock()
 }
 
 test "property: RwLock read/write consume-binds compile + commit" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
 
     consume rg = rw.read()
     rg.unlock()

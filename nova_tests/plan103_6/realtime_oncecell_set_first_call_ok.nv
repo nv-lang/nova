@@ -15,7 +15,7 @@ module nova_tests.plan103_6.realtime_oncecell_set_first_call_ok
 }
 
 test "OnceCell.set allowed in #realtime fn" {
-    let c = OnceCell[int].new()
+    let mut c = OnceCell[int].new()
     let ok = _rt_oncecell_set(c, 77)
     assert(ok == true)
     let v = c.get()
@@ -23,7 +23,7 @@ test "OnceCell.set allowed in #realtime fn" {
 }
 
 test "OnceCell.take allowed in #realtime fn" {
-    let c = OnceCell[str].new()
+    let mut c = OnceCell[str].new()
     let _ = c.set("hi")
     let taken_ok = _rt_oncecell_take_str(c)
     assert(taken_ok)

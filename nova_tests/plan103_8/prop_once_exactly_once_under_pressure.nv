@@ -80,7 +80,7 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 Lazy objects Ð²Ð‚â
 }
 
 test "prop once: state is Done after call_once completes" {
-    let once  = Once.new()
+    let mut once = Once.new()
     let inits = AtomicI64.new(0)
 
     once.call_once() { inits.fetch_add(1) }

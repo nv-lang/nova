@@ -8,8 +8,8 @@
 module nova_tests.concurrency.sync_rwlock_guards
 
 test "ReadGuard: explicit unlock after read" {
-    let rw = RwLock.new()
-    let v = AtomicInt.new(100)
+    let mut rw = RwLock.new()
+    let mut v = AtomicInt.new(100)
 
     supervised {
         spawn {
@@ -22,8 +22,8 @@ test "ReadGuard: explicit unlock after read" {
 }
 
 test "WriteGuard: exclusive write with explicit unlock" {
-    let rw = RwLock.new()
-    let v = AtomicInt.new(0)
+    let mut rw = RwLock.new()
+    let mut v = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -41,7 +41,7 @@ test "WriteGuard: exclusive write with explicit unlock" {
 }
 
 test "ReadGuard: multiple readers coexist, writer waits" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     let readers = AtomicInt.new(0)
     let writer_ran = AtomicInt.new(0)
 

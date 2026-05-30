@@ -13,7 +13,7 @@ test "copy_from on slice view" {
 }
 
 test "len + is_empty on view" {
-    let arr = [1, 2, 3, 4, 5]
+    let mut arr = [1, 2, 3, 4, 5]
     let view = arr[1..4]
     assert(view.len() == 3)
     assert(!view.is_empty())

@@ -70,7 +70,7 @@ test "bench: 100k смешанных аллокаций" {
     let mut sum = 0
     for i in 0..100_000 {
         let o = make_obj(i, i * 2, i * 3)
-        let arr = [o.a, o.b, o.c]
+        let mut arr = [o.a, o.b, o.c]
         let mv = arr.get(1)
         let v = match mv {
             Some(n) => n

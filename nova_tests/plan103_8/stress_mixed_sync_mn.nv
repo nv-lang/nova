@@ -13,9 +13,9 @@ module nova_tests.plan103_8.stress_mixed_sync_mn
 
 test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore + Barrier, M:N(4)" {
     let n_iters   = 200
-    let sem       = Semaphore.new(2)
-    let mu        = Mutex.new()
-    let barrier   = Barrier.new(4)
+    let mut sem = Semaphore.new(2)
+    let mut mu = Mutex.new()
+    let mut barrier = Barrier.new(4)
 
     // Counters we verify at end
     let atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers
@@ -25,7 +25,7 @@ test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore
     let in_permit     = AtomicI64.new(0)  // current in-permit count
     let barrier_count = AtomicI64.new(0)  // barrier fibers complete
 
-    let wg = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -100,10 +100,10 @@ test "stress: mixed sync Ð²Ð‚â€ AtomicI64 + Mutex increments agree on 
     // 8 fibers each increment via either AtomicI64 or under Mutex-protected
     // non-atomic counter. Final sum from both must be equal.
     let n_each  = 500
-    let mu      = Mutex.new()
+    let mut mu = Mutex.new()
     let atomic  = AtomicI64.new(0)
-    let counter = AtomicI64.new(0)  // updated under mu (acts as non-atomic)
-    let wg      = WaitGroup.new()
+    let mut counter = AtomicI64.new(0)  // updated under mu (acts as non-atomic)
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {

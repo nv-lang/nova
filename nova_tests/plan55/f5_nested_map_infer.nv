@@ -5,7 +5,7 @@ module plan55.f5_nested_map_infer
 import std.collections.hashmap.{HashMap}
 
 
-test "let m = [str: int] множественное использование" {
+test "let mut m = [str: int] множественное использование" {
     let m1 = ["x": 10, "y": 20]
     let m2 = ["a": 1, "b": 2, "c": 3]
     assert(m1.len() == 2)

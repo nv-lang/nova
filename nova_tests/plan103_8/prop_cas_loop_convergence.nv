@@ -10,8 +10,8 @@
 module nova_tests.plan103_8.prop_cas_loop_convergence
 
 test "prop CAS convergence: 8 fibers × 50 strong CAS — final = 400" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut counter = AtomicI64.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -37,8 +37,8 @@ test "prop CAS convergence: 8 fibers × 50 strong CAS — final = 400" {
 }
 
 test "prop CAS convergence: 8 fibers × 50 weak CAS — final = 400" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut counter = AtomicI64.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -69,7 +69,7 @@ test "prop CAS convergence: fetch_add vs CAS loop produce same final count" {
     let fetch_counter  = AtomicI64.new(0)
     let n_fibers       = 4
     let n_per_fiber    = 50
-    let wg             = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(n_fibers * 2)
 
     supervised {

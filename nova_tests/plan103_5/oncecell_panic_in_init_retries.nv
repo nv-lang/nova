@@ -6,7 +6,7 @@
 module nova_tests.plan103_5.oncecell_panic_in_init_retries
 
 test "OnceCell.get_or_init: panic in init keeps cell empty; retry succeeds" {
-    let cell = OnceCell[int].new()
+    let mut cell = OnceCell[int].new()
 
     // First attempt: init panics
     let mut first_panicked = false

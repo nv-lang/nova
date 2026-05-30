@@ -14,10 +14,10 @@
 module nova_tests.plan103_8.prop_condvar_no_lost_wakeup
 
 test "prop no lost wakeup: 1 producer + 1 consumer Ð“â€” 1000 cycles" {
-    let mu       = Mutex.new()
-    let cv       = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let produced = AtomicI64.new(0)
-    let consumed = AtomicI64.new(0)
+    let mut consumed = AtomicI64.new(0)
 
     supervised {
         // Consumer fiber
@@ -48,12 +48,12 @@ test "prop no lost wakeup: 1 producer + 1 consumer Ð“â€” 1000 cycles" {
 }
 
 test "prop no lost wakeup: 4 producers + 4 consumers Ð“â€” 250 items each" {
-    let mu           = Mutex.new()
-    let cv           = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let pending      = AtomicI64.new(0)
     let total_cons   = AtomicI64.new(0)
     let total_prod   = AtomicI64.new(0)
-    let wg = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -100,11 +100,11 @@ test "prop no lost wakeup: 4 producers + 4 consumers Ð“â€” 250 items eac
 }
 
 test "prop notify_all: all waiters wake up" {
-    let mu       = Mutex.new()
-    let cv       = Condvar.new()
-    let flag     = AtomicBool.new(false)
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
+    let mut flag = AtomicBool.new(false)
     let woken    = AtomicI64.new(0)
-    let wg       = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(9)   // 8 waiters + 1 notifier
 
     supervised {

@@ -54,7 +54,7 @@ test "nested for" {
 }
 
 test "for collects via array.push" {
-    let squares = []
+    let mut squares = []
     for i in 1..6 {
         squares.push(i * i)
     }

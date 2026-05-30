@@ -7,7 +7,7 @@ module nova_tests.plan103_6.realtime_via_user_fn_neg
 
 #parks
 fn parks_fn() {
-    let m = Mutex.new()
+    let mut m = Mutex.new()
     m.lock()
     m.unlock()
 }

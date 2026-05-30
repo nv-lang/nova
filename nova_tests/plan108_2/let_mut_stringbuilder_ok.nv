@@ -1,0 +1,11 @@
+// Plan 108.2 (D36 enforcement): `let mut` для StringBuilder с цепочкой.
+
+module nova_tests.plan108_2.let_mut_stringbuilder_ok
+
+test "let mut + StringBuilder fluent chain" {
+    consume sb = StringBuilder.new()
+    sb.append("hello")
+    sb.append(" world")
+    let s = sb.as_str()
+    assert(s == "hello world")
+}

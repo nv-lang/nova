@@ -18,7 +18,7 @@ test "into — ASCII content" {
 }
 
 test "into — пустой буфер даёт пустую строку" {
-    let sb = StringBuilder.new()
+    let mut sb = StringBuilder.new()
     let s = sb.into()
     assert(s == "")
     assert(s.len() == 0)
@@ -35,12 +35,12 @@ test "into — Unicode паритет len с str" {
 }
 
 test "into — после from(str)" {
-    let sb = StringBuilder.from("preloaded")
+    let mut sb = StringBuilder.from("preloaded")
     assert(sb.into() == "preloaded")
 }
 
 test "into — после from(char)" {
-    let sb = StringBuilder.from('Я')
+    let mut sb = StringBuilder.from('Я')
     assert(sb.into() == "Я")
 }
 

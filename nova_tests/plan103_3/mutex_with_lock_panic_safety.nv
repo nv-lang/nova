@@ -8,7 +8,7 @@
 module nova_tests.plan103_3.mutex_with_lock_panic_safety
 
 test "mutex released via Fail handler on throw" {
-    let mu = Mutex.new()
+    let mut mu = Mutex.new()
 
     // Lock mutex, throw a Fail effect; handler unlocks and interrupts.
     with Fail = effect Fail {

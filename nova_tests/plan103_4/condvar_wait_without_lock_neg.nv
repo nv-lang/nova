@@ -8,8 +8,8 @@
 module nova_tests.plan103_4.condvar_wait_without_lock_neg
 
 test "wait without prior mu.lock() panics" {
-    let mu = Mutex.new()
-    let cv = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     // mu is NOT locked — cv.wait(mu) must panic.
     cv.wait(mu)
 }

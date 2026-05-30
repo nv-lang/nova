@@ -7,13 +7,13 @@
 module syntax.higher_order
 
 fn map_int(xs []int, f fn(int) -> int) -> []int {
-    let r = []
+    let mut r = []
     for x in xs { r.push(f(x)) }
     r
 }
 
 fn filter_int(xs []int, pred fn(int) -> bool) -> []int {
-    let r = []
+    let mut r = []
     for x in xs {
         let ok = pred(x)
         if ok { r.push(x) }

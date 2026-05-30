@@ -5,9 +5,9 @@
 module nova_tests.plan103_3.mutex_stress_mn_4workers
 
 test "Mutex stress: 8 fibers × 5000 iters, final counter=40000" {
-    let mu = Mutex.new()
-    let counter = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut mu = Mutex.new()
+    let mut counter = AtomicInt.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     parallel for _i in 0..8 {

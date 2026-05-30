@@ -104,7 +104,7 @@ test "peek — append после peek работает" {
 }
 
 test "peek — пустой буфер" {
-    let sb = StringBuilder.new()
+    let mut sb = StringBuilder.new()
     assert(sb.peek() == "")
 }
 

@@ -50,7 +50,7 @@ test "nested destructure" {
 }
 
 test "одиночный eval RHS — порядок side-effects" {
-    let count = []int.new()
+    let mut count = []int.new()
     let p = {
         count.push(1)
         Pair { tx: 100, rx: 200 }

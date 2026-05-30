@@ -9,11 +9,11 @@
 module nova_tests.plan103_9.mutexguard_invariant_balanced
 
 test "N fibers × K iters explicit guard: counter balanced, mutex exclusive" {
-    let mu = Mutex.new()
-    let counter = AtomicInt.new(0)
-    let inside = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut mu = Mutex.new()
+    let mut counter = AtomicInt.new(0)
+    let mut inside = AtomicInt.new(0)
+    let mut violation = AtomicInt.new(0)
+    let mut wg = WaitGroup.new()
     let n_fibers = 6
     let k_iters = 150
     wg.add(n_fibers)
@@ -38,11 +38,11 @@ test "N fibers × K iters explicit guard: counter balanced, mutex exclusive" {
 }
 
 test "N fibers × K iters nested scope guard: same invariants" {
-    let mu = Mutex.new()
-    let counter = AtomicInt.new(0)
-    let inside = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut mu = Mutex.new()
+    let mut counter = AtomicInt.new(0)
+    let mut inside = AtomicInt.new(0)
+    let mut violation = AtomicInt.new(0)
+    let mut wg = WaitGroup.new()
     let n_fibers = 4
     let k_iters = 100
     wg.add(n_fibers)

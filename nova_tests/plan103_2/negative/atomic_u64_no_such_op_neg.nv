@@ -11,7 +11,7 @@ module nova_tests.plan103_2.negative.atomic_u64_no_such_op_neg
 fn bad(a AtomicU64) => a.rotate_left()
 
 test "should not compile" {
-    let a = AtomicU64.new(1)
+    let mut a = AtomicU64.new(1)
     bad(a)
     assert(true)
 }

@@ -11,6 +11,6 @@ fn append_99(readonly b []int) -> int {
 }
 
 test "readonly + push → error" {
-    let arr = [1, 2]
+    let mut arr = [1, 2]
     let _ = append_99(arr)
 }

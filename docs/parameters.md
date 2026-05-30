@@ -103,9 +103,25 @@ fn StringBuilder mut @append(s str) -> @     // mut receiver
 fn StringBuilder consume @as_str() -> str    // consume receiver
 ```
 
+## Локальные let-bindings (Plan 108.2)
+
+Внутри тела функции локальные binding'и подчиняются тому же правилу,
+что и параметры: **без `mut` — read-only**.
+
+```nova
+let arr = []
+arr.push(1)                       // ✗ E_LOCAL_NOT_MUT
+let mut arr = []
+arr.push(1)                       // ✓
+```
+
+`consume X = ...` неявно подразумевает `mut` (как `consume` param).
+
 ## Ссылки
 
-- `spec/decisions/02-types.md` D176 — formal spec.
-- `docs/migration/d176-param-readonly-default.md` — migration guide.
+- `spec/decisions/02-types.md` D176 — formal spec params.
+- `spec/decisions/02-types.md` D36 + amend Plan 108.2 — formal spec locals.
+- `docs/migration/d176-param-readonly-default.md` — params migration guide.
+- `docs/migration/d36-let-mut-enforcement.md` — locals migration guide.
 - D131 (Plan 73) — consume affine semantics.
 - D157 (Plan 100.3) — view-borrow для consume-типов.

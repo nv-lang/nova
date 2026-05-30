@@ -6,7 +6,7 @@
 module nova_tests.plan103_9.readguard_leak_neg
 
 test "forget ReadGuard unlock → compile error" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     consume rg = rw.read()
     // MISSING: rg.unlock()
     // D133: rg is Live at scope exit

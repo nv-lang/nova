@@ -92,7 +92,7 @@ export external fn fence(ord MemOrdering)
 /// # Examples
 ///
 /// ```nova
-/// let counter = AtomicInt.new(0)
+/// let mut counter = AtomicInt.new(0)
 /// counter.fetch_add(1)
 /// assert(counter.load() == 1)
 /// ```
@@ -170,7 +170,7 @@ export external fn AtomicBool mut @swap(v bool) -> bool
 /// # Examples
 ///
 /// ```nova
-/// let mu = Mutex.new()
+/// let mut mu = Mutex.new()
 /// mu.lock()
 /// // critical section
 /// mu.unlock()
@@ -211,7 +211,7 @@ export external fn Mutex mut @try_lock() -> bool
 /// # Examples
 ///
 /// ```nova
-/// let wg = WaitGroup.new()
+/// let mut wg = WaitGroup.new()
 /// wg.add(3)
 /// spawn { work1(); wg.done() }
 /// spawn { work2(); wg.done() }

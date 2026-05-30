@@ -8,7 +8,7 @@ module nova_tests.plan103_9.mutexguard_branch_forget_neg
 fn check_flag() -> bool => true
 
 test "guard consumed only on one branch → compile error" {
-    let mu = Mutex.new()
+    let mut mu = Mutex.new()
     consume g = mu.lock()
     if check_flag() {
         g.unlock()   // consumed here

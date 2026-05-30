@@ -6,8 +6,8 @@
 module nova_tests.plan103_5.once_call_once_exactly_once
 
 test "Once.call_once: init body executes exactly once across 5 concurrent fibers" {
-    let once = Once.new()
-    let counter = AtomicInt.new(0)
+    let mut once = Once.new()
+    let mut counter = AtomicInt.new(0)
 
     parallel for _i in 0..5 {
         once.call_once() { counter.fetch_add(1) }
@@ -17,7 +17,7 @@ test "Once.call_once: init body executes exactly once across 5 concurrent fibers
 }
 
 test "Once.call_once: no-op on subsequent calls after init" {
-    let once = Once.new()
+    let mut once = Once.new()
     let mut ran = 0
 
     once.call_once() { ran = ran + 1 }
@@ -28,7 +28,7 @@ test "Once.call_once: no-op on subsequent calls after init" {
 }
 
 test "Once.call_once: is_completed returns true after successful call" {
-    let once = Once.new()
+    let mut once = Once.new()
     assert(once.is_completed() == false)
     once.call_once() { () }
     assert(once.is_completed() == true)
