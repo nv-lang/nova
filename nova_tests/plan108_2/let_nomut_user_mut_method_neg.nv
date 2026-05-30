@@ -1,0 +1,20 @@
+// Plan 108.2 (D36 enforcement): `let` без `mut` → user mut-method даёт E_LOCAL_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module nova_tests.plan108_2.let_nomut_user_mut_method_neg
+
+type Box {
+    mut value int
+}
+
+fn Box.new() -> Box => { value: 0 }
+
+fn Box mut @bump() -> () {
+    @value = @value + 1
+}
+
+test "let no-mut + user mut @method → error" {
+    let b = Box.new()
+    b.bump()
+}
