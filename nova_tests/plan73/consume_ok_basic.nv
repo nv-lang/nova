@@ -6,7 +6,7 @@
 module nova_tests.plan73.consume_ok_basic
 
 test "StringBuilder.into — consume без последующего использования" {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hi")
     sb.append(" there")
     let s = sb.to_str()
@@ -15,7 +15,7 @@ test "StringBuilder.into — consume без последующего испол�
 }
 
 test "into сразу после new — пустой буфер" {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     let s = sb.to_str()
     assert(s == "")
 }
