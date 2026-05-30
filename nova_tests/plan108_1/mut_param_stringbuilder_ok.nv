@@ -1,0 +1,17 @@
+// Plan 108.1 (D176 amend): `mut` параметр позволяет вызов mut-методов
+// на user-defined consume-типе (StringBuilder).
+
+module nova_tests.plan108_1.mut_param_stringbuilder_ok
+
+fn append_world(mut sb StringBuilder) -> int {
+    sb.append(" world")
+    sb.len()
+}
+
+test "mut param + StringBuilder append" {
+    consume sb = StringBuilder.from("hello")
+    let n = append_world(sb)
+    assert(n == 11)         // "hello world" = 11 bytes
+    let final = sb.as_str()
+    assert(final == "hello world")
+}

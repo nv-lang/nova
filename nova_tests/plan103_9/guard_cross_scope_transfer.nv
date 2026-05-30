@@ -5,7 +5,7 @@
 
 module nova_tests.plan103_9.guard_cross_scope_transfer
 
-fn do_work_under_lock(consume g MutexGuard, counter AtomicInt) -> () {
+fn do_work_under_lock(consume g MutexGuard, mut counter AtomicInt) -> () {
     counter.fetch_add(1)
     g.unlock()  // consumed here
 }

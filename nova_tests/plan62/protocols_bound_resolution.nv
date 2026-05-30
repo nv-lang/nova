@@ -157,7 +157,7 @@ test "Into[X] bound — explicit @into impl резолвится через prel
 // std/runtime/string_builder.nv). `str.from(int)` для int → str.
 type Pair { x int, y int }
 
-export fn Pair @fmt(sb StringBuilder) -> () {
+export fn Pair @fmt(mut sb StringBuilder) -> () {
     sb.append("(")
     sb.append(str.from(@x))
     sb.append(", ")

@@ -2,7 +2,7 @@ module nova_tests.plan91_8a_2.interpolation_printable_test
 
 // Plan 91.8a.2 followup: "${m}" interpolation routes через Printable.fmt
 // path. Three paths covered:
-//   Path 1: explicit `fn T @fmt(sb StringBuilder)` — direct fmt call.
+//   Path 1: explicit `fn T @fmt(mut sb StringBuilder)` — direct fmt call.
 //   Path 2: `fn str.from(T) -> str` overload — append result.
 //   Path 3: `fn T @into() -> str` — append result.
 
@@ -18,7 +18,7 @@ fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 // finds method directly без synthesis). Annotation добавлен для verification.
 #impl(Printable)
 type Point { x int, y int }
-fn Point @fmt(sb StringBuilder) -> () {
+fn Point @fmt(mut sb StringBuilder) -> () {
     sb.append("Point(")
     sb.append(str.from(@x))
     sb.append(", ")

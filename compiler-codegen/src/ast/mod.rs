@@ -579,6 +579,11 @@ pub struct Param {
     /// После передачи аргумента в такой параметр переменная-источник
     /// логически инвалидируется; use-after-consume → compile error.
     pub consume: bool,
+    /// Plan 108.1 (D176 amend): `mut name Type` — параметр позволяет
+    /// вызов mut-методов / index-assignment в callee.  Default = false
+    /// (read-only param).  Конфликтует с `consume` и `readonly` —
+    /// parser-level error.
+    pub is_mut: bool,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.

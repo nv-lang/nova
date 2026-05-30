@@ -7917,6 +7917,10 @@ struct ConsumeRegistry {
     /// (single-segment Named). Used for var-type inference of method calls:
     /// `consume g = mu.lock()` → g has type `MutexGuard`.
     method_return_types: HashMap<(String, String), String>,
+    /// Plan 108.1 (D176 amend): `(receiver_type, method_name)` для всех
+    /// методов с `mut`-receiver (`fn T mut @method(...)`).  Вызов такого
+    /// метода на параметре без `mut` → E_PARAM_NOT_MUT.
+    mut_methods: HashSet<(String, String)>,
 }
 
 impl ConsumeRegistry {
@@ -7929,6 +7933,8 @@ impl ConsumeRegistry {
         let mut fn_view_params: HashMap<String, Vec<usize>> = HashMap::new();
         // Plan 103.9 (D174): method return-type map for var-type inference.
         let mut method_return_types: HashMap<(String, String), String> = HashMap::new();
+        // Plan 108.1 (D176 amend): mut-receiver methods registry.
+        let mut mut_methods: HashSet<(String, String)> = HashSet::new();
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -7946,6 +7952,10 @@ impl ConsumeRegistry {
             if let Some(recv) = f.receiver {
                 if f.is_consume {
                     methods.insert((recv.to_string(), f.name.to_string()));
+                }
+                // Plan 108.1 (D176 amend): mut-receiver methods registry.
+                if !f.is_static && f.is_mut {
+                    mut_methods.insert((recv.to_string(), f.name.to_string()));
                 }
                 // Plan 77 (D132): fluent builder-методы рендерятся `-> @`
                 // (mirror `render_nv` is_fluent) — гарантированно
@@ -7969,6 +7979,10 @@ impl ConsumeRegistry {
                     Some(r) => {
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
+                        }
+                        // Plan 108.1 (D176 amend): mut-receiver methods registry.
+                        if r.mutable {
+                            mut_methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
                         // Plan 103.9 (D174): track method return-type for inference.
                         // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
@@ -8040,6 +8054,11 @@ impl ConsumeRegistry {
                             if r.consume {
                                 methods.insert((r.type_name.clone(), fd.name.clone()));
                             }
+                            // Plan 108.1 (D176 amend): mut-receiver methods registry
+                            // — extern modules.
+                            if r.mutable {
+                                mut_methods.insert((r.type_name.clone(), fd.name.clone()));
+                            }
                             if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
                                 if path.len() == 1 {
                                     method_return_types.insert(
@@ -8056,7 +8075,7 @@ impl ConsumeRegistry {
 
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
-            fn_view_params, method_return_types,
+            fn_view_params, method_return_types, mut_methods,
         }
     }
 }
@@ -8149,6 +8168,12 @@ struct ConsumeCtx<'a> {
     /// Plan 103.9 (D174): тип receiver'а текущего метода. Используется для
     /// инференса типа при `consume g = self.method()` — `self` это SelfAccess.
     self_type: Option<String>,
+    /// Plan 108.1 (D176 amend): параметры функции с `is_mut: bool`.
+    /// HashMap<param_name, is_mut>.  Используется для проверки
+    /// `param.mut_method(...)` → E_PARAM_NOT_MUT при is_mut=false.
+    /// Заполняется при входе в функцию.  Includes consume-params
+    /// (is_mut=true since consume implies ownership+mut).
+    param_mut: HashMap<String, bool>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -8166,6 +8191,7 @@ impl<'a> ConsumeCtx<'a> {
             view_params: HashSet::new(),
             consume_closures: HashMap::new(),
             self_type: None,
+            param_mut: HashMap::new(),
         }
     }
 
@@ -8814,6 +8840,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 // Plan 100.2 (D156): если функция имеет `[T consume]` generics,
                 // параметры с типом T (или содержащим T) — consume-obligations.
                 for p in &f.params {
+                    // Plan 108.1 (D176 amend): track param mutability.
+                    // consume params получают неявно mut (по spec).
+                    let effective_mut = p.is_mut || p.consume;
+                    ctx.param_mut.insert(p.name.clone(), effective_mut);
                     let pty = match &p.ty {
                         TypeRef::Named { path, .. } if path.len() == 1 =>
                             Some(path[0].clone()),
@@ -9854,6 +9884,51 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     recv, method),
                                 e.span,
                             ));
+                        }
+                        // Plan 108.1 (D176 amend): mut-method on non-mut param → E_PARAM_NOT_MUT.
+                        // Двa источника mut-методов:
+                        //  (a) registered (`ctx.reg.mut_methods` — StringBuilder, WriteBuffer,
+                        //      user `fn T mut @method`).
+                        //  (b) builtin collection (array `[]T`, map `[K:V]`, set `{T}`) —
+                        //      `.push/.pop/.append/.insert/.remove/.clear/.truncate/.reserve/
+                        //       .swap/.sort/.set/.extend/.copy_from`.
+                        if let Some(&is_mut) = ctx.param_mut.get(&recv) {
+                            if !is_mut {
+                                let recv_ty = ctx.var_types.get(&ctx.canonical(&recv))
+                                    .or_else(|| ctx.var_types.get(&recv))
+                                    .cloned();
+                                let registered = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let builtin_mut_method = matches!(
+                                    method.as_str(),
+                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    | "clear" | "truncate" | "reserve" | "swap"
+                                    | "sort" | "sort_by" | "set" | "extend" | "extend_from"
+                                    | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
+                                    | "drain" | "dedup" | "reverse" | "shuffle"
+                                );
+                                if registered || builtin_mut_method {
+                                    let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PARAM_NOT_MUT] параметр `{}` не помечен `mut`, \
+                                             но вызывается mut-метод `{}` (тип `{}`).  \
+                                             Default для параметров — read-only (D176 amend, Plan 108.1).",
+                                            recv, method, ty_str),
+                                        e.span,
+                                    ).with_note(
+                                        "добавь `mut` к параметру: `fn ...(mut <name> T)` — \
+                                         разрешит вызов mut-методов и index-assignment в callee."
+                                            .to_string(),
+                                    ).with_suggestion(crate::diag::Suggestion {
+                                        message: format!("add `mut` to param `{}`", recv),
+                                        span: e.span,
+                                        replacement: format!("mut {}", recv),
+                                        applicability: crate::diag::Applicability::MaybeIncorrect,
+                                    }));
+                                }
+                            }
                         }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.

@@ -64,7 +64,7 @@ fn min_money[T Comparable](a T, b T) -> T =>
 
 
 type Buffer { data str }
-fn Buffer @fmt(sb StringBuilder) -> () {
+fn Buffer @fmt(mut sb StringBuilder) -> () {
     sb.append("Buffer(")
     sb.append(@data)
     sb.append(")")
