@@ -74,5 +74,5 @@ test "Printable.fmt — StringBuilder formatting" {
     let b = Buffer { data: "hello" }
     let mut sb = StringBuilder.new()
     b.fmt(sb)
-    assert(sb.to_str() == "Buffer(hello)")
+    assert(sb.as_str() == "Buffer(hello)")
 }

@@ -1,12 +1,12 @@
-// Plan 90.1 — позитив: insert_from at middle position.
-// D141 amend: insert_from(i, src) with memmove tail right.
+// Plan 90.1 — позитив: insert at middle position.
+// D141 amend: insert(i, src) with memmove tail right.
 
-module nova_tests.plan90_1.insert_from_middle
+module nova_tests.plan90_1.insert_middle
 
-test "insert_from middle — basic []int" {
+test "insert middle — basic []int" {
     let mut dst []int = [1, 2, 5, 6]
     let src []int = [3, 4]
-    dst.insert_from(2, src)
+    dst.insert(2, src)
     // [1, 2, 3, 4, 5, 6]
     assert(dst.len() == 6)
     assert(dst[0] == 1)
@@ -17,10 +17,10 @@ test "insert_from middle — basic []int" {
     assert(dst[5] == 6)
 }
 
-test "insert_from at start (i=0)" {
+test "insert at start (i=0)" {
     let mut dst []int = [3, 4, 5]
     let src []int = [1, 2]
-    dst.insert_from(0, src)
+    dst.insert(0, src)
     assert(dst.len() == 5)
     assert(dst[0] == 1)
     assert(dst[1] == 2)
@@ -28,10 +28,10 @@ test "insert_from at start (i=0)" {
     assert(dst[4] == 5)
 }
 
-test "insert_from []u8" {
+test "insert []u8" {
     let mut buf []u8 = [0x01, 0x04, 0x05]
     let ins []u8 = [0x02, 0x03]
-    buf.insert_from(1, ins)
+    buf.insert(1, ins)
     assert(buf.len() == 5)
     assert(buf[0] == 0x01)
     assert(buf[1] == 0x02)

@@ -1,12 +1,12 @@
-// Plan 90.1 — позитив: extend_from self-extend dst.extend_from(dst).
+// Plan 90.1 — позитив: append self-extend dst.append(dst).
 // D141 amend: snapshot src_data/src_len before potential realloc handles
 // self-extend correctly. With Boehm GC, old allocation retained until collected.
 
-module nova_tests.plan90_1.extend_from_self
+module nova_tests.plan90_1.append_self
 
-test "extend_from self — doubles prefix" {
+test "append self — doubles prefix" {
     let mut dst []int = [1, 2, 3]
-    dst.extend_from(dst)
+    dst.append(dst)
     // [1, 2, 3, 1, 2, 3]
     assert(dst.len() == 6)
     assert(dst[0] == 1)
@@ -17,9 +17,9 @@ test "extend_from self — doubles prefix" {
     assert(dst[5] == 3)
 }
 
-test "extend_from self — single element" {
+test "append self — single element" {
     let mut dst []int = [42]
-    dst.extend_from(dst)
+    dst.append(dst)
     assert(dst.len() == 2)
     assert(dst[0] == 42)
     assert(dst[1] == 42)

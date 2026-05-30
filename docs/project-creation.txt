@@ -25121,3 +25121,125 @@ Spec: D180 finalized (не draft) — это новый D-блок (не amend D
 D-block numbering: D175-D179 заняты; D180 next free.
 
 Plan 73.1 ✅ ЗАКРЫТ. 7 commits на ветке plan-73-v2.
+
+================================================================================
+2026-05-30 — Plan 91.10 + 91.11: D163 retract + SB cleanup + rename family
+================================================================================
+
+Plan 91.10 (D163 retract — capability syntax → effects):
+- Parser `needs <Cap>` clause удалён (hard error w/ migration hint).
+- `check_external_fn_needs_caps` removed (types/mod.rs).
+- `emit_d163_external_stub` removed (codegen).
+- `FnDecl.needs_caps` AST field сохранён always-empty (минимизация churn в
+  sum_schema_registry; удаление followup [M-91.10-remove-needs-caps-field]).
+- 9 D163-fixtures удалены: plan100_5/external_consume_* (6) +
+  plan100_7/{file_open_read_close,mutex_lock_release,socket_listen_accept}
+  (3). Эти тесты валидировали D163 mechanism — после retract obsolete.
+- Spec D163 marked RETRACTED в 02-types.md с rationale + cross-ref на
+  capability=effect insight.
+- 2 stale runtime fixtures удалены (string_builder.nv — namespace conflict
+  с std module; builder_chaining — pre-existing .into() stale API followup).
+
+Rationale Plan 91.10:
+- Trigger: при добавлении `str.from_bytes_unchecked_steal(consume []u8) -> str`
+  для zero-copy steal в StringBuilder.@as_str (Plan 91.11 work), D163-missing-cap
+  fire'нул на pure-memory ops external fn. Анализ выявил conflation orthogonal
+  concerns: `consume` (ownership/linearity) vs `needs Cap` (authority).
+- Insight (от user в обсуждении): capability **structurally идентична** effect-
+  без-операций. Same propagation, same static tracking. Nova уже имеет effect
+  system (Plan 33). `needs Cap` — parallel redundant tracking.
+- Reference: Koka language (Daan Leijen) — capabilities ARE effects.
+- Followup [M-91.10-fs-net-effects-formal] — если/когда понадобится capability
+  gating для реальных OS resources, ввести как formal `effect Fs { ... }`
+  declarations с handler'ами; не блокирует 0.1.
+
+Plan 91.11 (SB API cleanup + rename family + parser multi-line chain):
+
+(1) StringBuilder API cleanup (std/runtime/string_builder.nv):
+- `@append_bytes(readonly []u8)` merged → overload `@append(readonly []u8)`.
+- `@plus(s str)` и `@plus(c char)` removed (use .append() explicitly).
+  Affected: nova_tests/runtime/plus_operator.nv (trimmed to str+str only),
+  nova_tests/plan77/fluent_wrapper_ok.nv (sb + "..." → .append()).
+- `@to_str() → @as_str()` rename (better verb для consume-finalize).
+  Propagation: 22+ файлов (std + nova_tests/{plan11_followup,plan73,plan77,
+  plan91_8a*,plan62,protocols,_experimental}/*.nv) + string interp codegen
+  (Nova_StringBuilder_consume_to_str → Nova_StringBuilder_consume_as_str).
+- Performance / API optimizations:
+  - `.new()` → `=> with_capacity(16)` DRY one-liner
+  - `.with_capacity(n)` → `=> { buf: []u8.with_capacity(n) }` (прямой intrinsic)
+  - `.from(c char)` → `=> with_capacity(4).append(c)` (4× меньше pre-alloc)
+  - `@clone` → `=> with_capacity(len).append(@buf)` chain
+  - `@starts_with`/`@ends_with`: as_bytes() view + `@buf[a..b].compare(...) == 0`
+    (memmove memcmp, не byte loop)
+  - `@append(s str)`: `s.as_bytes()` (view) вместо `s.to_bytes()` (copy)
+  - `@append_repeat`: pre-reserve(total) → 1 realloc вместо O(log n)
+  - `@append(c char)`: multi-line push chain (D181 fluent) для UTF-8 byte
+    sequence emit
+
+(2) Zero-copy steal API:
+- New external `str.from_bytes_unchecked_steal(consume []u8) -> str`
+  (std/runtime/string.nv).
+- Runtime: nova_str_steal_bytes (compiler-codegen/nova_rt/string_builder.h) —
+  if cap > len: write '\0' at data[len] in-place + return wrapping nova_str
+  (zero-copy); else fallback alloc+copy.
+- @as_str() теперь использует steal (был: from_bytes_unchecked — alloc+copy).
+- Compiler dispatch в emit_c.rs (4 сайта): method routing, type infer.
+
+(3) Rename family (D141 amend, 2026-05-30):
+- `extend_from(src)` → `append(src)` (bulk append, grows)
+- `insert_from(i, src)` → `insert(i, src)` (bulk insert, grows + memmove tail)
+- `copy_from(src)` остаётся (Rust-style copy_from_slice; теперь isolated имя)
+- `copy_within(...)` остаётся (JS Array.copyWithin parity)
+- `fill(v)`, `reserve(extra)`, `truncate(n)` остаются
+- Migration: 33 файла затронуто. Compiler (parser/types/codegen/lints/ast +
+  array.h runtime macros), std (string_builder.nv), 12 test fixtures (10 git
+  mv'd + 2 lint + 1 plan91_7).
+- Naming rationale: `_from`-family склеивал ops по dispatch-детали ("берёт
+  source array"), не по semantic class. Распад family + semantic verbs →
+  net win для discoverability + API symmetry (push/append, insert overload).
+
+(4) Parser multi-line chain continuation (parser/mod.rs:parse_postfix):
+- Lookahead через Newline/Semicolon: если следующий значимый token — `.`,
+  skip newlines и продолжить chain. Иначе break (statement-end).
+- Conservative scope: только `.` member access после newline. Не охватывает
+  `?.` / `!.` / wrapping call args (separate followup).
+- Enables: `@buf.push(x)\n    .push(y)` многострочные fluent chain'ы.
+- Plan 91.7 D181 fluent-return design implied multi-line, но grammar не
+  закреплял. Этот fix — формализация.
+
+(5) var_boxed restore fix ([M-mono-method-var-boxed-leak] closed):
+- emit_monomorphized_method добавил save/restore var_boxed map (saved через
+  std::mem::take в начале, restored в конце — mirror existing
+  emit_lambda_body pattern). Root-cause for недавнего closure regression
+  в Plan 91.8c work: var_boxed (heap-promotion map для closure captures)
+  утекал между mono'd method emissions через worklist drain → identifier
+  `count` в mono'd `count_of` body резолвился через caller's `(*_box_count)`
+  → CC-FAIL «undeclared _box_count».
+
+Test results после rebuild:
+- plan90_1: 20/0 PASS (10 renamed fixtures + 10 existing)
+- plan11_followup: 20/0 PASS
+- plan73: 12/0 PASS
+- plan77: 7/0 PASS
+- plan91_7: 5/0 PASS
+- plan91_8a: 2/0 PASS
+- plan91_8a_2: 27/0 PASS
+- runtime: 16/3 PASS (3 FAIL pre-existing stale API — builder_chaining
+  .into(), read_buffer.read_byte, read_text.read_char; not caused by this work)
+
+Spec updates:
+- D141 amended (08-runtime.md) — append/insert renaming, naming rationale
+  section, W_VIEW_EXTEND_DETACH note refresh
+- D141 README entry updated (decisions/README.md)
+- D163 RETRACTED block (02-types.md) — historical record + retraction note
+
+Pending followups:
+- [M-91.10-remove-needs-caps-field] — удалить AST field после стабилизации
+- [M-91.10-fs-net-effects-formal] — capability as effect formal decls
+- [M-91.10-revisit-plan100-5-7] — Plan 100.5/100.7 архитектурный review
+- [M-stringbuilder-count_of-after-sort-no-prelude] — restore @char_len через
+  @count_of после cycle fix в std.sort
+- [M-91.11-builder-chaining-stale-into] — нова_tests/runtime/builder_chaining
+  использует stale .into() (pre-existing brittleness)
+- [M-parser-multiline-chain-extended] — `?.` / `!.` / wrapping args
+  multi-line continuation

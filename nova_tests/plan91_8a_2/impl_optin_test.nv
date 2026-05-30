@@ -42,7 +42,7 @@ test "#impl(A + B + C): multi-protocol opt-in" {
     // Printable.fmt via str.from(Coin) default — opted in
     let mut sb = StringBuilder.new()
     a.fmt(sb)
-    assert(sb.to_str() == "Coin(5)")
+    assert(sb.as_str() == "Coin(5)")
 }
 
 test "#impl(Greetable): generic bound mono'd through opted-in type" {

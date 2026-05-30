@@ -10,7 +10,7 @@ test "move-binding — twin owns and consumes" {
     consume sb = StringBuilder.new()
     sb.append("first")
     consume twin = sb               // move (Rule 3 D180); sb dead
-    let a = twin.to_str()           // consume через twin
+    let a = twin.as_str()           // consume через twin
     assert(a == "first")
 }
 
@@ -19,8 +19,8 @@ test "две независимые consume-bindings — каждая свой �
     sb1.append("alpha")
     consume sb2 = StringBuilder.new()
     sb2.append("beta")
-    let a = sb1.to_str()
-    let b = sb2.to_str()
+    let a = sb1.as_str()
+    let b = sb2.as_str()
     assert(a == "alpha")
     assert(b == "beta")
 }
