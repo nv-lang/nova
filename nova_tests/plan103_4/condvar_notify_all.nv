@@ -13,7 +13,7 @@ test "notify_all wakes all 5 waiters" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
     let mut n_waiting = AtomicInt.new(0)
-    let n_woken   = AtomicInt.new(0)
+    let mut n_woken = AtomicInt.new(0)
 
     supervised {
         for _i in 0..5 {

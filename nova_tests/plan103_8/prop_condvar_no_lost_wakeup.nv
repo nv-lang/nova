@@ -16,7 +16,7 @@ module nova_tests.plan103_8.prop_condvar_no_lost_wakeup
 test "prop no lost wakeup: 1 producer + 1 consumer Ð“â€” 1000 cycles" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
-    let produced = AtomicI64.new(0)
+    let mut produced = AtomicI64.new(0)
     let mut consumed = AtomicI64.new(0)
 
     supervised {

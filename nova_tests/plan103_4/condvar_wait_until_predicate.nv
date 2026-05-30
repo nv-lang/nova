@@ -20,7 +20,7 @@ test "wait_until returns only when predicate becomes true" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
     let ready = AtomicBool.new(false)
-    let done  = AtomicBool.new(false)
+    let mut done = AtomicBool.new(false)
 
     supervised {
         // Consumer: blocks until ready == true.

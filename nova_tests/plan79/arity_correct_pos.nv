@@ -34,6 +34,6 @@ test "Ф.2 — correct arity compiles" {
     assert(b.value == 42)
 
     // turbofish at correct arity — HashMap[K, V] declares two parameters
-    let h = HashMap[str, int].new()
+    let mut h = HashMap[str, int].new()
     assert(h.len() == 0)
 }

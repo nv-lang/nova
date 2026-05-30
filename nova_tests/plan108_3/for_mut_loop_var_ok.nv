@@ -1,0 +1,10 @@
+// Plan 108.3 (D36 amend): `for mut x in iter` — loop-var mutable.
+
+module nova_tests.plan108_3.for_mut_loop_var_ok
+
+test "for mut x — push allowed" {
+    let mut arrs = [[1, 2], [3, 4]]
+    for mut x in arrs {
+        x.push(99)
+    }
+}

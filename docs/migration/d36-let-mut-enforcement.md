@@ -106,17 +106,44 @@ nova check 2>&1 | grep "E_LOCAL_NOT_MUT" | awk -F: '{print $1}' | sort -u
 
 Затем для каждого binding'а в ошибке — добавь `mut` после `let`.
 
+## Recipe F — Loop-var (Plan 108.3)
+
+```nova
+// Before — error
+for x in arrs { x.push(99) }      // ✗ E_LOCAL_NOT_MUT
+
+// After
+for mut x in arrs { x.push(99) }  // ✓
+```
+
+## Recipe G — Pattern per-name mut (Plan 108.3)
+
+```nova
+// Before
+let (a, b) = pair
+a.push(1)                         // ✗ E_LOCAL_NOT_MUT
+
+// After (per-name)
+let (mut a, b) = pair             // ✓ a mutable, b immutable
+a.push(1)
+
+// Запрет — group mut
+let mut (a, b) = pair             // ✗ E_PATTERN_GROUP_MUT
+```
+
 ## Symmetry с Plan 108.1 (params)
 
 | Контекст | Default | Opt-in mut |
 |---|---|---|
 | Param (Plan 108.1) | readonly | `fn f(mut b T)` |
 | Local (Plan 108.2) | readonly (immutable) | `let mut x = ...` |
+| Loop-var (Plan 108.3) | readonly | `for mut x in iter` |
+| Pattern element (Plan 108.3) | readonly | `let (mut a, b) = ...` per-name |
 | Field (D36 + D175) | mutable у mut-binding | `mut field` для cache, `readonly field` для freeze |
 
 ## Ссылки
 
-- `spec/decisions/02-types.md` D36 (amended Plan 108.2).
+- `spec/decisions/02-types.md` D36 (amended Plan 108.2 + 108.3).
 - `docs/parameters.md` — обновлено: локалы тоже default readonly.
 - `docs/plans/108.2-locals-readonly-default.md` — plan status.
 - Plan 108.1 — symmetric для params.

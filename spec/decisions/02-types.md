@@ -2672,7 +2672,39 @@ amend Plan 108.1) — ownership transfer → владелец может мут�
 |---|---|---|
 | Param | ✓ (Plan 108.1) | `mut name T` |
 | Local binding | ✓ (Plan 108.2) | `let mut x = ...` |
+| Loop variable | ✓ (Plan 108.3) | `for mut x in iter` |
+| Pattern element | ✓ (Plan 108.3) | `let (mut a, b) = pair` (per-name) |
 | Field | ✓ (D36 default = mutable у mut-binding) | n/a |
+
+### Loop-var и pattern-binding (Plan 108.3, 2026-05-30)
+
+**Loop-var mutability:** в `for`-цикле переменная итерации по умолчанию
+read-only.  Opt-in mut через `for mut x in iter`:
+
+```nova
+for x in arrs { x.push(1) }           // ✗ E_LOCAL_NOT_MUT — x immutable
+for mut x in arrs { x.push(1) }       // ✓ — x mutable
+```
+
+**Pattern-binding per-name mut:** при destructure (tuple, record) `mut`
+ставится **на каждое имя отдельно**, parallel Rust pattern semantics:
+
+```nova
+let (a, b) = pair                     // оба immutable
+let (mut a, b) = pair                 // a mutable, b immutable
+let (a, mut b) = pair                 // a immutable, b mutable
+let (mut a, mut b) = pair             // оба mutable
+```
+
+**Запрет group-mut:** `let mut (a, b) = ...` отвергается parser-level
+(`E_PATTERN_GROUP_MUT`) — keyword `mut` относится к одному имени,
+не к pattern целиком (consistent с Rust):
+
+```nova
+let mut (a, b) = pair                 // ✗ E_PATTERN_GROUP_MUT
+```
+
+Использование `mut` внутри pattern — единственно правильная форма.
 
 ### Связь
 - [02-types.md → D175](#d175-readonly-field--полный-freeze-амендмент-d36) — readonly field полный freeze.

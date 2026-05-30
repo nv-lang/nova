@@ -117,10 +117,38 @@ arr.push(1)                       // ✓
 
 `consume X = ...` неявно подразумевает `mut` (как `consume` param).
 
+## Loop-var и pattern (Plan 108.3)
+
+### `for mut x in iter`
+
+Переменная цикла по умолчанию read-only.  Opt-in `mut`:
+
+```nova
+for x in arrs { x.push(1) }       // ✗ E_LOCAL_NOT_MUT
+for mut x in arrs { x.push(1) }   // ✓
+```
+
+`for consume x in iter` — implicit mut (ownership transfer).
+
+### Pattern per-name mut
+
+При destructure `mut` ставится **на каждое имя отдельно** (Rust-style):
+
+```nova
+let (a, b) = pair                  // оба immutable
+let (mut a, b) = pair              // a mutable, b immutable
+let (a, mut b) = pair              // a immutable, b mutable
+let (mut a, mut b) = pair          // оба mutable
+```
+
+**Запрет group-mut** — `let mut (a, b) = ...` parser-level отвергается
+(`E_PATTERN_GROUP_MUT`): `mut` keyword относится к одному имени,
+не к pattern целиком.
+
 ## Ссылки
 
 - `spec/decisions/02-types.md` D176 — formal spec params.
-- `spec/decisions/02-types.md` D36 + amend Plan 108.2 — formal spec locals.
+- `spec/decisions/02-types.md` D36 + amend Plan 108.2/108.3 — formal spec locals + loop-var + pattern.
 - `docs/migration/d176-param-readonly-default.md` — params migration guide.
 - `docs/migration/d36-let-mut-enforcement.md` — locals migration guide.
 - D131 (Plan 73) — consume affine semantics.

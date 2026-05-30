@@ -85,7 +85,7 @@ test "for in: min element" {
 
 test "for in: spread array sum" {
     let mut a = [1, 2, 3]
-    let b = [0, ...a, 4, 5]
+    let mut b = [0, ...a, 4, 5]
     let mut s = 0
     for n in b {
         s += n

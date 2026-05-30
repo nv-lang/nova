@@ -2831,7 +2831,7 @@ impl CEmitter {
         };
         Stmt::Let(LetDecl {
             mutable: false,
-            pattern: Pattern::Ident { name: name.to_string(), span },
+            pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
             ty: None,
             value: int_lit,
             span,
@@ -21583,7 +21583,7 @@ _cp++; \
                     for f in fields {
                         let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
                         let inner_pat = f.pattern.clone()
-                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false });
                         out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &ty, this));
                     }
                     return out;
@@ -21604,7 +21604,7 @@ _cp++; \
                         if let Some(field_c) = field_c {
                             // `field: pat` — recurse pat; `field` shorthand — bind directly.
                             let inner_pat = f.pattern.clone()
-                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false });
                             out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &field_c, this));
                         } else if f.pattern.is_none() {
                             // Shorthand field без type info — bind как scr_ty (fallback).

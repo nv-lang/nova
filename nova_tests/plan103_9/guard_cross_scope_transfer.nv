@@ -21,7 +21,7 @@ test "Guard passed to helper function and consumed there" {
 test "Guard held while doing multiple operations" {
     let mut mu = Mutex.new()
     let mut a = AtomicInt.new(0)
-    let b = AtomicInt.new(0)
+    let mut b = AtomicInt.new(0)
 
     consume g = mu.lock()
     // Multiple operations under same guard

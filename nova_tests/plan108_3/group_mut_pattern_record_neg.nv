@@ -1,0 +1,11 @@
+// Plan 108.3 (D36 amend): `let mut {field}` — group mut на record pattern запрещён.
+
+// EXPECT_COMPILE_ERROR E_PATTERN_GROUP_MUT
+
+module nova_tests.plan108_3.group_mut_pattern_record_neg
+
+type Pair { a int, b int }
+
+test "let mut {a, b} — group mut → error" {
+    let mut { a, b } = Pair { a: 1, b: 2 }
+}
