@@ -5,7 +5,7 @@
 
 // EXPECT_COMPILE_ERROR E_CONSUME_KEYWORD_MISSING
 
-module nova_tests.plan73_1.binding_cross_module_consume_neg
+module nova_tests.plan73.binding_cross_module_consume_neg
 
 import std.runtime.sync
 

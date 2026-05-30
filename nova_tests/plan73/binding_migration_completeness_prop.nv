@@ -18,7 +18,7 @@
 //
 // EXPECT_PASS
 
-module nova_tests.plan73_1.binding_migration_completeness_prop
+module nova_tests.plan73.binding_migration_completeness_prop
 
 test "property: Mutex consume-bind compiles + commits" {
     let m = Mutex.new()

@@ -12,7 +12,7 @@
 //
 // EXPECT_PASS
 
-module nova_tests.plan73_1.binding_no_dangling_view_prop
+module nova_tests.plan73.binding_no_dangling_view_prop
 
 type Token consume { val int }
 

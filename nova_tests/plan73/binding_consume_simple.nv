@@ -1,7 +1,7 @@
 // Plan 73.1 (D180): consume binding simple positive case.
 // `consume X = Type.new()` где Type — consume-type; X owns; X consumes via метод.
 
-module nova_tests.plan73_1.binding_consume_simple
+module nova_tests.plan73.binding_consume_simple
 
 type Token consume { val int }
 

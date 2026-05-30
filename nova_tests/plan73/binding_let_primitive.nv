@@ -1,6 +1,6 @@
 // Plan 73.1 (D180): regular `let` для не-consume RHS работает без consume keyword.
 
-module nova_tests.plan73_1.binding_let_primitive
+module nova_tests.plan73.binding_let_primitive
 
 test "let для int — без consume keyword" {
     let n = 42
