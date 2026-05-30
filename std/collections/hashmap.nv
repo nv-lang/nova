@@ -151,7 +151,7 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
 /// # Examples
 ///
 /// ```nova
-/// let m = HashMap[str, int].from([("a", 1), ("b", 2)])
+/// let mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
 /// assert(m.get("a") == Some(1))
 /// assert(m.len() == 2)
 /// ```
@@ -273,7 +273,7 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// # Examples
 ///
 /// ```nova
-/// let m = HashMap[str, int].from([("a", 1)])
+/// let mut m = HashMap[str, int].from([("a", 1)])
 /// let m2 = m.clone()
 /// assert(m2.get("a") == Some(1))
 /// ```
@@ -311,7 +311,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 /// # Examples
 ///
 /// ```nova
-/// let m = HashMap[str, int].from([("a", 1), ("b", 2), ("c", 3)])
+/// let mut m = HashMap[str, int].from([("a", 1), ("b", 2), ("c", 3)])
 /// let big = m.filter(|_, v| v > 1)
 /// assert(big.len() == 2)
 /// ```
@@ -424,7 +424,7 @@ type HashMapIter[K, V] {
 /// # Examples
 ///
 /// ```nova
-/// let m = HashMap[str, int].from([("a", 1), ("b", 2)])
+/// let mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
 /// for (k, v) in m.iter() {
 ///     assert(v > 0)
 /// }
@@ -637,7 +637,7 @@ test "get_or_insert with counter pattern" {
 }
 
 test "from pairs constructor" {
-    let m = HashMap[str, int].from([("x", 10), ("y", 20), ("z", 30)])
+    let mut m = HashMap[str, int].from([("x", 10), ("y", 20), ("z", 30)])
     assert(m.len() == 3)
     assert(m.get("y") == Some(20))
 }

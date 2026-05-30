@@ -5,6 +5,6 @@
 module nova_tests.plan96.neg_slice_a_gt_b
 
 fn main() -> () {
-    let arr = [1, 2, 3, 4, 5, 6]
+    let mut arr = [1, 2, 3, 4, 5, 6]
     let _ = arr[5..3]
 }

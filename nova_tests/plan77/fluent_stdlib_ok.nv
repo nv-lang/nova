@@ -11,7 +11,7 @@ test "StringBuilder fluent chain через -> @" {
 }
 
 test "WriteBuffer fluent chain через -> @" {
-    let wb = WriteBuffer.new()
+    let mut wb = WriteBuffer.new()
     let bytes = wb.write_byte(1).write_byte(2).write_byte(3).into()
     assert(bytes.len() == 3)
 }

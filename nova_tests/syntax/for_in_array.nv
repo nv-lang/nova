@@ -8,7 +8,7 @@ module syntax.for_in_array
 // ---- basic iteration ----
 
 test "for in: sum of elements" {
-    let arr = [10, 20, 30, 40, 50]
+    let mut arr = [10, 20, 30, 40, 50]
     let mut total = 0
     for n in arr {
         total += n
@@ -17,7 +17,7 @@ test "for in: sum of elements" {
 }
 
 test "for in: count iterations" {
-    let arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let mut arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     let mut count = 0
     for n in arr {
         count += 1
@@ -27,7 +27,7 @@ test "for in: count iterations" {
 }
 
 test "for in: single element" {
-    let arr = [42]
+    let mut arr = [42]
     let mut got = 0
     for n in arr {
         got = n
@@ -38,7 +38,7 @@ test "for in: single element" {
 // ---- mutation inside loop ----
 
 test "for in: accumulate product" {
-    let arr = [1, 2, 3, 4, 5]
+    let mut arr = [1, 2, 3, 4, 5]
     let mut prod = 1
     for n in arr {
         prod = prod * n
@@ -48,7 +48,7 @@ test "for in: accumulate product" {
 }
 
 test "for in: conditional accumulate" {
-    let arr = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
+    let mut arr = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
     let mut sum_big = 0
     for n in arr {
         if n > 4 {
@@ -60,7 +60,7 @@ test "for in: conditional accumulate" {
 }
 
 test "for in: max element" {
-    let arr = [3, 1, 4, 1, 5, 9, 2, 6]
+    let mut arr = [3, 1, 4, 1, 5, 9, 2, 6]
     let mut mx = 0
     for n in arr {
         if n > mx {
@@ -71,7 +71,7 @@ test "for in: max element" {
 }
 
 test "for in: min element" {
-    let arr = [5, 3, 8, 1, 7, 2, 9]
+    let mut arr = [5, 3, 8, 1, 7, 2, 9]
     let mut mn = 999
     for n in arr {
         if n < mn {
@@ -84,7 +84,7 @@ test "for in: min element" {
 // ---- spread arrays ----
 
 test "for in: spread array sum" {
-    let a = [1, 2, 3]
+    let mut a = [1, 2, 3]
     let b = [0, ...a, 4, 5]
     let mut s = 0
     for n in b {
@@ -133,7 +133,7 @@ test "for in: nested loop over two arrays" {
 
 test "for in: loop produces correct index-dependent results" {
     // array where elem[i] = (i+1)^2
-    let arr = [1, 4, 9, 16, 25]
+    let mut arr = [1, 4, 9, 16, 25]
     let mut sum = 0
     for n in arr {
         sum += n

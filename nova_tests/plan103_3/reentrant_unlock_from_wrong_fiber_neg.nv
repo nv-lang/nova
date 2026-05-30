@@ -7,7 +7,7 @@
 module nova_tests.plan103_3.reentrant_unlock_from_wrong_fiber_neg
 
 test "unlock from non-owner fiber panics" {
-    let rm = ReentrantMutex.new()
+    let mut rm = ReentrantMutex.new()
 
     // Main acquires lock
     rm.lock()

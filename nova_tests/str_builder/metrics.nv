@@ -40,7 +40,7 @@ test "смешанный текст: len < byte_len" {
 }
 
 test "пустой: len == 0, byte_len == 0" {
-    let sb = StringBuilder.new()
+    let mut sb = StringBuilder.new()
     assert(sb.len() == 0)
     assert(sb.byte_len() == 0)
 }

@@ -1119,7 +1119,7 @@ export external fn AtomicUsize mut @fetch_nand(v uint) -> uint
 /// # Examples
 ///
 /// ```nova
-/// let counter = AtomicInt.new(0)
+/// let mut counter = AtomicInt.new(0)
 /// counter.fetch_add(1)
 /// assert(counter.load() == 1)
 /// ```
@@ -1432,7 +1432,7 @@ export external fn OnceGuard consume @abort()
 /// # Examples
 ///
 /// ```nova
-/// let mu = Mutex.new()
+/// let mut mu = Mutex.new()
 /// mu.lock()
 /// // critical section
 /// mu.unlock()
@@ -1495,7 +1495,7 @@ export external fn Mutex.new_unfair() -> Self
 /// # Examples
 ///
 /// ```nova
-/// let mu = Mutex.new()
+/// let mut mu = Mutex.new()
 /// if mu.try_lock_for(Duration.from_millis(100)) {
 ///     defer mu.unlock()
 ///     // critical section
@@ -1529,7 +1529,7 @@ export external fn Mutex @is_locked() -> bool
 /// # Examples
 ///
 /// ```nova
-/// let mu = Mutex.new()
+/// let mut mu = Mutex.new()
 /// let result = mu.with_lock { ||
 ///     compute_under_lock()
 /// }
@@ -1560,7 +1560,7 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 /// # Examples
 ///
 /// ```nova
-/// let rw = RwLock.new()
+/// let mut rw = RwLock.new()
 /// rw.with_read { ||
 ///     let v = shared_data
 ///     print(v)
@@ -1689,7 +1689,7 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// # Examples
 ///
 /// ```nova
-/// let rm = ReentrantMutex.new()
+/// let mut rm = ReentrantMutex.new()
 /// rm.lock()
 /// rm.lock()           // тот же fiber — no deadlock
 /// rm.unlock()
@@ -1747,7 +1747,7 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 /// # Examples
 ///
 /// ```nova
-/// let wg = WaitGroup.new()
+/// let mut wg = WaitGroup.new()
 /// wg.add(3)
 /// spawn { work1(); wg.done() }
 /// spawn { work2(); wg.done() }
@@ -1883,7 +1883,7 @@ export external fn Once mut @make_guard() -> OnceGuard consume
 /// # Examples
 ///
 /// ```nova
-/// let once = Once.new()
+/// let mut once = Once.new()
 /// match once.try_start() {
 ///     Some(consume g) => {
 ///         // This fiber won — do the work
@@ -2205,7 +2205,7 @@ export external fn Condvar mut @notify_all()
 /// # Examples
 ///
 /// ```nova
-/// let latch = CountDownLatch.new(5)
+/// let mut latch = CountDownLatch.new(5)
 /// parallel for _i in 0..5 {
 ///     do_work()
 ///     latch.count_down()

@@ -10,7 +10,7 @@ module nova_tests.plan73.binding_cross_module_consume_neg
 import std.runtime.sync
 
 test "let X = mu.lock() (cross-module consume-type) → E_CONSUME_KEYWORD_MISSING" {
-    let mu = Mutex.new()
+    let mut mu = Mutex.new()
     let g = mu.lock()              // ❌ MutexGuard consume-type cross-module
     g.unlock()
 }

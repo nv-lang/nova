@@ -12,8 +12,8 @@ import std.time.duration
 
 test "try_acquire_for times out when no permits available" {
     // Zero permits: any acquire blocks immediately
-    let sem = Semaphore.new(0)
-    let result = AtomicInt.new(0)
+    let mut sem = Semaphore.new(0)
+    let mut result = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -26,8 +26,8 @@ test "try_acquire_for times out when no permits available" {
 }
 
 test "try_acquire_for succeeds when permits available" {
-    let sem = Semaphore.new(1)
-    let result = AtomicInt.new(0)
+    let mut sem = Semaphore.new(1)
+    let mut result = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -42,8 +42,8 @@ test "try_acquire_for succeeds when permits available" {
 }
 
 test "try_acquire_for with zero timeout behaves as try_acquire (no permits)" {
-    let sem = Semaphore.new(0)
-    let result = AtomicInt.new(0)
+    let mut sem = Semaphore.new(0)
+    let mut result = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -56,8 +56,8 @@ test "try_acquire_for with zero timeout behaves as try_acquire (no permits)" {
 }
 
 test "try_acquire_for with zero timeout behaves as try_acquire (has permit)" {
-    let sem = Semaphore.new(1)
-    let result = AtomicInt.new(0)
+    let mut sem = Semaphore.new(1)
+    let mut result = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -73,8 +73,8 @@ test "try_acquire_for with zero timeout behaves as try_acquire (has permit)" {
 
 test "try_acquire_for: permit released by other fiber → acquired" {
     // Fiber A releases permit; Fiber B acquires it via try_acquire_for
-    let sem    = Semaphore.new(1)
-    let result = AtomicInt.new(0)
+    let mut sem = Semaphore.new(1)
+    let mut result = AtomicInt.new(0)
     sem.acquire()   // take the only permit
 
     supervised {

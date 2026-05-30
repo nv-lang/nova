@@ -20,13 +20,13 @@ module runtime.write_buffer
 // ================================================================
 
 test "WriteBuffer.new() — empty" {
-    let wb = WriteBuffer.new()
+    let mut wb = WriteBuffer.new()
     assert(wb.len() == 0)
     assert(wb.capacity() >= 16)
 }
 
 test "WriteBuffer.with_capacity(128)" {
-    let wb = WriteBuffer.with_capacity(128)
+    let mut wb = WriteBuffer.with_capacity(128)
     assert(wb.len() == 0)
     assert(wb.capacity() >= 128)
 }
@@ -161,7 +161,7 @@ test "clone независим" {
 // ================================================================
 
 test "into() пустой буфер" {
-    let wb = WriteBuffer.new()
+    let mut wb = WriteBuffer.new()
     let arr = wb.into()
     assert(arr.len() == 0)
 }

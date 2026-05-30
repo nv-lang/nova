@@ -7,7 +7,7 @@
 module nova_tests.plan103_9.readguard_writeguard_separated
 
 test "ReadGuard explicit unlock" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     consume rg = rw.read()
     // read-critical-section
     rg.unlock()
@@ -17,7 +17,7 @@ test "ReadGuard explicit unlock" {
 }
 
 test "WriteGuard explicit unlock" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     consume wg = rw.write()
     // write-critical-section
     wg.unlock()
@@ -27,8 +27,8 @@ test "WriteGuard explicit unlock" {
 }
 
 test "multiple ReadGuards can coexist (multiple readers allowed)" {
-    let rw = RwLock.new()
-    let wg = WaitGroup.new()
+    let mut rw = RwLock.new()
+    let mut wg = WaitGroup.new()
     let readers_inside = AtomicInt.new(0)
     let max_inside = AtomicInt.new(0)
     wg.add(4)
@@ -53,9 +53,9 @@ test "multiple ReadGuards can coexist (multiple readers allowed)" {
 }
 
 test "WriteGuard explicit unlock in parallel" {
-    let rw = RwLock.new()
-    let counter = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut rw = RwLock.new()
+    let mut counter = AtomicInt.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(4)
 
     parallel for _i in 0..4 {

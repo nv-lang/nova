@@ -20,7 +20,7 @@ fn iter_sum_readonly(readonly b []int) -> int {
 }
 
 test "default param ≡ readonly param" {
-    let arr = [3, 4, 5]
+    let mut arr = [3, 4, 5]
     assert(count_default(arr) == count_readonly(arr))
     assert(iter_sum_default(arr) == iter_sum_readonly(arr))
     assert(iter_sum_default(arr) == 12)

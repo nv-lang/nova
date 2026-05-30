@@ -28,7 +28,7 @@ fn Token consume @release(mut counter AtomicInt) -> int {
 fn Token mut @bump() -> @ { @ }
 
 test "property: each consume-binding satisfied exactly once across scenarios" {
-    let counter = AtomicInt.new(0)
+    let mut counter = AtomicInt.new(0)
     let mut expected = 0
 
     // Scenario A: basic consume.

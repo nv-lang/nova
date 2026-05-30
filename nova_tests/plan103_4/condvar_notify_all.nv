@@ -10,8 +10,8 @@
 module nova_tests.plan103_4.condvar_notify_all
 
 test "notify_all wakes all 5 waiters" {
-    let mu        = Mutex.new()
-    let cv        = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let n_waiting = AtomicInt.new(0)
     let n_woken   = AtomicInt.new(0)
 

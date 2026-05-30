@@ -7,8 +7,8 @@ module nova_tests.plan103_3.rwlock_try_write_for_timeout
 import std.time.duration
 
 test "try_write_for times out while reader holds lock" {
-    let rw = RwLock.new()
-    let result = AtomicInt.new(0)  // 0=pending, 1=acquired, 2=timed_out
+    let mut rw = RwLock.new()
+    let mut result = AtomicInt.new(0)  // 0=pending, 1=acquired, 2=timed_out
 
     rw.read()
 
@@ -27,7 +27,7 @@ test "try_write_for times out while reader holds lock" {
 }
 
 test "try_write_for succeeds when lock is free" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     let ok = rw.try_write_for(Duration.from_millis(100))
     assert(ok == true)
     assert(rw.is_write_locked() == true)
@@ -36,8 +36,8 @@ test "try_write_for succeeds when lock is free" {
 }
 
 test "try_read_for times out while writer holds lock" {
-    let rw = RwLock.new()
-    let result = AtomicInt.new(0)
+    let mut rw = RwLock.new()
+    let mut result = AtomicInt.new(0)
 
     rw.write()
 

@@ -9,7 +9,7 @@ module nova_tests.plan103_9.permit_balanced_prop
 
 test "Semaphore: acquire M times, release M times — sequential" {
     let k = 5
-    let sem = Semaphore.new(k)
+    let mut sem = Semaphore.new(k)
     // Sequential acquire/release: no concurrency needed
     for _i in 0..k {
         consume p = sem.acquire()
@@ -21,10 +21,10 @@ test "Semaphore: acquire M times, release M times — sequential" {
 test "Semaphore: M:N bounded concurrency with explicit Permit" {
     runtime.init(2)
     let k = 3
-    let sem = Semaphore.new(k)
-    let inside = AtomicInt.new(0)
+    let mut sem = Semaphore.new(k)
+    let mut inside = AtomicInt.new(0)
     let violation = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     let n = 8
     wg.add(n)
 

@@ -43,7 +43,7 @@ test "lambda 3-арная" {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn map_int(xs []int, f fn(int) -> int) -> []int {
-    let r = []
+    let mut r = []
     for x in xs { r.push(f(x)) }
     r
 }

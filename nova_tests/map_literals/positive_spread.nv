@@ -9,7 +9,7 @@ import std.collections.hashmap.{HashMap}
 
 test "spread + extra pair" {
     let base HashMap[str, int] = ["a": 1, "b": 2]
-    let m = [...base, "c": 3]
+    let mut m = [...base, "c": 3]
     assert(m.len() == 3)
     assert(m.get("a") == Some(1))
     assert(m.get("b") == Some(2))
@@ -19,7 +19,7 @@ test "spread + extra pair" {
 test "two spreads — union (без аннотации, тип из источников)" {
     let a HashMap[str, int] = ["a": 1]
     let b HashMap[str, int] = ["b": 2, "c": 3]
-    let m = [...a, ...b]
+    let mut m = [...a, ...b]
     assert(m.len() == 3)
     assert(m.get("a") == Some(1))
     assert(m.get("c") == Some(3))
@@ -27,7 +27,7 @@ test "two spreads — union (без аннотации, тип из источн
 
 test "spread then overriding pair" {
     let base HashMap[str, int] = ["a": 1, "b": 2]
-    let m = [...base, "a": 99]
+    let mut m = [...base, "a": 99]
     assert(m.len() == 2)
     assert(m.get("a") == Some(99))
     assert(m.get("b") == Some(2))
@@ -35,7 +35,7 @@ test "spread then overriding pair" {
 
 test "leading pair then spread" {
     let base HashMap[str, int] = ["b": 2]
-    let m = ["a": 1, ...base]
+    let mut m = ["a": 1, ...base]
     assert(m.len() == 2)
     assert(m.get("a") == Some(1))
     assert(m.get("b") == Some(2))
@@ -43,7 +43,7 @@ test "leading pair then spread" {
 
 test "spread does not mutate source" {
     let base HashMap[str, int] = ["a": 1]
-    let m = [...base, "b": 2]
+    let mut m = [...base, "b": 2]
     assert(base.len() == 1)
     assert(m.len() == 2)
 }

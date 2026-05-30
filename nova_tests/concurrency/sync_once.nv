@@ -17,7 +17,7 @@ module nova_tests.concurrency.sync_once
 // ─── Basic API ─────────────────────────────────────────────────
 
 test "Once: single caller runs and completes" {
-    let once = Once.new()
+    let mut once = Once.new()
     let mut ran = false
     supervised {
         spawn {
@@ -31,7 +31,7 @@ test "Once: single caller runs and completes" {
 }
 
 test "Once: run returns false on second sequential call" {
-    let once = Once.new()
+    let mut once = Once.new()
     supervised {
         spawn {
             if once.run() { once.done() }
@@ -45,7 +45,7 @@ test "Once: run returns false on second sequential call" {
 }
 
 test "Once: run returns false immediately when already done" {
-    let once = Once.new()
+    let mut once = Once.new()
     supervised {
         spawn { if once.run() { once.done() } }
     }
@@ -64,8 +64,8 @@ test "Once: run returns false immediately when already done" {
 // Three fibers concurrently call run(). Only one should receive true
 // and execute the body. The counter must equal exactly 1.
 test "Once: only one of N concurrent callers executes body" {
-    let once = Once.new()
-    let counter = AtomicInt.new(0)
+    let mut once = Once.new()
+    let mut counter = AtomicInt.new(0)
     supervised {
         spawn {
             if once.run() {
@@ -99,8 +99,8 @@ test "Once: only one of N concurrent callers executes body" {
 // then spawn-2 runs (run() → false, fast-path or waiter), then asserts.
 // In M:N: the Once park/wake ensures happens-before.
 test "Once: body side-effects visible to waiting fibers" {
-    let once = Once.new()
-    let value = AtomicInt.new(0)
+    let mut once = Once.new()
+    let mut value = AtomicInt.new(0)
     supervised {
         spawn {
             if once.run() {
@@ -129,7 +129,7 @@ test "Once: body side-effects visible to waiting fibers" {
 // before calling done() to allow waiters to queue. All must see the
 // post-init value.
 test "Once: multiple waiters all wake after done" {
-    let once = Once.new()
+    let mut once = Once.new()
     let init_value = AtomicInt.new(0)
     let saw_correct = AtomicInt.new(0)
     supervised {
@@ -173,8 +173,8 @@ test "Once: multiple waiters all wake after done" {
 // The CAS in state transition guarantees exactly one winner.
 test "Once: M:N — exactly one worker executes body" {
     runtime.init(2)
-    let once = Once.new()
-    let counter = AtomicInt.new(0)
+    let mut once = Once.new()
+    let mut counter = AtomicInt.new(0)
     supervised {
         spawn { if once.run() { counter.fetch_add(1); once.done() } }
         spawn { if once.run() { counter.fetch_add(1); once.done() } }

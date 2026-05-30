@@ -8,39 +8,39 @@ module nova_tests.concurrency.sync_atomic
 // ─── AtomicInt: single-fiber baseline ──────────────────────────
 
 test "AtomicInt: new and load" {
-    let a = AtomicInt.new(42)
+    let mut a = AtomicInt.new(42)
     assert(a.load() == 42)
 }
 
 test "AtomicInt: store and load" {
-    let a = AtomicInt.new(0)
+    let mut a = AtomicInt.new(0)
     a.store(99)
     assert(a.load() == 99)
 }
 
 test "AtomicInt: fetch_add returns previous, updates value" {
-    let a = AtomicInt.new(10)
+    let mut a = AtomicInt.new(10)
     let prev = a.fetch_add(5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
 test "AtomicInt: fetch_sub returns previous, updates value" {
-    let a = AtomicInt.new(20)
+    let mut a = AtomicInt.new(20)
     let prev = a.fetch_sub(7)
     assert(prev == 20)
     assert(a.load() == 13)
 }
 
 test "AtomicInt: compare_exchange success" {
-    let a = AtomicInt.new(5)
+    let mut a = AtomicInt.new(5)
     let ok = a.compare_exchange(5, 100)
     assert(ok == true)
     assert(a.load() == 100)
 }
 
 test "AtomicInt: compare_exchange failure (wrong expected)" {
-    let a = AtomicInt.new(5)
+    let mut a = AtomicInt.new(5)
     let ok = a.compare_exchange(99, 100)
     assert(ok == false)
     assert(a.load() == 5)
@@ -52,7 +52,7 @@ test "AtomicInt: compare_exchange failure (wrong expected)" {
 // a plain `mut n = n + 1` would race and produce < 400. With AtomicInt,
 // the final value must be exactly 400.
 test "AtomicInt: concurrent fetch_add — no data race" {
-    let counter = AtomicInt.new(0)
+    let mut counter = AtomicInt.new(0)
     supervised {
         spawn {
             let mut i = 0
@@ -75,7 +75,7 @@ test "AtomicInt: concurrent fetch_add — no data race" {
 // CAS-based increment loop: each fiber increments via CAS retry.
 // Verifies compare_exchange is usable as a building block.
 test "AtomicInt: CAS loop — cooperative increment" {
-    let val = AtomicInt.new(0)
+    let mut val = AtomicInt.new(0)
     supervised {
         spawn {
             let mut i = 0
@@ -114,7 +114,7 @@ test "AtomicInt: CAS loop — cooperative increment" {
 // ─── AtomicBool: single-fiber baseline ─────────────────────────
 
 test "AtomicBool: new false and load" {
-    let a = AtomicBool.new(false)
+    let mut a = AtomicBool.new(false)
     assert(a.load() == false)
 }
 
@@ -124,7 +124,7 @@ test "AtomicBool: new true and load" {
 }
 
 test "AtomicBool: store and load" {
-    let a = AtomicBool.new(false)
+    let mut a = AtomicBool.new(false)
     a.store(true)
     assert(a.load() == true)
     a.store(false)
@@ -132,14 +132,14 @@ test "AtomicBool: store and load" {
 }
 
 test "AtomicBool: compare_exchange success" {
-    let a = AtomicBool.new(false)
+    let mut a = AtomicBool.new(false)
     let ok = a.compare_exchange(false, true)
     assert(ok == true)
     assert(a.load() == true)
 }
 
 test "AtomicBool: compare_exchange failure (wrong expected)" {
-    let a = AtomicBool.new(false)
+    let mut a = AtomicBool.new(false)
     let ok = a.compare_exchange(true, false)
     assert(ok == false)
     assert(a.load() == false)
@@ -147,14 +147,14 @@ test "AtomicBool: compare_exchange failure (wrong expected)" {
 
 // swap() sets new value, returns previous.
 test "AtomicBool: swap false→true returns previous" {
-    let a = AtomicBool.new(false)
+    let mut a = AtomicBool.new(false)
     let prev = a.swap(true)
     assert(prev == false)
     assert(a.load() == true)
 }
 
 test "AtomicBool: swap true→false returns previous" {
-    let a = AtomicBool.new(true)
+    let mut a = AtomicBool.new(true)
     let prev = a.swap(false)
     assert(prev == true)
     assert(a.load() == false)

@@ -5,7 +5,7 @@
 module nova_tests.plan103_3.rwlock_with_read_with_write_helpers
 
 test "read lock released after block" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     rw.read()
     let count_during = rw.reader_count()
     rw.read_unlock()
@@ -17,8 +17,8 @@ test "read lock released after block" {
 }
 
 test "write lock released and read can follow" {
-    let rw = RwLock.new()
-    let counter = AtomicInt.new(0)
+    let mut rw = RwLock.new()
+    let mut counter = AtomicInt.new(0)
     rw.write()
     counter.store(99)
     rw.write_unlock()
@@ -30,7 +30,7 @@ test "write lock released and read can follow" {
 }
 
 test "write lock released on panic via defer" {
-    let rw = RwLock.new()
+    let mut rw = RwLock.new()
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {

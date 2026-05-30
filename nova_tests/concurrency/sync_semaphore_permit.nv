@@ -11,7 +11,7 @@ module nova_tests.concurrency.sync_semaphore_permit
 // (same known-issue as parallel-for+mutex); those tests belong in plan103_9 suite with AUTOARM=0.
 
 test "Permit: explicit acquire and release" {
-    let sem = Semaphore.new(2)
+    let mut sem = Semaphore.new(2)
     consume p = sem.acquire()
     assert(sem.available_permits() == 1)
     p.release()
@@ -19,7 +19,7 @@ test "Permit: explicit acquire and release" {
 }
 
 test "Permit: defer release panic-safe" {
-    let sem = Semaphore.new(1)
+    let mut sem = Semaphore.new(1)
     {
         consume p = sem.acquire()
         defer p.release()

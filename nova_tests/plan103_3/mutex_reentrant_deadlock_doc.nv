@@ -7,7 +7,7 @@
 module nova_tests.plan103_3.mutex_reentrant_deadlock_doc
 
 test "regular Mutex is non-reentrant: try_lock from owner returns false" {
-    let mu = Mutex.new()
+    let mut mu = Mutex.new()
     mu.lock()
     // From same fiber: try_lock returns false (non-reentrant)
     let second_ok = mu.try_lock()

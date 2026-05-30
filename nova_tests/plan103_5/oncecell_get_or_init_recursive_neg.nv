@@ -11,7 +11,7 @@
 module nova_tests.plan103_5.oncecell_get_or_init_recursive_neg
 
 test "OnceCell.get_or_init: init failure leaves cell empty (not poisoned)" {
-    let cell = OnceCell[int].new()
+    let mut cell = OnceCell[int].new()
 
     // Init panics — cell must remain empty, not poisoned
     let mut panicked = false
@@ -31,7 +31,7 @@ test "OnceCell.get_or_init: init failure leaves cell empty (not poisoned)" {
 }
 
 test "OnceCell.get_or_init: multiple sequential failures then success" {
-    let cell = OnceCell[int].new()
+    let mut cell = OnceCell[int].new()
     let mut attempts = 0
 
     for _i in 0..3 {

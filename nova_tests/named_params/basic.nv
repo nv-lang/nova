@@ -41,7 +41,7 @@ test "опущенный средний параметр через дефолт
 }
 
 test "default ссылается на предшествующий параметр" {
-    let arr = [10, 20, 30, 40, 50]
+    let mut arr = [10, 20, 30, 40, 50]
     // from=0 (default), to=xs.len()=5 (default ссылается на xs)
     assert(slice_len(arr) == 5)
     // from=2 именованный, to=5 default

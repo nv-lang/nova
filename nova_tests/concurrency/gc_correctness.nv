@@ -118,7 +118,7 @@ test "GC корр: массив-sentinel жив после 5k аллокаций
     let sentinel = [100, 200, 300, 400, 500]
     let mut sum = 0
     for i in 0..5_000 {
-        let arr = [i, i + 1, i + 2]
+        let mut arr = [i, i + 1, i + 2]
         // Доступ через индекс, не .get() — избегаем Option bootstrap-ограничений
         let v = arr[0]
         sum = sum + v

@@ -6,7 +6,7 @@
 module nova_tests.plan103_9.mutexguard_double_unlock_neg
 
 test "double unlock via guard → compile error" {
-    let mu = Mutex.new()
+    let mut mu = Mutex.new()
     consume g = mu.lock()
     g.unlock()
     g.unlock()   // ERROR: g already consumed

@@ -10,9 +10,9 @@ module nova_tests.plan103_4.condvar_wait_for_timeout
 import std.time.duration
 
 test "wait_for times out when no notify arrives" {
-    let mu     = Mutex.new()
-    let cv     = Condvar.new()
-    let result = AtomicInt.new(-1)  // -1 = not set, 0 = Notified, 1 = TimedOut
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
+    let mut result = AtomicInt.new(-1)  // -1 = not set, 0 = Notified, 1 = TimedOut
 
     supervised {
         spawn {
@@ -30,10 +30,10 @@ test "wait_for times out when no notify arrives" {
 }
 
 test "wait_for returns Notified when notify arrives before timeout" {
-    let mu     = Mutex.new()
-    let cv     = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let n_waiting = AtomicInt.new(0)
-    let result = AtomicInt.new(-1)
+    let mut result = AtomicInt.new(-1)
 
     supervised {
         spawn {

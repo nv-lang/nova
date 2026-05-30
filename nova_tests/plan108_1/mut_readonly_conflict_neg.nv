@@ -8,6 +8,6 @@ module nova_tests.plan108_1.mut_readonly_conflict_neg
 fn bad(mut readonly b []int) -> int => b.len()
 
 test "mut + readonly → parser error" {
-    let arr = [1]
+    let mut arr = [1]
     let _ = bad(arr)
 }

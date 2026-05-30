@@ -14,7 +14,7 @@
 module nova_tests.plan103_8.stress_once_oncecell_lazy_combined
 
 test "Once.call_once under 4-fiber contention: init runs exactly once" {
-    let once      = Once.new()
+    let mut once = Once.new()
     let init_cnt  = AtomicI64.new(0)
 
     supervised {
@@ -33,7 +33,7 @@ test "Once.call_once under 4-fiber contention: init runs exactly once" {
 }
 
 test "OnceCell.get_or_init under 4-fiber contention: init runs exactly once" {
-    let cell      = OnceCell[int].new()
+    let mut cell = OnceCell[int].new()
     let init_cnt  = AtomicI64.new(0)
     let wrong     = AtomicI64.new(0)
 
@@ -81,9 +81,9 @@ test "Lazy.force under 4-fiber contention: init runs exactly once" {
 }
 
 test "repeated calls to Once+OnceCell+Lazy do not re-run init" {
-    let once       = Once.new()
+    let mut once = Once.new()
     let init_once  = AtomicI64.new(0)
-    let cell       = OnceCell[int].new()
+    let mut cell = OnceCell[int].new()
     let init_cell  = AtomicI64.new(0)
     let lazy_inits = AtomicI64.new(0)
     let lazy       = Lazy[int].new() {

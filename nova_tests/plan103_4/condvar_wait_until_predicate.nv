@@ -17,8 +17,8 @@
 module nova_tests.plan103_4.condvar_wait_until_predicate
 
 test "wait_until returns only when predicate becomes true" {
-    let mu    = Mutex.new()
-    let cv    = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let ready = AtomicBool.new(false)
     let done  = AtomicBool.new(false)
 
@@ -46,8 +46,8 @@ test "wait_until returns only when predicate becomes true" {
 }
 
 test "wait_until with initially true predicate returns immediately" {
-    let mu = Mutex.new()
-    let cv = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let calls = AtomicInt.new(0)
 
     supervised {
@@ -68,8 +68,8 @@ test "wait_until with initially true predicate returns immediately" {
 }
 
 test "wait_until survives multiple spurious wakes before predicate true" {
-    let mu        = Mutex.new()
-    let cv        = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let target    = AtomicInt.new(0)  // consumer wants target == 3
     let done_flag = AtomicBool.new(false)
     let n_waiting = AtomicInt.new(0)

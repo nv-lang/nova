@@ -8,7 +8,7 @@
 module nova_tests.plan103_9.onceguard_abort_path
 
 test "abort transitions Once to Poisoned state" {
-    let once = Once.new()
+    let mut once = Once.new()
 
     if once.try_start_won() {
         consume g = once.make_guard()
@@ -19,7 +19,7 @@ test "abort transitions Once to Poisoned state" {
 }
 
 test "abort: once guard abort path works" {
-    let once = Once.new()
+    let mut once = Once.new()
     let aborted = AtomicInt.new(0)
 
     if once.try_start_won() {

@@ -15,8 +15,8 @@
 module nova_tests.plan103_4.condvar_no_lost_wakeup_prop
 
 test "no lost wakeup: producer/consumer over 100 iterations" {
-    let mu       = Mutex.new()
-    let cv       = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let produced = AtomicInt.new(0)
     let consumed = AtomicInt.new(0)
     let n_iters  = 100
@@ -52,15 +52,15 @@ test "no lost wakeup: producer/consumer over 100 iterations" {
 }
 
 test "no lost wakeup under high contention: 5 producers × 20 items, 5 consumers × 20 items" {
-    let mu       = Mutex.new()
-    let cv       = Condvar.new()
+    let mut mu = Mutex.new()
+    let mut cv = Condvar.new()
     let pending  = AtomicInt.new(0)  // produced - consumed
     let total_consumed = AtomicInt.new(0)
     let n_prod   = 5
     let n_cons   = 5
     let items_pp = 20  // items per producer
     let items_pc = 20  // items per consumer
-    let wg       = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(n_prod + n_cons)
 
     supervised {

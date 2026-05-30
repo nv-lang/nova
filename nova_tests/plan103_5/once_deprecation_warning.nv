@@ -9,7 +9,7 @@ module nova_tests.plan103_5.once_deprecation_warning
 // EXPECT_COMPILE_WARNING W_ONCE_RUN_DONE_DEPRECATED
 
 test "Once: deprecated run/done still works (backward compat)" {
-    let once = Once.new()
+    let mut once = Once.new()
     let mut count = 0
     if once.run() {
         count = count + 1

@@ -6,8 +6,8 @@
 module nova_tests.plan103_9.mutexguard_with_lock_wrapper
 
 test "explicit guard: lock, work, unlock" {
-    let mu = Mutex.new()
-    let shared = AtomicInt.new(0)
+    let mut mu = Mutex.new()
+    let mut shared = AtomicInt.new(0)
 
     consume g = mu.lock()
     shared.fetch_add(1)
@@ -16,8 +16,8 @@ test "explicit guard: lock, work, unlock" {
 }
 
 test "explicit guard defer pattern" {
-    let mu = Mutex.new()
-    let result = AtomicInt.new(0)
+    let mut mu = Mutex.new()
+    let mut result = AtomicInt.new(0)
 
     {
         consume g = mu.lock()
@@ -28,7 +28,7 @@ test "explicit guard defer pattern" {
 }
 
 test "guard releases lock for subsequent acquire" {
-    let mu = Mutex.new()
+    let mut mu = Mutex.new()
     consume g = mu.lock()
     g.unlock()
     // Lock must be free now — can lock again immediately
@@ -38,8 +38,8 @@ test "guard releases lock for subsequent acquire" {
 }
 
 test "guard sequential lock/unlock 20 times" {
-    let mu = Mutex.new()
-    let counter = AtomicInt.new(0)
+    let mut mu = Mutex.new()
+    let mut counter = AtomicInt.new(0)
     for _i in 0..20 {
         consume g = mu.lock()
         counter.fetch_add(1)

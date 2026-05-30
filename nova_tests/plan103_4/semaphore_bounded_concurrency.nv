@@ -9,10 +9,10 @@
 module nova_tests.plan103_4.semaphore_bounded_concurrency
 
 test "Semaphore: bounded concurrency observable — max in-flight <= permits" {
-    let sem       = Semaphore.new(3)
+    let mut sem = Semaphore.new(3)
     let in_flight = AtomicInt.new(0)
     let violation = AtomicInt.new(0)
-    let wg        = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     let n_fibers  = 10
     wg.add(n_fibers)
 
@@ -34,7 +34,7 @@ test "Semaphore: bounded concurrency observable — max in-flight <= permits" {
 }
 
 test "Semaphore: available_permits reflects acquire/release" {
-    let sem = Semaphore.new(5)
+    let mut sem = Semaphore.new(5)
     assert(sem.available_permits() == 5)
     sem.acquire()
     sem.acquire()
@@ -44,7 +44,7 @@ test "Semaphore: available_permits reflects acquire/release" {
 }
 
 test "Semaphore: try_acquire succeeds when permits available" {
-    let sem = Semaphore.new(2)
+    let mut sem = Semaphore.new(2)
     let ok1 = sem.try_acquire()
     let ok2 = sem.try_acquire()
     let ok3 = sem.try_acquire()  // no permits left

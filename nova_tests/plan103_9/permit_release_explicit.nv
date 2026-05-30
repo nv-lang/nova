@@ -6,7 +6,7 @@
 module nova_tests.plan103_9.permit_release_explicit
 
 test "Permit explicit release" {
-    let sem = Semaphore.new(2)
+    let mut sem = Semaphore.new(2)
     consume p = sem.acquire()
     // use resource
     p.release()
@@ -15,7 +15,7 @@ test "Permit explicit release" {
 }
 
 test "Permit defer release" {
-    let sem = Semaphore.new(1)
+    let mut sem = Semaphore.new(1)
     {
         consume p = sem.acquire()
         defer p.release()
@@ -28,9 +28,9 @@ test "Permit defer release" {
 test "Permit release restores bounded concurrency" {
     runtime.init(2)
     let k = 2
-    let sem = Semaphore.new(k)
-    let total = AtomicInt.new(0)
-    let wg = WaitGroup.new()
+    let mut sem = Semaphore.new(k)
+    let mut total = AtomicInt.new(0)
+    let mut wg = WaitGroup.new()
     wg.add(6)
 
     parallel for _i in 0..6 {
@@ -47,7 +47,7 @@ test "Permit release restores bounded concurrency" {
 }
 
 test "Permit acquire then release repeatedly" {
-    let sem = Semaphore.new(3)
+    let mut sem = Semaphore.new(3)
     for _i in 0..10 {
         consume p = sem.acquire()
         p.release()

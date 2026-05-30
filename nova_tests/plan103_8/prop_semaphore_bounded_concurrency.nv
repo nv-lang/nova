@@ -8,10 +8,10 @@
 module nova_tests.plan103_8.prop_semaphore_bounded_concurrency
 
 test "prop semaphore bounded: K=3, N=8 fibers — max in-flight never exceeds 3" {
-    let sem       = Semaphore.new(3)
+    let mut sem = Semaphore.new(3)
     let in_flight = AtomicI64.new(0)
     let violation = AtomicI64.new(0)
-    let wg        = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -39,10 +39,10 @@ test "prop semaphore bounded: K=3, N=8 fibers — max in-flight never exceeds 3"
 }
 
 test "prop semaphore bounded: K=2, N=8 fibers — explicit acquire/release" {
-    let sem       = Semaphore.new(2)
+    let mut sem = Semaphore.new(2)
     let in_flight = AtomicI64.new(0)
     let violation = AtomicI64.new(0)
-    let wg        = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -70,8 +70,8 @@ test "prop semaphore bounded: K=2, N=8 fibers — explicit acquire/release" {
 
 test "prop semaphore: available_permits stays in [0, initial] range" {
     // After a series of acquire/release pairs, permits must return to initial.
-    let sem = Semaphore.new(5)
-    let wg  = WaitGroup.new()
+    let mut sem = Semaphore.new(5)
+    let mut wg = WaitGroup.new()
     wg.add(5)
 
     supervised {
@@ -91,10 +91,10 @@ test "prop semaphore: available_permits stays in [0, initial] range" {
 }
 
 test "prop semaphore: batch acquire_n bounded — K=6, acquire 3 at a time" {
-    let sem     = Semaphore.new(6)
+    let mut sem = Semaphore.new(6)
     let in_use  = AtomicI64.new(0)
     let bad     = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    let mut wg = WaitGroup.new()
     wg.add(4)
 
     supervised {

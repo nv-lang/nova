@@ -7,7 +7,7 @@
 module nova_tests.plan103_4.semaphore_with_permit_panic_safety
 
 test "explicit acquire + defer release: fires on throw — permit returned" {
-    let sem = Semaphore.new(1)
+    let mut sem = Semaphore.new(1)
 
     let mut caught = false
     with Fail = effect Fail {
@@ -26,7 +26,7 @@ test "explicit acquire + defer release: fires on throw — permit returned" {
 }
 
 test "acquire + defer release: permit returned on normal exit" {
-    let sem = Semaphore.new(1)
+    let mut sem = Semaphore.new(1)
     {
         sem.acquire()
         defer sem.release()
@@ -36,7 +36,7 @@ test "acquire + defer release: permit returned on normal exit" {
 }
 
 test "acquire + defer release: sequential calls work" {
-    let sem = Semaphore.new(1)
+    let mut sem = Semaphore.new(1)
     let mut total = 0
     for i in 0..5 {
         sem.acquire()
@@ -48,7 +48,7 @@ test "acquire + defer release: sequential calls work" {
 }
 
 test "acquire + defer release: permit returned after computation" {
-    let sem = Semaphore.new(2)
+    let mut sem = Semaphore.new(2)
     sem.acquire()
     defer sem.release()
     // Verify permit was taken

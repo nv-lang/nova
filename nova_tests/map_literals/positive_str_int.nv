@@ -26,10 +26,10 @@ test "str→int single entry" {
     assert(m.get("only") == Some(42))
 }
 
-// Plan 55 Ф.5 closure: `let m = ["a": 1, "b": 2]` без аннотации работает
+// Plan 55 Ф.5 closure: `let mut m = ["a": 1, "b": 2]` без аннотации работает
 // после auto-fix Ф.4 (mono-pass corruption + protocol whitelist).
 test "str→int БЕЗ аннотации — inferred" {
-    let m = ["a": 1, "b": 2]
+    let mut m = ["a": 1, "b": 2]
     assert(m.len() == 2)
     assert(m.get("a") == Some(1))
 }

@@ -14,7 +14,7 @@ fn sum(b []int) -> int {
 }
 
 test "readonly param explicit + default param (read-only)" {
-    let arr = [10, 20, 30]
+    let mut arr = [10, 20, 30]
     assert(count_items(arr) == 3)
     assert(sum(arr) == 60)
 }
