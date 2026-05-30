@@ -1,18 +1,26 @@
-// Plan 73 followup: реассайн развязывает alias-класс — НЕ false positive.
+// Plan 73 + 73.1 (D180): move-binding — позитивный кейс.
 //
-// `twin = sb`, затем `sb` переназначается на новый объект. consume
-// `twin` (старый объект) и `sb` (новый объект) — независимы, ошибки нет.
+// Старый pattern `let twin = sb` (alias) + reassign запрещён D180.
+// Move через `consume twin = sb` transfers ownership; sb dead;
+// twin становится новым owner и консумится через consume-метод.
 
 module nova_tests.plan73.consume_ok_reassign
 
-test "реассайн aliased-переменной — alias корректно развязан" {
-    let mut sb = StringBuilder.new()
+test "move-binding — twin owns and consumes" {
+    consume sb = StringBuilder.new()
     sb.append("first")
-    let twin = sb                  // twin — алиас sb (старый объект)
-    sb = StringBuilder.new()       // sb → новый объект; alias развязан
-    sb.append("second")
-    let a = twin.to_str()            // consume старого объекта через twin
-    let b = sb.to_str()              // consume нового объекта — НЕ ошибка
+    consume twin = sb               // move (Rule 3 D180); sb dead
+    let a = twin.to_str()           // consume через twin
     assert(a == "first")
-    assert(b == "second")
+}
+
+test "две независимые consume-bindings — каждая свой объект" {
+    consume sb1 = StringBuilder.new()
+    sb1.append("alpha")
+    consume sb2 = StringBuilder.new()
+    sb2.append("beta")
+    let a = sb1.to_str()
+    let b = sb2.to_str()
+    assert(a == "alpha")
+    assert(b == "beta")
 }
