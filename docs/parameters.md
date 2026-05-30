@@ -78,15 +78,20 @@ let s = finalize(sb)                  // sb dead after this
 
 ## Coercion (subtyping) для параметров
 
+Поскольку `T` в позиции параметра **уже readonly** (Plan 108.1 default),
+большинство комбинаций — тождество.  Единственное нарушение:
+`readonly → mut`.
+
 | caller-type → callee-param | OK? |
 |---|---|
-| `T` → `T` (default readonly) | ✓ |
-| `T` → `readonly T` | ✓ (явная readonly) |
-| `T` → `mut T` | ✓ (mut shrinks caller's permission) |
-| `readonly T` → `T` | ✗ `E_READONLY_COERCE` |
-| `readonly T` → `mut T` | ✗ `E_READONLY_COERCE` |
+| `T` → `T` (param default readonly) | ✓ (сужение) |
+| `T` → `readonly T` (param explicit readonly) | ✓ (synonym default) |
+| `T` → `mut T` (param explicit mut) | ✓ (caller разрешает mut) |
+| `readonly T` → `T` (param default readonly) | ✓ — оба readonly |
 | `readonly T` → `readonly T` | ✓ |
-| `mut T` → `T` | ✓ (mutable можно показать как readonly) |
+| `readonly T` → `mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` |
+| `mut T` → `T` (param default readonly) | ✓ (сужение) |
+| `mut T` → `mut T` | ✓ |
 
 ## Receiver methods (методы)
 
