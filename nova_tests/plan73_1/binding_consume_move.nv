@@ -1,0 +1,17 @@
+// Plan 73.1 (D180): move semantics (Rule 3).
+// `consume Y = X` где X — consume-obligation: move (X dead, Y owns).
+
+module nova_tests.plan73_1.binding_consume_move
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn Token consume @release() -> int => @val
+
+test "move chain via consume bindings" {
+    consume a = Token.new(11)
+    consume b = a               // move — a dead, b owns
+    let v = b.release()
+    assert(v == 11)
+}
