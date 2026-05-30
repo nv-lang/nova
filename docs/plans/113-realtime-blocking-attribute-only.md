@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 113 — `#realtime` / `#blocking` attribute-only simplification
 
-> **Создан 2026-05-29 как pre-req для [Plan 111](111-scoped-resources-radical-simplification.md).**
+> **Создан 2026-05-29 как pre-req для [Plan 110](110-scoped-resources-radical-simplification.md).**
 > **Статус:** 🆕 PLANNED.
-> **Приоритет:** P1 (gate для Plan 111).
+> **Приоритет:** P1 (gate для Plan 110).
 > **Оценка:** ~1 dev-day (mass rename + block removal + ~10-20 фикстур migration).
 > **Зависимости:** Plan 103.6 ✅ closed (текущая block-form); Plan 103.7 ✅ closed (D-blocks). Этот план **amends** D172 и **retracts** D64 block-form.
 >
@@ -94,7 +94,7 @@ fn read_file_sync(path str) Fail[IoError] -> []u8 =>
   - Все `#realtime_safe` использования (~372 мест)
   - Все `realtime { ... }` блоки в `nova_tests/`, `examples/`, `std/`
   - Все `blocking { ... }` блоки
-  - Cross-impact с Plan 111 (cleanup-семантика)
+  - Cross-impact с Plan 110 (cleanup-семантика)
 - **Ф.0.3** Migration plan: для каждого block — extract в отдельную fn или mark enclosing fn как `#realtime`/`#blocking`.
 - **Ф.0.4** Acceptance A1-A8 финализирован.
 
@@ -118,7 +118,7 @@ fn read_file_sync(path str) Fail[IoError] -> []u8 =>
   - НИКАКИХ caller constraints
   - Cross-ref C++ constexpr / Swift @MainActor аналогии
 - **Ф.2.2** D64 retract: «withdrawn; realtime/blocking enforcement переезжает на attribute-only model in D172».
-- **Ф.2.3** Cross-ref D198 (Plan 111) обновить — упоминание `#realtime`-context в desugaring.
+- **Ф.2.3** Cross-ref D198 (Plan 110) обновить — упоминание `#realtime`-context в desugaring.
 
 ### Ф.3 — Remove `realtime { }` / `blocking { }` block forms
 
@@ -166,7 +166,7 @@ fn read_file_sync(path str) Fail[IoError] -> []u8 =>
 3. **Caller stipulation:** none.
 4. `#blocking` это **runtime offload** (codegen wraps вызов в threadpool).
 5. **Block forms `realtime { }` / `blocking { }` withdrawn** — extract в отдельные fns.
-6. Cross-ref: Plan 111 D198 использует ту же модель для cleanup-timeout.
+6. Cross-ref: Plan 110 D198 использует ту же модель для cleanup-timeout.
 
 ### D64 retract
 
@@ -229,7 +229,7 @@ D64 (`realtime { }` block + Blocking effect block) полностью retracted.
 
 - **R1** ~372 mass rename — могут быть edge cases (substring matches, escape contexts). Mitigation: grep verify after, careful review.
 - **R2** Block-form usage в legacy fixtures — некоторые могут требовать non-trivial extraction. Mitigation: Ф.0.2 audit полный.
-- **R3** Plan 111 зависит от Plan 113 — должен дождаться. Plan 111 пишется на новой terminology, но не запускается до A1-A8.
+- **R3** Plan 110 зависит от Plan 113 — должен дождаться. Plan 110 пишется на новой terminology, но не запускается до A1-A8.
 - **R4** `#blocking fn` codegen change — runtime semantics modified. Mitigation: existing test suite Plan 83.3 (Blocking effect через libuv threadpool) пересборка с новой моделью.
 
 ---
@@ -239,7 +239,7 @@ D64 (`realtime { }` block + Blocking effect block) полностью retracted.
 - ✅ Plan 103.6 — текущая block-form (этот план amend'ит/retract'ит).
 - ✅ Plan 103.7 — D-blocks closed (включая D172 которое amend'ится).
 - ✅ Plan 83.3 — Blocking effect runtime (используется без изменений).
-- ⚠️ Plan 111 — **зависит от этого плана**; ждёт A1-A8 перед стартом.
+- ⚠️ Plan 110 — **зависит от этого плана**; ждёт A1-A8 перед стартом.
 
 ---
 
@@ -284,6 +284,6 @@ D64 (`realtime { }` block + Blocking effect block) полностью retracted.
 - [Plan 103.6 realtime-blocking-integration](103.6-realtime-blocking-integration.md) — текущая block-form basis (amends/retracts от 113)
 - [Plan 103.7 spec-d-blocks](103.7-spec-d-blocks.md) — D172 source
 - [Plan 83.3 blocking effect](83.3-blocking-effect.md) если exists — runtime threadpool basis
-- [Plan 111 consume-scope](111-scoped-resources-radical-simplification.md) — downstream consumer
+- [Plan 110 consume-scope](110-scoped-resources-radical-simplification.md) — downstream consumer
 - spec: `spec/decisions/06-concurrency.md` D172 (target amend)
 - spec: `spec/decisions/04-effects.md` D64 (target retract)

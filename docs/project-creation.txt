@@ -25026,7 +25026,7 @@ Merge commits в main: 2a824e86b9e, f5da5aaa1ad, 22c850a14d2, 63a962953dc.
 === Plan 113 CLOSED 2026-05-30: #realtime / #blocking attribute-only simplification ===
 
 Plan 113 объединяет `#realtime_safe` attribute и block-формы `realtime { }` /
-`blocking { }` в один механизм — attribute на функции. Это unblock'ит Plan 111
+`blocking { }` в один механизм — attribute на функции. Это unblock'ит Plan 110
 (scoped-resources), который требует чистого attribute-only API.
 
 Что сделано (Ф.0–Ф.5):
@@ -25067,6 +25067,6 @@ Plan 113 объединяет `#realtime_safe` attribute и block-формы `re
 - compiler-codegen/src/codegen/emit_c.rs
 - compiler-codegen/src/codegen/sum_schema_registry.rs
 
-Acceptance A1–A8 — все ✅. Plan 113 разблокирует Plan 111.
+Acceptance A1–A8 — все ✅. Plan 113 разблокирует Plan 110.
 
 Подробности — docs/plans/113-realtime-blocking-attribute-only.md (статус таблица + A1–A8 evidence).
