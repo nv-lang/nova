@@ -27621,6 +27621,40 @@ redesign'а Plan 103.x (consume/ownership semantics depend on mut
 receiver flagging).  Compromise: keep `mut @` для clarity, accept
 migration cost.
 
+## Plan 108.3 — loop-var + pattern-binding mut + residual (2026-05-30)
+
+**Closes:** `[M-108.2-loop-var-mut]` + `[M-108.2-pattern-binding]` +
+`[M-108.2-residual-migrations]` (последний — финальный sweep).
+
+**Why per-name mut в pattern (Rust-style), а не group-mut на pattern:**
+Rust semantics давно стандартизировали `let (mut a, b) = ...` — `mut`
+keyword относится к одному имени.  Group-mut (`let mut (a, b) = ...`)
+двусмыслен: a mutable? b mutable? оба?  Запрет parser-level
+(E_PATTERN_GROUP_MUT) удерживает один правильный путь.
+
+**Why is_mut в Pattern::Ident, а не отдельный wrapper:** добавление
+поля в существующий variant — минимальная инвазивность.  Wrapper
+(`Pattern::MutIdent`) дублировал бы flow analysis.  Field — proper
+locality.
+
+**Why for-loop leading 'mut' injects в pattern, а не отдельный flag в
+ExprKind::For:** parse_pattern уже принимает `mut name`; for-уровень mut
+для `for mut x` (где pattern — простой Ident) делает то же самое через
+inject — единая семантическая модель.  Для tuple-loop'ов
+(`for (mut a, b) in pairs`) — pattern's own per-name mut.  Без отдельного
+For-level флага сохраняется simplicity.
+
+**Why `mut _` запрещён:** wildcard `_` не связывает binding — mut на
+нём бессмысленен.  Эмитим E_PATTERN_GROUP_MUT с понятным message.
+
+**Why residual sweep ~62 sites bulk-sed, а не manual:** ручной проход
+по 62 sites имеет одинаковую вероятность пропусков; sed на дополнительные
+top-N var names (s/arr/v/r1/produced/n_woken/done/c/b/a/etc.) с broad
+type-name allowlist (AtomicXxx/Channel/sync primitives/etc.) — proven
+pattern from Plan 108.2 sweeps.  Residual после Plan 108.3 sweep
+documented в `[M-108.3-final-residual]` для manual cleanup'а если
+останется.
+
 ## Plan 91.10 — D163 retract (capability syntax → effects)
 
 **Why retract D163 instead of fixing the trigger:** конкретный pain (`from_bytes_unchecked_steal(consume []u8)` требует `needs Cap` для pure memory ops) — это symptom of deeper conflation. D163 жёстко связал `consume` (ownership/linearity contract) с `needs Cap` (authority gate) — orthogonal concerns. Fix-the-trigger (добавить `needs Mem`/`needs Sys` placeholder) сохранил бы conflation; retract — устраняет root cause.

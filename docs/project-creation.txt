@@ -25272,6 +25272,40 @@ Worktree: D:\Sources\nv-lang\nova-p108-2
 Plan 108.2 ✅ ЗАКРЫТ.
 
 ================================================================================
+2026-05-30 — Plan 108.3 — Loop-var mut + pattern per-name mut + residual
+================================================================================
+
+Sub-plan Plan 108.  Закрывает 3 follow-ups Plan 108.2:
+- [M-108.2-loop-var-mut] via 'for mut x in iter'.
+- [M-108.2-pattern-binding] via 'let (mut a, b) = pair' per-name.
+- [M-108.2-residual-migrations] manual + sed final pass.
+
+Что shipped:
+- Spec D36 amend: новый раздел 'Loop-var и pattern-binding (Plan 108.3)':
+  for mut + per-name pattern mut + запрет group-mut E_PATTERN_GROUP_MUT.
+- AST: Pattern::Ident { ..., is_mut: bool } новое поле.
+- Parser: parse_pattern принимает 'mut name' (per-name).
+  parse_let_decl: 'let mut (a, b)' → E_PATTERN_GROUP_MUT.
+  parse_for: 'for mut x' инжектит is_mut в Pattern::Ident.
+- Type-checker:
+  - consume_pattern_names_with_mut helper → Vec<(name, is_mut)>.
+  - Stmt::Let: per-name local_mut (outer || pattern's is_mut || consume).
+  - ExprKind::For: loop-var local_mut с учётом pattern's per-name + iter_consume.
+- 14 fixtures (6 positive + 7 negative + 1 property; 14/14 PASS).
+- Migration final sweep: широкий sed pass + residual cleanup.
+
+Тест результаты: plan108_3/ 14/14 PASS.
+
+Honest-defer:
+- 🟡 [M-108.3-nested-pattern-mut] — record-paths pattern mut
+  (let {mut field, name} = obj) — followup if needed.
+
+Branch: plan-108.3
+Worktree: D:\Sources\nv-lang\nova-p108-3
+
+Plan 108.3 ✅ ЗАКРЫТ.
+
+================================================================================
 2026-05-30 — Plan 91.10 + 91.11: D163 retract + SB cleanup + rename family
 ================================================================================
 
