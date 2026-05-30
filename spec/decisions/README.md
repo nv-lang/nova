@@ -88,6 +88,7 @@
 | D165 | 09-tooling.md | Consume-types migration policy — `nova consume-migrate` CLI + edition versioning (Plan 100.7, proposed) |
 | D166 | 09-tooling.md | Consume-types developer experience — perf budget <5%, LSP quick fixes (12 error codes), hover info, `nova doc` integration, structured diagnostic format (Plan 100.8, proposed) |
 | D174 | 07-modules.md | Prelude control attributes (Plan 107, 2026-05-27) — `#no_prelude` / `#prelude(names)` / `#allow(shadow)` перед `module`; amends D78 §«Prelude opt-out» (Plan 62.F/62.F.bis inline-клаузы удалены); extends D100 `_module.nv` prelude inheritance + pre-scan fix |
+| D180 | 05-memory.md | `consume` binding syntax (Plan 73.1, 2026-05-28) — V2 extension D131 на let-binding site. 3 правила: Rule 1 `consume X = expr` обязателен на consume-RHS (E_CONSUME_KEYWORD_MISSING); Rule 2 `let Y = consume_var` запрещён в теле (E_VIEW_BINDING_FORBIDDEN; views только как function-params); Rule 3 `consume Y = consume_var` = MOVE. Restriction-based safety без lifetime annotations |
 
 ## История
 

@@ -1,0 +1,23 @@
+// Plan 73.1 (D180): view как parameter (D157 carry-over).
+// Function принимает view-borrow consume-type; owner остаётся Live.
+
+module nova_tests.plan73_1.binding_view_as_param
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn Token consume @release() -> int => @val
+
+// Параметр без `consume` — view-borrow (D157).
+fn read_val(t Token) -> int => t.val
+
+test "view-param сохраняет ownership у caller'а" {
+    consume tok = Token.new(42)
+    let r1 = read_val(tok)        // view-borrow
+    let r2 = read_val(tok)        // view-borrow again — tok всё ещё Live
+    let consumed = tok.release()  // consume в конце scope
+    assert(r1 == 42)
+    assert(r2 == 42)
+    assert(consumed == 42)
+}

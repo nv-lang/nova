@@ -7,7 +7,7 @@
 module nova_tests.plan73.consume_ok_branches
 
 fn pick(flag bool) -> str {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("payload")
     // Обе ветки потребляют sb → join даёт Consumed, не MaybeConsumed.
     let s = if flag { sb.to_str() } else { sb.to_str() }
@@ -20,7 +20,7 @@ test "if-обе-ветки consume — ok" {
 }
 
 fn classify(n int) -> str {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("n=")
     // match: каждая рука потребляет sb.
     match n {
