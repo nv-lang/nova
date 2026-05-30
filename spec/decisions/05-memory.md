@@ -367,9 +367,13 @@ Compile-time проверка — основной механизм. В C-ран
 
 ### Границы (bootstrap)
 
-- **Без alias-tracking.** `let a = b` создаёт независимо отслеживаемую
+- ~~**Без alias-tracking.** `let a = b` создаёт независимо отслеживаемую
   переменную `a`; consume `a` не помечает `b` (false-negative,
-  permissive — не выдаёт ложных ошибок).
+  permissive — не выдаёт ложных ошибок).~~
+  **→ amended by [D180](#d180-consume-binding-syntax-plan-731)** —
+  `let a = consume_var` теперь запрещён в теле функции
+  (E_VIEW_BINDING_FORBIDDEN); требуется явный `consume a = b`
+  для move ownership ИЛИ передача в function-param для view-borrow.
 - **Резолв consume-метода по типу receiver'а — best-effort.** Тип
   переменной выводится из аннотации / очевидного конструктора
   (`Type.new()`); если тип неизвестен, метод не трактуется как
@@ -388,6 +392,239 @@ Compile-time проверка — основной механизм. В C-ран
   забыть → compile error). Foundation для Plan 100 family (D156-D166
   — generic propagation, borrow/view, defer/errdefer integration, FFI,
   cross-module, migration, IDE tooling).
+- [D180](#d180-consume-binding-syntax-plan-731) — extension D131 на
+  let-binding site (Plan 73.1, 2026-05-28).
+
+---
+
+## D180. `consume` binding syntax (Plan 73.1)
+
+> **Plan 73.1.** Принято 2026-05-28. Расширяет [D131](#d131-consume--квалификатор-логической-линейности)
+> с receiver/param на let-binding site.
+
+### Что
+
+`consume` квалификатор разрешён и **обязателен** на let-binding'е когда
+RHS — consume-обязательный expression. Кроме того, **view-binding в теле
+функции запрещён** — views существуют ТОЛЬКО как function params (D157
+view-default carry-over).
+
+```nova
+type Token consume { val int }
+fn Token.new(v int) -> Token => { val: v }
+
+// ❌ ОШИБКА E_CONSUME_KEYWORD_MISSING
+let tok = Token.new(7)
+
+// ✅ ownership-binding
+consume tok = Token.new(7)
+tok.release()                   // consume через метод D131
+```
+
+### Зачем
+
+D131 ввёл `consume` keyword **только** на receivers/params:
+```nova
+fn StringBuilder consume @into() -> str       // receiver
+fn drain(consume sb StringBuilder) -> str     // param
+```
+
+Но на let-binding consume-обязательство было **невидимо**:
+```nova
+let sb = StringBuilder.new()    // ← неявно: sb имеет consume-obligation
+sb.into()                        // ← consume happens silently
+```
+
+D180 закрывает 3 production-grade дыры:
+
+1. **Невидимость ownership на binding-site.** Reviewer не видит на
+   `let X = …` что переменная будет потреблена. Rust решает borrow
+   checker + lifetimes; Nova lifetime-free → нужна syntactic visibility.
+
+2. **Dangling view problem.** `let twin = sb; sb.into(); twin.append("…")`
+   — `twin` после `sb.into()` указывает в "никуда". D131 не ловит этот
+   pattern (см. «Границы — без alias-tracking»). D180 устраняет
+   возможность by construction: alias-binding запрещён.
+
+3. **Inconsistency с D157 view-default на params.** D157 говорит:
+   «не-consume param = view-borrow». Что значит `let X = consume_var`
+   в теле — move? alias? borrow без lifetime? D180 даёт чёткий ответ:
+   запрещено; используй `consume X = sb` (move) или функцию (view).
+
+### Синтаксис
+
+`consume` стоит перед именем binding'а, после `let` опционально:
+
+```nova
+consume X = expr            // primary form
+consume mut X = expr        // ❌ parse error (D131 §«взаимоисключающие»)
+let X = expr                // регулярный binding для не-consume RHS
+```
+
+**Type annotation** разрешён между pattern и `=`:
+```nova
+consume tok Token = Token.new(7)
+```
+
+**Destructuring patterns** — TBD (Plan 73.1 Ф.6 TODO; в V1 поддерживается
+только simple ident pattern).
+
+### Правило
+
+**Rule 1 — `consume` keyword обязателен на binding consume-obligated RHS.**
+
+`consume X = expr` требуется когда `expr` возвращает **consume-обязательный**
+instance. Без keyword'а → `E_CONSUME_KEYWORD_MISSING`.
+
+**Когда RHS считается consume-обязательным:**
+- Constructor consume-type'а (D133): `Token.new(...)`, `File.open(...)`,
+  any `Type.new(...)` где Type помечен `type Type consume { … }`
+- Function returning consume-type: `fn open_file() -> File consume`
+- Generic propagation per D156: `Option[T]` / `Result[T,E]` где T —
+  consume-type → результат consume-обязательный
+- Return-type consume-метода: TBD edge case
+
+**Когда RHS НЕ consume-обязательный (regular `let`):**
+- Primitive: `let n = 42`, `let s = "hi"`
+- Regular record: `let p = Point { x: 1 }` (если Point не consume)
+- Non-consume method: `let len = sb.len()` (len возвращает int)
+- View-borrow результат внутри fn: не возникает (Rule 2)
+
+**Rule 2 — view-binding в теле fn запрещён.**
+
+`let X = consume_obligated_var` (alias-binding) → `E_VIEW_BINDING_FORBIDDEN`.
+
+```nova
+consume sb = StringBuilder.new()
+sb.append("hi")
+
+// ❌ E_VIEW_BINDING_FORBIDDEN
+let twin = sb
+
+// ✅ move ownership
+consume twin = sb
+// sb теперь dead
+
+// ✅ передать как view через function-param
+fn read_len(view T) -> int => view.len()
+let n = read_len(sb)    // sb остаётся Live; read_len получает view-param
+```
+
+**Rationale safety:** views существуют ТОЛЬКО как function params. Param
+lifetime ограничен временем вызова; owner переживает вызов by stack
+semantics. Dangling view by construction **невозможен** — никакой
+lifetime tracking не нужен (vs Rust).
+
+**Rule 3 — `consume X = consume_var` = move.**
+
+```nova
+consume sb = StringBuilder.new()
+consume sb2 = sb        // ← move: sb dead, sb2 owns
+// sb.append("late")    // ❌ D131-use-after-consume
+```
+
+`consume`-binding исходного var в новый owner — explicit transfer.
+Source становится `Consumed` после move (D131 VarState).
+
+**Rule 4 — `consume mut X = expr` parse error (carry from D131).**
+
+Сохраняется существующий reject ([parser/mod.rs:3311](../../compiler-codegen/src/parser/mod.rs#L3311)).
+
+**Rule 5 — view как параметр сохраняет lifetime caller'а (D157 carry-over).**
+
+```nova
+fn read_len(view sb T) -> int => sb.len()
+
+fn main() {
+    consume sb = StringBuilder.new()
+    let n = read_len(sb)        // view-borrow на duration of call
+    sb.append("more")            // OK — sb всё ещё Live (view returned)
+    consume v = sb.into()        // OK — consume в конце
+}
+```
+
+Safe by construction.
+
+**Rule 6 — consume obligation в-scope check (carry from D131).**
+
+`consume X = …` обязывает X быть consumed до конца scope'а. D131
+flow-sensitive analysis применяется без изменений.
+
+### Error codes
+
+| Код | Когда | Suggestion (machine-applicable) |
+|---|---|---|
+| `E_CONSUME_KEYWORD_MISSING` | `let X = consume-obligated-expr` | Insert `consume ` перед X |
+| `E_VIEW_BINDING_FORBIDDEN` | `let X = consume_var` (alias) | Replace `let` с `consume` (move) ИЛИ перенести в function-param (view) |
+| `W_CONSUME_KEYWORD_UNNECESSARY` | `consume X = non-consume-expr` | Delete `consume ` keyword |
+
+Format Plan 50 D102 (header + code + span + note + suggestion).
+
+### Type-checker (production-grade)
+
+Не shortcut: flow analysis должна работать на all source kinds:
+- Direct ctor (`Type.new(...)`)
+- Fn return cross-fn (resolve return-type, check consume-status)
+- Member-access consume-field
+- Generic substitution (Option[T]/Result[T,E] D156 propagation)
+- Branch joins (D131 VarState semantics carry over)
+
+**Span precision** — error указывает на `let` keyword, не whole statement.
+
+### Industry comparison
+
+| Аспект | Nova D180 | Rust | Go | TypeScript | Swift |
+|---|---|---|---|---|---|
+| Explicit ownership на binding | ✅ `consume X = …` keyword | ⚠ implicit move (`let x = y`) | ❌ GC | ❌ GC | ⚠ implicit `consuming func` |
+| View-binding в теле | ❌ запрещён by construction | ✅ `&x` + lifetime | n/a | n/a | ✅ borrow с lifetime |
+| Lifetime аннотации требуются | ❌ нет | ✅ `<'a>` | n/a | n/a | частично implicit |
+| Dangling view возможен | ❌ by construction | ⚠ требует borrow-checker | n/a | n/a | ⚠ Swift exclusivity |
+| Visible move on assignment | ✅ keyword | ❌ silent | n/a | n/a | ⚠ implicit |
+
+**Nova edge:** visible ownership transfer на каждом binding-site,
+zero lifetime annotations, dangling-view-impossible by construction
+(через restriction-based design вместо lifetime tracking).
+
+### Связь
+
+- [D131](#d131-consume--квалификатор-логической-линейности) — foundation
+  (consume на receiver/param). D180 — extension на let-binding.
+- [D133](02-types.md#d133) — type-level consume (`type T consume { … }`),
+  source consume-обязательности.
+- [D156](02-types.md#d156) — generic propagation Option/Result для
+  consume-type'ов.
+- [D157](#d157-implicit-view-default--closure-capture-analysis--match-consume)
+  — view-default model; D180 cross-reference: views только как params.
+- [D170](06-concurrency.md#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034)
+  / [D174](06-concurrency.md#d174-sync-primitives-consume-integration-plan-1039)
+  — Plan 103.9 consume guards (MutexGuard/ReadGuard/Permit/OnceGuard) —
+  primary consumers D180 syntax в std/runtime/sync.nv.
+- [Plan 50 D102](03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)
+  — Diagnostic format для 3 error codes.
+
+### Что отвергнуто
+
+- **D131 amendment вместо нового D180.** Отвергнуто: новые правила
+  (Rule 2 view-binding-forbidden, Rule 3 alias=move) — semantically
+  distinct design decisions, не уточнения. Отдельный D-блок даёт
+  чёткий historical record.
+- **`view X = sb` keyword** для in-body view-binding. Отвергнуто: open
+  problem dangling-view без lifetime tracking. Restriction-based
+  design (views only as params) — простой safe выбор.
+- **Lifetime annotations** (`<'a>` Rust-style). Отвергнуто: D157
+  философия Nova — без lifetimes. Restriction в D180 — natural fit.
+- **Auto-insert `consume` keyword при missing.** Отвергнуто: silent
+  semantic change. Explicit error + machine-applicable suggestion даёт
+  reviewable migration.
+
+### Что отложено (honest defer)
+
+- **Destructuring patterns** в consume-binding (`consume (a, b) = pair`)
+  — V1 поддерживает только simple ident pattern. → followup `[M-73.1-
+  destructure]` if запрос.
+- **Cross-module flow inference** — V1 conservative: external fn
+  возврат-types помечены явно (D163 FFI consume); если нет — assumes
+  non-consume. → followup `[M-73.1-cross-module-flow]`.
 
 ---
 
