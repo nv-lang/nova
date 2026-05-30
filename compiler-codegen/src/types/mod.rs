@@ -9217,6 +9217,113 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     _ => None,
                 }
             } else { None };
+            // Plan 73.1 (D180): consume binding syntax enforcement.
+            // Pre-compute: is RHS consume-obligated? Is alias source consume-obligated?
+            let inferred_ty_d180 = ctx.infer_let_type(decl);
+            let rhs_yields_consume_type = inferred_ty_d180.as_ref()
+                .map(|ty| ctx.lin_reg.consume_types.contains(ty))
+                .unwrap_or(false);
+            let alias_obligated = if let Some(canon) = &alias_src {
+                ctx.consume_obligations.contains(canon)
+                    || ctx.var_types.get(canon)
+                        .map(|ty| ctx.lin_reg.consume_types.contains(ty))
+                        .unwrap_or(false)
+            } else { false };
+
+            // `let` keyword span — replace with `consume` (3 chars → 7 chars, but
+            // span-based replacement just covers the keyword position).
+            // decl.span.start points to `let` (3 chars) или `consume` (7 chars).
+            let kw_span = crate::diag::Span {
+                file_id: decl.span.file_id,
+                start: decl.span.start,
+                end: decl.span.start + 3, // "let" = 3 chars; if `consume` present, end overlaps but suggestion ignored
+            };
+
+            // Rule 2 (D180): `let X = consume_var` (alias) → E_VIEW_BINDING_FORBIDDEN.
+            if !decl.consume && alias_obligated && names.len() == 1 {
+                errors.push(crate::diag::Diagnostic::new(
+                    format!(
+                        "[E_VIEW_BINDING_FORBIDDEN] view-binding на consume-обязательную \
+                         переменную `{}` запрещён в теле функции (D180). \
+                         Used `let` без consume keyword.",
+                        names[0]
+                    ),
+                    decl.span,
+                ).with_note(
+                    "views существуют ТОЛЬКО как function-параметры (D157). \
+                     Для transfer ownership используй `consume X = …` (move); \
+                     для view-borrow перенеси в function-параметр.".to_string(),
+                ).with_suggestion(crate::diag::Suggestion {
+                    message: format!("use `consume {} = …` для move ownership", names[0]),
+                    span: kw_span,
+                    replacement: "consume".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }));
+            }
+            // Rule 1 (D180): non-alias consume-obligated RHS без `consume` keyword.
+            else if !decl.consume && rhs_yields_consume_type && names.len() == 1 {
+                errors.push(crate::diag::Diagnostic::new(
+                    format!(
+                        "[E_CONSUME_KEYWORD_MISSING] binding `{}` держит \
+                         consume-обязательную инстанс типа `{}` — требуется keyword \
+                         `consume` (D180).",
+                        names[0],
+                        inferred_ty_d180.as_deref().unwrap_or("?")
+                    ),
+                    decl.span,
+                ).with_note(
+                    "consume-обязательные значения должны быть явно ownership-bound \
+                     через `consume X = …`. Альтернатива: передать в function-параметр \
+                     для view-borrow.".to_string(),
+                ).with_suggestion(crate::diag::Suggestion {
+                    message: format!("add `consume` keyword: `consume {} = …`", names[0]),
+                    span: kw_span,
+                    replacement: "consume".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }));
+            }
+            // W_CONSUME_KEYWORD_UNNECESSARY: `consume` на non-consume RHS.
+            // Conservative: only emit if inferred type known AND not consume.
+            else if decl.consume && !rhs_yields_consume_type && !alias_obligated
+                && names.len() == 1 && inferred_ty_d180.is_some()
+            {
+                let consume_kw_span = crate::diag::Span {
+                    file_id: decl.span.file_id,
+                    start: decl.span.start,
+                    end: decl.span.start + 8, // "consume " = 8 chars (with trailing space)
+                };
+                errors.push(crate::diag::Diagnostic::new(
+                    format!(
+                        "[W_CONSUME_KEYWORD_UNNECESSARY] keyword `consume` на binding \
+                         `{}` избыточен — RHS типа `{}` не consume-обязателен (D180).",
+                        names[0],
+                        inferred_ty_d180.as_deref().unwrap_or("?")
+                    ),
+                    consume_kw_span,
+                ).with_note(
+                    "удали `consume ` для regular let-binding.".to_string(),
+                ).with_suggestion(crate::diag::Suggestion {
+                    message: "delete `consume ` keyword".to_string(),
+                    span: consume_kw_span,
+                    replacement: "let".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }));
+            }
+
+            // Rule 3 (D180): `consume X = consume_var` = move semantics
+            // (mark source Consumed, transfer obligation to X).
+            if let Some(ref canon) = alias_src {
+                if decl.consume && alias_obligated && names.len() == 1 {
+                    // Move: source becomes Consumed, X gets new obligation.
+                    ctx.mark_consumed(canon, decl.span);
+                    ctx.consume_obligations.remove(canon);
+                    let ty = ctx.var_types.get(canon).cloned();
+                    ctx.declare_consume_binding(&names[0], ty);
+                    // Skip the existing alias/declare path below.
+                    return;
+                }
+            }
+
             if let Some(canon) = alias_src {
                 let ty = ctx.var_types.get(&canon).cloned();
                 ctx.declare_alias(&names[0], &canon, ty);
