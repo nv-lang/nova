@@ -2429,19 +2429,76 @@ impl Parser {
         } else {
             false
         };
-        // Plan 72 P1-A (D6): `mut name type` prefix form — allow `mut` BEFORE
-        // the parameter name. Previously only `name mut type` was accepted, which
-        // prevented writing `fn sum_iter[U, T Iter[U]](mut it T)`. Both forms
-        // are semantically identical (mut is noop in bootstrap GC semantics).
+        // Plan 72 P1-A (D6): `mut name type` prefix form.
+        // Plan 108.1 (D176 amend): `mut` now carries semantic weight —
+        // params без `mut` = readonly (default).  Mut-method/index-assign
+        // на параметре без `mut` → E_PARAM_NOT_MUT.
+        //
+        // Сочетания с `consume`/`readonly` запрещены parser-level —
+        // E_PARAM_MOD_CONFLICT.
+        let mut is_mut = false;
         if matches!(self.peek().kind, TokenKind::KwMut) {
+            if is_consume {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `consume` и `mut`: `consume` подразумевает ownership transfer \
+                     (D131) — receiver уже владеет и может мутировать.  Убери `mut`."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            if has_readonly_prefix {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `readonly` и `mut` (D176): взаимоисключающие квалификаторы."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
             self.bump(); // consume leading `mut`
+            is_mut = true;
+            // Plan 108.1: after consuming `mut`, check for following
+            // `consume`/`readonly` which would create conflict.
+            if matches!(self.peek().kind, TokenKind::KwConsume) {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `mut` и `consume`: `consume` подразумевает ownership transfer \
+                     (D131) — receiver уже владеет и может мутировать.  Убери `mut`."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwReadonly) {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `mut` и `readonly` (D176): взаимоисключающие квалификаторы."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
         }
         let (name, name_span) = self.parse_ident()?;
         // D6: mut-маркер после имени — `name mut type` (legacy form).
-        // В bootstrap'е GC + reference-семантика делают это noop.
-        // Игнорируем `mut`, оставляем тип.
+        // Plan 108.1: тоже принимаем, помечаем is_mut.
         if matches!(self.peek().kind, TokenKind::KwMut) {
+            if is_consume {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `consume` и `mut` (D131 + D176)."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            if has_readonly_prefix {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `readonly` и `mut` (D176)."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
             self.bump();
+            is_mut = true;
         }
         let ty = {
             let inner = self.parse_type()?;
@@ -2485,6 +2542,7 @@ impl Parser {
             is_variadic,
             default,
             consume: is_consume,
+            is_mut,
         })
     }
 
