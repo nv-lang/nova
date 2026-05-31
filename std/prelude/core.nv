@@ -107,6 +107,36 @@ export type Result[T, E] | Ok(T) | Err(E)
 // компилятору напрямую (type-checker builtins HashSet, `ty_of_ref` +
 // `type_ref_is_never`). См. docs/plans/76-never-lowercase-keyword.md.
 
+/// Plan 110 (D188): exit-outcome для `consume X = expr { body }`
+/// scope-block'а. `Consumable.on_exit` получает это значение и решает
+/// что делать с ресурсом (commit/rollback/release/etc).
+///
+/// **Type-erased Failure**: payload `str` в bootstrap'е (вместо `any`
+/// per D188 spec) — routing через `if err.contains(...)` или upgrade
+/// до `any` после [M-110-multierror-any]. Resource-типы используют
+/// `Failure(_)` pattern + специфичный narrowing в типах ошибок.
+///
+/// **Variants:**
+/// - `Success` — body завершился нормально (включая `return v`).
+/// - `Failure(reason)` — body throw'нул / cancel / interrupt
+///   (D90 §7 amend: cancel приходит как `Failure("cancelled: <reason>")`).
+/// - `Panic(msg)` — body panic'нул; resource НЕ должен throw в этом
+///   случае (это bug), но может выполнить emergency cleanup.
+///
+/// # Examples
+///
+/// ```nova
+/// fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+///     match outcome {
+///         Success      => @commit()?
+///         Failure(_)   => @rollback()?
+///         Panic(_)     => @rollback_emergency()
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export type ScopeOutcome | Success | Failure(str) | Panic(str)
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Record types

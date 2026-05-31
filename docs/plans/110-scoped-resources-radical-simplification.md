@@ -1408,6 +1408,17 @@ Single-session sequential implementation не реалистична (plan-own e
 
 ---
 
+## Session 2 — continuation (2026-05-31)
+
+> Пользователь продолжает работу: выполнить оставшиеся Plan 110.1-110.8
+> без упрощений (production-grade), без остановок между фазами, с
+> updates spec/D/Q/docs, positive+negative tests через release nova &
+> компилятор, commit per big task, updates project-creation.txt +
+> simplifications.md + nova-private discussion-log.md, финальный статус
+> в этом же файле.
+
+---
+
 ## Ссылки
 
 - [Plan 100.4 umbrella](100.4-cleanup-on-failure.md) — basis (частично retracted)
