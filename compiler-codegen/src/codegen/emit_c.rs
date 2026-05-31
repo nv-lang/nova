@@ -14298,8 +14298,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 110.2.3 (D192): resolve exit_timeout via 3-level
                 // fallback. Bootstrap: Level 3 hardcoded; Level 1/2 added
                 // в Plan 110.2.x runtime integration.
+                // Plan 110.2.4 (D198): #realtime fn bypasses 3-level resolution,
+                // emits hardcoded 0 (no timeout = realtime-incompatible suspend).
                 let timeout_var = format!("_consume_timeout_{}", scope_id);
-                self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
+                if self.in_realtime {
+                    self.line(&format!(
+                        "int {} = 0;  /* Plan 110.2.4 (D198): #realtime bypass — no timeout */",
+                        timeout_var
+                    ));
+                } else {
+                    self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
+                }
 
                 // Plan 110.2.1 (D188 R3): enter cancel-shield для body
                 // execution + cleanup. Bootstrap: stub call; runtime impl
