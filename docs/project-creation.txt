@@ -25466,3 +25466,97 @@ Pending followups:
   использует stale .into() (pre-existing brittleness)
 - [M-parser-multiline-chain-extended] — `?.` / `!.` / wrapping args
   multi-line continuation
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 114 — Keyword refresh: ro/mut/consume bindings, no let, readonly→ro,
+const narrow + generalize (2026-05-31, partial)
+═══════════════════════════════════════════════════════════════════════════════
+
+Worktree: D:/Sources/nv-lang/nova-p114
+Branch:   plan-114-keyword-refresh (rebased на main 51212606e1e)
+Status:   🟡 PARTIAL — Ф.0 + Ф.1.1 closed; Ф.1.2-Ф.11 deferred
+
+Зачем:
+Plan 114 — syntax-surface change перед 0.1 freeze. Унификация immutability
+keyword'ов в Nova V2:
+- Тройная binding-symmetry ro/mut/consume (drop let entirely).
+- Pattern-bind в if/while через unified pattern grammar (drop outer let;
+  identifier-pattern требует ro/mut footgun protection; constructor/
+  destructure pattern default immutable, mut inside).
+- readonly → ro keyword rename (все позиции: field, type-modifier, param).
+- const narrow до strict constexpr-only + generalize на 3 позиции (module,
+  scope-local, record-field assoc const).
+- const fn comptime evaluable functions V1.
+
+Что сделано (commits на plan-114-keyword-refresh):
+
+1. Ф.0.1 — draft D184 в spec/decisions/03-syntax.md (commit 388edc05029):
+   - Полная keyword-table (ro/mut/consume + const + ro/mut field + const fn).
+   - Правила binding statements, pattern-bind conditions, readonly→ro,
+     const narrow/generalize, const fn V1, return-type defaults + @-inheritance.
+   - EBNF grammar diff (старое retracted, новое active).
+   - Comparison table vs Go/Rust/TS/Kotlin/Java/Swift.
+   - Cross-ref D27/D30/D32/D33/D34/D36/D102/D175/D176/D180/D199/D200.
+   - Status: 🆕 draft (финализируется в Ф.8 — D33 rewrite + amendments).
+
+2. Ф.0.2 — corpus audit (numbers match plan estimates):
+   - if let/while let: 63 occurrences в 23 .nv (plan: ~63 ✓).
+   - readonly: 162 .nv + 163 spec (plan: ~160 + ~161 ✓).
+   - const: 122 .nv в 49 файлах.
+   - let: ~1556 lines только в std/; total corpus ~8000-10000.
+
+3. Ф.0.5 — worktree nova-p114 создан, rebased на main.
+
+4. Ф.1.1 — lexer (commit 6eed72a2816):
+   - Добавлен KwRo TokenKind variant + mapping "ro" => KwRo.
+   - KwLet/KwReadonly сохранены в TokenKind для legacy-error path
+     (parser выдаст E_KW_REMOVED_LET/E_KW_REMOVED_READONLY вместо
+     generic 'unknown identifier'). Это НЕ dual-syntax fallback —
+     parser жёстко отвергает оба keyword'а с понятным сообщением.
+   - cargo check -p nova-codegen зелёный (0 новых warnings).
+
+Что deferred (следующая сессия / Plan 115):
+
+- Ф.1.2-Ф.1.6 — parser binding_stmt, if/while conditions, field/param/
+  type-modifier swap + new diagnostic codes + parser tests T1-T2 series.
+- Ф.2 — diagnostic terminology rewrite (compiler-codegen strings;
+  error codes сохраняются).
+- Ф.3 — readonly→ro в полях/типах call-sites + testsuite plan108*/plan108_1*.
+- Ф.5-Ф.6 — bulk-rewrite ~10K sites в ~2465 .nv-файлах (per parallel-subtree
+  agents approach per plan recommendation).
+- Ф.7 — tree-sitter grammar 0.2.0 + LSP semantic tokens + 4 editor extensions.
+- Ф.8 — spec finalize (D33 rewrite, D32/D34/D36/D175/D176/D180 amend) +
+  cross-platform full regression Windows+Linux × clang+MSVC.
+- Ф.9 — const narrowing strict constexpr-only (safety hatch: extractable
+  в Plan 115).
+- Ф.10 — const generalization assoc const incl. generic T-dependent
+  per-mono codegen (safety hatch).
+- Ф.11 — const fn comptime evaluable functions V1 (safety hatch).
+
+Причина частичности:
+Plan 114 — hard-cutover refactor (4-5 dev-day estimate в самом плане).
+Парсер изменения Ф.1 ДОЛЖНЫ land атомарно с corpus rewrite Ф.5/Ф.6
+(parser жёстко отвергает старый syntax → test corpus ломается ДО bulk
+rewrite). Этот объём не помещается в одну Claude-session.
+
+Останов произведён на coherent state:
+- cargo check зелёный.
+- nova test НЕ запускался (нечем триггерить regression — корпус не тронут,
+  парсер ещё принимает старый синтаксис через legacy KwLet/KwReadonly path).
+- Никаких half-baked simplifications или dual-syntax fallback'ов
+  не commit'нуто.
+
+Pending followups (открыты в plan114, см. «Out of scope» секцию):
+- [M-114-double-ro-syntax] — wait-and-see для `ro view ro T` readability.
+- [M-114-per-element-destructure-mut] — destructure granularity.
+- [Q-114-outer-mut-pattern] — V2 alternative outer-mut pattern design.
+- [M-114-for-binding-keyword] — for ro/mut x explicit на loop var.
+- [M-114-per-variant-const] — sum-type per-variant assoc const.
+- [M-114-const-fn-control-flow] — if/match/loop в const fn body.
+- [M-114-const-fn-recursion] — recursion в const fn.
+- [M-114-comptime-mixed-args] — Zig-like partial comptime params.
+- [M-114-const-param-runtime-return] — partial specialization.
+- [M-114-const-fn-first-class] — first-class const fn.
+- [M-114-generic-const-fn] — generic-aware comptime.
+- [M-114-const-extracted-to-115] — РЕЗЕРВ: будет записан если Ф.9/Ф.10/
+  Ф.11 safety hatch fire'нет.

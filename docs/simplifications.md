@@ -27720,3 +27720,29 @@ pre-Plan-109 API.  Документированы в их followups.
 **Why conservative scope (только `.` postfix, не `?.`/`!.`/wrapping args):** YAGNI + safety. `.method()` chain — dominant fluent use case (Plan 91.7 actual API). `?.` / `!.` — niche. Wrapping call args `f(\n a,\n b\n)` — уже работают через bracket-balancing в `(...)`. Расширение scope — отдельный followup при actual demand. Minimal change = minimal risk for parser.
 
 **Why var_boxed save/restore in `emit_monomorphized_method` (mirror lambda body pattern):** `emit_lambda_body` уже делал save/restore через `std::mem::take` — proven pattern. var_boxed (heap-promotion map) — caller-local context that must be isolated when emitting separate function body (mono'd method generates own C function with own variables). Без save/restore — identifier resolution in mono body leaked to caller's box-prefixed names → CC-FAIL «undeclared _box_X». Same pattern, same problem, same fix.
+
+## Plan 114 — Keyword refresh ro/mut/consume (partial, 2026-05-31)
+
+**Status:** 🟡 PARTIAL. Plan 114 — hard-cutover refactor оценен 4-5 dev-day, не влезает в одну Claude-session. Ф.0 + Ф.1.1 закрыты (worktree `nova-p114`, branch `plan-114-keyword-refresh`); Ф.1.2-Ф.11 deferred. Останов на coherent state: `cargo check -p nova-codegen` зелёный, корпус не тронут, dual-syntax fallback'ы не commit'нуты.
+
+**Explicitly deferred (NOT silently dropped):**
+
+- `[M-114-parser-binding-stmt]` — Ф.1.2 `parse_binding` для ro/mut/consume statement-leading; legacy-error `parse_let_decl`.
+- `[M-114-parser-if-while-pattern]` — Ф.1.3 unified `parse_if_cond` (drop outer let; ident-pattern ro/mut required; consume reject; outer-mut reject).
+- `[M-114-parser-field-param-readonly-ro]` — Ф.1.4 field/type-mod/param KwReadonly→KwRo.
+- `[M-114-new-diagnostic-codes]` — Ф.1.5: E_KW_REMOVED_LET, E_KW_REMOVED_READONLY, E_AMBIGUOUS_IDENT_PATTERN, E_CONSUME_IN_CONDITION, E_OUTER_MUT_IN_CONDITION, E_MUT_AT_MODULE_LEVEL, E_CONSUME_AT_MODULE_LEVEL, E_BINDING_REQUIRES_INIT (+ Ф.9-Ф.11 codes).
+- `[M-114-parser-tests]` — Ф.1.6 T1.1-T1.10a + NEG-T2.1-T2.8.
+- `[M-114-diag-terminology]` — Ф.2: compiler strings (let mut → mut; readonly field → ro field). Error codes preserved.
+- `[M-114-readonly-to-ro-corpus]` — Ф.3 testsuite plan108*/plan108_1*.
+- `[M-114-bulk-rewrite-std]` — Ф.5 ~200 std/ файлов, ~3000 lines via R1-R12.
+- `[M-114-bulk-rewrite-corpus]` — Ф.6 ~1500+ файлов nova_tests/+examples/+bench/+docs/+spec. Parallel-subtree.
+- `[M-114-tree-sitter-grammar]` — Ф.7.1 tree-sitter-nova 0.2.0.
+- `[M-114-lsp-quickfixes]` — Ф.7.2 LSP semantic tokens + quick-fix providers.
+- `[M-114-editor-packaging]` — Ф.7.3 VSCode/Helix/Zed/Neovim.
+- `[M-114-spec-finalize]` — Ф.8 D33 rewrite, D32/D34/D36/D175/D176/D180 amend, D184 promote, new D199+D200, D27 wording.
+- `[M-114-full-regression]` — Ф.8.4-Ф.8.5 nova test ≥ 1559/74 + cross-platform.
+- `[M-114-const-narrowing]` — Ф.9 (R-9 safety hatch extractable Plan 115).
+- `[M-114-const-generalize]` — Ф.10 assoc const + generic per-mono (R-10 safety hatch).
+- `[M-114-const-fn]` — Ф.11 comptime evaluable V1 (R-13 safety hatch).
+
+**Why partial-but-honest, not "rush to done":** Plan 114 явно требует production-grade без dual-syntax fallback'ов, hard cutover за один merge. Half-implemented parser changes без bulk-rewrite корпуса → тестсьют полностью сломан (нет валидных fixture'ов после parser swap'а до Ф.5/Ф.6 завершения). Атомарность Ф.1+Ф.5+Ф.6 неделима. Stop at Ф.0+Ф.1.1 (preparatory work) сохраняет codebase зелёным + complete design draft (D184) + lexer foundation для возобновления.
