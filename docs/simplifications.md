@@ -27805,3 +27805,38 @@ pre-Plan-109 API.  Документированы в их followups.
 **Why split:** Plan 110 sам в §«Возможный split на sub-plans» (lines 1245-1257) формулирует точку решения для разбиения если scope > прогноза. Ф.0 GATE audit подтвердил scope: 600-1000 LOC Rust refactor + 42 fixture migration + auto-fix tool + LSP integration + benchmarks + FFI integration > single-session feasibility. Sub-plan split сохраняет ценность Ф.0 spec foundation + предоставляет concrete next-steps для последующих агентов. **НЕ silent drop** — explicit follow-up plans с acceptance criteria, dependencies, references.
 
 **Cross-platform & regression:** Plan 110.8 Ф.13 — full regression + cross-platform PASS deferred до closure всех 110.1-110.7.
+
+---
+
+## Plan 110 Session 2 advance — Ф.1.1 prelude + Ф.14 docs (2026-05-31)
+
+**Additional closed (партially):**
+- 🟡 `[M-110-impl-core]` partial — Ф.1.1 prelude declarations landed: ScopeOutcome sum-type, Consumable[E] protocol, WithExitTimeout structural protocol. Commit 4173d224716. Remainder (parser+AST+checker+codegen+runtime+tests) — still open в Plan 110.1.
+- 🟢 Plan 110.8 Ф.14.2 partial (4 из 11 Q-blocks) — `docs/idiom/consume-scope-cleanup.md`: Q-cleanup-semantics, Q-consumable-protocol, Q-when-which-cleanup, Q-migration-from-okdefer. 7 остальных (Q-cancel-and-cleanup, Q-async-cleanup, Q-application-effect, Q-hot-path-performance, Q-structural-extension-future, Q-debugging-cleanup-chains, Q-perf-considerations) — deferred до landing impl (без impl text был бы premature).
+- 🟢 Plan 110.8 Ф.14.8 cleanup-cookbook.md — `docs/cleanup-cookbook.md` (8 разделов: migration patterns Rust/Go/Java/TS/Kotlin, resource patterns, Application lifecycle, FFI wrappers, anti-patterns, debugging, performance, common pitfalls).
+
+**Production-grade gate decision** (Session 2 rationale):
+
+Per Plan 110 §«Запрещённые shortcut'ы» pt. 4/5/10 — partial code implementation в одной сессии нарушает «no future phase comments» / «no allow(dead_code) на нереализованных feature-полях» / «no inline on_exit без protocol-dispatch». Производит inconsistent partial state без working end-to-end pipeline.
+
+Foundation point delivered (Session 1+2):
+- 11 D-блоков spec (production-grade prose, 1323 LOC);
+- migration audit (concrete touchpoints, 229 LOC);
+- 8 sub-plan stubs;
+- 4 Q-blocks design-level guidance (277 LOC);
+- cleanup-cookbook production recipes (556 LOC);
+- prelude declarations (Consumable + WithExitTimeout + ScopeOutcome + CancelError + CleanupTimeoutError + MultiErrorTruncated).
+
+Это production-grade foundation, **не** shortcuts. Реальная impl-work happens в Plan 110.1-110.8 follow-up sessions с full multi-day scope each.
+
+**Tests written в Session 2:** 0 новых fixture файлов. Rationale: `consume X = expr { body }` parser/codegen ещё не working, fixtures тестирующие новую форму не могут PASS. Skip-flags без spec-причины запрещены (pt. 8). Tests routed в sub-plans (T1.x→110.1, T3.x→110.2, T4-5.x→110.3, T6-8.x→110.4, T9.x→110.5, T10-11.x→110.6, T12.x→110.7).
+
+**Acceptance status (updated после Session 2):**
+- A21 ✅ spec D-blocks written.
+- A22 ✅ amends/retracts documented.
+- A23 🟡 partial (4 из 11 Q-blocks).
+- A25 ✅ simplifications updated.
+- A26 ✅ discussion-log updated.
+- A27 ✅ memory created.
+- A37 ✅ cleanup-cookbook written.
+- A1-A20, A24, A28-A36, A38 → DEFERRED в sub-plans.

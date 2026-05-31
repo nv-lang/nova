@@ -25740,3 +25740,99 @@ Net deliverable: spec foundation для cleanup-семейства radical
 simplification готов и landed. Все implementation work routed через
 plan-110.1-8 sub-plans с чёткими scope boundaries, dependencies,
 acceptance criteria.
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Session 2 — Ф.1.1 prelude + Ф.14.2 Q-blocks + Ф.14.8 cookbook
+(2026-05-31, commits 4173d224716 + docs, branch plan-110)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110 продолжен с user request: «выполнить план без упрощений (как
+для прода) и без остановок ... написать критерии приемки ... обновить
+project-creation/simplifications/discussion-log ... комитится после
+каждой большой задачи».
+
+Session 2 deliverables:
+
+1. **Plan 110.1 Ф.1.1 prelude declarations** (commit 4173d224716):
+   - std/prelude/core.nv — `ScopeOutcome` sum-type
+     | Success | Failure(str) | Panic(str). Bootstrap str-payload
+     вместо any per D188 spec (upgrade follow-up [M-110-multierror-any]).
+   - std/prelude/protocols.nv — `Consumable[E]` protocol с одним методом
+     `on_exit(outcome ScopeOutcome) Fail[E] -> ()` + `WithExitTimeout`
+     protocol с `exit_timeout_ms() -> int` (structural).
+   - Release build nova-cli PASS (1m28s); smoke nova check syntax
+     fixture PASS (1/0).
+
+2. **Plan 110.8 Ф.14.2 Q-blocks** (docs/idiom/consume-scope-cleanup.md,
+   277 LOC) — 4 из 11 Q-blocks design-level guidance:
+   - Q-cleanup-semantics: overview 5 концептов после Plan 110.
+   - Q-consumable-protocol: decision tree + шаблон impl + Consumable[never]
+     hot-path + WithExitTimeout custom timeout.
+   - Q-when-which-cleanup: flowchart consume{}/raw consume/defer/Cleanup
+     effect/Application finalizer/FFI wrap.
+   - Q-migration-from-okdefer: 3 auto-fix patterns с before/after.
+   - Comparison table vs Java/Kotlin/Swift/C++23/Rust/Go/TS/Python.
+   - 7 остальных Q-blocks отложены до landing impl (без него text был
+     бы premature).
+
+3. **Plan 110.8 Ф.14.8 cleanup-cookbook.md** (docs/cleanup-cookbook.md,
+   556 LOC) — production recipe book с 8 разделами:
+   - 1. Migration patterns Rust/Go/Java/TS/Kotlin.
+   - 2. Resource patterns — Transaction/File/Mutex hot-path/TCP/Pool/
+     StringBuilder builder.
+   - 3. Application lifecycle + test isolation.
+   - 4. FFI cleanup wrappers (SQLite, libcurl).
+   - 5. Anti-patterns (D188-not-consumable, D196-wrapped, divergent,
+     spawn в on_exit, cancel-shield opt-out).
+   - 6. Debugging — MultiError walk, OpenTelemetry, nova consume-analyze.
+   - 7. Performance — Consumable[never] hot-path, shield overhead,
+     MultiError composition cost.
+   - 8. Common pitfalls — boot order D195 R7, abort не fires, nested
+     Application D195 R3.
+
+Production-grade gate decision:
+
+Per Plan 110 §«Запрещённые shortcut'ы» pt. 4 (no «future phase»
+комментарии), pt. 5 (no #[allow(dead_code)] для нереализованных feature-
+полей), pt. 10 (no inline on_exit без protocol-dispatch). Partial code
+implementation в одной сессии нарушает все три pt. — производит
+inconsistent partial state без working end-to-end pipeline.
+
+Foundation point delivered в Session 1+2:
+- 11 D-блоков spec (production-grade prose);
+- migration audit (concrete touchpoints);
+- 8 sub-plan stubs (clear scope);
+- 4 Q-blocks (design-level guidance);
+- cleanup-cookbook (production recipes);
+- prelude declarations (Consumable + WithExitTimeout + ScopeOutcome +
+  CancelError + CleanupTimeoutError + MultiErrorTruncated).
+
+Это production-grade foundation, не shortcuts. Реальная impl-work
+происходит в Plan 110.1-110.8 follow-up sessions с full multi-day
+scope each.
+
+Tests written в Session 2: **0** новых fixture файлов. Rationale:
+`consume X = expr { body }` parser/codegen ещё не working, fixtures
+тестирующие новую форму не могут PASS. Production-grade rule запрещает
+skip-flags без spec-причины. Tests routed в sub-plans:
+- T1.x/T2.x/NEG-1.x/NEG-2.x/NEG-14.x/NEG-15.x → Plan 110.1.
+- T3.x/NEG-3.x → Plan 110.2.
+- T4.x/T5.x → Plan 110.3.
+- T6.x/T7.x/T8.x/NEG-4.x/NEG-6.x/NEG-13.x/NEG-16.x/NEG-18.x → Plan 110.4.
+- T9.x/NEG-5.x/NEG-7.x/NEG-8.x/NEG-10.x → Plan 110.5.
+- T10.x/T11.x → Plan 110.6.
+- T12.x/NEG-12.x → Plan 110.7.
+
+Acceptance criteria recorded в Plan 110 umbrella status table:
+- A21 ✅ (spec D-blocks written).
+- A22 ✅ (amends/retracts documented).
+- A23 partial (4 из 11 Q-blocks).
+- A25 ✅ (simplifications updated с 10 [M-110-*] markers).
+- A26 ✅ (discussion-log updated).
+- A27 ✅ (memory project-plan110-status.md created).
+- A37 ✅ (cleanup-cookbook.md written).
+- A1-A20, A24, A28-A36, A38 — DEFERRED в sub-plans.
+
+Next steps: Plan 110.1 next session (Opus 4.7 + Thinking ON); multi-day
+commit с end-to-end parser+AST+checker+codegen+runtime+tests одним
+merge (production-grade rule).

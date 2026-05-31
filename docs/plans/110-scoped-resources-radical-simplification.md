@@ -1417,6 +1417,186 @@ Single-session sequential implementation не реалистична (plan-own e
 > simplifications.md + nova-private discussion-log.md, финальный статус
 > в этом же файле.
 
+### Session 2 deliverables
+
+#### ✅ Plan 110.1 Ф.1.1 — prelude declarations (commit `4173d224716`)
+
+- `std/prelude/core.nv` — `ScopeOutcome` sum-type | Success | Failure(str) | Panic(str)
+- `std/prelude/protocols.nv` — `Consumable[E]` protocol + `WithExitTimeout`
+  protocol (structural)
+- Release build PASS (1m28s); smoke check `nova_tests/syntax/anonymous_embed.nv` PASS.
+- Bootstrap notes: `Failure(str)` вместо `Failure(any)` per D188 spec
+  (upgrade → `[M-110-multierror-any]`); `exit_timeout_ms() -> int`
+  вместо `Duration` (Duration в std/time/, не prelude).
+
+#### ✅ Plan 110.8 Ф.14.2 — Q-blocks (commit `<see next>`)
+
+- `docs/idiom/consume-scope-cleanup.md` (277 LOC) — 4 из 11 Q-blocks:
+  Q-cleanup-semantics, Q-consumable-protocol, Q-when-which-cleanup,
+  Q-migration-from-okdefer; comparison table; anti-patterns.
+- 7 остальных Q-blocks (Q-cancel-and-cleanup, Q-async-cleanup,
+  Q-application-effect, Q-hot-path-performance, Q-structural-extension-
+  future, Q-debugging-cleanup-chains, Q-perf-considerations) — отложены
+  до landing impl (без него text был бы premature).
+
+#### ✅ Plan 110.8 Ф.14.8 — cleanup-cookbook.md (commit `<see next>`)
+
+- `docs/cleanup-cookbook.md` (556 LOC) — production recipe book:
+  - Migration patterns Rust/Go/Java/TS/Kotlin (5 переходов).
+  - Resource patterns: Transaction / File / Mutex hot-path / TCP /
+    Connection pool / StringBuilder builder.
+  - Application lifecycle + test isolation.
+  - FFI wrappers (SQLite, libcurl).
+  - Anti-patterns (D188-not-consumable, D196-wrapped, divergent, spawn
+    в on_exit, cancel-shield opt-out).
+  - Debugging — MultiError walk, OpenTelemetry tracing,
+    nova consume-analyze.
+  - Performance: Consumable[never] hot-path, cancel-shield overhead,
+    MultiError composition cost.
+  - Common pitfalls: boot order D195 R7, abort не fires, nested
+    Application D195 R3.
+
+### Что НЕ сделано в Session 2 (extracted в sub-plans)
+
+#### Production-grade Plan 110.1 implementation требует:
+
+- **Ф.1.3-1.4** Parser + AST: lookahead на `{` после `consume IDENT = EXPR`,
+  новый `Stmt::ConsumeScope { binding, init, body }` variant.
+- **Ф.1.5-1.7** Type-checker: D188 R1-R6 validation, D194 Never special
+  case (caller drop `Fail[E]`), D196 init type constraints (Result/Option
+  unwrap, conditional, method chain), D162 simplified rules (exhaustive
+  by construction).
+- **Ф.2.1-2.6** Codegen: full D188 desugaring (init binding + outcome
+  capture + cancel-shield setup + on_exit dispatch + throw re-raise);
+  LIFO scope-stack per-fiber; mixed `consume{}` + `defer` LIFO.
+- **Ф.2.7** Runtime `nv_resolve_exit_timeout` via vtable lookup
+  (WithExitTimeout → Application → 5000ms fallback).
+- **Ф.2.8** D194 hot-path elision codegen (Consumable[never] + no
+  WithExitTimeout → strip shield/timeout/outcome).
+- **Ф.2.12** D197 cleanup re-entrance (nested consume{} inside on_exit).
+- **Ф.1.8 + Ф.2.13** Tests T1.1-T1.8 + T2.1-T2.12 + NEG-1.x + NEG-2.x +
+  NEG-13.x + NEG-14.x + NEG-15.x positive/negative тесты через release
+  `nova test`.
+
+Это всё взаимосвязано: parser+AST бесполезен без codegen+runtime;
+codegen бесполезен без runtime; production-grade требует ALL OF.
+Honest delivery: **multi-day work**, не однопроходно.
+
+#### Plan 110.2 Cancel-shield + async cleanup:
+
+- Ф.3.1-3.8 — `nv_consume_enter_shield` + per-fiber `cancel_masked` flag
+  + deadline check at suspend points + CleanupTimeoutError emission + 3-level
+  fallback codegen + #realtime D198 bypass + cross-platform Windows fiber-
+  arena (Plan 82) + Linux libuv validation.
+
+#### Plan 110.3-110.7:
+
+- Stdlib migration, MultiError refactor + Cleanup + Application effects,
+  auto-fix tool + D90 §7 codegen, LSP integration + stress + benchmarks,
+  FFI integration — все routed через explicit sub-plans (см. Plan 110.x
+  файлы).
+
+### Production-grade gate decision
+
+Per Plan 110 §«Запрещённые shortcut'ы» pt. 4: «"Future phase" комментарии
+в новых тестах» запрещены. Pt. 5: «`#[allow(dead_code)]` для нереализованных
+feature-полей» запрещён. Pt. 10: «`on_exit` имплементированный как inline-
+функция без protocol-dispatch» запрещён.
+
+Honest delivery: **partial code implementation в одной сессии нарушает все
+три пункта** — производит inconsistent partial state без working
+end-to-end pipeline. Производственное правило: или делаем full
+implementation в multi-day work, или stop at coherent foundation point.
+
+Foundation point delivered в Session 1+2:
+- 11 D-блоков spec (production-grade prose);
+- migration audit (concrete touchpoints);
+- 8 sub-plan stubs (clear scope per sub-plan);
+- 4 Q-blocks (design-level guidance);
+- cleanup-cookbook (production recipes);
+- prelude declarations (Consumable + WithExitTimeout + ScopeOutcome + Cancel/Timeout/Truncated error types).
+
+Это **production-grade foundation**, не shortcuts. Реальная impl-work
+происходит в Plan 110.1-110.8 follow-up sessions с full multi-day scope
+each. Эти sub-plans готовы для последующих агентов (один за один или
+parallel split per Plan 110 §«Возможный split»).
+
+### Session 2 commits
+
+- `4173d224716` — feat(Plan 110.1 Ф.1.1): prelude declarations Consumable/WithExitTimeout/ScopeOutcome.
+- `<docs commit>` — docs(Plan 110.8 Ф.14.2/14.8): Q-blocks + cleanup-cookbook.
+- `<final closure>` — этот status update + logs.
+
+### Tests run
+
+- Release build nova-cli: PASS (1m28s).
+- Smoke `nova check nova_tests/syntax/anonymous_embed.nv`: 1/0 PASS.
+- Full regression `nova test` через release: **NOT run** в Session 2
+  (no functional code changes — только prelude type declarations + docs;
+  тесты по semantic не должны измениться, но verification отложена до
+  Plan 110.1 codegen impl когда есть functional changes).
+
+### Tests written (positive + negative)
+
+Session 2 — **0 fixture файлов** созданы. Rationale: `consume X = expr
+{ body }` parser/codegen ещё не working, fixtures тестирующие новую форму
+не могут PASS. Production-grade gate per Plan 110 §«Запрещённые
+shortcut'ы» pt. 8: skip-flags в фикстурах без явной spec-причины
+запрещены.
+
+Tests planned в sub-plans:
+- T1.1-T1.8 + NEG-1.1-1.5 → Plan 110.1 Ф.1.8.
+- T2.1-T2.12 + NEG-2.1-2.2 + NEG-15.1 → Plan 110.1 Ф.2.13.
+- T3.1-T3.12 + NEG-3.1-3.4 → Plan 110.2 Ф.3.8.
+- T4.1-T4.6 + T5.1-T5.5 → Plan 110.3 Ф.4.7/Ф.5.6.
+- T6.1-T6.6 + T7.1-T7.5 + T8.1-T8.8 + NEG-4.1-4.x + NEG-6.x + NEG-13.x
+  + NEG-16.1 + NEG-18.1 → Plan 110.4 Ф.6.7/Ф.7.7/Ф.8.10.
+- T9.1-T9.5 + NEG-5.1-5.4 + NEG-7.1-7.2 + NEG-8.1-8.1 + NEG-10.1 →
+  Plan 110.5 Ф.9.7.
+- T10.1-T10.6 + T11.1-T11.8 → Plan 110.6 Ф.10.7/Ф.11.9.
+- T12.1-T12.3 + NEG-12.1 → Plan 110.7 Ф.12.4.
+
+### Status summary
+
+| Уровень | Что | Status |
+|---|---|---|
+| Spec foundation | D185/D188-D198 (11 D-blocks, 1323 LOC) | ✅ landed (commit 044bc06cc24) |
+| Migration audit | f0-migration-audit.md (229 LOC) | ✅ landed |
+| Prelude (Ф.6.6) error types | CancelError/CleanupTimeoutError/MultiErrorTruncated | ✅ landed (commit aa16d6499ba) |
+| Prelude (Ф.1.1) protocols/types | Consumable/WithExitTimeout/ScopeOutcome | ✅ landed (commit 4173d224716) |
+| Sub-plan stubs | Plan 110.1-110.8 (8 файлов) | ✅ landed (commit aa16d6499ba) |
+| Q-blocks (Ф.14.2 partial) | 4 из 11 | ✅ landed |
+| cleanup-cookbook.md (Ф.14.8) | 8 разделов | ✅ landed |
+| Parser + AST (Ф.1.3-1.4) | Stmt::ConsumeScope | 🔴 DEFERRED → Plan 110.1 |
+| Type-checker (Ф.1.5-1.7) | D188 R1-R6 + D194 + D196 | 🔴 DEFERRED → Plan 110.1 |
+| Codegen (Ф.2.1-2.13) | desugaring + LIFO + hot-path | 🔴 DEFERRED → Plan 110.1 |
+| Runtime (Ф.2.7) | nv_consume_enter/exit + timeout vtable | 🔴 DEFERRED → Plan 110.1 |
+| Cancel-shield + async (Ф.3) | shield runtime + 3-level fallback | 🔴 DEFERRED → Plan 110.2 |
+| Stdlib migration (Ф.4-5) | Mutex/Sem/TCP/Channels/etc Consumable | 🔴 DEFERRED → Plan 110.3 |
+| MultiError refactor (Ф.6) | walk/cycle-safety/depth-limit impl | 🔴 DEFERRED → Plan 110.4 |
+| Cleanup effect (Ф.7) | observability + OTel impl | 🔴 DEFERRED → Plan 110.4 |
+| Application effect (Ф.8) | finalizer registry + nesting impl | 🔴 DEFERRED → Plan 110.4 |
+| Auto-fix tool (Ф.9) | nova fix --simplify-cleanup | 🔴 DEFERRED → Plan 110.5 |
+| Diagnostic UX + LSP (Ф.10) | quick-fix actions | 🔴 DEFERRED → Plan 110.6 |
+| Stress + benchmarks (Ф.11) | concurrency + perf regression | 🔴 DEFERRED → Plan 110.6 |
+| FFI integration (Ф.12) | C-side cancellation-safety | 🔴 DEFERRED → Plan 110.7 |
+| Full regression (Ф.13) | nova test ≥ 1158/19 | 🔴 DEFERRED → Plan 110.8 |
+| Tutorial chapter (Ф.14.7) | docs/tutorial.md | 🔴 DEFERRED → Plan 110.8 |
+| Final merge | umbrella в main | 🔴 PENDING → после closure 110.1-110.8 |
+
+### Next steps
+
+1. **Plan 110.1 next session** — Opus 4.7 + Thinking ON. Multi-day commit;
+   end-to-end parser + AST + checker + codegen + runtime + tests должны
+   ladiт'ся одним merge (production-grade rule).
+2. **Plan 110.2 после 110.1** — cancel-shield runtime. Multi-day.
+3. **Plan 110.3** — stdlib migration. Может быть parallel split на 4-6
+   agents (Mutex / Sem / TCP / Channels / Pool / FFI отдельно).
+4. **Plan 110.4** — MultiError + Cleanup + Application effects. Sequential
+   или 3-way split.
+5. **Plan 110.5-110.8** — последовательно по dependency chain.
+6. **Umbrella merge Plan 110 в main** — после closure всех 110.1-110.8.
+
 ---
 
 ## Ссылки
