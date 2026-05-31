@@ -1,0 +1,508 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+# Plan 115 — `const` narrow + generalize + `const fn` (extracted from Plan 114 Ф.9-Ф.11)
+
+> **Создан 2026-05-31.**
+> **Статус:** 🆕 PLANNED.
+> **Приоритет:** P1 — расширяет `const` discipline и добавляет comptime
+>   evaluator subsystem. Должен приземлиться до 0.1 freeze.
+> **Оценка:** ~1.5-2 dev-day (Ф.1 narrow ~⅛ day; Ф.2 generalize ~½ day;
+>   Ф.3 const fn ~1 day; doc/spec + regression ~⅛ day).
+> **Зависимости:**
+>   - Plan 114 ✅ closed — D184 keyword refresh master; D33 rewrite
+>     уже декларирует «3 real axes including hard-constexpr `const`».
+>   - Plan 14 Ф.2 ✅ closed — lazy-init `nova_const_<name>()` runtime
+>     symbol (Plan 115 Ф.1 narrow убирает lazy-init из `const`; legacy
+>     C-symbol naming сохранён для `ro` module-level non-constexpr).
+>   - Plan 46 ✅ closed — D102 default-param-values ссылается на
+>     module-level `const` (Plan 115 Ф.1 strict не ломает — compatible).
+> **D-блоки:** **новый D199** (`const fn` comptime evaluable functions);
+>   **новый D200** (associated constants — `const` field в `type X`);
+>   **D33 small wording amend** («from any visible scope» для `const N`
+>   в `[N]T` — Ф.2.5 scope-local case).
+>
+> **Safety hatches (extractable если timeline сжат):**
+>   - **Ф.3 (`const fn`)** — самая большая (новый comptime evaluator
+>     subsystem). Если evaluator усложняется неожиданно — extract в Plan
+>     115.1 одним revert'ом. Plan 115 шипится с Ф.1 + Ф.2 only.
+>     Decision point: end Ф.3.3 smoke на minimal example.
+>
+> **Worktree convention:** `nova-p115` (создать при старте).
+>
+> **Recommended model:** Opus 4.7 + Thinking ON (особенно Ф.3 — новая
+>   compiler subsystem). Sonnet 4.6 HIGH допустим для Ф.1 narrow (тривиальное
+>   tightening existing constexpr-engine).
+>
+> **Production-grade требование:** реализация без упрощений. Hard cutover
+>   за один merge. Никаких dual-syntax fallback'ов.
+
+---
+
+## Зачем
+
+Plan 114 D184 декларирует `const` как **«hard compile-time guarantee»** в
+трёх позициях (module/scope/field) с unified strict-constexpr semantics.
+Реализация этого design'а делится на 3 ортогональные фазы (бывшие
+Plan 114 Ф.9/Ф.10/Ф.11, extracted в Plan 115 per safety hatch).
+
+**Что сейчас (post-Plan-114):**
+1. `const` semantics — broad (Plan 14 Ф.2): принимает non-constexpr RHS
+   через lazy-init runtime getter. Противоречит mainstream-ожиданиям
+   (`const` = hard compile-time, как Rust/C/Java).
+2. `const` валиден только на **module-level**. Scope-local `const N =
+   16` в fn body — не поддерживается. Record-field associated `const` —
+   нет такой фичи вообще (workaround: module-level `const TYPE_X_MAX
+   = …`, ломает namespacing).
+3. `const fn` — не существует. Computed `[N]T` sizes, type-driven dispatch
+   constants, lookup tables — невозможно без runtime trampoline.
+
+**Что хочется (Plan 115 close):**
+1. `const X = expr` — strict constexpr-only во всех позициях; non-
+   constexpr → `E_CONST_NOT_CONSTEXPR` с подсказкой «use `ro` для lazy».
+2. `const` работает в 3 позициях (module/scope/field) с единой semantics:
+   - **Scope-local**: `const N = 16; ro buf [N]u8 = ...` (inline literal).
+   - **Record-field associated**: `type T { const VERSION = 2; name str }`
+     — namespace access `T.VERSION`, zero storage в layout, как Java
+     `static final` / Rust `impl T { const X }`.
+3. **`const fn`** comptime evaluable functions — Rust-style `const fn`
+   с V1 subset (literals + arithmetic + casts + local const + final
+   expression + calls на другие const fn; NO if/match/loop/mut/effect/
+   alloc/recursion/generic в V1, followup-markers).
+
+---
+
+## Дизайн
+
+Полный дизайн — в Plan 114 D184 (master decision). Plan 115 — implementation
+trio Ф.1/Ф.2/Ф.3 + D199/D200 spec блоки.
+
+### Ф.1 — `const` narrow → strict constexpr-only
+
+Checker tightens `const X = expr` enforcement: RHS обязан быть literal-
+eligible. Errors:
+- `E_CONST_NOT_CONSTEXPR` — non-constexpr RHS, с pointer на offending
+  sub-expression.
+- `E_CONST_REFERS_NON_CONSTEXPR` — RHS ссылается на runtime `ro` binding.
+- `E_CONST_EFFECT_IN_INIT` — effect call в RHS.
+
+**Strict module-level partition** (новая checker rule):
+- `ro X = CONSTEXPR_RHS` на module-level → `E_RO_FOR_CONSTEXPR_PREFER_CONST`
+  с hint «use `const X = …` — value is compile-time computable».
+- `const X = NON_CONSTEXPR_RHS` → `E_CONST_NOT_CONSTEXPR` с hint
+  «use `ro X = …` for lazy-init».
+
+Codegen: lazy-init fallback (`nova_const_<name>()` getter) удалён из
+const-path. `const` теперь только data-segment placement (`const T X = …;`).
+Module-level `ro X = …` non-constexpr — host для lazy-init; symbol
+`nova_const_<name>()` (legacy ABI) или `nova_ro_<name>()` (новый).
+
+### Ф.2 — `const` generalize: scope-local + associated constants
+
+#### Ф.2.1 — Scope-local `const`
+
+```nova
+fn parse_header(data ro []u8) -> Header {
+    const HEADER_SIZE = 16
+    ro buf [HEADER_SIZE]u8 = ...
+    ...
+}
+```
+
+Parser: добавить `const_decl` в `parse_stmt_or_expr` dispatch.
+Checker: scope-local const видим от declaration до end-of-enclosing-block;
+`[N]T` reference с scope-const'ом — OK.
+Codegen: inline literal value at use-sites (zero storage, zero binding
+overhead).
+
+#### Ф.2.2 — Record-field associated constants (D200)
+
+```nova
+type Config {
+    const VERSION int = 2
+    const MAX_PEERS int = 1024
+    name str
+    timeout Duration
+}
+
+Config.VERSION                  // ✓ 2 (namespace access)
+ro c = Config { name: "alice", timeout: SECOND }
+c.VERSION                       // ✗ E_CONST_INSTANCE_ACCESS
+sizeof(Config) == sizeof(name) + sizeof(timeout)  // const fields НЕ в layout
+```
+
+Parser: расширить `parse_record_fields` на `const` field-decl.
+Modifier-conflicts: `mut const` / `ro const` / `consume const` →
+`E_CONST_MUT_CONFLICT` / `E_CONST_RO_REDUNDANT` / `E_CONST_CONSUME_CONFLICT`.
+
+Checker:
+- `const` field НЕ в instance layout.
+- Namespace resolution `Type.NAME` — новый path в name-resolver
+  (associated-const lookup в type's const-table).
+- `instance.NAME` → `E_CONST_INSTANCE_ACCESS`.
+- Record literal без указания `const` fields (`Config { name: …, timeout: … }`).
+- Указание `const` field в literal → `E_CONST_FIELD_IN_LITERAL`.
+
+Codegen:
+- Non-generic: emit top-level `static const T Type_FieldName = …;` в .rodata.
+- `Type.FieldName` resolution → C-symbol `Type_FieldName`.
+
+#### Ф.2.3 — Sum-type associated constants
+
+```nova
+type Status = Active | Inactive | Pending {
+    const VERSION int = 2
+    const MAX_TRANSITIONS int = 100
+}
+Status.VERSION                  // ✓ 2 (на sum-type level)
+```
+
+Identical semantics с record-field. Per-variant const (`Active { const X = 1 }`)
+— out-of-scope V1, followup `[M-115-per-variant-const]`.
+
+#### Ф.2.4 — Generic-type associated constants
+
+**T-independent** (RHS не ссылается на generic params):
+```nova
+type Box[T] {
+    const TAG int = 0
+    value T
+}
+Box.TAG                         // ✓ 0 — emit single symbol Box_TAG
+```
+
+**T-dependent** (RHS ссылается на `sizeof(T)`, `T.CONST`, арифметику):
+```nova
+type Box[T] {
+    const SIZE int = sizeof(T)
+    value T
+}
+Box[int].SIZE                   // ✓ 8 — per-mono Box_int_SIZE
+Box[str].SIZE                   // ✓ 16 — per-mono Box_str_SIZE
+Box.SIZE                        // ✗ E_GENERIC_CONST_REQUIRES_INSTANTIATION
+```
+
+Per-monomorphization codegen (analog Plan 70.5 generic-fn mono). Cyclic
+detection: `type Tree[T] { const SIZE = sizeof(T) + sizeof(Tree[T]) }` →
+`E_GENERIC_CONST_CYCLE`.
+
+#### Ф.2.5 — D27 small wording amend
+
+`[N]T` requires `const N` from **any visible scope** (module-level OR
+scope-local). Semantics не меняется, только wording.
+
+### Ф.3 — `const fn` comptime evaluable functions (D199)
+
+```nova
+fn calc(const a int, const b char) -> const int {
+    const c = b as int
+    a + c * 10
+}
+
+const RESULT = calc(5, 'A')        // ✓ comptime → 655
+ro buf [calc(2, '0')]u8 = ...      // ✓ array size 482
+fn open(n int = calc(3, ' ')) { ... }  // ✓ default param 323
+```
+
+**V1 rules:**
+1. **All-or-nothing**: если хоть один param `const` OR return `-> const T`
+   — все params обязаны быть `const` И return обязан быть `const`.
+   Mixed → `E_CONST_FN_PARTIAL_CONSTNESS`. Mixed mode (Zig-style partial)
+   — followup `[M-115-comptime-mixed-args]`.
+2. **Allowed body** (V1): literals, arithmetic, `as`-casts, references на
+   const params/locals, local `const c = expr` decl, final expression,
+   calls на другие `const fn`.
+3. **Forbidden body** (V1, errors): `if`/`else`/`match`/`for`/`while`,
+   `mut`/`consume` bindings, effects (включая effect-list в declaration),
+   allocations, generic params, recursion.
+4. **Effect-list запрещён в declaration**: `fn calc(const a int) Log
+   -> const int { … }` → `E_CONST_FN_EFFECT_IN_SIGNATURE`.
+5. **Call-site rules**: все args обязаны быть constexpr-evaluable.
+   `E_CONST_FN_NON_CONST_ARG` иначе. Result inline'ится литералом.
+6. **First-class запрещено в V1**: `ro f = calc` → `E_CONST_FN_FIRST_CLASS`.
+   Followup `[M-115-const-fn-first-class]`.
+7. **Codegen**: `const fn` НЕ emit'ится в C-output. Все call sites
+   replaced литералом. Dead `const fn` — silently dropped.
+
+**Comptime evaluator:**
+- Reuse constexpr-evaluator из Plan 14 Ф.2 (расширить на fn-вызовы).
+- Environment-based interpreter: param env + local const env; execute
+  sequential statements; evaluate final expression.
+- Recursion-limit: 1 call deep в V1 (no recursion).
+- Memoization: за один compilation, кэш `(fn_id, arg_tuple) → result`.
+- Errors: `E_CONST_FN_EVAL_OVERFLOW` (arithmetic overflow),
+  `E_CONST_FN_DIV_ZERO`.
+
+---
+
+## Фазы
+
+### Ф.0 — GATE: design freeze + worktree
+
+- **Ф.0.1** Draft D199 (const fn) + D200 (assoc const) в spec.
+- **Ф.0.2** Audit current corpus:
+  - `rg "^const " --include="*.nv"` — module-level const sites.
+  - `rg "\bconst\b" --include="*.nv"` в std/ — что potentially demote'ится.
+- **Ф.0.3** Worktree `nova-p115` создать.
+- **Ф.0.4** Acceptance A1-A18 финализированы.
+
+### Ф.1 — `const` narrow → strict constexpr (~⅛ dev-day, self-contained)
+
+- **Ф.1.1** Checker tightening: `const X = expr` runs constexpr-evaluator
+  на любой позиции. Errors `E_CONST_NOT_CONSTEXPR` / `E_CONST_REFERS_NON_CONSTEXPR`
+  / `E_CONST_EFFECT_IN_INIT`.
+- **Ф.1.2** Codegen: убрать lazy-init fallback из const-path.
+- **Ф.1.3** Strict module-level partition: `ro X = CONSTEXPR_RHS` →
+  `E_RO_FOR_CONSTEXPR_PREFER_CONST`.
+- **Ф.1.4** Codemod через `scripts/plan115_const_rewrite.py`: demote
+  non-constexpr `const` в `ro`; promote constexpr `ro` в `const` на
+  module-level.
+- **Ф.1.5** Tests T1.1-T1.15 (positive + negative).
+
+### Ф.2 — `const` generalize: scope-local + assoc const (~½ dev-day, self-contained)
+
+- **Ф.2.1** Parser: `const_decl` в `parse_stmt_or_expr` (scope-local).
+- **Ф.2.2** Parser: `const_decl` в `parse_record_fields` (associated).
+- **Ф.2.3** Parser: modifier-conflicts (mut/ro/consume + const).
+- **Ф.2.4** Checker: scope-local const visibility + use в `[N]T`.
+- **Ф.2.5** Checker: assoc const namespace resolution `Type.NAME`;
+  reject `instance.NAME` (`E_CONST_INSTANCE_ACCESS`); reject
+  `const` field в record literal (`E_CONST_FIELD_IN_LITERAL`).
+- **Ф.2.6** Checker: generic T-independent vs T-dependent classification.
+  Cyclic detection.
+- **Ф.2.7** Codegen scope-local: inline literal.
+- **Ф.2.8** Codegen non-generic assoc: top-level `Type_FieldName` symbol.
+- **Ф.2.9** Codegen generic T-dependent assoc: per-mono symbol naming
+  coherent с existing generic-fn mono.
+- **Ф.2.10** Doc-gen `nova doc`: type page rendering — секция "Associated
+  constants"; cross-link `Type.FOO`; render T-dependent annotation.
+- **Ф.2.11** D27 small wording amend.
+- **Ф.2.12** D200 (new) в spec.
+- **Ф.2.13** Tests T2 series (positive + negative + generic).
+
+### Ф.3 — `const fn` comptime evaluable (~1 dev-day, self-contained, extractable)
+
+> **Safety hatch:** decision point в конце Ф.3.3. Если evaluator
+> требует >1 dev-day или integration требует deep refactor — Ф.3
+> extract'ится в Plan 115.1 одним revert'ом. Plan 115 шипится с Ф.1+Ф.2.
+
+- **Ф.3.1** Parser: `const` modifier на param + `-> const T` return.
+- **Ф.3.2** Parser: all-or-nothing check (`E_CONST_FN_PARTIAL_CONSTNESS`).
+- **Ф.3.3** Body checker: allowed/forbidden subset (whitelist literals/
+  arithmetic/casts/refs/locals/final expr/calls на другие const fn;
+  blacklist if/match/loop/mut/consume/effect/alloc/generic/recursion).
+- **Ф.3.4** Comptime evaluator: extend constexpr-engine на fn-вызовы.
+  Environment-based interp. Memoization. Recursion-limit V1=1.
+- **Ф.3.5** Call-site validation: всех args constexpr; replace литералом.
+- **Ф.3.6** Codegen: const fn НЕ emit'ится; dead drops.
+- **Ф.3.7** First-class reject (`E_CONST_FN_FIRST_CLASS`).
+- **Ф.3.8** D199 (new) в spec.
+- **Ф.3.9** Tests T3 series (positive + negative + memoization smoke).
+
+### Ф.4 — Spec finalize + full regression + merge
+
+- **Ф.4.1** Promote D199/D200 draft → active.
+- **Ф.4.2** Full `nova test` ≥ baseline.
+- **Ф.4.3** Cross-platform Windows + Linux × clang + MSVC.
+- **Ф.4.4** Update logs (project-creation.txt + simplifications.md +
+  nova-private/discussion-log.md).
+- **Ф.4.5** Update Plan 114 status: close markers `[M-114-const-narrowing]`,
+  `[M-114-const-generalize]`, `[M-114-const-fn]`.
+- **Ф.4.6** Final merge plan-115 → main.
+
+---
+
+## D-block changes
+
+### D199 (NEW) — `const fn` comptime evaluable functions
+
+**Локация:** `spec/decisions/03-syntax.md` (новый раздел после D184).
+Полный текст — см. Plan 114 «D199 (NEW)» секцию (carry-over). Acceptance —
+T3 series в Plan 115.
+
+### D200 (NEW) — Associated constants — `const` field в `type X`
+
+**Локация:** `spec/decisions/02-types.md` (новый раздел после D184 cross-ref).
+Полный текст — см. Plan 114 «D200 (NEW)» секцию (carry-over). Включает
+record-field, sum-type, generic T-independent + T-dependent + cyclic
+detection. Acceptance — T2 series.
+
+### D27 amend (small wording)
+
+`[N]T` size — «`const N` from any visible scope» (module-level **или**
+scope-local). Semantics не меняется.
+
+### D33 — НЕ меняется
+
+Plan 114 уже rewrote D33 декларировав «3 real axes». Plan 115 реализует
+strict-constexpr дисциплину которая в D33 уже описана.
+
+---
+
+## Tests
+
+### T1 — `const` narrowing
+
+- T1.1 `const MAX = 4096` — strict constexpr; emit data-segment.
+- T1.2 `const TIMEOUT = 60 * 5` — constexpr arithmetic.
+- T1.3 `const ORIGIN Point = { x: 0.0, y: 0.0 }` — constexpr record.
+- T1.4 **NEG** `const COMPUTED = make_point(7, 14)` → E_CONST_NOT_CONSTEXPR.
+- T1.5 **NEG** `const NOW = Time.now()` → E_CONST_EFFECT_IN_INIT.
+- T1.6 **NEG** `const Y = X + 1` где `ro X = compute()` →
+  E_CONST_REFERS_NON_CONSTEXPR.
+- T1.7 `ro NOW = Time.now()` module-level — lazy-init via getter.
+- T1.8 **NEG** module-level `ro MAX = 4096` →
+  E_RO_FOR_CONSTEXPR_PREFER_CONST.
+- T1.9 Codemod converts `const COMPUTED = make_point(...)` → `ro COMPUTED`.
+- T1.10 Codemod promotes `ro MAX = 4096` → `const MAX = 4096`.
+- T1.11-T1.15 regression: existing const_complex.nv, std/uuid.nv etc.
+
+### T2 — `const` generalize
+
+- T2.1 Scope-local `const N = 16; ro buf [N]u8 = ...`.
+- T2.2 Scope-local visibility (НЕ visible вне block'а).
+- T2.3 Assoc const: `type Config { const VERSION = 2 }`; `Config.VERSION == 2`.
+- T2.4 `sizeof(Config) == sizeof(instance_fields_only)`.
+- T2.5 Record literal без assoc const fields type-checks.
+- T2.6 **NEG** `c.VERSION` → E_CONST_INSTANCE_ACCESS.
+- T2.7 **NEG** `Config { VERSION: 5, ... }` → E_CONST_FIELD_IN_LITERAL.
+- T2.8 **NEG** `type T { mut const X = 5 }` → E_CONST_MUT_CONFLICT.
+- T2.9 **NEG** `type T { ro const X = 5 }` → E_CONST_RO_REDUNDANT.
+- T2.10 `export const VERSION = 2` field в export type — cross-module access.
+- T2.11 Sum-type: `type Status = A | B { const VERSION = 2 }`; access.
+- T2.12 Generic T-independent: `type Box[T] { const TAG = 0 }`; `Box.TAG`.
+- T2.13 Generic T-dependent: `type Box[T] { const SIZE = sizeof(T) }`;
+  `Box[int].SIZE == 8`; `Box[str].SIZE == 16`.
+- T2.14 Cross-T-param: `type Pair[T,U] { const TOTAL = sizeof(T)+sizeof(U) }`.
+- T2.15 **NEG** `Box.SIZE` T-dependent без instantiation →
+  E_GENERIC_CONST_REQUIRES_INSTANTIATION.
+- T2.16 **NEG** cyclic `Tree[T] { const SIZE = sizeof(Tree[T]) }` →
+  E_GENERIC_CONST_CYCLE.
+- T2.17 Doc-gen renders type page с "Associated constants" section.
+- T2.18 `nova doc` cross-link `Type.FOO`.
+
+### T3 — `const fn`
+
+- T3.1 `fn calc(const a int, const b char) -> const int { const c = b as
+  int; a + c * 10 }`; `calc(5, 'A')` → 655 на call site.
+- T3.2 Expression body: `fn add(const a int, const b int) -> const int
+  => a + b`; `add(2, 3)` → 5.
+- T3.3 Const fn в `[N]T`: `ro buf [calc(2, '0')]u8 = …` → [482]u8.
+- T3.4 Const fn в default param: `fn open(n int = calc(3, ' '))` → 323.
+- T3.5 Const fn в record-field assoc-const: `type T { const SIZE = add(2, 3) }`.
+- T3.6 Const fn calling const fn chain.
+- T3.7 **NEG** `calc(x, 'A')` runtime x → E_CONST_FN_NON_CONST_ARG.
+- T3.8 **NEG** `fn mixed(const a int, b int) -> const int` →
+  E_CONST_FN_PARTIAL_CONSTNESS.
+- T3.9 **NEG** `fn ret_runtime(const a int) -> int` →
+  E_CONST_FN_PARTIAL_CONSTNESS.
+- T3.10 **NEG** if/match/for/while в body → E_CONST_FN_CONTROL_FLOW.
+- T3.11 **NEG** mut/consume binding в body → E_CONST_FN_MUT_BINDING.
+- T3.12 **NEG** effect call в body → E_CONST_FN_EFFECT_IN_BODY.
+- T3.13 **NEG** allocation в body → E_CONST_FN_ALLOCATION.
+- T3.14 **NEG** generic params → E_CONST_FN_GENERIC.
+- T3.15 **NEG** recursion → E_CONST_FN_RECURSION.
+- T3.16 **NEG** `ro f = calc` → E_CONST_FN_FIRST_CLASS.
+- T3.17 **NEG** `mut const a int` param → E_CONST_PARAM_MOD_CONFLICT.
+- T3.18 **NEG** effect-list в const fn declaration →
+  E_CONST_FN_EFFECT_IN_SIGNATURE.
+- T3.19 Codegen: const fn НЕ в C-output (нет fn symbol).
+- T3.20 Memoization: 100 identical call sites evaluate раз.
+- T3.21 Regression: full nova test ≥ baseline.
+
+---
+
+## Acceptance criteria
+
+| # | Критерий | Verification |
+|---|---|---|
+| A1 | `const X = expr` strict constexpr-only во всех позициях | T1.1-T1.6 |
+| A2 | Lazy-init fallback переехал на `ro` module-level | T1.7 |
+| A3 | Strict module-level partition (ro vs const) enforced | T1.8 |
+| A4 | Codemod auto-rewrites const ↔ ro per constexpr-eligibility | T1.9-T1.10 |
+| A5 | Scope-local `const` parses + checks + inlines в `[N]T` | T2.1-T2.2 |
+| A6 | Record-field `const` (associated) — namespace access only | T2.3-T2.7 |
+| A7 | Modifier-conflicts (mut/ro/consume + const) error | T2.8-T2.9 |
+| A8 | `export const` field cross-module access | T2.10 |
+| A9 | Sum-type assoc const semantics identical record | T2.11 |
+| A10 | Generic T-independent assoc const — single symbol | T2.12 |
+| A11 | Generic T-dependent — per-monomorphization codegen | T2.13-T2.14 |
+| A12 | Generic ошибки (без instantiation, cycle) | T2.15-T2.16 |
+| A13 | Doc-gen renders assoc consts + cross-links | T2.17-T2.18 |
+| A14 | `const fn` parses + comptime evaluates + inlines literal | T3.1-T3.6 |
+| A15 | All-or-nothing const params/return enforced | T3.7-T3.9 |
+| A16 | V1 body subset enforcement (no if/loop/mut/effect/alloc/recursion) | T3.10-T3.15 |
+| A17 | First-class reject + modifier-conflict + effect-sig reject | T3.16-T3.18 |
+| A18 | const fn codegen NOT emitted + memoization | T3.19-T3.20 |
+
+---
+
+## Risk register
+
+| # | Риск | Митигация |
+|---|---|---|
+| R-1 | `const` tightening ломает pre-existing `const`-сайты | Ф.1 codemod auto-demote'ит non-constexpr → `ro`. Compiler errors показывают точные сайты. |
+| R-2 | Generic T-dependent assoc const monomorphization сложна | Reuse existing Plan 70.5 generic-fn mono pipeline. T-dependent classification = static check (RHS contains generic param). |
+| R-3 | Cyclic generic assoc const | Detection через mono-graph cycle check. Error `E_GENERIC_CONST_CYCLE`. |
+| **R-4** | **Ф.3 const fn evaluator** усложняется (shared interpreter logic с runtime, integration с Plan 14 constexpr-engine) | **Safety hatch:** extract в Plan 115.1 одним revert'ом. Decision point: Ф.3.3 end. Plan 115 шипится с Ф.1+Ф.2 only. |
+| R-5 | const fn integer overflow / div-by-zero — silent vs explicit | Explicit errors E_CONST_FN_EVAL_OVERFLOW / E_CONST_FN_DIV_ZERO. Not Rust-style silent на release. |
+| R-6 | Doc-gen render assoc constants — render complexity | Простая секция «Associated constants» — table form, не recursive doc tree. Generic T-dependent render annotation «computed per monomorphization». |
+
+---
+
+## Rollback strategy
+
+- Plan 115 single squashed merge — atomic revert.
+- Ф.3 extract: revert Ф.3 commits + ship Ф.1+Ф.2 only. Plan 115.1
+  ре-implementация в отдельной ветке.
+
+---
+
+## Out of scope (explicitly deferred)
+
+- `[M-115-per-variant-const]` — Per-variant const в sum-type
+  (`Active { const X = 1 }`).
+- `[M-115-comptime-mixed-args]` — Zig-style partial comptime params.
+- `[M-115-const-param-runtime-return]` — `fn make_buf(const n int) -> []u8`.
+- `[M-115-const-fn-first-class]` — First-class const fn через runtime
+  trampoline.
+- `[M-115-generic-const-fn]` — Generic-aware const fn (нужно для
+  generic assoc const).
+- `[M-115-const-fn-control-flow]` — if/else/match/for/while в body.
+- `[M-115-const-fn-recursion]` — Recursion с depth-limit + memoization.
+
+---
+
+## Cross-references
+
+### Связь с уже-закрытыми планами
+
+- **Plan 14 Ф.2** — lazy-init `nova_const_<name>()` runtime symbol.
+  Plan 115 Ф.1 выводит lazy-init из const-path; symbol naming legacy
+  ABI-сохранён.
+- **Plan 46** — D102 default-param-values reference `const`. Strict
+  constexpr enforcement compatible.
+- **Plan 70.5** — generic-fn monomorphization pipeline. Plan 115 Ф.2
+  T-dependent assoc const reuse'ит.
+- **Plan 114 D184** — master keyword refresh decision. Plan 115 — implementation
+  trio для `const` discipline declared в D184.
+
+### Spec D-blocks
+
+- **D27** ([03-syntax.md#d27](../../spec/decisions/03-syntax.md#d27)) —
+  small wording amend.
+- **D33** ([03-syntax.md#d33](../../spec/decisions/03-syntax.md#d33)) —
+  unchanged (Plan 114 уже rewrote).
+- **D102** ([03-syntax.md](../../spec/decisions/03-syntax.md)) — unchanged.
+- **D184** ([03-syntax.md#d184](../../spec/decisions/03-syntax.md#d184)) —
+  master decision.
+- **D199** (new, [03-syntax.md](../../spec/decisions/03-syntax.md)) —
+  `const fn` comptime evaluable.
+- **D200** (new, [02-types.md](../../spec/decisions/02-types.md)) —
+  associated constants.
+
+### Plan 114 closure markers
+
+При close Plan 115 — обновить:
+- `[M-114-const-narrowing]` → closed (Ф.1).
+- `[M-114-const-generalize]` → closed (Ф.2).
+- `[M-114-const-fn]` → closed (Ф.3).
+- `[M-114-const-extracted-to-115]` (REZERV) → активирован Plan 115.
