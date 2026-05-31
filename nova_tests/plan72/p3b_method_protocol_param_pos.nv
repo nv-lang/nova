@@ -45,7 +45,7 @@ fn Summer.count_static(mut it Iterable[int]) -> int => {
 }
 
 test "method protocol param — instance call boxes arg" {
-    let s = Summer { tag: 0 }
+    let mut s = Summer { tag: 0 }
     let c = IntCounter { cur: 0, end: 4 }
     let n = s.drain(c)
     assert(n == 4)

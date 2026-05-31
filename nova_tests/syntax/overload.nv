@@ -214,7 +214,7 @@ export fn Pair @set(x str, y int) -> Pair =>
 
 
 test "overload по first arg type" {
-    let p0 = Pair.new()
+    let mut p0 = Pair.new()
     let p1 = p0.set(3, 4)                // (int, int) → both
     assert(p1.a == 3)
     assert(p1.b == 4)

@@ -9,8 +9,8 @@ module nova_tests.plan103_3.rwlock_multiple_readers
 test "RwLock allows multiple concurrent readers" {
     let mut rw = RwLock.new()
     let shared_val = AtomicInt.new(42)
-    let active_readers = AtomicInt.new(0)
-    let max_concurrent = AtomicInt.new(0)
+    let mut active_readers = AtomicInt.new(0)
+    let mut max_concurrent = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(4)
 

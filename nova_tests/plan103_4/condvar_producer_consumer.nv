@@ -16,10 +16,10 @@ module nova_tests.plan103_4.condvar_producer_consumer
 
 test "producer/consumer bounded buffer — 20 rounds, no lost items" {
     let mut mu = Mutex.new()
-    let not_empty = Condvar.new()
-    let not_full  = Condvar.new()
+    let mut not_empty = Condvar.new()
+    let mut not_full  = Condvar.new()
     // Buffer: AtomicInt stores item value (0 = empty, >0 = full).
-    let buffer    = AtomicInt.new(0)
+    let mut buffer    = AtomicInt.new(0)
     let mut consumed = AtomicInt.new(0)
     let n_rounds  = 20
 
@@ -60,10 +60,10 @@ test "producer/consumer bounded buffer — 20 rounds, no lost items" {
 
 test "multiple producers, single consumer — no item lost" {
     let mut mu = Mutex.new()
-    let not_empty = Condvar.new()
+    let mut not_empty = Condvar.new()
     let mut counter = AtomicInt.new(0)   // total produced
     let mut consumed = AtomicInt.new(0)   // total consumed
-    let done_flag = AtomicBool.new(false)
+    let mut done_flag = AtomicBool.new(false)
     let n_items   = 10   // items per producer
     let n_prod    = 3    // 3 producers
 

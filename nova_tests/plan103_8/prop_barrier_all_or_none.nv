@@ -18,7 +18,7 @@ test "prop barrier all-or-none: 8 fibers × 10 rounds, all indices covered each 
     let n        = 8
     let n_rounds = 10
     let mut barrier = Barrier.new(n)
-    let round_sum = AtomicI64.new(0)  // sum of all arrival indices across all rounds
+    let mut round_sum = AtomicI64.new(0)  // sum of all arrival indices across all rounds
     let mut wg = WaitGroup.new()
     wg.add(n)
 
@@ -44,8 +44,8 @@ test "prop barrier all-or-none: 8 fibers × 10 rounds, all indices covered each 
 test "prop barrier: cyclic reuse — two consecutive rounds both complete" {
     let n       = 4
     let mut barrier = Barrier.new(n)
-    let r1_sum  = AtomicI64.new(0)
-    let r2_sum  = AtomicI64.new(0)
+    let mut r1_sum  = AtomicI64.new(0)
+    let mut r2_sum  = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(n)
 
@@ -68,7 +68,7 @@ test "prop barrier: cyclic reuse — two consecutive rounds both complete" {
 test "prop barrier: wait_with_action — action runs exactly once per round" {
     let n             = 4
     let mut barrier = Barrier.new(n)
-    let action_count  = AtomicI64.new(0)
+    let mut action_count  = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(n)
 

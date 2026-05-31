@@ -50,9 +50,9 @@ test "prop no lost wakeup: 1 producer + 1 consumer Ð“â€” 1000 cycles" {
 test "prop no lost wakeup: 4 producers + 4 consumers Ð“â€” 250 items each" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
-    let pending      = AtomicI64.new(0)
-    let total_cons   = AtomicI64.new(0)
-    let total_prod   = AtomicI64.new(0)
+    let mut pending      = AtomicI64.new(0)
+    let mut total_cons   = AtomicI64.new(0)
+    let mut total_prod   = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(8)
 
@@ -103,7 +103,7 @@ test "prop notify_all: all waiters wake up" {
     let mut mu = Mutex.new()
     let mut cv = Condvar.new()
     let mut flag = AtomicBool.new(false)
-    let woken    = AtomicI64.new(0)
+    let mut woken    = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(9)   // 8 waiters + 1 notifier
 

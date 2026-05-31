@@ -16,7 +16,7 @@ test "[]f64 stores f64 values" {
 }
 
 test "[]f64 push and access" {
-    let v []f64 = []f64.new()
+    let mut v []f64 = []f64.new()
     v.push(0.5)
     v.push(1.5)
     assert(v.len() == 2)
@@ -32,7 +32,7 @@ test "[]f32 stores f32 values" {
 }
 
 test "[]f32 push and access" {
-    let v []f32 = []f32.new()
+    let mut v []f32 = []f32.new()
     v.push(0.5 as f32)
     v.push(1.5 as f32)
     assert(v.len() == 2)

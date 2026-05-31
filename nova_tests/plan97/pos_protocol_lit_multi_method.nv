@@ -18,7 +18,7 @@ export type Storage protocol {
 test "protocol-литерал с 5 разными методами" {
     let mut total = 0
     let mut last_get = -1
-    let s = protocol Storage {
+    let mut s = protocol Storage {
         get(key) {
             last_get = total + 1
             42

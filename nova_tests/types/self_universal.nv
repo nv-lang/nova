@@ -61,7 +61,7 @@ fn Pair[A, B] @swap() -> Pair[B, A] {
 }
 
 test "Self не нужен — но альтернатива через Pair[B, A] явная" {
-    let p = Pair { fst: 1, snd: "x" }
+    let mut p = Pair { fst: 1, snd: "x" }
     let s = p.swap()
     assert(s.fst == "x")
     assert(s.snd == 1)

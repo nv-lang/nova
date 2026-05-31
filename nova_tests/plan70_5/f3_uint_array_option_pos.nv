@@ -3,7 +3,7 @@ module nova_tests.plan70_5.f3_uint_array_option_pos
 // Plan 70.5: []uint and Option[uint] use NovaArray_uint64_t / NovaOpt_uint64_t.
 
 test "[]uint push and access" {
-    let arr []uint = []uint.new()
+    let mut arr []uint = []uint.new()
     arr.push(1 as uint)
     arr.push(2 as uint)
     arr.push(3 as uint)

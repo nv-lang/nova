@@ -13,7 +13,7 @@ test "[]i32 stores and retrieves values" {
 }
 
 test "[]i32 push and access" {
-    let v []i32 = []i32.new()
+    let mut v []i32 = []i32.new()
     v.push(10 as i32)
     v.push(20 as i32)
     assert(v.len() == 2)

@@ -34,7 +34,7 @@ test "uint.MAX in Option" {
 }
 
 test "uint.MAX in array" {
-    let arr []uint = []uint.new()
+    let mut arr []uint = []uint.new()
     arr.push(uint.MAX)
     assert(arr[0] == uint.MAX)
 }

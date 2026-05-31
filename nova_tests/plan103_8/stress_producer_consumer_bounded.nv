@@ -13,11 +13,11 @@ module nova_tests.plan103_8.stress_producer_consumer_bounded
 
 test "bounded buffer: 4 producers + 4 consumers Ð“â€” 500 items Ð²Ð‚â€ no item lost" {
     let mut mu = Mutex.new()
-    let not_empty    = Condvar.new()
-    let not_full     = Condvar.new()
-    let pending      = AtomicI64.new(0)  // items in buffer (bounded by cap=8)
-    let total_prod   = AtomicI64.new(0)
-    let total_cons   = AtomicI64.new(0)
+    let mut not_empty    = Condvar.new()
+    let mut not_full     = Condvar.new()
+    let mut pending      = AtomicI64.new(0)  // items in buffer (bounded by cap=8)
+    let mut total_prod   = AtomicI64.new(0)
+    let mut total_cons   = AtomicI64.new(0)
     let cap          = 8   // buffer capacity
     let items_each   = 500 // items per producer/consumer
     let n_prod       = 4
@@ -78,9 +78,9 @@ test "bounded buffer: 4 producers + 4 consumers Ð“â€” 500 items Ð²Ð�
 
 test "bounded buffer: 2 producers + 2 consumers Ð“â€” 100 items Ð²Ð‚â€ ordering relaxed, no loss" {
     let mut mu = Mutex.new()
-    let not_empty  = Condvar.new()
-    let not_full   = Condvar.new()
-    let pending    = AtomicI64.new(0)
+    let mut not_empty  = Condvar.new()
+    let mut not_full   = Condvar.new()
+    let mut pending    = AtomicI64.new(0)
     let mut produced = AtomicI64.new(0)
     let mut consumed = AtomicI64.new(0)
     let cap        = 4

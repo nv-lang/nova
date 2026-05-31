@@ -74,7 +74,7 @@ test "closure-light: no-arg ||" {
 // ─── closure-light: wildcard `_` ─────────────────────────────────────
 
 fn map_constant(xs []int, f fn(int) -> int) -> []int {
-    let out = []int.new()
+    let mut out = []int.new()
     for x in xs {
         out.push(f(x))
     }

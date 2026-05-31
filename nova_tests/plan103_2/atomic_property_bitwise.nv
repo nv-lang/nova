@@ -22,7 +22,7 @@ test "property: fetch_and identity — and with all-ones" {
     // Largest positive i64 is all-ones except sign bit.
     // Use a mask with all low 32 bits set for portability.
     let mask = 0xFFFFFFFF
-    let a2 = AtomicI64.new(0b1010)
+    let mut a2 = AtomicI64.new(0b1010)
     let v2 = a2.load()
     let prev = a2.fetch_and(mask)
     assert(prev == v2)

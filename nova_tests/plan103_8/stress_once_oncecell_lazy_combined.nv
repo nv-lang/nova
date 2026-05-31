@@ -15,7 +15,7 @@ module nova_tests.plan103_8.stress_once_oncecell_lazy_combined
 
 test "Once.call_once under 4-fiber contention: init runs exactly once" {
     let mut once = Once.new()
-    let init_cnt  = AtomicI64.new(0)
+    let mut init_cnt  = AtomicI64.new(0)
 
     supervised {
         for _i in 0..4 {
@@ -34,8 +34,8 @@ test "Once.call_once under 4-fiber contention: init runs exactly once" {
 
 test "OnceCell.get_or_init under 4-fiber contention: init runs exactly once" {
     let mut cell = OnceCell[int].new()
-    let init_cnt  = AtomicI64.new(0)
-    let wrong     = AtomicI64.new(0)
+    let mut init_cnt  = AtomicI64.new(0)
+    let mut wrong     = AtomicI64.new(0)
 
     supervised {
         for _i in 0..4 {
@@ -57,8 +57,8 @@ test "OnceCell.get_or_init under 4-fiber contention: init runs exactly once" {
 }
 
 test "Lazy.force under 4-fiber contention: init runs exactly once" {
-    let init_cnt = AtomicI64.new(0)
-    let wrong    = AtomicI64.new(0)
+    let mut init_cnt = AtomicI64.new(0)
+    let mut wrong    = AtomicI64.new(0)
     let lazy     = Lazy[int].new() {
         init_cnt.fetch_add(1)
         99
@@ -82,10 +82,10 @@ test "Lazy.force under 4-fiber contention: init runs exactly once" {
 
 test "repeated calls to Once+OnceCell+Lazy do not re-run init" {
     let mut once = Once.new()
-    let init_once  = AtomicI64.new(0)
+    let mut init_once  = AtomicI64.new(0)
     let mut cell = OnceCell[int].new()
-    let init_cell  = AtomicI64.new(0)
-    let lazy_inits = AtomicI64.new(0)
+    let mut init_cell  = AtomicI64.new(0)
+    let mut lazy_inits = AtomicI64.new(0)
     let lazy       = Lazy[int].new() {
         lazy_inits.fetch_add(1)
         7
