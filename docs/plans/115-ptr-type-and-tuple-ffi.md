@@ -24,20 +24,106 @@
 > **Worktree convention:** `nova-p115`.
 >
 > **Recommended model:**
->   - **Opus 4.7 + Thinking ON** — language-feature work (parser, type-checker,
->     codegen для нового built-in type). FFI ABI validation cross-platform —
->     требует attention к detail.
+>   - **Opus 4.7 + Effort High + Thinking ON** — language-feature work (parser,
+>     type-checker, codegen для нового built-in type). FFI ABI validation
+>     cross-platform — требует attention к detail.
 >   - **Sonnet 4.6 НЕ рекомендую** — built-in type addition требует careful
->     parser/checker/codegen integration; ошибка в ABI = silent corruption.
+>     parser/checker/codegen integration; ошибка в ABI = silent memory corruption
+>     не пойманная тестами; Plan 115 foundational (bugs cascade в 91.12/116/118).
 >
-> **Workflow требования (для агента):** идентично Plan 114/91.12/108.4/116 —
->   commit per phase, update logs, tests через release nova, status section в
->   конце plan-файла, без упрощений.
+> **Workflow требования (для агента) — буквально, без отступлений:**
+>
+> 1. **Worktree auto-register первой Bash командой:**
+>    `cd d:/Sources/nv-lang/nova && git worktree add d:/Sources/nv-lang/nova-p115 -b plan-115`
+>    После этого ВСЕГДА `cd d:/Sources/nv-lang/nova-p115 && <команда>` в каждой
+>    Bash команде (cwd hook'а нет; работай только в worktree, не в main).
+>
+> 2. **Commit per task** — после каждой Ф.N (Ф.0..Ф.4) отдельный commit с
+>    message `feat(plan115 Ф.N): <summary>`. **Если в фазе несколько больших
+>    задач — разбить на несколько коммитов** (по одному коммиту на каждую
+>    задачу, не батчить).
+>
+> 3. **git add только специфичные файлы** — НИКОГДА `git add -A` / `git add .`
+>    (в репо параллельно работают другие agents).
+>
+> 4. **Перед каждым `git commit`** — `git diff --cached --stat` для verify
+>    index (могут быть pre-staged изменения других сессий).
+>
+> 5. **НЕТ `Co-Authored-By: Claude` trailer** в commit messages.
+>
+> 6. **Update logs после каждой большой задачи** (отдельные commits):
+>    - `docs/project-creation.txt` — sprint section про Plan 115 progress
+>      (формат — см. tail файла, последние sprint sections как pattern)
+>    - `docs/simplifications.md` — open/close `[M-115-*]` markers
+>    - `d:/Sources/nv-lang/nova-private/discussion-log.md` (**отдельный repo!**)
+>      — design decisions / lessons learned (Session 9 header,
+>      cd префикс в отдельный repo для git ops)
+>
+> 7. **Тесты через release nova:**
+>    `cargo build --release -p nova-cli` затем `target/release/nova test`
+>    (НЕ debug build; НЕ `cargo test` stand-alone — это другой test runner).
+>    Pos + neg тесты обязательно (T1.x positive, NEG-T1.x negative).
+>
+> 8. **Per-fix verify** — только targeted fixture после каждого изменения
+>    (`target/release/nova test --filter <fixture_name>` или single file).
+>    Full `nova test` только в конце каждой phase (Ф.N close verification).
+>
+> 9. **Per-file loop** при массовых compile errors после refactor:
+>    `nova check FILE` → fix → re-check (не full regression в loop).
+>
+> 10. **One-pass fix algorithm:** Grep → Edit за один запуск; не делать
+>     разведочный Read перед fix (если pattern ясен из Grep matches).
+>
+> 11. **Read files целиком** за один раз (не head/summary сначала, потом
+>     второй заход).
+>
+> 12. **Spec updates обязательны:**
+>     - D214 promote в `spec/decisions/02-types.md` (после D52 type forms)
+>     - Q-block (если applicable — список deferred questions с justification)
+>     - Cross-refs обновить в D52/D82/D126 (existing D-blocks которые
+>       leverage'ются Plan 115)
+>
+> 13. **Doc updates обязательны:**
+>     - `docs/ffi-cookbook.md` — создать если не существует; libsqlite3 +
+>       libpng + libcurl examples (~50 lines каждый)
+>     - `examples/ffi/` — создать если не существует; working sample
+>       (sqlite3 read/write test)
+>     - `nova doc` regen если type system changes (см. compiler-codegen/src/doc/)
+>
+> 14. **Acceptance criteria A1-A10** — каждый critically verify через
+>     specific test (T-mapping в plan file). Final summary report PASS/FAIL
+>     per acceptance в Status section.
+>
+> 15. **Status section в конце plan-файла** — заполни по завершении
+>     (per-phase summary + final overview). Шаблон есть в plan file (см.
+>     раздел «Status — closure summary»).
+>
+> 16. **Safety hatches per phase preambles** — следуй буквально; не «пушь
+>     дальше» если decision point говорит extract. Risk R-1 (ABI > ½ day)
+>     → extract tuple-FFI в Plan 115.1 sub-plan.
+>
+> 17. **Work без остановок** — не запрашивай confirmations внутри фазы;
+>     переход между фазами только если smoke verify pass'нул.
+>
+> 18. **На завершении выдай:**
+>     - Final commit list (per phase + per task)
+>     - `nova test` results (PASS/FAIL counts; regressions if any vs baseline
+>       post-Plan 113 = 1559/74)
+>     - Cross-platform PASS matrix (Linux × clang, Windows × MSVC, macOS × clang
+>       минимум)
+>     - Что extracted в Plan 115.1 (если safety hatch fire'нул)
+>     - Branch `plan-115` pushed в github для user-review (НЕ merge сам в main —
+>       user approves merge per memory feedback)
+>     - Memory `project-plan115-status.md` создан (через Write tool в
+>       `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`)
 >
 > **Production-grade требование:** реализация без упрощений. `ptr` type должен
->   быть first-class (поддерживается в parser/checker/codegen/runtime); tuple-
->   return ABI cross-platform validated; opaque handle pattern documented с
->   working examples.
+>   быть first-class (поддерживается в parser/checker/codegen/runtime);
+>   tuple-return ABI cross-platform validated (Linux Sys V AMD64, Windows x64
+>   MSVC, macOS clang); opaque handle pattern documented с working examples
+>   (sqlite mini-binding). Если что-то не влезает — extract в Plan 115.1
+>   sub-plan + record в `simplifications.md` как «explicitly deferred,
+>   not silently dropped».
 
 ---
 
