@@ -745,6 +745,10 @@ pub enum TypeDeclKind {
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)
     Alias(TypeRef),
+    /// Plan 120 (D215): `type Name(field1 T1, field2 T2)` — named tuple.
+    /// Stack-allocated value type identical to positional tuple (D123)
+    /// but fields accessed by name (`.x`, `.y`) instead of position (`.0`).
+    NamedTuple(Vec<NamedTupleField>),
     /// Plan 62.D.bis (D126): `external type X [Generics]` — opaque
     /// type known to compiler by name, реализация в runtime
     /// (`nova_rt/<x>.h`/.c). Без body, без variants/fields. Restricted
@@ -753,6 +757,14 @@ pub enum TypeDeclKind {
     /// Codegen эмитит ссылку как `Nova_<Name>*` (pointer); struct
     /// определение живёт в runtime header.
     Opaque,
+}
+
+/// Plan 120 (D215): field in a named tuple type declaration.
+#[derive(Debug, Clone)]
+pub struct NamedTupleField {
+    pub name: String,
+    pub ty: TypeRef,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

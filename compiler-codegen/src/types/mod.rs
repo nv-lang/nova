@@ -1183,6 +1183,12 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(e, &gs, errors);
                 }
             }
+            // Plan 120 (D215): walk field types in named tuple declarations.
+            TypeDeclKind::NamedTuple(fields) => {
+                for f in fields {
+                    self.walk_typeref(&f.ty, &gs, errors);
+                }
+            }
             TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Opaque => {}
@@ -2997,7 +3003,9 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                             // Concrete data-типы — сравниваются по имени.
                             TypeDeclKind::Record(_)
-                            | TypeDeclKind::Sum(_) => {
+                            | TypeDeclKind::Sum(_)
+                            // Plan 120 (D215): named tuples are concrete value types.
+                            | TypeDeclKind::NamedTuple(_) => {
                                 TyCat::Named(other.to_string())
                             }
                             // protocol/effect — структурная конформность
@@ -3230,6 +3238,7 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
                 TypeDeclKind::Alias(_) => "alias",
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
+                TypeDeclKind::NamedTuple(_) => "named_tuple",
             };
             type_kinds.insert(t.name.clone(), kind_name);
             if let TypeDeclKind::Protocol { methods, embeds } = &t.kind {
@@ -3436,6 +3445,7 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
                 TypeDeclKind::Alias(_) => "alias",
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
+                TypeDeclKind::NamedTuple(_) => "named_tuple",
             };
             type_kinds.insert(t.name.clone(), kind_name);
         }
