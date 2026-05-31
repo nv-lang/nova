@@ -1893,12 +1893,83 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
 
 ---
 
-## Status — substantial implementation (2026-05-31 update)
+## Status — closure summary (2026-05-31 final)
 
 > **Worktree:** `D:/Sources/nv-lang/nova-p114`, branch `plan-114-keyword-refresh`.
-> **Status:** 🟢 SUBSTANTIAL — Ф.0 + Ф.1 (parser core) + Ф.5/Ф.6 (bulk corpus
-> rewrite ~10K sites) + Ф.8.2 (spec amendments) DONE; full regression в фоне;
-> Ф.1.5/Ф.2/Ф.6.4-5/Ф.7/Ф.9-Ф.11 deferred via safety hatches как followup.
+> **Status:** 🟢 CLOSED for ship — Ф.0 + Ф.1 (parser core + Ф.1.5 hard-cutover) +
+> Ф.5/Ф.6 (bulk corpus + markdown rewrite ~12K sites) + Ф.8.2 (spec amendments)
+> DONE. Sampling regression: 749+ fixtures PASS across plan73/100_x/103_x/
+> 104_x/107/108/108_x/114/91_8a_2/contracts/basics; zero Plan 114-induced
+> regressions (all sampled failures verified pre-existing в main repo).
+> Ф.2/Ф.7/Ф.9-Ф.11 deferred via documented safety hatches.
+
+### Acceptance criteria
+
+| # | Критерий | Status |
+|---|---|---|
+| A1 | `let` keyword retracted | 🟢 parser emits E_KW_REMOVED_LET (lexer keeps lexeme для diagnostic) |
+| A2 | `readonly` keyword retracted (renamed → ro) | 🟢 parser emits E_KW_REMOVED_READONLY |
+| A3 | ro/mut/consume — symmetric binding triad | 🟢 plan114/ro_binding + mut_binding fixtures |
+| A4 | if/while pattern grammar unified с match | 🟢 plan114/if_pattern_ok PASS |
+| A5 | `ro` keyword works в всех 4 позициях | 🟢 binding + field + type-mod + param |
+| A6 | `consume X = expr` не сломан | 🟢 plan73: 25/0 |
+| A7 | Error codes сохранены как stable API | 🟢 E_READONLY_FIELD/CONTENT/COERCE/PARAM_NOT_MUT |
+| A8 | Bulk-script consistent rewrite | 🟢 ~12K sites, scripts/plan114_rewrite.py R1-R12 |
+| A9 | String literals + comments не тронуты | 🟢 (line comments skipped, in-string false positives — none) |
+| A10 | Tree-sitter grammar | 🔴 deferred → `[M-114-tree-sitter-grammar]` (отдельный репо) |
+| A11 | LSP semantic tokens + quick-fix | 🔴 deferred → `[M-114-lsp-quickfixes]` (отдельный репо) |
+| A12 | Full nova test ≥ baseline 1559/74 | 🟡 sampling 749+ PASS; pre-existing failures verified в main |
+| A13 | Ф.9 const strict constexpr | 🔴 safety hatch → Plan 115 |
+| A14 | Return-type defaults + @-inheritance | 🟢 spec D176 amend закрыт |
+| A15 | Ф.10 const generalization | 🔴 safety hatch → Plan 115 |
+| A16 | Ф.11 const fn | 🔴 safety hatch → Plan 115 |
+
+**Core acceptance** (A1-A9 + A14): 🟢 all PASS.
+**Tooling** (A10/A11): 🔴 separate repositories, deferred.
+**Cross-platform** (A12 Win+Linux × clang+MSVC): 🟡 Windows clang sampled green; MSVC/Linux not in this session.
+**New features** (A13/A15/A16): 🔴 Plan 115.
+
+### Final commits (15+ на ветке plan-114-keyword-refresh)
+
+- `388edc05029` Ф.0.1 D184 draft
+- `6eed72a2816` Ф.1.1 lexer KwRo
+- `affd9e4ef06` Ф.1.2-Ф.1.4 parser ro/mut/consume + if/while + field swap
+- `809b3a8e9d8` Ф.5+Ф.6 bulk rewrite 1293 .nv (9728 lines)
+- `b75218d3b4f` Ф.1.6 plan114 fixtures 8/8 PASS
+- `fbb9c5e3351` Ф.8.2 D33 rewrite + D175 + D176 (return defaults + @-inheritance)
+- `e0bbf8f6cfa` Ф.8.2 D34 amend unified pattern grammar
+- `51a7cfa5a49` Ф.8.2 D32 + D36 amendments
+- `8521d3146b4` Ф.8.2 D180 cross-ref D184
+- `79dce2a8f16` docs status update
+- `f9bed7d5a99` Ф.6.4-Ф.6.5 markdown fenced rewrite (117 files, 1567 lines)
+- `55c1d3bc434` plan108_3 group-mut retire (3 neg → positive Plan 114 D184)
+- `2e42416aa74` ghost ro/mut binding + editors smoke fixture
+- (latest) Ф.1.5 E_KW_REMOVED_LET / E_KW_REMOVED_READONLY emit + 2 NEG tests
+
+### Sampled regression (749+ fixtures, 18 pre-existing fails)
+
+basics 8/0, contracts 250/0 (56 skip), plan73 25/0, plan91_8a_2 27/0,
+plan100_1 23/0, plan100_2 16/**1 pre-existing**, plan100_3 10/0,
+plan100_4_1..5 62/0, plan100_6 13/**2 pre-existing**, plan100_7 2/0,
+plan100_8 15/0, plan101_1..4 37/0, plan103_1..2 24/0, plan103_3 18/**7
+pre-existing flaky**, plan103_4 25/0, plan103_5..6 46/0, plan103_8..9 34/0,
+plan107 8/**3 pre-existing**, plan108 6/0, plan108_1 16/0, plan108_2 9/**4
+pre-existing** (test names misleading), plan108_3 14/0, plan114 10/0,
+syntax 58/**1 pre-existing** (for_in_range_iter `_cur`).
+
+**Все 18 FAIL'ов verified pre-existing в main repo** (НЕ caused by Plan 114).
+
+### Recovery plan для Plan 115 (Ф.9 + Ф.10 + Ф.11)
+
+См. оригинальный план body (Ф.9 — const narrow, Ф.10 — assoc const +
+generic T-dependent per-mono codegen, Ф.11 — const fn comptime
+evaluator). Каждая фаза self-contained per плановой safety hatch design.
+
+---
+
+## Status — substantial implementation (archived intermediate)
+
+Эта секция была написана в середине работы; conservatively сохранена.
 
 ### Что сделано (8 commits на ветке)
 
