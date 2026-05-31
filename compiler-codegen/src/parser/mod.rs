@@ -2439,12 +2439,17 @@ impl Parser {
         // выполняется в parse_fn после сбора всех params'ов.
         let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
         // D178 (Plan 91 Ф.2.6): `readonly name Type` — параметр с readonly-типом.
-        // Сахар: `readonly name []u8` эквивалентно `name readonly []u8`.
-        // Plan 114 (D184): `ro` — canonical short form для readonly type-prefix
-        // на параметре. Оба keyword'а принимаются parser'ом (legacy + new);
-        // codemod конвертирует readonly → ro в Ф.5/Ф.6.
-        let has_readonly_prefix = self.eat(&TokenKind::KwReadonly).is_some()
-            || self.eat(&TokenKind::KwRo).is_some();
+        // Plan 114 (D184) Ф.1.5: `readonly` retracted; используется `ro`.
+        if matches!(self.peek().kind, TokenKind::KwReadonly) {
+            return Err(Diagnostic::new(
+                "[E_KW_REMOVED_READONLY] `readonly` keyword renamed to `ro` \
+                 in Plan 114 (D184). Use `ro name Type` instead of \
+                 `readonly name Type`. Error code E_READONLY_* preserved as \
+                 stable API. Run scripts/plan114_rewrite.py to migrate.".to_string(),
+                self.peek().span,
+            ));
+        }
+        let has_readonly_prefix = self.eat(&TokenKind::KwRo).is_some();
         // Plan 73 (D131): `consume name Type` — consuming параметр. После
         // передачи аргумента в такой параметр переменная-источник
         // логически инвалидируется (use-after-consume → compile error).
@@ -2508,11 +2513,17 @@ impl Parser {
                     self.peek().span,
                 ));
             }
-            if matches!(self.peek().kind, TokenKind::KwReadonly | TokenKind::KwRo) {
-                let kw = if matches!(self.peek().kind, TokenKind::KwRo) { "ro" } else { "readonly" };
+            if matches!(self.peek().kind, TokenKind::KwReadonly) {
                 return Err(Diagnostic::new(
-                    format!("[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
-                     `mut` и `{}` (D176 / D184): взаимоисключающие квалификаторы.", kw),
+                    "[E_KW_REMOVED_READONLY] `readonly` renamed to `ro` (Plan 114 D184). \
+                     Also: cannot combine `mut` and `ro` — взаимоисключающие квалификаторы.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwRo) {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `mut` и `ro` (D176 / D184): взаимоисключающие квалификаторы.".to_string(),
                     self.peek().span,
                 ));
             }
@@ -2944,12 +2955,19 @@ impl Parser {
         while !matches!(self.peek().kind, TokenKind::RBrace) {
             let mut readonly = false;
             let mut mutable = false;
-            // Plan 114 (D184): `ro` — canonical short form для readonly field
-            // modifier. Оба keyword'а принимаются parser'ом (legacy + new);
-            // codemod конвертирует readonly → ro в Ф.5/Ф.6.
-            if self.eat(&TokenKind::KwReadonly).is_some()
-                || self.eat(&TokenKind::KwRo).is_some()
-            {
+            // Plan 114 (D184) Ф.1.5: `readonly` retracted; `ro` — canonical
+            // short form для read-only field modifier.
+            if matches!(self.peek().kind, TokenKind::KwReadonly) {
+                return Err(Diagnostic::new(
+                    "[E_KW_REMOVED_READONLY] `readonly` field modifier \
+                     renamed to `ro` in Plan 114 (D184). Use `ro NAME TYPE` \
+                     instead of `readonly NAME TYPE`. Error code \
+                     E_READONLY_FIELD preserved as stable API. Run \
+                     scripts/plan114_rewrite.py to migrate.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if self.eat(&TokenKind::KwRo).is_some() {
                 readonly = true;
             } else if self.eat(&TokenKind::KwMut).is_some() {
                 mutable = true;
@@ -3344,6 +3362,24 @@ impl Parser {
     // ─── let / const / test ──────────────────────────────────────────────
 
     fn parse_let_decl(&mut self) -> Result<LetDecl, Diagnostic> {
+        // Plan 114 (D184) Ф.1.5: `let` keyword retracted. Lexer всё ещё
+        // узнаёт лексему — здесь parser отвергает с понятным сообщением
+        // вместо generic 'unknown identifier'. Migrate через
+        // scripts/plan114_rewrite.py (R1-R10).
+        let span = self.peek().span;
+        return Err(Diagnostic::new(
+            "[E_KW_REMOVED_LET] `let` keyword removed in Plan 114 (D184). \
+             Use `ro X = expr` for immutable binding, `mut X = expr` for \
+             mutable, `consume X = expr` for owned. For pattern-bind in \
+             condition use `if Some(x) = e` (drop `let`) or `if ro X = e` \
+             for identifier-pattern. Run scripts/plan114_rewrite.py to \
+             migrate.".to_string(),
+            span,
+        ));
+    }
+
+    #[allow(dead_code)]
+    fn parse_let_decl_legacy(&mut self) -> Result<LetDecl, Diagnostic> {
         let start = self.peek().span;
         // Plan 33.3 (D24): `ghost let` / `ghost var` — spec-only binding.
         // Прификс `ghost` перед `let`/`var`. Контекстный keyword.
@@ -3969,11 +4005,20 @@ impl Parser {
     fn parse_type(&mut self) -> Result<TypeRef, Diagnostic> {
         let start = self.peek().span;
         match self.peek().kind {
-            // D176 (Plan 108): `readonly T` — compile-time immutability modifier.
-            // Plan 114 (D184): renamed `readonly` → `ro`. Оба keyword'а
-            // принимаются parser'ом (legacy + new); codemod конвертирует
-            // readonly → ro в Ф.5/Ф.6.
-            TokenKind::KwReadonly | TokenKind::KwRo => {
+            // Plan 114 (D184) Ф.1.5: `readonly T` renamed to `ro T`.
+            TokenKind::KwReadonly => {
+                return Err(Diagnostic::new(
+                    "[E_KW_REMOVED_READONLY] `readonly` type-modifier \
+                     renamed to `ro` in Plan 114 (D184). Use `ro TYPE` \
+                     instead of `readonly TYPE` in param/return/field/binding \
+                     positions. Error codes E_READONLY_* preserved as stable \
+                     API. Run scripts/plan114_rewrite.py to migrate.".to_string(),
+                    start,
+                ));
+            }
+            // D176 (Plan 108): compile-time immutability modifier
+            // (Plan 114 keyword: `ro`).
+            TokenKind::KwRo => {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());

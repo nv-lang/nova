@@ -1,0 +1,10 @@
+// Plan 114 (D184) Ф.1.5: `readonly` keyword retracted; parser emits
+// E_KW_REMOVED_READONLY с suggestion'ом для migration.
+
+// EXPECT_COMPILE_ERROR E_KW_REMOVED_READONLY
+
+module nova_tests.plan114.readonly_removed_neg
+
+type Foo {
+    readonly x int
+}

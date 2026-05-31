@@ -1,0 +1,11 @@
+// Plan 114 (D184) Ф.1.5: `let` keyword retracted; parser emits
+// E_KW_REMOVED_LET с suggestion'ом для migration.
+
+// EXPECT_COMPILE_ERROR E_KW_REMOVED_LET
+
+module nova_tests.plan114.let_removed_neg
+
+test "let X retracted" {
+    let x = 5
+    assert(x == 5)
+}
