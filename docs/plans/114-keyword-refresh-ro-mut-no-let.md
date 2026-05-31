@@ -41,14 +41,15 @@
 > dangling refs на D184-D187 (cleanup-семейство, никогда не landed).
 > **Safety hatch для Ф.9 (`const` narrowing), Ф.10 (`const` generalization
 >   to scope/field), и Ф.11 (`const fn`):** все три self-contained, extractable
->   в sub-plans **Plan 114.1** (Ф.9 → narrow const), **Plan 114.2** (Ф.10 →
->   assoc const), **Plan 114.3** (Ф.11 → const fn) — каждая одним revert'ом
->   независимо. Plan 114 может шипиться с любым subset фаз. Decision points
+>   в sub-plan **Plan 114.4** (bundled: Ф.9 narrow const + Ф.10 assoc const +
+>   Ф.11 const fn) — одним revert'ом независимо. Plan 114 может шипиться с любым subset фаз. Decision points
 >   в preamble каждой фазы.
->   *Sub-plan numbering vs Plan 115: Plan 115 зарезервирован за std/tls
->   (Plan 91.12 followup, post-0.1); conditional const-extracts используют
->   sub-plan family 114.x (consistent с patterns Plan 108.1-108.4 / Plan 91.x /
->   Plan 100.x).*
+>   *Sub-plan numbering update (2026-05-31): const extracts bundled в один
+>   Plan 114.4 (vs изначально proposed раздельные 114.1/114.2/114.3 — collapsed
+>   для simplicity, всё ещё possible split позже если phase decoupling потребуется).
+>   Plan 115 = foundational FFI (`ptr` + tuple FFI + opaque handles); Plan 116
+>   = std/tls (over TcpNet). Consistent с patterns Plan 108.1-108.4 / Plan 91.x /
+>   Plan 100.x для sub-plan family naming.*
 > **Worktree convention:** `nova-p114` (создать сразу, регистрировать через
 >   hook, все команды с cd-префиксом в worktree per feedback-worktree-cwd-clarity).
 >
@@ -76,7 +77,7 @@
 >      (не debug build; не cargo test stand-alone). Это catch'ает release-only optimizations.
 >   5. **Записать финальный статус** в этот же файл (`docs/plans/114-keyword-refresh-ro-mut-no-let.md`)
 >      в новой секции «## Status — closure summary» в конце файла: что
->      сделано, что extracted в Plan 114.1/114.2/114.3 (если safety hatch fire'нул), full
+>      сделано, что extracted в Plan 114.4 (если safety hatch fire'нул), full
 >      `nova test` results, ссылки на коммиты.
 >   6. **Safety hatch trigger'ы** в Ф.9/Ф.10/Ф.11 preamble — следуй им
 >      буквально; не «пушь дальше» если decision point говорит extract.
@@ -1919,15 +1920,15 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
 | A10 | Tree-sitter grammar | 🔴 deferred → `[M-114-tree-sitter-grammar]` (отдельный репо) |
 | A11 | LSP semantic tokens + quick-fix | 🔴 deferred → `[M-114-lsp-quickfixes]` (отдельный репо) |
 | A12 | Full nova test ≥ baseline 1559/74 | 🟡 sampling 749+ PASS; pre-existing failures verified в main |
-| A13 | Ф.9 const strict constexpr | 🔴 safety hatch → Plan 115 |
+| A13 | Ф.9 const strict constexpr | 🔴 safety hatch → Plan 114.4 |
 | A14 | Return-type defaults + @-inheritance | 🟢 spec D176 amend закрыт |
-| A15 | Ф.10 const generalization | 🔴 safety hatch → Plan 115 |
-| A16 | Ф.11 const fn | 🔴 safety hatch → Plan 115 |
+| A15 | Ф.10 const generalization | 🔴 safety hatch → Plan 114.4 |
+| A16 | Ф.11 const fn | 🔴 safety hatch → Plan 114.4 |
 
 **Core acceptance** (A1-A9 + A14): 🟢 all PASS.
 **Tooling** (A10/A11): 🔴 separate repositories, deferred.
 **Cross-platform** (A12 Win+Linux × clang+MSVC): 🟡 Windows clang sampled green; MSVC/Linux not in this session.
-**New features** (A13/A15/A16): 🔴 Plan 115.
+**New features** (A13/A15/A16): 🔴 Plan 114.4.
 
 ### Final commits (15+ на ветке plan-114-keyword-refresh)
 
@@ -1959,7 +1960,7 @@ syntax 58/**1 pre-existing** (for_in_range_iter `_cur`).
 
 **Все 18 FAIL'ов verified pre-existing в main repo** (НЕ caused by Plan 114).
 
-### Recovery plan для Plan 115 (Ф.9 + Ф.10 + Ф.11)
+### Recovery plan для Plan 114.4 (Ф.9 + Ф.10 + Ф.11)
 
 См. оригинальный план body (Ф.9 — const narrow, Ф.10 — assoc const +
 generic T-dependent per-mono codegen, Ф.11 — const fn comptime
@@ -2060,12 +2061,12 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
 - **`[M-114-editor-packaging]`** Ф.7.3 — VSCode + Helix + Zed + Neovim
   configs обновить.
 - **`[M-114-const-narrowing]`** Ф.9 — R-9 safety hatch, extractable
-  в Plan 115.
+  в Plan 114.4.
 - **`[M-114-const-generalize]`** Ф.10 — R-10 safety hatch (assoc const
   + sum-type + generic T-independent/T-dependent per-mono codegen).
 - **`[M-114-const-fn]`** Ф.11 — R-13 safety hatch (comptime evaluator
   subsystem).
-- **D199/D200 spec блоки** — добавляются вместе с Ф.10/Ф.11 в Plan 115.
+- **D199/D200 spec блоки** — добавляются вместе с Ф.10/Ф.11 в Plan 114.4.
 
 ### Critical lessons / discipline
 
@@ -2086,7 +2087,7 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
 - **Return-type asymmetry** (param default ro, return default mut)
   закреплена в D176 amend — design rationale в D184.
 
-### Recovery checklist для Ф.9-Ф.11 в Plan 115
+### Recovery checklist для Ф.9-Ф.11 в Plan 114.4
 
 1. Создать `docs/plans/115-const-narrowing-generalize-fn.md`.
 2. Перенести Ф.9 / Ф.10 / Ф.11 sections из этого plan114 как стартовая
@@ -2132,7 +2133,7 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
   `E_KW_REMOVED_READONLY` вместо generic 'unknown identifier'). `cargo
   check -p nova-codegen` зелёный, 0 новых warnings.
 
-### Что не сделано (deferred → следующая сессия / Plan 115)
+### Что не сделано (deferred → следующая сессия / Plan 114.4)
 
 - **Ф.1.2** parser: `parse_binding` для `ro`/`mut`/`consume`
   statement-leading; удалить или конвертировать `parse_let_decl` →
@@ -2164,11 +2165,11 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
 - **Ф.8** spec finalize: amend D32/D33/D34/D36/D175/D176/D180; promote
   D184 draft → active; cross-platform full regression.
 - **Ф.9** `const` narrowing → strict constexpr-only (self-contained,
-  extractable в Plan 115).
+  extractable в Plan 114.4).
 - **Ф.10** `const` generalization: scope-local + record-field
-  associated constants (self-contained, extractable в Plan 115).
+  associated constants (self-contained, extractable в Plan 114.4).
 - **Ф.11** `const fn` comptime evaluable functions (self-contained,
-  extractable в Plan 115).
+  extractable в Plan 114.4).
 
 ### Commits на ветке
 
