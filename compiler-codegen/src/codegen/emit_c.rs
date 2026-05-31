@@ -14330,7 +14330,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.indent -= 1;
                 self.line("}");
 
-                // 110.1.4.e + 110.1.4.g: construct outcome + dispatch on_exit.
+                // 110.1.4.e + 110.1.4.g + 110.5.6: construct outcome + dispatch
+                // on_exit. D90 §7 amend (Plan 110.5.6): cancel-routed throws
+                // (NOVA_THROW_CANCEL) prefixed with "cancel: " marker для
+                // resource discrimination через ScopeOutcome::Failure variant.
+                // Full typed CancelError construction после MultiError payload
+                // any migration ([M-110-multierror-any]).
                 self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
                 self.line(&format!("if ({} == 0) {{", outcome_kind));
                 self.indent += 1;
@@ -14339,9 +14344,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
                 self.indent += 1;
                 self.line(&format!(
+                    "/* D90 §7 amend (Plan 110.5.6): cancel marker prepended */"
+                ));
+                self.line(&format!(
+                    "if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame
+                ));
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
                     "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
                     outcome_val, frame
                 ));
+                self.indent -= 1;
+                self.line("}");
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
