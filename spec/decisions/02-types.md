@@ -2336,6 +2336,11 @@ Bootstrap-ограничения:
 > Status: revised для полей. [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)
 > переписал семантику `mut` **на поле типа**. Семантика `mut` **на
 > параметре** (этот D32) — без изменений.
+>
+> Amended Plan 114 D184 (2026-05-31): default immutable binding теперь
+> выражается через `ro X = …` (immutable) и `mut X = …` (mutable); `let`
+> retracted. Семантика default-immutable не меняется — только keyword.
+> См. [D184](03-syntax.md#d184).
 
 ### Что
 Параметры функций передаются by reference в managed heap (как Java/C#
@@ -2492,7 +2497,11 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
 
 ---
 
-## D36. Поля типа: дефолт mutable у `mut` binding'а, `readonly` для never-mut
+## D36. Поля типа: дефолт mutable у `mut` binding'а, `ro` для never-mut
+
+> Amended Plan 114 D184 (2026-05-31): `readonly` → `ro` keyword rename
+> в полях. Sample обновлён. Error code `E_READONLY_FIELD` сохранён как
+> stable API. Семантика per-field freeze не меняется.
 
 ### Что
 Поле без префикса мутируется, **если binding mutable**. `readonly`
