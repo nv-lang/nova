@@ -946,7 +946,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Even for primitive types like `int`/`str` — нет on_exit → error.
             // Но diagnostic должен быть полезный (suggest implement).
             if is_known_type || self.method_table.contains_key(&type_name) {
-                errors.push(Diagnostic::new(
+                let diag = Diagnostic::new(
                     format!(
                         "[D188-not-consumable] type `{name}` does not implement `Consumable[E]` \
                          (method `on_exit` missing). \
@@ -957,7 +957,13 @@ impl<'a> TypeCheckCtx<'a> {
                         name = type_name
                     ),
                     init.span,
+                ).with_note(format!(
+                    "Plan 110.6.1: see docs/idiom/consume-scope-cleanup.md \
+                     Q-consumable-protocol for decision tree + implementation template. \
+                     For infallible cleanup (Mutex/Sem/Lock) use `Consumable[never]` — \
+                     no Fail[E] effect (D194 hot-path eligible)."
                 ));
+                errors.push(diag);
             }
         } else {
             // on_exit existsует — validate signature (Plan 110.1.2 §D188-malformed-on-exit).
