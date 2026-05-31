@@ -1281,84 +1281,107 @@ binding управляет «можно ли модифицировать **пе
 
 ---
 
-## D34. `if let` и `while let` для pattern matching в условии
+## D34. Pattern-bind в `if`/`while` conditions — unified grammar с match arms
+
+> Status: active (Rust 1:1, 2026-05-27); amended Plan 114 D184 (2026-05-31):
+> drop outer `let` keyword; identifier-pattern требует `ro`/`mut`;
+> constructor/destructure pattern bare = immutable, `mut` inside;
+> `consume` запрещён в conditions; outer-`mut` запрещён.
 
 ### Что
-Синтаксис `if let pattern = expr { ... }` и `while let pattern = expr { ... }`
-— pattern matching прямо в условии с локальным binding в скоупе блока.
-Несколько условий через запятую.
+
+Синтаксис `if pattern = expr { ... }` и `while pattern = expr { ... }`
+— pattern matching прямо в условии с локальным binding в scope блока.
+Несколько условий через запятую (Plan 106).
+
+Pattern grammar **унифицирована** с match-arm patterns: те же правила
+(`mut` inside `Some(mut x)`, bare = immutable) работают в обеих позициях.
 
 ### Правило
 
 ```nova
-if let Some(user) = cache.get(key) {
+// Constructor / destructure pattern — bare bindings default immutable
+if Some(user) = cache.get(key) { process(user) }
+if Some(mut buf) = pool.try_take() { buf.fill(0) }    // mut inside pattern
+if (a, b) = pair { use(a, b) }
+if { name, age } = user_opt { greet(name, age) }
+
+while Some(item) = queue.pop() { handle(item) }
+while Some(mut line) = reader.read_line() { line.trim_in_place() }
+
+// Identifier pattern — REQUIRES `ro` or `mut` (footgun protection)
+if ro user = compute_user() { use(user) }              // ✓ explicit ro
+if mut counter = init() { counter += 1; … }            // ✓ explicit mut
+if user = compute_user() { ... }                       // ✗ E_AMBIGUOUS_IDENT_PATTERN
+
+// Chains (Plan 106)
+if Some(user) = lookup(id), user.is_active {
     process(user)
 }
 
-if let Ok(user) = Db.find(id) {
-    process(user)
-} else {
-    Log.warn("user not found")
-}
-
-while let Some(item) = queue.pop() {
-    process(item)
-}
-
-// несколько условий через запятую
-if let Some(user) = lookup(id), user.is_active {
-    process(user)
-}
-
-// else if let
-if let Some(a) = lookup_a() {
+// else-if
+if Some(a) = lookup_a() {
     use(a)
-} else if let Some(b) = lookup_b() {
+} else if Some(b) = lookup_b() {
     use(b)               // a НЕ доступна
 }
 ```
 
-> ⚠ **Chain-форма `if let … , …` пока не реализована** (parser drift,
-> 2026-05-27). Парсер падает на запятой после первого cond'а с
-> `expected '{', got ','`. Реализовано только одиночное `if let pattern = expr`
-> и `while let pattern = expr`. Workaround — вложенные `if`'ы. Полная
-> грамматика (включая `("," if-cond)*`) — см.
-> [Plan 106](../../docs/plans/106-if-let-chains.md).
+**Правила:**
+
+1. **Constructor / destructure pattern** — bare bindings inside pattern
+   default immutable. `mut` explicit когда нужно (`Some(mut x)`,
+   `(mut a, b)`). Consistent с match arms.
+2. **Identifier pattern** (`if NAME = expr`) — **обязательно `ro` или
+   `mut`**. Иначе `E_AMBIGUOUS_IDENT_PATTERN` (footgun protection:
+   bare `if x = compute()` визуально неотличимо от assignment).
+3. **`consume` запрещён** в conditions — `E_CONSUME_IN_CONDITION`.
+4. **Outer `mut` удалён** — `if mut Some(x)` → use `if Some(mut x)`
+   (mut moves inside pattern). Единое правило с match.
+5. **Chains** (Plan 106) переиспользуют тот же `if_cond`.
+6. **`else if`** — корректно для всех форм.
 
 Грамматика:
 
 ```
-if-expr    := "if" if-cond ("," if-cond)* block ("else" (if-expr | block))?
-while-expr := "while" if-cond ("," if-cond)* block
-if-cond    := "let" pattern "=" expr | expr
+if-expr      := "if" if-cond ("," if-cond)* block ("else" (if-expr | block))?
+while-expr   := "while" if-cond ("," if-cond)* block
+if-cond      := cond-pattern "=" expr | expr
+cond-pattern := ("ro" | "mut") IDENT type_opt
+              | constructor-pattern         // Some(...) / None / etc.
+              | tuple-pattern               // (a, b)
+              | record-pattern              // { name, age }
 ```
 
-Скоуп: связанные `let`-имена доступны **только в теле блока**.
+Скоуп: связанные имена доступны **только в теле блока**.
 
-`?` работает: `if let user = Db.find(id)? { ... }` пробрасывает
-ошибку наверх; внутрь блока заходим только при успехе.
+`?` работает: `if Some(user) = Db.find(id)? { ... }` пробрасывает ошибку
+наверх; внутрь блока заходим только при успехе.
 
 ### Почему
 
 1. **«Получить и использовать если есть»** без полного `match`-блока.
-2. **Эквивалент Go `if v, err := f(); err == nil`** со скоупом
-   переменной = тело if.
-3. **Условные циклы** — итерация пока паттерн совпадает.
-4. **Прецедент.** Rust 1:1.
+2. **Unified grammar с match arms** — единое правило (`Some(mut x)`),
+   а не два разных (Rust `if let Some(mut x)` vs match `Some(mut x)`).
+3. **Footgun protection** — identifier-pattern требует keyword'а
+   (Plan 114 D184 §«identifier-pattern protection»).
+4. **Условные циклы** — итерация пока паттерн совпадает.
 
 ### Что отвергнуто
 
-- **Go-стиль `;`-разделитель** — нарушает D17 «один разделитель —
-  запятая».
+- **Go-стиль `;`-разделитель** — нарушает D17 «один разделитель — запятая».
 - **`:=` оператор** — shadowing-проблемы Go.
 - **Smart-cast (Kotlin)** — магия в типе, AI-first против.
-- **Без `let`** (`if Some(x) = ...`) — парсер не отличит от
-  сравнения.
+- **`if let` (Rust-style outer `let`)** — Plan 114 retracted в пользу
+  unified pattern grammar с match arms.
+- **Outer `mut` в pattern position** (`if mut Some(x)`) — Plan 114
+  retracted; mut goes inside pattern (`if Some(mut x)`).
 
 ### Связь
-- [D33](#d33-const-vs-let--compile-time-vs-runtime) — `let` для
-  runtime binding с локальным скоупом.
-- [02-types.md → D17](02-types.md#d17) — pattern matching в `match`.
+- [D33](#d33-три-оси-immutability--romutconsume--const--per-field-freeze) — `ro`/`mut` binding mutability.
+- [D184](#d184) — master keyword refresh (Plan 114).
+- [02-types.md → D17](02-types.md#d17) — pattern matching в `match` (shared grammar).
+- [Plan 106](../../docs/plans/106-if-let-chains.md) — chain syntax.
 
 ---
 
