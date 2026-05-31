@@ -5331,7 +5331,8 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 
 ## D185. `Cleanup` effect — observability-only handler dispatch
 
-> **Plan 110 Ф.7.** Принято 2026-05-31 (proposed). Observability-only effect
+> **Plan 110 Ф.7.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.4.4.a/b
+> codegen emits on_scope_enter/exit dispatch, 2026-06-01). Observability-only effect
 > для tracing cleanup-scope entry/exit. Default handler — no-op,
 > zero-overhead если не использован. Не дублирует `Consumable.on_exit` —
 > orthogonal layer для metrics/tracing.
@@ -5442,9 +5443,11 @@ Compatible с std OpenTelemetry SDK через FFI bridge (cross-ref [Plan
 
 ## D195. `Application` effect — nesting + finalizer scoping + cross-fiber propagation
 
-> **Plan 110 Ф.8.** Принято 2026-05-31 (proposed). Application как ambient
-> capability для top-level lifecycle: finalizers + default exit_timeout.
-> Cross-ref [D188](03-syntax.md#d188) §R4 + [D192](03-syntax.md#d192) Level-2.
+> **Plan 110 Ф.8.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.4.6.a
+> Level-2 + 110.4.7 cross-fiber D80 snapshot landed 2026-06-01). Application
+> как ambient capability для top-level lifecycle: finalizers + default
+> exit_timeout. Cross-ref [D188](03-syntax.md#d188) §R4 +
+> [D192](03-syntax.md#d192) Level-2.
 
 ### Что
 
