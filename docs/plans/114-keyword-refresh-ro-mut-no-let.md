@@ -39,11 +39,16 @@
 > Renumber: D186→D199 (const fn), D185→D200 (assoc const). D184 свободен —
 > оставлен как есть. Также Plan 110 commit'нулся раньше с claim D188-D198 +
 > dangling refs на D184-D187 (cleanup-семейство, никогда не landed).
-> **Safety hatch для Ф.10 (`const` generalization to scope/field) и Ф.11
->   (`const fn`):** обе self-contained, extractable each в Plan 115 одним
->   revert'ом независимо. Plan 114 может шипиться с Ф.9 только (минимальный
->   slice), либо +Ф.10 (associated const), либо +Ф.10+Ф.11 (full constexpr
->   story). Decision points в preamble каждой фазы.
+> **Safety hatch для Ф.9 (`const` narrowing), Ф.10 (`const` generalization
+>   to scope/field), и Ф.11 (`const fn`):** все три self-contained, extractable
+>   в sub-plans **Plan 114.1** (Ф.9 → narrow const), **Plan 114.2** (Ф.10 →
+>   assoc const), **Plan 114.3** (Ф.11 → const fn) — каждая одним revert'ом
+>   независимо. Plan 114 может шипиться с любым subset фаз. Decision points
+>   в preamble каждой фазы.
+>   *Sub-plan numbering vs Plan 115: Plan 115 зарезервирован за std/tls
+>   (Plan 91.12 followup, post-0.1); conditional const-extracts используют
+>   sub-plan family 114.x (consistent с patterns Plan 108.1-108.4 / Plan 91.x /
+>   Plan 100.x).*
 > **Worktree convention:** `nova-p114` (создать сразу, регистрировать через
 >   hook, все команды с cd-префиксом в worktree per feedback-worktree-cwd-clarity).
 >
@@ -71,7 +76,7 @@
 >      (не debug build; не cargo test stand-alone). Это catch'ает release-only optimizations.
 >   5. **Записать финальный статус** в этот же файл (`docs/plans/114-keyword-refresh-ro-mut-no-let.md`)
 >      в новой секции «## Status — closure summary» в конце файла: что
->      сделано, что extracted в Plan 115 (если safety hatch fire'нул), full
+>      сделано, что extracted в Plan 114.1/114.2/114.3 (если safety hatch fire'нул), full
 >      `nova test` results, ссылки на коммиты.
 >   6. **Safety hatch trigger'ы** в Ф.9/Ф.10/Ф.11 preamble — следуй им
 >      буквально; не «пушь дальше» если decision point говорит extract.
@@ -981,7 +986,7 @@ errors достаточны.
 > **Safety hatch:** Ф.9 спроектирована как **self-contained slice**. Если
 > tightening checker'а ломает unforeseen edge cases (например, `const` site
 > референсит non-constexpr fn в pre-existing code, который думали constexpr,
-> а он не) — Ф.9 extract'ится в Plan 115. Все Ф.9 артефакты (checker tightening,
+> а он не) — Ф.9 extract'ится в **Plan 114.1** (sub-plan). Все Ф.9 артефакты (checker tightening,
 > codemod-rule «const → ro если non-constexpr», D-block правка D33) сгруппированы
 > — не размазаны по другим фазам.
 
@@ -1027,7 +1032,7 @@ errors достаточны.
 > resolution для `Type.FIELD`, doc-gen для associated consts, ABI implications
 > для `export const` field, или edge-cases с generic-types `type Box[T] {
 > const SIZE int = sizeof(T) }` — последнее за scope, comptime feature) —
-> Ф.10 extract'ится в Plan 115 одним revert'ом. Plan 114 шипится с Ф.9
+> Ф.10 extract'ится в **Plan 114.2** (sub-plan) одним revert'ом. Plan 114 шипится с Ф.9
 > narrowing + module-level `const` only. Все Ф.10 артефакты сгруппированы.
 
 - **Ф.10.1** Parser:
@@ -1085,7 +1090,7 @@ errors достаточны.
 
 > **Safety hatch:** Ф.11 — **новая language-фича** (comptime evaluator).
 > Если comptime-evaluator усложняется неожиданно — Ф.11 extract'ится в
-> Plan 115 одним revert'ом. Plan 114 шипится без Ф.11 — `const` остаётся
+> **Plan 114.3** (sub-plan) одним revert'ом. Plan 114 шипится без Ф.11 — `const` остаётся
 > data-only (literals + arithmetic + record-literals). Триггеры для extract:
 > evaluator требует значительного шеринга logic'а с runtime interpreter'ом
 > (>1 dev-day); body-checker для V1 subset усложняется неожиданно;
@@ -1763,11 +1768,11 @@ param как `comptime` per-param), но без runtime-call-mode (всегда 
 | R-6 | Error message changes ломают snapshot-tests | Ф.2.3 — обновить snapshots; full nova test покрывает |
 | R-7 | `mut` уже keyword в 4 позициях; добавление 5й (statement-leading) усложняет grammar | Verified в Ф.0.3: lookahead-based disambiguation тривиален (statement-position vs inside `type{}` / `fn(…)` / receiver) |
 | R-8 | Migration большой fixture-set'а (1559 tests) в один merge — рискованно | Single-branch hard-cutover; per-subtree parallel agents + `nova test` verify после каждого subtree; bisect easy через subtree-merge commits; rollback через single PR revert |
-| **R-9** | **Ф.9 `const` tightening** ломает pre-existing `const`-сайты которые think'ались constexpr но на самом деле нет (e.g. record-literal references runtime fn) | Compiler errors показывают конкретные сайты с `E_CONST_NOT_CONSTEXPR`; manual demote в `ro`; ожидается ~5 из 76 — manageable. **Safety hatch:** если число affected > 20 — Ф.9 extract'ится в Plan 115, `const` остаётся со старой broad-semantics в Plan 114. Decision point: первый `nova test` post-Ф.9.1 |
-| **R-10** | **Ф.10 associated consts** усложняют codegen namespace resolution / doc-gen / ABI (especially `export const` field) больше чем expected | **Self-contained slice (Ф.10 preamble): extract в Plan 115 одним revert'ом, Plan 114 шипится без Ф.10 — `const` остаётся module-level only. Triggers для extract: namespace resolution для `Type.FIELD` требует значительного рефактора name-resolver'а; doc-gen `nova doc` ломает existing render; ABI implications для `export const Type.FIELD` создают cross-module compatibility issues. Decision point: конец Ф.10.3 (codegen smoke)** |
+| **R-9** | **Ф.9 `const` tightening** ломает pre-existing `const`-сайты которые think'ались constexpr но на самом деле нет (e.g. record-literal references runtime fn) | Compiler errors показывают конкретные сайты с `E_CONST_NOT_CONSTEXPR`; manual demote в `ro`; ожидается ~5 из 76 — manageable. **Safety hatch:** если число affected > 20 — Ф.9 extract'ится в **Plan 114.1** (sub-plan), `const` остаётся со старой broad-semantics в Plan 114. Decision point: первый `nova test` post-Ф.9.1 |
+| **R-10** | **Ф.10 associated consts** усложняют codegen namespace resolution / doc-gen / ABI (especially `export const` field) больше чем expected | **Self-contained slice (Ф.10 preamble): extract в Plan 114.2 (sub-plan) одним revert'ом, Plan 114 шипится без Ф.10 — `const` остаётся module-level only. Triggers для extract: namespace resolution для `Type.FIELD` требует значительного рефактора name-resolver'а; doc-gen `nova doc` ломает existing render; ABI implications для `export const Type.FIELD` создают cross-module compatibility issues. Decision point: конец Ф.10.3 (codegen smoke)** |
 | **R-11** | `nova_const_<name>()` lazy-init runtime symbols collide с Ф.9 tightening (теперь только `ro` non-constexpr использует lazy) | **Решение в Ф.9.2:** keep `nova_const_<name>()` C-symbol naming (legacy от Plan 14 Ф.2); только Nova-side semantics меняется. C-side ABI инвариантен — zero migration для downstream FFI users |
 | R-12 | Associated-const + generic-type interaction: `const SIZE = sizeof(T)` deferred evaluation + per-mono codegen + namespace resolution `Box[T].SIZE` | **In-scope для Ф.10** (после переоценки 2026-05-30: не deep refactor — Nova уже monomorphizes; evaluator reuses Plan 14 Ф.2 logic с T-bound env; per-mono codegen symbol naming тривиально по аналогии с generic fields). Cost: +½ day к Ф.10. Followup `[M-114-generic-const-fn]` остаётся (generic `const fn` — отдельная фича) |
-| **R-13** | **Ф.11 comptime-evaluator** усложняется неожиданно (shared interpreter logic с runtime; integration с existing Plan 14 Ф.2 constexpr-engine; corner cases в const-fn-calls-const-fn chains) | **Self-contained slice (Ф.11 preamble): extract в Plan 115 одним revert'ом, Plan 114 шипится без Ф.11 — `const` data-only (literals + arithmetic + record-literals). Decision point: конец Ф.11.3 evaluator smoke на minimal example. Triggers для extract: evaluator требует >1 dev-day; body-checker для V1 subset усложняется неожиданно; integration deep refactor** |
+| **R-13** | **Ф.11 comptime-evaluator** усложняется неожиданно (shared interpreter logic с runtime; integration с existing Plan 14 Ф.2 constexpr-engine; corner cases в const-fn-calls-const-fn chains) | **Self-contained slice (Ф.11 preamble): extract в Plan 114.3 (sub-plan) одним revert'ом, Plan 114 шипится без Ф.11 — `const` data-only (literals + arithmetic + record-literals). Decision point: конец Ф.11.3 evaluator smoke на minimal example. Triggers для extract: evaluator требует >1 dev-day; body-checker для V1 subset усложняется неожиданно; integration deep refactor** |
 | R-14 | `const fn` evaluator integer overflow / div-by-zero — silent vs explicit | Explicit errors: `E_CONST_FN_EVAL_OVERFLOW` / `E_CONST_FN_DIV_ZERO` с pointer на offending expression в body + call site context. Не tradition-silent (Rust `const fn` ловит на debug, не на release). Nova V2 — всегда compile-error |
 
 ---
@@ -1798,7 +1803,9 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
 | `[M-114-for-binding-keyword]` | `for ro x in xs` / `for mut x in xs` (explicit на loop var) | Сейчас loop var implicit immutable; редко нужен mut. `for mut x in xs` уже работает. Если consistency-pressure — followup |
 | `[M-114-deprecate-let-in-comments]` | Doc-checker который warning'и при `let` в .md docs | Cosmetic |
 | `[M-114-per-variant-const]` | Per-variant const в sum-type: `type Result = Ok { const ROLE = "success" } | Err { const ROLE = "failure" }` — каждый variant со своим const | V1 sum-type assoc const только на sum-level. Per-variant — semantically interesting, но требует variant-namespace dispatch. Followup |
-| `[M-114-const-extracted-to-115]` | **Условный маркер** — записывается **только если safety hatch сработал**: Ф.9 и/или Ф.10 и/или Ф.11 extract'ятся в Plan 115 | Trigger при срабатывании R-9, R-10 или R-13 |
+| `[M-114-Ф.9-extracted-to-114.1]` | **Условный маркер** — записывается только если safety hatch сработал на Ф.9 (`const` narrowing) → extract в **Plan 114.1** sub-plan | Trigger при срабатывании R-9 |
+| `[M-114-Ф.10-extracted-to-114.2]` | Условный — Ф.10 (assoc const) extract'ится в **Plan 114.2** | Trigger при срабатывании R-10 |
+| `[M-114-Ф.11-extracted-to-114.3]` | Условный — Ф.11 (`const fn`) extract'ится в **Plan 114.3** | Trigger при срабатывании R-13 |
 | `[M-114-const-fn-control-flow]` | `const fn` с `if`/`else`/`match` в body | V1 expression+sequential subset достаточен для типовых constexpr; control flow требует расширения evaluator'а на branch-evaluation |
 | `[M-114-const-fn-recursion]` | `const fn` с recursion (с depth-limit + memoization) | V1 рекурсию reject'ит; followup добавляет limit-based recursion (e.g. 10K depth) |
 | `[M-114-comptime-mixed-args]` | `fn mixed(const a int, b int) -> int` — некоторые params const, некоторые runtime; partial specialization | Zig-like `comptime` per-param flexibility; требует runtime + comptime variants emission |
