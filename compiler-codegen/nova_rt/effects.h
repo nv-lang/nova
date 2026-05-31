@@ -175,6 +175,22 @@ static inline void nv_compose_suppressed(NovaFailFrame* primary,
                                           void* user_payload,
                                           NovaTypeId tid) {
     if (!primary) return;
+    /* Plan 110.4.2 (D193): cycle-safety + depth-limit.
+     * - Cycle-safety: identity check на msg.ptr + kind + user_payload
+     *   prevents self-suppression cycles (Java JDK-8287921 lesson).
+     * - Depth-limit 256: after 256 nodes, dalee compose silently no-op'ит
+     *   (debugger can observe length truncation via NovaErrorChain count).
+     */
+    int depth = 0;
+    for (NovaErrorChain* it = primary->error_suppressed; it && depth < 256; it = it->next, depth++) {
+        /* Identity check: existing node points к same payload? */
+        if (it->msg.ptr == msg.ptr && it->kind == kind && it->user_payload == user_payload) {
+            return;  /* duplicate — silently skip (cycle-safety) */
+        }
+    }
+    if (depth >= 256) {
+        return;  /* depth-limit 256 reached — silently no-op (D193) */
+    }
     NovaErrorChain* node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));
     node->msg          = msg;
     node->kind         = kind;
