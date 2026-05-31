@@ -27827,3 +27827,21 @@ pre-Plan-109 API.  Документированы в их followups.
 **Smoke regression:** 107 PASS / 1 pre-existing fail.
 
 **Design lesson:** Plan 114.4 (renamed from 115) — 3-фазный план оценен 1.5-2 dev-day. Реалистично в одну Claude-сессию помещается Ф.0+Ф.1+Ф.2-scope. Ф.2 assoc const + Ф.3 const fn — substantial subsystems каждый ~½-1 dev-day, extract per safety hatch design plan'а. Plan 114.4.1 doc — следующая session.
+
+---
+
+## Plan 115 — foundational FFI (`ptr` + tuple-return FFI + opaque handle pattern) — 2026-05-31
+
+**Status:** 🟢 OPEN sprint. Plan 115 — foundational P1 для FFI к произвольным C libraries (libsqlite, libpng, libcurl, etc.) + блокирует Plan 91.12 Pattern B, Plan 116 (TLS), Plan 117-118 (HTTP).
+
+**Plan markers (Ф.0 open):**
+- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing в unsafe contexts (V1 banned; future если real need).
+- 🟡 `[M-115-ptr-typed-deref]` — `unsafe { *p }` для typed pointer deref (`*mut T`) — advanced FFI; not needed для opaque handles.
+- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI для auto-generating FFI bindings из C header (major tooling effort; separate plan).
+- 🟡 `[M-115-d126-deprecation]` — formal deprecation `external type` D126 в favor of `type X(ptr)` (после stdlib migration to Plan 115 pattern).
+- 🟡 `[M-115-tuple-gc-types]` — tuple elements GC-tracked types ([]T / Option / Result / sum) в external fn return — V1 не recommended, V2 formal support.
+- 🟡 `[M-115-cookbook-libcurl]` — libcurl binding example в docs/ffi-cookbook.md (Plan 115 Ф.3 deliverable).
+- 🟡 `[M-115-cookbook-libpng]` — libpng binding example в docs/ffi-cookbook.md.
+- 🟡 `[M-115-examples-ffi-real-build]` — examples/ffi/ собирается в real-target test с linked libsqlite3 (V1 — Nova-side fixture только; real C-link verification — отдельный CI step).
+
+Дополнительно: Plan 115 v1 это **оригинальный D214 (НЕ Plan 118 D214 amend)**. Plan 118 future planned — добавляет `*T` family + `unsafe {}` block + D2 keyword restore + Option[*T] NPO. Plan 115 v1 = baseline foundation на котором Plan 118 строит V2.
