@@ -27782,3 +27782,21 @@ pre-Plan-109 API.  Документированы в их followups.
   3. Ф.1.5 финальный commit закрывает legacy paths (KwLet → E_KW_REMOVED_LET).
 
 Без шага (2) перед (3) — testsuite сломан между commit'ами. Plan специально допускает этот порядок: «scripts/sed/perl + parallel subagents» — это и есть стейджинг discipline в рамках одного hard-cutover merge.
+
+---
+
+## Plan 114 — followup tooling 2026-05-31 (Ф.2 + Ф.7.1-Ф.7.3) + Plan 115 spawn
+
+**CLOSED markers (followup batch):**
+- ✅ `[M-114-diag-terminology]` Ф.2 — compiler-codegen user-facing strings 'readonly' → 'ro' + 'let mut' → 'mut' в quick-fix + embedded nova_body strings via scripts/plan114_rust_nova_body.py. plan114: 10/10 PASS.
+- ✅ `[M-114-tree-sitter-grammar]` Ф.7.1 — tree-sitter-nova 0.2.0 BREAKING bump (separate repo). grammar.js + queries/* + test corpus updated. 84/84 fixtures PASS.
+- ✅ `[M-114-lsp-quickfixes]` Ф.7.2 — code_action_provider добавлен; quick-fix для E_KW_REMOVED_LET/READONLY с context-aware mut detection. cargo test -p nova-lsp: 91/0 PASS.
+- ✅ `[M-114-editor-packaging]` Ф.7.3 — VSCode + Zed + Vim + Emacs configs обновлены (let drop, readonly → ro). Helix + Neovim используют tree-sitter, не требовали изменений.
+
+**OPEN markers carried to Plan 115:**
+- 🟡 `[M-114-const-narrowing]` → Plan 115 Ф.1.
+- 🟡 `[M-114-const-generalize]` → Plan 115 Ф.2 (incl assoc const + generic per-mono).
+- 🟡 `[M-114-const-fn]` → Plan 115 Ф.3 (comptime evaluator V1, safety-hatched).
+- 🟡 `[M-114-const-extracted-to-115]` — ✅ АКТИВИРОВАН (Plan 115 doc создан docs/plans/115-const-narrow-generalize-fn.md, 508 lines).
+
+**Plan 114 family complete.** Core + Ф.2 + Ф.7.1-3 закрыты. Plan 115 spawned для оставшихся 3 фич (const discipline + assoc const + const fn) — 4-фазный план с D199 + D200 spec блоками, 18 acceptance criteria, 6 risks с safety hatches.

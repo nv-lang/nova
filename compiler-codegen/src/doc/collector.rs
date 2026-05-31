@@ -848,8 +848,8 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
             format!("protocol {{ {} }}", sigs.join("; "))
         }
         TypeRef::Unit(_) => "()".to_string(),
-        // D176 (Plan 108): readonly T — display as "readonly T"
-        TypeRef::Readonly(inner, _) => format!("readonly {}", render_type(inner)),
+        // D176 (Plan 108) / Plan 114 D184: ro T — display as "ro T"
+        TypeRef::Readonly(inner, _) => format!("ro {}", render_type(inner)),
     }
 }
 

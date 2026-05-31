@@ -8,7 +8,8 @@
 [
   "module" "import" "use" "export" "external"
   "fn" "type" "effect" "alias"
-  "let" "const" "mut" "consume" "readonly"
+  ; Plan 114 (D184): ro/mut/consume binding triad; let/readonly retracted.
+  "ro" "const" "mut" "consume"
   "if" "else" "match" "for" "while" "loop" "in"
   "return" "test"
   "with" "throw"
