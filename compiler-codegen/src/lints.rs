@@ -434,6 +434,16 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
             collect_expr(body, out)
         }
+        // Plan 110 D188: collect referenced names from init expr + body block.
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_expr(init, out);
+            for stmt in &body.stmts {
+                collect_stmt(stmt, out);
+            }
+            if let Some(t) = &body.trailing {
+                collect_expr(t, out);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             collect_expr(expr, out)
         }
@@ -1031,6 +1041,16 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         Stmt::Break(_) | Stmt::Continue(_) => {}
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => walk_expr_lints(body, out),
+        // Plan 110 D188: lint walk through init + body block.
+        Stmt::ConsumeScope { init, body, .. } => {
+            walk_expr_lints(init, out);
+            for stmt in &body.stmts {
+                walk_stmt_lints(stmt, out);
+            }
+            if let Some(t) = &body.trailing {
+                walk_expr_lints(t, out);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
         // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}

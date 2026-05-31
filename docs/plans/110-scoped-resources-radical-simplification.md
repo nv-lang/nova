@@ -1624,6 +1624,15 @@ Wall-time:
 - **Sequential** (1 session/working day): ~12 weeks.
 - **Parallel optimal**: ~3 weeks.
 
+### Session 3 (2026-05-31) — execute decomposition autonomous
+
+> Пользователь: «выполни план без упрощений (как для прода) и без
+> остановок ... сделать позитивные и негативные тесты (проверять через
+> релизные nova & компилятор), написать критерии приёмки ... я ушёл».
+>
+> Autonomous execution через decomposition: пройти столько sub-sub-задач
+> сколько влезет в session, atomic merge per sub-sub, commit per big task.
+
 ---
 
 ## Ссылки

@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// EXPECT_COMPILE_ERROR unexpected `consume` in expression
+//
+// Plan 110.1.1 (D188): scope-block требует **single-ident** binding.
+// Destructure pattern (`consume (a, b) = init() { body }`) не
+// разрешается — D188 §«Syntax» "single name". Для linear ownership
+// transfer destructure → используйте raw `consume X = expr` (D180).
+
+module plan110.neg_consume_scope_destructure_binding
+
+type Pair {
+    ro a int
+    ro b int
+}
+
+fn Pair.new(a int, b int) -> Pair => { a: a, b: b }
+
+fn Pair consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn bad() -> int {
+    // ❌ destructure pattern в consume scope-block — invalid.
+    consume (x, y) = Pair.new(1, 2) {
+        x + y
+    }
+}

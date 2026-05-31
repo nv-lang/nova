@@ -1186,6 +1186,19 @@ impl<'a> TypeCheckCtx<'a> {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, gs, errors);
             }
+            // Plan 110 D188: walk init + body.
+            Stmt::ConsumeScope { type_annot, init, body, .. } => {
+                if let Some(t) = type_annot {
+                    self.walk_typeref(t, gs, errors);
+                }
+                self.walk_expr(init, gs, errors);
+                for stmt in &body.stmts {
+                    self.walk_stmt(stmt, gs, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, gs, errors);
+                }
+            }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, gs, errors);
             }
@@ -1582,6 +1595,18 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.f1_expr(body, gs, scope, errors);
+            }
+            // Plan 110 D188: walk init + body (full D188 R1-R6 check лежит
+            // в Plan 110.1.2/110.1.3 — здесь scaffold walking).
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.f1_expr(init, gs, scope, errors);
+                self.f4_check_value(init, scope, errors);
+                for s in &body.stmts {
+                    self.f1_stmt(s, gs, scope, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.f1_expr(t, gs, scope, errors);
+                }
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.f1_expr(expr, gs, scope, errors);
@@ -3560,6 +3585,16 @@ impl<'a> BoundCtx<'a> {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, scope, errors);
             }
+            // Plan 110 D188: walk init + body (scaffold).
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, scope, errors);
+                for s in &body.stmts {
+                    self.walk_stmt(s, scope, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, scope, errors);
+                }
+            }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
             // Ф.4.1: apply — ghost statement, args walk'аем (для name resolution).
@@ -4890,6 +4925,16 @@ impl<'a> CapabilityCtx<'a> {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, state, errors);
             }
+            // Plan 110 D188: walk init + body (scaffold).
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, state, errors);
+                for s in &body.stmts {
+                    self.walk_stmt(s, state, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, state, errors);
+                }
+            }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, state, errors),
             // Ф.4.1: apply — ghost, нет capability-эффектов.
@@ -5793,6 +5838,24 @@ impl NameResCtx {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, file_id, scope, errors);
             }
+            // Plan 110 D188: walk init + push new scope frame с binding,
+            // walk body, pop frame. Binding visible только внутри body
+            // (D188 §«Syntax» single-name binding).
+            Stmt::ConsumeScope { binding, init, body, .. } => {
+                self.walk_expr(init, file_id, scope, errors);
+                scope.push({
+                    let mut frame = HashSet::new();
+                    frame.insert(binding.clone());
+                    frame
+                });
+                for s in &body.stmts {
+                    self.walk_stmt(s, file_id, scope, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, file_id, scope, errors);
+                }
+                scope.pop();
+            }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
@@ -6536,6 +6599,16 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         // РѕС‚РґРµР»СЊРЅСѓСЋ compile error СЂР°РЅСЊС€Рµ СЌС‚РѕР№ РїСЂРѕРІРµСЂРєРё.
         Stmt::Defer { .. } | Stmt::ErrDefer { .. }
         | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => false,
+        // Plan 110 D188: consume scope-block body может содержать throw —
+        // D188 R3 cancel-shield масаит throw к caller'у после on_exit;
+        // для has_throw analysis считаем body как throw-носитель.
+        Stmt::ConsumeScope { init, body, .. } => {
+            if has_throw_in_expr(init) { return true; }
+            for s in &body.stmts {
+                if has_throw_in_stmt(s) { return true; }
+            }
+            body.trailing.as_ref().map_or(false, |t| has_throw_in_expr(t))
+        }
         // Plan 33.2 Р¤.8: assert_static вЂ” bool expr, no throw inside.
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => has_throw_in_expr(expr),
         // Ф.4.1: apply — ghost, args могут содержать throw (теоретически нет, но проверяем).
@@ -7290,6 +7363,11 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 walk_expr_for_handler_lits(body, never_ops, errors);
+            }
+            // Plan 110 D188: walk init + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_handler_lits(init, never_ops, errors);
+                walk_block_for_handler_lits(body, never_ops, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
@@ -9676,6 +9754,20 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             // call inside body as Consumed.
             d162_mark_defer_cover(ctx, body, &pre_obligations);
         }
+        // Plan 110 D188: consume scope-block. Init expression evaluated +
+        // body block walked. Full consume-binding semantics (binding visible
+        // только в body; on_exit dispatch как auto-consume) — Plan 110.1.2.
+        // Здесь walk recursively, не вводим binding в obligations (110.1.2
+        // обязанность).
+        Stmt::ConsumeScope { init, body, .. } => {
+            consume_walk_expr(ctx, init, errors);
+            for stmt in &body.stmts {
+                consume_walk_stmt(ctx, stmt, errors);
+            }
+            if let Some(t) = &body.trailing {
+                consume_walk_expr(ctx, t, errors);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             consume_walk_expr(ctx, expr, errors);
         }
@@ -10729,6 +10821,11 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Calc { steps, .. } => {
                 for step in steps { walk_expr_for_defers(&step.expr, fn_effects, current_fn_effects, errors); }
             }
+            // Plan 110 D188: walk init expr + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_defers(init, fn_effects, current_fn_effects, errors);
+                walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
+            }
             Stmt::Reveal { .. } => {}
         }
     }
@@ -11223,6 +11320,13 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             // Ф.4.2: calc — ghost, шаги walk.
             Stmt::Calc { steps, .. } => {
                 for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, current_fn_effects, ctx, errors); }
+            }
+            // Plan 110 D188: nested consume{} inside defer body — init +
+            // body block walk (D197 cleanup re-entrance — full rules в
+            // Plan 110.1.8).
+            Stmt::ConsumeScope { init, body, .. } => {
+                check_defer_body_inner(init, kw, fn_effects, current_fn_effects, ctx, errors);
+                check_defer_body_block(body, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             Stmt::Reveal { .. } => {}
         }
@@ -12112,6 +12216,16 @@ impl MapLitCtx {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, None, errors);
             }
+            // Plan 110 D188: walk init + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, None, errors);
+                for stmt in &body.stmts {
+                    self.walk_stmt(stmt, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, None, errors);
+                }
+            }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, None, errors);
             }
@@ -12951,6 +13065,16 @@ impl MapLitAnnotator {
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, None);
+            }
+            // Plan 110 D188: walk init + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, None);
+                for stmt in &mut body.stmts {
+                    self.walk_stmt(stmt);
+                }
+                if let Some(t) = &mut body.trailing {
+                    self.walk_expr(t, None);
+                }
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, None);

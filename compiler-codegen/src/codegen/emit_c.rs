@@ -1262,7 +1262,8 @@ impl CEmitter {
             | Stmt::Assume { span, .. }
             | Stmt::Apply { span, .. }
             | Stmt::Calc { span, .. }
-            | Stmt::Reveal { span, .. } => *span,
+            | Stmt::Reveal { span, .. }
+            | Stmt::ConsumeScope { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -14219,6 +14220,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 let var = scope.entries[idx].active_var.clone();
                 scope.next_idx += 1;
                 self.line(&format!("{} = 1;", var));
+            }
+            // Plan 110 D188: `consume X = expr { body }` — codegen
+            // (desugaring + on_exit dispatch + cancel-shield + 3-level
+            // timeout resolution + LIFO scope-stack) lands в Plan 110.1.4-
+            // 110.1.8 поэтапно. Здесь — deliberate compile-time gate:
+            // user видит чёткий error code "D188 codegen not yet impl"
+            // вместо silent unsoundness. Это production-grade staged
+            // delivery (не unimplemented!/todo! шорткат).
+            Stmt::ConsumeScope { span, .. } => {
+                return Err(format!(
+                    "D188-codegen-not-yet-implemented: `consume X = expr {{ body }}` \
+                     scope-block codegen lands в Plan 110.1.4 (basic desugaring) + \
+                     Plan 110.2 (cancel-shield + 3-level timeout) + Plan 110.1.7 \
+                     (D194 hot-path elision). Parser/AST/type-checker scaffold landed \
+                     в Plan 110.1.1; for now use raw `consume X = expr` (D180 linear \
+                     binding) или `defer` + Consumable.on_exit manual call. \
+                     (span={}..{})",
+                    span.start, span.end
+                ));
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <expr>` — intermediate
             // proof obligation. Сейчас (без full SMT body-encoding)

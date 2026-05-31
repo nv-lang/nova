@@ -155,6 +155,17 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         Stmt::Throw { value, .. } => normalize_expr(value, sigs),
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => normalize_expr(body, sigs),
+        // Plan 110 D188: consume X = init() { body } — walk init expr +
+        // body block (stmts + trailing).
+        Stmt::ConsumeScope { init, body, .. } => {
+            normalize_expr(init, sigs);
+            for stmt in &mut body.stmts {
+                normalize_stmt(stmt, sigs);
+            }
+            if let Some(t) = &mut body.trailing {
+                normalize_expr(t, sigs);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => normalize_expr(expr, sigs),
         Stmt::Break(_) | Stmt::Continue(_) => {}
         // Ф.4.1: apply — ghost, аргументы нормализуем.

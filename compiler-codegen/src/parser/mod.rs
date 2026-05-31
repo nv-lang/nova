@@ -3445,8 +3445,13 @@ impl Parser {
     }
 
     /// Plan 100.1 (D133 / D9): `consume tx = expr` — explicit ownership binding.
+    /// Plan 110 (D188): `consume tx = expr { body }` — scope-block с
+    /// автоматическим вызовом `Consumable.on_exit` при выходе.
+    ///
     /// Парсится из `parse_stmt_or_expr` при lookahead KwConsume + Ident/KwMut.
-    fn parse_consume_let(&mut self) -> Result<LetDecl, Diagnostic> {
+    /// Lookahead `{` после init expr (с disabled trailing-block) решает между
+    /// scope-block (Stmt::ConsumeScope) и raw form (Stmt::Let).
+    fn parse_consume_decl_or_scope(&mut self) -> Result<Stmt, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConsume)?;
         // `consume mut tx` — не валидно: consume = full transfer,
@@ -3468,10 +3473,58 @@ impl Parser {
         };
         self.expect(&TokenKind::Eq)?;
         self.skip_newlines();
-        let value = self.parse_expr()?;
+        // Parse init expression с disabled trailing-block чтобы не путать
+        // `init() { body }` с trailing-block call syntax. Struct literals
+        // разрешены (no_struct_lit НЕ устанавливаем — `Config { ... }`
+        // как init остаётся валидным).
+        let saved_trailing = self.no_trailing_block;
+        self.no_trailing_block = true;
+        let value_result = self.parse_expr();
+        self.no_trailing_block = saved_trailing;
+        let value = value_result?;
+
+        // Plan 110 D188: lookahead `{` после init expr — scope-block form.
+        // Newline между init и `{` разрешён.
+        let saved_pos = self.pos;
+        self.skip_newlines();
+        if matches!(self.peek().kind, TokenKind::LBrace) {
+            // Scope-block form требует single-ident immutable binding.
+            let binding = match &pattern {
+                Pattern::Ident { name, is_mut: false, .. } => name.clone(),
+                Pattern::Ident { is_mut: true, .. } => {
+                    return Err(Diagnostic::new(
+                        "Plan 110 D188: `consume mut X = expr { body }` is not valid; \
+                         scope-block requires immutable single-ident binding."
+                            .to_string(),
+                        self.peek().span,
+                    ));
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "Plan 110 D188: `consume X = expr { body }` requires single \
+                         identifier binding (destructure not allowed in scope-block; \
+                         use raw `consume X = expr` for linear ownership transfer)."
+                            .to_string(),
+                        self.peek().span,
+                    ));
+                }
+            };
+            let body = self.parse_block()?;
+            let span = start.merge(body.span);
+            self.expect_newline_or_eof().ok();
+            return Ok(Stmt::ConsumeScope {
+                binding,
+                type_annot: ty,
+                init: value,
+                body,
+                span,
+            });
+        }
+        // Не scope-block — rewind newlines + raw form (D180).
+        self.pos = saved_pos;
         let span = start.merge(value.span);
         self.expect_newline_or_eof().ok();
-        Ok(LetDecl {
+        Ok(Stmt::Let(LetDecl {
             mutable: false,
             pattern,
             ty,
@@ -3479,7 +3532,7 @@ impl Parser {
             span,
             is_ghost: false,
             consume: true,
-        })
+        }))
     }
 
     /// Plan 114 (D184) helper: pattern is structural (constructor /
@@ -7366,8 +7419,10 @@ impl Parser {
             // Lookahead: `consume <ident>` или `consume mut` — не путать
             // с `consume` как часть expression (method call на receiver).
             TokenKind::KwConsume if matches!(self.peek_at(1).kind, TokenKind::Ident(_) | TokenKind::KwMut) => {
-                let let_decl = self.parse_consume_let()?;
-                Ok(StmtOrExpr::Stmt(Stmt::Let(let_decl)))
+                // Plan 110 D188: returns either Stmt::Let (raw form, D180)
+                // или Stmt::ConsumeScope (block form, D188).
+                let stmt = self.parse_consume_decl_or_scope()?;
+                Ok(StmtOrExpr::Stmt(stmt))
             }
             _ => {
                 let expr = self.parse_expr()?;
