@@ -34,13 +34,13 @@ test "M:N: 16 fibers выполняются на worker-пуле + распре�
     runtime.init(4)
 
     // 16 mut slots — each spawn writes own slot's worker_id.
-    let mut w00 = -1; let mut w01 = -1; let mut w02 = -1; let mut w03 = -1
-    let mut w04 = -1; let mut w05 = -1; let mut w06 = -1; let mut w07 = -1
-    let mut w08 = -1; let mut w09 = -1; let mut w10 = -1; let mut w11 = -1
-    let mut w12 = -1; let mut w13 = -1; let mut w14 = -1; let mut w15 = -1
+    mut w00 = -1; mut w01 = -1; mut w02 = -1; mut w03 = -1
+    mut w04 = -1; mut w05 = -1; mut w06 = -1; mut w07 = -1
+    mut w08 = -1; mut w09 = -1; mut w10 = -1; mut w11 = -1
+    mut w12 = -1; mut w13 = -1; mut w14 = -1; mut w15 = -1
 
-    let mut attempt = 0
-    let mut distributed = false
+    mut attempt = 0
+    mut distributed = false
 
     while attempt < 20 {
         // Сброс слотов перед каждым независимым batch'ем.
@@ -72,7 +72,7 @@ test "M:N: 16 fibers выполняются на worker-пуле + распре�
         // worker'ах — каждый slot >= 0 (а не -1 = main-thread).
         // Проверяется каждую попытку: реальная потеря работы или
         // выполнение на main вместо worker'а — мгновенный fail.
-        let total_ran =
+        ro total_ran =
             (if w00 >= 0 { 1 } else { 0 }) +
             (if w01 >= 0 { 1 } else { 0 }) +
             (if w02 >= 0 { 1 } else { 0 }) +
@@ -92,7 +92,7 @@ test "M:N: 16 fibers выполняются на worker-пуле + распре�
         assert(total_ran == 16)
 
         // (2) РАСПРЕДЕЛЕНИЕ (статистически): не все 16 на worker 0.
-        let on_w0 =
+        ro on_w0 =
             (if w00 == 0 { 1 } else { 0 }) +
             (if w01 == 0 { 1 } else { 0 }) +
             (if w02 == 0 { 1 } else { 0 }) +

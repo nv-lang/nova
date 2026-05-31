@@ -22,22 +22,22 @@ fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 fn show[T Printable](x T, sb StringBuilder) -> () => x.fmt(sb)
 
 test "Money satisfies Printable bound via str.from(T) overload" {
-    let m = Money { cents: 1250 }
+    ro m = Money { cents: 1250 }
     consume sb = StringBuilder.new()
     show(m, sb)
     assert(sb.as_str() == "Money(1250)")
 }
 
 test "Coin satisfies Printable bound via @into → str chain" {
-    let c = Coin { value: 7 }
+    ro c = Coin { value: 7 }
     consume sb = StringBuilder.new()
     show(c, sb)
     assert(sb.as_str() == "Coin(7)")
 }
 
 test "synthesized fmt composable with explicit appends" {
-    let m1 = Money { cents: 100 }
-    let m2 = Money { cents: 250 }
+    ro m1 = Money { cents: 100 }
+    ro m2 = Money { cents: 250 }
     consume sb = StringBuilder.new()
     sb.append("first=")
     show(m1, sb)

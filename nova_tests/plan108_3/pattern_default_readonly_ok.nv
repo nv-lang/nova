@@ -3,7 +3,7 @@
 module nova_tests.plan108_3.pattern_default_readonly_ok
 
 test "pattern default — both immutable read OK" {
-    let (a, b) = ([10, 20], [30, 40])
+    ro (a, b) = ([10, 20], [30, 40])
     assert(a.len() == 2)
     assert(b.len() == 2)
     assert(a[0] == 10)

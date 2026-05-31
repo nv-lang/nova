@@ -24,9 +24,9 @@ fn Item @compare(other Item) -> int =>
 fn same_hash[T Hashable](a T, b T) -> bool => a.hash() == b.hash()
 
 test "generic [T Hashable] — instance-dispatch на typevar" {
-    let a = Item { id: 7 }
-    let b = Item { id: 7 }
-    let c = Item { id: 9 }
+    ro a = Item { id: 7 }
+    ro b = Item { id: 7 }
+    ro c = Item { id: 9 }
     assert(same_hash[Item](a, b))
     assert(!same_hash[Item](a, c))
 }
@@ -37,9 +37,9 @@ test "generic [T Hashable] — instance-dispatch на typevar" {
 fn are_equal[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "generic [T Equatable] — instance-dispatch" {
-    let a = Item { id: 3 }
-    let b = Item { id: 3 }
-    let c = Item { id: 4 }
+    ro a = Item { id: 3 }
+    ro b = Item { id: 3 }
+    ro c = Item { id: 4 }
     assert(are_equal[Item](a, b))
     assert(!are_equal[Item](a, c))
 }
@@ -50,8 +50,8 @@ test "generic [T Equatable] — instance-dispatch" {
 fn cmp_of[T Comparable](a T, b T) -> int => a.compare(b)
 
 test "generic [T Comparable] — instance-dispatch возвращает int (D183)" {
-    let lo = Item { id: 1 }
-    let hi = Item { id: 5 }
+    ro lo = Item { id: 1 }
+    ro hi = Item { id: 5 }
     assert(cmp_of[Item](lo, hi) < 0)
     assert(cmp_of[Item](hi, lo) > 0)
     assert(cmp_of[Item](lo, lo) == 0)
@@ -74,9 +74,9 @@ fn hash_eq_match[T HashEq](a T, b T) -> bool =>
     a.hash() == b.hash() && a.equals(b)
 
 test "multi-bound именованный protocol — hash + equals вместе" {
-    let a = Item { id: 11 }
-    let b = Item { id: 11 }
-    let c = Item { id: 12 }
+    ro a = Item { id: 11 }
+    ro b = Item { id: 11 }
+    ro c = Item { id: 12 }
     assert(hash_eq_match[Item](a, b))
     assert(!hash_eq_match[Item](a, c))
 }

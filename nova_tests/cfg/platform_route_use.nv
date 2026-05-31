@@ -14,7 +14,7 @@ module cfg.platform_route_use
 import nova_tests.cfg.platform_route.{greet}
 
 test "filename suffix dispatch: greet returns OS-specific name" {
-    let g = greet()
+    ro g = greet()
     // Тест должен PASS на любом из 3-х platforms — на каждом active
     // ровно один impl_*.nv peer. Проверяем что результат — один из
     // ожидаемых OS names. Если filename suffix не работает — будет

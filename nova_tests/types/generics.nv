@@ -44,7 +44,7 @@ test "generic identity на bool" {
 }
 
 test "generic с двумя параметрами" {
-    let p = pair(1, "x")
+    ro p = pair(1, "x")
     assert(p.0 == 1)
     assert(p.1 == "x")
 }
@@ -55,25 +55,25 @@ test "generic с одинаковыми T для всех аргументов" 
 }
 
 test "generic record type" {
-    let b = Box { value: 42 }
+    ro b = Box { value: 42 }
     assert(box_get(b) == 42)
 }
 
 test "generic record на разных типах" {
-    let b1 = Box { value: 100 }
-    let b2 = Box { value: "world" }
+    ro b1 = Box { value: 100 }
+    ro b2 = Box { value: "world" }
     assert(b1.value == 100)
     assert(b2.value == "world")
 }
 
 test "generic record с двумя параметрами" {
-    let p = Pair { fst: 1, snd: "k" }
+    ro p = Pair { fst: 1, snd: "k" }
     assert(p.fst == 1)
     assert(p.snd == "k")
 }
 
 test "generic функция возвращает generic record" {
-    let b = Box { value: identity(7) }
+    ro b = Box { value: identity(7) }
     assert(b.value == 7)
 }
 
@@ -93,12 +93,12 @@ type TwoBounds[K Hashable, V Eq] {
 }
 
 test "D72 bound: type-decl с одним bound parsed" {
-    let w = WithBound { value: 42 }
+    ro w = WithBound { value: 42 }
     assert(w.value == 42)
 }
 
 test "D72 bound: type-decl с двумя bound'ами parsed" {
-    let t = TwoBounds { key: "k", value: 7 }
+    ro t = TwoBounds { key: "k", value: 7 }
     assert(t.key == "k")
     assert(t.value == 7)
 }
@@ -118,28 +118,28 @@ fn parse_one[T](x T) -> T {
 }
 
 test "D38 turbofish: function call with one type-arg" {
-    let n = parse_one[int](42)
+    ro n = parse_one[int](42)
     assert(n == 42)
 }
 
 test "D38 turbofish: function call with two type-args" {
-    let p = pair[int, str](7, "hi")
+    ro p = pair[int, str](7, "hi")
     assert(p.0 == 7)
     assert(p.1 == "hi")
 }
 
 test "D38 turbofish не ломает обычный Index" {
     // arr[i] остаётся Index'ом — за `]` идёт `;` / EOL / op, не `(`/`.IDENT(`/`?`.
-    let xs = [10, 20, 30]
+    ro xs = [10, 20, 30]
     assert(xs[0] == 10)
     assert(xs[1] == 20)
-    let mid = xs[1] + xs[2]
+    ro mid = xs[1] + xs[2]
     assert(mid == 50)
 }
 
 test "D38 turbofish: arr[i].field остаётся Index→Member (не turbofish)" {
     // post-`]` token — `.field` без `(` после; это НЕ turbofish.
-    let bs = [Box { value: 1 }, Box { value: 2 }]
+    ro bs = [Box { value: 1 }, Box { value: 2 }]
     assert(bs[0].value == 1)
     assert(bs[1].value == 2)
 }

@@ -14,7 +14,7 @@ fn Transaction consume @commit() -> () { () }
 
 test "vec.push без consume — tx остаётся Live → D133-not-consumed" {
     consume tx = Transaction { id: 1 }
-    let mut txs = []
+    mut txs = []
     txs.push(tx)                               // push is non-consume → tx NOT consumed
     // ОШИБКА D133-not-consumed: tx is still Live at scope exit.
 }

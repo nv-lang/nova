@@ -17,6 +17,6 @@ fn make_pair_redundant(key int, value int) -> Pair =>
 
 
 test "redundant { name: name } — should reject (D52 §2)" {
-    let p = make_pair_redundant(1, 2)
+    ro p = make_pair_redundant(1, 2)
     assert(p.key == 1)
 }

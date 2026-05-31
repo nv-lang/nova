@@ -5,8 +5,8 @@
 module nova_tests.plan103_3.rwlock_writer_priority
 
 test "writer-priority: writer acquires after readers finish, not starved" {
-    let mut rw = RwLock.new()
-    let mut writer_acquired = AtomicBool.new(false)
+    mut rw = RwLock.new()
+    mut writer_acquired = AtomicBool.new(false)
 
     // 2 readers hold the lock
     rw.read()
@@ -29,7 +29,7 @@ test "writer-priority: writer acquires after readers finish, not starved" {
 }
 
 test "writer-priority: try_read fails while write_locked" {
-    let mut rw = RwLock.new()
+    mut rw = RwLock.new()
     rw.write()
     // Writer holds lock — new reader cannot acquire
     assert(rw.try_read() == false)

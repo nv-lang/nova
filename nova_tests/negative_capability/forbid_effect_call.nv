@@ -12,7 +12,7 @@ type Counter effect {
 fn use_counter() Counter -> int => Counter.next()
 
 test "forbid Counter блокирует use_counter" {
-    let _ = forbid Counter {
+    ro _ = forbid Counter {
         use_counter()
     }
     assert(true)

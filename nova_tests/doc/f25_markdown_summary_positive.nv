@@ -93,8 +93,8 @@ test "formatted" {
 }
 
 test "tricky markdown does not affect runtime composition" {
-    let r = circle_area_approx(2)
+    ro r = circle_area_approx(2)
     assert(r == 12)
-    let combined = collection_helper(linked_fn(versioned(1)))
+    ro combined = collection_helper(linked_fn(versioned(1)))
     assert(combined == 22)
 }

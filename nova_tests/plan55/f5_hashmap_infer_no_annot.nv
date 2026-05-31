@@ -11,14 +11,14 @@ import std.collections.hashmap.{HashMap}
 
 
 test "let mut m = [k:v] без annotation → HashMap" {
-    let mut m = ["a": 1, "b": 2, "c": 3]
+    mut m = ["a": 1, "b": 2, "c": 3]
     assert(m.len() == 3)
     assert(m.get("a") == Some(1))
 }
 
 
 test "let mut m = [int:str] без annotation → HashMap" {
-    let mut m = [1: "one", 2: "two", 3: "three"]
+    mut m = [1: "one", 2: "two", 3: "three"]
     assert(m.len() == 3)
     assert(m.get(2) == Some("two"))
 }

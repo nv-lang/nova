@@ -6,7 +6,7 @@
 module nova_tests.plan100_4_4.neg_multi_defer_interrupt_in_body
 
 fn process() -> int {
-    let x = with Time = effect Time {
+    ro x = with Time = effect Time {
         sleep(_ms) { () }
         now() { 0 }
         now_ms() { 0 }

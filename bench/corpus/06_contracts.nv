@@ -28,8 +28,8 @@ fn binary_search(arr []int, target int, lo int, hi int) -> int
     decreases hi - lo
 {
     if lo >= hi { return -1 }
-    let mid = lo + (hi - lo) / 2
-    let v = arr[mid]
+    ro mid = lo + (hi - lo) / 2
+    ro v = arr[mid]
     if v == target { mid }
     else if v < target { binary_search(arr, target, mid + 1, hi) }
     else { binary_search(arr, target, lo, mid) }
@@ -40,14 +40,14 @@ fn sum_positive(xs []int) -> int
     requires xs.len() > 0
     ensures result >= 0
 {
-    let mut s = 0
-    let mut i = 0
+    mut s = 0
+    mut i = 0
     while i < xs.len()
         invariant i >= 0
         invariant i <= xs.len()
         invariant s >= 0
     {
-        let x = xs[i]
+        ro x = xs[i]
         if x > 0 { s = s + x }
         i = i + 1
     }

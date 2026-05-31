@@ -9,9 +9,9 @@ module expected_runtime.errdefer_panic_nested_mainflow
 
 
 fn main() Io -> () {
-    let _ = {
+    ro _ = {
         errdefer { println("OUTER_ERRDEFER") }
-        let _ = {
+        ro _ = {
             errdefer { println("INNER_ERRDEFER") }
             panic("deep")
             0

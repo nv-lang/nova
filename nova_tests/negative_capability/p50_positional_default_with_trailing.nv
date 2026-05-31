@@ -19,7 +19,7 @@ fn run_scaled(x int, factor int = 2, body fn(int) -> int = identity_fn) -> int =
 test "positional defaulted param alongside trailing form rejected" {
     // trailing-форма заполняет `body` (исключение из правила), но `3`
     // лёг позиционно на `factor` (дефолтный) → keyword-only ошибка.
-    let _ = run_scaled(5, 3) fn(n int) -> int {
+    ro _ = run_scaled(5, 3) fn(n int) -> int {
         n + 1
     }
     assert(true)

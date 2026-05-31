@@ -22,7 +22,7 @@ fn make_junk(i int) -> Junk =>
 test "gc differential: heap bounded после 100k короткоживущих + collect()" {
     // Прогрев + baseline
     gc.collect()
-    let h0 = gc.heap_size()
+    ro h0 = gc.heap_size()
 
     if h0 == 0 {
         // malloc backend: skip
@@ -31,14 +31,14 @@ test "gc differential: heap bounded после 100k короткоживущих
     } else {
         // 100k Junk-объектов × 32 bytes = ~3.2 MB если бы все жили.
         // После gc.collect() ожидаем heap << 3.2 MB.
-        let mut sum = 0
+        mut sum = 0
         for i in 0..100_000 {
-            let j = make_junk(i)
+            ro j = make_junk(i)
             sum = sum + j.a
         }
-        let h_peak = gc.heap_size()
+        ro h_peak = gc.heap_size()
         gc.collect()
-        let h_after = gc.heap_size()
+        ro h_after = gc.heap_size()
 
         println("baseline=${h0} peak=${h_peak} after_collect=${h_after}")
 
@@ -58,22 +58,22 @@ test "gc differential: heap bounded после 100k короткоживущих
 
 test "gc differential: 10 раундов аллокация+collect — heap не растёт линейно" {
     gc.collect()
-    let h0 = gc.heap_size()
+    ro h0 = gc.heap_size()
 
     if h0 == 0 {
         // malloc backend: skip
         println("(skip: heap_size unsupported)")
         assert(true)
     } else {
-        let mut total = 0
-        let mut max_heap = h0
+        mut total = 0
+        mut max_heap = h0
         for round in 0..10 {
             for i in 0..50_000 {
-                let j = make_junk(i + round * 100_000)
+                ro j = make_junk(i + round * 100_000)
                 total = total + j.a
             }
             gc.collect()
-            let h = gc.heap_size()
+            ro h = gc.heap_size()
             if h > max_heap {
                 max_heap = h
             }
@@ -83,7 +83,7 @@ test "gc differential: 10 раундов аллокация+collect — heap н�
 
         // Если linear leak: 10 раундов × 50k × 32 bytes = 16 MB ростом.
         // С GC: heap должен быть bounded — у меня consery: < h0 + 4 MB.
-        let bound = h0 + 4_194_304  // 4 MB headroom
+        ro bound = h0 + 4_194_304  // 4 MB headroom
         assert(max_heap < bound)
         assert(total > 0)
     }

@@ -10,8 +10,8 @@ module nova_tests.plan103_6.realtime_try_lock_for_zero_warn
 }
 
 test "Mutex.try_lock_for warns in #realtime fn" {
-    let mut m = Mutex.new()
-    let got = _rt_try_lock_for_short(m)
+    mut m = Mutex.new()
+    ro got = _rt_try_lock_for_short(m)
     if got {
         m.unlock()
     }

@@ -13,7 +13,7 @@ fn Transaction consume @commit() -> () { () }
 
 test "consume-closure — двойной invoke даёт error" {
     consume tx = Transaction { id: 1 }
-    let commit_it = || tx.commit()             // consume-closure
+    ro commit_it = || tx.commit()             // consume-closure
     commit_it()                                 // ✅ первый invoke
     // ОШИБКА D157 + D133 use-after-consume: closure уже Consumed,
     // и tx тоже Consumed.

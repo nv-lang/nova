@@ -3,8 +3,8 @@
 module nova_tests.plan108_3.for_default_readonly_ok
 
 test "for default loop-var — read OK" {
-    let mut arr = [1, 2, 3]
-    let mut sum = 0
+    mut arr = [1, 2, 3]
+    mut sum = 0
     for x in arr {
         sum = sum + x
     }

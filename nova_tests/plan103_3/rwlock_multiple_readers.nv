@@ -7,22 +7,22 @@
 module nova_tests.plan103_3.rwlock_multiple_readers
 
 test "RwLock allows multiple concurrent readers" {
-    let mut rw = RwLock.new()
-    let shared_val = AtomicInt.new(42)
-    let mut active_readers = AtomicInt.new(0)
-    let mut max_concurrent = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    mut rw = RwLock.new()
+    ro shared_val = AtomicInt.new(42)
+    mut active_readers = AtomicInt.new(0)
+    mut max_concurrent = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(4)
 
     parallel for _i in 0..4 {
         rw.read()
         active_readers.fetch_add(1)
         // Sample max
-        let cur = active_readers.load()
-        let prev = max_concurrent.load()
+        ro cur = active_readers.load()
+        ro prev = max_concurrent.load()
         if cur > prev { max_concurrent.store(cur) }
         // Read shared value
-        let v = shared_val.load()
+        ro v = shared_val.load()
         assert(v == 42)
         Time.sleep(20)
         active_readers.fetch_add(-1)
@@ -36,7 +36,7 @@ test "RwLock allows multiple concurrent readers" {
 }
 
 test "RwLock reader_count() tracks active readers" {
-    let mut rw = RwLock.new()
+    mut rw = RwLock.new()
     assert(rw.reader_count() == 0)
     rw.read()
     assert(rw.reader_count() == 1)

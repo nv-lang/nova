@@ -14,29 +14,29 @@
 module plan83_12.tcp_read_eof_test
 
 test "TcpStream: read after server closes → Ok (EOF)" {
-    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    let lst = lst_r.unwrap()
-    let port = lst.local_port()
+    ro lst = lst_r.unwrap()
+    ro port = lst.local_port()
 
-    let mut read_ok = false
+    mut read_ok = false
     supervised {
         // Server: accept and immediately close (sends FIN to client).
         spawn {
-            let acc_r = lst.accept()
+            ro acc_r = lst.accept()
             assert(acc_r.is_ok())
-            let srv = acc_r.unwrap()
+            ro srv = acc_r.unwrap()
             srv.close()
             lst.close()
         }
         // Client: connect then read → should get EOF (Ok).
         spawn {
-            let conn_r = TcpStream.connect(SocketAddr.loopback(port))
+            ro conn_r = TcpStream.connect(SocketAddr.loopback(port))
             assert(conn_r.is_ok())
-            let cli = conn_r.unwrap()
+            ro cli = conn_r.unwrap()
             // Give server time to close and FIN to arrive.
             Time.sleep(50)
-            let r = cli.read_bytes(512)
+            ro r = cli.read_bytes(512)
             // UV_EOF → Ok("") in our implementation.
             read_ok = r.is_ok()
             cli.close()

@@ -5,5 +5,5 @@
 module map_literals.negative_keyword_field
 
 fn main() -> () {
-    let bad = { type: 1 }
+    ro bad = { type: 1 }
 }

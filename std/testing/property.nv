@@ -38,9 +38,9 @@ import std.testing.handlers as th
 /// (use ambient Random handler).
 #stable(since = "0.1")
 export type PropertyConfig {
-    readonly num_tests int
-    readonly max_shrink_steps int
-    readonly seed u64
+    ro num_tests int
+    ro max_shrink_steps int
+    ro seed u64
 }
 
 /// Default PropertyConfig (100 cases, 1000 shrink, seed=0).
@@ -56,8 +56,8 @@ export fn PropertyConfig.default() -> PropertyConfig =>
 /// Throw'нутое из `assert_prop` при failure. Runner catches + начинает shrinking.
 #stable(since = "0.1")
 export type PropertyFailed {
-    readonly message str
-    readonly context str
+    ro message str
+    ro context str
 }
 
 /// Create PropertyFailed с message. Context заполняется runner'ом.
@@ -102,8 +102,8 @@ export type Generator[T] protocol {
 /// Uniform int generator в диапазоне `[min, max]`. Shrinks к 0 / границам.
 #stable(since = "0.1")
 export type IntGen {
-    readonly min int
-    readonly max int
+    ro min int
+    ro max int
 }
 
 /// Create IntGen с custom range.
@@ -119,8 +119,8 @@ export fn IntGen.default() -> IntGen =>
 /// Generate uniform int в `[min, max]`.
 #stable(since = "0.1")
 export fn IntGen @generate() Random -> int {
-    let range = @max - @min + 1
-    let raw = (Random.u64() as int)
+    ro range = @max - @min + 1
+    ro raw = (Random.u64() as int)
     @min + (raw.abs() % range)
 }
 
@@ -128,7 +128,7 @@ export fn IntGen @generate() Random -> int {
 #stable(since = "0.1")
 export fn IntGen @shrink(value int) -> Iter[int] {
     // Шринкаем к 0 — стандартная стратегия для интов
-    let mut steps []int = []
+    mut steps []int = []
     if value > 0 {
         steps.push(0)
         if value > 1 { steps.push(value / 2) }
@@ -158,7 +158,7 @@ export fn BoolGen @generate() Random -> bool =>
 /// Shrink bool — `true` → `false`, `false` → ничего.
 #stable(since = "0.1")
 export fn BoolGen @shrink(value bool) -> Iter[bool] {
-    let mut steps []bool = []
+    mut steps []bool = []
     if value { steps.push(false) }
     steps.iter()
 }
@@ -167,7 +167,7 @@ export fn BoolGen @shrink(value bool) -> Iter[bool] {
 /// Str generator — печатные ASCII длиной `[0, max_len]`. Shrinks к "" / коротким префиксам.
 #stable(since = "0.1")
 export type StrGen {
-    readonly max_len int
+    ro max_len int
 }
 
 /// Create StrGen с custom max length.
@@ -183,13 +183,13 @@ export fn StrGen.default() -> StrGen =>
 /// Generate random ASCII string `[0..max_len]`.
 #stable(since = "0.1")
 export fn StrGen @generate() Random -> str {
-    let len = (Random.u64() as int).abs() % (@max_len + 1)
+    ro len = (Random.u64() as int).abs() % (@max_len + 1)
     consume buf = StringBuilder.new()
     for i in 0..len {
         // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char.
         // Plan 34 Ф.5.2: `int as char` запрещён D54.
-        let code = 32 + ((Random.u64() as int).abs() % 95)
-        let c = match char.try_from(code) {
+        ro code = 32 + ((Random.u64() as int).abs() % 95)
+        ro c = match char.try_from(code) {
             Ok(ch) => ch
             Err(_) => '?'
         }
@@ -201,8 +201,8 @@ export fn StrGen @generate() Random -> str {
 /// Shrink string — "" / половина / на 1 короче.
 #stable(since = "0.1")
 export fn StrGen @shrink(value str) -> Iter[str] {
-    let mut steps []str = []
-    let len = value.len
+    mut steps []str = []
+    ro len = value.len
     if len > 0 {
         steps.push("")                                  // пустая строка
         if len > 1 { steps.push(value[0..len / 2]) }    // половина
@@ -216,8 +216,8 @@ export fn StrGen @shrink(value str) -> Iter[str] {
 /// Shrinks к пустому массиву / меньшим.
 #stable(since = "0.1")
 export type ArrayGen[T] {
-    readonly elem Generator[T]
-    readonly max_len int
+    ro elem Generator[T]
+    ro max_len int
 }
 
 /// Create ArrayGen с custom elem generator + max length.
@@ -235,8 +235,8 @@ export fn ArrayGen[T].default(elem Generator[T]) -> ArrayGen[T] => {
 /// Generate random `[]T` длиной `[0, max_len]` (каждый elem через nested generator).
 #stable(since = "0.1")
 export fn ArrayGen[T] @generate() Random -> []T {
-    let len = (Random.u64() as int).abs() % (@max_len + 1)
-    let mut result []T = []
+    ro len = (Random.u64() as int).abs() % (@max_len + 1)
+    mut result []T = []
     for i in 0..len {
         result.push(@elem.generate())
     }
@@ -246,20 +246,20 @@ export fn ArrayGen[T] @generate() Random -> []T {
 /// Shrink array — empty / halves / без последнего.
 #stable(since = "0.1")
 export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
-    let mut steps [][]T = []
-    let len = value.len
+    mut steps [][]T = []
+    ro len = value.len
     if len > 0 {
         // Пустой массив
         steps.push([])
         // Половина (первая)
         if len > 1 {
-            let mut half []T = []
+            mut half []T = []
             for i in 0..len / 2 { half.push(value[i]) }
             steps.push(half)
         }
         // Без последнего элемента
         if len > 1 {
-            let mut shorter []T = []
+            mut shorter []T = []
             for i in 0..len - 1 { shorter.push(value[i]) }
             steps.push(shorter)
         }
@@ -296,14 +296,14 @@ fn shrink_loop[T](gen Generator[T],
                   initial T,
                   initial_failure PropertyFailed,
                   max_steps int) -> (T, PropertyFailed) {
-    let mut current = initial
-    let mut current_failure = initial_failure
-    let mut steps = 0
+    mut current = initial
+    mut current_failure = initial_failure
+    mut steps = 0
 
     loop {
         if steps >= max_steps { break }
 
-        let mut found_smaller = false
+        mut found_smaller = false
         for candidate in gen.shrink(current) {
             if steps >= max_steps { break }
             steps += 1
@@ -354,11 +354,11 @@ export fn property_with[T](gen Generator[T],
                             body fn(T) Fail[PropertyFailed] -> (),
                             cfg PropertyConfig) Random Fail[PropertyFailed] -> () {
     for i in 0..cfg.num_tests {
-        let value = gen.generate()
+        ro value = gen.generate()
         match run_once(body, value) {
             Pass => ()
             Fail(e) => {
-                let (minimal, final_failure) = shrink_loop(
+                ro (minimal, final_failure) = shrink_loop(
                     gen, body, value, e, cfg.max_shrink_steps,
                 )
                 throw PropertyFailed {
@@ -378,9 +378,9 @@ export fn property_with[T](gen Generator[T],
 // Простейший property — обращение списка дважды даёт исходный.
 test "reverse-reverse == identity для []int" {
     with Random = th.seeded(42) {
-        let gen = ArrayGen.default(IntGen.default())
+        ro gen = ArrayGen.default(IntGen.default())
         property(gen, |xs| {
-            let twice = xs.reverse().reverse()
+            ro twice = xs.reverse().reverse()
             assert_prop(twice == xs)
         })
     }
@@ -389,10 +389,10 @@ test "reverse-reverse == identity для []int" {
 // Idempotence sort'а.
 test "sort idempotent для []int" {
     with Random = th.seeded(42) {
-        let gen = ArrayGen.default(IntGen.default())
+        ro gen = ArrayGen.default(IntGen.default())
         property(gen, |xs| {
-            let once = xs.sort()
-            let twice = once.sort()
+            ro once = xs.sort()
+            ro twice = once.sort()
             assert_prop(once == twice)
         })
     }
@@ -401,10 +401,10 @@ test "sort idempotent для []int" {
 // Длина после concat = сумма длин.
 test "len(a + b) == len(a) + len(b) для []int" {
     with Random = th.seeded(123) {
-        let gen = ArrayGen.default(IntGen.default())
+        ro gen = ArrayGen.default(IntGen.default())
         property(gen, |xs| {
-            let ys = xs.reverse()       // любой второй массив
-            let combined = xs + ys
+            ro ys = xs.reverse()       // любой второй массив
+            ro combined = xs + ys
             assert_prop(combined.len() == xs.len() + ys.len())
         })
     }
@@ -413,10 +413,10 @@ test "len(a + b) == len(a) + len(b) для []int" {
 // String concat ассоциативен.
 test "string concat associative" {
     with Random = th.seeded(7) {
-        let gen = StrGen.default()
+        ro gen = StrGen.default()
         property(gen, |s| {
-            let combined1 = (s + s) + s
-            let combined2 = s + (s + s)
+            ro combined1 = (s + s) + s
+            ro combined2 = s + (s + s)
             assert_prop(combined1 == combined2)
         })
     }
@@ -425,7 +425,7 @@ test "string concat associative" {
 // Bool: !!x == x.
 test "double negation для bool" {
     with Random = th.seeded(1) {
-        let gen = BoolGen.new()
+        ro gen = BoolGen.new()
         property(gen, |b| {
             assert_prop(!!b == b)
         })
@@ -437,15 +437,15 @@ test "double negation для bool" {
 // runner найдёт массив с одним отрицательным элементом и шринкнет
 // его до минимального ([0]) или ([-1]).
 test "shrinking демо: ищем минимальный counterexample" {
-    let gen = ArrayGen.default(IntGen.new(-100, 100))
-    let mut caught = false
-    let mut min_size = 9999
+    ro gen = ArrayGen.default(IntGen.new(-100, 100))
+    mut caught = false
+    mut min_size = 9999
 
     with Random = th.seeded(99) {
         with Fail[PropertyFailed] = |e| interrupt () {
             property(gen, |xs| {
                 // Намеренно ложное свойство: «все элементы > 0»
-                let mut all_pos = true
+                mut all_pos = true
                 for x in xs {
                     if x <= 0 { all_pos = false }
                 }

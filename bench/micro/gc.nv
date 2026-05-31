@@ -15,8 +15,8 @@ type Node {
 
 bench "alloc 1k records" {
     measure {
-        let mut head Option[Node] = None
-        let mut i = 0
+        mut head Option[Node] = None
+        mut i = 0
         while i < 1000 {
             head = Some(Node { value: i, next: head })
             i = i + 1
@@ -28,9 +28,9 @@ bench "alloc 1k records" {
 
 bench "alloc 100 hashmaps" {
     measure {
-        let mut i = 0
+        mut i = 0
         while i < 100 {
-            let m = HashMap[int, int].new()
+            ro m = HashMap[int, int].new()
             bench.opaque(m)
             i = i + 1
         }

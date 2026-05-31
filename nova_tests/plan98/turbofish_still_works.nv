@@ -18,11 +18,11 @@ fn first_or[T](items []T, default_v T) -> T {
 }
 
 test "[]int — inference работает (примитив)" {
-    let xs []int = [10, 20, 30]
+    ro xs []int = [10, 20, 30]
     assert(first_or(xs, 0) == 10)
 }
 
 test "[]int — turbofish тоже работает (back-compat)" {
-    let xs []int = [10, 20, 30]
+    ro xs []int = [10, 20, 30]
     assert(first_or[int](xs, 0) == 10)
 }

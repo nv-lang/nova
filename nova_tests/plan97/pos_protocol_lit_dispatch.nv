@@ -12,9 +12,9 @@ export type Counter protocol {
 
 
 test "protocol-литерал + dispatch метода" {
-    let r = protocol Counter {
+    ro r = protocol Counter {
         incr() => 42
     }
-    let v = r.incr()
+    ro v = r.incr()
     assert(v == 42)
 }

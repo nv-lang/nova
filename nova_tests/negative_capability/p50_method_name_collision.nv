@@ -26,7 +26,7 @@ fn Cube @scaled(factor int = 3) -> int =>
     @side * factor
 
 test "method-name collision: keyword-only fires on positional default" {
-    let b = Box { base: 10 }
-    let _ = b.scaled(3)
+    ro b = Box { base: 10 }
+    ro _ = b.scaled(3)
     assert(true)
 }

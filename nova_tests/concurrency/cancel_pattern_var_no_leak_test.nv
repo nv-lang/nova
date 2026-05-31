@@ -9,10 +9,10 @@ module concurrency.cancel_pattern_var_no_leak_test
 
 
 test "pattern v bool — does not leak" {
-    let tok_b CancelToken[bool] = CancelToken.new()
+    ro tok_b CancelToken[bool] = CancelToken.new()
     tok_b.cancel(true)
-    let r_b = tok_b.reason()
-    let got_b = match r_b {
+    ro r_b = tok_b.reason()
+    ro got_b = match r_b {
         Some(v) => v        // v: bool
         None    => false
     }
@@ -23,10 +23,10 @@ test "pattern v bool — does not leak" {
 test "pattern v int — same name, different type, must work" {
     // Тот же name `v` что в предыдущем test. До Ф.1 fix — var_types['v']
     // leak'ил bool, тест fail'ил с stale-inference.
-    let tok_i CancelToken[int] = CancelToken.new()
+    ro tok_i CancelToken[int] = CancelToken.new()
     tok_i.cancel(42)
-    let r_i = tok_i.reason()
-    let got_i = match r_i {
+    ro r_i = tok_i.reason()
+    ro got_i = match r_i {
         Some(v) => v        // v: int (must NOT be bool!)
         None    => -1
     }
@@ -35,10 +35,10 @@ test "pattern v int — same name, different type, must work" {
 
 
 test "pattern v str — same name, str type, must work" {
-    let tok_s = CancelToken.new()
+    ro tok_s = CancelToken.new()
     tok_s.cancel("hello")
-    let r_s = tok_s.reason()
-    let got_s = match r_s {
+    ro r_s = tok_s.reason()
+    ro got_s = match r_s {
         Some(v) => v        // v: str
         None    => "no"
     }

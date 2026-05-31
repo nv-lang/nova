@@ -38,7 +38,7 @@ fn process(input int) -> int
     // ghost — snapshot для spec-only reasoning (не используется в
     // non-ghost expressions; ghost vars читаются только в специальных
     // контекстах: requires/ensures/invariant/другие ghost-stmt).
-    ghost let initial = input
+    ghost ro initial = input
 
     // assume — escape hatch. Использует non-ghost var `input`, не ghost.
     assume input >= 0
@@ -47,7 +47,7 @@ fn process(input int) -> int
     assert_static is_safe(input)
 
     // Регулярная обработка.
-    let doubled = input * 2
+    ro doubled = input * 2
     doubled / 2
 }
 
@@ -57,7 +57,7 @@ fn modify_a(a int, b int) -> int
     reads a, b
     modifies a
 {
-    let mut local = a + b
+    mut local = a + b
     local = local * 2
     local
 }
@@ -73,6 +73,6 @@ test "integration: все фичи bootstrap Plan 33" {
     assert(modify_a(3, 4) == 14)
 
     // Record с invariant — конструктор не падает.
-    let c = Counter { value: 42 }
+    ro c = Counter { value: 42 }
     assert(c.value == 42)
 }

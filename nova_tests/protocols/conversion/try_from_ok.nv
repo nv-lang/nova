@@ -22,31 +22,31 @@ fn Port.try_from(v int) -> Result[Port, str] =>
 
 
 test "try_from валидный порт -> Ok" {
-    let r = Port.try_from(8080)
+    ro r = Port.try_from(8080)
     assert(r.is_ok())
 }
 
 test "try_from -> Ok, значение payload корректно" {
-    let r = Port.try_from(443)
-    let p = r.unwrap_or(Port { n: 0 })
+    ro r = Port.try_from(443)
+    ro p = r.unwrap_or(Port { n: 0 })
     assert(p.n == 443)
 }
 
 test "try_from нижняя граница (1) -> Ok" {
-    let r = Port.try_from(1)
+    ro r = Port.try_from(1)
     assert(r.is_ok())
     assert(r.unwrap_or(Port { n: 0 }).n == 1)
 }
 
 test "try_from верхняя граница (65535) -> Ok" {
-    let r = Port.try_from(65535)
+    ro r = Port.try_from(65535)
     assert(r.is_ok())
     assert(r.unwrap_or(Port { n: 0 }).n == 65535)
 }
 
 test "try_from Ok-дискриминация через match" {
-    let r = Port.try_from(3000)
-    let ok = match r {
+    ro r = Port.try_from(3000)
+    ro ok = match r {
         Ok(_) => true
         Err(_) => false
     }
@@ -67,7 +67,7 @@ fn NonEmpty.try_from(s str) -> Result[NonEmpty, str] =>
 
 
 test "try_from непустой строки -> Ok" {
-    let r = NonEmpty.try_from("hello")
+    ro r = NonEmpty.try_from("hello")
     assert(r.is_ok())
     assert(r.unwrap_or(NonEmpty { text: "x" }).text == "hello")
 }

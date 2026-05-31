@@ -6,13 +6,13 @@
 module nova_tests.plan100_4_3.mixed_defer_family_lifo
 
 test "mixed family LIFO — success path" {
-    let mut step = 0
-    let mut a_step = 0
-    let mut b_step = 0
-    let mut c_step = 0
-    let mut d_step = 0
-    let mut e_step = 0
-    let _ = {
+    mut step = 0
+    mut a_step = 0
+    mut b_step = 0
+    mut c_step = 0
+    mut d_step = 0
+    mut e_step = 0
+    ro _ = {
         defer    { step = step + 1; a_step = step }  // outer
         okdefer  { step = step + 1; b_step = step }
         errdefer { step = step + 1; c_step = step }
@@ -29,16 +29,16 @@ test "mixed family LIFO — success path" {
 }
 
 test "mixed family LIFO — interrupt path (only plain defer)" {
-    let mut step = 0
-    let mut a_step = 0
-    let mut b_step = 0
-    let mut c_step = 0
-    let mut d_step = 0
-    let mut e_step = 0
+    mut step = 0
+    mut a_step = 0
+    mut b_step = 0
+    mut c_step = 0
+    mut d_step = 0
+    mut e_step = 0
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        let _ = {
+        ro _ = {
             defer    { step = step + 1; a_step = step }
             okdefer  { step = step + 1; b_step = step }
             errdefer { step = step + 1; c_step = step }

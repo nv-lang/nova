@@ -4,7 +4,7 @@
 module plan107.prelude_multi_attr
 
 test "prelude(core, runtime, errors) — Option visible" {
-    let x Option[int] = Some(1)
+    ro x Option[int] = Some(1)
     assert(x.is_some())
 }
 

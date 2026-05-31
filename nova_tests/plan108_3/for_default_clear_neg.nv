@@ -5,7 +5,7 @@
 module nova_tests.plan108_3.for_default_clear_neg
 
 test "for default + clear → error" {
-    let mut arrs = [[1, 2]]
+    mut arrs = [[1, 2]]
     for x in arrs {
         x.clear()
     }

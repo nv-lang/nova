@@ -12,7 +12,7 @@ module map_literals.positive_insert_new_correctness
 import std.collections.hashmap.{HashMap}
 
 test "после литерала: contains работает корректно" {
-    let m HashMap[str, int] = [
+    ro m HashMap[str, int] = [
         "a": 1,
         "b": 2,
         "c": 3,
@@ -25,7 +25,7 @@ test "после литерала: contains работает корректно"
 }
 
 test "после литерала: get возвращает Some для всех ключей" {
-    let m HashMap[str, int] = [
+    ro m HashMap[str, int] = [
         "x": 10,
         "y": 20,
     ]
@@ -35,7 +35,7 @@ test "после литерала: get возвращает Some для всех
 }
 
 test "литерал с n=8 (boundary case where with_capacity contract critical)" {
-    let m HashMap[int, int] = [
+    ro m HashMap[int, int] = [
         1: 10,
         2: 20,
         3: 30,

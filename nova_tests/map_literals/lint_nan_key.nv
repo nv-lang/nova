@@ -9,6 +9,6 @@ module map_literals.lint_nan_key
 import std.collections.hashmap.{HashMap}
 
 fn main() -> () {
-    let m HashMap[f64, str] = [f64.NAN: "lost"]
-    let _ = m
+    ro m HashMap[f64, str] = [f64.NAN: "lost"]
+    ro _ = m
 }

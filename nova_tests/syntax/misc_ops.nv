@@ -10,17 +10,17 @@
 module syntax.misc_ops
 
 test "as cast int → int (no-op)" {
-    let x = 42 as int
+    ro x = 42 as int
     assert(x == 42)
 }
 
 test "as cast в выражении" {
-    let r = (10 as int) + 5
+    ro r = (10 as int) + 5
     assert(r == 15)
 }
 
 test "spawn block — результат через mut-захват (D50/D71)" {
-    let mut r = 0
+    mut r = 0
     supervised {
         spawn { r = 100 + 1 }
     }
@@ -28,7 +28,7 @@ test "spawn block — результат через mut-захват (D50/D71)" 
 }
 
 test "spawn с side-эффектами на захваченную переменную" {
-    let mut x = 0
+    mut x = 0
     supervised {
         spawn { x = 99 }
     }
@@ -36,19 +36,19 @@ test "spawn с side-эффектами на захваченную переме�
 }
 
 test "block expression как значение" {
-    let r = {
-        let a = 10
-        let b = 20
+    ro r = {
+        ro a = 10
+        ro b = 20
         a + b
     }
     assert(r == 30)
 }
 
 test "вложенные block expression" {
-    let r = {
-        let outer = 1
-        let inner = {
-            let x = outer + 9
+    ro r = {
+        ro outer = 1
+        ro inner = {
+            ro x = outer + 9
             x * 2
         }
         inner + outer
@@ -57,8 +57,8 @@ test "вложенные block expression" {
 }
 
 test "block expression в условии" {
-    let cond = {
-        let n = 5
+    ro cond = {
+        ro n = 5
         n > 0
     }
     if cond {
@@ -68,9 +68,9 @@ test "block expression в условии" {
     }
 }
 
-test "block в правой части let" {
-    let v = {
-        let mut acc = 0
+test "block в правой части ro" {
+    ro v = {
+        mut acc = 0
         for i in 1..5 {
             acc += i
         }

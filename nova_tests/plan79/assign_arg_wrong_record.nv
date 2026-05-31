@@ -11,6 +11,6 @@ type Order { total int }
 fn process(o Order) -> int => o.total
 
 fn run() -> int {
-    let u User = { id: 1 }
+    ro u User = { id: 1 }
     process(u)
 }

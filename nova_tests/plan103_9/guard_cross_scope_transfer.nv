@@ -11,17 +11,17 @@ fn do_work_under_lock(consume g MutexGuard, mut counter AtomicInt) -> () {
 }
 
 test "Guard passed to helper function and consumed there" {
-    let mut mu = Mutex.new()
-    let mut counter = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    mut counter = AtomicInt.new(0)
     consume g = mu.lock()
     do_work_under_lock(g, counter)
     assert(counter.load() == 1)
 }
 
 test "Guard held while doing multiple operations" {
-    let mut mu = Mutex.new()
-    let mut a = AtomicInt.new(0)
-    let mut b = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    mut a = AtomicInt.new(0)
+    mut b = AtomicInt.new(0)
 
     consume g = mu.lock()
     // Multiple operations under same guard
@@ -34,12 +34,12 @@ test "Guard held while doing multiple operations" {
 }
 
 test "ReadGuard held across multiple reads" {
-    let mut rw = RwLock.new()
-    let mut v = AtomicInt.new(42)
+    mut rw = RwLock.new()
+    mut v = AtomicInt.new(42)
 
     consume rg = rw.read()
-    let x = v.load()
-    let y = v.load()
+    ro x = v.load()
+    ro y = v.load()
     rg.unlock()
 
     assert(x == 42)
@@ -47,8 +47,8 @@ test "ReadGuard held across multiple reads" {
 }
 
 test "Permit held while processing" {
-    let mut sem = Semaphore.new(1)
-    let mut result = AtomicInt.new(0)
+    mut sem = Semaphore.new(1)
+    mut result = AtomicInt.new(0)
 
     consume p = sem.acquire()
     result.fetch_add(1)

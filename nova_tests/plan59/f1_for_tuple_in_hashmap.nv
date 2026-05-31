@@ -8,8 +8,8 @@ import std.collections.hashmap.{HashMap}
 
 
 test "for (k, v) in HashMap[str, int]" {
-    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
-    let mut sum = 0
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    mut sum = 0
     for (_k, v) in m {
         sum = sum + v
     }
@@ -18,8 +18,8 @@ test "for (k, v) in HashMap[str, int]" {
 
 
 test "for (k, v) in HashMap[int, str]" {
-    let m HashMap[int, str] = [1: "one", 2: "two"]
-    let mut count = 0
+    ro m HashMap[int, str] = [1: "one", 2: "two"]
+    mut count = 0
     for (k, _v) in m {
         count = count + k
     }
@@ -28,9 +28,9 @@ test "for (k, v) in HashMap[int, str]" {
 
 
 test "for (k, v) — collect both" {
-    let m HashMap[str, int] = ["x": 10, "y": 20]
-    let mut found_x = false
-    let mut found_y = false
+    ro m HashMap[str, int] = ["x": 10, "y": 20]
+    mut found_x = false
+    mut found_y = false
     for (k, v) in m {
         if k == "x" && v == 10 { found_x = true }
         if k == "y" && v == 20 { found_y = true }

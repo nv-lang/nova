@@ -14,7 +14,7 @@ module modules.folder_module_basic_use
 import nova_tests.modules.folder_module_basic.{User, create_user, create_audited_user}
 
 test "folder-module: exported items accessible" {
-    let u = create_user(1, "alice")
+    ro u = create_user(1, "alice")
     assert(u.id == 1)
     assert(u.name == "alice")
 }
@@ -22,7 +22,7 @@ test "folder-module: exported items accessible" {
 test "folder-module: cross-peer internal helper works" {
     // create_audited_user из users.nv использует compute_audit_id из helpers.nv.
     // Если cross-peer namespace shared — этот тест пройдёт.
-    let u = create_audited_user(5, "bob")
+    ro u = create_audited_user(5, "bob")
     // expected: id = 5 * 100 + 7 = 507
     assert(u.id == 507)
     assert(u.name == "bob")

@@ -86,7 +86,7 @@ fn ChanReader_close_after_doc_marker(d Duration) -> () {
     // ChanReader.close_after via compiler builtin, not via this fn.
     // Plan 65 honest-defer: until ChanReader gains a true .nv decl
     // (post-bootstrap), this file is doc-only.
-    let _ = d
+    ro _ = d
 }
 
 
@@ -120,6 +120,6 @@ fn ChanReader_close_after_doc_marker(d Duration) -> () {
 #unstable
 #stable(since = "0.6")
 fn ChanReader_tick_every_namespace_squat(d Duration) -> () {
-    let _ = d
+    ro _ = d
     panic("ChanReader.tick_every is not yet implemented — see Plan 66 (docs/plans/66-timer-wheel-and-tick-every.md). Use ChanReader.close_after for one-shot timers in Plan 65.")
 }

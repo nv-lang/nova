@@ -14,6 +14,6 @@ module nova_tests.plan103_1.negative.ordering_construct_with_payload_neg
 fn bad() -> MemOrdering => MemOrdering.Acquire(42)
 
 test "should not compile" {
-    let _ = bad()
+    ro _ = bad()
     assert(true)
 }

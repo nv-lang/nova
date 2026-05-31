@@ -12,8 +12,8 @@ module syntax.let_destructure_mutable
 type Pair { x int, y int }
 
 test "let mut { x, y } binds mutable copies" {
-    let p = Pair { x: 10, y: 20 }
-    let mut { x, y } = p
+    ro p = Pair { x: 10, y: 20 }
+    mut { x, y } = p
     assert(x == 10)
     assert(y == 20)
     // Переприсваиваем — должно компилироваться (mutable bindings)
@@ -27,8 +27,8 @@ test "let mut { x, y } binds mutable copies" {
 }
 
 test "let mut single-field destructure" {
-    let p = Pair { x: 5, y: 7 }
-    let mut { x, .. } = p
+    ro p = Pair { x: 5, y: 7 }
+    mut { x, .. } = p
     assert(x == 5)
     x = 999
     assert(x == 999)
@@ -36,8 +36,8 @@ test "let mut single-field destructure" {
 }
 
 test "immutable destructure stays immutable (regression baseline)" {
-    let p = Pair { x: 1, y: 2 }
-    let { x, y } = p
+    ro p = Pair { x: 1, y: 2 }
+    ro { x, y } = p
     assert(x == 1)
     assert(y == 2)
     // Не пытаемся переприсваивать — это compile error для non-mut.

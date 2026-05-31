@@ -10,8 +10,8 @@
 module plan83_10.runtime_survives_fiber_panic
 
 test "runtime survives panic, subsequent supervised works" {
-    let mut first_caught = false
-    let _ = with Fail[int] = |e| {
+    mut first_caught = false
+    ro _ = with Fail[int] = |e| {
         first_caught = true
         0
     } {
@@ -23,7 +23,7 @@ test "runtime survives panic, subsequent supervised works" {
     assert(first_caught)
 
     // Runtime still functional — new supervised completes successfully.
-    let xs = parallel for i in 0..10 { i * 2 }
+    ro xs = parallel for i in 0..10 { i * 2 }
     assert(xs[9] == 18)
     assert(xs[0] == 0)
 }

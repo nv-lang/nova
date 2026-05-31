@@ -10,6 +10,6 @@ fn greet(name str) -> int =>
 
 test "unknown named arg rejected" {
     // У `greet` нет параметра `nonexistent`.
-    let _ = greet(nonexistent: "x")
+    ro _ = greet(nonexistent: "x")
     assert(true)
 }

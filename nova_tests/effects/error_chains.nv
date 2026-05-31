@@ -24,14 +24,14 @@ fn safe_index(xs []int, i int) -> Result {
 }
 
 fn calc(a int, b int, xs []int, idx int) -> Result {
-    let q = safe_div(a, b)?
-    let v = safe_index(xs, idx)?
+    ro q = safe_div(a, b)?
+    ro v = safe_index(xs, idx)?
     Ok(q + v)
 }
 
 test "? цепочка через две Result-функции" {
-    let r = calc(10, 2, [100, 200, 300], 1)
-    let v = match r {
+    ro r = calc(10, 2, [100, 200, 300], 1)
+    ro v = match r {
         Ok(n)  => n
         Err(_) => -1
     }
@@ -39,8 +39,8 @@ test "? цепочка через две Result-функции" {
 }
 
 test "? на первой ошибке прерывает" {
-    let r = calc(10, 0, [100, 200], 0)
-    let s = match r {
+    ro r = calc(10, 0, [100, 200], 0)
+    ro s = match r {
         Ok(_)    => "ok"
         Err(msg) => msg
     }
@@ -48,8 +48,8 @@ test "? на первой ошибке прерывает" {
 }
 
 test "? на второй ошибке прерывает (первая прошла)" {
-    let r = calc(10, 2, [100, 200], 99)
-    let s = match r {
+    ro r = calc(10, 2, [100, 200], 99)
+    ro s = match r {
         Ok(_)    => "ok"
         Err(msg) => msg
     }
@@ -68,13 +68,13 @@ fn first_pos(xs []int) -> Option {
 }
 
 fn double_first_pos(xs []int) -> Option {
-    let v = first_pos(xs)?
+    ro v = first_pos(xs)?
     Some(v * 2)
 }
 
 test "Option ? с ранним return из for-loop" {
-    let r = double_first_pos([-1, -2, 5, 10])
-    let v = match r {
+    ro r = double_first_pos([-1, -2, 5, 10])
+    ro v = match r {
         Some(n) => n
         None    => 0
     }
@@ -82,8 +82,8 @@ test "Option ? с ранним return из for-loop" {
 }
 
 test "Option ? пробрасывает None" {
-    let r = double_first_pos([-1, -2, -3])
-    let v = match r {
+    ro r = double_first_pos([-1, -2, -3])
+    ro v = match r {
         Some(n) => n
         None    => -999
     }
@@ -97,18 +97,18 @@ fn step1() -> Result {
 }
 
 fn step2() -> Result {
-    let _ = step1()?
+    ro _ = step1()?
     Ok(42)
 }
 
 fn step3() -> Result {
-    let v = step2()?
+    ro v = step2()?
     Ok(v + 1)
 }
 
 test "ошибка пробрасывается через 3 уровня" {
-    let r = step3()
-    let s = match r {
+    ro r = step3()
+    ro s = match r {
         Ok(_)    => "ok"
         Err(msg) => msg
     }
@@ -122,8 +122,8 @@ fn maybe_negative(n int) -> Option {
 }
 
 test "? и ?? в одном выражении" {
-    let v = maybe_negative(5) ?? 0
+    ro v = maybe_negative(5) ?? 0
     assert(v == 5)
-    let v2 = maybe_negative(-3) ?? -1
+    ro v2 = maybe_negative(-3) ?? -1
     assert(v2 == -1)
 }

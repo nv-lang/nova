@@ -11,6 +11,6 @@ fn Token consume @release() -> int => @val
 
 test "consume binding + consume method release" {
     consume tok = Token.new(7)
-    let v = tok.release()
+    ro v = tok.release()
     assert(v == 7)
 }

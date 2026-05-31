@@ -26,11 +26,11 @@ test "P1-B — empty sum type compiles without variants" {
     // We cannot construct Uninhabited values (no variants), so we only
     // verify that the type resolved at compile time. The test just passes
     // if compilation succeeds.
-    let _ok = true
+    ro _ok = true
     assert(_ok)
 }
 
 test "P1-B — explicit empty braces sum type compiles" {
-    let _ok = true
+    ro _ok = true
     assert(_ok)
 }

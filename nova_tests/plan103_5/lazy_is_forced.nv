@@ -3,26 +3,26 @@
 module nova_tests.plan103_5.lazy_is_forced
 
 test "Lazy.is_forced: false before any force, true after successful force" {
-    let lazy = Lazy[str].new() { "hello" }
+    ro lazy = Lazy[str].new() { "hello" }
     assert(lazy.is_forced() == false)
-    let v = lazy.force()
+    ro v = lazy.force()
     assert(v == "hello")
     assert(lazy.is_forced() == true)
 }
 
 test "Lazy.is_forced: stays true after multiple forces" {
-    let lazy = Lazy[int].new() { 99 }
-    let _ = lazy.force()
-    let _ = lazy.force()
+    ro lazy = Lazy[int].new() { 99 }
+    ro _ = lazy.force()
+    ro _ = lazy.force()
     assert(lazy.is_forced() == true)
 }
 
 test "Lazy.is_forced: false after panic (not poisoned yet = not forced)" {
-    let lazy = Lazy[int].new() { throw "oops"; 0 }
+    ro lazy = Lazy[int].new() { throw "oops"; 0 }
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {
-        let _ = lazy.force()
+        ro _ = lazy.force()
     }
     // is_forced should be false (value never stored)
     assert(lazy.is_forced() == false)

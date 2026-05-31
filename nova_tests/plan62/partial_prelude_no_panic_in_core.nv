@@ -20,6 +20,6 @@ fn explode() -> int {
 }
 
 test "should never reach this — panic isn't in core" {
-    let _ = explode()
+    ro _ = explode()
     assert(true)
 }

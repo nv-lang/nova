@@ -17,13 +17,13 @@ fn Counter mut @bump() -> @ {
 fn Counter @value() -> int => @n
 
 test "user fluent-метод — chaining через -> @" {
-    let mut c = Counter.new()
-    let r = c.bump().bump().bump()
+    mut c = Counter.new()
+    ro r = c.bump().bump().bump()
     assert(r.value() == 3)
 }
 
 test "fluent + alias — потребления нет, ошибки нет" {
-    let mut c = Counter.new()
-    let same = c.bump()        // same — алиас c (bump: -> @)
+    mut c = Counter.new()
+    ro same = c.bump()        // same — алиас c (bump: -> @)
     assert(same.value() == 1)
 }

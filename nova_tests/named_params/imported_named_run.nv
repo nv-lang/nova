@@ -23,8 +23,8 @@ import nova_tests.named_params.imported_mod.{configure}
 // EXPECT_STDOUT p50-interp 32 1052 23
 
 fn main() Io -> () {
-    let a = configure("ab")
-    let b = configure("ab", verbose: true, retries: 5)
-    let c = configure("abc", retries: 2)
+    ro a = configure("ab")
+    ro b = configure("ab", verbose: true, retries: 5)
+    ro c = configure("abc", retries: 2)
     println("p50-interp ${a} ${b} ${c}")
 }

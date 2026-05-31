@@ -13,9 +13,9 @@ fn Date @compare(other Self) -> int {
 }
 
 test "single protocol #impl + explicit method works" {
-    let a = Date { day: 1, month: 1, year: 2020 }
-    let b = Date { day: 1, month: 1, year: 2020 }
-    let c = Date { day: 2, month: 1, year: 2020 }
+    ro a = Date { day: 1, month: 1, year: 2020 }
+    ro b = Date { day: 1, month: 1, year: 2020 }
+    ro c = Date { day: 2, month: 1, year: 2020 }
     assert(a.compare(b) == 0)
     assert(a.compare(c) < 0)
     assert(c.compare(a) > 0)

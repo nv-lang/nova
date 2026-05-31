@@ -15,9 +15,9 @@ module negative_capability.for_in_iter_diagnostic
 type Empty { value int }
 
 fn main() -> int {
-    let e = Empty { value: 1 }
+    ro e = Empty { value: 1 }
     for x in e {
-        let _ = x
+        ro _ = x
     }
     0
 }

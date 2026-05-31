@@ -12,24 +12,24 @@
 module syntax.let_destructure_channel_dedup
 
 test "Channel.new destructure через generic path — send+recv round-trip" {
-    let { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel.new(4)
     tx.send(42)
     tx.send(100)
-    let v1 = rx.recv()
-    let v2 = rx.recv()
+    ro v1 = rx.recv()
+    ro v2 = rx.recv()
     assert(v1 == Some(42))
     assert(v2 == Some(100))
 }
 
 test "Channel.new destructure с renaming" {
-    let { tx: sender, rx: receiver } = Channel.new(2)
+    ro { tx: sender, rx: receiver } = Channel.new(2)
     sender.send(7)
-    let got = receiver.recv()
+    ro got = receiver.recv()
     assert(got == Some(7))
 }
 
 test "Channel.new destructure через _-discard одного поля" {
-    let { tx, rx: _ } = Channel.new(1)
+    ro { tx, rx: _ } = Channel.new(1)
     tx.send(99)
     // rx discarded — но channel buffered (cap=1), send не блокирует
     assert(true)

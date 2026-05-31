@@ -10,6 +10,6 @@ fn fn2(a int, b int) -> int =>
 
 test "param bound twice rejected" {
     // `a` передан позиционно (1) и по имени (a: 2).
-    let _ = fn2(1, a: 2)
+    ro _ = fn2(1, a: 2)
     assert(true)
 }

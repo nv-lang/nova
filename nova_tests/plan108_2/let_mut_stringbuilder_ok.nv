@@ -6,6 +6,6 @@ test "let mut + StringBuilder fluent chain" {
     consume sb = StringBuilder.new()
     sb.append("hello")
     sb.append(" world")
-    let s = sb.as_str()
+    ro s = sb.as_str()
     assert(s == "hello world")
 }

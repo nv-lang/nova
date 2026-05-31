@@ -6,5 +6,5 @@
 module map_literals.negative_mixed_forms
 
 fn main() -> () {
-    let bad = [1, 2: 3]
+    ro bad = [1, 2: 3]
 }

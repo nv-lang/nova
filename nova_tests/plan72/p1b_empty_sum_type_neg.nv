@@ -13,6 +13,6 @@ module plan72.p1b_empty_sum_type_neg
 type Uninhabited
 
 fn run() -> int {
-    let x Uninhabited = 5
+    ro x Uninhabited = 5
     0
 }

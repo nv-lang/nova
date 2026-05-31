@@ -3,21 +3,21 @@
 module nova_tests.plan108_3.pattern_per_name_mut_ok
 
 test "per-name mut: (mut a, b) — a mutable" {
-    let (mut a, b) = ([1], [2])
+    ro (mut a, b) = ([1], [2])
     a.push(99)
     assert(a.len() == 2)
     assert(b.len() == 1)
 }
 
 test "per-name mut: (a, mut b) — b mutable" {
-    let (a, mut b) = ([1], [2])
+    ro (a, mut b) = ([1], [2])
     b.push(99)
     assert(a.len() == 1)
     assert(b.len() == 2)
 }
 
 test "per-name mut: (mut a, mut b) — both mutable" {
-    let (mut a, mut b) = ([1], [2])
+    ro (mut a, mut b) = ([1], [2])
     a.push(99)
     b.push(99)
     assert(a.len() == 2)

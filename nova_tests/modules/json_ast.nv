@@ -25,7 +25,7 @@ fn json_size(j Json) -> int => match j {
 }
 
 fn json_arr_size(items []Json) -> int {
-    let mut sum = 0
+    mut sum = 0
     for it in items {
         sum += json_size(it)
     }
@@ -33,7 +33,7 @@ fn json_arr_size(items []Json) -> int {
 }
 
 fn json_obj_size(pairs [](str, Json)) -> int {
-    let mut sum = 0
+    mut sum = 0
     for p in pairs {
         sum += json_size(p.1)
     }
@@ -50,18 +50,18 @@ fn json_depth(j Json) -> int => match j {
 }
 
 fn arr_max_depth(items []Json) -> int {
-    let mut m = 0
+    mut m = 0
     for it in items {
-        let d = json_depth(it)
+        ro d = json_depth(it)
         if d > m { m = d }
     }
     m
 }
 
 fn obj_max_depth(pairs [](str, Json)) -> int {
-    let mut m = 0
+    mut m = 0
     for p in pairs {
-        let d = json_depth(p.1)
+        ro d = json_depth(p.1)
         if d > m { m = d }
     }
     m
@@ -75,33 +75,33 @@ test "primitive json size" {
 }
 
 test "flat array size" {
-    let j = JArr([JNum(1), JStr("x"), JBool(true), JNull])
+    ro j = JArr([JNum(1), JStr("x"), JBool(true), JNull])
     assert(json_size(j) == 5)
 }
 
 test "nested arrays" {
-    let inner = JArr([JNum(1), JNum(2)])
-    let outer = JArr([JBool(true), inner])
+    ro inner = JArr([JNum(1), JNum(2)])
+    ro outer = JArr([JBool(true), inner])
     assert(json_size(outer) == 5)
 }
 
 test "object size" {
-    let pairs = [
+    ro pairs = [
         ("name", JStr("alice")),
         ("age", JNum(30)),
         ("active", JBool(true))
     ]
-    let j = JObj(pairs)
+    ro j = JObj(pairs)
     assert(json_size(j) == 4)
 }
 
 test "nested object/array" {
-    let inner_arr = JArr([JNum(1), JNum(2), JNum(3)])
-    let pairs = [
+    ro inner_arr = JArr([JNum(1), JNum(2), JNum(3)])
+    ro pairs = [
         ("nums", inner_arr),
         ("name", JStr("test"))
     ]
-    let j = JObj(pairs)
+    ro j = JObj(pairs)
     // 1 (obj) + 1 (arr) + 3 nums + 1 str = 6
     assert(json_size(j) == 6)
 }
@@ -112,11 +112,11 @@ test "depth flat" {
 }
 
 test "depth nested" {
-    let level3 = JArr([JArr([JArr([JNum(1)])])])
+    ro level3 = JArr([JArr([JArr([JNum(1)])])])
     assert(json_depth(level3) == 4)
 }
 
 test "depth empty array" {
-    let empty = JArr([])
+    ro empty = JArr([])
     assert(json_depth(empty) == 1)  // нет внутренних, max(0)+1 = 1
 }

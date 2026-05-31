@@ -7,14 +7,14 @@
 module nova_tests.plan103_2.atomic_bool_expanded
 
 test "AtomicBool load with explicit ordering" {
-    let mut a = AtomicBool.new(true)
+    mut a = AtomicBool.new(true)
     assert(a.load(Acquire))
     assert(a.load(Relaxed))
     assert(a.load(SeqCst))
 }
 
 test "AtomicBool store with explicit ordering" {
-    let mut a = AtomicBool.new(false)
+    mut a = AtomicBool.new(false)
     a.store(true, Release)
     assert(a.load(Acquire))
     a.store(false, SeqCst)
@@ -22,27 +22,27 @@ test "AtomicBool store with explicit ordering" {
 }
 
 test "AtomicBool swap with explicit ordering" {
-    let mut a = AtomicBool.new(false)
-    let old = a.swap(true, AcqRel)
+    mut a = AtomicBool.new(false)
+    ro old = a.swap(true, AcqRel)
     assert(!old)
     assert(a.load())
 }
 
 test "AtomicBool compare_exchange with ordering — success" {
-    let mut a = AtomicBool.new(false)
-    let ok = a.compare_exchange(false, true, SeqCst, Acquire)
+    mut a = AtomicBool.new(false)
+    ro ok = a.compare_exchange(false, true, SeqCst, Acquire)
     assert(ok)
     assert(a.load())
 }
 
 test "AtomicBool compare_exchange_weak — success path" {
-    let mut a = AtomicBool.new(true)
+    mut a = AtomicBool.new(true)
     // compare_exchange_weak may spuriously fail on some platforms;
     // retry until success for a deterministic test.
-    let i = 0
-    let ok = false
+    ro i = 0
+    ro ok = false
     while i < 100 {
-        let r = a.compare_exchange_weak(true, false)
+        ro r = a.compare_exchange_weak(true, false)
         if r {
             ok = true
             i = 100
@@ -54,26 +54,26 @@ test "AtomicBool compare_exchange_weak — success path" {
 }
 
 test "AtomicBool fetch_or" {
-    let mut a = AtomicBool.new(false)
-    let prev = a.fetch_or(true)
+    mut a = AtomicBool.new(false)
+    ro prev = a.fetch_or(true)
     assert(!prev)
     assert(a.load())
 }
 
 test "AtomicBool fetch_and" {
-    let mut a = AtomicBool.new(true)
-    let prev = a.fetch_and(false)
+    mut a = AtomicBool.new(true)
+    ro prev = a.fetch_and(false)
     assert(prev)
     assert(!a.load())
 }
 
 test "AtomicBool fetch_xor" {
-    let mut a = AtomicBool.new(true)
-    let prev = a.fetch_xor(true)
+    mut a = AtomicBool.new(true)
+    ro prev = a.fetch_xor(true)
     assert(prev)
     assert(!a.load())
     // second xor restores to true
-    let prev2 = a.fetch_xor(true)
+    ro prev2 = a.fetch_xor(true)
     assert(!prev2)
     assert(a.load())
 }

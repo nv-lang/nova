@@ -15,7 +15,7 @@ type Net effect {
 fn http_get(url str) Net -> str => Net.fetch(url)
 
 fn bad() Blocking -> str {
-    let r = blocking {
+    ro r = blocking {
         http_get("/api")        // ❌ suspend-эффект Net в теле blocking
     }
     r

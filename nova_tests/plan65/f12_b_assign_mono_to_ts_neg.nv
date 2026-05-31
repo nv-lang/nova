@@ -19,7 +19,7 @@ import std.time.duration
 test "documented gap: monotonic-to-timestamp assign currently silent" {
     // This compiles + runs today. When strict-annotation lands, this
     // test should become an EXPECT_COMPILE_ERROR fixture.
-    let _t Timestamp = Monotonic.now()
+    ro _t Timestamp = Monotonic.now()
     // Reach this line == known-gap behavior confirmed.
     assert(true)
 }

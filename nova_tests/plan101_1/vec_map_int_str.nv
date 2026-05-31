@@ -3,14 +3,14 @@
 module nova_tests.plan101_1.vec_map_int_str
 
 fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
-    let mut out []U = []U.with_capacity(@len())
+    mut out []U = []U.with_capacity(@len())
     for x in @ { out.push(f(x)) }
     out
 }
 
 test "fn[T] []T @map int → str (T≠U)" {
-    let v []int = [1, 2, 3]
-    let strs = v.my_map(|x| str.from(x))
+    ro v []int = [1, 2, 3]
+    ro strs = v.my_map(|x| str.from(x))
     assert(strs.len() == 3)
     assert(strs.get(0) == Some("1"))
     assert(strs.get(2) == Some("3"))

@@ -18,7 +18,7 @@ export fn IntBox @clone() -> Self =>
     Self.of(@v)
 
 test "Self.method() + factory pattern в non-generic типе" {
-    let b1 = IntBox.of(42)
-    let b2 = b1.clone()
+    ro b1 = IntBox.of(42)
+    ro b2 = b1.clone()
     assert(b2.v == 42)
 }

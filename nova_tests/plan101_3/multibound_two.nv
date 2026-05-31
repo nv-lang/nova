@@ -24,14 +24,14 @@ fn Widget @size() -> int => @weight
 
 // Multi-bound `[T Show_ + Sized_]` — T должен иметь оба метода.
 fn describe[T Show_ + Sized_](x T) -> str {
-    let n = x.show()
-    let s = x.size()
+    ro n = x.show()
+    ro s = x.size()
     "${n} (${s})"
 }
 
 
 test "multi-bound: Widget satisfies Show_ + Sized_" {
-    let w = Widget { name: "thing", weight: 42 }
-    let s = describe(w)
+    ro w = Widget { name: "thing", weight: 42 }
+    ro s = describe(w)
     assert(s == "thing (42)")
 }

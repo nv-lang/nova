@@ -10,15 +10,15 @@ module nova_tests.concurrency.sync_waitgroup
 // ─── Basic API ─────────────────────────────────────────────────
 
 test "WaitGroup: wait on zero-count returns immediately" {
-    let mut wg = WaitGroup.new()
+    mut wg = WaitGroup.new()
     // count is already 0 — wait must not block
     wg.wait()
     assert(true)
 }
 
 test "WaitGroup: add then done reaches zero" {
-    let mut wg = WaitGroup.new()
-    let mut done_count = 0
+    mut wg = WaitGroup.new()
+    mut done_count = 0
     wg.add(1)
     supervised {
         spawn {
@@ -39,8 +39,8 @@ test "WaitGroup: add then done reaches zero" {
 // M:N mode) and call done(). A fourth fiber waits, then asserts the full
 // count is visible. This verifies wait() does not return prematurely.
 test "WaitGroup: wait blocks until 3 tasks complete" {
-    let mut wg = WaitGroup.new()
-    let mut counter = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
+    mut counter = AtomicInt.new(0)
     wg.add(3)
     supervised {
         spawn { counter.fetch_add(1); wg.done() }
@@ -58,10 +58,10 @@ test "WaitGroup: wait blocks until 3 tasks complete" {
 // Multiple waiters: two fibers wait on the same WaitGroup.
 // Both must be woken when count reaches 0.
 test "WaitGroup: multiple waiters — both wake" {
-    let mut wg = WaitGroup.new()
-    let mut counter = AtomicInt.new(0)
-    let mut w1_saw = 0
-    let mut w2_saw = 0
+    mut wg = WaitGroup.new()
+    mut counter = AtomicInt.new(0)
+    mut w1_saw = 0
+    mut w2_saw = 0
     wg.add(1)
     supervised {
         spawn {
@@ -87,8 +87,8 @@ test "WaitGroup: multiple waiters — both wake" {
 // Four workers run concurrently. WaitGroup rendezvous collects results.
 test "WaitGroup: M:N rendezvous — 4 workers" {
     runtime.init(2)
-    let mut wg = WaitGroup.new()
-    let mut sum = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
+    mut sum = AtomicInt.new(0)
     wg.add(4)
     supervised {
         spawn { sum.fetch_add(1); wg.done() }

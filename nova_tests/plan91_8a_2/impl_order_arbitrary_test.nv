@@ -18,10 +18,10 @@ fn ItemB @compare(other Self) -> int =>
     else { 0 }
 
 test "order in #impl list — irrelevant" {
-    let a1 = ItemA { value: 7 }
-    let a2 = ItemA { value: 7 }
-    let b1 = ItemB { value: 7 }
-    let b2 = ItemB { value: 7 }
+    ro a1 = ItemA { value: 7 }
+    ro a2 = ItemA { value: 7 }
+    ro b1 = ItemB { value: 7 }
+    ro b2 = ItemB { value: 7 }
     assert(a1.equals(a2))
     assert(b1.equals(b2))
     assert(a1.compare(a2) == 0)

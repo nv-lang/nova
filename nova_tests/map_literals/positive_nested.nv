@@ -19,20 +19,20 @@ fn make_inner() -> HashMap[int, str] {
 }
 
 test "single-level nested via fn call" {
-    let outer HashMap[int, str] = [1: "first", 2: "second"]
+    ro outer HashMap[int, str] = [1: "first", 2: "second"]
     assert(outer.len() == 2)
     assert(outer.get(1) == Some("first"))
 
-    let inner = make_inner()
+    ro inner = make_inner()
     assert(inner.len() == 2)
     assert(inner.get(10) == Some("a"))
 }
 
 test "multiple sequential map literals in same scope" {
     // counter per-module → _m0, _m1, _m2 — не shadow.
-    let a HashMap[int, str] = [1: "alpha"]
-    let b HashMap[int, str] = [2: "beta"]
-    let c HashMap[int, str] = [3: "gamma"]
+    ro a HashMap[int, str] = [1: "alpha"]
+    ro b HashMap[int, str] = [2: "beta"]
+    ro c HashMap[int, str] = [3: "gamma"]
     assert(a.get(1) == Some("alpha"))
     assert(b.get(2) == Some("beta"))
     assert(c.get(3) == Some("gamma"))

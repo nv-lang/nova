@@ -21,10 +21,10 @@ fn divmod(a int, b int) -> Result[(int, int), str] {
 }
 
 
-test "Result[(str, int), str] heterogeneous — let-bound" {
-    let r = parse_kv("b=2")
-    let mut got_k str = ""
-    let mut got_v int = 0
+test "Result[(str, int), str] heterogeneous — ro-bound" {
+    ro r = parse_kv("b=2")
+    mut got_k str = ""
+    mut got_v int = 0
     match r {
         Ok((k, v)) => {
             got_k = k
@@ -37,9 +37,9 @@ test "Result[(str, int), str] heterogeneous — let-bound" {
 }
 
 
-test "Result[(str, int), str] heterogeneous — inline match (no let)" {
-    let mut got_k str = ""
-    let mut got_v int = 0
+test "Result[(str, int), str] heterogeneous — inline match (no ro)" {
+    mut got_k str = ""
+    mut got_v int = 0
     match parse_kv("a=1") {
         Ok((k, v)) => {
             got_k = k
@@ -52,10 +52,10 @@ test "Result[(str, int), str] heterogeneous — inline match (no let)" {
 }
 
 
-test "Result[(int, int), str] homogeneous — let-bound" {
-    let r = divmod(17, 5)
-    let mut q int = 0
-    let mut rem int = 0
+test "Result[(int, int), str] homogeneous — ro-bound" {
+    ro r = divmod(17, 5)
+    mut q int = 0
+    mut rem int = 0
     match r {
         Ok((quot, remn)) => {
             q = quot
@@ -69,7 +69,7 @@ test "Result[(int, int), str] homogeneous — let-bound" {
 
 
 test "Result[(int, int), str] homogeneous — inline match" {
-    let mut q int = 0
+    mut q int = 0
     match divmod(20, 7) {
         Ok((quot, _)) => { q = quot }
         Err(_) => assert(false)

@@ -16,19 +16,19 @@ fn identity[T](v T) -> T => v
 
 
 test "sanity: identity[int] компилируется и работает" {
-    let r = identity[int](42)
+    ro r = identity[int](42)
     assert(r == 42)
 }
 
 
 test "sanity: identity[str] mono'д отдельно" {
-    let r = identity[str]("hello")
+    ro r = identity[str]("hello")
     assert(r == "hello")
 }
 
 
 test "sanity: identity[bool]" {
-    let r = identity[bool](true)
+    ro r = identity[bool](true)
     assert(r == true)
 }
 
@@ -39,6 +39,6 @@ fn chain[T](v T) -> T => identity[T](v)
 
 
 test "chain через identity — multi-step mono без depth overflow" {
-    let r = chain[int](100)
+    ro r = chain[int](100)
     assert(r == 100)
 }

@@ -8,6 +8,6 @@ module nova_tests.plan79.type_as_value_let
 type Widget { w int }
 
 fn run() -> int {
-    let c = Widget
+    ro c = Widget
     0
 }

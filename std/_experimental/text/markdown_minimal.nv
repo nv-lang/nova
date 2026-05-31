@@ -40,14 +40,14 @@ module text.markdown_minimal
 #stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
     consume buf = StringBuilder.with_capacity(md.len() * 2)
-    let lines = md.split("\n")
-    let mut i = 0
-    let mut in_code_block = false
-    let mut in_list = false
+    ro lines = md.split("\n")
+    mut i = 0
+    mut in_code_block = false
+    mut in_list = false
     consume paragraph = StringBuilder.new()
 
     while i < lines.len() {
-        let line = lines[i]
+        ro line = lines[i]
 
         // Code block fence
         if line.starts_with("```") {
@@ -77,11 +77,11 @@ export fn Markdown.to_html(md str) -> str {
             flush_paragraph(buf, paragraph)
             paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
-            let mut level = 0
+            mut level = 0
             while level < 6 && line.char_at(level) == Some('#') {
                 level += 1
             }
-            let text = line[level..line.len()].trim()
+            ro text = line[level..line.len()].trim()
             buf.append("<h" + str.from(level) + ">")
             buf.append(render_inline(text))
             buf.append("</h" + str.from(level) + ">\n")
@@ -130,7 +130,7 @@ export fn Markdown.to_html(md str) -> str {
 
 fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
     if paragraph.len() > 0 {
-        let text = paragraph.clone().into()
+        ro text = paragraph.clone().into()
         if text.trim().len() > 0 {
             buf.append("<p>")
             buf.append(render_inline(text.trim()))
@@ -143,14 +143,14 @@ fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
 // Inline parsing: **bold**, *italic*, `code`, [text](url)
 fn render_inline(s str) -> str {
     consume buf = StringBuilder.with_capacity(s.len())
-    let mut i = 0
+    mut i = 0
     while i < s.len() {
-        let c = match s.char_at(i) { Some(ch) => ch, None => break }
+        ro c = match s.char_at(i) { Some(ch) => ch, None => break }
 
         // Inline code
         if c == '`' {
-            let start = i + 1
-            let mut end = start
+            ro start = i + 1
+            mut end = start
             while end < s.len() && s.char_at(end) != Some('`') { end += 1 }
             if end < s.len() {
                 buf.append("<code>")
@@ -163,8 +163,8 @@ fn render_inline(s str) -> str {
 
         // Bold ** ... **
         if c == '*' && s.char_at(i + 1) == Some('*') {
-            let start = i + 2
-            let mut end = start
+            ro start = i + 2
+            mut end = start
             while end + 1 < s.len() {
                 if s.char_at(end) == Some('*') && s.char_at(end + 1) == Some('*') { break }
                 end += 1
@@ -180,8 +180,8 @@ fn render_inline(s str) -> str {
 
         // Italic * ... *
         if c == '*' {
-            let start = i + 1
-            let mut end = start
+            ro start = i + 1
+            mut end = start
             while end < s.len() && s.char_at(end) != Some('*') { end += 1 }
             if end < s.len() {
                 buf.append("<em>")
@@ -194,15 +194,15 @@ fn render_inline(s str) -> str {
 
         // Link [text](url)
         if c == '[' {
-            let close_bracket_opt = find_in(s, ']', i + 1)
+            ro close_bracket_opt = find_in(s, ']', i + 1)
             match close_bracket_opt {
                 Some(close_bracket) => {
                     if s.char_at(close_bracket + 1) == Some('(') {
-                        let close_paren_opt = find_in(s, ')', close_bracket + 2)
+                        ro close_paren_opt = find_in(s, ')', close_bracket + 2)
                         match close_paren_opt {
                             Some(close_paren) => {
-                                let text = s[i + 1..close_bracket]
-                                let url = s[close_bracket + 2..close_paren]
+                                ro text = s[i + 1..close_bracket]
+                                ro url = s[close_bracket + 2..close_paren]
                                 buf.append("<a href=\"")
                                 buf.append(escape_html(url))
                                 buf.append("\">")
@@ -228,7 +228,7 @@ fn render_inline(s str) -> str {
 
 
 fn find_in(s str, target char, start int) -> Option[int] {
-    let mut i = start
+    mut i = start
     while i < s.len() {
         if s.char_at(i) == Some(target) { return Some(i) }
         i += 1
@@ -263,37 +263,37 @@ test "headings" {
 }
 
 test "paragraph" {
-    let html = Markdown.to_html("This is a paragraph.")
+    ro html = Markdown.to_html("This is a paragraph.")
     assert(html.contains("<p>This is a paragraph.</p>"))
 }
 
 test "bold and italic" {
-    let html = Markdown.to_html("**bold** and *italic*")
+    ro html = Markdown.to_html("**bold** and *italic*")
     assert(html.contains("<strong>bold</strong>"))
     assert(html.contains("<em>italic</em>"))
 }
 
 test "inline code" {
-    let html = Markdown.to_html("Use `code` here")
+    ro html = Markdown.to_html("Use `code` here")
     assert(html.contains("<code>code</code>"))
 }
 
 test "link" {
-    let html = Markdown.to_html("Visit [example](https://example.com)")
+    ro html = Markdown.to_html("Visit [example](https://example.com)")
     assert(html.contains("<a href=\"https://example.com\">example</a>"))
 }
 
 test "code block" {
-    let md = "```\nlet x = 1\n```\n"
-    let html = Markdown.to_html(md)
+    ro md = "```\nlet x = 1\n```\n"
+    ro html = Markdown.to_html(md)
     assert(html.contains("<pre><code>"))
     assert(html.contains("let x = 1"))
     assert(html.contains("</code></pre>"))
 }
 
 test "bullet list" {
-    let md = "- one\n- two\n- three\n"
-    let html = Markdown.to_html(md)
+    ro md = "- one\n- two\n- three\n"
+    ro html = Markdown.to_html(md)
     assert(html.contains("<ul>"))
     assert(html.contains("<li>one</li>"))
     assert(html.contains("<li>two</li>"))
@@ -301,7 +301,7 @@ test "bullet list" {
 }
 
 test "html escape" {
-    let html = Markdown.to_html("a < b & c > d")
+    ro html = Markdown.to_html("a < b & c > d")
     assert(html.contains("&lt;"))
     assert(html.contains("&gt;"))
     assert(html.contains("&amp;"))

@@ -6,8 +6,8 @@
 module plan83_10_3.nested_supervised_cancel
 
 test "nested supervised with cancel token — cancel propagates" {
-    let tok = CancelToken.new()
-    let mut inner_ran = false
+    ro tok = CancelToken.new()
+    mut inner_ran = false
 
     supervised(cancel: tok) {
         spawn {
@@ -26,8 +26,8 @@ test "nested supervised with cancel token — cancel propagates" {
 }
 
 test "nested supervised with cancel token — normal completion" {
-    let tok = CancelToken.new()
-    let mut result = 0
+    ro tok = CancelToken.new()
+    mut result = 0
 
     supervised(cancel: tok) {
         spawn {

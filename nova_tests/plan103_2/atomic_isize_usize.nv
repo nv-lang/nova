@@ -7,47 +7,47 @@
 module nova_tests.plan103_2.atomic_isize_usize
 
 test "AtomicIsize new and load" {
-    let mut a = AtomicIsize.new(42)
+    mut a = AtomicIsize.new(42)
     assert(a.load() == 42)
 }
 
 test "AtomicIsize store and fetch_add" {
-    let mut a = AtomicIsize.new(0)
+    mut a = AtomicIsize.new(0)
     a.store(10)
-    let prev = a.fetch_add(5)
+    ro prev = a.fetch_add(5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
 test "AtomicIsize compare_exchange" {
-    let mut a = AtomicIsize.new(100)
-    let ok = a.compare_exchange(100, 200)
+    mut a = AtomicIsize.new(100)
+    ro ok = a.compare_exchange(100, 200)
     assert(ok)
     assert(a.load() == 200)
 }
 
 test "AtomicIsize swap" {
-    let mut a = AtomicIsize.new(7)
-    let old = a.swap(99)
+    mut a = AtomicIsize.new(7)
+    ro old = a.swap(99)
     assert(old == 7)
     assert(a.load() == 99)
 }
 
 test "AtomicUsize new and load" {
-    let mut a = AtomicUsize.new(1000)
+    mut a = AtomicUsize.new(1000)
     assert(a.load() == 1000)
 }
 
 test "AtomicUsize fetch_add" {
-    let mut a = AtomicUsize.new(5)
-    let prev = a.fetch_add(10)
+    mut a = AtomicUsize.new(5)
+    ro prev = a.fetch_add(10)
     assert(prev == 5)
     assert(a.load() == 15)
 }
 
 test "AtomicUsize compare_exchange failure" {
-    let mut a = AtomicUsize.new(77)
-    let ok = a.compare_exchange(0, 999)
+    mut a = AtomicUsize.new(77)
+    ro ok = a.compare_exchange(0, 999)
     assert(!ok)
     assert(a.load() == 77)
 }

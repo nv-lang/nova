@@ -11,16 +11,16 @@ module nova_tests.plan70_1.f1_alias_call_pos
 import nova_tests.plan70_1.helper_mod as h
 
 test "alias-import: h.add_one(int)" {
-    let r = h.add_one(41)
+    ro r = h.add_one(41)
     assert(r == 42)
 }
 
 test "alias-import: h.double + chaining" {
-    let r = h.double(h.add_one(20))
+    ro r = h.double(h.add_one(20))
     assert(r == 42)
 }
 
 test "alias-import: h.greet(str)" {
-    let s = h.greet("world")
+    ro s = h.greet("world")
     assert(s == "hello, world")
 }

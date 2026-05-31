@@ -10,8 +10,8 @@ fn append_world(mut sb StringBuilder) -> int {
 
 test "mut param + StringBuilder append" {
     consume sb = StringBuilder.from("hello")
-    let n = append_world(sb)
+    ro n = append_world(sb)
     assert(n == 11)         // "hello world" = 11 bytes
-    let final = sb.as_str()
+    ro final = sb.as_str()
     assert(final == "hello world")
 }

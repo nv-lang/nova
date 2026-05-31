@@ -4,20 +4,20 @@ module nova_tests.plan90.byte_at
 
 
 test "byte_at — ASCII байты" {
-    let s = "ABC"
+    ro s = "ABC"
     assert(s.byte_at(0) as int == 65)
     assert(s.byte_at(1) as int == 66)
     assert(s.byte_at(2) as int == 67)
 }
 
 test "byte_at — граница (последний байт)" {
-    let s = "xy"
+    ro s = "xy"
     assert(s.byte_at(1) as int == 121)
 }
 
 test "byte_at — UTF-8 multibyte" {
     // 'Я' = U+042F → UTF-8: 0xD0 0xAF
-    let s = "Я"
+    ro s = "Я"
     assert(s.byte_at(0) as int == 0xD0)
     assert(s.byte_at(1) as int == 0xAF)
 }

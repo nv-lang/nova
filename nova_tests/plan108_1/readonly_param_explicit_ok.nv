@@ -3,18 +3,18 @@
 
 module nova_tests.plan108_1.readonly_param_explicit_ok
 
-fn count_items(readonly b []int) -> int => b.len()
+fn count_items(ro b []int) -> int => b.len()
 
 fn sum(b []int) -> int {
-    let mut total = 0
+    mut total = 0
     for x in b {
         total = total + x
     }
     total
 }
 
-test "readonly param explicit + default param (read-only)" {
-    let mut arr = [10, 20, 30]
+test "ro param explicit + default param (read-only)" {
+    mut arr = [10, 20, 30]
     assert(count_items(arr) == 3)
     assert(sum(arr) == 60)
 }

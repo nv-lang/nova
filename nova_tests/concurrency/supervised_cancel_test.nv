@@ -30,8 +30,8 @@ module concurrency.supervised_cancel_test
 // ================================================================
 
 test "supervised(cancel:) без cancel() — все fiber'ы выполняются" {
-    let tok = CancelToken.new()
-    let mut sum = 0
+    ro tok = CancelToken.new()
+    mut sum = 0
     supervised(cancel: tok) {
         spawn { sum += 1 }
         spawn { sum += 2 }
@@ -41,8 +41,8 @@ test "supervised(cancel:) без cancel() — все fiber'ы выполняют
 }
 
 test "supervised(cancel:): is_cancelled false по умолчанию" {
-    let tok = CancelToken.new()
-    let mut got_false = false
+    ro tok = CancelToken.new()
+    mut got_false = false
     supervised(cancel: tok) {
         spawn {
             if !tok.is_cancelled() {
@@ -70,8 +70,8 @@ test "supervised(cancel:): is_cancelled false по умолчанию" {
 // ================================================================
 
 test "double cancel() — idempotent, no panic" {
-    let tok = CancelToken.new()
-    let mut hits = 0
+    ro tok = CancelToken.new()
+    mut hits = 0
     supervised(cancel: tok) {
         spawn {
             tok.cancel()
@@ -87,9 +87,9 @@ test "double cancel() — idempotent, no panic" {
 // ================================================================
 
 test "is_cancelled() reflects cancel state within same fiber" {
-    let tok = CancelToken.new()
-    let mut before = false
-    let mut after = false
+    ro tok = CancelToken.new()
+    mut before = false
+    mut after = false
     supervised(cancel: tok) {
         spawn {
             before = tok.is_cancelled()    // false
@@ -109,10 +109,10 @@ test "cancelled_by: cancel parent — child каскадно отменён" {
     // Оба токена caller-owned, создаются заранее. child.cancelled_by(parent):
     // когда parent.cancel() сработает — child тоже отменится (вниз по
     // направлению; child.cancel() parent НЕ затронет).
-    let parent = CancelToken.new()
-    let child = CancelToken.new()
+    ro parent = CancelToken.new()
+    ro child = CancelToken.new()
     child.cancelled_by(parent)
-    let mut child_was_cancelled = false
+    mut child_was_cancelled = false
     supervised(cancel: parent) {
         spawn {
             supervised(cancel: child) {
@@ -135,8 +135,8 @@ test "cancelled_by: cancel parent — child каскадно отменён" {
 test "cancel() на завершённом scope — безвредный no-op" {
     // Старая модель: токен dangling после scope-exit. Новая: caller-owned,
     // unbind на выходе, cancel() на отвязанном токене — чистый no-op.
-    let tok = CancelToken.new()
-    let mut ran = false
+    ro tok = CancelToken.new()
+    mut ran = false
     supervised(cancel: tok) {
         spawn { ran = true }
     }
@@ -150,12 +150,12 @@ test "cancel() на завершённом scope — безвредный no-op"
 test "токен переживает scope — повторный bind на свежий scope" {
     // unbind на выходе освобождает токен; не-отменённый токен можно
     // привязать к новому scope'у заново.
-    let tok = CancelToken.new()
-    let mut first = 0
+    ro tok = CancelToken.new()
+    mut first = 0
     supervised(cancel: tok) {
         spawn { first += 1 }
     }
-    let mut second = 0
+    mut second = 0
     supervised(cancel: tok) {
         spawn { second += 1 }
     }

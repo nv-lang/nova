@@ -36,7 +36,7 @@ test "blocking: body executes trivially" {
 }
 
 #blocking fn _side_effect_work(n int) -> int {
-    let mut log = n
+    mut log = n
     log = 7
     log
 }
@@ -99,8 +99,8 @@ test "blocking: if inside body" {
 }
 
 #blocking fn _triangle_sum_work(upto int) -> int {
-    let mut acc = 0
-    let mut i = 1
+    mut acc = 0
+    mut i = 1
     while i <= upto {
         acc += i
         i += 1
@@ -121,7 +121,7 @@ test "blocking: while inside body" {
 // ================================================================
 
 fn blocking_sequential() -> int {
-    let mut log = 0
+    mut log = 0
     log = _add_to_val_work(log * 10, 1)
     log = _add_to_val_work(log * 10, 2)
     log = _add_to_val_work(log * 10, 3)
@@ -141,7 +141,7 @@ test "blocking: multiple calls preserve sequential order" {
 }
 
 fn blocking_sum_array() -> int {
-    let xs = [10, 20, 30]
+    ro xs = [10, 20, 30]
     _sum_three_work(xs[0], xs[1], xs[2])
 }
 

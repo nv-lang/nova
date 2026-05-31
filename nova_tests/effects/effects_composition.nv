@@ -32,14 +32,14 @@ type Writer effect {
 // --- Two effects ---
 
 fn task(n int) Logger Counter -> int {
-    let id = Counter.next()
+    ro id = Counter.next()
     Logger.log("processing")
     n * id
 }
 
 test "функция с двумя эффектами в сигнатуре (flat with)" {
-    let mut entries = []
-    let mut count = 0
+    mut entries = []
+    mut count = 0
     with Logger = effect Logger {
         log(msg) {
             entries.push(msg)
@@ -51,8 +51,8 @@ test "функция с двумя эффектами в сигнатуре (fla
             return count
         }
     } {
-        let a = task(10)
-        let b = task(20)
+        ro a = task(10)
+        ro b = task(20)
         assert(a == 10)
         assert(b == 40)
     }
@@ -63,7 +63,7 @@ test "функция с двумя эффектами в сигнатуре (fla
 // --- State effect ---
 
 test "state effect — get/set" {
-    let mut s = 100
+    mut s = 100
     with State = effect State {
         get() => s
         set(n) {
@@ -71,10 +71,10 @@ test "state effect — get/set" {
             return ()
         }
     } {
-        let v1 = State.get()
+        ro v1 = State.get()
         assert(v1 == 100)
         State.set(v1 + 5)
-        let v2 = State.get()
+        ro v2 = State.get()
         assert(v2 == 105)
         State.set(v2 * 2)
         assert(State.get() == 210)
@@ -83,7 +83,7 @@ test "state effect — get/set" {
 }
 
 test "state — accumulator pattern" {
-    let mut acc = 0
+    mut acc = 0
     with State = effect State {
         get() => acc
         set(n) {
@@ -92,7 +92,7 @@ test "state — accumulator pattern" {
         }
     } {
         for i in 1..6 {
-            let cur = State.get()
+            ro cur = State.get()
             State.set(cur + i)
         }
     }
@@ -102,13 +102,13 @@ test "state — accumulator pattern" {
 // --- Reader/Writer pipe ---
 
 fn echo() Reader Writer -> () {
-    let s = Reader.read()
+    ro s = Reader.read()
     Writer.write(s + "!")
 }
 
 test "reader/writer композиция (flat with)" {
-    let mut output = ""
-    let input = "hello"
+    mut output = ""
+    ro input = "hello"
     with Reader = effect Reader {
         read() => input
     }, Writer = effect Writer {
@@ -132,34 +132,34 @@ test "константный counter" {
     with Counter = effect Counter {
         next() => 7
     } {
-        let total = three()
+        ro total = three()
         assert(total == 21)
     }
 }
 
 test "нарастающий counter с state" {
-    let mut n = 0
+    mut n = 0
     with Counter = effect Counter {
         next() {
             n += 1
             return n
         }
     } {
-        let total = three()
+        ro total = three()
         assert(total == 1 + 2 + 3)
     }
     assert(n == 3)
 }
 
 test "decrementing counter" {
-    let mut n = 100
+    mut n = 100
     with Counter = effect Counter {
         next() {
             n -= 10
             return n
         }
     } {
-        let r = Counter.next() + Counter.next() + Counter.next()
+        ro r = Counter.next() + Counter.next() + Counter.next()
         assert(r == 90 + 80 + 70)
     }
     assert(n == 70)

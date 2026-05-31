@@ -13,11 +13,11 @@ module plan65.f6_huge_duration
 import std.time.duration
 
 test "Duration.from_days(10_000) allocates timer without panic" {
-    let huge = Duration.from_days(10_000)
-    let mut allocated = false
+    ro huge = Duration.from_days(10_000)
+    mut allocated = false
     supervised {
         spawn {
-            let _t = ChanReader.close_after(huge)
+            ro _t = ChanReader.close_after(huge)
             // Scope-exit cancels the pending timer; we never wait.
             allocated = true
         }
@@ -27,11 +27,11 @@ test "Duration.from_days(10_000) allocates timer without panic" {
 
 test "Duration.from_hours(1_000_000) allocates without overflow" {
     // 1M hours = ~114 years. Still well within i64 ns range (~292 years cap).
-    let huge = Duration.from_hours(1_000_000)
-    let mut allocated = false
+    ro huge = Duration.from_hours(1_000_000)
+    mut allocated = false
     supervised {
         spawn {
-            let _t = ChanReader.close_after(huge)
+            ro _t = ChanReader.close_after(huge)
             allocated = true
         }
     }

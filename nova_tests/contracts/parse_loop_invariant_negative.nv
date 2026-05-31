@@ -6,7 +6,7 @@ module contracts.parse_loop_invariant_negative
 
 #unverified
 fn bad_invariant(n int) -> int {
-    let mut i = 0
+    mut i = 0
     while i < n
         invariant
     {

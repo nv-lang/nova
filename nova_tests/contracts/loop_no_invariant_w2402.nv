@@ -6,7 +6,7 @@ module contracts.loop_no_invariant_w2402
 fn count_down(n int) -> int
     requires n >= 0
 {
-    let mut i = n
+    mut i = n
     while i > 0
         decreases i
     {

@@ -13,7 +13,7 @@ fn Transaction consume @commit() -> () { () }
 
 test "for consume tx in vec — каждый element consume'ится в arm'е" {
     // Inline literals → no named consume-obligations outside loop.
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
     for consume tx in txs {
         tx.commit()                             // consume obligation satisfied ✅
     }

@@ -11,7 +11,7 @@ fn pick[T](items []T, idx int = 0) -> T =>
     items[idx]
 
 test "positional arg on defaulted param of generic fn rejected" {
-    let xs = [10, 20, 30]
-    let _ = pick(xs, 1)
+    ro xs = [10, 20, 30]
+    ro _ = pick(xs, 1)
     assert(true)
 }

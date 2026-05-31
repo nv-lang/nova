@@ -49,9 +49,9 @@ fn use_resource(id int, amount int) Fail[str] -> int {
 
 fn with_resource_safe(id int, t Tracker, body fn(int) -> int) Fail[str] -> int {
     t.opened = t.opened + 1
-    let mut caught = ""
-    let mut had_throw = false
-    let result = with Fail[str] = effect Fail[str] {
+    mut caught = ""
+    mut had_throw = false
+    ro result = with Fail[str] = effect Fail[str] {
         fail(msg) {
             caught = msg
             had_throw = true
@@ -71,7 +71,7 @@ fn with_resource_safe(id int, t Tracker, body fn(int) -> int) Fail[str] -> int {
 // Простая (без cleanup на throw) версия — для motivating example.
 fn with_resource_naive(id int, t Tracker, body fn(int) -> int) -> int {
     t.opened = t.opened + 1
-    let result = body(id)
+    ro result = body(id)
     t.closed = t.closed + 1     // ⚠️ если body throw'ит — сюда не дойдёт
     result
 }
@@ -81,16 +81,16 @@ fn with_resource_naive(id int, t Tracker, body fn(int) -> int) -> int {
 // ================================================================
 
 test "happy path: tracker увеличен на open + close без throw" {
-    let t = Tracker { opened: 0, closed: 0 }
-    let result = with_resource_safe(7, t) fn(id int) -> int => use_resource(id, 5)
+    ro t = Tracker { opened: 0, closed: 0 }
+    ro result = with_resource_safe(7, t) fn(id int) -> int => use_resource(id, 5)
     assert(result == 35)
     assert(t.opened == 1)
     assert(t.closed == 1)
 }
 
 test "with_resource_naive: happy path тоже работает" {
-    let t = Tracker { opened: 0, closed: 0 }
-    let result = with_resource_naive(3, t) fn(id int) -> int => use_resource(id, 4)
+    ro t = Tracker { opened: 0, closed: 0 }
+    ro result = with_resource_naive(3, t) fn(id int) -> int => use_resource(id, 4)
     assert(result == 12)
     assert(t.opened == 1)
     assert(t.closed == 1)
@@ -102,9 +102,9 @@ test "with_resource_naive: happy path тоже работает" {
 
 test "with_resource_naive: throw в body — closed НЕ инкрементирован (resource leak)" {
     // Демонстрация ПОЧЕМУ нужна safe-обёртка: naive-версия течёт.
-    let t = Tracker { opened: 0, closed: 0 }
-    let mut caught_msg = ""
-    let _ = with Fail[str] = effect Fail[str] {
+    ro t = Tracker { opened: 0, closed: 0 }
+    mut caught_msg = ""
+    ro _ = with Fail[str] = effect Fail[str] {
         fail(msg) {
             caught_msg = msg
             interrupt 0
@@ -118,9 +118,9 @@ test "with_resource_naive: throw в body — closed НЕ инкрементир�
 }
 
 test "with_resource_safe: throw в body — cleanup вызывается + re-throw" {
-    let t = Tracker { opened: 0, closed: 0 }
-    let mut caught_msg = ""
-    let _ = with Fail[str] = effect Fail[str] {
+    ro t = Tracker { opened: 0, closed: 0 }
+    mut caught_msg = ""
+    ro _ = with Fail[str] = effect Fail[str] {
         fail(msg) {
             caught_msg = msg
             interrupt 0

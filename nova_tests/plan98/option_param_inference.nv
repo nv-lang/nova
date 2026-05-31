@@ -15,8 +15,8 @@ fn check[T](o Option[T]) -> bool => o.is_some()
 fn extract[T](o Option[T], default_v T) -> T => o.unwrap_or(default_v)
 
 test "Option[int] param inference — без turbofish" {
-    let a Option[int] = Some(42)
-    let b Option[int] = None
+    ro a Option[int] = Some(42)
+    ro b Option[int] = None
     assert(check(a))
     assert(!check(b))
     assert(extract(a, 0) == 42)
@@ -24,25 +24,25 @@ test "Option[int] param inference — без turbofish" {
 }
 
 test "Option[str] param inference" {
-    let s1 Option[str] = Some("hello")
-    let s2 Option[str] = None
+    ro s1 Option[str] = Some("hello")
+    ro s2 Option[str] = None
     assert(check(s1))
     assert(extract(s1, "default") == "hello")
     assert(extract(s2, "default") == "default")
 }
 
 test "Option[char] param inference" {
-    let c1 Option[char] = Some('A')
-    let c2 Option[char] = None
+    ro c1 Option[char] = Some('A')
+    ro c2 Option[char] = None
     assert(check(c1))
     assert(extract(c1, 'Z') == 'A')
     assert(extract(c2, 'Z') == 'Z')
 }
 
 test "Option[User] param inference — non-primitive" {
-    let u1 Option[User] = Some(User { id: 1, name: "Alice" })
-    let u2 Option[User] = None
-    let default_u = User { id: 0, name: "default" }
+    ro u1 Option[User] = Some(User { id: 1, name: "Alice" })
+    ro u2 Option[User] = None
+    ro default_u = User { id: 0, name: "default" }
     assert(check(u1))
     assert(extract(u1, default_u).id == 1)
     assert(extract(u2, default_u).id == 0)

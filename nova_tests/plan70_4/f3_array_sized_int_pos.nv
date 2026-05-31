@@ -6,14 +6,14 @@ module nova_tests.plan70_4.f3_array_sized_int_pos
 // memory overhead and wrong FFI alignment for GPU/audio/network buffers.
 
 test "[]i32 stores and retrieves values" {
-    let vals []i32 = [1 as i32, 2 as i32, 3 as i32]
+    ro vals []i32 = [1 as i32, 2 as i32, 3 as i32]
     assert(vals.len() == 3)
     assert(vals[0] == 1 as i32)
     assert(vals[2] == 3 as i32)
 }
 
 test "[]i32 push and access" {
-    let mut v []i32 = []i32.new()
+    mut v []i32 = []i32.new()
     v.push(10 as i32)
     v.push(20 as i32)
     assert(v.len() == 2)
@@ -22,34 +22,34 @@ test "[]i32 push and access" {
 }
 
 test "[]i16 stores values" {
-    let vals []i16 = [5 as i16, 10 as i16, 15 as i16]
+    ro vals []i16 = [5 as i16, 10 as i16, 15 as i16]
     assert(vals.len() == 3)
     assert(vals[0] == 5 as i16)
     assert(vals[1] == 10 as i16)
 }
 
 test "[]i8 stores values" {
-    let vals []i8 = [1 as i8, 2 as i8, 127 as i8]
+    ro vals []i8 = [1 as i8, 2 as i8, 127 as i8]
     assert(vals.len() == 3)
     assert(vals[0] == 1 as i8)
     assert(vals[2] == 127 as i8)
 }
 
 test "[]u32 stores values" {
-    let vals []u32 = [100 as u32, 200 as u32, 300 as u32]
+    ro vals []u32 = [100 as u32, 200 as u32, 300 as u32]
     assert(vals.len() == 3)
     assert(vals[0] == 100 as u32)
     assert(vals[2] == 300 as u32)
 }
 
 test "[]u16 stores values" {
-    let vals []u16 = [1000 as u16, 2000 as u16]
+    ro vals []u16 = [1000 as u16, 2000 as u16]
     assert(vals.len() == 2)
     assert(vals[0] == 1000 as u16)
 }
 
 test "[]u64 stores values" {
-    let vals []u64 = [1000000 as u64, 2000000 as u64]
+    ro vals []u64 = [1000000 as u64, 2000000 as u64]
     assert(vals.len() == 2)
     assert(vals[0] == 1000000 as u64)
     assert(vals[1] == 2000000 as u64)

@@ -19,10 +19,10 @@ module concurrency.select_timer_stress
 import std.time.duration
 
 test "500 iter select cleanup stress" {
-    let mut wins = 0
-    let mut i = 0
+    mut wins = 0
+    mut i = 0
     while i < 500 {
-        let ch = Channel.new(1)
+        ro ch = Channel.new(1)
         supervised {
             spawn { ch.tx.send(i) }
             spawn {
@@ -38,10 +38,10 @@ test "500 iter select cleanup stress" {
 }
 
 test "100 iter Time.after fires" {
-    let mut fired = 0
-    let mut i = 0
+    mut fired = 0
+    mut i = 0
     while i < 100 {
-        let ch = Channel.new(1)
+        ro ch = Channel.new(1)
         supervised {
             spawn {
                 select {

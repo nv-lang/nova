@@ -6,7 +6,7 @@ module plan70.f5_emit_call_hof_pos
 fn twice(f fn(int) -> int, x int) -> int => f(f(x))
 
 fn apply_each[T](xs []T, f fn(T) -> T) -> []T {
-    let mut result = []T.new()
+    mut result = []T.new()
     for x in xs {
         result.push(f(x))
     }
@@ -14,13 +14,13 @@ fn apply_each[T](xs []T, f fn(T) -> T) -> []T {
 }
 
 test "non-generic HOF call (emit_call non-mono path)" {
-    let r = twice(|x| x + 1, 10)
+    ro r = twice(|x| x + 1, 10)
     assert(r == 12)
 }
 
 test "generic HOF call (emit_call mono-subst path)" {
-    let xs = [1, 2, 3]
-    let doubled = apply_each(xs, |n| n * 2)
+    ro xs = [1, 2, 3]
+    ro doubled = apply_each(xs, |n| n * 2)
     assert(doubled.len() == 3)
     assert(doubled[0] == 2)
     assert(doubled[2] == 6)

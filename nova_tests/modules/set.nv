@@ -9,7 +9,7 @@ module modules.set
 import std.collections.set.{Set}
 
 test "Set: insert новый — true, дубликат — false" {
-    let mut s = Set[int].new()
+    mut s = Set[int].new()
     assert(s.insert(1) == true)
     assert(s.insert(1) == false)
     assert(s.insert(2) == true)
@@ -17,7 +17,7 @@ test "Set: insert новый — true, дубликат — false" {
 }
 
 test "Set: contains после insert" {
-    let mut s = Set[str].new()
+    mut s = Set[str].new()
     s.insert("alice")
     s.insert("bob")
     assert(s.contains("alice") == true)
@@ -26,7 +26,7 @@ test "Set: contains после insert" {
 }
 
 test "Set: remove возвращает true если был, false если нет" {
-    let mut s = Set[int].new()
+    mut s = Set[int].new()
     s.insert(10)
     assert(s.remove(10) == true)
     assert(s.remove(10) == false)
@@ -35,7 +35,7 @@ test "Set: remove возвращает true если был, false если не
 }
 
 test "Set: is_empty и len" {
-    let mut s = Set[int].new()
+    mut s = Set[int].new()
     assert(s.is_empty() == true)
     assert(s.len() == 0)
     s.insert(1)
@@ -44,7 +44,7 @@ test "Set: is_empty и len" {
 }
 
 test "Set: clear" {
-    let mut s = Set[int].new()
+    mut s = Set[int].new()
     s.insert(1)
     s.insert(2)
     s.insert(3)
@@ -54,7 +54,7 @@ test "Set: clear" {
 }
 
 test "Set: with_capacity — работает аналогично new" {
-    let mut s = Set[int].with_capacity(16)
+    mut s = Set[int].with_capacity(16)
     s.insert(42)
     assert(s.contains(42) == true)
     assert(s.len() == 1)

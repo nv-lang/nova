@@ -20,7 +20,7 @@ import std.collections.hashmap.{HashMap}
 test "SipHash: вставка и поиск работают для разнообразных string-ключей" {
     // Набор строк который у плохой hash-функции (типа sum-of-bytes)
     // даёт collision: anagrams.
-    let m HashMap[str, int] = [
+    ro m HashMap[str, int] = [
         "abc": 1,
         "cba": 2,
         "bac": 3,
@@ -38,7 +38,7 @@ test "SipHash: вставка и поиск работают для разноо
 }
 
 test "SipHash: empty string and same-length strings differentiated" {
-    let m HashMap[str, int] = [
+    ro m HashMap[str, int] = [
         "": 0,
         "a": 1,
         "ab": 2,
@@ -54,7 +54,7 @@ test "SipHash: empty string and same-length strings differentiated" {
 }
 
 test "SipHash: int-keys работают" {
-    let m HashMap[int, str] = [
+    ro m HashMap[int, str] = [
         0: "zero",
         1: "one",
         100: "hundred",

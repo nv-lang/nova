@@ -14,7 +14,7 @@ type IntCounter {
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -23,8 +23,8 @@ fn IntCounter mut @next() -> Option[int] => {
 }
 
 fn consume_iter(mut x Iterable[int]) -> int => {
-    let mut count = 0
-    let mut go = true
+    mut count = 0
+    mut go = true
     loop {
         if !go { break }
         if x.next().is_some() { count += 1 } else { go = false }
@@ -33,6 +33,6 @@ fn consume_iter(mut x Iterable[int]) -> int => {
 }
 
 test "P3-B neg — non-implementer passed to protocol parameter" {
-    let n = consume_iter(42)
+    ro n = consume_iter(42)
     assert(n == 0)
 }

@@ -53,8 +53,8 @@ test "Option[(str, int)] — heterogeneous payload destructure" {
 
 
 test "chained Option[(K, V)] — second call returns None" {
-    let first = find_pair(2)
-    let second = find_pair(99)
+    ro first = find_pair(2)
+    ro second = find_pair(99)
     match first {
         Some((a, b)) => assert(a == 20 && b == 200)
         None => assert(false)

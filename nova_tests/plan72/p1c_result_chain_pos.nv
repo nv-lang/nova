@@ -15,35 +15,35 @@ fn parse_bool(s str) -> Result[bool, str] => {
 }
 
 test "P1-C chain — map on Result[int,str] Ok path" {
-    let r = parse_int("42")
-    let mapped = r.map(fn(x int) -> int => x + 1)
+    ro r = parse_int("42")
+    ro mapped = r.map(fn(x int) -> int => x + 1)
     assert(mapped.unwrap_or(0) == 43)
 }
 
 test "P1-C chain — map on Result[int,str] Err path" {
-    let r = parse_int("bad")
-    let mapped = r.map(fn(x int) -> int => x + 1)
+    ro r = parse_int("bad")
+    ro mapped = r.map(fn(x int) -> int => x + 1)
     assert(mapped.unwrap_or(0) == 0)
 }
 
 test "P1-C chain — map_err on Result[int,str]" {
-    let r = parse_int("bad")
-    let mapped = r.map_err(fn(e str) -> str => "error: " + e)
+    ro r = parse_int("bad")
+    ro mapped = r.map_err(fn(e str) -> str => "error: " + e)
     assert(mapped.is_err())
 }
 
 test "P1-C chain — unwrap_or on inline Result[bool,str]" {
-    let b = parse_bool("true").unwrap_or(false)
+    ro b = parse_bool("true").unwrap_or(false)
     assert(b)
 }
 
 test "P1-C chain — unwrap_or on inline Result[bool,str] Err" {
-    let b = parse_bool("nope").unwrap_or(false)
+    ro b = parse_bool("nope").unwrap_or(false)
     assert(!b)
 }
 
 test "P1-C chain — map then unwrap_or on Result[bool,str]" {
-    let r = parse_bool("true")
-    let mapped = r.map(fn(b bool) -> bool => !b)
+    ro r = parse_bool("true")
+    ro mapped = r.map(fn(b bool) -> bool => !b)
     assert(mapped.unwrap_or(true) == false)
 }

@@ -17,7 +17,7 @@ type Counter {
 
 fn Counter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -27,21 +27,21 @@ fn Counter mut @next() -> Option[int] => {
 
 // Plan 72 P1-A: leading `mut it T` syntax — T is a generic type-var.
 fn count_items[U, T Iterable[U]](mut it T) -> int => {
-    let mut total = 0
-    while let Some(_) = it.next() {
+    mut total = 0
+    while Some(_) = it.next() {
         total += 1
     }
     total
 }
 
 test "P1-A — `mut it T` leading-mut parameter with generic type-var" {
-    let c = Counter { cur: 0, end: 5 }
-    let n = count_items[int, Counter](c)
+    ro c = Counter { cur: 0, end: 5 }
+    ro n = count_items[int, Counter](c)
     assert(n == 5)
 }
 
 test "P1-A — leading-mut parameter with concrete type" {
-    let c = Counter { cur: 0, end: 3 }
-    let n = count_items[int, Counter](c)
+    ro c = Counter { cur: 0, end: 3 }
+    ro n = count_items[int, Counter](c)
     assert(n == 3)
 }

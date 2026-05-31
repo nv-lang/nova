@@ -12,6 +12,6 @@ fn connect(host str, port int = 8080) -> int =>
     host.len() + port
 
 test "too-many-args reported as arity error, not keyword-only" {
-    let _ = connect("localhost", 9000, 7)
+    ro _ = connect("localhost", 9000, 7)
     assert(true)
 }

@@ -14,7 +14,7 @@ type IntCounter {
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -26,30 +26,30 @@ fn make_counter(n int) -> IntCounter => {
     IntCounter { cur: 0, end: n }
 }
 
-test "P3-B fat ptr — let x Iterable[int] = make_counter(3); x.next()" {
-    let c = make_counter(3)
-    let mut x Iterable[int] = c
-    let r = x.next()
+test "P3-B fat ptr — ro x Iterable[int] = make_counter(3); x.next()" {
+    ro c = make_counter(3)
+    mut x Iterable[int] = c
+    ro r = x.next()
     assert(r.is_some())
 }
 
 test "P3-B fat ptr — два вызова next() после функции-конструктора" {
-    let c = make_counter(1)
-    let mut x Iterable[int] = c
-    let r0 = x.next()
-    let r1 = x.next()
+    ro c = make_counter(1)
+    mut x Iterable[int] = c
+    ro r0 = x.next()
+    ro r1 = x.next()
     assert(r0.is_some())
     assert(r1.is_none())
 }
 
 test "P3-B fat ptr — count через protocol var из make_counter" {
-    let c = make_counter(5)
-    let mut x Iterable[int] = c
-    let mut count = 0
-    let mut go = true
+    ro c = make_counter(5)
+    mut x Iterable[int] = c
+    mut count = 0
+    mut go = true
     loop {
         if !go { break }
-        let r = x.next()
+        ro r = x.next()
         if r.is_some() { count += 1 } else { go = false }
     }
     assert(count == 5)
@@ -65,25 +65,25 @@ fn get_iter_0() -> Iterable[int] => {
     IntCounter { cur: 0, end: 0 }
 }
 
-test "P3-B fat ptr return — let x = get_iter_3(); x.next() is Some" {
-    let mut x = get_iter_3()
-    let r = x.next()
+test "P3-B fat ptr return — ro x = get_iter_3(); x.next() is Some" {
+    mut x = get_iter_3()
+    ro r = x.next()
     assert(r.is_some())
 }
 
-test "P3-B fat ptr return — let x = get_iter_0(); x.next() is None" {
-    let mut x = get_iter_0()
-    let r = x.next()
+test "P3-B fat ptr return — ro x = get_iter_0(); x.next() is None" {
+    mut x = get_iter_0()
+    ro r = x.next()
     assert(r.is_none())
 }
 
 test "P3-B fat ptr return — count через fn возвращающую Iterable[int]" {
-    let mut x = get_iter_3()
-    let mut count = 0
-    let mut go = true
+    mut x = get_iter_3()
+    mut count = 0
+    mut go = true
     loop {
         if !go { break }
-        let r = x.next()
+        ro r = x.next()
         if r.is_some() { count += 1 } else { go = false }
     }
     assert(count == 3)

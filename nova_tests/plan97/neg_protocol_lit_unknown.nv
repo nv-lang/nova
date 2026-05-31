@@ -7,7 +7,7 @@ module nova_tests.plan97.neg_protocol_lit_unknown
 
 
 test "unknown protocol" {
-    let l = protocol NotDeclared {
+    ro l = protocol NotDeclared {
         foo() => ()
     }
 }

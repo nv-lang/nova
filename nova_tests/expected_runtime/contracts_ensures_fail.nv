@@ -13,6 +13,6 @@ fn buggy(x int) -> int
 => x + 1
 
 fn main() Io -> () {
-    let _ = buggy(5)
+    ro _ = buggy(5)
     println("UNREACHABLE")
 }

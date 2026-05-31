@@ -8,20 +8,20 @@ fn Option[T] @my_map[U](f fn(T) -> U) -> Option[U]
   => match @ { Some(v) => Some(f(v)), None => None }
 
 test "Option[int].my_map int→str (T≠U primitive→primitive)" {
-    let a Option[int] = Some(42)
-    let s = a.my_map(|x| str.from(x))
+    ro a Option[int] = Some(42)
+    ro s = a.my_map(|x| str.from(x))
     assert(s.is_some())
     assert(s.unwrap_or("") == "42")
 }
 
 test "Option[int].my_map int→int (T==U)" {
-    let a Option[int] = Some(7)
-    let b = a.my_map(|x| x * 2)
+    ro a Option[int] = Some(7)
+    ro b = a.my_map(|x| x * 2)
     assert(b.unwrap_or(0) == 14)
 }
 
 test "Option.my_map на None — closure не вызывается" {
-    let a Option[int] = None
-    let s = a.my_map(|x| str.from(x))
+    ro a Option[int] = None
+    ro s = a.my_map(|x| str.from(x))
     assert(s.is_none())
 }

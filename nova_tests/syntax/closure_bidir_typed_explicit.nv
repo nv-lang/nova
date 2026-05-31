@@ -25,29 +25,29 @@ fn map_and_add(f fn(int) -> int, x int, delta int) -> int {
 
 test "HOF с несколькими аргументами — closure только последний" {
     // base=10, offset=5, f(10) = 10 + 1 = 11, result = 11 + 5 = 16
-    let r = apply_with_offset(10, 5, |n| n + 1)
+    ro r = apply_with_offset(10, 5, |n| n + 1)
     assert(r == 16)
 }
 
 test "bidir + захват переменной + int инференс" {
-    let mul = 3
-    let r = transform_int(4, |n| n * mul)
+    ro mul = 3
+    ro r = transform_int(4, |n| n * mul)
     assert(r == 12)
 }
 
 test "HOF где closure не последний аргумент (param_index=0)" {
     // f=|x|x*2, x=7, delta=1 => 7*2+1=15
-    let r = map_and_add(|x| x * 2, 7, 1)
+    ro r = map_and_add(|x| x * 2, 7, 1)
     assert(r == 15)
 }
 
 test "bidir bool — несколько HOF-вызовов цепочкой" {
-    let r1 = apply_bool(true, |b| !b)
-    let r2 = apply_bool(r1, |b| !b)
+    ro r1 = apply_bool(true, |b| !b)
+    ro r2 = apply_bool(r1, |b| !b)
     assert(r2 == true)
 }
 
 test "bidir int — closure возвращает константу (body не использует param)" {
-    let r = transform_int(99, |_n| 42)
+    ro r = transform_int(99, |_n| 42)
     assert(r == 42)
 }

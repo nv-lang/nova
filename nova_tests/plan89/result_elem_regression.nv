@@ -9,11 +9,11 @@
 module nova_tests.plan89.result_elem_regression
 
 
-test "for-in []Result + if let Ok" {
-    let rs []Result[int, str] = [Ok(1), Err("e"), Ok(3), Ok(8)]
-    let mut sum = 0
+test "for-in []Result + if ro Ok" {
+    ro rs []Result[int, str] = [Ok(1), Err("e"), Ok(3), Ok(8)]
+    mut sum = 0
     for r in rs {
-        if let Ok(v) = r {
+        if Ok(v) = r {
             sum = sum + v
         }
     }
@@ -21,9 +21,9 @@ test "for-in []Result + if let Ok" {
 }
 
 test "for-in []Result + match" {
-    let rs []Result[int, str] = [Ok(10), Err("bad"), Ok(5)]
-    let mut oks = 0
-    let mut errs = 0
+    ro rs []Result[int, str] = [Ok(10), Err("bad"), Ok(5)]
+    mut oks = 0
+    mut errs = 0
     for r in rs {
         match r {
             Ok(_) => { oks = oks + 1 }

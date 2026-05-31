@@ -18,12 +18,12 @@ fn fresh[T Buildable]() -> T => T.new()
 
 
 test "T.new() static на typevar — Counter" {
-    let c = fresh[Counter]()
+    ro c = fresh[Counter]()
     assert(c.n == 0)
 }
 
 test "T.new() static на typevar — Score" {
-    let s = fresh[Score]()
+    ro s = fresh[Score]()
     assert(s.points == 100)
 }
 
@@ -37,11 +37,11 @@ fn convert[T TryFrom[int, str]](n int) -> Result[T, str] => T.try_from(n)
 
 
 test "T.try_from на typevar — Ok-ветка" {
-    let r = convert[Pos](7)
+    ro r = convert[Pos](7)
     assert(r.is_ok())
 }
 
 test "T.try_from на typevar — Err-ветка" {
-    let r = convert[Pos](-3)
+    ro r = convert[Pos](-3)
     assert(r.is_err())
 }

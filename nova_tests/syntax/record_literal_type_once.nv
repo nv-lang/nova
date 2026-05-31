@@ -16,7 +16,7 @@ fn Pt.origin() -> Self => { x: 0, y: 0 }
 fn mk_circle(r int) -> Shape => Circle { r }
 
 test "=>-body typeless record literal" {
-    let p = mk(3, 4)
+    ro p = mk(3, 4)
     assert(p.x == 3)
     assert(p.y == 4)
 }
@@ -26,21 +26,21 @@ test "-> Self => { } resolves Self" {
 }
 
 test "let with annotation, typeless literal" {
-    let p Pt = { x: 7, y: 8 }
+    ro p Pt = { x: 7, y: 8 }
     assert(p.x == 7)
     assert(p.y == 8)
 }
 
 test "let without annotation, typed literal" {
-    let q = Pt { x: 1, y: 2 }
+    ro q = Pt { x: 1, y: 2 }
     assert(q.x == 1)
 }
 
 test "sum-coercion not broken (literal type != return type)" {
-    let s = mk_circle(5)
+    ro s = mk_circle(5)
     // match в let-позиции (arms возвращают int) — `mk_circle` строит
     // `Circle { r: 5 }` через sum-coercion из `-> Shape => Circle { ... }`.
-    let res = match s {
+    ro res = match s {
         Circle { r } => r
         Square { s } => -1
     }

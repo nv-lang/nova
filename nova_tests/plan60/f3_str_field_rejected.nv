@@ -4,7 +4,7 @@ module nova_tests.plan60.f3_str_field_rejected
 // EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
 
 fn main() -> () {
-    let s str = "hello"
-    let n int = s.len   // ← should error
+    ro s str = "hello"
+    ro n int = s.len   // ← should error
     println(n)
 }

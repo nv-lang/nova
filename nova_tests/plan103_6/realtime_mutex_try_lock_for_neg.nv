@@ -12,8 +12,8 @@ import std.time.duration
 }
 
 test "Mutex.try_lock_for warns in #realtime fn" {
-    let mut m = Mutex.new()
-    let got = _rt_try_lock_for(m)
+    mut m = Mutex.new()
+    ro got = _rt_try_lock_for(m)
     if got {
         m.unlock()
     }

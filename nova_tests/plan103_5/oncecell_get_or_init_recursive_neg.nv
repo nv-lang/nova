@@ -11,42 +11,42 @@
 module nova_tests.plan103_5.oncecell_get_or_init_recursive_neg
 
 test "OnceCell.get_or_init: init failure leaves cell empty (not poisoned)" {
-    let mut cell = OnceCell[int].new()
+    mut cell = OnceCell[int].new()
 
     // Init panics — cell must remain empty, not poisoned
-    let mut panicked = false
+    mut panicked = false
     with Fail = effect Fail {
         fail(_msg) { panicked = true; interrupt () }
     } {
-        let _ = cell.get_or_init() { throw "deliberate failure"; 0 }
+        ro _ = cell.get_or_init() { throw "deliberate failure"; 0 }
     }
 
     assert(panicked == true)
     assert(cell.is_initialized() == false)
 
     // Must be able to try again (not poisoned like Lazy)
-    let v = cell.get_or_init() { 123 }
+    ro v = cell.get_or_init() { 123 }
     assert(v == 123)
     assert(cell.is_initialized() == true)
 }
 
 test "OnceCell.get_or_init: multiple sequential failures then success" {
-    let mut cell = OnceCell[int].new()
-    let mut attempts = 0
+    mut cell = OnceCell[int].new()
+    mut attempts = 0
 
     for _i in 0..3 {
-        let mut panicked = false
+        mut panicked = false
         with Fail = effect Fail {
             fail(_msg) { panicked = true; interrupt () }
         } {
-            let _ = cell.get_or_init() { attempts = attempts + 1; throw "not ready yet"; 0 }
+            ro _ = cell.get_or_init() { attempts = attempts + 1; throw "not ready yet"; 0 }
         }
         assert(panicked == true)
         assert(cell.is_initialized() == false)
     }
 
     // After 3 failures, success is still possible
-    let v = cell.get_or_init() { attempts = attempts + 1; 999 }
+    ro v = cell.get_or_init() { attempts = attempts + 1; 999 }
     assert(v == 999)
     assert(attempts == 4)
 }

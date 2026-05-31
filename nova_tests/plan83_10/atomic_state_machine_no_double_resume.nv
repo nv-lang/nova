@@ -16,7 +16,7 @@ test "1K parallel spawn — no double-resume crash (jobs-safe)" {
     // V1: 1K — fits jobs=16 concurrent budget. Pool + CAS guard
     // должны выдержать. Pre-Plan 83.4.5.7 эта workload регулярно
     // triggered access violation in slot 0 при high N.
-    let xs = parallel for i in 0..1000 { i * 2 + 1 }
+    ro xs = parallel for i in 0..1000 { i * 2 + 1 }
     assert(xs[999] == 1999)
     assert(xs[0] == 1)
     assert(xs[500] == 1001)

@@ -24,7 +24,7 @@ fn Counter @eq(other Counter) -> bool => @n == other.n
 
 
 test "pure bound protocol declarations compile" {
-    let c = Counter { n: 42 }
+    ro c = Counter { n: 42 }
     assert(c.hash() == 42 as u64)
     assert(c.eq(Counter { n: 42 }))
     assert(!c.eq(Counter { n: 99 }))

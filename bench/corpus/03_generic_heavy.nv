@@ -32,8 +32,8 @@ fn Triple[A, B, C].new(a A, b B, c C) -> Triple[A, B, C] => Triple { first: a, s
 fn LinkedList[T].new(v T) -> LinkedList[T] => LinkedList { value: v, next: None2 }
 fn LinkedList[T] @push(v T) -> LinkedList[T] => LinkedList { value: v, next: Some2(@) }
 fn LinkedList[T] @len() -> int {
-    let mut n = 1
-    let mut cur = @next
+    mut n = 1
+    mut cur = @next
     loop {
         match cur {
             None2 => { return n }
@@ -46,7 +46,7 @@ fn Stack[T].new() -> Stack[T] => Stack { items: [] }
 fn Stack[T] mut @push(v T) -> () => @items.push(v)
 fn Stack[T] mut @pop() -> Option2[T] {
     if @items.len() == 0 { return None2 }
-    let last = @items[@items.len() - 1]
+    ro last = @items[@items.len() - 1]
     @items.truncate(@items.len() - 1)
     Some2(last)
 }
@@ -60,24 +60,24 @@ fn Container[T].new(v T, label str) -> Container[T] =>
 fn BinTree[T] @depth() -> int => match @ {
     Leaf => 0
     Node { left, right, .. } => {
-        let l = left.depth()
-        let r = right.depth()
+        ro l = left.depth()
+        ro r = right.depth()
         1 + (if l > r { l } else { r })
     }
 }
 
 fn use_int_generics() Io -> () {
-    let p = Pair[int, int].new(1, 2)
-    let t = Triple[int, int, int].new(1, 2, 3)
-    let ll = LinkedList[int].new(10).push(20).push(30)
+    ro p = Pair[int, int].new(1, 2)
+    ro t = Triple[int, int, int].new(1, 2, 3)
+    ro ll = LinkedList[int].new(10).push(20).push(30)
     println(str.from(ll.len()))
     println(str.from(p.first))
     println(str.from(t.third))
 }
 
 fn use_str_generics() Io -> () {
-    let p = Pair[str, str].new("a", "b")
-    let c = Container[str].new("hello", "greeting")
+    ro p = Pair[str, str].new("a", "b")
+    ro c = Container[str].new("hello", "greeting")
     println(p.first)
     println(c.value)
 }

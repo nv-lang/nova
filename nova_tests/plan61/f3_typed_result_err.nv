@@ -12,11 +12,11 @@ fn try_connect() -> Result[int, DbError] {
 }
 
 test "Result[int, DbError]!!  carries typed payload" {
-    let host = with Fail[DbError] = |e| interrupt (match e {
+    ro host = with Fail[DbError] = |e| interrupt (match e {
         ConnFailed(h) => h
         Timeout       => "timeout"
     }) {
-        let _ = try_connect()!!
+        ro _ = try_connect()!!
         "unreachable"
     }
     assert(host == "127.0.0.1:5432",

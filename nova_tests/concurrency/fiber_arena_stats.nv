@@ -13,7 +13,7 @@ module concurrency.fiber_arena_stats
 
 
 test "fibers introspection API доступен" {
-    let slots = fibers.slot_count()
+    ro slots = fibers.slot_count()
     if slots == 0 {
         // Платформа без arena. Все API симметрично возвращают 0.
         assert(fibers.virtual_reserved() == 0)
@@ -30,13 +30,13 @@ test "fibers introspection API доступен" {
 }
 
 test "spawn увеличивает slots_active под arena" {
-    let before_active = fibers.slots_active()
-    let before_high = fibers.high_water()
+    ro before_active = fibers.slots_active()
+    ro before_high = fibers.high_water()
 
     supervised {
         spawn {
             // Inside fiber — slot allocated в arena (все платформы с arena).
-            let now_active = fibers.slots_active()
+            ro now_active = fibers.slots_active()
             if fibers.slot_count() > 0 {
                 // Arena активна — slot для этого fiber'a должен быть учтён.
                 assert(now_active > before_active)
@@ -49,7 +49,7 @@ test "spawn увеличивает slots_active под arena" {
 
     // После завершения fiber slot переиспользуется. slots_active может
     // вернуться к before_active (или меньше при concurrent cleanup).
-    let after_active = fibers.slots_active()
+    ro after_active = fibers.slots_active()
     if fibers.slot_count() > 0 {
         assert(after_active <= before_high + 1)
     }

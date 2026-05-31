@@ -5,22 +5,22 @@
 module nova_tests.plan108_1.readonly_param_synonym_default_ok
 
 fn count_default(b []int) -> int => b.len()
-fn count_readonly(readonly b []int) -> int => b.len()
+fn count_readonly(ro b []int) -> int => b.len()
 
 fn iter_sum_default(b []int) -> int {
-    let mut s = 0
+    mut s = 0
     for x in b { s = s + x }
     s
 }
 
-fn iter_sum_readonly(readonly b []int) -> int {
-    let mut s = 0
+fn iter_sum_readonly(ro b []int) -> int {
+    mut s = 0
     for x in b { s = s + x }
     s
 }
 
-test "default param ≡ readonly param" {
-    let mut arr = [3, 4, 5]
+test "default param ≡ ro param" {
+    mut arr = [3, 4, 5]
     assert(count_default(arr) == count_readonly(arr))
     assert(iter_sum_default(arr) == iter_sum_readonly(arr))
     assert(iter_sum_default(arr) == 12)

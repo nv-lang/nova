@@ -12,12 +12,12 @@
 module plan83_6.spawn_pool_correctness
 
 test "parallel for 100 — per-slot values correct (pool exercised)" {
-    let n = 100
-    let xs = parallel for i in 0..100 {
+    ro n = 100
+    ro xs = parallel for i in 0..100 {
         i * 2
     }
     // Verify all slots received correct values (no ctx corruption / reuse).
-    let mut i = 0
+    mut i = 0
     while i < n {
         assert(xs[i] == i * 2)
         i = i + 1
@@ -25,11 +25,11 @@ test "parallel for 100 — per-slot values correct (pool exercised)" {
 }
 
 test "parallel for 1000 — pool overflow path correct" {
-    let n = 1000
-    let xs = parallel for i in 0..1000 {
+    ro n = 1000
+    ro xs = parallel for i in 0..1000 {
         i + 5
     }
-    let mut i = 0
+    mut i = 0
     while i < n {
         assert(xs[i] == i + 5)
         i = i + 1

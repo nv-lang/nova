@@ -3,8 +3,8 @@
 module plan108.str_as_bytes_test
 
 test "str.as_bytes: basic byte values" {
-    let s = "hello"
-    let view = s.as_bytes()
+    ro s = "hello"
+    ro view = s.as_bytes()
     assert(view[0] == 104)  // 'h'
     assert(view[1] == 101)  // 'e'
     assert(view[2] == 108)  // 'l'
@@ -13,15 +13,15 @@ test "str.as_bytes: basic byte values" {
 }
 
 test "str.as_bytes: length matches str.len" {
-    let s = "Nova"
-    let view = s.as_bytes()
+    ro s = "Nova"
+    ro view = s.as_bytes()
     assert(view.len() == s.len())
 }
 
 test "str.as_bytes: iterate over bytes" {
-    let s = "abc"
-    let view = s.as_bytes()
-    let mut sum = 0
+    ro s = "abc"
+    ro view = s.as_bytes()
+    mut sum = 0
     for b in view {
         sum = sum + b
     }
@@ -30,13 +30,13 @@ test "str.as_bytes: iterate over bytes" {
 }
 
 test "str.as_bytes: empty string gives empty slice" {
-    let s = ""
-    let view = s.as_bytes()
+    ro s = ""
+    ro view = s.as_bytes()
     assert(view.len() == 0)
 }
 
-test "str.as_bytes: auto-coerce to readonly []u8 param" {
-    let s = "test"
-    let view readonly []u8 = s.as_bytes()
+test "str.as_bytes: auto-coerce to ro []u8 param" {
+    ro s = "test"
+    ro view ro []u8 = s.as_bytes()
     assert(view.len() == 4)
 }

@@ -6,17 +6,17 @@
 
 module plan70.f4_let_fn_binding_pos
 
-test "lambda с let-annotation -> fn(int)->int (sites 9160/9165/9169)" {
-    let f fn(int) -> int = |x| x * 2
+test "lambda с ro-annotation -> fn(int)->int (sites 9160/9165/9169)" {
+    ro f fn(int) -> int = |x| x * 2
     assert(f(7) == 14)
 }
 
-test "ClosureLight с let-annotation (sites 9185, 9188)" {
-    let g fn(int) -> int = |y| y + 100
+test "ClosureLight с ro-annotation (sites 9185, 9188)" {
+    ro g fn(int) -> int = |y| y + 100
     assert(g(5) == 105)
 }
 
 test "lambda без annotation — default int (Cat D path в migrated code)" {
-    let h = |x| x + 1
+    ro h = |x| x + 1
     assert(h(10) == 11)
 }

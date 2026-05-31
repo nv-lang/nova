@@ -16,17 +16,17 @@ test "Some arm skips closed+empty, picks open channel with data" {
     // ch1 closed+empty, ch2 has data.
     // Some(v) = rx1 must NOT fire — no data.
     // Some(v) = rx2 must fire.
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx1.close()
     tx2.send(42)
 
-    let mut result = 0
+    mut result = 0
     select {
         Some(v) = rx1 => { result = -1 }
         Some(v) = rx2 => { result = v }
@@ -36,17 +36,17 @@ test "Some arm skips closed+empty, picks open channel with data" {
 
 test "Some arm picks data over closed: tx2.send then tx1.close" {
     // ch1 closed+empty, ch2 has data (different order of setup)
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx2.send(77)
     tx1.close()
 
-    let mut result = 0
+    mut result = 0
     select {
         Some(a) = rx1 => { result = -99 }
         Some(b) = rx2 => { result = b }
@@ -59,12 +59,12 @@ test "Some arm picks data over closed: tx2.send then tx1.close" {
 // ================================================================
 
 test "wildcard fires immediately on closed+empty channel" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     tx.close()
 
-    let mut fired = false
+    mut fired = false
     select {
         _ = rx => { fired = true }
     }
@@ -73,16 +73,16 @@ test "wildcard fires immediately on closed+empty channel" {
 
 test "wildcard wins in multi-arm when Some channel is empty and wildcard channel is closed" {
     // ch1 open+empty, ch2 closed → only wildcard ch2 is immediately ready
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx2.close()
 
-    let mut branch = 0
+    mut branch = 0
     select {
         Some(v) = rx1 => { branch = 1 }   // not ready — ch1 empty+open
         _ = rx2       => { branch = 2 }   // ready — ch2 closed (wildcard)
@@ -92,17 +92,17 @@ test "wildcard wins in multi-arm when Some channel is empty and wildcard channel
 
 test "wildcard fires on closed channel even when Some arm present" {
     // ch1 closed, ch2 closed — wildcard ch2 fires
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx1.close()
     tx2.close()
 
-    let mut branch = 0
+    mut branch = 0
     select {
         Some(v) = rx1 => { branch = 1 }  // closed+empty, Some → not immediate
         _ = rx2       => { branch = 2 }  // closed, wildcard → immediate
@@ -117,17 +117,17 @@ test "wildcard fires on closed channel even when Some arm present" {
 test "Some arm data wins over wildcard closed when both arms ready" {
     // ch1 has data, ch2 closed → try_immediate may pick either (random order).
     // Valid outcomes: result==55 (Some arm) or result==-1 (wildcard arm).
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx1.send(55)
     tx2.close()
 
-    let mut result = 0
+    mut result = 0
     select {
         Some(v) = rx1 => { result = v }
         _ = rx2       => { result = -1 }
@@ -137,17 +137,17 @@ test "Some arm data wins over wildcard closed when both arms ready" {
 
 test "wildcard in multi-arm prevents all-closed deadlock" {
     // All channels closed. Wildcard arm fires immediately — no park, no panic.
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx1.close()
     tx2.close()
 
-    let mut branch = 0
+    mut branch = 0
     select {
         Some(v) = rx1 => { branch = 1 }  // closed+empty, Some — skipped
         _ = rx2       => { branch = 2 }  // closed, wildcard — immediate
@@ -162,14 +162,14 @@ test "wildcard in multi-arm prevents all-closed deadlock" {
 test "Some arm parks and wakes when data arrives from another fiber" {
     // Two Some arms, both channels initially empty.
     // Fiber sends to ch2 after sleep → rx2 arm should fire.
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
-    let mut result = 0
+    mut result = 0
     supervised {
         spawn {
             Time.sleep(20)

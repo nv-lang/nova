@@ -10,11 +10,11 @@
 module negative_capability.p50_positional_default_among_many
 
 fn connect(host str, port int = 8080, flag bool = false) -> int {
-    let f = if flag { 1 } else { 0 }
+    ro f = if flag { 1 } else { 0 }
     host.len() + port + f
 }
 
 test "positional arg on defaulted param among many rejected" {
-    let _ = connect("localhost", 9000)
+    ro _ = connect("localhost", 9000)
     assert(true)
 }

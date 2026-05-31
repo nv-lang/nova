@@ -13,6 +13,6 @@ module nova_tests.plan95bis.unwrap_or_wrong_arg_type_neg
 fn Option[T] @plan95bis_probe() -> bool => plan95bis_no_such_fn()
 
 test "Plan 95.bis: Nova-body метод с undefined-symbol — loud-fail" {
-    let a Option[int] = Some(1)
+    ro a Option[int] = Some(1)
     assert(a.plan95bis_probe())
 }

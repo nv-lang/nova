@@ -39,30 +39,30 @@ fn Validator @emit(msg str) Io -> () => println(msg)
 fn run_check[T Checked](item T, n int) Fail[str] -> int => item.check(n)
 
 test "effectful protocol method — Fail success path" {
-    let v = Validator { min: 10 }
+    ro v = Validator { min: 10 }
     assert(v.check(42) == 42)
 }
 
 test "effectful protocol method via generic bound" {
-    let v = Validator { min: 10 }
+    ro v = Validator { min: 10 }
     assert(run_check(v, 50) == 50)
 }
 
 test "effectful protocol method — Fail caught by handler" {
-    let v = Validator { min: 10 }
-    let mut caught = ""
+    ro v = Validator { min: 10 }
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
         }
     } {
-        let _ = v.check(3)
+        ro _ = v.check(3)
     }
     assert(caught == "below min")
 }
 
 test "effectful protocol method — Io effect" {
-    let v = Validator { min: 0 }
+    ro v = Validator { min: 0 }
     v.emit("effectful protocol Io: ok")
 }

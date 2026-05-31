@@ -13,7 +13,7 @@ module nova_tests.generics.p48_mono_method
 
 
 type Counter {
-    readonly base int
+    ro base int
 }
 
 
@@ -26,27 +26,27 @@ export fn Counter.combine[T](x T, y T, merge fn(T, T) -> T) -> T => merge(x, y)
 
 
 test "mono method: int return (Ф.7.1 — без annotation)" {
-    let c = Counter { base: 10 }
-    let r = c.apply(fn(n int) -> int { n * 2 })
+    ro c = Counter { base: 10 }
+    ro r = c.apply(fn(n int) -> int { n * 2 })
     assert(r == 20)
 }
 
 test "mono method: bool return (Ф.7.1)" {
-    let c = Counter { base: 3 }
-    let r = c.apply(fn(n int) -> bool { n > 0 })
+    ro c = Counter { base: 3 }
+    ro r = c.apply(fn(n int) -> bool { n > 0 })
     assert(r == true)
 }
 
 test "mono method: closure с block body" {
-    let c = Counter { base: 5 }
-    let r = c.apply(fn(n int) -> int {
-        let doubled = n * 2
+    ro c = Counter { base: 5 }
+    ro r = c.apply(fn(n int) -> int {
+        ro doubled = n * 2
         doubled + 1
     })
     assert(r == 11)
 }
 
 test "static mono method: int merge (Ф.7.2)" {
-    let r = Counter.combine(2, 3, fn(a int, b int) -> int { a + b })
+    ro r = Counter.combine(2, 3, fn(a int, b int) -> int { a + b })
     assert(r == 5)
 }

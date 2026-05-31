@@ -15,16 +15,16 @@ fn Pt @compare(other Self) -> int =>
     else { 0 }
 
 test "Self в param works для @equals" {
-    let a = Pt { x: 1, y: 2 }
-    let b = Pt { x: 1, y: 2 }
-    let c = Pt { x: 3, y: 4 }
+    ro a = Pt { x: 1, y: 2 }
+    ro b = Pt { x: 1, y: 2 }
+    ro c = Pt { x: 3, y: 4 }
     assert(a.equals(b))
     assert(!a.equals(c))
 }
 
 test "Self в param works для @compare" {
-    let a = Pt { x: 1, y: 2 }
-    let b = Pt { x: 3, y: 4 }
+    ro a = Pt { x: 1, y: 2 }
+    ro b = Pt { x: 3, y: 4 }
     assert(a.compare(b) < 0)
     assert(b.compare(a) > 0)
     assert(a.compare(a) == 0)

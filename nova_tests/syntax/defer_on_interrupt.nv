@@ -16,15 +16,15 @@ module syntax.defer_on_interrupt
 // ───── defer срабатывает когда handler делает interrupt ─────
 
 test "defer срабатывает на interrupt-path" {
-    let mut defer_fired = false
-    let mut handled = false
+    mut defer_fired = false
+    mut handled = false
     with Fail = effect Fail {
         fail(_msg) {
             handled = true
             interrupt ()
         }
     } {
-        let _ = {
+        ro _ = {
             defer { defer_fired = true }
             throw "boom"
             0
@@ -41,15 +41,15 @@ test "defer срабатывает на interrupt-path" {
 // ───── errdefer НЕ срабатывает на interrupt-path ─────
 
 test "errdefer не срабатывает на interrupt-path (handled exit)" {
-    let mut errdefer_fired = false
-    let mut handled = false
+    mut errdefer_fired = false
+    mut handled = false
     with Fail = effect Fail {
         fail(_msg) {
             handled = true
             interrupt ()
         }
     } {
-        let _ = {
+        ro _ = {
             errdefer { errdefer_fired = true }
             throw "boom"
             0
@@ -65,14 +65,14 @@ test "errdefer не срабатывает на interrupt-path (handled exit)" {
 // ───── defer + errdefer combo на interrupt-path ─────
 
 test "defer + errdefer + interrupt — только defer" {
-    let mut defer_fired = false
-    let mut errdefer_fired = false
+    mut defer_fired = false
+    mut errdefer_fired = false
     with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
         }
     } {
-        let _ = {
+        ro _ = {
             defer { defer_fired = true }
             errdefer { errdefer_fired = true }
             throw "boom"
@@ -87,16 +87,16 @@ test "defer + errdefer + interrupt — только defer" {
 // ───── LIFO порядок defer'ов на interrupt-path ─────
 
 test "несколько defer'ов на interrupt — LIFO" {
-    let mut step = 0
-    let mut order_a = 0
-    let mut order_b = 0
-    let mut order_c = 0
+    mut step = 0
+    mut order_a = 0
+    mut order_b = 0
+    mut order_c = 0
     with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
         }
     } {
-        let _ = {
+        ro _ = {
             defer {
                 step = step + 1
                 order_a = step    // registered first — last to fire

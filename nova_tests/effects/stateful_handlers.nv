@@ -21,37 +21,37 @@ type Counter effect {
 
 // === Способ 1: Closure capture ===
 
-test "closure capture — state в let mut" {
-    let mut counter = 0
+test "closure capture — state в mut" {
+    mut counter = 0
     with Counter = effect Counter {
         next() {
             counter += 1
             return counter
         }
     } {
-        let a = Counter.next()
-        let b = Counter.next()
-        let c = Counter.next()
+        ro a = Counter.next()
+        ro b = Counter.next()
+        ro c = Counter.next()
         assert(a == 1)
         assert(b == 2)
         assert(c == 3)
     }
-    let v = counter
+    ro v = counter
     assert(v == 3)
 }
 
 test "closure capture — state переживает несколько with-блоков" {
-    let mut counter = 100
+    mut counter = 100
     with Counter = effect Counter {
         next() {
             counter += 10
             return counter
         }
     } {
-        let _ = Counter.next()
-        let _ = Counter.next()
+        ro _ = Counter.next()
+        ro _ = Counter.next()
     }
-    let mid = counter
+    ro mid = counter
     assert(mid == 120)
 
     with Counter = effect Counter {
@@ -60,10 +60,10 @@ test "closure capture — state переживает несколько with-б�
             return counter
         }
     } {
-        let r = Counter.next()
+        ro r = Counter.next()
         assert(r == 121)
     }
-    let final_v = counter
+    ro final_v = counter
     assert(final_v == 121)
 }
 
@@ -77,41 +77,41 @@ fn CounterState @inc_and_get() -> int {
 }
 
 test "record + @method — handler ссылается через closure на record" {
-    let s = CounterState { value: 0 }
+    ro s = CounterState { value: 0 }
     with Counter = effect Counter {
         next() => s.inc_and_get()
     } {
-        let a = Counter.next()
-        let b = Counter.next()
-        let c = Counter.next()
+        ro a = Counter.next()
+        ro b = Counter.next()
+        ro c = Counter.next()
         assert(a == 1)
         assert(b == 2)
         assert(c == 3)
     }
-    let v = s.value
+    ro v = s.value
     assert(v == 3)
 }
 
 test "record state — несколько handler'ов на один state" {
-    let s = CounterState { value: 0 }
-    let h1 = effect Counter {
+    ro s = CounterState { value: 0 }
+    ro h1 = effect Counter {
         next() => s.inc_and_get()
     }
     with Counter = h1 {
-        let _ = Counter.next()
-        let _ = Counter.next()
+        ro _ = Counter.next()
+        ro _ = Counter.next()
     }
-    let after_h1 = s.value
+    ro after_h1 = s.value
     assert(after_h1 == 2)
 
-    let h2 = effect Counter {
+    ro h2 = effect Counter {
         next() => s.inc_and_get()
     }
     with Counter = h2 {
-        let r = Counter.next()
+        ro r = Counter.next()
         assert(r == 3)
     }
-    let after_h2 = s.value
+    ro after_h2 = s.value
     assert(after_h2 == 3)
 }
 
@@ -122,15 +122,15 @@ fn make_counter_starting(start_state CounterState) -> Effect[Counter] => effect 
 }
 
 test "handler-фабрика принимает state как параметр" {
-    let s = CounterState { value: 10 }
-    let h = make_counter_starting(s)
+    ro s = CounterState { value: 10 }
+    ro h = make_counter_starting(s)
     with Counter = h {
-        let a = Counter.next()
-        let b = Counter.next()
+        ro a = Counter.next()
+        ro b = Counter.next()
         assert(a == 11)
         assert(b == 12)
     }
-    let v = s.value
+    ro v = s.value
     assert(v == 12)
 }
 
@@ -141,25 +141,25 @@ type Reset effect {
 }
 
 test "два эффекта на один state" {
-    let s = CounterState { value: 0 }
-    let h_counter = effect Counter {
+    ro s = CounterState { value: 0 }
+    ro h_counter = effect Counter {
         next() => s.inc_and_get()
     }
-    let h_reset = effect Reset {
+    ro h_reset = effect Reset {
         reset() {
             s.value = 0
             return ()
         }
     }
     with Counter = h_counter, Reset = h_reset {
-        let a = Counter.next()
-        let b = Counter.next()
+        ro a = Counter.next()
+        ro b = Counter.next()
         assert(a == 1)
         assert(b == 2)
         Reset.reset()
-        let c = Counter.next()
+        ro c = Counter.next()
         assert(c == 1)
     }
-    let final_v = s.value
+    ro final_v = s.value
     assert(final_v == 1)
 }

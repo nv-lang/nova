@@ -6,24 +6,24 @@
 module nova_tests.plan103_5.lazy_panic_poisons
 
 test "Lazy.force: panic in init poisons; subsequent force also panics" {
-    let lazy = Lazy[int].new() { throw "lazy-init-failed"; 0 }
+    ro lazy = Lazy[int].new() { throw "lazy-init-failed"; 0 }
 
     // First force: panics
-    let mut first_panicked = false
+    mut first_panicked = false
     with Fail = effect Fail {
         fail(_msg) { first_panicked = true; interrupt () }
     } {
-        let _ = lazy.force()
+        ro _ = lazy.force()
     }
     assert(first_panicked == true)
     assert(lazy.is_forced() == false)
 
     // Second force: also panics (poisoned)
-    let mut second_panicked = false
+    mut second_panicked = false
     with Fail = effect Fail {
         fail(_msg) { second_panicked = true; interrupt () }
     } {
-        let _ = lazy.force()
+        ro _ = lazy.force()
     }
     assert(second_panicked == true)
 }

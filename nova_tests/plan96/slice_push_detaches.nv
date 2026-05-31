@@ -7,8 +7,8 @@
 module nova_tests.plan96.slice_push_detaches
 
 test "push on view detaches from parent backing" {
-    let mut parent []int = [1, 2, 3, 4, 5]
-    let mut view = parent[1..4]
+    mut parent []int = [1, 2, 3, 4, 5]
+    mut view = parent[1..4]
     view.push(99)
     // Parent unchanged: doubling alloc'ит новый backing для view.
     assert(parent.len() == 5)
@@ -24,8 +24,8 @@ test "push on view detaches from parent backing" {
 }
 
 test "view doesn't share post-detach writes" {
-    let mut parent []int = [10, 20, 30, 40, 50]
-    let mut view = parent[1..4]
+    mut parent []int = [10, 20, 30, 40, 50]
+    mut view = parent[1..4]
     view.push(99)            // detach
     view[0] = 777            // write to detached backing
     assert(parent[1] == 20)  // parent NOT touched

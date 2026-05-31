@@ -28,38 +28,38 @@ fn run_pred(value int, pred fn(int) -> bool) -> bool {
 }
 
 test "bidir: bool параметр — identity" {
-    let r = apply_bool_fn(true, |b| b)
+    ro r = apply_bool_fn(true, |b| b)
     assert(r == true)
-    let r2 = apply_bool_fn(false, |b| b)
+    ro r2 = apply_bool_fn(false, |b| b)
     assert(r2 == false)
 }
 
 test "bidir: bool параметр — negation" {
-    let r = apply_bool_fn(true, |b| !b)
+    ro r = apply_bool_fn(true, |b| !b)
     assert(r == false)
 }
 
 test "bidir: str параметр — identity" {
-    let r = transform_str("hello", |s| s)
+    ro r = transform_str("hello", |s| s)
     assert(r == "hello")
 }
 
 test "bidir: (bool, int) -> int" {
-    let r = conditional_add(true, 10, |flag, n| if flag { n * 2 } else { n })
+    ro r = conditional_add(true, 10, |flag, n| if flag { n * 2 } else { n })
     assert(r == 20)
-    let r2 = conditional_add(false, 10, |flag, n| if flag { n * 2 } else { n })
+    ro r2 = conditional_add(false, 10, |flag, n| if flag { n * 2 } else { n })
     assert(r2 == 10)
 }
 
 test "bidir: predicate инференс" {
-    let r = run_pred(5, |x| x > 3)
+    ro r = run_pred(5, |x| x > 3)
     assert(r == true)
-    let r2 = run_pred(2, |x| x > 3)
+    ro r2 = run_pred(2, |x| x > 3)
     assert(r2 == false)
 }
 
 test "bidir: closure с захватом + инферированный bool" {
-    let threshold = true
-    let r = apply_bool_fn(false, |b| b || threshold)
+    ro threshold = true
+    ro r = apply_bool_fn(false, |b| b || threshold)
     assert(r == true)
 }

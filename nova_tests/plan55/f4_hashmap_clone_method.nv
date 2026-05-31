@@ -14,14 +14,14 @@ import std.collections.hashmap.{HashMap}
 
 
 test "HashMap base operations работают" {
-    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
     assert(m.len() == 3)
     assert(m.get("a") == Some(1))
 }
 
 
 test "HashMap insert после литерала работает" {
-    let mut m HashMap[str, int] = ["a": 1, "b": 2]
+    mut m HashMap[str, int] = ["a": 1, "b": 2]
     m.insert("c", 3)
     m.insert("d", 4)
     assert(m.len() == 4)
@@ -29,7 +29,7 @@ test "HashMap insert после литерала работает" {
 
 
 test "HashMap rehash (триггер @maybe_grow через много insert'ов)" {
-    let mut m HashMap[int, int] = [0: 0]
+    mut m HashMap[int, int] = [0: 0]
     for i in 1..50 {
         m.insert(i, i * 2)
     }

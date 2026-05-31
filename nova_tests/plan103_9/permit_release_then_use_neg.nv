@@ -6,7 +6,7 @@
 module nova_tests.plan103_9.permit_release_then_use_neg
 
 test "use permit after release → compile error" {
-    let mut sem = Semaphore.new(2)
+    mut sem = Semaphore.new(2)
     consume p = sem.acquire()
     p.release()     // p consumed here
     p.release()     // ERROR: p already consumed

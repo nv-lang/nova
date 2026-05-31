@@ -7,11 +7,11 @@
 module contracts.int_overflow_compound_panic
 
 fn accumulate(start int, step int) -> int {
-    let mut acc = start
+    mut acc = start
     acc += step
     acc
 }
 
 test "int += overflow panics" {
-    let _ = accumulate(int.MAX, 1)
+    ro _ = accumulate(int.MAX, 1)
 }

@@ -13,7 +13,7 @@ type Store effect {
 }
 
 fn broken_handler_user() -> int {
-    let mut s = 0
+    mut s = 0
     with #trusted Store = effect Store {
         Set(v) { s = v }
         get() => s

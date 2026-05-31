@@ -13,7 +13,7 @@ module expected_runtime.multi_expect_panic_errdefer
 
 fn main() Io -> () {
     defer { println("DEFER_C") }
-    let _ = {
+    ro _ = {
         errdefer { println("ERRDEFER_A") }
         errdefer { println("ERRDEFER_B") }
         panic("end")

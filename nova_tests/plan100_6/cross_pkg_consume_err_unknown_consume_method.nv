@@ -20,7 +20,7 @@ export fn Token_issue(v int) -> Token => { value: v }
 // "Package B" — только вызывает view-метод, не consume-метод:
 test "view-only call — consume obligation remains (D133-not-consumed)" {
     consume tok = Token_issue(999)
-    let val = tok.get_value()                       // ← view-method: tok ещё Live!
+    ro val = tok.get_value()                       // ← view-method: tok ещё Live!
     // val используется; но tok не consumed.
     // Нужно tok.revoke() для consume.
     // На scope-exit tok Live → D133-not-consumed.

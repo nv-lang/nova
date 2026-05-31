@@ -27,9 +27,9 @@ module plan83_4_5_6_stress.spawn_stress_10k
 test "1K spawns no-op, counter equal" {
     // V1: 1000 (= 10³). 10⁴ taking ~120s on Windows armed M:N (worker
     // pool overhead per spawn). Followup: profile spawn-overhead.
-    let mut counter = 0
+    mut counter = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 1000 {
             spawn {
                 counter += 1
@@ -41,11 +41,11 @@ test "1K spawns no-op, counter equal" {
 }
 
 test "10K spawns sum of i" {
-    let mut sum = 0
+    mut sum = 0
     supervised {
-        let mut i = 1
+        mut i = 1
         while i <= 100 {
-            let cur = i
+            ro cur = i
             spawn {
                 sum += cur
             }
@@ -58,13 +58,13 @@ test "10K spawns sum of i" {
 
 test "nested supervised: 10 outer × 10 inner spawns" {
     // V1: 100 total (10×10). Larger nested counts таймачuтся под armed.
-    let mut total = 0
+    mut total = 0
     supervised {
-        let mut o = 0
+        mut o = 0
         while o < 10 {
             spawn {
                 supervised {
-                    let mut i = 0
+                    mut i = 0
                     while i < 10 {
                         spawn {
                             total += 1

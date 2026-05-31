@@ -14,8 +14,8 @@ type Single protocol {
 
 
 test "вызов method не объявленного в protocol — Nova error" {
-    let l = protocol Single {
+    ro l = protocol Single {
         only() => 7
     }
-    let _ = l.nonexistent()   // ← `.nonexistent()` отсутствует в Single
+    ro _ = l.nonexistent()   // ← `.nonexistent()` отсутствует в Single
 }

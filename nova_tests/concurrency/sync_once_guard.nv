@@ -10,8 +10,8 @@
 module nova_tests.concurrency.sync_once_guard
 
 test "OnceGuard: single caller commits" {
-    let mut once = Once.new()
-    let mut ran = false
+    mut once = Once.new()
+    mut ran = false
     supervised {
         spawn {
             if once.try_start_won() {
@@ -26,8 +26,8 @@ test "OnceGuard: single caller commits" {
 }
 
 test "OnceGuard: only one of N concurrent callers wins" {
-    let mut once = Once.new()
-    let mut counter = AtomicInt.new(0)
+    mut once = Once.new()
+    mut counter = AtomicInt.new(0)
     supervised {
         spawn {
             if once.try_start_won() {
@@ -56,7 +56,7 @@ test "OnceGuard: only one of N concurrent callers wins" {
 }
 
 test "OnceGuard: try_start_won returns false after commit" {
-    let mut once = Once.new()
+    mut once = Once.new()
     supervised {
         spawn {
             if once.try_start_won() {
@@ -66,12 +66,12 @@ test "OnceGuard: try_start_won returns false after commit" {
         }
     }
     // Already done — try_start_won returns false immediately
-    let won = once.try_start_won()
+    ro won = once.try_start_won()
     assert(won == false)
 }
 
 test "OnceGuard: abort → Once is not completed" {
-    let mut once = Once.new()
+    mut once = Once.new()
     supervised {
         spawn {
             if once.try_start_won() {
@@ -84,8 +84,8 @@ test "OnceGuard: abort → Once is not completed" {
 }
 
 test "OnceGuard: happens-before — body effects visible after commit" {
-    let mut once = Once.new()
-    let mut value = AtomicInt.new(0)
+    mut once = Once.new()
+    mut value = AtomicInt.new(0)
     supervised {
         spawn {
             if once.try_start_won() {

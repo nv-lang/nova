@@ -20,36 +20,36 @@ fn parse_bool(s str) -> Result[bool, str] => {
 }
 
 test "P1-C — unwrap_or on Result[int, str] Ok path" {
-    let r = parse_int("42")
+    ro r = parse_int("42")
     assert(r.unwrap_or(0) == 42)
 }
 
 test "P1-C — unwrap_or on Result[int, str] Err path" {
-    let r = parse_int("bad")
+    ro r = parse_int("bad")
     assert(r.unwrap_or(99) == 99)
 }
 
 test "P1-C — unwrap_or_else on Result[int, str] Err path" {
-    let r = parse_int("bad")
-    let v = r.unwrap_or_else(fn(e str) -> int => 100)
+    ro r = parse_int("bad")
+    ro v = r.unwrap_or_else(fn(e str) -> int => 100)
     assert(v == 100)
 }
 
 test "P1-C — is_ok / is_err on Result[int, str]" {
-    let ok_r = parse_int("42")
-    let err_r = parse_int("bad")
+    ro ok_r = parse_int("42")
+    ro err_r = parse_int("bad")
     assert(ok_r.is_ok())
     assert(err_r.is_err())
 }
 
 test "P1-C — unwrap_or on Result[bool, str] Err path" {
-    let r = parse_bool("nope")
-    let b = r.unwrap_or(false)
+    ro r = parse_bool("nope")
+    ro b = r.unwrap_or(false)
     assert(!b)
 }
 
 test "P1-C — unwrap_or on Result[bool, str] Ok path" {
-    let r = parse_bool("true")
-    let b = r.unwrap_or(false)
+    ro r = parse_bool("true")
+    ro b = r.unwrap_or(false)
     assert(b)
 }

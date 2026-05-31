@@ -14,8 +14,8 @@ fn parse_2() -> Result[(int, int), str] {
 
 
 test "destructure 2-tuple Ok как 3-tuple — should reject" {
-    let r = parse_2()
-    let mut sum int = 0
+    ro r = parse_2()
+    mut sum int = 0
     match r {
         Ok((a, b, c)) => { sum = a + b + c }
         Err(_) => assert(false)

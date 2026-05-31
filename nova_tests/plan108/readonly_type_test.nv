@@ -3,33 +3,33 @@
 module plan108.readonly_type_test
 
 // Function accepting readonly []u8
-fn sum_bytes(data readonly []u8) -> int {
-    let mut total = 0
+fn sum_bytes(data ro []u8) -> int {
+    mut total = 0
     for b in data {
         total = total + b
     }
     total
 }
 
-test "readonly []u8: pass []u8 to readonly param (auto coerce)" {
-    let arr []u8 = [1, 2, 3, 4, 5]
-    let result = sum_bytes(arr)
+test "ro []u8: pass []u8 to ro param (auto coerce)" {
+    ro arr []u8 = [1, 2, 3, 4, 5]
+    ro result = sum_bytes(arr)
     assert(result == 15)
 }
 
-test "readonly []u8: explicit let binding" {
-    let arr []u8 = [10, 20, 30]
-    let view readonly []u8 = arr
+test "ro []u8: explicit ro binding" {
+    ro arr []u8 = [10, 20, 30]
+    ro view ro []u8 = arr
     // can read elements
     assert(view[0] == 10)
     assert(view[1] == 20)
     assert(view[2] == 30)
 }
 
-test "readonly []u8: iterate over readonly array" {
-    let arr []u8 = [5, 6, 7]
-    let view readonly []u8 = arr
-    let mut sum = 0
+test "ro []u8: iterate over ro array" {
+    ro arr []u8 = [5, 6, 7]
+    ro view ro []u8 = arr
+    mut sum = 0
     for b in view {
         sum = sum + b
     }

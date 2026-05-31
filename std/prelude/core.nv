@@ -123,7 +123,7 @@ export type Result[T, E] | Ok(T) | Err(E)
 /// runtime helper, не через Nova-level декларацию.
 #stable(since = "0.1")
 export type Error {
-    readonly msg str
+    ro msg str
 }
 
 // DEFER: Static fn `Error.new(msg)` остаётся в codegen special-case

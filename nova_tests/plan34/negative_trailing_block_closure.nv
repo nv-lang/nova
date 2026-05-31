@@ -13,7 +13,7 @@ module plan34.negative_trailing_block_closure
 fn apply(n int, f fn(int) -> int) -> int => f(n)
 
 test "trailing-block closure synthax не поддержан" {
-    let r = apply(5) { x =>          // <-- Kotlin/Swift style, парсер падает
+    ro r = apply(5) { x =>          // <-- Kotlin/Swift style, парсер падает
         x * 2
     }
     assert(r == 10)

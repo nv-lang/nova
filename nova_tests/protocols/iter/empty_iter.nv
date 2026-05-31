@@ -14,20 +14,20 @@ fn EmptyIter mut @next() -> Option[int] => None
 
 
 test "empty iter — next() сразу None" {
-    let mut e = EmptyIter.new()
+    mut e = EmptyIter.new()
     assert(e.next() == None)
 }
 
 test "empty iter — повторный next() остаётся None" {
-    let mut e = EmptyIter.new()
+    mut e = EmptyIter.new()
     assert(e.next() == None)
     assert(e.next() == None)
     assert(e.next() == None)
 }
 
 test "empty iter — for-in тело не выполняется" {
-    let mut count = 0
-    let e = EmptyIter.new()
+    mut count = 0
+    ro e = EmptyIter.new()
     for _ in e {
         count = count + 1
     }

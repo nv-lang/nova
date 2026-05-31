@@ -6,8 +6,8 @@
 module syntax.match_advanced
 
 test "match по строке" {
-    let cmd = "stop"
-    let r = match cmd {
+    ro cmd = "stop"
+    ro r = match cmd {
         "start" => 1
         "stop"  => 2
         "pause" => 3
@@ -17,7 +17,7 @@ test "match по строке" {
 }
 
 test "match по bool" {
-    let r = match true {
+    ro r = match true {
         true  => "yes"
         false => "no"
     }
@@ -25,8 +25,8 @@ test "match по bool" {
 }
 
 test "match с literal-pattern в первой позиции" {
-    let p = (1, 2, 3)
-    let s = match p {
+    ro p = (1, 2, 3)
+    ro s = match p {
         (1, _, c) => c
         (_, _, _) => 0
     }
@@ -34,16 +34,16 @@ test "match с literal-pattern в первой позиции" {
 }
 
 test "вложенный tuple-pattern" {
-    let nested = ((1, 2), (3, 4))
-    let r = match nested {
+    ro nested = ((1, 2), (3, 4))
+    ro r = match nested {
         ((a, b), (c, d)) => a + b + c + d
     }
     assert(r == 10)
 }
 
 test "глубоко вложенный Option" {
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n
         _                    => -1
     }
@@ -51,8 +51,8 @@ test "глубоко вложенный Option" {
 }
 
 test "Result с Option payload" {
-    let x = Ok(Some(7))
-    let v = match x {
+    ro x = Ok(Some(7))
+    ro v = match x {
         Ok(Some(n)) => n
         Ok(None)    => 0
         Err(_)      => -1
@@ -61,8 +61,8 @@ test "Result с Option payload" {
 }
 
 test "Option-Option None во внутренней позиции" {
-    let x = Some(None)
-    let v = match x {
+    ro x = Some(None)
+    ro v = match x {
         Some(Some(n)) => n
         Some(None)    => -2
         None          => -3
@@ -71,8 +71,8 @@ test "Option-Option None во внутренней позиции" {
 }
 
 test "guards в комбинации с tuple-pattern" {
-    let p = (10, 20)
-    let r = match p {
+    ro p = (10, 20)
+    ro r = match p {
         (a, b) if a > b => "first"
         (a, b) if a < b => "second"
         _                => "equal"
@@ -81,8 +81,8 @@ test "guards в комбинации с tuple-pattern" {
 }
 
 test "guards с reference на bound name" {
-    let n = 7
-    let r = match n {
+    ro n = 7
+    ro r = match n {
         x if x < 0  => "neg"
         x if x == 0 => "zero"
         x if x < 10 => "small"
@@ -91,9 +91,9 @@ test "guards с reference на bound name" {
     assert(r == "small")
 }
 
-test "match в let RHS" {
-    let opt = Some(5)
-    let v = match opt {
+test "match в ro RHS" {
+    ro opt = Some(5)
+    ro v = match opt {
         Some(n) => n * 2
         None    => 0
     }
@@ -101,8 +101,8 @@ test "match в let RHS" {
 }
 
 test "match в условии if" {
-    let x = Ok(42)
-    let valid = match x {
+    ro x = Ok(42)
+    ro valid = match x {
         Ok(n)  => n > 0
         Err(_) => false
     }
@@ -110,8 +110,8 @@ test "match в условии if" {
 }
 
 test "wildcard остаётся last (исчерпывающий)" {
-    let n = 100
-    let kind = match n {
+    ro n = 100
+    ro kind = match n {
         0  => "zero"
         1  => "one"
         _  => "many"

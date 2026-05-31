@@ -5,5 +5,5 @@
 module nova_tests.plan108_3.group_mut_array_pattern_neg
 
 test "let mut [a, b] — group mut → error" {
-    let mut [a, b] = [1, 2]
+    mut [a, b] = [1, 2]
 }

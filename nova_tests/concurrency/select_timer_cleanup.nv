@@ -21,10 +21,10 @@ module concurrency.select_timer_cleanup
 import std.time.duration
 
 test "Time.after cleanup: 50 quick wins не оставляют висящих таймеров" {
-    let mut wins = 0
-    let mut i = 0
+    mut wins = 0
+    mut i = 0
     while i < 50 {
-        let ch = Channel.new(1)
+        ro ch = Channel.new(1)
         supervised {
             spawn {
                 ch.tx.send(i)
@@ -46,8 +46,8 @@ test "Time.after cleanup: 50 quick wins не оставляют висящих �
 }
 
 test "Time.after wins: подтверждает что таймер всё ещё работает когда нужен" {
-    let ch = Channel.new(1)
-    let mut timeout_fired = false
+    ro ch = Channel.new(1)
+    mut timeout_fired = false
     supervised {
         // НЕ посылаем в ch — timer должен выиграть
         spawn {

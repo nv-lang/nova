@@ -6,14 +6,14 @@ module syntax.defer_with_closure_callback
 
 
 fn run_with_cleanup(cleanup fn(int) -> int) -> int {
-    defer { let _ = cleanup(7) }
+    defer { ro _ = cleanup(7) }
     42
 }
 
 
 test "defer вызывает closure callback с capture'ом mut local" {
-    let mut last_val = 0
-    let r = run_with_cleanup(|v| {
+    mut last_val = 0
+    ro r = run_with_cleanup(|v| {
         last_val = v
         v * 10
     })
@@ -25,16 +25,16 @@ test "defer вызывает closure callback с capture'ом mut local" {
 
 
 test "defer + closure: counter увеличивается каждый вызов" {
-    let mut count = 0
-    let _ = run_with_cleanup(|_v| {
+    mut count = 0
+    ro _ = run_with_cleanup(|_v| {
         count = count + 1
         count
     })
-    let _ = run_with_cleanup(|_v| {
+    ro _ = run_with_cleanup(|_v| {
         count = count + 1
         count
     })
-    let _ = run_with_cleanup(|_v| {
+    ro _ = run_with_cleanup(|_v| {
         count = count + 1
         count
     })

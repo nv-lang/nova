@@ -10,7 +10,7 @@ module expected_runtime.errdefer_panic_lifo
 
 
 fn main() Io -> () {
-    let _ = {
+    ro _ = {
         errdefer { println("A") }
         errdefer { println("B") }
         errdefer { println("C") }

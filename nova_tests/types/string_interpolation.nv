@@ -9,53 +9,53 @@
 module types.string_interpolation
 
 test "interpolation of int" {
-    let n = 42
+    ro n = 42
     assert("n=${n}" == "n=42")
 }
 
 test "interpolation of negative int" {
-    let n = -7
+    ro n = -7
     assert("n=${n}" == "n=-7")
 }
 
 test "interpolation of str" {
-    let name = "alice"
+    ro name = "alice"
     assert("hello, ${name}" == "hello, alice")
 }
 
 test "multiple interpolations" {
-    let a = 1
-    let b = 2
-    let c = 3
+    ro a = 1
+    ro b = 2
+    ro c = 3
     assert("${a}, ${b}, ${c}" == "1, 2, 3")
 }
 
 test "interpolation around literals" {
-    let x = 10
+    ro x = 10
     assert("[${x}]" == "[10]")
     assert("a${x}b${x}c" == "a10b10c")
 }
 
 test "interpolation of expression" {
-    let a = 2
-    let b = 3
+    ro a = 2
+    ro b = 3
     assert("sum=${a + b}" == "sum=5")
     assert("prod=${a * b}" == "prod=6")
 }
 
 test "single interpolation no surrounding text" {
-    let x = 7
+    ro x = 7
     assert("${x}" == "7")
 }
 
 test "interpolation followed by punctuation" {
-    let id = 42
+    ro id = 42
     assert("user-${id}." == "user-42.")
     assert("(${id})" == "(42)")
 }
 
 test "escape literal dollar-brace" {
-    let v = 100
+    ro v = 100
     // \${v} должен дать буквальное "${v}" без интерполяции.
     // Правая часть тоже escape'ится — иначе была бы попытка
     // взять переменную `v` (что дало бы "100", не "${v}").
@@ -67,14 +67,14 @@ test "escape literal dollar-brace" {
 test "interpolation of bool" {
     assert("flag=${true}" == "flag=true")
     assert("flag=${false}" == "flag=false")
-    let b = true
+    ro b = true
     assert("b=${b}" == "b=true")
 }
 
 test "interpolation of f64" {
-    let pi = 3.14
+    ro pi = 3.14
     assert("pi=${pi}" == "pi=3.14")
-    let zero = 0.0
+    ro zero = 0.0
     assert("z=${zero}" == "z=0")
 }
 
@@ -95,8 +95,8 @@ test "interpolation efficiency — большая строка через String
     // Конкатенация через цепочку + была бы O(N²);
     // через StringBuilder — O(N). Тест на корректность сборки
     // длинной строки (12 интерполяций).
-    let s = "x"
-    let r = "${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}"
+    ro s = "x"
+    ro r = "${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}"
     assert(r == "xxxxxxxxxxxx")
     assert(r.len() == 12)
 }

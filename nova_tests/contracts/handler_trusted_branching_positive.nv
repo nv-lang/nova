@@ -9,7 +9,7 @@ type Db effect {
 }
 
 test "handler с branching под #trusted компилируется" {
-    let mut store = 0
+    mut store = 0
     with #trusted Db = effect Db {
         SetBalance(id, amount) {
             if amount >= 0 {

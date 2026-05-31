@@ -13,9 +13,9 @@
 module nova_tests.plan103_8.prop_once_exactly_once_under_pressure
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 Once objects Ð²Ð‚â€ each init == 1" {
-    let mut once1  = Once.new(); let mut cnt1 = AtomicI64.new(0)
-    let mut once2  = Once.new(); let mut cnt2 = AtomicI64.new(0)
-    let mut once3  = Once.new(); let mut cnt3 = AtomicI64.new(0)
+    mut once1  = Once.new(); mut cnt1 = AtomicI64.new(0)
+    mut once2  = Once.new(); mut cnt2 = AtomicI64.new(0)
+    mut once3  = Once.new(); mut cnt3 = AtomicI64.new(0)
 
     parallel for _i in 0..64 {
         once1.call_once() { cnt1.fetch_add(1) }
@@ -32,15 +32,15 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 Once objects Ð²Ð‚â
 }
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 OnceCells Ð²Ð‚â€ each init == 1, value stable" {
-    let cell1   = OnceCell[int].new(); let mut cinit1 = AtomicI64.new(0)
-    let cell2   = OnceCell[int].new(); let mut cinit2 = AtomicI64.new(0)
-    let cell3   = OnceCell[int].new(); let mut cinit3 = AtomicI64.new(0)
-    let mut wrong   = AtomicI64.new(0)
+    ro cell1   = OnceCell[int].new(); mut cinit1 = AtomicI64.new(0)
+    ro cell2   = OnceCell[int].new(); mut cinit2 = AtomicI64.new(0)
+    ro cell3   = OnceCell[int].new(); mut cinit3 = AtomicI64.new(0)
+    mut wrong   = AtomicI64.new(0)
 
     parallel for _i in 0..64 {
-        let v1 = cell1.get_or_init() { cinit1.fetch_add(1); 111 }
-        let v2 = cell2.get_or_init() { cinit2.fetch_add(1); 222 }
-        let v3 = cell3.get_or_init() { cinit3.fetch_add(1); 333 }
+        ro v1 = cell1.get_or_init() { cinit1.fetch_add(1); 111 }
+        ro v2 = cell2.get_or_init() { cinit2.fetch_add(1); 222 }
+        ro v3 = cell3.get_or_init() { cinit3.fetch_add(1); 333 }
         if v1 != 111 || v2 != 222 || v3 != 333 {
             wrong.fetch_add(1)
         }
@@ -53,18 +53,18 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 OnceCells Ð²Ð‚â€
 }
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 Lazy objects Ð²Ð‚â€ each init == 1, value stable" {
-    let mut linit1 = AtomicI64.new(0)
-    let mut linit2 = AtomicI64.new(0)
-    let mut linit3 = AtomicI64.new(0)
-    let lazy1  = Lazy[int].new() { linit1.fetch_add(1); 1001 }
-    let lazy2  = Lazy[int].new() { linit2.fetch_add(1); 2002 }
-    let lazy3  = Lazy[int].new() { linit3.fetch_add(1); 3003 }
-    let mut wrong  = AtomicI64.new(0)
+    mut linit1 = AtomicI64.new(0)
+    mut linit2 = AtomicI64.new(0)
+    mut linit3 = AtomicI64.new(0)
+    ro lazy1  = Lazy[int].new() { linit1.fetch_add(1); 1001 }
+    ro lazy2  = Lazy[int].new() { linit2.fetch_add(1); 2002 }
+    ro lazy3  = Lazy[int].new() { linit3.fetch_add(1); 3003 }
+    mut wrong  = AtomicI64.new(0)
 
     parallel for _i in 0..64 {
-        let v1 = lazy1.force()
-        let v2 = lazy2.force()
-        let v3 = lazy3.force()
+        ro v1 = lazy1.force()
+        ro v2 = lazy2.force()
+        ro v3 = lazy3.force()
         if v1 != 1001 || v2 != 2002 || v3 != 3003 {
             wrong.fetch_add(1)
         }
@@ -80,8 +80,8 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 Lazy objects Ð²Ð‚â
 }
 
 test "prop once: state is Done after call_once completes" {
-    let mut once = Once.new()
-    let mut inits = AtomicI64.new(0)
+    mut once = Once.new()
+    mut inits = AtomicI64.new(0)
 
     once.call_once() { inits.fetch_add(1) }
     assert(once.is_completed())
@@ -93,7 +93,7 @@ test "prop once: state is Done after call_once completes" {
 
     assert(inits.load() == 1, "state stable: once completed stays completed, init runs 1 time")
     // Check state via match (enum comparison requires match)
-    let state_ok = match once.state() {
+    ro state_ok = match once.state() {
         OnceState.Done => true,
         _ => false,
     }

@@ -7,17 +7,17 @@ module map_literals.positive_record_punning
 import std.collections.hashmap.{HashMap}
 
 test "{ field-punning } → HashMap[str, bool]" {
-    let debug = true
-    let verbose = false
-    let cfg HashMap[str, bool] = { debug, verbose }
+    ro debug = true
+    ro verbose = false
+    ro cfg HashMap[str, bool] = { debug, verbose }
     assert(cfg.len() == 2)
     assert(cfg.get("debug") == Some(true))
     assert(cfg.get("verbose") == Some(false))
 }
 
 test "{ punning } single field" {
-    let enabled = true
-    let m HashMap[str, bool] = { enabled }
+    ro enabled = true
+    ro m HashMap[str, bool] = { enabled }
     assert(m.len() == 1)
     assert(m.get("enabled") == Some(true))
 }

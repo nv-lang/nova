@@ -2,8 +2,8 @@
 // Measures int + float arith codegen quality.
 
 fn sum_squares(n int) -> int {
-    let mut acc = 0
-    let mut i = 0
+    mut acc = 0
+    mut i = 0
     while i < n {
         acc = acc + i * i
         i = i + 1
@@ -12,8 +12,8 @@ fn sum_squares(n int) -> int {
 }
 
 fn product_floats(n int) -> f64 {
-    let mut acc f64 = 1.0
-    let mut i = 0
+    mut acc f64 = 1.0
+    mut i = 0
     while i < n {
         acc = acc * 1.0000001
         i = i + 1
@@ -27,9 +27,9 @@ fn fib(n int) -> int {
 }
 
 fn main() Io -> () {
-    let r = sum_squares(1000)
-    let p = product_floats(1000)
-    let f = fib(20)
+    ro r = sum_squares(1000)
+    ro p = product_floats(1000)
+    ro f = fib(20)
     println("results")
     println(str.from(r))
     println(str.from(p))

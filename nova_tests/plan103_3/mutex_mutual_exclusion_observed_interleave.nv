@@ -6,18 +6,18 @@
 module nova_tests.plan103_3.mutex_mutual_exclusion_observed_interleave
 
 test "mutual exclusion: inside counter never exceeds 1" {
-    let mut mu = Mutex.new()
-    let mut inside = AtomicInt.new(0)
-    let mut violation = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
-    let n_fibers = 6
-    let m_iters = 200
+    mut mu = Mutex.new()
+    mut inside = AtomicInt.new(0)
+    mut violation = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
+    ro n_fibers = 6
+    ro m_iters = 200
     wg.add(n_fibers)
 
     parallel for _i in 0..n_fibers {
         for _j in 0..m_iters {
             mu.lock()
-            let prev = inside.fetch_add(1)
+            ro prev = inside.fetch_add(1)
             if prev != 0 { violation.fetch_add(1) }
             inside.fetch_add(-1)
             mu.unlock()

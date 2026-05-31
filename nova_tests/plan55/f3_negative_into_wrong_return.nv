@@ -13,6 +13,6 @@ export fn Thing @into() => 42
 
 // EXPECT_CC_ERROR incompatible
 fn use_as_str() {
-    let t = Thing { x: 1 }
-    let s str = t.into()    // expected str, returns i64 → CC type mismatch
+    ro t = Thing { x: 1 }
+    ro s str = t.into()    // expected str, returns i64 → CC type mismatch
 }

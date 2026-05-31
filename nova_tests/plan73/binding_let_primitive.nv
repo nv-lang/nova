@@ -3,9 +3,9 @@
 module nova_tests.plan73.binding_let_primitive
 
 test "let для int — без consume keyword" {
-    let n = 42
-    let s = "hello"
-    let b = true
+    ro n = 42
+    ro s = "hello"
+    ro b = true
     assert(n == 42)
     assert(s == "hello")
     assert(b == true)

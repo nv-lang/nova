@@ -9,17 +9,17 @@ module plan34.gc_namespace_basic
 
 
 test "gc.heap_size — non-negative (malloc: 0, boehm: > 0)" {
-    let h = gc.heap_size()
+    ro h = gc.heap_size()
     assert(h >= 0)
 }
 
 test "gc.live_count — non-negative monotonic upper bound" {
-    let lc = gc.live_count()
+    ro lc = gc.live_count()
     assert(lc >= 0)
 }
 
 test "gc.alloc_count — non-negative" {
-    let a = gc.alloc_count()
+    ro a = gc.alloc_count()
     assert(a >= 0)
 }
 
@@ -31,7 +31,7 @@ test "gc.collect — callable без panic" {
 
 test "gc.reset_stats — callable без panic" {
     gc.reset_stats()
-    let a_after_reset = gc.alloc_count()
+    ro a_after_reset = gc.alloc_count()
     // После reset alloc_count может быть 0 или близко к нему (зависит от
     // backend и pending аллокаций между reset и read).
     assert(a_after_reset >= 0)

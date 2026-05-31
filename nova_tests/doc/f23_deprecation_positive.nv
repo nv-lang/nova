@@ -28,8 +28,8 @@ test "new compute works identically" {
 }
 
 test "deprecated and new produce same results" {
-    let inputs = [1, 5, 10, -1, 0]
-    let mut i = 0
+    ro inputs = [1, 5, 10, -1, 0]
+    mut i = 0
     while i < 5 {
         assert(old_compute(inputs[i]) == new_compute(inputs[i]))
         i = i + 1

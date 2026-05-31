@@ -8,18 +8,18 @@
 module nova_tests.plan95bis.result_unwrap_or_migrated
 
 test "Result.unwrap_or — Ok → v" {
-    let ok_r Result[int, str] = Ok(7)
+    ro ok_r Result[int, str] = Ok(7)
     assert(ok_r.unwrap_or(0) == 7)
 }
 
 test "Result.unwrap_or — Err → default" {
-    let err_r Result[int, str] = Err("oops")
+    ro err_r Result[int, str] = Err("oops")
     assert(err_r.unwrap_or(42) == 42)
 }
 
 test "Result.unwrap_or — composition with is_ok/is_err (Plan 95 Ф.5)" {
-    let ok_r Result[int, str] = Ok(7)
-    let err_r Result[int, str] = Err("oops")
+    ro ok_r Result[int, str] = Ok(7)
+    ro err_r Result[int, str] = Err("oops")
     assert(ok_r.is_ok())
     assert(err_r.is_err())
     assert(!ok_r.is_err())

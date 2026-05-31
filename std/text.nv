@@ -31,12 +31,12 @@ module std.text
 /// ```
 #stable(since = "0.1")
 export fn []str @join(sep str) -> str {
-    let n = @len()
+    ro n = @len()
     if n == 0 {
         return ""
     }
-    let mut result = @[0]
-    let mut i = 1
+    mut result = @[0]
+    mut i = 1
     while i < n {
         result = result + sep + @[i]
         i = i + 1

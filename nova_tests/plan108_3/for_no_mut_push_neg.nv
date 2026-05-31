@@ -5,7 +5,7 @@
 module nova_tests.plan108_3.for_no_mut_push_neg
 
 test "for default loop-var + push → error" {
-    let mut arrs = [[1]]
+    mut arrs = [[1]]
     for x in arrs {
         x.push(99)
     }

@@ -9,6 +9,6 @@ module iter.neg_not_iter
 
 test "int в for-in — compile error" {
     for x in 42 {
-        let _ = x
+        ro _ = x
     }
 }

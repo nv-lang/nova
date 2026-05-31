@@ -24,7 +24,7 @@ fn get_str(obj HashMap[str, Json], key str) -> str {
 }
 
 test "{field: v} → HashMap[str, Json] heterogeneous values" {
-    let m HashMap[str, Json] = {
+    ro m HashMap[str, Json] = {
         name: JStr("alice"),
         age: JNum(30),
         admin: JBool(true),
@@ -34,7 +34,7 @@ test "{field: v} → HashMap[str, Json] heterogeneous values" {
 }
 
 test "flagship — map-coercion in argument position with sum-coercion values" {
-    let n = count_fields({
+    ro n = count_fields({
         host: JStr("localhost"),
         port: JNum(8080),
     })

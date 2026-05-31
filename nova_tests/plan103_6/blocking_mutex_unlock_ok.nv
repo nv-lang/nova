@@ -11,10 +11,10 @@ module nova_tests.plan103_6.blocking_mutex_unlock_ok
 }
 
 test "Mutex.unlock (wake-only) allowed in #blocking fn" {
-    let mut m = Mutex.new()
+    mut m = Mutex.new()
     m.lock()
     _blk_mutex_unlock(m)
-    let acquired = m.try_lock()
+    ro acquired = m.try_lock()
     assert(acquired == true)
     m.unlock()
 }

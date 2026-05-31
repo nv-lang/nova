@@ -6,7 +6,7 @@
 module nova_tests.plan90_1.insert_oob_above_len_neg
 
 fn main() -> () {
-    let mut dst []int = [1, 2, 3]
-    let src []int = [10, 20]
+    mut dst []int = [1, 2, 3]
+    ro src []int = [10, 20]
     dst.insert(4, src)  // len=3, i=4 → out of bounds
 }

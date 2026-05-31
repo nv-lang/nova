@@ -18,41 +18,41 @@ fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int {
 }
 
 test "closure захватывает параметр функции" {
-    let add5 = make_adder(5)
-    let add10 = make_adder(10)
+    ro add5 = make_adder(5)
+    ro add10 = make_adder(10)
     assert(add5(3) == 8)
     assert(add10(3) == 13)
 }
 
 test "независимые closure'ы не влияют друг на друга" {
-    let a = make_adder(1)
-    let b = make_adder(100)
+    ro a = make_adder(1)
+    ro b = make_adder(100)
     assert(a(0) == 1)
     assert(b(0) == 100)
     assert(a(0) == 1)
 }
 
 test "функция как параметр" {
-    let r = apply_twice(|x| x * 2, 3)
+    ro r = apply_twice(|x| x * 2, 3)
     assert(r == 12)
 }
 
-test "lambda inline на let" {
-    let sq = |x| x * x
+test "lambda inline на ro" {
+    ro sq = |x| x * x
     assert(sq(7) == 49)
     assert(sq(0) == 0)
 }
 
 test "композиция функций" {
-    let inc = |x| x + 1
-    let dbl = |x| x * 2
-    let f = compose(inc, dbl)
+    ro inc = |x| x + 1
+    ro dbl = |x| x * 2
+    ro f = compose(inc, dbl)
     assert(f(3) == 7)
 }
 
-test "closure захватывает локальную let" {
-    let factor = 3
-    let mul = |x| x * factor
+test "closure захватывает локальную ro" {
+    ro factor = 3
+    ro mul = |x| x * factor
     assert(mul(4) == 12)
 }
 
@@ -61,9 +61,9 @@ test "closure возвращается из block" {
     // для парсера (без явного `;` или newline-disambig он трактует
     // как продолжение `n = 42 | x | x + n` bitwise OR). Делаем явный
     // wrap чтобы parser видел closure начало expression-start.
-    let f = {
-        let n = 42
-        let inner = |x| x + n
+    ro f = {
+        ro n = 42
+        ro inner = |x| x + n
         inner
     }
     assert(f(8) == 50)

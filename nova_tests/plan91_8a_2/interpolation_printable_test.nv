@@ -27,27 +27,27 @@ fn Point @fmt(mut sb StringBuilder) -> () {
 }
 
 test "\"${m}\" with fn str.from(Money) overload" {
-    let m = Money { cents: 250 }
-    let s = "amount = ${m}"
+    ro m = Money { cents: 250 }
+    ro s = "amount = ${m}"
     assert(s == "amount = Money(250)")
 }
 
 test "\"${c}\" with fn Coin @into() -> str" {
-    let c = Coin { value: 7 }
-    let s = "got ${c} pcs"
+    ro c = Coin { value: 7 }
+    ro s = "got ${c} pcs"
     assert(s == "got Coin(7) pcs")
 }
 
 test "\"${p}\" with explicit fn Point @fmt" {
-    let p = Point { x: 3, y: 4 }
-    let s = "loc=${p}"
+    ro p = Point { x: 3, y: 4 }
+    ro s = "loc=${p}"
     assert(s == "loc=Point(3, 4)")
 }
 
 test "multiple interpolations same string" {
-    let m = Money { cents: 1 }
-    let c = Coin { value: 2 }
-    let p = Point { x: 5, y: 6 }
-    let s = "m=${m} c=${c} p=${p}"
+    ro m = Money { cents: 1 }
+    ro c = Coin { value: 2 }
+    ro p = Point { x: 5, y: 6 }
+    ro s = "m=${m} c=${c} p=${p}"
     assert(s == "m=Money(1) c=Coin(2) p=Point(5, 6)")
 }

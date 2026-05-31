@@ -9,6 +9,6 @@
 module negative_capability.closure_arrow_in_body_rejected
 
 test "`|x| => body` отвергается (нет `=>` в closure-light)" {
-    let bad = |x| => x + 1
+    ro bad = |x| => x + 1
     assert(bad(5) == 6)
 }

@@ -14,7 +14,7 @@ fn Tag @fmt(mut sb StringBuilder) -> () {
 }
 
 test "verified #impl(Printable) with explicit @fmt" {
-    let t = Tag { name: "hello" }
+    ro t = Tag { name: "hello" }
     // Bare call works (explicit method, не synth)
     consume sb = StringBuilder.new()
     t.fmt(sb)
@@ -22,7 +22,7 @@ test "verified #impl(Printable) with explicit @fmt" {
 }
 
 test "explicit @fmt routes through interpolation directly" {
-    let t = Tag { name: "world" }
-    let s = "got ${t}"
+    ro t = Tag { name: "world" }
+    ro s = "got ${t}"
     assert(s == "got Tag(world)")
 }

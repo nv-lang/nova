@@ -6,7 +6,7 @@
 module nova_tests.plan108_3.loop_mut_invariant_prop
 
 test "property: for mut N iterations" {
-    let mut arrs = [[1], [2], [3]]
+    mut arrs = [[1], [2], [3]]
     for mut x in arrs {
         x.push(99)
         x.push(100)
@@ -14,7 +14,7 @@ test "property: for mut N iterations" {
 }
 
 test "property: pattern (mut a, b) — only a mutates" {
-    let (mut a, b) = ([], [10, 20])
+    ro (mut a, b) = ([], [10, 20])
     a.push(1)
     a.push(2)
     a.push(3)
@@ -23,7 +23,7 @@ test "property: pattern (mut a, b) — only a mutates" {
 }
 
 test "property: pattern (mut a, mut b) — both mutate independently" {
-    let (mut a, mut b) = ([], [])
+    ro (mut a, mut b) = ([], [])
     a.push(1)
     b.push(10)
     a.push(2)

@@ -3,40 +3,40 @@
 module nova_tests.plan103_5.oncecell_get_or_init_exactly_once
 
 test "OnceCell.get_or_init: init runs exactly once across 5 concurrent fibers" {
-    let mut cell = OnceCell[int].new()
-    let mut init_count = AtomicInt.new(0)
+    mut cell = OnceCell[int].new()
+    mut init_count = AtomicInt.new(0)
 
     supervised {
         spawn {
-            let v = cell.get_or_init() {
+            ro v = cell.get_or_init() {
                 init_count.fetch_add(1)
                 42
             }
             assert(v == 42)
         }
         spawn {
-            let v = cell.get_or_init() {
+            ro v = cell.get_or_init() {
                 init_count.fetch_add(1)
                 42
             }
             assert(v == 42)
         }
         spawn {
-            let v = cell.get_or_init() {
+            ro v = cell.get_or_init() {
                 init_count.fetch_add(1)
                 42
             }
             assert(v == 42)
         }
         spawn {
-            let v = cell.get_or_init() {
+            ro v = cell.get_or_init() {
                 init_count.fetch_add(1)
                 42
             }
             assert(v == 42)
         }
         spawn {
-            let v = cell.get_or_init() {
+            ro v = cell.get_or_init() {
                 init_count.fetch_add(1)
                 42
             }
@@ -45,6 +45,6 @@ test "OnceCell.get_or_init: init runs exactly once across 5 concurrent fibers" {
     }
 
     assert(init_count.load() == 1)
-    let v = cell.get_or_init() { 99 }
+    ro v = cell.get_or_init() { 99 }
     assert(v == 42)  // cached
 }

@@ -18,21 +18,21 @@ test "char literal emoji in interpolation" {
 }
 
 test "char variable ASCII in interpolation" {
-    let c char = 'A'
+    ro c char = 'A'
     assert("${c}" == "A")
 }
 
 test "char variable Cyrillic in interpolation" {
-    let cy char = 'Ю'
+    ro cy char = 'Ю'
     assert("${cy}" == "Ю")
 }
 
 test "char variable emoji in interpolation" {
-    let e char = '😀'
+    ro e char = '😀'
     assert("${e}" == "😀")
 }
 
 test "char variable embedded in text" {
-    let c char = 'Z'
+    ro c char = 'Z'
     assert("letter=${c}!" == "letter=Z!")
 }

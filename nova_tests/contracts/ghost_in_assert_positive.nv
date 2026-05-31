@@ -4,7 +4,7 @@
 module contracts.ghost_in_assert_positive
 
 fn check_ghost_assert(v int) -> int {
-    ghost let x = v + 1
+    ghost ro x = v + 1
     assert_static x > 0 || v <= -1  // ghost в assert_static — OK
     v
 }

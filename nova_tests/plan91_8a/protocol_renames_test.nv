@@ -8,15 +8,15 @@ fn Counter mut @next() -> Option[int] {
     if @cur >= @end {
         None
     } else {
-        let v = @cur
+        ro v = @cur
         @cur = @cur + 1
         Some(v)
     }
 }
 
 test "Iterable[T] bound резолвится" {
-    let mut c = Counter { cur: 0, end: 3 }
-    let mut sum = 0
+    mut c = Counter { cur: 0, end: 3 }
+    mut sum = 0
     for x in c {
         sum = sum + x
     }
@@ -28,9 +28,9 @@ type Pt { x int, y int }
 fn Pt @equals(other Pt) -> bool => @x == other.x && @y == other.y
 
 test "Equatable.equals — instance dispatch" {
-    let a = Pt { x: 1, y: 2 }
-    let b = Pt { x: 1, y: 2 }
-    let c = Pt { x: 3, y: 4 }
+    ro a = Pt { x: 1, y: 2 }
+    ro b = Pt { x: 1, y: 2 }
+    ro c = Pt { x: 3, y: 4 }
     assert(a.equals(b))
     assert(!a.equals(c))
 }
@@ -43,9 +43,9 @@ fn Money @compare(other Money) -> int =>
 fn Money @equals(other Money) -> bool => @compare(other) == 0
 
 test "Comparable.compare — int convention (D183)" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 200 }
-    let c = Money { cents: 100 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 200 }
+    ro c = Money { cents: 100 }
     assert(a.compare(b) < 0)
     assert(b.compare(a) > 0)
     assert(a.compare(c) == 0)
@@ -53,9 +53,9 @@ test "Comparable.compare — int convention (D183)" {
 }
 
 test "Comparable bound на T" {
-    let a = Money { cents: 50 }
-    let b = Money { cents: 75 }
-    let m = min_money(a, b)
+    ro a = Money { cents: 50 }
+    ro b = Money { cents: 75 }
+    ro m = min_money(a, b)
     assert(m.cents == 50)
 }
 
@@ -71,7 +71,7 @@ fn Buffer @fmt(mut sb StringBuilder) -> () {
 }
 
 test "Printable.fmt — StringBuilder formatting" {
-    let mut b = Buffer { data: "hello" }
+    mut b = Buffer { data: "hello" }
     consume sb = StringBuilder.new()
     b.fmt(sb)
     assert(sb.as_str() == "Buffer(hello)")

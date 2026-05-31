@@ -5,5 +5,5 @@
 module nova_tests.plan108_3.mut_wildcard_neg
 
 test "let (mut _, b) → error" {
-    let (mut _, b) = ([1], [2])
+    ro (mut _, b) = ([1], [2])
 }

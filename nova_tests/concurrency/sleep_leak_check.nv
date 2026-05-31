@@ -16,7 +16,7 @@ test "100k sequential sleep(0) — no resource accumulation" {
     // 100k fast yield'ов через Time.sleep(0). Каждый создаёт+закрывает
     // uv_timer_t handle. Если handle'ы leak'ались бы — uv_loop tracker
     // переполнился бы за ~1k iterations.
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         spawn {
             for _ in 0..100_000 {
@@ -24,7 +24,7 @@ test "100k sequential sleep(0) — no resource accumulation" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // 100k yields через libuv: theoretical ~1s. Slack 5s — generous
     // headroom для CI machines.
     assert(elapsed < 5000)
@@ -35,7 +35,7 @@ test "1k repeated sleep(10) — bounded close-cb backlog" {
     // (1000 × 10ms), но Windows timer-resolution ~15ms и Ф.8 ASYNC
     // close_cb добавляет ~2-3ms на каждый sleep ⇒ realistic ~20-25s.
     // Slack 30s — если elapsed >> 30s, handle backlog либо resource leak.
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         spawn {
             for _ in 0..1000 {
@@ -43,7 +43,7 @@ test "1k repeated sleep(10) — bounded close-cb backlog" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     assert(elapsed < 30_000)
 }
 
@@ -52,7 +52,7 @@ test "repeated scope-create/destroy не растит memory unbounded" {
     // (если park'ался) либо нет. GC должен освобождать unreachable
     // scope.sched_state и dynamic arrays между iteration'ами.
     // Если бы accumulating leak — это были бы +1 GB heap.
-    let mut completed = 0
+    mut completed = 0
     for _ in 0..1000 {
         supervised {
             spawn {

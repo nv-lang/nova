@@ -5,6 +5,6 @@
 module nova_tests.plan108_2.let_nomut_truncate_neg
 
 test "let no-mut + truncate → error" {
-    let mut arr = [1, 2, 3, 4, 5]
+    mut arr = [1, 2, 3, 4, 5]
     arr.truncate(2)
 }

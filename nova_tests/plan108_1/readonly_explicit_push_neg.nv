@@ -5,12 +5,12 @@
 
 module nova_tests.plan108_1.readonly_explicit_push_neg
 
-fn append_99(readonly b []int) -> int {
-    b.push(99)             // ✗ E_PARAM_NOT_MUT — `readonly` строго запрещает
+fn append_99(ro b []int) -> int {
+    b.push(99)             // ✗ E_PARAM_NOT_MUT — `ro` строго запрещает
     b.len()
 }
 
-test "readonly + push → error" {
-    let mut arr = [1, 2]
-    let _ = append_99(arr)
+test "ro + push → error" {
+    mut arr = [1, 2]
+    ro _ = append_99(arr)
 }

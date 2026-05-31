@@ -24,25 +24,25 @@ fn status_code(r Response) -> int => match r {
 }
 
 test "construct и match по record-варианту" {
-    let r = Success { code: 200, body: "ok" }
+    ro r = Success { code: 200, body: "ok" }
     assert(describe(r) == "ok")
     assert(status_code(r) == 200)
 }
 
 test "literal-pattern на поле variant'а" {
-    let r = Success { code: 404, body: "not found" }
+    ro r = Success { code: 404, body: "not found" }
     assert(describe(r) == "non-200")
     assert(status_code(r) == 404)
 }
 
 test "альтернативный record-вариант" {
-    let r = Failure { error: "boom" }
+    ro r = Failure { error: "boom" }
     assert(describe(r) == "boom")
     assert(status_code(r) == 500)
 }
 
 test "redirect вариант" {
-    let r = Redirect { url: "/login" }
+    ro r = Redirect { url: "/login" }
     assert(describe(r) == "/login")
     assert(status_code(r) == 302)
 }
@@ -65,8 +65,8 @@ test "смешанные unit/tuple/record варианты" {
 }
 
 test "доступ к полям record-варианта после match" {
-    let e = Click { x: 7, y: 13 }
-    let sum = match e {
+    ro e = Click { x: 7, y: 13 }
+    ro sum = match e {
         Click { x, y } => x + y
         _              => 0
     }

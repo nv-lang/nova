@@ -11,7 +11,7 @@ module expected_runtime.panic_no_errdefer_in_scope
 
 fn main() Io -> () {
     // Этот блок завершается нормально — errdefer НЕ должен сработать.
-    let _ = {
+    ro _ = {
         errdefer { println("SHOULD_NOT_PRINT") }
         42  // нормальный exit из блока
     }

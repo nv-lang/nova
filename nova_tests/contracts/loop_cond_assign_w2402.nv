@@ -14,8 +14,8 @@ module contracts.loop_cond_assign_w2402
 fn cond_accumulate(n int) -> int
     requires n >= 0
 {
-    let mut i = 0
-    let mut x = 0
+    mut i = 0
+    mut x = 0
     while i < n
         invariant x >= 0
         decreases n - i

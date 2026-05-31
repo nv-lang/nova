@@ -6,7 +6,7 @@ module modules.deque
 import std._experimental.collections.deque.{Deque}
 
 test "Deque: push_back и pop_front — FIFO порядок" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_back(1)
     d.push_back(2)
     d.push_back(3)
@@ -17,7 +17,7 @@ test "Deque: push_back и pop_front — FIFO порядок" {
 }
 
 test "Deque: push_front и pop_front — LIFO порядок" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_front(1)
     d.push_front(2)
     d.push_front(3)
@@ -27,7 +27,7 @@ test "Deque: push_front и pop_front — LIFO порядок" {
 }
 
 test "Deque: push_back и pop_back — LIFO порядок" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_back(10)
     d.push_back(20)
     d.push_back(30)
@@ -38,7 +38,7 @@ test "Deque: push_back и pop_back — LIFO порядок" {
 }
 
 test "Deque: смешанный push_front/push_back" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_back(2)
     d.push_front(1)
     d.push_back(3)
@@ -49,7 +49,7 @@ test "Deque: смешанный push_front/push_back" {
 }
 
 test "Deque: front и back не удаляют" {
-    let mut d = Deque[str].new()
+    mut d = Deque[str].new()
     d.push_back("a")
     d.push_back("b")
     assert(d.front() == Some("a"))
@@ -59,7 +59,7 @@ test "Deque: front и back не удаляют" {
 }
 
 test "Deque: len и is_empty" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     assert(d.is_empty() == true)
     assert(d.len() == 0)
     d.push_back(1)
@@ -71,13 +71,13 @@ test "Deque: len и is_empty" {
 
 
 test "Deque: pop из пустого — None" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     assert(d.pop_front() == None)
     assert(d.pop_back() == None)
 }
 
 test "Deque: front и back пустого — None" {
-    let d = Deque[int].new()
+    ro d = Deque[int].new()
     assert(d.front() == None)
     assert(d.back() == None)
 }

@@ -11,6 +11,6 @@ type Gadget { x int }
 fn Gadget mut consume @broken() -> int => @x
 
 test "mut+consume conflict" {
-    let g = Gadget { x: 1 }
+    ro g = Gadget { x: 1 }
     assert(g.x == 1)
 }

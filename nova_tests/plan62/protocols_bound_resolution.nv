@@ -52,8 +52,8 @@ export fn Item @compare(other Item) -> int =>
 fn hash_anything[T Hashable](v T) -> u64 => v.hash()
 
 test "Hashable bound резолвится через prelude — Item.hash()" {
-    let it = Item.new(42 as u64)
-    let h = hash_anything(it)
+    ro it = Item.new(42 as u64)
+    ro h = hash_anything(it)
     assert(h == (42 as u64))
 }
 
@@ -65,9 +65,9 @@ test "Hashable bound резолвится через prelude — Item.hash()" {
 fn eq_via_bound[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "Equatable bound — Item.equals()" {
-    let a = Item.new(7 as u64)
-    let b = Item.new(7 as u64)
-    let c = Item.new(8 as u64)
+    ro a = Item.new(7 as u64)
+    ro b = Item.new(7 as u64)
+    ro c = Item.new(8 as u64)
     assert(eq_via_bound(a, b) == true)
     assert(eq_via_bound(a, c) == false)
 }
@@ -82,9 +82,9 @@ fn min_of[T Comparable](a T, b T) -> T =>
     if a.compare(b) <= 0 { a } else { b }
 
 test "Comparable bound — Item.compare() с int-based check" {
-    let a = Item.new(3 as u64)
-    let b = Item.new(7 as u64)
-    let m = min_of(a, b)
+    ro a = Item.new(3 as u64)
+    ro b = Item.new(7 as u64)
+    ro m = min_of(a, b)
     assert(m.id == (3 as u64))
 }
 
@@ -109,8 +109,8 @@ export fn Celsius.from(f Fahrenheit) -> Celsius =>
 // — Plan 62.E+.
 
 test "From[X] bound — concrete Celsius.from(Fahrenheit) через prelude resolution" {
-    let f = Fahrenheit { value: 212.0 }
-    let c = Celsius.from(f)
+    ro f = Fahrenheit { value: 212.0 }
+    ro c = Celsius.from(f)
     // 212°F == 100°C
     assert(c.value > 99.9 && c.value < 100.1)
 }
@@ -140,8 +140,8 @@ export fn FahrToC @into() -> Celsius =>
 fn needs_into[T Into[Celsius]](v T) -> Celsius => v.to_str()
 
 test "Into[X] bound — explicit @into impl резолвится через prelude" {
-    let f = FahrToC { value: 32.0 }
-    let c = needs_into(f)
+    ro f = FahrToC { value: 32.0 }
+    ro c = needs_into(f)
     // 32°F == 0°C
     assert(c.value > -0.1 && c.value < 0.1)
 }
@@ -176,7 +176,7 @@ fn fmt_to_string[T Printable](v T) -> str {
 }
 
 test "Printable bound — Pair.fmt() in StringBuilder" {
-    let p = Pair { x: 3, y: 7 }
-    let s = fmt_to_string(p)
+    ro p = Pair { x: 3, y: 7 }
+    ro s = fmt_to_string(p)
     assert(s == "(3, 7)")
 }

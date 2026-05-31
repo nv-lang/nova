@@ -28,11 +28,11 @@ export fn MyBag[K, V] mut @insert_new(k K, v V) {
 export fn MyBag[K, V] @len() -> int => @count
 
 test "user MyBag через literal — корректное число вставок" {
-    let m MyBag[int, str] = [1: "a", 2: "b", 3: "c"]
+    ro m MyBag[int, str] = [1: "a", 2: "b", 3: "c"]
     assert(m.len() == 3)
 }
 
 test "user MyBag через literal — empty case без literal" {
-    let m = MyBag[int, str].with_capacity(0)
+    ro m = MyBag[int, str].with_capacity(0)
     assert(m.len() == 0)
 }

@@ -13,6 +13,6 @@ module nova_tests.plan87.neg_type_mismatch
 
 test "for x str in int array — annotation mismatch" {
     for x str in [1, 2, 3] {
-        let _ = x
+        ro _ = x
     }
 }

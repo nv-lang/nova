@@ -10,21 +10,21 @@ module str_builder.metrics
 // ── @len codepoints vs @byte_len bytes ────────────────────────────
 
 test "ASCII: len == byte_len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("hello world")
     assert(sb.len() == 11)
     assert(sb.byte_len() == 11)
 }
 
 test "Cyrillic: byte_len = 2 * len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("Привет")
     assert(sb.len() == 6)
     assert(sb.byte_len() == 12)
 }
 
 test "emoji: byte_len = 4 * len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append('😀')
     sb.append('🎉')
     assert(sb.len() == 2)
@@ -32,7 +32,7 @@ test "emoji: byte_len = 4 * len" {
 }
 
 test "смешанный текст: len < byte_len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("Hi Я 中")     // H,i,space,Я,space,中 = 6 codepoints
     assert(sb.len() == 6)
     // H(1)+i(1)+sp(1)+Я(2)+sp(1)+中(3) = 9 байт
@@ -40,7 +40,7 @@ test "смешанный текст: len < byte_len" {
 }
 
 test "пустой: len == 0, byte_len == 0" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     assert(sb.len() == 0)
     assert(sb.byte_len() == 0)
 }
@@ -49,14 +49,14 @@ test "пустой: len == 0, byte_len == 0" {
 // ── @capacity ──────────────────────────────────────────────────────
 
 test "capacity >= byte_len всегда" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("some content here")
     assert(sb.capacity() >= sb.byte_len())
 }
 
 test "capacity растёт при переполнении" {
-    let mut sb = StringBuilder.with_capacity(4)
-    let cap_before = sb.capacity()
+    mut sb = StringBuilder.with_capacity(4)
+    ro cap_before = sb.capacity()
     sb.append("aaaaaaaaaaaaaaaa")     // 16 байт >> cap 4
     assert(sb.byte_len() == 16)
     assert(sb.capacity() >= 16)
@@ -64,12 +64,12 @@ test "capacity растёт при переполнении" {
 }
 
 test "capacity не уменьшается при чтении" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("data")
-    let c1 = sb.capacity()
-    let _ = sb.len()
-    let _ = sb.byte_len()
-    let _ = sb.is_empty()
+    ro c1 = sb.capacity()
+    ro _ = sb.len()
+    ro _ = sb.byte_len()
+    ro _ = sb.is_empty()
     assert(sb.capacity() == c1)
 }
 
@@ -77,7 +77,7 @@ test "capacity не уменьшается при чтении" {
 // ── len после grow корректна ───────────────────────────────────────
 
 test "hot-loop accumulation — len точна после многих grow" {
-    let mut sb = StringBuilder.with_capacity(2)
+    mut sb = StringBuilder.with_capacity(2)
     for i in 0..200 {
         sb.append("x")
     }
@@ -87,7 +87,7 @@ test "hot-loop accumulation — len точна после многих grow" {
 }
 
 test "hot-loop Unicode — len codepoints, byte_len bytes" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     for i in 0..50 {
         sb.append('Я')
     }

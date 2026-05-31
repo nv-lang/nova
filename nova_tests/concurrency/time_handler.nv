@@ -30,8 +30,8 @@ module concurrency.time_handler
 // ================================================================
 
 test "with Time: handler.sleep called instead of default" {
-    let mut sleep_calls = 0
-    let mut last_ms = -1
+    mut sleep_calls = 0
+    mut last_ms = -1
     with Time = effect Time {
         sleep(ms) {
             sleep_calls += 1
@@ -51,8 +51,8 @@ test "with Time: handler.sleep called instead of default" {
 }
 
 test "with Time: handler.now() returns custom clock value" {
-    let mut got1 = -1
-    let mut got2 = -1
+    mut got1 = -1
+    mut got2 = -1
     with Time = effect Time {
         sleep(_ms) {
             return ()
@@ -69,7 +69,7 @@ test "with Time: handler.now() returns custom clock value" {
 }
 
 test "with Time: stateful clock that ticks on each call" {
-    let mut clock = 0
+    mut clock = 0
     with Time = effect Time {
         sleep(ms) {
             clock = clock + ms
@@ -79,11 +79,11 @@ test "with Time: stateful clock that ticks on each call" {
             return clock
         }
     } {
-        let t0 = Time.now()
+        ro t0 = Time.now()
         Time.sleep(10)
-        let t1 = Time.now()
+        ro t1 = Time.now()
         Time.sleep(5)
-        let t2 = Time.now()
+        ro t2 = Time.now()
         assert(t0 == 0)
         assert(t1 == 10)
         assert(t2 == 15)
@@ -104,8 +104,8 @@ test "with Time: handler installed on main, supervised inside still works" {
     // scheduling в supervised. Документируется как ожидаемое поведение:
     // если хочешь и yield, и handler — handler должен сам вызвать
     // nova_fiber_yield (через какую-то Nova-API; в bootstrap нет).
-    let mut sleep_count = 0
-    let mut log = 0
+    mut sleep_count = 0
+    mut log = 0
     with Time = effect Time {
         sleep(_ms) {
             sleep_count += 1
@@ -149,8 +149,8 @@ test "Time.now() on top level — monotonic non-decreasing" {
     // GetTickCount64 ticks ≈ every 15.625ms (system timer resolution).
     // Even after sleep(50), occasionally t2 lands in the same bucket as t1,
     // so we only assert monotonicity (>=), not exact delay.
-    let t1 = Time.now()
+    ro t1 = Time.now()
     Time.sleep(50)
-    let t2 = Time.now()
+    ro t2 = Time.now()
     assert(t2 >= t1)            // monotonic (clock never goes backwards)
 }

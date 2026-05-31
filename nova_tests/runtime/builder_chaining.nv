@@ -15,25 +15,25 @@ module runtime.builder_chaining
 // ================================================================
 
 test "StringBuilder: chained append str" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("hello").append(" ").append("world")
-    let s = sb.into()
+    ro s = sb.into()
     assert(s == "hello world")
 }
 
 test "StringBuilder: chained append str + char" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("=").append('>').append(" ").append("ok")
-    let s = sb.into()
+    ro s = sb.into()
     assert(s == "=> ok")
 }
 
 test "StringBuilder: chain produces same buffer (Self semantics)" {
-    let mut sb = StringBuilder.new()
-    let r = sb.append("a").append("b")
+    mut sb = StringBuilder.new()
+    ro r = sb.append("a").append("b")
     // r и sb — один и тот же буфер. Проверка через @len + into.
     assert(sb.len() == 2)
-    let s = sb.into()
+    ro s = sb.into()
     assert(s == "ab")
 }
 
@@ -43,10 +43,10 @@ test "StringBuilder: chain produces same buffer (Self semantics)" {
 // ================================================================
 
 test "WriteBuffer: chained write_byte" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x01).write_byte(0x02).write_byte(0x03)
     assert(wb.len() == 3)
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 3)
     assert(bs[0] == 0x01)
     assert(bs[1] == 0x02)
@@ -54,10 +54,10 @@ test "WriteBuffer: chained write_byte" {
 }
 
 test "WriteBuffer: chained mixed writes (numeric + bytes)" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_be(0xDEADBEEF as u32).write_u16_be(0x1234 as u16).write_byte(0xFF)
     assert(wb.len() == 7)         // 4 + 2 + 1
-    let bs = wb.into()
+    ro bs = wb.into()
     // Big-endian u32: DE AD BE EF
     assert(bs[0] == 0xDE)
     assert(bs[1] == 0xAD)
@@ -71,11 +71,11 @@ test "WriteBuffer: chained mixed writes (numeric + bytes)" {
 }
 
 test "WriteBuffer: chained text writes" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("nova").write_char('-').write_str("lang")
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let s = rb.read_str(9)         // 4 + 1 + 4 codepoints
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro s = rb.read_str(9)         // 4 + 1 + 4 codepoints
     assert(s == "nova-lang")
 }
 
@@ -85,14 +85,14 @@ test "WriteBuffer: chained text writes" {
 // ================================================================
 
 test "round-trip: builder chain → read_str codepoints" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("Hello, ").write_str("Привет!")
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
 
-    let part1 = rb.read_str(7)     // "Hello, " — 7 codepoints
+    ro part1 = rb.read_str(7)     // "Hello, " — 7 codepoints
     assert(part1 == "Hello, ")
-    let part2 = rb.read_str(7)     // "Привет!" — 7 codepoints
+    ro part2 = rb.read_str(7)     // "Привет!" — 7 codepoints
     assert(part2 == "Привет!")
     assert(rb.remaining() == 0)
 }

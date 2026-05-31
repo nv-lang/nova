@@ -21,15 +21,15 @@ fn any_equal[T Equatable](xs []T, target T) -> bool {
 }
 
 test "synthesized equals работает в generic bound с loop" {
-    let scores []Score = [Score { value: 10 }, Score { value: 20 }, Score { value: 30 }]
-    let target = Score { value: 20 }
+    ro scores []Score = [Score { value: 10 }, Score { value: 20 }, Score { value: 30 }]
+    ro target = Score { value: 20 }
     assert(any_equal(scores, target))
-    let missing = Score { value: 99 }
+    ro missing = Score { value: 99 }
     assert(!any_equal(scores, missing))
 }
 
 test "synthesized equals для empty array" {
-    let empty []Score = []
-    let target = Score { value: 5 }
+    ro empty []Score = []
+    ro target = Score { value: 5 }
     assert(!any_equal(empty, target))
 }

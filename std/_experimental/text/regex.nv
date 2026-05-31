@@ -77,9 +77,9 @@ export type NfaState
 /// backtracking. Нет backreferences и lookbehind (math.требуют backtracking).
 #stable(since = "0.1")
 export type Regex {
-    readonly states []NfaState
-    readonly start int
-    readonly anchored_start bool
+    ro states []NfaState
+    ro start int
+    ro anchored_start bool
 }
 
 
@@ -107,7 +107,7 @@ fn Parser.new(p str) -> Self => { pattern: p, pos: 0 }
 fn Parser @peek() -> Option[char] => @pattern.char_at(@pos)
 
 fn Parser mut @advance() -> Option[char] {
-    let c = @peek()
+    ro c = @peek()
     if c != None { @pos += 1 }
     c
 }
@@ -118,7 +118,7 @@ fn Parser mut @parse_pattern() Fail[CompileError] -> RegexNode {
 
 // alternate := concat ('|' concat)*
 fn Parser mut @parse_alternate() Fail[CompileError] -> RegexNode {
-    let mut alts []RegexNode = [@parse_concat()]
+    mut alts []RegexNode = [@parse_concat()]
     while @peek() == Some('|') {
         @advance()
         alts.push(@parse_concat())
@@ -128,15 +128,15 @@ fn Parser mut @parse_alternate() Fail[CompileError] -> RegexNode {
 
 // concat := atom*
 fn Parser mut @parse_concat() Fail[CompileError] -> RegexNode {
-    let mut items []RegexNode = []
-    let mut done = false
+    mut items []RegexNode = []
+    mut done = false
     while !done {
         match @peek() {
             None             => { done = true }
             Some(')')        => { done = true }
             Some('|')        => { done = true }
             _ => {
-                let atom = @parse_quantified()
+                ro atom = @parse_quantified()
                 items.push(atom)
             }
         }
@@ -149,7 +149,7 @@ fn Parser mut @parse_concat() Fail[CompileError] -> RegexNode {
 // quantified := atom quantifier?
 // quantifier := '*' | '+' | '?' | '{n}' | '{n,}' | '{n,m}'
 fn Parser mut @parse_quantified() Fail[CompileError] -> RegexNode {
-    let atom = @parse_atom()
+    ro atom = @parse_atom()
     match @peek() {
         Some('*') => { @advance(); NStar(atom) }
         Some('+') => { @advance(); NPlus(atom) }
@@ -160,7 +160,7 @@ fn Parser mut @parse_quantified() Fail[CompileError] -> RegexNode {
 }
 
 fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> RegexNode {
-    let start = @pos
+    ro start = @pos
     @advance()                           // {
     consume n_str = StringBuilder.new()
     loop {
@@ -169,14 +169,14 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
             _ => break
         }
     }
-    let min_str = n_str.into()
+    ro min_str = n_str.into()
     if min_str.len() == 0 { throw InvalidQuantifier { position: start } }
-    let min = match int.try_from(min_str) {
+    ro min = match int.try_from(min_str) {
         Ok(n)  => n
         Err(_) => throw InvalidQuantifier { position: start }
     }
 
-    let max = if @peek() == Some(',') {
+    ro max = if @peek() == Some(',') {
         @advance()
         consume m_str = StringBuilder.new()
         loop {
@@ -185,7 +185,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
                 _ => break
             }
         }
-        let m = m_str.into()
+        ro m = m_str.into()
         if m.len() == 0 { -1 }       // {n,} — unbounded
         else {
             match int.try_from(m) {
@@ -227,27 +227,27 @@ fn is_special(c char) -> bool =>
     c == ')' || c == '}' || c == ']'
 
 fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
-    let start = @pos
+    ro start = @pos
     @advance()                          // [
-    let negated = @peek() == Some('^')
+    ro negated = @peek() == Some('^')
     if negated { @advance() }
-    let mut chars []char = []
-    let mut ranges [](char, char) = []
-    let mut closed = false
+    mut chars []char = []
+    mut ranges [](char, char) = []
+    mut closed = false
     while !closed {
         match @peek() {
             None => throw UnclosedClass { position: start }
             Some(']') => { @advance(); closed = true }
             Some('\\') => {
                 @advance()
-                let c = match @advance() {
+                ro c = match @advance() {
                     Some(c) => decode_escape_char(c)
                     None    => throw UnclosedClass { position: start }
                 }
                 // Может быть range: \d-\f
                 if @peek() == Some('-') && @pattern.char_at(@pos + 1) != Some(']') {
                     @advance()
-                    let to = match @advance() {
+                    ro to = match @advance() {
                         Some('\\') => match @advance() {
                             Some(x) => decode_escape_char(x)
                             None    => throw UnclosedClass { position: start }
@@ -264,7 +264,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
                 @advance()
                 if @peek() == Some('-') && @pattern.char_at(@pos + 1) != Some(']') {
                     @advance()
-                    let to = match @advance() {
+                    ro to = match @advance() {
                         Some(x) => x
                         None    => throw UnclosedClass { position: start }
                     }
@@ -279,7 +279,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
 }
 
 fn Parser mut @parse_group() Fail[CompileError] -> RegexNode {
-    let start = @pos
+    ro start = @pos
     @advance()                          // (
     // Non-capturing: (?:...)
     if @peek() == Some('?') {
@@ -289,7 +289,7 @@ fn Parser mut @parse_group() Fail[CompileError] -> RegexNode {
         }
         // Named groups (?<name>...) — упрощено: пропускаем
     }
-    let inner = @parse_alternate()
+    ro inner = @parse_alternate()
     if @peek() != Some(')') {
         throw UnclosedGroup { position: start }
     }
@@ -377,7 +377,7 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 
         NConcat(items) => {
             // Compile right-to-left так чтобы каждое item вело в start следующего
-            let mut current = out_state
+            mut current = out_state
             for i in (0..items.len()).reverse() {
                 current = @compile_node(items[i], current)
             }
@@ -388,9 +388,9 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
             // Для двух — простой Split; для N — n-1 Split-ов.
             if alts.len() == 1 { return @compile_node(alts[0], out_state) }
             // Compile все ветви, объединяем через Split
-            let mut start = @compile_node(alts[alts.len() - 1], out_state)
+            mut start = @compile_node(alts[alts.len() - 1], out_state)
             for i in (0..alts.len() - 1).reverse() {
-                let branch = @compile_node(alts[i], out_state)
+                ro branch = @compile_node(alts[i], out_state)
                 start = @add(SSplit { out1: branch, out2: start })
             }
             start
@@ -399,8 +399,8 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
         NStar(inner) => {
             // Split: либо в inner (с возвратом в Split), либо в out
             // Patch loop: inner.out → split
-            let split_idx = @add(SSplit { out1: 0, out2: out_state })   // placeholder
-            let inner_start = @compile_node(inner, split_idx)
+            ro split_idx = @add(SSplit { out1: 0, out2: out_state })   // placeholder
+            ro inner_start = @compile_node(inner, split_idx)
             // Patch out1
             @states[split_idx] = SSplit { out1: inner_start, out2: out_state }
             split_idx
@@ -408,36 +408,36 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 
         NPlus(inner) => {
             // Однократный inner, потом Star inside
-            let split_idx = @add(SSplit { out1: 0, out2: out_state })
-            let inner_start = @compile_node(inner, split_idx)
+            ro split_idx = @add(SSplit { out1: 0, out2: out_state })
+            ro inner_start = @compile_node(inner, split_idx)
             @states[split_idx] = SSplit { out1: inner_start, out2: out_state }
             inner_start
         }
 
         NOptional(inner) => {
             // Split: в inner или сразу к out
-            let inner_start = @compile_node(inner, out_state)
+            ro inner_start = @compile_node(inner, out_state)
             @add(SSplit { out1: inner_start, out2: out_state })
         }
 
         NRepeat { node, min, max } => {
             // Развёртка: min обязательных, потом max-min опциональных
             // (или unbounded если max=-1).
-            let mut current = out_state
+            mut current = out_state
             // Optional / unbounded хвост
             if max == -1 {
                 // {min,} = min обязательных + Star
                 current = @compile_node(NStar(node), current)
             } else {
                 // {min,max} = max-min Optional
-                let mut k = max - min
+                mut k = max - min
                 while k > 0 {
                     current = @compile_node(NOptional(node), current)
                     k -= 1
                 }
             }
             // min обязательных перед хвостом
-            let mut k = min
+            mut k = min
             while k > 0 {
                 current = @compile_node(node, current)
                 k -= 1
@@ -464,11 +464,11 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 /// ```
 #stable(since = "0.1")
 export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
-    let mut p = Parser.new(pattern)
-    let ast = p.parse_pattern()
+    mut p = Parser.new(pattern)
+    ro ast = p.parse_pattern()
 
     // Detect anchored start
-    let anchored = match ast {
+    ro anchored = match ast {
         NConcat(items) if items.len() > 0 => match items[0] {
             NAnchorStart => true
             _            => false
@@ -477,9 +477,9 @@ export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
         _            => false
     }
 
-    let mut c = Compiler.new()
-    let accept = c.add(SMatch)
-    let start = c.compile_node(ast, accept)
+    mut c = Compiler.new()
+    ro accept = c.add(SMatch)
+    ro start = c.compile_node(ast, accept)
 
     {
         states: c.states,
@@ -523,10 +523,10 @@ fn matches_class(s NfaState, c char) -> bool => match s {
     SChar { c: target, .. } => c == target
     SAnyChar { .. } => c != '\n'
     SCharClass { chars, ranges, negated, .. } => {
-        let mut found = false
+        mut found = false
         for ch in chars { if ch == c { found = true } }
         for r in ranges {
-            let n = c as int
+            ro n = c as int
             if n >= (r.0 as int) && n <= (r.1 as int) { found = true }
         }
         if negated { !found } else { found }
@@ -546,18 +546,18 @@ fn step_out(s NfaState) -> int => match s {
 // Возвращает Some(end_pos) если matched (consumed [start_pos..end_pos]),
 // иначе None.
 fn try_match(re Regex, text str, start_pos int) -> Option[int] {
-    let n = re.states.len
-    let mut current []bool = []
-    let mut next []bool = []
+    ro n = re.states.len
+    mut current []bool = []
+    mut next []bool = []
     for i in 0..n { current.push(false); next.push(false) }
 
     add_state(current, re.states, re.start, start_pos, text)
 
-    let mut last_match = if current[final_state(re)] { Some(start_pos) } else { None }
+    mut last_match = if current[final_state(re)] { Some(start_pos) } else { None }
 
-    let mut pos = start_pos
+    mut pos = start_pos
     while pos < text.len() {
-        let c = match text.char_at(pos) { Some(ch) => ch, None => break }
+        ro c = match text.char_at(pos) { Some(ch) => ch, None => break }
 
         // Reset next
         for k in 0..n { next[k] = false }
@@ -566,7 +566,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
         for idx in 0..n {
             if current[idx] {
                 if matches_class(re.states[idx], c) {
-                    let out = step_out(re.states[idx])
+                    ro out = step_out(re.states[idx])
                     if out >= 0 {
                         add_state(next, re.states, out, pos + 1, text)
                     }
@@ -575,7 +575,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
         }
 
         // Swap
-        let tmp = current
+        ro tmp = current
         current = next
         next = tmp
 
@@ -590,7 +590,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
 }
 
 fn final_state(re Regex) -> int {
-    let mut i = 0
+    mut i = 0
     while i < re.states.len() {
         match re.states[i] {
             SMatch => return i
@@ -606,7 +606,7 @@ fn final_state(re Regex) -> int {
 /// True если regex matches anywhere в text (substring match).
 #stable(since = "0.1")
 export fn Regex @matches(text str) -> bool {
-    let r = try_match(@, text, 0)
+    ro r = try_match(@, text, 0)
     match r {
         Some(end) => end == text.len()
         None      => false
@@ -617,7 +617,7 @@ export fn Regex @matches(text str) -> bool {
 /// Find first match — returns `Some((start, end))` byte-offsets, или `None`.
 #stable(since = "0.1")
 export fn Regex @find(text str) -> Option[(int, int)] {
-    let mut start = 0
+    mut start = 0
     if @anchored_start {
         match try_match(@, text, 0) {
             Some(end) => return Some((0, end))
@@ -637,8 +637,8 @@ export fn Regex @find(text str) -> Option[(int, int)] {
 /// Find all non-overlapping matches — list of `(start, end)` tuples.
 #stable(since = "0.1")
 export fn Regex @find_all(text str) -> [](int, int) {
-    let mut results [](int, int) = []
-    let mut start = 0
+    mut results [](int, int) = []
+    mut start = 0
     while start <= text.len() {
         match try_match(@, text, start) {
             Some(end) => {
@@ -657,86 +657,86 @@ export fn Regex @find_all(text str) -> [](int, int) {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "literal match" {
-    let r = Regex.compile("hello")
+    ro r = Regex.compile("hello")
     assert(r.matches("hello"))
     assert(!r.matches("world"))
     assert(r.find("say hello world") == Some((4, 9)))
 }
 
 test "any char ." {
-    let r = Regex.compile("a.c")
+    ro r = Regex.compile("a.c")
     assert(r.matches("abc"))
     assert(r.matches("a-c"))
     assert(!r.matches("ac"))
 }
 
 test "char class" {
-    let r = Regex.compile("[abc]")
+    ro r = Regex.compile("[abc]")
     assert(r.matches("a"))
     assert(r.matches("b"))
     assert(!r.matches("d"))
 }
 
 test "char class range" {
-    let r = Regex.compile("[a-z]+")
+    ro r = Regex.compile("[a-z]+")
     assert(r.matches("hello"))
     assert(!r.matches("123"))
 }
 
 test "negated class" {
-    let r = Regex.compile("[^0-9]")
+    ro r = Regex.compile("[^0-9]")
     assert(r.matches("a"))
     assert(!r.matches("5"))
 }
 
 test "\\d \\w \\s" {
-    let digit = Regex.compile("\\d+")
+    ro digit = Regex.compile("\\d+")
     assert(digit.matches("12345"))
     assert(!digit.matches("abc"))
 
-    let word = Regex.compile("\\w+")
+    ro word = Regex.compile("\\w+")
     assert(word.matches("hello_world123"))
 
-    let space = Regex.compile("\\s+")
+    ro space = Regex.compile("\\s+")
     assert(space.matches("   "))
 }
 
 test "anchors ^ $" {
-    let r = Regex.compile("^abc$")
+    ro r = Regex.compile("^abc$")
     assert(r.matches("abc"))
     assert(!r.matches("xabc"))
     assert(!r.matches("abcx"))
 }
 
 test "quantifier *" {
-    let r = Regex.compile("ab*c")
+    ro r = Regex.compile("ab*c")
     assert(r.matches("ac"))
     assert(r.matches("abc"))
     assert(r.matches("abbbbbc"))
 }
 
 test "quantifier +" {
-    let r = Regex.compile("ab+c")
+    ro r = Regex.compile("ab+c")
     assert(!r.matches("ac"))
     assert(r.matches("abc"))
 }
 
 test "quantifier ?" {
-    let r = Regex.compile("ab?c")
+    ro r = Regex.compile("ab?c")
     assert(r.matches("ac"))
     assert(r.matches("abc"))
     assert(!r.matches("abbc"))
 }
 
 test "repeat {n}" {
-    let r = Regex.compile("a{3}")
+    ro r = Regex.compile("a{3}")
     assert(r.matches("aaa"))
     assert(!r.matches("aa"))
     assert(!r.matches("aaaa"))       // в matches требуем полное совпадение
 }
 
 test "repeat {n,m}" {
-    let r = Regex.compile("a{2,4}")
+    ro r = Regex.compile("a{2,4}")
     assert(!r.matches("a"))
     assert(r.matches("aa"))
     assert(r.matches("aaa"))
@@ -745,7 +745,7 @@ test "repeat {n,m}" {
 }
 
 test "alternation" {
-    let r = Regex.compile("cat|dog|bird")
+    ro r = Regex.compile("cat|dog|bird")
     assert(r.matches("cat"))
     assert(r.matches("dog"))
     assert(r.matches("bird"))
@@ -753,7 +753,7 @@ test "alternation" {
 }
 
 test "groups (...)" {
-    let r = Regex.compile("(ab)+")
+    ro r = Regex.compile("(ab)+")
     assert(r.matches("ab"))
     assert(r.matches("abab"))
     assert(r.matches("ababab"))
@@ -761,34 +761,34 @@ test "groups (...)" {
 }
 
 test "phone number pattern" {
-    let r = Regex.compile("^\\d{3}-\\d{4}$")
+    ro r = Regex.compile("^\\d{3}-\\d{4}$")
     assert(r.matches("123-4567"))
     assert(!r.matches("12-4567"))
     assert(!r.matches("123-456"))
 }
 
 test "find inside text" {
-    let r = Regex.compile("\\d+")
+    ro r = Regex.compile("\\d+")
     assert(r.find("call 123 then 456") == Some((5, 8)))
 }
 
 test "find_all" {
-    let r = Regex.compile("\\d+")
-    let matches = r.find_all("a1 b22 c333")
+    ro r = Regex.compile("\\d+")
+    ro matches = r.find_all("a1 b22 c333")
     assert(matches.len() == 3)
 }
 
 test "no catastrophic backtracking — ключевое отличие от PCRE" {
     // Этот pattern на длинной строке 'aaaa...' зависает в PCRE,
     // но в RE2/Thompson NFA — линейная сложность.
-    let r = Regex.compile("(a+)+b")
+    ro r = Regex.compile("(a+)+b")
     assert(!r.matches("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
     // Должно завершиться быстро без зависания.
 }
 
 test "compile: unclosed group" {
-    let r = with Fail[CompileError] = |e| interrupt Some(e) {
-        let _ = Regex.compile("(abc")
+    ro r = with Fail[CompileError] = |e| interrupt Some(e) {
+        ro _ = Regex.compile("(abc")
         None
     }
     assert(match r {
@@ -798,8 +798,8 @@ test "compile: unclosed group" {
 }
 
 test "compile: unclosed class" {
-    let r = with Fail[CompileError] = |e| interrupt Some(e) {
-        let _ = Regex.compile("[abc")
+    ro r = with Fail[CompileError] = |e| interrupt Some(e) {
+        ro _ = Regex.compile("[abc")
         None
     }
     assert(match r {

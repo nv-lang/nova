@@ -10,8 +10,8 @@ fn Widget.new(w int) -> Widget => { w }
 fn use_widget(x Widget) -> int => x.w
 
 test "Ф.4 — record literal and constructor are values" {
-    let a Widget = { w: 1 }       // record literal — a value
-    let b = Widget.new(2)         // constructor call — a value
+    ro a Widget = { w: 1 }       // record literal — a value
+    ro b = Widget.new(2)         // constructor call — a value
     assert(use_widget(a) == 1)
     assert(use_widget(b) == 2)
 }

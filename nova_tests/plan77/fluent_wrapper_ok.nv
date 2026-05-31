@@ -17,13 +17,13 @@ fn Buf mut @write() -> @ {
 fn Buf mut @push() -> @ => @write()
 
 test "fluent wrapper -> @ делегирует в -> @" {
-    let mut b = Buf.new()
-    let r = b.push().push().push()
+    mut b = Buf.new()
+    ro r = b.push().push().push()
     assert(r.n == 3)
 }
 
 test "StringBuilder @append -> @ chain" {
     consume sb = StringBuilder.new()
-    let s = sb.append("hello").append(" ").append("world").as_str()
+    ro s = sb.append("hello").append(" ").append("world").as_str()
     assert(s == "hello world")
 }

@@ -79,9 +79,9 @@ export type CronTime {
 /// ```
 #stable(since = "0.1")
 export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
-    let fields = expr.trim().split(" ")
+    ro fields = expr.trim().split(" ")
     // Удалить пустые (multiple spaces)
-    let mut clean []str = []
+    mut clean []str = []
     for f in fields {
         if f.len() > 0 { clean.push(f) }
     }
@@ -102,9 +102,9 @@ export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
 fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronField {
     // List: "1,5,10" → объединение
     if s.contains(",") {
-        let mut all []int = []
+        mut all []int = []
         for part in s.split(",") {
-            let sub = parse_field(part, name, min, max)
+            ro sub = parse_field(part, name, min, max)
             for v in sub.values { all.push(v) }
         }
         return { values: dedup_sort(all) }
@@ -112,22 +112,22 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
 
     // Step: "*/15", "10-30/5"
     if s.contains("/") {
-        let parts = s.split("/")
+        ro parts = s.split("/")
         if parts.len() != 2 {
             throw InvalidValue { field: name, value: s }
         }
-        let step = parse_int_in(parts[1], name, min, max)
-        let base = parts[0]
-        let (range_min, range_max) = if base == "*" {
+        ro step = parse_int_in(parts[1], name, min, max)
+        ro base = parts[0]
+        ro (range_min, range_max) = if base == "*" {
             (min, max)
         } else if base.contains("-") {
             parse_range(base, name, min, max)
         } else {
-            let v = parse_int_in(base, name, min, max)
+            ro v = parse_int_in(base, name, min, max)
             (v, max)
         }
-        let mut values []int = []
-        let mut v = range_min
+        mut values []int = []
+        mut v = range_min
         while v <= range_max {
             values.push(v)
             v += step
@@ -137,29 +137,29 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
 
     // Range: "1-5"
     if s.contains("-") {
-        let (lo, hi) = parse_range(s, name, min, max)
-        let mut values []int = []
-        let mut v = lo
+        ro (lo, hi) = parse_range(s, name, min, max)
+        mut values []int = []
+        mut v = lo
         while v <= hi { values.push(v); v += 1 }
         return { values }
     }
 
     // Wildcard: "*"
     if s == "*" {
-        let mut values []int = []
-        let mut v = min
+        mut values []int = []
+        mut v = min
         while v <= max { values.push(v); v += 1 }
         return { values }
     }
 
     // Single value
-    let v = parse_int_in(s, name, min, max)
+    ro v = parse_int_in(s, name, min, max)
     { values: [v] }
 }
 
 
 fn parse_int_in(s str, name str, min int, max int) Fail[ParseCronError] -> int {
-    let n = match int.try_from(s) {
+    ro n = match int.try_from(s) {
         Ok(x)  => x
         Err(_) => throw InvalidValue { field: name, value: s }
     }
@@ -171,12 +171,12 @@ fn parse_int_in(s str, name str, min int, max int) Fail[ParseCronError] -> int {
 
 
 fn parse_range(s str, name str, min int, max int) Fail[ParseCronError] -> (int, int) {
-    let parts = s.split("-")
+    ro parts = s.split("-")
     if parts.len() != 2 {
         throw InvalidValue { field: name, value: s }
     }
-    let lo = parse_int_in(parts[0], name, min, max)
-    let hi = parse_int_in(parts[1], name, min, max)
+    ro lo = parse_int_in(parts[0], name, min, max)
+    ro hi = parse_int_in(parts[1], name, min, max)
     if lo > hi {
         throw InvalidValue { field: name, value: s }
     }
@@ -187,18 +187,18 @@ fn parse_range(s str, name str, min int, max int) Fail[ParseCronError] -> (int, 
 fn dedup_sort(xs []int) -> []int {
     if xs.len() == 0 { return xs }
     // Простая сортировка bubble + dedup для bootstrap
-    let mut sorted = xs
-    let n = sorted.len
+    mut sorted = xs
+    ro n = sorted.len
     for i in 0..n {
         for j in 0..n - 1 - i {
             if sorted[j] > sorted[j + 1] {
-                let tmp = sorted[j]
+                ro tmp = sorted[j]
                 sorted[j] = sorted[j + 1]
                 sorted[j + 1] = tmp
             }
         }
     }
-    let mut out []int = []
+    mut out []int = []
     for v in sorted {
         if out.len() == 0 || out[out.len() - 1] != v {
             out.push(v)
@@ -235,52 +235,52 @@ fn field_contains(f CronField, v int) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: every minute" {
-    let e = Cron.parse("* * * * *")
-    let t CronTime = { minute: 30, hour: 12, day_month: 15, month: 6, day_week: 3 }
+    ro e = Cron.parse("* * * * *")
+    ro t CronTime = { minute: 30, hour: 12, day_month: 15, month: 6, day_week: 3 }
     assert(e.matches(t))
 }
 
 test "parse: top of hour" {
-    let e = Cron.parse("0 * * * *")
-    let t1 CronTime = { minute: 0, hour: 5, day_month: 1, month: 1, day_week: 0 }
-    let t2 CronTime = { minute: 1, hour: 5, day_month: 1, month: 1, day_week: 0 }
+    ro e = Cron.parse("0 * * * *")
+    ro t1 CronTime = { minute: 0, hour: 5, day_month: 1, month: 1, day_week: 0 }
+    ro t2 CronTime = { minute: 1, hour: 5, day_month: 1, month: 1, day_week: 0 }
     assert(e.matches(t1))
     assert(!e.matches(t2))
 }
 
 test "parse: weekdays 9-17" {
-    let e = Cron.parse("0 9-17 * * 1-5")
-    let monday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 1 }
-    let monday_18 CronTime = { minute: 0, hour: 18, day_month: 1, month: 1, day_week: 1 }
-    let saturday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 6 }
+    ro e = Cron.parse("0 9-17 * * 1-5")
+    ro monday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 1 }
+    ro monday_18 CronTime = { minute: 0, hour: 18, day_month: 1, month: 1, day_week: 1 }
+    ro saturday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 6 }
     assert(e.matches(monday_10))
     assert(!e.matches(monday_18))
     assert(!e.matches(saturday_10))
 }
 
 test "parse: */15 каждые 15 минут" {
-    let e = Cron.parse("*/15 * * * *")
-    let zero CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
-    let fifteen CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
-    let seven CronTime = { minute: 7, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro e = Cron.parse("*/15 * * * *")
+    ro zero CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro fifteen CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro seven CronTime = { minute: 7, hour: 0, day_month: 1, month: 1, day_week: 0 }
     assert(e.matches(zero))
     assert(e.matches(fifteen))
     assert(!e.matches(seven))
 }
 
 test "parse: list" {
-    let e = Cron.parse("0,30 * * * *")
-    let t0 CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
-    let t30 CronTime = { minute: 30, hour: 0, day_month: 1, month: 1, day_week: 0 }
-    let t15 CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro e = Cron.parse("0,30 * * * *")
+    ro t0 CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro t30 CronTime = { minute: 30, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro t15 CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
     assert(e.matches(t0))
     assert(e.matches(t30))
     assert(!e.matches(t15))
 }
 
 test "parse: ошибка — out of range" {
-    let r = with Fail[ParseCronError] = |e| interrupt Some(e) {
-        let _ = Cron.parse("0 25 * * *")          // hour > 23
+    ro r = with Fail[ParseCronError] = |e| interrupt Some(e) {
+        ro _ = Cron.parse("0 25 * * *")          // hour > 23
         None
     }
     assert(match r {
@@ -290,8 +290,8 @@ test "parse: ошибка — out of range" {
 }
 
 test "parse: ошибка — wrong field count" {
-    let r = with Fail[ParseCronError] = |e| interrupt Some(e) {
-        let _ = Cron.parse("0 0 0")
+    ro r = with Fail[ParseCronError] = |e| interrupt Some(e) {
+        ro _ = Cron.parse("0 0 0")
         None
     }
     assert(match r {

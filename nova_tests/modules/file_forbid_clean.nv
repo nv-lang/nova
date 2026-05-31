@@ -9,7 +9,7 @@ module modules.file_forbid_clean
 export fn pure_double(x int) -> int => x * 2
 
 export fn sum_list(xs []int) -> int {
-    let mut s = 0
+    mut s = 0
     for x in xs { s = s + x }
     s
 }

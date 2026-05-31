@@ -20,8 +20,8 @@ module syntax.errdefer_rethrow
 // ───── re-throw из handler работает (D65 правило 3) ─────
 
 test "re-throw из inner handler dispatch'ится на outer handler" {
-    let mut inner_called = false
-    let mut outer_called = false
+    mut inner_called = false
+    mut outer_called = false
     // Outer handler — финальный catch через interrupt.
     with Fail = effect Fail {
         fail(_msg) {
@@ -59,8 +59,8 @@ test "re-throw из inner handler dispatch'ится на outer handler" {
 // маркера — это другой тест-файл (errdefer_unhandled.nv).
 
 test "errdefer + re-throw + outer interrupt — errdefer skip" {
-    let mut cleaned_up = 0
-    let mut outer_called = false
+    mut cleaned_up = 0
+    mut outer_called = false
     with Fail = effect Fail {
         fail(_msg) {
             outer_called = true
@@ -72,7 +72,7 @@ test "errdefer + re-throw + outer interrupt — errdefer skip" {
                 throw msg               // re-throw → outer handler
             }
         } {
-            let _ = {
+            ro _ = {
                 errdefer { cleaned_up = cleaned_up + 1 }
                 throw "boom"
                 0
@@ -91,9 +91,9 @@ test "errdefer + re-throw + outer interrupt — errdefer skip" {
 // ───── Многоуровневый re-throw ─────
 
 test "трёхуровневый re-throw: каждый handler пропускает дальше" {
-    let mut level1 = false
-    let mut level2 = false
-    let mut level3 = false
+    mut level1 = false
+    mut level2 = false
+    mut level3 = false
     with Fail = effect Fail {
         fail(_msg) {
             level3 = true

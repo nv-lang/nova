@@ -16,11 +16,11 @@ fn raise() Fail[ParseError] -> int {
 }
 
 test "throw ParseError carries typed payload" {
-    let result = with Fail[ParseError] = |e| interrupt (match e {
+    ro result = with Fail[ParseError] = |e| interrupt (match e {
         Bad(detail) => detail
         EOF         => "eof"
     }) {
-        let _ = raise()
+        ro _ = raise()
         "unreachable"
     }
     // До Plan 61 — silent garbage. После Plan 61 — passes.

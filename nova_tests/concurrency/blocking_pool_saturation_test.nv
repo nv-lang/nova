@@ -10,8 +10,8 @@ module concurrency.blocking_pool_saturation_test
 
 // leaf CPU work: increments acc upto times, returns upto.
 #blocking fn _busy_work(upto int) -> int {
-    let mut acc = 0
-    let mut i = 0
+    mut acc = 0
+    mut i = 0
     while i < upto {
         acc = acc + 1
         i = i + 1
@@ -24,27 +24,27 @@ fn busy(upto int) -> int {
 }
 
 test "blocking: pool saturation — offloads > pool size, graceful queue" {
-    let mut total = 0
+    mut total = 0
     supervised {
         // 6 fibers, pool of 2 threads → 4 queued.
-        spawn { let r = busy(40000); total = total + r }
-        spawn { let r = busy(40000); total = total + r }
-        spawn { let r = busy(40000); total = total + r }
-        spawn { let r = busy(40000); total = total + r }
-        spawn { let r = busy(40000); total = total + r }
-        spawn { let r = busy(40000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
     }
     assert(total == 240000)
 }
 
 test "blocking: saturation with mixed work sizes" {
-    let mut total = 0
+    mut total = 0
     supervised {
-        spawn { let r = busy(10000); total = total + r }
-        spawn { let r = busy(20000); total = total + r }
-        spawn { let r = busy(30000); total = total + r }
-        spawn { let r = busy(40000); total = total + r }
-        spawn { let r = busy(50000); total = total + r }
+        spawn { ro r = busy(10000); total = total + r }
+        spawn { ro r = busy(20000); total = total + r }
+        spawn { ro r = busy(30000); total = total + r }
+        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy(50000); total = total + r }
     }
     assert(total == 150000)
 }

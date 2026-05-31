@@ -14,15 +14,15 @@ module nova_tests.plan95.probe_option_method_nova_body
 fn Option[T] @my_present() -> bool => match @ { Some(_) => true, None => false }
 
 test "Option[int] @my_present — Some/None" {
-    let a Option[int] = Some(42)
-    let b Option[int] = None
+    ro a Option[int] = Some(42)
+    ro b Option[int] = None
     assert(a.my_present())
     assert(!b.my_present())
 }
 
 test "Option[str] @my_present — Some/None" {
-    let a Option[str] = Some("hi")
-    let b Option[str] = None
+    ro a Option[str] = Some("hi")
+    ro b Option[str] = None
     assert(a.my_present())
     assert(!b.my_present())
 }

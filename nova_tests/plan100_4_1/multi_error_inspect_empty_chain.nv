@@ -8,7 +8,7 @@ fn make_single() -> MultiError =>
     { primary: "single error", suppressed: [] }
 
 test "MultiError с empty suppressed chain — backward-compat single-error" {
-    let e = make_single()
+    ro e = make_single()
     assert(e.primary() == "single error")
     assert(e.suppressed().len() == 0)
     assert(e.fmt_chain() == "single error")

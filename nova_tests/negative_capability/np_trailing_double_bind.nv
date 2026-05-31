@@ -13,6 +13,6 @@ fn double(x int) -> int => x * 2
 
 test "trailing + named for same param rejected" {
     // `f` передан и именованным аргументом (f: double), и trailing-fn.
-    let _ = apply_to(10, f: double) fn(x int) -> int { x + 1 }
+    ro _ = apply_to(10, f: double) fn(x int) -> int { x + 1 }
     assert(true)
 }

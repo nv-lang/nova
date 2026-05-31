@@ -19,8 +19,8 @@
 module concurrency.cancel_latency_bench
 
 test "single fiber cancel-during-sleep — wake latency measurement" {
-    let t0 = Time.now()
-    let tok = CancelToken.new()
+    ro t0 = Time.now()
+    ro tok = CancelToken.new()
     supervised(cancel: tok) {
         spawn {
             Time.sleep(10_000)  // never fires
@@ -30,8 +30,8 @@ test "single fiber cancel-during-sleep — wake latency measurement" {
             tok.cancel()
         }
     }
-    let elapsed = Time.now() - t0
-    let after_cancel = elapsed - 50
+    ro elapsed = Time.now() - t0
+    ro after_cancel = elapsed - 50
 
     // Plan 22 R4 «<1ms» — overclaim для Windows (timer-gran + uv_run pass).
     // Реалистично 1-20ms p99. Документируем: cancel response не блокирует
@@ -47,8 +47,8 @@ test "100 parked fibers cancel — wake latency under load" {
     // 100 fiber'ов в sleep(10000), один cancel'ит scope.
     // cancel_all_pending iterates все 100, инициирует close для каждого.
     // Все close_cb'и должны fire'нуть в одном-двух uv_run pass'ах.
-    let t0 = Time.now()
-    let tok = CancelToken.new()
+    ro t0 = Time.now()
+    ro tok = CancelToken.new()
     supervised(cancel: tok) {
         for _ in 0..99 {
             spawn { Time.sleep(10_000) }
@@ -58,8 +58,8 @@ test "100 parked fibers cancel — wake latency under load" {
             tok.cancel()
         }
     }
-    let elapsed = Time.now() - t0
-    let after_cancel = elapsed - 30
+    ro elapsed = Time.now() - t0
+    ro after_cancel = elapsed - 30
 
     // Plan 22 R4: cancel batch'ом 100 timer handle'ов. Realistic budget
     // 100 × close_cb pass — может занять 50-200ms на high-contention CI.
@@ -70,10 +70,10 @@ test "100 parked fibers cancel — wake latency under load" {
 test "10 nested cancels — cumulative latency" {
     // 10 scope'ов sequentially, каждый с 10 fiber'ов + cancel.
     // Measures aggregate cancel latency.
-    let mut total_after_cancel int = 0
+    mut total_after_cancel int = 0
     for _ in 0..10 {
-        let t0 = Time.now()
-        let tok = CancelToken.new()
+        ro t0 = Time.now()
+        ro tok = CancelToken.new()
         supervised(cancel: tok) {
             for _ in 0..9 {
                 spawn { Time.sleep(10_000) }
@@ -83,7 +83,7 @@ test "10 nested cancels — cumulative latency" {
                 tok.cancel()
             }
         }
-        let elapsed = Time.now() - t0
+        ro elapsed = Time.now() - t0
         total_after_cancel = total_after_cancel + (elapsed - 20)
     }
     // 10 cancel ops × ~10ms each = ~100ms total budget. Generous slack 500ms.

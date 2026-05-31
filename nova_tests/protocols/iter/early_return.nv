@@ -11,7 +11,7 @@ fn CountDown mut @next() -> Option[int] {
     if @current <= 0 {
         None
     } else {
-        let v = @current
+        ro v = @current
         @current = @current - 1
         Some(v)
     }
@@ -19,8 +19,8 @@ fn CountDown mut @next() -> Option[int] {
 
 
 test "break — выход из for-in после N итераций" {
-    let mut seen = 0
-    let cd = CountDown.new(100)
+    mut seen = 0
+    ro cd = CountDown.new(100)
     for _ in cd {
         seen = seen + 1
         if seen == 3 {
@@ -31,8 +31,8 @@ test "break — выход из for-in после N итераций" {
 }
 
 test "break — по значению из итератора" {
-    let mut last = -1
-    let cd = CountDown.new(10)
+    mut last = -1
+    ro cd = CountDown.new(10)
     for n in cd {
         last = n
         if n == 7 {
@@ -43,8 +43,8 @@ test "break — по значению из итератора" {
 }
 
 test "continue — пропуск итераций" {
-    let mut sum = 0
-    let cd = CountDown.new(6)
+    mut sum = 0
+    ro cd = CountDown.new(6)
     for n in cd {
         if n == 3 {
             continue
@@ -56,8 +56,8 @@ test "continue — пропуск итераций" {
 }
 
 test "break на первой итерации" {
-    let mut count = 0
-    let cd = CountDown.new(50)
+    mut count = 0
+    ro cd = CountDown.new(50)
     for _ in cd {
         count = count + 1
         break

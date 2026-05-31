@@ -8,5 +8,5 @@
 module expected_runtime.channel_zero_capacity_panic
 
 fn main() {
-    let _ = Channel.new(0)
+    ro _ = Channel.new(0)
 }

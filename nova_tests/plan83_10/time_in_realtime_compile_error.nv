@@ -7,7 +7,7 @@
 module plan83_10.time_in_realtime_compile_error
 
 fn rt_time_violates() Time -> () {
-    let _ = realtime {
+    ro _ = realtime {
         Time.sleep(0)
     }
 }

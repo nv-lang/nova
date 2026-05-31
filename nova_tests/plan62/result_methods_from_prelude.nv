@@ -19,22 +19,22 @@ module plan62.result_methods_from_prelude
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.is_ok returns true for Ok" {
-    let r = Ok(42)
+    ro r = Ok(42)
     assert(r.is_ok())
 }
 
 test "Result.is_ok returns false for Err" {
-    let r = Err("bad")
+    ro r = Err("bad")
     assert(!r.is_ok())
 }
 
 test "Result.is_err returns false for Ok" {
-    let r = Ok(7)
+    ro r = Ok(7)
     assert(!r.is_err())
 }
 
 test "Result.is_err returns true for Err" {
-    let r = Err("fail")
+    ro r = Err("fail")
     assert(r.is_err())
 }
 
@@ -43,26 +43,26 @@ test "Result.is_err returns true for Err" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.ok returns Some for Ok" {
-    let r = Ok(5)
-    let o = r.ok()
+    ro r = Ok(5)
+    ro o = r.ok()
     assert(o.is_some())
 }
 
 test "Result.ok returns None for Err" {
-    let r = Err("bad")
-    let o = r.ok()
+    ro r = Err("bad")
+    ro o = r.ok()
     assert(o.is_none())
 }
 
 test "Result.err returns None for Ok" {
-    let r = Ok(9)
-    let e = r.err()
+    ro r = Ok(9)
+    ro e = r.err()
     assert(e.is_none())
 }
 
 test "Result.err returns Some for Err" {
-    let r = Err("oops")
-    let e = r.err()
+    ro r = Err("oops")
+    ro e = r.err()
     assert(e.is_some())
 }
 
@@ -71,20 +71,20 @@ test "Result.err returns Some for Err" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.unwrap returns Ok value" {
-    let r Result[int, str] = Ok(42)
+    ro r Result[int, str] = Ok(42)
     assert(r.unwrap() == 42)
 }
 
 test "Result.unwrap throws Fail on Err" {
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
         }
     } {
-        let r Result[int, str] = Err("boom")
-        let _ = r.unwrap()
+        ro r Result[int, str] = Err("boom")
+        ro _ = r.unwrap()
     }
     assert(caught == "boom")
 }
@@ -94,12 +94,12 @@ test "Result.unwrap throws Fail on Err" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.unwrap_or returns Ok value" {
-    let r Result[int, str] = Ok(42)
+    ro r Result[int, str] = Ok(42)
     assert(r.unwrap_or(0) == 42)
 }
 
 test "Result.unwrap_or returns default on Err" {
-    let r Result[int, str] = Err("bad")
+    ro r Result[int, str] = Err("bad")
     assert(r.unwrap_or(99) == 99)
 }
 
@@ -108,12 +108,12 @@ test "Result.unwrap_or returns default on Err" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.unwrap_or_else skips closure on Ok" {
-    let r Result[int, str] = Ok(7)
+    ro r Result[int, str] = Ok(7)
     assert(r.unwrap_or_else(fn(e str) -> int => 0) == 7)
 }
 
 test "Result.unwrap_or_else calls closure on Err" {
-    let r Result[int, str] = Err("e")
+    ro r Result[int, str] = Err("e")
     assert(r.unwrap_or_else(fn(e str) -> int => 42) == 42)
 }
 
@@ -122,15 +122,15 @@ test "Result.unwrap_or_else calls closure on Err" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.map transforms Ok value" {
-    let r Result[int, str] = Ok(10)
-    let r2 = r.map(|x| x * 2)
+    ro r Result[int, str] = Ok(10)
+    ro r2 = r.map(|x| x * 2)
     assert(r2.is_ok())
     assert(r2.unwrap_or(0) == 20)
 }
 
 test "Result.map passes Err through" {
-    let r Result[int, str] = Err("E")
-    let r2 = r.map(|x| x + 1)
+    ro r Result[int, str] = Err("E")
+    ro r2 = r.map(|x| x + 1)
     assert(r2.is_err())
 }
 
@@ -139,14 +139,14 @@ test "Result.map passes Err through" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Result.map_err transforms Err payload" {
-    let r Result[int, str] = Err("boom")
-    let r2 = r.map_err(fn(e str) -> str => "wrapped")
+    ro r Result[int, str] = Err("boom")
+    ro r2 = r.map_err(fn(e str) -> str => "wrapped")
     assert(r2.is_err())
 }
 
 test "Result.map_err passes Ok through" {
-    let r Result[int, str] = Ok(42)
-    let r2 = r.map_err(fn(e str) -> str => "X")
+    ro r Result[int, str] = Ok(42)
+    ro r2 = r.map_err(fn(e str) -> str => "X")
     assert(r2.is_ok())
     assert(r2.unwrap_or(0) == 42)
 }

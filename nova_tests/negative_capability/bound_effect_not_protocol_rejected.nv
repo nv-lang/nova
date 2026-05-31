@@ -26,7 +26,7 @@ fn require_logger[T BefLogger](x T) -> T => x
 
 
 test "effect used as bound — compile error (negative)" {
-    let d = BefData { payload: "hi" }
-    let _ = require_logger(d)
+    ro d = BefData { payload: "hi" }
+    ro _ = require_logger(d)
     assert(true)
 }

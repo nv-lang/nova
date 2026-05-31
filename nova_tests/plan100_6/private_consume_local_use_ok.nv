@@ -24,6 +24,6 @@ test "private consume-type — used locally, enforced correctly" {
 }
 
 test "private consume via consume-param" {
-    let guard = acquire_mutex(2)
+    ro guard = acquire_mutex(2)
     do_critical_work(guard)                         // ✅ transfer to consume-param
 }

@@ -23,11 +23,11 @@ type Cell {
 
 
 fn Cell.new(initial int) -> (Reader, Writer) {
-    let state = Cell { value: initial }
-    let r = protocol Reader {
+    ro state = Cell { value: initial }
+    ro r = protocol Reader {
         read() => state.value
     }
-    let w = protocol Writer {
+    ro w = protocol Writer {
         write(v) {
             state.value = v
         }
@@ -37,10 +37,10 @@ fn Cell.new(initial int) -> (Reader, Writer) {
 
 
 test "capability-split factory pattern" {
-    let (r, w) = Cell.new(10)
-    let initial = r.read()
+    ro (r, w) = Cell.new(10)
+    ro initial = r.read()
     assert(initial == 10)
     w.write(99)
-    let after = r.read()
+    ro after = r.read()
     assert(after == 99)
 }

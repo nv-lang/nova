@@ -8,14 +8,14 @@ test "str.from ASCII char" {
 }
 
 test "str.from Cyrillic char (2-byte UTF-8)" {
-    let s = str.from('Ю')
+    ro s = str.from('Ю')
     assert(s == "Ю")
     assert(s.len() == 2)         // Plan 108 D26 rev: len = bytes
     assert(s.char_len() == 1)    // char_len = codepoints
 }
 
 test "str.from emoji char (4-byte UTF-8)" {
-    let s = str.from('😀')
+    ro s = str.from('😀')
     assert(s == "😀")
     assert(s.len() == 4)         // Plan 108 D26 rev: len = bytes
     assert(s.char_len() == 1)    // char_len = codepoints
@@ -42,13 +42,13 @@ test "str.from(false)" {
 }
 
 test "int.try_from valid positive" {
-    let r = int.try_from("123")
+    ro r = int.try_from("123")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 123)
 }
 
 test "int.try_from valid negative" {
-    let r = int.try_from("-100")
+    ro r = int.try_from("-100")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == -100)
 }
@@ -62,13 +62,13 @@ test "bool.try_from false" {
 }
 
 test "round-trip ASCII str through bytes" {
-    let s = "hello"
-    let r = str.try_from(s.to_bytes())
+    ro s = "hello"
+    ro r = str.try_from(s.to_bytes())
     assert(r.is_ok())
 }
 
 test "round-trip Cyrillic str through bytes" {
-    let s = "Привет"
-    let r = str.try_from(s.to_bytes())
+    ro s = "Привет"
+    ro r = str.try_from(s.to_bytes())
     assert(r.is_ok())
 }

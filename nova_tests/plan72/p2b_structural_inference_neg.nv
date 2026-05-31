@@ -13,7 +13,7 @@ type IntCounter {
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -22,15 +22,15 @@ fn IntCounter mut @next() -> Option[int] => {
 }
 
 fn sum_iter[U, T Iterable[U]](it_in T) -> int => {
-    let mut it = it_in
-    let mut total = 0
-    while let Some(_v) = it.next() {
+    mut it = it_in
+    mut total = 0
+    while Some(_v) = it.next() {
         total += 1
     }
     total
 }
 
 test "P2-B neg — non-iterator argument" {
-    let n = sum_iter(42)
+    ro n = sum_iter(42)
     assert(n == 0)
 }

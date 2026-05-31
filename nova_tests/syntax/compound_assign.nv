@@ -8,16 +8,16 @@ module syntax.compound_assign
 // 1. На локальной let-mut переменной
 // ──────────────────────────────────────────────────────────────────────────
 
-test "+= на let-mut int" {
-    let mut x = 10
+test "+= на ro-mut int" {
+    mut x = 10
     x += 5
     assert(x == 15)
     x += 0
     assert(x == 15)
 }
 
-test "-= *= /= на let-mut int" {
-    let mut x = 100
+test "-= *= /= на ro-mut int" {
+    mut x = 100
     x -= 30
     assert(x == 70)
     x *= 2
@@ -27,7 +27,7 @@ test "-= *= /= на let-mut int" {
 }
 
 test "+= в цикле — аккумулятор" {
-    let mut sum = 0
+    mut sum = 0
     for n in 1..=5 {
         sum += n
     }
@@ -60,7 +60,7 @@ fn Counter mut @reset() -> () {
 fn Counter @get() -> int => @value
 
 test "@field += 1 на self-поле" {
-    let mut c = Counter.new()
+    mut c = Counter.new()
     c.inc()
     assert(c.get() == 1)
     c.inc()
@@ -69,7 +69,7 @@ test "@field += 1 на self-поле" {
 }
 
 test "@field += n на self-поле" {
-    let mut c = Counter.new()
+    mut c = Counter.new()
     c.add(10)
     c.add(20)
     c.add(5)
@@ -106,7 +106,7 @@ fn State mut @halve() -> () {
 }
 
 test "несколько @field-compound в одном методе" {
-    let mut s = State.new()
+    mut s = State.new()
     s.move(10, 20)
     assert(s.x == 10)
     assert(s.y == 20)
@@ -118,7 +118,7 @@ test "несколько @field-compound в одном методе" {
 }
 
 test "@field -=, @field *=, @field /= в методе" {
-    let mut s = State.new()
+    mut s = State.new()
     s.move(20, 30)
     s.decay()
     assert(s.x == 19)

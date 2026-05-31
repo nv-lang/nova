@@ -11,7 +11,7 @@ type Money { cents int }
 fn Money.from(m Money) -> Money => m
 
 test "blanket identity override должно failing" {
-    let m = Money { cents: 100 }
-    let r = Money.from(m)
+    ro m = Money { cents: 100 }
+    ro r = Money.from(m)
     assert(r.cents == 100)
 }

@@ -14,7 +14,7 @@ fn make_huge() -> (int, int, int, int, int, int, int) {
 
 
 test "7-element tuple — warning + compile success" {
-    let t = make_huge()
+    ro t = make_huge()
     assert(t.0 == 1)
     assert(t.6 == 7)
 }

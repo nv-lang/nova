@@ -12,6 +12,6 @@ fn bad_assume(x int) -> int {
 }
 
 fn main() Io -> () {
-    let _ = bad_assume(5)   // 5 < 0 → false → contract violation
+    ro _ = bad_assume(5)   // 5 < 0 → false → contract violation
     println("UNREACHABLE")
 }

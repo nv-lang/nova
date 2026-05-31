@@ -13,26 +13,26 @@ module bench_m_n.handler_chain_pingpong
 
 bench "10K ping-pong same-worker latency" {
     measure {
-        let n = 10_000
-        let ch = Channel.new(1)
-        let mut received = 0
+        ro n = 10_000
+        ro ch = Channel.new(1)
+        mut received = 0
         supervised {
             spawn {
-                let mut i = 0
+                mut i = 0
                 while i < n {
-                    let _v = ch.rx.recv()
+                    ro _v = ch.rx.recv()
                     received = received + 1
                     i = i + 1
                 }
             }
             spawn {
-                let mut i = 0
+                mut i = 0
                 while i < n {
                     ch.tx.send(i)
                     i = i + 1
                 }
             }
         }
-        let _r = bench.opaque(received)
+        ro _r = bench.opaque(received)
     }
 }

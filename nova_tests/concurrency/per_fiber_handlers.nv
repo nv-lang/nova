@@ -52,8 +52,8 @@ fn helper_with_clock_200() -> int {
 }
 
 test "per-fiber Time handlers — разные значения в разных fibers" {
-    let mut a = -1
-    let mut b = -1
+    mut a = -1
+    mut b = -1
     supervised {
         spawn { a = helper_with_clock_100() }
         spawn { b = helper_with_clock_200() }
@@ -67,7 +67,7 @@ test "per-fiber Time handlers — разные значения в разных 
 // ================================================================
 
 test "spawn наследует outer with-handler" {
-    let mut got = -1
+    mut got = -1
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 42 }
@@ -95,8 +95,8 @@ fn helper_with_nested() -> int {
 }
 
 test "inner with в spawn перекрывает outer для своего fiber" {
-    let mut outer_seen = -1
-    let mut inner_seen = -1
+    mut outer_seen = -1
+    mut inner_seen = -1
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 111 }
@@ -115,14 +115,14 @@ test "inner with в spawn перекрывает outer для своего fiber
 // ================================================================
 
 test "outer handler не затирается завершившимися fibers" {
-    let mut outer_after = -1
+    mut outer_after = -1
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 555 }
     } {
         supervised {
-            spawn { let _ = helper_with_clock_100() }
-            spawn { let _ = helper_with_clock_200() }
+            spawn { ro _ = helper_with_clock_100() }
+            spawn { ro _ = helper_with_clock_200() }
         }
         // Здесь, после supervised, outer handler должен снова быть 555.
         // Без правильного snapshot restore — затёрся бы последним fiber'ом.

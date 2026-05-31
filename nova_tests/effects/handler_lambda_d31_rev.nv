@@ -21,25 +21,25 @@ fn make_msg() Logger -> str {
 }
 
 test "handler-лямбда: handler-литерал baseline" {
-    let mut captured = ""
+    mut captured = ""
     with Logger = effect Logger {
         log(msg) {
             captured = msg
             return ()
         }
     } {
-        let r = make_msg()
+        ro r = make_msg()
         assert(r == "done")
     }
     assert(captured == "hi")
 }
 
 test "D31-rev sugar: with Logger = |msg| ... " {
-    let mut captured = ""
+    mut captured = ""
     with Logger = |msg| {
         captured = msg
     } {
-        let r = make_msg()
+        ro r = make_msg()
         assert(r == "done")
     }
     assert(captured == "hi")

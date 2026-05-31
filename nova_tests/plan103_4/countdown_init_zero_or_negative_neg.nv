@@ -9,5 +9,5 @@ module nova_tests.plan103_4.countdown_init_zero_or_negative_neg
 
 test "CountDownLatch.new(0) panics with count must be > 0" {
     // count=0 is invalid: latch would be trivially done at construction
-    let _ = CountDownLatch.new(0)
+    ro _ = CountDownLatch.new(0)
 }

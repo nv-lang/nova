@@ -57,7 +57,7 @@ const FACTOR Point = Point { x: 2.0, y: 3.0 }
 fn scale(p Point) -> Point => { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
 
 test "lazy const использован в fn body" {
-    let p = scale(Point { x: 5.0, y: 10.0 })
+    ro p = scale(Point { x: 5.0, y: 10.0 })
     assert(p.x == 10.0)
     assert(p.y == 30.0)
 }
@@ -69,9 +69,9 @@ const SHARED Point = Point { x: 42.0, y: 84.0 }
 
 test "lazy const повторное обращение — кеш" {
     // Первое обращение — инициализирует.
-    let a = SHARED.x
+    ro a = SHARED.x
     // Второе — читает кеш.
-    let b = SHARED.x
+    ro b = SHARED.x
     assert(a == 42.0)
     assert(b == 42.0)
     assert(a == b)

@@ -3,9 +3,9 @@
 module contracts.ghost_in_invariant_positive
 
 fn sum_loop(n int) -> int {
-    ghost let target = n * (n + 1) / 2
-    let mut s = 0
-    let mut i = 0
+    ghost ro target = n * (n + 1) / 2
+    mut s = 0
+    mut i = 0
     while i <= n
         invariant s + (n - i) * (n - i + 1) / 2 == target || n <= 0
     {

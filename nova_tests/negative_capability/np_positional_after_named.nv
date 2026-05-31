@@ -9,6 +9,6 @@ fn fn3(a int, b int, c int) -> int =>
     a + b + c
 
 test "positional after named rejected" {
-    let _ = fn3(b: 2, 1, 3)
+    ro _ = fn3(b: 2, 1, 3)
     assert(true)
 }

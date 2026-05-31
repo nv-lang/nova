@@ -19,18 +19,18 @@ fn wrap[T From[str]](s str) -> T => T.from(s)
 
 
 test "wrap[Name] — T.from на typevar" {
-    let n = wrap[Name]("alice")
+    ro n = wrap[Name]("alice")
     assert(n.s == "alice")
 }
 
 test "wrap[Tag] — другой инстанс того же generic" {
-    let t = wrap[Tag]("urgent")
+    ro t = wrap[Tag]("urgent")
     assert(t.label == "urgent")
 }
 
 test "несколько инстансов wrap в одном тесте" {
-    let n = wrap[Name]("bob")
-    let t = wrap[Tag]("low")
+    ro n = wrap[Name]("bob")
+    ro t = wrap[Tag]("low")
     assert(n.s == "bob")
     assert(t.label == "low")
 }

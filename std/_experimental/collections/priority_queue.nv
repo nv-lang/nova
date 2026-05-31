@@ -65,13 +65,13 @@ export fn PriorityQueue[T] mut @push(item T) -> () {
 #stable(since = "0.1")
 export fn PriorityQueue[T] mut @pop() -> Option[T] {
     if @_items.len() == 0 { return None }
-    let top = @_items[0]
-    let last = @_items.len() - 1
+    ro top = @_items[0]
+    ro last = @_items.len() - 1
     if last > 0 {
         @_items[0] = @_items[last]
     }
     // Удаляем последний элемент (используем вспомогательный массив).
-    let mut new_items []T = []
+    mut new_items []T = []
     for i in 0..last {
         new_items.push(@_items[i])
     }
@@ -88,12 +88,12 @@ export fn PriorityQueue[T] mut @pop() -> Option[T] {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn PriorityQueue[T] mut @sift_up(idx int) -> () {
-    let mut i = idx
+    mut i = idx
     while i > 0 {
-        let parent = (i - 1) / 2
+        ro parent = (i - 1) / 2
         if @_items[i] < @_items[parent] {
             // swap
-            let tmp = @_items[i]
+            ro tmp = @_items[i]
             @_items[i] = @_items[parent]
             @_items[parent] = tmp
             i = parent
@@ -105,12 +105,12 @@ fn PriorityQueue[T] mut @sift_up(idx int) -> () {
 
 
 fn PriorityQueue[T] mut @sift_down(idx int) -> () {
-    let mut i = idx
-    let n = @_items.len()
+    mut i = idx
+    ro n = @_items.len()
     loop {
-        let left = 2 * i + 1
-        let right = 2 * i + 2
-        let mut smallest = i
+        ro left = 2 * i + 1
+        ro right = 2 * i + 2
+        mut smallest = i
         if left < n && @_items[left] < @_items[smallest] {
             smallest = left
         }
@@ -118,7 +118,7 @@ fn PriorityQueue[T] mut @sift_down(idx int) -> () {
             smallest = right
         }
         if smallest == i { return () }
-        let tmp = @_items[i]
+        ro tmp = @_items[i]
         @_items[i] = @_items[smallest]
         @_items[smallest] = tmp
         i = smallest
@@ -131,16 +131,16 @@ fn PriorityQueue[T] mut @sift_down(idx int) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "empty queue" {
-    let pq = PriorityQueue[int].new()
+    ro pq = PriorityQueue[int].new()
     assert(pq.is_empty())
     assert(pq.peek() == None)
     // pop из пустой — None
-    let mut pq2 = pq
+    mut pq2 = pq
     assert(pq2.pop() == None)
 }
 
 test "push / pop порядок" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     pq.push(5)
     pq.push(1)
     pq.push(3)
@@ -157,7 +157,7 @@ test "push / pop порядок" {
 }
 
 test "peek не удаляет" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     pq.push(5)
     pq.push(1)
     assert(pq.peek() == Some(1))

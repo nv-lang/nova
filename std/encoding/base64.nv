@@ -51,7 +51,7 @@ export type Base64Error
 // `value` всегда в [0, 63] (по семантике base64), значит codepoint
 // всегда в ASCII диапазоне — Err не возможен. Fallback нужен для exhaustiveness.
 fn encode_char_std(value u8) -> char {
-    let code = if value < 26 {
+    ro code = if value < 26 {
         'A' as int + value as int                  // 0..25 → A..Z
     } else if value < 52 {
         'a' as int + value as int - 26             // 26..51 → a..z
@@ -70,7 +70,7 @@ fn encode_char_std(value u8) -> char {
 
 // RFC 4648 § 5 URL-safe alphabet (отличие: `-` вместо `+`, `_` вместо `/`)
 fn encode_char_url(value u8) -> char {
-    let code = if value < 26 {
+    ro code = if value < 26 {
         'A' as int + value as int
     } else if value < 52 {
         'a' as int + value as int - 26
@@ -91,7 +91,7 @@ fn encode_char_url(value u8) -> char {
 // Принимает оба алфавита (standard и URL-safe) — `+`/`-` дают 62,
 // `/`/`_` дают 63.
 fn decode_char(c char) -> Option[u8] {
-    let n = c as int
+    ro n = c as int
     if n >= 65 && n <= 90 {                     // A..Z → 0..25
         Some((n - 65) as u8)
     } else if n >= 97 && n <= 122 {              // a..z → 26..51
@@ -127,20 +127,20 @@ export fn Base64.encode_url(data []u8) -> str =>
 // Encode с явным выбором alphabet и padding.
 fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
     // Каждые 3 байта → 4 символа. Округляем вверх.
-    let n = data.len
-    let chunks = n / 3
-    let remainder = n - chunks * 3
-    let out_len = chunks * 4 + (if remainder > 0 { 4 } else { 0 })
+    ro n = data.len
+    ro chunks = n / 3
+    ro remainder = n - chunks * 3
+    ro out_len = chunks * 4 + (if remainder > 0 { 4 } else { 0 })
 
     consume buf = StringBuilder.with_capacity(out_len)
 
     // Полные chunks по 3 байта = 24 бита = 4 × 6 бит.
     for i in 0..chunks {
-        let base = i * 3
-        let b0 = data[base] as u32
-        let b1 = data[base + 1] as u32
-        let b2 = data[base + 2] as u32
-        let triple = (b0 << 16) | (b1 << 8) | b2
+        ro base = i * 3
+        ro b0 = data[base] as u32
+        ro b1 = data[base + 1] as u32
+        ro b2 = data[base + 2] as u32
+        ro triple = (b0 << 16) | (b1 << 8) | b2
 
         buf.append(alphabet(((triple >> 18) & 0x3F) as u8))
         buf.append(alphabet(((triple >> 12) & 0x3F) as u8))
@@ -150,8 +150,8 @@ fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
 
     // Хвост: 1 или 2 байта.
     if remainder == 1 {
-        let b0 = data[chunks * 3] as u32
-        let triple = b0 << 16
+        ro b0 = data[chunks * 3] as u32
+        ro triple = b0 << 16
         buf.append(alphabet(((triple >> 18) & 0x3F) as u8))
         buf.append(alphabet(((triple >> 12) & 0x3F) as u8))
         if with_padding {
@@ -159,9 +159,9 @@ fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
             buf.append('=')
         }
     } else if remainder == 2 {
-        let b0 = data[chunks * 3] as u32
-        let b1 = data[chunks * 3 + 1] as u32
-        let triple = (b0 << 16) | (b1 << 8)
+        ro b0 = data[chunks * 3] as u32
+        ro b1 = data[chunks * 3 + 1] as u32
+        ro triple = (b0 << 16) | (b1 << 8)
         buf.append(alphabet(((triple >> 18) & 0x3F) as u8))
         buf.append(alphabet(((triple >> 12) & 0x3F) as u8))
         buf.append(alphabet(((triple >> 6) & 0x3F) as u8))
@@ -199,7 +199,7 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
 
     // Считаем сколько `=` в конце — это даёт длину выхода.
     // URL-safe без padding: оцениваем по длине.
-    let trimmed_len = if require_padding {
+    ro trimmed_len = if require_padding {
         if s.char_at(s.len() - 1) == Some('=') {
             if s.char_at(s.len() - 2) == Some('=') {
                 s.len() - 2
@@ -214,19 +214,19 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
     }
 
     // Каждые 4 символа → 3 байта; неполный последний блок даёт 1 или 2.
-    let full_blocks = trimmed_len / 4
-    let tail = trimmed_len - full_blocks * 4
-    let out_capacity = full_blocks * 3 + (if tail == 0 { 0 } else { tail - 1 })
+    ro full_blocks = trimmed_len / 4
+    ro tail = trimmed_len - full_blocks * 4
+    ro out_capacity = full_blocks * 3 + (if tail == 0 { 0 } else { tail - 1 })
 
-    let mut out = []u8.with_capacity(out_capacity)
+    mut out = []u8.with_capacity(out_capacity)
 
-    let mut pos = 0
+    mut pos = 0
     for _ in 0..full_blocks {
-        let c0 = decode_or_throw(s, pos)
-        let c1 = decode_or_throw(s, pos + 1)
-        let c2 = decode_or_throw(s, pos + 2)
-        let c3 = decode_or_throw(s, pos + 3)
-        let triple = ((c0 as u32) << 18)
+        ro c0 = decode_or_throw(s, pos)
+        ro c1 = decode_or_throw(s, pos + 1)
+        ro c2 = decode_or_throw(s, pos + 2)
+        ro c3 = decode_or_throw(s, pos + 3)
+        ro triple = ((c0 as u32) << 18)
             | ((c1 as u32) << 12)
             | ((c2 as u32) << 6)
             | (c3 as u32)
@@ -238,15 +238,15 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
 
     // Хвост (для URL-safe без padding или после strip'нутого padding).
     if tail == 2 {
-        let c0 = decode_or_throw(s, pos)
-        let c1 = decode_or_throw(s, pos + 1)
-        let triple = ((c0 as u32) << 18) | ((c1 as u32) << 12)
+        ro c0 = decode_or_throw(s, pos)
+        ro c1 = decode_or_throw(s, pos + 1)
+        ro triple = ((c0 as u32) << 18) | ((c1 as u32) << 12)
         out.push(((triple >> 16) & 0xFF) as u8)
     } else if tail == 3 {
-        let c0 = decode_or_throw(s, pos)
-        let c1 = decode_or_throw(s, pos + 1)
-        let c2 = decode_or_throw(s, pos + 2)
-        let triple = ((c0 as u32) << 18) | ((c1 as u32) << 12) | ((c2 as u32) << 6)
+        ro c0 = decode_or_throw(s, pos)
+        ro c1 = decode_or_throw(s, pos + 1)
+        ro c2 = decode_or_throw(s, pos + 2)
+        ro triple = ((c0 as u32) << 18) | ((c1 as u32) << 12) | ((c2 as u32) << 6)
         out.push(((triple >> 16) & 0xFF) as u8)
         out.push(((triple >> 8) & 0xFF) as u8)
     } else if tail == 1 {
@@ -273,7 +273,7 @@ fn decode_or_throw(s str, pos int) Fail[Base64Error] -> u8 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "encode: пустой массив" {
-    let empty []u8 = []
+    ro empty []u8 = []
     assert(Base64.encode(empty) == "")
 }
 
@@ -305,11 +305,11 @@ test "decode: RFC 4648 test vectors" {
 }
 
 test "round-trip: encode + decode == original" {
-    let cases = ["", "Hello", "The quick brown fox", "binary\x00data"]
+    ro cases = ["", "Hello", "The quick brown fox", "binary\x00data"]
     for s in cases {
-        let bytes = s.to_bytes()
-        let encoded = Base64.encode(bytes)
-        let decoded = Base64.decode(encoded)
+        ro bytes = s.to_bytes()
+        ro encoded = Base64.encode(bytes)
+        ro decoded = Base64.decode(encoded)
         assert(decoded == bytes)
     }
 }
@@ -320,9 +320,9 @@ test "URL-safe: + и / заменяются на - и _" {
     // Один способ — закодировать [0xFB, 0xFF, 0xFF] которые дадут "+/":
     //   0xFB FF FF = 1111 1011 1111 1111 1111 1111
     //   6-bit groups: 111110 111111 111111 111111 = 62 63 63 63 = +///
-    let data []u8 = [0xFB, 0xFF, 0xFF]
-    let std_encoded = Base64.encode(data)
-    let url_encoded = Base64.encode_url(data)
+    ro data []u8 = [0xFB, 0xFF, 0xFF]
+    ro std_encoded = Base64.encode(data)
+    ro url_encoded = Base64.encode_url(data)
     assert(std_encoded.contains("+") || std_encoded.contains("/"))
     assert(!url_encoded.contains("+"))
     assert(!url_encoded.contains("/"))
@@ -330,15 +330,15 @@ test "URL-safe: + и / заменяются на - и _" {
 }
 
 test "URL-safe round-trip" {
-    let data []u8 = [0xFB, 0xFF, 0xFF, 0x00, 0x42]
-    let encoded = Base64.encode_url(data)
-    let decoded = Base64.decode_url(encoded)
+    ro data []u8 = [0xFB, 0xFF, 0xFF, 0x00, 0x42]
+    ro encoded = Base64.encode_url(data)
+    ro decoded = Base64.decode_url(encoded)
     assert(decoded == data)
 }
 
 test "decode: ошибка — нечётная длина без padding в strict mode" {
-    let r = with Fail[Base64Error] = |e| interrupt Some(e) {
-        let _ = Base64.decode("abc")            // 3 символа — не кратно 4
+    ro r = with Fail[Base64Error] = |e| interrupt Some(e) {
+        ro _ = Base64.decode("abc")            // 3 символа — не кратно 4
         None
     }
     assert(match r {
@@ -348,8 +348,8 @@ test "decode: ошибка — нечётная длина без padding в str
 }
 
 test "decode: ошибка — невалидный символ" {
-    let r = with Fail[Base64Error] = |e| interrupt Some(e) {
-        let _ = Base64.decode("Zm$=")            // $ не в alphabet
+    ro r = with Fail[Base64Error] = |e| interrupt Some(e) {
+        ro _ = Base64.decode("Zm$=")            // $ не в alphabet
         None
     }
     assert(match r {
@@ -360,13 +360,13 @@ test "decode: ошибка — невалидный символ" {
 
 test "Base64 → JWT-like usage" {
     // Симулируем JWT header'а: `{"alg":"HS256","typ":"JWT"}` в URL-safe.
-    let header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
-    let encoded = Base64.encode_url(header.to_bytes())
+    ro header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
+    ro encoded = Base64.encode_url(header.to_bytes())
     // Не содержит padding и URL-safe alphabet
     assert(!encoded.contains("="))
     assert(!encoded.contains("+"))
     assert(!encoded.contains("/"))
     // Round-trip
-    let decoded = Base64.decode_url(encoded)
+    ro decoded = Base64.decode_url(encoded)
     assert(decoded == header.to_bytes())
 }

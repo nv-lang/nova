@@ -11,6 +11,6 @@ module nova_tests.plan87.neg_bad_syntax
 
 test "garbage between loop pattern and in" {
     for x 123 in [1, 2, 3] {
-        let _ = x
+        ro _ = x
     }
 }

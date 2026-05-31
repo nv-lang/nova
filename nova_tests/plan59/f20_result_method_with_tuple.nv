@@ -21,11 +21,11 @@ export fn Parser @split_kv(s str) -> Result[(str, int), str] {
 }
 
 
-test "method returning Result[(str, int), str] — instance call let-bound" {
-    let p = Parser.new(":")
-    let r = p.split_kv("x:1")
-    let mut k str = ""
-    let mut v int = 0
+test "method returning Result[(str, int), str] — instance call ro-bound" {
+    ro p = Parser.new(":")
+    ro r = p.split_kv("x:1")
+    mut k str = ""
+    mut v int = 0
     match r {
         Ok((key, val)) => { k = key; v = val }
         Err(_) => assert(false)
@@ -36,8 +36,8 @@ test "method returning Result[(str, int), str] — instance call let-bound" {
 
 
 test "method returning Result[(str, int), str] — inline match" {
-    let p = Parser.new(":")
-    let mut k str = ""
+    ro p = Parser.new(":")
+    mut k str = ""
     match p.split_kv("y:2") {
         Ok((key, _)) => { k = key }
         Err(_) => assert(false)

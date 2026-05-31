@@ -10,7 +10,7 @@ module concurrency.fn_array_collect_test
 
 // Simple identity-like generic — return []T от []T input.
 fn copy[T](xs []T) -> []T {
-    let mut out []T = []
+    mut out []T = []
     for x in xs {
         out.push(x)
     }
@@ -19,7 +19,7 @@ fn copy[T](xs []T) -> []T {
 
 
 test "copy[int]: return []int правильно типизировано" {
-    let xs = copy[int]([1, 2, 3])
+    ro xs = copy[int]([1, 2, 3])
     assert(xs.len() == 3)
     assert(xs[0] == 1)
     assert(xs[1] == 2)
@@ -28,7 +28,7 @@ test "copy[int]: return []int правильно типизировано" {
 
 
 test "copy[str]: return []str правильно типизировано" {
-    let xs = copy[str](["a", "b"])
+    ro xs = copy[str](["a", "b"])
     assert(xs.len() == 2)
     assert(xs[0] == "a")
     assert(xs[1] == "b")

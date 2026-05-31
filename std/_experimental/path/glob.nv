@@ -33,18 +33,18 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
         return si == path.len()
     }
 
-    let p = match pattern.char_at(pi) { Some(c) => c, None => return false }
+    ro p = match pattern.char_at(pi) { Some(c) => c, None => return false }
 
     if p == '*' {
         // Check for ** (recursive)
         if pi + 1 < pattern.len() && pattern.char_at(pi + 1) == Some('*') {
             // Skip extra * and any following /
-            let mut next_pi = pi + 2
+            mut next_pi = pi + 2
             if next_pi < pattern.len() && pattern.char_at(next_pi) == Some('/') {
                 next_pi += 1
             }
             // ** matches anything including /
-            let mut try_si = si
+            mut try_si = si
             while try_si <= path.len() {
                 if match_at(pattern, next_pi, path, try_si) { return true }
                 try_si += 1
@@ -53,8 +53,8 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
         }
 
         // Single * — matches anything except /
-        let next_pi = pi + 1
-        let mut try_si = si
+        ro next_pi = pi + 1
+        mut try_si = si
         while try_si <= path.len() {
             if match_at(pattern, next_pi, path, try_si) { return true }
             // Останавливаемся на /
@@ -74,8 +74,8 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 
     if p == '[' {
         if si == path.len() { return false }
-        let c = match path.char_at(si) { Some(ch) => ch, None => return false }
-        let (matched, next_pi) = match_class(pattern, pi + 1, c)
+        ro c = match path.char_at(si) { Some(ch) => ch, None => return false }
+        ro (matched, next_pi) = match_class(pattern, pi + 1, c)
         if !matched { return false }
         return match_at(pattern, next_pi, path, si + 1)
     }
@@ -88,17 +88,17 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 
 
 fn match_class(pattern str, start int, c char) -> (bool, int) {
-    let mut pi = start
-    let mut negate = false
+    mut pi = start
+    mut negate = false
     if pi < pattern.len() && pattern.char_at(pi) == Some('!') {
         negate = true
         pi += 1
     }
-    let mut found = false
+    mut found = false
     while pi < pattern.len() {
         match pattern.char_at(pi) {
             Some(']') => {
-                let result = if negate { !found } else { found }
+                ro result = if negate { !found } else { found }
                 return (result, pi + 1)
             }
             Some(ch) => {
@@ -106,8 +106,8 @@ fn match_class(pattern str, start int, c char) -> (bool, int) {
                 if pi + 2 < pattern.len()
                    && pattern.char_at(pi + 1) == Some('-')
                    && pattern.char_at(pi + 2) != Some(']') {
-                    let from_c = ch
-                    let to_c = match pattern.char_at(pi + 2) { Some(x) => x, None => return (false, pi) }
+                    ro from_c = ch
+                    ro to_c = match pattern.char_at(pi + 2) { Some(x) => x, None => return (false, pi) }
                     if (c as int) >= (from_c as int) && (c as int) <= (to_c as int) {
                         found = true
                     }

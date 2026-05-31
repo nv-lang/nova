@@ -6,12 +6,12 @@ module nova_tests.plan77.fluent_stdlib_ok
 
 test "StringBuilder fluent chain через -> @" {
     consume sb = StringBuilder.new()
-    let s = sb.append("a").append("b").append("c").as_str()
+    ro s = sb.append("a").append("b").append("c").as_str()
     assert(s == "abc")
 }
 
 test "WriteBuffer fluent chain через -> @" {
-    let mut wb = WriteBuffer.new()
-    let bytes = wb.write_byte(1).write_byte(2).write_byte(3).into()
+    mut wb = WriteBuffer.new()
+    ro bytes = wb.write_byte(1).write_byte(2).write_byte(3).into()
     assert(bytes.len() == 3)
 }

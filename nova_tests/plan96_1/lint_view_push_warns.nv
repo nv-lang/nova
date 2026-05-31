@@ -7,7 +7,7 @@
 module nova_tests.plan96_1.lint_view_push_warns
 
 fn main() -> () {
-    let mut parent []int = [1, 2, 3, 4, 5]
-    let mut view = parent[1..4]
+    mut parent []int = [1, 2, 3, 4, 5]
+    mut view = parent[1..4]
     view.push(99)
 }

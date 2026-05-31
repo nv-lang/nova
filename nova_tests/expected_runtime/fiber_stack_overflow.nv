@@ -18,15 +18,15 @@
 module expected_runtime.fiber_stack_overflow
 
 fn deep(n int) -> int {
-    let x = n + 1
-    let y = deep(x)
+    ro x = n + 1
+    ro y = deep(x)
     return x + y
 }
 
 fn main() {
     supervised {
         spawn {
-            let _ = deep(0)
+            ro _ = deep(0)
         }
     }
 }

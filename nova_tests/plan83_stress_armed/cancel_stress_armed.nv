@@ -10,11 +10,11 @@
 module plan83_stress_armed.cancel_stress_armed
 
 test "1K supervised cancel cycles armed M:N — baseline" {
-    let mut completed = 0
-    let mut i = 0
+    mut completed = 0
+    mut i = 0
     while i < 1000 {
-        let tok = CancelToken.new()
-        let cur = i
+        ro tok = CancelToken.new()
+        ro cur = i
         supervised(cancel: tok) {
             spawn {
                 // Cancel from inside fiber — exercises wake-all path.
@@ -30,11 +30,11 @@ test "1K supervised cancel cycles armed M:N — baseline" {
 }
 
 test "10K supervised cancel cycles armed M:N — Plan 83.9 §6.4" {
-    let mut completed = 0
-    let mut i = 0
+    mut completed = 0
+    mut i = 0
     while i < 10_000 {
-        let tok = CancelToken.new()
-        let cur = i
+        ro tok = CancelToken.new()
+        ro cur = i
         supervised(cancel: tok) {
             spawn {
                 if cur % 2 == 0 {

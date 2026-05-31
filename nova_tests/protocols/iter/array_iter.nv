@@ -4,8 +4,8 @@ module iter.array_iter
 
 
 test "for-in over []int — сумма" {
-    let xs []int = [10, 20, 30]
-    let mut sum = 0
+    ro xs []int = [10, 20, 30]
+    mut sum = 0
     for x in xs {
         sum = sum + x
     }
@@ -13,8 +13,8 @@ test "for-in over []int — сумма" {
 }
 
 test "for-in over []int — пустой массив" {
-    let xs []int = []
-    let mut count = 0
+    ro xs []int = []
+    mut count = 0
     for _ in xs {
         count = count + 1
     }
@@ -22,10 +22,10 @@ test "for-in over []int — пустой массив" {
 }
 
 test "for-in over []int — порядок сохранён" {
-    let xs []int = [1, 2, 3, 4]
-    let mut first = -1
-    let mut last = -1
-    let mut seen = 0
+    ro xs []int = [1, 2, 3, 4]
+    mut first = -1
+    mut last = -1
+    mut seen = 0
     for x in xs {
         if seen == 0 { first = x }
         last = x
@@ -37,8 +37,8 @@ test "for-in over []int — порядок сохранён" {
 }
 
 test "for-in over []str" {
-    let names []str = ["a", "bb", "ccc"]
-    let mut total_len = 0
+    ro names []str = ["a", "bb", "ccc"]
+    mut total_len = 0
     for n in names {
         total_len = total_len + n.len()
     }
@@ -46,8 +46,8 @@ test "for-in over []str" {
 }
 
 test "for-in over []int — break" {
-    let xs []int = [5, 10, 15, 20]
-    let mut sum = 0
+    ro xs []int = [5, 10, 15, 20]
+    mut sum = 0
     for x in xs {
         if x == 15 { break }
         sum = sum + x

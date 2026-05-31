@@ -8,8 +8,8 @@ import std.collections.hashmap.{HashMap}
 
 
 test "@merge_from — пустой источник" {
-    let mut m HashMap[str, int] = ["a": 1, "b": 2]
-    let empty HashMap[str, int] = []
+    mut m HashMap[str, int] = ["a": 1, "b": 2]
+    ro empty HashMap[str, int] = []
     m.merge_from(empty)
     assert(m.len() == 2)
     assert(m.get("a") == Some(1))
@@ -17,8 +17,8 @@ test "@merge_from — пустой источник" {
 
 
 test "@merge_from — добавление новых ключей" {
-    let mut m HashMap[str, int] = ["a": 1, "b": 2]
-    let extra HashMap[str, int] = ["c": 3, "d": 4]
+    mut m HashMap[str, int] = ["a": 1, "b": 2]
+    ro extra HashMap[str, int] = ["c": 3, "d": 4]
     m.merge_from(extra)
     assert(m.len() == 4)
     assert(m.get("c") == Some(3))
@@ -27,8 +27,8 @@ test "@merge_from — добавление новых ключей" {
 
 
 test "@merge_from — override existing ключей" {
-    let mut m HashMap[str, int] = ["a": 1, "b": 2]
-    let other HashMap[str, int] = ["a": 100, "c": 3]
+    mut m HashMap[str, int] = ["a": 1, "b": 2]
+    ro other HashMap[str, int] = ["a": 100, "c": 3]
     m.merge_from(other)
     assert(m.len() == 3)
     assert(m.get("a") == Some(100))   // overridden
@@ -38,22 +38,22 @@ test "@merge_from — override existing ключей" {
 
 
 test "@filter — identity predicate (all)" {
-    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
-    let all = m.filter(|_k, _v| true)
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    ro all = m.filter(|_k, _v| true)
     assert(all.len() == 3)
 }
 
 
 test "@filter — always-false (none)" {
-    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
-    let none = m.filter(|_k, _v| false)
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    ro none = m.filter(|_k, _v| false)
     assert(none.len() == 0)
 }
 
 
 test "@filter — value-based predicate" {
-    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3, "d": 4]
-    let evens = m.filter(|_k, v| v % 2 == 0)
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3, "d": 4]
+    ro evens = m.filter(|_k, v| v % 2 == 0)
     assert(evens.len() == 2)
     assert(evens.get("b") == Some(2))
     assert(evens.get("d") == Some(4))
@@ -62,8 +62,8 @@ test "@filter — value-based predicate" {
 
 
 test "@filter[int, str] — другие K, V types" {
-    let m HashMap[int, str] = [1: "one", 2: "two", 3: "three", 4: "four"]
-    let kept = m.filter(|k, _v| k > 2)
+    ro m HashMap[int, str] = [1: "one", 2: "two", 3: "three", 4: "four"]
+    ro kept = m.filter(|k, _v| k > 2)
     assert(kept.len() == 2)
     assert(kept.get(3) == Some("three"))
     assert(kept.get(4) == Some("four"))

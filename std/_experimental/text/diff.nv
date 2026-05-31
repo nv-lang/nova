@@ -28,28 +28,28 @@ export type DiffOp
 #stable(since = "0.1")
 export fn Diff.compute(a []str, b []str) -> []DiffOp {
     // Вычисляем LCS таблицу
-    let n = a.len
-    let m = b.len
-    let mut lcs [][]int = []
-    let mut i = 0
+    ro n = a.len
+    ro m = b.len
+    mut lcs [][]int = []
+    mut i = 0
     while i <= n {
-        let mut row []int = []
-        let mut j = 0
+        mut row []int = []
+        mut j = 0
         while j <= m { row.push(0); j += 1 }
         lcs.push(row)
         i += 1
     }
 
     // Заполняем DP-таблицу
-    let mut ii = 1
+    mut ii = 1
     while ii <= n {
-        let mut jj = 1
+        mut jj = 1
         while jj <= m {
             if a[ii - 1] == b[jj - 1] {
                 lcs[ii][jj] = lcs[ii - 1][jj - 1] + 1
             } else {
-                let up = lcs[ii - 1][jj]
-                let left = lcs[ii][jj - 1]
+                ro up = lcs[ii - 1][jj]
+                ro left = lcs[ii][jj - 1]
                 lcs[ii][jj] = if up > left { up } else { left }
             }
             jj += 1
@@ -58,9 +58,9 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
     }
 
     // Backtrack
-    let mut ops_rev []DiffOp = []
-    let mut x = n
-    let mut y = m
+    mut ops_rev []DiffOp = []
+    mut x = n
+    mut y = m
     while x > 0 || y > 0 {
         if x > 0 && y > 0 && a[x - 1] == b[y - 1] {
             ops_rev.push(Equal(a[x - 1]))
@@ -76,7 +76,7 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
     }
 
     // Reverse
-    let mut ops []DiffOp = []
+    mut ops []DiffOp = []
     for k in (0..ops_rev.len()).reverse() {
         ops.push(ops_rev[k])
     }
@@ -105,7 +105,7 @@ export fn Diff.format(ops []DiffOp) -> str {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "diff: identical arrays" {
-    let ops = Diff.compute(["a", "b", "c"], ["a", "b", "c"])
+    ro ops = Diff.compute(["a", "b", "c"], ["a", "b", "c"])
     for op in ops {
         match op {
             Equal(_) => ()
@@ -115,10 +115,10 @@ test "diff: identical arrays" {
 }
 
 test "diff: complete change" {
-    let ops = Diff.compute(["a"], ["b"])
+    ro ops = Diff.compute(["a"], ["b"])
     // Должна быть Delete("a") + Insert("b")
-    let mut has_delete = false
-    let mut has_insert = false
+    mut has_delete = false
+    mut has_insert = false
     for op in ops {
         match op {
             Delete("a") => { has_delete = true }
@@ -131,8 +131,8 @@ test "diff: complete change" {
 }
 
 test "diff: insertion в середине" {
-    let ops = Diff.compute(["a", "c"], ["a", "b", "c"])
-    let mut has_insert_b = false
+    ro ops = Diff.compute(["a", "c"], ["a", "b", "c"])
+    mut has_insert_b = false
     for op in ops {
         match op {
             Insert("b") => { has_insert_b = true }
@@ -143,8 +143,8 @@ test "diff: insertion в середине" {
 }
 
 test "diff: deletion в середине" {
-    let ops = Diff.compute(["a", "b", "c"], ["a", "c"])
-    let mut has_delete_b = false
+    ro ops = Diff.compute(["a", "b", "c"], ["a", "c"])
+    mut has_delete_b = false
     for op in ops {
         match op {
             Delete("b") => { has_delete_b = true }

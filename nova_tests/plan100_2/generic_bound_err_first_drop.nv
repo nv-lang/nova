@@ -17,7 +17,7 @@ fn first[T consume](pair (T, T)) -> T => pair.0
 // Suggest: add explicit `consume drop_b T` param, или используй map/zip.
 
 test "silent-leak ловится с consume bound" {
-    let pair_int = (1, 2)
-    let result = first(pair_int)
+    ro pair_int = (1, 2)
+    ro result = first(pair_int)
     assert(result == 1)
 }

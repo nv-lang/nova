@@ -7,8 +7,8 @@ fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
 fn extract_ok[T, E](r Result[T, E], default_v T) -> T => r.unwrap_or(default_v)
 
 test "Result[int, str] — без turbofish" {
-    let r1 Result[int, str] = Ok(7)
-    let r2 Result[int, str] = Err("oops")
+    ro r1 Result[int, str] = Ok(7)
+    ro r2 Result[int, str] = Err("oops")
     assert(check_ok(r1))
     assert(!check_ok(r2))
     assert(extract_ok(r1, 0) == 7)

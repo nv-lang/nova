@@ -15,7 +15,7 @@ type Box[T] {
 }
 
 test "Box[int] concrete fields compile" {
-    let b Box[int] = { value: 42, label: "answer", tag: 1 }
+    ro b Box[int] = { value: 42, label: "answer", tag: 1 }
     assert(b.value == 42)
     assert(b.label == "answer")
     assert(b.tag == 1)

@@ -7,6 +7,6 @@
 module negative_capability.channel_sender_no_recv
 
 test "sender cannot recv" {
-    let (tx, _rx) = Channel.new(1)
-    let _ = tx.recv()
+    ro (tx, _rx) = Channel.new(1)
+    ro _ = tx.recv()
 }

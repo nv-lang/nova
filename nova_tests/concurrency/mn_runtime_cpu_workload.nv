@@ -30,7 +30,7 @@ test "deque integration: init + shutdown без crash" {
 }
 
 test "deque integration: 2 workers idempotent cycle" {
-    let mut i = 0
+    mut i = 0
     while i < 3 {
         runtime.init(2)
         assert(runtime.maxprocs() == 2)

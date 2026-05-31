@@ -10,7 +10,7 @@ module expected_runtime.errdefer_panic_mainflow
 
 
 fn main() Io -> () {
-    let _ = {
+    ro _ = {
         errdefer { println("CLEANUP_DONE") }
         panic("kaboom")
         0

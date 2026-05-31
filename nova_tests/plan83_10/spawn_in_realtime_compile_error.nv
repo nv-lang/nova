@@ -10,7 +10,7 @@
 module plan83_10.spawn_in_realtime_compile_error
 
 fn spawn_without_scope() -> int {
-    let mut counter = 0
+    mut counter = 0
     spawn {
         counter = counter + 1
     }

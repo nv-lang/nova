@@ -8,6 +8,6 @@ module nova_tests.plan79.member_no_field
 type Point { x int, y int }
 
 fn run() -> int {
-    let p Point = { x: 1, y: 2 }
+    ro p Point = { x: 1, y: 2 }
     p.z
 }

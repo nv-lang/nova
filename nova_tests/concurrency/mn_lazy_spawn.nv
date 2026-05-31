@@ -16,7 +16,7 @@ test "init arms but does not materialize the pool" {
 test "first spawn materializes the pool" {
     runtime.init(2)
     assert(runtime.worker_count() == 0)    // до spawn — пул не поднят
-    let mut x = 0
+    mut x = 0
     supervised {
         spawn { x = 7 }
     }

@@ -8,7 +8,7 @@
 module negative_capability.blocking_no_effect
 
 fn no_effect_blocking(n int) -> int {
-    let mut r = 0
+    mut r = 0
     blocking {
         r = n + 1
     }

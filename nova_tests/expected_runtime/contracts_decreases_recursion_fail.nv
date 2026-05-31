@@ -13,6 +13,6 @@ fn bad_recursion(n int) -> int
 => bad_recursion(n)   // не уменьшает n — infinite recursion
 
 fn main() Io -> () {
-    let _ = bad_recursion(5)
+    ro _ = bad_recursion(5)
     println("UNREACHABLE")
 }

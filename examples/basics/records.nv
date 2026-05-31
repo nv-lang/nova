@@ -8,16 +8,16 @@ type Point {
 }
 
 fn main() {
-    let p = Point { x: 1.0, y: 2.0 }
+    ro p = Point { x: 1.0, y: 2.0 }
     println("p.x = ", p.x, ", p.y = ", p.y)
 
     // Field punning (D52)
-    let x = 5.0
-    let y = 6.0
-    let p2 = Point { x, y }
+    ro x = 5.0
+    ro y = 6.0
+    ro p2 = Point { x, y }
     println("p2.x = ", p2.x)
 
     // Spread (D60)
-    let p3 = { ...p, y: 10.0 }
+    ro p3 = { ...p, y: 10.0 }
     println("p3.x = ", p3.x, ", p3.y = ", p3.y)
 }

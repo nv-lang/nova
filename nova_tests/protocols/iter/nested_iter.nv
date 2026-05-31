@@ -11,7 +11,7 @@ fn CountDown mut @next() -> Option[int] {
     if @current <= 0 {
         None
     } else {
-        let v = @current
+        ro v = @current
         @current = @current - 1
         Some(v)
     }
@@ -19,10 +19,10 @@ fn CountDown mut @next() -> Option[int] {
 
 
 test "вложенный for-in — произведение длин" {
-    let mut total = 0
-    let outer = CountDown.new(3)
+    mut total = 0
+    ro outer = CountDown.new(3)
     for _ in outer {
-        let inner = CountDown.new(2)
+        ro inner = CountDown.new(2)
         for _ in inner {
             total = total + 1
         }
@@ -31,10 +31,10 @@ test "вложенный for-in — произведение длин" {
 }
 
 test "вложенный for-in — сумма произведений" {
-    let mut sum = 0
-    let outer = CountDown.new(3)
+    mut sum = 0
+    ro outer = CountDown.new(3)
     for a in outer {
-        let inner = CountDown.new(3)
+        ro inner = CountDown.new(3)
         for b in inner {
             sum = sum + a * b
         }
@@ -44,12 +44,12 @@ test "вложенный for-in — сумма произведений" {
 }
 
 test "вложенный for-in — break внутреннего не трогает внешний" {
-    let mut outer_count = 0
-    let mut inner_count = 0
-    let outer = CountDown.new(4)
+    mut outer_count = 0
+    mut inner_count = 0
+    ro outer = CountDown.new(4)
     for _ in outer {
         outer_count = outer_count + 1
-        let inner = CountDown.new(10)
+        ro inner = CountDown.new(10)
         for _ in inner {
             inner_count = inner_count + 1
             break

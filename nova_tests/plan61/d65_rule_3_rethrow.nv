@@ -12,7 +12,7 @@ fn op() Fail[AppError] -> int {
 
 test "re-throw в typed handler-arm → outer ловит" {
     // Outer ловит, transforms tag to int.
-    let result = with Fail[AppError] = |e| interrupt (match e {
+    ro result = with Fail[AppError] = |e| interrupt (match e {
         Network  => 1
         Internal => 2
     }) {

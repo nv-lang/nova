@@ -9,5 +9,5 @@ module contracts.int_overflow_add_panic
 fn add_one(x int) -> int => x + 1
 
 test "int + overflow panics" {
-    let _ = add_one(int.MAX)
+    ro _ = add_one(int.MAX)
 }

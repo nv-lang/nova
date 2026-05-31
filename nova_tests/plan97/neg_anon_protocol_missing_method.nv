@@ -16,6 +16,6 @@ fn need_closer[T protocol { close() -> () }](x T) -> () => x.close()
 
 
 test "missing-method" {
-    let w = WithoutClose { name: "n" }
+    ro w = WithoutClose { name: "n" }
     need_closer(w)   // ❌ WithoutClose не имеет close()
 }

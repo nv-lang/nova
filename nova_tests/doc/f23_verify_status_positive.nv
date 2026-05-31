@@ -52,7 +52,7 @@ test "max_two correct" {
 }
 
 test "max_two satisfies ensures" {
-    let r = max_two(7, 4)
+    ro r = max_two(7, 4)
     assert(r >= 7)
     assert(r >= 4)
 }
@@ -65,7 +65,7 @@ test "min_two correct" {
 }
 
 test "min_two satisfies ensures" {
-    let r = min_two(7, 4)
+    ro r = min_two(7, 4)
     assert(r <= 7)
     assert(r <= 4)
 }

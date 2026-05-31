@@ -12,36 +12,36 @@ export type UserId int
 export type Score int
 
 test "newtype construction" {
-    let uid = 42 as UserId
+    ro uid = 42 as UserId
     assert(uid as int == 42)
 }
 
 test "newtype zero" {
-    let z = 0 as UserId
+    ro z = 0 as UserId
     assert(z as int == 0)
 }
 
 test "newtype negative" {
-    let n = -5 as Score
+    ro n = -5 as Score
     assert(n as int == -5)
 }
 
 test "newtype arithmetic on underlying" {
-    let a = 10 as UserId
-    let b = 32 as UserId
+    ro a = 10 as UserId
+    ro b = 32 as UserId
     assert(a as int + b as int == 42)
 }
 
 test "newtype identity round-trip" {
-    let x = 99 as Score
-    let y = x as int
-    let z = y as Score
+    ro x = 99 as Score
+    ro y = x as int
+    ro z = y as Score
     assert(z as int == 99)
 }
 
 test "newtype comparison via underlying" {
-    let a = 5 as Score
-    let b = 10 as Score
+    ro a = 5 as Score
+    ro b = 10 as Score
     assert(a as int < b as int)
     assert(b as int > a as int)
 }

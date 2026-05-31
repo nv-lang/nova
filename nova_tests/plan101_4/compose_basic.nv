@@ -31,13 +31,13 @@ fn MyFile @write(s str) -> int => s.len()
 // Generic bounded функция: T должен удовлетворить ReadWriter →
 // автоматически satisfies Reader И Writer (через flatten).
 fn use_rw[T ReadWriter](x T) -> str {
-    let _ = x.write("ping")
+    ro _ = x.write("ping")
     x.read()
 }
 
 
 test "ReadWriter composition: MyFile satisfies both embedded protocols" {
-    let f = MyFile { name: "log.txt" }
-    let s = use_rw(f)
+    ro f = MyFile { name: "log.txt" }
+    ro s = use_rw(f)
     assert(s == "data from log.txt")
 }

@@ -14,9 +14,9 @@ fn read_val(t Token) -> int => t.val
 
 test "view-param сохраняет ownership у caller'а" {
     consume tok = Token.new(42)
-    let r1 = read_val(tok)        // view-borrow
-    let r2 = read_val(tok)        // view-borrow again — tok всё ещё Live
-    let consumed = tok.release()  // consume в конце scope
+    ro r1 = read_val(tok)        // view-borrow
+    ro r2 = read_val(tok)        // view-borrow again — tok всё ещё Live
+    ro consumed = tok.release()  // consume в конце scope
     assert(r1 == 42)
     assert(r2 == 42)
     assert(consumed == 42)

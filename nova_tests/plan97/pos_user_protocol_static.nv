@@ -19,12 +19,12 @@ fn Box.make(x int) -> Box => { value: x }
 
 
 test "static-protocol метод объявлен через .make, вызов через Type.method" {
-    let b = Box.make(42)
+    ro b = Box.make(42)
     assert(b.value == 42)
 }
 
 test "несколько вызовов" {
-    let a = Box.make(1)
-    let b = Box.make(99)
+    ro a = Box.make(1)
+    ro b = Box.make(99)
     assert(a.value + b.value == 100)
 }

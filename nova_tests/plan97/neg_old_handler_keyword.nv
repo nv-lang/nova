@@ -13,7 +13,7 @@ type Logger effect {
 
 
 test "старый handler keyword больше не парсится" {
-    let h = handler Logger {
+    ro h = handler Logger {
         log(msg) => ()
     }
     with Logger = h {

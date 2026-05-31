@@ -5,6 +5,6 @@
 module nova_tests.plan108_2.let_nomut_pop_neg
 
 test "let no-mut + pop → error" {
-    let mut arr = [1, 2, 3]
-    let _ = arr.pop()
+    mut arr = [1, 2, 3]
+    ro _ = arr.pop()
 }

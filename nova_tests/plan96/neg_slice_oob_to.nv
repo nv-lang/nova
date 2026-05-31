@@ -6,6 +6,6 @@
 module nova_tests.plan96.neg_slice_oob_to
 
 fn main() -> () {
-    let mut arr = [1, 2, 3]
-    let _ = arr[0..100]
+    mut arr = [1, 2, 3]
+    ro _ = arr[0..100]
 }

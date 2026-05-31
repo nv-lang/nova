@@ -29,6 +29,6 @@ fn sum_abc[T HasA + HasB + HasC](v T) -> int => v.a() + v.b() + v.c()
 
 
 test "three-bound conjunction" {
-    let t = Triple { x: 5 }
+    ro t = Triple { x: 5 }
     assert(sum_abc(t) == 30)
 }

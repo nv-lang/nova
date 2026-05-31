@@ -7,7 +7,7 @@
 module nova_tests.plan90_1.copy_from_too_short_neg
 
 fn main() -> () {
-    let mut dst []int = [0, 0, 0, 0]
-    let src []int = [1, 2]
+    mut dst []int = [0, 0, 0, 0]
+    ro src []int = [1, 2]
     dst.copy_from(src)
 }

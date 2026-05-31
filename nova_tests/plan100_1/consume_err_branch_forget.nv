@@ -18,7 +18,7 @@ fn Transaction consume @rollback() -> () { () }
 fn begin() -> Transaction => { id: 1 }
 
 test "consume только на then-branch — ошибка MaybeConsumed" {
-    let condition = true
+    ro condition = true
     consume tx = begin()
     if condition {
         tx.commit()

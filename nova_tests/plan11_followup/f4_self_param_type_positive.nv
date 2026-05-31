@@ -15,9 +15,9 @@ export fn Pair[T] @swap_with(other Self) -> Self =>
     { a: other.a, b: other.b }
 
 test "Self в param type generic instance method работает" {
-    let p1 = Pair[int].new(1, 2)
-    let p2 = Pair[int].new(10, 20)
-    let p3 = p1.swap_with(p2)
+    ro p1 = Pair[int].new(1, 2)
+    ro p2 = Pair[int].new(10, 20)
+    ro p3 = p1.swap_with(p2)
     assert(p3.a == 10)
     assert(p3.b == 20)
 }

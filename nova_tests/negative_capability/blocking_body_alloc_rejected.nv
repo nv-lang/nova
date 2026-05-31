@@ -10,8 +10,8 @@
 module negative_capability.blocking_body_alloc_rejected
 
 fn bad() Blocking -> int {
-    let r = blocking {
-        let xs = []int.new()    // ❌ GC-аллокация в теле blocking
+    ro r = blocking {
+        ro xs = []int.new()    // ❌ GC-аллокация в теле blocking
         xs.len()
     }
     r

@@ -10,16 +10,16 @@ module nova_tests.plan103_6.realtime_mutex_try_lock_ok
 }
 
 test "Mutex.try_lock allowed in #realtime fn (unlocked)" {
-    let mut m = Mutex.new()
-    let acquired = _rt_try_lock(m)
+    mut m = Mutex.new()
+    ro acquired = _rt_try_lock(m)
     assert(acquired == true)
     m.unlock()
 }
 
 test "Mutex.try_lock returns false when locked" {
-    let mut m = Mutex.new()
+    mut m = Mutex.new()
     m.lock()
-    let acquired = _rt_try_lock(m)
+    ro acquired = _rt_try_lock(m)
     assert(acquired == false)
     m.unlock()
 }

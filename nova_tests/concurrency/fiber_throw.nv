@@ -25,12 +25,12 @@ fn validated(n int) -> Result {
 // ================================================================
 
 test "fiber: ? on Ok inside spawn body works" {
-    let mut got = 0
+    mut got = 0
     supervised {
         spawn {
             // ? на Ok разворачивает значение и продолжает.
-            let r = validated(7)
-            let v = match r {
+            ro r = validated(7)
+            ro v = match r {
                 Ok(n) => n
                 Err(_) => -1
             }
@@ -41,12 +41,12 @@ test "fiber: ? on Ok inside spawn body works" {
 }
 
 test "fiber: ? on Err inside spawn body, error path via match" {
-    let mut got_ok = false
-    let mut got_err = false
+    mut got_ok = false
+    mut got_err = false
     supervised {
         spawn {
-            let r = validated(-5)
-            let tag = match r {
+            ro r = validated(-5)
+            ro tag = match r {
                 Ok(_n)  => 1
                 Err(_e) => 2
             }
@@ -62,11 +62,11 @@ test "fiber: ? on Err inside spawn body, error path via match" {
 // ================================================================
 
 test "supervised: many fibers, all succeed, scope completes normally" {
-    let mut counter = 0
+    mut counter = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 10 {
-            let cur = i
+            ro cur = i
             spawn {
                 if cur >= 0 {
                     counter += 1
@@ -83,15 +83,15 @@ test "supervised: many fibers, all succeed, scope completes normally" {
 // ================================================================
 
 test "fiber: error-flag via Result.match (no real throw)" {
-    let mut errors = 0
-    let mut successes = 0
+    mut errors = 0
+    mut successes = 0
     supervised {
-        let mut i = -3
+        mut i = -3
         while i <= 3 {
-            let cur = i
+            ro cur = i
             spawn {
-                let r = validated(cur)
-                let tag = match r {
+                ro r = validated(cur)
+                ro tag = match r {
                     Ok(_n)  => 1
                     Err(_e) => 2
                 }

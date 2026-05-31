@@ -7,18 +7,18 @@ test "uint.MAX equals u64.MAX" {
 }
 
 test "uint.MAX equals u64.MAX value" {
-    let m uint = uint.MAX
-    let expected u64 = u64.MAX
+    ro m uint = uint.MAX
+    ro expected u64 = u64.MAX
     assert(m as u64 == expected)
 }
 
 test "uint min is zero" {
-    let z uint = 0 as uint
+    ro z uint = 0 as uint
     assert(z == 0 as uint)
 }
 
 test "uint.MAX + 1 wraps to 0" {
-    let m uint = uint.MAX
-    let w uint = (m as u64 + 1 as u64) as uint
+    ro m uint = uint.MAX
+    ro w uint = (m as u64 + 1 as u64) as uint
     assert(w == 0 as uint)
 }

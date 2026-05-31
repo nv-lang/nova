@@ -15,17 +15,17 @@
 module nova_tests.plan103_8.litmus_refcount_drop
 
 test "refcount drop: fetch_sub Release + fence Acquire -- exactly one last-fiber" {
-    let n_iters   = 5
-    let mut bad_frees = AtomicI64.new(0)  // != 1 total "last fiber" signals
+    ro n_iters   = 5
+    mut bad_frees = AtomicI64.new(0)  // != 1 total "last fiber" signals
 
     for _iter in 0..n_iters {
-        let n_fibers = 8
-        let mut refcount = AtomicI64.new(0)
-        let mut freed_count = AtomicI64.new(0)  // how many fibers did "free"
+        ro n_fibers = 8
+        mut refcount = AtomicI64.new(0)
+        mut freed_count = AtomicI64.new(0)  // how many fibers did "free"
 
         // All fibers: Relaxed add to refcount first
         // (simulates "take a reference")
-        let mut init_wg = WaitGroup.new()
+        mut init_wg = WaitGroup.new()
         init_wg.add(n_fibers)
         parallel for _i in 0..n_fibers {
             refcount.fetch_add(1, Relaxed)
@@ -35,10 +35,10 @@ test "refcount drop: fetch_sub Release + fence Acquire -- exactly one last-fiber
 
         // All fibers "release": fetch_sub with Release ordering
         // Whoever sees previous_value == 1 is the "last" fiber
-        let mut release_wg = WaitGroup.new()
+        mut release_wg = WaitGroup.new()
         release_wg.add(n_fibers)
         parallel for _i in 0..n_fibers {
-            let prev = refcount.fetch_sub(1, Release)
+            ro prev = refcount.fetch_sub(1, Release)
             if prev == 1 {
                 // Last fiber: fence(Acquire) to synchronize with all releases
                 fence(Acquire)
@@ -60,18 +60,18 @@ test "refcount drop: fetch_sub Release + fence Acquire -- exactly one last-fiber
 }
 
 test "refcount drop: 16 fibers -- single free event" {
-    let n_fibers    = 16
-    let n_iters     = 5
-    let mut violations  = AtomicI64.new(0)
+    ro n_fibers    = 16
+    ro n_iters     = 5
+    mut violations  = AtomicI64.new(0)
 
     for _iter in 0..n_iters {
-        let mut refcount    = AtomicI64.new(n_fibers)  // pre-initialized
-        let mut freed_count = AtomicI64.new(0)
-        let mut wg = WaitGroup.new()
+        mut refcount    = AtomicI64.new(n_fibers)  // pre-initialized
+        mut freed_count = AtomicI64.new(0)
+        mut wg = WaitGroup.new()
         wg.add(n_fibers)
 
         parallel for _i in 0..n_fibers {
-            let prev = refcount.fetch_sub(1, Release)
+            ro prev = refcount.fetch_sub(1, Release)
             if prev == 1 {
                 fence(Acquire)
                 freed_count.fetch_add(1, Relaxed)
@@ -92,7 +92,7 @@ test "refcount drop: 16 fibers -- single free event" {
 test "fence(Relaxed) is valid syntax and no-op semantically" {
     // D167: fence(Relaxed) is valid syntactically but has no ordering effect.
     // This test verifies it compiles and runs without error.
-    let mut a = AtomicI64.new(0)
+    mut a = AtomicI64.new(0)
     a.store(1, Relaxed)
     fence(Relaxed)   // no-op: no ordering guarantee
     fence(Acquire)   // real fence

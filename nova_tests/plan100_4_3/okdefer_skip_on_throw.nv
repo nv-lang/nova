@@ -6,12 +6,12 @@
 module nova_tests.plan100_4_3.okdefer_skip_on_throw
 
 test "okdefer skipped при throw (interrupt-handler)" {
-    let mut fired = false
-    let mut caught = false
+    mut fired = false
+    mut caught = false
     with Fail = effect Fail {
         fail(_msg) { caught = true; interrupt () }
     } {
-        let _ = {
+        ro _ = {
             okdefer { fired = true }
             throw "fail"
             0
@@ -22,8 +22,8 @@ test "okdefer skipped при throw (interrupt-handler)" {
 }
 
 test "okdefer срабатывает на success-path (control)" {
-    let mut fired = false
-    let _ = {
+    mut fired = false
+    ro _ = {
         okdefer { fired = true }
         0
     }

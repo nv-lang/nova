@@ -7,9 +7,9 @@ fn lookup(n int) -> Option {
     None
 }
 
-test "if let Some matches" {
-    let opt = lookup(5)
-    let v = if let Some(n) = opt {
+test "if Some matches" {
+    ro opt = lookup(5)
+    ro v = if Some(n) = opt {
         n
     } else {
         -1
@@ -17,9 +17,9 @@ test "if let Some matches" {
     assert(v == 500)
 }
 
-test "if let None falls through" {
-    let opt = lookup(-1)
-    let v = if let Some(n) = opt {
+test "if None falls through" {
+    ro opt = lookup(-1)
+    ro v = if Some(n) = opt {
         n
     } else {
         999
@@ -27,9 +27,9 @@ test "if let None falls through" {
     assert(v == 999)
 }
 
-test "if let with tuple destructure" {
-    let pair = (10, 20)
-    let r = if let (a, b) = pair {
+test "if ro with tuple destructure" {
+    ro pair = (10, 20)
+    ro r = if (a, b) = pair {
         a + b
     } else {
         0
@@ -37,10 +37,10 @@ test "if let with tuple destructure" {
     assert(r == 30)
 }
 
-test "while let drains Option" {
-    let mut state = 5
-    let mut iterations = 0
-    while let Some(n) = (if state > 0 { Some(state) } else { None }) {
+test "while ro drains Option" {
+    mut state = 5
+    mut iterations = 0
+    while Some(n) = (if state > 0 { Some(state) } else { None }) {
         iterations += 1
         state = state - 1
         if iterations > 100 { break }
@@ -48,9 +48,9 @@ test "while let drains Option" {
     assert(iterations == 5)
 }
 
-test "if let bound name visible inside then" {
-    let opt = Some(7)
-    let r = if let Some(x) = opt {
+test "if ro bound name visible inside then" {
+    ro opt = Some(7)
+    ro r = if Some(x) = opt {
         x + x
     } else {
         0

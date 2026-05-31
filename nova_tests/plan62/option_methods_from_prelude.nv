@@ -14,22 +14,22 @@ module plan62.option_methods_from_prelude
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.is_some returns true for Some" {
-    let s = Some(42)
+    ro s = Some(42)
     assert(s.is_some())
 }
 
 test "Option.is_some returns false for None" {
-    let n = None
+    ro n = None
     assert(!n.is_some())
 }
 
 test "Option.is_none returns false for Some" {
-    let s = Some(7)
+    ro s = Some(7)
     assert(!s.is_none())
 }
 
 test "Option.is_none returns true for None" {
-    let n = None
+    ro n = None
     assert(n.is_none())
 }
 
@@ -38,7 +38,7 @@ test "Option.is_none returns true for None" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.unwrap returns value for Some" {
-    let s = Some(10)
+    ro s = Some(10)
     assert(s.unwrap() == 10)
 }
 
@@ -47,12 +47,12 @@ test "Option.unwrap returns value for Some" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.unwrap_or returns value for Some" {
-    let s = Some(99)
+    ro s = Some(99)
     assert(s.unwrap_or(0) == 99)
 }
 
 test "Option.unwrap_or returns default for None" {
-    let n = None
+    ro n = None
     assert(n.unwrap_or(123) == 123)
 }
 
@@ -61,14 +61,14 @@ test "Option.unwrap_or returns default for None" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.unwrap_or_else returns value for Some" {
-    let s = Some(5)
-    let n = s.unwrap_or_else(|| 0)
+    ro s = Some(5)
+    ro n = s.unwrap_or_else(|| 0)
     assert(n == 5)
 }
 
 test "Option.unwrap_or_else evaluates closure for None" {
-    let n = None
-    let v = n.unwrap_or_else(|| 42)
+    ro n = None
+    ro v = n.unwrap_or_else(|| 42)
     assert(v == 42)
 }
 
@@ -77,15 +77,15 @@ test "Option.unwrap_or_else evaluates closure for None" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.map transforms Some payload" {
-    let s = Some(3)
-    let r = s.map(|x| x * 2)
+    ro s = Some(3)
+    ro r = s.map(|x| x * 2)
     assert(r.is_some())
     assert(r.unwrap() == 6)
 }
 
 test "Option.map passes through None" {
-    let n = None
-    let r = n.map(|x| x * 2)
+    ro n = None
+    ro r = n.map(|x| x * 2)
     assert(r.is_none())
 }
 
@@ -94,13 +94,13 @@ test "Option.map passes through None" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.ok_or returns Ok for Some" {
-    let s = Some(11)
-    let r = s.ok_or("err")
+    ro s = Some(11)
+    ro r = s.ok_or("err")
     assert(r.is_ok())
 }
 
 test "Option.ok_or returns Err for None" {
-    let n = None
-    let r = n.ok_or("oops")
+    ro n = None
+    ro r = n.ok_or("oops")
     assert(r.is_err())
 }

@@ -24,7 +24,7 @@ module plan62.range_shadow_warning
 type Severity | Low | Medium | High
 
 test "local sum-type compiles + match works (D183 cleanup verified)" {
-    let s = Medium
+    ro s = Medium
     match s {
         Low    => assert(false)
         Medium => assert(true)

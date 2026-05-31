@@ -15,7 +15,7 @@ export fn Wrapper[T] @produce[U]() -> Wrapper[U] {
 }
 
 test "cannot infer U from no args" {
-    let w = Wrapper[int].of(5)
-    let r = w.produce()
+    ro w = Wrapper[int].of(5)
+    ro r = w.produce()
     assert(true, "never reaches — compile fails")
 }

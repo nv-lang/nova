@@ -197,8 +197,8 @@ export type RuntimeNoneError
 /// ```
 #stable(since = "0.1")
 export type MultiError {
-    readonly primary str
-    readonly suppressed []str
+    ro primary str
+    ro suppressed []str
 }
 
 /// Returns primary (root cause) error — what was originally thrown before

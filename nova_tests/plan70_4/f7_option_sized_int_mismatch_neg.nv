@@ -12,6 +12,6 @@ fn take_opt_i32(o Option[i32]) -> bool { o.is_some() }
 
 // EXPECT_CC_ERROR incompatible type
 fn bad() -> bool {
-    let o Option[i16] = Some(1 as i16)
+    ro o Option[i16] = Some(1 as i16)
     take_opt_i32(o)
 }

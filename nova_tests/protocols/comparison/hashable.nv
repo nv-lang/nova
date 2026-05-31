@@ -14,36 +14,36 @@ fn Color @hash() -> u64 =>
 
 
 test "Color.hash — детерминизм (одно значение — один хэш)" {
-    let c = Color { r: 255, g: 0, b: 128 }
+    ro c = Color { r: 255, g: 0, b: 128 }
     assert(c.hash() == c.hash())
 }
 
 test "Color.hash — повторный вызов стабилен" {
-    let c = Color { r: 10, g: 20, b: 30 }
-    let h1 = c.hash()
-    let h2 = c.hash()
-    let h3 = c.hash()
+    ro c = Color { r: 10, g: 20, b: 30 }
+    ro h1 = c.hash()
+    ro h2 = c.hash()
+    ro h3 = c.hash()
     assert(h1 == h2)
     assert(h2 == h3)
 }
 
 test "Color.hash — разные значения дают разный хэш" {
-    let red = Color { r: 255, g: 0, b: 0 }
-    let blue = Color { r: 0, g: 0, b: 255 }
+    ro red = Color { r: 255, g: 0, b: 0 }
+    ro blue = Color { r: 0, g: 0, b: 255 }
     assert(red.hash() != blue.hash())
 }
 
 test "Color.hash — равные значения дают равный хэш" {
-    let a = Color { r: 1, g: 2, b: 3 }
-    let b = Color { r: 1, g: 2, b: 3 }
+    ro a = Color { r: 1, g: 2, b: 3 }
+    ro b = Color { r: 1, g: 2, b: 3 }
     assert(a.hash() == b.hash())
 }
 
 test "Color.hash — отличие в одном поле меняет хэш" {
-    let base = Color { r: 5, g: 5, b: 5 }
-    let diff_r = Color { r: 6, g: 5, b: 5 }
-    let diff_g = Color { r: 5, g: 6, b: 5 }
-    let diff_b = Color { r: 5, g: 5, b: 6 }
+    ro base = Color { r: 5, g: 5, b: 5 }
+    ro diff_r = Color { r: 6, g: 5, b: 5 }
+    ro diff_g = Color { r: 5, g: 6, b: 5 }
+    ro diff_b = Color { r: 5, g: 5, b: 6 }
     assert(base.hash() != diff_r.hash())
     assert(base.hash() != diff_g.hash())
     assert(base.hash() != diff_b.hash())
@@ -81,7 +81,7 @@ type UserId { value u64 }
 fn UserId @hash() -> u64 => @value
 
 test "UserId.hash — прокидывает поле" {
-    let u = UserId { value: 12345 }
+    ro u = UserId { value: 12345 }
     assert(u.hash() == 12345)
     assert(u.hash() == u.hash())
 }

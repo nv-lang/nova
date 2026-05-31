@@ -12,6 +12,6 @@ module negative_capability.defer_keyword_reserved
 
 
 fn use_defer_as_var() -> int {
-    let defer = 42       // ❌ defer — keyword, не identifier
+    ro defer = 42       // ❌ defer — keyword, не identifier
     defer
 }

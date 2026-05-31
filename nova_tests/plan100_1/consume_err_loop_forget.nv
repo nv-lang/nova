@@ -19,8 +19,8 @@ fn Transaction consume @rollback() -> () { () }
 fn begin() -> Transaction => { id: 1 }
 
 test "loop без consume — каждая iteration teryает tx" {
-    let n = 3
-    let mut i = 0
+    ro n = 3
+    mut i = 0
     while i < n {
         consume tx = begin()
         // ОШИБКА D133-not-consumed: tx Live на exit'е iteration body.

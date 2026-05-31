@@ -6,9 +6,9 @@ module plan59.f5_tuple_of_arrays
 
 
 test "tuple of arrays — field access keeps array typing" {
-    let pair = ([1, 2, 3], [10, 20, 30])
-    let left = pair.0
-    let right = pair.1
+    ro pair = ([1, 2, 3], [10, 20, 30])
+    ro left = pair.0
+    ro right = pair.1
     assert(left[0] == 1)
     assert(left[2] == 3)
     assert(right[0] == 10)
@@ -17,7 +17,7 @@ test "tuple of arrays — field access keeps array typing" {
 
 
 test "tuple of str arrays" {
-    let words = (["a", "b"], ["x", "y", "z"])
+    ro words = (["a", "b"], ["x", "y", "z"])
     assert(words.0[1] == "b")
     assert(words.1[2] == "z")
 }

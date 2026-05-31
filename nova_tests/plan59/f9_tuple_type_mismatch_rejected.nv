@@ -14,6 +14,6 @@ fn sum_pair(p (int, int)) -> int {
 
 
 test "pass (int, str) where (int, int) expected — should reject" {
-    let x = sum_pair((1, "two"))
+    ro x = sum_pair((1, "two"))
     assert(x == 3)
 }

@@ -8,8 +8,8 @@ fn inner[T](x T) -> T => x
 
 
 fn outer[T](x T) -> T {
-    let y = inner[T](x)
-    let z = inner[T](y)
+    ro y = inner[T](x)
+    ro z = inner[T](y)
     z
 }
 

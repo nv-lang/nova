@@ -6,15 +6,15 @@
 module nova_tests.plan96.slice_gc_alive
 
 fn make_view_only() -> []int {
-    let mut arr = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    mut arr = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
     arr[2..7]
     // arr выходит из scope; backing достижим только через возвращаемый view
 }
 
 test "view keeps backing alive after GC" {
-    let view = make_view_only()
+    ro view = make_view_only()
     // Force GC через множественные аллокации (без std.runtime.gc.collect)
-    let mut waste []int = []
+    mut waste []int = []
     for _ in 0..1000 {
         waste.push(42)
     }

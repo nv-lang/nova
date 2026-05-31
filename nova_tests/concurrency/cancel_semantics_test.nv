@@ -28,8 +28,8 @@ module concurrency.cancel_semantics_test
 test "cancel: отмена не убегает из supervised(cancel:) без with Fail" {
     // До Plan 49 этот тест паниковал — "scope cancelled" летел наружу как
     // unhandled Fail. После Ф.3 supervised_run_impl возвращается без throw'а.
-    let tok = CancelToken.new()
-    let mut after_scope = false
+    ro tok = CancelToken.new()
+    mut after_scope = false
     supervised(cancel: tok) {
         spawn {
             tok.cancel()
@@ -50,7 +50,7 @@ test "cancel: отмена не убегает из supervised(cancel:) без w
 // ──────────────────────────────────────────────────────────────────────────
 
 test "cancel: tok.cancel(reason) → tok.reason() == Some(reason)" {
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     supervised(cancel: tok) {
         spawn {
             tok.cancel("deadline exceeded")
@@ -60,8 +60,8 @@ test "cancel: tok.cancel(reason) → tok.reason() == Some(reason)" {
         }
     }
     assert(tok.is_cancelled())
-    let r1 = tok.reason()
-    let got = match r1 {
+    ro r1 = tok.reason()
+    ro got = match r1 {
         Some(r) => r
         None    => ""
     }
@@ -70,14 +70,14 @@ test "cancel: tok.cancel(reason) → tok.reason() == Some(reason)" {
 
 
 test "cancel: tok.cancel() без аргумента → reason = 'cancelled'" {
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     supervised(cancel: tok) {
         spawn { tok.cancel() }
         spawn { for _i in 0..1000 { } }
     }
     assert(tok.is_cancelled())
-    let r1 = tok.reason()
-    let got = match r1 {
+    ro r1 = tok.reason()
+    ro got = match r1 {
         Some(r) => r
         None    => ""
     }
@@ -86,10 +86,10 @@ test "cancel: tok.cancel() без аргумента → reason = 'cancelled'" {
 
 
 test "cancel: tok.reason() до отмены — None" {
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     assert(!tok.is_cancelled())
-    let r1 = tok.reason()
-    let is_none = match r1 {
+    ro r1 = tok.reason()
+    ro is_none = match r1 {
         None    => true
         Some(_) => false
     }
@@ -102,8 +102,8 @@ test "cancel: tok.reason() до отмены — None" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "user-throw: реальная ошибка fiber'а пробрасывается наружу" {
-    let mut caught = ""
-    let r = with Fail[int] = |e| {
+    mut caught = ""
+    ro r = with Fail[int] = |e| {
         caught = "fail-handler"
         0
     } {
@@ -126,10 +126,10 @@ test "user-precedence: cancel() + позже throw → наружу летит r
     // Этот тест проверяет Ф.2 USER-precedence таблицу:
     // CANCEL записан первым, USER потом → first_error overwrite'ится на USER.
     // Внешний with Fail handler видит "boom" (USER), не "scope cancelled" (CANCEL).
-    let tok = CancelToken.new()
-    let mut caught_msg = ""
-    let mut caught_any = false
-    let _ = with Fail[int] = |e| {
+    ro tok = CancelToken.new()
+    mut caught_msg = ""
+    mut caught_any = false
+    ro _ = with Fail[int] = |e| {
         caught_any = true
         caught_msg = "fail-handler-fired"
         0
@@ -159,7 +159,7 @@ test "user-precedence: cancel() + позже throw → наружу летит r
 // ──────────────────────────────────────────────────────────────────────────
 
 test "backward-compat: supervised без cancel — обычный flow" {
-    let mut counter = 0
+    mut counter = 0
     supervised {
         spawn { counter += 1 }
         spawn { counter += 2 }
@@ -170,10 +170,10 @@ test "backward-compat: supervised без cancel — обычный flow" {
 
 
 test "backward-compat: tok.is_cancelled() сразу после .new() — false" {
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     assert(!tok.is_cancelled())
-    let r = tok.reason()
-    let is_none = match r {
+    ro r = tok.reason()
+    ro is_none = match r {
         None    => true
         Some(_) => false
     }
@@ -189,7 +189,7 @@ test "cancel: повторный cancel(reason2) — first reason сохраня
     // Plan 49 Ф.1: cancel_reason идемпотентен — first-cancel-wins.
     // Это паритет с Go context: первая causa записывается и не
     // overwrite'ится последующими cancel()'ами.
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     supervised(cancel: tok) {
         spawn {
             tok.cancel("first reason")
@@ -197,8 +197,8 @@ test "cancel: повторный cancel(reason2) — first reason сохраня
         }
         spawn { for _i in 0..1000 { } }
     }
-    let r = tok.reason()
-    let got = match r {
+    ro r = tok.reason()
+    ro got = match r {
         Some(s) => s
         None    => ""
     }

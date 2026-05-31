@@ -15,8 +15,8 @@ module nova_tests.plan87.explicit_generic
 
 
 test "for s str in string array" {
-    let words []str = ["alpha", "beta"]
-    let mut total_len = 0
+    ro words []str = ["alpha", "beta"]
+    mut total_len = 0
     for s str in words {
         total_len = total_len + s.len()
     }
@@ -24,8 +24,8 @@ test "for s str in string array" {
 }
 
 test "for row []int in [][]int — generic []T, вложенный for" {
-    let matrix [][]int = [[1, 2], [3, 4], [5]]
-    let mut total = 0
+    ro matrix [][]int = [[1, 2], [3, 4], [5]]
+    mut total = 0
     for row []int in matrix {
         for x int in row {
             total = total + x
@@ -35,10 +35,10 @@ test "for row []int in [][]int — generic []T, вложенный for" {
 }
 
 test "for o Option[int] in []Option[int] — аннотация generic-элемента" {
-    let opts []Option[int] = [Some(1), None, Some(3)]
-    let mut count = 0
+    ro opts []Option[int] = [Some(1), None, Some(3)]
+    mut count = 0
     for o Option[int] in opts {
-        let _ = o
+        ro _ = o
         count = count + 1
     }
     assert(count == 3)

@@ -8,34 +8,34 @@ module runtime.gc_introspect
 import std.runtime.gc
 
 test "gc.heap_size: возвращает int >= 0" {
-    let h = gc.heap_size()
+    ro h = gc.heap_size()
     assert(h >= 0)
 }
 
 test "gc.live_count: возвращает int >= 0" {
-    let n = gc.live_count()
+    ro n = gc.live_count()
     assert(n >= 0)
 }
 
 test "gc.alloc_count: монотонно растёт после аллокаций" {
     gc.reset_stats()
-    let before = gc.alloc_count()
+    ro before = gc.alloc_count()
     // Аллоцируем строки — каждая concat создаёт новый объект
-    let mut i = 0
+    mut i = 0
     while i < 10 {
-        let s = "alloc-" + str.from(i)
+        ro s = "alloc-" + str.from(i)
         assert(s.len() > 0)
         i += 1
     }
-    let after = gc.alloc_count()
+    ro after = gc.alloc_count()
     assert(after > before)
 }
 
 test "gc.reset_stats: сбрасывает alloc_count" {
     // Делаем аллокации
-    let _ = "x" + "y" + "z"
+    ro _ = "x" + "y" + "z"
     gc.reset_stats()
-    let after_reset = gc.alloc_count()
+    ro after_reset = gc.alloc_count()
     assert(after_reset == 0)
 }
 
@@ -47,12 +47,12 @@ test "gc.collect: не падает" {
 
 test "gc.last_pause_ns: возвращает int >= 0" {
     gc.collect()
-    let ns = gc.last_pause_ns()
+    ro ns = gc.last_pause_ns()
     assert(ns >= 0)
 }
 
 test "gc.heap_size differential: под boehm > 0, под malloc = 0" {
-    let h = gc.heap_size()
+    ro h = gc.heap_size()
     if h == 0 {
         // malloc backend — sentinel, не ошибка
         assert(true)

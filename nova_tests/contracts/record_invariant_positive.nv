@@ -10,8 +10,8 @@ type Account {
     invariant balance >= 0
 
 test "record invariant positive" {
-    let a = Account { balance: 100 }
-    let b = Account { balance: 0 }
+    ro a = Account { balance: 100 }
+    ro b = Account { balance: 0 }
     assert(a.balance == 100)
     assert(b.balance == 0)
 }

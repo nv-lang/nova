@@ -5,7 +5,7 @@
 module expected_runtime.contracts_loop_invariant_fail
 
 fn bad_loop(n int) -> int {
-    let mut i = 0
+    mut i = 0
     while i < n
         invariant i < 0   // явно ложно (i стартует с 0)
     {
@@ -15,6 +15,6 @@ fn bad_loop(n int) -> int {
 }
 
 fn main() Io -> () {
-    let _ = bad_loop(5)
+    ro _ = bad_loop(5)
     println("UNREACHABLE")
 }

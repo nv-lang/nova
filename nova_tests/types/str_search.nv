@@ -11,54 +11,54 @@ module types.str_search
 // ================================================================
 
 test "find: ASCII presence returns Some(byte_offset)" {
-    let s = "hello world"
-    let r = s.find("world")
+    ro s = "hello world"
+    ro r = s.find("world")
     assert(r.unwrap_or(-1) == 6)
 }
 
 test "find: at the start" {
-    let r = "hello".find("hel")
+    ro r = "hello".find("hel")
     assert(r.unwrap_or(-1) == 0)
 }
 
 test "find: at the end" {
-    let r = "hello".find("llo")
+    ro r = "hello".find("llo")
     assert(r.unwrap_or(-1) == 2)
 }
 
 test "find: needle not present" {
-    let r = "hello".find("world")
+    ro r = "hello".find("world")
     assert(r.is_none())
 }
 
 test "find: empty needle returns Some(0)" {
     // Rust convention: пустой needle всегда matches at offset 0.
-    let r = "hello".find("")
+    ro r = "hello".find("")
     assert(r.unwrap_or(-1) == 0)
 }
 
 test "find: needle longer than haystack" {
-    let r = "abc".find("abcdef")
+    ro r = "abc".find("abcdef")
     assert(r.is_none())
 }
 
 test "find: empty haystack with non-empty needle" {
-    let r = "".find("x")
+    ro r = "".find("x")
     assert(r.is_none())
 }
 
 test "find: empty haystack with empty needle" {
-    let r = "".find("")
+    ro r = "".find("")
     assert(r.unwrap_or(-1) == 0)
 }
 
 test "find: returns first match (not later)" {
-    let r = "abc-abc-abc".find("abc")
+    ro r = "abc-abc-abc".find("abc")
     assert(r.unwrap_or(-1) == 0)
 }
 
 test "find: single character search" {
-    let r = "hello".find("e")
+    ro r = "hello".find("e")
     assert(r.unwrap_or(-1) == 1)
 }
 
@@ -67,23 +67,23 @@ test "find: single character search" {
 // ================================================================
 
 test "rfind: returns last match offset" {
-    let r = "abc-abc-abc".rfind("abc")
+    ro r = "abc-abc-abc".rfind("abc")
     assert(r.unwrap_or(-1) == 8)
 }
 
 test "rfind: when only one match" {
-    let r = "hello".rfind("ll")
+    ro r = "hello".rfind("ll")
     assert(r.unwrap_or(-1) == 2)
 }
 
 test "rfind: not present returns None" {
-    let r = "hello".rfind("xyz")
+    ro r = "hello".rfind("xyz")
     assert(r.is_none())
 }
 
 test "rfind: empty needle returns Some(s.len)" {
     // Rust convention: пустой needle для rfind = position past last char.
-    let r = "abc".rfind("")
+    ro r = "abc".rfind("")
     assert(r.unwrap_or(-1) == 3)
 }
 
@@ -92,18 +92,18 @@ test "rfind: empty needle returns Some(s.len)" {
 // ================================================================
 
 test "find != rfind для multi-occurrence" {
-    let s = "ab-cd-ef"
-    let f = s.find("-").unwrap_or(-1)
-    let r = s.rfind("-").unwrap_or(-1)
+    ro s = "ab-cd-ef"
+    ro f = s.find("-").unwrap_or(-1)
+    ro r = s.rfind("-").unwrap_or(-1)
     assert(f == 2)
     assert(r == 5)
     assert(f != r)
 }
 
 test "find == rfind для unique match" {
-    let s = "abc-def"
-    let f = s.find("-").unwrap_or(-1)
-    let r = s.rfind("-").unwrap_or(-1)
+    ro s = "abc-def"
+    ro f = s.find("-").unwrap_or(-1)
+    ro r = s.rfind("-").unwrap_or(-1)
     assert(f == r)
     assert(f == 3)
 }
@@ -113,21 +113,21 @@ test "find == rfind для unique match" {
 // ================================================================
 
 test "split-by-find: parse 'key:value'" {
-    let s = "user:42"
-    let i = s.find(":").unwrap_or(-1)
+    ro s = "user:42"
+    ro i = s.find(":").unwrap_or(-1)
     assert(i == 4)
-    let key = s[0..i]
-    let val = s[i + 1..s.len()]
+    ro key = s[0..i]
+    ro val = s[i + 1..s.len()]
     assert(key == "user")
     assert(val == "42")
 }
 
 test "split-by-rfind: get last segment of path" {
-    let path = "/usr/local/bin/nova"
-    let i = path.rfind("/").unwrap_or(-1)
+    ro path = "/usr/local/bin/nova"
+    ro i = path.rfind("/").unwrap_or(-1)
     assert(i == 14)
-    let dir = path[0..i]
-    let name = path[i + 1..path.len()]
+    ro dir = path[0..i]
+    ro name = path[i + 1..path.len()]
     assert(dir == "/usr/local/bin")
     assert(name == "nova")
 }
@@ -137,31 +137,31 @@ test "split-by-rfind: get last segment of path" {
 // ================================================================
 
 test "slice: full range == original" {
-    let s = "hello"
-    let r = s[0..s.len()]
+    ro s = "hello"
+    ro r = s[0..s.len()]
     assert(r == "hello")
 }
 
 test "slice: empty slice (a == b)" {
-    let s = "hello"
-    let r = s[2..2]
+    ro s = "hello"
+    ro r = s[2..2]
     assert(r == "")
     assert(r.len() == 0)
 }
 
 test "slice: middle" {
-    let r = "hello world"[6..11]
+    ro r = "hello world"[6..11]
     assert(r == "world")
 }
 
 test "slice: from start" {
-    let r = "hello"[0..3]
+    ro r = "hello"[0..3]
     assert(r == "hel")
 }
 
 test "slice: to end" {
-    let s = "hello"
-    let r = s[2..s.len()]
+    ro s = "hello"
+    ro r = s[2..s.len()]
     assert(r == "llo")
 }
 
@@ -170,15 +170,15 @@ test "slice: to end" {
 // ================================================================
 
 test "find is case-sensitive" {
-    let s = "Hello World"
+    ro s = "Hello World"
     assert(s.find("hello").is_none())          // нижний регистр не найдём
     assert(s.find("Hello").unwrap_or(-1) == 0)
 }
 
 test "rfind is case-sensitive" {
-    let s = "Hello hello"
+    ro s = "Hello hello"
     assert(s.rfind("Hello").unwrap_or(-1) == 0) // только заглавный
-    let r = s.rfind("hello")
+    ro r = s.rfind("hello")
     assert(r.unwrap_or(-1) == 6)
 }
 
@@ -189,19 +189,19 @@ test "rfind is case-sensitive" {
 //                  s.char_len() — длина в codepoints O(n).
 
 test "len: ASCII — bytes == codepoints" {
-    let s = "hello"
+    ro s = "hello"
     assert(s.len() == 5)          // 5 bytes (ASCII; D26 rev: len = bytes O(1))
     assert(s.char_len() == 5)     // 5 codepoints
 }
 
 test "len: Cyrillic — bytes != codepoints" {
-    let s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
+    ro s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
     assert(s.len() == 12)          // D26 rev: len = bytes
     assert(s.char_len() == 6)      // codepoints
 }
 
 test "len: emoji — 4 байта на codepoint" {
-    let s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
+    ro s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
     assert(s.len() == 8)            // D26 rev: len = bytes
     assert(s.char_len() == 5)       // codepoints
 }
@@ -212,7 +212,7 @@ test "len: empty string" {
 }
 
 test "len for mixed content" {
-    let s = "a Привет b"           // a + space + 6 cyrillic + space + b = 10 codepoints
+    ro s = "a Привет b"           // a + space + 6 cyrillic + space + b = 10 codepoints
                                    // ASCII: a, space, space, b = 4 bytes
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
     assert(s.len() == 16)           // D26 rev: bytes
@@ -224,40 +224,40 @@ test "len for mixed content" {
 // ================================================================
 
 test "find: Cyrillic returns codepoint offset, not u8 offset" {
-    let s = "Привет мир"           // 'мир' starts at codepoint 7 (u8 13)
-    let r = s.find("мир")
+    ro s = "Привет мир"           // 'мир' starts at codepoint 7 (u8 13)
+    ro r = s.find("мир")
     assert(r.unwrap_or(-1) == 7)   // codepoint, не 13
 }
 
 test "rfind: Cyrillic returns codepoint offset" {
-    let s = "ааа-ааа"              // последний 'ааа' начинается с codepoint 4
-    let r = s.rfind("ааа")
+    ro s = "ааа-ааа"              // последний 'ааа' начинается с codepoint 4
+    ro r = s.rfind("ааа")
     assert(r.unwrap_or(-1) == 4)
 }
 
 test "slice: Cyrillic codepoint indices" {
-    let s = "Привет мир"
+    ro s = "Привет мир"
     // codepoints: П(0) р(1) и(2) в(3) е(4) т(5) ' '(6) м(7) и(8) р(9)
-    let hello = s[0..6]      // "Привет"
+    ro hello = s[0..6]      // "Привет"
     assert(hello == "Привет")
-    let world = s[7..10]     // "мир"
+    ro world = s[7..10]     // "мир"
     assert(world == "мир")
 }
 
 test "split-by-find with Cyrillic" {
-    let s = "ключ:значение"        // 'ключ'(0..4) + ':'(4) + 'значение'(5..13)
-    let i = s.find(":").unwrap_or(-1)
+    ro s = "ключ:значение"        // 'ключ'(0..4) + ':'(4) + 'значение'(5..13)
+    ro i = s.find(":").unwrap_or(-1)
     assert(i == 4)                 // codepoint offset
-    let key = s[0..i]
+    ro key = s[0..i]
     // Plan 108 D26 rev: slice uses codepoint indices; use char_len() not len().
-    let val = s[i + 1..s.char_len()]
+    ro val = s[i + 1..s.char_len()]
     assert(key == "ключ")
     assert(val == "значение")
 }
 
 test "slice across emoji boundary" {
-    let s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
-    let r = s[2..3]
+    ro s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
+    ro r = s[2..3]
     assert(r == "😀")
     assert(r.len() == 4)           // emoji = 4 bytes (D26 rev: len = bytes)
     assert(r.char_len() == 1)      // 1 codepoint
@@ -271,20 +271,20 @@ test "slice across emoji boundary" {
 // for-in по результату должен работать.
 
 test "bytes: ASCII — каждый символ = 1 байт" {
-    let s = "abc"
-    let bs = s.to_bytes()
+    ro s = "abc"
+    ro bs = s.to_bytes()
     assert(bs.len() == 3)
 }
 
 test "bytes: Cyrillic — UTF-8 многобайтовое представление" {
-    let s = "Привет"               // 6 codepoints, 12 bytes
-    let bs = s.to_bytes()
+    ro s = "Привет"               // 6 codepoints, 12 bytes
+    ro bs = s.to_bytes()
     assert(bs.len() == 12)
 }
 
 test "bytes: for-in over s.to_bytes()" {
-    let s = "abc"
-    let mut sum int = 0
+    ro s = "abc"
+    mut sum int = 0
     for b in s.to_bytes() {
         sum = sum + (b as int)
     }
@@ -292,10 +292,10 @@ test "bytes: for-in over s.to_bytes()" {
     assert(sum == 294)
 }
 
-test "bytes: let-binding then for-in" {
-    let s = "ABC"
-    let bs = s.to_bytes()
-    let mut count = 0
+test "bytes: ro-binding then for-in" {
+    ro s = "ABC"
+    ro bs = s.to_bytes()
+    mut count = 0
     for b in bs {
         if b == 'A' as u8 { count = count + 1 }
         if b == 'B' as u8 { count = count + 1 }
@@ -305,20 +305,20 @@ test "bytes: let-binding then for-in" {
 }
 
 test "chars: count codepoints через for-in" {
-    let s = "Привет"
-    let mut n = 0
+    ro s = "Привет"
+    mut n = 0
     for c in s.to_chars() {
-        let _ = c
+        ro _ = c
         n = n + 1
     }
     assert(n == 6)                 // 6 codepoints
 }
 
 test "chars: emoji decode" {
-    let s = "ab😀"                  // 3 codepoints
-    let mut count = 0
+    ro s = "ab😀"                  // 3 codepoints
+    mut count = 0
     for c in s.to_chars() {
-        let _ = c
+        ro _ = c
         count = count + 1
     }
     assert(count == 3)
@@ -329,26 +329,26 @@ test "chars: emoji decode" {
 // ================================================================
 
 test "split: basic" {
-    let parts = "a,b,c".split(",")
+    ro parts = "a,b,c".split(",")
     assert(parts.len() == 3)
 }
 
 test "split: no separator → один элемент" {
-    let parts = "abc".split(",")
+    ro parts = "abc".split(",")
     assert(parts.len() == 1)
 }
 
 test "split: для for-in" {
-    let mut count = 0
+    mut count = 0
     for p in "x,y,z,w".split(",") {
-        let _ = p
+        ro _ = p
         count = count + 1
     }
     assert(count == 4)
 }
 
 test "split: trailing separator" {
-    let parts = "a,b,".split(",")
+    ro parts = "a,b,".split(",")
     // ["a", "b", ""] — empty tail
     assert(parts.len() == 3)
 }
@@ -365,11 +365,11 @@ test "split: trailing separator" {
 //   - Buffer.with_capacity + add_byte       → WriteBuffer + write_byte
 
 test "bytes: round-trip через str.try_from" {
-    let original = "Hello, мир!"
-    let bs = original.to_bytes()
+    ro original = "Hello, мир!"
+    ro bs = original.to_bytes()
     // Восстановим строку: bs → str.try_from(bs) → str. UTF-8 валидный
     // (исходник был str), поэтому Ok.
-    let recon = match str.try_from(bs) {
+    ro recon = match str.try_from(bs) {
         Ok(s)  => s
         Err(_) => ""    // unreachable — original was valid UTF-8
     }
@@ -380,19 +380,19 @@ test "bytes: extreme values 0..255 через WriteBuffer" {
     // Если []u8 был int64-erasure, 0xFF мог бы потеряться при
     // приведении (signed sign-extend). С packed uint8_t[] сохраняется
     // битово-точно.
-    let mut wb = WriteBuffer.with_capacity(3)
+    mut wb = WriteBuffer.with_capacity(3)
     wb.write_byte(0xFF)
     wb.write_byte(0x00)
     wb.write_byte(0x7F)
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 3)
 }
 
 test "bytes: for-in over packed []u8" {
     // For-in: каждый элемент — реально u8 (uint8_t), не int64.
-    let s = "ABC"
-    let bs = s.to_bytes()
-    let mut sum = 0
+    ro s = "ABC"
+    ro bs = s.to_bytes()
+    mut sum = 0
     for b in bs {
         // b — это u8 (nova_byte = uint8_t), но cast to int для арифметики
         sum = sum + (b as int)

@@ -14,37 +14,37 @@ type Celsius { deg int }
 type Fahrenheit { deg int }
 
 fn Celsius.try_from(f Fahrenheit) -> Result[Celsius, str] => {
-    let c = (f.deg - 32) * 5 / 9
+    ro c = (f.deg - 32) * 5 / 9
     if c < -273 { Err("below absolute zero") } else { Ok(Celsius { deg: c }) }
 }
 
 fn Fahrenheit.try_from(c Celsius) -> Result[Fahrenheit, str] => {
-    let f = c.deg * 9 / 5 + 32
+    ro f = c.deg * 9 / 5 + 32
     Ok(Fahrenheit { deg: f })
 }
 
 test "P2-A — TryFrom Fahrenheit → Celsius Ok path" {
-    let r = Celsius.try_from(Fahrenheit { deg: 212 })
+    ro r = Celsius.try_from(Fahrenheit { deg: 212 })
     assert(r.is_ok())
-    let c = r.unwrap_or(Celsius { deg: 0 })
+    ro c = r.unwrap_or(Celsius { deg: 0 })
     assert(c.deg == 100)
 }
 
 test "P2-A — TryFrom Fahrenheit → Celsius Err path (below abs zero)" {
-    let r = Celsius.try_from(Fahrenheit { deg: -1000 })
+    ro r = Celsius.try_from(Fahrenheit { deg: -1000 })
     assert(r.is_err())
 }
 
 test "P2-A — TryFrom Celsius → Fahrenheit Ok path" {
-    let r = Fahrenheit.try_from(Celsius { deg: 100 })
+    ro r = Fahrenheit.try_from(Celsius { deg: 100 })
     assert(r.is_ok())
-    let f = r.unwrap_or(Fahrenheit { deg: 0 })
+    ro f = r.unwrap_or(Fahrenheit { deg: 0 })
     assert(f.deg == 212)
 }
 
 test "P2-A — TryInto via try_from symmetry" {
-    let r = Celsius.try_from(Fahrenheit { deg: 32 })
+    ro r = Celsius.try_from(Fahrenheit { deg: 32 })
     assert(r.is_ok())
-    let c = r.unwrap_or(Celsius { deg: -1 })
+    ro c = r.unwrap_or(Celsius { deg: -1 })
     assert(c.deg == 0)
 }

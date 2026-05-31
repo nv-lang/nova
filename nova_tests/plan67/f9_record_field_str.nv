@@ -12,6 +12,6 @@ type Person {
 // EXPECT_STDOUT Alice
 
 fn main() Io -> () {
-    let p = Person { name: "Alice", age: 30 }
+    ro p = Person { name: "Alice", age: 30 }
     println(p.name)
 }

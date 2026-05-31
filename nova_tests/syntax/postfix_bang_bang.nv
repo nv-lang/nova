@@ -13,7 +13,7 @@ fn parse_int(s str) -> Result[int, str] {
 }
 
 fn pipeline_throw(s str) Fail -> int {
-    let n = parse_int(s)!!
+    ro n = parse_int(s)!!
     n + 1
 }
 
@@ -21,7 +21,7 @@ test "!!: Ok(v) разворачивается в v" {
     with Fail = effect Fail {
         fail(_) => interrupt -1
     } {
-        let r = pipeline_throw("ok")
+        ro r = pipeline_throw("ok")
         assert(r == 43)
     }
 }
@@ -30,7 +30,7 @@ test "!!: Err(e) бросает через Fail" {
     with Fail = effect Fail {
         fail(_) => interrupt -1
     } {
-        let r = pipeline_throw("bad")
+        ro r = pipeline_throw("bad")
         assert(r == -1)
     }
 }
@@ -41,6 +41,6 @@ test "!!cond — двойное отрицание (D85 не ломает сущ
     assert(!!true)
     // !!false ≡ !(!false) ≡ !true ≡ false; assert(false) — fail.
     // Поэтому проверяем что true получается из !!true.
-    let r = !!true
+    ro r = !!true
     assert(r == true)
 }

@@ -8,23 +8,23 @@
 module nova_tests.plan89.iflet_option_elem
 
 
-test "for-in []Option + if let Some" {
-    let opts []Option[int] = [Some(1), None, Some(3), Some(10)]
-    let mut sum = 0
+test "for-in []Option + if ro Some" {
+    ro opts []Option[int] = [Some(1), None, Some(3), Some(10)]
+    mut sum = 0
     for o in opts {
-        if let Some(v) = o {
+        if Some(v) = o {
             sum = sum + v
         }
     }
     assert(sum == 14)
 }
 
-test "for-in []Option + if let с else" {
-    let opts []Option[int] = [Some(5), None, None, Some(2)]
-    let mut found = 0
-    let mut missing = 0
+test "for-in []Option + if ro с else" {
+    ro opts []Option[int] = [Some(5), None, None, Some(2)]
+    mut found = 0
+    mut missing = 0
     for o in opts {
-        if let Some(v) = o {
+        if Some(v) = o {
             found = found + v
         } else {
             missing = missing + 1
@@ -35,10 +35,10 @@ test "for-in []Option + if let с else" {
 }
 
 test "for-in []Option[str] — боксированный элемент с str payload" {
-    let names []Option[str] = [Some("alice"), None, Some("bob")]
-    let mut total_len = 0
+    ro names []Option[str] = [Some("alice"), None, Some("bob")]
+    mut total_len = 0
     for o in names {
-        if let Some(n) = o {
+        if Some(n) = o {
             total_len = total_len + n.len()
         }
     }

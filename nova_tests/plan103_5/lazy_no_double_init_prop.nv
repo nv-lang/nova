@@ -6,15 +6,15 @@
 module nova_tests.plan103_5.lazy_no_double_init_prop
 
 test "Lazy.force: init runs exactly once across N sequential calls" {
-    let mut init_count = AtomicInt.new(0)
-    let lazy = Lazy[int].new() {
+    mut init_count = AtomicInt.new(0)
+    ro lazy = Lazy[int].new() {
         init_count.fetch_add(1)
         555
     }
 
     // 100 sequential force() calls — init must run exactly once
     for _i in 0..100 {
-        let v = lazy.force()
+        ro v = lazy.force()
         assert(v == 555)
     }
 
@@ -23,11 +23,11 @@ test "Lazy.force: init runs exactly once across N sequential calls" {
 }
 
 test "Lazy.force: all callers observe the same value regardless of call order" {
-    let lazy = Lazy[int].new() { 123 }
+    ro lazy = Lazy[int].new() { 123 }
 
-    let v1 = lazy.force()
-    let v2 = lazy.force()
-    let v3 = lazy.force()
+    ro v1 = lazy.force()
+    ro v2 = lazy.force()
+    ro v3 = lazy.force()
 
     assert(v1 == 123)
     assert(v2 == 123)

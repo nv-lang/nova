@@ -27,5 +27,5 @@ module nonexistent.parent.target
 fn dummy() -> int => 1
 
 test "should never reach this — compile must fail on D29 mismatch" {
-    let _ = dummy()
+    ro _ = dummy()
 }

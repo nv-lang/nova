@@ -11,6 +11,6 @@ type Gizmo { v int }
 fn Gizmo.make() -> @ => { v: 1 }
 
 test "static -> @ rejected" {
-    let g = Gizmo { v: 0 }
+    ro g = Gizmo { v: 0 }
     assert(g.v == 0)
 }

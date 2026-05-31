@@ -16,18 +16,18 @@ test "10 cycles × 1K spawn — heap bounded" {
     // OK. Под concurrent jobs (other stress tests share CPU/GC/arena)
     // tighter scope avoids fiber arena pressure regressions.
     // Warmup: fill pool stable.
-    let _w = parallel for i in 0..1000 { i }
+    ro _w = parallel for i in 0..1000 { i }
     gc.collect()
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
-    let mut max_growth = 0
-    let mut cycle = 0
+    mut max_growth = 0
+    mut cycle = 0
     while cycle < 10 {
-        let xs = parallel for i in 0..1000 { i + cycle }
+        ro xs = parallel for i in 0..1000 { i + cycle }
         assert(xs[999] == 999 + cycle)
         gc.collect()
-        let h = gc.heap_size()
-        let g = if h > baseline { h - baseline } else { 0 }
+        ro h = gc.heap_size()
+        ro g = if h > baseline { h - baseline } else { 0 }
         if g > max_growth { max_growth = g }
         cycle = cycle + 1
     }

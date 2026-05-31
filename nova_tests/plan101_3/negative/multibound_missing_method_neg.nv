@@ -26,7 +26,7 @@ fn needs_both[T HasA + HasB](x T) -> int => x.a() + x.b()
 
 
 test "should error" {
-    let p = Partial { v: 1 }
-    let _ = needs_both(p)
+    ro p = Partial { v: 1 }
+    ro _ = needs_both(p)
     assert(1 == 1)
 }

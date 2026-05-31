@@ -14,6 +14,6 @@ fn Tag @show() -> str => @label
 fn describe[T Showable](x T) -> str => x.show()
 
 test "Ф.3 — cross-file bound satisfied by a conforming type" {
-    let t = Tag { label: "ok" }
+    ro t = Tag { label: "ok" }
     assert(describe(t) == "ok")
 }

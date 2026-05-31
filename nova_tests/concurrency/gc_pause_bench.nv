@@ -34,41 +34,41 @@ fn make_obj(i int) -> Obj =>
 
 // Возвращает max-pause из N раундов (миллисекунды).
 fn run_rounds(rounds int, per_round int) -> int {
-    let mut max_pause = 0
-    let mut sum_pause = 0
+    mut max_pause = 0
+    mut sum_pause = 0
     for _ in 0..rounds {
         for i in 0..per_round {
-            let _ = make_obj(i)
+            ro _ = make_obj(i)
         }
-        let t0 = Time.now()
+        ro t0 = Time.now()
         gc.collect()
-        let t1 = Time.now()
-        let pause = t1 - t0
+        ro t1 = Time.now()
+        ro pause = t1 - t0
         if pause > max_pause {
             max_pause = pause
         }
         sum_pause = sum_pause + pause
     }
-    let avg = sum_pause / rounds
-    let h = gc.heap_size()
+    ro avg = sum_pause / rounds
+    ro h = gc.heap_size()
     println("  ${rounds} rounds × ${per_round}: max=${max_pause}ms avg=${avg}ms heap=${h}b")
     max_pause
 }
 
 test "gc pause bench: small workload (10k × 20)" {
-    let max_pause_ms = run_rounds(20, 10_000)
+    ro max_pause_ms = run_rounds(20, 10_000)
     // На Windows max_pause_ms == 0 → pause < 15.6ms (gran)
     // Sanity: <1000ms (= 1s)
     assert(max_pause_ms < 1_000)
 }
 
 test "gc pause bench: medium workload (100k × 10)" {
-    let max_pause_ms = run_rounds(10, 100_000)
+    ro max_pause_ms = run_rounds(10, 100_000)
     assert(max_pause_ms < 5_000)
 }
 
 test "gc pause bench: large workload (1M × 3)" {
-    let max_pause_ms = run_rounds(3, 1_000_000)
+    ro max_pause_ms = run_rounds(3, 1_000_000)
     // Sanity: 30 секунд должно хватить даже под медленным debug-build Boehm.
     assert(max_pause_ms < 30_000)
 }

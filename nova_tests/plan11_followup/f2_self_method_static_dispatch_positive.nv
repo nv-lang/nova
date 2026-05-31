@@ -15,13 +15,13 @@ export fn Holder[T].dup(v T) -> Self =>
     Self.new(v)
 
 test "Self.method() в static method generic типа работает" {
-    let c = Holder[int].dup(99)
+    ro c = Holder[int].dup(99)
     assert(c.v == 99)
 }
 
 test "Self.method() с разными generic instances" {
-    let ci = Holder[int].dup(7)
-    let cs = Holder[str].dup("hi")
+    ro ci = Holder[int].dup(7)
+    ro cs = Holder[str].dup("hi")
     assert(ci.v == 7)
     assert(cs.v == "hi")
 }

@@ -9,13 +9,13 @@ fn classify(n int) -> str {
 }
 
 test "if-else as expression" {
-    let r = if 5 > 3 { "yes" } else { "no" }
+    ro r = if 5 > 3 { "yes" } else { "no" }
     assert(r == "yes")
 }
 
 test "if-else if chain" {
-    let n = 0
-    let r = if n > 0 { "pos" } else if n < 0 { "neg" } else { "zero" }
+    ro n = 0
+    ro r = if n > 0 { "pos" } else if n < 0 { "neg" } else { "zero" }
     assert(r == "zero")
 }
 
@@ -26,8 +26,8 @@ test "early return" {
 }
 
 test "while loop counts" {
-    let mut n = 1
-    let mut count = 0
+    mut n = 1
+    mut count = 0
     while n < 100 {
         n *= 2
         count += 1
@@ -36,8 +36,8 @@ test "while loop counts" {
 }
 
 test "loop with break" {
-    let mut i = 0
-    let mut sum = 0
+    mut i = 0
+    mut sum = 0
     loop {
         if i >= 5 { break }
         sum += i
@@ -47,8 +47,8 @@ test "loop with break" {
 }
 
 test "loop with continue" {
-    let mut i = 0
-    let mut even_sum = 0
+    mut i = 0
+    mut even_sum = 0
     while i < 10 {
         i += 1
         if i % 2 != 0 { continue }
@@ -58,8 +58,8 @@ test "loop with continue" {
 }
 
 test "nested if" {
-    let x = 5
-    let r = if x > 0 {
+    ro x = 5
+    ro r = if x > 0 {
         if x > 10 { "big positive" } else { "small positive" }
     } else {
         "non-positive"
@@ -68,9 +68,9 @@ test "nested if" {
 }
 
 test "block expression value" {
-    let v = {
-        let a = 10
-        let b = 20
+    ro v = {
+        ro a = 10
+        ro b = 20
         a + b
     }
     assert(v == 30)

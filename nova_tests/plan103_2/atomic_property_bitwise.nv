@@ -9,30 +9,30 @@
 module nova_tests.plan103_2.atomic_property_bitwise
 
 test "property: fetch_or identity — or with 0" {
-    let mut a = AtomicI64.new(0xDEADBEEF)
-    let v = a.load()
-    let prev = a.fetch_or(0)
+    mut a = AtomicI64.new(0xDEADBEEF)
+    ro v = a.load()
+    ro prev = a.fetch_or(0)
     assert(prev == v)
     assert(a.load() == v)
 }
 
 test "property: fetch_and identity — and with all-ones" {
-    let mut a = AtomicI64.new(0b10101010)
-    let v = a.load()
+    mut a = AtomicI64.new(0b10101010)
+    ro v = a.load()
     // Largest positive i64 is all-ones except sign bit.
     // Use a mask with all low 32 bits set for portability.
-    let mask = 0xFFFFFFFF
-    let mut a2 = AtomicI64.new(0b1010)
-    let v2 = a2.load()
-    let prev = a2.fetch_and(mask)
+    ro mask = 0xFFFFFFFF
+    mut a2 = AtomicI64.new(0b1010)
+    ro v2 = a2.load()
+    ro prev = a2.fetch_and(mask)
     assert(prev == v2)
     // value still v2 (0b1010 & 0xFFFFFFFF = 0b1010)
     assert(a2.load() == v2)
 }
 
 test "property: fetch_xor self-inverse" {
-    let mut a = AtomicI64.new(0b11001100)
-    let v = a.load()
+    mut a = AtomicI64.new(0b11001100)
+    ro v = a.load()
     a.fetch_xor(v)
     assert(a.load() == 0)
     a.fetch_xor(v)
@@ -40,23 +40,23 @@ test "property: fetch_xor self-inverse" {
 }
 
 test "property: fetch_max idempotent — already at max" {
-    let mut a = AtomicI64.new(100)
-    let prev = a.fetch_max(50)  // 50 < 100 → no change
+    mut a = AtomicI64.new(100)
+    ro prev = a.fetch_max(50)  // 50 < 100 → no change
     assert(prev == 100)
     assert(a.load() == 100)
 }
 
 test "property: fetch_min idempotent — already at min" {
-    let mut a = AtomicI64.new(5)
-    let prev = a.fetch_min(10)  // 10 > 5 → no change
+    mut a = AtomicI64.new(5)
+    ro prev = a.fetch_min(10)  // 10 > 5 → no change
     assert(prev == 5)
     assert(a.load() == 5)
 }
 
 test "property: AtomicBool fetch_xor is XOR identity" {
-    let mut a = AtomicBool.new(false)
+    mut a = AtomicBool.new(false)
     // XOR with false is identity
-    let prev = a.fetch_xor(false)
+    ro prev = a.fetch_xor(false)
     assert(!prev)
     assert(!a.load())
     // XOR with true flips
@@ -68,8 +68,8 @@ test "property: AtomicBool fetch_xor is XOR identity" {
 }
 
 test "property: AtomicBool fetch_and with true is identity" {
-    let mut a = AtomicBool.new(true)
-    let prev = a.fetch_and(true)
+    mut a = AtomicBool.new(true)
+    ro prev = a.fetch_and(true)
     assert(prev)
     assert(a.load())
 }

@@ -42,19 +42,19 @@ test "float exponent" {
 }
 
 test "string literal" {
-    let s = "hello"
+    ro s = "hello"
     assert(s == "hello")
     assert(s.len() == 5)
 }
 
 test "string escapes" {
-    let nl = "a\nb"
+    ro nl = "a\nb"
     assert(nl.len() == 3)
-    let tab = "x\ty"
+    ro tab = "x\ty"
     assert(tab.len() == 3)
-    let q = "he said \"hi\""
+    ro q = "he said \"hi\""
     assert(q.contains("\""))
-    let bs = "back\\slash"
+    ro bs = "back\\slash"
     assert(bs.contains("\\"))
 }
 
@@ -65,6 +65,6 @@ test "bool literals" {
 }
 
 test "unit literal" {
-    let u = ()
+    ro u = ()
     assert(u == ())
 }

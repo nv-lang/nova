@@ -13,10 +13,10 @@ type NotIterable {
 }
 
 fn main() -> int {
-    let bad = NotIterable { value: 42 }
+    ro bad = NotIterable { value: 42 }
     for x in bad {
         // unreachable: codegen error на for-in
-        let _ = x
+        ro _ = x
     }
     0
 }

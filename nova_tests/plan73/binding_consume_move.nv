@@ -12,6 +12,6 @@ fn Token consume @release() -> int => @val
 test "move chain via consume bindings" {
     consume a = Token.new(11)
     consume b = a               // move — a dead, b owns
-    let v = b.release()
+    ro v = b.release()
     assert(v == 11)
 }

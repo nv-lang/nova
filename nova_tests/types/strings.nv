@@ -14,7 +14,7 @@ test "len method" {
 }
 
 test "starts_with / ends_with" {
-    let s = "hello, world"
+    ro s = "hello, world"
     assert(s.starts_with("hello"))
     assert(!s.starts_with("world"))
     assert(s.ends_with("world"))
@@ -22,7 +22,7 @@ test "starts_with / ends_with" {
 }
 
 test "contains" {
-    let s = "the quick brown fox"
+    ro s = "the quick brown fox"
     assert(s.contains("quick"))
     assert(s.contains("brown fox"))
     assert(!s.contains("cat"))
@@ -46,8 +46,8 @@ test "equality and comparison" {
 }
 
 test "string contains escaped chars" {
-    let q = "\"quoted\""
+    ro q = "\"quoted\""
     assert(q.contains("\""))
-    let nl = "line1\nline2"
+    ro nl = "line1\nline2"
     assert(nl.contains("\n"))
 }

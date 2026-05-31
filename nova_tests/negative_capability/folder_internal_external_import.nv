@@ -10,6 +10,6 @@ module negative_capability.folder_internal_external_import
 import nova_tests.modules.folder_internal.internal.{make_token}
 
 test "internal import from outside rejected" {
-    let _x = make_token(5)
+    ro _x = make_token(5)
     assert(true)
 }

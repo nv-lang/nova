@@ -17,6 +17,6 @@ fn wrap[T From[str]](s str) -> T => T.from(s)
 
 
 test "тип без From[str] в generic bound — compile error" {
-    let bad = wrap[NoConv]("oops")
+    ro bad = wrap[NoConv]("oops")
     assert(bad.x == 0)
 }

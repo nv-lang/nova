@@ -8,6 +8,6 @@ module plan65.f1_close_after_int_neg
 
 fn main() -> () {
     // Bare int — должно быть отклонено codegen'ом с E5101-style сообщением.
-    let _t = ChanReader.close_after(50)
+    ro _t = ChanReader.close_after(50)
     println("unreachable")
 }

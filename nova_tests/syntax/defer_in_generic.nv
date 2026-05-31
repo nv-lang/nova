@@ -9,7 +9,7 @@ module syntax.defer_in_generic
 
 
 fn do_with_defer[T](x T) -> T {
-    defer { let _ = 42 }
+    defer { ro _ = 42 }
     x
 }
 
@@ -20,12 +20,12 @@ fn do_with_defer[T](x T) -> T {
 // просто compile + run без panic'а.
 
 test "defer в generic fn body компилируется и run'ится" {
-    let result = do_with_defer(42)
+    ro result = do_with_defer(42)
     assert(result == 42)
 }
 
 
 test "defer в generic fn body — другой тип" {
-    let result = do_with_defer("hello")
+    ro result = do_with_defer("hello")
     assert(result == "hello")
 }

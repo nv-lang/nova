@@ -9,14 +9,14 @@
 module nova_tests.plan70_4.f1_array_f32_vs_f64_pos
 
 test "[]f64 stores f64 values" {
-    let vals []f64 = [1.0, 2.5, 3.5]
+    ro vals []f64 = [1.0, 2.5, 3.5]
     assert(vals.len() == 3)
     assert(vals[0] == 1.0)
     assert(vals[2] == 3.5)
 }
 
 test "[]f64 push and access" {
-    let mut v []f64 = []f64.new()
+    mut v []f64 = []f64.new()
     v.push(0.5)
     v.push(1.5)
     assert(v.len() == 2)
@@ -25,14 +25,14 @@ test "[]f64 push and access" {
 }
 
 test "[]f32 stores f32 values" {
-    let vals []f32 = [1.0 as f32, 2.5 as f32]
+    ro vals []f32 = [1.0 as f32, 2.5 as f32]
     assert(vals.len() == 2)
     assert(vals[0] == 1.0 as f32)
     assert(vals[1] == 2.5 as f32)
 }
 
 test "[]f32 push and access" {
-    let mut v []f32 = []f32.new()
+    mut v []f32 = []f32.new()
     v.push(0.5 as f32)
     v.push(1.5 as f32)
     assert(v.len() == 2)

@@ -20,7 +20,7 @@ fn use_closer(c protocol { close() -> () }) -> () => c.close()
 
 
 test "анонимный protocol-тип в параметре, structural match" {
-    let d = Doc { title: "x" }
+    ro d = Doc { title: "x" }
     use_closer(d)
     assert(d.title == "x")
 }

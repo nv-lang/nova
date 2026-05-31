@@ -4,36 +4,36 @@ module nova_tests.plan70_4.f4_option_sized_int_pos
 // NovaOpt_int32_t / NovaOpt_uint32_t types, not collapse to NovaOpt_nova_int.
 
 test "Option[i32] Some/None" {
-    let a Option[i32] = Some(42 as i32)
-    let b Option[i32] = None
+    ro a Option[i32] = Some(42 as i32)
+    ro b Option[i32] = None
     assert(a.is_some())
     assert(b.is_none())
 }
 
 test "Option[i32] unwrap_or" {
-    let a Option[i32] = Some(7 as i32)
-    let b Option[i32] = None
+    ro a Option[i32] = Some(7 as i32)
+    ro b Option[i32] = None
     assert(a.unwrap_or(0 as i32) == 7 as i32)
     assert(b.unwrap_or(99 as i32) == 99 as i32)
 }
 
 test "Option[u32] Some/None" {
-    let a Option[u32] = Some(1000 as u32)
-    let b Option[u32] = None
+    ro a Option[u32] = Some(1000 as u32)
+    ro b Option[u32] = None
     assert(a.is_some())
     assert(b.is_none())
 }
 
 test "Option[u32] unwrap_or" {
-    let a Option[u32] = Some(500 as u32)
-    let b Option[u32] = None
+    ro a Option[u32] = Some(500 as u32)
+    ro b Option[u32] = None
     assert(a.unwrap_or(0 as u32) == 500 as u32)
     assert(b.unwrap_or(42 as u32) == 42 as u32)
 }
 
 test "Option[i16] Some and unwrap_or" {
-    let a Option[i16] = Some(100 as i16)
-    let b Option[i16] = None
+    ro a Option[i16] = Some(100 as i16)
+    ro b Option[i16] = None
     assert(a.is_some())
     assert(b.unwrap_or(0 as i16) == 0 as i16)
     assert(a.unwrap_or(0 as i16) == 100 as i16)

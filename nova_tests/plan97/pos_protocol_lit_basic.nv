@@ -14,7 +14,7 @@ export type Runnable protocol {
 
 
 test "protocol-литерал создаётся и присваивается" {
-    let r = protocol Runnable {
+    ro r = protocol Runnable {
         run() => ()
     }
     // Bootstrap: значение создано, allocation работает.
