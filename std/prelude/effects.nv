@@ -172,3 +172,82 @@ export type Mem effect {
     live() -> int
     reset() -> ()
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 110.4.3 (D185) — Cleanup observability effect
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Plan 110 D185: Cleanup effect — observability-only handler dispatch
+/// для tracing cleanup-scope entry/exit. Default handler — no-op,
+/// zero-overhead если не использован. Не дублирует Consumable.on_exit —
+/// orthogonal layer для metrics/tracing.
+///
+/// **Operations:**
+///   - `on_scope_enter(label str, timeout_ms int)` — invoked при входе
+///     в `consume X = ... { body }` scope-block. timeout_ms — resolved
+///     deadline.
+///   - `on_scope_exit(label str, outcome ScopeOutcome)` — invoked при
+///     выходе из scope с финальным outcome.
+///
+/// **Handler restrictions (D185):**
+///   - Handler не может `throw` (observability должна быть idempotent).
+///   - Handler не может `suspend` (sync-only).
+///   - Return type `()` (observability-only, not value-returning).
+///
+/// **OpenTelemetry integration (D185 §otel):** reference impl
+/// `CleanupHandler.to_otel(exporter)` маппит operations в OTel spans:
+///   - on_scope_enter → create span с attributes (cleanup.label,
+///     cleanup.timeout_ms, cleanup.start_time_ns).
+///   - on_scope_exit → close span с status (OK/ERROR_failed/
+///     ERROR_panic) + duration_ms.
+///
+/// **Bootstrap status (Plan 110.4.3):** declaration here; runtime
+/// integration с codegen ConsumeScope dispatch landing в Plan 110.4.4
+/// (effect emit when handler active). Default handler — silent no-op
+/// (codegen elides calls when no handler bound).
+#stable(since = "0.1")
+export type Cleanup effect {
+    on_scope_enter(label str, timeout_ms int) -> ()
+    on_scope_exit(label str, outcome ScopeOutcome) -> ()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 110.4.5 (D195) — Application effect для top-level lifecycle
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Plan 110 D195: Application effect для top-level application lifecycle
+/// (finalizers + default exit_timeout для cleanup-scopes).
+///
+/// **Operations:**
+///   - `register_finalizer(f fn() -> ())` — register fn to run при
+///     exit из enclosing `with Application = handler { ... }` scope.
+///     Topo-order: reverse of registration (LIFO).
+///   - `default_exit_timeout_ms() -> int` — Level-2 fallback для
+///     ConsumeScope timeout resolution (D192 3-level fallback).
+///
+/// **Use cases:**
+///   - `Application.register_finalizer(|| metrics.flush())` — clean
+///     metrics shutdown.
+///   - `with Application = Application.handler(default_exit_timeout_ms: 10_000)`
+///     — set global cleanup timeout.
+///
+/// **Nesting semantics (D195 R1-R8):**
+///   - R1 inner handler wins (effect-stack semantics).
+///   - R2 finalizer registry NOT inherited (test isolation).
+///   - R3 default exit_timeout NOT inherited.
+///   - R6 cross-fiber: spawn child видит parent's Application
+///     via D80 effect snapshot.
+///   - R8 abort/SIGKILL не fires finalizers (OS limitation, не bug).
+///
+/// **Bootstrap status (Plan 110.4.5):** effect + handler declarations
+/// here. Codegen integration с D192 Level-2 resolution landing в
+/// Plan 110.4.6 (codegen check Application handler в
+/// nv_resolve_exit_timeout). Cross-fiber propagation через D80 effect
+/// snapshot — landing в 110.4.7.
+#stable(since = "0.1")
+export type Application effect {
+    register_finalizer(f fn() -> ()) -> ()
+    default_exit_timeout_ms() -> int
+}
