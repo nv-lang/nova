@@ -27907,6 +27907,38 @@ Foundation point delivered (Session 1+2):
 
 ---
 
+## Plan 110.5.2-5 auto-fix tool — scope decision question (2026-05-31)
+
+User asked: "Plan 110.5.2-5 auto-fix tool nova fix --simplify-cleanup — зачем это?"
+
+**Rationale для tool:**
+- ~42 fixture'а в `nova_tests/plan100_4_*` + `nova_tests/syntax/errdefer_*` + `nova_tests/expected_runtime/errdefer_*` используют okdefer/errdefer/defer|r|.
+- Plan 110 D189 retracts эти keywords.
+- Plan 110.5.7 final parser cutover требует чтобы все fixtures были migrated ИНАЧЕ test suite ломается.
+
+**Three options:**
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A. Auto-fix tool (decomposition default)** | User-facing migration path; reusable for external users | Multi-day Rust binary implementation; overkill for internal-only codebase |
+| **B. Manual migration** | Concrete work, ~5-10 sessions | No user-facing tool |
+| **C. Delete deprecated fixtures** | Fastest; reduces test maintenance | Loses coverage for transition period |
+
+**Recommended path для production-grade Plan 110 closure:** **B + C**:
+1. Migrate fixtures testing cleanup-semantics в consume{} form (preserves coverage).
+2. Delete fixtures testing retracted-only behavior (no value post-cutover).
+3. Skip auto-fix tool (external users пока нет; bootstrap is internal).
+
+This saves ~1 session Rust binary work + still achieves Plan 110.5.7 hard cutover.
+
+**Awaiting user decision** before committing to either path. Currently:
+- 🟢 Plan 110.5.1 deprecation warnings landed (40dcb25e6c0).
+- 🟡 Plan 110.5.7 final parser cutover: DEFERRED pending migration path decision.
+- 🟡 Plan 110.5.2-4 auto-fix tool: TENTATIVE (recommend dropping per B+C).
+- 🟡 Plan 110.5.5 fixture migration: PENDING decision A/B/C.
+
+---
+
 ## Plan 110 Session 3 extended #2 — autonomous continuation (2026-05-31)
 
 Per user "продолжай без остановки" Session 3 продолжилась после initial closure. Дополнительно landed:
