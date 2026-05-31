@@ -25639,3 +25639,77 @@ readonly для smooth migration (Ф.5/Ф.6 corpus migrated в том же
 legacy paths (один followup commit перед merge). Это не dual-syntax
 fallback — а migration discipline в рамках hard-cutover single-merge
 требования плана.
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 114 — followup tooling 2026-05-31 (Ф.2 + Ф.7.1-Ф.7.3) + Plan 115 spawn
+═══════════════════════════════════════════════════════════════════════════════
+
+Worktree: D:/Sources/nv-lang/nova-p114
+Branch:   plan-114-followup
+Status:   🟢 Done — Ф.2 + Ф.7.1 + Ф.7.2 + Ф.7.3 closed + Plan 115 spawned.
+
+Что сделано (5 commits):
+
+1. Plan 115 doc — docs/plans/115-const-narrow-generalize-fn.md (508 lines).
+   Carry-over from Plan 114 safety hatches Ф.9/Ф.10/Ф.11; 4 фазы (Ф.0 GATE +
+   Ф.1 narrow + Ф.2 generalize + Ф.3 const fn + Ф.4 finalize); D199 + D200
+   spec блоки; 18 acceptance criteria A1-A18; R-1 to R-6 risks; out-of-scope
+   markers; cross-refs Plan 14 Ф.2 + Plan 46 + Plan 70.5 + Plan 114 D184.
+
+2. Ф.2 diagnostic terminology (closed [M-114-diag-terminology]):
+   - compiler-codegen/src/codegen/runtime_registry.rs: return_ty
+     'readonly []u8' → 'ro []u8'; doc strings updated; embedded Nova-body
+     strings (nova_body: Some('...')) rewritten via Python helper
+     scripts/plan114_rust_nova_body.py — let X → ro X, let mut Y → mut Y.
+   - compiler-codegen/src/types/mod.rs: E_READONLY_FIELD / E_READONLY_CONTENT
+     diagnostic texts use 'ro' instead of 'readonly'; TypeRef::Readonly
+     display (3 sites: typeref_display, render_type_ref, typeref_render)
+     'readonly T' → 'ro T'; quick-fix replacement 'let mut {recv}' →
+     'mut {recv}'.
+   - compiler-codegen/src/doc/collector.rs: TypeRef::Readonly render
+     'readonly T' → 'ro T'.
+   - Error codes (E_READONLY_FIELD/CONTENT/COERCE, E_PARAM_NOT_MUT) сохранены
+     как stable API; только terminology в diagnostic-текстах обновлена.
+   - plan114: 10/10 PASS; cargo build green.
+
+3. Ф.7.1 tree-sitter-nova grammar 0.2.0 (closed [M-114-tree-sitter-grammar]):
+   - BREAKING version bump 0.1.0 → 0.2.0 (separate repo D:/Sources/nv-lang/
+     tree-sitter-nova, branch main).
+   - grammar.js: KEYWORDS drop let/readonly + add ro; let_declaration
+     accepts choice('ro', 'mut'); let_statement choice('ro', 'mut',
+     'consume'); record_field choice('mut', 'ro', 'consume'); param
+     adds 'ro' qualifier; new ro_type rule (type-modifier prefix);
+     if_expr + while_expr add ro/mut identifier-pattern form.
+   - queries/highlights.scm + locals.scm: keyword list updated.
+   - Test corpus rewritten via plan114_rewrite.py: 5 files, 50 lines
+     changed. 84/84 fixtures PASS (100%).
+   - src/parser.c regenerated via tree-sitter generate.
+
+4. Ф.7.2 LSP quick-fix (closed [M-114-lsp-quickfixes]):
+   - nova-lsp/src/server.rs: ServerCapabilities добавлен
+     code_action_provider (CodeActionKind::QUICKFIX).
+   - async fn code_action handler — сканирует context.diagnostics на
+     E_KW_REMOVED_LET / E_KW_REMOVED_READONLY; для each diagnostic
+     создаёт CodeAction с WorkspaceEdit заменяющим keyword.
+   - plan114_fix_let helper: context-aware (mut vs non-mut detection
+     via rope line slice).
+   - plan114_fix_readonly: unconditional 'ro'.
+   - is_preferred: true — IDE auto-applies на Ctrl+. → first quick-fix.
+   - Без semantic_tokens_provider: tree-sitter обеспечивает highlights
+     (Ф.7.1 grammar 0.2.0); LSP'у не нужно дублировать.
+   - cargo test -p nova-lsp: 91/0 PASS (Plan 104.1 baseline preserved).
+
+5. Ф.7.3 editor packaging (closed [M-114-editor-packaging]):
+   - editors/vscode/syntaxes/nova.tmLanguage.json: keyword.declaration
+     dropped 'let'; storage.modifier 'mut readonly consume' → 'ro mut consume'.
+   - editors/zed/languages/nova/highlights.scm: KEYWORDS dropped let/readonly,
+     added ro.
+   - editors/vim/syntax/nova.vim: novaDeclaration dropped 'let'; novaModifier
+     'mut readonly' → 'ro mut consume'.
+   - editors/emacs/nova-mode.el: nova-keywords-declaration dropped 'let';
+     nova-keywords-modifier '(mut readonly)' → '(ro mut consume)'.
+   - Helix + Neovim не требовали изменений (используют tree-sitter
+     для syntax — Ф.7.1 grammar 0.2.0 обновлён отдельно).
+
+Открытые markers всё закрыто. Plan 114 family complete (core + Ф.2 +
+Ф.7.1-3). Ф.9/Ф.10/Ф.11 carry'нуты в Plan 115 как next-up.
