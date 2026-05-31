@@ -280,3 +280,92 @@ fn str @compare(other str) -> int => @as_bytes().compare(other.as_bytes())
 - [D144](../spec/decisions/02-types.md#d144) — слайсы `arr[a..b]`
 - [Plan 91](91-stdlib-mvp-for-0.1.md) — потребитель: `str.as_bytes()` + `split` на Nova
 - [Plan 90.1](90.1-array-extend-family.md) — `[]T` операции (смежно)
+
+---
+
+## ✅ FULL CLOSURE — Plan 108 family (2026-05-31)
+
+**Plan 108 trilogy полностью закрыт и merged в main.** D175 + D176 расширены
+через 3 sub-plans + residual cleanup.
+
+### Trilogy
+
+| Plan | Что | Merge | Дата |
+|---|---|---|---|
+| **Plan 108** | D175 readonly field freeze + D176 readonly T modifier | (master) | 2026-05-28 |
+| **Plan 108.1** | Параметры функций default = read-only (D176 amend) | `6048814b92c` | 2026-05-30 |
+| **Plan 108.2** | Локалы default = read-only (D36 enforcement) | `f0a198916f5` | 2026-05-30 |
+| **Plan 108.3** | Loop-var + pattern per-name mut (D36 amend) | `1f7bd5c49c2` | 2026-05-30 |
+| **Plan 108.3 residual** | Точечная миграция оставшихся 57 E_LOCAL_NOT_MUT | `51212606e1e` | 2026-05-31 |
+
+### Семантика после Plan 108
+
+Default = **read-only** во всех contexts:
+
+| Контекст | Default | Opt-in mut |
+|---|---|---|
+| Param | readonly | `fn f(mut b T)` |
+| Local binding | immutable | `let mut x = ...` |
+| Loop variable | immutable | `for mut x in iter` |
+| Pattern element | immutable | `let (mut a, b) = pair`, `Some(mut x)` |
+| Field | mutable у mut-binding | `mut field` / `readonly field` |
+
+### Error codes введённые
+
+- `E_PARAM_NOT_MUT` — mut-метод на param без `mut`
+- `E_PARAM_MOD_CONFLICT` — взаимоисключающие param-модификаторы
+- `E_LOCAL_NOT_MUT` — mut-метод/field-assign на `let` без `mut`
+- `E_READONLY_COERCE` — передача `readonly T` в non-readonly param
+- `E_PATTERN_GROUP_MUT` — `let mut (a, b)` group-mut запрещён
+
+### Тесты
+
+- plan108_1: 16/16 PASS (7 pos + 8 neg + 1 prop)
+- plan108_2: 13/13 PASS (6 pos + 6 neg + 1 prop)
+- plan108_3: 14/14 PASS (6 pos + 7 neg + 1 prop)
+- Полная регрессия: 73 fails (vs 127 baseline → **−54**)
+- Остаточные — pre-existing baseline (concurrency / plan100.3 D29 / str_builder pre-Plan-109)
+
+### Migration
+
+~280 файлов мигрированы:
+- Plan 108.1: 1 stdlib + 9 tests
+- Plan 108.2: ~225 файлов (bulk sed)
+- Plan 108.3: 53 файла (residual sed)
+- Plan 108.3 residual: 53 файла (per-file convergence loop)
+
+### Honest-defer markers — финальный статус
+
+- ✅ `[M-108-readonly-mut-method-check]` — CLOSED (Plan 108.1 E_PARAM_NOT_MUT)
+- ✅ `[M-108-readonly-coerce-on-param]` — CLOSED дефакто (Plan 108.1)
+- ✅ `[M-108.1-locals-readonly]` — CLOSED (Plan 108.2 E_LOCAL_NOT_MUT)
+- ✅ `[M-108.2-loop-var-mut]` — CLOSED (Plan 108.3 `for mut x`)
+- ✅ `[M-108.2-pattern-binding]` — CLOSED (Plan 108.3 per-name)
+- ✅ `[M-108.2-residual-migrations]` — CLOSED (Plan 108.3 residual)
+- ✅ `[M-108.3-final-residual]` — CLOSED (per-file convergence loop)
+- 🔄 `[M-108.1-readonly-to-explicit-mut-coerce]` — moved to **Plan 114** (после `ro` rename)
+- 🔄 `[M-108.3-nested-pattern-mut]` — moved to **Plan 114** (после keyword rename)
+
+### Lessons learned
+
+1. External-source registry pattern reusable across LinearityRegistry / ConsumeRegistry.
+2. Mut-method registry mirrors consume_methods pattern — symmetric design.
+3. **Per-file convergence loop** — новый стандартный алгоритм для post-refactor migration cleanup'ов (memory `feedback-test-fix-per-file-loop`).
+4. `consume` implies mut — consistent semantics через param/local/loop-var.
+5. `Pattern.is_mut` в AST — proper locality vs wrapper variant.
+6. Group-mut на pattern запрещён parser-level — single правильный path (per-name).
+7. Rust-style parallels работают: Nova `let (mut a, b) = pair` mirror Rust.
+
+### Future work (Plan 114)
+
+`readonly` → `ro` keyword rename + `let` drop. Не блокирует production-grade
+status Plan 108 — только syntax surface change. Plan 108 semantics остаются.
+
+### Memory entries
+
+- `project-plan108_1-status.md`
+- `project-plan108_2-status.md`
+- `project-plan108_3-status.md`
+- `feedback-test-fix-per-file-loop.md` (новый стандартный алгоритм)
+
+**Plan 108 family ✅ FULL CLOSURE. Production-ready.**
