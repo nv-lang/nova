@@ -14276,21 +14276,29 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     self.line(&format!("(void)({});", v));
                 }
 
-                // 110.1.4.a step 4: on_exit call placeholder. Real
-                // dispatch lands в 110.1.4.e (vtable resolution + outcome
-                // value). Здесь — only comment marker; current 110.1.4.a
-                // tests verify init binding + body access (success path).
+                // 110.1.4.e step: real on_exit dispatch (success-path-only
+                // до 110.1.4.d adds fail-frame для throw catching).
                 //
-                // Strip Nova_ prefix + trailing pointer star для readability.
+                // ScopeOutcome auto-registered (std/prelude/core.nv) →
+                // codegen emits factory `nova_make_ScopeOutcome_Success()`.
+                // on_exit method symbol: `Nova_<TypeName>_method_on_exit`.
                 let type_name = init_c_type
                     .trim_start_matches("Nova_")
                     .trim_end_matches('*')
                     .trim()
                     .to_string();
+                // Nova consume-method naming convention: `Nova_<T>_consume_<method>`
+                // (Plan 73.1 D180 consume self modifier emits *_consume_* prefix,
+                // не *_method_*).
+                let on_exit_c = format!("Nova_{}_consume_on_exit", type_name);
+                // Call on_exit(receiver, ScopeOutcome::Success). Receiver
+                // — already pointer (Nova_<T>*); pass binding directly.
                 self.line(&format!(
-                    "/* 110.1.4.e TODO: Nova_{}_method_on_exit(&{}, NOVA_SCOPE_OUTCOME_SUCCESS) — \
-                     vtable dispatch lands next sub-step */",
-                    type_name, c_binding
+                    "/* 110.1.4.e: on_exit(Success) dispatch */"
+                ));
+                self.line(&format!(
+                    "{}({}, nova_make_ScopeOutcome_Success());",
+                    on_exit_c, c_binding
                 ));
 
                 // Cleanup #define alias to avoid leaking outside scope.
