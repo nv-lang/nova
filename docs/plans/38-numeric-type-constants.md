@@ -137,7 +137,7 @@ test "int.MIN is negative" {
 
 test "int.MAX + 1 wraps" {
     // 2's complement: MAX + 1 = MIN.
-    let v = int.MAX + 1
+    ro v = int.MAX + 1
     assert(v == int.MIN)
 }
 
@@ -146,7 +146,7 @@ test "u8.MAX = 255" {
 }
 
 test "f64.NAN != NaN" {
-    let n = f64.NAN
+    ro n = f64.NAN
     assert(n != n)
 }
 

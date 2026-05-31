@@ -8,14 +8,14 @@
 Field-style доступ к размеру коллекции запрещён:
 
 ```nova
-let n = arr.len      // ✗ старое — error
-let n = arr.len()    // ✓ новое — добавьте ()
+ro n = arr.len      // ✗ старое — error
+ro n = arr.len()    // ✓ новое — добавьте ()
 ```
 
 Для `.cap` — rename:
 ```nova
-let c = arr.cap         // ✗ старое
-let c = arr.capacity()  // ✓ новое — rename + ()
+ro c = arr.cap         // ✗ старое
+ro c = arr.capacity()  // ✓ новое — rename + ()
 ```
 
 ## Что изменилось

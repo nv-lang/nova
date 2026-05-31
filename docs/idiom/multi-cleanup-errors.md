@@ -108,7 +108,7 @@ Caller может handle specific suppressed errors:
 match process() {
     Ok(_) => println("done"),
     Err(e) => {
-        let has_network = e.suppressed().any(|s| s is NetworkErr)
+        ro has_network = e.suppressed().any(|s| s is NetworkErr)
         if has_network {
             retry_with_backoff()
         } else {

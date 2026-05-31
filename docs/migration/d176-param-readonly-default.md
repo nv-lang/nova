@@ -87,7 +87,7 @@ fn put(mut m HashMap[str, int], k str, v int) { m.insert(k, v) }
 fn merge(dst []int, src []int) { for x in src { dst.push(x) } }
 
 // After — explicit dst is mut, src is read-only
-fn merge(mut dst []int, readonly src []int) { for x in src { dst.push(x) } }
+fn merge(mut dst []int, ro src []int) { for x in src { dst.push(x) } }
 ```
 
 ## Автоматическая миграция

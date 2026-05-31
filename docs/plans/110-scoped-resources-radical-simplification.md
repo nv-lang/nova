@@ -126,9 +126,9 @@ consume tx = db.begin() { body }
 
 // =>
 {
-    let _tx = db.begin()                       // if throws — no on_exit (D188 R2)
-    let _timeout = resolve_exit_timeout(_tx)   // 3-level fallback (D192)
-    let _outcome = run_body_capturing { body }
+    ro _tx = db.begin()                       // if throws — no on_exit (D188 R2)
+    ro _timeout = resolve_exit_timeout(_tx)   // 3-level fallback (D192)
+    ro _outcome = run_body_capturing { body }
     with cancel_shield(deadline: _timeout) {
         match _outcome {
             Ok          => _tx.on_exit(Success)

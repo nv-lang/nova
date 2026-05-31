@@ -33,10 +33,10 @@
 ```nova
 fn IntCounter mut @next() -> Option[int] => { ... }
 
-let mut x Iter[int] = c
-let r = x.next()     // compile OK, runtime WRONG (None вместо Some)
+mut x Iter[int] = c
+ro r = x.next()     // compile OK, runtime WRONG (None вместо Some)
 
-fn foo(x Iter[int]) -> bool => { let mut xx = x; xx.next().is_some() }
+fn foo(x Iter[int]) -> bool => { mut xx = x; xx.next().is_some() }
 foo(c)               // compile OK, runtime returns false вместо true
 ```
 
@@ -157,7 +157,7 @@ Inline-цепочки (`parse_bool("x").unwrap_or(false)`) попадают в �
 ```nova
 type Celsius { deg int }
 fn parse_celsius(s str) -> Result[Celsius, str] => ...
-let c = parse_celsius("100").unwrap_or(Celsius { deg: 0 })  // WRONG: каст nova_int → Nova_Celsius*
+ro c = parse_celsius("100").unwrap_or(Celsius { deg: 0 })  // WRONG: каст nova_int → Nova_Celsius*
 ```
 
 Фикс: расширить `infer_expr_c_type` для `ExprKind::MethodCall` — рекурсивно
@@ -184,10 +184,10 @@ let c = parse_celsius("100").unwrap_or(Celsius { deg: 0 })  // WRONG: каст n
 
 ```nova
 // Работает (turbofish):
-let count = sum_iter[int, IntCounter](c)
+ro count = sum_iter[int, IntCounter](c)
 
 // Не работает (должно работать как в Rust):
-let count = sum_iter(c)
+ro count = sum_iter(c)
 // error: cannot infer type argument `U` for generic function `sum_iter`
 ```
 

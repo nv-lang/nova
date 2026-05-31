@@ -92,9 +92,9 @@ type Result[T, E] = Ok(T), Err(E)
 Создание значений и pattern matching — обычные:
 
 ```nova
-let p = Point(1.0, 2.0)
-let u = User { id: 1, name: "alice" }
-let c = Circle { radius: 5.0 }
+ro p = Point(1.0, 2.0)
+ro u = User { id: 1, name: "alice" }
+ro c = Circle { radius: 5.0 }
 
 match shape {
     Circle { radius }    => 3.14159 * radius * radius
@@ -107,11 +107,11 @@ match shape {
 именем переменной в скоупе, можно писать имя один раз:
 
 ```nova
-let key = "alice"
-let value = 42
+ro key = "alice"
+ro value = 42
 
-let entry = Entry { key, value }                    // shorthand
-let entry = Entry { key, value, extra: "data" }     // можно смешивать
+ro entry = Entry { key, value }                    // shorthand
+ro entry = Entry { key, value, extra: "data" }     // можно смешивать
 ```
 
 Парсер однозначен: `name:` → полная форма, `name,` или `name}` →
@@ -208,7 +208,7 @@ type Cache[K, V] alias HashMap[K, (V, Time)]
 type User { id u64, name str }
 type Point3D { x, y, z f64 }                    // group-syntax (D36)
 type Account {
-    readonly id u64
+    ro id u64
     balance money
     mut last_access time
 }
@@ -309,18 +309,18 @@ type HttpCode i32 | Ok = 200 | NotFound = 404
 **Sum → int** — безопасный, всегда работает:
 
 ```nova
-let c = Red                 // Color
-let n = c as int            // 0 (если auto-increment)
+ro c = Red                 // Color
+ro n = c as int            // 0 (если auto-increment)
 
-let e = NotFound            // ErrorCode
-let n = e as i32            // 404
+ro e = NotFound            // ErrorCode
+ro n = e as i32            // 404
 ```
 
 **int → Sum** — через **pattern match obligation**:
 
 ```nova
-let n = read_from_db()
-let c = match n {
+ro n = read_from_db()
+ro c = match n {
     0 => Red
     1 => Green
     2 => Blue
@@ -361,14 +361,14 @@ type Tree[T]
 type AliasUserId alias u64
 type NewUserId u64
 
-let a AliasUserId = 42        // ok
-let b u64 = a                  // ok — alias совместим с u64
-let c u64 = 42
-let d AliasUserId = c          // ok — обратное тоже работает
+ro a AliasUserId = 42        // ok
+ro b u64 = a                  // ok — alias совместим с u64
+ro c u64 = 42
+ro d AliasUserId = c          // ok — обратное тоже работает
 
-let n NewUserId = 42           // ok (литерал подгоняется под целевой тип)
-let e u64 = n                  // ОШИБКА: NewUserId не u64
-let f u64 = n as u64           // ok через cast
+ro n NewUserId = 42           // ok (литерал подгоняется под целевой тип)
+ro e u64 = n                  // ОШИБКА: NewUserId не u64
+ro f u64 = n as u64           // ok через cast
 ```
 
 **Альтернативу newtype через record-обёртку (`type X { value u64 }`)
@@ -398,19 +398,19 @@ fn Range @iter() -> RangeIter =>
 
 ```nova
 // Переменная в scope:
-let key = "alice"
-let value = 42
-let entry = Entry { key, value }                  // ✓ обязательная форма
-let entry = Entry { key: key, value: value }      // ✗ ОШИБКА: избыточная форма
+ro key = "alice"
+ro value = 42
+ro entry = Entry { key, value }                  // ✓ обязательная форма
+ro entry = Entry { key: key, value: value }      // ✗ ОШИБКА: избыточная форма
 
 // @field-доступ:
-let r = { @end, @inclusive, cur: @start }         // ✓
-let r = { end: @end, inclusive: @inclusive, ... } // ✗ ОШИБКА: избыточная
+ro r = { @end, @inclusive, cur: @start }         // ✓
+ro r = { end: @end, inclusive: @inclusive, ... } // ✗ ОШИБКА: избыточная
 
 // Явная форма обязательна, когда имя источника отличается:
-let entry = Entry { name: user_name }             // ✓ имя поля ≠ переменной
-let r = { cur: @start }                            // ✓ имя поля cur ≠ start
-let r = { end: other.end }                         // ✓ источник — выражение, не @field
+ro entry = Entry { name: user_name }             // ✓ имя поля ≠ переменной
+ro r = { cur: @start }                            // ✓ имя поля cur ≠ start
+ro r = { end: other.end }                         // ✓ источник — выражение, не @field
 ```
 
 **Парсер:** `{ name`/`{ @name`/`{ name,`/`{ name }` — shorthand;
@@ -946,8 +946,8 @@ Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
 // Sum-coercion
 type StrOrInt | S(str) | I(int)
 
-let a StrOrInt = "test"          // компилятор: a = S("test")
-let b StrOrInt = 25               // компилятор: b = I(25)
+ro a StrOrInt = "test"          // компилятор: a = S("test")
+ro b StrOrInt = 25               // компилятор: b = I(25)
 
 fn process(x StrOrInt) -> str => ...
 process("alice")                   // компилятор: process(S("alice"))
@@ -956,7 +956,7 @@ process(42)                        // компилятор: process(I(42))
 // Record-coercion
 type User { id u64, name str }
 
-let u User = { id: 2, name: "Bob" }    // компилятор: u = User { id: 2, name: "Bob" }
+ro u User = { id: 2, name: "Bob" }    // компилятор: u = User { id: 2, name: "Bob" }
 
 fn create_user() -> User =>
     { id: 3, name: "Carol" }            // компилятор подставляет User
@@ -1033,9 +1033,9 @@ Enforce'ится в двух позициях:
 **Стандартные prelude-типы:**
 
 ```nova
-let m Maybe[int] = 42                        // Just(42)
-let r Result[User, str] = User { ... }       // Ok(User { ... })
-let opt Option[str] = "alice"                // Some("alice")
+ro m Maybe[int] = 42                        // Just(42)
+ro r Result[User, str] = User { ... }       // Ok(User { ... })
+ro opt Option[str] = "alice"                // Some("alice")
 ```
 
 **Коллекции:**
@@ -1043,10 +1043,10 @@ let opt Option[str] = "alice"                // Some("alice")
 ```nova
 type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]u8) | Null
 
-let args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
+ro args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
 
 // В sql`...` тэге интерполяции тоже coerce'ятся: i64 → I, str → S, bool → B
-let q = sql`SELECT * FROM users WHERE id = ${42}`   // args = [I(42)]
+ro q = sql`SELECT * FROM users WHERE id = ${42}`   // args = [I(42)]
 ```
 
 **Генерики:**
@@ -1054,8 +1054,8 @@ let q = sql`SELECT * FROM users WHERE id = ${42}`   // args = [I(42)]
 ```nova
 type Wrapper[T] | W(T) | Empty
 
-let w Wrapper[int] = 42                      // W(42)
-let w Wrapper[str] = "test"                   // W("test")
+ro w Wrapper[int] = 42                      // W(42)
+ro w Wrapper[str] = "test"                   // W("test")
 ```
 
 #### Record-coercion
@@ -1067,9 +1067,9 @@ let w Wrapper[str] = "test"                   // W("test")
 ```nova
 type User { id u64, name str }
 
-let u User = { id: 2, name: "Bob" }
+ro u User = { id: 2, name: "Bob" }
 // эквивалент:
-let u User = User { id: 2, name: "Bob" }
+ro u User = User { id: 2, name: "Bob" }
 
 fn save(u User) -> () => ...
 save({ id: 4, name: "Dave" })             // эквивалент save(User { ... })
@@ -1098,7 +1098,7 @@ fn make_default() -> Account =>
 **Композиция с sum-coercion:**
 
 ```nova
-let r Result[User, str] = { id: 2, name: "Bob" }
+ro r Result[User, str] = { id: 2, name: "Bob" }
 // шаг 1 (record-coercion): { id: 2, name: "Bob" } → User { id: 2, name: "Bob" }
 // шаг 2 (sum-coercion): User → Ok(User { ... })
 ```
@@ -1114,7 +1114,7 @@ let r Result[User, str] = { id: 2, name: "Bob" }
 
 ```nova
 fn first[T](xs []T) -> Option[T] => ...
-let r = first([])                   // [] : []T, T выводится из контекста
+ro r = first([])                   // [] : []T, T выводится из контекста
 
 fn save(u User) -> () => ...
 save({ id: 2, name: "Bob" })        // { ... } : User, тип параметра известен
@@ -1133,8 +1133,8 @@ save_all([{ id: 1, name: "a" }, { id: 2, name: "b" }])
 ```nova
 type Shape | Circle { radius f64 } | Square { side f64 }
 
-let s Shape = Circle { radius: 5.0 }   // явный конструктор обязателен
-let s Shape = { radius: 5.0 }           // ОШИБКА: по полям невозможно
+ro s Shape = Circle { radius: 5.0 }   // явный конструктор обязателен
+ro s Shape = { radius: 5.0 }           // ОШИБКА: по полям невозможно
                                         // выбрать между Circle и Square
                                         // (даже если у них разные поля,
                                         // программист пишет имя варианта)
@@ -1152,7 +1152,7 @@ record-литерал `{ name: value, ... }` превращается в str-key
 значениями map.
 
 ```nova
-let h HashMap[str, bool] = { debug: true, verbose: false }
+ro h HashMap[str, bool] = { debug: true, verbose: false }
 // эквивалент: HashMap[str, bool] с ключами "debug", "verbose"
 
 fn configure(opts HashMap[str, int]) -> () => ...
@@ -1185,16 +1185,16 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
    sum-coercion на каждом значении).
 3. **Композиция с sum-coercion:**
    ```nova
-   let j HashMap[str, JsonValue] = { name: "alice", age: 30.0 }
+   ro j HashMap[str, JsonValue] = { name: "alice", age: 30.0 }
    // "alice" → Str("alice"), 30.0 → Num(30.0); оба → JsonValue
    ```
 4. **Десугаринг — без промежуточных объектов:** block-expression с
    `with_capacity` + `@insert`, никакой промежуточный record не
    материализуется (литерал — только синтаксис):
    ```nova
-   { let mut _m0 = HashMap[str, V].with_capacity(n)
-     let _ = _m0.insert("debug", true)
-     let _ = _m0.insert("verbose", false)
+   { mut _m0 = HashMap[str, V].with_capacity(n)
+     ro _ = _m0.insert("debug", true)
+     ro _ = _m0.insert("verbose", false)
      _m0 }
    ```
 5. **Пустой `{}` — это НЕ пустая мапа.** `{}` всегда парсится как пустой
@@ -1202,8 +1202,8 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
    `HashMap[str, V]`. Пустая мапа записывается как `[]` + ожидаемый тип
    ([03-syntax.md → D108](03-syntax.md#d108-map-литерал-k-v)):
    ```nova
-   let h HashMap[str, bool] = []     // ✅ пустая мапа (тип из контекста)
-   let h HashMap[str, bool] = {}     // ⛔ {} — пустой блок, тип unit ≠ HashMap
+   ro h HashMap[str, bool] = []     // ✅ пустая мапа (тип из контекста)
+   ro h HashMap[str, bool] = {}     // ⛔ {} — пустой блок, тип unit ≠ HashMap
    ```
    > **Ревизия (Plan 52 Ф.0).** Прежняя формулировка §5 ошибочно
    > допускала `{}` в map-позиции → `HashMap[str, V].new()`. Это
@@ -1224,8 +1224,8 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
 ```nova
 type Ambiguous | A(int) | B(int)
 
-let x Ambiguous = 42         // ОШИБКА: ambiguous, A(42) или B(42)?
-let x = A(42)                 // явный конструктор — ok
+ro x Ambiguous = 42         // ОШИБКА: ambiguous, A(42) или B(42)?
+ro x = A(42)                 // явный конструктор — ok
 ```
 
 **Несоответствие — ни один конструктор не принимает тип значения:**
@@ -1233,8 +1233,8 @@ let x = A(42)                 // явный конструктор — ok
 ```nova
 type Color | Red | Green | Blue
 
-let c Color = "red"           // ОШИБКА: ни один конструктор не принимает str
-let c = Red                    // unit-конструктор
+ro c Color = "red"           // ОШИБКА: ни один конструктор не принимает str
+ro c = Red                    // unit-конструктор
 ```
 
 **Без аннотации — coercion отключён:**
@@ -1242,11 +1242,11 @@ let c = Red                    // unit-конструктор
 ```nova
 type StrOrInt | S(str) | I(int)
 
-let a = "test"                // a : str (не StrOrInt, аннотации нет)
-let b StrOrInt = "test"        // b : StrOrInt = S("test") (аннотация есть)
+ro a = "test"                // a : str (не StrOrInt, аннотации нет)
+ro b StrOrInt = "test"        // b : StrOrInt = S("test") (аннотация есть)
 
-let r = { id: 2, name: "Bob" }   // r : анонимный record { id int, name str }
-let u User = { id: 2, name: "Bob" }   // u : User (через record-coercion)
+ro r = { id: 2, name: "Bob" }   // r : анонимный record { id int, name str }
+ro u User = { id: 2, name: "Bob" }   // u : User (через record-coercion)
 ```
 
 **Newtype через D52 — coercion следует типу значения, не возможным кастам:**
@@ -1255,9 +1255,9 @@ let u User = { id: 2, name: "Bob" }   // u : User (через record-coercion)
 type UserId u64
 type Wrapper | W(UserId) | N(int)
 
-let w Wrapper = 42            // 42 : int → N(42) (тип значения int)
-let w Wrapper = 42 as UserId  // → W(42 as UserId) — явный as, потом coercion
-let w Wrapper = UserId(42)    // явный конструктор UserId
+ro w Wrapper = 42            // 42 : int → N(42) (тип значения int)
+ro w Wrapper = 42 as UserId  // → W(42 as UserId) — явный as, потом coercion
+ro w Wrapper = UserId(42)    // явный конструктор UserId
 ```
 
 **Несовпадение полей record:**
@@ -1265,9 +1265,9 @@ let w Wrapper = UserId(42)    // явный конструктор UserId
 ```nova
 type User { id u64, name str }
 
-let u User = { id: 2 }                    // ОШИБКА: missing field `name`
-let u User = { id: 2, name: "Bob", age: 30 }   // ОШИБКА: unknown field `age`
-let u User = { id: "two", name: "Bob" }   // ОШИБКА: id expects u64, got str
+ro u User = { id: 2 }                    // ОШИБКА: missing field `name`
+ro u User = { id: 2, name: "Bob", age: 30 }   // ОШИБКА: unknown field `age`
+ro u User = { id: "two", name: "Bob" }   // ОШИБКА: id expects u64, got str
 ```
 
 Coercion **не строит цепочку конверсий** — только одна обёртка вокруг
@@ -1280,9 +1280,9 @@ exact-type значения.
 ```nova
 type Event | Click(int, int) | KeyPress(str)
 
-let e Event = "enter"         // ok — KeyPress("enter"), unary с str
-let e Event = (5, 10)          // ОШИБКА в MVP: tuple-coercion не вводится
-let e = Click(5, 10)           // явный конструктор
+ro e Event = "enter"         // ok — KeyPress("enter"), unary с str
+ro e Event = (5, 10)          // ОШИБКА в MVP: tuple-coercion не вводится
+ro e = Click(5, 10)           // явный конструктор
 ```
 
 Tuple-coercion `(5, 10) → Click(5, 10)` — отложено. Усложняет правила
@@ -1296,7 +1296,7 @@ Unit-варианты не принимают значение, coercion не н
 
 ```nova
 type State | Open | Closed
-let s State = Open              // unit, coercion не применяется
+ro s State = Open              // unit, coercion не применяется
 ```
 
 ### Почему
@@ -1437,8 +1437,8 @@ fmt`/линтера и code review (это **не правило компиля�
 
 ```nova
 // 1. let с явной аннотацией — тип сразу слева, имя справа лишнее
-let u User = { id: 1, name: "alice" }                ✅
-let m Maybe[int] = 42                                 ✅
+ro u User = { id: 1, name: "alice" }                ✅
+ro m Maybe[int] = 42                                 ✅
 
 // 2. return-position в expression-body, есть -> T
 fn make_default() -> Account => { id: 0, balance: 0 } ✅
@@ -1447,7 +1447,7 @@ fn make_default() -> Account => { id: 0, balance: 0 } ✅
 serve({ ...SERVER_DEFAULTS, port: 9000 })             ✅
 
 // 4. коллекции с разнородными элементами в позиции []SqlValue
-let args []SqlValue = [42, "alice", true]             ✅
+ro args []SqlValue = [42, "alice", true]             ✅
 //                    [I(42), S("alice"), B(true)]    ❌ шумно
 ```
 
@@ -1455,8 +1455,8 @@ let args []SqlValue = [42, "alice", true]             ✅
 
 ```nova
 // 1. let без аннотации — coercion не работает, имя обязательно
-let r = if cond { Some(value) } else { None }         ✅
-let r = if cond { value } else { None }               ❌ — нет аннотации
+ro r = if cond { Some(value) } else { None }         ✅
+ro r = if cond { value } else { None }               ❌ — нет аннотации
 
 // 2. match-arms где хотя бы одна ветка — unit-вариант (None / Empty)
 //    — для визуальной симметрии писать ВСЕ ветки с конструкторами
@@ -1479,7 +1479,7 @@ fn compute() -> Money =>
 
 // 4. ambiguous unary-конструкторы (compile-error без явного имени)
 type Mixed | A(int) | B(int)
-let x Mixed = 42                  ❌ ambiguous — обязателен A(42) / B(42)
+ro x Mixed = 42                  ❌ ambiguous — обязателен A(42) / B(42)
 ```
 
 **Сводка:**
@@ -1861,7 +1861,7 @@ type AuditedAccount {
     audit_log []AuditEntry
 }
 
-let acc AuditedAccount = ...
+ro acc AuditedAccount = ...
 
 // Auto-proxy: прямой доступ к полям и методам Account
 println(acc.balance)                 // = acc.account.balance
@@ -1869,7 +1869,7 @@ println(acc.owner)                   // = acc.account.owner
 acc.is_solvent()                     // = acc.account.is_solvent()
 
 // Доступ к встроенному объекту целиком — через имя поля
-let just_account = acc.account
+ro just_account = acc.account
 ```
 
 `use Account` без имени — **ошибка компиляции**: имя поля обязательно.
@@ -1899,7 +1899,7 @@ type AuditedAccount {
 // fn AuditedAccount @balance_pct(of money) -> f64 =>
 //     @account.balance_pct(of)
 
-let aa AuditedAccount = ...
+ro aa AuditedAccount = ...
 aa.balance_pct(1000.0)               // через auto-proxy
 ```
 
@@ -1918,7 +1918,7 @@ type Wrapper {
 }
 
 fn deposit(mut acc Account) -> () => ...   // параметр: имя тип
-let user User = ...                           // let: имя тип
+ro user User = ...                           // ro: имя тип
 for id u64 in ids { ... }                     // for: имя тип
 ```
 
@@ -1938,8 +1938,8 @@ type Set[T] {
 }
 
 // record-литерал — имя поля
-let s Set[int] = { map: HashMap[int, ()].new() }      // ✓
-let s Set[int] = { use: HashMap[int, ()].new() }       // ✗ use — keyword
+ro s Set[int] = { map: HashMap[int, ()].new() }      // ✓
+ro s Set[int] = { use: HashMap[int, ()].new() }       // ✗ use — keyword
 
 // доступ — имя поля
 fn Set[T] @len() => @map.len()                          // ✓
@@ -1962,7 +1962,7 @@ fn AuditedAccount mut @deposit(amount money) {
     @audit_log.push(AuditEntry.deposit(amount))
 }
 
-let mut acc AuditedAccount = ...
+mut acc AuditedAccount = ...
 acc.deposit(100)                     // вызовет AuditedAccount.deposit
 ```
 
@@ -1983,7 +1983,7 @@ type Combined {
     use audit Auditor
 }
 
-let c = Combined { ... }
+ro c = Combined { ... }
 c.log("...")                         // ОШИБКА: ambiguous (оба имеют log)
 ```
 
@@ -1995,7 +1995,7 @@ fn Combined @log_all(msg str) {
     @audit.log(msg)
 }
 
-let c = Combined { ... }
+ro c = Combined { ... }
 c.console.log("...")
 c.audit.log("...")
 ```
@@ -2009,7 +2009,7 @@ type Set[T] {
     use _ HashMap[T, ()]
 }
 
-let s = Set[int].new()
+ro s = Set[int].new()
 s.insert(item, ())          // ✓ через auto-proxy на HashMap.insert
 s.contains(item)            // ✓ через auto-proxy
 s.len()                     // ✓ через auto-proxy (D117 method-only)
@@ -2054,7 +2054,7 @@ Resolution через **call-site overload resolution**
 `use`).
 
 ```nova
-let s Set[int] = ...
+ro s Set[int] = ...
 s.insert(42)
 // → resolve_overload("insert", "Set[int]", [int])
 // → 2 candidates: Set.@insert (own), HashMap.@insert (delegated)
@@ -2164,10 +2164,10 @@ type VecBuf[T] {
     extra str
 }
 
-let v = VecBuf[int] { data: [1, 2, 3], extra: "info" }
-let n = v.len            // прокси-метод к data.len ([]T API)
+ro v = VecBuf[int] { data: [1, 2, 3], extra: "info" }
+ro n = v.len            // прокси-метод к data.len ([]T API)
 v.push(42)               // прокси-метод к data.push
-let x = v.get(0)         // прокси к data.get
+ro x = v.get(0)         // прокси к data.get
 ```
 
 Этим механизмом строятся «именованные обёртки над массивами» с
@@ -2190,7 +2190,7 @@ API самих встроенных типов (`[]T.len`, `[]T.push`, etc.) —
 ```nova
 fn process(a Account) -> () => ...
 
-let aa AuditedAccount = ...
+ro aa AuditedAccount = ...
 process(aa)                         // ОШИБКА
 process(aa.account)                 // ок: извлекли Account-часть через имя поля
 ```
@@ -2364,7 +2364,7 @@ fn deposit(mut acc Account, amount money) {
     acc.balance += amount
 }
 
-let mut my_acc = Account { balance: 100 }
+mut my_acc = Account { balance: 100 }
 deposit(my_acc, 50)
 // my_acc.balance == 150 — мутация видна
 ```
@@ -2378,7 +2378,7 @@ fn weird(mut x int) {
     x = 999                         // меняет локально
 }
 
-let n = 5
+ro n = 5
 weird(n)
 // n == 5 — примитив всегда by value
 ```
@@ -2395,7 +2395,7 @@ fn add_item(mut order Order, item Item) {
     order.total += item.price
 }
 
-let mut my_order = Order { items: [], total: 0 }
+mut my_order = Order { items: [], total: 0 }
 add_item(my_order, item1)
 // my_order содержит item1 и обновлённый total
 ```
@@ -2427,7 +2427,7 @@ fn read_only(acc Account) {
 ```nova
 fn process_audio(samples []f32) Realtime -> []f32 =>
     region {
-        let buf = []f32.with_capacity(1024)
+        ro buf = []f32.with_capacity(1024)
         // обработка, без GC pauses
         buf.to_owned()
     }
@@ -2523,23 +2523,23 @@ type RunAcc {
     atk_lost_m int, atk_lost_s int, atk_lost_h int
 }
 
-let mut acc = RunAcc { att_wins: 0, def_wins: 0, ... }
-acc.att_wins += 1                   // ок — binding mut, поле без readonly
+mut acc = RunAcc { att_wins: 0, def_wins: 0, ... }
+acc.att_wins += 1                   // ок — binding mut, поле без ro
 
 // Структура с invariant'ами — readonly для read-only полей
 type Account {
-    readonly id u64                 // никогда не меняется
-    readonly owner str              // тоже
+    ro id u64                 // никогда не меняется
+    ro owner str              // тоже
     balance money                    // мутируется у mut binding'а
     closed bool
 }
 
-let acc = Account.new("alice")
+ro acc = Account.new("alice")
 acc.balance = 100                   // ОШИБКА: binding не mut
 
-let mut acc2 = Account.new("alice")
+mut acc2 = Account.new("alice")
 acc2.balance = 100                  // ок
-acc2.id = 999                       // ОШИБКА: id объявлено readonly
+acc2.id = 999                       // ОШИБКА: id объявлено ro
 
 // Cache/lazy — mut для полей, мутируемых через immutable binding
 type LazyConfig {
@@ -2548,9 +2548,9 @@ type LazyConfig {
 }
 
 fn LazyConfig @get() -> str {
-    if let Some(v) = @cached_value { return v }
-    let v = read_file(@path)
-    @cached_value = Some(v)         // мутация через @-метод даже у let-binding
+    if Some(v) = @cached_value { return v }
+    ro v = read_file(@path)
+    @cached_value = Some(v)         // мутация через @-метод даже у ro-binding
     v
 }
 ```
@@ -2571,7 +2571,7 @@ type RunAcc {
 
 ```nova
 type Account {
-    readonly id, owner_id u64       // два immutable
+    ro id, owner_id u64       // два immutable
     balance money                    // дефолт (mutable у mut-binding)
     mut last_access_time time        // mutable всегда
 }
@@ -2652,11 +2652,11 @@ type Account {
 (`b.field = ...`).  Plan 108.2 закрывает этот gap:
 
 ```nova
-let b = Box.new(1)
+ro b = Box.new(1)
 b.value = 99                  // ✗ E_LOCAL_NOT_MUT
 b.push(2)                     // ✗ E_LOCAL_NOT_MUT
 
-let mut b2 = Box.new(1)
+mut b2 = Box.new(1)
 b2.value = 99                 // ✓
 b2.push(2)                    // ✓
 ```
@@ -2699,10 +2699,10 @@ for mut x in arrs { x.push(1) }       // ✓ — x mutable
 ставится **на каждое имя отдельно**, parallel Rust pattern semantics:
 
 ```nova
-let (a, b) = pair                     // оба immutable
-let (mut a, b) = pair                 // a mutable, b immutable
-let (a, mut b) = pair                 // a immutable, b mutable
-let (mut a, mut b) = pair             // оба mutable
+ro (a, b) = pair                     // оба immutable
+ro (mut a, b) = pair                 // a mutable, b immutable
+ro (a, mut b) = pair                 // a immutable, b mutable
+ro (mut a, mut b) = pair             // оба mutable
 ```
 
 **Запрет group-mut:** `let mut (a, b) = ...` отвергается parser-level
@@ -2710,7 +2710,7 @@ let (mut a, mut b) = pair             // оба mutable
 не к pattern целиком (consistent с Rust):
 
 ```nova
-let mut (a, b) = pair                 // ✗ E_PATTERN_GROUP_MUT
+mut (a, b) = pair                 // ✗ E_PATTERN_GROUP_MUT
 ```
 
 Использование `mut` внутри pattern — единственно правильная форма.
@@ -2870,7 +2870,7 @@ Zero overhead — `readonly` только compile-time проверка, не в
 ```nova
 fn f(b []int) { b.push(1) }       // ✗ E_PARAM_NOT_MUT — нет `mut`
 fn f(mut b []int) { b.push(1) }   // ✓ explicit mut
-fn f(readonly b []int) { ... }    // ✓ synonym default (для документации)
+fn f(ro b []int) { ... }    // ✓ synonym default (для документации)
 fn f(consume b []int) { ... }     // ✓ owned move — mut по умолчанию
 ```
 
@@ -3321,11 +3321,11 @@ fn run[T Db](handler T) -> ()         // ОШИБКА: Db — effect, не bound
 
 ```nova
 type HashMap[K Hashable, V] {
-    readonly buckets []Slot[K, V]
+    ro buckets []Slot[K, V]
 }
 
 type Set[T Hashable] {
-    readonly inner HashMap[T, ()]
+    ro inner HashMap[T, ()]
 }
 
 type Sorted[T Ord] | Empty | Node(T, Sorted[T], Sorted[T])
@@ -3346,7 +3346,7 @@ fn User @hash() -> u64 => @id
 fn User @eq(other Self) -> bool => @id == other.id
 
 // User автоматически удовлетворяет Hashable, потому что есть @hash и @eq
-let m HashMap[User, str] = HashMap.new()       // ok
+ro m HashMap[User, str] = HashMap.new()       // ok
 ```
 
 Если методов нет — compile error на месте использования (`HashMap[User, str]`
@@ -3466,7 +3466,7 @@ bounds через анонимный protocol).
 fn fill(xs mut []int) -> ()
     ensures forall i in 0..xs.len() : xs[i] == 0
 {
-    ghost let n = xs.len()      // spec-only: виден в invariant
+    ghost ro n = xs.len()      // spec-only: виден в invariant
     for i in 0..xs.len()
         invariant forall j in 0..i : xs[j] == 0
     {
@@ -3605,7 +3605,7 @@ Distinguishable от legacy `_NovaTupleN` (e.g. `_NovaTuple2`) по `_`
 ### Правило
 
 ```nova
-let p (str, int) = ("a", 1)
+ro p (str, int) = ("a", 1)
 //                   ^^^^^^^ generates _NovaTuple_2_8_nova_str_8_nova_int
 //                   { nova_str f0; nova_int f1; }
 
@@ -3757,10 +3757,10 @@ export fn Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U] {
 }
 
 // Call-site:
-let w = Wrapper[int].of(5)
-let a = w.map(|x| x * 2)              // (T=int, U=int) instance
-let s = w.map(|x| str.from(x))        // (T=int, U=str) instance
-let s2 = s.map(|x| x + "!")           // (T=str, U=str) instance
+ro w = Wrapper[int].of(5)
+ro a = w.map(|x| x * 2)              // (T=int, U=int) instance
+ro s = w.map(|x| str.from(x))        // (T=int, U=str) instance
+ro s2 = s.map(|x| x + "!")           // (T=str, U=str) instance
 ```
 
 Compiler emits 3 distinct mono'd methods:
@@ -4477,13 +4477,13 @@ return).
 становится Live-linear-owner:
 
 ```nova
-let tx = begin()                               // ❌ ERROR D133-consume-needs-keyword:
+ro tx = begin()                               // ❌ ERROR D133-consume-needs-keyword:
                                                //    consume-type требует `consume` keyword
 
 consume tx = begin()                           // ✅ initial binding — owns
 
-let alias = tx                                 // ✅ view-alias (no ownership; Plan 73)
-let mut alias = tx                             // ✅ mut-view-alias
+ro alias = tx                                 // ✅ view-alias (no ownership; Plan 73)
+mut alias = tx                             // ✅ mut-view-alias
 consume new_owner = tx                         // ✅ transfer: tx → Consumed
 ```
 
@@ -5190,8 +5190,8 @@ type Cron effect   { run() -> () }
 type Fan  protocol { run() -> () }
 
 // Literal (значение, реализующее контракт):
-let h = effect   Cron { run() => spawn_cron() }   // value of type Effect[Cron]
-let p = protocol Fan  { run() => spin_blades() }  // value реализующее Fan
+ro h = effect   Cron { run() => spawn_cron() }   // value of type Effect[Cron]
+ro p = protocol Fan  { run() => spin_blades() }  // value реализующее Fan
 ```
 
 Раньше литерал эффекта писался ключевым словом `handler`, а
@@ -5222,13 +5222,13 @@ type Hash protocol { hash() -> u64 }
 
 ```nova
 // effect-литерал (value)
-let h = effect Db {
+ro h = effect Db {
     query(q) => mock_rows()
 }
 with Db = h { ... }
 
 // protocol-литерал (value реализующий контракт) — instance-only
-let l = protocol Locker { lock() => state.lock() }
+ro l = protocol Locker { lock() => state.lock() }
 ```
 
 #### Анонимный protocol в type-position (D53 §628)
@@ -5329,17 +5329,17 @@ type Writer protocol { write(v int) -> () }
 type Cell { mut value int }
 
 fn Cell.new(initial int) -> (Reader, Writer) {
-    let state = Cell { value: initial }
-    let r = protocol Reader { read() => state.value }
-    let w = protocol Writer { write(v) { state.value = v } }
+    ro state = Cell { value: initial }
+    ro r = protocol Reader { read() => state.value }
+    ro w = protocol Writer { write(v) { state.value = v } }
     (r, w)
 }
 
 // caller:
-let (r, w) = Cell.new(10)
-let initial = r.read()    // 10
+ro (r, w) = Cell.new(10)
+ro initial = r.read()    // 10
 w.write(99)
-let after = r.read()      // 99 — shared state через protocol-литералы
+ro after = r.read()      // 99 — shared state через protocol-литералы
 ```
 
 Реализация (Plan 97.1 emit_protocol_lit, Approach A):
@@ -5407,8 +5407,8 @@ Parent backing **никогда** не молча перезаписываетс
 Go-`append`-footgun без borrow checker'а.
 
 ```nova
-let mut parent = [1, 2, 3, 4, 5]
-let mut view = parent[1..4]   \ view: [2, 3, 4]
+mut parent = [1, 2, 3, 4, 5]
+mut view = parent[1..4]   \ view: [2, 3, 4]
 view.push(99)                  \ realloc; view detached
 \ parent == [1, 2, 3, 4, 5]   — НЕ затронут
 \ view == [2, 3, 4, 99]
@@ -5698,7 +5698,7 @@ fn[T ReadWriter] []T @process() => ...
 
 ```nova
 // ❌ ОТВЕРГНУТО:
-let v = protocol Foo {
+ro v = protocol Foo {
     use Reader               // error: E_LITERAL_COMPOSITION_NOT_ALLOWED
     read(buf) => impl1
     close() => impl2
@@ -5706,7 +5706,7 @@ let v = protocol Foo {
 
 // Workflow: extract в named type:
 type MyRW protocol { use Reader, Writer }
-let v = protocol MyRW {
+ro v = protocol MyRW {
     read(buf)  => impl1
     write(buf) => impl2
 }
@@ -5852,10 +5852,10 @@ enforcement diagnostic — followup `[M-91.7-default-new-enforcement]`):
 
 ```nova
 // stdlib provides:
-let x = int.new()      // 0
-let s = str.new()      // ""
-let a = []int.new()    // []
-let buf = []u8.with_capacity(1024)
+ro x = int.new()      // 0
+ro s = str.new()      // ""
+ro a = []int.new()    // []
+ro buf = []u8.with_capacity(1024)
 
 // User type — explicit:
 type User { name str, email str, is_admin bool }
@@ -5901,10 +5901,10 @@ unchanged.
 ### Пример
 
 ```nova
-let mut a = []int.new()
+mut a = []int.new()
 a.push(1).push(2).push(3).reserve(10)
 a.sort()                       // direct call
-let r = a.sort_by(|x,y| ...)   // can also return into binding
+ro r = a.sort_by(|x,y| ...)   // can also return into binding
 ```
 
 ### Slice — только bracket syntax (Plan 96)
@@ -6141,7 +6141,7 @@ type Comparable protocol {
 ```nova
 type Equatable protocol {
     equals(other Self) -> bool {
-        let cmp Comparable = @                  // coercion-style (explicit dependency)
+        ro cmp Comparable = @                  // coercion-style (explicit dependency)
         cmp.compare(other) == 0
     }
 }

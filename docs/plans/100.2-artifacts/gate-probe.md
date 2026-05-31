@@ -62,7 +62,7 @@ D156-iter-maybe-consumed, branch-join pessimism для loop body.
 
 ```nova
 fn for_iter_ok() {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         tx.commit()             // tx → Consumed в каждой итерации ✅
     }
@@ -70,14 +70,14 @@ fn for_iter_ok() {
 }
 
 fn for_iter_skip_err() {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         // tx не consumed → ❌ D156-iter-not-consumed в каждой итерации
     }
 }
 
 fn for_iter_branch_err() {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         if tx.id == 2 {
             tx.commit()         // consumed на одном ветвлении

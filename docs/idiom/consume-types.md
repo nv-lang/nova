@@ -32,7 +32,7 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
     consume tx = db.begin()
     errdefer { tx.rollback()? }                 // error → rollback
     okdefer  { tx.commit()?   }                 // success → commit
-    let order = db.insert(data)?
+    ro order = db.insert(data)?
     db.notify(order)?
     return Receipt { id: order.id }
 }
@@ -62,7 +62,7 @@ fn process() Fail[Err] -> () {
 fn process() -> () {
     consume f = File.open("x.txt")?
     defer { f.close() }                         // все exit-paths → close
-    let data = f.read_all()?
+    ro data = f.read_all()?
     println(data)
 }
 ```
@@ -89,7 +89,7 @@ fn local_use() Fail -> () {
 
 // «передам наверх»:
 fn factory() -> Transaction {
-    let tx = begin()
+    ro tx = begin()
     return tx                                    // передача наверх
 }
 ```
@@ -120,7 +120,7 @@ type Service consume {
 }
 
 fn Service mut @reopen() Fail[OpenErr] -> () {
-    let new_file = File.open()?                 // сначала получить замену
+    ro new_file = File.open()?                 // сначала получить замену
     @file.close()                                // только теперь закрыть старое
     @file = new_file                             // rebind — @.file Live
 }                                                // mut exit: @.file Live ✅
@@ -180,14 +180,14 @@ fn Service @file_id() -> Option[int] {
 ```nova
 // view-closure (FnMut/Fn analog) — multi-invoke OK:
 consume tx = begin()
-let logger = || println(tx.id)
+ro logger = || println(tx.id)
 logger()                                         // OK
 logger()                                         // OK
 tx.commit()                                      // ✅ tx Live
 
 // consume-closure (FnOnce analog) — single-invoke:
 consume tx2 = begin()
-let commit_it = || tx2.commit()
+ro commit_it = || tx2.commit()
 commit_it()                                      // ✅ tx2 Consumed
 commit_it()                                      // ❌ use-after-consume
 ```

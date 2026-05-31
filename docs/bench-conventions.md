@@ -34,12 +34,12 @@ module bench.my_module
 
 bench "name of this benchmark" {
     // Setup — НЕ measured, выполняется один раз.
-    let mut m = HashMap[int, int].new()
-    let n = 1000
+    mut m = HashMap[int, int].new()
+    ro n = 1000
 
     // Measured block — adaptive sampling: warmup → calibration → 100 samples.
     measure {
-        let mut i = 0
+        mut i = 0
         while i < n {
             m.insert(i, i)
             i = i + 1
@@ -198,8 +198,8 @@ waits, decoded frames). Closes Go `b.ReportMetric` gap.
 ```nova
 bench "decoder_throughput" {
     measure {
-        let n = bench.iterations()
-        let mut decoded = 0
+        ro n = bench.iterations()
+        mut decoded = 0
         for i in 0..n {
             decoded = decoded + decode_frame(i)
         }

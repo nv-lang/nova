@@ -39,8 +39,8 @@
 ```nova
 \ (a) Network parser — header + payload
 fn parse_packet(buf []u8) Fail[ParseError] -> Packet
-    let header = buf[0..20]                  \ view, no copy
-    let payload = buf[20..]                  \ open-ended view
+    ro header = buf[0..20]                  \ view, no copy
+    ro payload = buf[20..]                  \ open-ended view
     Packet { header: parse_header(header), payload: parse_body(payload) }
 
 \ (b) HMAC inner-pad (RFC 2104)
@@ -51,7 +51,7 @@ fn hmac_init(key []u8) -> Hmac
 
 \ (c) Two-pointer (quicksort partition)
 fn partition[T Ord](arr mut []T, lo int, hi int) -> int
-    let pivot = arr[hi - 1]
+    ro pivot = arr[hi - 1]
     var i = lo
     for j in lo..hi-1
         if arr[j] <= pivot
@@ -62,8 +62,8 @@ fn partition[T Ord](arr mut []T, lo int, hi int) -> int
 
 \ (d) Parser stack — remaining tokens
 fn parse_block(tokens []Token, cursor int) -> (Ast, int)
-    let remaining = tokens[cursor..]         \ view хвоста
-    let (ast, consumed) = parse_expr(remaining)
+    ro remaining = tokens[cursor..]         \ view хвоста
+    ro (ast, consumed) = parse_expr(remaining)
     (ast, cursor + consumed)
 ```
 
@@ -578,7 +578,7 @@ D-push-detach, D-iter-snap.
 - **Ф.5.7** Iterator invalidation: тест `slice_iter_after_parent_push.nv`:
   ```nova
   var parent = [1, 2, 3, 4, 5]
-  let view = parent[1..4]
+  ro view = parent[1..4]
   parent.push(99)            \ realloc parent backing
   \ view ещё указывает на старый backing (через interior-ptr, Boehm держит)
   assert(view.len() == 3)

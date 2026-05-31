@@ -41,8 +41,8 @@ gcc/clang/msvc для signed). OK.
 ### Конкретные UB-trap'ы
 
 ```nova
-let f f64 = 70000.5
-let n = f as i16            // C: int16_t n = (int16_t)f;
+ro f f64 = 70000.5
+ro n = f as i16            // C: int16_t n = (int16_t)f;
                             // 70000 не помещается в i16 (-32768..32767) → UB
                             //   gcc: 0
                             //   clang: -32768
@@ -50,16 +50,16 @@ let n = f as i16            // C: int16_t n = (int16_t)f;
 ```
 
 ```nova
-let nan f64 = f64.NAN
-let m = nan as int          // C: int64_t m = (int64_t)nan;
+ro nan f64 = f64.NAN
+ro m = nan as int          // C: int64_t m = (int64_t)nan;
                             // NaN → integer → UB
                             //   gcc/clang: INT_MIN на x86, но не гарантировано
                             //   архитектура-зависимо
 ```
 
 ```nova
-let inf f64 = f64.INFINITY
-let k = inf as u32          // C: uint32_t k = (uint32_t)inf;
+ro inf f64 = f64.INFINITY
+ro k = inf as u32          // C: uint32_t k = (uint32_t)inf;
                             // ±∞ → integer → UB
 ```
 
@@ -221,63 +221,63 @@ ExprKind::As(inner, ty) => {
 
 ```nova
 test "f64 as i16 — in range" {
-    let f f64 = 100.7
+    ro f f64 = 100.7
     assert(f as i16 == 100)         // truncate towards zero
 }
 
 test "f64 as i16 — out of range positive" {
-    let f f64 = 70000.0
+    ro f f64 = 70000.0
     assert(f as i16 == 32767)       // saturation to INT16_MAX
 }
 
 test "f64 as i16 — out of range negative" {
-    let f f64 = -70000.0
+    ro f f64 = -70000.0
     assert(f as i16 == -32768)      // saturation to INT16_MIN
 }
 
 test "f64 as i16 — NaN" {
-    let f f64 = f64.NAN
+    ro f f64 = f64.NAN
     assert(f as i16 == 0)
 }
 
 test "f64 as i16 — +Infinity" {
-    let f f64 = f64.INFINITY
+    ro f f64 = f64.INFINITY
     assert(f as i16 == 32767)
 }
 
 test "f64 as i16 — -Infinity" {
-    let f f64 = -f64.INFINITY
+    ro f f64 = -f64.INFINITY
     assert(f as i16 == -32768)
 }
 
 test "f64 as u16 — negative becomes 0" {
-    let f f64 = -100.0
+    ro f f64 = -100.0
     assert(f as u16 == 0)           // not wrap, saturate to 0
 }
 
 test "f64 as u8 — saturation 256+" {
-    let f f64 = 1000.0
+    ro f f64 = 1000.0
     assert(f as u8 == 255)
 }
 
 test "f64 as i64 — INT_MAX boundary" {
-    let f f64 = 1e20                // > INT64_MAX
+    ro f f64 = 1e20                // > INT64_MAX
     assert(f as int == int.MAX)
 }
 
 test "f64 as int — preserves precision in range" {
-    let f f64 = 12345.0
+    ro f f64 = 12345.0
     assert(f as int == 12345)
 }
 
 test "f32 as i32 — same saturation" {
-    let f f32 = 1e10                // > INT32_MAX
+    ro f f32 = 1e10                // > INT32_MAX
     assert(f as i32 == i32.MAX)
 }
 
 // Проверка что int→int wraparound остался (не сломали план 05)
 test "int wraparound по-прежнему работает" {
-    let big int = 0x1_0000_FFFF
+    ro big int = 0x1_0000_FFFF
     assert(big as i32 == 0xFFFF)
     assert(big as byte == 0xFF)
 }

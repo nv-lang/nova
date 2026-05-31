@@ -123,7 +123,7 @@ integration, Time-effect mock, select cancel propagation).
 ### AD1. New API: `ChanReader.close_after(d Duration) -> ChanReader[()]`
 
 ```nova
-let t = ChanReader.close_after(Duration.from_secs(1))
+ro t = ChanReader.close_after(Duration.from_secs(1))
 select {
     Some(v) = rx.recv() => process(v)
     None    = t.recv()  => log_idle()
@@ -176,10 +176,10 @@ Nova: **integrate с existing D75 CancelToken** — timer наследует can
 от родительского `supervised(cancel: tok)` scope.
 
 ```nova
-let tok = CancelToken.new()
+ro tok = CancelToken.new()
 supervised(cancel: tok) {
     spawn fn() => {
-        let t = ChanReader.close_after(Duration.from_secs(60))  // long timeout
+        ro t = ChanReader.close_after(Duration.from_secs(60))  // long timeout
         select {
             Some(v) = rx.recv() => process(v)
             None    = t.recv()  => log_timeout()
@@ -205,7 +205,7 @@ Plan 47 Ф.6 уже добавил cancel-resource hooks для channels — п�
 
 ```nova
 with Time = Test.mock_clock(start_ms: 1000) {
-    let t = ChanReader.close_after(Duration.from_secs(5))
+    ro t = ChanReader.close_after(Duration.from_secs(5))
     Time.advance(Duration.from_secs(4))  // virtual time
     assert(t.is_closed() == false)
     Time.advance(Duration.from_secs(2))  // total +6s
@@ -846,7 +846,7 @@ f7, f8, f10, f11a).
    /// Используется для timer deadlines, profiling, retry budgets.
    /// Сериализация запрещена — bessmysленно вне процесса.
    #stable(since = "0.6")
-   export type Monotonic { readonly nanos i64 }
+   export type Monotonic { ro nanos i64 }
 
    /// Construct Monotonic from current clock. Единственный
    /// способ получить — нет `from_nanos` (raw bytes бессмысленны).

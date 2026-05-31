@@ -180,8 +180,8 @@
 ### Binding statements — три keyword'а, без `let`
 
 ```nova
-ro x = 5                            // immutable binding (был let x = 5)
-mut counter = 0                     // mutable binding   (был let mut counter = 0)
+ro x = 5                            // immutable binding (был ro x = 5)
+mut counter = 0                     // mutable binding   (был mut counter = 0)
 consume sb = StringBuilder.new()    // owned binding     (без изменений, Plan 73.1)
 
 ro x int = 5                        // с явным типом
@@ -1333,7 +1333,7 @@ Config.VERSION                                // ✓ 2
 Config.MAX_PEERS                              // ✓ 1024
 
 // Instance access — error
-let c = Config { name: "alice", timeout: SECOND }
+ro c = Config { name: "alice", timeout: SECOND }
 c.VERSION                                     // ✗ E_CONST_INSTANCE_ACCESS
                                               //   hint: «use Config.VERSION»
 
@@ -1981,7 +1981,7 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
   «let mut binding» → «mut binding» и т.п. (5 файлов). Cosmetic.
 - **`[M-114-bulk-rewrite-markdown]`** Ф.6.4-Ф.6.5 — markdown fenced
   ```nova blocks в docs/+spec/. Sample blocks в legacy plans (108/73/
-  etc) содержат let/readonly в text — не блокирует compilation.
+  etc) содержат ro/ro в text — не блокирует compilation.
 - **`[M-114-tree-sitter-grammar]`** Ф.7.1 — tree-sitter-nova grammar
   0.2.0 bump (отдельный репо).
 - **`[M-114-lsp-quickfixes]`** Ф.7.2 — LSP semantic tokens + quick-fix
@@ -2010,7 +2010,7 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
   footgun protection.
 - **Bulk-rewrite script effectiveness:** mechanical regex (word-boundary +
   skip line-comments) on .nv files — 9728 line changes без false
-  positives на 1293 файла. String literals containing «let»/«readonly»
+  positives на 1293 файла. String literals containing «let»/«ro»
   rare enough в .nv что compiler errors их бы выявили (none found).
 - **Return-type asymmetry** (param default ro, return default mut)
   закреплена в D176 amend — design rationale в D184.
@@ -2040,13 +2040,13 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
 
 - **Ф.0.1 ✅ DONE** — draft D184 в `spec/decisions/03-syntax.md`
   (commit `388edc05029`). Полный keyword-refresh decision: binding triad
-  ro/mut/consume + const narrow/generalize + readonly→ro rename +
+  ro/mut/consume + const narrow/generalize + ro→ro rename +
   return-type defaults + `@`-inheritance + grammar EBNF diff + сравнение
   с Go/Rust/TS/Kotlin/Java/Swift. Status: draft (финализируется в Ф.8).
 - **Ф.0.2 ✅ DONE** — audit corpus (in-message; не committed):
-  - `if let` / `while let` — 63 occurrences в 23 .nv-файлах (matches plan
+  - `if ro` / `while ro` — 63 occurrences в 23 .nv-файлах (matches plan
     estimate).
-  - `readonly` — 162 occurrences в 42 .nv-файлах + 163 в 11 spec-файлах
+  - `ro` — 162 occurrences в 42 .nv-файлах + 163 в 11 spec-файлах
     (matches estimate ~160 + ~161).
   - `const` — 122 occurrences в 49 .nv-файлах.
   - `let` в std/ — 1556 lines; total corpus ~8000-10000 (matches plan).
@@ -2078,9 +2078,9 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
   `E_BINDING_REQUIRES_INIT`.
 - **Ф.1.6** parser tests T1.1-T1.10a + NEG-T2.1-T2.8.
 - **Ф.2** diagnostics terminology rewrite (compiler-codegen strings
-  «let mut binding» → «mut binding», «readonly field» → «ro field» с
+  «let mut binding» → «mut binding», «ro field» → «ro field» с
   сохранением error codes).
-- **Ф.3** readonly→ro в полях/типах call-sites (compiler-codegen +
+- **Ф.3** ro→ro в полях/типах call-sites (compiler-codegen +
   testsuite plan108*/plan108_1*).
 - **Ф.4** ✅ self-contained — rewrite rules R1-R14 уже задокументированы
   в plan body (раздел «Автоматический rewrite recipe»).

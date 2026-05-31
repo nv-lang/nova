@@ -346,7 +346,7 @@ docs/plans/13-runtime-stdlib-and-autogen.md → Ф.9.5).
 
 ```nova
 fn T mut @try_read_X() -> Result[X, E] {
-    let r = with Fail[E] = (e) => interrupt Err(e) {
+    ro r = with Fail[E] = (e) => interrupt Err(e) {
         Ok(@read_X())
     }
     r
@@ -472,7 +472,7 @@ builtins.nv и runtime ловятся внутри Nova-компилятора �
 ```nova
 // (1) unknown method
 test "StringBuilder unknown method" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.unknown_method()
     // expected: error: no method 'unknown_method' on StringBuilder
 }

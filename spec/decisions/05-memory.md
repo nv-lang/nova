@@ -56,7 +56,7 @@ type Tree {
     parent Tree              // циклы освобождаются автоматом
 }
 
-let root = Tree { value: 1, children: [], parent: ... }
+ro root = Tree { value: 1, children: [], parent: ... }
 // освобождается автоматически когда становится недостижим
 ```
 
@@ -90,8 +90,8 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 fn process_audio_block(samples []f32) -> []f32 {
     realtime nogc {
-        let scratch = region {
-            let buf = []f32.with_capacity(1024)
+        ro scratch = region {
+            ro buf = []f32.with_capacity(1024)
             // ... первая фаза, временные данные
             buf.to_owned()
         }
@@ -420,7 +420,7 @@ type Token consume { val int }
 fn Token.new(v int) -> Token => { val: v }
 
 // ❌ ОШИБКА E_CONSUME_KEYWORD_MISSING
-let tok = Token.new(7)
+ro tok = Token.new(7)
 
 // ✅ ownership-binding
 consume tok = Token.new(7)
@@ -437,7 +437,7 @@ fn drain(consume sb StringBuilder) -> str     // param
 
 Но на let-binding consume-обязательство было **невидимо**:
 ```nova
-let sb = StringBuilder.new()    // ← неявно: sb имеет consume-obligation
+ro sb = StringBuilder.new()    // ← неявно: sb имеет consume-obligation
 sb.into()                        // ← consume happens silently
 ```
 
@@ -464,7 +464,7 @@ D180 закрывает 3 production-grade дыры:
 ```nova
 consume X = expr            // primary form
 consume mut X = expr        // ❌ parse error (D131 §«взаимоисключающие»)
-let X = expr                // регулярный binding для не-consume RHS
+ro X = expr                // регулярный binding для не-consume RHS
 ```
 
 **Type annotation** разрешён между pattern и `=`:
@@ -505,7 +505,7 @@ consume sb = StringBuilder.new()
 sb.append("hi")
 
 // ❌ E_VIEW_BINDING_FORBIDDEN
-let twin = sb
+ro twin = sb
 
 // ✅ move ownership
 consume twin = sb
@@ -513,7 +513,7 @@ consume twin = sb
 
 // ✅ передать как view через function-param
 fn read_len(view T) -> int => view.len()
-let n = read_len(sb)    // sb остаётся Live; read_len получает view-param
+ro n = read_len(sb)    // sb остаётся Live; read_len получает view-param
 ```
 
 **Rationale safety:** views существуют ТОЛЬКО как function params. Param
@@ -543,7 +543,7 @@ fn read_len(view sb T) -> int => sb.len()
 
 fn main() {
     consume sb = StringBuilder.new()
-    let n = read_len(sb)        // view-borrow на duration of call
+    ro n = read_len(sb)        // view-borrow на duration of call
     sb.append("more")            // OK — sb всё ещё Live (view returned)
     consume v = sb.into()        // OK — consume в конце
 }
@@ -707,19 +707,19 @@ Closure-body анализируется как функция; capture-mode оп
 ```nova
 consume tx = begin()
 
-let logger = || println(tx.id)                  // view-capture (только read)
+ro logger = || println(tx.id)                  // view-capture (только read)
 logger()                                         // OK
 logger()                                         // OK, multi-invoke
 tx.commit()                                      // ✅ tx Live после
 
 consume sb = StringBuilder.new()
-let appender = || sb.append("x")                // mut-view-capture
+ro appender = || sb.append("x")                // mut-view-capture
 appender()                                       // OK
 appender()                                       // OK, multi-invoke
 sb.into()                                        // ✅ sb Live после mut-view
 
 consume tx2 = begin()
-let commit_it = || tx2.commit()                 // consume-capture (FnOnce)
+ro commit_it = || tx2.commit()                 // consume-capture (FnOnce)
 commit_it()                                      // ✅ tx2 Consumed, closure Consumed
 commit_it()                                      // ❌ use-after-consume closure
 tx2.commit()                                     // ❌ tx2 уже Consumed
@@ -735,13 +735,13 @@ tx2.commit()                                     // ❌ tx2 уже Consumed
 ```nova
 fn make_logger() -> ?? {
     consume tx = begin()
-    let f = || println(tx.id)                   // view-capture
+    ro f = || println(tx.id)                   // view-capture
     return f                                     // ❌ view-closure escape
 }
 
 fn make_committer() -> ?? {
     consume tx = begin()
-    let f = || tx.commit()                       // consume-capture (FnOnce)
+    ro f = || tx.commit()                       // consume-capture (FnOnce)
     return f                                     // ✅ consume-closure owns tx; escape OK
 }
 ```
@@ -779,8 +779,8 @@ fn Service consume @close_file() {
 tx in vec` consume. То же для `if let`:
 
 ```nova
-if let Some(t) = opt { println(t.id) }          // view, opt Live после
-if let consume Some(t) = opt { t.commit() }     // consume, opt Consumed после
+if Some(t) = opt { println(t.id) }          // view, opt Live после
+if ro consume Some(t) = opt { t.commit() }     // consume, opt Consumed после
 ```
 
 ### `mut`-borrow через `mut tx` qualifier (НЕ `&mut T`)

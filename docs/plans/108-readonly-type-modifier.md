@@ -33,8 +33,8 @@ invariant.
 
 ```nova
 type Account {
-    readonly id u64           // нельзя: acc.id = 999
-    readonly tags []str       // нельзя: acc.tags = other  И  acc.tags.push("x")
+    ro id u64           // нельзя: acc.id = 999
+    ro tags []str       // нельзя: acc.tags = other  И  acc.tags.push("x")
     balance money             // можно у mut binding
 }
 ```
@@ -73,11 +73,11 @@ type Account {
 ### Coercion rules
 
 ```nova
-let arr []u8 = [1, 2, 3]
-let view readonly []u8 = arr    // ✅ []u8 → readonly []u8 (автоматически)
-let back []u8 = view            // ❌ readonly []u8 → []u8 — E_READONLY_COERCE
+ro arr []u8 = [1, 2, 3]
+ro view ro []u8 = arr    // ✅ []u8 → ro []u8 (автоматически)
+ro back []u8 = view            // ❌ ro []u8 → []u8 — E_READONLY_COERCE
 
-fn take_view(data readonly []u8) { ... }
+fn take_view(data ro []u8) { ... }
 take_view(arr)                  // ✅ автоматический coerce при вызове
 
 // Escape hatch: см. Q1 — не финализировано.
@@ -90,7 +90,7 @@ take_view(arr)                  // ✅ автоматический coerce пр�
 
 ```nova
 // Zero-copy view в буфер строки — UTF-8 invariant защищён.
-export external fn str @as_bytes() -> readonly []u8
+export external fn str @as_bytes() -> ro []u8
 
 // Старый @bytes() остаётся как копия (для случаев когда нужна owned копия).
 export external fn str @bytes() -> []u8

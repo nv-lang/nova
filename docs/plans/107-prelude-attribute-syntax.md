@@ -565,18 +565,18 @@ test "no_prelude — module compiles without prelude" {
 module plan107.prelude_core_attr
 
 test "prelude(core, runtime) — Option visible" {
-    let x Option[int] = Some(42)
+    ro x Option[int] = Some(42)
     assert(x == Some(42))
 }
 
 test "prelude(core, runtime) — Result visible" {
-    let r Result[int, str] = Ok(1)
+    ro r Result[int, str] = Ok(1)
     assert(r == Ok(1))
 }
 
 test "prelude(core, runtime) — panic visible (runtime)" {
     // panic exists — не вызываем, просто проверяем что компилируется
-    let _ = fn() { panic("x") }
+    ro _ = fn() { panic("x") }
     assert(true)
 }
 ```

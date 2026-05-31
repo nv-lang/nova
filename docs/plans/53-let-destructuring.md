@@ -36,12 +36,12 @@
 
 ```nova
 // До:
-let pair = Channel.new(0)
-let tx = pair.tx
-let rx = pair.rx
+ro pair = Channel.new(0)
+ro tx = pair.tx
+ro rx = pair.rx
 
 // После:
-let { tx, rx } = Channel.new(0)
+ro { tx, rx } = Channel.new(0)
 ```
 
 Аналогично — любой record-возврат (Result-like структуры, точки, размеры,

@@ -9,7 +9,7 @@
 ```nova
 fn append(mut b []int, v int) { b.push(v) }   // ✓ mutates
 fn count(b []int) -> int => b.len()           // ✓ read-only (default)
-fn count(readonly b []int) -> int => b.len()  // ✓ readonly (synonym default)
+fn count(ro b []int) -> int => b.len()  // ✓ ro (synonym default)
 fn drain(consume b []int) { ... }             // ✓ ownership transfer
 ```
 
@@ -35,16 +35,16 @@ fn drain(consume b []int) { ... }             // ✓ ownership transfer
 ```nova
 fn append_world(mut sb StringBuilder) { sb.append(" world") }
 
-let sb = StringBuilder.from("hello")
+ro sb = StringBuilder.from("hello")
 append_world(sb)
-let s = sb.as_str()                  // "hello world" — мутация видна
+ro s = sb.as_str()                  // "hello world" — мутация видна
 ```
 
 ### default или `readonly` — только читать (с производством результата)
 
 ```nova
 fn sum(b []int) -> int {
-    let mut total = 0
+    mut total = 0
     for x in b { total = total + x }
     total
 }
@@ -54,7 +54,7 @@ fn sum(b []int) -> int {
 (особенно для FFI/документации):
 
 ```nova
-export fn hash(readonly bytes []u8) -> u64 => ...
+export fn hash(ro bytes []u8) -> u64 => ...
 ```
 
 ### `consume` — забираешь ownership
@@ -63,7 +63,7 @@ export fn hash(readonly bytes []u8) -> u64 => ...
 fn finalize(consume sb StringBuilder) -> str => sb.as_str()
 
 consume sb = StringBuilder.from("x")
-let s = finalize(sb)                  // sb dead after this
+ro s = finalize(sb)                  // sb dead after this
 ```
 
 ## Диагностики
@@ -109,9 +109,9 @@ fn StringBuilder consume @as_str() -> str    // consume receiver
 что и параметры: **без `mut` — read-only**.
 
 ```nova
-let arr = []
+ro arr = []
 arr.push(1)                       // ✗ E_LOCAL_NOT_MUT
-let mut arr = []
+mut arr = []
 arr.push(1)                       // ✓
 ```
 
@@ -135,10 +135,10 @@ for mut x in arrs { x.push(1) }   // ✓
 При destructure `mut` ставится **на каждое имя отдельно** (Rust-style):
 
 ```nova
-let (a, b) = pair                  // оба immutable
-let (mut a, b) = pair              // a mutable, b immutable
-let (a, mut b) = pair              // a immutable, b mutable
-let (mut a, mut b) = pair          // оба mutable
+ro (a, b) = pair                  // оба immutable
+ro (mut a, b) = pair              // a mutable, b immutable
+ro (a, mut b) = pair              // a immutable, b mutable
+ro (mut a, mut b) = pair          // оба mutable
 ```
 
 **Запрет group-mut** — `let mut (a, b) = ...` parser-level отвергается

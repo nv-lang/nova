@@ -44,9 +44,9 @@ D-decisions: [D54](decisions/03-syntax.md#d54),
 от C/C++ UB). Согласовано с Rust 1.45+.
 
 ```nova
-let n = 1e20 as int             // saturates to INT64_MAX
-let m = (-1.0) as u32           // saturates to 0
-let nan = 0.0 / 0.0 as i16      // 0
+ro n = 1e20 as int             // saturates to INT64_MAX
+ro m = (-1.0) as u32           // saturates to 0
+ro nan = 0.0 / 0.0 as i16      // 0
 ```
 
 ---
@@ -63,9 +63,9 @@ let nan = 0.0 / 0.0 as i16      // 0
 | `str → f64/f32` | `f64.try_from(s)?` | invalid number format |
 
 ```nova
-let n = int.try_from("42")?     // Ok(42)
-let m = int.try_from("abc")     // Err
-let f = f64.try_from("3.14")?   // Ok(3.14)
+ro n = int.try_from("42")?     // Ok(42)
+ro m = int.try_from("abc")     // Err
+ro f = f64.try_from("3.14")?   // Ok(3.14)
 ```
 
 ### numeric → str (format, infallible)
@@ -77,8 +77,8 @@ let f = f64.try_from("3.14")?   // Ok(3.14)
 | `byte → str` | `str.from(b)` |
 
 ```nova
-let s = str.from(42)            // "42"
-let f = str.from(3.14)          // "3.14"
+ro s = str.from(42)            // "42"
+ro f = str.from(3.14)          // "3.14"
 ```
 
 ---
@@ -133,9 +133,9 @@ let f = str.from(3.14)          // "3.14"
 | **`int/byte/f64/etc → bool`** | **запрещено** | use `n != 0` |
 
 ```nova
-let s = str.from(true)          // "true"
-let b = bool.try_from("true")?  // Ok(true)
-let n = if x != 0 { ... }       // explicit
+ro s = str.from(true)          // "true"
+ro b = bool.try_from("true")?  // Ok(true)
+ro n = if x != 0 { ... }       // explicit
 ```
 
 ---
@@ -149,8 +149,8 @@ let n = if x != 0 { ... }       // explicit
 
 ```nova
 type UserId alias int
-let u UserId = 42 as UserId
-let n int = u as int            // 42
+ro u UserId = 42 as UserId
+ro n int = u as int            // 42
 ```
 
 ---
@@ -161,7 +161,7 @@ let n int = u as int            // 42
 
 ```nova
 type ErrorCode | NotFound = 404 | InternalError = 500
-let code = NotFound as int      // 404
+ro code = NotFound as int      // 404
 ```
 
 `int → Sum` через `as` **запрещён** (число может не попасть в варианты).
@@ -176,7 +176,7 @@ let code = NotFound as int      // 404
 запрещён.
 
 ```nova
-let n int = 5
+ro n int = 5
 if n { ... }                    // ❌ compile error
 if n != 0 { ... }               // ✅
 ```

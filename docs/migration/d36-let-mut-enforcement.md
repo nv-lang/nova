@@ -7,13 +7,13 @@
 
 ```nova
 // Было (V1 — D36 spec, но без enforcement):
-let arr = [1, 2, 3]
+ro arr = [1, 2, 3]
 arr.push(4)                       // компилировалось — silent mutability
 
 // Стало (Plan 108.2 — enforcement):
-let arr = [1, 2, 3]
+ro arr = [1, 2, 3]
 arr.push(4)                       // ✗ E_LOCAL_NOT_MUT
-let mut arr = [1, 2, 3]
+mut arr = [1, 2, 3]
 arr.push(4)                       // ✓
 ```
 
@@ -34,11 +34,11 @@ arr.push(...)`.  Теперь это `E_LOCAL_NOT_MUT`.
 
 ```nova
 // Before
-let arr = [1]
+ro arr = [1]
 arr.push(2)
 
 // After
-let mut arr = [1]
+mut arr = [1]
 arr.push(2)
 ```
 
@@ -46,14 +46,14 @@ arr.push(2)
 
 ```nova
 // Before
-let sb = StringBuilder.new()
+ro sb = StringBuilder.new()
 sb.append("hello")
 
 // After
 consume sb = StringBuilder.new()    // consume → implicit mut
 sb.append("hello")
 // или
-let mut sb = StringBuilder.new()
+mut sb = StringBuilder.new()
 sb.append("hello")
 ```
 
@@ -61,12 +61,12 @@ sb.append("hello")
 
 ```nova
 // Before
-let mu = Mutex.new()
-let g = mu.lock()
+ro mu = Mutex.new()
+ro g = mu.lock()
 
 // After
-let mut mu = Mutex.new()
-let g = mu.lock()
+mut mu = Mutex.new()
+ro g = mu.lock()
 ```
 
 Аналогично для `WaitGroup`, `Semaphore`, `RwLock`, `Once`, `Condvar`,
@@ -76,11 +76,11 @@ let g = mu.lock()
 
 ```nova
 // Before
-let b = Box.new(1)
+ro b = Box.new(1)
 b.value = 99
 
 // After
-let mut b = Box.new(1)
+mut b = Box.new(1)
 b.value = 99
 ```
 
@@ -88,11 +88,11 @@ b.value = 99
 
 ```nova
 // Before
-let m = HashMap[str, int].new()
+ro m = HashMap[str, int].new()
 m.insert("k", 1)
 
 // After
-let mut m = HashMap[str, int].new()
+mut m = HashMap[str, int].new()
 m.insert("k", 1)
 ```
 
@@ -120,15 +120,15 @@ for mut x in arrs { x.push(99) }  // ✓
 
 ```nova
 // Before
-let (a, b) = pair
+ro (a, b) = pair
 a.push(1)                         // ✗ E_LOCAL_NOT_MUT
 
 // After (per-name)
-let (mut a, b) = pair             // ✓ a mutable, b immutable
+ro (mut a, b) = pair             // ✓ a mutable, b immutable
 a.push(1)
 
 // Запрет — group mut
-let mut (a, b) = pair             // ✗ E_PATTERN_GROUP_MUT
+mut (a, b) = pair             // ✗ E_PATTERN_GROUP_MUT
 ```
 
 ## Symmetry с Plan 108.1 (params)

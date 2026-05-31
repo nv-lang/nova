@@ -1374,13 +1374,13 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     @realtime
     fn checksum(data []byte) -> int {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
 
     realtime nogc {
-        let xs = []int.new()  // ← compile error: cannot allocate
+        ro xs = []int.new()  // ← compile error: cannot allocate
                               //   inside `realtime nogc`.
     }
     ```
@@ -1438,12 +1438,12 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     fn dedup[T Hashable](xs []T) -> []T => xs
 
-    let users = [User { id: 1 as u64, name: "a" }]
-    let _ = dedup(users)   // ← type-check OK, User satisfies Hashable
+    ro users = [User { id: 1 as u64, name: "a" }]
+    ro _ = dedup(users)   // ← type-check OK, User satisfies Hashable
 
     type NoHash { name str }
-    let xs = [NoHash { name: "x" }]
-    let _ = dedup(xs)
+    ro xs = [NoHash { name: "x" }]
+    ro _ = dedup(xs)
     // ← compile-error:
     //   type `NoHash` does not satisfy `Hashable` bound
     //     `Hashable` requires: hash() -> u64
@@ -1523,8 +1523,8 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
     }
 
     // Nested Option — typed pattern match:
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n      // n: int, не cast'ится
         _ => -1
     }
@@ -2431,9 +2431,9 @@ macros остаются для optimization (когда сигнатура hardc
 fn Buf mut @push(n int) -> int => ...
 fn Buf mut @push(b bool) -> int => ...
 
-let f = buf.@push                       // ambiguous → берётся first
-let g = buf.@push as fn(int) -> int     // выбор первого overload'а
-let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+ro f = buf.@push                       // ambiguous → берётся first
+ro g = buf.@push as fn(int) -> int     // выбор первого overload'а
+ro h = buf.@push as fn(bool) -> int    // выбор второго overload'а
 ```
 
 В codegen emit_expr для `As(Member, TypeRef::Func)`:
@@ -3187,7 +3187,7 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -3282,7 +3282,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -13331,7 +13331,7 @@ emission в emit_c.rs).
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
   `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
   ```nova
-  if let Some(user) = lookup(id), user.is_active {
+  if Some(user) = lookup(id), user.is_active {
       process(user)
   }
   ```
@@ -14788,13 +14788,13 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     @realtime
     fn checksum(data []byte) -> int {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
 
     realtime nogc {
-        let xs = []int.new()  // ← compile error: cannot allocate
+        ro xs = []int.new()  // ← compile error: cannot allocate
                               //   inside `realtime nogc`.
     }
     ```
@@ -14852,12 +14852,12 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     fn dedup[T Hashable](xs []T) -> []T => xs
 
-    let users = [User { id: 1 as u64, name: "a" }]
-    let _ = dedup(users)   // ← type-check OK, User satisfies Hashable
+    ro users = [User { id: 1 as u64, name: "a" }]
+    ro _ = dedup(users)   // ← type-check OK, User satisfies Hashable
 
     type NoHash { name str }
-    let xs = [NoHash { name: "x" }]
-    let _ = dedup(xs)
+    ro xs = [NoHash { name: "x" }]
+    ro _ = dedup(xs)
     // ← compile-error:
     //   type `NoHash` does not satisfy `Hashable` bound
     //     `Hashable` requires: hash() -> u64
@@ -14937,8 +14937,8 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
     }
 
     // Nested Option — typed pattern match:
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n      // n: int, не cast'ится
         _ => -1
     }
@@ -15845,9 +15845,9 @@ macros остаются для optimization (когда сигнатура hardc
 fn Buf mut @push(n int) -> int => ...
 fn Buf mut @push(b bool) -> int => ...
 
-let f = buf.@push                       // ambiguous → берётся first
-let g = buf.@push as fn(int) -> int     // выбор первого overload'а
-let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+ro f = buf.@push                       // ambiguous → берётся first
+ro g = buf.@push as fn(int) -> int     // выбор первого overload'а
+ro h = buf.@push as fn(bool) -> int    // выбор второго overload'а
 ```
 
 В codegen emit_expr для `As(Member, TypeRef::Func)`:
@@ -16601,7 +16601,7 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -16696,7 +16696,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -26745,7 +26745,7 @@ emission в emit_c.rs).
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
   `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
   ```nova
-  if let Some(user) = lookup(id), user.is_active {
+  if Some(user) = lookup(id), user.is_active {
       process(user)
   }
   ```

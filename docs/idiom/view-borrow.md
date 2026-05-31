@@ -66,7 +66,7 @@ fn Service @file_id() -> Option[int] {
 
 ```nova
 consume tx = begin()
-let logger = || println(tx.id)                  // только view-операции в body
+ro logger = || println(tx.id)                  // только view-операции в body
 logger()                                         // OK
 logger()                                         // OK, multi-invoke
 tx.commit()                                     // tx Live после
@@ -76,7 +76,7 @@ tx.commit()                                     // tx Live после
 
 ```nova
 consume tx = begin()
-let commit_it = || tx.commit()                  // consume-операция в body
+ro commit_it = || tx.commit()                  // consume-операция в body
 commit_it()                                      // ✅ tx Consumed
 commit_it()                                      // ❌ use-after-consume
 ```

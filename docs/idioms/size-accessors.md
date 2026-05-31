@@ -8,20 +8,20 @@
 **Всегда** `.method()` со скобками. **Никогда** field-style.
 
 ```nova
-let v = [1, 2, 3]
+ro v = [1, 2, 3]
 
-let n = v.len()              // ✓
-let n = v.len                // ✗ error E_SIZE_ACCESSOR_FIELD
+ro n = v.len()              // ✓
+ro n = v.len                // ✗ error E_SIZE_ACCESSOR_FIELD
 
 if v.is_empty() { ... }      // ✓
 if v.is_empty { ... }        // ✗
 
-let c = v.capacity()         // ✓
-let c = v.cap                // ✗ rename + parens: .capacity()
+ro c = v.capacity()         // ✓
+ro c = v.cap                // ✗ rename + parens: .capacity()
 
-let s = "hello"
-let b = s.byte_len()         // ✓
-let b = s.is_empty()         // ✓
+ro s = "hello"
+ro b = s.byte_len()         // ✓
+ro b = s.is_empty()         // ✓
 ```
 
 ## API per type
@@ -57,9 +57,9 @@ let b = s.is_empty()         // ✓
 но требует **явного `@`-prefix** для disambiguation:
 
 ```nova
-let f = arr.@len    // ✓ bound method value, тип fn() -> int
-let f = arr.len     // ✗ error E_SIZE_ACCESSOR_FIELD
-let n = arr.len()   // ✓ method call, тип int
+ro f = arr.@len    // ✓ bound method value, тип fn() -> int
+ro f = arr.len     // ✗ error E_SIZE_ACCESSOR_FIELD
+ro n = arr.len()   // ✓ method call, тип int
 ```
 
 ## Loop с индексом

@@ -52,7 +52,7 @@ fn sort[T](xs []T, less fn(T, T) -> bool) -> []T
 type Option[T] | Some(T) | None
 type HashMap[K, V] { ... }
 
-let parsed = parse[int]("42")?
+ro parsed = parse[int]("42")?
 ```
 
 `[T]` — это **generic-применение** к именованному типу или функции
@@ -121,7 +121,7 @@ match shape {
     Square { s } => s * s
 }
 
-let inc = |x| x + 1
+ro inc = |x| x + 1
 fn double(x int) -> int => x * 2
 ```
 
@@ -203,8 +203,8 @@ block      = '{' { statement } [ expression ] '}'
 ```nova
 fn cleanup() Io -> ()           // явно
 fn cleanup() Io                  // -> () можно опустить
-let xs [()] = [(), (), ()]       // unit как элемент массива
-let r Result[(), str] = Ok(())   // unit как generic-параметр
+ro xs [()] = [(), (), ()]       // unit как элемент массива
+ro r Result[(), str] = Ok(())   // unit как generic-параметр
 ```
 
 Сводка символов:
@@ -226,12 +226,12 @@ Function type записывается **только** через `fn(args) Eff
 // ✓ — function type везде с fn
 fn sort[T](xs []T, less fn(T, T) -> bool) -> []T
 type Handler alias fn(Request) -> Response
-let callback fn() -> int = ...
+ro callback fn() -> int = ...
 type Server { handler fn(Request) -> Response }
 fn measure[T](action fn() Io -> T) Time -> (T, Duration)
 
 // ✗ — без fn запрещено
-let f () -> int = ...                      // ✗
+ro f () -> int = ...                      // ✗
 type Handler alias (Request) -> Response   // ✗
 fn sort[T](xs []T, less (T, T) -> bool)    // ✗
 type Server { handler (Request) -> Response }  // ✗
@@ -284,13 +284,13 @@ type Server { handler (Request) -> Response }  // ✗
 
 ```nova
 // Тип: fn(int) -> bool
-let pred fn(int) -> bool = |x| x > 0
+ro pred fn(int) -> bool = |x| x > 0
 //        ^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^
 //        type annotation         closure-light value
 
 // closure-full — анонимная fn (см. D22):
-let pred fn(int) -> bool = fn(x int) -> bool => x > 0   // closure-full
-let pred fn(int) -> bool = fn(x int) -> bool { x > 0 }  // closure-full block
+ro pred fn(int) -> bool = fn(x int) -> bool => x > 0   // closure-full
+ro pred fn(int) -> bool = fn(x int) -> bool { x > 0 }  // closure-full block
 ```
 
 `fn` встречается в трёх ролях, различимых по контексту:
@@ -354,10 +354,10 @@ let pred fn(int) -> bool = fn(x int) -> bool { x > 0 }  // closure-full block
 #### closure-light
 
 ```nova
-let inc   = |x| x + 1                              // expr-body
-let zero  = || 0                                    // no params
-let block = |x| { let y = x*2; y + 1 }              // block-body
-let any   = |_| 0                                   // wildcard
+ro inc   = |x| x + 1                              // expr-body
+ro zero  = || 0                                    // no params
+ro block = |x| { ro y = x*2; y + 1 }              // block-body
+ro any   = |_| 0                                   // wildcard
 
 list.filter(|x| x > 0)                              // closure-arg
 list.fold(0, |acc, x| acc + x)                      // multiple params
@@ -385,10 +385,10 @@ identifier    = name | '_'
 #### closure-full
 
 ```nova
-let typed    = fn(x int) -> int => x * 2
-let block    = fn(x int, y int) -> int { let z = x+y; z * 2 }
-let with_eff = fn(req Request) Db Log -> Response { process(req) }
-let void     = fn(s str) Log { Log.info(s) }
+ro typed    = fn(x int) -> int => x * 2
+ro block    = fn(x int, y int) -> int { ro z = x+y; z * 2 }
+ro with_eff = fn(req Request) Db Log -> Response { process(req) }
+ro void     = fn(s str) Log { Log.info(s) }
 ```
 
 Грамматика идентична named fn без имени:
@@ -412,7 +412,7 @@ closure-light валиден **только когда контекст одно
    объявил `-> (fn(int) -> int, ...)`.
 5. **First-use inference** (Rust-семантика):
    ```nova
-   let f = |x| x + 1
+   ro f = |x| x + 1
    f(5)                    // first use фиксирует x: int → sig: fn(int) -> int
    f(3.14)                 // ❌ ошибка: sig уже зафиксирован
    ```
@@ -420,13 +420,13 @@ closure-light валиден **только когда контекст одно
 Если контекст недостаточен (closure-light нигде не используется):
 
 ```nova
-let f = |x| x + 1           // ❌ cannot infer signature
+ro f = |x| x + 1           // ❌ cannot infer signature
 ```
 
 → либо использовать `f` далее, либо переключиться на closure-full:
 
 ```nova
-let f = fn(x int) -> int => x + 1
+ro f = fn(x int) -> int => x + 1
 ```
 
 #### Эффекты
@@ -475,12 +475,12 @@ managed-heap ([D32](02-types.md#d32), [D62](04-effects.md#d62)).
 
 ```nova
 fn make_counter() -> fn() -> int {
-    let mut count = 0
+    mut count = 0
     || { count = count + 1; count }
 }
 
-let f = make_counter()
-let g = make_counter()
+ro f = make_counter()
+ro g = make_counter()
 f()    // 1   ← каждый вызов make_counter создаёт свежий scope
 f()    // 2
 g()    // 1   ← у g свой count, не shared с f
@@ -490,7 +490,7 @@ g()    // 1   ← у g свой count, не shared с f
 
 ```nova
 fn make_counter() -> (fn() -> int, fn(int) -> int, fn() -> int) {
-    let mut count = 0
+    mut count = 0
     (
         || { count = count + 1; count },
         |a| { count = count + a; count },
@@ -498,7 +498,7 @@ fn make_counter() -> (fn() -> int, fn(int) -> int, fn() -> int) {
     )
 }
 
-let (f1, f2, f3) = make_counter()
+ro (f1, f2, f3) = make_counter()
 f1()    // 1   ← все три closure'а share один count
 f1()    // 2
 f2(5)   // 7
@@ -512,7 +512,7 @@ f3()    // 7
 другого:
 
 ```nova
-let mut count = 0
+mut count = 0
 (|a| count += a, || a)                              // ❌ `a` undefined в `|| a`
 //                  ^
 //                  parameter of previous closure, not in scope here
@@ -537,7 +537,7 @@ enclosing fn. Это согласовано с D43 (`return` в trailing-block �
 из блока):
 
 ```nova
-let find = |xs []int| {
+ro find = |xs []int| {
     for x in xs {
         if x > 100 { return Some(x) }                // выход ИЗ closure
     }
@@ -760,14 +760,14 @@ fn classify(x int) -> str =>
 ### Правило
 
 ```nova
-let xs []int = [1, 2, 3]                // динамический
-let buf [5]u8 = [0, 0, 0, 0, 0]         // фиксированный
-let zeros [4]u8 = [0; 4]                // повторение через ;
+ro xs []int = [1, 2, 3]                // динамический
+ro buf [5]u8 = [0, 0, 0, 0, 0]         // фиксированный
+ro zeros [4]u8 = [0; 4]                // повторение через ;
 
-let matrix [2][3]int = [[1, 2, 3], [4, 5, 6]]
+ro matrix [2][3]int = [[1, 2, 3], [4, 5, 6]]
 matrix[i][j]                             // i: 0..2, j: 0..3 — порядок совпадает
 
-let opt Option[int] = Some(42)           // generic не меняется
+ro opt Option[int] = Some(42)           // generic не меняется
 ```
 
 Парсер по позиции:
@@ -1133,11 +1133,11 @@ const TIMEOUT_SEC = 60 * 5            // арифметика над литер�
 const GREETING = "hello"
 
 // let — runtime
-let now = Time.now()
-let user = Db.find(user_id) ?? throw UserNotFound(user_id)
+ro now = Time.now()
+ro user = Db.find(user_id) ?? throw UserNotFound(user_id)
 
 // let mut
-let mut counter = 0
+mut counter = 0
 counter += 1
 ```
 
@@ -1185,8 +1185,8 @@ Nova имеет **три разных** keyword'а связанных с immutab
 #### `let` / `let mut` — про **binding**
 
 ```nova
-let x = 5             // binding x не переприсваивается
-let mut y = 0         // binding y переприсваивается
+ro x = 5             // binding x не переприсваивается
+mut y = 0         // binding y переприсваивается
 y = y + 1
 ```
 
@@ -1199,7 +1199,7 @@ immutable. `let mut` — явный opt-in в mutable, аналогично Rust
 
 ```nova
 const MAX = 4096                  // compile-time, в data-segment
-let limit = compute_limit()        // runtime, в heap/stack
+ro limit = compute_limit()        // runtime, в heap/stack
 ```
 
 Оба immutable. **Разница** — `const` накладывает требование
@@ -1216,14 +1216,14 @@ const-record'ы). `let` принимает любое runtime-выражение
 
 ```nova
 type Account {
-    readonly id u64        // поле never-mut, даже у `let mut acc`
+    ro id u64        // поле never-mut, даже у `let mut acc`
     balance money          // поле default — mut если binding mut
     mut log_count int      // поле always-mut, даже у `let acc`
 }
 
-let mut acc = Account { id: 1, balance: 100, log_count: 0 }
+mut acc = Account { id: 1, balance: 100, log_count: 0 }
 acc.balance = 200          // OK   — поле default + binding mut
-acc.id = 999               // ERR  — id readonly
+acc.id = 999               // ERR  — id ro
 acc.log_count += 1         // OK   — log_count mut
 ```
 
@@ -1397,7 +1397,7 @@ self**. Поля self — через `@field`. Мутирующий метод �
 
 ```nova
 type Account {
-    readonly owner str
+    ro owner str
     _balance money
 }
 
@@ -1440,9 +1440,9 @@ fn str.from(i int) -> Self => /* ... */
 fn int @to_hex() -> str => /* ... */
 fn f64 @round() -> int => /* ... */
 
-let s = str.from(42)            // static via D35
-let h = (255).to_hex()          // instance, parens around literal
-let r = 3.7.round()             // chained on numeric literal
+ro s = str.from(42)            // static via D35
+ro h = (255).to_hex()          // instance, parens around literal
+ro r = 3.7.round()             // chained on numeric literal
 ```
 
 Применение: `From[X]` для `str` (D73) — основной механизм
@@ -1469,16 +1469,16 @@ fn Account @send(ch Channel[Account]) => ch.send(@)
 Вызов методов — **скобки обязательны**:
 
 ```nova
-let acc = Account.new("alice")
+ro acc = Account.new("alice")
 acc.deposit(100)
-let bal = acc.balance()         // getter, обязательные ()
+ro bal = acc.balance()         // getter, обязательные ()
 ```
 
 Bound vs unbound:
 
 ```nova
-let f = acc.balance              // bound: fn() -> money
-let g = Account.@balance         // unbound: fn(Account) -> money
+ro f = acc.balance              // bound: fn() -> money
+ro g = Account.@balance         // unbound: fn(Account) -> money
 ```
 
 Generic'и: `[T]` после имени типа (`fn Vec[T] @len()`) и/или после
@@ -1538,24 +1538,24 @@ fn Account.new(b int) -> Self => Self { balance: b }
 fn Account @get() -> int => @balance
 fn Account @add(n int) -> int => @balance + n
 
-let acc = Account.new(42)
+ro acc = Account.new(42)
 
 // 1. Bound method value: захватывает obj как self.
 //    Тип: fn(<remaining-params>) -> R
-let f = acc.@get          // тип: fn() -> int
-let g = acc.@add          // тип: fn(int) -> int
-let v = f()               // 42
-let r = g(10)             // 52
+ro f = acc.@get          // тип: fn() -> int
+ro g = acc.@add          // тип: fn(int) -> int
+ro v = f()               // 42
+ro r = g(10)             // 52
 
 // 2. Unbound method value: self передаётся явно как первый аргумент.
 //    Тип: fn(Receiver, <params>) -> R
-let h = Account.@add      // тип: fn(Account, int) -> int
-let r2 = h(acc, 10)       // 52
+ro h = Account.@add      // тип: fn(Account, int) -> int
+ro r2 = h(acc, 10)       // 52
 
 // 3. Static method value: обычная свободная функция.
 //    Тип: fn(<params>) -> R
-let mk = Account.new      // тип: fn(int) -> Self
-let acc2 = mk(7)
+ro mk = Account.new      // тип: fn(int) -> Self
+ro acc2 = mk(7)
 ```
 
 #### Семантика
@@ -1569,9 +1569,9 @@ let acc2 = mk(7)
 #### Использование в HOF
 
 ```nova
-let nums = [1, 2, 3]
-let negated = nums.map(int.@neg)    // unbound: применяет @neg к каждому
-let total = nums.fold(0, acc.@add)  // bound: добавляет каждый num к acc
+ro nums = [1, 2, 3]
+ro negated = nums.map(int.@neg)    // unbound: применяет @neg к каждому
+ro total = nums.fold(0, acc.@add)  // bound: добавляет каждый num к acc
 ```
 
 #### Disambiguation для overloaded methods (Ф.5)
@@ -1582,9 +1582,9 @@ let total = nums.fold(0, acc.@add)  // bound: добавляет каждый nu
 fn Buffer mut @write(s str) -> ()
 fn Buffer mut @write(b []u8) -> ()
 
-let buf = Buffer.new()
-let f1 = buf.@write as fn(str) -> ()      // выбор по annotation
-let f2 = buf.@write as fn([]u8) -> ()
+ro buf = Buffer.new()
+ro f1 = buf.@write as fn(str) -> ()      // выбор по annotation
+ro f2 = buf.@write as fn([]u8) -> ()
 ```
 
 Без annotation — compile error «ambiguous method value». Annotation
@@ -1643,17 +1643,17 @@ Swift `Self.method()`. D66 расширяется этим Plan'ом 11.
 
 ```nova
 // record — доступ по имени
-let u = User { id: 1, name: "alice" }
+ro u = User { id: 1, name: "alice" }
 println(u.name)
 
 // позиционная структура — по индексу
 type Point(f64, f64)
-let p = Point(1.0, 2.0)
+ro p = Point(1.0, 2.0)
 println(p.0)             // 1.0
 println(p.1)             // 2.0
 
 // кортежи — то же
-let pair = (1, "alice")
+ro pair = (1, "alice")
 println(pair.0)
 println(pair.1)
 ```
@@ -1672,7 +1672,7 @@ Mutation работает по правилам [05-memory.md](05-memory.md) (mu
 поле без `readonly`):
 
 ```nova
-let mut p = Point(1.0, 2.0)
+mut p = Point(1.0, 2.0)
 p.0 = 5.0                // ок
 ```
 
@@ -1682,7 +1682,7 @@ Pattern matching как альтернатива:
 match p {
     Point(x, y) => x + y
 }
-let Point(x, y) = p      // деструктуризация
+ro Point(x, y) = p      // деструктуризация
 ```
 
 Парсер: `.N` после идентификатора или `)` — field access. После
@@ -1722,28 +1722,28 @@ let Point(x, y) = p      // деструктуризация
 
 ```nova
 // 1) литерал + annotation
-let mut buckets []Slot[K, V] = []
-let xs []int = [1, 2, 3]
+mut buckets []Slot[K, V] = []
+ro xs []int = [1, 2, 3]
 
 // 2) inference из контекста
 fn first(xs []int) -> Option[int] => ...
-let result = first([])           // [] выводится из аргумента
+ro result = first([])           // [] выводится из аргумента
 
 // 3) static-методы
-let buckets = []Slot[K, V].with_capacity(cap)
-let empty = []int.new()
-let zeros = []u8.filled(0, 1024)
+ro buckets = []Slot[K, V].with_capacity(cap)
+ro empty = []int.new()
+ro zeros = []u8.filled(0, 1024)
 ```
 
 Turbofish — те же `[T]`, без `::`:
 
 ```nova
 fn parse[T](s str) -> Result[T, ParseError] => ...
-let n = parse[int]("42")?            // в Result-возвращающей функции
+ro n = parse[int]("42")?            // в Result-возвращающей функции
 
-let c = Cache[str, int].new()
-let buckets = []Slot[K, V].with_capacity(16)
-let result = m.@get[int]("key")
+ro c = Cache[str, int].new()
+ro buckets = []Slot[K, V].with_capacity(16)
+ro result = m.@get[int]("key")
 ```
 
 Грамматика — generic-application:
@@ -1864,8 +1864,8 @@ type Holder[T] {
     use data []T
     extra str
 }
-let h = Holder[int] { data: [1, 2, 3], extra: "info" }
-let n = h.len()           // прокси к data.len() (D117 method-only)
+ro h = Holder[int] { data: [1, 2, 3], extra: "info" }
+ro n = h.len()           // прокси к data.len() (D117 method-only)
 h.push(42)                // прокси к data.push
 ```
 
@@ -1937,7 +1937,7 @@ fn HashMap[K, V].new() -> HashMap[K, V] =>
 // block-body
 fn next_pow2(n int) -> int {
     if n <= 1 { return 1 }
-    let mut p = 1
+    mut p = 1
     while p < n { p *= 2 }
     p
 }
@@ -1961,12 +1961,12 @@ fn abs(x int) -> int => if x < 0 { -x } else { x }
 ```nova
 // НЕ ОК — `let` это statement, `=>` ожидает одно выражение
 fn area(r f64) -> f64 =>
-    let pi = 3.14
+    ro pi = 3.14
     pi * r * r
 
 // ОК — блок-форма
 fn area(r f64) -> f64 {
-    let pi = 3.14
+    ro pi = 3.14
     pi * r * r
 }
 ```
@@ -2109,7 +2109,7 @@ Trailing-fn идентична closure-full ([D22](#d22-closure-light--и-full-f
 Дисамбигуация с record-литералом:
 
 ```nova
-let u = User { name: "alice" }                  // record (имя типа, без ())
+ro u = User { name: "alice" }                  // record (имя типа, без ())
 fn_call(arg) { name: "alice" }                  // trailing-block (после `)`)
 fn_call(arg) fn(x) => x.value                    // trailing-fn
 fn_call(arg, User { name: "a" })                // record внутри args
@@ -2213,7 +2213,7 @@ default — `int` для целых, `f64` для дробных. **Type-suffixe
 1e10             1.5e-3            1_000.5e6
 
 // type через cast или аннотацию
-let x i32 = 100
+ro x i32 = 100
 100 as u8
 0xFF as u32
 ```
@@ -2223,10 +2223,10 @@ Default-типы: `int` (платформенно-зависимая ширин�
 переопределяет:
 
 ```nova
-let x u8 = 200             // 200 это u8
+ro x u8 = 200             // 200 это u8
 fn write(b u8) -> () => ...
 write(0xFF)                // 0xFF это u8
-let arr []f32 = [1.0, 2.0]
+ro arr []f32 = [1.0, 2.0]
 ```
 
 Разделитель `_` — **только между цифрами**. Запрещено: в начале
@@ -2275,9 +2275,9 @@ float       = decimal-int "." decimal-int (("e"|"E") ("+"|"-")? decimal-int)?
 закрыт в Plan 17 Ф.1):
 
 ```nova
-let name = "alice"
-let age  = 30
-let s = "Hello, ${name}, you are ${age}"   // → "Hello, alice, you are 30"
+ro name = "alice"
+ro age  = 30
+ro s = "Hello, ${name}, you are ${age}"   // → "Hello, alice, you are 30"
 ```
 
 **Семантика — sugar над `+` и `str.from(...)`** (D73 [Into]). Литерал
@@ -2304,14 +2304,14 @@ user-типов с реализованным `From[Self] for str` или `Into[
 
 ```nova
 // Что разрешено
-let v = "x = ${1 + 2}"             // sub-expression — ok
-let v = "user = ${user.name()}"    // method call — ok
-let v = "${a}${b}"                 // соседние интерполяции — ok
-let v = "literal \${name}"         // escape — буквальное "${name}"
+ro v = "x = ${1 + 2}"             // sub-expression — ok
+ro v = "user = ${user.name()}"    // method call — ok
+ro v = "${a}${b}"                 // соседние интерполяции — ok
+ro v = "literal \${name}"         // escape — буквальное "${name}"
 
 // Что НЕ работает
-let v = "${}"                      // ✗ пустое выражение
-let v = "${let x = 1; x}"          // ✗ statement, не выражение
+ro v = "${}"                      // ✗ пустое выражение
+ro v = "${ro x = 1; x}"          // ✗ statement, не выражение
 ```
 
 **Bootstrap status (2026-05-08):** ✅ реализовано в lexer/parser/codegen
@@ -2375,7 +2375,7 @@ fn HashMap[K, V] @len() => @count                  // -> int выведен
 // block-body — -> T обязателен
 fn next_pow2(n int) -> int {
     if n <= 1 { return 1 }
-    let mut p = 1
+    mut p = 1
     while p < n { p *= 2 }
     p
 }
@@ -2449,8 +2449,8 @@ fn Duration @plus(other Duration) -> Duration =>
 fn Duration @times(n i64) -> Duration =>
     Duration { nanos: @nanos * n }
 
-let total = 1.hour() + 30.minutes()       // вызывает @plus
-let triple = 5.seconds() * 3              // вызывает @times
+ro total = 1.hour() + 30.minutes()       // вызывает @plus
+ro triple = 5.seconds() * 3              // вызывает @times
 ```
 
 Mapping:
@@ -2533,11 +2533,11 @@ fn Vector @times(other Vector) -> f64 => // dot product
 ### Правило
 
 ```nova
-let j = json`{"name": "alice"}`
-let q = sql`SELECT * FROM users WHERE id = ${user_id}`
-let h = html`<div>${escape(name)}</div>`
-let r = regex`\d{3}-\d{4}`
-let b = bytes`deadbeef`
+ro j = json`{"name": "alice"}`
+ro q = sql`SELECT * FROM users WHERE id = ${user_id}`
+ro h = html`<div>${escape(name)}</div>`
+ro r = regex`\d{3}-\d{4}`
+ro b = bytes`deadbeef`
 ```
 
 Грамматика:
@@ -2578,8 +2578,8 @@ Compile-time validation через `@comptime` — для тегов без ин
 Multiline и raw escapes естественны:
 
 ```nova
-let r = regex`\d+\.\d+`               // не нужно дважды экранировать
-let q = sql`
+ro r = regex`\d+\.\d+`               // не нужно дважды экранировать
+ro q = sql`
     SELECT id, name
     FROM users
     WHERE created_at > ${cutoff}
@@ -2625,25 +2625,25 @@ let q = sql`
 ### Правило
 
 ```nova
-let x = 1                        // newline разделяет
-let y = 2
+ro x = 1                        // newline разделяет
+ro y = 2
 foo(x, y)
 
-let a = 1; let b = 2; foo(a, b)  // ; для одной строки (редко)
+ro a = 1; ro b = 2; foo(a, b)  // ; для одной строки (редко)
 ```
 
 Лексер игнорирует NEWLINE, если statement очевидно продолжается:
 
 1. **После висящего бинарного оператора** в конце предыдущей строки:
    ```nova
-   let total = a +
+   ro total = a +
                b +
                c
    ```
 2. **Внутри открытых `(`, `[`, `{`** — newlines игнорируются.
 3. **Перед `.`** (method chain) и **перед `?`** (error propagation):
    ```nova
-   let r = list
+   ro r = list
        .filter(|x| x > 0)
        .map(|x| x * 2)
        .sum()
@@ -2651,7 +2651,7 @@ let a = 1; let b = 2; foo(a, b)  // ; для одной строки (редко
 4. **После `,`** в списках.
 5. **Перед `else` / `else if`** — продолжение `if`-выражения:
    ```nova
-   let label =
+   ro label =
        if s is Origin { "at-origin" }
        else if s is Circle { "circle" }
        else { "square" }
@@ -2693,7 +2693,7 @@ Compound-операторы — синтаксический сахар:
 
 ```nova
 // 1) Локальная mut-переменная
-let mut n = 0
+mut n = 0
 n += 1                              // ✅
 
 // 2) @field на self в методе (D35)
@@ -2702,7 +2702,7 @@ fn Counter mut @inc() -> () {
 }
 
 // 3) Element массива/индексируемой коллекции
-let mut xs = [10, 20, 30]
+mut xs = [10, 20, 30]
 xs[0] += 5                          // ✅
 ```
 
@@ -2732,11 +2732,11 @@ RHS обычного `=`). Type-check соответствует базовом�
 Edge cases:
 
 ```nova
-let x = foo
+ro x = foo
 (arg)                        // ❌ два statement'а: foo и (arg)
 
-let x = foo(arg)             // ✅ одна строка
-let x = foo(                 // ✅ открытая ( игнорирует newline
+ro x = foo(arg)             // ✅ одна строка
+ro x = foo(                 // ✅ открытая ( игнорирует newline
     arg
 )
 ```
@@ -2846,10 +2846,10 @@ primary       = literal | identifier | '(' expr ')' | block | if | match | ...
 **Numeric cast** (см. [D44](#d44-числовые-литералы)):
 
 ```nova
-let n = 100 as u32           // литерал → u32
-let big = 0xFF_FF as u16
-let x = 1.5 as i32           // f64 → i32 (truncate)
-let y = some_int as f64       // int → f64
+ro n = 100 as u32           // литерал → u32
+ro big = 0xFF_FF as u16
+ro x = 1.5 as i32           // f64 → i32 (truncate)
+ro y = some_int as f64       // int → f64
 ```
 
 #### Семантика narrowing-конверсий
@@ -2883,8 +2883,8 @@ let y = some_int as f64       // int → f64
 [`TryFrom`](08-runtime.md#d77):
 
 ```nova
-let n = f as i16                // saturation, infallible
-let n = i16.try_from(f)?         // throws Fail[OutOfRangeError]
+ro n = f as i16                // saturation, infallible
+ro n = i16.try_from(f)?         // throws Fail[OutOfRangeError]
 ```
 
 `as` остаётся **pure** (без Fail-эффекта). Throw-форма доступна через
@@ -2901,15 +2901,15 @@ IEEE round + wraparound (defined, но не saturation).
 ```nova
 type UserId u64
 
-let u UserId = 42 as UserId   // u64 → UserId
-let n u64 = u as u64           // UserId → u64
+ro u UserId = 42 as UserId   // u64 → UserId
+ro n u64 = u as u64           // UserId → u64
 ```
 
 **Sum → int** (для sum'ов с числовыми discriminants, [D52](02-types.md#d52)):
 
 ```nova
 type ErrorCode | NotFound = 404 | InternalError = 500
-let code = NotFound as int    // 404
+ro code = NotFound as int    // 404
 ```
 
 **Запрещено:**
@@ -2965,7 +2965,7 @@ bool, `n as bool` — explicit ошибка с suggestion. Это закрыва
 (`if a` где `a: int`) запрещён.
 
 ```nova
-let n int = 5
+ro n int = 5
 if n { ... }          // ❌ compile error: cond must be bool
 if n != 0 { ... }     // ✅ explicit comparison
 ```
@@ -3035,18 +3035,18 @@ fn process(x any) -> str =>
 ```nova
 type Shape | Circle { radius f64 } | Square { side f64 } | Origin
 
-let s Shape = Circle { radius: 1.0 }
+ro s Shape = Circle { radius: 1.0 }
 
 if s is Circle { println("circular") }       // ✅ true
 if s is Square { println("squarish") }        // ✅ false
 if s is Origin { println("at origin") }       // ✅ unit-вариант
 
 // Также для prelude sum-типов:
-let r Result[int, str] = Ok(42)
+ro r Result[int, str] = Ok(42)
 if r is Ok    { println("happy path") }      // ✅
 if r is Err   { handle_error() }              // ✅
 
-let opt Option[User] = Some(u)
+ro opt Option[User] = Some(u)
 if opt is Some { ... }
 if opt is None { ... }
 ```
@@ -3060,7 +3060,7 @@ if opt is None { ... }
 if r is Ok { println("ok") }
 
 // С биндингом — if let:
-if let Ok(n) = r { use(n) }
+if Ok(n) = r { use(n) }
 ```
 
 Это даёт чёткое разделение:
@@ -3101,12 +3101,12 @@ fn any.as[T](x any) Fail[TypeMismatch] -> T =>
 
 ```nova
 // if let
-if let Some(n) = arg.try_as[int]() {
+if Some(n) = arg.try_as[int]() {
     process_int(n)
 }
 
 // ?-стиль
-let n int = arg.as[int]?
+ro n int = arg.as[int]?
 ```
 
 **Три инструмента под разные сценарии:**
@@ -3154,7 +3154,7 @@ overhead. Nova избегает этого: `is` использует **суще
 if shape is Circle { return "round" }
 
 // Полная форма с biding'ом:
-if let Circle(r) = shape { use(r) }
+if Circle(r) = shape { use(r) }
 
 // Exhaustive обработка:
 match shape {
@@ -3283,14 +3283,14 @@ D44, D52). D54 фиксирует семантику явно: `as` — compile-
 #### Range-литералы
 
 ```nova
-let r1 = 0..5             // Range { start: 0, end: 5, inclusive: false }
-let r2 = 0..=5            // Range { start: 0, end: 5, inclusive: true }
+ro r1 = 0..5             // Range { start: 0, end: 5, inclusive: false }
+ro r2 = 0..=5            // Range { start: 0, end: 5, inclusive: true }
 
-let r Range = 1..10       // в let-binding'е работает
+ro r Range = 1..10       // в ro-binding'е работает
 fn count(r Range) -> int => r.end - r.start
 count(0..100)              // в позиции аргумента работает
 
-let ranges []Range = [0..5, 10..20, 100..200]   // в массиве
+ro ranges []Range = [0..5, 10..20, 100..200]   // в массиве
 ```
 
 `a..b` — синтаксический сахар, разворачивается компилятором в
@@ -3301,9 +3301,9 @@ let ranges []Range = [0..5, 10..20, 100..200]   // в массиве
 
 ```nova
 type Range {
-    readonly start int
-    readonly end int
-    readonly inclusive bool
+    ro start int
+    ro end int
+    ro inclusive bool
 }
 ```
 
@@ -3338,7 +3338,7 @@ fn LinesIter mut @next() -> Option[str] => ...       // Iter[str]
 
 ```nova
 fn count_items[T](it Iter[T]) -> int {
-    let mut n = 0
+    mut n = 0
     for _ in it { n += 1 }
     n
 }
@@ -3369,14 +3369,14 @@ for x in c { body }
 итераторов** напрямую (без двойного `.iter()`).
 
 ```nova
-let v []int = [1, 2, 3]
+ro v []int = [1, 2, 3]
 for x in v { ... }                   // []T.iter() автоматически
 
-let r = 0..5
+ro r = 0..5
 for x in r { ... }                   // Range.iter() автоматически
 for x in 0..5 { ... }                // тот же
 
-let it = v.iter()
+ro it = v.iter()
 for x in it { ... }                  // it уже Iter[T], без двойного iter()
 ```
 
@@ -3508,7 +3508,7 @@ match xs {
 #### Tuple patterns
 
 ```nova
-let p = (1, "alice", true)
+ro p = (1, "alice", true)
 
 match p {
     (1, _, true)        => "first variant"
@@ -3516,8 +3516,8 @@ match p {
     _                   => "other"
 }
 
-let (a, b, c) = (1, 2, 3)                  // destructuring let
-let (x, _, z) = (1, 2, 3)                   // ignore middle
+ro (a, b, c) = (1, 2, 3)                  // destructuring ro
+ro (x, _, z) = (1, 2, 3)                   // ignore middle
 ```
 
 **Правила:**
@@ -3632,11 +3632,11 @@ match event {
 к D59 partial-pattern: D59 **разбирает**, D60 **строит**.
 
 ```nova
-let arr1 = [1, 2, 3]
-let arr2 = [0, ...arr1, 4]                  // [0, 1, 2, 3, 4]
+ro arr1 = [1, 2, 3]
+ro arr2 = [0, ...arr1, 4]                  // [0, 1, 2, 3, 4]
 
-let user1 = User { id: 1, name: "alice", email: "a@x.com" }
-let user2 = { ...user1, name: "bob" }        // copy + override name
+ro user1 = User { id: 1, name: "alice", email: "a@x.com" }
+ro user2 = { ...user1, name: "bob" }        // copy + override name
 ```
 
 ### Правило
@@ -3644,12 +3644,12 @@ let user2 = { ...user1, name: "bob" }        // copy + override name
 #### Array spread
 
 ```nova
-let a = [1, 2, 3]
-let b = [4, 5]
+ro a = [1, 2, 3]
+ro b = [4, 5]
 
-let c = [...a, ...b]                         // [1, 2, 3, 4, 5]
-let d = [0, ...a, ...b, 6]                    // [0, 1, 2, 3, 4, 5, 6]
-let e = [...a]                                // копия (не reference)
+ro c = [...a, ...b]                         // [1, 2, 3, 4, 5]
+ro d = [0, ...a, ...b, 6]                    // [0, 1, 2, 3, 4, 5, 6]
+ro e = [...a]                                // копия (не reference)
 ```
 
 **Правила:**
@@ -3668,16 +3668,16 @@ let e = [...a]                                // копия (не reference)
 ```nova
 type User { id u64, name str, email str, role str }
 
-let alice User = { id: 1, name: "alice", email: "a@x.com", role: "user" }
+ro alice User = { id: 1, name: "alice", email: "a@x.com", role: "user" }
 
 // Override одного поля:
-let alice2 = { ...alice, name: "ALICE" }
+ro alice2 = { ...alice, name: "ALICE" }
 
 // Override нескольких:
-let admin_alice = { ...alice, role: "admin", email: "admin@x.com" }
+ro admin_alice = { ...alice, role: "admin", email: "admin@x.com" }
 
 // Все поля из spread — то же значение:
-let copy = { ...alice }                       // эквивалентно alice (но новый record)
+ro copy = { ...alice }                       // эквивалентно alice (но новый record)
 ```
 
 **Правила:**
@@ -3687,7 +3687,7 @@ let copy = { ...alice }                       // эквивалентно alice 
 2. **Override:** явные `field: value` после `...src` **перезаписывают**
    значения из spread. Порядок в литерале — left-to-right.
    ```nova
-   let r = { ...src, name: "new", ...override, id: 99 }
+   ro r = { ...src, name: "new", ...override, id: 99 }
    //           ↑       ↑          ↑           ↑
    //  src.все   override("name")  override.все  override("id"=99)
    ```
@@ -3704,9 +3704,9 @@ let copy = { ...alice }                       // эквивалентно alice 
 ```nova
 type User { id u64, name str }
 
-let u User = { id: 1, name: "alice" }              // D52 record-coercion
-let u2 User = { ...u, name: "bob" }                 // D60 spread + D52 coercion
-let u3 User = { ...u }                              // полный copy через spread
+ro u User = { id: 1, name: "alice" }              // D52 record-coercion
+ro u2 User = { ...u, name: "bob" }                 // D60 spread + D52 coercion
+ro u3 User = { ...u }                              // полный copy через spread
 ```
 
 В позиции с явным целевым типом spread работает с D52-coercion: имя
@@ -3715,8 +3715,8 @@ let u3 User = { ...u }                              // полный copy чер�
 #### Совместимость с D17/D52 field punning
 
 ```nova
-let name = "bob"
-let u User = { ...other, name }                     // shorthand + spread
+ro name = "bob"
+ro u User = { ...other, name }                     // shorthand + spread
 ```
 
 Field punning ([D52](02-types.md#d52)) работает после spread — если
@@ -3728,7 +3728,7 @@ Field punning ([D52](02-types.md#d52)) работает после spread — е
    Nova: `mut` через эффект, GC по умолчанию) immutable-обновление
    record — частая операция. Без spread:
    ```nova
-   let u2 = User { id: u.id, name: "bob", email: u.email, role: u.role }
+   ro u2 = User { id: u.id, name: "bob", email: u.email, role: u.role }
    ```
    С spread: `{ ...u, name: "bob" }`. **Краткость + защита от
    ошибок** (если в `User` добавилось поле, программист **не должен**
@@ -3849,7 +3849,7 @@ param = [ '...' ] name type
 
 ```nova
 // Способ 1: spread массива
-let names = ["alice", "bob"]
+ro names = ["alice", "bob"]
 print(...names)            // эквивалентно print("alice", "bob")
 
 // Способ 2: отдельные элементы
@@ -4011,8 +4011,8 @@ D69 фиксирует variadic как полноценную фичу язык�
 ```nova
 // все следующие — compile error «expected identifier, got keyword `X`»
 
-let if = 5                          // ✗
-let mut while = 0                   // ✗
+ro if = 5                          // ✗
+mut while = 0                   // ✗
 
 type Queue[T] {
     in []T                          // ✗ — «expected identifier, got `in`»
@@ -4036,9 +4036,9 @@ keyword'ы. Программист может **переопределить л�
 но это анти-паттерн (lint выдаёт warning).
 
 ```nova
-let int_array []int = [1, 2, 3]    // ✓ — `int_array` обычный identifier
+ro int_array []int = [1, 2, 3]    // ✓ — `int_array` обычный identifier
 fn shadow() {
-    let int = "string"              // ⚠️ shadow's prelude name (warning, не error)
+    ro int = "string"              // ⚠️ shadow's prelude name (warning, не error)
     println(int)
 }
 ```
@@ -4155,11 +4155,11 @@ type Complex[T = f64] {
 }
 
 // Старые вызовы продолжают работать без [T]:
-let z = Complex.from(2.0)             // T выводится как f64 (из default + arg)
-let z Complex = Complex.new(1.0, 2.0)  // тип Complex без скобок ≡ Complex[f64]
+ro z = Complex.from(2.0)             // T выводится как f64 (из default + arg)
+ro z Complex = Complex.new(1.0, 2.0)  // тип Complex без скобок ≡ Complex[f64]
 
 // Новые — с явным параметром:
-let z32 Complex[f32] = Complex.new(1.0_f32, 2.0_f32)
+ro z32 Complex[f32] = Complex.new(1.0_f32, 2.0_f32)
 ```
 
 #### С bound'ом
@@ -4203,8 +4203,8 @@ type Bad[T = f64, U] { ... }                         // ❌ обязательн
 
 Все default'ы могут быть опущены частично:
 ```nova
-let m HashMap[str, int] = ...                        // S = DefaultHasher
-let m HashMap[str, int, FxHasher] = ...              // S явно
+ro m HashMap[str, int] = ...                        // S = DefaultHasher
+ro m HashMap[str, int, FxHasher] = ...              // S явно
 ```
 
 #### Default — это тип, не выражение
@@ -4238,7 +4238,7 @@ Default-тип **должен** удовлетворять bound'у — комп
 
    // Теперь generic, но старый код работает:
    type Complex[T = f64] { re T, im T }
-   let z = Complex.from(2.0)            // ← без правок
+   ro z = Complex.from(2.0)            // ← без правок
    ```
 2. **Default — не выбор для программиста.** Это сокращённая запись,
    не два пути с разной семантикой. Нарушения D9 «один очевидный путь»
@@ -4323,9 +4323,9 @@ body = expression
 
 ```nova
 fn read_config(path str) Fs Fail -> Config {
-    let file = Fs.open(path)
+    ro file = Fs.open(path)
     defer file.close()                  // выполнится на exit из fn
-    let raw = file.read_all()
+    ro raw = file.read_all()
     Config.parse(raw)
 }
 ```
@@ -4357,11 +4357,11 @@ fn nested() Fs -> () {
 
 ```nova
 fn process() Fs Log -> () {
-    let log_file = Fs.open("app.log")
+    ro log_file = Fs.open("app.log")
     defer log_file.close()              // выход из fn
 
     if condition {
-        let temp = Fs.create_temp()
+        ro temp = Fs.create_temp()
         defer temp.cleanup()            // выход из if-блока
         write_to(temp)
     }   // <- здесь выполняется temp.cleanup()
@@ -4374,10 +4374,10 @@ fn process() Fs Log -> () {
 
 ```nova
 fn create_user(data UserData) Fail[Db] Db -> User {
-    let user = Db.insert_user(data)
+    ro user = Db.insert_user(data)
     errdefer Db.delete_user(user.id)    // откат если что-то дальше упадёт
 
-    let profile = Db.insert_profile(user, data)
+    ro profile = Db.insert_profile(user, data)
     errdefer Db.delete_profile(profile.id)
 
     Db.send_welcome(user.email)         // если throw — оба delete сработают
@@ -4395,7 +4395,7 @@ fn transaction() Fail Db -> Receipt {
     defer Log.info("transaction finished")    // ВСЕГДА
     errdefer Db.rollback()                     // только при throw
 
-    let r = do_work()
+    ro r = do_work()
     Db.commit()
     r
 }
@@ -4416,16 +4416,16 @@ block** (function body, `if`/`else` branch, `for` body, `with`-block,
 вычисляются **в момент `defer`**, тело — откладывается:
 
 ```nova
-let i = 5
+ro i = 5
 defer println(i)            // i = 5 захвачено сейчас
-let i_new = 100             // другая переменная (immutable)
+ro i_new = 100             // другая переменная (immutable)
 // exit prints: 5
 ```
 
 Для **mut**-переменной с теми же captures-правилами:
 
 ```nova
-let mut counter = 0
+mut counter = 0
 defer println(counter)      // counter — захвачен по reference (как closure)
 counter = 42
 // exit prints: 42
@@ -4521,7 +4521,7 @@ defer {
 }
 
 defer {
-    let cleanup_fn = || {
+    ro cleanup_fn = || {
         if early_done { return }     // ✅ local return в nested fn-literal
         do_more()
     }
@@ -4561,16 +4561,16 @@ cleanup (file.close, unlock, rollback) пишется через **handler-бл�
 ```nova
 // Без defer — verbose:
 fn create_user(data UserData) Fail Db -> User {
-    let user = Db.insert_user(data)
-    let mut profile_id Option[int] = None
+    ro user = Db.insert_user(data)
+    mut profile_id Option[int] = None
     with Fail = effect Fail {
         fail(e) {
-            if let Some(pid) = profile_id { Db.delete_profile(pid) }
+            if Some(pid) = profile_id { Db.delete_profile(pid) }
             Db.delete_user(user.id)
             throw e
         }
     } {
-        let profile = Db.insert_profile(user, data)
+        ro profile = Db.insert_profile(user, data)
         profile_id = Some(profile.id)
         Db.send_welcome(user.email)
     }
@@ -4616,7 +4616,7 @@ func f() {
 
 Если бы аргументы вычислялись lazy:
 ```nova
-let mut i = 0
+mut i = 0
 defer println(i)
 i = 42
 // exit: print 42 (хотел печатать 0?)
@@ -4986,12 +4986,12 @@ Map-литерал `[k: v, ...]` конструирует `HashMap[K, V]`. Кл�
 значения — **выражения**, вычисляются в рантайме.
 
 ```nova
-let m HashMap[int, str]  = [1: "a", 2: "b"]
-let m = [1: "a", 2: "b"]                       // K, V выводятся из литерала
-let a = 10
-let m HashMap[int, str]  = [a: "x", a + 1: "y"]   // ключи — выражения
-let m HashMap[str, bool] = ["has space": true]    // не-идентификаторный str-ключ
-let empty HashMap[int, str] = []               // пустой — тип из контекста
+ro m HashMap[int, str]  = [1: "a", 2: "b"]
+ro m = [1: "a", 2: "b"]                       // K, V выводятся из литерала
+ro a = 10
+ro m HashMap[int, str]  = [a: "x", a + 1: "y"]   // ключи — выражения
+ro m HashMap[str, bool] = ["has space": true]    // не-идентификаторный str-ключ
+ro empty HashMap[int, str] = []               // пустой — тип из контекста
 ```
 
 Дополняет map-coercion `{field: v}` ([02-types.md → D55](02-types.md#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы)):
@@ -5028,7 +5028,7 @@ array-body         = expr { ',' expr } [ ',' ]              // D27/D38
   ([D55](02-types.md#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы))
   композируются на ключах и значениях:
   ```nova
-  let m HashMap[str, JsonValue] = ["name": "alice", "age": 30.0]
+  ro m HashMap[str, JsonValue] = ["name": "alice", "age": 30.0]
   // значения: "alice" → Str(...), 30.0 → Num(...)
   ```
 - Все ключи унифицируются в один `K`, все значения — в один `V`.
@@ -5077,9 +5077,9 @@ Map-литерал десугарится **сразу в вызовы мето�
 [k1: v1, k2: v2]
 // →
 {
-    let mut _m0 = HashMap[K, V].with_capacity(2)
-    let _ = _m0.insert(k1, v1)
-    let _ = _m0.insert(k2, v2)
+    mut _m0 = HashMap[K, V].with_capacity(2)
+    ro _ = _m0.insert(k1, v1)
+    ro _ = _m0.insert(k2, v2)
     _m0
 }
 ```
@@ -5166,10 +5166,10 @@ TIMTOWTDI: `{}` и `[]` покрывают **разные** случаи (имя
 `...m` внутри map-литерала разворачивает другую map того же типа:
 
 ```nova
-let defaults HashMap[str, int] = ["a": 1, "b": 2]
-let m HashMap[str, int] = [...defaults, "c": 3]      // {a:1, b:2, c:3}
-let m HashMap[str, int] = [...defaults, "a": 100]    // {a:100, b:2} (override)
-let m HashMap[str, int] = [...a, ...b]               // merge two maps
+ro defaults HashMap[str, int] = ["a": 1, "b": 2]
+ro m HashMap[str, int] = [...defaults, "c": 3]      // {a:1, b:2, c:3}
+ro m HashMap[str, int] = [...defaults, "a": 100]    // {a:100, b:2} (override)
+ro m HashMap[str, int] = [...a, ...b]               // merge two maps
 ```
 
 Семантика «right-most wins»: при duplicate keys позже встретившаяся
@@ -5328,7 +5328,7 @@ fn outer() -> int {
     //! ERROR: //! внутри тела функции недопустим.
 
     /// ERROR: outer doc на let-statement не поддерживается.
-    let x = 1
+    ro x = 1
     x
 }
 ```
@@ -5442,11 +5442,11 @@ values, [Plan 11](../../docs/plans/11-method-values-and-overload.md)).
 ### Правило
 
 ```nova
-let v = [1, 2, 3]
-let n = v.len()        // ✓ корректно
-let m = v.len          // ✗ error E_SIZE_ACCESSOR_FIELD
-let z = v.is_empty()   // ✓
-let c = v.capacity()   // ✓ (renamed from .cap — Rust/C++/Swift naming)
+ro v = [1, 2, 3]
+ro n = v.len()        // ✓ корректно
+ro m = v.len          // ✗ error E_SIZE_ACCESSOR_FIELD
+ro z = v.is_empty()   // ✓
+ro c = v.capacity()   // ✓ (renamed from .cap — Rust/C++/Swift naming)
 ```
 
 Что попадает под D117 (по conventional имени):
@@ -6600,8 +6600,8 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
     consume tx = Db.begin()
     errdefer { tx.rollback()? }                 // failable rollback (D158)
     okdefer  { tx.commit()?   }                 // failable commit (D158)
-    let order = Db.insert(data)?
-    let receipt = Db.notify(order)?
+    ro order = Db.insert(data)?
+    ro receipt = Db.notify(order)?
     return receipt                               // okdefer fires → commit
 }
 // Error: errdefer fires → rollback (composite если rollback fails)

@@ -129,11 +129,28 @@ def is_skip_line(line: str) -> bool:
 # Per-file driver.
 # ──────────────────────────────────────────────────────────────────────────
 
-def rewrite_text(src: str) -> tuple[str, dict[str, int]]:
+def rewrite_text(src: str, *, markdown: bool = False) -> tuple[str, dict[str, int]]:
+    """Rewrite all .nv lines. В markdown mode применяет правила только
+    внутри fenced ```nova blocks (детекция по leading ```nova).
+    """
     stats = {'lines': 0, 'changed': 0, 'iflet': 0, 'let': 0, 'readonly': 0}
     out_lines: list[str] = []
+    in_nova_fence = not markdown  # для .nv всегда true; для md только внутри fence
     for line in src.splitlines(keepends=True):
         stats['lines'] += 1
+        if markdown:
+            stripped = line.lstrip()
+            if stripped.startswith('```'):
+                # toggle fence state
+                if in_nova_fence:
+                    in_nova_fence = False
+                else:
+                    in_nova_fence = stripped.startswith('```nova')
+                out_lines.append(line)
+                continue
+        if not in_nova_fence:
+            out_lines.append(line)
+            continue
         if is_skip_line(line):
             out_lines.append(line)
             continue
@@ -190,7 +207,7 @@ def main() -> int:
         except UnicodeDecodeError:
             # Probably CRLF / windows-1252; try latin1 as a hard fallback.
             src = f.read_text(encoding='latin-1')
-        new_src, stats = rewrite_text(src)
+        new_src, stats = rewrite_text(src, markdown=f.suffix.lower() in ('.md', '.markdown'))
         total['files'] += 1
         for k in ('lines', 'changed', 'iflet', 'let', 'readonly'):
             total[k] += stats[k]

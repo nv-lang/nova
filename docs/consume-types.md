@@ -7,9 +7,9 @@
 
 ```nova
 consume x = Token.new(7)    // ✓ ownership binding
-let y = x                   // ✗ E_VIEW_BINDING_FORBIDDEN
+ro y = x                   // ✗ E_VIEW_BINDING_FORBIDDEN
 consume y = x               // ✓ move (x dead, y owns)
-let v = x.release()         // ✓ consume via method
+ro v = x.release()         // ✓ consume via method
 ```
 
 - **Ownership** перемещается через `consume X = …`.
@@ -40,7 +40,7 @@ consume-obligated.
 ### Rule 1 — `consume X = …` required for consume-RHS
 
 ```nova
-let t = Token.new(7)        // ✗ E_CONSUME_KEYWORD_MISSING
+ro t = Token.new(7)        // ✗ E_CONSUME_KEYWORD_MISSING
 consume t = Token.new(7)    // ✓
 ```
 
@@ -51,7 +51,7 @@ value and requires the `consume` keyword.
 
 ```nova
 consume sb = StringBuilder.new()
-let view = sb                       // ✗ E_VIEW_BINDING_FORBIDDEN
+ro view = sb                       // ✗ E_VIEW_BINDING_FORBIDDEN
 ```
 
 Aliasing a consume-obligation would create a dangling reference once
@@ -62,7 +62,7 @@ Aliasing a consume-obligation would create a dangling reference once
 ```nova
 consume a = Token.new(11)
 consume b = a               // move — a dead, b owns
-let v = b.release()         // ✓
+ro v = b.release()         // ✓
 ```
 
 After the move, `a` is consumed; using it triggers a
@@ -74,8 +74,8 @@ After the move, `a` is consumed; using it triggers a
 fn snapshot(t Token) -> int => t.val
 
 consume t = Token.new(7)
-let s = snapshot(t)         // ✓ view-borrow (bounded by call)
-let v = t.release()         // ✓ caller still owns; consume here
+ro s = snapshot(t)         // ✓ view-borrow (bounded by call)
+ro v = t.release()         // ✓ caller still owns; consume here
 ```
 
 Function parameters of consume-type without the `consume` keyword
@@ -100,7 +100,7 @@ A method declared with `-> @` return type returns the receiver itself
 
 ```nova
 consume sb = StringBuilder.new()
-let s = sb.append("a").append("b").as_str()   // chain + consume
+ro s = sb.append("a").append("b").as_str()   // chain + consume
 ```
 
 When such a chain is the trailing expression of a function body, the
