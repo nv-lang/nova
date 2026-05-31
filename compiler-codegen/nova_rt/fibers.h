@@ -1269,6 +1269,57 @@ static inline void nv_consume_leave_shield(void) {
     }
 }
 
+/* Plan 110.2.2.a (D188 R3 + D192): deadline check called at suspend
+ * entry (Time.sleep, nova_fiber_yield, future Net I/O). If a shield
+ * is active AND deadline_ns is set AND uv_hrtime() has passed it,
+ * throw the cleanup-timeout marker so the outer ConsumeScope's
+ * fail-frame catches it and surfaces it to user code.
+ *
+ * Bootstrap implementation (Plan 110.2.2.a): the throw is a plain
+ * `nova_throw` (USER kind) carrying a recognizable msg-string
+ * "cleanup-timeout-exceeded after Nms"; the user-facing structured
+ * CleanupTimeoutError construction is wired via the
+ * `_nova_throw_cleanup_timeout_fn` function pointer when codegen
+ * emits the impl in the user TU (assigned at startup). When the
+ * pointer is NULL — string-only fallback used (production safe; the
+ * outer fail-frame still catches and propagates).
+ *
+ * Idempotent: returns immediately on no-shield / no-deadline / not
+ * exceeded. Safe to call at every suspend site без performance cost
+ * на the hot non-shielded path. */
+extern void (*_nova_throw_cleanup_timeout_fn)(int duration_ms);
+
+static inline void nv_shield_check_deadline(void) {
+    mco_coro* co = mco_running();
+    if (!co) return;
+    if (nova_cancel_mask_load(co) == 0) return;  /* no shield active */
+    int64_t deadline = nova_cancel_deadline_get(co);
+    if (deadline == 0) return;  /* #realtime bypass or no-deadline scope */
+    int64_t now = (int64_t)uv_hrtime();
+    if (now <= deadline) return;  /* within budget */
+    /* Deadline exceeded: compute elapsed-over-budget for diagnostic.
+     * NOTE: We do NOT re-enter the shield while throwing — the fail-frame
+     * for ConsumeScope (set up by codegen) catches kind=USER and surfaces
+     * to user code. The shield itself stays armed; nv_consume_leave_shield
+     * clears it on the way out. */
+    int over_ms = (int)((now - deadline) / 1000000LL);
+    if (over_ms < 0) over_ms = 0;
+    if (_nova_throw_cleanup_timeout_fn) {
+        /* Structured CleanupTimeoutError throw — codegen-supplied impl
+         * allocates struct + calls nova_throw_typed. */
+        _nova_throw_cleanup_timeout_fn(over_ms);
+        /* unreachable — fn does not return on throw path */
+    }
+    /* Fallback: plain string throw (USER kind). The msg-prefix is the
+     * recognized marker; outer code that wants typed access can match
+     * на msg.starts_with("cleanup-timeout-exceeded:"). */
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "cleanup-timeout-exceeded: %d ms over budget", over_ms);
+    nova_throw(nova_str_from_cstr(buf));
+    /* unreachable */
+}
+
 /* Forward-decl для использования из spawn_into. */
 static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap);
 
@@ -1860,6 +1911,10 @@ static inline void nova_fiber_yield(void) {
         }
         /* shielded: cancel deferred; fall through to mco_yield. */
     }
+    /* Plan 110.2.2.a (D188 R3 + D192): deadline check at cooperative
+     * suspend entry. When shield active and deadline exceeded, throws
+     * cleanup-timeout marker — outer ConsumeScope fail-frame catches. */
+    nv_shield_check_deadline();
     mco_yield(co);
 }
 
@@ -2393,6 +2448,11 @@ static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
  *
  * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
 static inline nova_unit _nova_time_default_sleep(nova_int ms) {
+    /* Plan 110.2.2.a (D188 R3 + D192): cleanup-deadline gate before
+     * suspending. Если scope-cleanup shield active и deadline уже
+     * exceeded — throw сразу без park'а (иначе fiber бы спал N ms
+     * over budget). */
+    nv_shield_check_deadline();
     if (ms <= 0) {
         if (mco_running()) {
             nova_fiber_yield();
