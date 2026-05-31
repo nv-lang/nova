@@ -6922,6 +6922,104 @@ fn_return      ::= "->" "const"? type
 - [D175](02-types.md#d175) — `ro field` full freeze (rename).
 - [D176](02-types.md#d176) — `ro T` type-modifier + return defaults + `@`-inheritance (rename + Plan 114 раздел).
 - [D180](05-memory.md#d180) — `consume` binding (cross-ref).
-- [D199](#d199) — `const fn` comptime evaluable functions (Plan 114 Ф.11).
-- [D200](02-types.md#d200) — associated constants (Plan 114 Ф.10).
+- [D199](#d199-const-fn--comptime-evaluable-functions) — `const fn` comptime evaluable functions (Plan 114.4 Ф.3).
+- [D200](02-types.md#d200) — associated constants (Plan 114.4 Ф.2).
 - [Plan 114](../../docs/plans/114-keyword-refresh-ro-mut-no-let.md) — master plan.
+
+---
+
+## D199. `const fn` — comptime evaluable functions
+
+> **Plan 114.4 Ф.3** (extracted from Plan 114 Ф.11 safety hatch).
+> **Status:** 🆕 draft (финализируется в Ф.4).
+
+### Что
+
+`const fn` — функция, **вычисляемая компилятором** во время компиляции.
+Параметры с модификатором `const` требуют constexpr-eligible args на call
+site; `-> const T` return type гарантирует constexpr-eligible результат.
+Компилятор evaluate'ит body во время компиляции и inline'ит результат
+литералом на каждый call site.
+
+```nova
+fn calc(const a int, const b char) -> const int {
+    const c = b as int
+    a + c * 10
+}
+
+const RESULT = calc(5, 'A')              // ✓ comptime → 655
+ro buf [calc(2, '0')]u8 = ...            // ✓ array size 482
+fn open(n int = calc(3, ' ')) { ... }    // ✓ default param 323
+```
+
+### Правила V1
+
+1. **All-or-nothing** — если хоть один param объявлен `const` ИЛИ return
+   `-> const T`, то ВСЕ params обязаны быть `const` И return обязан быть
+   `const`. Mixed → `E_CONST_FN_PARTIAL_CONSTNESS`.
+
+2. **Allowed body** (V1 subset):
+   - Литералы и арифметика над const.
+   - `as`-casts между primitive-типами.
+   - Ссылки на const-параметры и local `const`-bindings.
+   - Локальные `const c = expr` declarations.
+   - Final expression (последний statement — expression).
+   - Вызовы других `const fn` с constexpr args.
+
+3. **Forbidden body** (V1):
+   - `if`/`else`/`match`/`for`/`while`/`loop` → `E_CONST_FN_CONTROL_FLOW`.
+   - `mut`/`consume` bindings → `E_CONST_FN_MUT_BINDING`.
+   - Effects (calls на non-const fn, runtime calls) →
+     `E_CONST_FN_EFFECT_IN_BODY`.
+   - Allocations → `E_CONST_FN_ALLOCATION`.
+   - Generic type params → `E_CONST_FN_GENERIC`.
+   - Recursion → `E_CONST_FN_RECURSION` (V1).
+
+4. **Effect-list запрещён в declaration**: `fn calc(const a int) Log
+   -> const int { … }` → `E_CONST_FN_EFFECT_IN_SIGNATURE`.
+
+5. **Call-site rules**: все args обязаны быть constexpr-evaluable.
+   `E_CONST_FN_NON_CONST_ARG` иначе. Result inline'ится литералом.
+
+6. **First-class запрещено в V1**: `ro f = calc` → `E_CONST_FN_FIRST_CLASS`.
+
+7. **Codegen.** `const fn` НЕ emit'ится в C-output. Все call sites
+   replaced литералом. Dead `const fn` — silently dropped.
+
+8. **Modifier-conflicts**: `mut const a int` → `E_CONST_PARAM_MOD_CONFLICT`.
+
+### Comptime evaluator
+
+Environment-based interpreter:
+- **Param env + local const env** — отдельные scope'ы.
+- **Sequential statements** — выполнение по одному.
+- **Final expression** — последнее выражение возвращает результат.
+- **Recursion-limit V1=1** — no recursion (checker rejects).
+- **Memoization**: `(fn_id, arg_tuple) → result` cache per compilation.
+
+Errors на evaluator-side:
+- `E_CONST_FN_EVAL_OVERFLOW` — arithmetic overflow.
+- `E_CONST_FN_DIV_ZERO` — division by zero.
+
+Расширяет existing Plan 14 Ф.2 constexpr-engine на fn-вызовы.
+
+### Сравнение с mainstream
+
+| Язык | Синтаксис | Body subset | Mixed const/runtime |
+|---|---|---|---|
+| Rust | `const fn factorial(n: u32) -> u32` | Subset; recursion OK | Нет |
+| C++ | `constexpr fn factorial(int n)` | Subset; recursion OK | Нет |
+| Zig | `fn factorial(comptime n: u32) u32` | Full Zig | **Yes** |
+| **Nova V1** | `fn factorial(const n int) -> const int { … }` | V1 subset | Нет в V1 |
+
+### Cross-ref
+
+- [D184](#d184) — Plan 114 master keyword refresh.
+- [D33](#d33-три-оси-immutability--romutconsume--const--per-field-freeze) — three immutability axes.
+- [D102](#d102) — default-param-values.
+- [D200](02-types.md#d200) — assoc const.
+- [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[N]T` arrays.
+
+### Acceptance
+
+См. Plan 114.4 A14-A18 (T3 series).
