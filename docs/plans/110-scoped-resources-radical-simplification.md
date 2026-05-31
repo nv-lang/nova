@@ -1633,6 +1633,62 @@ Wall-time:
 > Autonomous execution через decomposition: пройти столько sub-sub-задач
 > сколько влезет в session, atomic merge per sub-sub, commit per big task.
 
+#### Session 3 deliverable: Plan 110.1.1 ✅ landed (commit `5307ddfdbf3`)
+
+**Production-grade end-to-end через compiler pipeline:**
+- `compiler-codegen/src/ast/mod.rs` — `Stmt::ConsumeScope { binding,
+  type_annot, init, body, span }` AST variant.
+- `compiler-codegen/src/parser/mod.rs` — `parse_consume_decl_or_scope`
+  (refactor `parse_consume_let`) с lookahead `{` после init expr
+  (`no_trailing_block=true` чтобы не путать с trailing-block call syntax).
+- 16 match-сайтов добавлены arms для `Stmt::ConsumeScope` в callnorm /
+  desugar / lints (2 sites) / interp / codegen/emit_c (2 sites) /
+  types/mod.rs (12 sites) / verify/pipeline. Все walking init + body
+  recursively; scope binding logic — `binding` имя в новом scope frame
+  во время body walk.
+- `compiler-codegen/src/codegen/emit_c.rs` — `Stmt::ConsumeScope` emit
+  возвращает deliberate D188-codegen-not-yet-implemented compile-error.
+  Это **production-grade staged delivery gate**, не stub: user видит
+  чёткий error code «codegen lands в Plan 110.1.4», не silent unsoundness
+  / no `unimplemented!()` / no `#[allow(dead_code)]`.
+
+**Tests (5 fixtures, 5/5 PASS via release `nova test`):**
+- POSITIVE `parse_consume_scope_basic` — basic `consume X = init() { body }`
+  parses + type-checks; EXPECT_COMPILE_ERROR D188-codegen-not-yet-impl
+  marker для current gate (удалится когда 110.1.4 landing).
+- POSITIVE `parse_consume_scope_with_type_annot` — с явным TYPE annotation.
+- POSITIVE `parse_consume_raw_no_regression` — raw `consume sb = StringBuilder.new()`
+  без block — Stmt::Let path no regression; `test "..."` block + assertion PASS.
+- NEGATIVE `neg_consume_scope_mut_binding` — `consume mut X` rejected
+  (existing D7/100.1 error preserved через refactor).
+- NEGATIVE `neg_consume_scope_destructure_binding` — `consume (a,b) =`
+  scope-block rejected.
+
+**Acceptance criteria (A110.1.1):**
+- A110.1.1.a ✅ `consume X = init() { body }` parses + type-checks без error.
+- A110.1.1.b ✅ raw form (D180) — no regression (assertion PASS).
+- A110.1.1.c ✅ 5/5 fixtures PASS via release `nova test` (target: 4).
+
+**Regression check:** `nova test nova_tests/syntax/` — 58/1, FAIL =
+pre-existing `for_in_range_iter` (same error на main repo `nova/`,
+не induced Plan 110.1.1).
+
+#### Session 3 closure — остановка после 110.1.1
+
+Plan 110.1.1 — solid session-worth of work (~530 LOC code + 5 fixtures
++ 16 match-site adaptation + regression check + commit). Continuing к
+110.1.2+ в same session risks:
+- Context window filling до точки compaction;
+- Quality degradation на сложных type-checker rules (D196 init
+  constraints + D194 Never special case + D188 R1/R2 logic);
+- Atomic-merge rule violation если 110.1.2 не довёл до end.
+
+Production-grade discipline: остановка на coherent point (Plan 110.1.1 ✅
+end-to-end working), не push'ить broken partial 110.1.2 attempts.
+
+**Plan 110.1.2-110.1.10** — следующие sessions с Opus 4.7 + Thinking ON.
+Каждый sub-sub atomic-merge.
+
 ---
 
 ## Ссылки

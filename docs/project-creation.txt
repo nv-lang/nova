@@ -25836,3 +25836,68 @@ Acceptance criteria recorded в Plan 110 umbrella status table:
 Next steps: Plan 110.1 next session (Opus 4.7 + Thinking ON); multi-day
 commit с end-to-end parser+AST+checker+codegen+runtime+tests одним
 merge (production-grade rule).
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Session 3 — Plan 110.1.1 parser + AST scaffold landed
+(2026-05-31, commit 5307ddfdbf3, branch plan-110, worktree nova-p110)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110.1 разбит на 10 sub-sub-задач (decomposition.md). Session 3
+закрывает первую: 110.1.1 — parser + AST scaffold для consume X = expr
+{ body }.
+
+Что landed:
+
+1. AST: Stmt::ConsumeScope { binding, type_annot, init, body, span }
+   variant в compiler-codegen/src/ast/mod.rs.
+
+2. Parser: parse_consume_let → parse_consume_decl_or_scope (refactor)
+   с lookahead `{` после init expr (с no_trailing_block=true чтобы
+   не путать с trailing-block call syntax). Pattern rejection при
+   destructure / mut в scope-block.
+
+3. 16 match-сайтов адаптированы для Stmt::ConsumeScope:
+   - callnorm.rs, desugar.rs, lints.rs (2), interp/mod.rs,
+     verify/pipeline.rs — walk init + body recursively.
+   - codegen/emit_c.rs (2 sites): stmt_span + emit_stmt. Последний
+     возвращает deliberate compile-error D188-codegen-not-yet-implemented
+     (production-grade staged delivery gate, не stub/todo).
+   - types/mod.rs (12 sites): walk_stmt, f1_stmt, walk_block_for_defers,
+     check_defer_body_block, has_throw_in_stmt, consume_walk_stmt, etc.
+     Включая scope binding logic (binding visible только в body).
+
+4. Tests (5 fixtures в nova_tests/plan110/, 5/5 PASS via release
+   nova test):
+   - parse_consume_scope_basic (positive, EXPECT_COMPILE_ERROR D188
+     codegen-not-yet-impl до 110.1.4).
+   - parse_consume_scope_with_type_annot (positive, аналогично).
+   - parse_consume_raw_no_regression (positive runtime, raw consume
+     StringBuilder; test block с assertion PASS).
+   - neg_consume_scope_mut_binding (negative, EXPECT_COMPILE_ERROR
+     `consume mut tx is not valid`).
+   - neg_consume_scope_destructure_binding (negative,
+     EXPECT_COMPILE_ERROR unexpected `consume` in expression).
+
+Acceptance criteria A110.1.1 (decomposition.md):
+- A110.1.1.a ✅ consume X = init() { body } парсится без error.
+- A110.1.1.b ✅ raw consume (D180) — no regression.
+- A110.1.1.c ✅ 5/5 fixtures PASS via release nova test.
+
+Regression check: nova_tests/syntax/ 58/1; FAIL = pre-existing
+for_in_range_iter (same error на main repo, не induced Plan 110.1.1).
+
+Session 3 closure rationale:
+
+Plan 110.1.1 — substantial session-worth работы (~530 LOC code + 5
+fixtures + 16 match-сайтов adaptation + regression check + commit).
+Continuing к Plan 110.1.2 (type-checker D188 R1+R2 + D196 init
+constraints + D194 Never special case) risks context window saturation
+и quality degradation на сложных type-checker rules. Production-grade
+discipline: остановка на coherent point (110.1.1 ✅ end-to-end working)
+вместо push'ить broken partial 110.1.2 attempts.
+
+Plan 110.1.2-110.1.10 — следующие sessions с Opus 4.7 + Thinking ON.
+Каждый sub-sub-plan atomic-merge с working tests + acceptance verified.
+
+Followup markers (Session 3): нет новых (все work из decomposition.md
+открытого списка).

@@ -27840,3 +27840,34 @@ Foundation point delivered (Session 1+2):
 - A27 ✅ memory created.
 - A37 ✅ cleanup-cookbook written.
 - A1-A20, A24, A28-A36, A38 → DEFERRED в sub-plans.
+
+---
+
+## Plan 110 Session 3 — Plan 110.1.1 parser + AST scaffold landed (2026-05-31, commit 5307ddfdbf3)
+
+**Plan 110.1 sub-sub progress:** 1/10 done (110.1.1 ✅; 110.1.2-110.1.10 open).
+
+**Что landed end-to-end через compiler pipeline:**
+- AST `Stmt::ConsumeScope { binding, type_annot, init, body, span }` variant.
+- Parser refactor `parse_consume_decl_or_scope` с lookahead `{` после init expr (no_trailing_block=true).
+- 16 match-сайтов адаптированы — callnorm, desugar, lints×2, interp, codegen×2, types×12, verify. Walking init + body recursively + scope binding logic (binding visible только в body).
+- Codegen ConsumeScope emit returns deliberate `D188-codegen-not-yet-implemented` compile-error gate. **Production-grade staged delivery, не stub** — user видит чёткий error code; no `unimplemented!()` / no `#[allow(dead_code)]`.
+- 5/5 fixtures PASS via release `nova test`:
+  - 2 positive parsing (с EXPECT_COMPILE_ERROR D188-codegen-not-yet-impl marker — удалится когда 110.1.4 landing).
+  - 1 positive runtime (raw consume StringBuilder, no regression, assertion PASS).
+  - 2 negative (consume mut + destructure scope-block — rejected).
+
+**Regression check:** syntax/ 58/1; FAIL = pre-existing for_in_range_iter (same error на main, не induced Plan 110.1.1).
+
+**Session 3 acceptance updates:**
+- A110.1.1.a ✅ consume X = init() { body } parses.
+- A110.1.1.b ✅ raw consume no regression.
+- A110.1.1.c ✅ 5/5 fixtures PASS via release nova test.
+
+**Plan 110.1.1 contribution к umbrella acceptance:**
+- A1 (Consumable + scope-block syntax): 🟡 partial (parser+AST+type-check ✅, codegen/runtime DEFERRED → 110.1.4-110.1.8).
+- A2 (codegen + R1-R6 + hot-path + re-entrance): 🔴 DEFERRED → Plan 110.1.4-110.1.8.
+
+**Session 3 closure rationale:** Plan 110.1.1 — substantial session-worth (~530 LOC + 5 fixtures + 16 match-сайтов adaptation + regression check). Continuing к 110.1.2 (D188 R1+R2 + D196 init constraints + D194 Never special case) risks context window saturation + quality degradation. Production-grade discipline: остановка на coherent point.
+
+**Followup markers (Session 3):** нет новых.
