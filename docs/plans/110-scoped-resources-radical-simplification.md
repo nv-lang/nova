@@ -1597,6 +1597,33 @@ Tests planned в sub-plans:
 5. **Plan 110.5-110.8** — последовательно по dependency chain.
 6. **Umbrella merge Plan 110 в main** — после closure всех 110.1-110.8.
 
+### Session-sized decomposition
+
+**Создан 2026-05-31:**
+[`docs/plans/110-artifacts/decomposition.md`](110-artifacts/decomposition.md)
+— разбивка Plan 110.1-110.8 на **59 session-sized sub-sub-задач**:
+
+| Sub-plan | sub-sub count | Parallel-friendly |
+|---|---|---|
+| 110.1 Core compiler | 10 | partial |
+| 110.2 Cancel-shield + timeout | 6 | low |
+| 110.3 Stdlib migration | 6 | **high** (5-way) |
+| 110.4 Effects + MultiError | 8 | medium |
+| 110.5 Auto-fix tool | 7 | low |
+| 110.6 LSP + stress + bench | 11 | **high** (3-way) |
+| 110.7 FFI integration | 3 | low |
+| 110.8 Finalize | 8 | low |
+| **Total** | **59 sessions** | mixed |
+
+Каждый sub-sub имеет: scope, files, tests (positive+negative), acceptance
+(A110.X.Y.a/b/c), dependencies, estimated effort (1 session). Production-
+grade atomic merge per sub-sub (working build + working tests + clear
+acceptance, никаких висящих TODO).
+
+Wall-time:
+- **Sequential** (1 session/working day): ~12 weeks.
+- **Parallel optimal**: ~3 weeks.
+
 ---
 
 ## Ссылки
