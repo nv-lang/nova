@@ -39,14 +39,15 @@
 ;; ============================================================================
 
 (defconst nova-keywords-declaration
+  ;; Plan 114 (D184): let/readonly retracted; ro/mut/consume binding triad.
   '("fn" "type" "alias" "effect" "handler" "protocol"
-    "let" "const" "module" "import" "export" "as" "use" "test"
+    "const" "module" "import" "export" "as" "use" "test"
     "external")
   "Declaration keywords.")
 
 (defconst nova-keywords-modifier
-  '("mut" "readonly")
-  "Storage modifier keywords.")
+  '("ro" "mut" "consume")
+  "Storage modifier keywords (Plan 114 D184).")
 
 (defconst nova-keywords-control
   '("if" "else" "match" "for" "while" "loop"
