@@ -2734,11 +2734,11 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         match &target.kind {
             ExprKind::Member { obj, name: field_name } => {
-                // Transitivity check: mutation through a readonly field.
+                // Transitivity check: mutation through a ro field (Plan 114 D184).
                 if self.is_readonly_path(obj, scope) {
                     errors.push(Diagnostic::new(
                         format!(
-                            "[E_READONLY_FIELD] cannot mutate `{}` through a readonly field path",
+                            "[E_READONLY_FIELD] cannot mutate `{}` through a `ro` field path",
                             field_name
                         ),
                         target.span,
@@ -2758,7 +2758,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 if f.readonly {
                                     errors.push(Diagnostic::new(
                                         format!(
-                                            "[E_READONLY_FIELD] cannot assign to readonly field `{}` of type `{}`",
+                                            "[E_READONLY_FIELD] cannot assign to `ro` field `{}` of type `{}`",
                                             field_name, tname
                                         ),
                                         target.span,
@@ -2769,13 +2769,13 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            // D176: index write `arr[i] = x` — forbid if arr has readonly type.
+            // D176 / Plan 114 D184: index write `arr[i] = x` — forbid if arr has `ro` type.
             ExprKind::Index { obj, .. } => {
                 let obj_ty = self.infer_expr_type(obj, scope);
                 if let Some(tr) = obj_ty {
                     if tr.is_readonly() {
                         errors.push(Diagnostic::new(
-                            "[E_READONLY_CONTENT] cannot write through index on readonly array".to_string(),
+                            "[E_READONLY_CONTENT] cannot write through index on `ro` array".to_string(),
                             target.span,
                         ));
                     }
@@ -2999,7 +2999,7 @@ fn typeref_display(tr: &TypeRef) -> String {
         }
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
-        TypeRef::Readonly(inner, _) => format!("readonly {}", typeref_display(inner)),
+        TypeRef::Readonly(inner, _) => format!("ro {}", typeref_display(inner)),
     }
 }
 
@@ -6445,7 +6445,7 @@ fn render_type_ref(t: &TypeRef) -> String {
         }
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
-        TypeRef::Readonly(inner, _) => format!("readonly {}", render_type_ref(inner)),
+        TypeRef::Readonly(inner, _) => format!("ro {}", render_type_ref(inner)),
     }
 }
 
@@ -10102,13 +10102,13 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                             recv, method, ty_str),
                                         e.span,
                                     ).with_note(
-                                        "добавь `mut` к binding'у: `let mut <name> = ...` — \
+                                        "добавь `mut` к binding'у: `mut <name> = ...` (Plan 114 D184) — \
                                          разрешит вызов mut-методов и field/index-assignment."
                                             .to_string(),
                                     ).with_suggestion(crate::diag::Suggestion {
-                                        message: format!("add `mut` to `let {}`", recv),
+                                        message: format!("change `ro {}` to `mut {}`", recv, recv),
                                         span: e.span,
-                                        replacement: format!("let mut {}", recv),
+                                        replacement: format!("mut {}", recv),
                                         applicability: crate::diag::Applicability::MaybeIncorrect,
                                     }));
                                 }
@@ -12693,7 +12693,7 @@ fn typeref_render(t: &TypeRef) -> String {
         // полный pretty-print — в `typeref_display`.
         TypeRef::Protocol { methods, .. } => format!("protocol {{...{} sigs}}", methods.len()),
         // D176 (Plan 108): readonly T — display as "readonly T"
-        TypeRef::Readonly(inner, _) => format!("readonly {}", typeref_render(inner)),
+        TypeRef::Readonly(inner, _) => format!("ro {}", typeref_render(inner)),
     }
 }
 

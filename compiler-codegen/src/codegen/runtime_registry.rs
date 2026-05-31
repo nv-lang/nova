@@ -409,10 +409,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false, is_consume: false,
             name: "as_bytes",
             params: &[],
-            return_ty: "readonly []u8",
+            return_ty: "ro []u8",
             effects: &[],
             c_name: "nova_str_as_bytes",
-            doc: "Plan 108 D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).",
+            doc: "Plan 108 D176 / Plan 114 D184: zero-copy view of str UTF-8 bytes as ro []u8 (no memcpy).",
         nova_body: None,
     },
         RuntimeFn {
@@ -433,10 +433,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false, is_consume: false,
             name: "split",
             params: &[("sep", "str")],
-            return_ty: "readonly []str",
+            return_ty: "ro []str",
             effects: &[],
             c_name: "nova_str_split",
-            doc: "D178: Split по separator. Returns zero-copy views (readonly []str).",
+            doc: "D178 / Plan 114 D184: Split по separator. Returns zero-copy views (ro []str).",
         nova_body: None,
     },
         // D178: compare — lexicographic, like C strcmp. External (C implementation).
@@ -465,7 +465,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "D178: parse int в заданной base (2..36), radix=10 по умолчанию. Nova body.",
-            nova_body: Some("{\n    if radix < 2 || radix > 36 { return None }\n    let bytes = @as_bytes()\n    let n = @byte_len()\n    if n == 0 { return None }\n    let mut neg = false\n    let mut start = 0\n    if bytes[0] as int == '-' as int {\n        neg = true\n        start = 1\n    } else if bytes[0] as int == '+' as int {\n        start = 1\n    }\n    if start >= n { return None }\n    let mut acc = 0\n    for j in start..n {\n        let c = bytes[j] as int\n        let mut d = -1\n        if c >= '0' as int && c <= '9' as int {\n            d = c - '0' as int\n        } else if c >= 'a' as int && c <= 'z' as int {\n            d = c - 'a' as int + 10\n        } else if c >= 'A' as int && c <= 'Z' as int {\n            d = c - 'A' as int + 10\n        }\n        if d < 0 || d >= radix { return None }\n        if acc > (9223372036854775807 - d) / radix { return None }\n        acc = acc * radix + d\n    }\n    Some(if neg { -acc } else { acc })\n}"),
+            nova_body: Some("{\n    if radix < 2 || radix > 36 { return None }\n    ro bytes = @as_bytes()\n    ro n = @byte_len()\n    if n == 0 { return None }\n    mut neg = false\n    mut start = 0\n    if bytes[0] as int == '-' as int {\n        neg = true\n        start = 1\n    } else if bytes[0] as int == '+' as int {\n        start = 1\n    }\n    if start >= n { return None }\n    mut acc = 0\n    for j in start..n {\n        ro c = bytes[j] as int\n        mut d = -1\n        if c >= '0' as int && c <= '9' as int {\n            d = c - '0' as int\n        } else if c >= 'a' as int && c <= 'z' as int {\n            d = c - 'a' as int + 10\n        } else if c >= 'A' as int && c <= 'Z' as int {\n            d = c - 'A' as int + 10\n        }\n        if d < 0 || d >= radix { return None }\n        if acc > (9223372036854775807 - d) / radix { return None }\n        acc = acc * radix + d\n    }\n    Some(if neg { -acc } else { acc })\n}"),
         },
         // D177: pad_left / pad_right / repeat / replace — Nova-body.
         RuntimeFn {
@@ -478,7 +478,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.",
-            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).to_str()\n}"),
+            nova_body: Some("{\n    ro pad = width - @len()\n    if pad <= 0 { return @ }\n    ro fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).to_str()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -490,7 +490,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.",
-            nova_body: Some("{\n    let pad = width - @len()\n    if pad <= 0 { return @ }\n    let fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).to_str()\n}"),
+            nova_body: Some("{\n    ro pad = width - @len()\n    if pad <= 0 { return @ }\n    ro fill_s = str.from(fill)\n    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).to_str()\n}"),
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -514,7 +514,7 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "",
             doc: "Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.",
-            nova_body: Some("{\n    if from.len() == 0 { return @ }\n    let parts = @split(from)\n    let n = parts.len()\n    if n == 0 { return @ }\n    let mut result = parts[0]\n    let mut i = 1\n    while i < n {\n        result = result.concat(to).concat(parts[i])\n        i = i + 1\n    }\n    result\n}"),
+            nova_body: Some("{\n    if from.len() == 0 { return @ }\n    ro parts = @split(from)\n    ro n = parts.len()\n    if n == 0 { return @ }\n    mut result = parts[0]\n    mut i = 1\n    while i < n {\n        result = result.concat(to).concat(parts[i])\n        i = i + 1\n    }\n    result\n}"),
         },
     ]
 }
