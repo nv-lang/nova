@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.1.6 (D188 R5 LIFO composition): nested `consume {}` blocks
+// — on_exit calls execute в reverse order (LIFO: inner exits first,
+// then outer).
+//
+// Acceptance A110.1.6.a: LIFO order correct для 3+ levels.
+
+module plan110.codegen_nested_lifo
+
+type LayerRes {
+    ro depth int
+}
+
+fn LayerRes.new(depth int) -> LayerRes => { depth }
+
+fn LayerRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+// Three nested consume scopes; each binding accessible from inner.
+fn use_three_nested() -> int {
+    mut sum = 0
+    consume a = LayerRes.new(1) {
+        sum = sum + a.depth                          // 1
+        consume b = LayerRes.new(2) {
+            sum = sum + b.depth                      // +2 = 3
+            consume c = LayerRes.new(3) {
+                sum = sum + c.depth                  // +3 = 6
+            }
+            // c.on_exit fires here (innermost first per LIFO).
+        }
+        // b.on_exit fires here.
+    }
+    // a.on_exit fires here.
+    sum
+}
+
+test "Plan 110.1.6 (D188 R5): nested consume LIFO composition" {
+    assert(use_three_nested() == 6)
+}

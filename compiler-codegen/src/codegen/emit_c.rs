@@ -14290,6 +14290,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.indent += 1;
                 self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
                 self.line(&format!("#define {} {}", binding, c_binding));
+                // Register binding's C type для downstream member/method
+                // dispatch (codegen uses var_types для `r.field` → `r->field`
+                // detection на pointer types).
+                self.var_types.insert(binding.clone(), init_c_type.clone());
 
                 // 110.1.4.d: setup fail-frame for throw catching.
                 self.line(&format!("NovaFailFrame {};", frame));
@@ -14357,6 +14361,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.line("}");
 
                 self.line(&format!("#undef {}", binding));
+                self.var_types.remove(binding);
                 self.indent -= 1;
                 self.line("}");
                 let _ = span;
