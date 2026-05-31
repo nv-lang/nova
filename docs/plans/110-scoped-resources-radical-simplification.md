@@ -1802,8 +1802,49 @@ point (110.1.4.a ✅ end-to-end working).
 
 **Branch pushed to `github`**: `https://github.com/nv-lang/nova/tree/plan-110`.
 
-**Plan 110.1.4.b-h + 110.1.5-110.1.10 + 110.2-110.8** — следующие sessions
-с Opus 4.7 + Thinking ON. Каждый sub-sub-(sub) atomic-merge.
+#### Session 3 extended (autonomous continuation per user "продолжай без остановки")
+
+После Session 3 initial closure пользователь requested non-stop autonomous
+continuation. Дополнительно landed:
+
+| Sub-sub-(sub) | Commit |
+|---|---|
+| 110.1.4.e initial on_exit dispatch | 9c5d8998964 |
+| 110.1.4.d setjmp fail-frame + 110.1.4.f throw re-raise | c58d62a65b8 |
+| 110.1.4.g panic distinction via NOVA_THROW_PANIC | 06051deaa49 |
+| Plan 110.1.5 D188 R2 manual on_exit detection | a1d3243999d |
+| Plan 110.1.6 nested LIFO composition (var_types registration fix) | fb7e31e5aa8 |
+| Decomposition status updates | 775f61c7ee5 |
+
+**Session 3 grand total:** 14 commits pushed to github.
+- **15/15 plan110 fixtures PASS** via release `nova test`.
+- **Production-grade final requirement** записан в plan header
+  (mandatory, не negotiable — финал = всё без упрощений).
+- ~2300+ LOC code/spec across 4 sub-sub plans + 5 sub-sub-sub steps.
+
+**Plan 110.1 progress:** 6/10 sub-sub done (110.1.1+110.1.2+110.1.3+110.1.5+110.1.6
++ 110.1.4 itself 6/8 sub-sub-sub). Plan 110.1.4 = 1 sub-sub из 110.1; itself
+decomposed.
+
+**Что осталось (Plan 110 grand-total):**
+- 110.1.4.b body trailing value capture (substantive AST refactor —
+  ConsumeScope-as-expression).
+- 110.1.4.h close phase.
+- 110.1.7 D194 hot-path elision.
+- 110.1.8 D197 cleanup re-entrance verification.
+- 110.1.9-10 tests + close.
+- 110.2.1-6 cancel-shield + 3-level timeout (substantive runtime work).
+- 110.3-110.8 stdlib migration + MultiError + Cleanup effect + Application
+  effect + auto-fix tool + LSP + stress + bench + FFI + finalize.
+
+**Plan 110.2.1 next session priority:** runtime cancel-shield (adding
+`fiber->cancel_masked` field + cancel-delivery check points + codegen
+ConsumeScope wraps body with shield enter/leave). Substantive multi-day
+work; runtime infrastructure changes.
+
+**Plan production-grade FINAL обязательство** (записано в plan header):
+все sub-sub-(sub) plans MUST land end-to-end через release nova test
+до закрытия Plan 110 umbrella; никаких «good enough» или silent leftovers.
 
 ---
 
