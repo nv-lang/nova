@@ -14228,80 +14228,117 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // user видит чёткий error code "D188 codegen not yet impl"
             // вместо silent unsoundness. Это production-grade staged
             // delivery (не unimplemented!/todo! шорткат).
-            // Plan 110.1.4.a: basic ConsumeScope codegen — init binding +
-            // body emit + on_exit call (success path). Throw/panic/cancel
-            // handling — Plan 110.1.4.d-g (staged delivery).
+            // Plan 110.1.4 ConsumeScope codegen — full D188 desugaring
+            // (success + failure paths, on_exit dispatch + re-raise).
             //
-            // Desugaring (simplified для 110.1.4.a — success path only):
+            // 110.1.4.a init binding + body emit ✅.
+            // 110.1.4.d setjmp fail-frame для throw catching ✅.
+            // 110.1.4.e on_exit dispatch via *_consume_on_exit symbol ✅.
+            // 110.1.4.f throw re-raise after on_exit на Failure outcome ✅.
+            //
+            // Pending: 110.1.4.b trailing value capture, 110.1.4.g panic
+            // propagation distinct из throw, 110.2 cancel-shield + timeout.
+            //
+            // Desugared C:
             // {
-            //     <C_type> <C_name> = <init expr>;
-            //     // body stmts
-            //     // body trailing → return value
-            //     Nova_<Type>_method_on_exit(&<C_name>, NOVA_SCOPE_OUTCOME_SUCCESS);
+            //     <C_type> _consume_<binding>_<id> = <init expr>;
+            //     #define <binding> _consume_<binding>_<id>
+            //     NovaFailFrame _consume_frame_<id>;
+            //     nova_fail_push(&_consume_frame_<id>);
+            //     _consume_frame_<id>.error_suppressed = NULL;
+            //     int _consume_outcome_<id> = 0;
+            //     if (setjmp(_consume_frame_<id>.jmp) == 0) {
+            //         // body stmts
+            //         // body trailing (discarded)
+            //         nova_fail_pop();
+            //     } else {
+            //         nova_fail_pop();
+            //         _consume_outcome_<id> = 1;
+            //     }
+            //     Nova_ScopeOutcome* _outcome_<id>;
+            //     if (_consume_outcome_<id> == 0) {
+            //         _outcome_<id> = nova_make_ScopeOutcome_Success();
+            //     } else {
+            //         _outcome_<id> = nova_make_ScopeOutcome_Failure(
+            //             _consume_frame_<id>.error_msg);
+            //     }
+            //     Nova_<Type>_consume_on_exit(_consume_<binding>_<id>, _outcome_<id>);
+            //     if (_consume_outcome_<id> == 1) {
+            //         nova_rethrow_with_suppressed(&_consume_frame_<id>);
+            //     }
+            //     #undef <binding>
             // }
-            //
-            // 110.1.4.b adds trailing-value capture + return-from-scope.
-            // 110.1.4.c registers ScopeOutcome sum-type для proper outcome
-            //   construction (sentinel int используется в 110.1.4.a).
-            // 110.1.4.d wraps body в setjmp fail-frame для throw catching.
-            // 110.1.4.e refines on_exit dispatch через vtable.
-            // 110.1.4.f re-raises throw after on_exit на Failure outcome.
-            // 110.1.4.g handles panic propagation через on_exit.
             Stmt::ConsumeScope { binding, type_annot: _, init, body, span } => {
-                // 110.1.4.a step 1: emit init expr + bind to C local.
                 let init_c_type = self.infer_expr_c_type(init);
                 let init_c_code = self.emit_expr(init)?;
                 let scope_id = self.defer_block_counter;
                 self.defer_block_counter += 1;
                 let c_binding = format!("_consume_{}_{}", binding, scope_id);
-                self.line(&format!("/* Plan 110.1.4.a: consume {} = ... {{ ... }} */", binding));
-                self.line("{");
-                self.indent += 1;
-                self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
-
-                // 110.1.4.a step 2: register binding alias so body code
-                // referencing `binding` resolves to `c_binding`. Use
-                // #define for simple substitution (consistent with Plan
-                // 73.1 raw consume binding pattern).
-                self.line(&format!("#define {} {}", binding, c_binding));
-
-                // 110.1.4.a step 3: emit body stmts.
-                for s in &body.stmts {
-                    self.emit_stmt(s)?;
-                }
-                // Body trailing expr — для now discard (110.1.4.b adds
-                // return value capture).
-                if let Some(t) = &body.trailing {
-                    let v = self.emit_expr(t)?;
-                    self.line(&format!("(void)({});", v));
-                }
-
-                // 110.1.4.e step: real on_exit dispatch (success-path-only
-                // до 110.1.4.d adds fail-frame для throw catching).
-                //
-                // ScopeOutcome auto-registered (std/prelude/core.nv) →
-                // codegen emits factory `nova_make_ScopeOutcome_Success()`.
-                // on_exit method symbol: `Nova_<TypeName>_method_on_exit`.
+                let frame = format!("_consume_frame_{}", scope_id);
+                let outcome_kind = format!("_consume_outcome_{}", scope_id);
+                let outcome_val = format!("_consume_outcome_val_{}", scope_id);
+                // Strip Nova_ prefix + pointer star для symbol resolution.
                 let type_name = init_c_type
                     .trim_start_matches("Nova_")
                     .trim_end_matches('*')
                     .trim()
                     .to_string();
-                // Nova consume-method naming convention: `Nova_<T>_consume_<method>`
-                // (Plan 73.1 D180 consume self modifier emits *_consume_* prefix,
-                // не *_method_*).
                 let on_exit_c = format!("Nova_{}_consume_on_exit", type_name);
-                // Call on_exit(receiver, ScopeOutcome::Success). Receiver
-                // — already pointer (Nova_<T>*); pass binding directly.
-                self.line(&format!(
-                    "/* 110.1.4.e: on_exit(Success) dispatch */"
-                ));
-                self.line(&format!(
-                    "{}({}, nova_make_ScopeOutcome_Success());",
-                    on_exit_c, c_binding
-                ));
 
-                // Cleanup #define alias to avoid leaking outside scope.
+                self.line(&format!("/* Plan 110.1.4: consume {} = ... {{ ... }} */", binding));
+                self.line("{");
+                self.indent += 1;
+                self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
+                self.line(&format!("#define {} {}", binding, c_binding));
+
+                // 110.1.4.d: setup fail-frame for throw catching.
+                self.line(&format!("NovaFailFrame {};", frame));
+                self.line(&format!("nova_fail_push(&{});", frame));
+                self.line(&format!("{}.error_suppressed = NULL;", frame));
+                self.line(&format!("int {} = 0;  /* 0=Success, 1=Failure */", outcome_kind));
+
+                // setjmp wrap around body.
+                self.line(&format!("if (setjmp({}.jmp) == 0) {{", frame));
+                self.indent += 1;
+                for s in &body.stmts {
+                    self.emit_stmt(s)?;
+                }
+                if let Some(t) = &body.trailing {
+                    let v = self.emit_expr(t)?;
+                    self.line(&format!("(void)({});", v));
+                }
+                self.line("nova_fail_pop();");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("nova_fail_pop();");
+                self.line(&format!("{} = 1;", outcome_kind));
+                self.indent -= 1;
+                self.line("}");
+
+                // 110.1.4.e: construct outcome + dispatch on_exit.
+                self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
+                self.line(&format!("if ({} == 0) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("{} = nova_make_ScopeOutcome_Success();", outcome_val));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
+
+                // 110.1.4.f: re-raise после on_exit на Failure outcome.
+                self.line(&format!("if ({} == 1) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
+                self.indent -= 1;
+                self.line("}");
+
                 self.line(&format!("#undef {}", binding));
                 self.indent -= 1;
                 self.line("}");

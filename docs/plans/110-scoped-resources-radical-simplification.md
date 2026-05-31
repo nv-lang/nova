@@ -103,6 +103,30 @@
 > record'ится в `simplifications.md` как «explicitly deferred, not silently
 > dropped».
 >
+> **Финальное обязательство (мandatory, не negotiable):** декомпозиция плана
+> на 110.1.X / 110.X.Y / 110.1.4.a-h sub-sub-(sub) — это **только этапы**
+> работы. **По итогу выполнения всего Plan 110 — всё должно быть сделано
+> без упрощений, как для прода**:
+>
+> 1. Все 11 D-блоков D185+D188-D198 — status «active» (не «proposed»).
+> 2. Все sub-sub-(sub) plans landed end-to-end через release nova test.
+> 3. Все acceptance criteria A1-A38 ✅ verified.
+> 4. Все positive + negative tests T1.x-T12.3 + NEG-1.x-NEG-18.1 PASS.
+> 5. Все [M-110-*] followup markers либо closed либо явно extracted в
+>    independent plans с собственной декомпозицией (никаких висящих
+>    «later»).
+> 6. Full cross-platform PASS: Windows + Linux × clang + MSVC.
+> 7. Full regression `nova test` ≥ 1158/19 baseline.
+> 8. Production-grade performance: cancel-shield + 3-level resolution
+>    overhead ≤ Plan 100.4 baseline + 5% (T11.5).
+> 9. Umbrella merge Plan 110 в main с financial-grade discipline:
+>    cleanup-семейство ~20 концептов → 5 концептов **полностью** (не
+>    частично).
+>
+> Если какой-то sub-sub fails this requirement при finalization — НЕ
+> закрывать Plan 110 umbrella. Open additional sub-sub-задачи до закрытия
+> всего. Никаких «good enough» или silent leftovers.
+>
 > **Note on Plan 114 / Plan 91.12 / Plan 108.4 syntax sync:** если эти
 > планы ещё не landed (по статусу main на момент запуска) — Plan 110
 > implementation использует **current syntax** (`let`/`readonly`/`if let`);
