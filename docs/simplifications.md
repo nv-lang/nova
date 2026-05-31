@@ -27800,3 +27800,30 @@ pre-Plan-109 API.  Документированы в их followups.
 - 🟡 `[M-114-const-extracted-to-115]` — ✅ АКТИВИРОВАН (Plan 115 doc создан docs/plans/115-const-narrow-generalize-fn.md, 508 lines).
 
 **Plan 114 family complete.** Core + Ф.2 + Ф.7.1-3 закрыты. Plan 115 spawned для оставшихся 3 фич (const discipline + assoc const + const fn) — 4-фазный план с D199 + D200 spec блоками, 18 acceptance criteria, 6 risks с safety hatches.
+
+---
+
+## Plan 114.4 — const narrow + scope-local generalize (partial, 2026-05-31)
+
+**Status:** 🟢 PARTIAL CLOSURE. Plan 114.4 (renamed from Plan 115 const в main `6bb77106eaa`) реализован minimal slice: Ф.0 + Ф.1 + Ф.2 scope-local. Ф.2 assoc const + Ф.3 const fn extracted в Plan 114.4.1 per safety hatch.
+
+**CLOSED markers:**
+- ✅ `[M-114-const-narrowing]` → Plan 114.4 Ф.1 closed (check_const_constexpr; 7/7 T1 PASS).
+- ✅ `[M-114-const-generalize]` partial → scope-local const closed; assoc const D200 extracted.
+- ✅ Plan 114.4 doc spawn (508 lines + workflow preamble).
+- ✅ D199 + D200 spec block drafts.
+
+**OPEN markers carried to Plan 114.4.1:**
+- 🟡 `[M-114.4-assoc-const]` — record-field assoc const D200 + sum-type + generic T-dependent per-mono codegen (~½ day; Plan 70.5 mono integration).
+- 🟡 `[M-114.4-const-fn]` — comptime evaluator + body checker + memoization + D199 promote (~1 day; safety-hatched extractable в 114.4.2).
+- 🟡 `[M-114.4-scope-const-chain]` — scope-locals referencing other scope-locals.
+- 🟡 `[M-114.4-cross-module-const-ref]` — Path expr cross-module.
+- 🟡 `[M-114.4-ro-module-lazy-init]` — top-level ro X = compute() codegen.
+- 🟡 `[M-114.4-remove-lazy-fallback]` — emit_lazy_const dead code cleanup.
+- 🟡 `[M-114.4-strict-partition]` — E_RO_FOR_CONSTEXPR_PREFER_CONST.
+
+**Acceptance (mini-slice):** A1 ✓ + A5 ✓; A2/A4 partial; A3 + A6-A18 deferred.
+
+**Smoke regression:** 107 PASS / 1 pre-existing fail.
+
+**Design lesson:** Plan 114.4 (renamed from 115) — 3-фазный план оценен 1.5-2 dev-day. Реалистично в одну Claude-сессию помещается Ф.0+Ф.1+Ф.2-scope. Ф.2 assoc const + Ф.3 const fn — substantial subsystems каждый ~½-1 dev-day, extract per safety hatch design plan'а. Plan 114.4.1 doc — следующая session.
