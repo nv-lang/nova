@@ -27655,6 +27655,36 @@ pattern from Plan 108.2 sweeps.  Residual после Plan 108.3 sweep
 documented в `[M-108.3-final-residual]` для manual cleanup'а если
 останется.
 
+## Plan 108.3 residual cleanup — точечная миграция (2026-05-31)
+
+**Closes:** `[M-108.2-residual-migrations]` + `[M-108.3-final-residual]`.
+
+**Why per-file convergence loop, не full regression в loop:** компилятор
+останавливается на первой ошибке per file → каждый full-regression раунд
+показывает только head'ы ошибок.  Сходимость через full-regression идёт
+лесенкой (8 раундов: 127 → 111 → 100 → 95 → 89 → 81 → 83 → 81 →
+73), но diminishing returns в конце.  **Per-file convergence loop**
+(`nova check FILE` → fix → re-check, пока чисто) — каждый файл
+сходится за 2-3 итерации, без межфайловых артефактов.  Сохранён как
+стандартный алгоритм в memory `feedback-test-fix-per-file-loop`.
+
+**Why sed pattern broaden iteratively:** первый regex `^(\s*)let X =`
+покрывал ~80% sites, но не ловил:
+- `let X T = ...` (type annotation между именем и `=`).
+- `; let X = ...` (multi-let на одной строке).
+- `let X  =` (двойной пробел).
+- `let X =\nNEXT_LINE` (multi-line declaration).
+
+Каждый раунд добавлял regex variant.  В финальном per-file loop:
+`s/^(\s*)let X([^=]*)=/\1let mut X\2=/` — robust pattern с optional
+type annotation.
+
+**Why оставшиеся 73 fails не Plan 108.x regressions:** 0 NEW
+E_LOCAL_NOT_MUT после cleanup.  Все 73 — pre-existing baseline:
+concurrency flakiness (M:N runtime), plan100.3 D29 dotted module
+path violation, buffers/* read_buffer stale API, str_builder/*
+pre-Plan-109 API.  Документированы в их followups.
+
 ## Plan 91.10 — D163 retract (capability syntax → effects)
 
 **Why retract D163 instead of fixing the trigger:** конкретный pain (`from_bytes_unchecked_steal(consume []u8)` требует `needs Cap` для pure memory ops) — это symptom of deeper conflation. D163 жёстко связал `consume` (ownership/linearity contract) с `needs Cap` (authority gate) — orthogonal concerns. Fix-the-trigger (добавить `needs Mem`/`needs Sys` placeholder) сохранил бы conflation; retract — устраняет root cause.

@@ -25306,6 +25306,46 @@ Worktree: D:\Sources\nv-lang\nova-p108-3
 Plan 108.3 ✅ ЗАКРЫТ.
 
 ================================================================================
+2026-05-31 — Plan 108.3 residual cleanup — точечная миграция let X → let mut X
+================================================================================
+
+Post-merge cleanup hosshipping Plan 108.3.  Closes [M-108.2-residual-migrations]
++ [M-108.3-final-residual].
+
+Метод (новый стандартный алгоритм для миграций — см. memory
+feedback-test-fix-per-file-loop):
+1. Full regression scan → extract (file:line:var) triples.
+2. Bulk sed по var name → re-test → repeat (если convergence не достигается).
+3. Финальная per-file convergence loop для последних edge cases
+   (nova check FILE → fix → re-check, пока чисто).
+
+Stats:
+- Pre (Plan 108.3 merge baseline): 127 fails (57 E_LOCAL_NOT_MUT).
+- Post: 73 fails (0 NEW E_LOCAL_NOT_MUT regressions).
+- 53 файла мигрированы, 143 sites.
+- Net: -54 fails vs Plan 108.3 baseline.
+
+Остаточные 73 fails — pre-existing baseline (concurrency flakiness,
+plan100.3 D29 dotted module path, buffers/str_builder pre-Plan-109).
+НЕ Plan 108.x regressions.
+
+Insight: full regression в loop неэффективен — компилятор останавливается
+на первой ошибке per file, каждый раунд показывает только head'ы.
+Per-file convergence loop существенно быстрее: 1.5-2.5 часа full
+regression vs 10-30 мин per-file.
+
+Branch: plan-108.3-residual
+Worktree: D:\Sources\nv-lang\nova-p108-3r
+Merge in main: 51212606e1e
+
+Plan 108 family — full closure complete:
+- Plan 108 (D175 + D176)              ✅ MERGED 2026-05-28
+- Plan 108.1 (params readonly)        ✅ MERGED 6048814b92c
+- Plan 108.2 (locals readonly)        ✅ MERGED f0a198916f5
+- Plan 108.3 (loop-var + pattern)     ✅ MERGED 1f7bd5c49c2
+- Plan 108.3 residual cleanup         ✅ MERGED 51212606e1e
+
+================================================================================
 2026-05-30 — Plan 91.10 + 91.11: D163 retract + SB cleanup + rename family
 ================================================================================
 
