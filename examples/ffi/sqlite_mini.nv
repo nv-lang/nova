@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 115 D214 — minimal libsqlite3 binding sketch.
+//
+// V1 — example only (без real libsqlite3 link). Demonstrates structure of
+// external fn declarations + typed handle wrap + error mapping.
+// Real link integration в followup `[M-115-ffi-build-pipeline]`.
+//
+// Pattern:
+//   1. external fn declarations match C shim (см. docs/ffi-cookbook.md
+//      §«Example 1 — libsqlite3 binding» для full C shim).
+//   2. Wrap raw ptr returns в typed record handles.
+//   3. Multi-value return через tuple-by-value ABI (Plan 115 D214 §2).
+//   4. consume close() для resource ownership.
+
+module examples.ffi.sqlite_mini
+
+// Typed handles (V1 record form).
+type Db { ro value ptr }
+type Stmt { ro value ptr }
+
+// SQLite constants (subset).
+const SQLITE_OK   int = 0
+const SQLITE_ROW  int = 100
+const SQLITE_DONE int = 101
+
+// Error sum type (Nova-native, distinct от raw C codes).
+type DbError
+    | OpenFailed(int)
+    | ExecFailed(int)
+    | PrepareFailed(int)
+    | StepFailed(int)
+
+// External declarations — sqlite3_ffi.h (см. cookbook).
+// V1: shim header нужен в compiler-codegen/nova_rt/ для actual link
+// (followup [M-115-ffi-build-pipeline] добавит user-side --c-shim CLI).
+external fn nova_fn_sqlite3_open(path str) -> (ptr, int)
+external fn nova_fn_sqlite3_close(db ptr) -> int
+external fn nova_fn_sqlite3_exec(db ptr, sql str) -> int
+external fn nova_fn_sqlite3_prepare(db ptr, sql str) -> (ptr, int)
+external fn nova_fn_sqlite3_step(stmt ptr) -> int
+external fn nova_fn_sqlite3_column_int(stmt ptr, col int) -> int
+external fn nova_fn_sqlite3_finalize(stmt ptr) -> int
+
+// Layer 2: typed wrappers.
+
+fn Db.open(path str) Fail[DbError] -> Db {
+    ro (raw, rc) = nova_fn_sqlite3_open(path)
+    if rc != SQLITE_OK {
+        Fail.throw(DbError.OpenFailed(rc))
+    }
+    Db { value: raw }
+}
+
+fn Db @exec(sql str) Fail[DbError] -> () {
+    ro rc = nova_fn_sqlite3_exec(self.value, sql)
+    if rc != SQLITE_OK {
+        Fail.throw(DbError.ExecFailed(rc))
+    }
+}
+
+fn Db @prepare(sql str) Fail[DbError] -> Stmt {
+    ro (raw, rc) = nova_fn_sqlite3_prepare(self.value, sql)
+    if rc != SQLITE_OK {
+        Fail.throw(DbError.PrepareFailed(rc))
+    }
+    Stmt { value: raw }
+}
+
+fn Db consume @close() -> () {
+    nova_fn_sqlite3_close(self.value)
+}
+
+// Stmt methods.
+
+fn Stmt @step_to_int(col int) Fail[DbError] -> int {
+    ro rc = nova_fn_sqlite3_step(self.value)
+    if rc != SQLITE_ROW and rc != SQLITE_DONE {
+        Fail.throw(DbError.StepFailed(rc))
+    }
+    nova_fn_sqlite3_column_int(self.value, col)
+}
+
+fn Stmt consume @close() -> () {
+    nova_fn_sqlite3_finalize(self.value)
+}
+
+// Example usage. Would actually exercise libsqlite3 if shim is wired up
+// at build time. V1 — illustrative only (test annotated as
+// EXPECT_COMPILE_ERROR в test fixtures когда shim не linked).
+fn open_and_close_demo(path str) Fail[DbError] -> int {
+    ro db = Db.open(path)
+    db.@exec("CREATE TABLE IF NOT EXISTS users (id INT, name TEXT)")
+    db.@close()
+    0
+}

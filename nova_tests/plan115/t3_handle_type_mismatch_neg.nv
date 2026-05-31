@@ -1,0 +1,17 @@
+// Plan 115 Ф.3 T3.3 — type safety: distinct handle types prevent
+// accidental cross-mixing. Compile error at type-check stage.
+
+// EXPECT_COMPILE_ERROR E7301
+
+module nova_tests.plan115.t3_handle_type_mismatch_neg
+
+type SqHandle { ro value ptr }
+type PngHandle { ro value ptr }
+
+fn close_sqlite(h SqHandle) -> int => 0
+
+test "passing PngHandle to fn expecting SqHandle is a type error" {
+    ro png = PngHandle { value: null ptr }
+    ro result = close_sqlite(png)
+    assert(result == 0)
+}

@@ -1,0 +1,50 @@
+// Plan 115 Ф.3 T3.1-T3.2 — opaque handle pattern via record-form wrapper.
+//
+// V1 design choice: D214 spec describes tuple newtype `type X(ptr)` для
+// canonical pattern; tuple-newtype-construct + `.0` access не реализованы
+// в bootstrap codegen (followup `[M-115-newtype-constructor]`). V1 ships
+// equivalent semantics через single-field record `type X { value ptr }`:
+//   - Compile-time distinct type (Nova_<X> typedef = struct pointer).
+//   - Construct: `X { value: raw_ptr }` (D-records syntax).
+//   - Access: `h.value` (D-records member access).
+//   - Same C ABI when passing handle by value to external fn (record =
+//     heap pointer, но ptr field reads inline).
+// V2 simplification: Plan 115.1 / followup добавит tuple-newtype
+// constructor + .0 access — fixtures here будут переписаны на canonical
+// form без потери semantics.
+
+module nova_tests.plan115.t3_handle_pattern_ok
+
+type SqHandle { ro value ptr }
+type PngHandle { ro value ptr }
+type CurlHandle { ro value ptr }
+
+external fn p115_int_to_ptr(value int) -> ptr
+
+test "record-form handle — constructor + member access" {
+    ro raw = p115_int_to_ptr(42)
+    ro h = SqHandle { value: raw }
+    ro back = h.value
+    assert(back == raw)
+}
+
+test "distinct handle types — same underlying ptr, different Nova type" {
+    ro raw = p115_int_to_ptr(100)
+    ro sq = SqHandle { value: raw }
+    ro png = PngHandle { value: raw }
+    // Inner ptr is the same, but the wrapping types are nominally distinct.
+    assert(sq.value == png.value)
+}
+
+test "handle construction from null ptr" {
+    ro h = SqHandle { value: null ptr }
+    assert(h.value == null ptr)
+}
+
+test "multiple handles — independent values" {
+    ro h1 = SqHandle { value: p115_int_to_ptr(1) }
+    ro h2 = SqHandle { value: p115_int_to_ptr(2) }
+    ro h3 = CurlHandle { value: p115_int_to_ptr(3) }
+    assert(h1.value != h2.value)
+    assert(h2.value != h3.value)
+}
