@@ -1,0 +1,20 @@
+// Plan 114 (D184): `ro field T` — renamed from `readonly field T`
+// (D175 amend). Семантика freeze + транзитивность сохранена.
+
+module nova_tests.plan114.ro_field_ok
+
+type Account {
+    ro id u64
+    balance int
+    mut log_count int
+}
+
+test "ro field reads correctly" {
+    mut acc = Account { id: 1, balance: 100, log_count: 0 }
+    assert(acc.id == 1)
+    assert(acc.balance == 100)
+    acc.balance = 200
+    assert(acc.balance == 200)
+    acc.log_count = acc.log_count + 1
+    assert(acc.log_count == 1)
+}
