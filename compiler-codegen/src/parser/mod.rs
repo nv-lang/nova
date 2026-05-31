@@ -7300,49 +7300,43 @@ impl Parser {
             // DeferWithResult; иначе обычный Defer.
             TokenKind::KwDefer => {
                 self.bump();
-                // Lookahead: `defer |ident|` → DeferWithResult?
+                // Plan 110.5.7 (D189): `defer |result_binding|` form removed.
+                // Hard cutover — emit D189-removed-defer-result error.
                 if matches!(self.peek().kind, TokenKind::Pipe) {
-                    // `defer |binding| body` — reason-aware form (D160).
-                    self.bump(); // consume `|`
-                    // Expect identifier for the result binding.
-                    let result_binding = match &self.peek().kind {
-                        TokenKind::Ident(n) => {
-                            let n = n.clone();
-                            self.bump();
-                            n
-                        }
-                        _ => {
-                            let span = self.peek().span;
-                            return Err(Diagnostic::new(
-                                "expected identifier after `defer |` (D160: result binding name)".to_string(),
-                                span,
-                            ));
-                        }
-                    };
-                    // Expect closing `|`.
-                    self.expect(&TokenKind::Pipe)?;
-                    let body = self.parse_expr()?;
-                    let span = start.merge(body.span);
-                    return Ok(StmtOrExpr::Stmt(Stmt::DeferWithResult { result_binding, body, span }));
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[D189-removed-defer-result] `defer |result| { ... }` reason-aware \
+                         form retracted by Plan 110 D189. Migrate к `consume X = init() { body }` \
+                         scope-block с `match outcome` в `on_exit` method, OR `with Cleanup = \
+                         handler { body }` (D185) для observability-only logging pattern.".to_string(),
+                        span,
+                    ));
                 }
                 let body = self.parse_expr()?;
                 let span = start.merge(body.span);
                 Ok(StmtOrExpr::Stmt(Stmt::Defer { body, span }))
             }
-            // D90: `errdefer body` — cleanup только на throw/panic-exit.
+            // Plan 110.5.7 (D189): `errdefer` retracted. Hard cutover.
             TokenKind::KwErrDefer => {
-                self.bump();
-                let body = self.parse_expr()?;
-                let span = start.merge(body.span);
-                Ok(StmtOrExpr::Stmt(Stmt::ErrDefer { body, span }))
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[D189-removed-errdefer] `errdefer { body }` retracted by Plan 110 D189. \
+                     Migrate к `consume X = init() { body }` scope-block с `match outcome \
+                     { Failure(_) => ... }` в `on_exit` method, OR use \
+                     `mut done = false; defer { if !done { ... } }; ...; done = true` для \
+                     bare cleanup-state pattern.".to_string(),
+                    span,
+                ));
             }
-            // D160 Plan 100.4.3: `okdefer body` — complement к errdefer.
-            // Cleanup только на success-path (normal exit / return).
+            // Plan 110.5.7 (D189): `okdefer` retracted. Hard cutover.
             TokenKind::KwOkDefer => {
-                self.bump();
-                let body = self.parse_expr()?;
-                let span = start.merge(body.span);
-                Ok(StmtOrExpr::Stmt(Stmt::OkDefer { body, span }))
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[D189-removed-okdefer] `okdefer { body }` retracted by Plan 110 D189. \
+                     Migrate к `consume X = init() { body }` scope-block с `match outcome \
+                     { Success => ... }` в `on_exit` method.".to_string(),
+                    span,
+                ));
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate
             // proof obligation. Контекстный keyword (Ident в лексере).
