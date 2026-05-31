@@ -1,6 +1,6 @@
 // Plan 114.4.1 (D200): basic assoc const — namespace access.
 
-module nova_tests.plan114_4_1.assoc_const_basic_ok
+module plan114_4_1.assoc_const_basic_ok
 
 type Config {
     const VERSION int = 2

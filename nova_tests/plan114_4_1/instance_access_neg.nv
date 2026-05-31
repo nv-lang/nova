@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_CONST_INSTANCE_ACCESS
 
-module nova_tests.plan114_4_1.instance_access_neg
+module plan114_4_1.instance_access_neg
 
 type Config {
     const VERSION int = 2

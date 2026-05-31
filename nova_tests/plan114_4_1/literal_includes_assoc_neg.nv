@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_CONST_FIELD_IN_LITERAL
 
-module nova_tests.plan114_4_1.literal_includes_assoc_neg
+module plan114_4_1.literal_includes_assoc_neg
 
 type Config {
     const VERSION int = 2
