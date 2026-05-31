@@ -5326,3 +5326,281 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
   для multi-error composition при cleanup-fail во время propagation.
   Plan 100.4.1 (2026-05-23 proposed; runtime impl extends этот D118
   fail-frame layout).
+
+---
+
+## D185. `Cleanup` effect — observability-only handler dispatch
+
+> **Plan 110 Ф.7.** Принято 2026-05-31 (proposed). Observability-only effect
+> для tracing cleanup-scope entry/exit. Default handler — no-op,
+> zero-overhead если не использован. Не дублирует `Consumable.on_exit` —
+> orthogonal layer для metrics/tracing.
+
+### Что
+
+```nova
+effect Cleanup {
+    fn on_scope_enter(label str, timeout Duration) -> ()
+    fn on_scope_exit(label str, outcome ScopeOutcome) -> ()
+}
+```
+
+Default handler — no-op:
+
+```nova
+fn Cleanup.default() -> CleanupHandler => CleanupHandler { /* no-op */ }
+```
+
+### Codegen integration
+
+При входе в `consume X = init() { body }` codegen эмитит (если Cleanup
+effect handler активен):
+
+```c
+perform_Cleanup_on_scope_enter(type_label(X), _timeout);
+// ... body ...
+perform_Cleanup_on_scope_exit(type_label(X), _outcome);
+```
+
+Если handler === default no-op (compile-time check) — calls elided через
+[D194](03-syntax.md#d194)-style optimization. Zero overhead.
+
+### Handler restrictions
+
+1. **Handler не может `throw`** — observability должна быть idempotent.
+   Compile error `D185-cleanup-handler-throw` если signature handler'а
+   `throw`'ит.
+
+2. **Return type должен быть `()`** — observability-only. Compile error
+   `D185-cleanup-handler-non-unit-return`.
+
+3. **Handler не может `suspend`** — observability должна быть sync
+   relative to scope-entry/exit. Async export через off-thread queue в
+   handler implementation если нужен.
+
+### OpenTelemetry wire format (D185 §otel)
+
+Reference implementation `CleanupHandler.to_otel(exporter)`:
+
+#### on_scope_enter — создаёт span
+
+```
+attributes = {
+    "cleanup.label":         label,
+    "cleanup.timeout_ms":    timeout.ms(),
+    "cleanup.start_time_ns": now_ns(),
+}
+span_kind = INTERNAL
+parent = active_span()
+```
+
+#### on_scope_exit — закрывает span
+
+```
+status = match outcome {
+    Success      => OK
+    Failure(_)   => ERROR { code: "cleanup_failed" }
+    Panic(_)     => ERROR { code: "cleanup_panic" }
+}
+attributes.duration_ms = (now_ns() - start_time_ns) / 1_000_000
+end_time = now()
+```
+
+#### Trace context propagation
+
+Spans nested correctly через scope-stack ([D188](03-syntax.md#d188) §R5).
+Parent span = enclosing scope-handler's span. Cross-fiber propagation
+через [D80](#d80) effect snapshot.
+
+#### Compatibility
+
+Compatible с std OpenTelemetry SDK через FFI bridge (cross-ref [Plan
+100.5](../../docs/plans/100.5-ffi-external-integration.md)).
+
+### Use cases
+
+- Production tracing — per-resource cleanup duration → APM.
+- Debugging — long-running slow cleanup → визуальные spans.
+- Audit — какие resource'ы cleanup'или в каком порядке.
+- Performance regression detection — baseline cleanup performance.
+
+### Что НЕ Cleanup effect
+
+- ❌ Не resource lifecycle — это `Consumable.on_exit`.
+- ❌ Не для cancel control — это shield (D188 R3).
+- ❌ Не для timeout adjustment — это `WithExitTimeout` / Application (D192).
+
+### Связь
+
+- [D80](#d80) — effect snapshot для cross-fiber.
+- [D188](03-syntax.md#d188) §R5 — scope-stack LIFO.
+- [Plan 100.5](../../docs/plans/100.5-ffi-external-integration.md) — FFI bridge.
+- [Plan 100.8](../../docs/plans/100.8-performance-ide-tooling.md) — performance + tooling.
+- [Plan 110 Ф.7](../../docs/plans/110-scoped-resources-radical-simplification.md).
+
+---
+
+## D195. `Application` effect — nesting + finalizer scoping + cross-fiber propagation
+
+> **Plan 110 Ф.8.** Принято 2026-05-31 (proposed). Application как ambient
+> capability для top-level lifecycle: finalizers + default exit_timeout.
+> Cross-ref [D188](03-syntax.md#d188) §R4 + [D192](03-syntax.md#d192) Level-2.
+
+### Что
+
+```nova
+effect Application {
+    fn register_finalizer(f fn() -> ()) -> ()
+    fn default_exit_timeout() -> Duration
+}
+
+type ApplicationHandler {
+    mut finalizers                []fn() -> ()
+    ro  default_exit_timeout_value Duration
+}
+
+fn Application.handler(default_exit_timeout Duration = 5.s()) -> ApplicationHandler
+    => ApplicationHandler { finalizers: [], default_exit_timeout_value: default_exit_timeout }
+
+fn ApplicationHandler @register_finalizer(f fn() -> ()) -> () => @finalizers.push(f)
+fn ApplicationHandler @default_exit_timeout() -> Duration => @default_exit_timeout_value
+
+// Handler сам Consumable — finalizers fire при выходе из with-блока:
+fn ApplicationHandler consume @on_exit(_outcome ScopeOutcome) -> () {
+    for f in @finalizers.reverse() { f() }
+}
+```
+
+### Idiomatic main pattern
+
+```nova
+fn main() Io -> () {
+    with Application = Application.handler(default_exit_timeout: 10.s()) {
+        run_server()
+        // anywhere глубоко: Application.register_finalizer(|| { ... })
+    }
+    // handler.on_exit fires finalizers в reverse order
+}
+```
+
+### R1 — Inner handler wins (effect-stack semantics)
+
+```nova
+with Application = h2 {
+    with Application = h1 {
+        // Application.X operations бьют по h1 здесь
+    }
+    // здесь — по h2
+}
+```
+
+Стандартная effect-stack семантика — inner handler побеждает.
+
+### R2 — Finalizer registry NOT inherited
+
+Inner handler `h2` имеет **свой пустой** registry. Finalizers registered
+внутри `with Application = h2` scope не visible снаружи; на exit h2
+запускаются h2.finalizers, h1.registry не trogается.
+
+```nova
+with Application = h1 {
+    Application.register_finalizer(|| println("h1.A"))
+    with Application = h2 {
+        Application.register_finalizer(|| println("h2.A"))
+        // h2.finalizers = [h2.A]
+        // h1.finalizers = [h1.A]
+    }
+    // h2 exits → prints "h2.A"
+}
+// h1 exits → prints "h1.A"
+```
+
+### R3 — Default exit_timeout NOT inherited
+
+`h2` имеет **свой** `default_exit_timeout_value`. Если `h2` создан без
+аргумента — использует hardcoded default `5.s()`, **не** h1's value:
+
+```nova
+with Application = Application.handler(default_exit_timeout: 30.s()) {  // h1
+    with Application = Application.handler() {                          // h2 — 5s, не 30s
+        consume tx = db.begin() { ... }  // timeout 5s
+    }
+}
+```
+
+Deliberate — позволяет inner scope override без implicit inheritance
+(test isolation use case).
+
+### R4 — Test isolation
+
+Каждый test получает свой isolated Application; не shareit finalizers с
+runner'ом:
+
+```nova
+fn test_user_registration() Io -> () {
+    with Application = Application.handler() {
+        Application.register_finalizer(|| cleanup_test_db())
+        run_scenario()
+    }
+    // finalizers fire здесь, runner не affected
+}
+```
+
+### R5 — Integration с D192
+
+Codegen `nv_resolve_exit_timeout` Level-2 check:
+
+```c
+nv_handler_t* app = nv_effect_lookup("Application");
+if (app) {
+    return nv_call_method(app, "default_exit_timeout");
+}
+```
+
+Inner handler побеждает через effect-stack (R1) — `nv_effect_lookup`
+возвращает active handler from top of stack.
+
+### R6 — Cross-fiber propagation
+
+При `spawn { ... }` дочерний fiber видит родительский effect-stack
+([D75](06-concurrency.md#d75) cancel-token model extension), включая активный Application:
+
+```nova
+with Application = Application.handler(default_exit_timeout: 10.s()) {
+    spawn {
+        Application.register_finalizer(|| ...)   // регистрирует в parent's handler
+        consume tx = db.begin() { ... }          // использует parent's 10s
+    }
+}
+```
+
+Snapshot effect-stack at spawn-point ([D80](#d80) semantics). Child видит
+parent's Application даже после exit parent — refcount keeps handler
+alive до последнего fiber.
+
+### R7 — Boot order
+
+`Application.handler(...)` constructor должен **полностью завершиться**
+до входа в `with`-блок. Никаких регистраций finalizer'ов во время
+construction — только из body. Если constructor throws — `with` не
+входит, `on_exit` не вызывается ([D188 R1](03-syntax.md#d188) partial-construction
+safety).
+
+### R8 — Abort / SIGKILL не fires finalizers
+
+Документировано как ограничение всех языков:
+- `abort()` / SIGKILL / SIGSEGV → process killed; OS unmaps memory;
+  finalizers NOT run.
+- `exit(code)` — fires handler.on_exit (controlled exit) → finalizers run.
+
+`#[run_on_abort]` атрибут — follow-up Plan 110.X (если будет нужно).
+
+### Связь
+
+- [D75](06-concurrency.md#d75) — CancelToken model.
+- [D80](#d80) — cross-fiber effect snapshot.
+- [D188](03-syntax.md#d188) §R1 boot-order, §R5 LIFO.
+- [D192](03-syntax.md#d192) Level-2 — 3-level resolution integration.
+- [D198](03-syntax.md#d198) — realtime bypass этого Level-2.
+- [Plan 100.4.1](../../docs/plans/100.4.1-failable-cleanup-body.md) — handler cleanup mechanism.
+- [Plan 110 Ф.8](../../docs/plans/110-scoped-resources-radical-simplification.md).
