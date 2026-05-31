@@ -144,6 +144,25 @@ form `consume X = expr;` сохраняется.
 
 **Декомпозиция на 8 sub-sub-sub-steps** (2026-05-31):
 
+#### Plan 110.1.4 sub-sub-sub progress (Session 3 status)
+
+| Step | Status | Commit |
+|---|---|---|
+| 110.1.4.a init binding emit + body emit | ✅ landed | 933e4a42e58 |
+| 110.1.4.b body trailing value capture | 🔴 OPEN | — |
+| 110.1.4.c ScopeOutcome sum-type registration | ✅ implicit (auto-registered via std/prelude/core.nv) | — |
+| 110.1.4.d setjmp fail-frame для body try/catch | ✅ landed | c58d62a65b8 |
+| 110.1.4.e on_exit method dispatch via vtable | ✅ landed | 9c5d8998964 + c58d62a65b8 |
+| 110.1.4.f throw re-raise after on_exit | ✅ landed | c58d62a65b8 |
+| 110.1.4.g panic propagation distinct из throw | ✅ landed | 06051deaa49 |
+| 110.1.4.h tests T2.x + NEG + close | 🔴 OPEN | — |
+
+**6/8 done.** Plan 110.1.4 в основном functional через release nova test
+(13/13 plan110 fixtures PASS). Remaining: 110.1.4.b (ConsumeScope-as-
+expression — substantive AST refactor) + 110.1.4.h (final closure).
+
+---
+
 #### 110.1.4.a — Init binding emit + scope-block C structure
 
 Emit C block `{ Nova_<Type> _consume_<binding>_<id> = <init expr>; ... }`.

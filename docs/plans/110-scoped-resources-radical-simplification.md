@@ -1752,12 +1752,16 @@ pre-existing `for_in_range_iter` (same error на main repo `nova/`,
     generic-bound resolution (staged 110.1.4).
   - A110.1.3.c 🟡 partial: `[T Consumable[never]]` same as .b.
 
-#### Plan 110.1.4 decomposed → 8 sub-sub-sub-steps (commit `878a2ff83fe`)
+#### Plan 110.1.4 decomposed → 8 sub-sub-sub-steps (commit `878a2ff83fe`); 6/8 done
 
 Plan 110.1.4 codegen разбит на atomic-merge steps 110.1.4.a-h:
-init binding (a) → body trailing value (b) → ScopeOutcome registration
-(c) → setjmp fail-frame (d) → on_exit vtable dispatch (e) → throw
-re-raise (f) → panic propagation (g) → tests + close (h).
+init binding (a ✅) → body trailing value (b 🔴) → ScopeOutcome
+registration (c ✅ implicit) → setjmp fail-frame (d ✅) → on_exit
+vtable dispatch (e ✅) → throw re-raise (f ✅) → panic propagation
+(g ✅) → tests + close (h 🔴).
+
+Commits: 933e4a42e58 (a) + 9c5d8998964 (e initial) + c58d62a65b8 (d/e
+refined/f) + 06051deaa49 (g).
 
 #### Plan 110.1.4.a ✅ (commit `933e4a42e58`) — init binding emit + body emit (success path)
 
