@@ -2772,6 +2772,7 @@ impl Parser {
                 kind: TypeDeclKind::Opaque,
                 impl_protocols: impl_protocols.clone(),
                 span: start.merge(last_span),
+                assoc_consts: Vec::new(),
                 attrs,
                 invariants: Vec::new(),
                 axioms: Vec::new(),
@@ -2841,6 +2842,7 @@ impl Parser {
                     generics,
                     kind,
                     span: start.merge(last_span),
+                    assoc_consts: Vec::new(),
                     attrs,
                     invariants: Vec::new(),
                     axioms: Vec::new(),
@@ -2851,6 +2853,9 @@ impl Parser {
         }
 
         let mut effect_axioms: Vec<EffectAxiom> = Vec::new();
+        // Plan 114.4.1 (D200): assoc consts собираются здесь; populates только
+        // для Record-types в Ф.1 (Sum-type + Generic — Ф.2/Ф.3 followup).
+        let mut assoc_consts: Vec<AssocConst> = Vec::new();
         let kind = match self.peek().kind {
             TokenKind::KwEffect => {
                 self.bump();
@@ -2884,7 +2889,8 @@ impl Parser {
             }
             TokenKind::LBrace => {
                 self.bump();
-                let fields = self.parse_record_fields()?;
+                let (fields, acs) = self.parse_record_fields()?;
+                assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
             }
@@ -2941,6 +2947,7 @@ impl Parser {
             generics,
             kind,
             span,
+            assoc_consts,
             attrs,
             invariants,
             axioms: effect_axioms,
@@ -2949,10 +2956,42 @@ impl Parser {
         })
     }
 
-    fn parse_record_fields(&mut self) -> Result<Vec<RecordField>, Diagnostic> {
+    /// Plan 114.4.1 (D200): расширено возвращать tuple
+    /// `(Vec<RecordField>, Vec<AssocConst>)`. Поля типа `const NAME T = expr`
+    /// внутри `type X { ... }` collected отдельно как associated constants —
+    /// НЕ в instance layout, accessible через namespace `Type.NAME`.
+    fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
+        let mut assoc_consts = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // Plan 114.4.1 (D200) Ф.1: `const NAME T = expr` — associated
+            // constant. Modifier-conflicts detected via lookahead.
+            if matches!(self.peek().kind, TokenKind::KwConst) {
+                let ac = self.parse_assoc_const_field(false)?;
+                assoc_consts.push(ac);
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                } else {
+                    self.skip_newlines();
+                }
+                continue;
+            }
+            // Plan 114.4.1 (D200) Ф.1: `export const NAME T = expr` —
+            // public assoc const (cross-module access).
+            if matches!(self.peek().kind, TokenKind::KwExport)
+                && matches!(self.peek_at(1).kind, TokenKind::KwConst)
+            {
+                self.bump(); // export
+                let ac = self.parse_assoc_const_field(true)?;
+                assoc_consts.push(ac);
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                } else {
+                    self.skip_newlines();
+                }
+                continue;
+            }
             let mut readonly = false;
             let mut mutable = false;
             // Plan 114 (D184) Ф.1.5: `readonly` retracted; `ro` — canonical
@@ -2964,6 +3003,32 @@ impl Parser {
                      instead of `readonly NAME TYPE`. Error code \
                      E_READONLY_FIELD preserved as stable API. Run \
                      scripts/plan114_rewrite.py to migrate.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Plan 114.4.1 (D200) modifier-conflicts: `mut const` / `ro const`
+            // / `consume const` — error before consuming modifier (ambiguous
+            // intent: assoc const vs instance field).
+            if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut | TokenKind::KwConsume)
+                && matches!(self.peek_at(1).kind, TokenKind::KwConst)
+            {
+                let kw = match self.peek().kind {
+                    TokenKind::KwRo => "ro",
+                    TokenKind::KwMut => "mut",
+                    TokenKind::KwConsume => "consume",
+                    _ => unreachable!(),
+                };
+                let code = match self.peek().kind {
+                    TokenKind::KwRo => "E_CONST_RO_REDUNDANT",
+                    TokenKind::KwMut => "E_CONST_MUT_CONFLICT",
+                    TokenKind::KwConsume => "E_CONST_CONSUME_CONFLICT",
+                    _ => unreachable!(),
+                };
+                return Err(Diagnostic::new(
+                    format!("[{code}] cannot combine `{kw}` with `const` field — \
+                     `const` field — это associated constant (zero-storage, \
+                     namespace access Type.NAME); `{kw}` относится к instance \
+                     field. Choose one (Plan 114.4.1 D200)."),
                     self.peek().span,
                 ));
             }
@@ -3031,7 +3096,32 @@ impl Parser {
                 self.skip_newlines();
             }
         }
-        Ok(fields)
+        Ok((fields, assoc_consts))
+    }
+
+    /// Plan 114.4.1 (D200) Ф.1: parse `const NAME [T] = expr` внутри
+    /// `type X { ... }` body. Caller гарантирует что `const`/`export const`
+    /// уже peek'нут; `KwConst` consumed внутри.
+    fn parse_assoc_const_field(&mut self, is_export: bool) -> Result<AssocConst, Diagnostic> {
+        let start = self.peek().span;
+        self.expect(&TokenKind::KwConst)?;
+        let (name, _) = self.parse_ident()?;
+        let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
+        let value = self.parse_expr()?;
+        let span = start.merge(value.span);
+        Ok(AssocConst {
+            name,
+            ty,
+            value,
+            span,
+            is_export,
+        })
     }
 
     fn parse_sum_variants(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
@@ -3056,7 +3146,12 @@ impl Parser {
                 }
                 TokenKind::LBrace => {
                     self.bump();
-                    let fields = self.parse_record_fields()?;
+                    // Plan 114.4.1 Ф.2 followup: per-variant assoc const
+                    // НЕ поддерживается V1 ([M-114.4.1-per-variant-const]).
+                    // Здесь записываем фактические assoc consts найденные
+                    // парсером — но Ф.2 sum-type assoc на sum-level
+                    // обрабатывается отдельно. Пока для variant — ignored.
+                    let (fields, _variant_acs) = self.parse_record_fields()?;
                     self.expect(&TokenKind::RBrace)?;
                     SumVariantKind::Record(fields)
                 }

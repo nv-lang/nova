@@ -679,6 +679,10 @@ pub struct TypeDecl {
     pub generics: Vec<GenericParam>,
     pub kind: TypeDeclKind,
     pub span: Span,
+    /// Plan 114.4.1 (D200): associated constants — `const NAME T = expr`
+    /// внутри `type X { ... }`. НЕ в instance layout; accessible через
+    /// namespace `Type.NAME`. Пустой вектор у типов без assoc consts.
+    pub assoc_consts: Vec<AssocConst>,
     /// Plan 52 Ф.1: атрибуты-маркеры перед `type` (`#from_fields`).
     /// Пустой вектор у типов без атрибутов (backward-compat).
     pub attrs: Vec<TypeAttr>,
@@ -753,6 +757,20 @@ pub enum TypeDeclKind {
     /// Codegen эмитит ссылку как `Nova_<Name>*` (pointer); struct
     /// определение живёт в runtime header.
     Opaque,
+}
+
+/// Plan 114.4.1 (D200): associated constant — `const NAME T = expr` inside
+/// `type X { ... }` body. НЕ в instance layout (zero storage); accessible
+/// через namespace `Type.NAME`. Codegen emit'ит как top-level
+/// `static const T Type_NAME = literal;` в .rodata.
+#[derive(Debug, Clone)]
+pub struct AssocConst {
+    pub name: String,
+    pub ty: Option<TypeRef>,
+    pub value: Expr,
+    pub span: Span,
+    /// `export const FOO …` — public cross-module access.
+    pub is_export: bool,
 }
 
 #[derive(Debug, Clone)]

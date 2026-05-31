@@ -8253,6 +8253,26 @@ impl CEmitter {
             }
             return Ok(());
         }
+        // Plan 114.4.1 (D200): emit associated constants как top-level
+        // `static const T Type_NAME = literal;` в .rodata. Generic
+        // T-dependent assoc consts (sizeof(T) etc) — followup Ф.3
+        // [M-114.4.1-generic-per-mono]; non-generic + T-independent
+        // обрабатываются здесь.
+        for ac in &t.assoc_consts {
+            let ty_c = if let Some(ty) = &ac.ty {
+                self.type_ref_to_c(ty)?
+            } else {
+                self.infer_expr_c_type(&ac.value)
+            };
+            let val = self.emit_const_expr_typed(&ac.value, Some(&ty_c))
+                .map_err(|e| format!(
+                    "assoc const `{}.{}` codegen failed: {}",
+                    t.name, ac.name, e
+                ))?;
+            let symbol = format!("{}_{}", t.name, ac.name);
+            self.line(&format!("static const {} {} = {};", ty_c, symbol, val));
+            self.var_types.insert(symbol, ty_c);
+        }
         match &t.kind {
             TypeDeclKind::Record(fields) => {
                 self.emit_record_type(&t.name, fields)?;
@@ -14586,6 +14606,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Mapping table в `numeric_type_constant_mapping`.
                 if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(parts) {
                     return Ok(c_expr.to_string());
+                }
+                // Plan 114.4.1 (D200): associated constants — `Type.NAME`
+                // emitted as `Type_NAME` C-symbol. Symbol present в var_types
+                // если emit_type_decl уже emitted assoc const declaration.
+                if parts.len() == 2 {
+                    let symbol = format!("{}_{}", parts[0], parts[1]);
+                    if self.var_types.contains_key(&symbol) {
+                        return Ok(symbol);
+                    }
                 }
                 // D109: qualified unit variant constructor: `Type.Variant`.
                 // In monomorphized context, Type may be a generic type (e.g. Slot[K,V]).

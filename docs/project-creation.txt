@@ -25890,3 +25890,74 @@ Acceptance:
 Smoke regression: 107 PASS / 1 pre-existing fail
 (basics+syntax+plan114+plan73+plan108+plan114_4). Zero induced
 regressions.
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 114.4.1 — Associated constants record-field (2026-06-01, partial)
+═══════════════════════════════════════════════════════════════════════════════
+
+Worktree: D:/Sources/nv-lang/nova-p114-4
+Branch:   plan-114.4.1 (rebased на main)
+Status:   🟢 PARTIAL CLOSURE — Ф.1 record-field closed; Ф.2 sum-type +
+          Ф.3 generic per-mono → Plan 114.4.1.1 / .1.2 per safety hatch.
+
+3 commits на ветке:
+  2953f655e37 Ф.1 parser   — AssocConst AST + parse_record_fields tuple
+                              return + modifier conflicts (3 error codes)
+  eb12eb5fb33 Ф.1 codegen  — emit static const Type_NAME + Path resolution
+  (hash)      Ф.1 checker  — E_CONST_INSTANCE_ACCESS + E_CONST_FIELD_IN_LITERAL
+
+Что сделано:
+
+1. Ф.1 parser:
+   - AST: pub struct AssocConst { name, ty: Option<TypeRef>, value: Expr,
+     span, is_export }. Added pub assoc_consts: Vec<AssocConst> в TypeDecl.
+   - Parser: parse_record_fields signature changed () → Vec<RecordField>
+     to (Vec<RecordField>, Vec<AssocConst>); 2 callers updated. New
+     parse_assoc_const_field(is_export) helper. KwConst dispatch + export
+     const support + modifier-conflicts (E_CONST_MUT_CONFLICT,
+     E_CONST_RO_REDUNDANT, E_CONST_CONSUME_CONFLICT). 3 TypeDecl init
+     sites updated (Opaque/empty-sum/main).
+
+2. Ф.1 codegen:
+   - emit_type_decl loop over t.assoc_consts → 'static const T Type_NAME
+     = literal;' в .rodata. Registers Type_NAME в var_types для Path
+     resolution.
+   - ExprKind::Path arm: assoc const lookup перед existing Path resolution.
+     Если parts.len() == 2 и format!('{}_{}', parts[0], parts[1]) в
+     var_types → return symbol.
+
+3. Ф.1 checker rejects:
+   - field_method_not_found: assoc-const detection перед E7320; если name
+     matches type.assoc_consts → E_CONST_INSTANCE_ACCESS с hint 'use
+     Type.NAME'.
+   - walk_expr RecordLit arm: type_name lookup; если field name matches
+     assoc_consts → E_CONST_FIELD_IN_LITERAL с span на field.
+
+Tests (5/5 plan114_4_1 PASS):
+- assoc_const_basic_ok (4 inner: Config.VERSION==2, Config.MAX_PEERS==1024,
+  instantiation без const fields, arithmetic over assoc const).
+- instance_access_neg, literal_includes_assoc_neg, mut_const_conflict_neg,
+  ro_const_redundant_neg.
+
+Smoke regression: 87 PASS / 1 pre-existing fail across basics+syntax+
+plan114+plan114_4+plan114_4_1+plan73+plan108. Zero induced regressions.
+
+Acceptance (Ф.1 slice):
+- A6 ✓ (namespace access)
+- A7 ✓ (zero storage)
+- A8 ✓ (literal without assoc fields)
+- A9 ✓ (modifier conflicts)
+- A10 partial (export const parses; cross-module не тестирован)
+- A11 deferred (sum-type → Plan 114.4.1.1)
+- A12-A14 deferred (generic per-mono → Plan 114.4.1.2)
+- A15 deferred (nova doc regen)
+
+Extracted via safety hatch:
+- [M-114.4.1-sum-type-assoc] → Plan 114.4.1.1 (sum-type body parser design).
+- [M-114.4.1-generic-per-mono] → Plan 114.4.1.2 (Plan 70.5 integration).
+- [M-114.4.1-doc-gen], [M-114.4.1-cross-module-export-const],
+  [M-114.4.1-per-variant-const] — minor followups.
+
+Closes [M-114.4-assoc-const] partial (record-field slice shipped;
+sum-type + generic per-mono в extracted plans).
+

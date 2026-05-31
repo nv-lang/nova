@@ -1491,7 +1491,33 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_expr(e, gs, errors);
                 }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
+                // Plan 114.4.1 (D200): reject field shorthand / pair refering
+                // assoc const — assoc consts live на type-level, не указываются
+                // в record literal.
+                if let Some(tn) = type_name {
+                    if let Some(last) = tn.last() {
+                        if let Some(td) = self.types.get(last) {
+                            for f in fields {
+                                if f.is_spread { continue; }
+                                if td.assoc_consts.iter().any(|ac| ac.name == f.name) {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_CONST_FIELD_IN_LITERAL] field `{}` \
+                                             в record literal `{}{{ … }}` — это \
+                                             associated constant (zero-storage, \
+                                             namespace access `{}.{}`); НЕ указывается \
+                                             и НЕ инициализируется в record literal \
+                                             (Plan 114.4.1 D200).",
+                                            f.name, last, last, f.name,
+                                        ),
+                                        f.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.walk_expr(v, gs, errors);
@@ -2388,6 +2414,26 @@ impl<'a> TypeCheckCtx<'a> {
         // patterns are skipped (treated as not synthesizable) — type-checker
         // returns E7320 normally.
         if self.protocol_method_satisfiable_for(tname, name) {
+            return;
+        }
+        // Plan 114.4.1 (D200): assoc const detection — если `name` matches
+        // одну из assoc consts типа, hint user про namespace access.
+        let is_assoc_const = self.types.get(tname)
+            .map(|td| td.assoc_consts.iter().any(|ac| ac.name == name))
+            .unwrap_or(false);
+        if is_assoc_const {
+            errors.push(
+                Diagnostic::new(
+                    format!(
+                        "[E_CONST_INSTANCE_ACCESS] cannot access associated \
+                         constant `{}.{}` через instance — assoc constants \
+                         live на type-level (zero storage в instance). \
+                         Use `{}.{}` namespace access instead (Plan 114.4.1 D200).",
+                        tname, name, tname, name,
+                    ),
+                    span,
+                )
+            );
             return;
         }
         let avail: Vec<&str> =
