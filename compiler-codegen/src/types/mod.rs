@@ -954,15 +954,33 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 110.1.2: infer the resulting type name from `consume X = INIT
-    /// { body }` init expression. Heuristics:
+    /// Plan 110.1.2 / 110.1.3 (D196): infer the resulting type name from
+    /// `consume X = INIT { body }` init expression. Heuristics:
     /// - `Type.method(args)` → look up method's return type via method_table.
     /// - `Type { fields }` → type name directly.
-    /// - `expr?` / `expr!!` → recurse (postfix-unwrap doesn't change type
-    ///   name for record-typed receiver; full Result[T,E] / Option[T] unwrap
-    ///   semantics — 110.1.3).
-    /// - Other forms → return None (staged delivery).
+    /// - `expr?` / `expr!!` → если inner returns `Result[T,E]` / `Option[T]`,
+    ///   unwrap до T (D196 form 2: Result/Option unwrap).
+    /// - `expr as Type` → cast target.
+    /// - Other forms → None (staged delivery — full inference 110.1.4).
     fn infer_consume_init_type(&self, e: &Expr) -> Option<String> {
+        self.infer_consume_init_typeref(e)
+            .as_ref()
+            .and_then(Self::typeref_to_name)
+    }
+
+    /// Extract final type name from TypeRef::Named (last path segment).
+    fn typeref_to_name(t: &TypeRef) -> Option<String> {
+        if let TypeRef::Named { path, .. } = t {
+            path.last().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Plan 110.1.3 (D196): infer full TypeRef для init expression. Используется
+    /// для Result/Option unwrap (D196 form 2) — нужен дополнительный slot
+    /// для unwrap'нутого T type-ref'а.
+    fn infer_consume_init_typeref(&self, e: &Expr) -> Option<TypeRef> {
         use crate::ast::ExprKind;
         match &e.kind {
             ExprKind::Call { func, .. } => {
@@ -973,38 +991,54 @@ impl<'a> TypeCheckCtx<'a> {
                         let methods = self.method_table.get(type_name)?;
                         let decls = methods.get(method_name)?;
                         let decl = decls.first()?;
-                        match decl.return_type.as_ref()? {
-                            TypeRef::Named { path, .. } => {
-                                // Self в return-type разворачиваем в receiver type.
-                                let last = path.last()?;
-                                if last == "Self" {
-                                    Some(type_name.clone())
-                                } else {
-                                    Some(last.clone())
-                                }
+                        let rt = decl.return_type.as_ref()?;
+                        // Self → receiver type substitution.
+                        if let TypeRef::Named { path, .. } = rt {
+                            if path.last().map_or(false, |s| s == "Self") {
+                                return Some(TypeRef::Named {
+                                    path: vec![type_name.clone()],
+                                    generics: Vec::new(),
+                                    span: e.span,
+                                });
                             }
-                            _ => None,
                         }
+                        Some(rt.clone())
                     }
                     _ => None,
                 }
             }
             ExprKind::RecordLit { type_name: Some(name), .. } => {
-                name.last().cloned()
+                Some(TypeRef::Named {
+                    path: name.clone(),
+                    generics: Vec::new(),
+                    span: e.span,
+                })
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                // ?/!! unwrap — для Plan 110.1.2 scaffold возвращаем inner
-                // тип напрямую. Полная семантика Result[T,E]/Option[T] →
-                // T unwrap landing в Plan 110.1.3 (D196 forms 2-5).
-                self.infer_consume_init_type(inner)
-            }
-            ExprKind::As(_, ty) => {
-                if let TypeRef::Named { path, .. } = ty {
-                    path.last().cloned()
-                } else {
-                    None
+            ExprKind::Try(inner) => {
+                // D196 form 2 (?): unwrap Result[T, E] → T.
+                let inner_ty = self.infer_consume_init_typeref(inner)?;
+                if let TypeRef::Named { path, generics, .. } = &inner_ty {
+                    if path.last().map_or(false, |s| s == "Result") && !generics.is_empty() {
+                        return Some(generics[0].clone());
+                    }
+                    // Option[T] через ? тоже разворачивается (R/E aware).
+                    if path.last().map_or(false, |s| s == "Option") && !generics.is_empty() {
+                        return Some(generics[0].clone());
+                    }
                 }
+                Some(inner_ty)
             }
+            ExprKind::Bang(inner) => {
+                // D196 form 2 (!!): unwrap Option[T] → T или Result[T,_] → T.
+                let inner_ty = self.infer_consume_init_typeref(inner)?;
+                if let TypeRef::Named { path, generics, .. } = &inner_ty {
+                    if path.last().map_or(false, |s| s == "Option" || s == "Result") && !generics.is_empty() {
+                        return Some(generics[0].clone());
+                    }
+                }
+                Some(inner_ty)
+            }
+            ExprKind::As(_, ty) => Some(ty.clone()),
             ExprKind::Ident(_) | ExprKind::Path(_) => None,
             _ => None,
         }

@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR D188-codegen-not-yet-implemented
+//
+// Plan 110.1.3 (D194): `Consumable[never]` permits caller без `Fail[E]`.
+// `Fail[never]` ≡ «не throws» — caller fn не должна объявлять Fail-effect.
+// Hot-path optimization (D194 §perf) разворачивается в codegen Plan 110.1.7.
+
+module plan110.check_consume_never_no_fail_required
+
+// MutexGuard-style infallible resource — release не может fail.
+type InfallibleResource {
+    ro id int
+}
+
+fn InfallibleResource.new(id int) -> InfallibleResource => { id }
+
+// Consumable[never]: on_exit БЕЗ Fail-effect.
+fn InfallibleResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+// Caller fn НЕ объявляет Fail[E] — должно проходить type-check
+// (D194 Never special case).
+fn use_infallible() -> int {
+    consume r = InfallibleResource.new(42) {
+        r.id
+    }
+}
