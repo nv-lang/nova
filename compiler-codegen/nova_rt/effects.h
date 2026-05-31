@@ -236,6 +236,45 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
 /* Accessors для MultiError prelude — count + indexed access на chain.
  * Caller (codegen MultiError @suppressed()) uses этих для materialize'а
  * Nova-side []Err array. */
+/* Plan 110.2.3 (D192): 3-level exit_timeout resolution runtime.
+ *
+ * Called by ConsumeScope codegen at scope-entry to resolve cleanup
+ * deadline в milliseconds. Bootstrap:
+ *
+ * - Level 1 (WithExitTimeout impl per type): vtable check для
+ *   `Nova_<T>_method_exit_timeout_ms` symbol. Not yet implemented —
+ *   Plan 110.2.x lookup integration.
+ * - Level 2 (Application effect handler): scan effect-stack для
+ *   bound `Application` handler; if found, call
+ *   `default_exit_timeout_ms()`. Not yet implemented — Plan 110.4.6
+ *   integration.
+ * - Level 3 (hardcoded fallback): 5000 ms.
+ *
+ * Currently bootstrap returns Level 3 unconditionally; Level 1/2
+ * integration после Plan 110.2.x + 110.4.6 codegen.
+ */
+static inline int nv_resolve_exit_timeout_ms(void) {
+    /* TODO Plan 110.2.x: Level 1 — WithExitTimeout vtable lookup. */
+    /* TODO Plan 110.4.6: Level 2 — Application effect handler check. */
+    return 5000;  /* Level 3 hardcoded fallback (D192). */
+}
+
+/* Plan 110.2.1 (D188 R3): cancel-shield runtime — suspends cancel
+ * delivery до scope-exit или timeout exceedance. Bootstrap version:
+ * minimal stub; full implementation в Plan 110.2.x (fiber state
+ * field + cancel-delivery check points + deadline tracking).
+ */
+static inline void nv_consume_enter_shield(int deadline_ms) {
+    (void)deadline_ms;
+    /* TODO Plan 110.2.1: set fiber->cancel_masked = true + register
+     * deadline_ns = now_ns() + deadline_ms * 1_000_000. */
+}
+
+static inline void nv_consume_leave_shield(void) {
+    /* TODO Plan 110.2.1: clear fiber->cancel_masked; deliver pending
+     * cancel if any. */
+}
+
 static inline int nova_failframe_suppressed_count(const NovaFailFrame* frame) {
     if (!frame) return 0;
     int n = 0;

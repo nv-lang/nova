@@ -14295,6 +14295,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // detection на pointer types).
                 self.var_types.insert(binding.clone(), init_c_type.clone());
 
+                // Plan 110.2.3 (D192): resolve exit_timeout via 3-level
+                // fallback. Bootstrap: Level 3 hardcoded; Level 1/2 added
+                // в Plan 110.2.x runtime integration.
+                let timeout_var = format!("_consume_timeout_{}", scope_id);
+                self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
+
+                // Plan 110.2.1 (D188 R3): enter cancel-shield для body
+                // execution + cleanup. Bootstrap: stub call; runtime impl
+                // в Plan 110.2.x.
+                self.line(&format!("nv_consume_enter_shield({});", timeout_var));
+
                 // 110.1.4.d: setup fail-frame for throw catching.
                 self.line(&format!("NovaFailFrame {};", frame));
                 self.line(&format!("nova_fail_push(&{});", frame));
@@ -14373,6 +14384,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
+
+                // Plan 110.2.1: leave cancel-shield before re-propagation.
+                // Pending cancel (if any) delivered после leave_shield.
+                self.line(&format!("nv_consume_leave_shield();"));
 
                 // 110.1.4.f: re-raise после on_exit на Failure outcome.
                 // 110.1.4.g: re-panic на Panic outcome (через nv_panic →
