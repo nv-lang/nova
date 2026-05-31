@@ -1382,6 +1382,13 @@ export type OnceGuard consume { ptr int }
 #stable(since = "0.1")
 export external fn MutexGuard consume @unlock()
 
+/// Plan 110 D194 (Consumable[never]): on_exit calls unlock. Used by
+/// `consume g = mu.acquire() { body }` scope-block automatic cleanup.
+/// Infallible (never throws); same C impl as unlock.
+#wakes
+#stable(since = "0.1")
+export external fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+
 // ─── ReadGuard methods ───────────────────────────────────────────
 
 /// Release the read lock. The guard is consumed (single-use).
@@ -1389,12 +1396,22 @@ export external fn MutexGuard consume @unlock()
 #stable(since = "0.1")
 export external fn ReadGuard consume @unlock()
 
+/// Plan 110 D194 (Consumable[never]): on_exit calls unlock.
+#wakes
+#stable(since = "0.1")
+export external fn ReadGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+
 // ─── WriteGuard methods ──────────────────────────────────────────
 
 /// Release the write lock. The guard is consumed (single-use).
 #wakes
 #stable(since = "0.1")
 export external fn WriteGuard consume @unlock()
+
+/// Plan 110 D194 (Consumable[never]): on_exit calls unlock.
+#wakes
+#stable(since = "0.1")
+export external fn WriteGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 
 // ─── Permit methods ──────────────────────────────────────────────
 
@@ -1404,6 +1421,11 @@ export external fn WriteGuard consume @unlock()
 #wakes
 #stable(since = "0.1")
 export external fn Permit consume @release()
+
+/// Plan 110 D194 (Consumable[never]): on_exit calls release.
+#wakes
+#stable(since = "0.1")
+export external fn Permit consume @on_exit(_outcome ScopeOutcome) -> ()
 
 // ─── OnceGuard methods ───────────────────────────────────────────
 
