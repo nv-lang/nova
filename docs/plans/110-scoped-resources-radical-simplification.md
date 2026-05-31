@@ -1865,6 +1865,37 @@ Plan 110 progress (Session 3 extended #3 grand total):
 
 **Sub-sub-(sub) tasks remaining:** ~45 (down from 55 at Session 3 start).
 
+#### Session 3 extended #4 — additional sub-sub plans landed
+
+| Sub-sub | Commit | Notes |
+|---|---|---|
+| 110.1.4.h T2.1 on_exit throws MultiError | aa5375447eb | fixture |
+| 110.1.4.h T2.11 typed error dispatch | 0d94f5592b6 | fixture с outcome match |
+| 110.8.1 Q-cancel-and-cleanup | 642cd7b1e4c | docs |
+| 110.8.1 Q-application-effect | c1ec666a781 | docs |
+| 110.8.1 Q-debugging-cleanup-chains | 2cba796eb8a | docs |
+
+Session 3 extended #4 totals: 30+ commits pushed, 22+ plan110 fixtures
+PASS, 7/11 Q-blocks done (consume-scope-cleanup 4-block + cancel-and-
+cleanup + application-effect + debugging-cleanup-chains).
+
+Plan 110 grand progress:
+- **Plan 110.1**: 7/10 sub-sub done + 110.1.4 6/8 sub-sub-sub (a/c/d/e/f/g) + 110.1.4.h fixtures.
+- **Plan 110.3**: 2/6 done (Mutex/Sem).
+- **Plan 110.4**: 4/8 done (4.1/4.2/4.3/4.5).
+- **Plan 110.5**: 2/7 done (5.1/5.6).
+- **Plan 110.8.1**: 7/11 Q-blocks done.
+- **Plan 110.2**: 0/6 (cancel-shield runtime — multi-day work).
+- **Plan 110.6/110.7**: 0 (LSP/stress/bench/FFI).
+
+Remaining sub-sub-(sub) tasks: ~40 (down from 55 at start of Session 3,
+-15 from concentrated work). Acceptance progress:
+- A1, A2 partial, A7 partial, A8, A21, A22, A23 partial (7/11 Q),
+  A25, A26, A27, A32, A33, A34, A37 ✅.
+- A3, A4, A5 partial (Mutex/Sem only), A6, A9, A10, A11, A12 partial,
+  A13, A14, A15, A16 partial, A17-A20 partial, A24, A28, A29 partial,
+  A30, A31, A35, A36, A38 — OPEN.
+
 **Plan production-grade FINAL обязательство** (записано в plan header):
 все sub-sub-(sub) plans MUST land end-to-end через release nova test
 до закрытия Plan 110 umbrella; никаких «good enough» или silent leftovers.
