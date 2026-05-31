@@ -925,6 +925,37 @@ Rust/C++/Swift; менять `@plus` → `@addition` бессмысленно.
 3. **Прецедент Swift API Guidelines.** Swift строго запрещает abbreviations,
    и это даёт API surface, которую читать как естественный язык.
 
+#### Leading underscore: «параметр / биндинг намеренно не используется»
+
+**Конвенция** (Plan 110.7.3.a, 2026-06-01): локальные биндинги и
+параметры с префиксом `_` явно сигналят compiler'у «эта переменная
+объявлена для интерфейсной совместимости, но не нужна телу». Это
+**подавляет** `W_UNUSED_PARAM` / `W_UNUSED_LOCAL` warning'и без
+необходимости комментариев.
+
+| Применение | Пример | Семантика |
+|---|---|---|
+| Unused parameter | `fn @on_exit(_outcome ScopeOutcome) -> ()` | param required by protocol, тело его не читает |
+| Unused let-binding | `ro _ = expensive_compute()` | side-effect важен, value irrelevant |
+| Unused pattern binding | `match v { Some(_x) => 0, None => 1 }` | wildcard с именем для diagnostic, не reading |
+| Discard tuple element | `ro (a, _b) = pair()` | первый нужен, второй — нет |
+
+**Правило компилятора:**
+* Имя начинается с `_` (включая чистый `_`) → unused-warning suppressed.
+* Любое другое имя → warning fires если binding не читается.
+* `_` (одиночное подчёркивание) — традиционная «throwaway» форма; допустимо
+  использовать многократно в одном scope (каждое — fresh binding).
+
+**Prior art:**
+* Rust: `let _x = compute()` — same convention.
+* Swift: `_` parameter labels — call-site suppression.
+* Go: `_` blank identifier — same purpose, syntax level.
+* Python: `_var` — informal convention, no enforcement.
+
+**Запрещено**: `_` префикс на **public exports** — это signals «private
+to module», и leading-underscore tied к unused-suppression cleanly
+разделимо только для local / private bindings.
+
 #### Типы ошибок: `Parse<TypeName>Error`, `<Operation><Domain>Error`
 
 Имена ошибок в публичных API должны включать **тип / домен** который

@@ -360,6 +360,12 @@ pub struct FnDecl {
     /// Plan 113 (D172): `#blocking` attribute перед `fn`.
     /// Runtime threadpool offload — callers wrap fn in uv_queue_work, fiber parks.
     pub blocking_attr: bool,
+    /// Plan 110.7.3.a (D188 §FFI): `#cancel_safe` attribute на `external fn`.
+    /// Attests что C-side function is cancel-safe — can be invoked from inside
+    /// ConsumeScope on_exit body (under cancel-shield). Without this attribute,
+    /// the cancel-unsafe lint (W_FFI_CANCEL_UNSAFE) fires at the call site
+    /// when the call appears inside an on_exit body. Default `false`.
+    pub cancel_safe_attr: bool,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
     pub contracts: Vec<Contract>,

@@ -1115,6 +1115,12 @@ impl Parser {
         // `type`. Контекстный разбор после `#` (не keyword).
         let (type_attrs, impl_protocols) = self.parse_type_attrs()?;
 
+        // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
+        // form `#cancel_safe\nexternal fn ...` работала (attribute может
+        // стоять перед `external`). Дополнительный pass позже подберёт
+        // attribute если он был между `external` и `fn`.
+        let pre_cancel_safe = self.parse_cancel_safe_attr();
+
         let is_export = self.eat(&TokenKind::KwExport).is_some();
         // D82: `external` modifier — между `export` и `fn`.
         // Plan 62.D.bis (D126): `external` теперь также валиден перед `type`
@@ -1140,12 +1146,31 @@ impl Parser {
         // Парсим в RealtimeAttr enum, передаём в parse_fn.
         // Plan 113 (D172): `#blocking` — fn-level threadpool offload attr.
         // Both `#realtime` and `#blocking` may appear before `fn` in either order.
-        let realtime_attr = self.parse_realtime_attr()?;
-        let blocking_attr = self.parse_blocking_attr();
-        // Re-try realtime if blocking came first (allow either order)
-        let realtime_attr = if matches!(realtime_attr, RealtimeAttr::None) {
-            self.parse_realtime_attr()?
-        } else { realtime_attr };
+        // Plan 110.7.3.a: parse #cancel_safe / #realtime / #blocking в любом
+        // порядке. Iterate пока хотя бы один pattern matches. Pre-seed
+        // cancel_safe_attr с pre_cancel_safe (consumed выше до eat KwExternal).
+        let mut realtime_attr = self.parse_realtime_attr()?;
+        let mut blocking_attr = self.parse_blocking_attr();
+        let mut cancel_safe_attr = pre_cancel_safe || self.parse_cancel_safe_attr();
+        loop {
+            let mut progressed = false;
+            if matches!(realtime_attr, RealtimeAttr::None) {
+                let r = self.parse_realtime_attr()?;
+                if !matches!(r, RealtimeAttr::None) {
+                    realtime_attr = r;
+                    progressed = true;
+                }
+            }
+            if !blocking_attr && self.parse_blocking_attr() {
+                blocking_attr = true;
+                progressed = true;
+            }
+            if !cancel_safe_attr && self.parse_cancel_safe_attr() {
+                cancel_safe_attr = true;
+                progressed = true;
+            }
+            if !progressed { break; }
+        }
         if !matches!(realtime_attr, RealtimeAttr::None)
             && !matches!(self.peek().kind, TokenKind::KwFn)
             && !matches!(self.peek().kind, TokenKind::Hash)
@@ -1221,7 +1246,7 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -1381,6 +1406,26 @@ impl Parser {
         self.bump(); // blocking
         self.skip_newlines();
         true
+    }
+
+    /// Plan 110.7.3.a (D188 §FFI): parse `#cancel_safe` attribute перед
+    /// `external fn` (or any fn). Attests на cancel-safety при invocation
+    /// из ConsumeScope on_exit body. `cancel_safe` — обычный identifier
+    /// (не keyword в lexer'е), парсится контекстно после `#`.
+    /// Returns true if attribute present.
+    fn parse_cancel_safe_attr(&mut self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return false;
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "cancel_safe" => {
+                self.bump(); // #
+                self.bump(); // cancel_safe
+                self.skip_newlines();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
@@ -2078,7 +2123,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -2411,6 +2456,7 @@ impl Parser {
             span: start.merge(end_span),
             realtime_attr,
             blocking_attr,
+            cancel_safe_attr,
             // Plan 33.1 (D24): contracts + verify attributes.
             // Backward-compat: пустой Vec для функций без контрактов;
             // Default verify_mode / Unknown purity для функций без атрибутов.
@@ -5162,6 +5208,17 @@ impl Parser {
             }
             TokenKind::At => {
                 self.bump();
+                // Plan 110.7.3.a (D03 строка 1460-1461): `@.field` невалидно.
+                // Канонический доступ к полю self — `@field` без точки.
+                // `(@).field` через postfix-парсер also rejected here (sole
+                // entry point для @).
+                if matches!(self.peek().kind, TokenKind::Dot) {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[E_SELF_DOT_INVALID] `@.field` is invalid syntax — use `@field` for self-field access (D03 §D35/D37)",
+                        span,
+                    ));
+                }
                 // @ или @field
                 if matches!(self.peek().kind, TokenKind::Ident(_)) {
                     let (name, name_span) = self.parse_ident()?;
