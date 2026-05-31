@@ -798,8 +798,13 @@ impl<'a> TypeCheckCtx<'a> {
     /// Plan 110.1.2 (D188): walk Stmt looking for ConsumeScope, recurse into children.
     fn check_consume_scopes_in_stmt(&self, s: &Stmt, errors: &mut Vec<Diagnostic>) {
         match s {
-            Stmt::ConsumeScope { init, body, .. } => {
+            Stmt::ConsumeScope { binding, init, body, .. } => {
                 self.validate_consume_scope_init(init, errors);
+                // Plan 110.1.5 (D188 R2 enforcement at compile time):
+                // detect manual `binding.on_exit(...)` calls в body.
+                // Runtime exactly-once guard prevents double dispatch;
+                // здесь — compile-time gate чтобы избегать runtime panic.
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
                 self.check_consume_scopes_in_expr(init, errors);
                 self.check_consume_scopes_in_block(body, errors);
             }
@@ -951,6 +956,129 @@ impl<'a> TypeCheckCtx<'a> {
                     init_span,
                 ));
             }
+        }
+    }
+
+    /// Plan 110.1.5 (D188 R2): detect manual `binding.on_exit(...)` calls
+    /// в ConsumeScope body. Auto on_exit dispatch happens at scope-exit;
+    /// manual call → double invocation → runtime panic (R2 exactly-once
+    /// violation). Compile-time gate preferred to runtime panic.
+    fn check_no_manual_on_exit_call_in_block(&self, binding: &str, b: &Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.check_no_manual_on_exit_call_in_stmt(binding, s, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_no_manual_on_exit_call_in_expr(binding, t, errors);
+        }
+    }
+
+    fn check_no_manual_on_exit_call_in_stmt(&self, binding: &str, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Let(d) => self.check_no_manual_on_exit_call_in_expr(binding, &d.value, errors),
+            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(binding, e, errors),
+            Stmt::Assign { target, value, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, target, errors);
+                self.check_no_manual_on_exit_call_in_expr(binding, value, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(binding, v, errors); }
+            }
+            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(binding, value, errors),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, body, errors);
+            }
+            Stmt::ConsumeScope { init, body, binding: inner_binding, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, init, errors);
+                // Nested consume scope с inner binding NEW — outer `binding`
+                // check still applies inside (если inner body references
+                // outer's binding manually — same violation).
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                // Дополнительно: recurse с inner binding (D197 re-entrance).
+                self.check_no_manual_on_exit_call_in_block(inner_binding, body, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, expr, errors);
+            }
+            _ => {}
+        }
+    }
+
+    fn check_no_manual_on_exit_call_in_expr(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        // Detect `binding.on_exit(...)` call: Call { func: Member { obj: Ident(binding), name: "on_exit" }, ... }
+        if let ExprKind::Call { func, .. } = &e.kind {
+            if let ExprKind::Member { obj, name, .. } = &func.kind {
+                if name == "on_exit" {
+                    if let ExprKind::Ident(obj_name) = &obj.kind {
+                        if obj_name == binding {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[D188-r2-manual-on-exit] `{binding}.on_exit(...)` cannot be \
+                                     called manually from inside `consume {binding} = ... {{ body }}` \
+                                     scope-block body. Auto on_exit dispatch на scope exit \
+                                     гарантирует exactly-once invariant (D188 R2). Manual call \
+                                     → double invocation → runtime panic. \
+                                     Remove the explicit call; scope-exit will dispatch on_exit \
+                                     с appropriate ScopeOutcome value.",
+                                    binding = binding
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        // Recurse into children regardless.
+        self.check_no_manual_on_exit_recurse(binding, e, errors);
+    }
+
+    fn check_no_manual_on_exit_recurse(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, func, errors);
+                for a in args {
+                    match a {
+                        crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
+                            self.check_no_manual_on_exit_call_in_expr(binding, ae, errors);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ExprKind::If { cond, then, else_, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(binding, then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(binding, ei, errors),
+                    }
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, iter, errors);
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+            }
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.check_no_manual_on_exit_call_in_expr(binding, a, errors);
+                self.check_no_manual_on_exit_call_in_expr(binding, b, errors);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, left, errors);
+                self.check_no_manual_on_exit_call_in_expr(binding, right, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(binding, operand, errors),
+            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(binding, obj, errors),
+            _ => {}
         }
     }
 
