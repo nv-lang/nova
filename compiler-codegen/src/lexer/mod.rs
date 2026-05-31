@@ -610,6 +610,10 @@ impl<'a> Lexer<'a> {
             "const" => TokenKind::KwConst,
             "mut" => TokenKind::KwMut,
             "consume" => TokenKind::KwConsume,
+            // Plan 114 (D184): `ro` — canonical short keyword.
+            "ro" => TokenKind::KwRo,
+            // Plan 114 (D184): retracted; lexer still recognizes the lexeme
+            // so parser can emit `E_KW_REMOVED_READONLY` with a clear hint.
             "readonly" => TokenKind::KwReadonly,
             "if" => TokenKind::KwIf,
             "else" => TokenKind::KwElse,
