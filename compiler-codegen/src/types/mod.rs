@@ -106,20 +106,22 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
             if let Item::Fn(fd) = item {
                 if fd.is_external {
                     // Plan 91.10 (D163 retracted): `needs <Cap>` clause удалён.
-                    // D82 restriction для plain external fn остаётся: only
-                    // stdlib-runtime modules могут декларировать external fn.
-                    // FFI to external C libraries — TBD (нужен `extern("C")`
-                    // или похожий механизм; пока stdlib-only).
+                    //
+                    // Plan 115 D214 amend D82 (2026-05-31): D82 restriction
+                    // "external fn only allowed in std.runtime.*" SNYATA.
+                    // Foundational FFI требует user-level `external fn` для
+                    // bindings к третьесторонним C libraries (libsqlite, libpng,
+                    // libcurl, etc) без участия compiler-team. User несёт
+                    // ответственность за:
+                    //   - правильную C shim implementation (Layer 4),
+                    //   - safe memory ownership (consume close() pattern),
+                    //   - link-time provision shim object files (`nova build
+                    //     --c-shim path/to/shim.c`).
+                    //
+                    // Verification: D214 §«Layered FFI pattern». Future
+                    // `[M-115-ffi-build-pipeline]` formalizes shim linking
+                    // CLI.
                     let _ = fd.needs_caps; // backward-compat field, всегда empty.
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "`external fn` is only allowed in `std.runtime.*` modules \
-                             (this module is `{}`). FFI to external C libraries — \
-                             см. D82 + future `extern(\"C\")` syntax.",
-                            module.name.join(".")
-                        ),
-                        fd.span,
-                    ));
                 }
             }
             // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with

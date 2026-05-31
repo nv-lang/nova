@@ -1344,6 +1344,47 @@ impl CEmitter {
             }
         }
 
+        // Plan 115 D214: user-level `external fn` registration. Pre-populates
+        // `external_registry` с entries из текущего module — даёт unmangled
+        // `nova_fn_<name>` resolve в emit_call (без него Nova-mangling
+        // делает `nova_fn_<modpath><name>` который не matches C shim).
+        //
+        // Plan 115 v1 ограничение: только FREE external fn (без receiver) и
+        // с simple types. Generic / receiver-method external fn — followup
+        // `[M-115-external-fn-method]`.
+        match super::external_registry::ExternalRegistry::from_module(module) {
+            Ok(user_reg) => {
+                for (key, decls) in user_reg.by_key {
+                    self.external_registry.by_key.entry(key).or_default().extend(decls);
+                }
+            }
+            Err(_) => {
+                // Type-checker emits a более user-friendly diagnostic для
+                // type-resolution issues — registry merge молча skip'ает.
+            }
+        }
+        // Plan 115 D214: pre-register mono'd tuple instances для external fn
+        // return types — гарантирует emit'ит typedef в финальный output (без
+        // этого call-site видит unresolved `_NovaTuple_2_8_nova_ptr_8_nova_int`).
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if !f.is_external { continue; }
+                if let Some(TypeRef::Tuple(elems, _)) = &f.return_type {
+                    let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                    let mut all_concrete = true;
+                    for e in elems {
+                        match self.type_ref_to_c(e) {
+                            Ok(c) if !c.is_empty() && c != "void*" => elem_cs.push(c),
+                            _ => { all_concrete = false; break; }
+                        }
+                    }
+                    if all_concrete && !elem_cs.is_empty() {
+                        self.register_mono_tuple(&elem_cs);
+                    }
+                }
+            }
+        }
+
         // Plan 33.3 Ф.9.2 (D24): pre-pass — собрать invariants для record-типов.
         // Used в emit_record_lit для wrap'а конструкции в runtime-check.
         for item in &module.items {
@@ -2744,13 +2785,24 @@ impl CEmitter {
         let mut tuple_decls = String::new();
         if !sorted.is_empty() {
             tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
+            tuple_decls.push_str("/* Plan 115 D214: tagged struct form — позволяет shim header'у\n");
+            tuple_decls.push_str(" * forward-declare same typedef для external fn tuple-return ABI без redefinition. */\n");
             for inst in &sorted {
                 let mangled = Self::compute_mono_tuple_c_name(inst);
                 let fields: String = inst.iter().enumerate()
                     .map(|(i, c)| format!("{} f{}; ", c, i))
                     .collect();
+                // Plan 115: tagged form (`struct NAME { ... }`) — multiple
+                // identical declarations of same tag are compatible per C99 §6.7.2.3.
+                // Forward-declared (via shim header) typedef и Nova-emitted typedef
+                // resolve к same type — no redefinition error.
                 tuple_decls.push_str(&format!(
-                    "typedef struct {{ {}}} {};\n", fields, mangled));
+                    "#ifndef NOVA_TUPLE_TYPEDEF_{}\n", mangled));
+                tuple_decls.push_str(&format!(
+                    "#define NOVA_TUPLE_TYPEDEF_{}\n", mangled));
+                tuple_decls.push_str(&format!(
+                    "typedef struct {} {{ {}}} {};\n", mangled, fields, mangled));
+                tuple_decls.push_str("#endif\n");
             }
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
@@ -4263,12 +4315,15 @@ impl CEmitter {
                     // `nova_int` — консистентно с empty-sum (`typedef
                     // int64_t Nova_X`); слот никогда не читается/пишется.
                     "never" => Ok("nova_int".into()),
-                    // Plan 115 D214: `ptr` — opaque pointer primitive
-                    // (`void*` ABI). FFI-domain; GC ignores (conservative
-                    // collector scans pointer-sized slots regardless,
-                    // so explicit pin не нужен). Casts via `as ptr` / `as
-                    // u64` через standard C-cast в emit ExprKind::As.
-                    "ptr" => Ok("void*".into()),
+                    // Plan 115 D214: `ptr` — opaque pointer primitive.
+                    // Distinct typedef `nova_ptr` (= void*) — mirrors
+                    // Plan 70.3 nova_char rationale: distinguishable от
+                    // erased generic-T void* placeholder в codegen logic
+                    // (TupleLit + infer_expr_c_type решают mono'd vs
+                    // legacy fallback по this distinction). ABI = void*,
+                    // zero cost. FFI-domain — GC ignores (conservative
+                    // collector scans pointer-sized slots regardless).
+                    "ptr" => Ok("nova_ptr".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -14483,8 +14538,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
             ExprKind::BoolLit(b)  => Ok(if *b { "true".into() } else { "false".into() }),
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
-            // Plan 115 D214: `null ptr` literal → C `((void*)0)`.
-            ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
+            // Plan 115 D214: `null ptr` literal → C `((nova_ptr)0)`.
+            ExprKind::NullPtrLit  => Ok("((nova_ptr)0)".into()),
             ExprKind::StrLit(s)   => {
                 let escaped = Self::escape_c_str(s);
                 Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
@@ -15369,6 +15424,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Real type storage — no nova_int slot erasure, no heap boxing
                 // для struct elements (nova_str fits directly).
                 // Legacy fallback на `_NovaTupleN` — для erased generic contexts.
+                //
+                // Plan 115 D214: `ptr` primitive имеет distinct typedef
+                // `nova_ptr` (= void*) — distinguishable от erased generic-T
+                // `void*` placeholder. `void*` остаётся erased indicator;
+                // `nova_ptr` — legitimate ptr-typed element для mono path.
                 let n = elems.len();
                 let mut emitted_vals: Vec<String> = Vec::new();
                 let mut emitted_types: Vec<String> = Vec::new();
@@ -15378,7 +15438,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let v = self.emit_expr(e)?;
                     emitted_vals.push(v);
                     emitted_types.push(ety.clone());
-                    // "void*" or empty type — too erased для mono.
+                    // "void*" or empty type — erased generic placeholder.
+                    // `nova_ptr` (Plan 115 D214) — explicit ptr, мelt mono path.
                     if ety.is_empty() || ety == "void*" {
                         all_concrete = false;
                     }
@@ -25271,11 +25332,12 @@ _cp++; \
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
     /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
     fn nova_type_name_from_c(c_ty: &str) -> String {
-        // Plan 115 D214: `void*` ↔ Nova `ptr`. Check raw c_ty BEFORE
-        // trim_end_matches'a — `void*` имеет `*` суффикс, который trim
-        // удалит, оставив `"void"` (не интерпретируется в Nova). Treating
-        // unstripped form позволяет распознать `void*` корректно.
-        if c_ty.trim() == "void*" {
+        // Plan 115 D214: `nova_ptr` (typedef void*) ↔ Nova `ptr`. Distinct
+        // от `void*` (erased generic-T placeholder) на codegen уровне.
+        // External fn API tools (как-`s as ptr`) могут вернуть raw `void*`
+        // через C library — treat both as Nova ptr для cast/check purposes.
+        let t = c_ty.trim();
+        if t == "nova_ptr" || t == "void*" {
             return "ptr".into();
         }
         let trimmed = c_ty.trim_end_matches('*').trim();
@@ -25492,8 +25554,10 @@ _cp++; \
             ExprKind::StrLit(_) => "nova_str".into(),
             ExprKind::InterpolatedStr { .. } => "nova_str".into(),
             ExprKind::UnitLit => "nova_unit".into(),
-            // Plan 115 D214: ptr inference — `null ptr` literal as `void*`.
-            ExprKind::NullPtrLit => "void*".into(),
+            // Plan 115 D214: ptr inference — `null ptr` literal as `nova_ptr`
+            // (distinct typedef = void*; distinguishable от erased generic-T
+            // void* placeholder в TupleLit mono detection).
+            ExprKind::NullPtrLit => "nova_ptr".into(),
             ExprKind::TupleLit(elems) => {
                 // Plan 59: prefer mono'd tuple struct если все element types
                 // concrete. Параллель с emit_expr::TupleLit decision.
@@ -26238,6 +26302,21 @@ _cp++; \
                     let key = format!("fn_ret_{}", name);
                     if let Some(t) = self.var_types.get(&key).cloned() {
                         return t;
+                    }
+                    // Plan 115 D214: free external fn (declared в user module
+                    // OR stdlib runtime) return-type через ExternalRegistry.
+                    // Без этого `nova_p115_make_pair() -> (ptr, int)` infer'ит
+                    // в "nova_int" fallback → call-site assigns to _NovaTuple2
+                    // mismatch'ит с mono'd `_NovaTuple_2_8_nova_ptr_8_nova_int`.
+                    if let Some(decls) = self.external_registry.by_key
+                        .get(&(String::new(), name.clone()))
+                    {
+                        if let Some(decl) = decls.first() {
+                            let c_ret = &decl.return_c_type;
+                            if !c_ret.is_empty() && c_ret != "void*" {
+                                return c_ret.clone();
+                            }
+                        }
                     }
                     // Plan 48: infer concrete return type for monomorphized generic fn calls.
                     // When a generic fn's return type is a bare type param T, resolve T
