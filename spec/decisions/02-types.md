@@ -2713,33 +2713,35 @@ let mut (a, b) = pair                 // ✗ E_PATTERN_GROUP_MUT
 
 ---
 
-## D175. `readonly field` — полный freeze (амендмент D36)
+## D175. `ro field` — полный freeze (амендмент D36)
 
-> Status: active (Plan 108, 2026-05-28)
+> Status: active (Plan 108, 2026-05-28); amended Plan 114 D184 (2026-05-31):
+> `readonly` → `ro` keyword rename. Error code `E_READONLY_FIELD` сохранён
+> как stable API. Семантика freeze + транзитивность не меняется.
 
 ### Что
 
-Уточнение D36: `readonly field T` запрещает **и** переприсвоение поля,
+Уточнение D36: `ro field T` запрещает **и** переприсвоение поля,
 **и** мутацию содержимого — транзитивно.
 
 | Объявление | Переприсвоить | Мутировать содержимое | Use case |
 |---|---|---|---|
 | `field T` | у `mut` binding | у `mut` binding | большинство полей |
-| `readonly field T` | ❌ никогда | ❌ никогда | id, invariants, frozen state |
-| `field readonly T` | у `mut` binding | ❌ никогда | mutable ref, immutable content |
+| `ro field T` | ❌ никогда | ❌ никогда | id, invariants, frozen state |
+| `field ro T` | у `mut` binding | ❌ никогда | mutable ref, immutable content |
 | `mut field T` | ✅ всегда | у `mut` binding | cache, lazy init |
-| `mut field readonly T` | ✅ всегда | ❌ никогда | swappable readonly view |
+| `mut field ro T` | ✅ всегда | ❌ никогда | swappable readonly view |
 
-**Транзитивность:** если поле объявлено `readonly`, доступ через него
+**Транзитивность:** если поле объявлено `ro`, доступ через него
 также запрещает мутацию вложенных полей и вызов `mut`-методов:
 
 ```nova
 type Tags { mut items []str }
 type Account {
-    readonly id u64
-    readonly tags Tags        // нельзя acc.tags.items.push("x")
+    ro id u64
+    ro tags Tags              // нельзя acc.tags.items.push("x")
 }
-let mut acc = ...
+mut acc = ...
 acc.id = 999                  // E_READONLY_FIELD
 acc.tags = Tags{}             // E_READONLY_FIELD
 acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
@@ -2747,43 +2749,92 @@ acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
 
 ### Связь
 - [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — расширяется
-- [D176](#d176-readonly-t-тип-модификатор) — readonly как тип-позиция
+- [D176](#d176-ro-t-тип-модификатор) — `ro` как тип-позиция
+- [D184](03-syntax.md#d184) — keyword refresh (readonly → ro rename)
 
 ---
 
-## D176. `readonly T` — тип-модификатор
+## D176. `ro T` — тип-модификатор
 
-> Status: active (Plan 108, 2026-05-28); amended (Plan 108.1, 2026-05-30)
->
-> **Amendment 108.1:** параметры функций default = read-only. Hочешь
-> menять — `fn f(mut b T)`. Подробности в разделе «Параметры функций
-> (Plan 108.1)» ниже.
+> Status: active (Plan 108, 2026-05-28); amended (Plan 108.1, 2026-05-30);
+> amended Plan 114 D184 (2026-05-31): `readonly` → `ro` keyword rename;
+> return-type defaults + `@`-inheritance section added.
+> Error codes `E_READONLY_CONTENT` / `E_READONLY_COERCE` / `E_PARAM_NOT_MUT`
+> сохранены как stable API.
 
 ### Что
 
-`readonly` как prefix-модификатор типа в любой позиции:
+`ro` как prefix-модификатор типа в любой позиции:
 
 ```nova
-fn str @as_bytes() -> readonly []u8          // возвращаемый тип
-fn process(data readonly []u8) { ... }       // параметр
-type Wrapper { field readonly []u8 }         // поле
-let view readonly []u8 = s.as_bytes()        // локальная переменная
+fn str @as_bytes() -> ro []u8                 // возвращаемый тип
+fn process(data ro []u8) { ... }              // параметр
+type Wrapper { field ro []u8 }                // поле
+ro view ro []u8 = s.as_bytes()                // binding с ro-content
 ```
+
+> Двойное `ro` в последней строке — не tautology: первое `ro` — binding
+> mutability (нельзя `view = …`), второе — type-modifier (нельзя `view[0] = …`).
+> См. [D184](03-syntax.md#d184) для полного дизайна.
 
 ### Семантика
 
-- Запрещает вызов `mut`-методов на значении типа `readonly T`
+- Запрещает вызов `mut`-методов на значении типа `ro T`
 - Запрещает запись через индекс: `view[i] = x` → `E_READONLY_CONTENT`
-- `T` → `readonly T` coercion разрешён автоматически (сужение прав)
-- `readonly T` → `T` запрещён: `E_READONLY_COERCE`
+- `T` → `ro T` coercion разрешён автоматически (сужение прав)
+- `ro T` → `T` запрещён: `E_READONLY_COERCE`
 
 ```nova
-let arr []u8 = [1, 2, 3]
-let view readonly []u8 = arr          // ✅ []u8 → readonly []u8
-let back []u8 = view                  // ❌ E_READONLY_COERCE
+ro arr []u8 = [1, 2, 3]
+ro view ro []u8 = arr                 // ✅ []u8 → ro []u8
+mut back []u8 = view                  // ❌ E_READONLY_COERCE
 view[0] = 99                          // ❌ E_READONLY_CONTENT
-take_readonly(arr)                    // ✅ auto-coerce при вызове
+take_ro(arr)                          // ✅ auto-coerce при вызове
 ```
+
+### Return-type defaults + `@`-inheritance (Plan 114 D184)
+
+**Асимметрия с параметрами — намеренная.** Plan 108.1 сделал параметры
+default `ro` (callee не может мутировать без opt-in). Для возвращаемых
+значений правило **противоположное**: default = **mutable** (caller
+получает значение, делает с ним что хочет).
+
+```nova
+fn make_buf(n int) -> []u8                  // -> mutable []u8 by default
+fn read_view(s str) -> ro []u8              // explicit ro в возврате
+```
+
+**Обоснование.** Param `ro` default — defensive (callee не имеет права).
+Return mut default — permissive (caller владеет результатом). Это совпадает
+с Rust/Swift/Kotlin: `fn foo() -> Vec<T>` отдаёт owned mutable; чтобы
+вернуть read-only view — explicit `-> ro T`.
+
+**Особый случай: `-> @` (self-return для fluent chains, D181).**
+Возвращаемая `@` **наследует мутируемость от receiver**:
+
+| Receiver | Return `-> @` | Пример |
+|---|---|---|
+| `fn T @method() -> @` (implicit/ro receiver) | `ro @` (read-only self-view) | `ro r = obj.method()` |
+| `fn T mut @method() -> @` | mut `@` (mutable self-view) | `obj.push(1).push(2)` — fluent mut chain |
+| `fn T consume @method() -> @` | **parse error `E_CONSUME_RECEIVER_RETURNS_AT`** | consume already moves ownership; return `@` создал бы dangling-view |
+
+**Почему такое правило для `@`.** `@` это **тот же экземпляр** что
+receiver — его access-mutability не может быть строже, чем у receiver'а:
+
+- `ro @` receiver → `@` уже view; return view'а — view; consistent.
+- `mut @` receiver → `@` mutable handle; return mutable handle; consistent —
+  именно так работают fluent chains `xs.push(1).push(2)`.
+- `consume @` receiver → ownership уже перемещён внутрь method'а; вернуть
+  `@` = alias на consumed value = use-after-move; **запрещено**. Если
+  нужно fluent после consume — возвращайте новый owned (`fn T consume
+  @transform() -> T`), не `@`.
+
+**Что НЕ меняется** в return-семантике:
+- Любой явный return type (`-> T`, `-> []u8`, `-> ro T`, `-> mut T`) —
+  берётся как написан.
+- `-> Self` (статический Self-тип, D182) — owned-by-caller; не наследует
+  receiver-мут.
+- `-> @` без receiver-method context (free fn) → **`E_AT_RETURN_OUTSIDE_METHOD`**.
 
 ### Escape hatch
 

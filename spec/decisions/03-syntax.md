@@ -998,9 +998,128 @@ Test-имена — строки естественного языка: `test "i
 
 ---
 
-## D33. `const` vs `let` — compile-time vs runtime
+## D33. Три оси immutability — `ro`/`mut`/`consume` + `const` + per-field freeze
+
+> **Plan 114 rewrite (2026-05-31)**: эта секция полностью переписана.
+> Старая формулировка («`const` vs `let` — compile-time vs runtime»)
+> декларировала три оси, но **одна была fake**: ось «`const` = compile-time,
+> `let` = runtime» не соответствовала реальности после Plan 14 Ф.2 (расширил
+> `const` на non-constexpr RHS через lazy-init `nova_const_<name>()` static
+> getter). Plan 114 Ф.9 narrow'ит `const` обратно до strict constexpr-only,
+> делая ось «hard compile-time guarantee» правдивой; Ф.10 generalize'ит
+> `const` на 3 позиции; `let` retracted. Полный дизайн см. [D184](#d184).
 
 ### Что
+
+Nova V2 имеет **три ортогональные оси, все три реальные**:
+
+| Конструкция | Что фиксирует | Позиции | Решает |
+|---|---|---|---|
+| `ro x` / `mut x` / `consume x` | binding mutability + ownership | module-level (только `ro`) + scope (все три) | можно ли переприсвоить переменную; кто owns |
+| `const X = …` | **hard compile-time guarantee** (strict constexpr) | module-level + scope-local + record-field (associated const) | известно ли значение при компиляции; compile-error если не |
+| `ro field T` / `mut field T` / `field ro T` | per-field freeze | внутри `type X { … }` | можно ли мутировать конкретное поле в record'е |
+
+### Правило
+
+```nova
+// Ось 1: binding mutability + ownership
+ro x = 5                            // immutable binding
+mut counter = 0                     // mutable binding
+counter = counter + 1               // OK — mut
+consume sb = StringBuilder.new()    // owned binding (Plan 73.1)
+
+// Ось 2: const — hard compile-time guarantee
+const MAX_PAYLOAD = 4096            // ✓ literal
+const TIMEOUT_SEC = 60 * 5          // ✓ constexpr arithmetic
+const ORIGIN Point = { x: 0.0, y: 0.0 }  // ✓ constexpr record-literal
+
+const COMPUTED = make_point(7, 14)  // ✗ E_CONST_NOT_CONSTEXPR
+                                    //   hint: «use `ro` for lazy-init»
+
+// Module-level non-constexpr → ro (заменяет старый let X = …)
+ro NOW = Time.now()
+ro COMPUTED Point = make_point(7.0, 14.0)
+
+// Ось 3: per-field freeze
+type Account {
+    ro id u64                       // never-mut, даже у `mut acc`
+    balance int                     // default — mut если binding mut
+    mut log_count int               // always-mut, даже у `ro acc`
+}
+```
+
+`const` требует (strict constexpr-only — Plan 114 Ф.9):
+- Литералы любого primitive-типа.
+- Арифметика/bitwise/comparison над constexpr операндами.
+- Record-литерал из constexpr-полей.
+- Sum-type конструктор из constexpr args.
+- Ссылка на другой `const`.
+- Вызов `const fn` с constexpr args (Plan 114 Ф.11; см. [D199](#d199)).
+
+**Не** runtime call, **не** effect, **не** allocation. Для lazy-init
+runtime-value используется `ro X = …` на module-level (заменяет старый
+`let X = …` host).
+
+### Strict module-level partition
+
+На **module-level** между `const` и `ro` — обязательное разделение по
+constexpr-eligibility:
+
+| RHS | Keyword |
+|---|---|
+| Constexpr-eligible (literal, arithmetic, record-литерал, `const fn` call) | `const X = …` (E_RO_FOR_CONSTEXPR_PREFER_CONST иначе) |
+| Non-constexpr (runtime call, effect, allocation) | `ro X = …` (E_CONST_NOT_CONSTEXPR иначе) |
+
+Compiler определяет «constexpr» точно — user не выбирает между `const`/`ro`,
+выбирает RHS, keyword следует. Codemod auto-converts в обе стороны.
+
+**Scope-level — без strict-правила.** Внутри fn body `ro x = 5` и `const
+x = 5` оба валидны; разница только в гарантиях (`const` = строго constexpr
++ inlined; `ro` = runtime immutable binding).
+
+### Почему
+
+1. **Compile-time гарантия (восстановлена).** `const` теперь делает то что
+   обещает — hard constexpr. После Plan 14 Ф.2 это было размыто; Plan 114
+   Ф.9 narrow'ит обратно.
+2. **Размеры массивов.** `[N]T` ([D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные))
+   требуют `const N` (теперь N может быть scope-local — Plan 114 Ф.10).
+3. **Associated constants.** `type T { const X = … }` — namespace-bound
+   constexpr (Java `static final`, Rust `impl T { const X }`, Kotlin
+   `companion const val`). См. [D200](02-types.md#d200).
+4. **AI-first.** LLM, видя `const X = compute(...)` → compile error
+   E_CONST_NOT_CONSTEXPR, получает явный сигнал «используй `ro`».
+
+### Что отвергнуто
+
+- **`let`/`let mut`** — retracted в Plan 114 (D184). Сейчас replaced
+  тройкой ro/mut/consume.
+- **`:=` (Go)** — дублирует binding declaration; источник shadowing-багов.
+- **`final` (Java)** — лишнее ключевое слово.
+- **Без разделения** — массивы `[N]T` потребуют литералов всюду;
+  comptime станет несовместимым.
+
+### Сравнение с mainstream — см. [D184](#d184) §«Сравнение с mainstream»
+
+### Связь
+- [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `const N` для `[N]T` (Plan 114 Ф.10: any visible scope).
+- [D30](#d30-стиль-именования) — `SCREAMING_SNAKE_CASE` для `const`.
+- [D32](02-types.md#d32) — default immutable (`ro` ось 1).
+- [D36](02-types.md#d36), [D175](02-types.md#d175), [D176](02-types.md#d176) — `ro`/`mut` field, ось 3.
+- [D102](#d102) — default-param values reference `const`.
+- [D184](#d184) — master keyword refresh decision (Plan 114).
+- [D199](#d199) — `const fn` comptime evaluable.
+- [D200](02-types.md#d200) — associated constants.
+- [07-modules.md](07-modules.md) — `export const` экспортирует.
+
+---
+
+## D33-LEGACY (archived). `const` vs `let` — compile-time vs runtime
+
+> ⚠ Эта секция — historical record для legacy-codebase reference.
+> Plan 114 retracted `let` keyword (D184); design rewritten выше.
+
+### Что (archived)
 `const` — для **compile-time констант**, известных при компиляции.
 `let` — для **runtime значений** (immutable binding); `let mut` —
 mutable. Это два разных ключевых слова, не сахар.
