@@ -259,21 +259,12 @@ static inline int nv_resolve_exit_timeout_ms(void) {
     return 5000;  /* Level 3 hardcoded fallback (D192). */
 }
 
-/* Plan 110.2.1 (D188 R3): cancel-shield runtime — suspends cancel
- * delivery до scope-exit или timeout exceedance. Bootstrap version:
- * minimal stub; full implementation в Plan 110.2.x (fiber state
- * field + cancel-delivery check points + deadline tracking).
- */
-static inline void nv_consume_enter_shield(int deadline_ms) {
-    (void)deadline_ms;
-    /* TODO Plan 110.2.1: set fiber->cancel_masked = true + register
-     * deadline_ns = now_ns() + deadline_ms * 1_000_000. */
-}
-
-static inline void nv_consume_leave_shield(void) {
-    /* TODO Plan 110.2.1: clear fiber->cancel_masked; deliver pending
-     * cancel if any. */
-}
+/* Plan 110.2.1.a (D188 R3): cancel-shield runtime — `nv_consume_enter_shield`
+ * + `nv_consume_leave_shield` defined в fibers.h после NovaSpawnCtxBase
+ * (нужен доступ к per-fiber state). Codegen-emitted call sites компилятся
+ * после nova_rt.h inclusion, которое включает fibers.h транзитивно, так что
+ * inline-определения видны в user TU. Прототипа здесь нет специально —
+ * `static inline` в fibers.h не может быть forward-declared как non-static. */
 
 static inline int nova_failframe_suppressed_count(const NovaFailFrame* frame) {
     if (!frame) return 0;

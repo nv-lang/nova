@@ -1137,6 +1137,20 @@ typedef struct {
      * (legacy nova_alloc fallback path). Codegen sets to sizeof(SpawnCtx_N)
      * на acquire. nova_spawn_pool_release derives size class из value. */
     size_t               _nova_pool_size;
+    /* Plan 110.2.1.a (D188 R3): cancel-shield mask depth counter.
+     * Incremented by nv_consume_enter_shield (ConsumeScope entry),
+     * decremented by nv_consume_leave_shield (scope exit). When > 0,
+     * cooperative cancel-check points (nova_fiber_yield, suspend entry)
+     * defer the cancel-throw until count returns to 0. Atomic int because
+     * decrement may happen on a different worker thread than increment
+     * after migration (work-stealing M:N). zero-init via nova_alloc. */
+    nova_atomic_int      _nova_cancel_mask_count;
+    /* Plan 110.2.2.a (D188 R3 + D192): deadline_ns for shield. Captured
+     * by nv_consume_enter_shield as now_ns + timeout_ms*1_000_000.
+     * Suspend entries compare uv_hrtime() vs this value; if exceeded
+     * while mask > 0, throw CleanupTimeoutError instead of suspending.
+     * 0 = no active deadline. */
+    int64_t              _nova_cancel_deadline_ns;
 } NovaSpawnCtxBase;
 
 /* Plan 83.4.5.7: helper — CAS fiber state. Returns true if CAS succeeded.
@@ -1163,6 +1177,96 @@ static inline int32_t nova_fiber_state_load(mco_coro* co) {
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
     if (!base) return NOVA_FIBER_STATE_IDLE;
     return nova_aint_load(&base->_nova_fiber_state);
+}
+
+/* ===== Plan 110.2.1.a (D188 R3): cancel-shield primitives =====
+ *
+ * The mask depth counter lives in NovaSpawnCtxBase (per-fiber state,
+ * survives mco_yield/resume + worker migration). Inc/dec on enter/leave
+ * of `consume X = expr { body }` scope; cancel-receive sites consult
+ * load() and defer the throw while > 0.
+ *
+ * NULL-safe для legacy fibers без base (treated as no-shield, mask==0). */
+
+static inline void nova_cancel_mask_inc(mco_coro* co) {
+    if (!co) return;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return;
+    (void)nova_aint_inc(&base->_nova_cancel_mask_count);
+}
+
+static inline void nova_cancel_mask_dec(mco_coro* co) {
+    if (!co) return;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return;
+    (void)nova_aint_fetch_sub_release(&base->_nova_cancel_mask_count);
+}
+
+static inline int32_t nova_cancel_mask_load(mco_coro* co) {
+    if (!co) return 0;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return 0;
+    return nova_aint_load(&base->_nova_cancel_mask_count);
+}
+
+/* Convenience: query mask for currently-running fiber. */
+static inline int32_t nova_cancel_mask_active(void) {
+    return nova_cancel_mask_load(mco_running());
+}
+
+/* Plan 110.2.2.a: deadline accessors. _nova_cancel_deadline_ns не атомарен
+ * (per-fiber single-writer: enter→leave; suspend сайт читает только когда
+ * mask>0 значит этот же fiber выполняет тело consume{}). int64_t reads на
+ * 64-битных платформах atomic by alignment. */
+static inline void nova_cancel_deadline_set(mco_coro* co, int64_t ns) {
+    if (!co) return;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return;
+    base->_nova_cancel_deadline_ns = ns;
+}
+
+static inline int64_t nova_cancel_deadline_get(mco_coro* co) {
+    if (!co) return 0;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return 0;
+    return base->_nova_cancel_deadline_ns;
+}
+
+/* Plan 110.2.1.a (D188 R3): ConsumeScope shield entry/exit.
+ *
+ * `nv_consume_enter_shield(deadline_ms)` — increments cancel_mask_count,
+ * captures deadline_ns = uv_hrtime() + deadline_ms*1_000_000 (saving the
+ * previous value на stack-saved slot НЕ нужен — D196: nested consume{}
+ * shadows external deadline; outer fiber resumes its own на leave).
+ *
+ * Implementation note for D197 (cleanup re-entrance): nested consume{}
+ * inside on_exit body increments mask further; nested leave decrements
+ * back to outer mask level. Outer deadline_ns rewritten by inner enter,
+ * THEN restored by inner leave via save-on-enter/restore-on-leave
+ * (deferred to 110.2.2.a). Bootstrap: simpler overwrite + restore via
+ * caller's saved local — emit_c.rs handles. */
+static inline void nv_consume_enter_shield(int deadline_ms) {
+    mco_coro* co = mco_running();
+    if (!co) return;  /* main thread / non-fiber — shield is no-op */
+    nova_cancel_mask_inc(co);
+    if (deadline_ms > 0) {
+        int64_t now_ns = (int64_t)uv_hrtime();
+        nova_cancel_deadline_set(co, now_ns + (int64_t)deadline_ms * 1000000LL);
+    } else {
+        /* #realtime bypass (D198): deadline_ms == 0 → no deadline check. */
+        nova_cancel_deadline_set(co, 0);
+    }
+}
+
+static inline void nv_consume_leave_shield(void) {
+    mco_coro* co = mco_running();
+    if (!co) return;
+    nova_cancel_mask_dec(co);
+    /* Reset deadline only when fully unshielded; nested cleanup body
+     * inside on_exit may still need outer deadline visible. */
+    if (nova_cancel_mask_load(co) == 0) {
+        nova_cancel_deadline_set(co, 0);
+    }
 }
 
 /* Forward-decl для использования из spawn_into. */
@@ -1740,12 +1844,21 @@ static inline void nova_fiber_yield(void) {
     /* Cooperative cancellation check. _nova_active_scope set by step.
      * Plan 49 Ф.2: бросаем kind=CANCEL (вместо USER) и тащим причину
      * из bound token'а scope'а (если есть). Это позволяет supervised_run
-     * (Ф.3) различать отмену от реальной ошибки и не пробрасывать наружу. */
+     * (Ф.3) различать отмену от реальной ошибки и не пробрасывать наружу.
+     *
+     * Plan 110.2.1.a (D188 R3): if a ConsumeScope shield is active
+     * (cancel_mask_count > 0), defer the cancel-throw — the fiber is
+     * currently running cleanup code that must complete (subject to
+     * the exit_timeout enforced separately by suspend-entry checks).
+     * Yield cooperatively без throw — cancel remains latched on scope. */
     if (_nova_active_scope && nova_abool_load(&_nova_active_scope->cancel_requested)) {
-        void* reason = _nova_active_scope->cancel_reason_ptr;
-        nova_throw_cancel_reason(
-            nova_str_from_cstr("scope cancelled"),
-            reason);
+        if (nova_cancel_mask_load(co) == 0) {
+            void* reason = _nova_active_scope->cancel_reason_ptr;
+            nova_throw_cancel_reason(
+                nova_str_from_cstr("scope cancelled"),
+                reason);
+        }
+        /* shielded: cancel deferred; fall through to mco_yield. */
     }
     mco_yield(co);
 }
