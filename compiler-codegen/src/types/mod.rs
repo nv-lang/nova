@@ -888,6 +888,40 @@ impl<'a> TypeCheckCtx<'a> {
     /// return type; record literal → type; ?/!! → recurse). Полный inference
     /// (method chain, conditional, generic) — staged delivery 110.1.3+.
     fn validate_consume_scope_init(&self, init: &Expr, errors: &mut Vec<Diagnostic>) {
+        // Plan 110.1.3 (D196 form 5 — wrapped без unwrap): detect raw
+        // Option[T] / Result[T,_] returning expressions WITHOUT ?/!!
+        // unwrap. Emit specific D196-wrapped-init-needs-unwrap hint.
+        if let Some(wrapped) = self.detect_wrapped_init_typeref(init) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D196-wrapped-init-needs-unwrap] `consume X = expr {{ body }}` \
+                     init expr returns `{wrapped}[T, ...]` без unwrap. Required: \
+                     either `consume X = expr!! {{ body }}` (Option unwrap), \
+                     `consume X = expr? {{ body }}` (Result unwrap with Fail \
+                     propagation), or distinguish None case explicitly через \
+                     `if Some(X) = maybe_X() {{ consume X = X {{ ... }} }}`.",
+                    wrapped = wrapped
+                ),
+                init.span,
+            ));
+            return;
+        }
+        // Plan 110.1.3 (D196 form 3 — divergent conditional): if/match init
+        // with branches returning incompatible Consumable types.
+        if let Some((t1, t2)) = self.detect_divergent_consumable(init) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D196-divergent-consumable] `consume X = if cond {{ ... }} \
+                     else {{ ... }} {{ body }}` branches return divergent \
+                     Consumable types: `{t1}` vs `{t2}`. Branches must return \
+                     compatible type. Extract в polymorphic wrapper type \
+                     или unify branches.",
+                    t1 = t1, t2 = t2
+                ),
+                init.span,
+            ));
+            return;
+        }
         let Some(type_name) = self.infer_consume_init_type(init) else {
             // Тип не выводится простыми heuristic'ами — staged delivery
             // через codegen-gate D188-codegen-not-yet-implemented. Полное
@@ -1100,6 +1134,69 @@ impl<'a> TypeCheckCtx<'a> {
     fn typeref_to_name(t: &TypeRef) -> Option<String> {
         if let TypeRef::Named { path, .. } = t {
             path.last().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Plan 110.1.3 (D196 form 5): detect if init returns raw `Option[T]`
+    /// or `Result[T,_]` без unwrap operator. Returns wrapper name если
+    /// detected, None если init is direct (unwrapped) or non-wrapped type.
+    fn detect_wrapped_init_typeref(&self, init: &Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        // `?` and `!!` are unwrap operators — they're EXPLICITLY safe.
+        if matches!(init.kind, ExprKind::Try(_) | ExprKind::Bang(_)) {
+            return None;
+        }
+        // For direct Call (e.g., `try_new()` without `?`), inspect return type.
+        if let ExprKind::Call { func, .. } = &init.kind {
+            if let ExprKind::Path(parts) = &func.kind {
+                if parts.len() >= 2 {
+                    let type_name = &parts[parts.len() - 2];
+                    let method_name = &parts[parts.len() - 1];
+                    if let Some(methods) = self.method_table.get(type_name) {
+                        if let Some(decls) = methods.get(method_name) {
+                            if let Some(decl) = decls.first() {
+                                if let Some(TypeRef::Named { path, .. }) = &decl.return_type {
+                                    if let Some(outer) = path.last() {
+                                        if outer == "Option" || outer == "Result" {
+                                            return Some(outer.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Plan 110.1.3 (D196 form 3): detect if/match init with branches
+    /// returning incompatible Consumable types. Returns (t1, t2) pair если
+    /// detected.
+    fn detect_divergent_consumable(&self, init: &Expr) -> Option<(String, String)> {
+        use crate::ast::ExprKind;
+        if let ExprKind::If { then, else_, .. } = &init.kind {
+            // Both branches must end в expression returning Consumable.
+            let then_ty = self.infer_block_trailing_typeref(then)?;
+            let else_ty = match else_.as_ref()? {
+                crate::ast::ElseBranch::Block(b) => self.infer_block_trailing_typeref(b)?,
+                crate::ast::ElseBranch::If(ei) => self.infer_consume_init_typeref(ei)?,
+            };
+            let then_name = Self::typeref_to_name(&then_ty)?;
+            let else_name = Self::typeref_to_name(&else_ty)?;
+            if then_name != else_name {
+                return Some((then_name, else_name));
+            }
+        }
+        None
+    }
+
+    fn infer_block_trailing_typeref(&self, b: &crate::ast::Block) -> Option<TypeRef> {
+        if let Some(t) = &b.trailing {
+            self.infer_consume_init_typeref(t)
         } else {
             None
         }

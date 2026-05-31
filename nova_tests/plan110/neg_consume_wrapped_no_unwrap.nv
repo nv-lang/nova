@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// EXPECT_COMPILE_ERROR D188-not-consumable
+// EXPECT_COMPILE_ERROR D196-wrapped-init-needs-unwrap
 //
 // Plan 110.1.3 (D196 form 5 — wrapped без unwrap): `consume X = expr {
 // body }` where expr returns `Option[Consumable]` без unwrap →
-// D188-not-consumable (на типе Option, не на inner).
-//
-// Currently emits D188-not-consumable на Option (Option не имеет
-// on_exit). Future D196-wrapped-init-needs-unwrap (Plan 110.1.4)
-// будет emit более specific hint suggest `?` или `!!`.
+// D196-wrapped-init-needs-unwrap (specific hint suggest ?/!!).
 
 module plan110.neg_consume_wrapped_no_unwrap
 
