@@ -8009,3 +8009,73 @@ heuristic detection (не точная analysis); warning, не error.
 - [D194](#d194) — `Consumable[Never]` typical realtime pattern.
 - [Plan 103.6](../../docs/plans/103.6-realtime-blocking-integration.md).
 - [Plan 113](../../docs/plans/113-realtime-blocking-attribute-only.md).
+
+---
+
+## D199. `#cancel_safe` — attestation на FFI safety inside cleanup
+
+> **Plan 110.7.3.a.** Принято 2026-06-01. Cross-ref
+> [D188](#d188) §R3 (cancel-shield), [D192](#d192) (exit_timeout).
+
+### Что
+
+`#cancel_safe` — fn-level attribute который аттестует, что функция
+**безопасна для вызова из `Consumable.on_exit` body** под активным
+cancel-shield'ом (D188 R3).
+
+```nova
+#cancel_safe
+external fn sqlite3_close(handle int) -> int
+
+#cancel_safe
+fn local_cleanup_helper(state State) -> () { ... }
+```
+
+### Зачем
+
+Когда `consume X = expr { body }` выходит, runtime поднимает
+cancel-shield (mask_count++). Внешние cancel'ы откладываются до
+`leave_shield`. Если `on_exit` вызывает C-функцию, которая:
+
+1. **Блокируется неограниченно** (например, classic POSIX `read(fd)`
+   на TTY-устройстве без `O_NONBLOCK`) — fiber виснет на C-стэке,
+   shield deadline сгорит впустую.
+2. **Не идемпотентна при повторе** — если cancel в итоге сработает
+   и unwind рестартанёт cleanup, partial-effect C-state может оставить
+   garbage.
+3. **Требует Nova fail-frame state** — например читает `_nova_fail_top`
+   — это нестабильно через FFI boundary.
+
+`#cancel_safe` — обещание разработчика, что вызываемая фукция:
+* Завершится за разумное время даже под cancel-shield'ом.
+* Идемпотентна для cleanup семантики (D188 R2 § §«cleanup atomicity»).
+* Не зависит от Nova fail-frame TLS state.
+
+### Lint
+
+При вызове FFI fn БЕЗ `#cancel_safe` из `on_exit` body — компилятор
+выдаёт **`W_FFI_CANCEL_UNSAFE`** warning с suggestion:
+* Добавить `#cancel_safe` к декларации FFI fn если действительно safe.
+* Обернуть call в sync-only wrapper если cancel-safety не гарантирована.
+
+Внутри тела обычной Nova fn (не FFI) — `#cancel_safe` не требуется;
+весь Nova-код cancel-safe by construction (cancel routed через
+nova_throw_cancel + fail-frame).
+
+### Что НЕ делает `#cancel_safe`
+
+* Не меняет codegen вызова — это статическая аттестация.
+* Не отключает cancel-shield (это всегда активно under ConsumeScope).
+* Не предоставляет runtime check на cancel-safety — только compile-time
+  warn'ит на отсутствующую аттестацию.
+
+### Связь
+
+- [D188](#d188) §R3 — cancel-shield механизм.
+- [D192](#d192) — exit_timeout taxonomy.
+- [Plan 110.7](../../docs/plans/110.7-ffi-consumable.md) — FFI
+  Consumable integration.
+- [Plan 100.5](../../docs/plans/100.5-ffi-external-integration.md) —
+  general FFI rules.
+- Followup [M-110.7.3-w-ffi-cancel-unsafe-lint] — runtime lint
+  enforcement (currently parser stores attribute, lint check pending).
