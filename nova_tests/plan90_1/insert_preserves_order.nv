@@ -4,7 +4,7 @@
 module nova_tests.plan90_1.insert_preserves_order
 
 test "insert order preservation — sequential inserts" {
-    let mut arr []int = [1, 5]
+    mut arr []int = [1, 5]
     // Insert [2, 3, 4] at position 1: [1, 2, 3, 4, 5]
     arr.insert(1, [2, 3, 4])
     assert(arr.len() == 5)
@@ -23,11 +23,11 @@ test "insert order preservation — sequential inserts" {
 
 test "insert — interleaved inserts build sorted sequence" {
     // Build [10, 20, 30, 40, 50] by inserting pairs
-    let mut arr []int = [10, 50]
+    mut arr []int = [10, 50]
     arr.insert(1, [20, 30, 40])
     assert(arr.len() == 5)
-    let mut i = 0
-    let expected []int = [10, 20, 30, 40, 50]
+    mut i = 0
+    ro expected []int = [10, 20, 30, 40, 50]
     while i < 5 {
         assert(arr[i] == expected[i])
         i = i + 1

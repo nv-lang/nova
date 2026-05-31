@@ -7,7 +7,7 @@
 module nova_tests.plan103_9.readguard_writeguard_separated
 
 test "ReadGuard explicit unlock" {
-    let mut rw = RwLock.new()
+    mut rw = RwLock.new()
     consume rg = rw.read()
     // read-critical-section
     rg.unlock()
@@ -17,7 +17,7 @@ test "ReadGuard explicit unlock" {
 }
 
 test "WriteGuard explicit unlock" {
-    let mut rw = RwLock.new()
+    mut rw = RwLock.new()
     consume wg = rw.write()
     // write-critical-section
     wg.unlock()
@@ -27,18 +27,18 @@ test "WriteGuard explicit unlock" {
 }
 
 test "multiple ReadGuards can coexist (multiple readers allowed)" {
-    let mut rw = RwLock.new()
-    let mut wg = WaitGroup.new()
-    let mut readers_inside = AtomicInt.new(0)
-    let mut max_inside = AtomicInt.new(0)
+    mut rw = RwLock.new()
+    mut wg = WaitGroup.new()
+    mut readers_inside = AtomicInt.new(0)
+    mut max_inside = AtomicInt.new(0)
     wg.add(4)
 
     parallel for _i in 0..4 {
         consume rg = rw.read()
-        let now = readers_inside.fetch_add(1) + 1
+        ro now = readers_inside.fetch_add(1) + 1
         // Update max_inside via CAS loop
         loop {
-            let old_max = max_inside.load()
+            ro old_max = max_inside.load()
             if now <= old_max { break }
             max_inside.compare_exchange(old_max, now)
         }
@@ -53,9 +53,9 @@ test "multiple ReadGuards can coexist (multiple readers allowed)" {
 }
 
 test "WriteGuard explicit unlock in parallel" {
-    let mut rw = RwLock.new()
-    let mut counter = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    mut rw = RwLock.new()
+    mut counter = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(4)
 
     parallel for _i in 0..4 {

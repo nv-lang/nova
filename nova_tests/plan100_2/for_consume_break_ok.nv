@@ -11,7 +11,7 @@ fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
 test "for + break — обе arm-ветки consume" {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
     for consume tx in txs {
         if tx.id == 2 {
             tx.commit()

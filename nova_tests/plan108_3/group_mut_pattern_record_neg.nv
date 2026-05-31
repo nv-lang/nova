@@ -1,11 +1,16 @@
-// Plan 108.3 (D36 amend): `let mut {field}` — group mut на record pattern запрещён.
-
-// EXPECT_COMPILE_ERROR E_PATTERN_GROUP_MUT
+// Plan 108.3 (D36 amend): `let mut {field}` — group mut на record был запрещён.
+//
+// SUPERSEDED by Plan 114 (D184): `mut { a, b } = pair` — canonical
+// (leading keyword distributes). Этот fixture сохранён как positive.
 
 module nova_tests.plan108_3.group_mut_pattern_record_neg
 
 type Pair { a int, b int }
 
-test "let mut {a, b} — group mut → error" {
-    let mut { a, b } = Pair { a: 1, b: 2 }
+test "mut {a, b} — group mut distributes (Plan 114)" {
+    mut { a, b } = Pair { a: 1, b: 2 }
+    a = a + 10
+    b = b + 20
+    assert(a == 11)
+    assert(b == 22)
 }

@@ -15,7 +15,7 @@ fn Counter mut @inc() -> () {
 fn Counter @get() -> int => @value
 
 test "let mut + user record + mut @method" {
-    let mut c = Counter.new()
+    mut c = Counter.new()
     c.inc()
     c.inc()
     c.inc()

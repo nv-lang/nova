@@ -14,6 +14,6 @@ fn data_len(w Wrapper) -> int
 }
 
 test "string len non-negative" {
-    let w = Wrapper { data: "hello" }
+    ro w = Wrapper { data: "hello" }
     assert(data_len(w) == 5)
 }

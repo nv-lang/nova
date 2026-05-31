@@ -18,7 +18,7 @@ type IntCounter {
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -27,28 +27,28 @@ fn IntCounter mut @next() -> Option[int] => {
 }
 
 fn sum_iter[U, T Iterable[U]](it_in T) -> int => {
-    let mut it = it_in
-    let mut total = 0
-    while let Some(_v) = it.next() {
+    mut it = it_in
+    mut total = 0
+    while Some(_v) = it.next() {
         total += 1
     }
     total
 }
 
 test "P2-B — turbofish still works (regression guard)" {
-    let c = IntCounter { cur: 1, end: 4 }
-    let count = sum_iter[int, IntCounter](c)
+    ro c = IntCounter { cur: 1, end: 4 }
+    ro count = sum_iter[int, IntCounter](c)
     assert(count == 3)
 }
 
 test "P2-B — structural inference without turbofish" {
-    let c = IntCounter { cur: 0, end: 5 }
-    let count = sum_iter(c)
+    ro c = IntCounter { cur: 0, end: 5 }
+    ro count = sum_iter(c)
     assert(count == 5)
 }
 
 test "P2-B — empty iterator inferred without turbofish" {
-    let c = IntCounter { cur: 10, end: 10 }
-    let count = sum_iter(c)
+    ro c = IntCounter { cur: 10, end: 10 }
+    ro count = sum_iter(c)
     assert(count == 0)
 }

@@ -15,20 +15,20 @@
 module plan83_7.runnext_displaced_to_deque
 
 test "consecutive wakes — both fibers run, no loss" {
-    let n = 100
-    let ch = Channel.new(1)
-    let mut received = 0
+    ro n = 100
+    ro ch = Channel.new(1)
+    mut received = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
-                let _v = ch.rx.recv()
+                ro _v = ch.rx.recv()
                 received = received + 1
                 i = i + 1
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
                 ch.tx.send(i)
                 i = i + 1

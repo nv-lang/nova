@@ -29,12 +29,12 @@ test "char == and !=" {
 }
 
 test "char range '0'..='9'" {
-    let c = '5'
+    ro c = '5'
     assert(c >= '0' && c <= '9')
 }
 
 test "char range 'a'..='z'" {
-    let c = 'm'
+    ro c = 'm'
     assert(c >= 'a' && c <= 'z')
 }
 

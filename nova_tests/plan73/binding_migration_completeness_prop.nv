@@ -21,13 +21,13 @@
 module nova_tests.plan73.binding_migration_completeness_prop
 
 test "property: Mutex consume-bind compiles + commits" {
-    let mut m = Mutex.new()
+    mut m = Mutex.new()
     consume g = m.lock()
     g.unlock()
 }
 
 test "property: RwLock read/write consume-binds compile + commit" {
-    let mut rw = RwLock.new()
+    mut rw = RwLock.new()
 
     consume rg = rw.read()
     rg.unlock()
@@ -39,13 +39,13 @@ test "property: RwLock read/write consume-binds compile + commit" {
 test "property: StringBuilder consume-bind + consume @as_str()" {
     consume sb = StringBuilder.new()
     sb.append("hi")
-    let s = sb.as_str()
+    ro s = sb.as_str()
     assert(s.len() == 2)
 }
 
 test "property: StringBuilder via fluent-chain mutators then consume" {
     consume sb = StringBuilder.with_capacity(8)
     sb.append("a").append("b").append("c")
-    let s = sb.as_str()
+    ro s = sb.as_str()
     assert(s == "abc")
 }

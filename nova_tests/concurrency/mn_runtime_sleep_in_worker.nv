@@ -9,7 +9,7 @@ module nova_tests.concurrency.mn_runtime_sleep_in_worker
 
 test "M:N: 1 fiber Time.sleep в worker — park/wake" {
     runtime.init(2)
-    let mut done = 0
+    mut done = 0
     supervised {
         spawn { Time.sleep(10); done = 1 }
     }
@@ -19,9 +19,9 @@ test "M:N: 1 fiber Time.sleep в worker — park/wake" {
 
 test "M:N: 1 fiber Time.sleep loop (5 iterations)" {
     runtime.init(2)
-    let mut i = 0
+    mut i = 0
     while i < 5 {
-        let mut done = 0
+        mut done = 0
         supervised {
             spawn { Time.sleep(5); done = 1 }
         }

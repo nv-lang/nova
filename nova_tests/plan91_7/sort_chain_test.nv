@@ -7,8 +7,8 @@ import std.sort
 // (см. [M-91.7-mixed-method-chain] followup).
 
 test "arr.sort() возвращает receiver" {
-    let mut a []int = [3, 1, 4, 1, 5]
-    let r = a.sort()
+    mut a []int = [3, 1, 4, 1, 5]
+    ro r = a.sort()
     assert(r.len() == 5)
     assert(a[0] == 1)
     assert(a[1] == 1)
@@ -18,15 +18,15 @@ test "arr.sort() возвращает receiver" {
 }
 
 test "arr.sort_by(cmp) возвращает receiver" {
-    let mut a []int = [3, 1, 4, 1, 5]
-    let r = a.sort_by(|x, y| y - x)    // descending (D183 int convention)
+    mut a []int = [3, 1, 4, 1, 5]
+    ro r = a.sort_by(|x, y| y - x)    // descending (D183 int convention)
     assert(r.len() == 5)
     assert(a[0] == 5)
     assert(a[4] == 1)
 }
 
 test "builtin chain после sort (по шагам)" {
-    let mut a = []int.new()
+    mut a = []int.new()
     a.push(3).push(1).push(2)
     a.sort()
     assert(a.len() == 3)

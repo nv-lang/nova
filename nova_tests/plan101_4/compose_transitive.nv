@@ -30,14 +30,14 @@ fn Handle @close() -> bool => true
 
 // T должен удовлетворить CloseableReader → flatten { read, close }.
 fn finish[T CloseableReader](x T) -> str {
-    let s = x.read()
-    let _ = x.close()
+    ro s = x.read()
+    ro _ = x.close()
     s
 }
 
 
 test "transitive embed: Handle satisfies through chain" {
-    let h = Handle { id: 42 }
-    let s = finish(h)
+    ro h = Handle { id: 42 }
+    ro s = finish(h)
     assert(s == "h42")
 }

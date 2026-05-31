@@ -17,7 +17,7 @@ module concurrency.memory_footprint_test
 test "100 idle supervised scopes — no sched_state allocations" {
     // 100 fiber'ов которые spawn'ятся и сразу завершаются.
     // sched_state должен остаться NULL для каждого — никто не park'ится.
-    let mut completed = 0
+    mut completed = 0
     supervised {
         for _ in 0..100 {
             spawn {
@@ -33,7 +33,7 @@ test "1000 idle spawns не allocate sched_state" {
     // Stress 1000 fiber'ов без park'а. SpawnCtx хранится в GC-managed
     // fiber_ctx[] массиве (D97 fix) — Boehm видит все live contexts,
     // GC не собирает их пока fiber не завершится.
-    let mut sum = 0
+    mut sum = 0
     supervised {
         for i in 0..1000 {
             spawn {

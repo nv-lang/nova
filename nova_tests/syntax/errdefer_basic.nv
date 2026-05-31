@@ -16,8 +16,8 @@ module syntax.errdefer_basic
 // ───── errdefer НЕ срабатывает на normal exit ─────
 
 test "errdefer не срабатывает на normal trailing exit" {
-    let mut cleaned_up = 0
-    let result = {
+    mut cleaned_up = 0
+    ro result = {
         errdefer { cleaned_up = cleaned_up + 1 }
         42
     }
@@ -28,9 +28,9 @@ test "errdefer не срабатывает на normal trailing exit" {
 
 
 test "defer + errdefer: normal exit — только defer срабатывает" {
-    let mut defer_count = 0
-    let mut errdefer_count = 0
-    let result = {
+    mut defer_count = 0
+    mut errdefer_count = 0
+    ro result = {
         defer { defer_count = defer_count + 1 }
         errdefer { errdefer_count = errdefer_count + 1 }
         7
@@ -44,10 +44,10 @@ test "defer + errdefer: normal exit — только defer срабатывае�
 // ───── errdefer и порядок registration не влияют на normal exit ─────
 
 test "несколько errdefer-ов: ни один не срабатывает на normal exit" {
-    let mut a = 0
-    let mut b = 0
-    let mut c = 0
-    let _ = {
+    mut a = 0
+    mut b = 0
+    mut c = 0
+    ro _ = {
         errdefer { a = 1 }
         errdefer { b = 1 }
         errdefer { c = 1 }

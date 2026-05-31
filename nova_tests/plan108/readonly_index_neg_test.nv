@@ -3,8 +3,8 @@
 
 module plan108.readonly_index_neg_test
 
-test "cannot write through index on readonly array" {
-    let arr []u8 = [1, 2, 3]
-    let view readonly []u8 = arr
+test "cannot write through index on ro array" {
+    ro arr []u8 = [1, 2, 3]
+    ro view ro []u8 = arr
     view[0] = 99  // E_READONLY_CONTENT
 }

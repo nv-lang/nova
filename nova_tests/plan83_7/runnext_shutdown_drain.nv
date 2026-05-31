@@ -10,7 +10,7 @@
 module plan83_7.runnext_shutdown_drain
 
 test "spawn 500 — all fibers complete (runnext drain on shutdown)" {
-    let xs = parallel for i in 0..500 { i }
+    ro xs = parallel for i in 0..500 { i }
     assert(xs[499] == 499)
     assert(xs[0] == 0)
     assert(xs[250] == 250)

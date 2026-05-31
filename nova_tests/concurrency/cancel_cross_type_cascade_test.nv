@@ -27,8 +27,8 @@ export fn ChildErr.from(p ParentErr) -> ChildErr =>
 
 
 test "same-type cascade: backward-compat (ParentErr + ParentErr)" {
-    let parent CancelToken[ParentErr] = CancelToken.new()
-    let child  CancelToken[ParentErr] = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
+    ro child  CancelToken[ParentErr] = CancelToken.new()
     child.cancelled_by(parent)
     parent.cancel(ParentErr { code: 42 })
     assert(child.is_cancelled())
@@ -36,8 +36,8 @@ test "same-type cascade: backward-compat (ParentErr + ParentErr)" {
 
 
 test "cross-type cascade: ChildErr.from(ParentErr) — child получает converted" {
-    let parent CancelToken[ParentErr] = CancelToken.new()
-    let child  CancelToken[ChildErr]  = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
+    ro child  CancelToken[ChildErr]  = CancelToken.new()
     child.cancelled_by(parent)
     parent.cancel(ParentErr { code: 7 })
     assert(child.is_cancelled())
@@ -50,9 +50,9 @@ test "cross-type cascade: ChildErr.from(ParentErr) — child получает co
 
 
 test "cross-type: 2 children cascaded от одного parent — оба cancelled" {
-    let parent CancelToken[ParentErr] = CancelToken.new()
-    let c1 CancelToken[ChildErr] = CancelToken.new()
-    let c2 CancelToken[ChildErr] = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
+    ro c1 CancelToken[ChildErr] = CancelToken.new()
+    ro c2 CancelToken[ChildErr] = CancelToken.new()
     c1.cancelled_by(parent)
     c2.cancelled_by(parent)
     parent.cancel(ParentErr { code: 5 })
@@ -62,10 +62,10 @@ test "cross-type: 2 children cascaded от одного parent — оба cancel
 
 
 test "cross-type: parent уже cancelled до cascade-bind — child тоже cancelled" {
-    let parent CancelToken[ParentErr] = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
     parent.cancel(ParentErr { code: 1 })
     assert(parent.is_cancelled())
-    let child CancelToken[ChildErr] = CancelToken.new()
+    ro child CancelToken[ChildErr] = CancelToken.new()
     child.cancelled_by(parent)
     // bind_cascade_typed при cancel-already-fired срабатывает converter
     // немедленно и отменяет child.
@@ -74,9 +74,9 @@ test "cross-type: parent уже cancelled до cascade-bind — child тоже c
 
 
 test "same-type pre-cancelled: child получает реальную причину" {
-    let p1 CancelToken[ParentErr] = CancelToken.new()
+    ro p1 CancelToken[ParentErr] = CancelToken.new()
     p1.cancel(ParentErr { code: 99 })
-    let p2 CancelToken[ParentErr] = CancelToken.new()
+    ro p2 CancelToken[ParentErr] = CancelToken.new()
     p2.cancelled_by(p1)
     assert(p2.is_cancelled())
 }
@@ -88,8 +88,8 @@ test "same-type pre-cancelled: child получает реальную прич�
 
 
 test "negative: cancel SAMOГО child НЕ отменяет parent" {
-    let parent CancelToken[ParentErr] = CancelToken.new()
-    let child  CancelToken[ChildErr]  = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
+    ro child  CancelToken[ChildErr]  = CancelToken.new()
     child.cancelled_by(parent)
     child.cancel(ChildErr { msg: "child only" })
     assert(child.is_cancelled())
@@ -98,8 +98,8 @@ test "negative: cancel SAMOГО child НЕ отменяет parent" {
 
 
 test "negative: cross-type cascade не cancel'ит parent или child до actual cancel" {
-    let parent CancelToken[ParentErr] = CancelToken.new()
-    let child  CancelToken[ChildErr]  = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
+    ro child  CancelToken[ChildErr]  = CancelToken.new()
     child.cancelled_by(parent)
     // bind сам по себе не cancel'ит — только при parent.cancel().
     assert(!parent.is_cancelled())
@@ -118,14 +118,14 @@ test "cross-type round-trip: child.reason() возвращает converted A" {
     // (через converter wrapper) molча падал на UB (передавал raw
     // B-reason cast as A), reason() возвращал бы garbage. Этот тест —
     // regression guard.
-    let parent CancelToken[ParentErr] = CancelToken.new()
-    let child  CancelToken[ChildErr]  = CancelToken.new()
+    ro parent CancelToken[ParentErr] = CancelToken.new()
+    ro child  CancelToken[ChildErr]  = CancelToken.new()
     child.cancelled_by(parent)
     parent.cancel(ParentErr { code: 12345 })
     assert(child.is_cancelled())
-    let r = child.reason()
+    ro r = child.reason()
     // ChildErr.from(ParentErr) → ChildErr { msg: "from-parent" }
-    let msg = match r {
+    ro msg = match r {
         Some(ce_rt) => ce_rt.msg
         None        => "no-reason"
     }
@@ -136,12 +136,12 @@ test "cross-type round-trip: child.reason() возвращает converted A" {
 test "cross-type round-trip: same-type cascade reason() пробрасывается" {
     // Sanity: same-type cascade (B == A) — child получает тот же
     // reason_ptr что parent, reason() возвращает то же значение.
-    let p1 CancelToken[ParentErr] = CancelToken.new()
-    let p2 CancelToken[ParentErr] = CancelToken.new()
+    ro p1 CancelToken[ParentErr] = CancelToken.new()
+    ro p2 CancelToken[ParentErr] = CancelToken.new()
     p2.cancelled_by(p1)
     p1.cancel(ParentErr { code: 777 })
-    let r = p2.reason()
-    let code = match r {
+    ro r = p2.reason()
+    ro code = match r {
         Some(pe_rt) => pe_rt.code
         None        => -1
     }

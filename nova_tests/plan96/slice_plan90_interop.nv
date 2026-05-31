@@ -4,8 +4,8 @@
 module nova_tests.plan96.slice_plan90_interop
 
 test "copy_from on slice view" {
-    let src = [10, 20, 30, 40, 50]
-    let mut dst []int = [0, 0, 0]
+    ro src = [10, 20, 30, 40, 50]
+    mut dst []int = [0, 0, 0]
     dst.copy_from(src[1..4])
     assert(dst[0] == 20)
     assert(dst[1] == 30)
@@ -13,10 +13,10 @@ test "copy_from on slice view" {
 }
 
 test "len + is_empty on view" {
-    let mut arr = [1, 2, 3, 4, 5]
-    let view = arr[1..4]
+    mut arr = [1, 2, 3, 4, 5]
+    ro view = arr[1..4]
     assert(view.len() == 3)
     assert(!view.is_empty())
-    let empty = arr[2..2]
+    ro empty = arr[2..2]
     assert(empty.is_empty())
 }

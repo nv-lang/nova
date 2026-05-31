@@ -7,13 +7,13 @@ module modules.set_ops
 import std.collections.set.{Set}
 
 test "Set.or — объединение" {
-    let mut a = Set[int].new()
-    let mut b = Set[int].new()
+    mut a = Set[int].new()
+    mut b = Set[int].new()
     a.insert(1)
     a.insert(2)
     b.insert(2)
     b.insert(3)
-    let c = a | b
+    ro c = a | b
     assert(c.contains(1) == true)
     assert(c.contains(2) == true)
     assert(c.contains(3) == true)
@@ -21,13 +21,13 @@ test "Set.or — объединение" {
 }
 
 test "Set.and — пересечение" {
-    let mut a = Set[int].new()
-    let mut b = Set[int].new()
+    mut a = Set[int].new()
+    mut b = Set[int].new()
     a.insert(1)
     a.insert(2)
     b.insert(2)
     b.insert(3)
-    let c = a & b
+    ro c = a & b
     assert(c.contains(1) == false)
     assert(c.contains(2) == true)
     assert(c.contains(3) == false)
@@ -35,13 +35,13 @@ test "Set.and — пересечение" {
 }
 
 test "Set.minus — разность" {
-    let mut a = Set[int].new()
-    let mut b = Set[int].new()
+    mut a = Set[int].new()
+    mut b = Set[int].new()
     a.insert(1)
     a.insert(2)
     a.insert(3)
     b.insert(2)
-    let c = a - b
+    ro c = a - b
     assert(c.contains(1) == true)
     assert(c.contains(2) == false)
     assert(c.contains(3) == true)

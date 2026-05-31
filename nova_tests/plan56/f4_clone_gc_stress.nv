@@ -7,25 +7,25 @@ import std.collections.hashmap.{HashMap}
 
 
 test "@clone × 100 итераций — heap bounded" {
-    let mut m HashMap[str, int] = []
+    mut m HashMap[str, int] = []
     for i in 0..100 {
         m.insert(str.from(i), i)
     }
-    let baseline_pre = gc.heap_size()
+    ro baseline_pre = gc.heap_size()
     gc.collect()
-    let baseline_post = gc.heap_size()
+    ro baseline_post = gc.heap_size()
 
     // 100 clones — каждый создаёт ~100-entry HashMap copy.
     for _ in 0..100 {
-        let _c = m.clone()
+        ro _c = m.clone()
     }
 
     gc.collect()
-    let final_heap = gc.heap_size()
+    ro final_heap = gc.heap_size()
 
     // Heap bounded — clones собраны GC. Threshold: 4x baseline (loose
     // chunk allocator + Boehm overhead).
-    let upper = if baseline_post == 0 {
+    ro upper = if baseline_post == 0 {
         16 * 1024 * 1024   // malloc backend: heap_size() == 0 always
     } else {
         baseline_post * 4
@@ -35,15 +35,15 @@ test "@clone × 100 итераций — heap bounded" {
 
 
 test "@clone deep iterations — clone of clone of clone..." {
-    let mut m HashMap[str, int] = []
+    mut m HashMap[str, int] = []
     for i in 0..50 {
         m.insert(str.from(i), i * 2)
     }
     // Chain clones — каждый clone независим.
-    let c1 = m.clone()
-    let c2 = c1.clone()
-    let c3 = c2.clone()
-    let c4 = c3.clone()
+    ro c1 = m.clone()
+    ro c2 = c1.clone()
+    ro c3 = c2.clone()
+    ro c4 = c3.clone()
     assert(c1.len() == 50)
     assert(c2.len() == 50)
     assert(c3.len() == 50)

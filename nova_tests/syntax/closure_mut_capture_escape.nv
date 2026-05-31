@@ -14,7 +14,7 @@ module syntax.closure_mut_capture_escape
 // ─── Case 1: closure escapes fn scope (classic dangling-ptr case) ────
 
 fn make_counter() -> fn() -> int {
-    let mut count = 0
+    mut count = 0
     || {
         count += 1
         count
@@ -22,7 +22,7 @@ fn make_counter() -> fn() -> int {
 }
 
 test "escaped closure с mut-capture считает корректно" {
-    let counter = make_counter()
+    ro counter = make_counter()
     // При каждом вызове counter должен увеличивать count в своём box.
     assert(counter() == 1)
     assert(counter() == 2)
@@ -33,16 +33,16 @@ test "escaped closure с mut-capture считает корректно" {
 // ─── Case 2: два closure'а захватывают одну mut переменную ───────────
 
 fn make_pair() -> (fn() -> int, fn() -> int) {
-    let mut n = 0
-    let inc = || { n += 1; n }
-    let get = || n
+    mut n = 0
+    ro inc = || { n += 1; n }
+    ro get = || n
     (inc, get)
 }
 
 test "два closure'а разделяют один mut-box" {
-    let pair = make_pair()
-    let inc = pair.0
-    let get = pair.1
+    ro pair = make_pair()
+    ro inc = pair.0
+    ro get = pair.1
     // Оба closure'а должны видеть одно значение через shared box.
     assert(get() == 0)
     inc()
@@ -61,8 +61,8 @@ fn run_callback_mut(cb fn(int) -> ()) -> int {
 }
 
 test "mut-capture через HOF (не escape) — регрессия" {
-    let mut got = 0
-    let r = run_callback_mut(|v| {
+    mut got = 0
+    ro r = run_callback_mut(|v| {
         got = v
     })
     assert(r == 42)

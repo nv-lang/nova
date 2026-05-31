@@ -16,7 +16,7 @@ type Store effect {
 }
 
 test "handler branching под #verify должен давать E2402" {
-    let mut s = 0
+    mut s = 0
     with #verify Store = effect Store {
         Set(v) {
             if v > 0 { s = v }  // branching — V1 не поддерживает

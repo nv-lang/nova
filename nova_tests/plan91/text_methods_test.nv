@@ -92,11 +92,11 @@ test "str replace edge cases" {
 // D177: pad with non-ASCII fill character.
 test "str pad non-ascii fill" {
     // pad with multi-byte char (2-byte UTF-8: é = U+00E9)
-    let padded = "hi".pad_left(4, 'é')
+    ro padded = "hi".pad_left(4, 'é')
     assert(padded.len() == 6)          // 2 chars × 2 bytes + 2 bytes for "hi"
     assert(padded.ends_with("hi"))
     // pad_right with emoji-class char (3-byte: ♥ = U+2665)
-    let pr = "x".pad_right(3, '♥')
+    ro pr = "x".pad_right(3, '♥')
     assert(pr.starts_with("x"))
     assert(pr.len() == 7)              // 1 + 2×3
 }
@@ -114,22 +114,22 @@ test "str repeat edge cases" {
 // split возвращает views в оригинальный буфер (zero-copy).
 // str — это (ptr, len) без ownership, нет отдельной split_to_slices.
 test "str split zero-copy views" {
-    let parts = "a,bb,ccc".split(",")
+    ro parts = "a,bb,ccc".split(",")
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "bb")
     assert(parts[2] == "ccc")
     // empty sep → весь оригинал как единственный элемент
-    let whole = "hello".split("")
+    ro whole = "hello".split("")
     assert(whole.len() == 1)
     assert(whole[0] == "hello")
     // split по многосимвольному разделителю
-    let lines = "foo::bar::baz".split("::")
+    ro lines = "foo::bar::baz".split("::")
     assert(lines.len() == 3)
     assert(lines[0] == "foo")
     assert(lines[2] == "baz")
     // trailing empty part
-    let trailing = "a,b,".split(",")
+    ro trailing = "a,b,".split(",")
     assert(trailing.len() == 3)
     assert(trailing[2] == "")
 }

@@ -17,22 +17,22 @@ module plan72.p3a_record_shadow_range_pos
 import std.collections.range
 
 test "P3-A — Range { start, end } plain record init (not sum variant)" {
-    let r = Range { start: 2, end: 7 }
+    ro r = Range { start: 2, end: 7 }
     assert(r.start == 2)
     assert(r.end == 7)
 }
 
 test "P3-A — Range literal with computed values" {
-    let lo = 0
-    let hi = 100
-    let r = Range { start: lo, end: hi }
+    ro lo = 0
+    ro hi = 100
+    ro r = Range { start: lo, end: hi }
     assert(r.start == 0)
     assert(r.end == 100)
 }
 
 test "P3-A — Range spread update" {
-    let r1 = Range { start: 5, end: 10 }
-    let r2 = Range { ...r1, start: 0 }
+    ro r1 = Range { start: 5, end: 10 }
+    ro r2 = Range { ...r1, start: 0 }
     assert(r2.start == 0)
     assert(r2.end == 10)
 }

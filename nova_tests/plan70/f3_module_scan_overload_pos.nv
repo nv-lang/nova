@@ -16,7 +16,7 @@ fn Counter @inc() -> Self => { value: @value + 1 }
 
 test "free fn + method registration с concrete types" {
     assert(double_int(7) == 14)
-    let c Counter = { value: 5 }
-    let c2 = c.inc()
+    ro c Counter = { value: 5 }
+    ro c2 = c.inc()
     assert(c2.value == 6)
 }

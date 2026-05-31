@@ -8,8 +8,8 @@
 module str_builder.neg_use_after_consume
 
 test "append после into — use-after-consume" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("hello")
-    let _ = sb.into()                 // consume
+    ro _ = sb.into()                 // consume
     sb.append(" world")               // ← ОШИБКА D131
 }

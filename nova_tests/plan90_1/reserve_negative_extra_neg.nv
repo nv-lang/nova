@@ -6,6 +6,6 @@
 module nova_tests.plan90_1.reserve_negative_extra_neg
 
 fn main() -> () {
-    let mut arr []int = [1, 2, 3]
+    mut arr []int = [1, 2, 3]
     arr.reserve(-1)
 }

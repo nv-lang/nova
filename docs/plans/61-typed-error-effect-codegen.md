@@ -176,7 +176,7 @@ static inline void _nova_throw_typed_E(E* err) {
 
 [`effects.h:140-150`](../../compiler-codegen/nova_rt/effects.h#L140) `nova_throw_value` стрипается; codegen для `expr!!` на `Result[T, E]`:
 ```nova
-let v = result!!   // если Err(e) — throw e
+ro v = result!!   // если Err(e) — throw e
 ```
 lowers в:
 ```c

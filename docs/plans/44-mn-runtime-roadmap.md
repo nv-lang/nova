@@ -191,7 +191,7 @@ void cross_worker_wake(NovaWorker* target, NovaFiber* f) {
 Plan 18 P0 предлагает `std.sync`:
 
 ```nova
-let counter = Atomic[int].new(0)
+ro counter = Atomic[int].new(0)
 parallel for _ in 0..1000 {
     counter.fetch_add(1)        // safe
 }

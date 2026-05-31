@@ -10,7 +10,7 @@ module map_literals.positive_user_from_fields
 import std.collections.hashmap.{HashMap}
 
 test "stdlib HashMap with #from_fields triggers map-coercion" {
-    let m HashMap[str, int] = { a: 1, b: 2, c: 3 }
+    ro m HashMap[str, int] = { a: 1, b: 2, c: 3 }
     assert(m.len() == 3)
     assert(m.get("a") == Some(1))
     assert(m.get("b") == Some(2))

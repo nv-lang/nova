@@ -12,11 +12,11 @@
 module nova_tests.plan103_4.barrier_wait_with_action
 
 test "last-arrival fiber executes action exactly once per epoch" {
-    let parties = 4
-    let epochs = 2
-    let mut b = Barrier.new(parties)
-    let mut action_count = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    ro parties = 4
+    ro epochs = 2
+    mut b = Barrier.new(parties)
+    mut action_count = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {
@@ -32,10 +32,10 @@ test "last-arrival fiber executes action exactly once per epoch" {
 }
 
 test "action result visible to all fibers after barrier" {
-    let parties = 3
-    let mut b = Barrier.new(parties)
-    let mut shared_value = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    ro parties = 3
+    mut b = Barrier.new(parties)
+    mut shared_value = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {
@@ -49,18 +49,18 @@ test "action result visible to all fibers after barrier" {
 }
 
 test "wait_with_action index is correct (last arrival returns parties-1)" {
-    let parties = 4
-    let mut b = Barrier.new(parties)
-    let mut last_idx = AtomicInt.new(-1)
+    ro parties = 4
+    mut b = Barrier.new(parties)
+    mut last_idx = AtomicInt.new(-1)
     // Use AtomicInt to avoid capturing a primitive int in the trailing closure
     // (primitive int capture in trailing blocks inside parallel-for fibers has a
     // codegen issue: the env struct uses nova_int* but the assignment misses &).
-    let max_idx = AtomicInt.new(parties - 1)
-    let mut wg = WaitGroup.new()
+    ro max_idx = AtomicInt.new(parties - 1)
+    mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {
-        let idx = b.wait_with_action() { last_idx.store(max_idx.load()) }
+        ro idx = b.wait_with_action() { last_idx.store(max_idx.load()) }
         assert(idx >= 0)
         assert(idx < parties)
         wg.done()

@@ -25,16 +25,16 @@ fn make_int[T From[int]](x int) -> T => T.from(x)
 
 
 test "generic From[str]-bound — T.from внутри generic-тела" {
-    let r = make[Name]("alpha")
+    ro r = make[Name]("alpha")
     assert(r.s == "alpha")
 }
 
 test "generic From[str]-bound — повторный инстанс" {
-    let r = make[Name]("beta")
+    ro r = make[Name]("beta")
     assert(r.s == "beta")
 }
 
 test "generic From[int]-bound — T.from(int)" {
-    let b = make_int[Boxed](99)
+    ro b = make_int[Boxed](99)
     assert(b.n == 99)
 }

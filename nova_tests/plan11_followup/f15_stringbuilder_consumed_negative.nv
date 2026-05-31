@@ -12,6 +12,6 @@ module plan11_followup.f15_stringbuilder_consumed_negative
 test "append после @as_str() — compile error (D131)" {
     consume sb = StringBuilder.new()
     sb.append("hello")
-    let _ = sb.as_str()                   // consume
+    ro _ = sb.as_str()                   // consume
     sb.append(" world")                   // ← ОШИБКА D131: use-after-consume
 }

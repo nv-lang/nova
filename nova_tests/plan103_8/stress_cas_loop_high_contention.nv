@@ -10,8 +10,8 @@
 module nova_tests.plan103_8.stress_cas_loop_high_contention
 
 test "CAS loop high contention: 16 fibers × 20 compare_exchange — final = 320" {
-    let mut counter = AtomicI64.new(0)
-    let mut wg = WaitGroup.new()
+    mut counter = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -19,9 +19,9 @@ test "CAS loop high contention: 16 fibers × 20 compare_exchange — final = 320
             spawn {
                 for _j in 0..20 {
                     // CAS-loop: retry until strong CAS succeeds
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = counter.load(Acquire)
+                        ro cur = counter.load(Acquire)
                         done = counter.compare_exchange(cur, cur + 1, AcqRel, Acquire)
                     }
                 }
@@ -37,8 +37,8 @@ test "CAS loop high contention: 16 fibers × 20 compare_exchange — final = 320
 }
 
 test "CAS loop high contention: 16 fibers × 20 compare_exchange_weak — final = 320" {
-    let mut counter = AtomicI64.new(0)
-    let mut wg = WaitGroup.new()
+    mut counter = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -46,9 +46,9 @@ test "CAS loop high contention: 16 fibers × 20 compare_exchange_weak — final 
             spawn {
                 for _j in 0..20 {
                     // CAS weak loop: tolerates spurious failures
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = counter.load(Acquire)
+                        ro cur = counter.load(Acquire)
                         done = counter.compare_exchange_weak(cur, cur + 1, AcqRel, Acquire)
                     }
                 }
@@ -64,8 +64,8 @@ test "CAS loop high contention: 16 fibers × 20 compare_exchange_weak — final 
 }
 
 test "CAS mixed: 8 strong + 8 weak fibers x 20 each — final = 320" {
-    let mut counter = AtomicI64.new(0)
-    let mut wg = WaitGroup.new()
+    mut counter = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -73,9 +73,9 @@ test "CAS mixed: 8 strong + 8 weak fibers x 20 each — final = 320" {
         for _i in 0..8 {
             spawn {
                 for _j in 0..20 {
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = counter.load(Acquire)
+                        ro cur = counter.load(Acquire)
                         done = counter.compare_exchange(cur, cur + 1, AcqRel, Acquire)
                     }
                 }
@@ -86,9 +86,9 @@ test "CAS mixed: 8 strong + 8 weak fibers x 20 each — final = 320" {
         for _i in 0..8 {
             spawn {
                 for _j in 0..20 {
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = counter.load(Relaxed)
+                        ro cur = counter.load(Relaxed)
                         done = counter.compare_exchange_weak(cur, cur + 1, Release, Relaxed)
                     }
                 }

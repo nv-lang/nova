@@ -16,41 +16,41 @@ module runtime.from_into_basic
 // ───── str → int ─────
 
 test "int.try_from валидное число" {
-    let r = int.try_from("42")
+    ro r = int.try_from("42")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 42)
 }
 
 
 test "int.try_from отрицательное" {
-    let r = int.try_from("-17")
+    ro r = int.try_from("-17")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == -17)
 }
 
 
 test "int.try_from с пробелами в начале" {
-    let r = int.try_from("  100")
+    ro r = int.try_from("  100")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 100)
 }
 
 
 test "int.try_from невалидная строка" {
-    let r = int.try_from("abc")
+    ro r = int.try_from("abc")
     assert(r.is_err())
 }
 
 
 test "int.try_from пустая строка" {
-    let r = int.try_from("")
+    ro r = int.try_from("")
     assert(r.is_err())
 }
 
 
 test "int.try_from overflow" {
     // 2^63 = 9223372036854775808 > INT64_MAX
-    let r = int.try_from("9999999999999999999999")
+    ro r = int.try_from("9999999999999999999999")
     assert(r.is_err())
 }
 
@@ -58,7 +58,7 @@ test "int.try_from overflow" {
 // ───── str → f64 ─────
 
 test "f64.try_from валидное число" {
-    let r = f64.try_from("3.14")
+    ro r = f64.try_from("3.14")
     assert(r.is_ok())
     // Bootstrap Result hardcoded на nova_int payload — для f64 не имеет смысла
     // unwrap_or(0) (даст int-cast). Просто проверяем is_ok.
@@ -66,13 +66,13 @@ test "f64.try_from валидное число" {
 
 
 test "f64.try_from целое" {
-    let r = f64.try_from("42")
+    ro r = f64.try_from("42")
     assert(r.is_ok())
 }
 
 
 test "f64.try_from невалидное" {
-    let r = f64.try_from("not a number")
+    ro r = f64.try_from("not a number")
     assert(r.is_err())
 }
 
@@ -80,25 +80,25 @@ test "f64.try_from невалидное" {
 // ───── str → bool ─────
 
 test "bool.try_from \"true\"" {
-    let r = bool.try_from("true")
+    ro r = bool.try_from("true")
     assert(r.is_ok())
 }
 
 
 test "bool.try_from \"false\"" {
-    let r = bool.try_from("false")
+    ro r = bool.try_from("false")
     assert(r.is_ok())
 }
 
 
 test "bool.try_from invalid" {
-    let r = bool.try_from("yes")
+    ro r = bool.try_from("yes")
     assert(r.is_err())
 }
 
 
 test "bool.try_from case-sensitive" {
-    let r = bool.try_from("TRUE")
+    ro r = bool.try_from("TRUE")
     assert(r.is_err())  // case-sensitive
 }
 
@@ -106,20 +106,20 @@ test "bool.try_from case-sensitive" {
 // ───── str → char ─────
 
 test "char.try_from single ASCII char" {
-    let r = char.try_from("A")
+    ro r = char.try_from("A")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 65)
 }
 
 
 test "char.try_from empty string" {
-    let r = char.try_from("")
+    ro r = char.try_from("")
     assert(r.is_err())
 }
 
 
 test "char.try_from multi-char" {
-    let r = char.try_from("AB")
+    ro r = char.try_from("AB")
     assert(r.is_err())
 }
 
@@ -127,26 +127,26 @@ test "char.try_from multi-char" {
 // ───── int → char (codepoint range-check) ─────
 
 test "char.try_from(int) валидный codepoint" {
-    let r = char.try_from(65)
+    ro r = char.try_from(65)
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 65)
 }
 
 
 test "char.try_from(int) negative" {
-    let r = char.try_from(-1)
+    ro r = char.try_from(-1)
     assert(r.is_err())
 }
 
 
 test "char.try_from(int) выше 0x10FFFF" {
-    let r = char.try_from(0x110000)
+    ro r = char.try_from(0x110000)
     assert(r.is_err())
 }
 
 
 test "char.try_from(int) surrogate" {
-    let r = char.try_from(0xD800)
+    ro r = char.try_from(0xD800)
     assert(r.is_err())
 }
 
@@ -154,13 +154,13 @@ test "char.try_from(int) surrogate" {
 // ───── bool → str ─────
 
 test "str.from(true)" {
-    let s = str.from(true)
+    ro s = str.from(true)
     assert(s == "true")
 }
 
 
 test "str.from(false)" {
-    let s = str.from(false)
+    ro s = str.from(false)
     assert(s == "false")
 }
 
@@ -168,13 +168,13 @@ test "str.from(false)" {
 // ───── int → str ─────
 
 test "str.from(int)" {
-    let s = str.from(42)
+    ro s = str.from(42)
     assert(s == "42")
 }
 
 
 test "str.from(negative int)" {
-    let s = str.from(-7)
+    ro s = str.from(-7)
     assert(s == "-7")
 }
 
@@ -182,14 +182,14 @@ test "str.from(negative int)" {
 // ───── char → str (UTF-8 encode) ─────
 
 test "str.from(char) ASCII" {
-    let s = str.from('A')
+    ro s = str.from('A')
     assert(s == "A")
 }
 
 
 test "str.from(char) Cyrillic (2-byte UTF-8)" {
     // 'П' = U+041F (Plan 108 D26 rev: len=bytes, char_len=codepoints)
-    let s = str.from('П')
+    ro s = str.from('П')
     // UTF-8: 0xD0 0x9F = 2 bytes, 1 codepoint
     assert(s.len() == 2)
     assert(s.char_len() == 1)

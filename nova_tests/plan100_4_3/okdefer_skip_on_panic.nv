@@ -15,9 +15,9 @@ module nova_tests.plan100_4_3.okdefer_skip_on_panic
 // когда panic НЕ происходит (позитивный контроль).
 
 test "okdefer не мешает normal flow (нет panic)" {
-    let mut ok_count = 0
-    let mut err_count = 0
-    let _ = {
+    mut ok_count = 0
+    mut err_count = 0
+    ro _ = {
         errdefer { err_count = err_count + 1 }
         okdefer  { ok_count  = ok_count  + 1 }
         99
@@ -27,8 +27,8 @@ test "okdefer не мешает normal flow (нет panic)" {
 }
 
 test "несколько okdefer на success — все срабатывают LIFO" {
-    let mut count = 0
-    let _ = {
+    mut count = 0
+    ro _ = {
         okdefer { count = count + 1 }
         okdefer { count = count + 1 }
         okdefer { count = count + 1 }

@@ -7,8 +7,8 @@
 module plan83_10.fail_in_realtime_compile_error
 
 fn time_now_in_realtime() Time -> int {
-    let _ = realtime {
-        let _t = Time.now()
+    ro _ = realtime {
+        ro _t = Time.now()
         0
     }
     0

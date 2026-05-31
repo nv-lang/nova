@@ -18,5 +18,5 @@ fn id_view(t Transaction) -> Transaction {
 
 test "view return — error" {
     consume tx = Transaction { id: 1 }
-    let result = id_view(tx)
+    ro result = id_view(tx)
 }

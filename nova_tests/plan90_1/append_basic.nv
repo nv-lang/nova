@@ -5,8 +5,8 @@ module nova_tests.plan90_1.append_basic
 
 
 test "append basic []int" {
-    let mut dst []int = [1, 2]
-    let src []int = [3, 4, 5]
+    mut dst []int = [1, 2]
+    ro src []int = [3, 4, 5]
     dst.append(src)
     assert(dst.len() == 5)
     assert(dst[0] == 1)
@@ -17,8 +17,8 @@ test "append basic []int" {
 }
 
 test "append []u8 bytes" {
-    let mut buf []u8 = [0x48, 0x65]     // "He"
-    let more []u8 = [0x6c, 0x6c, 0x6f]  // "llo"
+    mut buf []u8 = [0x48, 0x65]     // "He"
+    ro more []u8 = [0x6c, 0x6c, 0x6f]  // "llo"
     buf.append(more)
     assert(buf.len() == 5)
     assert(buf[0] == 0x48)
@@ -28,8 +28,8 @@ test "append []u8 bytes" {
 
 test "append triggers growth (cap doubling)" {
     // Start with exactly capacity 8 (default initial cap).
-    let mut dst []int = [1, 2, 3, 4, 5, 6, 7, 8]
-    let src []int = [9, 10, 11]
+    mut dst []int = [1, 2, 3, 4, 5, 6, 7, 8]
+    ro src []int = [9, 10, 11]
     dst.append(src)
     assert(dst.len() == 11)
     assert(dst[8] == 9)

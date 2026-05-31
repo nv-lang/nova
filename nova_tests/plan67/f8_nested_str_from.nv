@@ -6,7 +6,7 @@ module plan67.f8_nested_str_from
 // EXPECT_STDOUT 15
 
 fn main() Io -> () {
-    let x = 7
-    let y = 8
+    ro x = 7
+    ro y = 8
     println(str.from(x + y))
 }

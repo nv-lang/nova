@@ -9,5 +9,5 @@ fn bad(consume mut sb StringBuilder) -> str => sb.as_str()
 
 test "consume + mut → parser error" {
     consume sb = StringBuilder.from("x")
-    let _ = bad(sb)
+    ro _ = bad(sb)
 }

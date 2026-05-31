@@ -7,20 +7,20 @@
 module nova_tests.plan103_3.rwlock_no_data_race_under_writes
 
 test "RwLock: no torn reads while writers update counter" {
-    let mut rw = RwLock.new()
-    let mut counter = AtomicInt.new(0)
-    let mut torn_read = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
-    let n_writers = 2
-    let n_readers = 4
-    let iters = 100
+    mut rw = RwLock.new()
+    mut counter = AtomicInt.new(0)
+    mut torn_read = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
+    ro n_writers = 2
+    ro n_readers = 4
+    ro iters = 100
     wg.add(n_writers + n_readers)
 
     // Writers: increment by 10 atomically under write lock
     parallel for _i in 0..n_writers {
         for _j in 0..iters {
             rw.write()
-            let v = counter.load()
+            ro v = counter.load()
             counter.store(v + 10)
             rw.write_unlock()
         }
@@ -31,7 +31,7 @@ test "RwLock: no torn reads while writers update counter" {
     parallel for _i in 0..n_readers {
         for _j in 0..iters {
             rw.read()
-            let v = counter.load()
+            ro v = counter.load()
             if v % 10 != 0 { torn_read.fetch_add(1) }
             rw.read_unlock()
         }

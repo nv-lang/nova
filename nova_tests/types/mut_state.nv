@@ -7,14 +7,14 @@ type Box { mut inner int }
 type Wrap { mut b Box }
 
 test "let mut простое переприсваивание" {
-    let mut x = 0
+    mut x = 0
     x = 5
     x = x + 10
     assert(x == 15)
 }
 
 test "let mut в цикле" {
-    let mut acc = 0
+    mut acc = 0
     for i in 1..6 {
         acc = acc + i
     }
@@ -22,19 +22,19 @@ test "let mut в цикле" {
 }
 
 test "mut поле прямое присваивание" {
-    let b = Box { inner: 10 }
+    ro b = Box { inner: 10 }
     b.inner = 99
     assert(b.inner == 99)
 }
 
 test "вложенное mut присваивание через цепочку" {
-    let w = Wrap { b: Box { inner: 0 } }
+    ro w = Wrap { b: Box { inner: 0 } }
     w.b.inner = 42
     assert(w.b.inner == 42)
 }
 
 test "мутация элемента массива записей" {
-    let xs = [Box { inner: 1 }, Box { inner: 2 }, Box { inner: 3 }]
+    ro xs = [Box { inner: 1 }, Box { inner: 2 }, Box { inner: 3 }]
     xs[1].inner = 200
     assert(xs[0].inner == 1)
     assert(xs[1].inner == 200)
@@ -42,22 +42,22 @@ test "мутация элемента массива записей" {
 }
 
 test "мутация поля через переменную-копию" {
-    let b = Box { inner: 5 }
-    let other = b
+    ro b = Box { inner: 5 }
+    ro other = b
     other.inner = 100
     // record-семантика в bootstrap'е: other и b делят значение
     assert(b.inner == 100)
 }
 
 test "compound assign на mut поле" {
-    let b = Box { inner: 1 }
+    ro b = Box { inner: 1 }
     b.inner += 10
     b.inner *= 2
     assert(b.inner == 22)
 }
 
 test "массив-в-массиве индексное присваивание" {
-    let mut m = [[1, 2], [3, 4], [5, 6]]
+    mut m = [[1, 2], [3, 4], [5, 6]]
     m[1][0] = 99
     assert(m[0][0] == 1)
     assert(m[1][0] == 99)

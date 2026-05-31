@@ -38,46 +38,46 @@ export fn Circle @describe() -> str {
 }
 
 test "box describe wide" {
-    let b = Box { width:10; height:5 }
+    ro b = Box { width:10; height:5 }
     assert(b.describe() == "wide")
 }
 
 test "box describe tall" {
-    let b = Box { width:3; height:8 }
+    ro b = Box { width:3; height:8 }
     assert(b.describe() == "tall")
 }
 
 test "box describe square" {
-    let b = Box { width:4; height:4 }
+    ro b = Box { width:4; height:4 }
     assert(b.describe() == "square")
 }
 
 test "box size" {
-    let b = Box { width:3; height:4 }
+    ro b = Box { width:3; height:4 }
     assert(b.size() == 12)
 }
 
 test "box size zero" {
-    let b = Box { width:0; height:5 }
+    ro b = Box { width:0; height:5 }
     assert(b.size() == 0)
 }
 
 test "circle size" {
-    let c = Circle { radius:5 }
+    ro c = Circle { radius:5 }
     assert(c.size() == 25)
 }
 
 test "circle describe small" {
-    let c = Circle { radius:3 }
+    ro c = Circle { radius:3 }
     assert(c.describe() == "small")
 }
 
 test "circle describe medium" {
-    let c = Circle { radius:7 }
+    ro c = Circle { radius:7 }
     assert(c.describe() == "medium")
 }
 
 test "circle describe large" {
-    let c = Circle { radius:15 }
+    ro c = Circle { radius:15 }
     assert(c.describe() == "large")
 }

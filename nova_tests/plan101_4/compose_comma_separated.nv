@@ -27,12 +27,12 @@ fn FileC @write(s str) -> int => s.len()
 
 
 fn use_rwc[T RWC](x T) -> str {
-    let _ = x.write("a")
+    ro _ = x.write("a")
     x.read()
 }
 
 
 test "comma-separated `use A, B` composition works" {
-    let f = FileC { name: "n" }
+    ro f = FileC { name: "n" }
     assert(use_rwc(f) == "n")
 }

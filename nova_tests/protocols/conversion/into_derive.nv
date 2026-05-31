@@ -16,14 +16,14 @@ type Feet { v f64 }
 fn Feet.from(m Meters) -> Feet => { v: m.v * 3.28084 }
 
 test "into() выводится из .from — аннотация даёт целевой тип" {
-    let f Feet = (Meters { v: 1.0 }).into()
+    ro f Feet = (Meters { v: 1.0 }).into()
     assert(f.v == 3.28084)
 }
 
 test "from() и into() дают идентичный результат" {
-    let m = Meters { v: 10.0 }
-    let via_from = Feet.from(m)
-    let via_into Feet = m.into()
+    ro m = Meters { v: 10.0 }
+    ro via_from = Feet.from(m)
+    ro via_into Feet = m.into()
     assert(via_from.v == via_into.v)
 }
 
@@ -35,14 +35,14 @@ type Id { raw int }
 fn Id @into() -> str => "id-" + str.from(@raw)
 
 test "@into() — explicit instance-вызов" {
-    let id = Id { raw: 5 }
-    let s str = id.into()
+    ro id = Id { raw: 5 }
+    ro s str = id.into()
     assert(s == "id-5")
 }
 
 test "str.from(Id) выводится из @into" {
-    let id = Id { raw: 77 }
-    let s = str.from(id)
+    ro id = Id { raw: 77 }
+    ro s = str.from(id)
     assert(s == "id-77")
 }
 
@@ -52,6 +52,6 @@ test "str.from(Id) выводится из @into" {
 fn to_feet(m Meters) -> Feet => m.into()
 
 test "into() в return-позиции функции" {
-    let f = to_feet(Meters { v: 2.0 })
+    ro f = to_feet(Meters { v: 2.0 })
     assert(f.v == 6.56168)
 }

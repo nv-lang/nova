@@ -5,7 +5,7 @@ module nova_tests.plan60.f5_cap_legacy_rejected
 // EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
 
 fn main() -> () {
-    let a []int = [1, 2, 3]
-    let c int = a.cap   // ← should error: rename to .capacity()
+    ro a []int = [1, 2, 3]
+    ro c int = a.cap   // ← should error: rename to .capacity()
     println(c)
 }

@@ -67,11 +67,19 @@ pub enum TokenKind {
     // Plan 97 Ф.3 (D142): `KwHandler` снят (clean break). Литерал
     // handler'а — `effect X { ... }`. См. parse_atom + parse_handler_lit.
     KwAlias,
+    /// Plan 114 (D184): retracted as binding-stmt keyword. Lexer still
+    /// recognizes the lexeme `let` so parser can emit a precise
+    /// `E_KW_REMOVED_LET` diagnostic instead of `unknown identifier`.
     KwLet,
     KwConst,
     KwMut,
     /// Plan 73 (D131): `consume` — consuming receiver/param qualifier.
     KwConsume,
+    /// Plan 114 (D184): immutable binding / field / type-modifier / param.
+    /// Replaces `readonly` as the canonical short keyword.
+    KwRo,
+    /// Plan 114 (D184): retracted in favour of `ro`. Lexer still recognizes
+    /// the lexeme `readonly` so parser can emit `E_KW_REMOVED_READONLY`.
     KwReadonly,
     KwIf,
     KwElse,
@@ -216,6 +224,7 @@ impl TokenKind {
             TokenKind::KwConst => "`const`",
             TokenKind::KwMut => "`mut`",
             TokenKind::KwConsume => "`consume`",
+            TokenKind::KwRo => "`ro`",
             TokenKind::KwReadonly => "`readonly`",
             TokenKind::KwIf => "`if`",
             TokenKind::KwElse => "`else`",

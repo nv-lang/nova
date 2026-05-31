@@ -14,8 +14,8 @@ fn run_callback(cb fn() -> ()) -> int {
 
 
 test "no-arg closure с side-effect-only body (unit return)" {
-    let mut fired = false
-    let r = run_callback(|| {
+    mut fired = false
+    ro r = run_callback(|| {
         fired = true
     })
     assert(r == 42)
@@ -30,8 +30,8 @@ fn run_with_int(x int, cb fn(int) -> ()) -> int {
 
 
 test "one-arg closure с side-effect-only body" {
-    let mut got = 0
-    let r = run_with_int(21, |v| {
+    mut got = 0
+    ro r = run_with_int(21, |v| {
         got = v
     })
     assert(r == 42)
@@ -48,8 +48,8 @@ fn process(cleanup fn() -> ()) -> int {
 
 
 test "defer + closure callback с unit-return" {
-    let mut cleaned = false
-    let r = process(|| {
+    mut cleaned = false
+    ro r = process(|| {
         cleaned = true
     })
     assert(r == 100)

@@ -12,18 +12,18 @@ module plan83_10.gc_no_leak_armed_spawn
 
 test "spawn workload → collect → heap bounded" {
     gc.collect()
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
     // Single parallel-for (codegen restriction — multiple parallel-for
     // в одной test fn создаёт name collision).
-    let xs = parallel for i in 0..1000 { i }
+    ro xs = parallel for i in 0..1000 { i }
     assert(xs[999] == 999)
     assert(xs[0] == 0)
 
     gc.collect()
-    let h = gc.heap_size()
+    ro h = gc.heap_size()
 
-    let growth = if h > baseline { h - baseline } else { 0 }
+    ro growth = if h > baseline { h - baseline } else { 0 }
     println("baseline=${baseline} after=${h} growth=${growth}")
 
     // Generous bound: 16MB (covers pool retention + Boehm overhead +

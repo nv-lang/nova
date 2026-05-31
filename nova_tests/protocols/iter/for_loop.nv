@@ -14,7 +14,7 @@ fn CountDown mut @next() -> Option[int] {
     if @current <= 0 {
         None
     } else {
-        let v = @current
+        ro v = @current
         @current = @current - 1
         Some(v)
     }
@@ -22,8 +22,8 @@ fn CountDown mut @next() -> Option[int] {
 
 
 test "for-in over CountDown — сумма" {
-    let mut sum = 0
-    let cd = CountDown.new(4)
+    mut sum = 0
+    ro cd = CountDown.new(4)
     for n in cd {
         sum = sum + n
     }
@@ -31,8 +31,8 @@ test "for-in over CountDown — сумма" {
 }
 
 test "for-in over CountDown — счётчик итераций" {
-    let mut count = 0
-    let cd = CountDown.new(7)
+    mut count = 0
+    ro cd = CountDown.new(7)
     for _ in cd {
         count = count + 1
     }
@@ -40,8 +40,8 @@ test "for-in over CountDown — счётчик итераций" {
 }
 
 test "for-in over CountDown — одна итерация" {
-    let mut last = -1
-    let cd = CountDown.new(1)
+    mut last = -1
+    ro cd = CountDown.new(1)
     for n in cd {
         last = n
     }
@@ -49,9 +49,9 @@ test "for-in over CountDown — одна итерация" {
 }
 
 test "for-in — порядок значений (по убыванию)" {
-    let mut first = 0
-    let mut seen = 0
-    let cd = CountDown.new(3)
+    mut first = 0
+    mut seen = 0
+    ro cd = CountDown.new(3)
     for n in cd {
         if seen == 0 { first = n }
         seen = seen + 1

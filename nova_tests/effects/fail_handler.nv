@@ -49,8 +49,8 @@ fn divide(a int, b int) -> int {
 // ================================================================
 
 test "with Fail: catches throw, body completes after handler" {
-    let mut caught_msg = ""
-    let mut handler_ran = false
+    mut caught_msg = ""
+    mut handler_ran = false
     with Fail = effect Fail {
         fail(msg) {
             caught_msg = msg
@@ -58,15 +58,15 @@ test "with Fail: catches throw, body completes after handler" {
             interrupt ()
         }
     } {
-        let _ = parse_num("bad")
+        ro _ = parse_num("bad")
     }
     assert(handler_ran)
     assert(caught_msg == "parse failed")
 }
 
 test "with Fail: ok-path doesn't trigger handler" {
-    let mut handler_ran = false
-    let mut got_value = 0
+    mut handler_ran = false
+    mut got_value = 0
     with Fail = effect Fail {
         fail(_msg) {
             handler_ran = true
@@ -80,20 +80,20 @@ test "with Fail: ok-path doesn't trigger handler" {
 }
 
 test "with Fail: divide by zero caught" {
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
         }
     } {
-        let _ = divide(10, 0)
+        ro _ = divide(10, 0)
     }
     assert(caught == "division by zero")
 }
 
 test "with Fail: divide ok-path returns value" {
-    let mut value = 0
+    mut value = 0
     with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
@@ -113,7 +113,7 @@ test "with Fail: divide ok-path returns value" {
 // (см. simplifications.md).
 
 test "with Fail: throw from spawn caught by outer handler" {
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
@@ -142,8 +142,8 @@ test "with Fail: handler ловит throw из supervised (cross-mco-boundary in
     //   4. spawn-entry catch detect'ит sentinel — НЕ вызывает report_error.
     //   5. supervised_run после drain re-issue'ит nova_interrupt(value)
     //      на main-flow, где with-frame достижим.
-    let mut caught = ""
-    let mut invocations = 0
+    mut caught = ""
+    mut invocations = 0
     with Fail = effect Fail {
         fail(msg) {
             caught = msg

@@ -6,7 +6,7 @@ module nova_tests.contracts.loop_decreases_smt_positive
 fn count_down(n int) -> int
     requires n >= 0
 {
-    let mut i = n
+    mut i = n
     while i > 0 decreases i {
         i -= 1
     }

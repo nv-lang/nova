@@ -11,7 +11,7 @@ fn bv_identity(x u32) -> u32
     requires x >= 10 as u32
     ensures result == x
 {
-    let y u32 = x + 5 as u32
+    ro y u32 = x + 5 as u32
     y - 5 as u32
 }
 

@@ -13,7 +13,7 @@ type TwoMethod protocol {
 
 
 test "literal без bar" {
-    let l = protocol TwoMethod {
+    ro l = protocol TwoMethod {
         foo() => ()
         // bar отсутствует — должна быть compile ошибка
     }

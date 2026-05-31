@@ -28,19 +28,19 @@ fn process(db Db, should_fail bool) Fail[OrderErr] -> int {
         tx.rollback()                           // explicit consume on error path
         throw OrderErr { msg: "operation failed" }
     }
-    let r = db_insert(tx)
+    ro r = db_insert(tx)
     tx.commit()
     return r
 }
 
 test "Transaction rollback on error path" {
-    let db = Db { id: 1 }
+    ro db = Db { id: 1 }
     // Success path
     process(db, false)
 }
 
 test "Transaction rollback explicit on error path" {
-    let db2 = Db { id: 2 }
+    ro db2 = Db { id: 2 }
     // Error path — rollback fires, no leak
     with Fail[OrderErr] = effect Fail { fail(_e) { interrupt () } } {
         process(db2, true)

@@ -30,8 +30,8 @@ type AuditedAccount {
 
 
 test "named embed: auto-proxy через wrapper" {
-    let a = Account.acc_new(100)
-    let aa = AuditedAccount { account: a, audit_log_count: 0 }
+    ro a = Account.acc_new(100)
+    ro aa = AuditedAccount { account: a, audit_log_count: 0 }
     assert(aa.balance() == 100)
 }
 
@@ -56,8 +56,8 @@ type LoggingCounter {
 
 
 test "anonymous embed: auto-proxy без alias" {
-    let inner = Counter.cnt_new(42)
-    let lc = LoggingCounter { __embed_Counter: inner, log_count: 0 }
+    ro inner = Counter.cnt_new(42)
+    ro lc = LoggingCounter { __embed_Counter: inner, log_count: 0 }
     assert(lc.value() == 42)
 }
 
@@ -86,8 +86,8 @@ export fn Wrapper @get() -> int =>
 
 
 test "override Own wins over Delegated" {
-    let i = Inner.inner_new(10)
-    let w = Wrapper { inner: i, extra: 5 }
+    ro i = Inner.inner_new(10)
+    ro w = Wrapper { inner: i, extra: 5 }
     assert(w.get() == 15)        // 10 + 5, не просто 10
 }
 
@@ -119,8 +119,8 @@ export fn Cache @capacity() -> int =>
 
 
 test "explicit base-call через @<alias>.method() в named embed" {
-    let s = Storage.stor_new(100)
-    let c = Cache { storage: s, hits: 5 }
+    ro s = Storage.stor_new(100)
+    ro c = Cache { storage: s, hits: 5 }
     // Own @capacity вызывает @storage.capacity() (через alias) + hits.
     assert(c.capacity() == 105)
     // Delegated @doubled_capacity (auto-proxy) — нет own override.
@@ -150,8 +150,8 @@ type MultiWrap {
 
 
 test "несколько auto-proxy методов от одного embed" {
-    let mb = MultiBase.mb_new(3, 4)
-    let mw = MultiWrap { base: mb, label: 99 }
+    ro mb = MultiBase.mb_new(3, 4)
+    ro mw = MultiWrap { base: mb, label: 99 }
     assert(mw.get_x() == 3)
     assert(mw.get_y() == 4)
     assert(mw.sum() == 7)
@@ -181,8 +181,8 @@ type CalcWrap {
 
 
 test "auto-proxy с args" {
-    let c = Calc.calc_new(10)
-    let cw = CalcWrap { __embed_Calc: c, multiplier: 2 }
+    ro c = Calc.calc_new(10)
+    ro cw = CalcWrap { __embed_Calc: c, multiplier: 2 }
     assert(cw.add_to(5) == 15)
     assert(cw.combine(3, 7) == 20)
 }
@@ -217,7 +217,7 @@ type Merged {
 
 
 test "два named embed разных типов работают вместе" {
-    let m = Merged {
+    ro m = Merged {
         src_a: SourceA.src_a_new(10),
         src_b: SourceB.src_b_new(20),
     }
@@ -246,8 +246,8 @@ type Car {
 
 
 test "anonymous embed coexists с extra fields" {
-    let e = Engine.eng_new(3000)
-    let c = Car { __embed_Engine: e, fuel: 50 }
+    ro e = Engine.eng_new(3000)
+    ro c = Car { __embed_Engine: e, fuel: 50 }
     assert(c.rev() == 3000)
     assert(c.fuel == 50)
 }
@@ -281,8 +281,8 @@ export fn Dog @description() -> int =>
 
 
 test "override через anonymous embed: Own wins (с lint warning)" {
-    let a = Animal.an_new(4)
-    let d = Dog { __embed_Animal: a, name_id: 5 }
+    ro a = Animal.an_new(4)
+    ro d = Dog { __embed_Animal: a, name_id: 5 }
     // Own @description: 100 + 5 == 105, не 4 (delegated).
     assert(d.description() == 105)
 }

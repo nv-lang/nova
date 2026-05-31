@@ -14,7 +14,7 @@ test "liskov handler fail" {
     with #verify ConstEffect = effect ConstEffect {
         get_ten() => 5
     } {
-        let r = ConstEffect.get_ten()
+        ro r = ConstEffect.get_ten()
         assert(r == 5)
     }
 }

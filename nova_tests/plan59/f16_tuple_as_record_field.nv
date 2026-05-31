@@ -19,7 +19,7 @@ type Box {
 
 
 test "tuple as record value field — (int, int)" {
-    let c = Coord { name: "origin", point: (0, 0) }
+    ro c = Coord { name: "origin", point: (0, 0) }
     assert(c.name == "origin")
     assert(c.point.0 == 0)
     assert(c.point.1 == 0)
@@ -27,14 +27,14 @@ test "tuple as record value field — (int, int)" {
 
 
 test "tuple field — non-zero values" {
-    let c = Coord { name: "diag", point: (5, 7) }
+    ro c = Coord { name: "diag", point: (5, 7) }
     assert(c.point.0 == 5)
     assert(c.point.1 == 7)
 }
 
 
 test "nested tuple as record field — 2-level" {
-    let b = Box {
+    ro b = Box {
         label: "unit",
         bounds: ((0, 0), (10, 20)),
     }

@@ -19,34 +19,34 @@ export fn validate_email(e Email) -> bool => true
 
 /// Get account_id as raw int (newtype unwrap).
 export fn account_to_int(id AccountId) -> int {
-    let raw int = id
+    ro raw int = id
     raw
 }
 
 test "newtype используется как distinct type" {
-    let id AccountId = 42
+    ro id AccountId = 42
     assert(account_to_int(id) == 42)
 }
 
 test "newtype with multiple instances" {
-    let a AccountId = 1
-    let b AccountId = 2
+    ro a AccountId = 1
+    ro b AccountId = 2
     assert(account_to_int(a) + account_to_int(b) == 3)
 }
 
 test "alias works for plain types" {
-    let name UserName = "Alice"
+    ro name UserName = "Alice"
     assert(name == "Alice")
 }
 
 test "newtype and alias coexist" {
-    let id AccountId = 100
-    let name UserName = "Bob"
+    ro id AccountId = 100
+    ro name UserName = "Bob"
     assert(account_to_int(id) == 100)
     assert(name == "Bob")
 }
 
 test "validate_email accepts Email newtype" {
-    let e Email = "test@example.com"
+    ro e Email = "test@example.com"
     assert(validate_email(e))
 }

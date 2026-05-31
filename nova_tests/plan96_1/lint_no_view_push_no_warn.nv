@@ -4,7 +4,7 @@
 module nova_tests.plan96_1.lint_no_view_push_no_warn
 
 test "regular array push doesn't trigger lint" {
-    let mut arr []int = [1, 2, 3]
+    mut arr []int = [1, 2, 3]
     arr.push(4)
     arr.push(5)
     assert(arr.len() == 5)

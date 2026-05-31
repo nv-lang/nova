@@ -11,6 +11,6 @@ type Box[T] { value T }
 fn Box[T].new(v T) -> Box[T] => { value: v }
 
 fn run() -> int {
-    let b = Box[int, str].new(1)
+    ro b = Box[int, str].new(1)
     b.value
 }

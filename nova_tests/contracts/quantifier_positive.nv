@@ -8,8 +8,8 @@ fn sum_nonneg(n int) -> int
     requires n >= 0
     requires forall i in 0..n : i >= 0
 {
-    let mut s = 0
-    let mut i = 0
+    mut s = 0
+    mut i = 0
     while i < n { s = s + i; i = i + 1 }
     s
 }

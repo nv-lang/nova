@@ -9,8 +9,8 @@ module doc.f23_newtype_type_mismatch_fail
 export type Wrapper int
 
 fn uses_wrapper() -> int {
-    let w = 5 as Wrapper
-    let _ = w
+    ro w = 5 as Wrapper
+    ro _ = w
     // Обращение к несуществующей переменной — ошибка компиляции.
     undefined_variable_xyz
 }

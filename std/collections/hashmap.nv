@@ -97,8 +97,8 @@ export type HashMap[K Hashable, V] {
     _tombstones int
 
     // Конфигурация — readonly invariants. Public (config-как).
-    readonly load_factor f64       // обычно 0.75
-    readonly initial_capacity int  // обычно 16
+    ro load_factor f64       // обычно 0.75
+    ro initial_capacity int  // обычно 16
 }
 
 
@@ -134,8 +134,8 @@ export fn HashMap[K, V].new() -> HashMap[K, V] =>
 #stable(since = "0.1")
 export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
     // ceil(4 * min_capacity / 3) — entry-count → требуемый минимум бакетов.
-    let needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
-    let cap = next_pow2(needed)
+    ro needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
+    ro cap = next_pow2(needed)
     HashMap {
         _buckets: new_buckets[K, V](cap),
         _count: 0,
@@ -157,7 +157,7 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
-    let mut m = Self.with_capacity(pairs.len() * 2)
+    mut m = Self.with_capacity(pairs.len() * 2)
     for (k, v) in pairs {
         m.insert(k, v)
     }
@@ -194,7 +194,7 @@ export fn HashMap[K, V] @capacity() -> int => @_buckets.len()
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] @get(key K) -> Option[V] {
-    let idx = @find_slot(key)
+    ro idx = @find_slot(key)
     match @_buckets[idx] {
         Occupied { value } => Some(value)        // partial: key игнорируется
         _                  => None
@@ -205,7 +205,7 @@ export fn HashMap[K, V] @get(key K) -> Option[V] {
 /// Проверить наличие ключа без извлечения значения.
 #stable(since = "0.1")
 export fn HashMap[K, V] @contains(key K) -> bool =>
-    if let Some(_) = @get(key) { true } else { false }
+    if Some(_) = @get(key) { true } else { false }
 
 
 /// Вставить пару `(key, value)`.
@@ -224,7 +224,7 @@ export fn HashMap[K, V] @contains(key K) -> bool =>
 export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
     @maybe_grow()
 
-    let idx = @find_slot(key)
+    ro idx = @find_slot(key)
     match @_buckets[idx] {
         Occupied { key: _, value: old } => {
             // Замена существующего значения — count не меняется.
@@ -262,7 +262,7 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @insert_new(key K, value V) {
-    let idx = @find_slot(key)
+    ro idx = @find_slot(key)
     @_buckets[idx] = Occupied { key, value }
     @_count += 1
 }
@@ -279,7 +279,7 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
-    let mut copy = HashMap[K, V].with_capacity(@_count)
+    mut copy = HashMap[K, V].with_capacity(@_count)
     for (k, v) in @iter() {
         copy.insert_new(k, v)
     }
@@ -317,7 +317,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
-    let mut out = HashMap[K, V].with_capacity(@_count)
+    mut out = HashMap[K, V].with_capacity(@_count)
     for (k, v) in @iter() {
         if pred(k, v) { out.insert_new(k, v) }
     }
@@ -353,7 +353,7 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
-    let idx = @find_slot(key)
+    ro idx = @find_slot(key)
     match @_buckets[idx] {
         Occupied { value } => {                  // partial: key игнорируется
             @_buckets[idx] = Tombstone
@@ -399,10 +399,10 @@ export fn HashMap[K, V] mut @clear() {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @get_or_insert(key K, fallback fn() -> V) -> V {
-    if let Some(v) = @get(key) {
+    if Some(v) = @get(key) {
         return v
     }
-    let v = fallback()
+    ro v = fallback()
     @insert(key, v)
     v
 }
@@ -438,9 +438,9 @@ export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
 // Структурно совместима с любым итератором: { next() -> Option[T] }.
 export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
     while @pos < @map._buckets.len() {
-        let slot = @map._buckets[@pos]
+        ro slot = @map._buckets[@pos]
         @pos += 1
-        if let Occupied { key, value } = slot {
+        if Occupied { key, value } = slot {
             return Some((key, value))
         }
     }
@@ -487,9 +487,9 @@ export fn ValuesIter[K, V] mut @next() -> Option[V] =>
 //
 // Linear probing: cap-mask вместо modulo.
 fn HashMap[K, V] @find_slot(key K) -> int {
-    let mask = @_buckets.len() - 1
-    let mut idx = (key.hash() as int) & mask
-    let mut first_tombstone = -1
+    ro mask = @_buckets.len() - 1
+    mut idx = (key.hash() as int) & mask
+    mut first_tombstone = -1
 
     loop {
         match @_buckets[idx] {
@@ -514,13 +514,13 @@ fn HashMap[K, V] @find_slot(key K) -> int {
 // HashMap.mut @maybe_grow() — пересоздать массив, если load_factor
 // превышен или слишком много tombstones.
 fn HashMap[K, V] mut @maybe_grow() {
-    let used = @_count + @_tombstones
-    let threshold = (@_buckets.len() as f64 * @load_factor) as int
+    ro used = @_count + @_tombstones
+    ro threshold = (@_buckets.len() as f64 * @load_factor) as int
     if used < threshold { return }
 
     // Если tombstones — большая часть, можно rehash в тот же размер.
     // Иначе удваиваем capacity.
-    let new_cap = if @_tombstones * 2 > @_count {
+    ro new_cap = if @_tombstones * 2 > @_count {
         @_buckets.len()
     } else {
         @_buckets.len() * 2
@@ -534,13 +534,13 @@ fn HashMap[K, V] mut @maybe_grow() {
 //
 // Используется при росте и при cleanup tombstones.
 fn HashMap[K, V] mut @rehash(new_cap int) {
-    let old_buckets = @_buckets
+    ro old_buckets = @_buckets
     @_buckets = new_buckets[K, V](new_cap)
     @_count = 0
     @_tombstones = 0
 
     for slot in old_buckets {
-        if let Occupied { key, value } = slot {
+        if Occupied { key, value } = slot {
             @insert(key, value)
         }
     }
@@ -554,7 +554,7 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
 fn new_buckets[K, V](cap int) -> []Slot[K, V] {
     // Turbofish (D38): явный generic для with_capacity, чтобы
     // type inference знал тип элементов массива.
-    let mut buckets = []Slot[K, V].with_capacity(cap)
+    mut buckets = []Slot[K, V].with_capacity(cap)
     for _ in 0..cap {
         buckets.push(Slot.Empty)
     }
@@ -567,7 +567,7 @@ fn new_buckets[K, V](cap int) -> []Slot[K, V] {
 // Чистая функция. При n ≤ 1 возвращает 1.
 fn next_pow2(n int) -> int {
     if n <= 1 { return 1 }
-    let mut p = 1
+    mut p = 1
     while p < n { p *= 2 }
     p
 }
@@ -578,7 +578,7 @@ fn next_pow2(n int) -> int {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "insert and get" {
-    let mut m = HashMap[str, int].new()
+    mut m = HashMap[str, int].new()
     m.insert("alice", 1)
     m.insert("bob", 2)
 
@@ -589,7 +589,7 @@ test "insert and get" {
 }
 
 test "insert returns old value on overwrite" {
-    let mut m = HashMap[str, int].new()
+    mut m = HashMap[str, int].new()
     assert(m.insert("a", 1) == None)
     assert(m.insert("a", 2) == Some(1))
     assert(m.get("a") == Some(2))
@@ -597,7 +597,7 @@ test "insert returns old value on overwrite" {
 }
 
 test "remove" {
-    let mut m = HashMap[str, int].new()
+    mut m = HashMap[str, int].new()
     m.insert("a", 1)
     m.insert("b", 2)
 
@@ -611,7 +611,7 @@ test "remove" {
 test "contains keys" {
     // NOTE: iterating m.keys() not yet supported — KeysIter mono body
     // emits incomplete. Tracking: bootstrap iterator-on-generic limitation.
-    let mut m = HashMap[str, int].new()
+    mut m = HashMap[str, int].new()
     m.insert("a", 1)
     m.insert("b", 2)
     m.insert("c", 3)
@@ -623,11 +623,11 @@ test "contains keys" {
 }
 
 test "get_or_insert with counter pattern" {
-    let mut counts = HashMap[str, int].new()
-    let words = ["foo", "bar", "foo", "baz", "foo", "bar"]
+    mut counts = HashMap[str, int].new()
+    ro words = ["foo", "bar", "foo", "baz", "foo", "bar"]
 
     for w in words {
-        let prev = counts.get_or_insert(w, || 0)
+        ro prev = counts.get_or_insert(w, || 0)
         counts.insert(w, prev + 1)
     }
 
@@ -637,13 +637,13 @@ test "get_or_insert with counter pattern" {
 }
 
 test "from pairs constructor" {
-    let mut m = HashMap[str, int].from([("x", 10), ("y", 20), ("z", 30)])
+    mut m = HashMap[str, int].from([("x", 10), ("y", 20), ("z", 30)])
     assert(m.len() == 3)
     assert(m.get("y") == Some(20))
 }
 
 test "rehash on growth" {
-    let mut m = HashMap[int, int].with_capacity(4)
+    mut m = HashMap[int, int].with_capacity(4)
     // with_capacity(4) → ceil(4*4/3)=6 → next_pow2(6)=8 бакетов.
     // 100 вставок сильно превышают threshold → серия rehash'ей.
     for i in 0..100 {
@@ -662,43 +662,43 @@ test "rehash on growth" {
 // прежняя bucket-count реализация давала threshold < n.
 test "with_capacity contract — n inserts without rehash" {
     // n = 4
-    let mut m4 = HashMap[int, int].with_capacity(4)
-    let cap4 = m4.capacity()
+    mut m4 = HashMap[int, int].with_capacity(4)
+    ro cap4 = m4.capacity()
     for i in 0..4 { m4.insert(i, i) }
     assert(m4.capacity() == cap4)
     assert(m4.len() == 4)
 
     // n = 7
-    let mut m7 = HashMap[int, int].with_capacity(7)
-    let cap7 = m7.capacity()
+    mut m7 = HashMap[int, int].with_capacity(7)
+    ro cap7 = m7.capacity()
     for i in 0..7 { m7.insert(i, i) }
     assert(m7.capacity() == cap7)
     assert(m7.len() == 7)
 
     // n = 8
-    let mut m8 = HashMap[int, int].with_capacity(8)
-    let cap8 = m8.capacity()
+    mut m8 = HashMap[int, int].with_capacity(8)
+    ro cap8 = m8.capacity()
     for i in 0..8 { m8.insert(i, i) }
     assert(m8.capacity() == cap8)
     assert(m8.len() == 8)
 
     // n = 13
-    let mut m13 = HashMap[int, int].with_capacity(13)
-    let cap13 = m13.capacity()
+    mut m13 = HashMap[int, int].with_capacity(13)
+    ro cap13 = m13.capacity()
     for i in 0..13 { m13.insert(i, i) }
     assert(m13.capacity() == cap13)
     assert(m13.len() == 13)
 
     // n = 16
-    let mut m16 = HashMap[int, int].with_capacity(16)
-    let cap16 = m16.capacity()
+    mut m16 = HashMap[int, int].with_capacity(16)
+    ro cap16 = m16.capacity()
     for i in 0..16 { m16.insert(i, i) }
     assert(m16.capacity() == cap16)
     assert(m16.len() == 16)
 }
 
 test "tombstones cleanup on rehash" {
-    let mut m = HashMap[int, int].with_capacity(16)
+    mut m = HashMap[int, int].with_capacity(16)
     for i in 0..10 { m.insert(i, i) }
     for i in 0..8  { m.remove(i) }
     // Сейчас: 2 occupied + 8 tombstones. Следующий insert → rehash.

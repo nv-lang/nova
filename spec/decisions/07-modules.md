@@ -531,8 +531,8 @@ export import std.collections.HashMap as Map    // алиас при re-export
 import std.option.Option
 import my.Option as MyOption
 
-let x Option[int] = Some(42)                    // std.option.Option
-let y MyOption = ...                            // my.Option
+ro x Option[int] = Some(42)                    // std.option.Option
+ro y MyOption = ...                            // my.Option
 ```
 
 #### Prelude — без `import`
@@ -637,7 +637,7 @@ module account
 
 // ── Типы ──────────────────────────────────────────────────────────
 export type Account {                    // публичный тип
-    readonly owner str
+    ro owner str
     balance money
     _internal_id u64                     // convention: _prefix = приватное-по-договору
 }
@@ -684,7 +684,7 @@ type _InternalIter[T] protocol {           // приватный protocol
 
 ```nova
 export type Account {
-    readonly owner str       // публичное
+    ro owner str       // публичное
     balance money            // публичное
     _internal_id u64         // приватное-по-конвенции (НЕ enforced)
 }

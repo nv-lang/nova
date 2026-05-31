@@ -9,6 +9,6 @@ type Counter { n int }
 fn Counter @value() -> int => @n
 
 fn run() -> int {
-    let c Counter = { n: 5 }
+    ro c Counter = { n: 5 }
     c.increment()
 }

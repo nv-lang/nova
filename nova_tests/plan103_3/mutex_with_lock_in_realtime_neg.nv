@@ -10,6 +10,6 @@ module nova_tests.plan103_3.mutex_with_lock_in_realtime_neg
 }
 
 test "Mutex.lock banned in #realtime fn" {
-    let mut mu = Mutex.new()
+    mut mu = Mutex.new()
     _rt_check_mutex_lock(mu)
 }

@@ -7,8 +7,8 @@ fn sum_down(n int) -> int
     requires n >= 0
     ensures result >= 0
 {
-    let mut i = n
-    let mut sum = 0
+    mut i = n
+    mut sum = 0
     while i > 0
         invariant i >= 0
         invariant sum >= 0

@@ -27,10 +27,10 @@ module plan83_4_5_6_stress.cancel_stress
 test "100 supervised(cancel:) — body fast, no cancel triggered" {
     // Body fiber completes before any cancel — token never fires.
     // Stress: 100 supervised scopes sequentially.
-    let mut done = 0
-    let mut i = 0
+    mut done = 0
+    mut i = 0
     while i < 100 {
-        let tok = CancelToken.new()
+        ro tok = CancelToken.new()
         supervised(cancel: tok) {
             spawn {
                 done += 1
@@ -44,10 +44,10 @@ test "100 supervised(cancel:) — body fast, no cancel triggered" {
 test "50 supervised(cancel:) — body cancels token mid-flight" {
     // Body fiber cancels token immediately после spawn. Other spawn
     // (timer) gets cancelled via cooperative yield.
-    let mut completed_or_cancelled = 0
-    let mut i = 0
+    mut completed_or_cancelled = 0
+    mut i = 0
     while i < 50 {
-        let tok = CancelToken.new()
+        ro tok = CancelToken.new()
         supervised(cancel: tok) {
             spawn {
                 tok.cancel()
@@ -74,11 +74,11 @@ test "10 supervised(cancel:) с sleep — cancel взрывает sleep" {
     // прервать sleep'а raight-away (cancel_wake_all + close_cb).
     // V1: 10 iterations; armed M:N показывает ~500ms+ overhead на
     // cancel-during-sleep — generous bound 5s ниже.
-    let mut iterations = 0
-    let mut i = 0
+    mut iterations = 0
+    mut i = 0
     while i < 10 {
-        let tok = CancelToken.new()
-        let t0 = Time.now()
+        ro tok = CancelToken.new()
+        ro t0 = Time.now()
         supervised(cancel: tok) {
             spawn {
                 Time.sleep(10000)  // 10 sec — должен быть прерван cancel
@@ -88,7 +88,7 @@ test "10 supervised(cancel:) с sleep — cancel взрывает sleep" {
                 tok.cancel()
             }
         }
-        let elapsed = Time.now() - t0
+        ro elapsed = Time.now() - t0
         // Sleep(10000) должен быть прерван через ~5ms + slack. Generous:
         // < 5000ms (вместо 10 sec). Под armed M:N — cancel-during-sleep
         // path добавляет ~50-500ms overhead per iteration (close_cb

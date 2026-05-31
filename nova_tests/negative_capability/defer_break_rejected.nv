@@ -8,7 +8,7 @@ module negative_capability.defer_break_rejected
 
 
 fn f() -> int {
-    let mut sum = 0
+    mut sum = 0
     for i in 0..10 {
         defer {
             break       // ❌ break в defer body

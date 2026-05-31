@@ -24,9 +24,9 @@ const TIMEOUT_MS i64 = 5000
 const SLACK_MS   i64 = 1500
 
 test "select close_after — cancel wakes select and closes timer" {
-    let tok = CancelToken.new()
-    let (tx, rx) = Channel.new[i64](1)
-    let t0 = Time.now()
+    ro tok = CancelToken.new()
+    ro (tx, rx) = Channel.new[i64](1)
+    ro t0 = Time.now()
     with Fail = effect Fail {
         fail(_msg) => interrupt ()
     } {
@@ -44,7 +44,7 @@ test "select close_after — cancel wakes select and closes timer" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // If cancel-propagation did not work, elapsed >= TIMEOUT_MS.
     assert(elapsed < SLACK_MS)
 }

@@ -12,9 +12,9 @@ module contracts.loop_in_let_w2402
 fn sum_in_let(n int) -> int
     requires n >= 0
 {
-    let total = {
-        let mut i = 0
-        let mut s = 0
+    ro total = {
+        mut i = 0
+        mut s = 0
         while i < n
             invariant s >= 0
         {

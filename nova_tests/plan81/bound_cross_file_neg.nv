@@ -13,7 +13,7 @@ type NoShow { n int }
 fn describe[T Showable](x T) -> str => x.show()
 
 test "Ф.3 — non-conforming type rejected by cross-file bound" {
-    let bad = NoShow { n: 1 }
-    let _ = describe(bad)
+    ro bad = NoShow { n: 1 }
+    ro _ = describe(bad)
     assert(true)
 }

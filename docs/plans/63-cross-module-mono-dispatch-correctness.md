@@ -14,9 +14,9 @@
 **Repro:** [`nova_tests/plan11_followup/f11_stringbuilder_new_methods_positive.nv`](../../nova_tests/plan11_followup/f11_stringbuilder_new_methods_positive.nv)
 
 ```nova
-let mut sb = StringBuilder.new()
+mut sb = StringBuilder.new()
 sb.append("abc")
-let snap = sb.peek()      // ← snap declared в C как nova_int, не nova_str
+ro snap = sb.peek()      // ← snap declared в C как nova_int, не nova_str
 ```
 
 Generated C:

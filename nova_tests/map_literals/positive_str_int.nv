@@ -4,7 +4,7 @@ module map_literals.positive_str_int
 import std.collections.hashmap.{HashMap}
 
 test "str→int basic" {
-    let m HashMap[str, int] = ["one": 1, "two": 2, "three": 3]
+    ro m HashMap[str, int] = ["one": 1, "two": 2, "three": 3]
     assert(m.len() == 3)
     assert(m.get("one") == Some(1))
     assert(m.get("two") == Some(2))
@@ -12,7 +12,7 @@ test "str→int basic" {
 }
 
 test "str→int trailing comma" {
-    let m HashMap[str, int] = [
+    ro m HashMap[str, int] = [
         "x": 10,
         "y": 20,
         "z": 30,
@@ -21,7 +21,7 @@ test "str→int trailing comma" {
 }
 
 test "str→int single entry" {
-    let m HashMap[str, int] = ["only": 42]
+    ro m HashMap[str, int] = ["only": 42]
     assert(m.len() == 1)
     assert(m.get("only") == Some(42))
 }
@@ -29,7 +29,7 @@ test "str→int single entry" {
 // Plan 55 Ф.5 closure: `let mut m = ["a": 1, "b": 2]` без аннотации работает
 // после auto-fix Ф.4 (mono-pass corruption + protocol whitelist).
 test "str→int БЕЗ аннотации — inferred" {
-    let mut m = ["a": 1, "b": 2]
+    mut m = ["a": 1, "b": 2]
     assert(m.len() == 2)
     assert(m.get("a") == Some(1))
 }

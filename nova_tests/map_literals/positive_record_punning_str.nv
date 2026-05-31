@@ -6,8 +6,8 @@ module map_literals.positive_record_punning_str
 import std.collections.hashmap.{HashMap}
 
 test "mixed punning + explicit values" {
-    let host = "localhost"
-    let cfg HashMap[str, str] = { host, port: "8080" }
+    ro host = "localhost"
+    ro cfg HashMap[str, str] = { host, port: "8080" }
     assert(cfg.len() == 2)
     assert(cfg.get("host") == Some("localhost"))
     assert(cfg.get("port") == Some("8080"))

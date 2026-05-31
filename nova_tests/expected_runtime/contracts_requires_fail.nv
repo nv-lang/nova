@@ -10,6 +10,6 @@ fn must_be_positive(x int) -> int
 => x * 2
 
 fn main() Io -> () {
-    let _ = must_be_positive(-5)
+    ro _ = must_be_positive(-5)
     println("UNREACHABLE")
 }

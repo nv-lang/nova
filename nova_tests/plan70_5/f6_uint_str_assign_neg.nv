@@ -9,6 +9,6 @@ module nova_tests.plan70_5.f6_uint_str_assign_neg
 
 // EXPECT_CC_ERROR incompatible type
 fn bad() -> str {
-    let x str = uint.MAX
+    ro x str = uint.MAX
     x
 }

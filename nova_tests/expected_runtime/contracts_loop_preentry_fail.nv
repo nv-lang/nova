@@ -7,7 +7,7 @@
 module expected_runtime.contracts_loop_preentry_fail
 
 fn empty_loop_bad(n int) -> int {
-    let mut i = 100   // i стартует с 100
+    mut i = 100   // i стартует с 100
     while i < n
         invariant i < 0   // явно ложно от 0-й итерации
     {
@@ -19,6 +19,6 @@ fn empty_loop_bad(n int) -> int {
 fn main() Io -> () {
     // n=0: loop body не выполняется, но pre-entry check срабатывает
     // (i=100, invariant `i < 0` false).
-    let _ = empty_loop_bad(0)
+    ro _ = empty_loop_bad(0)
     println("UNREACHABLE")
 }

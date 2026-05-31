@@ -14,7 +14,7 @@ export fn Wrapper[T] @make_sibling(v T) -> Self =>
     Self.new(v)
 
 test "Self.method() в instance method generic типа работает" {
-    let original = Wrapper[int].new(1)
-    let sibling = original.make_sibling(42)
+    ro original = Wrapper[int].new(1)
+    ro sibling = original.make_sibling(42)
     assert(sibling.v == 42)
 }

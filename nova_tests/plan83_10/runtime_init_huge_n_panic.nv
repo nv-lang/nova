@@ -7,10 +7,10 @@
 module plan83_10.runtime_init_huge_n_panic
 
 fn main() {
-    let xs = [1, 2, 3]
+    ro xs = [1, 2, 3]
     supervised {
         spawn {
-            let _x = xs[100]
+            ro _x = xs[100]
         }
     }
 }

@@ -9,7 +9,7 @@
 Bindings consume-обязательного значения требуют keyword `consume`:
 
 ```nova
-let g = mu.lock()       // ✗ старое — E_CONSUME_KEYWORD_MISSING
+ro g = mu.lock()       // ✗ старое — E_CONSUME_KEYWORD_MISSING
 consume g = mu.lock()   // ✓ новое
 ```
 
@@ -17,7 +17,7 @@ Alias-binding consume-obligation запрещён в теле функции:
 
 ```nova
 consume sb = StringBuilder.new()
-let view = sb           // ✗ E_VIEW_BINDING_FORBIDDEN
+ro view = sb           // ✗ E_VIEW_BINDING_FORBIDDEN
 ```
 
 Для transfer ownership — используйте `consume Y = X` (move):
@@ -110,8 +110,8 @@ stdlib consume-types: `MutexGuard`, `ReadGuard`, `WriteGuard`,
 
 ```nova
 // Before
-let g = mu.lock()
-let sb = StringBuilder.new()
+ro g = mu.lock()
+ro sb = StringBuilder.new()
 
 // After
 consume g = mu.lock()
@@ -122,19 +122,19 @@ consume sb = StringBuilder.new()
 
 ```nova
 // Before — alias inside function body
-let mu = Mutex.new()
+ro mu = Mutex.new()
 consume g = mu.lock()
-let g2 = g          // ✗ E_VIEW_BINDING_FORBIDDEN
+ro g2 = g          // ✗ E_VIEW_BINDING_FORBIDDEN
 g2.unlock()
 
 // After — option 1: move ownership explicitly
-let mu = Mutex.new()
+ro mu = Mutex.new()
 consume g = mu.lock()
 consume g2 = g      // ✓ move — g dead, g2 owns
 g2.unlock()
 
 // After — option 2: just rename, no alias needed
-let mu = Mutex.new()
+ro mu = Mutex.new()
 consume g = mu.lock()
 g.unlock()
 ```
@@ -145,7 +145,7 @@ g.unlock()
 // Before — alias for «read-only» peek
 consume sb = StringBuilder.new()
 sb.append("hi")
-let view = sb              // ✗
+ro view = sb              // ✗
 print(view.len())
 
 // After — function-param view
@@ -154,8 +154,8 @@ fn print_len(s StringBuilder) -> int => s.len()
 
 consume sb = StringBuilder.new()
 sb.append("hi")
-let n = print_len(sb)      // ✓ view-borrow during call
-let v = sb.as_str()        // sb still live in caller
+ro n = print_len(sb)      // ✓ view-borrow during call
+ro v = sb.as_str()        // sb still live in caller
 ```
 
 ### Recipe D — fluent-chain через `-> @` методы
@@ -166,7 +166,7 @@ Fluent методы (`-> @`) возвращают receiver — chain mutators в
 ```nova
 consume sb = StringBuilder.with_capacity(8)
 sb.append("a").append("b")     // chain — sb still live
-let s = sb.as_str()             // consume
+ro s = sb.as_str()             // consume
 ```
 
 Когда chain — trailing функции, M3 (Plan 73.1 V3) детектит implicit
@@ -204,8 +204,8 @@ type-checker project-wide registry: consume-types declared в
 ```nova
 import std.runtime.sync
 
-let mu = Mutex.new()
-let g = mu.lock()       // ✓ детектит — E_CONSUME_KEYWORD_MISSING
+ro mu = Mutex.new()
+ro g = mu.lock()       // ✓ детектит — E_CONSUME_KEYWORD_MISSING
 consume g = mu.lock()   // ✓ correct
 ```
 

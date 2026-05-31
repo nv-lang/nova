@@ -17,38 +17,38 @@ fn Priority @compare(other Priority) -> int =>
 
 
 test "compare — less (negative)" {
-    let a = Priority { level: 1 }
-    let b = Priority { level: 5 }
+    ro a = Priority { level: 1 }
+    ro b = Priority { level: 5 }
     assert(a.compare(b) < 0)
 }
 
 test "compare — equal (zero)" {
-    let a = Priority { level: 3 }
-    let b = Priority { level: 3 }
+    ro a = Priority { level: 3 }
+    ro b = Priority { level: 3 }
     assert(a.compare(b) == 0)
 }
 
 test "compare — greater (positive)" {
-    let a = Priority { level: 9 }
-    let b = Priority { level: 2 }
+    ro a = Priority { level: 9 }
+    ro b = Priority { level: 2 }
     assert(a.compare(b) > 0)
 }
 
 test "compare — антисимметрия: a<b => b>a" {
-    let a = Priority { level: 1 }
-    let b = Priority { level: 2 }
+    ro a = Priority { level: 1 }
+    ro b = Priority { level: 2 }
     assert(a.compare(b) < 0)
     assert(b.compare(a) > 0)
 }
 
 test "compare — рефлексивность: x.compare(x) == 0" {
-    let p = Priority { level: 42 }
+    ro p = Priority { level: 42 }
     assert(p.compare(p) == 0)
 }
 
 test "compare — отрицательные уровни" {
-    let a = Priority { level: -5 }
-    let b = Priority { level: -1 }
+    ro a = Priority { level: -5 }
+    ro b = Priority { level: -1 }
     assert(a.compare(b) < 0)
 }
 
@@ -58,9 +58,9 @@ test "compare — отрицательные уровни" {
 fn is_less(a Priority, b Priority) -> bool => a.compare(b) < 0
 
 test "compare — транзитивность: a<b, b<c => a<c" {
-    let a = Priority { level: 1 }
-    let b = Priority { level: 5 }
-    let c = Priority { level: 10 }
+    ro a = Priority { level: 1 }
+    ro b = Priority { level: 5 }
+    ro c = Priority { level: 10 }
     assert(is_less(a, b))
     assert(is_less(b, c))
     assert(is_less(a, c))

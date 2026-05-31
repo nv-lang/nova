@@ -10,8 +10,8 @@ fn raise() Fail[ParseError] -> int {
 }
 
 test "Fail без [E] ловит любой typed throw" {
-    let n = with Fail = |_e| interrupt 42 {
-        let _ = raise()
+    ro n = with Fail = |_e| interrupt 42 {
+        ro _ = raise()
         0
     }
     assert(n == 42, "Fail catch-all interrupts to 42")

@@ -8,9 +8,9 @@ import std.time.duration
 test "close_at past deadline — already-closed, immediate None" {
     supervised {
         spawn {
-            let past = Monotonic.now() - Duration.from_secs(1)
-            let t = ChanReader.close_at(past)
-            let v = t.recv()
+            ro past = Monotonic.now() - Duration.from_secs(1)
+            ro t = ChanReader.close_at(past)
+            ro v = t.recv()
             assert(v.is_none())
         }
     }
@@ -19,9 +19,9 @@ test "close_at past deadline — already-closed, immediate None" {
 test "close_at exactly-now deadline — immediate close" {
     supervised {
         spawn {
-            let now = Monotonic.now()
-            let t = ChanReader.close_at(now)
-            let v = t.recv()
+            ro now = Monotonic.now()
+            ro t = ChanReader.close_at(now)
+            ro v = t.recv()
             assert(v.is_none())
         }
     }

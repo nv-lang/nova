@@ -13,21 +13,21 @@ export type Incrementer protocol {
 
 
 test "mutable capture, mutation visible через несколько вызовов" {
-    let mut counter = 0
-    let it = protocol Incrementer {
+    mut counter = 0
+    ro it = protocol Incrementer {
         advance() {
             counter = counter + 1
             counter
         }
     }
-    let a = it.advance()
-    let b = it.advance()
-    let c = it.advance()
+    ro a = it.advance()
+    ro b = it.advance()
+    ro c = it.advance()
     assert(a == 1)
     assert(b == 2)
     assert(c == 3)
     // External mutation also visible:
     counter = 100
-    let d = it.advance()
+    ro d = it.advance()
     assert(d == 101)
 }

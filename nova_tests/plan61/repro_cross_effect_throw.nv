@@ -20,11 +20,11 @@ fn upper_layer() Fail[HttpError] -> int {
 }
 
 test "cross-effect throw in handler arm" {
-    let reason = with Fail[HttpError] = |e| interrupt (match e {
+    ro reason = with Fail[HttpError] = |e| interrupt (match e {
         InvalidPath(reason) => reason
         ServerErr           => "server"
     }) {
-        let _ = upper_layer()
+        ro _ = upper_layer()
         "unreachable"
     }
     assert(reason == "lower fail", "outer handler should receive HttpError")

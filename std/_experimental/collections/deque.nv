@@ -63,7 +63,7 @@ export fn Deque[T] mut @push_back(x T) -> () {
 /// Добавить элемент в начало. O(n) в текущей реализации; O(1) в production.
 #stable(since = "0.1")
 export fn Deque[T] mut @push_front(x T) -> () {
-    let mut new_items []T = [x]
+    mut new_items []T = [x]
     for it in @_items { new_items.push(it) }
     @_items = new_items
 }
@@ -73,9 +73,9 @@ export fn Deque[T] mut @push_front(x T) -> () {
 #stable(since = "0.1")
 export fn Deque[T] mut @pop_back() -> Option[T] {
     if @_items.len() == 0 { return None }
-    let last_idx = @_items.len() - 1
-    let value = @_items[last_idx]
-    let mut new_items []T = []
+    ro last_idx = @_items.len() - 1
+    ro value = @_items[last_idx]
+    mut new_items []T = []
     for i in 0..last_idx {
         new_items.push(@_items[i])
     }
@@ -88,9 +88,9 @@ export fn Deque[T] mut @pop_back() -> Option[T] {
 #stable(since = "0.1")
 export fn Deque[T] mut @pop_front() -> Option[T] {
     if @_items.len() == 0 { return None }
-    let value = @_items[0]
-    let mut new_items []T = []
-    let mut i = 1
+    ro value = @_items[0]
+    mut new_items []T = []
+    mut i = 1
     while i < @_items.len() {
         new_items.push(@_items[i])
         i += 1
@@ -125,7 +125,7 @@ export fn Deque[T] @get(i int) -> Option[T] {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "push_back / pop_back" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_back(1)
     d.push_back(2)
     d.push_back(3)
@@ -137,7 +137,7 @@ test "push_back / pop_back" {
 }
 
 test "push_front / pop_front" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_front(1)
     d.push_front(2)
     d.push_front(3)                    // d = [3, 2, 1]
@@ -150,7 +150,7 @@ test "push_front / pop_front" {
 }
 
 test "mixed push_back + pop_front (FIFO queue)" {
-    let mut d = Deque[str].new()
+    mut d = Deque[str].new()
     d.push_back("a")
     d.push_back("b")
     d.push_back("c")
@@ -160,12 +160,12 @@ test "mixed push_back + pop_front (FIFO queue)" {
 }
 
 test "BFS-like sliding window" {
-    let mut d = Deque[int].new()
-    let inputs = [1, 2, 3, 4, 5]
+    mut d = Deque[int].new()
+    ro inputs = [1, 2, 3, 4, 5]
     for x in inputs {
         d.push_back(x)
         if d.len() > 3 {
-            let _ = d.pop_front()
+            ro _ = d.pop_front()
         }
     }
     // Window of size 3 на конце
@@ -175,7 +175,7 @@ test "BFS-like sliding window" {
 }
 
 test "front/back пустого deque" {
-    let d = Deque[int].new()
+    ro d = Deque[int].new()
     assert(d.front() == None)
     assert(d.back() == None)
 }

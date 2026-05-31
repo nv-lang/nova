@@ -11,7 +11,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 
 test "for consume — skip consume in arm → D156-iter-not-consumed" {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         // Read tx.id but do NOT call any consume method.
         // ОШИБКА D156-iter-not-consumed: tx is Live on arm exit.

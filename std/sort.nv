@@ -32,11 +32,11 @@ module std.sort
 /// ```
 #stable(since = "0.1")
 export fn []int mut @sort() -> @ {
-    let n = @len()
-    let mut i = 1
+    ro n = @len()
+    mut i = 1
     while i < n {
-        let key = @[i]
-        let mut j = i - 1
+        ro key = @[i]
+        mut j = i - 1
         while j >= 0 && @[j] > key {
             @[j + 1] = @[j]
             j = j - 1
@@ -63,11 +63,11 @@ export fn []int mut @sort() -> @ {
 /// ```
 #stable(since = "0.1")
 export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
-    let n = @len()
-    let mut i = 1
+    ro n = @len()
+    mut i = 1
     while i < n {
-        let key = @[i]
-        let mut j = i - 1
+        ro key = @[i]
+        mut j = i - 1
         while j >= 0 && cmp(@[j], key) > 0 {
             @[j + 1] = @[j]
             j = j - 1
@@ -97,11 +97,11 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
 /// ```
 #stable(since = "0.1")
 export fn []int @binary_search(target int) -> Option[int] {
-    let mut lo = 0
-    let mut hi = @len() - 1
+    mut lo = 0
+    mut hi = @len() - 1
     while lo <= hi {
-        let mid = (lo + hi) / 2
-        let v = @[mid]
+        ro mid = (lo + hi) / 2
+        ro v = @[mid]
         if v == target {
             return Some(mid)
         }
@@ -125,14 +125,14 @@ export fn []int @binary_search(target int) -> Option[int] {
 /// ```
 #stable(since = "0.1")
 export fn []int @min() -> Option[int] {
-    let n = @len()
+    ro n = @len()
     if n == 0 {
         return None
     }
-    let mut m = @[0]
-    let mut i = 1
+    mut m = @[0]
+    mut i = 1
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if v < m {
             m = v
         }
@@ -152,14 +152,14 @@ export fn []int @min() -> Option[int] {
 /// ```
 #stable(since = "0.1")
 export fn []int @max() -> Option[int] {
-    let n = @len()
+    ro n = @len()
     if n == 0 {
         return None
     }
-    let mut m = @[0]
-    let mut i = 1
+    mut m = @[0]
+    mut i = 1
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if v > m {
             m = v
         }
@@ -186,12 +186,12 @@ export fn []int @max() -> Option[int] {
 /// ```
 #stable(since = "0.1")
 export fn[T Comparable] []T @min_of() -> Option[T] {
-    let n = @len()
+    ro n = @len()
     if n == 0 { return None }
-    let mut m = @[0]
-    let mut i = 1
+    mut m = @[0]
+    mut i = 1
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if v.compare(m) < 0 { m = v }
         i = i + 1
     }
@@ -201,12 +201,12 @@ export fn[T Comparable] []T @min_of() -> Option[T] {
 /// Generic max для любого `[T Comparable]`. `None` для empty.
 #stable(since = "0.1")
 export fn[T Comparable] []T @max_of() -> Option[T] {
-    let n = @len()
+    ro n = @len()
     if n == 0 { return None }
-    let mut m = @[0]
-    let mut i = 1
+    mut m = @[0]
+    mut i = 1
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if v.compare(m) > 0 { m = v }
         i = i + 1
     }
@@ -223,14 +223,14 @@ export fn[T Comparable] []T @max_of() -> Option[T] {
 /// ```
 #stable(since = "0.1")
 export fn[T Comparable] []T mut @sort_of() -> @ {
-    let n = @len()
-    let mut i = 1
+    ro n = @len()
+    mut i = 1
     while i < n {
-        let key = @[i]
-        let mut j = i - 1
+        ro key = @[i]
+        mut j = i - 1
         // Note: binding `cur = @[j]` workaround — direct @[j].method
         // не диспатчится правильно в mono пути (followup [M-91.8c-direct-index-method]).
-        let mut cur = @[j]
+        mut cur = @[j]
         while j >= 0 && cur.compare(key) > 0 {
             @[j + 1] = cur
             j = j - 1
@@ -256,12 +256,12 @@ export fn[T Comparable] []T mut @sort_of() -> @ {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @min_by_of(cmp fn(T, T) -> int) -> Option[T] {
-    let n = @len()
+    ro n = @len()
     if n == 0 { return None }
-    let mut m = @[0]
-    let mut i = 1
+    mut m = @[0]
+    mut i = 1
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if cmp(v, m) < 0 { m = v }
         i = i + 1
     }
@@ -271,12 +271,12 @@ export fn[T] []T @min_by_of(cmp fn(T, T) -> int) -> Option[T] {
 /// Generic max_by с custom comparator.
 #stable(since = "0.1")
 export fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T] {
-    let n = @len()
+    ro n = @len()
     if n == 0 { return None }
-    let mut m = @[0]
-    let mut i = 1
+    mut m = @[0]
+    mut i = 1
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if cmp(v, m) > 0 { m = v }
         i = i + 1
     }
@@ -293,11 +293,11 @@ export fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T] {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T mut @reverse_of() -> @ {
-    let n = @len()
-    let mut i = 0
-    let mut j = n - 1
+    ro n = @len()
+    mut i = 0
+    mut j = n - 1
     while i < j {
-        let tmp = @[i]
+        ro tmp = @[i]
         @[i] = @[j]
         @[j] = tmp
         i = i + 1
@@ -316,9 +316,9 @@ export fn[T] []T mut @reverse_of() -> @ {
 /// ```
 #stable(since = "0.1")
 export fn []int @sum() -> int {
-    let n = @len()
-    let mut s = 0
-    let mut i = 0
+    ro n = @len()
+    mut s = 0
+    mut i = 0
     while i < n {
         s = s + @[i]
         i = i + 1
@@ -329,9 +329,9 @@ export fn []int @sum() -> int {
 /// Product для `[]int`. Returns 1 для empty (multiplicative identity).
 #stable(since = "0.1")
 export fn []int @product() -> int {
-    let n = @len()
-    let mut p = 1
-    let mut i = 0
+    ro n = @len()
+    mut p = 1
+    mut i = 0
     while i < n {
         p = p * @[i]
         i = i + 1
@@ -350,10 +350,10 @@ export fn []int @product() -> int {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @position_of(pred fn(T) -> bool) -> Option[int] {
-    let n = @len()
-    let mut i = 0
+    ro n = @len()
+    mut i = 0
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if pred(v) { return Some(i) }
         i = i + 1
     }
@@ -369,11 +369,11 @@ export fn[T] []T @position_of(pred fn(T) -> bool) -> Option[int] {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @count_of(pred fn(T) -> bool) -> int {
-    let n = @len()
-    let mut count = 0
-    let mut i = 0
+    ro n = @len()
+    mut count = 0
+    mut i = 0
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if pred(v) { count = count + 1 }
         i = i + 1
     }
@@ -389,10 +389,10 @@ export fn[T] []T @count_of(pred fn(T) -> bool) -> int {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
-    let n = @len()
-    let mut i = 0
+    ro n = @len()
+    mut i = 0
     while i < n {
-        let v = @[i]
+        ro v = @[i]
         if pred(v) { return Some(v) }
         i = i + 1
     }
@@ -409,12 +409,12 @@ export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
 /// ```
 #stable(since = "0.1")
 export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
-    let n = @len()
-    let mut i = 1
+    ro n = @len()
+    mut i = 1
     while i < n {
-        let key = @[i]
-        let mut j = i - 1
-        let mut cur = @[j]
+        ro key = @[i]
+        mut j = i - 1
+        mut cur = @[j]
         while j >= 0 && cmp(cur, key) > 0 {
             @[j + 1] = cur
             j = j - 1
@@ -430,12 +430,12 @@ export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
 /// Возвращает `Some(idx)` где `@[idx] == target` (через @compare == 0), или `None`.
 #stable(since = "0.1")
 export fn[T Comparable] []T @binary_search_of(target T) -> Option[int] {
-    let mut lo = 0
-    let mut hi = @len() - 1
+    mut lo = 0
+    mut hi = @len() - 1
     while lo <= hi {
-        let mid = (lo + hi) / 2
-        let v = @[mid]
-        let cmp = v.compare(target)
+        ro mid = (lo + hi) / 2
+        ro v = @[mid]
+        ro cmp = v.compare(target)
         if cmp == 0 { return Some(mid) }
         if cmp < 0 { lo = mid + 1 }
         else       { hi = mid - 1 }

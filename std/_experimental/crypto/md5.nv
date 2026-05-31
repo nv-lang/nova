@@ -51,7 +51,7 @@ export type Md5 {
 // T[i] = floor(2^32 * |sin(i+1)|), i=0..63
 fn t_constant(i int) -> u32 {
     // Pre-computed values from RFC 1321 § 3.4
-    let table [64]u32 = [
+    ro table [64]u32 = [
         0xD76AA478, 0xE8C7B756, 0x242070DB, 0xC1BDCEEE,
         0xF57C0FAF, 0x4787C62A, 0xA8304613, 0xFD469501,
         0x698098D8, 0x8B44F7AF, 0xFFFF5BB1, 0x895CD7BE,
@@ -74,7 +74,7 @@ fn t_constant(i int) -> u32 {
 
 // Per-round shift amounts.
 fn s_constant(i int) -> int {
-    let shifts [64]int = [
+    ro shifts [64]int = [
         7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
         5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
         4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
@@ -103,7 +103,7 @@ export fn Md5.new() -> Self =>
 /// One-shot MD5 hash: bytes → 16-byte digest.
 #stable(since = "0.1")
 export fn Md5.hash(data []u8) -> [16]u8 {
-    let mut state = Md5.new()
+    mut state = Md5.new()
     state.update(data)
     state.finalize()
 }
@@ -111,8 +111,8 @@ export fn Md5.hash(data []u8) -> [16]u8 {
 /// One-shot MD5 hash в lowercase hex string.
 #stable(since = "0.1")
 export fn Md5.hash_str(data []u8) -> str {
-    let digest = Md5.hash(data)
-    let mut bytes []u8 = []
+    ro digest = Md5.hash(data)
+    mut bytes []u8 = []
     for i in 0..16 { bytes.push(digest[i]) }
     Hex.encode(bytes)
 }
@@ -138,7 +138,7 @@ export fn Md5 mut @update(data []u8) -> () {
 export fn Md5 mut @finalize() -> [16]u8 {
     // Padding: append 0x80, потом 0-bytes до длины ≡ 56 (mod 64),
     // потом 8 байт длины в битах (little-endian).
-    let total_bits = @total_len * 8
+    ro total_bits = @total_len * 8
 
     @buffer.push(0x80)
     while @buffer.len() % 64 != 56 {
@@ -150,16 +150,16 @@ export fn Md5 mut @finalize() -> [16]u8 {
     }
 
     // Process remaining blocks.
-    let mut pos = 0
+    mut pos = 0
     while pos < @buffer.len() {
-        let mut block []u8 = []
+        mut block []u8 = []
         for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)
         pos += 64
     }
 
     // Вывод: 16 байт в LE-порядке.
-    let mut out [16]u8 = [0; 16]
+    mut out [16]u8 = [0; 16]
     write_le_u32(out, 0,  @a)
     write_le_u32(out, 4,  @b)
     write_le_u32(out, 8,  @c)
@@ -174,19 +174,19 @@ export fn Md5 mut @finalize() -> [16]u8 {
 
 fn Md5 mut @process_block(block []u8) -> () {
     // Read 16 little-endian u32 words.
-    let mut m [16]u32 = [0; 16]
+    mut m [16]u32 = [0; 16]
     for i in 0..16 {
         m[i] = read_le_u32(block, i * 4)
     }
 
-    let mut a = @a
-    let mut b = @b
-    let mut c = @c
-    let mut d = @d
+    mut a = @a
+    mut b = @b
+    mut c = @c
+    mut d = @d
 
     // 64 rounds in 4 groups of 16.
     for k in 0..64 {
-        let f u32 = if k < 16 {
+        ro f u32 = if k < 16 {
             (b & c) | ((b ^ 0xFFFFFFFF) & d)               // F: (B & C) | (~B & D)
         } else if k < 32 {
             (d & b) | ((d ^ 0xFFFFFFFF) & c)               // G: (D & B) | (~D & C)
@@ -196,7 +196,7 @@ fn Md5 mut @process_block(block []u8) -> () {
             c ^ (b | (d ^ 0xFFFFFFFF))                       // I: C ^ (B | ~D)
         }
 
-        let g int = if k < 16 {
+        ro g int = if k < 16 {
             k
         } else if k < 32 {
             (5 * k + 1) % 16
@@ -206,10 +206,10 @@ fn Md5 mut @process_block(block []u8) -> () {
             (7 * k) % 16
         }
 
-        let temp = d
+        ro temp = d
         d = c
         c = b
-        let sum = (a + f + t_constant(k) + m[g]) & 0xFFFFFFFF
+        ro sum = (a + f + t_constant(k) + m[g]) & 0xFFFFFFFF
         b = (b + rotl32(sum, s_constant(k))) & 0xFFFFFFFF
         a = temp
 
@@ -259,24 +259,24 @@ test "MD5: 'message digest'" {
 }
 
 test "MD5: 'abcdefghijklmnopqrstuvwxyz'" {
-    let s = "abcdefghijklmnopqrstuvwxyz"
+    ro s = "abcdefghijklmnopqrstuvwxyz"
     assert(Md5.hash_str(s.bytes()) == "c3fcd3d76192e4007dfb496cca67e13b")
 }
 
 test "MD5: incremental == one-shot" {
-    let full = "The quick brown fox jumps over the lazy dog".bytes()
-    let part1 = "The quick brown ".bytes()
-    let part2 = "fox jumps over ".bytes()
-    let part3 = "the lazy dog".bytes()
+    ro full = "The quick brown fox jumps over the lazy dog".bytes()
+    ro part1 = "The quick brown ".bytes()
+    ro part2 = "fox jumps over ".bytes()
+    ro part3 = "the lazy dog".bytes()
 
-    let one_shot = Md5.hash_str(full)
+    ro one_shot = Md5.hash_str(full)
 
-    let mut state = Md5.new()
+    mut state = Md5.new()
     state.update(part1)
     state.update(part2)
     state.update(part3)
-    let digest = state.finalize()
-    let mut bytes []u8 = []
+    ro digest = state.finalize()
+    mut bytes []u8 = []
     for i in 0..16 { bytes.push(digest[i]) }
 
     assert(one_shot == Hex.encode(bytes))

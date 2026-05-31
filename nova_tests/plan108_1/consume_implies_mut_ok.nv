@@ -10,6 +10,6 @@ fn build_str(consume sb StringBuilder) -> str {
 
 test "consume param can mutate" {
     consume sb = StringBuilder.from("hi")
-    let result = build_str(sb)
+    ro result = build_str(sb)
     assert(result == "hi!")
 }

@@ -6,7 +6,7 @@ module concurrency.mn_init_after_materialize
 
 test "init after first spawn is a diagnosed no-op" {
     runtime.init(2)
-    let mut x = 0
+    mut x = 0
     supervised {
         spawn { x = 1 }
     }

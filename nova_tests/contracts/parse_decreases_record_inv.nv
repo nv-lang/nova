@@ -24,7 +24,7 @@ fn add(a int, b int) -> int
 => a + b
 
 test "decreases + record invariant parse" {
-    let acc = Account { balance: 100 }
+    ro acc = Account { balance: 100 }
     assert(acc.balance == 100)
     assert(factorial(5) == 120)
     assert(add(3, 4) == 7)

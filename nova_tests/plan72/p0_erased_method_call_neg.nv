@@ -25,7 +25,7 @@ type IntCounter {
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -35,8 +35,8 @@ fn IntCounter mut @next() -> Option[int] => {
 
 // P3-B: this now compiles and dispatches via NovaVtable_Iter_nova_int.
 test "P0→P3-B — method call on existential Iterable[int] now works via vtable" {
-    let c = IntCounter { cur: 0, end: 3 }
-    let mut x Iterable[int] = c
-    let r = x.next()
+    ro c = IntCounter { cur: 0, end: 3 }
+    mut x Iterable[int] = c
+    ro r = x.next()
     assert(r.is_some())
 }

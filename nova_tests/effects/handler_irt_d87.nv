@@ -19,7 +19,7 @@ type Logger effect {
 }
 
 test "Effect[E] (default IRT=never): handler без interrupt" {
-    let mut count = 0
+    mut count = 0
     with Logger = effect Logger {
         log(_msg) {
             count = count + 1
@@ -33,7 +33,7 @@ test "Effect[E] (default IRT=never): handler без interrupt" {
 }
 
 test "Effect[E, IRT] (явный IRT=int): handler с interrupt" {
-    let r = with Logger = effect Logger {
+    ro r = with Logger = effect Logger {
         log(msg) {
             if msg == "stop" {
                 interrupt 42

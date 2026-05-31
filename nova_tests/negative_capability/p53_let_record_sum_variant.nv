@@ -8,8 +8,8 @@ module negative_capability.p53_let_record_sum_variant
 
 type Shape | Circle { r int } | Square { s int }
 
-test "record-variant pattern in let — refutable" {
-    let sh = Shape.Circle { r: 7 }
-    let Circle { r } = sh
+test "record-variant pattern in ro — refutable" {
+    ro sh = Shape.Circle { r: 7 }
+    ro Circle { r } = sh
     assert(r == 7)
 }

@@ -17,7 +17,7 @@ module syntax.variadic
 
 // Declaration: ...items []int (variadic last).
 fn sum_all(...items []int) -> int {
-    let mut total int = 0
+    mut total int = 0
     for x in items {
         total += x
     }
@@ -26,7 +26,7 @@ fn sum_all(...items []int) -> int {
 
 
 fn count_items(...items []int) -> int {
-    let mut n int = 0
+    mut n int = 0
     for _ in items {
         n += 1
     }
@@ -35,34 +35,34 @@ fn count_items(...items []int) -> int {
 
 
 test "variadic — все regular args" {
-    let r = sum_all(1, 2, 3)
+    ro r = sum_all(1, 2, 3)
     assert(r == 6)
 }
 
 
 test "variadic — empty (variadic-position пустая)" {
-    let r = sum_all()
+    ro r = sum_all()
     assert(r == 0)
     assert(count_items() == 0)
 }
 
 
 test "variadic — spread `...arr`" {
-    let mut arr = [10, 20, 30]
-    let r = sum_all(...arr)
+    mut arr = [10, 20, 30]
+    ro r = sum_all(...arr)
     assert(r == 60)
 }
 
 
 test "variadic — mixed regular + spread + regular" {
-    let middle = [2, 3, 4]
-    let r = sum_all(1, ...middle, 5)
+    ro middle = [2, 3, 4]
+    ro r = sum_all(1, ...middle, 5)
     assert(r == 15)
 }
 
 
 test "variadic — count vs sum independent" {
-    let mut a = [10, 20, 30, 40]
+    mut a = [10, 20, 30, 40]
     assert(count_items(...a) == 4)
     assert(sum_all(...a) == 100)
 }
@@ -70,7 +70,7 @@ test "variadic — count vs sum independent" {
 
 // Combination of regular + variadic params.
 fn weighted_sum(weight int, ...items []int) -> int {
-    let mut total int = 0
+    mut total int = 0
     for x in items {
         total += x * weight
     }
@@ -80,11 +80,11 @@ fn weighted_sum(weight int, ...items []int) -> int {
 
 test "variadic — комбинация regular + variadic" {
     // weight=3, items=[1,2,3] → 3*1 + 3*2 + 3*3 = 18.
-    let r = weighted_sum(3, 1, 2, 3)
+    ro r = weighted_sum(3, 1, 2, 3)
     assert(r == 18)
-    let mut arr = [4, 5]
+    mut arr = [4, 5]
     // weight=2, items=[4,5] → 2*4 + 2*5 = 18.
-    let r2 = weighted_sum(2, ...arr)
+    ro r2 = weighted_sum(2, ...arr)
     assert(r2 == 18)
 }
 
@@ -96,7 +96,7 @@ type Aggregator {
 
 
 export fn Aggregator @sum(...nums []int) -> int {
-    let mut t int = 0
+    mut t int = 0
     for n in nums {
         t += n
     }
@@ -110,10 +110,10 @@ export fn Aggregator.new(label str) -> Aggregator {
 
 
 test "variadic — method (Aggregator.@sum)" {
-    let agg = Aggregator.new("test")
-    let r = agg.sum(7, 8, 9)
+    ro agg = Aggregator.new("test")
+    ro r = agg.sum(7, 8, 9)
     assert(r == 24)
-    let xs = [100, 200]
+    ro xs = [100, 200]
     assert(agg.sum(...xs) == 300)
     assert(agg.sum() == 0)
 }

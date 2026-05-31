@@ -12,11 +12,11 @@ fn parse_pair(s str) -> Result[(str, int), str] {
 
 
 test "match Block { trailing call } { Ok((k, v)) => ... }" {
-    let prefix = "p"
-    let mut k str = ""
-    let mut v int = 0
+    ro prefix = "p"
+    mut k str = ""
+    mut v int = 0
     match {
-        let composed = prefix + ":1"
+        ro composed = prefix + ":1"
         parse_pair(composed)
     } {
         Ok((key, val)) => { k = key; v = val }

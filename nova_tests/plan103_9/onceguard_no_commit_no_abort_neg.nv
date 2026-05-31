@@ -6,7 +6,7 @@
 module nova_tests.plan103_9.onceguard_no_commit_no_abort_neg
 
 test "onceguard not consumed → D133 compile error" {
-    let mut once = Once.new()
+    mut once = Once.new()
     consume g = once.make_guard()
     // Missing: g.commit() or g.abort()
     // ERROR: g is Live at scope exit → D133

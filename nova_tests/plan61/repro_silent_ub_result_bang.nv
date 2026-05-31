@@ -16,8 +16,8 @@ fn try_connect() -> Result[int, str] {
 }
 
 test "result!! carries Err payload" {
-    let host = with Fail = |e| interrupt e {
-        let _ = try_connect()!!
+    ro host = with Fail = |e| interrupt e {
+        ro _ = try_connect()!!
         "unreachable"
     }
     // До Plan 61 Ф.4 — `host == "Result::Err"` (placeholder garbage).

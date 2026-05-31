@@ -6,8 +6,8 @@
 module expected_runtime.f9_loop_decreases_fail
 
 fn bad_loop(n int) -> int {
-    let mut i = n
-    let mut iter = 0
+    mut i = n
+    mut iter = 0
     while iter < 1
         decreases i
     {
@@ -18,6 +18,6 @@ fn bad_loop(n int) -> int {
 }
 
 fn main() Io -> () {
-    let _ = bad_loop(5)
+    ro _ = bad_loop(5)
     println("UNREACHABLE")
 }

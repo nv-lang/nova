@@ -4,7 +4,7 @@ module map_literals.positive_int_str
 import std.collections.hashmap.{HashMap}
 
 test "int→str basic" {
-    let m HashMap[int, str] = [1: "a", 2: "b", 3: "c"]
+    ro m HashMap[int, str] = [1: "a", 2: "b", 3: "c"]
     assert(m.len() == 3)
     assert(m.get(2) == Some("b"))
     assert(m.contains(3))
@@ -12,8 +12,8 @@ test "int→str basic" {
 }
 
 test "expressions as keys/values" {
-    let base = 100
-    let m HashMap[int, str] = [base: "first", base + 1: "second", base * 2: "third"]
+    ro base = 100
+    ro m HashMap[int, str] = [base: "first", base + 1: "second", base * 2: "third"]
     assert(m.len() == 3)
     assert(m.get(100) == Some("first"))
     assert(m.get(101) == Some("second"))

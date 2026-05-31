@@ -18,18 +18,18 @@ type Bar {
 
 
 test "tuple of two pointer-typed records — _p suffix in mangle" {
-    let f = Foo { val: 100 }
-    let b = Bar { label: "hello" }
-    let pair = (f, b)
+    ro f = Foo { val: 100 }
+    ro b = Bar { label: "hello" }
+    ro pair = (f, b)
     assert(pair.0.val == 100)
     assert(pair.1.label == "hello")
 }
 
 
 test "triple pointer mix: (Foo, Bar, int)" {
-    let f = Foo { val: 7 }
-    let b = Bar { label: "x" }
-    let triple = (f, b, 42)
+    ro f = Foo { val: 7 }
+    ro b = Bar { label: "x" }
+    ro triple = (f, b, 42)
     assert(triple.0.val == 7)
     assert(triple.1.label == "x")
     assert(triple.2 == 42)
@@ -37,10 +37,10 @@ test "triple pointer mix: (Foo, Bar, int)" {
 
 
 test "tuple of pointer with destructure — round-trip parse" {
-    let f = Foo { val: 99 }
-    let b = Bar { label: "world" }
-    let pair = (f, b)
-    let (fp, bp) = pair
+    ro f = Foo { val: 99 }
+    ro b = Bar { label: "world" }
+    ro pair = (f, b)
+    ro (fp, bp) = pair
     assert(fp.val == 99)
     assert(bp.label == "world")
 }

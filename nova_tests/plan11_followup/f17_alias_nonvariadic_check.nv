@@ -7,11 +7,11 @@ module plan11_followup.f17_alias_nonvariadic_check
 import std._experimental.path.path as p
 
 test "non-variadic Path.normalize via alias" {
-    let r = p.Path.normalize("/a/b/../c")
+    ro r = p.Path.normalize("/a/b/../c")
     assert(r == "/a/c")
 }
 
 test "non-variadic Path.is_absolute via alias" {
-    let r = p.Path.is_absolute("/abs")
+    ro r = p.Path.is_absolute("/abs")
     assert(r)
 }

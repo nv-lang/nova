@@ -4,7 +4,7 @@ module plan11_followup.f8_assert_in_if_expr_positive
 // branch — same fix через comma-operator NOVA_UNIT cast.
 
 test "assert в if-expression branch — compiles + runs" {
-    let n = 7
+    ro n = 7
     if n > 0 {
         assert(n == 7)
     } else {
@@ -13,9 +13,9 @@ test "assert в if-expression branch — compiles + runs" {
 }
 
 test "assert как last expression в block" {
-    let m = 10
-    let _ = {
-        let doubled = m * 2
+    ro m = 10
+    ro _ = {
+        ro doubled = m * 2
         assert(doubled == 20)
     }
 }

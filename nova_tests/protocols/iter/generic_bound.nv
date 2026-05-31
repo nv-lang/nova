@@ -14,7 +14,7 @@ fn CountDown mut @next() -> Option[int] {
     if @current <= 0 {
         None
     } else {
-        let v = @current
+        ro v = @current
         @current = @current - 1
         Some(v)
     }
@@ -23,7 +23,7 @@ fn CountDown mut @next() -> Option[int] {
 
 // Generic-функция с Iterable[int]-bound — for-in по type-параметру.
 fn sum_iter[T Iterable[int]](mut it T) -> int {
-    let mut total = 0
+    mut total = 0
     for n in it {
         total = total + n
     }
@@ -32,7 +32,7 @@ fn sum_iter[T Iterable[int]](mut it T) -> int {
 
 // Подсчёт элементов.
 fn count_iter[T Iterable[int]](mut it T) -> int {
-    let mut n = 0
+    mut n = 0
     for _ in it {
         n = n + 1
     }
@@ -41,16 +41,16 @@ fn count_iter[T Iterable[int]](mut it T) -> int {
 
 
 test "generic [T Iterable[int]] — sum_iter с CountDown" {
-    let r = sum_iter[CountDown](CountDown.new(5))
+    ro r = sum_iter[CountDown](CountDown.new(5))
     assert(r == 15)          // 5+4+3+2+1
 }
 
 test "generic [T Iterable[int]] — count_iter" {
-    let r = count_iter[CountDown](CountDown.new(8))
+    ro r = count_iter[CountDown](CountDown.new(8))
     assert(r == 8)
 }
 
 test "generic [T Iterable[int]] — пустой итератор" {
-    let r = sum_iter[CountDown](CountDown.new(0))
+    ro r = sum_iter[CountDown](CountDown.new(0))
     assert(r == 0)
 }

@@ -25,14 +25,14 @@ fn handler_value(v int) -> int {
 // ================================================================
 
 test "race repro: 8 concurrent fibers, unique handlers, no cross-contamination" {
-    let mut r0 = -1
-    let mut r1 = -1
-    let mut r2 = -1
-    let mut r3 = -1
-    let mut r4 = -1
-    let mut r5 = -1
-    let mut r6 = -1
-    let mut r7 = -1
+    mut r0 = -1
+    mut r1 = -1
+    mut r2 = -1
+    mut r3 = -1
+    mut r4 = -1
+    mut r5 = -1
+    mut r6 = -1
+    mut r7 = -1
     supervised {
         spawn { r0 = handler_value(100) }
         spawn { r1 = handler_value(200) }
@@ -58,10 +58,10 @@ test "race repro: 8 concurrent fibers, unique handlers, no cross-contamination" 
 // ================================================================
 
 test "race repro: inherited outer + per-fiber override — no contamination" {
-    let mut outer0 = -1
-    let mut outer1 = -1
-    let mut inner0 = -1
-    let mut inner1 = -1
+    mut outer0 = -1
+    mut outer1 = -1
+    mut inner0 = -1
+    mut inner1 = -1
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 999 }
@@ -84,17 +84,17 @@ test "race repro: inherited outer + per-fiber override — no contamination" {
 // ================================================================
 
 test "race repro: outer handler intact after supervised completes" {
-    let mut before = -1
-    let mut after = -1
+    mut before = -1
+    mut after = -1
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 12345 }
     } {
         before = Time.now()
         supervised {
-            spawn { let _ = handler_value(1) }
-            spawn { let _ = handler_value(2) }
-            spawn { let _ = handler_value(3) }
+            spawn { ro _ = handler_value(1) }
+            spawn { ro _ = handler_value(2) }
+            spawn { ro _ = handler_value(3) }
         }
         after = Time.now()
     }

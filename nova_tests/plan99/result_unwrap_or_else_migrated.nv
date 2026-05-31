@@ -3,22 +3,22 @@
 module nova_tests.plan99.result_unwrap_or_else_migrated
 
 test "Result[int,str].unwrap_or_else — Ok skip closure" {
-    let r Result[int, str] = Ok(42)
-    let v = r.unwrap_or_else(|e| 0)
+    ro r Result[int, str] = Ok(42)
+    ro v = r.unwrap_or_else(|e| 0)
     assert(v == 42)
 }
 
 test "Result[int,str].unwrap_or_else — Err invokes f(e)" {
-    let r Result[int, str] = Err("boom")
+    ro r Result[int, str] = Err("boom")
     // Plan 108 D26 note: byte_len() needed here due to generic-closure erasure bug.
     // [M-str-len-closure-dispatch]: str.len() dispatches to Nova_Range_method_len
     // when str is erased to nova_int inside generic closures. Follow-up fix required.
-    let v = r.unwrap_or_else(|e| e.byte_len())
+    ro v = r.unwrap_or_else(|e| e.byte_len())
     assert(v == 4)
 }
 
 test "Result[str,int].unwrap_or_else — reversed E type" {
-    let r Result[str, int] = Err(99)
-    let s = r.unwrap_or_else(|n| str.from(n))
+    ro r Result[str, int] = Err(99)
+    ro s = r.unwrap_or_else(|n| str.from(n))
     assert(s == "99")
 }

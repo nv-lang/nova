@@ -9,7 +9,7 @@ module plan11_followup.f12_variadic_str_array_positive
 
 export fn join_strings(...parts []str) -> str {
     consume buf = StringBuilder.new()
-    let mut first = true
+    mut first = true
     for p in parts {
         if !first { buf.append(",") }
         buf.append(p)
@@ -19,29 +19,29 @@ export fn join_strings(...parts []str) -> str {
 }
 
 test "variadic str: positional args" {
-    let result = join_strings("a", "b", "c")
+    ro result = join_strings("a", "b", "c")
     assert(result == "a,b,c")
 }
 
 test "variadic str: spread из array" {
-    let arr []str = ["x", "y", "z"]
-    let result = join_strings(...arr)
+    ro arr []str = ["x", "y", "z"]
+    ro result = join_strings(...arr)
     assert(result == "x,y,z")
 }
 
 test "variadic str: mixed positional + spread" {
-    let middle []str = ["b", "c"]
-    let result = join_strings("a", ...middle, "d")
+    ro middle []str = ["b", "c"]
+    ro result = join_strings("a", ...middle, "d")
     assert(result == "a,b,c,d")
 }
 
 test "variadic str: single positional arg" {
-    let result = join_strings("solo")
+    ro result = join_strings("solo")
     assert(result == "solo")
 }
 
 test "variadic str: empty spread" {
-    let empty []str = []
-    let result = join_strings(...empty)
+    ro empty []str = []
+    ro result = join_strings(...empty)
     assert(result == "")
 }

@@ -31,28 +31,28 @@ fn parse_bool(s str) -> Result[(bool, int), str] {
 
 
 test "три Result-fns с разными mono types — каждая destructure правильно" {
-    let r1 = parse_str("a")
-    let r2 = parse_int("5")
-    let r3 = parse_bool("t")
+    ro r1 = parse_str("a")
+    ro r2 = parse_int("5")
+    ro r3 = parse_bool("t")
 
-    let mut k1 str = ""
-    let mut v1 int = 0
+    mut k1 str = ""
+    mut v1 int = 0
     match r1 {
         Ok((k, v)) => { k1 = k; v1 = v }
         Err(_) => assert(false)
     }
     assert(k1 == "a" && v1 == 1)
 
-    let mut k2 int = 0
-    let mut v2 int = 0
+    mut k2 int = 0
+    mut v2 int = 0
     match r2 {
         Ok((k, v)) => { k2 = k; v2 = v }
         Err(_) => assert(false)
     }
     assert(k2 == 5 && v2 == 50)
 
-    let mut k3 = false
-    let mut v3 int = 0
+    mut k3 = false
+    mut v3 int = 0
     match r3 {
         Ok((k, v)) => { k3 = k; v3 = v }
         Err(_) => assert(false)
@@ -63,7 +63,7 @@ test "три Result-fns с разными mono types — каждая destructur
 
 
 test "пересекающиеся inline matches — pending не leak'ает между ними" {
-    let mut totals = 0
+    mut totals = 0
 
     match parse_str("a") {
         Ok((_, v)) => { totals = totals + v }

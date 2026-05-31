@@ -11,19 +11,19 @@
 module plan83_12.tcp_cancel_accept_test
 
 test "TcpListener: cancel in-flight accept — exits cleanly" {
-    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    let lst = lst_r.unwrap()
+    ro lst = lst_r.unwrap()
 
-    let tok = CancelToken.new()
-    let mut acc_err = false
+    ro tok = CancelToken.new()
+    mut acc_err = false
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {
         supervised(cancel: tok) {
             // Acceptor fiber: parks waiting for a connection.
             spawn {
-                let acc_r = lst.accept()
+                ro acc_r = lst.accept()
                 // Under cancel, accept returns Err (cancelled or closed).
                 acc_err = acc_r.is_err()
             }

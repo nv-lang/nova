@@ -3,13 +3,13 @@ module nova_tests.plan91_7.str_new_test
 // Plan 91.7 Part D: str.new() canonical default.
 
 test "str.new() == \"\"" {
-    let s = str.new()
+    ro s = str.new()
     assert(s == "")
     assert(s.len() == 0)
     assert(s.is_empty())
 }
 
 test "str.new() usable как builder seed" {
-    let s = str.new() + "hello"
+    ro s = str.new() + "hello"
     assert(s == "hello")
 }

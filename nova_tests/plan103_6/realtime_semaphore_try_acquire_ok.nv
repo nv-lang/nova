@@ -10,14 +10,14 @@ module nova_tests.plan103_6.realtime_semaphore_try_acquire_ok
 }
 
 test "Semaphore.try_acquire allowed in #realtime fn (has permit)" {
-    let mut s = Semaphore.new(1)
-    let acquired = _rt_try_acquire(s)
+    mut s = Semaphore.new(1)
+    ro acquired = _rt_try_acquire(s)
     assert(acquired == true)
     s.release()
 }
 
 test "Semaphore.try_acquire returns false when no permits" {
-    let mut s = Semaphore.new(0)
-    let acquired = _rt_try_acquire(s)
+    mut s = Semaphore.new(0)
+    ro acquired = _rt_try_acquire(s)
     assert(acquired == false)
 }

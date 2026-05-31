@@ -839,8 +839,8 @@ error: expected identifier, got `mut`
 Workaround — local re-bind в теле:
 ```nova
 fn sum_iter[U, T Iter[U]](it_in T) -> int => {
-    let mut it = it_in
-    while let Some(_v) = it.next() { ... }
+    mut it = it_in
+    while Some(_v) = it.next() { ... }
     ...
 }
 ```
@@ -858,11 +858,11 @@ error: cannot infer type argument `U` for generic function `sum_iter`
 ```
 User должен писать **двойной turbofish** на call-site:
 ```nova
-let count = sum_iter[int, IntCounter](c)
+ro count = sum_iter[int, IntCounter](c)
 ```
 Вместо expected ergonomic form:
 ```nova
-let count = sum_iter(c)  // U=int (от IntCounter @next return), T=IntCounter
+ro count = sum_iter(c)  // U=int (от IntCounter @next return), T=IntCounter
 ```
 
 Rust/Swift делают это inference automatically — given concrete arg

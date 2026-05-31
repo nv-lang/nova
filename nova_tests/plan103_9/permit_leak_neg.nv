@@ -6,7 +6,7 @@
 module nova_tests.plan103_9.permit_leak_neg
 
 test "forget Permit release → compile error" {
-    let mut sem = Semaphore.new(2)
+    mut sem = Semaphore.new(2)
     consume p = sem.acquire()
     // MISSING: p.release()
     // D133: p is Live at scope exit

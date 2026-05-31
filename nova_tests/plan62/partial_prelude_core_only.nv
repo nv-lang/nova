@@ -25,13 +25,13 @@ fn make_some() -> Option[int] {
 }
 
 test "partial_prelude(core, runtime) — Option available" {
-    let o = make_some()
+    ro o = make_some()
     assert(o.is_some())
     assert(o.unwrap() == 7)
 }
 
 test "partial_prelude(core, runtime) — Result available" {
-    let r Result[int, str] = Ok(99)
+    ro r Result[int, str] = Ok(99)
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 99)
 }

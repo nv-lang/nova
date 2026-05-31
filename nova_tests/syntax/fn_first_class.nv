@@ -16,24 +16,24 @@ module syntax.fn_first_class
 // ──────────────────────────────────────────────────────────────────────────
 
 test "lambda 0-арная как значение" {
-    let f = || 42
+    ro f = || 42
     assert(f() == 42)
 }
 
 test "lambda 1-арная" {
-    let f = |x| x + 1
+    ro f = |x| x + 1
     assert(f(0) == 1)
     assert(f(99) == 100)
 }
 
 test "lambda 2-арная" {
-    let f = |a, b| a * b
+    ro f = |a, b| a * b
     assert(f(3, 4) == 12)
     assert(f(0, 100) == 0)
 }
 
 test "lambda 3-арная" {
-    let f = |a, b, c| a + b + c
+    ro f = |a, b, c| a + b + c
     assert(f(1, 2, 3) == 6)
 }
 
@@ -43,7 +43,7 @@ test "lambda 3-арная" {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn map_int(xs []int, f fn(int) -> int) -> []int {
-    let mut r = []
+    mut r = []
     for x in xs { r.push(f(x)) }
     r
 }
@@ -55,23 +55,23 @@ fn make_adder(n int) -> fn(int) -> int =>
     |x| x + n
 
 test "HOF возвращает lambda — параметризованный builder" {
-    let triple = make_scaler(3)
-    let half = make_scaler(0)
+    ro triple = make_scaler(3)
+    ro half = make_scaler(0)
     assert(triple(7) == 21)
     assert(half(99) == 0)
 }
 
 test "HOF возвращает lambda + сразу применяется" {
-    let xs = [1, 2, 3]
-    let ys = map_int(xs, make_adder(10))
+    ro xs = [1, 2, 3]
+    ro ys = map_int(xs, make_adder(10))
     assert(ys[0] == 11)
     assert(ys[1] == 12)
     assert(ys[2] == 13)
 }
 
 test "две независимые lambda-фабрики не конфликтуют" {
-    let a = make_adder(5)
-    let s = make_scaler(2)
+    ro a = make_adder(5)
+    ro s = make_scaler(2)
     // (x + 5) * 2 != (x * 2) + 5
     assert(s(a(10)) == 30)
     assert(a(s(10)) == 25)
@@ -90,9 +90,9 @@ fn pick_op(code int) -> fn(int) -> int =>
     }
 
 test "match-выражение возвращает lambda" {
-    let f0 = pick_op(0)
-    let f1 = pick_op(1)
-    let f2 = pick_op(99)
+    ro f0 = pick_op(0)
+    ro f1 = pick_op(1)
+    ro f2 = pick_op(99)
     assert(f0(10) == 11)
     assert(f1(10) == 20)
     assert(f2(10) == -10)
@@ -105,18 +105,18 @@ test "match-выражение возвращает lambda" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "lambda с захватом неизменяемого окружения — детерминированна" {
-    let base = 100
-    let offset = |x| base + x
+    ro base = 100
+    ro offset = |x| base + x
     assert(offset(1) == 101)
     assert(offset(2) == 102)
     assert(offset(1) == 101)              // idempotent — нет внутреннего state
 }
 
 test "lambda захватывает несколько переменных" {
-    let a = 10
-    let b = 20
-    let c = 30
-    let sum_with = |x| a + b + c + x
+    ro a = 10
+    ro b = 20
+    ro c = 30
+    ro sum_with = |x| a + b + c + x
     assert(sum_with(0) == 60)
     assert(sum_with(40) == 100)
 }
@@ -130,19 +130,19 @@ fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int =>
     |x| f(g(x))
 
 test "compose lambda-аргументов" {
-    let inc1 = |x| x + 1
-    let dbl  = |x| x * 2
-    let f = compose(inc1, dbl)
+    ro inc1 = |x| x + 1
+    ro dbl  = |x| x * 2
+    ro f = compose(inc1, dbl)
     // f(x) = inc1(dbl(x)) = (x*2) + 1
     assert(f(3) == 7)
     assert(f(0) == 1)
 }
 
 test "compose трёх — композиция результата с третьей" {
-    let inc1 = |x| x + 1
-    let dbl  = |x| x * 2
-    let neg1 = |x| -x
-    let f = compose(neg1, compose(inc1, dbl))
+    ro inc1 = |x| x + 1
+    ro dbl  = |x| x * 2
+    ro neg1 = |x| -x
+    ro f = compose(neg1, compose(inc1, dbl))
     // f(x) = -(inc1(dbl(x))) = -((x*2)+1)
     assert(f(3) == -7)
     assert(f(0) == -1)
@@ -161,38 +161,38 @@ test "compose трёх — композиция результата с трет
 fn top_inc(x int) -> int => x + 1
 fn top_dbl(x int) -> int => x * 2
 
-test "free fn name as value — let-binding" {
-    let f = top_inc
+test "free fn name as value — ro-binding" {
+    ro f = top_inc
     assert(f(0) == 1)
     assert(f(41) == 42)
 }
 
 test "free fn name as value — передача в HOF" {
-    let xs = [1, 2, 3]
-    let ys = map_int(xs, top_inc)
+    ro xs = [1, 2, 3]
+    ro ys = map_int(xs, top_inc)
     assert(ys[0] == 2)
     assert(ys[1] == 3)
     assert(ys[2] == 4)
 }
 
 test "две free fn в HOF — независимые" {
-    let xs = [1, 2, 3]
-    let incd = map_int(xs, top_inc)
-    let dbld = map_int(xs, top_dbl)
+    ro xs = [1, 2, 3]
+    ro incd = map_int(xs, top_inc)
+    ro dbld = map_int(xs, top_dbl)
     assert(incd[2] == 4)
     assert(dbld[2] == 6)
 }
 
 test "free fn в compose с lambda" {
     // compose ожидает fn(int)->int; передаём именованную top_inc + lambda.
-    let f = compose(top_inc, |x| x * 10)
+    ro f = compose(top_inc, |x| x * 10)
     // f(x) = top_inc((x) * 10) = x*10 + 1
     assert(f(0) == 1)
     assert(f(3) == 31)
 }
 
 test "две именованные fn в compose" {
-    let f = compose(top_inc, top_dbl)
+    ro f = compose(top_inc, top_dbl)
     // f(x) = top_inc(top_dbl(x)) = x*2 + 1
     assert(f(0) == 1)
     assert(f(5) == 11)
@@ -208,15 +208,15 @@ type Op {
 }
 
 test "fn-поле в record + вызов через obj.f(x)" {
-    let op = Op { name: "inc", f: |x| x + 1 }
+    ro op = Op { name: "inc", f: |x| x + 1 }
     assert(op.f(0) == 1)
     assert(op.f(41) == 42)
     assert(op.name == "inc")
 }
 
 test "fn-поле в record — две разные fn" {
-    let inc_op = Op { name: "inc", f: |x| x + 1 }
-    let dbl_op = Op { name: "dbl", f: |x| x * 2 }
+    ro inc_op = Op { name: "inc", f: |x| x + 1 }
+    ro dbl_op = Op { name: "dbl", f: |x| x * 2 }
     assert(inc_op.f(5) == 6)
     assert(dbl_op.f(5) == 10)
     assert(inc_op.f(0) == 1)
@@ -229,15 +229,15 @@ type BinOp {
 }
 
 test "fn-поле arity 2 — несколько параметров" {
-    let add_op = BinOp { name: "+", f: |a, b| a + b }
-    let mul_op = BinOp { name: "*", f: |a, b| a * b }
+    ro add_op = BinOp { name: "+", f: |a, b| a + b }
+    ro mul_op = BinOp { name: "*", f: |a, b| a * b }
     assert(add_op.f(3, 4) == 7)
     assert(mul_op.f(3, 4) == 12)
 }
 
 test "fn-поле + free fn (Plan 14 Ф.3)" {
     // `top_inc` (Ф.3 free-fn-as-value) можно положить в record-поле.
-    let op = Op { name: "top_inc", f: top_inc }
+    ro op = Op { name: "top_inc", f: top_inc }
     assert(op.f(10) == 11)
     assert(op.f(99) == 100)
 }

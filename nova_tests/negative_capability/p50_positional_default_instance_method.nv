@@ -15,7 +15,7 @@ fn Box @scaled(factor int = 2) -> int =>
     @base * factor
 
 test "positional arg on defaulted param of instance method rejected" {
-    let b = Box { base: 10 }
-    let _ = b.scaled(3)
+    ro b = Box { base: 10 }
+    ro _ = b.scaled(3)
     assert(true)
 }

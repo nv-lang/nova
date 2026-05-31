@@ -52,7 +52,7 @@ fn forget_err() {
 }
 
 fn let_without_consume_err() {
-    let tx = begin()                // ❌ error D133-consume-needs-keyword (D9):
+    ro tx = begin()                // ❌ error D133-consume-needs-keyword (D9):
                                     //    consume-тип в binding без `consume` keyword.
 }
 ```
@@ -85,7 +85,7 @@ fn Service consume @close() {
 
 // D5: mut-метод — invariant preserved, @file должен быть Live на exit.
 fn Service mut @reopen() -> Result[(), OpenErr] {
-    let new_file = File.open()?  // новый файл
+    ro new_file = File.open()?  // новый файл
     @file.close()                // D2: @file → Consumed
     @file = new_file             // D5.1: assign OK (предшествующий Consumed)
     // Exit: @file Live ✅ (mut-метод — ожидаем Live)
@@ -196,7 +196,7 @@ fn TaskOpt @peek_id() -> int {
 
 // D6 error: non-consume binding для Option[Transaction].
 fn bad_binding() {
-    let wrapped = get_task()     // ❌ D133-consume-needs-keyword:
+    ro wrapped = get_task()     // ❌ D133-consume-needs-keyword:
                                   //    Option[Transaction] через type_is_consume — consume.
     consume wrapped = get_task() // ✅
 }

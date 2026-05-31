@@ -3,7 +3,7 @@
 module nova_tests.plan108_2.let_mut_array_push_ok
 
 test "let mut + push" {
-    let mut arr = [1, 2]
+    mut arr = [1, 2]
     arr.push(3)
     arr.push(4)
     assert(arr.len() == 4)

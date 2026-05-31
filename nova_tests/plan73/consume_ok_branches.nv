@@ -10,7 +10,7 @@ fn pick(flag bool) -> str {
     consume sb = StringBuilder.new()
     sb.append("payload")
     // Обе ветки потребляют sb → join даёт Consumed, не MaybeConsumed.
-    let s = if flag { sb.as_str() } else { sb.as_str() }
+    ro s = if flag { sb.as_str() } else { sb.as_str() }
     s
 }
 

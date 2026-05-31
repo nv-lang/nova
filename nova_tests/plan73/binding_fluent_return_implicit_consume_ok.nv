@@ -17,7 +17,7 @@ fn Box.new() -> Self => { data: [].with_capacity(4) }
 fn Box mut @push(x int) -> @ { @data.push(x); @ }
 
 fn Box consume @sum() -> int {
-    let mut s = 0
+    mut s = 0
     for v in @data { s = s + v }
     s
 }
@@ -42,18 +42,18 @@ fn make_box_one() -> Box {
 
 test "fluent-chain 2-deep — implicit return consumes chain root" {
     consume b = make_box_two()
-    let total = b.sum()
+    ro total = b.sum()
     assert(total == 3)
 }
 
 test "fluent-chain 3-deep — implicit return consumes chain root" {
     consume b = make_box_three()
-    let total = b.sum()
+    ro total = b.sum()
     assert(total == 60)
 }
 
 test "fluent-chain 1-deep — implicit return consumes chain root" {
     consume b = make_box_one()
-    let total = b.sum()
+    ro total = b.sum()
     assert(total == 7)
 }

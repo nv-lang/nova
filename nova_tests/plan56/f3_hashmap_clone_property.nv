@@ -9,13 +9,13 @@ import std.collections.hashmap.{HashMap}
 
 
 test "clone[str, int]: 50 элементов — все сохранены" {
-    let mut m HashMap[str, int] = []
+    mut m HashMap[str, int] = []
     for i in 0..50 {
         m.insert(str.from(i), i * 10)
     }
     assert(m.len() == 50)
 
-    let c = m.clone()
+    ro c = m.clone()
     assert(c.len() == 50)
 
     for i in 0..50 {
@@ -25,8 +25,8 @@ test "clone[str, int]: 50 элементов — все сохранены" {
 
 
 test "clone[int, str]: разные типы K, V" {
-    let mut m HashMap[int, str] = [1: "a", 2: "b", 3: "c"]
-    let c = m.clone()
+    mut m HashMap[int, str] = [1: "a", 2: "b", 3: "c"]
+    ro c = m.clone()
     assert(c.len() == 3)
     assert(c.get(1) == Some("a"))
     assert(c.get(3) == Some("c"))
@@ -34,16 +34,16 @@ test "clone[int, str]: разные типы K, V" {
 
 
 test "clone[int, int]: same K и V types" {
-    let mut m HashMap[int, int] = [10: 100, 20: 200, 30: 300]
-    let c = m.clone()
+    mut m HashMap[int, int] = [10: 100, 20: 200, 30: 300]
+    ro c = m.clone()
     assert(c.len() == 3)
     assert(c.get(20) == Some(200))
 }
 
 
 test "clone independence: insert в копию не меняет оригинал" {
-    let mut m HashMap[str, int] = ["x": 1, "y": 2]
-    let mut c = m.clone()
+    mut m HashMap[str, int] = ["x": 1, "y": 2]
+    mut c = m.clone()
     c.insert("z", 99)
     c.insert("x", 999)  // override existing
     // Оригинал unchanged.
@@ -58,9 +58,9 @@ test "clone independence: insert в копию не меняет оригина�
 
 
 test "clone independence: remove из оригинала не меняет копию" {
-    let mut m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
-    let c = m.clone()
-    let _ = m.remove("a")
+    mut m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    ro c = m.clone()
+    ro _ = m.remove("a")
     assert(m.len() == 2)
     assert(c.len() == 3)
     assert(c.get("a") == Some(1))
@@ -68,9 +68,9 @@ test "clone independence: remove из оригинала не меняет ко�
 
 
 test "double clone: c1 = m.clone(); c2 = c1.clone(); все 3 independent" {
-    let mut m HashMap[str, int] = ["a": 1, "b": 2]
-    let mut c1 = m.clone()
-    let mut c2 = c1.clone()
+    mut m HashMap[str, int] = ["a": 1, "b": 2]
+    mut c1 = m.clone()
+    mut c2 = c1.clone()
     c1.insert("from_c1", 10)
     c2.insert("from_c2", 20)
     // m unchanged.

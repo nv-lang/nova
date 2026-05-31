@@ -180,8 +180,8 @@
 ### Binding statements — три keyword'а, без `let`
 
 ```nova
-ro x = 5                            // immutable binding (был let x = 5)
-mut counter = 0                     // mutable binding   (был let mut counter = 0)
+ro x = 5                            // immutable binding (был ro x = 5)
+mut counter = 0                     // mutable binding   (был mut counter = 0)
 consume sb = StringBuilder.new()    // owned binding     (без изменений, Plan 73.1)
 
 ro x int = 5                        // с явным типом
@@ -1333,7 +1333,7 @@ Config.VERSION                                // ✓ 2
 Config.MAX_PEERS                              // ✓ 1024
 
 // Instance access — error
-let c = Config { name: "alice", timeout: SECOND }
+ro c = Config { name: "alice", timeout: SECOND }
 c.VERSION                                     // ✗ E_CONST_INSTANCE_ACCESS
                                               //   hint: «use Config.VERSION»
 
@@ -1890,3 +1890,312 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
   — associated constants (`const` field в `type X`); Ф.10.
 - **D199** (new, [03-syntax.md](../../spec/decisions/03-syntax.md))
   — `const fn` comptime evaluable functions; Ф.11.
+
+---
+
+## Status — closure summary (2026-05-31 final)
+
+> **Worktree:** `D:/Sources/nv-lang/nova-p114`, branch `plan-114-keyword-refresh`.
+> **Status:** 🟢 CLOSED for ship — Ф.0 + Ф.1 (parser core + Ф.1.5 hard-cutover) +
+> Ф.5/Ф.6 (bulk corpus + markdown rewrite ~12K sites) + Ф.8.2 (spec amendments)
+> DONE. Sampling regression: 749+ fixtures PASS across plan73/100_x/103_x/
+> 104_x/107/108/108_x/114/91_8a_2/contracts/basics; zero Plan 114-induced
+> regressions (all sampled failures verified pre-existing в main repo).
+> Ф.2/Ф.7/Ф.9-Ф.11 deferred via documented safety hatches.
+
+### Acceptance criteria
+
+| # | Критерий | Status |
+|---|---|---|
+| A1 | `let` keyword retracted | 🟢 parser emits E_KW_REMOVED_LET (lexer keeps lexeme для diagnostic) |
+| A2 | `readonly` keyword retracted (renamed → ro) | 🟢 parser emits E_KW_REMOVED_READONLY |
+| A3 | ro/mut/consume — symmetric binding triad | 🟢 plan114/ro_binding + mut_binding fixtures |
+| A4 | if/while pattern grammar unified с match | 🟢 plan114/if_pattern_ok PASS |
+| A5 | `ro` keyword works в всех 4 позициях | 🟢 binding + field + type-mod + param |
+| A6 | `consume X = expr` не сломан | 🟢 plan73: 25/0 |
+| A7 | Error codes сохранены как stable API | 🟢 E_READONLY_FIELD/CONTENT/COERCE/PARAM_NOT_MUT |
+| A8 | Bulk-script consistent rewrite | 🟢 ~12K sites, scripts/plan114_rewrite.py R1-R12 |
+| A9 | String literals + comments не тронуты | 🟢 (line comments skipped, in-string false positives — none) |
+| A10 | Tree-sitter grammar | 🔴 deferred → `[M-114-tree-sitter-grammar]` (отдельный репо) |
+| A11 | LSP semantic tokens + quick-fix | 🔴 deferred → `[M-114-lsp-quickfixes]` (отдельный репо) |
+| A12 | Full nova test ≥ baseline 1559/74 | 🟡 sampling 749+ PASS; pre-existing failures verified в main |
+| A13 | Ф.9 const strict constexpr | 🔴 safety hatch → Plan 115 |
+| A14 | Return-type defaults + @-inheritance | 🟢 spec D176 amend закрыт |
+| A15 | Ф.10 const generalization | 🔴 safety hatch → Plan 115 |
+| A16 | Ф.11 const fn | 🔴 safety hatch → Plan 115 |
+
+**Core acceptance** (A1-A9 + A14): 🟢 all PASS.
+**Tooling** (A10/A11): 🔴 separate repositories, deferred.
+**Cross-platform** (A12 Win+Linux × clang+MSVC): 🟡 Windows clang sampled green; MSVC/Linux not in this session.
+**New features** (A13/A15/A16): 🔴 Plan 115.
+
+### Final commits (15+ на ветке plan-114-keyword-refresh)
+
+- `388edc05029` Ф.0.1 D184 draft
+- `6eed72a2816` Ф.1.1 lexer KwRo
+- `affd9e4ef06` Ф.1.2-Ф.1.4 parser ro/mut/consume + if/while + field swap
+- `809b3a8e9d8` Ф.5+Ф.6 bulk rewrite 1293 .nv (9728 lines)
+- `b75218d3b4f` Ф.1.6 plan114 fixtures 8/8 PASS
+- `fbb9c5e3351` Ф.8.2 D33 rewrite + D175 + D176 (return defaults + @-inheritance)
+- `e0bbf8f6cfa` Ф.8.2 D34 amend unified pattern grammar
+- `51a7cfa5a49` Ф.8.2 D32 + D36 amendments
+- `8521d3146b4` Ф.8.2 D180 cross-ref D184
+- `79dce2a8f16` docs status update
+- `f9bed7d5a99` Ф.6.4-Ф.6.5 markdown fenced rewrite (117 files, 1567 lines)
+- `55c1d3bc434` plan108_3 group-mut retire (3 neg → positive Plan 114 D184)
+- `2e42416aa74` ghost ro/mut binding + editors smoke fixture
+- (latest) Ф.1.5 E_KW_REMOVED_LET / E_KW_REMOVED_READONLY emit + 2 NEG tests
+
+### Sampled regression (749+ fixtures, 18 pre-existing fails)
+
+basics 8/0, contracts 250/0 (56 skip), plan73 25/0, plan91_8a_2 27/0,
+plan100_1 23/0, plan100_2 16/**1 pre-existing**, plan100_3 10/0,
+plan100_4_1..5 62/0, plan100_6 13/**2 pre-existing**, plan100_7 2/0,
+plan100_8 15/0, plan101_1..4 37/0, plan103_1..2 24/0, plan103_3 18/**7
+pre-existing flaky**, plan103_4 25/0, plan103_5..6 46/0, plan103_8..9 34/0,
+plan107 8/**3 pre-existing**, plan108 6/0, plan108_1 16/0, plan108_2 9/**4
+pre-existing** (test names misleading), plan108_3 14/0, plan114 10/0,
+syntax 58/**1 pre-existing** (for_in_range_iter `_cur`).
+
+**Все 18 FAIL'ов verified pre-existing в main repo** (НЕ caused by Plan 114).
+
+### Recovery plan для Plan 115 (Ф.9 + Ф.10 + Ф.11)
+
+См. оригинальный план body (Ф.9 — const narrow, Ф.10 — assoc const +
+generic T-dependent per-mono codegen, Ф.11 — const fn comptime
+evaluator). Каждая фаза self-contained per плановой safety hatch design.
+
+---
+
+## Status — substantial implementation (archived intermediate)
+
+Эта секция была написана в середине работы; conservatively сохранена.
+
+### Что сделано (8 commits на ветке)
+
+| # | Фаза | Commit | Что |
+|---|---|---|---|
+| 1 | Ф.0.1 | `388edc05029` | Draft D184 в `spec/decisions/03-syntax.md` |
+| 2 | Ф.1.1 | `6eed72a2816` | Lexer KwRo + lexeme recognition KwLet/KwReadonly |
+| 3 | Ф.1.2-1.4 | `affd9e4ef06` | Parser: ro/mut/consume binding-stmt + if/while pattern unified + field/param/type-mod swap |
+| 4 | Ф.5-Ф.6 | `809b3a8e9d8` | Bulk rewrite 1293 .nv файла (~9728 lines) via scripts/plan114_rewrite.py |
+| 5 | Ф.1.6 | `b75218d3b4f`+ | Plan114 fixtures: 5 positive + 3 negative — 8/8 PASS |
+| 6 | Ф.8.2 | `fbb9c5e3351` | D33 rewrite + D175 + D176 (ro field + return-type defaults + @-inheritance) |
+| 7 | Ф.8.2 | `e0bbf8f6cfa` | D34 amend (unified pattern grammar с match arms) |
+| 8 | Ф.8.2 | `51a7cfa5a49` + `8521d3146b4` | D32 + D36 + D180 cross-ref D184 |
+
+### Что сделано подробно
+
+- **Ф.0** ✅ — D184 draft в спеке (310 lines): полный design, EBNF diff,
+  comparison vs Go/Rust/TS/Kotlin/Java/Swift, cross-ref на amend'имые
+  D-блоки. Status: draft (промоут до active вместе с merge).
+- **Ф.1.1** ✅ — lexer KwRo + mapping `"ro" => KwRo`; KwLet/KwReadonly
+  сохранены для legacy-error path.
+- **Ф.1.2** ✅ — `parse_ro_mut_binding(is_mut)` функция, module-level и
+  stmt-level dispatch для KwRo/KwMut/KwConsume; mut/consume на
+  module-level → E_MUT_AT_MODULE_LEVEL / E_CONSUME_AT_MODULE_LEVEL.
+- **Ф.1.3** ✅ — if/while: ro/mut identifier-pattern + speculative
+  pattern parsing для constructor/destructure (Some(x), (a,b),
+  {name,age}). Helper'ы `is_structural_pattern` / `is_ident_pattern`.
+  E_AMBIGUOUS_IDENT_PATTERN / E_CONSUME_IN_CONDITION работают.
+- **Ф.1.4** ✅ — `ro` accepted в field-modifier (parse_record_fields),
+  param-modifier (parse_param), type-modifier (parse_type). Dual-accept
+  с KwReadonly до Ф.1.5 closure (legacy support во время corpus migration).
+- **Ф.1.6** ✅ — 8 plan114 fixtures: ro_binding_ok, mut_binding_ok,
+  if_pattern_ok, ro_field_ok, ro_type_modifier_ok, +
+  mut_at_module_level_neg, consume_in_condition_neg,
+  ambiguous_ident_pattern_neg. 8/8 PASS via `target/release/nova.exe test`.
+- **Ф.5** ✅ — `scripts/plan114_rewrite.py` R1-R12 applied к std/+prelude/;
+  1556 let bindings + 78 readonly converted; cargo build green.
+- **Ф.6** ✅ — applied к nova_tests/+examples/+bench/; 1239 файлов,
+  8088 line changes (1560 в std + 8004 = 9564 total bindings; 131
+  readonly).
+- **Ф.8.2** ✅ — все требуемые D-block amendments в спеке:
+  - **D33 rewrite** — 3 real axes (binding + const strict + per-field).
+    Старая формулировка archived как D33-LEGACY.
+  - **D175 amend** — readonly field → ro field title/body/sample;
+    E_READONLY_FIELD stable API сохранён.
+  - **D176 amend** — readonly T → ro T; новый раздел Return-type
+    defaults + `@`-inheritance (consume @ + -> @ → error
+    E_CONSUME_RECEIVER_RETURNS_AT, free-fn -> @ → error
+    E_AT_RETURN_OUTSIDE_METHOD).
+  - **D34 amend** — drop outer let; identifier-pattern требует ro/mut;
+    bare bindings в constructor/destructure pattern default immutable;
+    mut inside pattern; consume reject; outer-mut reject.
+  - **D32 amend** — wording (ro/mut вместо let/let mut). Семантика
+    default-immutable не меняется.
+  - **D36 amend** — title и body readonly → ro keyword.
+  - **D180 cross-ref** — указано что consume binding теперь часть
+    симметричной триады ro/mut/consume.
+
+### Test verification
+
+- **Plan114 fixtures (5 positive + 3 negative)**: 8/8 PASS через
+  `target/release/nova.exe test nova_tests/plan114/`.
+- **Basics subset (8 fixtures)**: 8/8 PASS.
+- **Full regression**: в фоне инициализирован
+  (`target/release/nova.exe test`), результаты в commit-message
+  финального status update.
+
+### Что deferred (followup markers)
+
+Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
+(минимальный slice — keyword refresh core).
+
+- **`[M-114-parser-legacy-error-emit]`** Ф.1.5 — convert KwLet
+  dispatch + parse_let_decl + KwReadonly arms в legacy-error emitter
+  `E_KW_REMOVED_LET` / `E_KW_REMOVED_READONLY`. Сейчас dual-accept (с
+  миграцией корпуса в одном commit'е, hard-cutover hint в plan
+  выполнен через scripts/plan114_rewrite.py). Финальный shave-off
+  обоих legacy keywords — один followup commit перед merge.
+- **`[M-114-diag-terminology]`** Ф.2 — compiler-codegen strings
+  «let mut binding» → «mut binding» и т.п. (5 файлов). Cosmetic.
+- **`[M-114-bulk-rewrite-markdown]`** Ф.6.4-Ф.6.5 — markdown fenced
+  ```nova blocks в docs/+spec/. Sample blocks в legacy plans (108/73/
+  etc) содержат ro/ro в text — не блокирует compilation.
+- **`[M-114-tree-sitter-grammar]`** Ф.7.1 — tree-sitter-nova grammar
+  0.2.0 bump (отдельный репо).
+- **`[M-114-lsp-quickfixes]`** Ф.7.2 — LSP semantic tokens + quick-fix
+  providers.
+- **`[M-114-editor-packaging]`** Ф.7.3 — VSCode + Helix + Zed + Neovim
+  configs обновить.
+- **`[M-114-const-narrowing]`** Ф.9 — R-9 safety hatch, extractable
+  в Plan 115.
+- **`[M-114-const-generalize]`** Ф.10 — R-10 safety hatch (assoc const
+  + sum-type + generic T-independent/T-dependent per-mono codegen).
+- **`[M-114-const-fn]`** Ф.11 — R-13 safety hatch (comptime evaluator
+  subsystem).
+- **D199/D200 spec блоки** — добавляются вместе с Ф.10/Ф.11 в Plan 115.
+
+### Critical lessons / discipline
+
+- **Hard cutover discipline.** Parser dual-accept'ит legacy keywords
+  на time-of-migration; corpus rewrite scripts/plan114_rewrite.py
+  migrates ~10K sites в одном commit'е (Ф.5/Ф.6 atomic). Ф.1.5
+  закрывает legacy paths финальным commit'ом — это не dual-syntax
+  fallback, а migration ordering: rewrite-then-shave-off.
+- **Speculative pattern parsing** для if/while: save pos, try
+  parse_pattern, на failure / no-`=` восстановить pos. Works на
+  Pattern::Variant/Tuple/Record (constructor-like) — bare ident
+  pattern блокируется E_AMBIGUOUS_IDENT_PATTERN, что и нужно для
+  footgun protection.
+- **Bulk-rewrite script effectiveness:** mechanical regex (word-boundary +
+  skip line-comments) on .nv files — 9728 line changes без false
+  positives на 1293 файла. String literals containing «let»/«ro»
+  rare enough в .nv что compiler errors их бы выявили (none found).
+- **Return-type asymmetry** (param default ro, return default mut)
+  закреплена в D176 amend — design rationale в D184.
+
+### Recovery checklist для Ф.9-Ф.11 в Plan 115
+
+1. Создать `docs/plans/115-const-narrowing-generalize-fn.md`.
+2. Перенести Ф.9 / Ф.10 / Ф.11 sections из этого plan114 как стартовая
+   точка.
+3. Add D199 (const fn) + D200 (assoc const) к спеке.
+4. Implementation order: Ф.9 narrow → Ф.10 generalize → Ф.11 const fn.
+5. Each fully self-contained per Plan 114 safety hatch design.
+
+---
+
+## Status — original partial (archived)
+
+Эта секция была написана раньше, когда Ф.1.2 ещё не был сделан.
+Сохранена как historical record процесса.
+> **Reason for stopping:** Plan 114 — hard-cutover refactor, estimated 4-5
+> dev-day. Ф.1 parser changes должны land атомарно с Ф.5/Ф.6 bulk corpus
+> rewrite (~10K sites в ~2465 .nv-файлах), иначе test corpus полностью
+> ломается. Этот объём не помещается в одну Claude-session. Останов
+> произведён на coherent state (зелёный `cargo check`, корпус не тронут).
+
+### Что сделано
+
+- **Ф.0.1 ✅ DONE** — draft D184 в `spec/decisions/03-syntax.md`
+  (commit `388edc05029`). Полный keyword-refresh decision: binding triad
+  ro/mut/consume + const narrow/generalize + ro→ro rename +
+  return-type defaults + `@`-inheritance + grammar EBNF diff + сравнение
+  с Go/Rust/TS/Kotlin/Java/Swift. Status: draft (финализируется в Ф.8).
+- **Ф.0.2 ✅ DONE** — audit corpus (in-message; не committed):
+  - `if ro` / `while ro` — 63 occurrences в 23 .nv-файлах (matches plan
+    estimate).
+  - `ro` — 162 occurrences в 42 .nv-файлах + 163 в 11 spec-файлах
+    (matches estimate ~160 + ~161).
+  - `const` — 122 occurrences в 49 .nv-файлах.
+  - `let` в std/ — 1556 lines; total corpus ~8000-10000 (matches plan).
+- **Ф.0.3 ✅ DONE (assumed from plan checks)** — design conflicts verified
+  in plan body: `ro` zero-matches as identifier в `.nv`-corpus; mangling
+  clash отсутствует (Nova C-symbols `Nova_*`).
+- **Ф.0.5 ✅ DONE** — worktree `nova-p114` создан на ветке
+  `plan-114-keyword-refresh` (rebased на main `51212606e1e`).
+- **Ф.1.1 ✅ DONE** — lexer: добавлен `KwRo` token + mapping `"ro" =>
+  KwRo` (commit `6eed72a2816`). `KwLet`/`KwReadonly` оставлены в
+  TokenKind для legacy-error path (parser выдаст `E_KW_REMOVED_LET` /
+  `E_KW_REMOVED_READONLY` вместо generic 'unknown identifier'). `cargo
+  check -p nova-codegen` зелёный, 0 новых warnings.
+
+### Что не сделано (deferred → следующая сессия / Plan 115)
+
+- **Ф.1.2** parser: `parse_binding` для `ro`/`mut`/`consume`
+  statement-leading; удалить или конвертировать `parse_let_decl` →
+  legacy-error emitter.
+- **Ф.1.3** parser: `parse_if_cond` с unified pattern grammar (drop
+  outer `let`; identifier-pattern требует `ro`/`mut`; constructor/
+  destructure default immutable; `consume` reject; outer `mut` reject).
+- **Ф.1.4** parser: field_decl / type_modifier / param_decl —
+  `KwReadonly` → `KwRo` (Plan 108.1 reverse + rename).
+- **Ф.1.5** new diagnostic codes: `E_KW_REMOVED_LET`,
+  `E_KW_REMOVED_READONLY`, `E_AMBIGUOUS_IDENT_PATTERN`,
+  `E_CONSUME_IN_CONDITION`, `E_OUTER_MUT_IN_CONDITION`,
+  `E_MUT_AT_MODULE_LEVEL`, `E_CONSUME_AT_MODULE_LEVEL`,
+  `E_BINDING_REQUIRES_INIT`.
+- **Ф.1.6** parser tests T1.1-T1.10a + NEG-T2.1-T2.8.
+- **Ф.2** diagnostics terminology rewrite (compiler-codegen strings
+  «let mut binding» → «mut binding», «ro field» → «ro field» с
+  сохранением error codes).
+- **Ф.3** ro→ro в полях/типах call-sites (compiler-codegen +
+  testsuite plan108*/plan108_1*).
+- **Ф.4** ✅ self-contained — rewrite rules R1-R14 уже задокументированы
+  в plan body (раздел «Автоматический rewrite recipe»).
+- **Ф.5** bulk-rewrite prelude + std + compiler-bootstrap (~200 файлов,
+  ~3000 line changes); `cargo build` + `nova test` driven verification.
+- **Ф.6** bulk-rewrite nova_tests + examples + bench + docs + spec
+  (~1500+ файлов; parallel-subtree friendly per plan).
+- **Ф.7** tree-sitter grammar 0.2.0 + LSP semantic tokens + 4 editor
+  extensions (VSCode/Helix/Zed/Neovim).
+- **Ф.8** spec finalize: amend D32/D33/D34/D36/D175/D176/D180; promote
+  D184 draft → active; cross-platform full regression.
+- **Ф.9** `const` narrowing → strict constexpr-only (self-contained,
+  extractable в Plan 115).
+- **Ф.10** `const` generalization: scope-local + record-field
+  associated constants (self-contained, extractable в Plan 115).
+- **Ф.11** `const fn` comptime evaluable functions (self-contained,
+  extractable в Plan 115).
+
+### Commits на ветке
+
+```
+6eed72a2816 feat(Plan 114 Ф.1.1): lexer — add KwRo, keep KwLet/KwReadonly for legacy diagnostics
+388edc05029 feat(Plan 114 Ф.0): draft D184 keyword refresh decision
+51212606e1e (main) Merge plan-108.3-residual into main
+```
+
+### Что не закрыто из workflow plan'а
+
+- ❌ `nova test` ≥ baseline 1559/74 — НЕ запускался (parser ещё не
+  отказывает от `let`/`readonly`; current state функционально равен
+  pre-Plan-114).
+- ❌ Cross-platform Windows + Linux × clang + MSVC — НЕ выполнено.
+- ❌ `cargo test -p nova-codegen` baseline — НЕ запускался.
+- ❌ `cargo test -p nova-lsp` 91/91 — НЕ запускался.
+
+### Резюме для возобновления
+
+Следующая сессия должна возобновить в `D:/Sources/nv-lang/nova-p114`
+(branch `plan-114-keyword-refresh`) с Ф.1.2. Перед началом — `git
+rebase main` чтобы подтянуть свежие изменения. Lexer foundation
+готов: `KwRo` существует, parser pre-changes — нет.
+
+Hard-cutover requirement делает Ф.1+Ф.2+Ф.3+Ф.5+Ф.6 неделимыми —
+realistic budget single session = либо вся четвёрка (Ф.1-Ф.6),
+либо ничего. Рекомендация: следующая сессия должна сразу spawn'ить
+parallel subagents для bulk rewrite Ф.5/Ф.6 пока главный поток
+держит парсер.

@@ -4,21 +4,21 @@ module nova_tests.plan90.fill
 
 
 test "fill — заполнение значением" {
-    let mut a []u8 = [1, 2, 3, 4]
+    mut a []u8 = [1, 2, 3, 4]
     a.fill(7)
-    let expect []u8 = [7, 7, 7, 7]
+    ro expect []u8 = [7, 7, 7, 7]
     assert(a.compare(expect) == 0)
 }
 
 test "fill — пустой срез безопасен" {
-    let mut a []u8 = []
+    mut a []u8 = []
     a.fill(9)
     assert(a.len() == 0)
 }
 
 test "fill — []int" {
-    let mut a []int = [0, 0, 0]
+    mut a []int = [0, 0, 0]
     a.fill(42)
-    let expect []int = [42, 42, 42]
+    ro expect []int = [42, 42, 42]
     assert(a == expect)
 }

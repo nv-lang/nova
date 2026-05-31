@@ -10,7 +10,7 @@
 module plan83_10.detach_without_effect_compile_error
 
 fn missing_blocking_effect(n int) -> int {
-    let mut r = n
+    mut r = n
     blocking {
         r = r * 2
     }

@@ -14,7 +14,7 @@ fn Transaction consume @commit() -> () { () }
 
 test "consume-closure (FnOnce) — invoke ровно один раз" {
     consume tx = Transaction { id: 1 }
-    let commit_it = || tx.commit()             // consume-closure
+    ro commit_it = || tx.commit()             // consume-closure
     commit_it()                                 // ✅ tx Consumed, closure Consumed
     // tx Consumed; нельзя использовать.
     // closure Consumed; нельзя invoke повторно.

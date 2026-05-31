@@ -7,6 +7,6 @@ module plan11_followup.f6_self_outside_receiver_negative
 // нерезолвибельно.
 
 export fn standalone() -> Self {
-    let x = 42
+    ro x = 42
     x
 }

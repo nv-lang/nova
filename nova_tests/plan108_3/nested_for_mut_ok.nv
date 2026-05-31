@@ -3,7 +3,7 @@
 module nova_tests.plan108_3.nested_for_mut_ok
 
 test "nested for mut" {
-    let mut matrix = [[1, 2], [3, 4]]
+    mut matrix = [[1, 2], [3, 4]]
     for mut row in matrix {
         row.push(99)
     }

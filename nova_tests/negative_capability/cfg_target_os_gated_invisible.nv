@@ -11,8 +11,8 @@ module negative_capability.cfg_target_os_gated_invisible
 import nova_tests.cfg.target_os_module.{shared_value}
 
 test "target_os-gated symbol invisible on non-matching OS" {
-    let _ = shared_value()
+    ro _ = shared_value()
     // bsd_only_value gated #cfg(target_os = "freebsd") — off here.
-    let _ = bsd_only_value()
+    ro _ = bsd_only_value()
     assert(true)
 }

@@ -17,6 +17,6 @@ fn check_door(d Door) -> int
 }
 
 test "member typed positive" {
-    let d = Door { is_open: true, count: 5 }
+    ro d = Door { is_open: true, count: 5 }
     assert(check_door(d) == 5)
 }

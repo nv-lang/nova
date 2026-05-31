@@ -10,35 +10,35 @@ module buffers.read_integers
 // ── byte / u8 / i8 ─────────────────────────────────────────────────
 
 test "read_byte / try_read_byte" {
-    let bytes []u8 = [0x42, 0x99]
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [0x42, 0x99]
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_byte() == 0x42)
-    let r = rb.try_read_byte()
+    ro r = rb.try_read_byte()
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 0x99)
 }
 
 test "read_u8 / try_read_u8" {
-    let bytes []u8 = [0x00, 0xFF]
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [0x00, 0xFF]
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.read_u8() == 0x00)
     assert(rb.try_read_u8().unwrap_or(1) == 0xFF)
 }
 
 test "read_i8 — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i8(-1)
     wb.write_i8(-128)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i8() == -1)
     assert(rb.read_i8() == -128)
 }
 
 test "try_read_i8 — Ok-путь" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i8(-42)
-    let mut rb = ReadBuffer.from(wb.into())
-    let r = rb.try_read_i8()
+    mut rb = ReadBuffer.from(wb.into())
+    ro r = rb.try_read_i8()
     assert(r.is_ok())
 }
 
@@ -46,24 +46,24 @@ test "try_read_i8 — Ok-путь" {
 // ── u16 LE / BE ────────────────────────────────────────────────────
 
 test "round-trip u16_le" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u16_le(0xABCD)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u16_le() == 0xABCD)
 }
 
 test "round-trip u16_be" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u16_be(0xABCD)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u16_be() == 0xABCD)
 }
 
 test "try_read_u16_le / be Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u16_le(0x1234)
     wb.write_u16_be(0x5678)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_u16_le().unwrap_or(0) == 0x1234)
     assert(rb.try_read_u16_be().unwrap_or(0) == 0x5678)
 }
@@ -72,18 +72,18 @@ test "try_read_u16_le / be Ok" {
 // ── i16 LE / BE ────────────────────────────────────────────────────
 
 test "round-trip i16_le / be — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i16_le(-300)
     wb.write_i16_be(-300)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i16_le() == -300)
     assert(rb.read_i16_be() == -300)
 }
 
 test "try_read_i16_le Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i16_le(-1)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_i16_le().is_ok())
 }
 
@@ -91,19 +91,19 @@ test "try_read_i16_le Ok" {
 // ── u32 LE / BE ────────────────────────────────────────────────────
 
 test "round-trip u32_le / be" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_le(0xCAFEBABE)
     wb.write_u32_be(0xDEADBEEF)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u32_le() == 0xCAFEBABE)
     assert(rb.read_u32_be() == 0xDEADBEEF)
 }
 
 test "try_read_u32_le / be Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_le(0x11223344)
     wb.write_u32_be(0x55667788)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_u32_le().unwrap_or(0) == 0x11223344)
     assert(rb.try_read_u32_be().unwrap_or(0) == 0x55667788)
 }
@@ -112,18 +112,18 @@ test "try_read_u32_le / be Ok" {
 // ── i32 LE / BE ────────────────────────────────────────────────────
 
 test "round-trip i32_le / be — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i32_le(-123456)
     wb.write_i32_be(-123456)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i32_le() == -123456)
     assert(rb.read_i32_be() == -123456)
 }
 
 test "try_read_i32_le Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i32_be(-7)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_i32_be().is_ok())
 }
 
@@ -131,18 +131,18 @@ test "try_read_i32_le Ok" {
 // ── u64 LE / BE ────────────────────────────────────────────────────
 
 test "round-trip u64_le / be" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u64_le(0x0102030405060708)
     wb.write_u64_be(0x1112131415161718)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u64_le() == 0x0102030405060708)
     assert(rb.read_u64_be() == 0x1112131415161718)
 }
 
 test "try_read_u64_le / be Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u64_le(0xAABBCCDD)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_u64_le().is_ok())
 }
 
@@ -150,18 +150,18 @@ test "try_read_u64_le / be Ok" {
 // ── i64 LE / BE ────────────────────────────────────────────────────
 
 test "round-trip i64_le / be — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i64_le(-1000000)
     wb.write_i64_be(-1000000)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i64_le() == -1000000)
     assert(rb.read_i64_be() == -1000000)
 }
 
 test "try_read_i64_be Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i64_be(-1)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_i64_be().is_ok())
 }
 
@@ -169,12 +169,12 @@ test "try_read_i64_be Ok" {
 // ── последовательное чтение разной ширины ─────────────────────────
 
 test "смешанное чтение — byte, u16, u32, u64" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x01)
     wb.write_u16_be(0x0203)
     wb.write_u32_be(0x04050607)
     wb.write_u64_be(0x08090A0B0C0D0E0F)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_byte() == 0x01)
     assert(rb.read_u16_be() == 0x0203)
     assert(rb.read_u32_be() == 0x04050607)

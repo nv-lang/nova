@@ -27,17 +27,17 @@ import examples.effect_density.domain.*
 // 2 параметра, 2 возврата, эффекты невидимы. Связка с Cache в реальном
 // Go-коде живёт ВНУТРИ функции, и читатель её не видит из сигнатуры.
 export fn account_get(id AccountId) Db Cache Fail[RepoError] -> Account {
-    let cache_key = "account:${id}"
+    ro cache_key = "account:${id}"
     match Cache.get(cache_key) {
         Some(bytes) => decode_account(bytes)?
         None => {
             // D48 sql`...`-tag: интерполяции — параметры запроса, не
             // склейка строк (SQL injection невозможен). D55 + D52:
             // newtype id → u64 → SqlValue.I(...) автоматически.
-            let rows = Db.query(sql`
+            ro rows = Db.query(sql`
                 SELECT * FROM accounts WHERE id = ${id as u64}
             `)
-            let acc = match rows {
+            ro acc = match rows {
                 []     => throw RepoError.NotFound
                 [r]    => row_to_account(r)?
                 [_,..] => throw RepoError.Inconsistent("multiple accounts with id ${id}")
@@ -56,7 +56,7 @@ export fn account_get(id AccountId) Db Cache Fail[RepoError] -> Account {
 export fn account_update_balance(id AccountId, new_balance Money) Db Cache Fail[RepoError] -> () {
     // D48 sql`...`-tag — интерполяции типизированы и параметризованы.
     // D55 + D52: каждый интерпол coerce'ится в SqlValue из своего типа.
-    let affected = Db.exec(sql`
+    ro affected = Db.exec(sql`
         UPDATE accounts SET balance_amount = ${new_balance.amount},
                             balance_currency = ${new_balance.currency}
         WHERE id = ${id as u64} AND NOT closed
@@ -91,7 +91,7 @@ export fn transfer_insert(t Transfer) Db Fail[RepoError] -> () {
 export fn transfer_update_status(id TransferId, status TransferStatus) Db Fail[RepoError] -> () {
     // D48 sql`...`-tag. D55 + D52: status и id — newtype'ы, явный
     // cast к underlying для coerce в SqlValue.
-    let affected = Db.exec(sql`
+    ro affected = Db.exec(sql`
         UPDATE transfers SET status = ${status as int} WHERE id = ${id as str}
     `)
     if affected == 0 { throw RepoError.NotFound }

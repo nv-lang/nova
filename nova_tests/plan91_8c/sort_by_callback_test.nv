@@ -5,7 +5,7 @@ import std.sort
 // Plan 91.8c (D185): generic sort_by_of с custom comparator callback.
 
 test "sort_by_of descending []int" {
-    let mut xs []int = [3, 1, 4, 1, 5]
+    mut xs []int = [3, 1, 4, 1, 5]
     xs.sort_by_of(|a, b| b - a)
     assert(xs[0] == 5)
     assert(xs[1] == 4)
@@ -15,7 +15,7 @@ test "sort_by_of descending []int" {
 }
 
 test "sort_by_of ascending []int" {
-    let mut xs []int = [3, 1, 4, 1, 5]
+    mut xs []int = [3, 1, 4, 1, 5]
     xs.sort_by_of(|a, b| a - b)
     assert(xs[0] == 1)
     assert(xs[1] == 1)
@@ -25,10 +25,10 @@ test "sort_by_of ascending []int" {
 }
 
 test "sort_by_of by absolute value" {
-    let mut xs []int = [-3, 1, -4, 2, -5]
+    mut xs []int = [-3, 1, -4, 2, -5]
     xs.sort_by_of(|a, b| {
-        let aa = if a < 0 { -a } else { a }
-        let bb = if b < 0 { -b } else { b }
+        ro aa = if a < 0 { -a } else { a }
+        ro bb = if b < 0 { -b } else { b }
         aa - bb
     })
     assert(xs[0] == 1)

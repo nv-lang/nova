@@ -24,7 +24,7 @@ export fn EnumeratedCounter mut @next() -> Option[(int, int)] {
     if @idx >= @end {
         None
     } else {
-        let pair = (@idx, @idx * 10)
+        ro pair = (@idx, @idx * 10)
         @idx = @idx + 1
         Some(pair)
     }
@@ -37,8 +37,8 @@ export fn EnumeratedCounter.new(end int) -> EnumeratedCounter {
 
 
 test "for-in tuple destructure: (idx, value)" {
-    let mut sum_idx = 0
-    let mut sum_value = 0
+    mut sum_idx = 0
+    mut sum_value = 0
     for (i, v) in EnumeratedCounter.new(4) {
         sum_idx = sum_idx + i
         sum_value = sum_value + v
@@ -51,7 +51,7 @@ test "for-in tuple destructure: (idx, value)" {
 
 
 test "for-in tuple destructure с wildcard" {
-    let mut count = 0
+    mut count = 0
     for (_, v) in EnumeratedCounter.new(3) {
         count = count + v
     }

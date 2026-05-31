@@ -22,32 +22,32 @@ const N_FIBERS int = 10
 const TIMEOUT_BUDGET_MS i64 = 5000
 
 test "1000 concurrent close_after allocs, no leak, no crash" {
-    let baseline = Time.timer_alloc_active()
-    let t0 = Time.now()
+    ro baseline = Time.timer_alloc_active()
+    ro t0 = Time.now()
     supervised {
-        let mut f int = 0
+        mut f int = 0
         while f < N_FIBERS {
             spawn {
-                let mut i int = 0
+                mut i int = 0
                 while i < TIMERS_PER_FIBER {
                     // Vary the duration to exercise short/medium-path
                     // bucketing in libuv's heap. Sub-ms values trigger
                     // the round-up path; multi-ms trigger natural fire.
-                    let ms i64 = ((i % 3) as i64) + 1
-                    let t = ChanReader.close_after(Duration.from_millis(ms))
-                    let _ = t.recv()
+                    ro ms i64 = ((i % 3) as i64) + 1
+                    ro t = ChanReader.close_after(Duration.from_millis(ms))
+                    ro _ = t.recv()
                     i = i + 1
                 }
             }
             f = f + 1
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // Test must complete in well under the 5s budget; otherwise we
     // deadlocked or fell back to a serial schedule.
     assert(elapsed < TIMEOUT_BUDGET_MS)
     // All allocated timers must have fired naturally — alloc_active
     // returns to baseline.
-    let after = Time.timer_alloc_active()
+    ro after = Time.timer_alloc_active()
     assert(after == baseline)
 }

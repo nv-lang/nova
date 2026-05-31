@@ -27,7 +27,7 @@ fn make_counter(v int) -> Counter => { val: v }
 // ================================================================
 
 test "detach: body executes (visible after drain_orphans)" {
-    let mut x = 0
+    mut x = 0
     detach {
         x = 42
     }
@@ -36,14 +36,14 @@ test "detach: body executes (visible after drain_orphans)" {
 }
 
 test "detach: empty body is no-op" {
-    let mut touched = false
+    mut touched = false
     detach { touched = true }
     runtime.drain_orphans()
     assert(touched)
 }
 
 test "detach: trailing expr value is discarded (fire-and-forget)" {
-    let mut log = 0
+    mut log = 0
     detach {
         log = 7
         99   // discarded
@@ -57,24 +57,24 @@ test "detach: trailing expr value is discarded (fire-and-forget)" {
 // ================================================================
 
 test "detach: captures immutable int" {
-    let n = 21
-    let mut result = 0
+    ro n = 21
+    mut result = 0
     detach { result = n * 2 }
     runtime.drain_orphans()
     assert(result == 42)
 }
 
 test "detach: captures multiple vars" {
-    let a = 3
-    let b = 5
-    let mut c = 0
+    ro a = 3
+    ro b = 5
+    mut c = 0
     detach { c = a * a + b * b }
     runtime.drain_orphans()
     assert(c == 34)
 }
 
 test "detach: mutates captured record field" {
-    let counter = make_counter(10)
+    ro counter = make_counter(10)
     detach {
         counter.val = counter.val + 5
     }
@@ -87,8 +87,8 @@ test "detach: mutates captured record field" {
 // ================================================================
 
 test "detach with if inside" {
-    let n = 5
-    let mut tag = 0
+    ro n = 5
+    mut tag = 0
     detach {
         if n > 0 {
             tag = 1
@@ -101,9 +101,9 @@ test "detach with if inside" {
 }
 
 test "detach with while inside" {
-    let mut acc = 0
+    mut acc = 0
     detach {
-        let mut i = 1
+        mut i = 1
         while i <= 5 {
             acc += i
             i += 1
@@ -121,8 +121,8 @@ test "detach inside supervised: orphan body completes after drain" {
     // detach живёт мимо scope. AsyncDetach (D50 revised): orphan body
     // НЕ участвует в supervised drain — completes asynchronously.
     // Каждый spawn внутри supervised drained scope'ом; orphan — global.
-    let mut detach_flag = 0
-    let mut spawn_sum = 0
+    mut detach_flag = 0
+    mut spawn_sum = 0
     supervised {
         detach {
             detach_flag = 1
@@ -148,8 +148,8 @@ test "detach inside supervised: orphan body completes after drain" {
 test "detach inside detach: оба orphan, completeness assertion" {
     // AsyncDetach: outer detach spawns orphan, inner detach (внутри outer's
     // body) тоже spawns orphan. Оба завершаются после drain.
-    let mut outer_done = 0
-    let mut inner_done = 0
+    mut outer_done = 0
+    mut inner_done = 0
     detach {
         outer_done = 1
         detach {
@@ -164,7 +164,7 @@ test "detach inside detach: оба orphan, completeness assertion" {
 test "detach: multiple detaches all complete (set-equality)" {
     // AsyncDetach: 3 orphan fibers. Order не специфицирован (Go semantics
     // — spawn ordering undef). Проверяем completeness через sum.
-    let mut sum = 0
+    mut sum = 0
     detach { sum += 1 }
     detach { sum += 2 }
     detach { sum += 4 }
@@ -179,10 +179,10 @@ test "detach: multiple detaches all complete (set-equality)" {
 // ================================================================
 
 test "detach mutates array via captured ref" {
-    let mut sum = 0
-    let xs = [10, 20, 30]
+    mut sum = 0
+    ro xs = [10, 20, 30]
     detach {
-        let mut i = 0
+        mut i = 0
         while i < 3 {
             sum += xs[i]
             i += 1
@@ -197,7 +197,7 @@ test "detach: usable outside supervised (orphan semantic)" {
     // supervised — compile error). Detach привязан к global orphan pool,
     // поэтому валиден везде где вызывается функция с эффектом Detach
     // в сигнатуре.
-    let mut x = 100
+    mut x = 100
     detach { x = x + 1 }
     detach { x = x * 2 }
     runtime.drain_orphans()
@@ -212,7 +212,7 @@ test "detach: usable outside supervised (orphan semantic)" {
 
 test "drain_orphans negative: empty pool — no-op" {
     // Никаких detach'ей. drain_orphans должен быть no-op (быстрый return).
-    let mut sentinel = 0
+    mut sentinel = 0
     runtime.drain_orphans()
     sentinel = 1
     assert(sentinel == 1)
@@ -220,7 +220,7 @@ test "drain_orphans negative: empty pool — no-op" {
 
 test "drain_orphans negative: повторный вызов — idempotent" {
     // После первого drain orphan pool empty. Второй drain — no-op.
-    let mut x = 0
+    mut x = 0
     detach { x = 5 }
     runtime.drain_orphans()
     assert(x == 5)

@@ -16,6 +16,6 @@ test "char_at: negative index returns None" {
 }
 
 test "char_at: index equals len returns None" {
-    let s = "hello"
+    ro s = "hello"
     assert(s.char_at(s.len()) == None)
 }

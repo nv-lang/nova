@@ -13,9 +13,9 @@ fn Score @compare(other Self) -> int =>
     else { 0 }
 
 test "bare call: m.equals(other) для Score (только @compare)" {
-    let a = Score { value: 10 }
-    let b = Score { value: 10 }
-    let c = Score { value: 99 }
+    ro a = Score { value: 10 }
+    ro b = Score { value: 10 }
+    ro c = Score { value: 99 }
     assert(a.equals(b))
     assert(!a.equals(c))
 }
@@ -26,7 +26,7 @@ type Money { cents int }
 fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
 test "bare call: m.fmt(sb) для Money (через fn str.from)" {
-    let m = Money { cents: 500 }
+    ro m = Money { cents: 500 }
     consume sb = StringBuilder.new()
     m.fmt(sb)
     assert(sb.as_str() == "Money(500)")
@@ -38,7 +38,7 @@ type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
 test "bare call: c.fmt(sb) для Coin (через @into)" {
-    let c = Coin { value: 7 }
+    ro c = Coin { value: 7 }
     consume sb = StringBuilder.new()
     c.fmt(sb)
     assert(sb.as_str() == "Coin(7)")

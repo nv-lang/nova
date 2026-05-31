@@ -17,7 +17,7 @@ test "runtime.worker_count: 0 до init" {
 }
 
 test "runtime.is_initialized: bool" {
-    let b = runtime.is_initialized()
+    ro b = runtime.is_initialized()
     assert(b == true || b == false)
 }
 

@@ -11,8 +11,8 @@ module nova_tests.plan73.consume_err_alias
 test "use after consume через alias" {
     consume sb = StringBuilder.new()
     sb.append("hi")
-    let twin = sb              // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
-    let s = twin.as_str()
+    ro twin = sb              // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
+    ro s = twin.as_str()
     sb.append("oops")
     assert(s == "hi")
 }

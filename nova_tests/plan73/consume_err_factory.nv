@@ -9,8 +9,8 @@ module nova_tests.plan73.consume_err_factory
 fn make_builder() -> StringBuilder => StringBuilder.new()
 
 test "use after consume — тип из return-типа функции" {
-    let sb = make_builder()
-    let s = sb.as_str()
+    ro sb = make_builder()
+    ro s = sb.as_str()
     sb.append("oops")          // ОШИБКА D131: sb потреблён @into()
     assert(s == "")
 }

@@ -26,27 +26,27 @@ type Switch effect {
 }
 
 fn three_times() Counter -> int {
-    let a = Counter.next()
-    let b = Counter.next()
-    let c = Counter.next()
+    ro a = Counter.next()
+    ro b = Counter.next()
+    ro c = Counter.next()
     a + b + c
 }
 
 test "single-op handler with state" {
-    let mut s = 0
+    mut s = 0
     with Counter = effect Counter {
         next() {
             s += 1
             return s
         }
     } {
-        let total = three_times()
+        ro total = three_times()
         assert(total == 1 + 2 + 3)
     }
 }
 
 test "two-op handler" {
-    let mut store = 0
+    mut store = 0
     with KeyValue = effect KeyValue {
         get()  => store
         set(n) {
@@ -65,13 +65,13 @@ test "handler transforms value through return" {
     with Echo = effect Echo {
         say(msg) => msg + "!"
     } {
-        let r = Echo.say("hi")
+        ro r = Echo.say("hi")
         assert(r == "hi!")
     }
 }
 
 test "handler with multiple operations on same effect" {
-    let mut log = []
+    mut log = []
     with Echo = effect Echo {
         say(msg) {
             log.push(msg)
@@ -88,8 +88,8 @@ test "handler with multiple operations on same effect" {
 }
 
 test "nested with: inner handler shadows outer" {
-    let mut outer_calls = 0
-    let mut inner_calls = 0
+    mut outer_calls = 0
+    mut inner_calls = 0
     with Counter = effect Counter {
         next() {
             outer_calls += 1
@@ -102,10 +102,10 @@ test "nested with: inner handler shadows outer" {
                 return 99
             }
         } {
-            let v = Counter.next()
+            ro v = Counter.next()
             assert(v == 99)
         }
-        let v2 = Counter.next()
+        ro v2 = Counter.next()
         assert(v2 == 1)
     }
     assert(outer_calls == 1)
@@ -123,7 +123,7 @@ test "handler-method short-form (=> expr)" {
 test "handler-method block-form с финальным выражением" {
     with Echo = effect Echo {
         say(msg) {
-            let upper = msg.to_upper()
+            ro upper = msg.to_upper()
             upper
         }
     } {
@@ -132,45 +132,45 @@ test "handler-method block-form с финальным выражением" {
 }
 
 test "D61: interrupt прерывает весь with-блок" {
-    let result = with Switch = effect Switch {
+    ro result = with Switch = effect Switch {
         flip() {
             interrupt 42
         }
     } {
         // Эта строка не выполнится — handler сделал interrupt
-        let _ = Switch.flip()
+        ro _ = Switch.flip()
         0
     }
     assert(result == 42)
 }
 
 test "D61: handler-значение через переменную" {
-    let h = effect Switch {
+    ro h = effect Switch {
         flip() => false
     }
     with Switch = h {
-        let b = Switch.flip()
+        ro b = Switch.flip()
         assert(b == false)
     }
 }
 
 test "D61: прямой вызов h.op(args) на handler-значении" {
     // Минует with-стек — handler-method исполняется на h напрямую.
-    let h = effect Switch {
+    ro h = effect Switch {
         flip() => true
     }
-    let b = h.flip()
+    ro b = h.flip()
     assert(b == true)
 }
 
 test "D61: interrupt в прямом h.op() возвращается как результат вызова" {
-    let h = effect Switch {
+    ro h = effect Switch {
         flip() {
             interrupt false
         }
     }
     // Нет активного with — interrupt становится результатом самого
     // h.flip(), а не падает наверх.
-    let b = h.flip()
+    ro b = h.flip()
     assert(b == false)
 }

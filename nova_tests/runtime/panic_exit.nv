@@ -24,21 +24,21 @@ test "panic компилируется в правильную позицию (n
     // panic имеет тип never, поэтому совместим с любой position.
     // Здесь не вызываем — иначе тест упадёт. Проверяем что код
     // с условным panic компилируется и не выполняет ветку с panic.
-    let x int = if true { 42 } else { panic("unreachable") }
+    ro x int = if true { 42 } else { panic("unreachable") }
     assert(x == 42)
 }
 
 
 test "exit компилируется в правильную позицию (never)" {
     // exit имеет тип never — то же что и panic.
-    let x int = if true { 42 } else { exit(1, "unreachable") }
+    ro x int = if true { 42 } else { exit(1, "unreachable") }
     assert(x == 42)
 }
 
 
 test "panic в never-position у return" {
     // never-тип позволяет panic быть веткой без значения.
-    let n = compute_or_panic(10)
+    ro n = compute_or_panic(10)
     assert(n == 100)
 }
 
@@ -50,7 +50,7 @@ fn compute_or_panic(x int) -> int {
 
 
 test "exit в never-position у return" {
-    let n = compute_or_exit(5)
+    ro n = compute_or_exit(5)
     assert(n == 50)
 }
 
@@ -69,21 +69,21 @@ fn compute_or_exit(x int) -> int {
 
 test "panic с пустой строкой не падает на форматировании" {
     // Не вызываем — проверяем компиляцию. Пустая строка валидный msg.
-    let x int = if true { 1 } else { panic("") }
+    ro x int = if true { 1 } else { panic("") }
     assert(x == 1)
 }
 
 
 test "exit с пустым msg не падает на форматировании" {
-    let x int = if true { 1 } else { exit(0, "") }
+    ro x int = if true { 1 } else { exit(0, "") }
     assert(x == 1)
 }
 
 
 test "exit с разными exit-code'ами компилируется" {
-    let x int = if true { 1 } else { exit(0, "ok") }
-    let y int = if true { 2 } else { exit(1, "err") }
-    let z int = if true { 3 } else { exit(127, "fatal") }
+    ro x int = if true { 1 } else { exit(0, "ok") }
+    ro y int = if true { 2 } else { exit(1, "err") }
+    ro z int = if true { 3 } else { exit(127, "fatal") }
     assert(x + y + z == 6)
 }
 
@@ -95,14 +95,14 @@ test "exit с разными exit-code'ами компилируется" {
 // fallback в position D86 ?? coalesce.
 
 test "?? panic — unwrap Option, panic если None" {
-    let opt = Some(42)
-    let v = opt ?? panic("expected Some")
+    ro opt = Some(42)
+    ro v = opt ?? panic("expected Some")
     assert(v == 42)
 }
 
 
 test "?? exit — unwrap Option, exit если None" {
-    let opt = Some(7)
-    let v = opt ?? exit(1, "expected Some")
+    ro opt = Some(7)
+    ro v = opt ?? exit(1, "expected Some")
     assert(v == 7)
 }

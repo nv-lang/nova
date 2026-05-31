@@ -33,8 +33,8 @@ fn make_triple(a int, b int, c int) -> Triple => { a, b, c }
 
 fn sum_range(n int) -> int {
     // 1+2+...+n = n*(n+1)/2
-    let mut acc = 0
-    let mut i = 1
+    mut acc = 0
+    mut i = 1
     while i <= n {
         acc += i
         i += 1
@@ -48,13 +48,13 @@ fn sum_range(n int) -> int {
 
 test "GC: sentinel survives 10000 interleaved allocs" {
     // Allocate a sentinel, then create 10000 short-lived objects, verify sentinel intact.
-    let sentinel = make_point(12345, 67890)
+    ro sentinel = make_point(12345, 67890)
 
-    let mut i = 0
+    mut i = 0
     while i < 10000 {
-        let tmp = make_point(i, i * 2)
+        ro tmp = make_point(i, i * 2)
         // prevent optimizer from eliding: use tmp in a way that affects state
-        let _ = tmp.x + tmp.y
+        ro _ = tmp.x + tmp.y
         i += 1
     }
 
@@ -63,17 +63,17 @@ test "GC: sentinel survives 10000 interleaved allocs" {
 }
 
 test "GC: 5 sentinels survive 5000 allocs each phase" {
-    let s0 = make_point(0,  100)
-    let s1 = make_point(1,  200)
-    let s2 = make_point(2,  300)
-    let s3 = make_point(3,  400)
-    let s4 = make_point(4,  500)
+    ro s0 = make_point(0,  100)
+    ro s1 = make_point(1,  200)
+    ro s2 = make_point(2,  300)
+    ro s3 = make_point(3,  400)
+    ro s4 = make_point(4,  500)
 
     // Phase 1: 5000 allocs
-    let mut i = 0
+    mut i = 0
     while i < 5000 {
-        let tmp = make_point(i, i)
-        let _ = tmp.x
+        ro tmp = make_point(i, i)
+        ro _ = tmp.x
         i += 1
     }
 
@@ -85,8 +85,8 @@ test "GC: 5 sentinels survive 5000 allocs each phase" {
     // Phase 2: 5000 more allocs
     i = 0
     while i < 5000 {
-        let tmp = make_triple(i, i + 1, i + 2)
-        let _ = tmp.a + tmp.b + tmp.c
+        ro tmp = make_triple(i, i + 1, i + 2)
+        ro _ = tmp.a + tmp.b + tmp.c
         i += 1
     }
 
@@ -110,11 +110,11 @@ test "GC: 5 sentinels survive 5000 allocs each phase" {
 test "GC: 1000-step chain, each depends on previous" {
     // Simulates a linked list traversal without actual pointers:
     // each record's field = previous.x + 1.
-    let mut cur_x = 0
-    let mut cur_y = 0
-    let mut i = 0
+    mut cur_x = 0
+    mut cur_y = 0
+    mut i = 0
     while i < 1000 {
-        let p = make_point(cur_x + 1, cur_y + 2)
+        ro p = make_point(cur_x + 1, cur_y + 2)
         cur_x = p.x
         cur_y = p.y
         i += 1
@@ -126,11 +126,11 @@ test "GC: 1000-step chain, each depends on previous" {
 
 test "GC: deep box chain, depth tracked" {
     // 30 iterations: val = 2^30 = 1073741824, well within int64
-    let mut val = 1
-    let mut depth = 0
-    let mut i = 0
+    mut val = 1
+    mut depth = 0
+    mut i = 0
     while i < 30 {
-        let b = make_box(val * 2, depth + 1)
+        ro b = make_box(val * 2, depth + 1)
         val = b.val
         depth = b.depth
         i += 1
@@ -142,12 +142,12 @@ test "GC: deep box chain, depth tracked" {
 test "GC: triple chain sum invariant" {
     // At each step: new triple = (prev.b, prev.c, prev.a + prev.b + prev.c)
     // Running sum of .c should follow Tribonacci-like growth.
-    let mut a = 1
-    let mut b = 1
-    let mut c = 1
-    let mut i = 0
+    mut a = 1
+    mut b = 1
+    mut c = 1
+    mut i = 0
     while i < 20 {
-        let t = make_triple(b, c, a + b + c)
+        ro t = make_triple(b, c, a + b + c)
         a = t.a
         b = t.b
         c = t.c
@@ -166,11 +166,11 @@ test "GC: triple chain sum invariant" {
 // ================================================================
 
 test "GC: 100 records, field arithmetic correct" {
-    let mut sum_x = 0
-    let mut sum_y = 0
-    let mut i = 0
+    mut sum_x = 0
+    mut sum_y = 0
+    mut i = 0
     while i < 100 {
-        let p = make_point(i, i * i)
+        ro p = make_point(i, i * i)
         sum_x += p.x
         sum_y += p.y
         i += 1
@@ -182,10 +182,10 @@ test "GC: 100 records, field arithmetic correct" {
 }
 
 test "GC: 1000 records, p.x + p.y == const" {
-    let mut check = 0
-    let mut i = 0
+    mut check = 0
+    mut i = 0
     while i < 1000 {
-        let p = make_point(i, 999 - i)
+        ro p = make_point(i, 999 - i)
         check += p.x + p.y    // always 999
         i += 1
     }
@@ -194,10 +194,10 @@ test "GC: 1000 records, p.x + p.y == const" {
 }
 
 test "GC: 500 triples, sum of all fields" {
-    let mut total = 0
-    let mut i = 0
+    mut total = 0
+    mut i = 0
     while i < 500 {
-        let t = make_triple(i, i + 1, i + 2)
+        ro t = make_triple(i, i + 1, i + 2)
         total += t.a + t.b + t.c
         i += 1
     }
@@ -211,11 +211,11 @@ test "GC: 500 triples, sum of all fields" {
 // ================================================================
 
 test "GC: record allocated inside spawn readable outside" {
-    let mut out_x = 0
-    let mut out_y = 0
+    mut out_x = 0
+    mut out_y = 0
     supervised {
         spawn {
-            let inner = make_point(777, 888)
+            ro inner = make_point(777, 888)
             out_x = inner.x
             out_y = inner.y
         }
@@ -225,15 +225,15 @@ test "GC: record allocated inside spawn readable outside" {
 }
 
 test "GC: 10 spawns each allocate a record, all mutations visible" {
-    let mut sum = 0
+    mut sum = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 10 {
-            let cur = i
+            ro cur = i
             spawn {
-                let inner = make_point(cur * 10, cur * 10 + 1)
-                let vx = inner.x
-                let vy = inner.y
+                ro inner = make_point(cur * 10, cur * 10 + 1)
+                ro vx = inner.x
+                ro vy = inner.y
                 sum += vx + vy
             }
             i += 1
@@ -245,11 +245,11 @@ test "GC: 10 spawns each allocate a record, all mutations visible" {
 }
 
 test "GC: record survives two spawns (pipeline)" {
-    let p = make_point(30, 40)
-    let px = p.x
-    let py = p.y
-    let mut r1 = 0
-    let mut r2 = 0
+    ro p = make_point(30, 40)
+    ro px = p.x
+    ro py = p.y
+    mut r1 = 0
+    mut r2 = 0
     supervised { spawn { r1 = px * px + py * py } }   // 2500
     supervised { spawn { r2 = r1 + px + py } }         // 2570
     assert(r1 == 2500)
@@ -261,30 +261,30 @@ test "GC: record survives two spawns (pipeline)" {
 // ================================================================
 
 test "GC: array len grows correctly" {
-    let mut arr = [10, 20, 30, 40, 50]
+    mut arr = [10, 20, 30, 40, 50]
     assert(arr.len() == 5)
 }
 
 test "GC: array spread creates correct length" {
-    let mut a = [1, 2, 3]
-    let mut b = [0, ...a, 4, 5, 6]
+    mut a = [1, 2, 3]
+    mut b = [0, ...a, 4, 5, 6]
     assert(b.len() == 7)
 }
 
 test "GC: array .get returns Some/None correctly" {
-    let mut arr = [100, 200, 300]
-    let m0 = arr.get(0)
-    let v0 = match m0 {
+    mut arr = [100, 200, 300]
+    ro m0 = arr.get(0)
+    ro v0 = match m0 {
         Some(n) => n
         None    => -1
     }
-    let m2 = arr.get(2)
-    let v2 = match m2 {
+    ro m2 = arr.get(2)
+    ro v2 = match m2 {
         Some(n) => n
         None    => -1
     }
-    let mx = arr.get(9)
-    let vx = match mx {
+    ro mx = arr.get(9)
+    ro vx = match mx {
         Some(n) => n
         None    => -999
     }
@@ -294,14 +294,14 @@ test "GC: array .get returns Some/None correctly" {
 }
 
 test "GC: array pattern [] vs [x, ..]" {
-    let empty = [0, 0]
-    let nonempty = [42, 99]
+    ro empty = [0, 0]
+    ro nonempty = [42, 99]
 
-    let r1 = match nonempty {
+    ro r1 = match nonempty {
         []      => -1
         [x, ..] => x
     }
-    let r2 = match empty {
+    ro r2 = match empty {
         []      => -1
         [x, ..] => x
     }
@@ -310,13 +310,13 @@ test "GC: array pattern [] vs [x, ..]" {
 }
 
 test "GC: 100 arrays with spread accumulate correctly" {
-    let base = [1, 2, 3]
-    let mut total = 0
-    let mut i = 0
+    ro base = [1, 2, 3]
+    mut total = 0
+    mut i = 0
     while i < 100 {
-        let extended = [0, ...base, i]
-        let mv = extended.get(4)
-        let v = match mv {
+        ro extended = [0, ...base, i]
+        ro mv = extended.get(4)
+        ro v = match mv {
             Some(n) => n
             None    => -1
         }
@@ -332,16 +332,16 @@ test "GC: 100 arrays with spread accumulate correctly" {
 // ================================================================
 
 test "GC: records and arrays interleaved, no corruption" {
-    let mut record_sum = 0
-    let mut array_sum = 0
+    mut record_sum = 0
+    mut array_sum = 0
 
-    let mut i = 0
+    mut i = 0
     while i < 50 {
-        let p = make_point(i, i + 1)
-        let mut arr = [i, i + 1, i + 2]
+        ro p = make_point(i, i + 1)
+        mut arr = [i, i + 1, i + 2]
         record_sum += p.x + p.y
-        let mv = arr.get(2)
-        let v = match mv {
+        ro mv = arr.get(2)
+        ro v = match mv {
             Some(n) => n
             None    => 0
         }
@@ -356,18 +356,18 @@ test "GC: records and arrays interleaved, no corruption" {
 }
 
 test "GC: 20 spawns each create records and arrays, mutations visible" {
-    let mut total = 0
+    mut total = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 20 {
-            let cur = i
+            ro cur = i
             spawn {
-                let inner = make_point(cur, cur * 2)
-                let vx = inner.x
-                let vy = inner.y
-                let mut arr = [vx, vy, vx + vy]
-                let ms = arr.get(2)
-                let s = match ms {
+                ro inner = make_point(cur, cur * 2)
+                ro vx = inner.x
+                ro vy = inner.y
+                mut arr = [vx, vy, vx + vy]
+                ro ms = arr.get(2)
+                ro s = match ms {
                     Some(n) => n
                     None    => 0
                 }

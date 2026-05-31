@@ -20,7 +20,7 @@ fn Bldr mut @bump() -> @ {
 fn Bldr mut @step() -> Self => @bump()
 
 test "should not compile" {
-    let b = Bldr.new()
-    let _ = b.step()
+    ro b = Bldr.new()
+    ro _ = b.step()
     assert(b.k == 1)
 }

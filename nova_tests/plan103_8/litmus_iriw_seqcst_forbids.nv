@@ -23,18 +23,18 @@
 module nova_tests.plan103_8.litmus_iriw_seqcst_forbids
 
 test "IRIW SeqCst: forbidden observation (1,0)/(1,0) never occurs over 1000 iterations" {
-    let n_iters   = 20
-    let mut violations = AtomicI64.new(0)
+    ro n_iters   = 20
+    mut violations = AtomicI64.new(0)
 
     for _iter in 0..n_iters {
-        let mut x = AtomicI64.new(0)
-        let mut y = AtomicI64.new(0)
+        mut x = AtomicI64.new(0)
+        mut y = AtomicI64.new(0)
 
         // Results from readers
-        let mut r1 = AtomicI64.new(-1)  // Reader1 sees X
-        let mut r2 = AtomicI64.new(-1)  // Reader1 sees Y
-        let mut r3 = AtomicI64.new(-1)  // Reader2 sees Y
-        let mut r4 = AtomicI64.new(-1)  // Reader2 sees X
+        mut r1 = AtomicI64.new(-1)  // Reader1 sees X
+        mut r2 = AtomicI64.new(-1)  // Reader1 sees Y
+        mut r3 = AtomicI64.new(-1)  // Reader2 sees Y
+        mut r4 = AtomicI64.new(-1)  // Reader2 sees X
 
         supervised {
             // Writer1: store X = 1
@@ -59,7 +59,7 @@ test "IRIW SeqCst: forbidden observation (1,0)/(1,0) never occurs over 1000 iter
 
         // Forbidden under SeqCst: r1=1 AND r2=0 AND r3=1 AND r4=0
         // (Reader1 saw X=1 but missed Y=1; Reader2 saw Y=1 but missed X=1)
-        let bad = r1.load() == 1 && r2.load() == 0 &&
+        ro bad = r1.load() == 1 && r2.load() == 0 &&
                   r3.load() == 1 && r4.load() == 0
         if bad {
             violations.fetch_add(1)

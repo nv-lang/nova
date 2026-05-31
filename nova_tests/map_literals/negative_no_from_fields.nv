@@ -18,6 +18,6 @@ module map_literals.negative_no_from_fields
 type MyContainer[K, V] { data int }
 
 fn main() -> () {
-    let m MyContainer[str, int] = { a: 1, b: 2 }
-    let _ = m
+    ro m MyContainer[str, int] = { a: 1, b: 2 }
+    ro _ = m
 }

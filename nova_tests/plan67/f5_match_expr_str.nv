@@ -7,12 +7,12 @@ module plan67.f5_match_expr_str
 // EXPECT_STDOUT other
 
 fn main() Io -> () {
-    let n = 1
+    ro n = 1
     println(match n {
         1 => "one"
         _ => "other"
     })
-    let m = 99
+    ro m = 99
     println(match m {
         1 => "one"
         _ => "other"

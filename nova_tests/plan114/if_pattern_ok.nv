@@ -1,0 +1,48 @@
+// Plan 114 (D184): pattern-bind в if condition — drop outer `let`,
+// unified pattern grammar (constructor / identifier с ro/mut).
+
+module nova_tests.plan114.if_pattern_ok
+
+fn lookup(n int) -> Option {
+    if n > 0 { return Some(n * 100) }
+    None
+}
+
+test "if Some constructor pattern (bare immutable)" {
+    ro v = if Some(n) = lookup(5) {
+        n
+    } else {
+        -1
+    }
+    assert(v == 500)
+}
+
+test "if None falls through" {
+    ro v = if Some(n) = lookup(-1) {
+        n
+    } else {
+        999
+    }
+    assert(v == 999)
+}
+
+test "if ro identifier-pattern" {
+    ro v = if ro x = lookup(7) {
+        match x {
+            Some(n) => n
+            None => 0
+        }
+    } else {
+        -1
+    }
+    assert(v == 700)
+}
+
+test "while Some queue iter" {
+    mut q = [1, 2, 3]
+    mut sum = 0
+    while Some(item) = q.pop() {
+        sum = sum + item
+    }
+    assert(sum == 6)
+}

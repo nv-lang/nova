@@ -8,6 +8,6 @@
 module negative_capability.closure_full_generics_rejected
 
 test "closure-full с `[T]` отвергается" {
-    let f = fn[T](x T) -> T => x
+    ro f = fn[T](x T) -> T => x
     assert(f(42) == 42)
 }

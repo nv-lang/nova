@@ -14,7 +14,7 @@ type WithStatic protocol {
 
 
 test "literal реализует static .make — запрещено" {
-    let l = protocol WithStatic {
+    ro l = protocol WithStatic {
         make(x) => ()       // ❌ static — не имеет value-level реализации
         run() => ()
     }

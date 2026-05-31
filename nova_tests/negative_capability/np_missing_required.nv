@@ -10,6 +10,6 @@ fn need_two(a int, b int) -> int =>
 
 test "missing required param rejected" {
     // `b` не передан, у него нет дефолта.
-    let _ = need_two(a: 1)
+    ro _ = need_two(a: 1)
     assert(true)
 }

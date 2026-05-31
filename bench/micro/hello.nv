@@ -8,10 +8,10 @@ bench "noop" {
 }
 
 bench "int add tight loop" {
-    let mut acc = 0
+    mut acc = 0
     measure {
-        let n = bench.iterations()
-        let mut i = 0
+        ro n = bench.iterations()
+        mut i = 0
         while i < n {
             acc = bench.opaque(acc + i)
             i = i + 1

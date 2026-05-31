@@ -10,11 +10,11 @@ module nova_tests.concurrency.mn_runtime_cross_channel
 // Consumer park'ится на recv, producer присылает значение → dispatch_ready wake.
 test "M:N: Channel basic send/recv — park/wake через workers" {
     runtime.init(2)
-    let ch = Channel.new(1)
-    let mut received = 0
+    ro ch = Channel.new(1)
+    mut received = 0
     supervised {
         spawn {
-            let v = match ch.rx.recv() {
+            ro v = match ch.rx.recv() {
                 Some(x) => x
                 None    => -1
             }
@@ -31,15 +31,15 @@ test "M:N: Channel basic send/recv — park/wake через workers" {
 // Это упражняет park/wake path через dispatch_ready.
 test "M:N: Channel pipeline — 4 producers park/wake" {
     runtime.init(2)
-    let ch = Channel.new(1)
-    let mut count = 0
+    ro ch = Channel.new(1)
+    mut count = 0
     supervised {
         spawn { ch.tx.send(1) }
         spawn { ch.tx.send(2) }
         spawn { ch.tx.send(3) }
         spawn { ch.tx.send(4) }
         spawn {
-            let mut got = 0
+            mut got = 0
             while got < 4 {
                 match ch.rx.recv() {
                     Some(_) => { got = got + 1; count = count + 1 }
@@ -55,15 +55,15 @@ test "M:N: Channel pipeline — 4 producers park/wake" {
 // --- Channel + Time.sleep: комбо park/wake от таймера И от channel ---
 test "M:N: Channel + Time.sleep в одном supervised" {
     runtime.init(2)
-    let ch = Channel.new(4)
-    let mut done = 0
+    ro ch = Channel.new(4)
+    mut done = 0
     supervised {
         spawn { Time.sleep(5); ch.tx.send(1) }
         spawn { Time.sleep(5); ch.tx.send(2) }
         spawn { Time.sleep(5); ch.tx.send(3) }
         spawn { Time.sleep(5); ch.tx.send(4) }
         spawn {
-            let mut n = 0
+            mut n = 0
             while n < 4 {
                 match ch.rx.recv() {
                     Some(_) => { n = n + 1; done = done + 1 }

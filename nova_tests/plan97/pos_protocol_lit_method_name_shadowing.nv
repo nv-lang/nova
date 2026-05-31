@@ -20,15 +20,15 @@ export type CounterPlain protocol {
 
 
 test "protocol-литерал с method-name shadowing stdlib" {
-    let mut state = 0
-    let c = protocol CounterPlain {
+    mut state = 0
+    ro c = protocol CounterPlain {
         next() {
             state = state + 1
             state
         }
     }
-    let a = c.next()
-    let b = c.next()
+    ro a = c.next()
+    ro b = c.next()
     assert(a == 1)
     assert(b == 2)
 }

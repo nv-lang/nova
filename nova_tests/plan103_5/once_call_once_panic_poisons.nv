@@ -6,8 +6,8 @@
 module nova_tests.plan103_5.once_call_once_panic_poisons
 
 test "Once.call_once: body panic → state is Poisoned" {
-    let mut once = Once.new()
-    let mut caught = false
+    mut once = Once.new()
+    mut caught = false
     with Fail = effect Fail {
         fail(_msg) { caught = true; interrupt () }
     } {
@@ -15,7 +15,7 @@ test "Once.call_once: body panic → state is Poisoned" {
     }
     assert(caught == true)
     // State should now be Poisoned
-    let s = once.state()
+    ro s = once.state()
     assert(match s {
         OnceState.Poisoned => true
         _ => false
@@ -23,9 +23,9 @@ test "Once.call_once: body panic → state is Poisoned" {
 }
 
 test "Once.call_once: subsequent call after poison also panics" {
-    let mut once = Once.new()
+    mut once = Once.new()
     // First call: body panics → poisons
-    let mut first_caught = false
+    mut first_caught = false
     with Fail = effect Fail {
         fail(_msg) { first_caught = true; interrupt () }
     } {
@@ -33,7 +33,7 @@ test "Once.call_once: subsequent call after poison also panics" {
     }
     assert(first_caught == true)
     // Second call: should re-panic
-    let mut second_panicked = false
+    mut second_panicked = false
     with Fail = effect Fail {
         fail(_msg) { second_panicked = true; interrupt () }
     } {
@@ -43,7 +43,7 @@ test "Once.call_once: subsequent call after poison also panics" {
 }
 
 test "Once.call_once: is_completed returns false when poisoned" {
-    let mut once = Once.new()
+    mut once = Once.new()
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {

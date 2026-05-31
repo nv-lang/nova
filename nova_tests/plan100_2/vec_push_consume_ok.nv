@@ -14,7 +14,7 @@ fn Transaction consume @rollback() -> () { () }
 
 test "for consume — inline array, каждый element consume'ится" {
     // Inline literals: no named consume-bindings before the loop.
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
     for consume tx in txs {
         tx.commit()                             // consume obligation satisfied ✅
     }

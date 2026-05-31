@@ -46,7 +46,7 @@ test "clamp within bounds" {
 }
 
 test "clamp result satisfies ensures" {
-    let r = clamp(42, 10, 20)
+    ro r = clamp(42, 10, 20)
     assert(r >= 10)
     assert(r <= 20)
 }

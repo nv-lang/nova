@@ -38,7 +38,7 @@ fn IntCounter.new(start int, end int) -> IntCounter => { cur: start, end }
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -55,14 +55,14 @@ fn accepts_iter_param(it Iterable[int], fallback int) -> int => fallback
 
 
 test "Iterable[int] as parameter type — declaration compiles (CC-FAIL fix)" {
-    let c = IntCounter.new(1, 4)
-    let r = accepts_iter_param(c, 42)
+    ro c = IntCounter.new(1, 4)
+    ro r = accepts_iter_param(c, 42)
     assert(r == 42)
 }
 
 
 test "second call confirms repeated codegen path stable" {
-    let c2 = IntCounter.new(0, 0)
-    let r = accepts_iter_param(c2, 7)
+    ro c2 = IntCounter.new(0, 0)
+    ro r = accepts_iter_param(c2, 7)
     assert(r == 7)
 }

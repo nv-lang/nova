@@ -14,6 +14,6 @@ type NoFrom { x int }            // НЕ реализует From[str]
 fn wrap[T From[str]](s str) -> T => T.from(s)
 
 test "тип без From[str] в generic bound — compile error" {
-    let bad = wrap[NoFrom]("oops")    // ← ОШИБКА: NoFrom does not satisfy From[str]
+    ro bad = wrap[NoFrom]("oops")    // ← ОШИБКА: NoFrom does not satisfy From[str]
     assert(bad.x == 0)
 }

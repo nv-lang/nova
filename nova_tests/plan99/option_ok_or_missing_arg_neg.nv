@@ -6,6 +6,6 @@
 module nova_tests.plan99.option_ok_or_missing_arg_neg
 
 test "ok_or missing err-arg" {
-    let o Option[int] = Some(1)
-    let _x = o.ok_or()
+    ro o Option[int] = Some(1)
+    ro _x = o.ok_or()
 }

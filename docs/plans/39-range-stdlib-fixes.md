@@ -64,7 +64,7 @@
 #### Симптом (наблюдается в range.nv test "inclusive overflow throws")
 
 ```nova
-let r = with Fail[OverflowError] = |e| interrupt None {
+ro r = with Fail[OverflowError] = |e| interrupt None {
     Some(Range.inclusive(0, int.MAX))
 }
 assert(r == None)

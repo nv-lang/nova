@@ -8,8 +8,8 @@ module contracts.loop_invariant_positive
 fn sum_to(n int) -> int
     requires n >= 0
 {
-    let mut s = 0
-    let mut i = 0
+    mut s = 0
+    mut i = 0
     while i < n
         invariant 0 <= i
         invariant i <= n
@@ -21,12 +21,12 @@ fn sum_to(n int) -> int
 }
 
 fn count_with_inv(xs []int) -> int {
-    let mut count = 0
+    mut count = 0
     for x in xs
         invariant count >= 0
     {
         count = count + 1
-        let _ = x
+        ro _ = x
     }
     count
 }

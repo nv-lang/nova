@@ -41,11 +41,11 @@ fn sum_hs[T HashSize](x T) -> int => x.hash() + x.size()
 
 
 test "IntBox satisfies HashSize" {
-    let b = IntBox { v: 7 }
+    ro b = IntBox { v: 7 }
     assert(sum_hs(b) == 11)
 }
 
 test "Tag satisfies HashSize" {
-    let t = Tag { name: "abc" }
+    ro t = Tag { name: "abc" }
     assert(sum_hs(t) == 7)
 }

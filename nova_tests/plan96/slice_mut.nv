@@ -4,24 +4,24 @@
 module nova_tests.plan96.slice_mut
 
 test "mut view write propagates to parent" {
-    let mut arr []int = [10, 20, 30, 40, 50]
-    let view = arr[1..4]
+    mut arr []int = [10, 20, 30, 40, 50]
+    ro view = arr[1..4]
     view[0] = 999
     assert(arr[1] == 999)
     assert(view[0] == 999)
 }
 
 test "parent mutation visible through view" {
-    let mut arr []int = [10, 20, 30, 40, 50]
-    let view = arr[1..4]
+    mut arr []int = [10, 20, 30, 40, 50]
+    ro view = arr[1..4]
     arr[2] = 777
     assert(view[1] == 777)
 }
 
 test "multiple mut views same backing" {
-    let mut arr []int = [10, 20, 30, 40, 50]
-    let v1 = arr[0..3]
-    let v2 = arr[2..5]
+    mut arr []int = [10, 20, 30, 40, 50]
+    ro v1 = arr[0..3]
+    ro v2 = arr[2..5]
     v1[2] = 100
     assert(v2[0] == 100)
 }

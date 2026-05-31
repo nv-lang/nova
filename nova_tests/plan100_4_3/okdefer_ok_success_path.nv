@@ -4,9 +4,9 @@
 module nova_tests.plan100_4_3.okdefer_ok_success_path
 
 test "okdefer срабатывает на normal exit" {
-    let mut ok_count = 0
-    let mut err_count = 0
-    let _ = {
+    mut ok_count = 0
+    mut err_count = 0
+    ro _ = {
         errdefer { err_count = err_count + 1 }
         okdefer  { ok_count  = ok_count  + 1 }
         42
@@ -16,9 +16,9 @@ test "okdefer срабатывает на normal exit" {
 }
 
 test "defer + okdefer оба срабатывают на success-path" {
-    let mut defer_count = 0
-    let mut ok_count = 0
-    let _ = {
+    mut defer_count = 0
+    mut ok_count = 0
+    ro _ = {
         defer   { defer_count = defer_count + 1 }
         okdefer { ok_count    = ok_count    + 1 }
         0
@@ -28,10 +28,10 @@ test "defer + okdefer оба срабатывают на success-path" {
 }
 
 test "okdefer LIFO на success-path" {
-    let mut step = 0
-    let mut first = 0
-    let mut second = 0
-    let _ = {
+    mut step = 0
+    mut first = 0
+    mut second = 0
+    ro _ = {
         okdefer { step = step + 1; first  = step }  // registered first, fires last
         okdefer { step = step + 1; second = step }  // registered last, fires first
         0

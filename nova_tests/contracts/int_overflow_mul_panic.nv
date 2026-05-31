@@ -7,5 +7,5 @@ module contracts.int_overflow_mul_panic
 fn double(x int) -> int => x * 2
 
 test "int * overflow panics" {
-    let _ = double(int.MAX)
+    ro _ = double(int.MAX)
 }

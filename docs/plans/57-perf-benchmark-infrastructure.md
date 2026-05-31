@@ -88,12 +88,12 @@ module bench.my_module
 
 bench "name of this benchmark" {
     // Setup — НЕ measured, 1x.
-    let mut m = HashMap[int, int].new()
-    let n = 1000
+    mut m = HashMap[int, int].new()
+    ro n = 1000
 
     // Measured block — adaptive sampling.
     measure {
-        let mut i = 0
+        mut i = 0
         while i < n {
             m.insert(i, i)
             i = i + 1
@@ -108,7 +108,7 @@ bench "name of this benchmark" {
 ```nova
 #bench(params = [10, 100, 1_000, 10_000])
 fn hashmap_insert(n int) {
-    let m = HashMap[int, int].new()
+    ro m = HashMap[int, int].new()
     measure {
         for i in 0..n {
             bench.opaque(m.insert(i, i))

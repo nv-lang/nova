@@ -12,7 +12,7 @@
 module nova_tests.plan70_3.f4_char_in_int_slot_neg
 
 test "char literal rejected in Option[int] slot" {
-    let i Option[int] = Some('a')
+    ro i Option[int] = Some('a')
     match i {
         Some(n) => assert(n == 97)
         None => assert(false)

@@ -61,7 +61,7 @@ Negative: `supervised_cancel_double_bind` (runtime panic),
 `supervised`:
 
 ```nova
-let tok = CancelToken.new()
+ro tok = CancelToken.new()
 supervised(cancel: tok) {
     spawn { fetch(url) }
 }

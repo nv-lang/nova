@@ -29,12 +29,12 @@ fn db_insert(t Transaction, data int) -> Receipt
 fn process_order(db Db, data int) -> Receipt {
     consume tx Transaction = db.begin()          // explicit type annotation (D165)
     // Commit on any exit — for simplicity use explicit consume.
-    let receipt = db_insert(tx, data)
+    ro receipt = db_insert(tx, data)
     tx.commit()
     return receipt
 }
 
 test "Transaction commit success path" {
-    let db = Db { id: 1 }
+    ro db = Db { id: 1 }
     process_order(db, 42)
 }

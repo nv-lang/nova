@@ -9,8 +9,8 @@ fn append_99(mut b []int) -> int {
 }
 
 test "mut param + array push" {
-    let mut arr = [1, 2, 3]
-    let n = append_99(arr)
+    mut arr = [1, 2, 3]
+    ro n = append_99(arr)
     assert(n == 4)
     assert(arr.len() == 4)        // мутация видна caller'у (reference semantics)
 }

@@ -5,18 +5,18 @@
 module concurrency.select_max_arms_boundary
 
 test "select: 32 arms (max) compile and dispatch" {
-    let c0  = Channel.new(1)
-    let c1  = Channel.new(1); let c2  = Channel.new(1); let c3  = Channel.new(1)
-    let c4  = Channel.new(1); let c5  = Channel.new(1); let c6  = Channel.new(1)
-    let c7  = Channel.new(1); let c8  = Channel.new(1); let c9  = Channel.new(1)
-    let c10 = Channel.new(1); let c11 = Channel.new(1); let c12 = Channel.new(1)
-    let c13 = Channel.new(1); let c14 = Channel.new(1); let c15 = Channel.new(1)
-    let c16 = Channel.new(1); let c17 = Channel.new(1); let c18 = Channel.new(1)
-    let c19 = Channel.new(1); let c20 = Channel.new(1); let c21 = Channel.new(1)
-    let c22 = Channel.new(1); let c23 = Channel.new(1); let c24 = Channel.new(1)
-    let c25 = Channel.new(1); let c26 = Channel.new(1); let c27 = Channel.new(1)
-    let c28 = Channel.new(1); let c29 = Channel.new(1); let c30 = Channel.new(1)
-    let c31 = Channel.new(1)
+    ro c0  = Channel.new(1)
+    ro c1  = Channel.new(1); ro c2  = Channel.new(1); ro c3  = Channel.new(1)
+    ro c4  = Channel.new(1); ro c5  = Channel.new(1); ro c6  = Channel.new(1)
+    ro c7  = Channel.new(1); ro c8  = Channel.new(1); ro c9  = Channel.new(1)
+    ro c10 = Channel.new(1); ro c11 = Channel.new(1); ro c12 = Channel.new(1)
+    ro c13 = Channel.new(1); ro c14 = Channel.new(1); ro c15 = Channel.new(1)
+    ro c16 = Channel.new(1); ro c17 = Channel.new(1); ro c18 = Channel.new(1)
+    ro c19 = Channel.new(1); ro c20 = Channel.new(1); ro c21 = Channel.new(1)
+    ro c22 = Channel.new(1); ro c23 = Channel.new(1); ro c24 = Channel.new(1)
+    ro c25 = Channel.new(1); ro c26 = Channel.new(1); ro c27 = Channel.new(1)
+    ro c28 = Channel.new(1); ro c29 = Channel.new(1); ro c30 = Channel.new(1)
+    ro c31 = Channel.new(1)
 
     supervised {
         spawn {
@@ -24,7 +24,7 @@ test "select: 32 arms (max) compile and dispatch" {
             c0.tx.send(42)
         }
         spawn {
-            let mut got = 0
+            mut got = 0
             select {
                 Some(v) = c0.rx  => { got = v }
                 Some(_) = c1.rx  => { }

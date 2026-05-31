@@ -6,6 +6,6 @@
 module nova_tests.plan79.assign_let_float_to_int
 
 fn run() -> int {
-    let n int = 1.5
+    ro n int = 1.5
     n
 }

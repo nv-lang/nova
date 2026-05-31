@@ -7,8 +7,8 @@
 module nova_tests.plan90_1.view_extend_detach_warn
 
 fn main() -> () {
-    let mut parent []int = [1, 2, 3, 4, 5]
-    let view = parent[1..4]
+    mut parent []int = [1, 2, 3, 4, 5]
+    ro view = parent[1..4]
     parent.append([6, 7, 8])  // W_VIEW_EXTEND_DETACH: view may dangle after realloc
-    let _ = view.len()
+    ro _ = view.len()
 }

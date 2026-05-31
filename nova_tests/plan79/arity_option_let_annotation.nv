@@ -6,6 +6,6 @@
 module nova_tests.plan79.arity_option_let_annotation
 
 fn run() -> int {
-    let x Option[int, bool] = None
+    ro x Option[int, bool] = None
     0
 }

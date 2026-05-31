@@ -11,8 +11,8 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 
 test "for + branch только на then — каждая iteration теряет tx" {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
-    let condition = true
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro condition = true
     for consume tx in txs {
         if condition {
             tx.commit()

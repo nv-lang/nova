@@ -12,8 +12,8 @@ module concurrency.blocking_offload_test
 
 // leaf work: CPU busy-loop. Returns result → tests result-passing via ctx-struct after wake.
 #blocking fn _busy_sum_work(upto int) -> int {
-    let mut acc = 0
-    let mut i = 0
+    mut acc = 0
+    mut i = 0
     while i < upto {
         acc = acc + (i % 7)
         i = i + 1
@@ -30,7 +30,7 @@ fn busy_sum(upto int) -> int {
 // ================================================================
 
 test "blocking: offload in fiber returns correct result" {
-    let mut got = 0
+    mut got = 0
     supervised {
         spawn {
             got = busy_sum(70)
@@ -45,12 +45,12 @@ test "blocking: offload in fiber returns correct result" {
 // ================================================================
 
 test "blocking: worker freed — sibling fiber progresses during offload" {
-    let mut marker = 0
-    let mut a_saw = -1
+    mut marker = 0
+    mut a_saw = -1
     supervised {
         spawn {
             // Fiber A — offloads to threadpool, parks.
-            let _ = busy_sum(1000000)
+            ro _ = busy_sum(1000000)
             // What A sees immediately after returning from blocking offload.
             a_saw = marker
         }
@@ -70,7 +70,7 @@ test "blocking: worker freed — sibling fiber progresses during offload" {
 
 test "blocking: on main thread runs inline" {
     // Outside fiber context (mco_running == false) — runs inline.
-    let r = busy_sum(700)
+    ro r = busy_sum(700)
     assert(r == 2100)   // 100 cycles * 21
 }
 
@@ -79,9 +79,9 @@ test "blocking: on main thread runs inline" {
 // ================================================================
 
 test "blocking: multiple fibers offload concurrently" {
-    let mut s1 = 0
-    let mut s2 = 0
-    let mut s3 = 0
+    mut s1 = 0
+    mut s2 = 0
+    mut s3 = 0
     supervised {
         spawn { s1 = busy_sum(70) }
         spawn { s2 = busy_sum(140) }

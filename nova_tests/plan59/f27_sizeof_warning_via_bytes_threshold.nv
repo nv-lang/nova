@@ -14,7 +14,7 @@ fn make_str_octuple() -> (str, str, str, str, str, str, str, str) {
 
 
 test "8 nova_str tuple — sizeof warning emitted" {
-    let t = make_str_octuple()
+    ro t = make_str_octuple()
     assert(t.0 == "a")
     assert(t.7 == "h")
 }

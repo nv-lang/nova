@@ -76,7 +76,7 @@ fn TomlParser.new(s str) -> Self =>
 /// floats, booleans, arrays.
 #stable(since = "0.1")
 export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue {
-    let mut p = TomlParser.new(s)
+    mut p = TomlParser.new(s)
     p.parse_document()
     TomlTable(p.root)
 }
@@ -89,7 +89,7 @@ export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue {
 fn TomlParser @peek() -> Option[char] => @input.char_at(@pos)
 
 fn TomlParser mut @advance() -> Option[char] {
-    let c = @peek()
+    ro c = @peek()
     match c {
         Some('\n') => { @line += 1; @col = 1 }
         Some(_)    => { @col += 1 }
@@ -100,7 +100,7 @@ fn TomlParser mut @advance() -> Option[char] {
 }
 
 fn TomlParser mut @skip_whitespace_and_comments() -> () {
-    let mut done = false
+    mut done = false
     while !done {
         match @peek() {
             Some(' ') | Some('\t') => { @advance() }
@@ -113,7 +113,7 @@ fn TomlParser mut @skip_whitespace_and_comments() -> () {
 }
 
 fn TomlParser mut @skip_whitespace_and_newlines() -> () {
-    let mut done = false
+    mut done = false
     while !done {
         match @peek() {
             Some(' ') | Some('\t') | Some('\n') | Some('\r') => { @advance() }
@@ -143,10 +143,10 @@ fn TomlParser mut @parse_document() Fail[ParseTomlError] -> () {
 
 fn TomlParser mut @parse_table_header() Fail[ParseTomlError] -> () {
     @advance()          // [
-    let is_array = @peek() == Some('[')
+    ro is_array = @peek() == Some('[')
     if is_array { @advance() }
 
-    let path = @parse_key_path()
+    ro path = @parse_key_path()
 
     if @peek() != Some(']') {
         throw UnclosedTable { line: @line }
@@ -163,7 +163,7 @@ fn TomlParser mut @parse_table_header() Fail[ParseTomlError] -> () {
 }
 
 fn TomlParser mut @parse_key_path() Fail[ParseTomlError] -> []str {
-    let mut path []str = []
+    mut path []str = []
     @skip_whitespace_and_comments()
     path.push(@parse_key())
     @skip_whitespace_and_comments()
@@ -187,7 +187,7 @@ fn TomlParser mut @parse_key() Fail[ParseTomlError] -> str {
 
 fn TomlParser mut @parse_bare_key() -> str {
     consume buf = StringBuilder.new()
-    let mut done = false
+    mut done = false
     while !done {
         match @peek() {
             Some(c) if is_bare_key_char(c) => {
@@ -201,7 +201,7 @@ fn TomlParser mut @parse_bare_key() -> str {
 }
 
 fn is_bare_key_char(c char) -> bool {
-    let n = c as int
+    ro n = c as int
     (n >= 65 && n <= 90)        // A-Z
     || (n >= 97 && n <= 122)     // a-z
     || (n >= 48 && n <= 57)      // 0-9
@@ -215,7 +215,7 @@ fn is_bare_key_char(c char) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn TomlParser mut @parse_key_value() Fail[ParseTomlError] -> () {
-    let key = @parse_key()
+    ro key = @parse_key()
     @skip_whitespace_and_comments()
     if @peek() != Some('=') {
         throw UnexpectedChar {
@@ -225,7 +225,7 @@ fn TomlParser mut @parse_key_value() Fail[ParseTomlError] -> () {
     }
     @advance()
     @skip_whitespace_and_comments()
-    let value = @parse_value()
+    ro value = @parse_value()
     @insert_at_current_path(key, value)
 }
 
@@ -249,7 +249,7 @@ fn is_num_start(c char) -> bool =>
 fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
     @advance()          // open "
     consume buf = StringBuilder.new()
-    let mut done = false
+    mut done = false
     while !done {
         match @advance() {
             None => throw UnexpectedEof { line: @line }
@@ -279,8 +279,8 @@ fn TomlParser mut @parse_bool() Fail[ParseTomlError] -> TomlValue {
 }
 
 fn TomlParser mut @match_keyword(kw str) -> bool {
-    let saved = @pos
-    let mut i = 0
+    ro saved = @pos
+    mut i = 0
     while i < kw.len() {
         if @peek() != kw.char_at(i) {
             @pos = saved
@@ -294,10 +294,10 @@ fn TomlParser mut @match_keyword(kw str) -> bool {
 
 
 fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
-    let start = @pos
+    ro start = @pos
     if @peek() == Some('-') || @peek() == Some('+') { @advance() }
-    let mut has_dot = false
-    let mut has_exp = false
+    mut has_dot = false
+    mut has_exp = false
     loop {
         match @peek() {
             Some(c) if c >= '0' && c <= '9' => { @advance() }
@@ -310,7 +310,7 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
             _ => break
         }
     }
-    let text = @input[start..@pos]
+    ro text = @input[start..@pos]
     if has_dot || has_exp {
         match f64.try_from(text) {
             Ok(f)  => TomlFloat(f)
@@ -327,7 +327,7 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
 
 fn TomlParser mut @parse_array() Fail[ParseTomlError] -> TomlValue {
     @advance()          // [
-    let mut items []TomlValue = []
+    mut items []TomlValue = []
     @skip_whitespace_and_newlines()
     if @peek() == Some(']') {
         @advance()
@@ -352,33 +352,33 @@ fn TomlParser mut @parse_array() Fail[ParseTomlError] -> TomlValue {
 
 fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
     @advance()          // {
-    let mut t = HashMap[str, TomlValue].new()
+    mut t = HashMap[str, TomlValue].new()
     @skip_whitespace_and_comments()
     if @peek() == Some('}') {
         @advance()
         return TomlTable(t)
     }
-    let key = @parse_key()
+    ro key = @parse_key()
     @skip_whitespace_and_comments()
     if @peek() != Some('=') {
         throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') }
     }
     @advance()
     @skip_whitespace_and_comments()
-    let value = @parse_value()
+    ro value = @parse_value()
     t.insert(key, value)
     @skip_whitespace_and_comments()
     while @peek() == Some(',') {
         @advance()
         @skip_whitespace_and_comments()
-        let k = @parse_key()
+        ro k = @parse_key()
         @skip_whitespace_and_comments()
         if @peek() != Some('=') {
             throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') }
         }
         @advance()
         @skip_whitespace_and_comments()
-        let v = @parse_value()
+        ro v = @parse_value()
         t.insert(k, v)
         @skip_whitespace_and_comments()
     }
@@ -397,7 +397,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
 fn TomlParser mut @ensure_path_exists(path []str, is_array bool) -> () {
     // Упрощённо: для bootstrap-stdlib просто insert empty table.
     // Production-парсер обрабатывает [[array of tables]] полноценно.
-    let mut current = @root
+    mut current = @root
     for segment in path {
         if !current.contains(segment) {
             current.insert(segment, TomlTable(HashMap[str, TomlValue].new()))
@@ -422,7 +422,7 @@ fn TomlParser mut @insert_at_current_path(key str, value TomlValue) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: ключ-значение топ-уровня" {
-    let v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")
+    ro v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")
     match v {
         TomlTable(t) => {
             assert(t.get("name") == Some(TomlStr("nova")))
@@ -433,7 +433,7 @@ test "parse: ключ-значение топ-уровня" {
 }
 
 test "parse: integer и float" {
-    let v = Toml.parse("port = 8080\npi = 3.14\n")
+    ro v = Toml.parse("port = 8080\npi = 3.14\n")
     match v {
         TomlTable(t) => {
             assert(t.get("port") == Some(TomlInt(8080)))
@@ -444,7 +444,7 @@ test "parse: integer и float" {
 }
 
 test "parse: bool" {
-    let v = Toml.parse("debug = true\nprod = false\n")
+    ro v = Toml.parse("debug = true\nprod = false\n")
     match v {
         TomlTable(t) => {
             assert(t.get("debug") == Some(TomlBool(true)))
@@ -455,7 +455,7 @@ test "parse: bool" {
 }
 
 test "parse: array" {
-    let v = Toml.parse("ports = [80, 443, 8080]\n")
+    ro v = Toml.parse("ports = [80, 443, 8080]\n")
     match v {
         TomlTable(t) => match t.get("ports") {
             Some(TomlArray(xs)) => {
@@ -469,7 +469,7 @@ test "parse: array" {
 }
 
 test "parse: comments игнорируются" {
-    let v = Toml.parse("# top comment\nname = \"x\"  # inline\n")
+    ro v = Toml.parse("# top comment\nname = \"x\"  # inline\n")
     match v {
         TomlTable(t) => assert(t.get("name") == Some(TomlStr("x")))
         _ => assert(false)
@@ -477,8 +477,8 @@ test "parse: comments игнорируются" {
 }
 
 test "parse: ошибка — незакрытая string" {
-    let r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
-        let _ = Toml.parse("k = \"unclosed")
+    ro r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
+        ro _ = Toml.parse("k = \"unclosed")
         None
     }
     assert(match r {

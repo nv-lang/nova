@@ -12,7 +12,7 @@ test "liskov handler positive" {
     with #verify Multiplier = effect Multiplier {
         twice(x) => x * 2
     } {
-        let r = Multiplier.twice(5)
+        ro r = Multiplier.twice(5)
         assert(r == 10)
     }
 }

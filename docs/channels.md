@@ -49,13 +49,13 @@ revision) + [D94](../spec/decisions/06-concurrency.md#d94) (select).
 
 ```nova
 test "channel: send + recv FIFO" {
-    let { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel.new(4)
     tx.send(10)
     tx.send(20)
     tx.send(30)
-    let a = rx.recv()
-    let b = rx.recv()
-    let c = rx.recv()
+    ro a = rx.recv()
+    ro b = rx.recv()
+    ro c = rx.recv()
     assert(a.unwrap_or(-1) == 10)
     assert(b.unwrap_or(-1) == 20)
     assert(c.unwrap_or(-1) == 30)
@@ -65,10 +65,10 @@ test "channel: send + recv FIFO" {
 
 ```nova
 test "select: data wins over timeout" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut branch = 0
     supervised {
         spawn {
             tx.send(99)
@@ -95,18 +95,18 @@ Returns a **pair** — a record with fields `tx` (writer capability) and
 
 ```nova
 // 1. Record destructure (Plan 53, most idiomatic)
-let { tx, rx } = Channel.new(4)
+ro { tx, rx } = Channel.new(4)
 
 // 2. Record destructure with renaming
-let { tx: sender, rx: receiver } = Channel.new(4)
+ro { tx: sender, rx: receiver } = Channel.new(4)
 
 // 3. Tuple destructure (compat with D91 spec examples)
-let (tx, rx) = Channel.new(4)
+ro (tx, rx) = Channel.new(4)
 
 // 4. Record access (when distinct lifetimes are needed)
-let ch = Channel.new(4)
-let tx = ch.tx
-let rx = ch.rx
+ro ch = Channel.new(4)
+ro tx = ch.tx
+ro rx = ch.rx
 ```
 
 **Capacity ≥ 1.** `Channel.new(0)` currently panics with
@@ -116,9 +116,9 @@ let rx = ch.rx
 **The element type (`T`)** is inferred from the first `send`/`recv`:
 
 ```nova
-let { tx, rx } = Channel.new(8)
+ro { tx, rx } = Channel.new(8)
 tx.send(42)         // T = int
-let v = rx.recv()   // Option[int]
+ro v = rx.recv()   // Option[int]
 ```
 
 Explicit annotation via turbofish: `Channel[str].new(8)`.
@@ -139,7 +139,7 @@ Explicit annotation via turbofish: `Channel[str].new(8)`.
 
 ```nova
 test "channel: send after close returns false, does not panic" {
-    let { tx, rx: _rx } = Channel.new(2)
+    ro { tx, rx: _rx } = Channel.new(2)
     assert(tx.send(1))
     tx.close()
     assert(!tx.send(99))    // false: channel closed
@@ -150,7 +150,7 @@ Useful for graceful shutdown without try/catch wrapping:
 
 ```nova
 fn produce(tx ChanWriter[Job], jobs []Job) {
-    let mut i = 0
+    mut i = 0
     while i < jobs.len() {
         if !tx.send(jobs[i]) {
             break               // consumer closed — exit silently
@@ -164,7 +164,7 @@ fn produce(tx ChanWriter[Job], jobs []Job) {
 
 ```nova
 test "channel: try_send full buffer" {
-    let { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel.new(2)
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))            // buffer full
@@ -178,14 +178,14 @@ test "channel: try_send full buffer" {
 
 ```nova
 test "channel: fan-in — two writers, one reader" {
-    let { tx, rx } = Channel.new(8)
-    let tx2 = tx.clone()                // writer_count = 2
-    let mut sum = 0
+    ro { tx, rx } = Channel.new(8)
+    ro tx2 = tx.clone()                // writer_count = 2
+    mut sum = 0
     supervised {
         spawn { tx.send(1);  tx.send(2);  tx.send(3);  tx.close() }
         spawn { tx2.send(10); tx2.send(20); tx2.send(30); tx2.close() }
         spawn {
-            while let Some(v) = rx.recv() { sum = sum + v }
+            while Some(v) = rx.recv() { sum = sum + v }
         }
     }
     assert(sum == 66)
@@ -217,7 +217,7 @@ idiomatic `while let` loop.
 
 ```nova
 test "channel: close + recv drain" {
-    let { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel.new(4)
     tx.send(1)
     tx.send(2)
     tx.close()
@@ -232,7 +232,7 @@ test "channel: close + recv drain" {
 
 ```nova
 test "channel: try_recv distinguishes empty-open from empty-closed via is_closed" {
-    let { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel.new(4)
     assert(rx.try_recv().is_none())     // empty, open
     assert(!rx.is_closed())
     tx.close()
@@ -245,13 +245,13 @@ test "channel: try_recv distinguishes empty-open from empty-closed via is_closed
 
 ```nova
 test "channel: len and capacity" {
-    let { tx, rx } = Channel.new(8)
+    ro { tx, rx } = Channel.new(8)
     assert(rx.capacity() == 8)
     assert(rx.len() == 0)
     tx.send(1)
     tx.send(2)
     assert(rx.len() == 2)
-    let _ = rx.recv()
+    ro _ = rx.recv()
     assert(rx.len() == 1)
     tx.close()
 }
@@ -265,13 +265,13 @@ test "channel: len and capacity" {
 
 ```nova
 test "channel: while-let drain pattern" {
-    let { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel.new(4)
     tx.send(10)
     tx.send(20)
     tx.send(30)
     tx.close()
-    let mut sum = 0
-    while let Some(v) = rx.recv() {
+    mut sum = 0
+    while Some(v) = rx.recv() {
         sum = sum + v
     }
     assert(sum == 60)
@@ -286,8 +286,8 @@ automatically once the channel is closed and the buffer is empty —
 
 ```nova
 test "channel: producer-consumer pipeline" {
-    let { tx, rx } = Channel.new(4)
-    let mut sum = 0
+    ro { tx, rx } = Channel.new(4)
+    mut sum = 0
     supervised {
         spawn {
             tx.send(1)
@@ -298,7 +298,7 @@ test "channel: producer-consumer pipeline" {
             tx.close()                  // important: producer closes after finishing
         }
         spawn {
-            while let Some(v) = rx.recv() {
+            while Some(v) = rx.recv() {
                 sum = sum + v
             }
         }
@@ -311,18 +311,18 @@ test "channel: producer-consumer pipeline" {
 
 ```nova
 test "channel: ping-pong" {
-    let { tx: tx1, rx: rx1 } = Channel.new(1)
-    let { tx: tx2, rx: rx2 } = Channel.new(1)
-    let mut result = 0
+    ro { tx: tx1, rx: rx1 } = Channel.new(1)
+    ro { tx: tx2, rx: rx2 } = Channel.new(1)
+    mut result = 0
     supervised {
         spawn {
             tx1.send(10)
-            let reply = rx2.recv()
+            ro reply = rx2.recv()
             result = reply.unwrap_or(-1)
             tx1.close()
         }
         spawn {
-            let msg = rx1.recv()
+            ro msg = rx1.recv()
             tx2.send(msg.unwrap_or(0) * 2)
             tx2.close()
         }
@@ -336,10 +336,10 @@ test "channel: ping-pong" {
 Several spawns produce, one consumes.
 
 ```nova
-let { tx, rx } = Channel.new(8)
+ro { tx, rx } = Channel.new(8)
 supervised {
     for item in work_items {
-        let worker_tx = tx.clone()      // each spawn gets its own capability
+        ro worker_tx = tx.clone()      // each spawn gets its own capability
         spawn {
             worker_tx.send(process(item))
             worker_tx.close()
@@ -347,7 +347,7 @@ supervised {
     }
     tx.close()                          // close the root writer
     spawn {
-        while let Some(v) = rx.recv() {
+        while Some(v) = rx.recv() {
             collect(v)
         }
     }
@@ -364,22 +364,22 @@ once all `worker_count + 1` writers have called `close()`.
 
 ```nova
 fn relay(rx ChanReader[int], tx ChanWriter[int]) {
-    while let Some(v) = rx.recv() {
+    while Some(v) = rx.recv() {
         tx.send(v * 2)
     }
     tx.close()
 }
 
 test "channel: relay — Receiver → Sender pipeline through a function" {
-    let { tx: tx1, rx: rx1 } = Channel.new(4)
-    let { tx: tx2, rx: rx2 } = Channel.new(4)
+    ro { tx: tx1, rx: rx1 } = Channel.new(4)
+    ro { tx: tx2, rx: rx2 } = Channel.new(4)
     tx1.send(1)
     tx1.send(2)
     tx1.send(3)
     tx1.close()
     relay(rx1, tx2)
-    let mut s = 0
-    while let Some(v) = rx2.recv() { s = s + v }
+    mut s = 0
+    while Some(v) = rx2.recv() { s = s + v }
     assert(s == 12)
 }
 ```
@@ -390,7 +390,7 @@ Capability types in signatures make APIs explicit.
 
 ```nova
 fn fill_channel(tx ChanWriter[int], values []int) {
-    let mut i = 0
+    mut i = 0
     while i < values.len() {
         tx.send(values[i])
         i = i + 1
@@ -399,17 +399,17 @@ fn fill_channel(tx ChanWriter[int], values []int) {
 }
 
 fn drain_channel(rx ChanReader[int]) -> int {
-    let mut sum = 0
-    while let Some(v) = rx.recv() {
+    mut sum = 0
+    while Some(v) = rx.recv() {
         sum = sum + v
     }
     sum
 }
 
 test "channel: Sender and Receiver passed independently" {
-    let { tx, rx } = Channel.new(8)
+    ro { tx, rx } = Channel.new(8)
     fill_channel(tx, [100, 200, 300])
-    let s = drain_channel(rx)
+    ro s = drain_channel(rx)
     assert(s == 600)
 }
 ```
@@ -462,13 +462,13 @@ arm-body     = block | stmt
 
 ```nova
 test "select single recv: value from channel" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     supervised {
         spawn { tx.send(42) }
         spawn {
-            let mut got = 0
+            mut got = 0
             select {
                 Some(v) = rx => { got = v }
             }
@@ -482,17 +482,17 @@ test "select single recv: value from channel" {
 
 ```nova
 test "select send arm: sends to channel with space" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut sent = 0
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut sent = 0
     select {
         tx.send(77) => { sent = 1 }
         _           => { sent = -1 }
     }
     assert(sent == 1)
-    let opt = rx.recv()
-    let mut got = 0
+    ro opt = rx.recv()
+    mut got = 0
     match opt {
         Some(v) => { got = v }
         None    => { got = -1 }
@@ -505,11 +505,11 @@ test "select send arm: sends to channel with space" {
 
 ```nova
 test "select guard: disabled arm falls through to default" {
-    let ch = Channel.new(1)
+    ro ch = Channel.new(1)
     ch.tx.send(10)
-    let rx = ch.rx
-    let enabled = false
-    let mut branch = 0
+    ro rx = ch.rx
+    ro enabled = false
+    mut branch = 0
     select {
         Some(v) = rx if enabled => { branch = v }
         _                       => { branch = -1 }
@@ -529,9 +529,9 @@ channel's ready state is checked. Equivalent to `if` in Tokio
 
 ```nova
 test "select recv with default: default when channel empty" {
-    let ch = Channel.new(1)
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro rx = ch.rx
+    mut branch = 0
     select {
         Some(_) = rx => { branch = 1 }
         _            => { branch = 2 }     // ← default
@@ -547,17 +547,17 @@ A wildcard in the recv-target fires on **both** states: `Some(v)` and
 
 ```nova
 test "Some arm skips closed+empty, picks open channel with data" {
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx1.close()                  // ch1 closed+empty
     tx2.send(42)                 // ch2 has data
 
-    let mut result = 0
+    mut result = 0
     select {
         Some(v) = rx1 => { result = -1 }     // Some does NOT fire on closed
         Some(v) = rx2 => { result = v  }     // ← runs
@@ -566,12 +566,12 @@ test "Some arm skips closed+empty, picks open channel with data" {
 }
 
 test "wildcard fires immediately on closed+empty channel" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     tx.close()
 
-    let mut fired = false
+    mut fired = false
     select {
         _ = rx => { fired = true }           // ← wildcard catches closed
     }
@@ -596,9 +596,9 @@ recv channel produced by `ChanReader.close_after(Duration)`.
 import std.time.duration
 
 test "select timeout: fires when channel stays empty" {
-    let ch = Channel.new(1)
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro rx = ch.rx
+    mut branch = 0
     supervised {
         spawn {
             select {
@@ -611,10 +611,10 @@ test "select timeout: fires when channel stays empty" {
 }
 
 test "select timeout: data wins over timeout" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut branch = 0
     supervised {
         spawn {
             tx.send(99)
@@ -657,20 +657,20 @@ is [Plan 66](plans/66-timer-wheel-and-tick-every.md).
 
 ```nova
 test "select multi-arm: fairness — both channels get served" {
-    let n = 50
-    let ch1 = Channel.new(n)
-    let ch2 = Channel.new(n)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro n = 50
+    ro ch1 = Channel.new(n)
+    ro ch2 = Channel.new(n)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
-    let mut from1 = 0
-    let mut from2 = 0
+    mut from1 = 0
+    mut from2 = 0
 
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
                 tx1.send(1)
                 tx2.send(2)
@@ -678,11 +678,11 @@ test "select multi-arm: fairness — both channels get served" {
             }
         }
         spawn {
-            let mut total = 0
+            mut total = 0
             while total < n * 2 {
                 select {
-                    Some(v) = rx1 => { from1 += 1; let _ = v }
-                    Some(v) = rx2 => { from2 += 1; let _ = v }
+                    Some(v) = rx1 => { from1 += 1; ro _ = v }
+                    Some(v) = rx2 => { from2 += 1; ro _ = v }
                 }
                 total += 1
             }
@@ -704,13 +704,13 @@ semantically compatible).
 
 ```nova
 test "select: data wins supervised(cancel:) race" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut branch = 0
-    let mut error_seen = false
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut branch = 0
+    mut error_seen = false
 
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     with Fail = handler Fail {
         fail(_msg) {
             error_seen = true
@@ -756,12 +756,12 @@ does not invoke a `Fail` handler. The behavior is symmetric to Go's
 
 ```nova
 fn run_pipeline() Net -> () {
-    let { tx, rx } = Channel[Job].new(10)
+    ro { tx, rx } = Channel[Job].new(10)
     defer tx.close()
 
     supervised {
         spawn { for j in jobs { tx.send(j) } }
-        spawn { while let Some(j) = rx.recv() { process(j) } }
+        spawn { while Some(j) = rx.recv() { process(j) } }
     }
 }   // <-- tx.close() always runs; rx.recv() in the spawn gets None and terminates
 ```
@@ -796,7 +796,7 @@ would make tests flaky. That is why `close()` is always explicit.
 
 ```nova
 test "channel: close idempotent" {
-    let { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel.new(2)
     tx.close()
     tx.close()                  // not an error
     assert(rx.is_closed())

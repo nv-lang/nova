@@ -10,6 +10,6 @@ fn connect(host str, port int = 8080) -> int =>
     host.len() + port
 
 test "positional arg on defaulted param rejected" {
-    let _ = connect("localhost", 9000)
+    ro _ = connect("localhost", 9000)
     assert(true)
 }

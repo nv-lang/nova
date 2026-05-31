@@ -31,8 +31,8 @@ test "fence(ord) где ord — параметр функции" {
 }
 
 test "default_ordering() возвращает SeqCst" {
-    let ord = default_ordering()
-    let tag = match ord {
+    ro ord = default_ordering()
+    ro tag = match ord {
         Relaxed => 0
         Acquire => 1
         Release => 2

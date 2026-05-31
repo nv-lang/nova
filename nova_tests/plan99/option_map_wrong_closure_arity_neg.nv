@@ -6,6 +6,6 @@
 module nova_tests.plan99.option_map_wrong_closure_arity_neg
 
 test "wrong arity in closure-arg" {
-    let o Option[int] = Some(42)
-    let _x = o.map(|x, y| x + y)
+    ro o Option[int] = Some(42)
+    ro _x = o.map(|x, y| x + y)
 }

@@ -4,7 +4,7 @@ module nova_tests.plan60.f4_is_empty_field_rejected
 // EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
 
 fn main() -> () {
-    let a []int = []
-    let b bool = a.is_empty   // ← should error
+    ro a []int = []
+    ro b bool = a.is_empty   // ← should error
     if b { println("yes") }
 }

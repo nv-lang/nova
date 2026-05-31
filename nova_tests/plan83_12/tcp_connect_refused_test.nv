@@ -12,19 +12,19 @@ module plan83_12.tcp_connect_refused_test
 
 test "TCP: connect to closed port → Err" {
     // Bind on OS-assigned port.
-    let lst_r = TcpListener.bind(SocketAddr.loopback(0))
+    ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    let lst = lst_r.unwrap()
-    let port = lst.local_port()
+    ro lst = lst_r.unwrap()
+    ro port = lst.local_port()
     // Close the listener — the OS will refuse any new connections.
     lst.close()
 
-    let mut got_err = false
+    mut got_err = false
     supervised {
         spawn {
             // Sleep so the close callback fires and port is released.
             Time.sleep(80)
-            let r = TcpStream.connect(SocketAddr.loopback(port))
+            ro r = TcpStream.connect(SocketAddr.loopback(port))
             got_err = r.is_err()
         }
     }

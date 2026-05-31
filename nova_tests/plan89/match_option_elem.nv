@@ -4,10 +4,10 @@ module nova_tests.plan89.match_option_elem
 
 
 test "for-in []Option + match Some/None" {
-    let opts []Option[int] = [Some(10), None, Some(5)]
-    let mut sum = 0
+    ro opts []Option[int] = [Some(10), None, Some(5)]
+    mut sum = 0
     for o in opts {
-        let add = match o {
+        ro add = match o {
             Some(v) => v
             None => 100
         }
@@ -17,8 +17,8 @@ test "for-in []Option + match Some/None" {
 }
 
 test "match по элементу — извлечение значения" {
-    let opts []Option[int] = [Some(2), Some(4), None]
-    let mut product = 1
+    ro opts []Option[int] = [Some(2), Some(4), None]
+    mut product = 1
     for o in opts {
         match o {
             Some(v) => { product = product * v }

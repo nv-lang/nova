@@ -33,14 +33,14 @@ export type ParseIniError
 /// (без секции) хранятся под ключом `""`.
 #stable(since = "0.1")
 export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]] {
-    let mut result = HashMap[str, HashMap[str, str]].new()
+    mut result = HashMap[str, HashMap[str, str]].new()
     result.insert("", HashMap[str, str].new())
-    let mut current_section = ""
-    let mut line_num = 0
+    mut current_section = ""
+    mut line_num = 0
 
     for raw_line in s.split("\n") {
         line_num += 1
-        let line = raw_line.trim()
+        ro line = raw_line.trim()
 
         // Пропускаем пустые и комментарии
         if line.len() == 0 { continue }
@@ -62,16 +62,16 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
         match line.find("=") {
             None => throw InvalidLine { line: line_num, content: line }
             Some(i) => {
-                let key = line[0..i].trim()
-                let value_raw = line[i + 1..line.len()].trim()
-                let value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len() >= 2 {
+                ro key = line[0..i].trim()
+                ro value_raw = line[i + 1..line.len()].trim()
+                ro value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len() >= 2 {
                     value_raw[1..value_raw.len() - 1]
                 } else {
                     value_raw
                 }
                 match result.get(current_section) {
                     Some(section_map) => {
-                        let mut sm = section_map
+                        mut sm = section_map
                         sm.insert(key, value)
                         result.insert(current_section, sm)
                     }
@@ -127,8 +127,8 @@ export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: простой INI" {
-    let s = "[server]\nhost = localhost\nport = 8080\n"
-    let r = Ini.parse(s)
+    ro s = "[server]\nhost = localhost\nport = 8080\n"
+    ro r = Ini.parse(s)
     match r.get("server") {
         Some(m) => {
             assert(m.get("host") == Some("localhost"))
@@ -139,8 +139,8 @@ test "parse: простой INI" {
 }
 
 test "parse: top-level (без section)" {
-    let s = "name = nova\nversion = 0.5\n"
-    let r = Ini.parse(s)
+    ro s = "name = nova\nversion = 0.5\n"
+    ro r = Ini.parse(s)
     match r.get("") {
         Some(m) => {
             assert(m.get("name") == Some("nova"))
@@ -151,8 +151,8 @@ test "parse: top-level (без section)" {
 }
 
 test "parse: комментарии" {
-    let s = "# this is a comment\n; this too\n[s]\nk = v\n"
-    let r = Ini.parse(s)
+    ro s = "# this is a comment\n; this too\n[s]\nk = v\n"
+    ro r = Ini.parse(s)
     match r.get("s") {
         Some(m) => assert(m.get("k") == Some("v"))
         None    => assert(false)
@@ -160,8 +160,8 @@ test "parse: комментарии" {
 }
 
 test "parse: quoted values" {
-    let s = "[s]\nk = \"hello world\"\n"
-    let r = Ini.parse(s)
+    ro s = "[s]\nk = \"hello world\"\n"
+    ro r = Ini.parse(s)
     match r.get("s") {
         Some(m) => assert(m.get("k") == Some("hello world"))
         None    => assert(false)
@@ -169,8 +169,8 @@ test "parse: quoted values" {
 }
 
 test "parse: ошибка — невалидная line" {
-    let r = with Fail[ParseIniError] = |e| interrupt Some(e) {
-        let _ = Ini.parse("[s]\nbroken-line-no-equals\n")
+    ro r = with Fail[ParseIniError] = |e| interrupt Some(e) {
+        ro _ = Ini.parse("[s]\nbroken-line-no-equals\n")
         None
     }
     assert(match r {
@@ -180,8 +180,8 @@ test "parse: ошибка — невалидная line" {
 }
 
 test "parse: ошибка — незакрытая section" {
-    let r = with Fail[ParseIniError] = |e| interrupt Some(e) {
-        let _ = Ini.parse("[unclosed\nk = v\n")
+    ro r = with Fail[ParseIniError] = |e| interrupt Some(e) {
+        ro _ = Ini.parse("[unclosed\nk = v\n")
         None
     }
     assert(match r {

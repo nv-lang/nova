@@ -3,17 +3,17 @@
 
 module nova_tests.plan108_1.multi_param_mixed_modifiers_ok
 
-fn merge(mut dst []int, readonly src []int, scale int) -> int {
+fn merge(mut dst []int, ro src []int, scale int) -> int {
     for x in src {
         dst.push(x * scale)
     }
     dst.len()
 }
 
-test "mut + readonly + default — mixed param modifiers" {
-    let dst = [1, 2]
-    let src = [10, 20, 30]
-    let n = merge(dst, src, 2)
+test "mut + ro + default — mixed param modifiers" {
+    ro dst = [1, 2]
+    ro src = [10, 20, 30]
+    ro n = merge(dst, src, 2)
     assert(n == 5)
     assert(dst.len() == 5)
     assert(src.len() == 3)        // src не изменён

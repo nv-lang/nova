@@ -10,8 +10,8 @@ module nova_tests.plan95.probe_result_method_nova_body
 fn Result[T, E] @my_succeeded() -> bool => match @ { Ok(_) => true, Err(_) => false }
 
 test "Result[int, str] @my_succeeded — Ok/Err" {
-    let a Result[int, str] = Ok(42)
-    let b Result[int, str] = Err("oops")
+    ro a Result[int, str] = Ok(42)
+    ro b Result[int, str] = Err("oops")
     assert(a.my_succeeded())
     assert(!b.my_succeeded())
 }

@@ -7,8 +7,8 @@ fn Token.new(v int) -> Token => { val: v }
 fn Token consume @release() -> int => @val
 
 test "for consume x — implicit mut" {
-    let toks = [Token.new(1), Token.new(2)]
-    let mut total = 0
+    ro toks = [Token.new(1), Token.new(2)]
+    mut total = 0
     for consume t in toks {
         total = total + t.release()
     }

@@ -63,8 +63,8 @@ import std.testing.handlers as th
 /// ```
 #stable(since = "0.1")
 export type Uuid {
-    readonly hi u64
-    readonly lo u64
+    ro hi u64
+    ro lo u64
 }
 
 /// Версия UUID — старшие 4 бита 7-го байта (биты 48..51).
@@ -106,16 +106,16 @@ export fn Uuid.new(hi u64, lo u64) -> Self =>
 /// `with Random = th.seeded(...)` детерминирован.
 #stable(since = "0.1")
 export fn Uuid.v4() Random -> Self {
-    let raw_hi = Random.u64()
-    let raw_lo = Random.u64()
+    ro raw_hi = Random.u64()
+    ro raw_lo = Random.u64()
 
     // Version = 4 в старшие 4 бита 7-го байта (биты 48..51 от MSB).
     // Маска: очистить биты 48..51 → задать 0100 = 0x4.
-    let hi = (raw_hi & 0xFFFFFFFFFFFF0FFF) | 0x0000000000004000
+    ro hi = (raw_hi & 0xFFFFFFFFFFFF0FFF) | 0x0000000000004000
 
     // Variant = 10 (RFC 4122) в старшие 2 бита 9-го байта.
     // Биты 62..63 от MSB lo. Очистить → задать 10.
-    let lo = (raw_lo & 0x3FFFFFFFFFFFFFFF) | 0x8000000000000000
+    ro lo = (raw_lo & 0x3FFFFFFFFFFFFFFF) | 0x8000000000000000
 
     { hi, lo }
 }
@@ -132,17 +132,17 @@ export fn Uuid.v4() Random -> Self {
 /// отлично для primary keys в БД (B-tree friendly).
 #stable(since = "0.1")
 export fn Uuid.v7() Time Random -> Self {
-    let ms = Time.now_ms()                            // u64
+    ro ms = Time.now_ms()                            // u64
 
     // Заполняем верхние 48 бит timestamp'ом.
     // hi = [48 бит ts][4 бит version=7][12 бит rand]
-    let ts_part = (ms & 0xFFFFFFFFFFFF) << 16          // ms в биты 16..63
-    let rand_12 = Random.u64() & 0xFFF                 // младшие 12 бит — random
-    let hi = ts_part | 0x7000 | rand_12                // version=7 в биты 12..15
+    ro ts_part = (ms & 0xFFFFFFFFFFFF) << 16          // ms в биты 16..63
+    ro rand_12 = Random.u64() & 0xFFF                 // младшие 12 бит — random
+    ro hi = ts_part | 0x7000 | rand_12                // version=7 в биты 12..15
 
     // lo = [2 бит variant=10][62 бит random]
-    let raw_lo = Random.u64()
-    let lo = (raw_lo & 0x3FFFFFFFFFFFFFFF) | 0x8000000000000000
+    ro raw_lo = Random.u64()
+    ro lo = (raw_lo & 0x3FFFFFFFFFFFFFFF) | 0x8000000000000000
 
     { hi, lo }
 }
@@ -155,7 +155,7 @@ export fn Uuid.v7() Time Random -> Self {
 /// Extract UUID version (биты 48..51 от MSB hi). Returns V4/V7/Other(n).
 #stable(since = "0.1")
 export fn Uuid @version() -> UuidVersion {
-    let v = ((@hi >> 12) & 0xF) as u8
+    ro v = ((@hi >> 12) & 0xF) as u8
     match v {
         4 => V4
         7 => V7
@@ -244,7 +244,7 @@ export fn Uuid @into() -> str {
 }
 
 fn write_hex_u32(buf mut Buffer, v u32) {
-    let mut shift = 28
+    mut shift = 28
     while shift >= 0 {
         buf.append(hex_digit(((v >> shift) & 0xF) as u8))
         shift -= 4
@@ -252,7 +252,7 @@ fn write_hex_u32(buf mut Buffer, v u32) {
 }
 
 fn write_hex_u16(buf mut Buffer, v u16) {
-    let mut shift = 12
+    mut shift = 12
     while shift >= 0 {
         buf.append(hex_digit(((v >> shift) & 0xF) as u8))
         shift -= 4
@@ -262,7 +262,7 @@ fn write_hex_u16(buf mut Buffer, v u16) {
 // Plan 34 Ф.5.2: `int as char` запрещён D54, используем char.try_from.
 // n всегда в [0, 15], code всегда ASCII — Err не возможен.
 fn hex_digit(n u8) -> char {
-    let code = if n < 10 {
+    ro code = if n < 10 {
         '0' as int + n as int
     } else {
         'a' as int + n as int - 10
@@ -293,16 +293,16 @@ export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
     check_dash(s, 23)
 
     // hi = 4 байта (биты 32..63) + 2 байта (16..31) + 2 байта (0..15)
-    let hi_high = parse_hex_range(s, 0, 8)             // 8 hex = u32
-    let hi_mid  = parse_hex_range(s, 9, 13)            // 4 hex = u16
-    let hi_low  = parse_hex_range(s, 14, 18)           // 4 hex (содержит version)
-    let hi = (hi_high << 32) | (hi_mid << 16) | hi_low
+    ro hi_high = parse_hex_range(s, 0, 8)             // 8 hex = u32
+    ro hi_mid  = parse_hex_range(s, 9, 13)            // 4 hex = u16
+    ro hi_low  = parse_hex_range(s, 14, 18)           // 4 hex (содержит version)
+    ro hi = (hi_high << 32) | (hi_mid << 16) | hi_low
 
     // lo = 2 байта (биты 48..63 — variant) + 4 байта + 2 байта
-    let lo_high = parse_hex_range(s, 19, 23)           // 4 hex (содержит variant)
-    let lo_mid  = parse_hex_range(s, 24, 32)           // 8 hex
-    let lo_low  = parse_hex_range(s, 32, 36)           // 4 hex
-    let lo = (lo_high << 48) | (lo_mid << 16) | lo_low
+    ro lo_high = parse_hex_range(s, 19, 23)           // 4 hex (содержит variant)
+    ro lo_mid  = parse_hex_range(s, 24, 32)           // 8 hex
+    ro lo_low  = parse_hex_range(s, 32, 36)           // 4 hex
+    ro lo = (lo_high << 48) | (lo_mid << 16) | lo_low
 
     { hi, lo }
 }
@@ -316,12 +316,12 @@ fn check_dash(s str, pos int) Fail[ParseUuidError] -> () {
 
 // Парсит hex-цифры в диапазоне [from, to) → u64. Throws на не-hex.
 fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
-    let mut acc u64 = 0
-    let mut i = from
+    mut acc u64 = 0
+    mut i = from
     while i < to {
         match s.char_at(i) {
             Some(c) => {
-                let d = hex_value(c, i)
+                ro d = hex_value(c, i)
                 acc = acc * 16 + (d as u64)
             }
             None => throw InvalidHex { position: i }
@@ -332,7 +332,7 @@ fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
 }
 
 fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
-    let n = c as int
+    ro n = c as int
     if n >= 48 && n <= 57 {           // '0'..'9'
         (n - 48) as u8
     } else if n >= 97 && n <= 102 {    // 'a'..'f'
@@ -358,7 +358,7 @@ test "NIL и MAX константы" {
 
 test "v4: version и variant корректны" {
     with Random = th.seeded(42) {
-        let u = Uuid.v4()
+        ro u = Uuid.v4()
         match u.version() {
             V4 => ()
             _  => assert(false)
@@ -368,20 +368,20 @@ test "v4: version и variant корректны" {
 }
 
 test "v4: разные seed → разные UUID" {
-    let a = with Random = th.seeded(1) { Uuid.v4() }
-    let b = with Random = th.seeded(2) { Uuid.v4() }
+    ro a = with Random = th.seeded(1) { Uuid.v4() }
+    ro b = with Random = th.seeded(2) { Uuid.v4() }
     assert(!a.eq(b))
 }
 
 test "v4: одинаковый seed → одинаковый UUID (детерминизм)" {
-    let a = with Random = th.seeded(42) { Uuid.v4() }
-    let b = with Random = th.seeded(42) { Uuid.v4() }
+    ro a = with Random = th.seeded(42) { Uuid.v4() }
+    ro b = with Random = th.seeded(42) { Uuid.v4() }
     assert(a.eq(b))
 }
 
 test "v7: version и timestamp" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
-        let u = Uuid.v7()
+        ro u = Uuid.v7()
         match u.version() {
             V7 => ()
             _  => assert(false)
@@ -392,28 +392,28 @@ test "v7: version и timestamp" {
 }
 
 test "v7: lexicographic ordering по timestamp" {
-    let earlier = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Uuid.v7() }
-    let later = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Uuid.v7() }
+    ro earlier = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Uuid.v7() }
+    ro later = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Uuid.v7() }
     assert(earlier.lt(later))
     assert(!later.lt(earlier))
 }
 
 test "round-trip: from(u.into()) == u" {
-    let cases = [
+    ro cases = [
         NIL,
         MAX,
         Uuid.new(0x550e8400e29b41d4, 0xa716446655440000),
         Uuid.new(0xffffffffffffffff, 0x0000000000000000),
     ]
     for u in cases {
-        let s = u.into()
-        let parsed = Uuid.from(s)
+        ro s = u.into()
+        ro parsed = Uuid.from(s)
         assert(parsed.eq(u))
     }
 }
 
 test "from: канонический пример из RFC 4122" {
-    let u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
+    ro u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
     assert(u.into() == "550e8400-e29b-41d4-a716-446655440000")
     match u.version() {
         V4 => ()
@@ -422,14 +422,14 @@ test "from: канонический пример из RFC 4122" {
 }
 
 test "from: case-insensitive hex" {
-    let lower = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
-    let upper = Uuid.from("550E8400-E29B-41D4-A716-446655440000")
+    ro lower = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
+    ro upper = Uuid.from("550E8400-E29B-41D4-A716-446655440000")
     assert(lower.eq(upper))
 }
 
 test "from: ошибка — неправильная длина" {
-    let r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
-        let _ = Uuid.from("too-short")
+    ro r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
+        ro _ = Uuid.from("too-short")
         None
     }
     assert(match r {
@@ -439,8 +439,8 @@ test "from: ошибка — неправильная длина" {
 }
 
 test "from: ошибка — отсутствует дефис" {
-    let r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
-        let _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
+    ro r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
+        ro _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
         None
     }
     assert(match r {
@@ -450,8 +450,8 @@ test "from: ошибка — отсутствует дефис" {
 }
 
 test "from: ошибка — не-hex символ" {
-    let r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
-        let _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
+    ro r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
+        ro _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
         None
     }
     assert(match r {
@@ -461,9 +461,9 @@ test "from: ошибка — не-hex символ" {
 }
 
 test "ordering: total order на UUID" {
-    let a = Uuid.new(1, 0)
-    let b = Uuid.new(1, 1)
-    let c = Uuid.new(2, 0)
+    ro a = Uuid.new(1, 0)
+    ro b = Uuid.new(1, 1)
+    ro c = Uuid.new(2, 0)
 
     assert(a.lt(b))
     assert(b.lt(c))
@@ -475,8 +475,8 @@ test "AI-first: тест UUID-генерации детерминистичен 
     // Без mock-библиотек: подменяем Random handler на seeded.
     // Тот же handler-substitution что в orm_decorators.nv для Db.
     with Random = th.seeded(0xDEADBEEF) {
-        let u1 = Uuid.v4()
-        let u2 = Uuid.v4()
+        ro u1 = Uuid.v4()
+        ro u2 = Uuid.v4()
         // Воспроизводимо: тот же seed → те же UUID при любом запуске.
         assert(u1.into() == u1.into())
         assert(!u1.eq(u2))

@@ -36,11 +36,11 @@ test "match SeqCst → 4" {
 }
 
 test "match возвращает различные значения для всех вариантов" {
-    let relaxed = ordering_to_int(Relaxed)
-    let acquire = ordering_to_int(Acquire)
-    let release = ordering_to_int(Release)
-    let acqrel  = ordering_to_int(AcqRel)
-    let seqcst  = ordering_to_int(SeqCst)
+    ro relaxed = ordering_to_int(Relaxed)
+    ro acquire = ordering_to_int(Acquire)
+    ro release = ordering_to_int(Release)
+    ro acqrel  = ordering_to_int(AcqRel)
+    ro seqcst  = ordering_to_int(SeqCst)
     // Все значения различны
     assert(relaxed != acquire)
     assert(acquire != release)

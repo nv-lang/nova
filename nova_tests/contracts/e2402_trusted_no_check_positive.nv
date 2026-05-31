@@ -10,7 +10,7 @@ type Log effect {
 }
 
 test "#trusted handler с complex body компилируется без ошибок" {
-    let mut buf = 0
+    mut buf = 0
     with #trusted Log = effect Log {
         Write(msg) {
             if msg > 0 {

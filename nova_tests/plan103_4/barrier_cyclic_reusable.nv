@@ -11,11 +11,11 @@
 module nova_tests.plan103_4.barrier_cyclic_reusable
 
 test "barrier reused across 3 epochs of 4 parties" {
-    let parties = 4
-    let epochs = 3
-    let mut b = Barrier.new(parties)
-    let mut epoch_counter = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    ro parties = 4
+    ro epochs = 3
+    mut b = Barrier.new(parties)
+    mut epoch_counter = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {
@@ -34,16 +34,16 @@ test "barrier reused across 3 epochs of 4 parties" {
 }
 
 test "barrier index is consistent across multiple rounds" {
-    let parties = 3
-    let rounds = 5
-    let mut b = Barrier.new(parties)
-    let mut total_indices = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    ro parties = 3
+    ro rounds = 5
+    mut b = Barrier.new(parties)
+    mut total_indices = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {
         for _r in 0..rounds {
-            let idx = b.wait()
+            ro idx = b.wait()
             assert(idx >= 0)
             assert(idx < parties)
             total_indices.fetch_add(1)

@@ -4,13 +4,13 @@
 module str.try_from_readonly
 
 test "str.try_from(as_bytes()) round-trip ASCII" {
-    let s = "hello"
-    let r = str.try_from(s.as_bytes())
+    ro s = "hello"
+    ro r = str.try_from(s.as_bytes())
     assert(r.is_ok())
 }
 
 test "str.try_from(as_bytes()) round-trip Cyrillic" {
-    let s = "Привет"
-    let r = str.try_from(s.as_bytes())
+    ro s = "Привет"
+    ro r = str.try_from(s.as_bytes())
     assert(r.is_ok())
 }

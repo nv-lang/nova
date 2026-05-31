@@ -21,26 +21,26 @@ fn describe(b Box) -> str => b.label() + " value=" + str.from(b.value()) + " dou
 
 
 test "inferred i64 from `=> @n`" {
-    let b = Box { n: 21 }
+    ro b = Box { n: 21 }
     assert(b.value() == 21)
 }
 
 
 test "inferred i64 from `=> @n * 2`" {
-    let b = Box { n: 21 }
+    ro b = Box { n: 21 }
     assert(b.doubled() == 42)
 }
 
 
 test "inferred str from `=> @n + ...`" {
-    let b = Box { n: 7 }
-    let s = b.label()
+    ro b = Box { n: 7 }
+    ro s = b.label()
     assert(s == "Box(7)")
 }
 
 
 test "chained inferred-types в одном expression" {
-    let b = Box { n: 10 }
-    let s = describe(b)
+    ro b = Box { n: 10 }
+    ro s = describe(b)
     assert(s == "Box(10) value=10 doubled=20")
 }

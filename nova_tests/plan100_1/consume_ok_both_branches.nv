@@ -15,7 +15,7 @@ fn Transaction consume @rollback() -> () { () }
 fn begin() -> Transaction => { id: 7 }
 
 test "оба arm'а consume — branch join Consumed/Consumed = Consumed" {
-    let condition = true
+    ro condition = true
     consume tx = begin()
     if condition {
         tx.commit()

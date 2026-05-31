@@ -9,24 +9,24 @@ module map_literals.positive_clone_merge
 import std.collections.hashmap.{HashMap}
 
 test "clone — независимая копия" {
-    let m HashMap[str, int] = ["a": 1, "b": 2]
-    let c = m.clone()
+    ro m HashMap[str, int] = ["a": 1, "b": 2]
+    ro c = m.clone()
     assert(c.len() == 2)
     assert(c.get("a") == Some(1))
     assert(c.get("b") == Some(2))
 }
 
 test "clone — мутация копии не трогает оригинал" {
-    let m HashMap[str, int] = ["a": 1]
-    let mut c = m.clone()
+    ro m HashMap[str, int] = ["a": 1]
+    mut c = m.clone()
     c.insert("b", 2)
     assert(c.len() == 2)
     assert(m.len() == 1)
 }
 
 test "merge_from — override semantics" {
-    let mut a HashMap[str, int] = ["x": 1]
-    let b HashMap[str, int] = ["x": 99, "y": 2]
+    mut a HashMap[str, int] = ["x": 1]
+    ro b HashMap[str, int] = ["x": 99, "y": 2]
     a.merge_from(b)
     assert(a.len() == 2)
     assert(a.get("x") == Some(99))
@@ -34,7 +34,7 @@ test "merge_from — override semantics" {
 }
 
 test "HashMap.from — построение из массива пар" {
-    let mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
+    mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
     assert(m.len() == 2)
     assert(m.get("a") == Some(1))
     assert(m.get("b") == Some(2))

@@ -7,9 +7,9 @@
 module nova_tests.plan100_4_3.errdefer_okdefer_exhaustive
 
 test "normal exit: okdefer fires, errdefer skipped" {
-    let mut ok = 0
-    let mut err = 0
-    let _ = {
+    mut ok = 0
+    mut err = 0
+    ro _ = {
         errdefer { err = err + 1 }
         okdefer  { ok  = ok  + 1 }
         42
@@ -19,10 +19,10 @@ test "normal exit: okdefer fires, errdefer skipped" {
 }
 
 test "defer orthogonal: fires на normal exit вместе с okdefer" {
-    let mut plain = 0
-    let mut ok = 0
-    let mut err = 0
-    let _ = {
+    mut plain = 0
+    mut ok = 0
+    mut err = 0
+    ro _ = {
         defer    { plain = plain + 1 }
         errdefer { err   = err   + 1 }
         okdefer  { ok    = ok    + 1 }
@@ -34,13 +34,13 @@ test "defer orthogonal: fires на normal exit вместе с okdefer" {
 }
 
 test "interrupt path: plain defer fires, errdefer+okdefer skipped" {
-    let mut plain = 0
-    let mut ok = 0
-    let mut err = 0
+    mut plain = 0
+    mut ok = 0
+    mut err = 0
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        let _ = {
+        ro _ = {
             defer    { plain = plain + 1 }
             errdefer { err   = err   + 1 }
             okdefer  { ok    = ok    + 1 }
@@ -54,11 +54,11 @@ test "interrupt path: plain defer fires, errdefer+okdefer skipped" {
 }
 
 test "symmetric resource pattern: одна и только одна операция" {
-    let mut commit_count = 0
-    let mut rollback_count = 0
+    mut commit_count = 0
+    mut rollback_count = 0
 
     // Success path
-    let _ = {
+    ro _ = {
         errdefer { rollback_count = rollback_count + 1 }
         okdefer  { commit_count   = commit_count   + 1 }
         "done"

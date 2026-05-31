@@ -11,8 +11,8 @@ module negative_capability.cfg_feature_gated_invisible
 import nova_tests.cfg.feature_gate.{stable_value}
 
 test "feature-gated symbol invisible without the feature" {
-    let _ = stable_value()
+    ro _ = stable_value()
     // experimental_value gated #cfg(feature = "experimental") — off.
-    let _ = experimental_value()
+    ro _ = experimental_value()
     assert(true)
 }

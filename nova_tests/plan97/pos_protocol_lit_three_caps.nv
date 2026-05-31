@@ -19,16 +19,16 @@ type Cell {
 
 
 fn Cell.split(initial int) -> (Reader, Writer, Resetter) {
-    let state = Cell { value: initial }
-    let r = protocol Reader { read() => state.value }
-    let w = protocol Writer { write(v) { state.value = v } }
-    let z = protocol Resetter { reset() { state.value = 0 } }
+    ro state = Cell { value: initial }
+    ro r = protocol Reader { read() => state.value }
+    ro w = protocol Writer { write(v) { state.value = v } }
+    ro z = protocol Resetter { reset() { state.value = 0 } }
     (r, w, z)
 }
 
 
 test "3-way capability split: read/write/reset over shared state" {
-    let (r, w, z) = Cell.split(42)
+    ro (r, w, z) = Cell.split(42)
     assert(r.read() == 42)
     w.write(100)
     assert(r.read() == 100)
@@ -40,8 +40,8 @@ test "3-way capability split: read/write/reset over shared state" {
 
 
 test "несколько factory вызовов: state изолирован" {
-    let (r1, w1, _) = Cell.split(1)
-    let (r2, w2, _) = Cell.split(2)
+    ro (r1, w1, _) = Cell.split(1)
+    ro (r2, w2, _) = Cell.split(2)
     assert(r1.read() == 1)
     assert(r2.read() == 2)
     w1.write(100)
@@ -63,7 +63,7 @@ fn observe(r Reader) -> int => r.read()
 
 
 test "capability передаётся в helpers с minimal contract" {
-    let (r, w, _) = Cell.split(0)
+    ro (r, w, _) = Cell.split(0)
     drain_writes(w, [10, 20, 30])
     assert(observe(r) == 30)
 }

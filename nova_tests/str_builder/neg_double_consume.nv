@@ -8,7 +8,7 @@
 module str_builder.neg_double_consume
 
 test "двойной into — use-after-consume" {
-    let mut sb = StringBuilder.from("data")
-    let _ = sb.into()                 // первый consume
-    let _ = sb.into()                 // ← ОШИБКА D131
+    mut sb = StringBuilder.from("data")
+    ro _ = sb.into()                 // первый consume
+    ro _ = sb.into()                 // ← ОШИБКА D131
 }

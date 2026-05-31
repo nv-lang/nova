@@ -18,23 +18,23 @@ fn Port.try_from(v int) -> Result[Port, str] =>
 
 
 test "try_from слишком большой -> Err" {
-    let r = Port.try_from(99999)
+    ro r = Port.try_from(99999)
     assert(r.is_err())
 }
 
 test "try_from ноль -> Err" {
-    let r = Port.try_from(0)
+    ro r = Port.try_from(0)
     assert(r.is_err())
 }
 
 test "try_from отрицательный -> Err" {
-    let r = Port.try_from(-1)
+    ro r = Port.try_from(-1)
     assert(r.is_err())
 }
 
 test "try_from Err-дискриминация через match" {
-    let r = Port.try_from(70000)
-    let is_err = match r {
+    ro r = Port.try_from(70000)
+    ro is_err = match r {
         Ok(_) => false
         Err(_) => true
     }
@@ -42,8 +42,8 @@ test "try_from Err-дискриминация через match" {
 }
 
 test "try_from Err — содержимое сообщения" {
-    let r = Port.try_from(123456)
-    let msg = match r {
+    ro r = Port.try_from(123456)
+    ro msg = match r {
         Ok(_) => ""
         Err(e) => e
     }
@@ -64,9 +64,9 @@ fn NonEmpty.try_from(s str) -> Result[NonEmpty, str] =>
 
 
 test "try_from пустой строки -> Err с сообщением" {
-    let r = NonEmpty.try_from("")
+    ro r = NonEmpty.try_from("")
     assert(r.is_err())
-    let msg = match r {
+    ro msg = match r {
         Ok(_) => ""
         Err(e) => e
     }

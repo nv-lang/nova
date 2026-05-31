@@ -10,11 +10,11 @@ module nova_tests.concurrency.mn_runtime_yield
 // Без yield: первый fiber мог бы занять worker до завершения.
 test "M:N: runtime.yield() — cooperative progress between fibers" {
     runtime.init(1)
-    let mut a_steps = 0
-    let mut b_steps = 0
+    mut a_steps = 0
+    mut b_steps = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 3 {
                 a_steps = a_steps + 1
                 runtime.yield()
@@ -22,7 +22,7 @@ test "M:N: runtime.yield() — cooperative progress between fibers" {
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 3 {
                 b_steps = b_steps + 1
                 runtime.yield()
@@ -44,7 +44,7 @@ test "M:N: runtime.yield() outside fiber — no-op" {
 
 // --- yield в single-thread (без runtime.init) ---
 test "runtime.yield() без init — cooperative yield в single-thread" {
-    let mut count = 0
+    mut count = 0
     supervised {
         spawn {
             count = count + 1

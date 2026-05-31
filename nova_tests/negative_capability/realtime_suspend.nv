@@ -12,7 +12,7 @@ type Net effect {
 fn http_get(url str) Net -> str => Net.fetch(url)
 
 test "realtime блокирует http_get" {
-    let _ = realtime {
+    ro _ = realtime {
         http_get("/api")
     }
     assert(true)

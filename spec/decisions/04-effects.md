@@ -259,7 +259,7 @@ fn Account mut @deposit(amount money) Fail Log -> () => ...
 
 ```nova
 fn pipeline(s str) Fail[ParseError] -> int {
-    let n = parse(s)?         // если parse бросил — pipeline бросает то же
+    ro n = parse(s)?         // если parse бросил — pipeline бросает то же
     validate(n)?               // если validate бросил — pipeline бросает то же
     n
 }
@@ -269,7 +269,7 @@ fn pipeline(s str) Fail[ParseError] -> int {
 
 ```nova
 fn pipeline(s str) -> int {
-    let n = parse(s)?           // ОШИБКА: ? requires effect Fail[E]
+    ro n = parse(s)?           // ОШИБКА: ? requires effect Fail[E]
     n
 }
 ```
@@ -297,7 +297,7 @@ match expr {
 
 ```nova
 fn pipeline(s str) Fail[PipelineError] -> int {
-    let n = parse(s).map_err(|e| PipelineError.Parse(e))!!
+    ro n = parse(s).map_err(|e| PipelineError.Parse(e))!!
     validate(n).map_err(|e| PipelineError.Validate(e))!!
     n
 }
@@ -395,7 +395,7 @@ fn process(o Order) Db -> Receipt => ...
 Db.query(sql`select * from users`)
 
 // 3. ПОЗИЦИЯ ВЫРАЖЕНИЯ — одиночное Db в выражении
-let captured_db = Db          // активный handler как значение Effect[Db]
+ro captured_db = Db          // активный handler как значение Effect[Db]
 some_function(Db)
 return Db
 ```
@@ -424,7 +424,7 @@ with Logger = console_logger, Db = in_memory, Time = fixed(t0) {
 Для сложных или переиспользуемых handler'ов:
 
 ```nova
-let audit = effect Logger {
+ro audit = effect Logger {
     log(msg) { audit_db.write(msg); return () }
 }
 
@@ -439,10 +439,10 @@ with Logger = audit {
 
 ```nova
 type User { id u64, name str }                              // record-тип (data)
-let alice = User { id: 1, name: "alice" }                   // record-литерал
+ro alice = User { id: 1, name: "alice" }                   // record-литерал
 
 type Logger effect { log(msg str) -> () }                  // эффект (behavior)
-let console = effect Logger { log(msg) => println(msg) }  // handler-литерал
+ro console = effect Logger { log(msg) => println(msg) }  // handler-литерал
 ```
 
 Handler-литерал начинается с keyword'а `handler` (по [D61](#d61)) —
@@ -530,7 +530,7 @@ Handler-литерал начинается с keyword'а `handler` (по [D61](
 #### Уровень 1 — статически типизированный планировщик (дефолт)
 
 ```nova
-let order_queue Queue[fn(OrderId) Db Log Fail -> ()]
+ro order_queue Queue[fn(OrderId) Db Log Fail -> ()]
 
 order_queue.enqueue(send_order_confirmation)        // ок
 order_queue.enqueue(cleanup_db_task)                 // ОШИБКА: лишний эффект Net
@@ -543,7 +543,7 @@ order_queue.enqueue(cleanup_db_task)                 // ОШИБКА: лишни
 
 ```nova
 fn erase[E](task fn() E -> ()) E -> fn() -> () =>
-    let captured = capture_handlers[E]()
+    ro captured = capture_handlers[E]()
     || with captured { task() }
 
 universal_queue.enqueue(erase(send_email_task))
@@ -894,7 +894,7 @@ match expr {
 любой позиции:
 
 ```nova
-let x int = if condition { 42 } else { throw NotReady }
+ro x int = if condition { 42 } else { throw NotReady }
 //                                     ^^^^^^^^^^^^^^^
 //                                     тип never, совместим с int
 ```
@@ -904,7 +904,7 @@ let x int = if condition { 42 } else { throw NotReady }
 работают и такие выражения:
 
 ```nova
-let user = lookup(id) ?? return Response.error(404)
+ro user = lookup(id) ?? return Response.error(404)
 //                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 //                       тип never, совместим с типом user
 ```
@@ -916,7 +916,7 @@ let user = lookup(id) ?? return Response.error(404)
 
 ```nova
 fn pipeline(s str) Fail[ParseError] -> int =>
-    let n = parse(s)?              // если parse бросил — pipeline тоже бросает
+    ro n = parse(s)?              // если parse бросил — pipeline тоже бросает
     n
 ```
 
@@ -1034,7 +1034,7 @@ fn parse_b(s str) -> Result[int, ParseError] => ...   // value-стиль
 Из `Fail[E]` в `Result[T, E]`:
 
 ```nova
-let r = with Fail[ParseError] = |e| interrupt Err(e) {
+ro r = with Fail[ParseError] = |e| interrupt Err(e) {
     Ok(parse(s)?)
 }
 // r: Result[int, ParseError]
@@ -1043,7 +1043,7 @@ let r = with Fail[ParseError] = |e| interrupt Err(e) {
 Из `Result[T, E]` в `Fail[E]`:
 
 ```nova
-let v = parse(s)?              // если Result, ? = match Ok(v) => v / Err(e) => throw e
+ro v = parse(s)?              // если Result, ? = match Ok(v) => v / Err(e) => throw e
 ```
 
 Оператор `?` работает на обоих типах ([D26](08-runtime.md#d26)).
@@ -1563,7 +1563,7 @@ with Fail[Error] = || { ... } { ... }
 
 ```nova
 type Comparator { compare(a int, b int) -> int }
-let c Comparator = |a, b| a - b      // ← отвергнуто, не делаем
+ro c Comparator = |a, b| a - b      // ← отвергнуто, не делаем
 ```
 
 Причина: для **эффектов** сахар сильно окупается (Fail частый,
@@ -1700,7 +1700,7 @@ type Fail[E] effect {
 
 ```nova
 // Место 1 — let-биндинг
-let postgres_db = effect Db {
+ro postgres_db = effect Db {
     query(q) => real_query(q)
     exec(q)  => real_exec(q)
     in_transaction(body) => real_transaction(body)
@@ -1756,9 +1756,9 @@ Handler-литерал содержит **handler-method'ы** — по одно�
 `Effect[E, IRT]` — first-class:
 
 ```nova
-let h = effect Db { ... }                  // h: Effect[Db, never] (нет interrupt)
-let arr = [h, h2, h3]                       // в массив
-let pair = (h, "label")                     // в кортеж
+ro h = effect Db { ... }                  // h: Effect[Db, never] (нет interrupt)
+ro arr = [h, h2, h3]                       // в массив
+ro pair = (h, "label")                     // в кортеж
 fn make() -> Effect[Db] => h               // вернуть из fn (never по default)
 fn use(h Effect[Db]) { ... }               // принять как параметр
 
@@ -1837,7 +1837,7 @@ Handler-method ведёт себя как обычная функция. Воз�
 effect Db {
     query(q)  => real_query(q)               // финальное выражение = return
     exec(q)  {
-        let r = real_exec(q)
+        ro r = real_exec(q)
         return r                              // явный return
     }
 }
@@ -1846,7 +1846,7 @@ effect Db {
 С точки зрения caller'а операции — это обычный возврат:
 
 ```nova
-let rows = Db.query(q)                       // получает результат query
+ro rows = Db.query(q)                       // получает результат query
 println(rows.len())                           // программа продолжается
 ```
 
@@ -1898,7 +1898,7 @@ type Db effect {
     query(q Sql) -> []DbRow      // R = []DbRow
 }
 
-let result = with Db = effect Db {
+ro result = with Db = effect Db {
     query(q) {
         if q.template == "" {
             interrupt 42          // здесь v: int (W = int — см. body ниже)
@@ -1906,7 +1906,7 @@ let result = with Db = effect Db {
         real_query(q)             // здесь финальное выражение: []DbRow (R)
     }
 } {
-    let rows = Db.query(some_q)
+    ro rows = Db.query(some_q)
     rows.len()                       // body даёт int → W = int
 }
 // result: int
@@ -2014,7 +2014,7 @@ match expr {
 Пример:
 
 ```nova
-let i = with Fail[Error] = effect Fail[Error] {
+ro i = with Fail[Error] = effect Fail[Error] {
     fail(err) => interrupt -1
 } {
     throw Error.new("bad")           // тип throw — never
@@ -2037,8 +2037,8 @@ let i = with Fail[Error] = effect Fail[Error] {
 Handler-значение поддерживает прямой member-call к своим операциям:
 
 ```nova
-let real = effect Db { query(q) => real_query(q), ... }
-let rows = real.query(sql`SELECT 1`)         // прямой вызов на handler-значении
+ro real = effect Db { query(q) => real_query(q), ... }
+ro rows = real.query(sql`SELECT 1`)         // прямой вызов на handler-значении
 ```
 
 Семантика:
@@ -2098,9 +2098,9 @@ fn make_recovery() -> Effect[Fail[Error]] => effect Fail[Error] {
     fail(err) => interrupt -1
 }
 
-let h = make_recovery()                    // тип h: Effect[Fail[Error]]
+ro h = make_recovery()                    // тип h: Effect[Fail[Error]]
 
-let i = with Fail[Error] = h {              // Fail[Error] здесь — effect-position
+ro i = with Fail[Error] = h {              // Fail[Error] здесь — effect-position
     throw Error.new("not good")
 }
 // тип i = int (через never-совместимость + interrupt -1)
@@ -2129,7 +2129,7 @@ let i = with Fail[Error] = h {              // Fail[Error] здесь — effect
 #### 10. Тип `with`-блока
 
 ```nova
-let r = with Db = h { body }
+ro r = with Db = h { body }
 ```
 
 Тип `r` определяется так:
@@ -2146,7 +2146,7 @@ let r = with Db = h { body }
 Несовпадения — compile error:
 
 ```nova
-let r = with Fail[E] = effect Fail[E] {
+ro r = with Fail[E] = effect Fail[E] {
     fail(err) => interrupt "fail"           // handler даёт str
 } {
     fetch_user_id()?                          // body даёт int
@@ -2440,7 +2440,7 @@ type Db effect {
 }
 
 // Литерал (изменилось: handler → effect)
-let pg = effect Db {
+ro pg = effect Db {
     query(q) => real_query(q)
 }
 
@@ -2566,7 +2566,7 @@ fn parse(s str) Fail[ParseError] -> int {
 }
 
 fn pipeline(s str) Fail[ParseError] -> int {
-    let n = parse(s)?                          // ? = throw — Fail обязан
+    ro n = parse(s)?                          // ? = throw — Fail обязан
     n
 }
 
@@ -2637,7 +2637,7 @@ fiber-runtime сам решает где можно вытесняться.
 ```nova
 // Гомогенный fan-out — массив результатов через parallel for.
 fn fetch_dashboard(uid int) Net Fail -> Dashboard {
-    let users_and_posts = parallel for kind in ["users", "posts"] {
+    ro users_and_posts = parallel for kind in ["users", "posts"] {
         fetch_section(uid, kind)
     }
     Dashboard.ok(users_and_posts)
@@ -2645,8 +2645,8 @@ fn fetch_dashboard(uid int) Net Fail -> Dashboard {
 
 // Гетерогенная параллельность — mut-захваты в supervised.
 fn handle_request(req Request) Net Db -> Response {
-    let mut users = []
-    let mut posts = []
+    mut users = []
+    mut posts = []
     supervised {
         spawn { users = fetch_users() }     // spawn — fire-and-forget statement
         spawn { posts = fetch_posts() }
@@ -3119,8 +3119,8 @@ Plugin может бросать что угодно (типы из его со�
 
 ```nova
 fn quick_check() Fail -> int {
-    let n = parse(input)?     // Fail[ParseError]
-    let v = lookup(n)?        // Fail[LookupError]
+    ro n = parse(input)?     // Fail[ParseError]
+    ro v = lookup(n)?        // Fail[LookupError]
     v + 1
 }
 ```
@@ -3273,7 +3273,7 @@ panic'и, не Fail. Не ловятся в коде. См. [D13](08-runtime.md#
 ```nova
 // в prelude (D26)
 type Error {
-    readonly msg str
+    ro msg str
 }
 
 fn Error.new(msg str) -> Error => { msg }
@@ -3815,7 +3815,7 @@ suspend-точка проверяет флаг — если активен, runt
 ```nova
 fn checksum(data []u8) -> int {
     realtime {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
@@ -3842,7 +3842,7 @@ Sugar для функции целиком (атрибут-префикс `#` �
 ```nova
 #realtime
 fn checksum(data []u8) -> int {
-    let mut sum = 0
+    mut sum = 0
     for b in data { sum += b as int }
     sum
 }
@@ -3850,7 +3850,7 @@ fn checksum(data []u8) -> int {
 // эквивалентно:
 fn checksum(data []u8) -> int {
     realtime {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
@@ -4035,7 +4035,7 @@ expr?  ≡  match expr {
 
 ```nova
 fn first_pos(xs []int) -> Option[int] {
-    let head = xs.first()?         // Option[int]; на None: return None
+    ro head = xs.first()?         // Option[int]; на None: return None
     if head > 0 { Some(head) } else { None }
 }
 ```
@@ -4173,7 +4173,7 @@ State — локальная переменная или параметр сво
 
 ```nova
 // State прямо в `with` — captured by closure
-let mut counter = 0
+mut counter = 0
 with Counter = effect Counter {
     next() {
         counter += 1
@@ -4189,7 +4189,7 @@ with Counter = effect Counter {
 
 ```nova
 fn make_counter(initial int) -> Effect[Counter] {
-    let mut state = initial
+    mut state = initial
     effect Counter {
         next() {
             state += 1
@@ -4222,7 +4222,7 @@ fn CounterState @as_handler() -> Effect[Counter] => effect Counter {
     }
 }
 
-let s = CounterState { value: 0 }
+ro s = CounterState { value: 0 }
 with Counter = s.as_handler() {
     do_work()
 }
@@ -4299,7 +4299,7 @@ state:
 
 ```nova
 // ❌ Race: shared между fiber'ами без атомика
-let mut counter = 0
+mut counter = 0
 parallel for url in urls {
     with Counter = effect Counter {
         next() {
@@ -4310,7 +4310,7 @@ parallel for url in urls {
 }
 
 // ✅ Atomic для shared counter:
-let counter = Atomic[int].new(0)
+ro counter = Atomic[int].new(0)
 parallel for url in urls {
     with Counter = effect Counter {
         next() => counter.fetch_add(1) + 1
@@ -4319,7 +4319,7 @@ parallel for url in urls {
 
 // ✅ Или per-fiber state:
 parallel for url in urls {
-    let mut local = 0
+    mut local = 0
     with Counter = effect Counter {
         next() {
             local += 1
@@ -4384,8 +4384,8 @@ error.
 
 ```nova
 fn pipeline(s str) -> Result[int, ParseError] {
-    let n = parse(s)?            // на Err: return Err(e)
-    let v = validate(n)?
+    ro n = parse(s)?            // на Err: return Err(e)
+    ro v = validate(n)?
     Ok(v)
 }
 ```
@@ -4403,7 +4403,7 @@ expr?  ≡  match expr {
 
 ```nova
 fn first_pos(xs []int) -> Option[int] {
-    let head = xs.first()?       // на None: return None
+    ro head = xs.first()?       // на None: return None
     if head > 0 { Some(head) } else { None }
 }
 ```
@@ -4422,8 +4422,8 @@ expr!!  ≡  match expr {
 
 ```nova
 fn pipeline(s str) Fail[ParseError] -> int {
-    let n = parse(s)!!           // на Err: throw e
-    let v = validate(n)!!
+    ro n = parse(s)!!           // на Err: throw e
+    ro v = validate(n)!!
     v
 }
 ```
@@ -4442,8 +4442,8 @@ expr!!  ≡  match expr {
 
 ```nova
 fn extract(json Json) Fail[RuntimeNoneError] -> str {
-    let user  = json.get("user")!!     // None → throw RuntimeNoneError
-    let email = user.get("email")!!
+    ro user  = json.get("user")!!     // None → throw RuntimeNoneError
+    ro email = user.get("email")!!
     email.as_str()!!
 }
 ```
@@ -4459,10 +4459,10 @@ fn extract(json Json) Fail[RuntimeNoneError] -> str {
 для default или явного custom-throw'а:
 
 ```nova
-let port = config.get("port") ?? 8080                       // default
-let port = config.get("port") ?? throw ConfigError.MissingPort   // custom throw
-let port = config.get("port") ?? panic("config must have port")  // panic (D13)
-let port = config.get("port") ?? exit(1, "no port in config")    // exit (D13)
+ro port = config.get("port") ?? 8080                       // default
+ro port = config.get("port") ?? throw ConfigError.MissingPort   // custom throw
+ro port = config.get("port") ?? panic("config must have port")  // panic (D13)
+ro port = config.get("port") ?? exit(1, "no port in config")    // exit (D13)
 ```
 
 `??` — для случаев, когда программисту нужен **конкретный fallback**:
@@ -4487,8 +4487,8 @@ fn first_word(s str) Fail[RuntimeNoneError] -> str =>
 
 // Mix: разные операнды, разные стили
 fn process(s str) Fail[ParseError] -> int {
-    let raw = config.get("raw") ?? "default"
-    let n = parse(raw)!!
+    ro raw = config.get("raw") ?? "default"
+    ro n = parse(raw)!!
     n
 }
 ```
@@ -4614,7 +4614,7 @@ Result, RuntimeNoneError для Option). `?? throw E` остаётся для
 обычный `with`-блок:
 
 ```nova
-let r Result[int, ParseError] = with Fail[ParseError] = handler {
+ro r Result[int, ParseError] = with Fail[ParseError] = handler {
     fail(e) { interrupt Err(e) }
 } {
     Ok(parse(s))    // parse без !! — throw сам ловится handler'ом
@@ -4711,23 +4711,23 @@ D85 ломает текущий идиоматический Nova-стиль:
 ### Правило
 
 ```nova
-let v = lookup(id) ?? 0                // None → 0
-let r = parse(s)   ?? -1               // Err(_) → -1
-let port = config.get("port") ?? 8080  // default
+ro v = lookup(id) ?? 0                // None → 0
+ro r = parse(s)   ?? -1               // Err(_) → -1
+ro port = config.get("port") ?? 8080  // default
 ```
 
 Fallback может быть:
 - **значением** того же типа, что внутри `Some`/`Ok`:
   ```nova
-  let port = config.get("port") ?? 8080
+  ro port = config.get("port") ?? 8080
   ```
 - **`throw err`** (custom ошибка):
   ```nova
-  let port = config.get("port") ?? throw MissingPortError
+  ro port = config.get("port") ?? throw MissingPortError
   ```
 - **`panic("...")`** ([D13](08-runtime.md#d13)):
   ```nova
-  let port = config.get("port") ?? panic("port required")
+  ro port = config.get("port") ?? panic("port required")
   ```
 - **`return ...`** для раннего выхода из enclosing fn.
 - произвольным выражением, чей тип совместим с `T` (внутри `Some(T)` /
@@ -4868,14 +4868,14 @@ fn fatal_logger() -> Effect[Logger, int] => effect Logger {
 
 ```nova
 // Effect[Logger, never] — interrupt запрещён, with-блок даёт T_body:
-let r = with Logger = console_logger() {
+ro r = with Logger = console_logger() {
     Logger.log("hello")
     "ok"                    // T_body = str
 }
 // r: str
 
 // Effect[Logger, int] — IRT = int должен быть совместим с T_body:
-let r = with Logger = fatal_logger() {
+ro r = with Logger = fatal_logger() {
     Logger.log("FATAL: oom")
     "ok"                    // ❌ T_body = str, IRT = int → несовместимы
 }
@@ -4887,7 +4887,7 @@ let r = with Logger = fatal_logger() {
 Чтобы пример работал — нужно привести типы:
 
 ```nova
-let r = with Logger = fatal_logger() {
+ro r = with Logger = fatal_logger() {
     Logger.log("FATAL: oom")
     -1                       // T_body = int, совпадает с IRT
 }
@@ -4897,7 +4897,7 @@ let r = with Logger = fatal_logger() {
 или явно указать общий supertype:
 
 ```nova
-let r any = with Logger = fatal_logger() {
+ro r any = with Logger = fatal_logger() {
     Logger.log("FATAL: oom")
     "ok"
 }
@@ -4963,7 +4963,7 @@ interrupt types».
 **неявная** — компилятор знает контекст и не требует явных аннотаций:
 
 ```nova
-let r = with Fail[E] = effect Fail[E] {
+ro r = with Fail[E] = effect Fail[E] {
     fail(err) => interrupt -1
 } {
     fetch_count()

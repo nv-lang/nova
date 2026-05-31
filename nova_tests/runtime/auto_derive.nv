@@ -30,13 +30,13 @@ export fn Celsius.try_from(n int) -> Result[Celsius, str] {
 
 
 test "Celsius.try_from(int) валидное" {
-    let r = Celsius.try_from(20)
+    ro r = Celsius.try_from(20)
     assert(r.is_ok())
 }
 
 
 test "Celsius.try_from(int) невалидное" {
-    let r = Celsius.try_from(-300)
+    ro r = Celsius.try_from(-300)
     assert(r.is_err())
 }
 
@@ -45,15 +45,15 @@ test "auto-derive: int.@try_into() → Result[Celsius, str]" {
     // Программист НЕ писал `fn int @try_into() -> Result[Celsius, str]`.
     // Codegen синтезирует через Celsius.try_from.
     // Проверка через is_ok — payload-extraction требует доп. boilerplate.
-    let n = 25
-    let r = n.try_into()
+    ro n = 25
+    ro r = n.try_into()
     assert(r.is_ok())
 }
 
 
 test "auto-derive: int.@try_into() невалидный → Err" {
-    let n = -500
-    let r = n.try_into()
+    ro n = -500
+    ro r = n.try_into()
     assert(r.is_err())
 }
 
@@ -70,7 +70,7 @@ export fn Wrapper.from(n int) -> Wrapper {
 
 
 test "from auto-derive: Wrapper.from(int)" {
-    let w = Wrapper.from(42)
+    ro w = Wrapper.from(42)
     assert(w.inner == 42)
 }
 
@@ -78,6 +78,6 @@ test "from auto-derive: Wrapper.from(int)" {
 test "into auto-derive: int.@into() → Wrapper" {
     // Программист НЕ писал `fn int @into() -> Wrapper`.
     // Codegen синтезирует через Wrapper.from.
-    let w = 100.into()
+    ro w = 100.into()
     assert(w.inner == 100)
 }

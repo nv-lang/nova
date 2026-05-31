@@ -13,34 +13,34 @@ fn Point @equals(other Point) -> bool => @x == other.x && @y == other.y
 
 
 test "equals — рефлексивность: x.equals(x)" {
-    let p = Point { x: 3, y: 4 }
+    ro p = Point { x: 3, y: 4 }
     assert(p.equals(p))
 }
 
 test "equals — равные значения" {
-    let a = Point { x: 1, y: 2 }
-    let b = Point { x: 1, y: 2 }
+    ro a = Point { x: 1, y: 2 }
+    ro b = Point { x: 1, y: 2 }
     assert(a.equals(b))
 }
 
 test "equals — неравенство" {
-    let a = Point { x: 1, y: 2 }
-    let b = Point { x: 9, y: 2 }
+    ro a = Point { x: 1, y: 2 }
+    ro b = Point { x: 9, y: 2 }
     assert(!a.equals(b))
 }
 
 test "equals — симметрия: a.equals(b) == b.equals(a)" {
-    let a = Point { x: 5, y: 5 }
-    let b = Point { x: 5, y: 5 }
-    let c = Point { x: 7, y: 1 }
+    ro a = Point { x: 5, y: 5 }
+    ro b = Point { x: 5, y: 5 }
+    ro c = Point { x: 7, y: 1 }
     assert(a.equals(b) == b.equals(a))
     assert(a.equals(c) == c.equals(a))
 }
 
 test "equals — транзитивность: a==b, b==c => a==c" {
-    let a = Point { x: 2, y: 2 }
-    let b = Point { x: 2, y: 2 }
-    let c = Point { x: 2, y: 2 }
+    ro a = Point { x: 2, y: 2 }
+    ro b = Point { x: 2, y: 2 }
+    ro c = Point { x: 2, y: 2 }
     assert(a.equals(b))
     assert(b.equals(c))
     assert(a.equals(c))
@@ -50,21 +50,21 @@ test "equals — транзитивность: a==b, b==c => a==c" {
 // ── оператор == / != через @eq (D46) — до 91.8b ──────────────────
 
 test "оператор == использует @eq (D46)" {
-    let a = Point { x: 10, y: 20 }
-    let b = Point { x: 10, y: 20 }
+    ro a = Point { x: 10, y: 20 }
+    ro b = Point { x: 10, y: 20 }
     assert(a == b)
 }
 
 test "оператор == — false для разных" {
-    let a = Point { x: 0, y: 0 }
-    let b = Point { x: 0, y: 1 }
+    ro a = Point { x: 0, y: 0 }
+    ro b = Point { x: 0, y: 1 }
     assert(!(a == b))
 }
 
 test "оператор != выводится из @eq" {
-    let a = Point { x: 1, y: 1 }
-    let b = Point { x: 2, y: 2 }
-    let same = Point { x: 1, y: 1 }
+    ro a = Point { x: 1, y: 1 }
+    ro b = Point { x: 2, y: 2 }
+    ro same = Point { x: 1, y: 1 }
     assert(a != b)
     assert(!(a != same))
 }

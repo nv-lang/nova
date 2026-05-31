@@ -17,13 +17,13 @@ module runtime.channels
 // ================================================================
 
 test "channel: send + recv FIFO" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     tx.send(10)
     tx.send(20)
     tx.send(30)
-    let a = rx.recv()
-    let b = rx.recv()
-    let c = rx.recv()
+    ro a = rx.recv()
+    ro b = rx.recv()
+    ro c = rx.recv()
     assert(a.unwrap_or(-1) == 10)
     assert(b.unwrap_or(-1) == 20)
     assert(c.unwrap_or(-1) == 30)
@@ -31,22 +31,22 @@ test "channel: send + recv FIFO" {
 }
 
 test "channel: len и capacity" {
-    let (tx, rx) = Channel.new(8)
+    ro (tx, rx) = Channel.new(8)
     assert(rx.capacity() == 8)
     assert(rx.len() == 0)
     tx.send(1)
     tx.send(2)
     assert(rx.len() == 2)
-    let _ = rx.recv()
+    ro _ = rx.recv()
     assert(rx.len() == 1)
     tx.close()
 }
 
 test "channel: ring-buffer wrap" {
-    let (tx, rx) = Channel.new(3)
+    ro (tx, rx) = Channel.new(3)
     tx.send(1)
     tx.send(2)
-    let _ = rx.recv()
+    ro _ = rx.recv()
     tx.send(3)
     tx.send(4)
     assert(rx.recv().unwrap_or(-1) == 2)
@@ -60,7 +60,7 @@ test "channel: ring-buffer wrap" {
 // ================================================================
 
 test "channel: close + recv drain" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     tx.send(1)
     tx.send(2)
     tx.close()
@@ -71,14 +71,14 @@ test "channel: close + recv drain" {
 }
 
 test "channel: is_closed" {
-    let (tx, rx) = Channel.new(2)
+    ro (tx, rx) = Channel.new(2)
     assert(!rx.is_closed())
     tx.close()
     assert(rx.is_closed())
 }
 
 test "channel: close idempotent" {
-    let (tx, rx) = Channel.new(2)
+    ro (tx, rx) = Channel.new(2)
     tx.close()
     tx.close()
     assert(rx.is_closed())
@@ -89,7 +89,7 @@ test "channel: close idempotent" {
 // ================================================================
 
 test "channel: try_send full buffer" {
-    let (tx, rx) = Channel.new(2)
+    ro (tx, rx) = Channel.new(2)
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))
@@ -99,7 +99,7 @@ test "channel: try_send full buffer" {
 }
 
 test "channel: try_recv empty buffer" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     assert(rx.try_recv().is_none())
     tx.send(42)
     assert(rx.try_recv().unwrap_or(-1) == 42)
@@ -108,7 +108,7 @@ test "channel: try_recv empty buffer" {
 }
 
 test "channel: try_send на closed → false" {
-    let (tx, _rx) = Channel.new(2)
+    ro (tx, _rx) = Channel.new(2)
     tx.close()
     assert(!tx.try_send(1))
 }
@@ -118,13 +118,13 @@ test "channel: try_send на closed → false" {
 // ================================================================
 
 test "channel: while-let drain pattern" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     tx.send(10)
     tx.send(20)
     tx.send(30)
     tx.close()
-    let mut sum = 0
-    while let Some(v) = rx.recv() {
+    mut sum = 0
+    while Some(v) = rx.recv() {
         sum = sum + v
     }
     assert(sum == 60)
@@ -135,15 +135,15 @@ test "channel: while-let drain pattern" {
 // ================================================================
 
 test "channel: concurrent send+recv via spawn" {
-    let (tx, rx) = Channel.new(1)
-    let mut received = 0
+    ro (tx, rx) = Channel.new(1)
+    mut received = 0
     supervised {
         spawn {
             tx.send(42)
             tx.close()
         }
         spawn {
-            let v = rx.recv()
+            ro v = rx.recv()
             received = v.unwrap_or(-1)
         }
     }
@@ -151,8 +151,8 @@ test "channel: concurrent send+recv via spawn" {
 }
 
 test "channel: producer-consumer pipeline" {
-    let (tx, rx) = Channel.new(4)
-    let mut sum = 0
+    ro (tx, rx) = Channel.new(4)
+    mut sum = 0
     supervised {
         spawn {
             tx.send(1)
@@ -163,7 +163,7 @@ test "channel: producer-consumer pipeline" {
             tx.close()
         }
         spawn {
-            while let Some(v) = rx.recv() {
+            while Some(v) = rx.recv() {
                 sum = sum + v
             }
         }
@@ -172,18 +172,18 @@ test "channel: producer-consumer pipeline" {
 }
 
 test "channel: ping-pong" {
-    let (tx1, rx1) = Channel.new(1)
-    let (tx2, rx2) = Channel.new(1)
-    let mut result = 0
+    ro (tx1, rx1) = Channel.new(1)
+    ro (tx2, rx2) = Channel.new(1)
+    mut result = 0
     supervised {
         spawn {
             tx1.send(10)
-            let reply = rx2.recv()
+            ro reply = rx2.recv()
             result = reply.unwrap_or(-1)
             tx1.close()
         }
         spawn {
-            let msg = rx1.recv()
+            ro msg = rx1.recv()
             tx2.send(msg.unwrap_or(0) * 2)
             tx2.close()
         }
@@ -196,7 +196,7 @@ test "channel: ping-pong" {
 // ================================================================
 
 fn fill_channel(tx ChanWriter[int], values []int) {
-    let mut i = 0
+    mut i = 0
     while i < values.len() {
         tx.send(values[i])
         i = i + 1
@@ -205,94 +205,94 @@ fn fill_channel(tx ChanWriter[int], values []int) {
 }
 
 fn drain_channel(rx ChanReader[int]) -> int {
-    let mut sum = 0
-    while let Some(v) = rx.recv() {
+    mut sum = 0
+    while Some(v) = rx.recv() {
         sum = sum + v
     }
     sum
 }
 
 test "channel: Sender передаётся в функцию" {
-    let (tx, rx) = Channel.new(8)
+    ro (tx, rx) = Channel.new(8)
     fill_channel(tx, [1, 2, 3, 4, 5])
-    let a = rx.recv().unwrap_or(-1)
+    ro a = rx.recv().unwrap_or(-1)
     assert(a == 1)
     tx.close()
 }
 
 test "channel: Receiver передаётся в функцию" {
-    let (tx, rx) = Channel.new(8)
+    ro (tx, rx) = Channel.new(8)
     tx.send(10)
     tx.send(20)
     tx.send(30)
     tx.close()
-    let s = drain_channel(rx)
+    ro s = drain_channel(rx)
     assert(s == 60)
 }
 
 test "channel: Sender и Receiver передаются независимо" {
-    let (tx, rx) = Channel.new(8)
+    ro (tx, rx) = Channel.new(8)
     fill_channel(tx, [100, 200, 300])
-    let s = drain_channel(rx)
+    ro s = drain_channel(rx)
     assert(s == 600)
 }
 
 fn relay(rx ChanReader[int], tx ChanWriter[int]) {
-    while let Some(v) = rx.recv() {
+    while Some(v) = rx.recv() {
         tx.send(v * 2)
     }
     tx.close()
 }
 
 test "channel: relay — Receiver → Sender pipeline через функцию" {
-    let (tx1, rx1) = Channel.new(4)
-    let (tx2, rx2) = Channel.new(4)
+    ro (tx1, rx1) = Channel.new(4)
+    ro (tx2, rx2) = Channel.new(4)
     tx1.send(1)
     tx1.send(2)
     tx1.send(3)
     tx1.close()
     relay(rx1, tx2)
-    let s = drain_channel(rx2)
+    ro s = drain_channel(rx2)
     assert(s == 12)
 }
 
 // ── Секция 7: send → bool (Plan 30 Ф.1) ──────────────────────────
 
 test "channel: send после close возвращает false, не паникует" {
-    let (tx, _rx) = Channel.new(2)
+    ro (tx, _rx) = Channel.new(2)
     assert(tx.send(1))
     tx.close()
     assert(!tx.send(99))
 }
 
 test "channel: send в открытый канал возвращает true" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     assert(tx.send(10))
     assert(tx.send(20))
     assert(tx.send(30))
     tx.close()
-    let a = rx.recv() ?? -1
-    let b = rx.recv() ?? -1
-    let c = rx.recv() ?? -1
+    ro a = rx.recv() ?? -1
+    ro b = rx.recv() ?? -1
+    ro c = rx.recv() ?? -1
     assert(a == 10)
     assert(b == 20)
     assert(c == 30)
 }
 
 test "channel: send возвращаемое значение можно использовать как bool" {
-    let (tx, _rx) = Channel.new(1)
-    let ok = tx.send(42)
+    ro (tx, _rx) = Channel.new(1)
+    ro ok = tx.send(42)
     assert(ok)
     tx.close()
-    let ok2 = tx.send(0)
+    ro ok2 = tx.send(0)
     assert(!ok2)
 }
 
 // ── Секция 8: multi-writer tx.clone() (Plan 30 Ф.2) ──────────────
 
 test "channel: clone — канал НЕ закрыт после close оригинала" {
-    let (tx, rx) = Channel.new(4)
-    let tx2 = tx.clone()
+    ro (tx, rx) = Channel.new(4)
+    ro tx2 = tx.clone()
     tx.send(1)
     tx.close()
     // tx закрыт (writer_count = 1), но tx2 ещё жив (writer_count = 1→0 при tx2.close)
@@ -301,15 +301,15 @@ test "channel: clone — канал НЕ закрыт после close ориг�
     tx2.close()
     // теперь все writers закрыты
     assert(rx.is_closed())
-    let a = rx.recv() ?? -1
-    let b = rx.recv() ?? -1
+    ro a = rx.recv() ?? -1
+    ro b = rx.recv() ?? -1
     assert(a == 1)
     assert(b == 2)
 }
 
 test "channel: clone/close порядок — канал закрыт только когда все writers закрыты" {
-    let (tx, rx) = Channel.new(2)
-    let tx2 = tx.clone()
+    ro (tx, rx) = Channel.new(2)
+    ro tx2 = tx.clone()
     // close clone первым — оригинал ещё жив
     tx2.close()
     assert(!rx.is_closed())
@@ -319,9 +319,9 @@ test "channel: clone/close порядок — канал закрыт тольк
 }
 
 test "channel: fan-in — два writer'а, один reader" {
-    let (tx, rx) = Channel.new(8)
-    let tx2 = tx.clone()
-    let mut sum = 0
+    ro (tx, rx) = Channel.new(8)
+    ro tx2 = tx.clone()
+    mut sum = 0
     supervised {
         spawn {
             tx.send(1)
@@ -336,7 +336,7 @@ test "channel: fan-in — два writer'а, один reader" {
             tx2.close()
         }
         spawn {
-            while let Some(v) = rx.recv() {
+            while Some(v) = rx.recv() {
                 sum = sum + v
             }
         }
@@ -347,7 +347,7 @@ test "channel: fan-in — два writer'а, один reader" {
 // ── Секция 9: исправления Plan 30 review ──────────────────────────
 
 test "channel: double-close одного writer idempotent (Б1 fix)" {
-    let (tx, rx) = Channel.new(2)
+    ro (tx, rx) = Channel.new(2)
     tx.send(42)
     tx.close()
     tx.close()  // повторный close НЕ должен corrupting writer_count
@@ -357,8 +357,8 @@ test "channel: double-close одного writer idempotent (Б1 fix)" {
 }
 
 test "channel: double-close clone не ломает другой writer (Б1 fix)" {
-    let (tx, rx) = Channel.new(4)
-    let tx2 = tx.clone()  // writer_count = 2
+    ro (tx, rx) = Channel.new(4)
+    ro tx2 = tx.clone()  // writer_count = 2
     tx.close()            // writer_count = 1, closed = false
     tx.close()            // idempotent — writer_count остаётся 1
     assert(!rx.is_closed())  // tx2 ещё жив
@@ -369,7 +369,7 @@ test "channel: double-close clone не ломает другой writer (Б1 fix
 }
 
 test "channel: try_recv различает empty-open от empty-closed через is_closed (Н1)" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     // пустой открытый
     assert(rx.try_recv().is_none())
     assert(!rx.is_closed())
@@ -380,7 +380,7 @@ test "channel: try_recv различает empty-open от empty-closed чере
 }
 
 test "channel: try_recv drains buffer после close (Н1)" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     tx.send(1)
     tx.send(2)
     tx.close()
@@ -393,7 +393,7 @@ test "channel: try_recv drains buffer после close (Н1)" {
 }
 
 test "channel: try_send closed channel → false и is_closed (Н1)" {
-    let (tx, _rx) = Channel.new(2)
+    ro (tx, _rx) = Channel.new(2)
     tx.close()
     assert(!tx.try_send(42))
     assert(tx.is_closed())

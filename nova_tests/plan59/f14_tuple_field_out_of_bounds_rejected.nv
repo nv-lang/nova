@@ -10,7 +10,7 @@ module plan59.f14_tuple_field_out_of_bounds_rejected
 
 
 test "access .5 of 2-tuple — should reject" {
-    let pair = (1, 2)
-    let bad = pair.5
+    ro pair = (1, 2)
+    ro bad = pair.5
     assert(bad == 0)
 }

@@ -31,14 +31,14 @@ fn Device @log(msg str) -> int => msg.len()
 
 
 fn use_dev[T ReadCloseLogger](x T) -> int {
-    let _ = x.read()
-    let _ = x.close()
+    ro _ = x.read()
+    ro _ = x.close()
     x.log("hello")
 }
 
 
 test "embed + direct method composition" {
-    let d = Device { tag: "x" }
-    let n = use_dev(d)
+    ro d = Device { tag: "x" }
+    ro n = use_dev(d)
     assert(n == 5)
 }

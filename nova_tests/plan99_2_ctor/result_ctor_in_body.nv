@@ -12,25 +12,25 @@ fn make_ok_str_int() -> Result[str, int] => Ok("hello")
 fn make_err_str_int() -> Result[str, int] => Err(99)
 
 test "Ok(int) с Result[int, str] context" {
-    let r = make_ok_int_str()
+    ro r = make_ok_int_str()
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 42)
 }
 
 test "Err(str) с Result[int, str] context" {
-    let r = make_err_int_str()
+    ro r = make_err_int_str()
     assert(r.is_err())
     assert(r.unwrap_or(99) == 99)
 }
 
 test "Ok(str) с Result[str, int] context (reversed)" {
-    let r = make_ok_str_int()
+    ro r = make_ok_str_int()
     assert(r.is_ok())
     assert(r.unwrap_or("") == "hello")
 }
 
 test "Err(int) с Result[str, int] context (reversed)" {
-    let r = make_err_str_int()
+    ro r = make_err_str_int()
     assert(r.is_err())
     assert(r.unwrap_or("default") == "default")
 }

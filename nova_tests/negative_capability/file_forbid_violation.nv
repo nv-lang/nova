@@ -15,6 +15,6 @@ export fn fetch_url(url str) Net -> str =>
     Net.get(url)
 
 test "Net call in #forbid Net module rejected" {
-    let _ = fetch_url("http://example.com")
+    ro _ = fetch_url("http://example.com")
     assert(true)
 }

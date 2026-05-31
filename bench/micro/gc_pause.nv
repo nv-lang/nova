@@ -5,7 +5,7 @@ bench "gc pause measurement" {
     measure {
         // Force a collect — under malloc no-op, под boehm — real cycle.
         gc.collect()
-        let p = gc.last_pause_ns()
+        ro p = gc.last_pause_ns()
         bench.opaque(p)
     }
 }

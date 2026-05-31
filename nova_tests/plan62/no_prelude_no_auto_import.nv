@@ -27,6 +27,6 @@ module plan62.no_prelude_no_auto_import
 fn dummy() -> int => 1
 
 test "should never reach this — compile must fail" {
-    let _ = dummy()
+    ro _ = dummy()
     assert(true)   // ← fails here: `assert` unavailable без auto-import
 }

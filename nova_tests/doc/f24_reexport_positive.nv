@@ -71,8 +71,8 @@ test "lcm zero" {
 
 test "mul_add is fma" {
     // Проверяем что mul_add(a, b, c) == a*b + c
-    let a = 7
-    let b = 3
-    let c = 2
+    ro a = 7
+    ro b = 3
+    ro c = 2
     assert(mul_add(a, b, c) == a * b + c)
 }

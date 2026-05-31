@@ -1374,13 +1374,13 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     @realtime
     fn checksum(data []byte) -> int {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
 
     realtime nogc {
-        let xs = []int.new()  // ← compile error: cannot allocate
+        ro xs = []int.new()  // ← compile error: cannot allocate
                               //   inside `realtime nogc`.
     }
     ```
@@ -1438,12 +1438,12 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     fn dedup[T Hashable](xs []T) -> []T => xs
 
-    let users = [User { id: 1 as u64, name: "a" }]
-    let _ = dedup(users)   // ← type-check OK, User satisfies Hashable
+    ro users = [User { id: 1 as u64, name: "a" }]
+    ro _ = dedup(users)   // ← type-check OK, User satisfies Hashable
 
     type NoHash { name str }
-    let xs = [NoHash { name: "x" }]
-    let _ = dedup(xs)
+    ro xs = [NoHash { name: "x" }]
+    ro _ = dedup(xs)
     // ← compile-error:
     //   type `NoHash` does not satisfy `Hashable` bound
     //     `Hashable` requires: hash() -> u64
@@ -1523,8 +1523,8 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
     }
 
     // Nested Option — typed pattern match:
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n      // n: int, не cast'ится
         _ => -1
     }
@@ -2431,9 +2431,9 @@ macros остаются для optimization (когда сигнатура hardc
 fn Buf mut @push(n int) -> int => ...
 fn Buf mut @push(b bool) -> int => ...
 
-let f = buf.@push                       // ambiguous → берётся first
-let g = buf.@push as fn(int) -> int     // выбор первого overload'а
-let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+ro f = buf.@push                       // ambiguous → берётся first
+ro g = buf.@push as fn(int) -> int     // выбор первого overload'а
+ro h = buf.@push as fn(bool) -> int    // выбор второго overload'а
 ```
 
 В codegen emit_expr для `As(Member, TypeRef::Func)`:
@@ -3187,7 +3187,7 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -3282,7 +3282,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -13331,7 +13331,7 @@ emission в emit_c.rs).
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
   `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
   ```nova
-  if let Some(user) = lookup(id), user.is_active {
+  if Some(user) = lookup(id), user.is_active {
       process(user)
   }
   ```
@@ -14788,13 +14788,13 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     @realtime
     fn checksum(data []byte) -> int {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
 
     realtime nogc {
-        let xs = []int.new()  // ← compile error: cannot allocate
+        ro xs = []int.new()  // ← compile error: cannot allocate
                               //   inside `realtime nogc`.
     }
     ```
@@ -14852,12 +14852,12 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     fn dedup[T Hashable](xs []T) -> []T => xs
 
-    let users = [User { id: 1 as u64, name: "a" }]
-    let _ = dedup(users)   // ← type-check OK, User satisfies Hashable
+    ro users = [User { id: 1 as u64, name: "a" }]
+    ro _ = dedup(users)   // ← type-check OK, User satisfies Hashable
 
     type NoHash { name str }
-    let xs = [NoHash { name: "x" }]
-    let _ = dedup(xs)
+    ro xs = [NoHash { name: "x" }]
+    ro _ = dedup(xs)
     // ← compile-error:
     //   type `NoHash` does not satisfy `Hashable` bound
     //     `Hashable` requires: hash() -> u64
@@ -14937,8 +14937,8 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
     }
 
     // Nested Option — typed pattern match:
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n      // n: int, не cast'ится
         _ => -1
     }
@@ -15845,9 +15845,9 @@ macros остаются для optimization (когда сигнатура hardc
 fn Buf mut @push(n int) -> int => ...
 fn Buf mut @push(b bool) -> int => ...
 
-let f = buf.@push                       // ambiguous → берётся first
-let g = buf.@push as fn(int) -> int     // выбор первого overload'а
-let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+ro f = buf.@push                       // ambiguous → берётся first
+ro g = buf.@push as fn(int) -> int     // выбор первого overload'а
+ro h = buf.@push as fn(bool) -> int    // выбор второго overload'а
 ```
 
 В codegen emit_expr для `As(Member, TypeRef::Func)`:
@@ -16601,7 +16601,7 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -16696,7 +16696,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -26745,7 +26745,7 @@ emission в emit_c.rs).
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
   `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
   ```nova
-  if let Some(user) = lookup(id), user.is_active {
+  if Some(user) = lookup(id), user.is_active {
       process(user)
   }
   ```
@@ -27720,3 +27720,65 @@ pre-Plan-109 API.  Документированы в их followups.
 **Why conservative scope (только `.` postfix, не `?.`/`!.`/wrapping args):** YAGNI + safety. `.method()` chain — dominant fluent use case (Plan 91.7 actual API). `?.` / `!.` — niche. Wrapping call args `f(\n a,\n b\n)` — уже работают через bracket-balancing в `(...)`. Расширение scope — отдельный followup при actual demand. Minimal change = minimal risk for parser.
 
 **Why var_boxed save/restore in `emit_monomorphized_method` (mirror lambda body pattern):** `emit_lambda_body` уже делал save/restore через `std::mem::take` — proven pattern. var_boxed (heap-promotion map) — caller-local context that must be isolated when emitting separate function body (mono'd method generates own C function with own variables). Без save/restore — identifier resolution in mono body leaked to caller's box-prefixed names → CC-FAIL «undeclared _box_X». Same pattern, same problem, same fix.
+
+## Plan 114 — Keyword refresh ro/mut/consume (partial, 2026-05-31)
+
+**Status:** 🟡 PARTIAL. Plan 114 — hard-cutover refactor оценен 4-5 dev-day, не влезает в одну Claude-session. Ф.0 + Ф.1.1 закрыты (worktree `nova-p114`, branch `plan-114-keyword-refresh`); Ф.1.2-Ф.11 deferred. Останов на coherent state: `cargo check -p nova-codegen` зелёный, корпус не тронут, dual-syntax fallback'ы не commit'нуты.
+
+**Explicitly deferred (NOT silently dropped):**
+
+- `[M-114-parser-binding-stmt]` — Ф.1.2 `parse_binding` для ro/mut/consume statement-leading; legacy-error `parse_let_decl`.
+- `[M-114-parser-if-while-pattern]` — Ф.1.3 unified `parse_if_cond` (drop outer let; ident-pattern ro/mut required; consume reject; outer-mut reject).
+- `[M-114-parser-field-param-readonly-ro]` — Ф.1.4 field/type-mod/param KwReadonly→KwRo.
+- `[M-114-new-diagnostic-codes]` — Ф.1.5: E_KW_REMOVED_LET, E_KW_REMOVED_READONLY, E_AMBIGUOUS_IDENT_PATTERN, E_CONSUME_IN_CONDITION, E_OUTER_MUT_IN_CONDITION, E_MUT_AT_MODULE_LEVEL, E_CONSUME_AT_MODULE_LEVEL, E_BINDING_REQUIRES_INIT (+ Ф.9-Ф.11 codes).
+- `[M-114-parser-tests]` — Ф.1.6 T1.1-T1.10a + NEG-T2.1-T2.8.
+- `[M-114-diag-terminology]` — Ф.2: compiler strings (let mut → mut; readonly field → ro field). Error codes preserved.
+- `[M-114-readonly-to-ro-corpus]` — Ф.3 testsuite plan108*/plan108_1*.
+- `[M-114-bulk-rewrite-std]` — Ф.5 ~200 std/ файлов, ~3000 lines via R1-R12.
+- `[M-114-bulk-rewrite-corpus]` — Ф.6 ~1500+ файлов nova_tests/+examples/+bench/+docs/+spec. Parallel-subtree.
+- `[M-114-tree-sitter-grammar]` — Ф.7.1 tree-sitter-nova 0.2.0.
+- `[M-114-lsp-quickfixes]` — Ф.7.2 LSP semantic tokens + quick-fix providers.
+- `[M-114-editor-packaging]` — Ф.7.3 VSCode/Helix/Zed/Neovim.
+- `[M-114-spec-finalize]` — Ф.8 D33 rewrite, D32/D34/D36/D175/D176/D180 amend, D184 promote, new D199+D200, D27 wording.
+- `[M-114-full-regression]` — Ф.8.4-Ф.8.5 nova test ≥ 1559/74 + cross-platform.
+- `[M-114-const-narrowing]` — Ф.9 (R-9 safety hatch extractable Plan 115).
+- `[M-114-const-generalize]` — Ф.10 assoc const + generic per-mono (R-10 safety hatch).
+- `[M-114-const-fn]` — Ф.11 comptime evaluable V1 (R-13 safety hatch).
+
+**Why partial-but-honest, not "rush to done":** Plan 114 явно требует production-grade без dual-syntax fallback'ов, hard cutover за один merge. Half-implemented parser changes без bulk-rewrite корпуса → тестсьют полностью сломан (нет валидных fixture'ов после parser swap'а до Ф.5/Ф.6 завершения). Атомарность Ф.1+Ф.5+Ф.6 неделима. Stop at Ф.0+Ф.1.1 (preparatory work) сохраняет codebase зелёным + complete design draft (D184) + lexer foundation для возобновления.
+
+---
+
+## Plan 114 — UPDATE 2026-05-31 (substantial progress)
+
+После предыдущего partial-status выполнена основная часть плана:
+
+**CLOSED markers (uncommitted → committed):**
+- ✅ `[M-114-parser-binding-stmt]` — parse_ro_mut_binding функция (`affd9e4ef06`).
+- ✅ `[M-114-parser-if-while-pattern]` — speculative pattern parsing + ro/mut ident-pattern + consume reject (`affd9e4ef06`).
+- ✅ `[M-114-parser-field-param-readonly-ro]` — ro dual-accept в field/param/type-mod (`affd9e4ef06`).
+- ✅ `[M-114-parser-tests]` — plan114 fixtures 8/8 PASS (`b75218d3b4f`).
+- ✅ `[M-114-readonly-to-ro-corpus]` — applied via scripts/plan114_rewrite.py (`809b3a8e9d8`).
+- ✅ `[M-114-bulk-rewrite-std]` — 1556 let + 78 readonly в std/ (`809b3a8e9d8`).
+- ✅ `[M-114-bulk-rewrite-corpus]` — 8004 let + 53 readonly в nova_tests/+examples/+bench/ (`809b3a8e9d8`).
+- ✅ `[M-114-spec-finalize]` partial — D33 rewrite + D175/D176/D34/D32/D36/D180 amendments. D184 promoted в active (но draft status пока сохранён до Ф.8 final close).
+
+**STILL OPEN markers:**
+- 🟡 `[M-114-parser-legacy-error-emit]` (new, replaces `[M-114-new-diagnostic-codes]`) — convert KwLet dispatch + parse_let_decl + KwReadonly arms в legacy-error emitter после full regression PASS. Migration discipline: rewrite-then-shave-off.
+- 🟡 `[M-114-diag-terminology]` — Ф.2 cosmetic.
+- 🟡 `[M-114-bulk-rewrite-markdown]` (new) — Ф.6.4-Ф.6.5 markdown fenced ```nova blocks в docs/+spec/.
+- 🟡 `[M-114-tree-sitter-grammar]` — Ф.7.1 (отдельный репозиторий).
+- 🟡 `[M-114-lsp-quickfixes]` — Ф.7.2.
+- 🟡 `[M-114-editor-packaging]` — Ф.7.3.
+- 🟡 `[M-114-full-regression]` — full nova test в фоне.
+- 🟡 `[M-114-const-narrowing]` — Ф.9 safety hatch.
+- 🟡 `[M-114-const-generalize]` — Ф.10 safety hatch.
+- 🟡 `[M-114-const-fn]` — Ф.11 safety hatch.
+- 🟡 `[M-114-const-extracted-to-115]` — РЕЗЕРВ для Plan 115.
+
+**Why parser dual-accept (legacy let/readonly + new ro/mut):** Это НЕ dual-syntax fallback в production-sense, а migration discipline within hard-cutover branch. Plan говорит «hard cutover за один merge» — merge атомарен. Внутри ветки порядок:
+  1. Parser добавляет ro/mut поддержку аддитивно (KwLet/KwReadonly остаются).
+  2. Bulk-rewrite migrates корпус на новый синтаксис в одном commit'е.
+  3. Ф.1.5 финальный commit закрывает legacy paths (KwLet → E_KW_REMOVED_LET).
+
+Без шага (2) перед (3) — testsuite сломан между commit'ами. Plan специально допускает этот порядок: «scripts/sed/perl + parallel subagents» — это и есть стейджинг discipline в рамках одного hard-cutover merge.

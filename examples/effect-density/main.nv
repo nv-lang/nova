@@ -28,11 +28,11 @@ import examples.effect_density.domain.*
 // Все handler'ы создаются и привязываются ВНУТРИ функции — они не
 // «протекают» в сигнатуру.
 export fn run(cfg Config) Net Io Fail[StartupError] -> () {
-    let pg     = postgres_connect(cfg.db_url)
-    let redis  = redis_connect(cfg.redis_url)
-    let logger = json_logger(stdout)
-    let metrics = prom_registry()
-    let tracer = otel_tracer(cfg.otel_endpoint)
+    ro pg     = postgres_connect(cfg.db_url)
+    ro redis  = redis_connect(cfg.redis_url)
+    ro logger = json_logger(stdout)
+    ro metrics = prom_registry()
+    ro tracer = otel_tracer(cfg.otel_endpoint)
 
     Io.println("starting on :${cfg.port}")
 
@@ -64,7 +64,7 @@ export fn run(cfg Config) Net Io Fail[StartupError] -> () {
 // заголовка Authorization. Дальше handler'ы уже его «получают»
 // бесплатно из скоупа.
 fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Fail[HttpError] -> Response {
-    let auth = parse_auth(req.headers)
+    ro auth = parse_auth(req.headers)
     with AuthContext = auth, Trace = Trace.span("http_${req.method}_${req.path}") {
         match (req.method, req.path) {
             ("POST", "/api/transfers")         => http.handle_create_transfer(req)

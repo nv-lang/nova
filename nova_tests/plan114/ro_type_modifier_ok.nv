@@ -1,0 +1,22 @@
+// Plan 114 (D184): `ro T` type-modifier — renamed from `readonly T`
+// (D176 amend). Семантика immutable view сохранена.
+
+module nova_tests.plan114.ro_type_modifier_ok
+
+fn sum(view ro []int) -> int {
+    mut total = 0
+    for x in view {
+        total = total + x
+    }
+    total
+}
+
+test "ro view sums correctly" {
+    ro xs = [1, 2, 3, 4, 5]
+    assert(sum(xs) == 15)
+}
+
+test "ro param prefix accepted" {
+    ro xs = [10, 20, 30]
+    assert(sum(xs) == 60)
+}

@@ -13,39 +13,39 @@ fn Counter @add(n int) -> int => @value + n
 fn Counter @add_two(a int, b int) -> int => @value + a + b
 
 test "bound method value: no args" {
-    let c = Counter.new()
-    let f = c.@get
-    let v = f()
+    ro c = Counter.new()
+    ro f = c.@get
+    ro v = f()
     assert(v == 0)
 }
 
 test "bound method value: one arg" {
-    let c = Counter.new()
-    let f = c.@add
-    let r = f(7)
+    ro c = Counter.new()
+    ro f = c.@add
+    ro r = f(7)
     assert(r == 7)
 }
 
 test "bound method value: two args" {
-    let c = Counter.new()
-    let f = c.@add_two
-    let r = f(3, 4)
+    ro c = Counter.new()
+    ro f = c.@add_two
+    ro r = f(3, 4)
     assert(r == 7)
 }
 
 test "unbound method value: explicit self pass" {
-    let c = Counter.new()
-    let f = Counter.@add
-    let r = f(c, 5)
+    ro c = Counter.new()
+    ro f = Counter.@add
+    ro r = f(c, 5)
     assert(r == 5)
 }
 
 test "bound method value: разные обращения" {
-    let a = Counter.new()
-    let b = Counter.new()
+    ro a = Counter.new()
+    ro b = Counter.new()
     // Каждый bound несёт свой self.
-    let fa = a.@get
-    let fb = b.@get
+    ro fa = a.@get
+    ro fb = b.@get
     assert(fa() == 0)
     assert(fb() == 0)
 }
@@ -60,8 +60,8 @@ test "bound method value: разные обращения" {
 // Сейчас @add единственный overload, поэтому disambiguation тривиальная,
 // но annotation должна compile + работать.
 test "Ф.5: as fn type annotation" {
-    let c = Counter.new()
-    let f = c.@add as fn(int) -> int
-    let r = f(11)
+    ro c = Counter.new()
+    ro f = c.@add as fn(int) -> int
+    ro r = f(11)
     assert(r == 11)
 }

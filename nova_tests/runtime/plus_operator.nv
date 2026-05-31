@@ -22,15 +22,15 @@ test "str + str — пустые" {
 
 test "str + str — ASCII" {
     assert("foo" + "bar" == "foobar")
-    let result = "alpha" + "-" + "beta"
+    ro result = "alpha" + "-" + "beta"
     assert(result == "alpha-beta")
 }
 
 test "str + str — Unicode len/char_len (Plan 108 D26 rev)" {
-    let a = "Привет"      // 6 codepoints, 12 bytes
-    let b = ", "          // 2 codepoints, 2 bytes
-    let c = "мир"         // 3 codepoints, 6 bytes
-    let s = a + b + c
+    ro a = "Привет"      // 6 codepoints, 12 bytes
+    ro b = ", "          // 2 codepoints, 2 bytes
+    ro c = "мир"         // 3 codepoints, 6 bytes
+    ro s = a + b + c
     assert(s.len() == 20)             // 12 + 2 + 6 bytes (len = bytes now)
     assert(s.char_len() == 11)        // 6 + 2 + 3 codepoints
 }

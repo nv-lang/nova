@@ -75,7 +75,7 @@ Static method call `str.from(x)` — это `Call { func: Member { obj: Ident("s
 3. **Учит cargo-cult'у** — workaround pattern «assign to var first»
    уже встречается:
    ```nova
-   let s = str.from(factorial(5))  // ← workaround
+   ro s = str.from(factorial(5))  // ← workaround
    println(s)                       // works (Ident path resolves)
    ```
 4. **Архитектурный ред флаг** — `infer_print_helper` — это manual type

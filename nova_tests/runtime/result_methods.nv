@@ -21,8 +21,8 @@ module runtime.result_methods
 // ───── is_ok / is_err ─────
 
 test "Result.is_ok / is_err" {
-    let ok Result[int, str] = Ok(42)
-    let err Result[int, str] = Err("boom")
+    ro ok Result[int, str] = Ok(42)
+    ro err Result[int, str] = Err("boom")
     assert(ok.is_ok())
     assert(!ok.is_err())
     assert(err.is_err())
@@ -33,13 +33,13 @@ test "Result.is_ok / is_err" {
 // ───── unwrap_or ─────
 
 test "Result.unwrap_or — Ok(v) → v" {
-    let r Result[int, str] = Ok(99)
+    ro r Result[int, str] = Ok(99)
     assert(r.unwrap_or(0) == 99)
 }
 
 
 test "Result.unwrap_or — Err(_) → default" {
-    let r Result[int, str] = Err("oops")
+    ro r Result[int, str] = Err("oops")
     assert(r.unwrap_or(7) == 7)
 }
 
@@ -47,17 +47,17 @@ test "Result.unwrap_or — Err(_) → default" {
 // ───── unwrap_or_else ─────
 
 test "Result.unwrap_or_else — Ok(v) skips closure" {
-    let r Result[int, str] = Ok(123)
-    let v = r.unwrap_or_else(fn(e str) -> int => 0)
+    ro r Result[int, str] = Ok(123)
+    ro v = r.unwrap_or_else(fn(e str) -> int => 0)
     assert(v == 123)
 }
 
 
 test "Result.unwrap_or_else — Err(e) calls closure" {
-    let r Result[int, str] = Err("e1")
+    ro r Result[int, str] = Err("e1")
     // (Использование e.len ломает bootstrap-inference для closure-param,
     // см. Q-closure-param-inference; покрытие — interp-only.)
-    let v = r.unwrap_or_else(fn(e str) -> int => 42)
+    ro v = r.unwrap_or_else(fn(e str) -> int => 42)
     assert(v == 42)
 }
 
@@ -65,16 +65,16 @@ test "Result.unwrap_or_else — Err(e) calls closure" {
 // ───── map ─────
 
 test "Result.map — Ok(v) → Ok(f(v))" {
-    let r Result[int, str] = Ok(10)
-    let r2 = r.map(|x| x * 2)
+    ro r Result[int, str] = Ok(10)
+    ro r2 = r.map(|x| x * 2)
     assert(r2.is_ok())
     assert(r2.unwrap_or(0) == 20)
 }
 
 
 test "Result.map — Err(e) passes through" {
-    let r Result[int, str] = Err("E")
-    let r2 = r.map(|x| x + 1)
+    ro r Result[int, str] = Err("E")
+    ro r2 = r.map(|x| x + 1)
     assert(r2.is_err())
     // Err-payload не извлекаем числовой path'ом (nova_str через NovaOpt
     // боксируется); проверяем only is_err.
@@ -84,11 +84,11 @@ test "Result.map — Err(e) passes through" {
 // ───── map_err ─────
 
 test "Result.map_err — Err(e) → Err(f(e))" {
-    let r Result[int, str] = Err("boom")
+    ro r Result[int, str] = Err("boom")
     // Closure-arg type должен быть аннотирован явно — bootstrap-codegen
     // не делает inference для closure-параметра по сигнатуре method'а
     // (Q-closure-param-inference).
-    let r2 = r.map_err(fn(e str) -> str => "wrapped: " + e)
+    ro r2 = r.map_err(fn(e str) -> str => "wrapped: " + e)
     assert(r2.is_err())
     // Полная проверка содержимого Err — через chain ?, см. ниже тест
     // "chain через ?" (Fail-handler ловит и возвращает строку).
@@ -96,8 +96,8 @@ test "Result.map_err — Err(e) → Err(f(e))" {
 
 
 test "Result.map_err — Ok(v) passes through" {
-    let r Result[int, str] = Ok(42)
-    let r2 = r.map_err(fn(e str) -> str => "X")
+    ro r Result[int, str] = Ok(42)
+    ro r2 = r.map_err(fn(e str) -> str => "X")
     assert(r2.is_ok())
     assert(r2.unwrap_or(0) == 42)
 }
@@ -111,16 +111,16 @@ test "Result.map_err — Ok(v) passes through" {
 // ───── ok / err Option-конверсия ─────
 
 test "Result.ok — Ok(v) → Some(v)" {
-    let r Result[int, str] = Ok(7)
-    let o = r.ok()
+    ro r Result[int, str] = Ok(7)
+    ro o = r.ok()
     assert(o.is_some())
     assert(o.unwrap_or(0) == 7)
 }
 
 
 test "Result.ok — Err(_) → None" {
-    let r Result[int, str] = Err("x")
-    let o = r.ok()
+    ro r Result[int, str] = Err("x")
+    ro o = r.ok()
     assert(o.is_none())
     assert(o.unwrap_or(99) == 99)
 }
@@ -129,23 +129,23 @@ test "Result.ok — Err(_) → None" {
 // ───── Result.unwrap (Fail на Err) ─────
 
 test "Result.unwrap — Ok(v) → v" {
-    let r Result[int, str] = Ok(123)
-    let v = r.unwrap()
+    ro r Result[int, str] = Ok(123)
+    ro v = r.unwrap()
     assert(v == 123)
 }
 
 
 test "Result.unwrap — Err(e) бросает Fail с msg" {
     // Fail-handler ловит msg из Err.
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
         }
     } {
-        let r Result[int, str] = Err("boom")
-        let _ = r.unwrap()
+        ro r Result[int, str] = Err("boom")
+        ro _ = r.unwrap()
     }
     assert(caught == "boom")
 }
@@ -154,8 +154,8 @@ test "Result.unwrap — Err(e) бросает Fail с msg" {
 // ───── Result.err — Option[E] ─────
 
 test "Result.err — Err(e) → Some(e), Ok → None" {
-    let err Result[int, str] = Err("E1")
-    let ok Result[int, str] = Ok(42)
+    ro err Result[int, str] = Err("E1")
+    ro ok Result[int, str] = Ok(42)
     assert(err.err().is_some())
     assert(ok.err().is_none())
 }
@@ -164,15 +164,15 @@ test "Result.err — Err(e) → Some(e), Ok → None" {
 // ───── Option.unwrap_or_else ─────
 
 test "Option.unwrap_or_else — Some(v) skips closure" {
-    let s Option[int] = Some(7)
-    let v = s.unwrap_or_else(|| 0)
+    ro s Option[int] = Some(7)
+    ro v = s.unwrap_or_else(|| 0)
     assert(v == 7)
 }
 
 
 test "Option.unwrap_or_else — None calls closure" {
-    let n Option[int] = None
-    let v = n.unwrap_or_else(|| 99)
+    ro n Option[int] = None
+    ro v = n.unwrap_or_else(|| 99)
     assert(v == 99)
 }
 
@@ -180,16 +180,16 @@ test "Option.unwrap_or_else — None calls closure" {
 // ───── Option.map ─────
 
 test "Option.map — Some(v) → Some(f(v))" {
-    let s Option[int] = Some(5)
-    let s2 = s.map(fn(x int) -> int => x * 2)
+    ro s Option[int] = Some(5)
+    ro s2 = s.map(fn(x int) -> int => x * 2)
     assert(s2.is_some())
     assert(s2.unwrap_or(0) == 10)
 }
 
 
 test "Option.map — None → None" {
-    let n Option[int] = None
-    let n2 = n.map(fn(x int) -> int => x + 1)
+    ro n Option[int] = None
+    ro n2 = n.map(fn(x int) -> int => x + 1)
     assert(n2.is_none())
 }
 
@@ -197,15 +197,15 @@ test "Option.map — None → None" {
 // ───── Option.ok_or — конверсия в Result ─────
 
 test "Option.ok_or — Some(v) → Ok(v)" {
-    let s Option[int] = Some(42)
-    let r = s.ok_or("missing")
+    ro s Option[int] = Some(42)
+    ro r = s.ok_or("missing")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 42)
 }
 
 
 test "Option.ok_or — None → Err(e)" {
-    let n Option[int] = None
-    let r = n.ok_or("missing value")
+    ro n Option[int] = None
+    ro r = n.ok_or("missing value")
     assert(r.is_err())
 }

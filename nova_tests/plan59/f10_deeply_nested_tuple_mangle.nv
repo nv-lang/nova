@@ -19,7 +19,7 @@ fn make_deep() -> ((((int, int), int), int), int) {
 
 
 test "4-level nested tuple — length-prefixed mangle parses correctly" {
-    let deep = make_deep()
+    ro deep = make_deep()
     // Access всех уровней:
     assert(deep.1 == 5)
     assert(deep.0.1 == 4)
@@ -30,9 +30,9 @@ test "4-level nested tuple — length-prefixed mangle parses correctly" {
 
 
 test "let-destructure 3-level nested" {
-    let triple = (((1, 2), (3, 4)), (5, 6))
-    let (left, right) = triple
-    let (ll, lr) = left
+    ro triple = (((1, 2), (3, 4)), (5, 6))
+    ro (left, right) = triple
+    ro (ll, lr) = left
     assert(ll.0 == 1)
     assert(ll.1 == 2)
     assert(lr.0 == 3)
@@ -45,7 +45,7 @@ test "let-destructure 3-level nested" {
 // Mixed element types на разных уровнях — guards что length-prefix
 // корректно обрабатывает heterogeneous nesting.
 test "mixed nested: (str, (int, bool))" {
-    let pair = ("label", (42, true))
+    ro pair = ("label", (42, true))
     assert(pair.0 == "label")
     assert(pair.1.0 == 42)
     assert(pair.1.1)

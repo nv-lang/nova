@@ -17,10 +17,10 @@ module nova_tests.concurrency.mn_runtime_supervised_after_init
 test "M:N: workers run compute-only spawn bodies (4 workers)" {
     runtime.init(4)
 
-    let mut a = 0
-    let mut b = 0
-    let mut c = 0
-    let mut d = 0
+    mut a = 0
+    mut b = 0
+    mut c = 0
+    mut d = 0
 
     supervised {
         spawn { a = 1 }
@@ -39,14 +39,14 @@ test "M:N: workers run compute-only spawn bodies (4 workers)" {
 test "M:N: 8 spawn bodies (2 workers, sequential ordering not required)" {
     runtime.init(2)
 
-    let mut s0 = 0
-    let mut s1 = 0
-    let mut s2 = 0
-    let mut s3 = 0
-    let mut s4 = 0
-    let mut s5 = 0
-    let mut s6 = 0
-    let mut s7 = 0
+    mut s0 = 0
+    mut s1 = 0
+    mut s2 = 0
+    mut s3 = 0
+    mut s4 = 0
+    mut s5 = 0
+    mut s6 = 0
+    mut s7 = 0
 
     supervised {
         spawn { s0 = 1 }
@@ -59,7 +59,7 @@ test "M:N: 8 spawn bodies (2 workers, sequential ordering not required)" {
         spawn { s7 = 1 }
     }
 
-    let total = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+    ro total = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
     assert(total == 8)
 
     runtime.shutdown()
@@ -68,9 +68,9 @@ test "M:N: 8 spawn bodies (2 workers, sequential ordering not required)" {
 test "M:N: nested compute-only supervised" {
     runtime.init(2)
 
-    let mut outer = 0
-    let mut inner_a = 0
-    let mut inner_b = 0
+    mut outer = 0
+    mut inner_a = 0
+    mut inner_b = 0
 
     supervised {
         spawn {

@@ -26,6 +26,6 @@ type TxState {
 fn TxState @do_something() -> () { () }
 
 test "consume-поле без consume на type-decl — error на type-decl" {
-    let state = TxState { tx: Transaction { id: 1 } }
+    ro state = TxState { tx: Transaction { id: 1 } }
     state.do_something()
 }

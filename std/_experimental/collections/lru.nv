@@ -31,7 +31,7 @@ import std.collections.hashmap.{HashMap}
 /// ```
 #stable(since = "0.1")
 export type Lru[K Hashable, V] {
-    readonly capacity int        // public config
+    ro capacity int        // public config
     mut _order []K               // internal: index 0 = most recent
     mut _store HashMap[K, V]     // internal storage
 }
@@ -85,10 +85,10 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
 
     if @_order.len() >= @capacity {
         // Evict LRU (last element)
-        let evicted = @_order[@_order.len() - 1]
+        ro evicted = @_order[@_order.len() - 1]
         @_store.remove(evicted)
         // Удаляем последний элемент из order
-        let mut new_order []K = []
+        mut new_order []K = []
         for i in 0..@_order.len() - 1 {
             new_order.push(@_order[i])
         }
@@ -96,7 +96,7 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
     }
 
     // Insert front
-    let mut new_order []K = [k]
+    mut new_order []K = [k]
     for x in @_order { new_order.push(x) }
     @_order = new_order
     @_store.insert(k, v)
@@ -105,7 +105,7 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
 
 fn Lru[K, V] mut @move_to_front(k K) -> () {
     // Найти k в order, удалить, поставить в начало.
-    let mut new_order []K = [k]
+    mut new_order []K = [k]
     for x in @_order {
         if x != k { new_order.push(x) }
     }
@@ -118,7 +118,7 @@ fn Lru[K, V] mut @move_to_front(k K) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "basic put/get" {
-    let mut cache = Lru[str, int].new(3)
+    mut cache = Lru[str, int].new(3)
     cache.put("a", 1)
     cache.put("b", 2)
     cache.put("c", 3)
@@ -129,7 +129,7 @@ test "basic put/get" {
 }
 
 test "eviction at capacity" {
-    let mut cache = Lru[str, int].new(2)
+    mut cache = Lru[str, int].new(2)
     cache.put("a", 1)
     cache.put("b", 2)
     cache.put("c", 3)              // evicts "a" (LRU)
@@ -140,10 +140,10 @@ test "eviction at capacity" {
 }
 
 test "get refreshes recency" {
-    let mut cache = Lru[str, int].new(2)
+    mut cache = Lru[str, int].new(2)
     cache.put("a", 1)
     cache.put("b", 2)
-    let _ = cache.get("a")          // "a" теперь most recent
+    ro _ = cache.get("a")          // "a" теперь most recent
     cache.put("c", 3)               // evicts "b" (LRU теперь b)
 
     assert(cache.get("a") == Some(1))
@@ -152,7 +152,7 @@ test "get refreshes recency" {
 }
 
 test "update existing key" {
-    let mut cache = Lru[str, int].new(2)
+    mut cache = Lru[str, int].new(2)
     cache.put("a", 1)
     cache.put("a", 99)
     assert(cache.get("a") == Some(99))

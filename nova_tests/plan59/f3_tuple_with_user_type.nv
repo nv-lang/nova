@@ -12,8 +12,8 @@ type Point {
 
 
 test "tuple of (user_record, int) — typedef ordering" {
-    let p = Point { x: 10, y: 20 }
-    let pair = (p, 100)
+    ro p = Point { x: 10, y: 20 }
+    ro pair = (p, 100)
     assert(pair.0.x == 10)
     assert(pair.0.y == 20)
     assert(pair.1 == 100)
@@ -21,8 +21,8 @@ test "tuple of (user_record, int) — typedef ordering" {
 
 
 test "tuple of (str, user_record) — mixed" {
-    let p = Point { x: 1, y: 2 }
-    let pair = ("label", p)
+    ro p = Point { x: 1, y: 2 }
+    ro pair = ("label", p)
     assert(pair.0 == "label")
     assert(pair.1.x == 1)
     assert(pair.1.y == 2)

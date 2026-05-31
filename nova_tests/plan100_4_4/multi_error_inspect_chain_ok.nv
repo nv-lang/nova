@@ -7,9 +7,9 @@ fn make_chain() -> MultiError =>
     { primary: "primary error", suppressed: ["suppr1", "suppr2", "suppr3"] }
 
 test "MultiError chain inspection — primary + suppressed + fmt_chain" {
-    let e = make_chain()
+    ro e = make_chain()
     assert(e.primary() == "primary error")
     assert(e.suppressed().len() == 3)
-    let s = e.fmt_chain()
+    ro s = e.fmt_chain()
     assert(s == "primary error")
 }

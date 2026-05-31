@@ -8,5 +8,5 @@
 module nova_tests.plan103_4.barrier_zero_parties_neg
 
 test "Barrier.new(0) panics" {
-    let _b = Barrier.new(0)
+    ro _b = Barrier.new(0)
 }

@@ -6,7 +6,7 @@
 module contracts.ghost_runtime_use_fail
 
 fn bad(x int) -> int {
-    ghost let ghost_val = x * 3
-    let y = ghost_val + 1   // ghost в правой части non-ghost let → error
+    ghost ro ghost_val = x * 3
+    ro y = ghost_val + 1   // ghost в правой части non-ghost ro → error
     y
 }

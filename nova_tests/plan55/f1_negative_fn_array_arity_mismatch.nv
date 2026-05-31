@@ -15,5 +15,5 @@ fn bad(fns []fn() -> int) -> int => 0
 
 fn main() {
     // closure |x| 2 имеет arity 1, не 0 — несовместимо с []fn() -> int
-    let _ = bad([|| 1, |x| x + 1])
+    ro _ = bad([|| 1, |x| x + 1])
 }

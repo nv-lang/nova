@@ -30,7 +30,7 @@ fn require_countable[T BmmCountable](x T) -> T => x
 
 
 test "wrong arity — compile error (negative)" {
-    let b = BmmBag { items: "a,b,c" }
-    let _ = require_countable(b)   // ❌ count(int) ≠ count()
+    ro b = BmmBag { items: "a,b,c" }
+    ro _ = require_countable(b)   // ❌ count(int) ≠ count()
     assert(true)
 }

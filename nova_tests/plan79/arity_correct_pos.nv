@@ -23,17 +23,17 @@ fn maybe(n int) -> Option[int] => Some(n)
 
 test "Ф.2 — correct arity compiles" {
     // Result[T, E] — 2 args; Option[T] — 1 arg; in let annotations.
-    let r Result[int, str] = lookup(3)
+    ro r Result[int, str] = lookup(3)
     assert(r.is_ok())
 
-    let m Option[int] = maybe(5)
+    ro m Option[int] = maybe(5)
     assert(m == Some(5))
 
     // user generic at correct arity (one type parameter)
-    let b = box_of(42)
+    ro b = box_of(42)
     assert(b.value == 42)
 
     // turbofish at correct arity — HashMap[K, V] declares two parameters
-    let mut h = HashMap[str, int].new()
+    mut h = HashMap[str, int].new()
     assert(h.len() == 0)
 }

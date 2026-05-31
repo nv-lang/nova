@@ -3,28 +3,28 @@
 module nova_tests.plan99.option_ok_or_migrated
 
 test "Option[int].ok_or[str] — Some → Ok" {
-    let a Option[int] = Some(42)
-    let r = a.ok_or("missing")
+    ro a Option[int] = Some(42)
+    ro r = a.ok_or("missing")
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 42)
 }
 
 test "Option[int].ok_or[str] — None → Err" {
-    let a Option[int] = None
-    let r = a.ok_or("missing")
+    ro a Option[int] = None
+    ro r = a.ok_or("missing")
     assert(r.is_err())
     assert(r.unwrap_or(0) == 0)
 }
 
 test "Option[str].ok_or[int] — reversed E type" {
-    let a Option[str] = Some("hello")
-    let r = a.ok_or(99)
+    ro a Option[str] = Some("hello")
+    ro r = a.ok_or(99)
     assert(r.is_ok())
     assert(r.unwrap_or("") == "hello")
 }
 
 test "Option.ok_or — None с custom E type" {
-    let a Option[int] = None
-    let r = a.ok_or(42)
+    ro a Option[int] = None
+    ro r = a.ok_or(42)
     assert(r.is_err())
 }

@@ -5,7 +5,7 @@ module map_literals.positive_infer
 import std.collections.hashmap.{HashMap}
 
 test "infer K=str V=int from values" {
-    let mut m = ["a": 1, "b": 2, "c": 3]
+    mut m = ["a": 1, "b": 2, "c": 3]
     assert(m.len() == 3)
     assert(m.get("a") == Some(1))
     assert(m.get("b") == Some(2))

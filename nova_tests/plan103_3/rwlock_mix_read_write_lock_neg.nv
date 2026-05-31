@@ -5,7 +5,7 @@
 module nova_tests.plan103_3.rwlock_mix_read_write_lock_neg
 
 test "read then write_unlock panics" {
-    let mut rw = RwLock.new()
+    mut rw = RwLock.new()
     rw.read()
     rw.write_unlock()  // wrong unlock kind
 }

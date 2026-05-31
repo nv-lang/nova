@@ -6,7 +6,7 @@ module modules.priority_queue
 import std._experimental.collections.priority_queue.{PriorityQueue}
 
 test "PriorityQueue: push и pop в порядке возрастания" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     pq.push(5)
     pq.push(1)
     pq.push(3)
@@ -21,7 +21,7 @@ test "PriorityQueue: push и pop в порядке возрастания" {
 }
 
 test "PriorityQueue: peek не удаляет минимум" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     pq.push(10)
     pq.push(1)
     pq.push(5)
@@ -31,7 +31,7 @@ test "PriorityQueue: peek не удаляет минимум" {
 }
 
 test "PriorityQueue: is_empty и len" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     assert(pq.is_empty() == true)
     assert(pq.len() == 0)
     pq.push(42)
@@ -40,13 +40,13 @@ test "PriorityQueue: is_empty и len" {
 }
 
 test "PriorityQueue: pop из пустой — None" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     assert(pq.pop() == None)
     assert(pq.peek() == None)
 }
 
 test "PriorityQueue: один элемент" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     pq.push(99)
     assert(pq.peek() == Some(99))
     assert(pq.pop() == Some(99))
@@ -54,7 +54,7 @@ test "PriorityQueue: один элемент" {
 }
 
 test "PriorityQueue: дублирующиеся элементы" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     pq.push(3)
     pq.push(1)
     pq.push(1)
@@ -66,14 +66,14 @@ test "PriorityQueue: дублирующиеся элементы" {
 }
 
 test "PriorityQueue: heap sort через последовательный pop" {
-    let mut pq = PriorityQueue[int].new()
+    mut pq = PriorityQueue[int].new()
     for x in [7, 3, 9, 1, 5, 2, 8, 4, 6] {
         pq.push(x)
     }
     assert(pq.len() == 9)
-    let mut prev = 0
+    mut prev = 0
     for _ in 0..9 {
-        let v = match pq.pop() {
+        ro v = match pq.pop() {
             Some(x) => x
             None    => 0
         }

@@ -1016,7 +1016,7 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 8. **Тесты:**
    ```nova
    test "StringBuilder + str" {
-       let mut sb = StringBuilder.new()
+       mut sb = StringBuilder.new()
        (sb + "hello ").append("world")  // chaining
        assert(sb.into() == "hello world")
    }

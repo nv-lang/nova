@@ -13,7 +13,7 @@ type Counter {
 
 fn main() Io -> () {
     // value == 200 нарушает `value <= 100`.
-    let c = Counter { value: 200 }
+    ro c = Counter { value: 200 }
     println("UNREACHABLE")
-    let _ = c
+    ro _ = c
 }

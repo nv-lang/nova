@@ -17,10 +17,10 @@
 module nova_tests.plan103_4.condvar_wait_until_predicate
 
 test "wait_until returns only when predicate becomes true" {
-    let mut mu = Mutex.new()
-    let mut cv = Condvar.new()
-    let mut ready = AtomicBool.new(false)
-    let mut done = AtomicBool.new(false)
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut ready = AtomicBool.new(false)
+    mut done = AtomicBool.new(false)
 
     supervised {
         // Consumer: blocks until ready == true.
@@ -46,9 +46,9 @@ test "wait_until returns only when predicate becomes true" {
 }
 
 test "wait_until with initially true predicate returns immediately" {
-    let mut mu = Mutex.new()
-    let mut cv = Condvar.new()
-    let mut calls = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut calls = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -68,11 +68,11 @@ test "wait_until with initially true predicate returns immediately" {
 }
 
 test "wait_until survives multiple spurious wakes before predicate true" {
-    let mut mu = Mutex.new()
-    let mut cv = Condvar.new()
-    let mut target    = AtomicInt.new(0)  // consumer wants target == 3
-    let mut done_flag = AtomicBool.new(false)
-    let mut n_waiting = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut target    = AtomicInt.new(0)  // consumer wants target == 3
+    mut done_flag = AtomicBool.new(false)
+    mut n_waiting = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -87,7 +87,7 @@ test "wait_until survives multiple spurious wakes before predicate true" {
         }
 
         // Wait for consumer to register.
-        let mut w = false
+        mut w = false
         while !w {
             Time.sleep(1)
             mu.lock()

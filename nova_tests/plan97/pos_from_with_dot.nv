@@ -22,15 +22,15 @@ fn Celsius.from(f Fahrenheit) -> Celsius =>
 
 
 test "From[Fahrenheit] для Celsius — прямой Celsius.from(f) работает" {
-    let f = Fahrenheit { value: 212.0 }
-    let c = Celsius.from(f)
+    ro f = Fahrenheit { value: 212.0 }
+    ro c = Celsius.from(f)
     // 212F = 100C
     assert(c.value > 99.9 && c.value < 100.1)
 }
 
 test "Into[Celsius] auto-derive из From[Fahrenheit]" {
-    let f = Fahrenheit { value: 32.0 }
-    let c Celsius = f.into()
+    ro f = Fahrenheit { value: 32.0 }
+    ro c Celsius = f.into()
     // 32F = 0C
     assert(c.value > -0.01 && c.value < 0.01)
 }

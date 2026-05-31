@@ -31,7 +31,7 @@ fn run_user_script(code str) Fail -> Result =>
 
 fn realtime_audio(buf []f32) -> () =>
     realtime nogc {
-        let arr = []int.new()    // ← managed alloc здесь = НЕ ловится
+        ro arr = []int.new()    // ← managed alloc здесь = НЕ ловится
     }
 ```
 

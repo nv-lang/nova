@@ -8,8 +8,8 @@ module syntax.for_in_array
 // ---- basic iteration ----
 
 test "for in: sum of elements" {
-    let mut arr = [10, 20, 30, 40, 50]
-    let mut total = 0
+    mut arr = [10, 20, 30, 40, 50]
+    mut total = 0
     for n in arr {
         total += n
     }
@@ -17,18 +17,18 @@ test "for in: sum of elements" {
 }
 
 test "for in: count iterations" {
-    let mut arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    let mut count = 0
+    mut arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    mut count = 0
     for n in arr {
         count += 1
-        let _ = n
+        ro _ = n
     }
     assert(count == 10)
 }
 
 test "for in: single element" {
-    let mut arr = [42]
-    let mut got = 0
+    mut arr = [42]
+    mut got = 0
     for n in arr {
         got = n
     }
@@ -38,8 +38,8 @@ test "for in: single element" {
 // ---- mutation inside loop ----
 
 test "for in: accumulate product" {
-    let mut arr = [1, 2, 3, 4, 5]
-    let mut prod = 1
+    mut arr = [1, 2, 3, 4, 5]
+    mut prod = 1
     for n in arr {
         prod = prod * n
     }
@@ -48,8 +48,8 @@ test "for in: accumulate product" {
 }
 
 test "for in: conditional accumulate" {
-    let mut arr = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
-    let mut sum_big = 0
+    mut arr = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
+    mut sum_big = 0
     for n in arr {
         if n > 4 {
             sum_big += n
@@ -60,8 +60,8 @@ test "for in: conditional accumulate" {
 }
 
 test "for in: max element" {
-    let mut arr = [3, 1, 4, 1, 5, 9, 2, 6]
-    let mut mx = 0
+    mut arr = [3, 1, 4, 1, 5, 9, 2, 6]
+    mut mx = 0
     for n in arr {
         if n > mx {
             mx = n
@@ -71,8 +71,8 @@ test "for in: max element" {
 }
 
 test "for in: min element" {
-    let mut arr = [5, 3, 8, 1, 7, 2, 9]
-    let mut mn = 999
+    mut arr = [5, 3, 8, 1, 7, 2, 9]
+    mut mn = 999
     for n in arr {
         if n < mn {
             mn = n
@@ -84,9 +84,9 @@ test "for in: min element" {
 // ---- spread arrays ----
 
 test "for in: spread array sum" {
-    let mut a = [1, 2, 3]
-    let mut b = [0, ...a, 4, 5]
-    let mut s = 0
+    mut a = [1, 2, 3]
+    mut b = [0, ...a, 4, 5]
+    mut s = 0
     for n in b {
         s += n
     }
@@ -99,17 +99,17 @@ test "for in: spread array sum" {
 test "for in: 100-element sum" {
     // build array [0, 1, ..., 99] via range+spread equivalent
     // we don't have range-to-array yet, so build manually as range loop + array
-    let mut arr = [0]
-    let mut i = 1
+    mut arr = [0]
+    mut i = 1
     while i < 100 {
-        let next = [i]
+        ro next = [i]
         // Can't push into arr yet (no push in Nova surface), use a workaround:
         // accumulate sum directly via while loop for array building
         i += 1
     }
     // Fallback: just verify for-in on a known array of 10 elements
-    let known = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    let mut s = 0
+    ro known = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    mut s = 0
     for n in known {
         s += n
     }
@@ -118,9 +118,9 @@ test "for in: 100-element sum" {
 }
 
 test "for in: nested loop over two arrays" {
-    let xs = [1, 2, 3]
-    let ys = [10, 20]
-    let mut total = 0
+    ro xs = [1, 2, 3]
+    ro ys = [10, 20]
+    mut total = 0
     for x in xs {
         for y in ys {
             total += x * y
@@ -133,8 +133,8 @@ test "for in: nested loop over two arrays" {
 
 test "for in: loop produces correct index-dependent results" {
     // array where elem[i] = (i+1)^2
-    let mut arr = [1, 4, 9, 16, 25]
-    let mut sum = 0
+    mut arr = [1, 4, 9, 16, 25]
+    mut sum = 0
     for n in arr {
         sum += n
     }

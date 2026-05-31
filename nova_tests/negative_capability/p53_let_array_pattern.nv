@@ -5,9 +5,9 @@
 
 module negative_capability.p53_let_array_pattern
 
-test "array pattern in let — refutable" {
-    let xs = [1, 2, 3]
-    let [a, b, c] = xs
+test "array pattern in ro — refutable" {
+    ro xs = [1, 2, 3]
+    ro [a, b, c] = xs
     assert(a == 1)
     assert(b == 2)
     assert(c == 3)

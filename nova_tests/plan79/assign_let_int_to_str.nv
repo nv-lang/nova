@@ -5,6 +5,6 @@
 module nova_tests.plan79.assign_let_int_to_str
 
 fn run() -> int {
-    let s str = 5
+    ro s str = 5
     0
 }

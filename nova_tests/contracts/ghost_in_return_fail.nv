@@ -6,6 +6,6 @@
 module contracts.ghost_in_return_fail
 
 fn bad_return(x int) -> int {
-    ghost let g = x + 1
+    ghost ro g = x + 1
     g  // trailing expr = return value → runtime context → error
 }

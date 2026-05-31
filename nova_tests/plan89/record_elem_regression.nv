@@ -14,12 +14,12 @@ type Point { x int, y int }
 
 
 test "for-in []Record + доступ к полям" {
-    let pts []Point = [
+    ro pts []Point = [
         Point { x: 1, y: 2 },
         Point { x: 3, y: 4 },
         Point { x: 10, y: 20 },
     ]
-    let mut sum = 0
+    mut sum = 0
     for p in pts {
         sum = sum + p.x + p.y
     }
@@ -27,8 +27,8 @@ test "for-in []Record + доступ к полям" {
 }
 
 test "for-in []Record + match по record-паттерну" {
-    let pts []Point = [Point { x: 5, y: 5 }, Point { x: 1, y: 9 }]
-    let mut diag = 0
+    ro pts []Point = [Point { x: 5, y: 5 }, Point { x: 1, y: 9 }]
+    mut diag = 0
     for p in pts {
         match p {
             Point { x, y } => {

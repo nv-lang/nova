@@ -21,13 +21,13 @@ fn main() Io -> () {
     // только runtime panic с правильным message). Production-grade
     // тестирование cleanup-cascade требует other-way (через
     // observable side effects, fs/stdout).
-    let _ = {
+    ro _ = {
         defer { println("L1 defer") }
         errdefer { println("L1 errdefer") }
-        let _ = {
+        ro _ = {
             defer { println("L2 defer") }
             errdefer { println("L2 errdefer") }
-            let _ = {
+            ro _ = {
                 defer { println("L3 defer") }
                 errdefer { println("L3 errdefer") }
                 throw "deep"

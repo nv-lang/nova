@@ -25,8 +25,8 @@ type ChildErr2 {
 
 
 test "negative: cross-type cascade без From → compile error" {
-    let parent CancelToken[ParentErr2] = CancelToken.new()
-    let child  CancelToken[ChildErr2]  = CancelToken.new()
+    ro parent CancelToken[ParentErr2] = CancelToken.new()
+    ro child  CancelToken[ChildErr2]  = CancelToken.new()
     // Ниже строка должна получить compile error с pattern
     // "requires `ChildErr2.from(ParentErr2)` to be defined".
     child.cancelled_by(parent)

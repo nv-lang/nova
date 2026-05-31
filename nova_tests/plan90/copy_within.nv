@@ -4,22 +4,22 @@ module nova_tests.plan90.copy_within
 
 
 test "copy_within — без перекрытия" {
-    let mut a []u8 = [1, 2, 3, 4, 5]
+    mut a []u8 = [1, 2, 3, 4, 5]
     a.copy_within(0, 3, 2)
-    let expect []u8 = [1, 2, 3, 1, 2]
+    ro expect []u8 = [1, 2, 3, 1, 2]
     assert(a.compare(expect) == 0)
 }
 
 test "copy_within — перекрытие вперёд (dst > src)" {
-    let mut a []u8 = [1, 2, 3, 4, 5]
+    mut a []u8 = [1, 2, 3, 4, 5]
     a.copy_within(0, 1, 3)
-    let expect []u8 = [1, 1, 2, 3, 5]
+    ro expect []u8 = [1, 1, 2, 3, 5]
     assert(a.compare(expect) == 0)
 }
 
 test "copy_within — перекрытие назад (dst < src)" {
-    let mut a []u8 = [1, 2, 3, 4, 5]
+    mut a []u8 = [1, 2, 3, 4, 5]
     a.copy_within(2, 0, 3)
-    let expect []u8 = [3, 4, 5, 4, 5]
+    ro expect []u8 = [3, 4, 5, 4, 5]
     assert(a.compare(expect) == 0)
 }

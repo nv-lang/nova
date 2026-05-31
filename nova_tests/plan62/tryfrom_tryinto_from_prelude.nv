@@ -43,8 +43,8 @@ export fn PositiveInt.try_from(n int) -> Result[PositiveInt, str] =>
 
 
 test "TryFrom from prelude — Ok discriminant" {
-    let r = PositiveInt.try_from(42)
-    let is_ok = match r {
+    ro r = PositiveInt.try_from(42)
+    ro is_ok = match r {
         Ok(_) => true
         Err(_) => false
     }
@@ -52,8 +52,8 @@ test "TryFrom from prelude — Ok discriminant" {
 }
 
 test "TryFrom from prelude — Err discriminant" {
-    let r = PositiveInt.try_from(-1)
-    let is_ok = match r {
+    ro r = PositiveInt.try_from(-1)
+    ro is_ok = match r {
         Ok(_) => true
         Err(_) => false
     }
@@ -76,9 +76,9 @@ export fn Meters @try_into() -> Result[Feet, str] =>
 
 
 test "TryInto from prelude — Ok discriminant" {
-    let m = Meters { v: 10 }
-    let r = m.try_into()
-    let is_ok = match r {
+    ro m = Meters { v: 10 }
+    ro r = m.try_into()
+    ro is_ok = match r {
         Ok(_) => true
         Err(_) => false
     }
@@ -86,9 +86,9 @@ test "TryInto from prelude — Ok discriminant" {
 }
 
 test "TryInto from prelude — Err discriminant" {
-    let m = Meters { v: -5 }
-    let r = m.try_into()
-    let is_ok = match r {
+    ro m = Meters { v: -5 }
+    ro r = m.try_into()
+    ro is_ok = match r {
         Ok(_) => true
         Err(_) => false
     }

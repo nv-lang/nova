@@ -23,7 +23,7 @@ fn add(a int, b int, c int) -> int => a + b + c
 
 // No return type
 fn greet(name str) {
-    let _ = "hello, " + name
+    ro _ = "hello, " + name
 }
 
 // Returning unit explicitly
@@ -52,34 +52,34 @@ test "multiple parameters" {
 }
 
 test "lambda inline" {
-    let inc = |x| x + 1
+    ro inc = |x| x + 1
     assert(inc(5) == 6)
-    let mul = |a, b| a * b
+    ro mul = |a, b| a * b
     assert(mul(3, 4) == 12)
 }
 
 test "lambda passed as argument" {
-    let apply = fn(f fn(int) -> int, x int) -> int => f(x)
+    ro apply = fn(f fn(int) -> int, x int) -> int => f(x)
     assert(apply(|n| n * 10, 5) == 50)
 }
 
 test "closure captures variable" {
-    let n = 100
-    let add_n = |x| x + n
+    ro n = 100
+    ro add_n = |x| x + n
     assert(add_n(7) == 107)
 }
 
 test "lambda with explicit param type" {
-    let halve = fn(x int) -> int => x / 2
+    ro halve = fn(x int) -> int => x / 2
     assert(halve(20) == 10)
 }
 
 test "function returns unit" {
-    let r = tick()
+    ro r = tick()
     assert(r == ())
 }
 
 test "higher-order: map-like" {
-    let twice = fn(n int) -> int => n * 2
+    ro twice = fn(n int) -> int => n * 2
     assert(twice(5) == 10)
 }

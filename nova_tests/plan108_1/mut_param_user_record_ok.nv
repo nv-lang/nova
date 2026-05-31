@@ -21,8 +21,8 @@ fn bump_by_5(mut c Counter) -> int {
 }
 
 test "mut param + user-defined mut @method" {
-    let c = Counter.new()
-    let v = bump_by_5(c)
+    ro c = Counter.new()
+    ro v = bump_by_5(c)
     assert(v == 5)
     assert(c.get() == 5)
 }

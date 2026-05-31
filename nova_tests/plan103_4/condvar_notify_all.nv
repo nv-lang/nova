@@ -10,10 +10,10 @@
 module nova_tests.plan103_4.condvar_notify_all
 
 test "notify_all wakes all 5 waiters" {
-    let mut mu = Mutex.new()
-    let mut cv = Condvar.new()
-    let mut n_waiting = AtomicInt.new(0)
-    let mut n_woken = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut n_waiting = AtomicInt.new(0)
+    mut n_woken = AtomicInt.new(0)
 
     supervised {
         for _i in 0..5 {
@@ -30,7 +30,7 @@ test "notify_all wakes all 5 waiters" {
         // The poll acquires mu, which the fiber holds until park_with_unlock
         // fires (after yield) — so mu is only released after the fiber is
         // truly parked. This prevents the lost-wakeup in the poll logic.
-        let mut all_in = false
+        mut all_in = false
         while !all_in {
             Time.sleep(1)
             mu.lock()

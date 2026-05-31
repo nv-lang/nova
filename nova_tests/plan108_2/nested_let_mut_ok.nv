@@ -3,10 +3,10 @@
 
 module nova_tests.plan108_2.nested_let_mut_ok
 
-test "nested let mut in block" {
-    let outer = 5
-    let result = {
-        let mut acc = []
+test "nested mut in block" {
+    ro outer = 5
+    ro result = {
+        mut acc = []
         acc.push(outer)
         acc.push(outer * 2)
         acc.len()

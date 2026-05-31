@@ -10,8 +10,8 @@ module syntax.defer_basic
 // ───── Single defer: cleanup на trailing exit (block-expr) ─────
 
 test "defer срабатывает на trailing block-exit" {
-    let mut counter = 0
-    let result = {
+    mut counter = 0
+    ro result = {
         defer { counter = counter + 1 }
         42
     }
@@ -25,11 +25,11 @@ test "defer срабатывает на trailing block-exit" {
 // ───── LIFO порядок: несколько defers ─────
 
 test "несколько defers выполняются в LIFO" {
-    let mut order_a = 0
-    let mut order_b = 0
-    let mut order_c = 0
-    let mut step = 0
-    let _ = {
+    mut order_a = 0
+    mut order_b = 0
+    mut order_c = 0
+    mut step = 0
+    ro _ = {
         defer {
             step = step + 1
             order_a = step       // A — последний (registered first)
@@ -57,8 +57,8 @@ test "несколько defers выполняются в LIFO" {
 // outer mut local'ями напрямую.
 
 test "defer срабатывает при early return из nested block" {
-    let mut counter = 0
-    let result = {
+    mut counter = 0
+    ro result = {
         defer { counter = counter + 1 }
         // Симулируем early return через trailing if-then-else;
         // в обоих ветках мы покидаем block, и defer должен сработать.
@@ -76,7 +76,7 @@ test "defer срабатывает при early return из nested block" {
 // числу итераций.
 
 test "defer срабатывает на каждой итерации for-loop" {
-    let mut tick = 0
+    mut tick = 0
     for _ in 0..5 {
         defer { tick = tick + 1 }
     }

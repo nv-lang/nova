@@ -44,7 +44,7 @@ module concurrency.parallel_for
 // ================================================================
 
 test "parallel for: sum of [1..5]" {
-    let mut sum = 0
+    mut sum = 0
     parallel for x in [1, 2, 3, 4, 5] {
         sum += x
     }
@@ -52,8 +52,8 @@ test "parallel for: sum of [1..5]" {
 }
 
 test "parallel for: empty array, no iterations" {
-    let mut touched = 0
-    let xs = []
+    mut touched = 0
+    ro xs = []
     parallel for _ in xs {
         touched += 1
     }
@@ -61,7 +61,7 @@ test "parallel for: empty array, no iterations" {
 }
 
 test "parallel for: single element" {
-    let mut got = 0
+    mut got = 0
     parallel for x in [42] {
         got = x
     }
@@ -77,8 +77,8 @@ test "parallel for: 2 fibers each write 3 times (completeness)" {
     // Каждая итерация пишет цифру x три раза с yield. Под cooperative
     // или work-stealing M:N — каждый fiber завершает все 3 шага.
     // Проверка multiset-equality: total writes = 6, sum = 3*(1+2) = 9.
-    let mut total_writes = 0
-    let mut sum = 0
+    mut total_writes = 0
+    mut sum = 0
     parallel for x in [1, 2] {
         println("  fiber x=", x, " step 1")
         total_writes += 1
@@ -100,8 +100,8 @@ test "parallel for: 2 fibers each write 3 times (completeness)" {
 test "parallel for: 3 fibers each write 2 times (completeness)" {
     // 3 fibers по 2 шага с yield. multiset-equality:
     // total writes = 6, sum = 2*(1+2+3) = 12.
-    let mut total_writes = 0
-    let mut sum = 0
+    mut total_writes = 0
+    mut sum = 0
     parallel for x in [1, 2, 3] {
         println("  fiber ", x, " a")
         total_writes += 1
@@ -120,13 +120,13 @@ test "parallel for: NO yield → each fiber runs to completion" {
     // Без Time.sleep — у каждого fiber'а body выполняется атомарно.
     // Проверяем completeness: каждый x встретился x раз → total = 1+2+3 = 6.
     // Order между fibers НЕ проверяется (M:N work-stealing → undef).
-    let mut total = 0
-    let mut count_1 = 0
-    let mut count_2 = 0
-    let mut count_3 = 0
+    mut total = 0
+    mut count_1 = 0
+    mut count_2 = 0
+    mut count_3 = 0
     parallel for x in [1, 2, 3] {
         println("  fiber ", x, " writes")
-        let mut i = 0
+        mut i = 0
         while i < x {
             total += 1
             if x == 1 {
@@ -151,7 +151,7 @@ test "parallel for: NO yield → each fiber runs to completion" {
 test "parallel for vs sequential for: same sum, both complete" {
     // Sequential for + parallel for — оба обходят весь массив.
     // Order не проверяется — только что каждый fiber/iteration выполнен.
-    let mut seq_sum = 0
+    mut seq_sum = 0
     for x in [1, 2] {
         seq_sum += x
         Time.sleep(0)
@@ -162,7 +162,7 @@ test "parallel for vs sequential for: same sum, both complete" {
     // Sequential: каждый x записан 3 раза → 3*1 + 3*2 = 9
     assert(seq_sum == 9)
 
-    let mut par_sum = 0
+    mut par_sum = 0
     parallel for x in [1, 2] {
         par_sum += x
         Time.sleep(0)
@@ -180,8 +180,8 @@ test "parallel for vs sequential for: same sum, both complete" {
 // ================================================================
 
 test "parallel for over range 0..3: each i runs twice (completeness)" {
-    let mut total_writes = 0
-    let mut sum = 0
+    mut total_writes = 0
+    mut sum = 0
     parallel for i in 0..3 {
         println("  fiber i=", i, " a")
         total_writes += 1
@@ -197,8 +197,8 @@ test "parallel for over range 0..3: each i runs twice (completeness)" {
 }
 
 test "parallel for over inclusive range 1..=3: completeness" {
-    let mut total_writes = 0
-    let mut sum = 0
+    mut total_writes = 0
+    mut sum = 0
     parallel for i in 1..=3 {
         total_writes += 1
         sum += i
@@ -218,7 +218,7 @@ test "parallel for: each fiber sees its OWN x (snapshot)" {
     // Если бы x захватывалось by-pointer, все queued fibers видели бы
     // последний элемент массива (=5). Сумма была бы 5+5+5+5+5 = 25.
     // С by-value snapshot: 1+2+3+4+5 = 15.
-    let mut sum = 0
+    mut sum = 0
     parallel for x in [1, 2, 3, 4, 5] {
         sum += x
     }
@@ -228,7 +228,7 @@ test "parallel for: each fiber sees its OWN x (snapshot)" {
 test "parallel for: snapshot survives across yield" {
     // x каждого fiber'а сохраняется через yield-точку.
     // Если бы x перезаписывался между итерациями, после yield все увидели бы 3.
-    let mut sum = 0
+    mut sum = 0
     parallel for x in [1, 2, 3] {
         Time.sleep(0)   // yield ДО чтения x
         sum += x
@@ -241,8 +241,8 @@ test "parallel for: snapshot survives across yield" {
 // ================================================================
 
 test "parallel for inside ordinary for (3 outer × 3 parallel)" {
-    let mut total = 0
-    let mut row = 0
+    mut total = 0
+    mut row = 0
     while row < 3 {
         parallel for x in [1, 2, 3] {
             total += x
@@ -253,14 +253,14 @@ test "parallel for inside ordinary for (3 outer × 3 parallel)" {
 }
 
 test "ordinary for inside parallel for" {
-    let mut count = 0
+    mut count = 0
     parallel for outer in [10, 20, 30] {
-        let mut inner = 0
+        mut inner = 0
         while inner < 4 {
             count += 1
             inner += 1
         }
-        let _ = outer   // touch capture
+        ro _ = outer   // touch capture
     }
     assert(count == 12)   // 3 × 4
 }
@@ -270,8 +270,8 @@ test "ordinary for inside parallel for" {
 // ================================================================
 
 test "parallel for: mut outer by-ptr, inner x by-value" {
-    let mut accum = 0
-    let bonus = 100
+    mut accum = 0
+    ro bonus = 100
     parallel for x in [1, 2, 3] {
         accum += x + bonus
     }
@@ -287,7 +287,7 @@ test "parallel for negative: 5 spawns over [10, 20, 30] = 60 not 90" {
     // Если бы capture был by-pointer и `x` зафиксировался бы на
     // последнем значении (=30), сумма стала бы 30*3 = 90.
     // by-value: 10+20+30 = 60.
-    let mut sum = 0
+    mut sum = 0
     parallel for x in [10, 20, 30] {
         Time.sleep(0)   // даём scheduler'у переключиться
         sum += x
@@ -297,7 +297,7 @@ test "parallel for negative: 5 spawns over [10, 20, 30] = 60 not 90" {
 
 test "parallel for negative: empty body still scope-cleans" {
     // Empty body не должен оставить мусор. Scope-exit должен пройти clean.
-    let mut sentinel = 0
+    mut sentinel = 0
     parallel for _ in [1, 2, 3] {
         // empty body
     }

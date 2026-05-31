@@ -77,7 +77,7 @@ fn commit_both[T consume](consume a T, consume b T) -> () {
 
 ```nova
 fn commit_all() {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
     for consume tx in txs {
         tx.commit()     // каждый tx consumed в своей итерации ✅
     }
@@ -89,7 +89,7 @@ fn commit_all() {
 
 ```nova
 fn commit_with_break() {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         if tx.id == 1 {
             tx.commit()
@@ -128,9 +128,9 @@ fn bad_first[T consume](pair (T, T)) -> T {
 
 ```nova
 fn bad_loop() {
-    let txs = [Transaction { id: 1 }]
+    ro txs = [Transaction { id: 1 }]
     for consume tx in txs {
-        let _ = tx.id   // ❌ [D156-iter-not-consumed] tx не consumed в итерации
+        ro _ = tx.id   // ❌ [D156-iter-not-consumed] tx не consumed в итерации
     }
 }
 ```
@@ -139,7 +139,7 @@ fn bad_loop() {
 
 ```nova
 fn bad_branch_loop() {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         if tx.id == 1 {
             tx.commit()

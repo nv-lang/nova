@@ -7,6 +7,6 @@
 module nova_tests.plan103_3.mutex_double_unlock_neg
 
 test "unlock without lock panics" {
-    let mut mu = Mutex.new()
+    mut mu = Mutex.new()
     mu.unlock()
 }

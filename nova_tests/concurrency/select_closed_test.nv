@@ -15,11 +15,11 @@ import std.time.duration
 
 test "select: wildcard recv fires when channel has data" {
     // _ = rx matches any ready recv (closed or with value)
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     tx.send(99)
-    let mut fired = false
+    mut fired = false
     select {
         _ = rx => { fired = true }
     }
@@ -27,11 +27,11 @@ test "select: wildcard recv fires when channel has data" {
 }
 
 test "select: wildcard recv fires when channel already closed" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     tx.close()
-    let mut fired = false
+    mut fired = false
     select {
         _ = rx => { fired = true }
     }
@@ -39,16 +39,16 @@ test "select: wildcard recv fires when channel already closed" {
 }
 
 test "select: Some arm fires on buffered value, wildcard on closed" {
-    let ch = Channel.new(2)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(2)
+    ro tx = ch.tx
+    ro rx = ch.rx
     tx.send(42)
     tx.close()
 
     // First select: drain buffered value via direct recv (не select)
     // чтобы избежать flaky Fisher-Yates когда оба арма ready.
-    let mut got = 0
-    let opt = rx.recv()
+    mut got = 0
+    ro opt = rx.recv()
     match opt {
         Some(v) => { got = v }
         None    => { got = -1 }
@@ -56,7 +56,7 @@ test "select: Some arm fires on buffered value, wildcard on closed" {
     assert(got == 42)
 
     // Second select: wildcard fires (closed, empty)
-    let mut closed_fired = false
+    mut closed_fired = false
     select {
         _ = rx => { closed_fired = true }
     }
@@ -70,13 +70,13 @@ test "select: Some arm fires on buffered value, wildcard on closed" {
 test "select: data wins supervised(cancel:) race" {
     // Data arrives immediately; scope cancel comes much later.
     // Expect select to fire with the data, no error.
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut branch = 0
-    let mut error_seen = false
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut branch = 0
+    mut error_seen = false
 
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     with Fail = effect Fail {
         fail(_msg) {
             error_seen = true
@@ -107,17 +107,17 @@ test "select: data wins supervised(cancel:) race" {
 
 test "select: open channel wins over closed channel" {
     // ch1 open with data, ch2 closed → Some arm on ch1 fires
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx1.send(55)
     tx2.close()
 
-    let mut result = 0
+    mut result = 0
     select {
         Some(v) = rx1 => { result = v }
         _ = rx2       => { result = -1 }

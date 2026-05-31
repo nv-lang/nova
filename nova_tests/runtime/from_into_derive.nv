@@ -14,14 +14,14 @@ type UserId { id u64 }
 fn UserId @into() -> str => "user#" + str.from(@id)
 
 test "into-form вызова — explicit method" {
-    let u = UserId { id: 42 }
-    let s str = u.into()
+    ro u = UserId { id: 42 }
+    ro s str = u.into()
     assert(s == "user#42")
 }
 
 test "from-form авто-выводится из @into (UserId → str)" {
-    let u = UserId { id: 99 }
-    let s = str.from(u)        // авто: вызывает u.into()
+    ro u = UserId { id: 99 }
+    ro s = str.from(u)        // авто: вызывает u.into()
     assert(s == "user#99")
 }
 
@@ -36,19 +36,19 @@ fn Fahrenheit.from(c Celsius) -> Self =>
     { degrees: c.degrees * 9 / 5 + 32 }
 
 test "from-form вызова — explicit static" {
-    let c = Celsius { degrees: 100 }
-    let f = Fahrenheit.from(c)
+    ro c = Celsius { degrees: 100 }
+    ro f = Fahrenheit.from(c)
     assert(f.degrees == 212)
 }
 
 test "into-form авто-выводится из .from (Celsius → Fahrenheit)" {
-    let c = Celsius { degrees: 0 }
-    let f Fahrenheit = c.into()    // авто: вызывает Fahrenheit.from(c)
+    ro c = Celsius { degrees: 0 }
+    ro f Fahrenheit = c.into()    // авто: вызывает Fahrenheit.from(c)
     assert(f.degrees == 32)
 }
 
 test "into-form: ещё одна точка проверки" {
-    let c = Celsius { degrees: 100 }
-    let f Fahrenheit = c.into()
+    ro c = Celsius { degrees: 100 }
+    ro f Fahrenheit = c.into()
     assert(f.degrees == 212)
 }

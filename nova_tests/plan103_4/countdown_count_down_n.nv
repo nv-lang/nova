@@ -10,7 +10,7 @@
 module nova_tests.plan103_4.countdown_count_down_n
 
 test "CountDownLatch.count_down_n: decrements count by n" {
-    let mut latch = CountDownLatch.new(10)
+    mut latch = CountDownLatch.new(10)
 
     assert(latch.current_count() == 10)
 
@@ -30,7 +30,7 @@ test "CountDownLatch.count_down_n: decrements count by n" {
 }
 
 test "CountDownLatch.count_down_n: saturating past zero does not panic" {
-    let mut latch = CountDownLatch.new(3)
+    mut latch = CountDownLatch.new(3)
 
     // Decrement by more than count — must saturate at 0, not go negative
     latch.count_down_n(100)
@@ -40,8 +40,8 @@ test "CountDownLatch.count_down_n: saturating past zero does not panic" {
 
 test "CountDownLatch.count_down_n: concurrent waiter woken by batch" {
     // 3 fibers: i=0 awaits; i=1 and i=2 each count_down_n(3) = 6 total for a count-6 latch
-    let mut latch = CountDownLatch.new(6)
-    let mut woke = AtomicInt.new(0)
+    mut latch = CountDownLatch.new(6)
+    mut woke = AtomicInt.new(0)
 
     // Two separate ifs (no else) to avoid if/else mixed-return-type issue.
     parallel for i in 0..3 {
@@ -60,7 +60,7 @@ test "CountDownLatch.count_down_n: concurrent waiter woken by batch" {
 }
 
 test "CountDownLatch.count_down_n: n=0 is no-op" {
-    let mut latch = CountDownLatch.new(5)
+    mut latch = CountDownLatch.new(5)
     latch.count_down_n(0)
     assert(latch.current_count() == 5)
     latch.count_down_n(-1)

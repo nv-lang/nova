@@ -24,7 +24,7 @@ fn[T Showable_] []T @desc() -> str {
 
 
 test "should error: NoShow does not satisfy Showable_" {
-    let xs []NoShow = [NoShow { n: 1 }]
-    let _ = xs.desc()
+    ro xs []NoShow = [NoShow { n: 1 }]
+    ro _ = xs.desc()
     assert(1 == 1)
 }

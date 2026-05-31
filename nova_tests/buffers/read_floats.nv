@@ -10,44 +10,44 @@ module buffers.read_floats
 // ── Fail-form: точные round-trip значения ─────────────────────────
 
 test "read_f32_le — точное значение" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f32_le(0.5)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f32_le() == 0.5)
 }
 
 test "read_f32_be — точное значение" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f32_be(0.25)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f32_be() == 0.25)
 }
 
 test "read_f64_le — точное значение" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_le(3.14159265)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f64_le() == 3.14159265)
 }
 
 test "read_f64_be — точное значение" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_be(-2.5)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f64_be() == -2.5)
 }
 
 test "read_f64 — нулевое значение" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_le(0.0)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f64_le() == 0.0)
 }
 
 test "read_f64 — отрицательное большое значение" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_be(-987654321.5)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f64_be() == -987654321.5)
 }
 
@@ -55,19 +55,19 @@ test "read_f64 — отрицательное большое значение" {
 // ── Result-form: Ok на достаточных данных ─────────────────────────
 
 test "try_read_f32_le / be Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f32_le(1.0)
     wb.write_f32_be(2.0)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_f32_le().is_ok())
     assert(rb.try_read_f32_be().is_ok())
 }
 
 test "try_read_f64_le / be Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_le(1.5)
     wb.write_f64_be(2.5)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.try_read_f64_le().is_ok())
     assert(rb.try_read_f64_be().is_ok())
 }
@@ -76,20 +76,20 @@ test "try_read_f64_le / be Ok" {
 // ── Result-form: Err на коротком буфере ───────────────────────────
 
 test "try_read_f32_le Err — буфер короче 4 байт" {
-    let bytes []u8 = [0x00, 0x01]
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [0x00, 0x01]
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.try_read_f32_le().is_err())
 }
 
 test "try_read_f64_be Err — буфер короче 8 байт" {
-    let bytes []u8 = [0x00, 0x01, 0x02, 0x03]
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [0x00, 0x01, 0x02, 0x03]
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.try_read_f64_be().is_err())
 }
 
 test "try_read_f64_le Err — пустой буфер" {
-    let bytes []u8 = []
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = []
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.try_read_f64_le().is_err())
 }
 
@@ -97,11 +97,11 @@ test "try_read_f64_le Err — пустой буфер" {
 // ── f64 round-trip через f64.from_bits + try_read ─────────────────
 
 test "f64.from_bits + try_read_f64_be round-trip" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_be(2.71828)
-    let mut rb = ReadBuffer.from(wb.into())
-    let r = rb.try_read_f64_be()
+    mut rb = ReadBuffer.from(wb.into())
+    ro r = rb.try_read_f64_be()
     assert(r.is_ok())
-    let d = f64.from_bits(r.unwrap_or(0))
+    ro d = f64.from_bits(r.unwrap_or(0))
     assert(d == 2.71828)
 }

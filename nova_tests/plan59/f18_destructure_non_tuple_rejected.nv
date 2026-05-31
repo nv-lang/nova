@@ -9,7 +9,7 @@ module plan59.f18_destructure_non_tuple_rejected
 
 
 test "destructure int as 2-tuple — should reject" {
-    let (a, b) = 42
+    ro (a, b) = 42
     assert(a == 0)
     assert(b == 0)
 }

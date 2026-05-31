@@ -4,16 +4,16 @@
 module nova_tests.plan90_1.append_grows_amortized
 
 test "append amortized growth N=1000" {
-    let mut dst []int = []
-    let one []int = [0]
-    let mut i = 0
+    mut dst []int = []
+    ro one []int = [0]
+    mut i = 0
     while i < 1000 {
         dst.append(one)
         i = i + 1
     }
     assert(dst.len() == 1000)
     // Verify all elements are 0 (the value we extended with)
-    let mut j = 0
+    mut j = 0
     while j < 1000 {
         assert(dst[j] == 0)
         j = j + 1
@@ -21,9 +21,9 @@ test "append amortized growth N=1000" {
 }
 
 test "append repeated doubling correctness" {
-    let mut dst []int = [1]
-    let mut expected_len = 1
-    let mut iter = 0
+    mut dst []int = [1]
+    mut expected_len = 1
+    mut iter = 0
     while iter < 10 {
         dst.append(dst)  // self-extend doubles length each time
         expected_len = expected_len * 2

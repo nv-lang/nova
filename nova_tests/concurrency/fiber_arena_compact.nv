@@ -14,10 +14,10 @@ import std.time.duration
 
 test "fibers.compact() callable" {
     // Burst → quiescence → compact().
-    let mut wins = 0
-    let mut i = 0
+    mut wins = 0
+    mut i = 0
     while i < 20 {
-        let ch = Channel.new(1)
+        ro ch = Channel.new(1)
         supervised {
             spawn { ch.tx.send(i) }
             spawn {
@@ -35,7 +35,7 @@ test "fibers.compact() callable" {
     fibers.compact()
 
     // slot_count и virtual_reserved неизменны.
-    let slots = fibers.slot_count()
+    ro slots = fibers.slot_count()
     if slots > 0 {
         assert(slots >= 4096)
         // slots_active может быть либо 0 (Linux clean state) либо некоторое

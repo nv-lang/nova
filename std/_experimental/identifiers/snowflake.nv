@@ -55,7 +55,7 @@ export type SnowflakeError
 /// - `[Uuid]` — случайный UUID
 #stable(since = "0.1")
 export type SnowflakeGen {
-    readonly machine_id i64                  // public config: 0..1023
+    ro machine_id i64                  // public config: 0..1023
     mut _last_ms i64                         // internal: ms прошлой генерации
     mut _sequence i64                        // internal: 0..4095
 }
@@ -87,7 +87,7 @@ export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
 /// Использует `Time` effect для получения текущего времени.
 #stable(since = "0.1")
 export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
-    let now = Time.now_ms() as i64
+    ro now = Time.now_ms() as i64
 
     if now < @_last_ms {
         throw ClockBackwards { now, last: @_last_ms }
@@ -108,7 +108,7 @@ export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
         @_last_ms = now
     }
 
-    let ts_offset = @_last_ms - TWITTER_EPOCH_MS
+    ro ts_offset = @_last_ms - TWITTER_EPOCH_MS
     // Layout: [42 bit ts][10 bit machine][12 bit sequence]
     (ts_offset << 22) | (@machine_id << 12) | @_sequence
 }
@@ -117,9 +117,9 @@ export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
 /// Компоненты Snowflake ID после декодирования.
 #stable(since = "0.1")
 export type SnowflakeParts {
-    readonly timestamp_ms i64           // Unix ms (с epoch)
-    readonly machine_id int
-    readonly sequence int
+    ro timestamp_ms i64           // Unix ms (с epoch)
+    ro machine_id int
+    ro sequence int
 }
 
 
@@ -144,10 +144,10 @@ export type SnowflakeParts {
 /// - `[SnowflakeParts]` — структура результата
 #stable(since = "0.1")
 export fn Snowflake.parse(id i64) -> SnowflakeParts {
-    let sequence = (id & 0xFFF) as int
-    let machine_id = ((id >> 12) & 0x3FF) as int
-    let ts_offset = id >> 22
-    let timestamp_ms = ts_offset + TWITTER_EPOCH_MS
+    ro sequence = (id & 0xFFF) as int
+    ro machine_id = ((id >> 12) & 0x3FF) as int
+    ro ts_offset = id >> 22
+    ro timestamp_ms = ts_offset + TWITTER_EPOCH_MS
     { timestamp_ms, machine_id, sequence }
 }
 
@@ -157,11 +157,11 @@ export fn Snowflake.parse(id i64) -> SnowflakeParts {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "next: monotonic в одной ms" {
-    let mut gen = SnowflakeGen.new(1)
+    mut gen = SnowflakeGen.new(1)
     with Time = th.fixed_ms(1700000000000) {
-        let a = gen.next()
-        let b = gen.next()
-        let c = gen.next()
+        ro a = gen.next()
+        ro b = gen.next()
+        ro c = gen.next()
         // Все три в той же ms — sequence 0, 1, 2
         assert(a < b)
         assert(b < c)
@@ -169,24 +169,24 @@ test "next: monotonic в одной ms" {
 }
 
 test "next: разные ms → разные ID" {
-    let mut gen = SnowflakeGen.new(5)
-    let id1 = with Time = th.fixed_ms(1000) { gen.next() }
-    let id2 = with Time = th.fixed_ms(2000) { gen.next() }
+    mut gen = SnowflakeGen.new(5)
+    ro id1 = with Time = th.fixed_ms(1000) { gen.next() }
+    ro id2 = with Time = th.fixed_ms(2000) { gen.next() }
     assert(id1 < id2)
 }
 
 test "parse: round-trip компонентов" {
-    let mut gen = SnowflakeGen.new(42)
-    let id = with Time = th.fixed_ms(1700000000000) { gen.next() }
-    let parts = Snowflake.parse(id)
+    mut gen = SnowflakeGen.new(42)
+    ro id = with Time = th.fixed_ms(1700000000000) { gen.next() }
+    ro parts = Snowflake.parse(id)
     assert(parts.timestamp_ms == 1700000000000)
     assert(parts.machine_id == 42)
     assert(parts.sequence == 0)
 }
 
 test "ошибка — невалидный machine_id" {
-    let r = with Fail[SnowflakeError] = |e| interrupt Some(e) {
-        let _ = SnowflakeGen.new(2000)
+    ro r = with Fail[SnowflakeError] = |e| interrupt Some(e) {
+        ro _ = SnowflakeGen.new(2000)
         None
     }
     assert(match r {
@@ -196,10 +196,10 @@ test "ошибка — невалидный machine_id" {
 }
 
 test "ошибка — clock backwards" {
-    let mut gen = SnowflakeGen.new(0)
-    let _ = with Time = th.fixed_ms(2000) { gen.next() }
-    let r = with Time = th.fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
-        let _ = gen.next()
+    mut gen = SnowflakeGen.new(0)
+    ro _ = with Time = th.fixed_ms(2000) { gen.next() }
+    ro r = with Time = th.fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
+        ro _ = gen.next()
         None
     }
     assert(match r {

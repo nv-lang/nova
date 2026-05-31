@@ -11,7 +11,7 @@ fn Token.new(v int) -> Token => { val: v }
 fn Token consume @release() -> int => @val
 
 test "let X = ctor consume-type → E_CONSUME_KEYWORD_MISSING" {
-    let tok = Token.new(1)         // ОШИБКА D180 Rule 1
-    let v = tok.release()
+    ro tok = Token.new(1)         // ОШИБКА D180 Rule 1
+    ro v = tok.release()
     assert(v == 1)
 }

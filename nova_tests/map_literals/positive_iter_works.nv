@@ -13,7 +13,7 @@ module map_literals.positive_iter_works
 import std.collections.hashmap.{HashMap}
 
 test "all entries available via get (independent of iteration order)" {
-    let m HashMap[str, int] = [
+    ro m HashMap[str, int] = [
         "alpha": 1,
         "beta": 2,
         "gamma": 3,
@@ -31,7 +31,7 @@ test "all entries available via get (independent of iteration order)" {
 }
 
 test "len() consistent с числом entries в литерале" {
-    let m HashMap[int, int] = [
+    ro m HashMap[int, int] = [
         100: 1,
         200: 2,
         300: 3,

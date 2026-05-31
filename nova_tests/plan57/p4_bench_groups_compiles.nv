@@ -5,8 +5,8 @@ bench "grouped" {
     group "int" {
         case "add" {
             measure {
-                let mut acc = 0
-                let mut i = 0
+                mut acc = 0
+                mut i = 0
                 while i < 100 {
                     acc = bench.opaque(acc + i)
                     i = i + 1
@@ -15,8 +15,8 @@ bench "grouped" {
         }
         case "mul" {
             measure {
-                let mut acc = 1
-                let mut i = 1
+                mut acc = 1
+                mut i = 1
                 while i < 10 {
                     acc = bench.opaque(acc * i)
                     i = i + 1
@@ -27,8 +27,8 @@ bench "grouped" {
     group "f64" {
         case "add" {
             measure {
-                let mut acc f64 = 0.0
-                let mut i = 0
+                mut acc f64 = 0.0
+                mut i = 0
                 while i < 100 {
                     acc = bench.opaque(acc + 1.5)
                     i = i + 1

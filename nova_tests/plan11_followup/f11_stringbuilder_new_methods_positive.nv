@@ -13,7 +13,7 @@ test "is_empty: true для свежего, false после append" {
     assert(sb.is_empty())
     sb.append("x")
     assert(!sb.is_empty())
-    let _ = sb.as_str()
+    ro _ = sb.as_str()
 }
 
 test "starts_with: matches префикс" {
@@ -23,7 +23,7 @@ test "starts_with: matches префикс" {
     assert(sb.starts_with(""))           // пустой префикс всегда true
     assert(!sb.starts_with("world"))
     assert(!sb.starts_with("HELLO"))     // case-sensitive
-    let _ = sb.as_str()
+    ro _ = sb.as_str()
 }
 
 test "ends_with: matches суффикс" {
@@ -33,17 +33,17 @@ test "ends_with: matches суффикс" {
     assert(sb.ends_with(""))
     assert(!sb.ends_with("hello"))
     assert(!sb.ends_with("WORLD"))
-    let _ = sb.as_str()
+    ro _ = sb.as_str()
 }
 
 test "non-consuming: append после starts_with/ends_with работает" {
     consume sb = StringBuilder.new()
     sb.append("foo")
-    let _ = sb.starts_with("f")           // не consume
-    let _ = sb.ends_with("o")             // не consume
+    ro _ = sb.starts_with("f")           // не consume
+    ro _ = sb.ends_with("o")             // не consume
     sb.append("/bar")                     // должен compile + run
     assert(sb.ends_with("bar"))
-    let final = sb.as_str()               // consume
+    ro final = sb.as_str()               // consume
     assert(final == "foo/bar")
 }
 
@@ -52,8 +52,8 @@ test "non-consuming: append после starts_with/ends_with работает" {
 
 test "Path.join pattern (real use case ends_with-based logic)" {
     consume buf = StringBuilder.new()
-    let parts []str = ["/usr", "local", "bin"]
-    let mut first = true
+    ro parts []str = ["/usr", "local", "bin"]
+    mut first = true
     for part in parts {
         if !first && !buf.ends_with("/") && !part.starts_with("/") {
             buf.append('/')

@@ -11,9 +11,9 @@ fn make_composite() -> MultiError =>
     { primary: "operation failed", suppressed: ["cleanup1 failed", "cleanup2 failed"] }
 
 test "MultiError API: .primary() / .suppressed() — compile + runtime" {
-    let e = make_composite()
-    let p = e.primary()
+    ro e = make_composite()
+    ro p = e.primary()
     assert(p == "operation failed")
-    let chain = e.suppressed()
+    ro chain = e.suppressed()
     assert(chain.len() == 2)
 }

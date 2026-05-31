@@ -5,7 +5,7 @@
 module nova_tests.plan103_3.reentrant_count_invariant
 
 test "lock_count invariant: balanced lock/unlock sequence" {
-    let mut rm = ReentrantMutex.new()
+    mut rm = ReentrantMutex.new()
 
     // Initial: unlocked
     assert(rm.lock_count() == 0)
@@ -41,8 +41,8 @@ test "lock_count invariant: balanced lock/unlock sequence" {
 }
 
 test "lock_count() returns 0 for non-owner fiber" {
-    let mut rm = ReentrantMutex.new()
-    let mut other_count = AtomicInt.new(-1)
+    mut rm = ReentrantMutex.new()
+    mut other_count = AtomicInt.new(-1)
 
     rm.lock()
 

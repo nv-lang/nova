@@ -12,17 +12,17 @@ module nova_tests.plan103_4.barrier_n_party_rendezvous
 import std.time.duration
 
 test "8 fibers all pass barrier simultaneously" {
-    let n = 8
-    let mut barrier = Barrier.new(n)
-    let mut indices = AtomicInt.new(0)   // bitmask of seen arrival indices
-    let mut wg = WaitGroup.new()
+    ro n = 8
+    mut barrier = Barrier.new(n)
+    mut indices = AtomicInt.new(0)   // bitmask of seen arrival indices
+    mut wg = WaitGroup.new()
     wg.add(n)
 
     parallel for _i in 0..n {
-        let idx = barrier.wait()
+        ro idx = barrier.wait()
         // Record arrival index in bitmask (index is 0..7)
-        let bit = 1
-        let shifted = bit
+        ro bit = 1
+        ro shifted = bit
         // Use AtomicInt fetch_add to accumulate: we encode index as (1 << idx)
         // Simple approach: just count that all indices are non-negative and in range
         assert(idx >= 0)
@@ -37,14 +37,14 @@ test "8 fibers all pass barrier simultaneously" {
 }
 
 test "barrier wait returns index in range 0..parties-1" {
-    let parties = 4
-    let mut b = Barrier.new(parties)
-    let mut sum = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    ro parties = 4
+    mut b = Barrier.new(parties)
+    mut sum = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(parties)
 
     parallel for _i in 0..parties {
-        let idx = b.wait()
+        ro idx = b.wait()
         assert(idx >= 0)
         assert(idx < parties)
         sum.fetch_add(idx)

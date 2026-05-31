@@ -66,7 +66,7 @@ fn Account.is_solvent(self) = self.balance > 0
 Использование:
 
 ```nova
-let mut acc = Account.new("alice")
+mut acc = Account.new("alice")
 acc.deposit(100)?
 acc.withdraw(30)?
 print(acc.balance)  // 70
@@ -137,7 +137,7 @@ fn Shape.area(self) = match self {
 ## Динамический диспатч — через `dyn Trait`
 
 ```nova
-let items: [dyn Printable] = [acc, 42, "hello"]
+ro items: [dyn Printable] = [acc, 42, "hello"]
 for x in items { print(x.show()) }  // vtable-вызов
 ```
 

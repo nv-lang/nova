@@ -11,6 +11,6 @@ fn take_opt_f64(o Option[f64]) -> bool { o.is_some() }
 
 // EXPECT_CC_ERROR incompatible type
 fn bad() -> bool {
-    let o Option[f32] = Some(1.0 as f32)
+    ro o Option[f32] = Some(1.0 as f32)
     take_opt_f64(o)
 }

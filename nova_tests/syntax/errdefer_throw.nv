@@ -16,8 +16,8 @@ module syntax.errdefer_throw
 // ───── errdefer НЕ срабатывает когда handler делает interrupt ─────
 
 test "errdefer не срабатывает когда handler делает interrupt" {
-    let mut cleaned_up = 0
-    let mut caught = false
+    mut cleaned_up = 0
+    mut caught = false
     // Handler делает interrupt — это handled normal exit для inner scope.
     // Spec-compliant по D61 (handler-method exit'ит control через interrupt).
     // По D90 errdefer этого inner scope НЕ должен срабатывать, потому что
@@ -29,7 +29,7 @@ test "errdefer не срабатывает когда handler делает inter
             interrupt ()
         }
     } {
-        let _ = {
+        ro _ = {
             errdefer { cleaned_up = cleaned_up + 1 }
             throw "boom"
             0
@@ -48,17 +48,17 @@ test "errdefer не срабатывает когда handler делает inter
 // не должен сработать, потому что handler делает interrupt.
 
 test "несколько errdefer + interrupt — ни один не срабатывает" {
-    let mut a = 0
-    let mut b = 0
-    let mut c = 0
-    let mut caught = false
+    mut a = 0
+    mut b = 0
+    mut c = 0
+    mut caught = false
     with Fail = effect Fail {
         fail(_msg) {
             caught = true
             interrupt ()
         }
     } {
-        let _ = {
+        ro _ = {
             errdefer { a = 1 }
             errdefer { b = 1 }
             errdefer { c = 1 }

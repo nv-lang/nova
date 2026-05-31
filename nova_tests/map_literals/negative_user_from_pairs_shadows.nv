@@ -19,6 +19,6 @@ module map_literals.negative_user_from_pairs_shadows
 type MyMap[K, V] { data int }
 
 fn main() -> () {
-    let m MyMap[int, str] = [1: "a", 2: "b"]
-    let _ = m
+    ro m MyMap[int, str] = [1: "a", 2: "b"]
+    ro _ = m
 }

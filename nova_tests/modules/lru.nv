@@ -7,7 +7,7 @@ module modules.lru
 import std._experimental.collections.lru.{Lru}
 
 test "Lru: put и get базовое" {
-    let mut c = Lru[str, int].new(3)
+    mut c = Lru[str, int].new(3)
     c.put("a", 1)
     c.put("b", 2)
     c.put("c", 3)
@@ -18,13 +18,13 @@ test "Lru: put и get базовое" {
 }
 
 test "Lru: get несуществующего → None" {
-    let mut c = Lru[str, int].new(2)
+    mut c = Lru[str, int].new(2)
     c.put("x", 10)
     assert(c.get("missing") == None)
 }
 
 test "Lru: eviction при достижении capacity" {
-    let mut c = Lru[str, int].new(2)
+    mut c = Lru[str, int].new(2)
     c.put("a", 1)
     c.put("b", 2)
     c.put("c", 3)   // вытесняет "a" (LRU)
@@ -35,10 +35,10 @@ test "Lru: eviction при достижении capacity" {
 }
 
 test "Lru: get обновляет recency — вытесняется другой" {
-    let mut c = Lru[str, int].new(2)
+    mut c = Lru[str, int].new(2)
     c.put("a", 1)
     c.put("b", 2)
-    let _ = c.get("a")   // "a" теперь MRU
+    ro _ = c.get("a")   // "a" теперь MRU
     c.put("c", 3)        // вытесняет "b" (стал LRU)
     assert(c.get("a") == Some(1))
     assert(c.get("b") == None)
@@ -46,7 +46,7 @@ test "Lru: get обновляет recency — вытесняется друго�
 }
 
 test "Lru: update существующего ключа" {
-    let mut c = Lru[str, int].new(3)
+    mut c = Lru[str, int].new(3)
     c.put("k", 1)
     c.put("k", 99)
     assert(c.get("k") == Some(99))
@@ -54,7 +54,7 @@ test "Lru: update существующего ключа" {
 }
 
 test "Lru: contains без обновления recency" {
-    let mut c = Lru[str, int].new(2)
+    mut c = Lru[str, int].new(2)
     c.put("a", 1)
     c.put("b", 2)
     assert(c.contains("a") == true)
@@ -65,13 +65,13 @@ test "Lru: contains без обновления recency" {
 }
 
 test "Lru: is_empty на новом кэше" {
-    let c = Lru[str, int].new(10)
+    ro c = Lru[str, int].new(10)
     assert(c.is_empty() == true)
     assert(c.len() == 0)
 }
 
 test "Lru: capacity=1 всегда хранит только последний" {
-    let mut c = Lru[int, int].new(1)
+    mut c = Lru[int, int].new(1)
     c.put(1, 10)
     c.put(2, 20)
     c.put(3, 30)

@@ -349,9 +349,9 @@ Rust — ближайший конкурент по эффектам-в-типе
 
 ```nova
 test "withdraw debits the account" {
-    let mut clock = 1000
+    mut clock = 1000
     with Time = handler { now() => return clock; sleep(ms) { clock += ms; return () } } {
-        let acc = Account { balance: 500, last_tx: 0 }
+        ro acc = Account { balance: 500, last_tx: 0 }
         withdraw(acc, 100)?
         assert(acc.balance == 400)
         assert(acc.last_tx == 1000)
@@ -384,7 +384,7 @@ fn fetch_user(id int) Net Fail -> User =>
 
 // никаких async, никаких .then, никаких runtime-блокировок
 fn main() Net Fail -> () =>
-    let users = parallel for id in 1..100 { fetch_user(id)? }
+    ro users = parallel for id in 1..100 { fetch_user(id)? }
     println("got ${users.len} users")
 ```
 
@@ -408,7 +408,7 @@ no-GC-зона. Это редкая комбинация.
 ### 5. Structured concurrency «из коробки»
 
 ```nova
-let result = race {
+ro result = race {
     fetch_from_primary(),
     fetch_from_cache(),
     timeout(500.ms)

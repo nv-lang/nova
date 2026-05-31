@@ -7,8 +7,8 @@ module contracts.unverified_attribute_positive
 fn loop_with_ensures(n int) -> int
     ensures result >= 0
 {
-    let mut s = 0
-    let mut i = 0
+    mut s = 0
+    mut i = 0
     while i <= n {
         s = s + i
         i = i + 1

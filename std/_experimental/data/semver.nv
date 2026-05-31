@@ -69,11 +69,11 @@ module data.semver
 /// ```
 #stable(since = "0.1")
 export type Version {
-    readonly major u64
-    readonly minor u64
-    readonly patch u64
-    readonly pre   []str
-    readonly build []str
+    ro major u64
+    ro minor u64
+    ro patch u64
+    ro pre   []str
+    ro build []str
 }
 
 
@@ -158,28 +158,28 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     // Build: после "+", единственное вхождение "+" в строке.
     // Pre: после "-", но "-" может быть в build identifier'е, поэтому
     // обрабатываем сначала split по "+", потом по "-" в первой части.
-    let (left, build_str) = match s.find("+") {
+    ro (left, build_str) = match s.find("+") {
         Some(i) => (s[0..i], s[i + 1..s.len()])
         None    => (s, "")
     }
 
-    let (core, pre_str) = match left.find("-") {
+    ro (core, pre_str) = match left.find("-") {
         Some(i) => (left[0..i], left[i + 1..left.len()])
         None    => (left, "")
     }
 
     // Парсим core.
-    let (major, minor, patch) = parse_core(core)
+    ro (major, minor, patch) = parse_core(core)
 
     // Парсим pre identifiers.
-    let pre = if pre_str.len() == 0 {
+    ro pre = if pre_str.len() == 0 {
         []
     } else {
         parse_identifiers(pre_str, "pre-release", true)
     }
 
     // Парсим build identifiers.
-    let build = if build_str.len() == 0 {
+    ro build = if build_str.len() == 0 {
         []
     } else {
         parse_identifiers(build_str, "build", false)
@@ -191,7 +191,7 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
 // Парсинг "MAJOR.MINOR.PATCH". Все три обязательны, цифры, без leading
 // zero (кроме самого "0").
 fn parse_core(core str) Fail[ParseVersionError] -> (u64, u64, u64) {
-    let parts = core.split(".")
+    ro parts = core.split(".")
     if parts.len() < 2 {
         throw MissingMinor
     }
@@ -202,9 +202,9 @@ fn parse_core(core str) Fail[ParseVersionError] -> (u64, u64, u64) {
         throw InvalidComponent { component: "core", value: core }
     }
 
-    let major = parse_numeric_component(parts[0], "major")
-    let minor = parse_numeric_component(parts[1], "minor")
-    let patch = parse_numeric_component(parts[2], "patch")
+    ro major = parse_numeric_component(parts[0], "major")
+    ro minor = parse_numeric_component(parts[1], "minor")
+    ro patch = parse_numeric_component(parts[2], "patch")
     (major, minor, patch)
 }
 
@@ -229,8 +229,8 @@ fn parse_numeric_component(s str, name str) Fail[ParseVersionError] -> u64 {
 // strict_no_leading_zero — для pre numeric не разрешено leading zero;
 // для build разрешено всё что alphanumeric+"-".
 fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[ParseVersionError] -> []str {
-    let raw = s.split(".")
-    let mut out []str = []
+    ro raw = s.split(".")
+    mut out []str = []
     for ident in raw {
         if ident.len() == 0 {
             throw EmptyIdentifier { section }
@@ -272,7 +272,7 @@ fn is_valid_identifier(s str) -> bool {
 }
 
 fn is_ascii_ident_char(c char) -> bool {
-    let n = c as int
+    ro n = c as int
     (n >= 48 && n <= 57)         // 0-9
     || (n >= 65 && n <= 90)       // A-Z
     || (n >= 97 && n <= 122)      // a-z
@@ -288,7 +288,7 @@ fn is_ascii_ident_char(c char) -> bool {
 /// Round-trip: `Version.from(v.into()).eq(v)` для валидной Version.
 #stable(since = "0.1")
 export fn Version @into() -> str {
-    let mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
+    mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
     if @pre.len() > 0 {
         s = s + "-" + join_dots(@pre)
     }
@@ -299,8 +299,8 @@ export fn Version @into() -> str {
 }
 
 fn join_dots(parts []str) -> str {
-    let mut s = ""
-    let mut first = true
+    mut s = ""
+    mut first = true
     for p in parts {
         if !first { s = s + "." }
         s = s + p
@@ -343,8 +343,8 @@ export fn Version @lt(other Version) -> bool {
     if @patch != other.patch { return @patch < other.patch }
 
     // major.minor.patch равны → смотрим pre.
-    let a_has_pre = @pre.len() > 0
-    let b_has_pre = other.pre.len() > 0
+    ro a_has_pre = @pre.len() > 0
+    ro b_has_pre = other.pre.len() > 0
 
     if a_has_pre && !b_has_pre { return true }   // 1.0.0-alpha < 1.0.0
     if !a_has_pre && b_has_pre { return false }
@@ -356,10 +356,10 @@ export fn Version @lt(other Version) -> bool {
 
 // Покомпонентное pre-release сравнение (§ 11.4).
 fn pre_lt(a []str, b []str) -> bool {
-    let n = if a.len() < b.len() { a.len() } else { b.len() }
-    let mut i = 0
+    ro n = if a.len() < b.len() { a.len() } else { b.len() }
+    mut i = 0
     while i < n {
-        let result = compare_ident(a[i], b[i])
+        ro result = compare_ident(a[i], b[i])
         if result < 0 { return true }
         if result > 0 { return false }
         i += 1
@@ -373,15 +373,15 @@ fn pre_lt(a []str, b []str) -> bool {
 //   - оба numeric: numeric-сравнение
 //   - оба alphanumeric: лексикографическое
 fn compare_ident(a str, b str) -> int {
-    let a_num = is_all_digits(a)
-    let b_num = is_all_digits(b)
+    ro a_num = is_all_digits(a)
+    ro b_num = is_all_digits(b)
     if a_num && !b_num { return -1 }
     if !a_num && b_num { return 1 }
     if a_num && b_num {
         // Оба numeric — парсим в u64 (валидация уже была в parse).
         // D77: try_from возвращает Result, .ok() → Option, .unwrap_or → u64.
-        let an = u64.try_from(a).ok().unwrap_or(0)
-        let bn = u64.try_from(b).ok().unwrap_or(0)
+        ro an = u64.try_from(a).ok().unwrap_or(0)
+        ro bn = u64.try_from(b).ok().unwrap_or(0)
         if an < bn { return -1 }
         if an > bn { return 1 }
         return 0
@@ -393,7 +393,7 @@ fn compare_ident(a str, b str) -> int {
 // Helper для @eq: массив строк структурно равен.
 fn pre_eq(a []str, b []str) -> bool {
     if a.len() != b.len() { return false }
-    let mut i = 0
+    mut i = 0
     while i < a.len() {
         if a[i] != b[i] { return false }
         i += 1
@@ -419,7 +419,7 @@ export fn Version @ge(other Version) -> bool => @gt(other) || @eq_precedence(oth
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: простая версия" {
-    let v = Version.from("1.2.3")
+    ro v = Version.from("1.2.3")
     assert(v.major == 1)
     assert(v.minor == 2)
     assert(v.patch == 3)
@@ -428,7 +428,7 @@ test "parse: простая версия" {
 }
 
 test "parse: pre-release" {
-    let v = Version.from("1.0.0-alpha")
+    ro v = Version.from("1.0.0-alpha")
     assert(v.major == 1)
     assert(v.pre.len() == 1)
     assert(v.pre[0] == "alpha")
@@ -436,21 +436,21 @@ test "parse: pre-release" {
 }
 
 test "parse: pre-release с компонентами" {
-    let v = Version.from("1.0.0-alpha.1")
+    ro v = Version.from("1.0.0-alpha.1")
     assert(v.pre.len() == 2)
     assert(v.pre[0] == "alpha")
     assert(v.pre[1] == "1")
 }
 
 test "parse: build metadata" {
-    let v = Version.from("1.0.0+20130313144700")
+    ro v = Version.from("1.0.0+20130313144700")
     assert(v.build.len() == 1)
     assert(v.build[0] == "20130313144700")
     assert(v.has_build())
 }
 
 test "parse: pre + build" {
-    let v = Version.from("1.0.0-beta+exp.sha.5114f85")
+    ro v = Version.from("1.0.0-beta+exp.sha.5114f85")
     assert(v.pre[0] == "beta")
     assert(v.build.len() == 3)
     assert(v.build[0] == "exp")
@@ -459,21 +459,21 @@ test "parse: pre + build" {
 }
 
 test "parse: большие числа" {
-    let v = Version.from("100.200.300")
+    ro v = Version.from("100.200.300")
     assert(v.major == 100)
     assert(v.minor == 200)
     assert(v.patch == 300)
 }
 
 test "parse: pre с цифрами и точками" {
-    let v = Version.from("1.0.0-x.7.z.92")
+    ro v = Version.from("1.0.0-x.7.z.92")
     assert(v.pre.len() == 4)
     assert(v.pre[3] == "92")
 }
 
 test "parse: ошибка — пустой ввод" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("")
         None
     }
     assert(match r {
@@ -483,8 +483,8 @@ test "parse: ошибка — пустой ввод" {
 }
 
 test "parse: ошибка — нет minor" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("1")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("1")
         None
     }
     assert(match r {
@@ -494,8 +494,8 @@ test "parse: ошибка — нет minor" {
 }
 
 test "parse: ошибка — нет patch" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("1.2")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("1.2")
         None
     }
     assert(match r {
@@ -505,8 +505,8 @@ test "parse: ошибка — нет patch" {
 }
 
 test "parse: ошибка — leading zero в major" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("01.0.0")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("01.0.0")
         None
     }
     assert(match r {
@@ -516,8 +516,8 @@ test "parse: ошибка — leading zero в major" {
 }
 
 test "parse: ошибка — leading zero в pre numeric" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("1.0.0-01")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("1.0.0-01")
         None
     }
     assert(match r {
@@ -527,8 +527,8 @@ test "parse: ошибка — leading zero в pre numeric" {
 }
 
 test "parse: ошибка — пустой identifier в pre" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("1.0.0-")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("1.0.0-")
         None
     }
     assert(match r {
@@ -538,8 +538,8 @@ test "parse: ошибка — пустой identifier в pre" {
 }
 
 test "parse: ошибка — нечисловой major" {
-    let r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        let _ = Version.from("a.b.c")
+    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
+        ro _ = Version.from("a.b.c")
         None
     }
     assert(match r {
@@ -549,38 +549,38 @@ test "parse: ошибка — нечисловой major" {
 }
 
 test "into: round-trip простая версия" {
-    let v = Version.new(1, 2, 3)
+    ro v = Version.new(1, 2, 3)
     assert(v.into() == "1.2.3")
-    let parsed = Version.from(v.into())
+    ro parsed = Version.from(v.into())
     assert(parsed.eq(v))
 }
 
 test "into: round-trip с pre" {
-    let v = Version.full(1, 0, 0, ["alpha", "1"], [])
+    ro v = Version.full(1, 0, 0, ["alpha", "1"], [])
     assert(v.into() == "1.0.0-alpha.1")
-    let parsed = Version.from(v.into())
+    ro parsed = Version.from(v.into())
     assert(parsed.eq(v))
 }
 
 test "into: round-trip с build" {
-    let v = Version.full(1, 0, 0, [], ["build", "42"])
+    ro v = Version.full(1, 0, 0, [], ["build", "42"])
     assert(v.into() == "1.0.0+build.42")
-    let parsed = Version.from(v.into())
+    ro parsed = Version.from(v.into())
     assert(parsed.eq(v))
 }
 
 test "into: round-trip с pre и build" {
-    let v = Version.full(1, 0, 0, ["beta"], ["exp", "sha", "5114f85"])
+    ro v = Version.full(1, 0, 0, ["beta"], ["exp", "sha", "5114f85"])
     assert(v.into() == "1.0.0-beta+exp.sha.5114f85")
-    let parsed = Version.from(v.into())
+    ro parsed = Version.from(v.into())
     assert(parsed.eq(v))
 }
 
 test "compare: numeric ordering" {
-    let a = Version.from("1.0.0")
-    let b = Version.from("2.0.0")
-    let c = Version.from("1.1.0")
-    let d = Version.from("1.0.1")
+    ro a = Version.from("1.0.0")
+    ro b = Version.from("2.0.0")
+    ro c = Version.from("1.1.0")
+    ro d = Version.from("1.0.1")
 
     assert(a.lt(b))
     assert(a.lt(c))
@@ -590,8 +590,8 @@ test "compare: numeric ordering" {
 }
 
 test "compare: pre-release < release (semver § 11.3)" {
-    let pre = Version.from("1.0.0-alpha")
-    let rel = Version.from("1.0.0")
+    ro pre = Version.from("1.0.0-alpha")
+    ro rel = Version.from("1.0.0")
     assert(pre.lt(rel))
     assert(rel.gt(pre))
 }
@@ -599,7 +599,7 @@ test "compare: pre-release < release (semver § 11.3)" {
 test "compare: цепочка pre-release per semver.org example" {
     // Из § 11: 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta
     //          < 1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
-    let chain = [
+    ro chain = [
         Version.from("1.0.0-alpha"),
         Version.from("1.0.0-alpha.1"),
         Version.from("1.0.0-alpha.beta"),
@@ -616,21 +616,21 @@ test "compare: цепочка pre-release per semver.org example" {
 
 test "compare: numeric vs alphanumeric pre identifier" {
     // Numeric < alphanumeric (semver § 11.4.3)
-    let num = Version.from("1.0.0-1")
-    let alpha = Version.from("1.0.0-a")
+    ro num = Version.from("1.0.0-1")
+    ro alpha = Version.from("1.0.0-a")
     assert(num.lt(alpha))
 }
 
 test "compare: длина pre identifiers" {
     // Из § 11.4.4: shorter < longer когда префикс совпадает
-    let short = Version.from("1.0.0-alpha")
-    let long = Version.from("1.0.0-alpha.1")
+    ro short = Version.from("1.0.0-alpha")
+    ro long = Version.from("1.0.0-alpha.1")
     assert(short.lt(long))
 }
 
 test "compare: build metadata игнорируется (semver § 10)" {
-    let a = Version.from("1.0.0+build.1")
-    let b = Version.from("1.0.0+build.2")
+    ro a = Version.from("1.0.0+build.1")
+    ro b = Version.from("1.0.0+build.2")
     // Имеют одинаковый precedence, но структурно разные.
     assert(a.eq_precedence(b))
     assert(!a.eq(b))           // структурное @eq различает build
@@ -646,22 +646,22 @@ test "is_stable: только не-pre с major >= 1" {
 }
 
 test "D73: Version.from + .into() работают парно" {
-    let v Version = Version.from("3.14.159")
+    ro v Version = Version.from("3.14.159")
     assert(v.major == 3)
 
     // Обратная форма — авто-Into через D73
-    let s str = v.into()
+    ro s str = v.into()
     assert(s == "3.14.159")
 
     // .into() без аннотации — тип цели из контекста: let s str = ...
-    let s2 str = Version.from("1.2.3").into()
+    ro s2 str = Version.from("1.2.3").into()
     assert(s2 == "1.2.3")
 }
 
 test "operator overloading: <, ==, !=" {
-    let v1 = Version.from("1.0.0")
-    let v2 = Version.from("2.0.0")
-    let v1_copy = Version.from("1.0.0")
+    ro v1 = Version.from("1.0.0")
+    ro v2 = Version.from("2.0.0")
+    ro v1_copy = Version.from("1.0.0")
 
     assert(v1 < v2)
     assert(v2 > v1)

@@ -13,10 +13,10 @@ fn parse_pair(s str) -> Result[(str, int), str] {
 }
 
 test "Result[(str, int), str] — Ok branch with tuple destructure" {
-    let r = parse_pair("ab,1")
-    let mut got_ok = false
-    let mut got_k str = ""
-    let mut got_v int = 0
+    ro r = parse_pair("ab,1")
+    mut got_ok = false
+    mut got_k str = ""
+    mut got_v int = 0
     match r {
         Ok((k, v)) => {
             got_ok = true
@@ -31,9 +31,9 @@ test "Result[(str, int), str] — Ok branch with tuple destructure" {
 }
 
 test "Result[(str, int), str] — Err branch" {
-    let r = parse_pair("garbage")
-    let mut got_err = false
-    let mut got_msg str = ""
+    ro r = parse_pair("garbage")
+    mut got_err = false
+    mut got_msg str = ""
     match r {
         Ok(_) => {}
         Err(msg) => {
@@ -46,10 +46,10 @@ test "Result[(str, int), str] — Err branch" {
 }
 
 test "Result[(str, int), str] — pattern_cond + bindings оба работают" {
-    let r1 = parse_pair("ab,1")
-    let r2 = parse_pair("xx")
-    let mut ok_count = 0
-    let mut err_count = 0
+    ro r1 = parse_pair("ab,1")
+    ro r2 = parse_pair("xx")
+    mut ok_count = 0
+    mut err_count = 0
     match r1 {
         Ok(_) => { ok_count = ok_count + 1 }
         Err(_) => { err_count = err_count + 1 }

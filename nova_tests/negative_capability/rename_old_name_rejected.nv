@@ -9,6 +9,6 @@ module negative_capability.rename_old_name_rejected
 import nova_tests.modules.rename_import_source.{calculate as compute}
 
 test "old name rejected after rename" {
-    let _x = calculate(5)
+    ro _x = calculate(5)
     assert(true)
 }

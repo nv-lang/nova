@@ -30,7 +30,7 @@ fn File consume @close() -> () {
 
 ```nova
 fn process(path str) Fail[IoErr] Fs -> () {
-    let r = nova_file_open(path)?
+    ro r = nova_file_open(path)?
     consume f = r
     defer { f.close() }                         // D158 cleanup
     // use f...

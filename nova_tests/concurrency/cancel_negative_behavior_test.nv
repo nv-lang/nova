@@ -15,9 +15,9 @@ test "negative: with Fail handler не вызывается на CANCEL" {
     // До Plan 49 Ф.3 handler сработал бы на "scope cancelled" throw
     // (он был USER-kind). После — frame.error_kind == CANCEL → re-throw
     // дальше, handler не запускается, scope-выход через outer supervised.
-    let tok = CancelToken.new()
-    let mut handler_fired = false
-    let _ = with Fail[int] = |_e| {
+    ro tok = CancelToken.new()
+    mut handler_fired = false
+    ro _ = with Fail[int] = |_e| {
         handler_fired = true
         0
     } {
@@ -39,8 +39,8 @@ test "negative: with Fail handler не вызывается на CANCEL" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "negative: cancel НЕ долетает как throw в caller код" {
-    let tok = CancelToken.new()
-    let mut after_scope_executed = false
+    ro tok = CancelToken.new()
+    mut after_scope_executed = false
     supervised(cancel: tok) {
         spawn { tok.cancel() }
         spawn { for _i in 0..1000 { } }
@@ -57,9 +57,9 @@ test "negative: cancel НЕ долетает как throw в caller код" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "negative: reason() до cancel — None, не Some" {
-    let tok = CancelToken.new()
-    let r = tok.reason()
-    let saw_some = match r {
+    ro tok = CancelToken.new()
+    ro r = tok.reason()
+    ro saw_some = match r {
         Some(_) => true   // если бы возвращали garbage Some — тест упал бы
         None    => false
     }
@@ -72,9 +72,9 @@ test "negative: reason() до cancel — None, не Some" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "negative: is_cancelled() до cancel — false" {
-    let tok CancelToken[int] = CancelToken.new()
+    ro tok CancelToken[int] = CancelToken.new()
     assert(!tok.is_cancelled())
     // также для default CancelToken[str]
-    let tok2 = CancelToken.new()
+    ro tok2 = CancelToken.new()
     assert(!tok2.is_cancelled())
 }

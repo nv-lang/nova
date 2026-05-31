@@ -25,13 +25,13 @@ module concurrency.sleep_bench
 // grade: ~100-500ms. Ф.7 убрала NOVA_SCOPE_CAP — heap-allocated arrays
 // grow до требуемого, hard limit ушёл.
 test "5k concurrent sleeps в <5000ms (production-scale, M:N)" {
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         for _ in 0..5_000 {
             spawn { Time.sleep(100) }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     assert(elapsed < 5000)
 }
 
@@ -44,7 +44,7 @@ test "5k concurrent sleeps в <5000ms (production-scale, M:N)" {
 // под обоими режимами. Bootstrap производительность калибруется в
 // отдельном bench/micro/sleep_bench_throughput.nv (Plan 83.4.5.6 Ф.4).
 test "100k sleep(0) yields в <5 секунд (throughput, M:N-tolerant)" {
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         spawn {
             for _ in 0..100_000 {
@@ -52,7 +52,7 @@ test "100k sleep(0) yields в <5 секунд (throughput, M:N-tolerant)" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // Slack: under armed runtime + jobs=16 oversubscription scheduler-tick
     // overhead ~ 50µs/yield. 100k × 50µs = 5s upper bound.
     assert(elapsed < 5000)

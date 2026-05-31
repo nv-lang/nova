@@ -14,20 +14,20 @@
 module plan83_stress_armed.park_wake_stress_armed
 
 test "100 channel ping-pong armed M:N — smoke" {
-    let n = 100
-    let ch = Channel.new(1)
-    let mut received = 0
+    ro n = 100
+    ro ch = Channel.new(1)
+    mut received = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
-                let _v = ch.rx.recv()
+                ro _v = ch.rx.recv()
                 received = received + 1
                 i = i + 1
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
                 ch.tx.send(i)
                 i = i + 1
@@ -38,20 +38,20 @@ test "100 channel ping-pong armed M:N — smoke" {
 }
 
 test "1K channel ping-pong armed M:N — baseline" {
-    let n = 1000
-    let ch = Channel.new(1)
-    let mut received = 0
+    ro n = 1000
+    ro ch = Channel.new(1)
+    mut received = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
-                let _v = ch.rx.recv()
+                ro _v = ch.rx.recv()
                 received = received + 1
                 i = i + 1
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
                 ch.tx.send(i)
                 i = i + 1
@@ -62,20 +62,20 @@ test "1K channel ping-pong armed M:N — baseline" {
 }
 
 test "10K channel ping-pong armed M:N — V1 stretch" {
-    let n = 10_000
-    let ch = Channel.new(1)
-    let mut received = 0
+    ro n = 10_000
+    ro ch = Channel.new(1)
+    mut received = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
-                let _v = ch.rx.recv()
+                ro _v = ch.rx.recv()
                 received = received + 1
                 i = i + 1
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
                 ch.tx.send(i)
                 i = i + 1

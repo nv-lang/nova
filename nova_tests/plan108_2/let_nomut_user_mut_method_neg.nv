@@ -15,6 +15,6 @@ fn Box mut @bump() -> () {
 }
 
 test "let no-mut + user mut @method → error" {
-    let b = Box.new()
+    ro b = Box.new()
     b.bump()
 }

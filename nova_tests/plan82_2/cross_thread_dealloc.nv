@@ -29,11 +29,11 @@ test "10 fibers cross-thread spawn/dealloc cycle completes correctly" {
     // dealloc skip'нул bitmap clear — eventual exhaustion, но на 10
     // fibers симптом косвенный: тест просто должен завершиться без
     // зависания/abort'а и mut-аккумуляция должна совпасть.
-    let mut total = 0
+    mut total = 0
     supervised {
-        let mut i = 1
+        mut i = 1
         while i <= 10 {
-            let cur = i
+            ro cur = i
             spawn { total += cur }
             i += 1
         }

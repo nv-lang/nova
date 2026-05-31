@@ -16,6 +16,6 @@ fn Bldr mut @tweak() -> @ {
 }
 
 test "fluent body without @" {
-    let b = Bldr.new()
+    ro b = Bldr.new()
     assert(b.k == 0)
 }

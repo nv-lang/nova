@@ -7,6 +7,6 @@ module negative_capability.errdefer_keyword_reserved
 
 
 fn use_errdefer_as_var() -> int {
-    let errdefer = 42    // ❌ errdefer — keyword, не identifier
+    ro errdefer = 42    // ❌ errdefer — keyword, не identifier
     errdefer
 }

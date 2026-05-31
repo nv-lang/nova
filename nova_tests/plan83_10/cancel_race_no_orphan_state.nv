@@ -10,10 +10,10 @@
 module plan83_10.cancel_race_no_orphan_state
 
 test "1K cancel cycles — no orphan state, no hang" {
-    let mut i = 0
+    mut i = 0
     while i < 1000 {
-        let tok = CancelToken.new()
-        let cur = i
+        ro tok = CancelToken.new()
+        ro cur = i
         supervised(cancel: tok) {
             spawn {
                 if cur % 3 == 0 {

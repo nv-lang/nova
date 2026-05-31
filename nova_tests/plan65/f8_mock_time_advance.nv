@@ -21,8 +21,8 @@ module plan65.f8_mock_time_advance
 import std.time.duration
 
 test "close_after delegates to mock Time handler — sleep is invoked" {
-    let mut sleep_calls = 0
-    let mock = effect Time {
+    mut sleep_calls = 0
+    ro mock = effect Time {
         sleep(_d) => { sleep_calls = sleep_calls + 1; () }
         now()    => 0
         now_ms() => 0
@@ -30,10 +30,10 @@ test "close_after delegates to mock Time handler — sleep is invoked" {
     }
     with Time = mock {
         // Without mock-Time path, this would block for 10 seconds.
-        let t = ChanReader.close_after(Duration.from_secs(10))
+        ro t = ChanReader.close_after(Duration.from_secs(10))
         // recv must return None immediately — channel already closed by
         // mock-time fast-path.
-        let v = t.recv()
+        ro v = t.recv()
         assert(v.is_none())
     }
     // The handler's sleep was actually invoked exactly once.
@@ -41,17 +41,17 @@ test "close_after delegates to mock Time handler — sleep is invoked" {
 }
 
 test "close_after through mock handler — multiple invocations counted" {
-    let mut sleep_calls = 0
-    let mock = effect Time {
+    mut sleep_calls = 0
+    ro mock = effect Time {
         sleep(_d) => { sleep_calls = sleep_calls + 1; () }
         now()    => 0
         now_ms() => 0
         now_ns() => 0
     }
     with Time = mock {
-        let _t1 = ChanReader.close_after(Duration.from_secs(5))
-        let _t2 = ChanReader.close_after(Duration.from_millis(250))
-        let _t3 = ChanReader.close_after(Duration.from_nanos(500))
+        ro _t1 = ChanReader.close_after(Duration.from_secs(5))
+        ro _t2 = ChanReader.close_after(Duration.from_millis(250))
+        ro _t3 = ChanReader.close_after(Duration.from_nanos(500))
     }
     assert(sleep_calls == 3)
 }

@@ -12,6 +12,6 @@ fn make_opt(x int) -> Option[int] {
 }
 
 test "no_prelude + explicit import — Option visible" {
-    let o = make_opt(7)
+    ro o = make_opt(7)
     assert(o.is_some())
 }

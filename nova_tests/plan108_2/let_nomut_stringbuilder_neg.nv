@@ -6,6 +6,6 @@ module nova_tests.plan108_2.let_nomut_stringbuilder_neg
 
 test "let no-mut + StringBuilder.append → error" {
     consume sb = StringBuilder.from("x")
-    let other = sb.clone()
+    ro other = sb.clone()
     other.append("y")
 }

@@ -11,8 +11,8 @@ module nova_tests.plan77.fluent_chain_alias_err
 
 test "use after consume через builder-chain alias" {
     consume sb = StringBuilder.new()
-    let sb2 = sb.append("a")   // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
-    let s = sb2.as_str()
+    ro sb2 = sb.append("a")   // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
+    ro s = sb2.as_str()
     sb.append("b")
     assert(s == "a")
 }

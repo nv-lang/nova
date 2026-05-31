@@ -18,8 +18,8 @@
 module expected_runtime.supervised_cancel_double_bind
 
 fn main() {
-    let tok = CancelToken.new()
-    let mut hits = 0
+    ro tok = CancelToken.new()
+    mut hits = 0
     supervised(cancel: tok) {
         spawn {
             // tok уже привязан к внешнему scope'у — этот bind должен паниковать.

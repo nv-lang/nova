@@ -75,13 +75,13 @@
 когда все senders дропнуты. Это нужно для паттерна fan-in:
 
 ```nova
-let (tx, rx) = Channel.new(8)
-let tx2 = tx.clone()
+ro (tx, rx) = Channel.new(8)
+ro tx2 = tx.clone()
 supervised {
     spawn { tx.send(1); tx.close() }
     spawn { tx2.send(2); tx2.close() }
     spawn {
-        while let Some(v) = rx.recv() { ... }
+        while Some(v) = rx.recv() { ... }
     }
 }
 ```
@@ -100,8 +100,8 @@ supervised {
 ### Nova API
 
 ```nova
-let (tx, rx) = Channel.new(8)
-let tx2 = tx.clone()   // новый ChanWriter на тот же буфер
+ro (tx, rx) = Channel.new(8)
+ro tx2 = tx.clone()   // новый ChanWriter на тот же буфер
 ```
 
 ### Изменения

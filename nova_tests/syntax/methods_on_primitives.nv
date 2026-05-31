@@ -15,7 +15,7 @@ fn int @is_positive() -> bool => @ > 0
 fn int @add(other int) -> int => @ + other
 
 test "int.@doubled" {
-    let n = 5
+    ro n = 5
     assert(n.doubled() == 10)
     assert((100).doubled() == 200)
 }
@@ -64,7 +64,7 @@ test "bool.@flip" {
 fn str @doubled_str() -> str => @ + @
 
 test "str.@doubled_str" {
-    let s = "ab"
+    ro s = "ab"
     assert(s.doubled_str() == "abab")
 }
 

@@ -28,13 +28,13 @@ fn Token consume @release(mut counter AtomicInt) -> int {
 fn Token mut @bump() -> @ { @ }
 
 test "property: each consume-binding satisfied exactly once across scenarios" {
-    let mut counter = AtomicInt.new(0)
-    let mut expected = 0
+    mut counter = AtomicInt.new(0)
+    mut expected = 0
 
     // Scenario A: basic consume.
     {
         consume t = Token.new(1)
-        let v = t.release(counter)
+        ro v = t.release(counter)
         assert(v == 1)
         expected = expected + 1
     }
@@ -43,20 +43,20 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
     {
         consume a = Token.new(2)
         consume b = a
-        let v = b.release(counter)
+        ro v = b.release(counter)
         assert(v == 2)
         expected = expected + 1
     }
 
     // Scenario C: branch — each branch consumes exactly once.
     {
-        let pick = 1
+        ro pick = 1
         consume t = Token.new(3)
         if pick == 1 {
-            let v = t.release(counter)
+            ro v = t.release(counter)
             assert(v == 3)
         } else {
-            let v = t.release(counter)
+            ro v = t.release(counter)
             assert(v == 3)
         }
         expected = expected + 1
@@ -68,16 +68,16 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
     {
         consume t = Token.new(4)
         t.bump().bump()
-        let v = t.release(counter)
+        ro v = t.release(counter)
         assert(v == 4)
         expected = expected + 1
     }
 
     // Scenario E: loop — N iterations, each owns + consumes its own token.
-    let n = 5
+    ro n = 5
     for i in 0..n {
         consume t = Token.new(i)
-        let v = t.release(counter)
+        ro v = t.release(counter)
         assert(v == i)
         expected = expected + 1
     }

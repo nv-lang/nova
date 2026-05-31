@@ -5,8 +5,8 @@
 module nova_tests.plan100_4_3.defer_with_result_ok_pattern_match
 
 test "defer |_result| — тело выполняется на normal exit" {
-    let mut fired = false
-    let _ = {
+    mut fired = false
+    ro _ = {
         defer |_result| { fired = true }
         42
     }
@@ -14,10 +14,10 @@ test "defer |_result| — тело выполняется на normal exit" {
 }
 
 test "defer |_result| — LIFO с обычным defer" {
-    let mut step = 0
-    let mut a = 0
-    let mut b = 0
-    let _ = {
+    mut step = 0
+    mut a = 0
+    mut b = 0
+    ro _ = {
         defer         { step = step + 1; a = step }  // registered first
         defer |_res|  { step = step + 1; b = step }  // registered last, fires first
         0
@@ -27,12 +27,12 @@ test "defer |_result| — LIFO с обычным defer" {
 }
 
 test "defer |_result| fires на interrupt-path (plain defer semantics)" {
-    let mut fired = false
-    let mut caught = false
+    mut fired = false
+    mut caught = false
     with Fail = effect Fail {
         fail(_) { caught = true; interrupt () }
     } {
-        let _ = {
+        ro _ = {
             defer |_result| { fired = true }
             throw "fail"
             0

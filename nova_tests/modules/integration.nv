@@ -25,17 +25,17 @@ test "expr eval: число" {
 }
 
 test "expr eval: сложение" {
-    let e = Add(Num(2), Num(3))
+    ro e = Add(Num(2), Num(3))
     assert(eval(e) == 5)
 }
 
 test "expr eval: вложенное (2+3)*4-1" {
-    let e = Sub(Mul(Add(Num(2), Num(3)), Num(4)), Num(1))
+    ro e = Sub(Mul(Add(Num(2), Num(3)), Num(4)), Num(1))
     assert(eval(e) == 19)
 }
 
 test "expr eval: глубокое дерево" {
-    let e = Add(Num(1), Add(Num(2), Add(Num(3), Num(4))))
+    ro e = Add(Num(1), Add(Num(2), Add(Num(3), Num(4))))
     assert(eval(e) == 10)
 }
 
@@ -48,7 +48,7 @@ type Op
     | OpDup
 
 fn pop_or_zero(mut stack []int) -> int {
-    let v = stack.pop()
+    ro v = stack.pop()
     match v {
         Some(x) => x
         None    => 0
@@ -56,22 +56,22 @@ fn pop_or_zero(mut stack []int) -> int {
 }
 
 fn run(program []Op) -> int {
-    let mut stack = []
+    mut stack = []
     for op in program {
         match op {
             Push(n) => stack.push(n)
             OpAdd => {
-                let b = pop_or_zero(stack)
-                let a = pop_or_zero(stack)
+                ro b = pop_or_zero(stack)
+                ro a = pop_or_zero(stack)
                 stack.push(a + b)
             }
             OpMul => {
-                let b = pop_or_zero(stack)
-                let a = pop_or_zero(stack)
+                ro b = pop_or_zero(stack)
+                ro a = pop_or_zero(stack)
                 stack.push(a * b)
             }
             OpDup => {
-                let v = pop_or_zero(stack)
+                ro v = pop_or_zero(stack)
                 stack.push(v)
                 stack.push(v)
             }
@@ -81,17 +81,17 @@ fn run(program []Op) -> int {
 }
 
 test "stack VM: 2 + 3" {
-    let prog = [Push(2), Push(3), OpAdd]
+    ro prog = [Push(2), Push(3), OpAdd]
     assert(run(prog) == 5)
 }
 
 test "stack VM: (2 + 3) * 4" {
-    let prog = [Push(2), Push(3), OpAdd, Push(4), OpMul]
+    ro prog = [Push(2), Push(3), OpAdd, Push(4), OpMul]
     assert(run(prog) == 20)
 }
 
 test "stack VM: dup-then-mul = square" {
-    let prog = [Push(7), OpDup, OpMul]
+    ro prog = [Push(7), OpDup, OpMul]
     assert(run(prog) == 49)
 }
 
@@ -136,20 +136,20 @@ type Account effect {
 fn make_transactions() Account -> int {
     Account.deposit(100)
     Account.deposit(50)
-    let _ = Account.withdraw(30)
-    let _ = Account.withdraw(200)  // overdraft, должен быть false
+    ro _ = Account.withdraw(30)
+    ro _ = Account.withdraw(200)  // overdraft, должен быть false
     Account.balance()
 }
 
 test "account effect через handler" {
-    let mut bal = 0
+    mut bal = 0
     with Account = effect Account {
         deposit(n) {
             bal += n
             return ()
         }
         withdraw(n) {
-            let enough = bal >= n
+            ro enough = bal >= n
             if enough {
                 bal -= n
                 return true
@@ -158,7 +158,7 @@ test "account effect через handler" {
         }
         balance() => bal
     } {
-        let final_balance = make_transactions()
+        ro final_balance = make_transactions()
         // 100 + 50 - 30 = 120 (вторая withdraw отклонена)
         assert(final_balance == 120)
     }

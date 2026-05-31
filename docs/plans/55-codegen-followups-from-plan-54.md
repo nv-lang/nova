@@ -196,14 +196,14 @@ as-is. В процессе вылезли 3 orthogonal codegen issues, кото�
 
 ```nova
 fn collect[T](fns []fn() -> T) -> []T {
-    let mut out []T = []
+    mut out []T = []
     for f in fns {
         out.push(f())          // ← f() пытается nova_fn_f(), не closure
     }
     out
 }
 
-let xs = collect[int]([|| 1, || 2, || 3])
+ro xs = collect[int]([|| 1, || 2, || 3])
 //          ↑ closures передаются — но collect видит их как nova_int
 ```
 
@@ -297,10 +297,10 @@ resolve_mono + emit_for body + array.h runtime. Зависимостей нет.
 особенно ломает `Some(v) => v` где `v` имеет тип scrutinee-inner.
 
 ```nova
-let tok CancelToken[int] = CancelToken.new()
+ro tok CancelToken[int] = CancelToken.new()
 tok.cancel(42)
-let r = tok.reason()
-let got = match r {
+ro r = tok.reason()
+ro got = match r {
     Some(v) => v       // v: nova_int (внутренний тип Option[int])
     None    => -1
 }
@@ -482,7 +482,7 @@ PASS (-21), 25 → 48 FAIL (+23).
 
 ```nova
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
-    let mut copy = HashMap[K, V].with_capacity(@count)
+    mut copy = HashMap[K, V].with_capacity(@count)
     for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
@@ -660,9 +660,9 @@ isolated commit, single-call-site change.
 
 ```nova
 fn f() {
-    let a HashMap[str, int]  = ["x": 1]
-    let b HashMap[int, str]  = [1: "x"]   // ← разные K, V
-    let c HashMap[int, int]  = [1: 1]     // ← третья пара
+    ro a HashMap[str, int]  = ["x": 1]
+    ro b HashMap[int, str]  = [1: "x"]   // ← разные K, V
+    ro c HashMap[int, int]  = [1: 1]     // ← третья пара
 }
 ```
 

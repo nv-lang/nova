@@ -8,6 +8,6 @@ module nova_tests.plan81.visibility_fn_rejected
 import nova_tests.plan81.lib.{public_value}
 
 test "private function is inaccessible" {
-    let _ = hidden()
+    ro _ = hidden()
     assert(true)
 }

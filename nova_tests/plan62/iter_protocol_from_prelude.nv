@@ -34,7 +34,7 @@ fn Counter.new(end int) -> Counter {
 
 fn Counter mut @next() -> Option[int] {
     if @cur >= @end { return None }
-    let v = @cur
+    ro v = @cur
     @cur += 1
     Some(v)
 }
@@ -58,8 +58,8 @@ fn make_counter(n int) -> Counter =>
 // ────────────────────────────────────────────────────────────────────
 
 test "Counter ducks Iterable[int] — for-in dispatch via structural next()" {
-    let mut sum = 0
-    let it = make_counter(5)
+    mut sum = 0
+    ro it = make_counter(5)
     for x in it {
         sum += x
     }
@@ -69,7 +69,7 @@ test "Counter ducks Iterable[int] — for-in dispatch via structural next()" {
 
 
 test "Counter iter — manual next() loop yields all elements then None" {
-    let mut it = make_counter(3)
+    mut it = make_counter(3)
     assert(it.next() == Some(0))
     assert(it.next() == Some(1))
     assert(it.next() == Some(2))
@@ -80,7 +80,7 @@ test "Counter iter — manual next() loop yields all elements then None" {
 
 
 test "empty Counter yields nothing" {
-    let mut count = 0
+    mut count = 0
     for _x in make_counter(0) {
         count += 1
     }

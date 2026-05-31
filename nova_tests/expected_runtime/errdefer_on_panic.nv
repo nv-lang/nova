@@ -11,7 +11,7 @@ module expected_runtime.errdefer_on_panic
 
 
 fn main() Io -> () {
-    let _ = {
+    ro _ = {
         errdefer { println("ERRDEFER_FIRED") }
         panic("PANIC_MSG")
         0

@@ -3,15 +3,15 @@
 module nova_tests.plan103_5.lazy_force_idempotent
 
 test "Lazy.force: returns same value on multiple calls" {
-    let mut call_count = AtomicInt.new(0)
-    let lazy = Lazy[int].new() {
+    mut call_count = AtomicInt.new(0)
+    ro lazy = Lazy[int].new() {
         call_count.fetch_add(1)
         100
     }
 
-    let v1 = lazy.force()
-    let v2 = lazy.force()
-    let v3 = lazy.force()
+    ro v1 = lazy.force()
+    ro v2 = lazy.force()
+    ro v3 = lazy.force()
 
     assert(v1 == 100)
     assert(v2 == 100)
@@ -20,14 +20,14 @@ test "Lazy.force: returns same value on multiple calls" {
 }
 
 test "Lazy.is_forced: false before force, true after" {
-    let lazy = Lazy[int].new() { 42 }
+    ro lazy = Lazy[int].new() { 42 }
     assert(lazy.is_forced() == false)
-    let _ = lazy.force()
+    ro _ = lazy.force()
     assert(lazy.is_forced() == true)
 }
 
 test "Lazy.force: captures closure at construction" {
-    let mult = 7
-    let lazy = Lazy[int].new() { mult * 6 }
+    ro mult = 7
+    ro lazy = Lazy[int].new() { mult * 6 }
     assert(lazy.force() == 42)
 }

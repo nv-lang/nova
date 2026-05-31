@@ -17,9 +17,9 @@ module syntax.as_cast_restrictions
 
 
 test "char-literal as int/u8 — разрешено (program ставит codepoint буквально)" {
-    let a = 'A' as u8
-    let b = 'A' as int
-    let c = 'A' as u8
+    ro a = 'A' as u8
+    ro b = 'A' as int
+    ro c = 'A' as u8
     assert(a as int == 65)
     assert(b == 65)
     assert(c as int == 65)
@@ -27,29 +27,29 @@ test "char-literal as int/u8 — разрешено (program ставит codepo
 
 
 test "u8 → int (widening) — разрешено" {
-    let b u8 = 65
-    let n = b as int
+    ro b u8 = 65
+    ro n = b as int
     assert(n == 65)
 }
 
 
 test "int → u8 (narrowing wraparound) — разрешено (план 05)" {
-    let big int = 1111
-    let b = big as u8
+    ro big int = 1111
+    ro b = big as u8
     assert(b as int == 87)  // 1111 mod 256
 }
 
 
 test "f64 → int (saturation) — разрешено (план 07)" {
-    let f f64 = 100.5
-    let n = f as int
+    ro f f64 = 100.5
+    ro n = f as int
     assert(n == 100)
 }
 
 
 test "bool → int — разрешено (D54: bool это {0,1})" {
-    let t = true
-    let f = false
+    ro t = true
+    ro f = false
     assert(t as int == 1)
     assert(f as int == 0)
 }
@@ -59,7 +59,7 @@ type RestrictionsMyInt alias int
 
 
 test "newtype-alias as underlying — identity (план 05)" {
-    let x RestrictionsMyInt = 42 as RestrictionsMyInt
-    let n int = x as int
+    ro x RestrictionsMyInt = 42 as RestrictionsMyInt
+    ro n int = x as int
     assert(n == 42)
 }

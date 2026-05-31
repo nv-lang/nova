@@ -16,10 +16,10 @@
 module plan83_10.panic_in_nested_supervised
 
 test "inner supervised panic — outer scope survives" {
-    let mut inner_caught = false
-    let mut outer_completed = false
+    mut inner_caught = false
+    mut outer_completed = false
 
-    let _ = with Fail[int] = |e| {
+    ro _ = with Fail[int] = |e| {
         inner_caught = true
         0
     } {

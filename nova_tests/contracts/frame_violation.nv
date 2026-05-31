@@ -9,7 +9,7 @@ module contracts.frame_violation
 fn bad_modify(a int, b int) -> int
     modifies a
 {
-    let mut c = a + b
+    mut c = a + b
     c = a * 2     // OK — `c` локальная
     b = 10        // ERROR — `b` параметр, не в modifies
     c

@@ -23,8 +23,8 @@ export fn add(a int, b int) -> int => a + b
 /// // Output: ababab
 /// ```
 export fn repeat(s str, n int) -> str {
-    let mut result = ""
-    let mut i = 0
+    mut result = ""
+    mut i = 0
     while i < n {
         result = result + s
         i = i + 1

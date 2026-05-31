@@ -9,8 +9,8 @@ type Tree
 type Pair { a int, b int }
 
 test "literal patterns" {
-    let n = 5
-    let s = match n {
+    ro n = 5
+    ro s = match n {
         0 => "zero"
         1 => "one"
         5 => "five"
@@ -20,8 +20,8 @@ test "literal patterns" {
 }
 
 test "wildcard catch-all" {
-    let n = 999
-    let s = match n {
+    ro n = 999
+    ro s = match n {
         0 => "z"
         _ => "other"
     }
@@ -29,8 +29,8 @@ test "wildcard catch-all" {
 }
 
 test "ident bind in arm" {
-    let n = 42
-    let r = match n {
+    ro n = 42
+    ro r = match n {
         0       => 0
         x       => x * 10
     }
@@ -62,22 +62,22 @@ test "variant unit + tuple patterns" {
 }
 
 test "tuple destructuring pattern" {
-    let r = match (1, 2) {
+    ro r = match (1, 2) {
         (a, b) => a + b
     }
     assert(r == 3)
 }
 
 test "nested tuple pattern" {
-    let r = match ((1, 2), 3) {
+    ro r = match ((1, 2), 3) {
         ((a, b), c) => a + b + c
     }
     assert(r == 6)
 }
 
 test "array pattern empty" {
-    let xs []int = []
-    let s = match xs {
+    ro xs []int = []
+    ro s = match xs {
         []      => "empty"
         [_, ..] => "non-empty"
     }
@@ -85,8 +85,8 @@ test "array pattern empty" {
 }
 
 test "array pattern single" {
-    let xs = [42]
-    let s = match xs {
+    ro xs = [42]
+    ro s = match xs {
         []      => 0
         [x]     => x
         [_, ..] => -1
@@ -95,8 +95,8 @@ test "array pattern single" {
 }
 
 test "array pattern head/tail (D59)" {
-    let xs = [10, 20, 30, 40]
-    let head = match xs {
+    ro xs = [10, 20, 30, 40]
+    ro head = match xs {
         []         => -1
         [h, ..]    => h
     }
@@ -104,11 +104,11 @@ test "array pattern head/tail (D59)" {
 }
 
 test "array pattern slice-bind ..rest (D59)" {
-    let xs = [1, 2, 3, 4, 5]
-    let rest_sum = match xs {
+    ro xs = [1, 2, 3, 4, 5]
+    ro rest_sum = match xs {
         []           => 0
         [_, ..rest]  => {
-            let mut s = 0
+            mut s = 0
             for x in rest {
                 s += x
             }
@@ -119,24 +119,24 @@ test "array pattern slice-bind ..rest (D59)" {
 }
 
 test "record pattern with full fields" {
-    let p = Pair { a: 10, b: 20 }
-    let r = match p {
+    ro p = Pair { a: 10, b: 20 }
+    ro r = match p {
         Pair { a, b } => a + b
     }
     assert(r == 30)
 }
 
 test "record pattern with rename" {
-    let p = Pair { a: 5, b: 7 }
-    let r = match p {
+    ro p = Pair { a: 5, b: 7 }
+    ro r = match p {
         Pair { a: x, b: y } => x * y
     }
     assert(r == 35)
 }
 
 test "record pattern with rest" {
-    let p = Pair { a: 1, b: 99 }
-    let r = match p {
+    ro p = Pair { a: 1, b: 99 }
+    ro r = match p {
         Pair { a, .. } => a
     }
     assert(r == 1)

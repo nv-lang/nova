@@ -12,7 +12,7 @@ fn Token consume @release() -> int => @val
 
 test "let Y = consume_var (alias) → E_VIEW_BINDING_FORBIDDEN" {
     consume tok = Token.new(1)
-    let twin = tok                  // ОШИБКА D180 Rule 2 — alias-binding запрещён
-    let v = twin.release()
+    ro twin = tok                  // ОШИБКА D180 Rule 2 — alias-binding запрещён
+    ro v = twin.release()
     assert(v == 1)
 }

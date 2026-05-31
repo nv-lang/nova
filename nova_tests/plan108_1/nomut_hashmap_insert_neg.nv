@@ -11,6 +11,6 @@ fn put(m HashMap[str, int], k str, v int) -> int {
 }
 
 test "no-mut + HashMap insert → error" {
-    let mut m = HashMap[str, int].new()
-    let _ = put(m, "x", 1)
+    mut m = HashMap[str, int].new()
+    ro _ = put(m, "x", 1)
 }

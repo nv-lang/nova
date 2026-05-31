@@ -11,7 +11,7 @@ fn CountDown mut @next() -> Option[int] {
     if @current <= 0 {
         None
     } else {
-        let v = @current
+        ro v = @current
         @current = @current - 1
         Some(v)
     }
@@ -20,7 +20,7 @@ fn CountDown mut @next() -> Option[int] {
 
 // Generic-функция: собрать все элементы Iterable[int] в массив.
 fn collect_all[T Iterable[int]](mut it T) -> []int {
-    let mut out []int = []
+    mut out []int = []
     for n in it {
         out.push(n)
     }
@@ -29,25 +29,25 @@ fn collect_all[T Iterable[int]](mut it T) -> []int {
 
 
 test "collect_all — длина результата" {
-    let got = collect_all[CountDown](CountDown.new(4))
+    ro got = collect_all[CountDown](CountDown.new(4))
     assert(got.len() == 4)
 }
 
 test "collect_all — порядок элементов" {
-    let got = collect_all[CountDown](CountDown.new(3))
+    ro got = collect_all[CountDown](CountDown.new(3))
     assert(got[0] == 3)
     assert(got[1] == 2)
     assert(got[2] == 1)
 }
 
 test "collect_all — пустой итератор даёт пустой массив" {
-    let got = collect_all[CountDown](CountDown.new(0))
+    ro got = collect_all[CountDown](CountDown.new(0))
     assert(got.len() == 0)
 }
 
 test "collect_all — сумма собранного" {
-    let got = collect_all[CountDown](CountDown.new(5))
-    let mut sum = 0
+    ro got = collect_all[CountDown](CountDown.new(5))
+    mut sum = 0
     for x in got {
         sum = sum + x
     }

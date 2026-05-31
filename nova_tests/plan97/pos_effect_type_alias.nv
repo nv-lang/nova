@@ -17,7 +17,7 @@ fn console_logger() -> Effect[Logger] => effect Logger {
 
 
 test "Effect[E] alias return type" {
-    let h = console_logger()
+    ro h = console_logger()
     with Logger = h {
         Logger.log("ok")
     }

@@ -30,9 +30,9 @@ const UNDER_SLACK_MS int = 20
 test "sleep waits at least ms (fiber-context)" {
     supervised {
         spawn {
-            let t0 = Time.now()
+            ro t0 = Time.now()
             Time.sleep(100)
-            let elapsed = Time.now() - t0
+            ro elapsed = Time.now() - t0
             // Windows: timer-resolution ~15ms означает что 100ms sleep
             // может fire через 85ms. Тест валидирует "approximately 100ms",
             // не "exact ≥ 100ms".
@@ -43,14 +43,14 @@ test "sleep waits at least ms (fiber-context)" {
 }
 
 test "many fibers sleep concurrently, not sequentially" {
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         spawn { Time.sleep(100) }
         spawn { Time.sleep(100) }
         spawn { Time.sleep(100) }
         spawn { Time.sleep(100) }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // Все 4 fiber'а спят параллельно — итого ~100ms, не 400ms.
     // Windows timer-resolution slack — допускается ~85ms (см. выше).
     assert(elapsed >= 100 - UNDER_SLACK_MS)
@@ -58,8 +58,8 @@ test "many fibers sleep concurrently, not sequentially" {
 }
 
 test "cancel during long sleep wakes immediately" {
-    let t0 = Time.now()
-    let tok = CancelToken.new()
+    ro t0 = Time.now()
+    ro tok = CancelToken.new()
     supervised(cancel: tok) {
         spawn {
             Time.sleep(10000)  // 10 sec — должен быть отменён
@@ -69,13 +69,13 @@ test "cancel during long sleep wakes immediately" {
             tok.cancel()
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // 10 sec sleep должен прерваться через ~50ms + slack.
     assert(elapsed < 50 + SLACK_MS)
 }
 
 test "Time.sleep(0) is fast yield" {
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         spawn {
             // 100 yield'ов должны завершиться очень быстро.
@@ -84,13 +84,13 @@ test "Time.sleep(0) is fast yield" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     assert(elapsed < SLACK_MS)
 }
 
 test "sleep handler override works (mock)" {
-    let mut calls = 0
-    let mock = effect Time {
+    mut calls = 0
+    ro mock = effect Time {
         sleep(ms) { calls += 1; return () }
         now()     => 12345
     }

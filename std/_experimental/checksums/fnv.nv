@@ -39,7 +39,7 @@ const FNV1A_64_PRIME  u64 = 0x100000001B3
 /// ```
 #stable(since = "0.1")
 export fn Fnv.hash32(data []u8) -> u32 {
-    let mut h = FNV1A_32_OFFSET
+    mut h = FNV1A_32_OFFSET
     for b in data {
         h = h ^ (b as u32)
         h = h * FNV1A_32_PRIME
@@ -51,7 +51,7 @@ export fn Fnv.hash32(data []u8) -> u32 {
 /// FNV-1a 64-bit hash. Non-cryptographic, fast, low collision для small/medium inputs.
 #stable(since = "0.1")
 export fn Fnv.hash64(data []u8) -> u64 {
-    let mut h = FNV1A_64_OFFSET
+    mut h = FNV1A_64_OFFSET
     for b in data {
         h = h ^ (b as u64)
         h = h * FNV1A_64_PRIME
@@ -117,36 +117,36 @@ test "FNV-1a 64: 'foobar'" {
 }
 
 test "детерминизм: повторный hash → тот же результат" {
-    let a = Fnv.hash_str("test")
-    let b = Fnv.hash_str("test")
+    ro a = Fnv.hash_str("test")
+    ro b = Fnv.hash_str("test")
     assert(a == b)
 }
 
 test "разные inputs → разные hashes (статистически)" {
-    let a = Fnv.hash_str("hello")
-    let b = Fnv.hash_str("world")
+    ro a = Fnv.hash_str("hello")
+    ro b = Fnv.hash_str("world")
     assert(a != b)
 }
 
 test "streaming: один chunk == split chunks" {
-    let full = "Hello, world!".bytes()
+    ro full = "Hello, world!".bytes()
 
-    let one_shot = Fnv.hash64(full)
+    ro one_shot = Fnv.hash64(full)
 
-    let mut state = Fnv64.new()
+    mut state = Fnv64.new()
     state.update("Hello, ".bytes())
     state.update("world!".bytes())
-    let streaming = state.finalize()
+    ro streaming = state.finalize()
 
     assert(one_shot == streaming)
 }
 
 test "small change → big diff (avalanche-ish)" {
-    let h1 = Fnv.hash_str("hello")
-    let h2 = Fnv.hash_str("Hello")               // только регистр
+    ro h1 = Fnv.hash_str("hello")
+    ro h2 = Fnv.hash_str("Hello")               // только регистр
     // Хорошая hash function должна давать совсем разные значения
     assert(h1 != h2)
     // XOR должен иметь много set bits (statistical, упрощённо)
-    let xor_diff = h1 ^ h2
+    ro xor_diff = h1 ^ h2
     assert(xor_diff != 0)
 }

@@ -22,28 +22,28 @@ fn Meters @try_into() -> Result[Feet, str] =>
 
 
 test "try_into Ok — положительное значение" {
-    let m = Meters { v: 10 }
-    let r = m.try_into()
+    ro m = Meters { v: 10 }
+    ro r = m.try_into()
     assert(r.is_ok())
 }
 
 test "try_into Ok — payload корректен" {
-    let m = Meters { v: 4 }
-    let r = m.try_into()
-    let f = r.unwrap_or(Feet { v: 0 })
+    ro m = Meters { v: 4 }
+    ro r = m.try_into()
+    ro f = r.unwrap_or(Feet { v: 0 })
     assert(f.v == 12)
 }
 
 test "try_into Err — отрицательное значение" {
-    let m = Meters { v: -1 }
-    let r = m.try_into()
+    ro m = Meters { v: -1 }
+    ro r = m.try_into()
     assert(r.is_err())
 }
 
 test "try_into Err — сообщение" {
-    let m = Meters { v: -5 }
-    let r = m.try_into()
-    let msg = match r {
+    ro m = Meters { v: -5 }
+    ro r = m.try_into()
+    ro msg = match r {
         Ok(_) => ""
         Err(e) => e
     }
@@ -51,20 +51,20 @@ test "try_into Err — сообщение" {
 }
 
 test "try_into ноль -> Ok (граница)" {
-    let m = Meters { v: 0 }
-    let r = m.try_into()
+    ro m = Meters { v: 0 }
+    ro r = m.try_into()
     assert(r.is_ok())
     assert(r.unwrap_or(Feet { v: 99 }).v == 0)
 }
 
 test "try_into Ok/Err дискриминация через match" {
-    let good = Meters { v: 1 }
-    let bad = Meters { v: -1 }
-    let g_ok = match good.try_into() {
+    ro good = Meters { v: 1 }
+    ro bad = Meters { v: -1 }
+    ro g_ok = match good.try_into() {
         Ok(_) => true
         Err(_) => false
     }
-    let b_ok = match bad.try_into() {
+    ro b_ok = match bad.try_into() {
         Ok(_) => true
         Err(_) => false
     }

@@ -9,8 +9,8 @@ fn LL[T] @len() -> int => match @ {
 }
 
 fn LL[T] @to_array() -> []T {
-    let mut out = []T.new()
-    let mut cur = @
+    mut out = []T.new()
+    mut cur = @
     loop {
         match cur {
             Empty => { return out }
@@ -20,8 +20,8 @@ fn LL[T] @to_array() -> []T {
 }
 
 fn LL[int] @sum() -> int {
-    let mut s = 0
-    let mut cur = @
+    mut s = 0
+    mut cur = @
     loop {
         match cur {
             Empty => { return s }
@@ -31,8 +31,8 @@ fn LL[int] @sum() -> int {
 }
 
 fn LL[int] @max() -> Option[int] {
-    let mut cur = @
-    let mut best Option[int] = None
+    mut cur = @
+    mut best Option[int] = None
     loop {
         match cur {
             Empty => { return best }
@@ -48,8 +48,8 @@ fn LL[int] @max() -> Option[int] {
 }
 
 fn LL[int] @count_even() -> int {
-    let mut n = 0
-    let mut cur = @
+    mut n = 0
+    mut cur = @
     loop {
         match cur {
             Empty => { return n }
@@ -62,8 +62,8 @@ fn LL[int] @count_even() -> int {
 }
 
 fn build_range(n int) -> LL[int] {
-    let mut result LL[int] = Empty
-    let mut i = n - 1
+    mut result LL[int] = Empty
+    mut i = n - 1
     loop {
         if i < 0 { return result }
         result = Cons(i, result)
@@ -88,25 +88,25 @@ fn evens_only(xs LL[int]) -> LL[int] => match xs {
 
 type Pt { x f64, y f64 }
 fn dist(a Pt, b Pt) -> f64 {
-    let dx = a.x - b.x
-    let dy = a.y - b.y
+    ro dx = a.x - b.x
+    ro dy = a.y - b.y
     (dx * dx + dy * dy).sqrt()
 }
 
 fn main() Io -> () {
-    let xs = build_range(100)
+    ro xs = build_range(100)
     println(str.from(xs.sum()))
     println(str.from(xs.len()))
     println(str.from(xs.count_even()))
-    let sq = squared(xs)
+    ro sq = squared(xs)
     println(str.from(sq.sum()))
-    let even = evens_only(xs)
+    ro even = evens_only(xs)
     println(str.from(even.sum()))
-    let m = xs.max()
-    println(if let Some(v) = m { str.from(v) } else { "none" })
+    ro m = xs.max()
+    println(if Some(v) = m { str.from(v) } else { "none" })
 
-    let p1 = Pt { x: 0.0, y: 0.0 }
-    let p2 = Pt { x: 3.0, y: 4.0 }
-    let d = dist(p1, p2)
+    ro p1 = Pt { x: 0.0, y: 0.0 }
+    ro p2 = Pt { x: 3.0, y: 4.0 }
+    ro d = dist(p1, p2)
     println(str.from(d))
 }

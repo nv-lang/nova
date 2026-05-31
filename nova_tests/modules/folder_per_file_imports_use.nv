@@ -27,7 +27,7 @@ test "peer B (writer): double works without Range import" {
 
 test "both peers: combined use" {
     // Совместное использование обоих peers — shared declaration namespace.
-    let s = sum_range(1, 4)  // 1+2+3 = 6
-    let d = double(s)         // 12
+    ro s = sum_range(1, 4)  // 1+2+3 = 6
+    ro d = double(s)         // 12
     assert(d == 12)
 }

@@ -25,9 +25,9 @@ test "100 fibers × Time.sleep(1) — all complete" {
     // V1: 100 fibers (= 10²). Larger counts (10³, 10⁴) пока timeout под
     // armed M:N — worker pool overhead. Acceptance: no leak/crash/
     // deadlock; counter matches.
-    let mut completed = 0
+    mut completed = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 100 {
             spawn {
                 Time.sleep(1)
@@ -43,10 +43,10 @@ test "20 fibers × Time.sleep(5) — parallel timing smoke" {
     // 20 fibers each sleep 5ms. Под armed multi-worker should run in
     // ~5-50ms wall-clock. Acceptance: completes within test timeout
     // без deadlock.
-    let t0 = Time.now()
-    let mut completed = 0
+    ro t0 = Time.now()
+    mut completed = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 20 {
             spawn {
                 Time.sleep(5)
@@ -55,7 +55,7 @@ test "20 fibers × Time.sleep(5) — parallel timing smoke" {
             i = i + 1
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     assert(completed == 20)
     // Generous bound: under cooperative single-thread sequential — 100ms.
     // Under armed multi-worker parallel — ~5-50ms. Acceptance: < 30s
@@ -66,11 +66,11 @@ test "20 fibers × Time.sleep(5) — parallel timing smoke" {
 test "supervised drain после park/wake — все fibers done" {
     // Verify supervised exit-condition корректно ждёт всех parked
     // fiber'ов (Plan 83.4.5.7 idempotent wake fix).
-    let mut sum = 0
+    mut sum = 0
     supervised {
-        let mut i = 1
+        mut i = 1
         while i <= 50 {
-            let cur = i
+            ro cur = i
             spawn {
                 Time.sleep(cur)  // 1ms..50ms — varying sleep durations
                 sum += cur

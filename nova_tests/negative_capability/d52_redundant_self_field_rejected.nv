@@ -17,7 +17,7 @@ export fn Counter @bad_clone() -> Counter =>
 
 
 test "redundant { name: @name } — should reject (D52 §2)" {
-    let c = Counter { end: 5, cur: 0 }
-    let copy = c.bad_clone()
+    ro c = Counter { end: 5, cur: 0 }
+    ro copy = c.bad_clone()
     assert(copy.end == 5)
 }

@@ -251,7 +251,7 @@ Iter[T] case подхватит.
 
 ```nova
 test "for-in over Range.step_by" {
-    let mut sum = 0
+    mut sum = 0
     for i in (0..10).step_by(2) {
         sum += i
     }
@@ -259,7 +259,7 @@ test "for-in over Range.step_by" {
 }
 
 test "for-in over Range.reverse" {
-    let mut collected []int = []
+    mut collected []int = []
     for i in (1..=3).reverse() {
         collected.push(i)
     }
@@ -267,10 +267,10 @@ test "for-in over Range.reverse" {
 }
 
 test "for-in over HashMap.values" {
-    let mut m = HashMap[str, int].new()
+    mut m = HashMap[str, int].new()
     m.insert("a", 1)
     m.insert("b", 2)
-    let mut sum = 0
+    mut sum = 0
     for v in m.values() {
         sum += v
     }
@@ -278,9 +278,9 @@ test "for-in over HashMap.values" {
 }
 
 test "for-in tuple destructure" {
-    let mut m = HashMap[str, int].new()
+    mut m = HashMap[str, int].new()
     m.insert("x", 10)
-    let mut found_x_10 = false
+    mut found_x_10 = false
     for (k, v) in m.entries() {
         if k == "x" && v == 10 { found_x_10 = true }
     }
@@ -288,11 +288,11 @@ test "for-in tuple destructure" {
 }
 
 test "for-in implicit iter() on Deque" {
-    let mut d = Deque[int].new()
+    mut d = Deque[int].new()
     d.push_back(1)
     d.push_back(2)
     d.push_back(3)
-    let mut sum = 0
+    mut sum = 0
     for x in d {                        // implicit .iter()
         sum += x
     }

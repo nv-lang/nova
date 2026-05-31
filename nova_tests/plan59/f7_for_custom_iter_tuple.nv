@@ -16,7 +16,7 @@ export fn Counter mut @next() -> Option[(int, int)] {
     if @idx >= @end {
         None
     } else {
-        let pair = (@idx, @idx * 100)
+        ro pair = (@idx, @idx * 100)
         @idx = @idx + 1
         Some(pair)
     }
@@ -29,8 +29,8 @@ export fn Counter.new(end int) -> Counter {
 
 
 test "for (i, v) in custom iter — tuple destructure works" {
-    let mut sum_i = 0
-    let mut sum_v = 0
+    mut sum_i = 0
+    mut sum_v = 0
     for (i, v) in Counter.new(5) {
         sum_i = sum_i + i
         sum_v = sum_v + v
@@ -43,7 +43,7 @@ test "for (i, v) in custom iter — tuple destructure works" {
 
 
 test "for (_, v) in custom iter — wildcard k" {
-    let mut total = 0
+    mut total = 0
     for (_, v) in Counter.new(3) {
         total = total + v
     }

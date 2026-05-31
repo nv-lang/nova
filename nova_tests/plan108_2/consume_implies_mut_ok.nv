@@ -5,6 +5,6 @@ module nova_tests.plan108_2.consume_implies_mut_ok
 test "consume binding can call mut method" {
     consume sb = StringBuilder.from("a")
     sb.append("b")              // ✓ consume → mut implicit
-    let s = sb.as_str()
+    ro s = sb.as_str()
     assert(s == "ab")
 }

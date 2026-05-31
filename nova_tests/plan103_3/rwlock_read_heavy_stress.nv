@@ -6,11 +6,11 @@
 module nova_tests.plan103_3.rwlock_read_heavy_stress
 
 test "RwLock read-heavy stress: 10 readers + 1 writer, no deadlock" {
-    let mut rw = RwLock.new()
-    let mut shared = AtomicInt.new(0)
-    let mut torn = AtomicInt.new(0)
-    let mut writer_iters = AtomicInt.new(0)
-    let mut wg = WaitGroup.new()
+    mut rw = RwLock.new()
+    mut shared = AtomicInt.new(0)
+    mut torn = AtomicInt.new(0)
+    mut writer_iters = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(11)
 
     // 10 readers
@@ -18,7 +18,7 @@ test "RwLock read-heavy stress: 10 readers + 1 writer, no deadlock" {
         for _j in 0..1000 {
             rw.read()
             // shared is always even (writer adds 2)
-            let v = shared.load()
+            ro v = shared.load()
             if v % 2 != 0 { torn.fetch_add(1) }
             rw.read_unlock()
         }
@@ -30,7 +30,7 @@ test "RwLock read-heavy stress: 10 readers + 1 writer, no deadlock" {
         spawn {
             for _j in 0..1000 {
                 rw.write()
-                let v = shared.load()
+                ro v = shared.load()
                 shared.store(v + 2)
                 rw.write_unlock()
                 writer_iters.fetch_add(1)

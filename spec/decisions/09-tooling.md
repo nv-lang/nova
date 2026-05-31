@@ -325,8 +325,8 @@ fn process(n int) -> str { "second" }    // duplicate sig
 module nova_tests.runtime_panic.array_bounds
 
 fn main() Io -> () {
-    let xs = [1, 2, 3]
-    let _ = xs[10]                       // out-of-bounds
+    ro xs = [1, 2, 3]
+    ro _ = xs[10]                       // out-of-bounds
 }
 ```
 
@@ -1587,7 +1587,7 @@ Escape-hatch для знаний о FFI / внешних инвариантах.
 ```nova
 #trusted
 fn call_ffi() -> int {
-    let result = extern_fn()
+    ro result = extern_fn()
     assume result >= 0   // знаем по документации FFI
     result
 }
@@ -1852,12 +1852,12 @@ module bench.my_module
 
 bench "name of this benchmark" {
     // Setup — НЕ measured, выполняется один раз.
-    let mut m = HashMap[int, int].new()
-    let n = 1000
+    mut m = HashMap[int, int].new()
+    ro n = 1000
 
     // Measured block — adaptive sampling (Criterion-style).
     measure {
-        let mut i = 0
+        mut i = 0
         while i < n {
             m.insert(i, i)
             i = i + 1

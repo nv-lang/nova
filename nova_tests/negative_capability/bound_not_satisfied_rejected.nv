@@ -26,7 +26,7 @@ fn require_hashable[T BnsHashable](x T) -> T => x
 
 
 test "bound not satisfied — compile error (negative)" {
-    let p = BnsPlain { name: "x" }
-    let _ = require_hashable(p)   // ❌ BnsPlain не имеет hash()/eq()
+    ro p = BnsPlain { name: "x" }
+    ro _ = require_hashable(p)   // ❌ BnsPlain не имеет hash()/eq()
     assert(true)
 }

@@ -10,14 +10,14 @@ type Obj { a int, b int }
 
 test "gc.alloc_count растёт после аллокаций" {
     gc.reset_stats()
-    let before = gc.alloc_count()
+    ro before = gc.alloc_count()
     // Создаём 100 короткоживущих объектов.
-    let mut sink = 0
+    mut sink = 0
     for i in 0..100 {
-        let o = Obj { a: i, b: i * 2 }
+        ro o = Obj { a: i, b: i * 2 }
         sink = sink + o.a
     }
-    let after = gc.alloc_count()
+    ro after = gc.alloc_count()
     assert(after >= before)
     assert(sink == 4950)        // sum(0..99) = 4950
 }
@@ -26,6 +26,6 @@ test "gc.alloc_count растёт после аллокаций" {
 test "gc.collect после reset_stats — heap_size не падает в инвалидное" {
     gc.reset_stats()
     gc.collect()
-    let h = gc.heap_size()
+    ro h = gc.heap_size()
     assert(h >= 0)
 }

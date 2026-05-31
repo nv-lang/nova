@@ -42,14 +42,14 @@ fn err_status(msg str) -> FiberStatus => { ok: false, value: 0, error_msg: msg }
 test "supervised: explicit error-flag pattern (Go-style)" {
     // Каждый spawn пишет в собственный mut-флаг. После scope main
     // агрегирует флаги в общий "did any fail".
-    let mut a_ok = true
-    let mut b_ok = true
-    let mut a_val = 0
-    let mut b_val = 0
+    mut a_ok = true
+    mut b_ok = true
+    mut a_val = 0
+    mut b_val = 0
     supervised {
         spawn {
             // Симулируем validated computation.
-            let input = 10
+            ro input = 10
             if input > 0 {
                 a_val = input * 2   // success path
             } else {
@@ -57,7 +57,7 @@ test "supervised: explicit error-flag pattern (Go-style)" {
             }
         }
         spawn {
-            let input = -5
+            ro input = -5
             if input > 0 {
                 b_val = input * 2
             } else {
@@ -65,7 +65,7 @@ test "supervised: explicit error-flag pattern (Go-style)" {
             }
         }
     }
-    let any_failed = !a_ok || !b_ok
+    ro any_failed = !a_ok || !b_ok
     assert(any_failed)         // b пометил себя как failed
     assert(a_ok)
     assert(!b_ok)
@@ -76,11 +76,11 @@ test "supervised: explicit error-flag pattern (Go-style)" {
 test "supervised: aggregate FiberStatus across spawns" {
     // Каждый fiber пишет FiberStatus в свою ячейку. После scope-exit
     // main собирает их.
-    let mut r1 = ok_status(0)
-    let mut r2 = ok_status(0)
+    mut r1 = ok_status(0)
+    mut r2 = ok_status(0)
     supervised {
         spawn {
-            let x = 7
+            ro x = 7
             if x > 0 {
                 r1 = ok_status(x * x)   // 49
             } else {
@@ -88,7 +88,7 @@ test "supervised: aggregate FiberStatus across spawns" {
             }
         }
         spawn {
-            let y = 0
+            ro y = 0
             if y > 0 {
                 r2 = ok_status(y * y)
             } else {
@@ -103,12 +103,12 @@ test "supervised: aggregate FiberStatus across spawns" {
 }
 
 test "supervised: counter of failed fibers" {
-    let mut errors = 0
-    let mut successes = 0
+    mut errors = 0
+    mut successes = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 10 {
-            let cur = i
+            ro cur = i
             spawn {
                 // Чётные считаем "успехом", нечётные — "ошибкой".
                 if cur % 2 == 0 {
@@ -134,17 +134,17 @@ fn parse_positive(s str) -> Result {
 }
 
 fn use_parse(s str) -> Result {
-    let v = parse_positive(s)?       // ? на Result работает в обычном коде
+    ro v = parse_positive(s)?       // ? на Result работает в обычном коде
     Ok(v + 1)
 }
 
 test "supervised body: Result via match works on main-flow" {
     // Result + match на main-flow внутри supervised — обычный код.
-    let mut got_err = false
-    let mut got_val = 0
+    mut got_err = false
+    mut got_val = 0
     supervised {
-        let r = use_parse("ok")
-        let v = match r {
+        ro r = use_parse("ok")
+        ro v = match r {
             Ok(n)  => n
             Err(_) => -1
         }
@@ -155,10 +155,10 @@ test "supervised body: Result via match works on main-flow" {
 }
 
 test "supervised body: Result match — error path" {
-    let mut got_err = false
+    mut got_err = false
     supervised {
-        let r = use_parse("bad")
-        let v = match r {
+        ro r = use_parse("bad")
+        ro v = match r {
             Ok(_)  => 0
             Err(_) => -1
         }
@@ -175,13 +175,13 @@ test "supervised: early-stop pattern via shared error flag" {
     // Pattern: каждый spawn перед работой проверяет shared флаг
     // `aborted`. Первый, кто встретит ошибку, ставит aborted = true,
     // остальные skip'ают. (Это manual cancel, не язык-уровень.)
-    let mut aborted = false
-    let mut work_done = 0
+    mut aborted = false
+    mut work_done = 0
 
     supervised {
         spawn {
             if !aborted {
-                let bad_input = -1
+                ro bad_input = -1
                 if bad_input < 0 {
                     aborted = true   // ошибка → tell others
                 } else {
@@ -245,11 +245,11 @@ test "supervised: early-stop pattern via shared error flag" {
 
 test "doc: error-flag is the ONLY way to detect spawn failures (bootstrap)" {
     // Этот тест существует чтобы зафиксировать текущее ограничение.
-    let mut spawn_completed = false
+    mut spawn_completed = false
     supervised {
         spawn {
             // Делаем что-то, что МОГЛО бы fail'нуться.
-            let n = 42
+            ro n = 42
             if n > 0 {
                 spawn_completed = true
             }

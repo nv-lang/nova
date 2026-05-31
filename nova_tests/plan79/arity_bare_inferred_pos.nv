@@ -20,9 +20,9 @@ fn lookup(n int) -> Option {
 }
 
 test "Ф.2 — bare Result/Option compiles (inferred type args)" {
-    let r = validated(5)
+    ro r = validated(5)
     assert(r.is_ok())
 
-    let o = lookup(3)
+    ro o = lookup(3)
     assert(o == Some(3))
 }

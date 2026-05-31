@@ -6,34 +6,34 @@ module nova_tests.plan99.option_map_migrated
 type User { id int, name str }
 
 test "Option[int].map int→int (T==U)" {
-    let a Option[int] = Some(21)
-    let m = a.map(|x| x * 2)
+    ro a Option[int] = Some(21)
+    ro m = a.map(|x| x * 2)
     assert(m.unwrap_or(0) == 42)
 }
 
 test "Option[int].map int→str (T≠U)" {
-    let a Option[int] = Some(7)
-    let s = a.map(|x| str.from(x))
+    ro a Option[int] = Some(7)
+    ro s = a.map(|x| str.from(x))
     assert(s.unwrap_or("") == "7")
 }
 
 test "Option[str].map str→int (str→primitive)" {
-    let a Option[str] = Some("hello")
+    ro a Option[str] = Some("hello")
     // Plan 108 D26 note: use byte_len() alias here because generic closures
     // erase str→nova_int and str.len() accidentally dispatches to Nova_Range_method_len.
     // Known codegen issue: [M-str-len-closure-dispatch]. Tracked as follow-up.
-    let len = a.map(|s| s.byte_len())
+    ro len = a.map(|s| s.byte_len())
     assert(len.unwrap_or(0) == 5)
 }
 
 test "Option.map на None — closure не вызывается" {
-    let a Option[int] = None
-    let s = a.map(|x| str.from(x))
+    ro a Option[int] = None
+    ro s = a.map(|x| str.from(x))
     assert(s.is_none())
 }
 
 test "Option.map chain" {
-    let a Option[int] = Some(5)
-    let m = a.map(|x| x * 2).map(|y| str.from(y))
+    ro a Option[int] = Some(5)
+    ro m = a.map(|x| x * 2).map(|y| str.from(y))
     assert(m.unwrap_or("") == "10")
 }

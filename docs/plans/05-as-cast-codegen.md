@@ -36,8 +36,8 @@ ExprKind::As(inner, _ty) => {
 #### Сценарий 1 — narrowing с независимым результатом
 
 ```nova
-let a int = 1111
-let b = a as byte
+ro a int = 1111
+ro b = a as byte
 ```
 
 **Ожидание (по D54):** `b` имеет тип `byte` со значением `1111 mod 256 = 87`.
@@ -52,9 +52,9 @@ let b = a as byte
 #### Сценарий 2 — bitwise операции с cast'ом
 
 ```nova
-let n int = 0xFFFF
-let lo = (n & 0xFF) as byte
-let combined = (lo as int) << 8 | (lo as int)
+ro n int = 0xFFFF
+ro lo = (n & 0xFF) as byte
+ro combined = (lo as int) << 8 | (lo as int)
 ```
 
 `combined` может содержать неожиданные верхние биты, потому что `lo as byte` не truncate'ил, а `lo as int` — снова no-op.
@@ -62,7 +62,7 @@ let combined = (lo as int) << 8 | (lo as int)
 #### Сценарий 3 — где **работает** случайно
 
 ```nova
-let arr []byte = []
+ro arr []byte = []
 arr.push(a as byte)        // OK — C narrowing при push в uint8_t-слот
 fn f(b byte) { ... }
 f(a as byte)               // OK — C narrowing при передаче параметра
@@ -142,38 +142,38 @@ Cast эмитится `((nova_int)(42))` — это идempotent, коррект
 
 ```nova
 test "as byte truncates" {
-    let a int = 1111
-    let b = a as byte
+    ro a int = 1111
+    ro b = a as byte
     assert(b as int == 87)        // 1111 mod 256
 }
 
 test "as byte chained with bitwise" {
-    let n int = 0xFFFF
-    let lo = (n & 0xFF) as byte
+    ro n int = 0xFFFF
+    ro lo = (n & 0xFF) as byte
     assert(lo as int == 0xFF)
 }
 
 test "as i32 from i64 wraparound" {
-    let big int = 0x1_0000_0001
-    let small = big as i32
+    ro big int = 0x1_0000_0001
+    ro small = big as i32
     assert(small as int == 1)      // младшие 32 бита
 }
 
 test "as f64 from int" {
-    let n int = 42
-    let f = n as f64
+    ro n int = 42
+    ro f = n as f64
     assert(f == 42.0)
 }
 
 test "as int from f64 truncates" {
-    let f f64 = 3.7
-    let n = f as int
+    ro f f64 = 3.7
+    ro n = f as int
     assert(n == 3)                  // truncate, не round
 }
 
 test "newtype as underlying — identity" {
-    let id UserId = 42 as UserId
-    let n int = id as int
+    ro id UserId = 42 as UserId
+    ro n int = id as int
     assert(n == 42)
 }
 ```

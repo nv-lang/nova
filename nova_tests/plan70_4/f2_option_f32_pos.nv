@@ -6,13 +6,13 @@
 module nova_tests.plan70_4.f2_option_f32_pos
 
 test "Option[f64] Some/None" {
-    let a Option[f64] = Some(3.14)
+    ro a Option[f64] = Some(3.14)
     match a {
         Some(v) => assert(v == 3.14)
         None => assert(false)
     }
 
-    let b Option[f64] = None
+    ro b Option[f64] = None
     match b {
         None => {}
         Some(_) => assert(false)
@@ -20,21 +20,21 @@ test "Option[f64] Some/None" {
 }
 
 test "Option[f64] unwrap_or" {
-    let a Option[f64] = Some(1.5)
+    ro a Option[f64] = Some(1.5)
     assert(a.unwrap_or(0.0) == 1.5)
 
-    let b Option[f64] = None
+    ro b Option[f64] = None
     assert(b.unwrap_or(9.9) == 9.9)
 }
 
 test "Option[f32] Some/None" {
-    let a Option[f32] = Some(1.5 as f32)
+    ro a Option[f32] = Some(1.5 as f32)
     match a {
         Some(v) => assert(v == 1.5 as f32)
         None => assert(false)
     }
 
-    let b Option[f32] = None
+    ro b Option[f32] = None
     match b {
         None => {}
         Some(_) => assert(false)
@@ -42,9 +42,9 @@ test "Option[f32] Some/None" {
 }
 
 test "Option[f32] unwrap_or" {
-    let a Option[f32] = Some(2.5 as f32)
+    ro a Option[f32] = Some(2.5 as f32)
     assert(a.unwrap_or(0.0 as f32) == 2.5 as f32)
 
-    let b Option[f32] = None
+    ro b Option[f32] = None
     assert(b.unwrap_or(9.0 as f32) == 9.0 as f32)
 }

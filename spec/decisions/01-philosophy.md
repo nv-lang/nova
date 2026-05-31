@@ -27,7 +27,7 @@ record-типы хранят данные, методы привязаны к т
 ```nova
 // 1) Данные — record, sum-type, alias
 type Account {
-    readonly owner str
+    ro owner str
     balance money
 }
 

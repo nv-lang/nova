@@ -8,7 +8,7 @@
 module negative_capability.supervised_unknown_named_arg
 
 fn main() {
-    let x = 5
+    ro x = 5
     supervised(foo: x) {
         spawn { }
     }

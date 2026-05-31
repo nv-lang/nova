@@ -12,5 +12,5 @@ fn add_suffix(sb StringBuilder) -> int {
 
 test "no-mut + StringBuilder append → error" {
     consume sb = StringBuilder.from("hi")
-    let _ = add_suffix(sb)
+    ro _ = add_suffix(sb)
 }

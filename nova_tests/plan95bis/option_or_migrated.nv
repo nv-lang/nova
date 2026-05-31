@@ -7,30 +7,30 @@
 module nova_tests.plan95bis.option_or_migrated
 
 test "Option[int].or — chain None.or(Some).or(None) → Some" {
-    let a Option[int] = None
-    let b Option[int] = Some(10)
-    let c Option[int] = None
-    let result_i = a.or(b).or(c)
+    ro a Option[int] = None
+    ro b Option[int] = Some(10)
+    ro c Option[int] = None
+    ro result_i = a.or(b).or(c)
     assert(result_i.is_some())
     assert(result_i.unwrap_or(0) == 10)
 }
 
 test "Option[str].or — both None → None" {
-    let s1 Option[str] = None
-    let s2 Option[str] = None
-    let result_s = s1.or(s2)
+    ro s1 Option[str] = None
+    ro s2 Option[str] = None
+    ro result_s = s1.or(s2)
     assert(result_s.is_none())
 }
 
 test "Option[str].or — first wins when present" {
-    let p Option[str] = Some("primary")
-    let q Option[str] = Some("secondary")
-    let result_p = p.or(q)
+    ro p Option[str] = Some("primary")
+    ro q Option[str] = Some("secondary")
+    ro result_p = p.or(q)
     assert(result_p.unwrap_or("none") == "primary")
 }
 
 test "Option[char].or — None.or(Some) → second" {
-    let n Option[char] = None
-    let v Option[char] = Some('X')
+    ro n Option[char] = None
+    ro v Option[char] = Some('X')
     assert(n.or(v).unwrap_or('?') == 'X')
 }

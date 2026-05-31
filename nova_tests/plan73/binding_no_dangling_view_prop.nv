@@ -31,30 +31,30 @@ fn drain_into(consume t Token) -> int => t.take()
 test "property: view via function-param is bounded and never dangles" {
     consume t = Token.new(11)
     // Take a view (function-param) — t still live in caller scope.
-    let snapshot = snapshot_value(t)
+    ro snapshot = snapshot_value(t)
     assert(snapshot == 11)
     // After view returns, t is still live; consume it explicitly.
-    let final_v = t.take()
+    ro final_v = t.take()
     assert(final_v == 11)
 }
 
 test "property: consume-param move — source binding becomes Consumed" {
     consume t = Token.new(22)
     // Move into callee — t is dead in caller after this line.
-    let v = drain_into(t)
+    ro v = drain_into(t)
     assert(v == 22)
 }
 
 test "property: branch view + branch consume — no dangling" {
-    let pick = 1
+    ro pick = 1
     consume t = Token.new(33)
     if pick == 1 {
-        let v = snapshot_value(t)
+        ro v = snapshot_value(t)
         assert(v == 33)
-        let final_v = t.take()
+        ro final_v = t.take()
         assert(final_v == 33)
     } else {
-        let final_v = t.take()
+        ro final_v = t.take()
         assert(final_v == 33)
     }
 }
@@ -63,12 +63,12 @@ test "property: branch view + branch consume — no dangling" {
 // «no dangling» across N iterations.  If any iteration mis-detected, the
 // loop body would not compile (E_VIEW_BINDING_FORBIDDEN or D133).
 test "property: N consume bindings — each view-bounded + consume-satisfied" {
-    let n = 8
-    let mut total = 0
+    ro n = 8
+    mut total = 0
     for i in 0..n {
         consume t = Token.new(i)
-        let view_v = snapshot_value(t)
-        let owned_v = t.take()
+        ro view_v = snapshot_value(t)
+        ro owned_v = t.take()
         assert(view_v == i)
         assert(owned_v == i)
         total = total + owned_v

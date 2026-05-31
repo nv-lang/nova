@@ -11,7 +11,7 @@
 module plan83_10.cancel_token_wrong_type_compile_error
 
 fn blocking_with_time_violates() Blocking + Time -> int {
-    let mut r = 0
+    mut r = 0
     blocking {
         Time.sleep(0)
         r = 42

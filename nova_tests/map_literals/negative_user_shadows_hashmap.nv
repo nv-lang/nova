@@ -19,6 +19,6 @@ module map_literals.negative_user_shadows_hashmap
 type HashMap[K, V] { data int }
 
 fn main() -> () {
-    let m HashMap[str, int] = { a: 1, b: 2 }
-    let _ = m
+    ro m HashMap[str, int] = { a: 1, b: 2 }
+    ro _ = m
 }

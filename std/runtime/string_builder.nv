@@ -56,7 +56,7 @@ export fn StringBuilder @len() -> int => @buf.len()
 // (high bits != 10xxxxxx). Manual loop — std.sort.@count_of сюда
 // нельзя import'нуть (cycle через prelude); followup [M-stringbuilder-count_of-after-sort-no-prelude].
 export fn StringBuilder @char_len() -> int {
-    let mut count = 0
+    mut count = 0
     for b in @buf {
         if (b as int & 0xC0) != 0x80 {
             count = count + 1
@@ -77,16 +77,16 @@ export fn StringBuilder @clone() -> Self =>
 
 // Проверить prefix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @starts_with(prefix str) -> bool {
-    let pbytes = prefix.as_bytes()
-    let plen = pbytes.len()
+    ro pbytes = prefix.as_bytes()
+    ro plen = pbytes.len()
     plen <= @buf.len() && @buf[0..plen].compare(pbytes) == 0
 }
 
 // Проверить suffix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @ends_with(suffix str) -> bool {
-    let sbytes = suffix.as_bytes()
-    let slen = sbytes.len()
-    let blen = @buf.len()
+    ro sbytes = suffix.as_bytes()
+    ro slen = sbytes.len()
+    ro blen = @buf.len()
     slen <= blen && @buf[blen - slen..blen].compare(sbytes) == 0
 }
 
@@ -98,7 +98,7 @@ export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.as_bytes()); @ }
 // Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
 // + multi-line continuation (Plan 91 followup parser fix).
 export fn StringBuilder mut @append(c char) -> @ {
-    let cp = c as int
+    ro cp = c as int
     if cp < 0x80 {
         @buf.push(cp as u8)
     } else if cp < 0x800 {
@@ -118,14 +118,14 @@ export fn StringBuilder mut @append(c char) -> @ {
 }
 
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.
-export fn StringBuilder mut @append(readonly arr []u8) -> @ { @buf.append(arr); @ }
+export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr); @ }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.
 // `as_bytes()` — zero-copy view; `append` в loop без indirection.
 export fn StringBuilder mut @append_repeat(s str, n int) -> @ {
     if n <= 0 { return @ }
-    let bytes = s.as_bytes()
+    ro bytes = s.as_bytes()
     @buf.reserve(bytes.len() * n)
     for _ in 0..n {
         @buf.append(bytes)

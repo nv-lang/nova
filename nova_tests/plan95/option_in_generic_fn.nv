@@ -9,8 +9,8 @@ fn check_some[T](o Option[T]) -> bool => o.is_some()
 fn check_none[T](o Option[T]) -> bool => o.is_none()
 
 test "generic-fn is_some — Option[int]" {
-    let a Option[int] = Some(1)
-    let b Option[int] = None
+    ro a Option[int] = Some(1)
+    ro b Option[int] = None
     // Turbofish обязателен — codegen не выводит T из `Option[T]`-параметра
     // (известный gap; см. fn_array_generic_smoke). Сам метод is_some
     // (Plan 95 Ф.4) от этого ограничения независим.
@@ -21,8 +21,8 @@ test "generic-fn is_some — Option[int]" {
 }
 
 test "generic-fn is_some — Option[str]" {
-    let a Option[str] = Some("hi")
-    let b Option[str] = None
+    ro a Option[str] = Some("hi")
+    ro b Option[str] = None
     assert(check_some[str](a))
     assert(check_none[str](b))
 }
@@ -31,8 +31,8 @@ fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
 fn check_err[T, E](r Result[T, E]) -> bool => r.is_err()
 
 test "generic-fn is_ok — Result[int, str]" {
-    let a Result[int, str] = Ok(1)
-    let b Result[int, str] = Err("no")
+    ro a Result[int, str] = Ok(1)
+    ro b Result[int, str] = Err("no")
     assert(check_ok[int, str](a))
     assert(check_err[int, str](b))
     assert(!check_ok[int, str](b))

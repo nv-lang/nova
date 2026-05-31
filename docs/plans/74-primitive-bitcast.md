@@ -45,9 +45,9 @@ export external fn f32.from_bits(bits u32) -> f32
 
 Пример:
 ```nova
-let f = 1.0
-let bits = f.to_bits()           // 0x3FF0000000000000
-let back = f64.from_bits(bits)   // 1.0
+ro f = 1.0
+ro bits = f.to_bits()           // 0x3FF0000000000000
+ro back = f64.from_bits(bits)   // 1.0
 ```
 
 ---
@@ -99,13 +99,13 @@ export external fn f32.from_bits(bits u32) -> f32
 
 ```nova
 // bitcast-ok.nv
-let bits = (1.0).to_bits()
+ro bits = (1.0).to_bits()
 assert bits == 0x3FF0000000000000
 
-let back = f64.from_bits(0x3FF0000000000000)
+ro back = f64.from_bits(0x3FF0000000000000)
 assert back == 1.0
 
-let neg_zero = f64.from_bits(0x8000000000000000)
+ro neg_zero = f64.from_bits(0x8000000000000000)
 assert neg_zero == 0.0  // -0.0 == 0.0 по IEEE 754
 ```
 

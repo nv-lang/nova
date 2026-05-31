@@ -14,10 +14,10 @@ type Shape
 
 
 test "for-in []UserSum + match" {
-    let shapes []Shape = [Circle(2), Square(3), Circle(5), Empty]
-    let mut total = 0
+    ro shapes []Shape = [Circle(2), Square(3), Circle(5), Empty]
+    mut total = 0
     for s in shapes {
-        let area = match s {
+        ro area = match s {
             Circle(r)    => r * r
             Square(side) => side * side
             Empty        => 0
@@ -27,11 +27,11 @@ test "for-in []UserSum + match" {
     assert(total == 38)
 }
 
-test "for-in []UserSum + if let" {
-    let shapes []Shape = [Circle(4), Empty, Square(1)]
-    let mut circle_count = 0
+test "for-in []UserSum + if ro" {
+    ro shapes []Shape = [Circle(4), Empty, Square(1)]
+    mut circle_count = 0
     for s in shapes {
-        if let Circle(_) = s {
+        if Circle(_) = s {
             circle_count = circle_count + 1
         }
     }

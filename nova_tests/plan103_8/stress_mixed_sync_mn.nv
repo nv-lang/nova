@@ -12,20 +12,20 @@
 module nova_tests.plan103_8.stress_mixed_sync_mn
 
 test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore + Barrier, M:N(4)" {
-    let n_iters   = 200
-    let mut sem = Semaphore.new(2)
-    let mut mu = Mutex.new()
-    let mut barrier = Barrier.new(4)
+    ro n_iters   = 200
+    mut sem = Semaphore.new(2)
+    mut mu = Mutex.new()
+    mut barrier = Barrier.new(4)
 
     // Counters we verify at end
-    let mut atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers
-    let mut mutex_count   = AtomicI64.new(0)  // incremented under mutex
-    let mut sem_count     = AtomicI64.new(0)  // incremented inside semaphore permit
-    let mut sem_violation = AtomicI64.new(0)  // non-zero if >2 simultaneous
-    let mut in_permit     = AtomicI64.new(0)  // current in-permit count
-    let mut barrier_count = AtomicI64.new(0)  // barrier fibers complete
+    mut atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers
+    mut mutex_count   = AtomicI64.new(0)  // incremented under mutex
+    mut sem_count     = AtomicI64.new(0)  // incremented inside semaphore permit
+    mut sem_violation = AtomicI64.new(0)  // non-zero if >2 simultaneous
+    mut in_permit     = AtomicI64.new(0)  // current in-permit count
+    mut barrier_count = AtomicI64.new(0)  // barrier fibers complete
 
-    let mut wg = WaitGroup.new()
+    mut wg = WaitGroup.new()
     wg.add(16)
 
     supervised {
@@ -44,7 +44,7 @@ test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore
             spawn {
                 for _j in 0..n_iters {
                     mu.lock()
-                    let v = mutex_count.load()
+                    ro v = mutex_count.load()
                     mutex_count.store(v + 1)
                     mu.unlock()
                 }
@@ -57,7 +57,7 @@ test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore
             spawn {
                 for _j in 0..n_iters {
                     sem.acquire()
-                    let curr = in_permit.fetch_add(1) + 1
+                    ro curr = in_permit.fetch_add(1) + 1
                     if curr > 2 {
                         sem_violation.fetch_add(1)
                     }
@@ -99,11 +99,11 @@ test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore
 test "stress: mixed sync Ð²Ð‚â€ AtomicI64 + Mutex increments agree on total" {
     // 8 fibers each increment via either AtomicI64 or under Mutex-protected
     // non-atomic counter. Final sum from both must be equal.
-    let n_each  = 500
-    let mut mu = Mutex.new()
-    let mut atomic  = AtomicI64.new(0)
-    let mut counter = AtomicI64.new(0)  // updated under mu (acts as non-atomic)
-    let mut wg = WaitGroup.new()
+    ro n_each  = 500
+    mut mu = Mutex.new()
+    mut atomic  = AtomicI64.new(0)
+    mut counter = AtomicI64.new(0)  // updated under mu (acts as non-atomic)
+    mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -119,7 +119,7 @@ test "stress: mixed sync Ð²Ð‚â€ AtomicI64 + Mutex increments agree on 
             spawn {
                 for _j in 0..n_each {
                     mu.lock()
-                    let v = counter.load()
+                    ro v = counter.load()
                     counter.store(v + 1)
                     mu.unlock()
                 }

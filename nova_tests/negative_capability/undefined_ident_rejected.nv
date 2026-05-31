@@ -9,6 +9,6 @@
 module negative_capability.undefined_ident_rejected
 
 test "undefined ident должен ловиться typechecker'ом" {
-    let r = 1 | undefined_var
+    ro r = 1 | undefined_var
     assert(r == 1)
 }

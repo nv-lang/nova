@@ -7,7 +7,7 @@
 module nova_tests.plan96.neg_range_open_in_for
 
 fn main() -> () {
-    let mut sum = 0
+    mut sum = 0
     for x in 3.. {
         sum = sum + x
     }

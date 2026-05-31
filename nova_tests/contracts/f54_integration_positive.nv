@@ -7,7 +7,7 @@ module contracts.f54_integration_positive
 fn cancel_then_square(x int, y int) -> int
     ensures result >= 0
 {
-    let cancelled = (x + y) - y  // cancelled == x (Ф.41.1)
+    ro cancelled = (x + y) - y  // cancelled == x (Ф.41.1)
     cancelled * cancelled  // x*x >= 0 (Ф.51.1)
 }
 
@@ -17,7 +17,7 @@ fn restore_then_strict(x int) -> int
     requires x >= 5
     ensures result > 0
 {
-    let restored = (x - 1) + 1  // restored == x (Ф.43.1)
+    ro restored = (x - 1) + 1  // restored == x (Ф.43.1)
     restored  // x >= 5 > 0 (Ф.30.2)
 }
 
@@ -36,8 +36,8 @@ fn div_and_mod_self(a int) -> int
     requires a >= 1
     ensures result == 1
 {
-    let q = a / a    // q == 1 (Ф.52.3)
-    let r = 0 % a    // r == 0 (Ф.45.3)
+    ro q = a / a    // q == 1 (Ф.52.3)
+    ro r = 0 % a    // r == 0 (Ф.45.3)
     q + r            // 1 + 0 == 1
 }
 
