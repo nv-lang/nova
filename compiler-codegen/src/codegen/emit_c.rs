@@ -14311,9 +14311,23 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
 
                 // Plan 110.2.1 (D188 R3): enter cancel-shield для body
-                // execution + cleanup. Bootstrap: stub call; runtime impl
-                // в Plan 110.2.x.
+                // execution + cleanup. Runtime: nova_cancel_mask_inc +
+                // deadline_ns capture (Plan 110.2.1.a + 110.2.2.a).
                 self.line(&format!("nv_consume_enter_shield({});", timeout_var));
+
+                // Plan 110.4.4.a (D185): Cleanup effect on_scope_enter
+                // dispatch. Observability-only — invoked если user handler
+                // bound, else silent no-op. Guard by NULL-check; the
+                // `_nova_handler_Cleanup` TLS slot is emitted by
+                // emit_effect_type when Cleanup decl is in scope (via
+                // std/prelude/effects.nv import-by-default). Label = type
+                // name; timeout_ms = resolved exit deadline.
+                if self.effect_schemas.contains_key("Cleanup") {
+                    self.line(&format!(
+                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
+                        type_name, timeout_var
+                    ));
+                }
 
                 // 110.1.4.d: setup fail-frame for throw catching.
                 self.line(&format!("NovaFailFrame {};", frame));
@@ -14393,6 +14407,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
+
+                // Plan 110.4.4.b (D185): Cleanup effect on_scope_exit
+                // dispatch. Pairs with on_scope_enter — fires after the
+                // user on_exit body has run (so observability sees the
+                // final outcome). Guarded by NULL-check; same scoping
+                // rules as enter.
+                if self.effect_schemas.contains_key("Cleanup") {
+                    self.line(&format!(
+                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
+                        type_name, outcome_val
+                    ));
+                }
 
                 // Plan 110.2.1: leave cancel-shield before re-propagation.
                 // Pending cancel (if any) delivered после leave_shield.
