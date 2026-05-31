@@ -6474,3 +6474,312 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
   precondition (Plan 100.4 family).
 - [Plan 49](../../docs/plans/49-cancel-throw-routing.md) — cancel-routing.
 - [Plan 47](../../docs/plans/47-supervised-cancel.md) — supervised.
+
+---
+
+## D184. Keyword refresh: `ro`/`mut`/`consume` bindings, `const` narrowed + generalized, no `let`, `readonly` → `ro`
+
+> **Статус:** 🆕 draft (Plan 114 Ф.0; финализируется в Ф.8).
+
+### Что
+
+Plan 114 фиксирует **единую keyword-поверхность** для четырёх ортогональных
+осей immutability в Nova V2:
+
+| Ось | Keyword'ы | Позиции |
+|---|---|---|
+| **Binding mutability + ownership** | `ro` (immutable), `mut` (mutable), `consume` (owned) | scope; `ro` также module-level |
+| **Hard compile-time guarantee** | `const` (strict constexpr) | module-level + scope-local + record-field (associated const) |
+| **Per-field freeze** | `ro field T` / `mut field T` / `field ro T` | внутри `type X { … }` |
+| **Comptime evaluable functions** | `const fn` (с `const` params и `-> const T` return) | top-level fn-declaration |
+
+`let` retracted. `readonly` retracted (rename → `ro`). `const` keyword
+сохранён, semantics narrowed (strict constexpr-only) + generalized (работает
+в трёх позициях с единой semantics).
+
+### Правило: binding statements
+
+```nova
+ro x = 5                            // immutable binding
+mut counter = 0                     // mutable binding
+consume sb = StringBuilder.new()    // owned binding (Plan 73.1)
+
+ro x int = 5                        // с явным типом (Plan 70 prefix-form)
+ro (a, b) = pair                    // destructuring tuple — оба immutable
+mut (lo, hi) = bounds               // destructuring tuple — оба mutable
+ro { name, age } = user             // destructuring record
+```
+
+- `ro` / `mut` — statement-leading keyword'ы в любой statement-позиции
+  (top of fn body, top of block, body for/while/match arm).
+- `=` обязателен. Bare `ro x` / `mut x` без init = `E_BINDING_REQUIRES_INIT`.
+- Destructure-pattern: leading keyword распространяется на все имена.
+  Per-element granularity (`(ro a, mut b)`) не вводится — destructure +
+  reassign если нужна асимметрия.
+- `mut X = expr` на module-level → `E_MUT_AT_MODULE_LEVEL`.
+- `consume X = expr` на module-level → `E_CONSUME_AT_MODULE_LEVEL`.
+- `ro X = expr` валиден на module-level (заменяет старый `let X = …` host
+  для non-constexpr lazy-init).
+
+### Правило: pattern-bind в условиях
+
+`if Pat = expr` / `while Pat = expr` без outer keyword. Pattern grammar
+**унифицирована** с match arm:
+
+```nova
+// Constructor / destructure pattern — bare bindings default immutable
+if Some(user) = cache.get(key) { use(user) }
+if Some(mut buf) = pool.try_take() { buf.fill(0) }    // mut inside pattern
+if (a, b) = pair { use(a, b) }
+if { name, age } = user_opt { greet(name, age) }
+
+while Some(item) = queue.pop() { handle(item) }
+while Some(mut line) = reader.read_line() { line.trim_in_place() }
+
+// Identifier pattern — REQUIRES `ro`/`mut` (footgun protection)
+if ro user = compute() { use(user) }
+if mut counter = init() { counter += 1; … }
+if user = compute() { … }                              // E_AMBIGUOUS_IDENT_PATTERN
+
+// Chains (Plan 106)
+if Some(user) = lookup(id), user.is_active {
+    process(user)
+}
+
+// else if
+if Some(a) = lookup_a() {
+    use(a)
+} else if Some(b) = lookup_b() {
+    use(b)
+}
+```
+
+- **Constructor / destructure pattern**: bare bindings default immutable;
+  `mut` explicit inside (`Some(mut x)`, `(mut a, b)`).
+- **Identifier pattern** (`if NAME = expr`): обязательно `ro`/`mut` —
+  иначе `E_AMBIGUOUS_IDENT_PATTERN` (визуально неотличимо от assignment).
+- **`consume` запрещён** в conditions — `E_CONSUME_IN_CONDITION`.
+- **`mut` outside pattern удалён**: `if mut Some(buf) = e` → use
+  `if Some(mut buf) = e` (`E_OUTER_MUT_IN_CONDITION`).
+- Chains (Plan 106) переиспользуют тот же `if_cond`.
+- Pattern grammar shared между match arm и if/while condition.
+
+### Правило: `readonly` → `ro` (keyword rename, все позиции)
+
+| Позиция | Было | Стало |
+|---|---|---|
+| Field default-immutable | `readonly id u64` | `ro id u64` |
+| Field type-modifier (mutable ref, ro content) | `field readonly T` | `field ro T` |
+| Field always-mut, ro content | `mut field readonly T` | `mut field ro T` |
+| Param explicit ro (synonym default) | `fn f(readonly b T)` | `fn f(ro b T)` |
+| Return-type | `-> readonly []u8` | `-> ro []u8` |
+| Binding type-position | `ro view readonly []u8 = …` | `ro view ro []u8 = …` |
+
+Error codes сохраняются (stable API): `E_READONLY_FIELD`, `E_READONLY_CONTENT`,
+`E_READONLY_COERCE`, `E_PARAM_NOT_MUT`. Terminology в текстах diagnostic'ов
+обновляется (`ro` вместо `readonly`).
+
+`ro view ro []u8` — **не tautology**: первое `ro` фиксирует «нельзя
+`view = …`» (binding), второе — «нельзя `view[0] = …`» (content).
+
+### Правило: `const` narrow → strict constexpr-only (Ф.9)
+
+`const X = expr` принимает **только** constexpr-eligible RHS:
+- Литералы любого primitive-типа.
+- Арифметика/bitwise/comparison над constexpr операндами.
+- Record-литерал из constexpr-полей.
+- Sum-type конструктор из constexpr args.
+- Ссылка на другой `const` (любая позиция).
+- Вызов `const fn` с constexpr args (Ф.11).
+
+**Не** runtime call, **не** effect, **не** allocation, **не** ссылка на
+runtime `ro`.
+
+Errors:
+- `E_CONST_NOT_CONSTEXPR` — RHS не constexpr-eligible.
+- `E_CONST_REFERS_NON_CONSTEXPR` — RHS ссылается на runtime binding.
+- `E_CONST_EFFECT_IN_INIT` — effect call в RHS.
+
+```nova
+// ✓ constexpr
+const MAX_PAYLOAD = 4096
+const TIMEOUT_SEC = 60 * 5
+const GREETING = "hello"
+const ORIGIN Point = { x: 0.0, y: 0.0 }
+
+// Lazy-init non-constexpr → теперь `ro`
+ro COMPUTED Point = make_point(7.0, 14.0)
+ro NOW = Time.now()
+
+// ✗ E_CONST_NOT_CONSTEXPR
+const COMPUTED Point = make_point(7.0, 14.0)
+```
+
+**Strict module-level partition.** На **module-level** между `const` и `ro`
+не выбор, а обязательное разделение по constexpr-eligibility:
+
+```nova
+ro MAX = 4096                              // ✗ E_RO_FOR_CONSTEXPR_PREFER_CONST
+const COMPUTED = make_point(7, 14)         // ✗ E_CONST_NOT_CONSTEXPR
+```
+
+Scope-level — без strict-правила (`ro x = 5` и `const x = 5` оба валидны,
+разница в гарантиях).
+
+### Правило: `const` generalization (Ф.10)
+
+`const` валиден в **трёх позициях** с единой semantics (strict constexpr):
+
+```nova
+// 1. Module-level (как сегодня)
+const MAX = 4096
+
+// 2. Scope-local (внутри fn body / block)
+fn parse_header(data ro []u8) -> Header {
+    const HEADER_SIZE = 16
+    ro buf [HEADER_SIZE]u8 = ...
+    ...
+}
+
+// 3. Record-field — associated constant
+type Config {
+    const VERSION int = 2                   // не в instance layout
+    const MAX_PEERS int = 1024
+    name str                                 // instance field
+    timeout Duration
+}
+
+Config.VERSION                              // ✓ 2 (namespace access)
+ro c = Config { name: "alice", timeout: SECOND }
+c.VERSION                                   // ✗ E_CONST_INSTANCE_ACCESS
+```
+
+Sum-type assoc const и generic-type assoc const (T-independent +
+T-dependent с per-monomorphization codegen) — детали в [D200](02-types.md#d200).
+
+Modifier-conflicts:
+- `mut const` / `const mut` → `E_CONST_MUT_CONFLICT`.
+- `ro const` / `const ro` → `E_CONST_RO_REDUNDANT`.
+- `consume const` → `E_CONST_CONSUME_CONFLICT`.
+- `export const` — ✓ (module-level и record-field).
+
+### Правило: `const fn` (Ф.11)
+
+```nova
+fn calc(const a int, const b char) -> const int {
+    const c = b as int
+    a + c * 10
+}
+
+const RESULT = calc(5, 'A')                 // ✓ comptime → 655
+ro buf [calc(2, '0')]u8 = ...               // ✓ array size 482
+```
+
+V1: all-or-nothing const params/return; body subset (literals, arithmetic,
+`as`-casts, const-references, local `const`, final expression, calls на
+другие `const fn`); no if/match/loop/mut/consume/effect/alloc/recursion/
+generic в V1. Детали — [D199](#d199).
+
+### Правило: Return-type defaults + `@`-inheritance (D176 amend)
+
+Асимметрия с параметрами **намеренная**:
+- Param default = `ro` (defensive — callee без права мутации).
+- Return default = mutable (permissive — caller owns).
+
+```nova
+fn make_buf(n int) -> []u8                  // -> mutable []u8 by default
+fn read_view(s str) -> ro []u8              // explicit ro в возврате
+```
+
+**`-> @` (self-return, D181)** наследует мутируемость от receiver:
+
+| Receiver | Return `-> @` |
+|---|---|
+| `fn T @method() -> @` (implicit ro receiver) | `ro @` |
+| `fn T mut @method() -> @` | mut `@` |
+| `fn T consume @method() -> @` | `E_CONSUME_RECEIVER_RETURNS_AT` |
+
+`-> @` без receiver-method context → `E_AT_RETURN_OUTSIDE_METHOD`.
+
+### Grammar (precise diff)
+
+```ebnf
+// Старое (retracted)
+binding_stmt   ::= "let" "mut"? IDENT type_opt "=" expr
+                 | "consume" IDENT type_opt "=" expr
+if_let_stmt    ::= "if" "let" pattern "=" expr block ("else" else_branch)?
+while_let_stmt ::= "while" "let" pattern "=" expr block
+field_decl     ::= ("readonly" | "mut")? "field"? IDENT type
+type_modifier  ::= "readonly" type
+param_decl     ::= ("mut" | "readonly" | "consume")? IDENT type
+
+// Новое
+binding_stmt   ::= ("ro" | "mut" | "consume") bind_lhs "=" expr
+                 | const_decl
+bind_lhs       ::= IDENT type_opt
+                 | "(" bind_lhs ("," bind_lhs)* ")"
+                 | "{" IDENT ("," IDENT)* "}"
+
+const_decl     ::= "export"? "const" IDENT type_opt "=" expr
+
+module_item    ::= ...
+                 | "export"? "ro" IDENT type_opt "=" expr
+                 | const_decl
+
+if_stmt        ::= "if" if_cond ("," if_cond)* block ("else" else_branch)?
+while_stmt     ::= "while" if_cond block
+if_cond        ::= cond_pattern "=" expr
+                 | bool_expr
+cond_pattern   ::= ("ro" | "mut") IDENT type_opt
+                 | constructor_pattern
+                 | tuple_pattern
+                 | record_pattern
+constructor_pattern ::= TYPE_PATH "(" pattern_arg ("," pattern_arg)* ")"
+                      | TYPE_PATH
+pattern_arg    ::= "mut"? IDENT type_opt
+
+field_decl     ::= ("ro" | "mut")? "field"? IDENT type
+                 | "mut" "field"? IDENT "ro" type
+                 | "field"? IDENT "ro" type
+                 | const_decl
+type_modifier  ::= "ro" type
+param_decl     ::= ("mut" | "ro" | "consume" | "const")? IDENT type
+fn_return      ::= "->" "const"? type
+```
+
+**Tokenizer изменения:** новый keyword token `KW_RO`; `KW_LET`/`KW_READONLY`
+сохранены как recognized-but-deprecated (parser отвергает с
+`E_KW_REMOVED_LET` / `E_KW_REMOVED_READONLY`).
+
+### Сравнение с mainstream
+
+| Язык | Immutable | Mutable | Pattern-bind-in-cond | Strength |
+|---|---|---|---|---|
+| Go | `const X = …` (comp-time) / нет immutable runtime | `var X` / `X :=` | `if v, ok := m[k]; ok` | walrus `:=` cond compact |
+| Rust | `let x = …` | `let mut x = …` | `if let Some(x) = e` | `let` повсюду, mut явный |
+| TypeScript | `const x = …` | `let x = …` | `if (e !== null) const x = e` | const/let несимметрия |
+| Kotlin | `val x = …` | `var x = …` | `if (e is X) /* smart cast */` | symmetric pair |
+| Java | `final var x = …` | `var x = …` | `if (e instanceof X x)` | `final` verbose |
+| Swift | `let x = …` | `var x = …` | `if case let .some(x) = e` | symmetric pair |
+| **Nova V1** (was) | `let x = …` | `let mut x = …` | `if let Some(x) = e` | Rust-clone |
+| **Nova V2** | **`ro x = …`** | **`mut x = …`** | **`if ro x = …`** / **`if Some(x) = e`** | symmetric `ro`/`mut`/`consume` triad + ortho `const` + pattern-grammar unification |
+
+### Acceptance
+
+См. Plan 114 [A1-A16](../../docs/plans/114-keyword-refresh-ro-mut-no-let.md#acceptance-criteria).
+
+### Связь
+
+- [D27](#d27) — `[N]T` size, small wording-update «`const N` from any visible scope».
+- [D30](#d30) — naming convention SCREAMING_SNAKE_CASE для `const`.
+- [D32](02-types.md#d32) — default immutable amend.
+- [D33](#d33) — three immutability axes (rewritten Ф.8).
+- [D34](#d34) — `if`/`while` pattern grammar amend.
+- [D36](02-types.md#d36) — field modifiers amend.
+- [D102](#d102) — default-param-values reference `const` (compat).
+- [D175](02-types.md#d175) — `ro field` full freeze (rename).
+- [D176](02-types.md#d176) — `ro T` type-modifier + return defaults + `@`-inheritance (rename + Plan 114 раздел).
+- [D180](05-memory.md#d180) — `consume` binding (cross-ref).
+- [D199](#d199) — `const fn` comptime evaluable functions (Plan 114 Ф.11).
+- [D200](02-types.md#d200) — associated constants (Plan 114 Ф.10).
+- [Plan 114](../../docs/plans/114-keyword-refresh-ro-mut-no-let.md) — master plan.
