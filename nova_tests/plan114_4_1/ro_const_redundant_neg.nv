@@ -1,0 +1,14 @@
+// Plan 114.4.1 (D200) NEG: ro + const field — redundant.
+
+// EXPECT_COMPILE_ERROR E_CONST_RO_REDUNDANT
+
+module nova_tests.plan114_4_1.ro_const_redundant_neg
+
+type Config {
+    ro const X int = 5
+    name str
+}
+
+test "ro const redundant" {
+    assert(true)
+}

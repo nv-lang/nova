@@ -1,0 +1,16 @@
+// Plan 114.4.1 (D200) NEG: instance.NAME для assoc const → error.
+
+// EXPECT_COMPILE_ERROR E_CONST_INSTANCE_ACCESS
+
+module nova_tests.plan114_4_1.instance_access_neg
+
+type Config {
+    const VERSION int = 2
+    name str
+}
+
+test "instance access на assoc const rejected" {
+    ro c = Config { name: "x" }
+    ro v = c.VERSION
+    assert(v == 2)
+}

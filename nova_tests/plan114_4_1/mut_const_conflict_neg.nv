@@ -1,0 +1,14 @@
+// Plan 114.4.1 (D200) NEG: mut + const field — conflict.
+
+// EXPECT_COMPILE_ERROR E_CONST_MUT_CONFLICT
+
+module nova_tests.plan114_4_1.mut_const_conflict_neg
+
+type Config {
+    mut const X int = 5
+    name str
+}
+
+test "mut const conflict" {
+    assert(true)
+}
