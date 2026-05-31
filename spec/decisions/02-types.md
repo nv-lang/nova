@@ -6608,6 +6608,30 @@ forward-compatible, но не реализуется в V1.
 V1 ограничение: только `null ptr` valid. `null int`, `null str`, `null
 SomeRecord` — `E_NULL_LITERAL_REQUIRES_PTR`.
 
+> ⚠ **INTERIM construct (Plan 115 V1 only).** `null ptr` дублирует
+> функциональность `None` из `Option[T]` (sum-type из D-блока Option/
+> Result). Идиоматический Nova-путь — `Option[ptr]` с явной `None` /
+> `Some(p)` диспозицией и compiler-enforced null check'ом.
+>
+> **Почему `null ptr` существует в V1.** `Option[ptr]` в bootstrap
+> представлен как `NovaOpt_nova_ptr` struct (tag + value) — НЕ
+> ABI-совместим с raw `void*` из C library. FFI shim пришлось бы
+> оборачивать pointer'ы в Option struct'у — лишний overhead + struct
+> return convention вместо register return. `null ptr` = bitwise 0 =
+> идентично C `NULL` → zero-cost FFI.
+>
+> **Plan 118 NPO (Null Pointer Optimization).** После Plan 118 V2
+> добавит `Option[*T]` с NPO codegen — `None` представляется как
+> bitwise 0, `Some(p)` как `p`. Zero-cost + type-safe + ABI-compatible
+> одновременно. См. `[[project-plan118-status]]` §«Option[*T] NPO
+> codegen».
+>
+> **После Plan 118 landed: `null ptr` полностью удаляется** —
+> retract из spec, parser emit'ит `E_NULL_LITERAL_REPLACED_BY_OPTION`
+> с migration hint к `Option[ptr] / None`. См. marker
+> `[M-115-null-ptr-to-option-after-npo]` в `docs/simplifications.md`
+> для migration tracking.
+
 #### Type-checker rules
 
 | Операция | Результат | Diagnostic |

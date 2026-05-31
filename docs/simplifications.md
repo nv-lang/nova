@@ -27852,6 +27852,14 @@ pre-Plan-109 API.  Документированы в их followups.
 - 🟡 `[M-115-newtype-constructor]` — D52 tuple newtype `type X(ptr)` constructor + `.0` field access. V1 ships record form `type X { value ptr }` equivalent. Bootstrap codegen TypeDeclKind::Newtype не имеет call-site constructor — `SqHandle(value)` parses как Call{Ident("SqHandle"), [value]} и codegen эмитит nova_fn_SqHandle (undefined symbol). Followup adds: type-check accepts NAME(v) call if NAME registered as Newtype; codegen emits cast `((Nova_NAME)(v))`; `.0` member access on Newtype value → identity (no-op typedef).
 - 🟡 `[M-115-external-fn-method]` — generic / receiver-method external fn в user modules. V1 поддерживает только free external fn `external fn name(args) -> ret`. Receiver-method `external fn Type.method() -> ...` пока gated.
 - 🟡 `[M-115-ffi-build-pipeline]` — `nova build --c-shim path/to/file.c` CLI для user-provided shim linking. V1 shims живут в `compiler-codegen/nova_rt/` (рядом с stdlib shims), требует rebuild Nova compiler. Production-grade: separate build-step + cargo-feature toggle для C linking.
+- 🔴 `[M-115-null-ptr-to-option-after-npo]` — **HARD-RETRACT** `null ptr` literal после Plan 118 V2 lands `Option[*T]` NPO codegen. **План на retract (НЕ deprecation):**
+  1. Plan 118 V2 добавляет `Option[*T]` с Null Pointer Optimization — `None` = bitwise 0 (idintично C `NULL`), `Some(p)` = `p`. Zero-cost + type-safe + ABI-compatible одновременно. Закрывает причину existence `null ptr`.
+  2. После landed: migrate user code `null ptr` → `None` (Option[ptr]) + `p == null ptr` → `p.is_none()`. Compiler ships codemod tool в `nova migrate plan118-null-ptr-retract`.
+  3. Parser deprecation cycle: 1 release с `W_NULL_PTR_DEPRECATED` warning + migration hint; следующий release — hard error `E_NULL_LITERAL_REPLACED_BY_OPTION` (retract: lexeme `null` снова становится Ident, ExprKind::NullPtrLit удаляется из AST).
+  4. D214 spec amend: §«null ptr литерал» retract'нут, replaced секцией «migration to `Option[*T]` (Plan 118)». Cross-ref к Plan 118 NPO codegen.
+  5. nova_rt/plan115_ffi_test.h shim updated: tuple `(Option[ptr], int)` вместо `(ptr, int)`. T2 fixtures rewritten.
+  
+  **Why hard-retract, not deprecation co-existence:** Nova принцип single mechanism для "нет значения" (см. `[[feedback_nova_syntax]]` — explicit > implicit, AI-first). `null ptr` дублирует `None` — оставлять оба → confusion + ambiguity при code review / LLM-generation. Hard cutover одним merge с codemod tool.
 
 **Codegen architectural changes (Ф.2):**
 - nova_ptr distinct typedef (`typedef void* nova_ptr`) — mirror Plan 70.3 nova_char rationale; distinguishable от erased generic-T void* placeholder.
