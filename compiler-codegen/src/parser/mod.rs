@@ -3473,6 +3473,16 @@ impl Parser {
     /// granularity (`(ro a, mut b)`) НЕ вводится (D184 «Out of scope V1»).
     fn parse_ro_mut_binding(&mut self, is_mut: bool) -> Result<LetDecl, Diagnostic> {
         let start = self.peek().span;
+        // Plan 33.3 (D24) carry-over: `ghost ro X = …` / `ghost mut X = …`
+        // — spec-only binding. Контекстный keyword `ghost` перед ro/mut.
+        let is_ghost = if let TokenKind::Ident(n) = &self.peek().kind {
+            if n == "ghost" && matches!(self.peek_at(1).kind,
+                TokenKind::KwRo | TokenKind::KwMut)
+            {
+                self.bump();
+                true
+            } else { false }
+        } else { false };
         if is_mut {
             self.expect(&TokenKind::KwMut)?;
         } else {
@@ -3519,7 +3529,7 @@ impl Parser {
             ty,
             value,
             span,
-            is_ghost: false,
+            is_ghost,
             consume: false,
         })
     }
@@ -7143,6 +7153,15 @@ impl Parser {
             // Plan 33.3 (D24): `ghost let` — контекстный keyword `ghost`.
             TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwLet) => {
                 let l = self.parse_let_decl()?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            // Plan 114 (D184): `ghost ro X` / `ghost mut X` — spec-only binding.
+            TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwRo) => {
+                let l = self.parse_ro_mut_binding(false)?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwMut) => {
+                let l = self.parse_ro_mut_binding(true)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
             TokenKind::KwReturn => {

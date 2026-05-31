@@ -72,7 +72,7 @@ fn describe(opt: Option[int]) -> str {
 // ─── For loop ────────────────────────────────────────────────────────────────
 
 fn sum_range(n: int) -> int {
-    let mut total = 0
+    mut total = 0
     for i in 0..n {
         total = total + i
     }
@@ -87,8 +87,8 @@ type Point {
 }
 
 fn distance(p: Point) -> f64 {
-    let fx = p.x as f64
-    let fy = p.y as f64
+    ro fx = p.x as f64
+    ro fy = p.y as f64
     (fx * fx + fy * fy)   // simplified (no sqrt in stdlib yet)
 }
 
@@ -97,19 +97,19 @@ fn distance(p: Point) -> f64 {
 fn main() [Io] {
     greet_io("world")
 
-    let sum = add(1, 2)
+    ro sum = add(1, 2)
     println(`1 + 2 = ${sum}`)
 
-    let desc = describe(Some(42))
+    ro desc = describe(Some(42))
     println(desc)
 
-    let total = sum_range(10)
+    ro total = sum_range(10)
     println(`sum 0..10 = ${total}`)
 
-    let p = Point { x: 3, y: 4 }
+    ro p = Point { x: 3, y: 4 }
     println(`distance: ${distance(p)}`)
 
     // Demonstrate LSP: hover over these to see types in supporting editors
-    let greeting: str = greet("Nova")
+    ro greeting: str = greet("Nova")
     println(greeting)
 }
