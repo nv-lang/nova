@@ -25712,4 +25712,99 @@ Status:   🟢 Done — Ф.2 + Ф.7.1 + Ф.7.2 + Ф.7.3 closed + Plan 115 spawne
      для syntax — Ф.7.1 grammar 0.2.0 обновлён отдельно).
 
 Открытые markers всё закрыто. Plan 114 family complete (core + Ф.2 +
-Ф.7.1-3). Ф.9/Ф.10/Ф.11 carry'нуты в Plan 115 как next-up.
+Ф.7.1-3). Ф.9/Ф.10/Ф.11 carry'нуты в Plan 114.4 как next-up.
+
+================================================================================
+Plan 120 + Plan 118 + Plan 114.4 (2026-05-31, design session, planning only)
+================================================================================
+
+Design-only session: написаны три plan-документа (no implementation), Plan
+115 collision разрешён. Все commits на main.
+
+1. Plan 120 — Named tuples + value/reference allocation contract (commit
+   ffc09d773f2):
+   - Reopens Plan 59 Ф.7.4 rejection (named tuples) с corrected reasoning:
+     tuple и record имеют fundamentally different allocation semantics
+     (stack value vs heap reference), не «почти идентичны» как rejected.
+   - Adds `type Point(x f64, y f64)` named tuple syntax.
+   - Documents explicit allocation contract: `()` = stack value, `{}` = heap
+     reference (currently scattered + implicit в Spec — Plan 120 makes
+     explicit).
+   - D215 NEW; amends D52 (extended tuple syntax) / D32 (value/reference
+     allocation contract) / D123 (named field codegen + access).
+   - 5 фаз, ~½-1 dev-day. Sonnet 4.6 HIGH recommended.
+   - Worktree convention: nova-p120.
+
+2. Plan 115 collision resolution (commit 6bb77106eaa):
+   - Discovered same-day collision: два plan-файла claimed номер 115:
+     - 115-const-narrow-generalize-fn.md (const story extract из Plan 114
+       Ф.9-Ф.11, earlier today commit 9ed0220f538)
+     - 115-ptr-type-and-tuple-ffi.md (foundational FFI, later commit
+       56a10cf5e7a)
+   - Resolution: const story renamed → Plan 114.4 (logical sub-plan Plan
+     114 keyword refresh); FFI остаётся Plan 115 (Plan 91.12/116/118 уже
+     ссылаются как hard dependency).
+   - git mv 115-const-narrow-* → 114.4-const-narrow-*; replace all
+     "Plan 115" / "[M-115-*]" / "nova-p115" / "plan-115" → "Plan 114.4"
+     etc в renamed file.
+   - Plan 114 main updated: sub-plan numbering note (3 separate extracts
+     114.1/114.2/114.3 → 1 bundle 114.4 — simplification, всё ещё split
+     possible later); std/tls reservation outdated (std/tls = Plan 116).
+
+3. Plan 118 — Typed pointers (*T family) + unsafe model + NPO (commit
+   ee7ba959f48):
+   - Language addition после Plan 115 v1. Plan 115 v1 даёт opaque handles
+     (`type Handle(ptr)`); Plan 118 закрывает typed memory work (typed
+     buffer FFI, memory-mapped I/O, manual linked structures, out-params,
+     perf-critical hot loops).
+   - Finalized после ~10-round design discussion (lifetimes vs GC,
+     auto-promote, unsafe model, NPO, function pointers, casts, comparison,
+     forbidden ops).
+   - *T family типов: *T (= *ro T default), *ro T, *mut T, *unsafe T (после
+     арифметики).
+   - Binding mut rule: `mut p *T` → `*mut T` по default (mut binding implies
+     mut pointer); `ro p *mut T` valid edge case.
+   - Chain order: modifier перед `*` относится к ЭТОМУ pointer'у (Rust
+     grammar; `*mut *ro T` = mut outer на ro inner).
+   - &value operator + escape analysis с auto-promote: stack values
+     (primitives, tuples) auto-promoted в heap если escape (return / closure
+     capture / heap-field store) — Go-style; vs Rust lifetimes (у нас GC
+     + auto-promote заменяет lifetime tracking).
+   - Auto-deref *p (one level) + p.field (Go-style) только в unsafe context.
+   - Pointer arithmetic только в `unsafe { }` block → результат *unsafe T;
+     deref *unsafe T требует ещё один unsafe wrap.
+   - Option[*T] + NPO codegen: single-pointer layout (8 bytes, не tagged
+     struct); pattern match = null-check; direct C-FFI compatible (malloc/
+     fopen/dlopen returns).
+   - unsafe { } block + #unsafe attribute: Rust-style no propagation up
+     (caller wraps в `unsafe { }` для calling #unsafe fn).
+   - D2 AMEND: keyword `unsafe` restored as syntactic sugar для built-in
+     effect handler (`with unsafe_handler { ... }`). D2 spirit preserved
+     (effect mechanics под капотом).
+   - *fn(...) function pointers для FFI (no env); fn(...) для Nova closures
+     (vtable + env). Cast captureless fn → *fn ok.
+   - Casts: p as usize safe; usize as *T unsafe (reverse cast).
+   - Compare: ==/!= safe (robust к moving GC); </> unsafe (cross-allocation
+     UB + GC compaction concern).
+   - &record.field только в unsafe (GC compaction concern); &arr[i] forbidden
+     (array realloc/move).
+   - NO `null` literal (use `None`); NO `undefined` (use `?*T = None + init`
+     pattern).
+   - `ptr` (Plan 115) redefine: `type ptr ?*unsafe ()` newtype — D214 amend,
+     backward-compatible.
+   - D-блоки: D216 NEW + D2 AMEND + D214 AMEND.
+   - 9 фаз (Ф.0..Ф.8), ~7-10 dev-day. Opus 4.7 + Thinking ON (safety-critical;
+     pointer model errors = silent memory corruption). Worktree nova-p118.
+   - Q-block ~17 deferred markers: lifetimes Rust-style (permanently out
+     — GC + auto-promote replaces), borrow checker, XOR aliasing, as_ptr/
+     with_ptr arrays (V2), AtomicPtr[T] (отдельный sub-plan), *[N]T fixed
+     arrays (Plan 121 future), vararg FFI, volatile r/w, offsetof, strict
+     provenance, alignment attrs, inline asm, undefined syntax, out params
+     syntax, Pin API, std/ptr helpers, bindgen tool.
+
+Открытые planning items для дальнейших sessions:
+- Plan 120 implementation (mechanical, ~½-1 day).
+- Plan 118 implementation (~7-10 day language addition).
+- Plan 114.4 implementation (~1.5-2 day const story).
+- Plan 121 (future) — *[N]T fixed arrays language addition (out of Plan 118
+  scope).
