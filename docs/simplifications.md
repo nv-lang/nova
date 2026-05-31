@@ -27827,3 +27827,27 @@ pre-Plan-109 API.  Документированы в их followups.
 **Smoke regression:** 107 PASS / 1 pre-existing fail.
 
 **Design lesson:** Plan 114.4 (renamed from 115) — 3-фазный план оценен 1.5-2 dev-day. Реалистично в одну Claude-сессию помещается Ф.0+Ф.1+Ф.2-scope. Ф.2 assoc const + Ф.3 const fn — substantial subsystems каждый ~½-1 dev-day, extract per safety hatch design plan'а. Plan 114.4.1 doc — следующая session.
+
+---
+
+## Plan 114.4.1 — Associated constants (partial, 2026-06-01)
+
+**Status:** 🟢 PARTIAL CLOSURE. Plan 114.4.1 Ф.1 (record-field assoc const) closed. Ф.2 sum-type + Ф.3 generic per-mono → Plan 114.4.1.1 / Plan 114.4.1.2 per safety hatch.
+
+**CLOSED markers:**
+- ✅ `[M-114.4.1-record-field-assoc]` — record-field assoc const с namespace `Type.NAME` access, E_CONST_INSTANCE_ACCESS reject, E_CONST_FIELD_IN_LITERAL reject, mut/ro/consume + const conflicts.
+
+**OPEN markers extracted:**
+- 🟡 `[M-114.4.1-sum-type-assoc]` → Plan 114.4.1.1. Sum-type bodies требуют новый parser-design (variant body vs sum-level body separator).
+- 🟡 `[M-114.4.1-generic-per-mono]` → Plan 114.4.1.2 (safety hatched). Generic T-independent + T-dependent monomorphization integration.
+- 🟡 `[M-114.4.1-doc-gen]` — `nova doc` regen для type page.
+- 🟡 `[M-114.4.1-cross-module-export-const]` — full cross-module export const tests.
+- 🟡 `[M-114.4.1-per-variant-const]` — per-variant assoc consts.
+
+**Acceptance (Ф.1 slice):** A6 ✓ + A7 ✓ + A8 ✓ + A9 ✓; A10 partial; A11-A15 deferred.
+
+**Test coverage (5/5 plan114_4_1 PASS):** assoc_const_basic_ok (4 tests) + 4 negatives.
+
+**Smoke regression:** 87 PASS / 1 pre-existing (basics+syntax+plan114+plan114_4+plan114_4_1+plan73+plan108). Zero induced.
+
+**Design lesson:** Record-field assoc const fit'нул в session; sum-type требует syntax design (variant body vs sum-level), generic per-mono требует Plan 70.5 deep integration — оба extract per safety hatch. Closes [M-114.4-assoc-const] partial; sub-extracts держат остальное.
