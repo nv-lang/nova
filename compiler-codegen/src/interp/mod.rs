@@ -2029,6 +2029,28 @@ impl Interpreter {
                 };
                 Ok(Flow::Return(v))
             }
+            // Plan 114.4 Ф.2: scope-local const — interp uses match_pattern
+            // helper for the Ident binding (consistent с Let-handling).
+            Stmt::Const(decl) => {
+                let v = match self.eval_expr(&decl.value, env)? {
+                    Flow::Value(v) => v,
+                    flow => return Ok(flow),
+                };
+                use crate::ast::Pattern;
+                let pat = Pattern::Ident {
+                    name: decl.name.clone(),
+                    span: decl.span,
+                    is_mut: false,
+                };
+                let local = env.clone();
+                if !self.match_pattern(&pat, &v, &local) {
+                    return Err(Diagnostic::new(
+                        format!("const `{}` binding failed", decl.name),
+                        decl.span,
+                    ));
+                }
+                Ok(Flow::Value(Value::Unit))
+            }
             Stmt::Break(_) => Ok(Flow::Break),
             Stmt::Continue(_) => Ok(Flow::Continue),
             Stmt::Throw { value, .. } => {

@@ -419,6 +419,12 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
             }
             collect_expr(&d.value, out);
         }
+        Stmt::Const(d) => {
+            if let Some(t) = &d.ty {
+                collect_tr(t, out);
+            }
+            collect_expr(&d.value, out);
+        }
         Stmt::Assign { target, value, .. } => {
             collect_expr(target, out);
             collect_expr(value, out);
@@ -1020,6 +1026,7 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
     match s {
         Stmt::Expr(e) => walk_expr_lints(e, out),
         Stmt::Let(d) => walk_expr_lints(&d.value, out),
+        Stmt::Const(d) => walk_expr_lints(&d.value, out),
         Stmt::Assign { target, value, .. } => {
             walk_expr_lints(target, out);
             walk_expr_lints(value, out);

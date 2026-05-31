@@ -38,13 +38,18 @@ test "const с D55 record-coercion" {
 }
 
 
-// === 3. Const с вызовом функции ===
+// === 3. Const с record-литералом (Plan 114.4 Ф.1: constexpr-eligible) ===
+//
+// Plan 14 Ф.2 ранее разрешал `const COMPUTED = make_point(7.0, 14.0)` —
+// lazy-init runtime call. Plan 114.4 Ф.1 retracted lazy-init из const;
+// non-constexpr → E_CONST_NOT_CONSTEXPR. Эквивалентная constexpr форма —
+// record-литерал из literal-полей (то же значение, без runtime call).
+// Lazy-init не используется в bootstrap'е (followup [M-114.4-ro-module-lazy-init]
+// для `ro X = compute()` module-level — отдельная work item).
 
-fn make_point(a f64, b f64) -> Point => { x: a, y: b }
+const COMPUTED Point = Point { x: 7.0, y: 14.0 }
 
-const COMPUTED Point = make_point(7.0, 14.0)
-
-test "const с function call" {
+test "const с constexpr record-literal" {
     assert(COMPUTED.x == 7.0)
     assert(COMPUTED.y == 14.0)
 }

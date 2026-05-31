@@ -534,6 +534,144 @@ struct ArityInfo {
     decl_span: Option<Span>,
 }
 
+/// Plan 114.4 Ф.1: constexpr-eligibility check для `const X = expr`.
+///
+/// Проверяет рекурсивно что RHS — literal-eligible: literals + арифметика
+/// над constexpr operands + record/tuple/array literals из constexpr-полей +
+/// references на другие top-level `const`.
+///
+/// Возвращает `Err(Diagnostic)` если non-constexpr:
+/// - `E_CONST_NOT_CONSTEXPR` — generic non-constexpr expr.
+/// - `E_CONST_REFERS_NON_CONSTEXPR` — Ident на non-const binding.
+/// - `E_CONST_EFFECT_IN_INIT` — runtime call / effect / allocation.
+///
+/// `known_consts` — set имен top-level `const` (для Ident-резолва).
+fn check_const_constexpr(
+    expr: &crate::ast::Expr,
+    known_consts: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::ExprKind as E;
+    match &expr.kind {
+        // Literals — всегда constexpr.
+        E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
+        | E::CharLit(_) | E::UnitLit => Ok(()),
+        // Unary над constexpr operand.
+        E::Unary { operand, .. } => check_const_constexpr(operand, known_consts),
+        // Binary над constexpr operands.
+        E::Binary { left, right, .. } => {
+            check_const_constexpr(left, known_consts)?;
+            check_const_constexpr(right, known_consts)
+        }
+        // Tuple-литерал — каждый элемент constexpr.
+        E::TupleLit(elems) => {
+            for e in elems {
+                check_const_constexpr(e, known_consts)?;
+            }
+            Ok(())
+        }
+        // Array-литерал (без spread) — каждый элемент constexpr.
+        E::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    crate::ast::ArrayElem::Item(e) => check_const_constexpr(e, known_consts)?,
+                    crate::ast::ArrayElem::Spread(_) => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed \
+                             в const initialiser — runtime operation. Inline \
+                             literals или use `ro X = …` for runtime value \
+                             (Plan 114.4 Ф.1 D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        // Record-литерал — каждое поле constexpr.
+        E::RecordLit { fields, .. } => {
+            for f in fields {
+                if f.is_spread {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed в \
+                         const-record initialiser (Plan 114.4 Ф.1).".to_string(),
+                        expr.span,
+                    ));
+                }
+                match &f.value {
+                    Some(v) => check_const_constexpr(v, known_consts)?,
+                    None => {
+                        // Shorthand `{ name }` — refers binding called `name`.
+                        if !known_consts.contains(&f.name) {
+                            return Err(Diagnostic::new(
+                                format!(
+                                    "[E_CONST_REFERS_NON_CONSTEXPR] field shorthand `{}` \
+                                     в const-record refers binding which is not a \
+                                     top-level const. Use explicit `{}: <literal>` либо \
+                                     declare referenced `const {}` (Plan 114.4 Ф.1).",
+                                    f.name, f.name, f.name
+                                ),
+                                expr.span,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        // Ident — должен ссылаться на другой known top-level `const`.
+        E::Ident(name) => {
+            if known_consts.contains(name) {
+                Ok(())
+            } else {
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_REFERS_NON_CONSTEXPR] `const` initialiser \
+                         refers `{}` which is not a top-level `const`. Only \
+                         literals + arithmetic on literals + record/tuple/array \
+                         literals из constexpr fields + references to other \
+                         `const` are allowed. For runtime / lazy-init use \
+                         `ro {} = …` (Plan 114.4 Ф.1 / D199).",
+                        name, name
+                    ),
+                    expr.span,
+                ))
+            }
+        }
+        // Path (e.g. `Module.NAME` cross-module const, или `LOCAL.field`
+        // member-access на local-const). V1 conservative: запрещаем все
+        // Path формы в const-RHS (cross-module — followup
+        // [M-114.4-cross-module-const-ref]; field-access на local-const —
+        // runtime-only, эквивалент `ro X = LOCAL.field`).
+        E::Path(_) => Err(Diagnostic::new(
+            "[E_CONST_NOT_CONSTEXPR] path expression (Module.NAME / Type.field) \
+             not allowed в `const` initialiser в V1. Cross-module const refs — \
+             followup [M-114.4-cross-module-const-ref]. Field access на local \
+             const → use `ro X = …` (runtime ok) (Plan 114.4 Ф.1).".to_string(),
+            expr.span,
+        )),
+        // Function calls / method calls / member access / index / etc. —
+        // runtime по дефолту. const fn (Plan 114.4 Ф.3) добавит исключение.
+        E::Call { .. } | E::Member { .. } | E::Index { .. }
+        | E::InterpolatedStr { .. } | E::MapLit { .. } => Err(Diagnostic::new(
+            "[E_CONST_NOT_CONSTEXPR] non-constexpr expression в `const` \
+             initialiser — only literals, arithmetic over literals, \
+             record/tuple/array literals из constexpr fields, и references \
+             на другие top-level `const` are allowed. Runtime calls / member \
+             access / interpolation / map literals — not constexpr. Use \
+             `ro X = …` for runtime / lazy-init value, либо `const fn` для \
+             comptime function (Plan 114.4 Ф.1 / D199).".to_string(),
+            expr.span,
+        )),
+        // Любые другие конструкции (if, match, blocks, closures, etc.) — runtime.
+        _ => Err(Diagnostic::new(
+            "[E_CONST_NOT_CONSTEXPR] non-constexpr expression в `const` \
+             initialiser (control flow / closures / blocks not allowed). \
+             Use `ro X = …` для runtime / lazy-init value (Plan 114.4 Ф.1).".to_string(),
+            expr.span,
+        )),
+    }
+}
+
 /// Plan 79: проход типовой полноты type-checker'а.
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
@@ -727,6 +865,23 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(t, &empty, errors);
                     }
                     self.walk_expr(&cd.value, &empty, errors);
+                    // Plan 114.4 Ф.1: strict constexpr-only enforcement.
+                    // `const X = expr` принимает только literal-eligible
+                    // RHS — арифметику над literals, record-literal из
+                    // constexpr-fields, references на другие const.
+                    // Runtime calls / effects / allocations / non-const
+                    // refs → E_CONST_NOT_CONSTEXPR.
+                    let known_consts: HashSet<String> = module
+                        .items
+                        .iter()
+                        .filter_map(|it| match it {
+                            Item::Const(c) => Some(c.name.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if let Err(d) = check_const_constexpr(&cd.value, &known_consts) {
+                        errors.push(d);
+                    }
                 }
                 Item::Test(t) => {
                     let empty = HashSet::new();
@@ -1171,6 +1326,20 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 self.walk_expr(&d.value, gs, errors);
             }
+            // Plan 114.4 Ф.2: scope-local const — strict constexpr enforce.
+            // Same eligibility rule as module-level const (check_const_constexpr).
+            // known_consts здесь conservatively empty (referencing другие
+            // scope-locals — followup [M-114.4-scope-const-chain]).
+            Stmt::Const(d) => {
+                if let Some(t) = &d.ty {
+                    self.walk_typeref(t, gs, errors);
+                }
+                self.walk_expr(&d.value, gs, errors);
+                let empty_consts: HashSet<String> = HashSet::new();
+                if let Err(diag) = check_const_constexpr(&d.value, &empty_consts) {
+                    errors.push(diag);
+                }
+            }
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, gs, errors);
                 self.walk_expr(value, gs, errors);
@@ -1561,6 +1730,8 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.f1_expr(target, gs, scope, errors);
                 self.f1_expr(value, gs, scope, errors);
@@ -2414,6 +2585,7 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(e) => self.walk_default_body_expr(e, tname, ok),
             Stmt::Return { value: Some(e), .. } => self.walk_default_body_expr(e, tname, ok),
             Stmt::Let(d) => self.walk_default_body_expr(&d.value, tname, ok),
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_default_body_expr(target, tname, ok);
                 self.walk_default_body_expr(value, tname, ok);
@@ -3544,6 +3716,8 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, scope, errors);
                 self.walk_expr(value, scope, errors);
@@ -4874,6 +5048,7 @@ impl<'a> CapabilityCtx<'a> {
         match s {
             Stmt::Expr(e) => self.walk_expr(e, state, errors),
             Stmt::Let(d) => self.walk_expr(&d.value, state, errors),
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, state, errors);
                 self.walk_expr(value, state, errors);
@@ -5778,6 +5953,8 @@ impl NameResCtx {
                     for n in bindings { top.insert(n); }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, file_id, scope, errors);
                 self.walk_expr(value, file_id, scope, errors);
@@ -6520,6 +6697,7 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
     match s {
         Stmt::Expr(e) => has_throw_in_expr(e),
         Stmt::Let(decl) => has_throw_in_expr(&decl.value),
+        Stmt::Const(_) => false,
         Stmt::Assign { target, value, .. } =>
             has_throw_in_expr(target) || has_throw_in_expr(value),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, has_throw_in_expr),
@@ -6874,6 +7052,7 @@ fn walk_block_for_with_gate(b: &Block, eff_pv: &HashSet<String>, errors: &mut Ve
         match s {
             Stmt::Expr(e) => walk_expr_for_with_gate(e, eff_pv, errors),
             Stmt::Let(LetDecl { value, .. }) => walk_expr_for_with_gate(value, eff_pv, errors),
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 walk_expr_for_with_gate(target, eff_pv, errors);
                 walk_expr_for_with_gate(value, eff_pv, errors);
@@ -7278,6 +7457,7 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
     for s in &b.stmts {
         match s {
             Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, errors),
+            Stmt::Const(_) => {}
             Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, errors),
             Stmt::Assign { target, value, .. } => {
                 walk_expr_for_handler_lits(target, never_ops, errors);
@@ -7616,6 +7796,7 @@ fn stmt_has_throw(s: &Stmt) -> bool {
         Stmt::Throw { .. } => true,
         Stmt::Expr(e) => expr_has_throw(e),
         Stmt::Let(d) => expr_has_throw(&d.value),
+        Stmt::Const(_) => false,
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } | Stmt::OkDefer { body, .. }
         | Stmt::DeferWithResult { body, .. }
             => expr_has_throw(body),
@@ -9584,6 +9765,8 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 }
             }
         }
+        // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+        Stmt::Const(_) => {}
         Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
         Stmt::Assign { target, op, value, .. } => {
             consume_walk_expr(ctx, value, errors);
@@ -9786,6 +9969,7 @@ fn d162_collect_covers_stmt(s: &Stmt, pre_obligations: &HashSet<String>,
         Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d162_collect_covers(e, pre_obligations, ctx, out),
         Stmt::Return { value: Some(v), .. } => d162_collect_covers(v, pre_obligations, ctx, out),
         Stmt::Let(decl) => d162_collect_covers(&decl.value, pre_obligations, ctx, out),
+        Stmt::Const(_) => {}
         _ => {}
     }
 }
@@ -9863,6 +10047,7 @@ fn d157_scan_block(b: &Block, outer: &HashSet<String>, ctx: &ConsumeCtx, out: &m
             Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d157_scan_expr(e, outer, ctx, out),
             Stmt::Return { value: Some(v), .. } => d157_scan_expr(v, outer, ctx, out),
             Stmt::Let(decl) => d157_scan_expr(&decl.value, outer, ctx, out),
+            Stmt::Const(_) => {}
             _ => {}
         }
     }
@@ -10712,6 +10897,7 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
                 check_defer_body(body, "defer |result|", fn_effects, current_fn_effects, errors);
             }
             Stmt::Let(decl) => walk_expr_for_defers(&decl.value, fn_effects, current_fn_effects, errors),
+            Stmt::Const(_) => {}
             Stmt::Expr(e) => walk_expr_for_defers(e, fn_effects, current_fn_effects, errors),
             Stmt::Assign { target, value, .. } => {
                 walk_expr_for_defers(target, fn_effects, current_fn_effects, errors);
@@ -11200,6 +11386,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                 check_defer_body_inner(value, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, current_fn_effects, ctx, errors),
+            Stmt::Const(_) => {}
             Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors),
             Stmt::Assign { target, value, .. } => {
                 check_defer_body_inner(target, kw, fn_effects, current_fn_effects, ctx, errors);
@@ -11718,6 +11905,8 @@ fn check_ghost_in_stmt(s: &Stmt, ghosts: &HashSet<String>, errors: &mut Vec<Diag
             // Non-ghost let: value РЅРµ РґРѕР»Р¶РµРЅ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ ghost-vars.
             check_ghost_in_expr(&decl.value, ghosts, errors);
         }
+        // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+        Stmt::Const(_) => {}
         Stmt::Expr(e) => check_ghost_in_expr(e, ghosts, errors),
         Stmt::Assign { target, value, .. } => {
             check_ghost_in_expr(target, ghosts, errors);
@@ -12094,6 +12283,8 @@ impl MapLitCtx {
                 // let-аннотация — known-target-type position (D55).
                 self.walk_expr(&d.value, d.ty.as_ref(), errors);
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, None, errors);
                 self.walk_expr(value, None, errors);
@@ -12939,6 +13130,8 @@ impl MapLitAnnotator {
                     }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, None);
                 self.walk_expr(value, None);

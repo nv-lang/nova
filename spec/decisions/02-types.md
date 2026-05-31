@@ -6395,3 +6395,141 @@ auto-derive `str.from(@)` pattern).
   synthesis (что gate'ится).
 - [D109 split policy](#d109-split-policy).
 - Plan 101.3 — multi-bound `+` syntax.
+
+---
+
+## D200. Associated constants — `const` field в `type X`
+
+> **Plan 114.4 Ф.2** (extracted from Plan 114 Ф.10 safety hatch).
+> **Status:** 🆕 draft (финализируется в Ф.4).
+
+### Что
+
+`const` declaration внутри `type X { … }` body — **associated constant**
+типа. Не часть instance layout; accessible через namespace
+`Type.CONST_NAME`.
+
+```nova
+type Config {
+    const VERSION int = 2                  // associated const
+    const PROTOCOL str = "v2"
+    const MAX_PEERS int = 1024
+    name str                                // instance field
+    timeout Duration                        // instance field
+}
+
+// Access — только namespace
+Config.VERSION                              // ✓ 2
+Config.MAX_PEERS                            // ✓ 1024
+
+// Instance access — error
+ro c = Config { name: "alice", timeout: SECOND }
+c.VERSION                                   // ✗ E_CONST_INSTANCE_ACCESS
+
+// Layout
+sizeof(Config) == sizeof(name) + sizeof(timeout)  // const fields НЕ в layout
+```
+
+### Семантика
+
+1. **Strict constexpr** — RHS должен быть literal-eligible.
+2. **Zero storage в instance.** Codegen не emit'ит const-field в struct
+   layout. Каждый const-field живёт как top-level C-symbol
+   `Type_FieldName` в .rodata.
+3. **Namespace access only.** `Type.NAME` resolution через type's
+   const-table. `instance.NAME` → `E_CONST_INSTANCE_ACCESS`.
+4. **Не указывается в record literal.** Указание → `E_CONST_FIELD_IN_LITERAL`.
+5. **`export const` field** — publicly accessible cross-module.
+6. **Modifier-conflicts:**
+   - `mut const` / `const mut` → `E_CONST_MUT_CONFLICT`.
+   - `ro const` / `const ro` → `E_CONST_RO_REDUNDANT`.
+   - `consume const` → `E_CONST_CONSUME_CONFLICT`.
+7. **SCREAMING_SNAKE_CASE convention** — lint warning (D30 carry-over).
+
+### Sum-type associated constants
+
+`const` decl внутри sum-type body — associated на sum-type-level:
+
+```nova
+type Status = Active | Inactive | Pending {
+    const VERSION int = 2
+    const MAX_TRANSITIONS int = 100
+}
+
+Status.VERSION                              // ✓ 2
+```
+
+Per-variant const'ы (`Active { const X = 1 }`) — out-of-scope V1, followup
+`[M-115-per-variant-const]`.
+
+### Generic-type associated constants
+
+**T-independent** — RHS не reference'ит generic params:
+
+```nova
+type Box[T] {
+    const TAG int = 0
+    value T
+}
+Box.TAG                                     // ✓ emit single Box_TAG
+```
+
+**T-dependent** — RHS reference'ит generic param:
+
+```nova
+type Box[T] {
+    const SIZE int = sizeof(T)
+    value T
+}
+Box[int].SIZE                               // ✓ 8 — per-mono Box_int_SIZE
+Box[str].SIZE                               // ✓ 16 — per-mono Box_str_SIZE
+Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INSTANTIATION
+```
+
+**Allowed в T-dependent RHS (V1):**
+- `sizeof(T)` где `T` — generic param.
+- Арифметика над `sizeof(T_i)` и literals.
+- Ссылки на T-independent `const` через `Type.CONST`.
+
+**НЕ allowed в V1**:
+- `T.METHOD()` calls — `[M-115-t-method-in-const]`.
+- `const fn` calls с generic args — `[M-115-generic-const-fn]`.
+- Recursive type refs (`Tree[T] { const X = sizeof(Tree[T]) }`) →
+  `E_GENERIC_CONST_CYCLE`.
+
+### Codegen
+
+- **Non-generic + T-independent:** top-level `static const T Type_FieldName
+  = …;` в .rodata. Resolution `Type.FieldName` → C-symbol `Type_FieldName`.
+- **Generic T-dependent:** per-mono symbol naming coherent с existing
+  generic-fn mono (Plan 70.5). Emit при каждой monomorphization.
+- **`export const` field:** public C-symbol visibility.
+
+### Сравнение с mainstream
+
+| Язык | Синтаксис | Storage |
+|---|---|---|
+| Java | `static final int VERSION = 2;` (внутри class) | top-level C-static |
+| Rust | `impl Config { const VERSION: i32 = 2; }` | top-level |
+| Kotlin | `companion object { const val VERSION = 2 }` | companion slot |
+| Swift | `struct Config { static let version = 2 }` | type-metadata |
+| TS | `class Config { static readonly VERSION = 2 }` | class-static |
+| **Nova** | `type Config { const VERSION int = 2; … }` | top-level .rodata |
+
+### Use cases
+
+- Version / protocol identifiers: `Config.VERSION`, `Protocol.MAGIC_BYTES`.
+- Capacity / size limits: `Buffer.DEFAULT_CAPACITY`.
+- Math constants: `Circle.PI`, `Complex.UNIT_IMAGINARY`.
+- Per-mono sizes: `Box[int].SIZE`, `Pair[T,U].TOTAL`.
+
+### Cross-ref
+
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — field-decl extended.
+- [D184](03-syntax.md#d184) — Plan 114 master keyword refresh.
+- [D199](03-syntax.md#d199-const-fn--comptime-evaluable-functions) — `const fn` (могут использоваться для assoc const RHS).
+- [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[N]T` arrays.
+
+### Acceptance
+
+См. Plan 114.4 A5-A13 (T2 series).

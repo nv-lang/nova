@@ -1250,6 +1250,7 @@ impl CEmitter {
     fn stmt_span(stmt: &Stmt) -> Span {
         match stmt {
             Stmt::Let(d) => d.span,
+            Stmt::Const(d) => d.span,
             Stmt::Expr(e) => e.span,
             Stmt::Assign { span, .. }
             | Stmt::Return { span, .. }
@@ -3385,6 +3386,42 @@ impl CEmitter {
                 };
                 Ok(format!("({}({}))", op_str, inner))
             }
+            // Plan 114.4 Ф.1: arithmetic/bitwise/comparison над constexpr
+            // operands — допустимо в const RHS. C compiler constant-fold'ит.
+            ExprKind::Binary { op, left, right } => {
+                let l = self.emit_const_expr(left)?;
+                let r = self.emit_const_expr(right)?;
+                let op_str = match op {
+                    crate::ast::BinOp::Add => "+",
+                    crate::ast::BinOp::Sub => "-",
+                    crate::ast::BinOp::Mul => "*",
+                    crate::ast::BinOp::Div => "/",
+                    crate::ast::BinOp::Mod => "%",
+                    crate::ast::BinOp::Eq => "==",
+                    crate::ast::BinOp::Neq => "!=",
+                    crate::ast::BinOp::Lt => "<",
+                    crate::ast::BinOp::Le => "<=",
+                    crate::ast::BinOp::Gt => ">",
+                    crate::ast::BinOp::Ge => ">=",
+                    crate::ast::BinOp::And => "&&",
+                    crate::ast::BinOp::Or => "||",
+                    crate::ast::BinOp::BitAnd => "&",
+                    crate::ast::BinOp::BitOr => "|",
+                    crate::ast::BinOp::BitXor => "^",
+                    crate::ast::BinOp::Shl => "<<",
+                    crate::ast::BinOp::Shr => ">>",
+                    // Contract-only ops (D24) — not allowed в const initialiser.
+                    crate::ast::BinOp::Implies | crate::ast::BinOp::Iff => {
+                        return Err(format!(
+                            "contract-only operator {:?} not allowed в const initialiser",
+                            op
+                        ));
+                    }
+                };
+                Ok(format!("(({}) {} ({}))", l, op_str, r))
+            }
+            // Reference на another top-level const — emit C identifier.
+            ExprKind::Ident(name) => Ok(name.clone()),
             _ => Err(format!("non-constant expression in const declaration: {:?}", expr.kind)),
         }
     }
@@ -13559,6 +13596,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // originating Nova source as a /* SRC: ... */ comment.
         self.emit_source_annotation_for_stmt(stmt);
         match stmt {
+            // Plan 114.4 Ф.2: scope-local `const N = expr` — constexpr,
+            // emit как block-scope C const declaration. Тип / значение
+            // через emit_const_expr_typed (как для module-level const).
+            Stmt::Const(decl) => {
+                let ty_c = if let Some(ty) = &decl.ty {
+                    self.type_ref_to_c(ty)?
+                } else {
+                    self.infer_expr_c_type(&decl.value)
+                };
+                let val = self.emit_const_expr_typed(&decl.value, Some(&ty_c))
+                    .map_err(|e| format!("scope-local const `{}` codegen failed: {}", decl.name, e))?;
+                self.line(&format!("const {} {} = {};", ty_c, decl.name, val));
+                self.var_types.insert(decl.name.clone(), ty_c);
+                return Ok(());
+            }
             Stmt::Let(decl) => {
                 // Plan 33.3 Ф.9.1 (D24): ghost erasure.
                 // `ghost let x = ...` НЕ emit'ится в C-output (паритет с

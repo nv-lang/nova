@@ -2308,6 +2308,8 @@ fn stmt_has_assignment(s: &Stmt) -> bool {
     match s {
         Stmt::Assign { .. } => true,
         Stmt::Let(ld) => expr_has_assignment(&ld.value),
+        // Plan 114.4 Ф.2: scope-local const — constexpr-only, no assignment.
+        Stmt::Const(_) => false,
         Stmt::Expr(e) => expr_has_assignment(e),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, expr_has_assignment),
         Stmt::Throw { value, .. } => expr_has_assignment(value),

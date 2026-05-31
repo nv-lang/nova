@@ -25808,3 +25808,85 @@ Design-only session: написаны три plan-документа (no impleme
 - Plan 114.4 implementation (~1.5-2 day const story).
 - Plan 121 (future) — *[N]T fixed arrays language addition (out of Plan 118
   scope).
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 114.4 — const narrow + scope-local generalize (2026-05-31, partial)
+═══════════════════════════════════════════════════════════════════════════════
+
+Worktree: D:/Sources/nv-lang/nova-p114-4
+Branch:   plan-114.4 (rebased on main c11ab400b68)
+Status:   🟢 PARTIAL CLOSURE — Ф.0 + Ф.1 + Ф.2-scope closed; Ф.2-assoc + Ф.3
+          extracted в Plan 114.4.1 per safety hatch.
+
+5 commits на ветке:
+  362eb48f30d Ф.0   workflow preamble (autonomous execution rules)
+  bbe95581a1d Ф.0.1 D199 + D200 spec block drafts
+  e7687528601 Ф.1   const narrow → strict constexpr-only
+  (Ф.2 commit)      scope-local const (Stmt::Const variant + emit)
+  2752632c7dc Ф.4   closure status section в plan-файл
+
+Что сделано:
+
+1. Ф.0 — workflow preamble в plan-файл: autonomous execution rules
+   (commit per phase, logs update, tests through release nova, positive
+   + negative для каждой фазы, acceptance A1-A18 verify, spec/D/Q/doc
+   update, safety hatch на Ф.3, merge no-ff после full regression).
+
+2. Ф.0.1 — D199 (const fn) + D200 (associated constants) spec block
+   drafts. D199 в spec/decisions/03-syntax.md: V1 rules, allowed/forbidden
+   body, effect-list reject, call-site rules, first-class reject, codegen
+   silent drops, comptime evaluator (env-based interp + memoization),
+   mainstream comparison Rust/C++/Zig/Nova. D200 в spec/decisions/02-types.md:
+   zero-storage в instance, namespace access Type.NAME, record literal
+   без assoc fields, modifier-conflicts, sum-type assoc, generic
+   T-independent vs T-dependent per-monomorphization codegen, mainstream
+   comparison Java/Rust/Kotlin/Swift/TS/Nova.
+
+3. Ф.1 — const narrow strict constexpr-only:
+   - check_const_constexpr standalone fn в compiler-codegen/src/types/mod.rs.
+   - Recursive constexpr-eligibility check для const RHS.
+   - Allowed: literals; Unary; Binary над constexpr; TupleLit/ArrayLit/
+     RecordLit без spread; Ident refering known top-level const.
+   - Errors: E_CONST_NOT_CONSTEXPR / E_CONST_REFERS_NON_CONSTEXPR.
+   - Path conservatively rejected V1 (cross-module + Type.field).
+   - Called from check_module Item::Const arm.
+   - nova_tests/syntax/const_complex.nv Section 3 manually converted
+     (constexpr-equivalent rewrite).
+   - 7 T1 fixtures PASS (4 positive + 3 negative).
+
+4. Ф.2 partial — scope-local const:
+   - Stmt::Const(ConstDecl) AST variant.
+   - parse_stmt_or_expr KwConst dispatch.
+   - 18 sites в types/mod.rs получили Stmt::Const arms (через
+     scripts/plan114_4_stmt_const_arms.py + manual verify/pipeline.rs).
+   - walk_stmt Stmt::Const: walk + check_const_constexpr enforcement.
+   - emit_stmt Stmt::Const: emit 'const T name = literal;' block-scope.
+   - emit_const_expr extended: Binary { left, op, right }, Ident.
+   - interp exec_stmt Stmt::Const: eval + match_pattern bind.
+   - 2 T2 fixtures PASS (scope_const_ok + scope_const_non_constexpr_neg).
+
+5. Ф.4 — closure status в plan-файл + logs update (this entry).
+
+Deferred via safety hatch → Plan 114.4.1:
+- [M-114.4-assoc-const] (~½ dev-day): record-field assoc const D200 +
+  sum-type + generic T-dependent per-mono codegen (Plan 70.5 integration).
+- [M-114.4-const-fn] (~1 dev-day): comptime evaluator subsystem +
+  body checker + V1 subset + codegen replace + memoization + D199 promote.
+
+Open markers (Plan 114.4.1+):
+- [M-114.4-scope-const-chain] — scope-locals referencing другие scope-locals.
+- [M-114.4-cross-module-const-ref] — Path expr для cross-module.
+- [M-114.4-ro-module-lazy-init] — top-level ro X = compute() codegen.
+- [M-114.4-remove-lazy-fallback] — emit_lazy_const dead code cleanup.
+- [M-114.4-strict-partition] — E_RO_FOR_CONSTEXPR_PREFER_CONST.
+
+Acceptance:
+- A1 ✓ (strict constexpr во всех позициях)
+- A5 ✓ (scope-local const parses + checks + emits)
+- A2/A4 partial
+- A3 deferred (strict partition)
+- A6-A18 deferred (assoc const D200 + const fn D199)
+
+Smoke regression: 107 PASS / 1 pre-existing fail
+(basics+syntax+plan114+plan73+plan108+plan114_4). Zero induced
+regressions.

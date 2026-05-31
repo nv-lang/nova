@@ -1087,6 +1087,12 @@ pub struct Block {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Let(LetDecl),
+    /// Plan 114.4 Ф.2: scope-local `const N = expr` — strict constexpr
+    /// binding inside function body / block. Codegen inline'ит literal
+    /// value на use-sites (zero allocation, zero binding overhead).
+    /// Visible до end-of-enclosing-block. Constexpr-eligibility — same как
+    /// module-level const (check_const_constexpr).
+    Const(ConstDecl),
     Expr(Expr),
     Assign {
         target: Expr,

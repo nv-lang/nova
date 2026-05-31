@@ -109,6 +109,7 @@ impl DesugarCtx {
     fn desugar_stmt(&mut self, s: &mut Stmt) {
         match s {
             Stmt::Let(d) => self.desugar_expr(&mut d.value),
+            Stmt::Const(d) => self.desugar_expr(&mut d.value),
             Stmt::Expr(e) => self.desugar_expr(e),
             Stmt::Assign { target, value, .. } => {
                 self.desugar_expr(target);
