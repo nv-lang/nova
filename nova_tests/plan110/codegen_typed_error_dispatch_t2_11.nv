@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.1.4.h T2.11 (D85 + D188 R3 cancel-shield): typed error
+// dispatch в on_exit body через ScopeOutcome match → outcome message
+// inspection. Bootstrap version (str-prefix discrimination); full
+// `if err is T` narrowing после payload `any` migration.
+
+module plan110.codegen_typed_error_dispatch_t2_11
+
+type TxRes {
+    ro id int
+}
+
+fn TxRes.new(id int) -> TxRes => { id }
+
+// on_exit inspects outcome variant + (bootstrap) message prefix
+// для cancel-vs-throw discrimination.
+fn TxRes consume @on_exit(outcome ScopeOutcome) -> () {
+    match outcome {
+        Success => ()
+        Failure(msg) => {
+            // Bootstrap: check "cancel: " prefix per D90 §7 amend
+            // (Plan 110.5.6). Full typed narrowing после
+            // [M-110-multierror-any].
+            if msg.starts_with("cancel: ") {
+                // Cancel path — different cleanup behavior.
+                ()
+            } else {
+                // Regular failure — generic rollback.
+                ()
+            }
+        }
+        Panic(_) => ()
+    }
+}
+
+fn use_typed_dispatch() -> int {
+    mut result = 0
+    consume tx = TxRes.new(7) {
+        result = tx.id
+    }
+    result
+}
+
+test "Plan 110.1.4.h T2.11: typed error dispatch via outcome match" {
+    assert(use_typed_dispatch() == 7)
+}
