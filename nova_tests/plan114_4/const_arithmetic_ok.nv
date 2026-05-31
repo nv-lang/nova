@@ -1,0 +1,15 @@
+// Plan 114.4 Ф.1: const X = literal-арифметика — constexpr-eligible.
+
+module nova_tests.plan114_4.const_arithmetic_ok
+
+const TIMEOUT_SEC int = 60 * 5
+const KILO int = 1024
+const NEG int = -42
+const PRECEDENCE int = 1 + 2 * 3
+
+test "const arithmetic" {
+    assert(TIMEOUT_SEC == 300)
+    assert(KILO == 1024)
+    assert(NEG == -42)
+    assert(PRECEDENCE == 7)
+}

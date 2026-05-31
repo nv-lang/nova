@@ -1,0 +1,15 @@
+// Plan 114.4 Ф.1: const X = record literal из constexpr-полей — constexpr-eligible.
+
+module nova_tests.plan114_4.const_record_ok
+
+type Point { x f64, y f64 }
+
+const ORIGIN Point = Point { x: 0.0, y: 0.0 }
+const TARGET Point = Point { x: 7.0, y: 14.0 }
+
+test "const record-literal" {
+    assert(ORIGIN.x == 0.0)
+    assert(ORIGIN.y == 0.0)
+    assert(TARGET.x == 7.0)
+    assert(TARGET.y == 14.0)
+}

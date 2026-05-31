@@ -1,0 +1,7 @@
+// Plan 114.4 Ф.1 NEG: const X = ref на unknown / non-const — error.
+
+// EXPECT_COMPILE_ERROR E_CONST_REFERS_NON_CONSTEXPR
+
+module nova_tests.plan114_4.const_refers_non_const_neg
+
+const BAD int = unknown_binding

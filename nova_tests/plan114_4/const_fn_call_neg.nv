@@ -1,0 +1,14 @@
+// Plan 114.4 Ф.1 NEG: const X = fn_call(...) — non-constexpr.
+// Plan 14 Ф.2 lazy-init retracted; теперь parser/checker отвергает.
+
+// EXPECT_COMPILE_ERROR E_CONST_NOT_CONSTEXPR
+
+module nova_tests.plan114_4.const_fn_call_neg
+
+fn compute() -> int => 42
+
+const X int = compute()
+
+test "const fn-call retracted" {
+    assert(X == 42)
+}

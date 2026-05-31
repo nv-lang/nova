@@ -534,6 +534,144 @@ struct ArityInfo {
     decl_span: Option<Span>,
 }
 
+/// Plan 114.4 Ф.1: constexpr-eligibility check для `const X = expr`.
+///
+/// Проверяет рекурсивно что RHS — literal-eligible: literals + арифметика
+/// над constexpr operands + record/tuple/array literals из constexpr-полей +
+/// references на другие top-level `const`.
+///
+/// Возвращает `Err(Diagnostic)` если non-constexpr:
+/// - `E_CONST_NOT_CONSTEXPR` — generic non-constexpr expr.
+/// - `E_CONST_REFERS_NON_CONSTEXPR` — Ident на non-const binding.
+/// - `E_CONST_EFFECT_IN_INIT` — runtime call / effect / allocation.
+///
+/// `known_consts` — set имен top-level `const` (для Ident-резолва).
+fn check_const_constexpr(
+    expr: &crate::ast::Expr,
+    known_consts: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::ExprKind as E;
+    match &expr.kind {
+        // Literals — всегда constexpr.
+        E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
+        | E::CharLit(_) | E::UnitLit => Ok(()),
+        // Unary над constexpr operand.
+        E::Unary { operand, .. } => check_const_constexpr(operand, known_consts),
+        // Binary над constexpr operands.
+        E::Binary { left, right, .. } => {
+            check_const_constexpr(left, known_consts)?;
+            check_const_constexpr(right, known_consts)
+        }
+        // Tuple-литерал — каждый элемент constexpr.
+        E::TupleLit(elems) => {
+            for e in elems {
+                check_const_constexpr(e, known_consts)?;
+            }
+            Ok(())
+        }
+        // Array-литерал (без spread) — каждый элемент constexpr.
+        E::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    crate::ast::ArrayElem::Item(e) => check_const_constexpr(e, known_consts)?,
+                    crate::ast::ArrayElem::Spread(_) => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed \
+                             в const initialiser — runtime operation. Inline \
+                             literals или use `ro X = …` for runtime value \
+                             (Plan 114.4 Ф.1 D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        // Record-литерал — каждое поле constexpr.
+        E::RecordLit { fields, .. } => {
+            for f in fields {
+                if f.is_spread {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed в \
+                         const-record initialiser (Plan 114.4 Ф.1).".to_string(),
+                        expr.span,
+                    ));
+                }
+                match &f.value {
+                    Some(v) => check_const_constexpr(v, known_consts)?,
+                    None => {
+                        // Shorthand `{ name }` — refers binding called `name`.
+                        if !known_consts.contains(&f.name) {
+                            return Err(Diagnostic::new(
+                                format!(
+                                    "[E_CONST_REFERS_NON_CONSTEXPR] field shorthand `{}` \
+                                     в const-record refers binding which is not a \
+                                     top-level const. Use explicit `{}: <literal>` либо \
+                                     declare referenced `const {}` (Plan 114.4 Ф.1).",
+                                    f.name, f.name, f.name
+                                ),
+                                expr.span,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        // Ident — должен ссылаться на другой known top-level `const`.
+        E::Ident(name) => {
+            if known_consts.contains(name) {
+                Ok(())
+            } else {
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_REFERS_NON_CONSTEXPR] `const` initialiser \
+                         refers `{}` which is not a top-level `const`. Only \
+                         literals + arithmetic on literals + record/tuple/array \
+                         literals из constexpr fields + references to other \
+                         `const` are allowed. For runtime / lazy-init use \
+                         `ro {} = …` (Plan 114.4 Ф.1 / D199).",
+                        name, name
+                    ),
+                    expr.span,
+                ))
+            }
+        }
+        // Path (e.g. `Module.NAME` cross-module const, или `LOCAL.field`
+        // member-access на local-const). V1 conservative: запрещаем все
+        // Path формы в const-RHS (cross-module — followup
+        // [M-114.4-cross-module-const-ref]; field-access на local-const —
+        // runtime-only, эквивалент `ro X = LOCAL.field`).
+        E::Path(_) => Err(Diagnostic::new(
+            "[E_CONST_NOT_CONSTEXPR] path expression (Module.NAME / Type.field) \
+             not allowed в `const` initialiser в V1. Cross-module const refs — \
+             followup [M-114.4-cross-module-const-ref]. Field access на local \
+             const → use `ro X = …` (runtime ok) (Plan 114.4 Ф.1).".to_string(),
+            expr.span,
+        )),
+        // Function calls / method calls / member access / index / etc. —
+        // runtime по дефолту. const fn (Plan 114.4 Ф.3) добавит исключение.
+        E::Call { .. } | E::Member { .. } | E::Index { .. }
+        | E::InterpolatedStr { .. } | E::MapLit { .. } => Err(Diagnostic::new(
+            "[E_CONST_NOT_CONSTEXPR] non-constexpr expression в `const` \
+             initialiser — only literals, arithmetic over literals, \
+             record/tuple/array literals из constexpr fields, и references \
+             на другие top-level `const` are allowed. Runtime calls / member \
+             access / interpolation / map literals — not constexpr. Use \
+             `ro X = …` for runtime / lazy-init value, либо `const fn` для \
+             comptime function (Plan 114.4 Ф.1 / D199).".to_string(),
+            expr.span,
+        )),
+        // Любые другие конструкции (if, match, blocks, closures, etc.) — runtime.
+        _ => Err(Diagnostic::new(
+            "[E_CONST_NOT_CONSTEXPR] non-constexpr expression в `const` \
+             initialiser (control flow / closures / blocks not allowed). \
+             Use `ro X = …` для runtime / lazy-init value (Plan 114.4 Ф.1).".to_string(),
+            expr.span,
+        )),
+    }
+}
+
 /// Plan 79: проход типовой полноты type-checker'а.
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
@@ -727,6 +865,23 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(t, &empty, errors);
                     }
                     self.walk_expr(&cd.value, &empty, errors);
+                    // Plan 114.4 Ф.1: strict constexpr-only enforcement.
+                    // `const X = expr` принимает только literal-eligible
+                    // RHS — арифметику над literals, record-literal из
+                    // constexpr-fields, references на другие const.
+                    // Runtime calls / effects / allocations / non-const
+                    // refs → E_CONST_NOT_CONSTEXPR.
+                    let known_consts: HashSet<String> = module
+                        .items
+                        .iter()
+                        .filter_map(|it| match it {
+                            Item::Const(c) => Some(c.name.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if let Err(d) = check_const_constexpr(&cd.value, &known_consts) {
+                        errors.push(d);
+                    }
                 }
                 Item::Test(t) => {
                     let empty = HashSet::new();
