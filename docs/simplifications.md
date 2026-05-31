@@ -27827,3 +27827,29 @@ pre-Plan-109 API.  Документированы в их followups.
 **Smoke regression:** 107 PASS / 1 pre-existing fail.
 
 **Design lesson:** Plan 114.4 (renamed from 115) — 3-фазный план оценен 1.5-2 dev-day. Реалистично в одну Claude-сессию помещается Ф.0+Ф.1+Ф.2-scope. Ф.2 assoc const + Ф.3 const fn — substantial subsystems каждый ~½-1 dev-day, extract per safety hatch design plan'а. Plan 114.4.1 doc — следующая session.
+
+---
+
+## Plan 120 — Named tuple fields + value/reference allocation contract (2026-05-31)
+
+**Status:** 🟢 ЗАКРЫТ V1 (5/5 plan120 fixtures PASS; spec D215 NEW; branch plan-120).
+
+**CLOSED markers:**
+- ✅ `[M-120-parser]` — named tuple parser `TypeDeclKind::NamedTuple` + `is_named_tuple_decl()` lookahead.
+- ✅ `[M-120-codegen]` — `NovaTuple_<Name>` C struct + compound literal constructor + value-type semantics.
+- ✅ `[M-120-checker]` — `f3_check_member` extended: E_TUPLE_POSITIONAL_ACCESS_ON_NAMED + E_TUPLE_NAMED_ACCESS_ON_POSITIONAL.
+- ✅ `[M-120-spec-d215]` — D215 NEW promoted in spec/decisions/02-types.md.
+- ✅ `[M-120-spec-d52-amend]` — D52: named tuple form + allocation contract note.
+- ✅ `[M-120-spec-d32-amend]` — D32: explicit value/reference taxonomy table.
+- ✅ `[M-120-spec-d123-amend]` — Plan 59 Ф.7.4 rejection REOPENED (corrected reasoning).
+- ✅ `[M-120-docs]` — docs/value-vs-reference.md created.
+
+**OPEN markers carried forward:**
+- 🟡 `[M-120-positional-fallback]` — allow `.0`/`.1` on named tuples (V1 = Option B: forbid; low priority).
+- 🟡 `[M-120-named-positional-mix]` — mixed positional+named in single tuple decl (out of V1 scope).
+- 🟡 `[M-120-stack-arrays]` — stack-allocated fixed-size arrays `[3]Vec3` (separate plan).
+- 🟡 `[M-120-positional-construct-check]` — checker: named args on positional tuple type → E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL (A4/A5 deferred — requires `infer_expr_c_type` extension for call-result types).
+
+**Design lesson:** Named tuple vs record distinction drives 4× different C code: `NovaTuple_X { x; y; }` (stack struct, value type) vs `Nova_X*` (heap pointer, GC-tracked). The bracket syntax (`()` vs `{}`) was already implicit in spec (D32/D123) — Plan 120 makes it explicit at the type-declaration level. `type_aliases` HashMap in emit_c.rs is the key integration point: stores `"Vec3" → "NovaTuple_Vec3"`, enabling value-type dispatch everywhere without special-casing.
+
+**Scope vs original plan:** A4 (positional args on named tuple works), A5 (construction errors), A11 (full regression) deferred to Ф.5.9 (full nova test). A3/A6/A7/A8/A9/A10/A12 all verified.
