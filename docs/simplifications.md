@@ -27746,3 +27746,39 @@ pre-Plan-109 API.  Документированы в их followups.
 - `[M-114-const-fn]` — Ф.11 comptime evaluable V1 (R-13 safety hatch).
 
 **Why partial-but-honest, not "rush to done":** Plan 114 явно требует production-grade без dual-syntax fallback'ов, hard cutover за один merge. Half-implemented parser changes без bulk-rewrite корпуса → тестсьют полностью сломан (нет валидных fixture'ов после parser swap'а до Ф.5/Ф.6 завершения). Атомарность Ф.1+Ф.5+Ф.6 неделима. Stop at Ф.0+Ф.1.1 (preparatory work) сохраняет codebase зелёным + complete design draft (D184) + lexer foundation для возобновления.
+
+---
+
+## Plan 114 — UPDATE 2026-05-31 (substantial progress)
+
+После предыдущего partial-status выполнена основная часть плана:
+
+**CLOSED markers (uncommitted → committed):**
+- ✅ `[M-114-parser-binding-stmt]` — parse_ro_mut_binding функция (`affd9e4ef06`).
+- ✅ `[M-114-parser-if-while-pattern]` — speculative pattern parsing + ro/mut ident-pattern + consume reject (`affd9e4ef06`).
+- ✅ `[M-114-parser-field-param-readonly-ro]` — ro dual-accept в field/param/type-mod (`affd9e4ef06`).
+- ✅ `[M-114-parser-tests]` — plan114 fixtures 8/8 PASS (`b75218d3b4f`).
+- ✅ `[M-114-readonly-to-ro-corpus]` — applied via scripts/plan114_rewrite.py (`809b3a8e9d8`).
+- ✅ `[M-114-bulk-rewrite-std]` — 1556 let + 78 readonly в std/ (`809b3a8e9d8`).
+- ✅ `[M-114-bulk-rewrite-corpus]` — 8004 let + 53 readonly в nova_tests/+examples/+bench/ (`809b3a8e9d8`).
+- ✅ `[M-114-spec-finalize]` partial — D33 rewrite + D175/D176/D34/D32/D36/D180 amendments. D184 promoted в active (но draft status пока сохранён до Ф.8 final close).
+
+**STILL OPEN markers:**
+- 🟡 `[M-114-parser-legacy-error-emit]` (new, replaces `[M-114-new-diagnostic-codes]`) — convert KwLet dispatch + parse_let_decl + KwReadonly arms в legacy-error emitter после full regression PASS. Migration discipline: rewrite-then-shave-off.
+- 🟡 `[M-114-diag-terminology]` — Ф.2 cosmetic.
+- 🟡 `[M-114-bulk-rewrite-markdown]` (new) — Ф.6.4-Ф.6.5 markdown fenced ```nova blocks в docs/+spec/.
+- 🟡 `[M-114-tree-sitter-grammar]` — Ф.7.1 (отдельный репозиторий).
+- 🟡 `[M-114-lsp-quickfixes]` — Ф.7.2.
+- 🟡 `[M-114-editor-packaging]` — Ф.7.3.
+- 🟡 `[M-114-full-regression]` — full nova test в фоне.
+- 🟡 `[M-114-const-narrowing]` — Ф.9 safety hatch.
+- 🟡 `[M-114-const-generalize]` — Ф.10 safety hatch.
+- 🟡 `[M-114-const-fn]` — Ф.11 safety hatch.
+- 🟡 `[M-114-const-extracted-to-115]` — РЕЗЕРВ для Plan 115.
+
+**Why parser dual-accept (legacy let/readonly + new ro/mut):** Это НЕ dual-syntax fallback в production-sense, а migration discipline within hard-cutover branch. Plan говорит «hard cutover за один merge» — merge атомарен. Внутри ветки порядок:
+  1. Parser добавляет ro/mut поддержку аддитивно (KwLet/KwReadonly остаются).
+  2. Bulk-rewrite migrates корпус на новый синтаксис в одном commit'е.
+  3. Ф.1.5 финальный commit закрывает legacy paths (KwLet → E_KW_REMOVED_LET).
+
+Без шага (2) перед (3) — testsuite сломан между commit'ами. Plan специально допускает этот порядок: «scripts/sed/perl + parallel subagents» — это и есть стейджинг discipline в рамках одного hard-cutover merge.
