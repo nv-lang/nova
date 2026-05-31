@@ -758,6 +758,256 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => {}
             }
         }
+
+        // Plan 110.1.2 (D188 / D196): Consumable[E] protocol satisfaction check.
+        // Для каждого `Stmt::ConsumeScope { init, body, .. }` проверяем что
+        // init expr resolves к типу с `on_exit` method. Если нет — emit
+        // [D188-not-consumable] error. Полный D196 (Result/Option unwrap,
+        // conditional, method chain — non-trivial type inference) — staged
+        // delivery: дополнительные формы validated в Plan 110.1.3 / 110.1.4.
+        for item in &module.items {
+            match item {
+                Item::Fn(fd) => {
+                    match &fd.body {
+                        FnBody::Block(b) => self.check_consume_scopes_in_block(b, errors),
+                        FnBody::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
+                        FnBody::External => {}
+                    }
+                }
+                Item::Test(t) => self.check_consume_scopes_in_block(&t.body, errors),
+                Item::Bench(b) => {
+                    for s in &b.setup { self.check_consume_scopes_in_stmt(s, errors); }
+                    self.check_consume_scopes_in_block(&b.measure_body, errors);
+                    for s in &b.teardown { self.check_consume_scopes_in_stmt(s, errors); }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Plan 110.1.2 (D188): recursive walk через Block для ConsumeScope check.
+    fn check_consume_scopes_in_block(&self, b: &Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.check_consume_scopes_in_stmt(s, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_consume_scopes_in_expr(t, errors);
+        }
+    }
+
+    /// Plan 110.1.2 (D188): walk Stmt looking for ConsumeScope, recurse into children.
+    fn check_consume_scopes_in_stmt(&self, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.validate_consume_scope_init(init, errors);
+                self.check_consume_scopes_in_expr(init, errors);
+                self.check_consume_scopes_in_block(body, errors);
+            }
+            Stmt::Let(d) => self.check_consume_scopes_in_expr(&d.value, errors),
+            Stmt::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
+            Stmt::Assign { target, value, .. } => {
+                self.check_consume_scopes_in_expr(target, errors);
+                self.check_consume_scopes_in_expr(value, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.check_consume_scopes_in_expr(v, errors); }
+            }
+            Stmt::Throw { value, .. } => self.check_consume_scopes_in_expr(value, errors),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                self.check_consume_scopes_in_expr(body, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.check_consume_scopes_in_expr(expr, errors);
+            }
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. }
+            | Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+        }
+    }
+
+    /// Plan 110.1.2 (D188): walk Expr looking for nested ConsumeScope in
+    /// bodies (lambdas, blocks, if-then-else, match arms, etc).
+    fn check_consume_scopes_in_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_consume_scopes_in_block(b, errors),
+            ExprKind::If { cond, then, else_, .. } => {
+                self.check_consume_scopes_in_expr(cond, errors);
+                self.check_consume_scopes_in_block(then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.check_consume_scopes_in_block(b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_consume_scopes_in_expr(ei, errors),
+                    }
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.check_consume_scopes_in_expr(cond, errors);
+                self.check_consume_scopes_in_block(body, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.check_consume_scopes_in_expr(iter, errors);
+                self.check_consume_scopes_in_block(body, errors);
+            }
+            ExprKind::Loop { body, .. } => self.check_consume_scopes_in_block(body, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_consume_scopes_in_expr(func, errors);
+                for a in args {
+                    match a {
+                        crate::ast::CallArg::Item(e) | crate::ast::CallArg::Spread(e) => {
+                            self.check_consume_scopes_in_expr(e, errors);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ExprKind::Try(e) | ExprKind::Bang(e) => self.check_consume_scopes_in_expr(e, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.check_consume_scopes_in_expr(a, errors);
+                self.check_consume_scopes_in_expr(b, errors);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.check_consume_scopes_in_expr(left, errors);
+                self.check_consume_scopes_in_expr(right, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.check_consume_scopes_in_expr(operand, errors),
+            ExprKind::Member { obj, .. } => self.check_consume_scopes_in_expr(obj, errors),
+            // Lambda / closure bodies — separate scopes; walk their bodies too.
+            ExprKind::Lambda { body, .. } => self.check_consume_scopes_in_expr(body, errors),
+            _ => {}
+        }
+    }
+
+    /// Plan 110.1.2 (D188 / D196): validate init expression's type implements
+    /// Consumable. Uses простой heuristic для type inference (Type.method() →
+    /// return type; record literal → type; ?/!! → recurse). Полный inference
+    /// (method chain, conditional, generic) — staged delivery 110.1.3+.
+    fn validate_consume_scope_init(&self, init: &Expr, errors: &mut Vec<Diagnostic>) {
+        let Some(type_name) = self.infer_consume_init_type(init) else {
+            // Тип не выводится простыми heuristic'ами — staged delivery
+            // через codegen-gate D188-codegen-not-yet-implemented. Полное
+            // покрытие в Plan 110.1.4 / 110.1.3.
+            return;
+        };
+        // Special case: `never` (bottom-тип) — никогда не resolved init
+        // type, skip без ошибки.
+        if type_name == "never" || type_name == "Never" {
+            return;
+        }
+        // Look up on_exit method on the type.
+        let has_on_exit = self.method_table.get(&type_name)
+            .map(|methods| methods.contains_key("on_exit"))
+            .unwrap_or(false);
+        if !has_on_exit {
+            // Тип known? Если не known — это либо primitive (`int`/`str`)
+            // либо unresolved (caught by name resolution). Skip primitive
+            // случаи silently.
+            let is_known_type = self.types.contains_key(&type_name)
+                || self.method_table.contains_key(&type_name);
+            // Even for primitive types like `int`/`str` — нет on_exit → error.
+            // Но diagnostic должен быть полезный (suggest implement).
+            if is_known_type || self.method_table.contains_key(&type_name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-not-consumable] type `{name}` does not implement `Consumable[E]` \
+                         (method `on_exit` missing). \
+                         To use `consume X = expr {{ body }}` scope-block, type must declare:\n  \
+                         `fn {name} consume @on_exit(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`\n\
+                         where `E` is the cleanup-error type (or `never` for infallible — D194).\n\
+                         Alternative: use raw `consume X = expr` (D180 linear binding) without block.",
+                        name = type_name
+                    ),
+                    init.span,
+                ));
+            }
+        } else {
+            // on_exit existsует — validate signature (Plan 110.1.2 §D188-malformed-on-exit).
+            // Минимальная проверка: первый param должен быть ScopeOutcome.
+            // Глубокая validation (Fail[E] check, return type ()) — 110.1.3.
+            self.validate_on_exit_signature(&type_name, init.span, errors);
+        }
+    }
+
+    /// Plan 110.1.2 (D188-malformed-on-exit): basic on_exit signature check.
+    fn validate_on_exit_signature(&self, type_name: &str, init_span: Span, errors: &mut Vec<Diagnostic>) {
+        let Some(methods) = self.method_table.get(type_name) else { return; };
+        let Some(decls) = methods.get("on_exit") else { return; };
+        for decl in decls {
+            // Param[0] must be `outcome ScopeOutcome`.
+            let first_param_ok = decl.params.first()
+                .map(|p| matches!(&p.ty, TypeRef::Named { path, .. }
+                    if path.last().map_or(false, |s| s == "ScopeOutcome")))
+                .unwrap_or(false);
+            if !first_param_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` signature invalid: \
+                         first parameter must be `outcome ScopeOutcome` (D188 protocol contract). \
+                         Correct form: \
+                         `fn {tn} consume @on_exit(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`. \
+                         (Diagnostic emitted at `consume {{}}` use-site for context.)",
+                        tn = type_name
+                    ),
+                    init_span,
+                ));
+            }
+        }
+    }
+
+    /// Plan 110.1.2: infer the resulting type name from `consume X = INIT
+    /// { body }` init expression. Heuristics:
+    /// - `Type.method(args)` → look up method's return type via method_table.
+    /// - `Type { fields }` → type name directly.
+    /// - `expr?` / `expr!!` → recurse (postfix-unwrap doesn't change type
+    ///   name for record-typed receiver; full Result[T,E] / Option[T] unwrap
+    ///   semantics — 110.1.3).
+    /// - Other forms → return None (staged delivery).
+    fn infer_consume_init_type(&self, e: &Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Call { func, .. } => {
+                match &func.kind {
+                    ExprKind::Path(parts) if parts.len() >= 2 => {
+                        let type_name = &parts[parts.len() - 2];
+                        let method_name = &parts[parts.len() - 1];
+                        let methods = self.method_table.get(type_name)?;
+                        let decls = methods.get(method_name)?;
+                        let decl = decls.first()?;
+                        match decl.return_type.as_ref()? {
+                            TypeRef::Named { path, .. } => {
+                                // Self в return-type разворачиваем в receiver type.
+                                let last = path.last()?;
+                                if last == "Self" {
+                                    Some(type_name.clone())
+                                } else {
+                                    Some(last.clone())
+                                }
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::RecordLit { type_name: Some(name), .. } => {
+                name.last().cloned()
+            }
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                // ?/!! unwrap — для Plan 110.1.2 scaffold возвращаем inner
+                // тип напрямую. Полная семантика Result[T,E]/Option[T] →
+                // T unwrap landing в Plan 110.1.3 (D196 forms 2-5).
+                self.infer_consume_init_type(inner)
+            }
+            ExprKind::As(_, ty) => {
+                if let TypeRef::Named { path, .. } = ty {
+                    path.last().cloned()
+                } else {
+                    None
+                }
+            }
+            ExprKind::Ident(_) | ExprKind::Path(_) => None,
+            _ => None,
+        }
     }
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
