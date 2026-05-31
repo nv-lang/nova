@@ -1728,22 +1728,54 @@ pre-existing `for_in_range_iter` (same error на main repo `nova/`,
     generic-bound resolution (staged 110.1.4).
   - A110.1.3.c 🟡 partial: `[T Consumable[never]]` same as .b.
 
-#### Session 3 closure — остановка после 110.1.3
+#### Plan 110.1.4 decomposed → 8 sub-sub-sub-steps (commit `878a2ff83fe`)
 
-Plan 110.1.1-110.1.3 — substantial session-worth (~880 LOC code + 10
-fixtures + 18 match-site adaptation + recursive AST visitor + type
-inference heuristic + regression checks + 3 atomic commits). Continuing
-к 110.1.4 codegen risks:
-- Plan 110.1.4 = THE BIG ONE (full D188 desugaring с try/catch fail-frame
-  setup + on_exit dispatch + throw re-raise) — sustains multi-day scope.
-- Context window saturation.
-- Atomic-merge rule violation если codegen partial.
+Plan 110.1.4 codegen разбит на atomic-merge steps 110.1.4.a-h:
+init binding (a) → body trailing value (b) → ScopeOutcome registration
+(c) → setjmp fail-frame (d) → on_exit vtable dispatch (e) → throw
+re-raise (f) → panic propagation (g) → tests + close (h).
 
-Production-grade discipline: остановка на coherent point (110.1.3 ✅
-end-to-end working, three sub-sub-plans landed atomically).
+#### Plan 110.1.4.a ✅ (commit `933e4a42e58`) — init binding emit + body emit (success path)
 
-**Plan 110.1.4-110.1.10** — следующие sessions с Opus 4.7 + Thinking ON.
-Каждый sub-sub atomic-merge.
+Replace D188-codegen-not-yet-implemented gate с real codegen:
+- Emit C block с `<C_type> <c_name> = <init>`.
+- `#define` alias для Nova binding → C local; `#undef` после body.
+- Body stmts emit via existing emit_stmt loop.
+- Body trailing expr → discard (capture в 110.1.4.b).
+- on_exit dispatch → comment placeholder (110.1.4.e adds real vtable).
+- `defer_block_counter` для unique scope IDs.
+
+Tests (11/11 PASS via release `nova test`):
+- POSITIVE codegen_consume_init_only (new) — init evaluates, body
+  reads binding, assertion PASS.
+- 5 existing positive fixtures updated с test blocks + EXPECT_COMPILE_ERROR
+  markers removed (codegen теперь работает).
+- 4 existing negative fixtures continue PASS.
+
+Acceptance A110.1.4.a ✅: init evaluates, binding accessible в body,
+scope-block executes без runtime error.
+
+#### Session 3 final closure — остановка после 110.1.4.a
+
+Session 3 total: 4 sub-sub-(sub)-plans landed atomically через release
+nova test:
+- 110.1.1 parser + AST scaffold (5307ddfdbf3).
+- 110.1.2 D188-not-consumable + malformed-on-exit (98f96bf1af9).
+- 110.1.3 D194 never + D196 Result/Option unwrap (785bf04d88e).
+- 110.1.4.a init binding emit + body emit (933e4a42e58).
+
+~1020 LOC code + 11 fixtures + 18 match-site adaptation + recursive AST
+visitor + type inference heuristic + scope-block codegen + regression
+checks + 4 atomic commits.
+
+Continuing к 110.1.4.b (body trailing value capture) risks context
+window saturation. Production-grade discipline: остановка на coherent
+point (110.1.4.a ✅ end-to-end working).
+
+**Branch pushed to `github`**: `https://github.com/nv-lang/nova/tree/plan-110`.
+
+**Plan 110.1.4.b-h + 110.1.5-110.1.10 + 110.2-110.8** — следующие sessions
+с Opus 4.7 + Thinking ON. Каждый sub-sub-(sub) atomic-merge.
 
 ---
 
