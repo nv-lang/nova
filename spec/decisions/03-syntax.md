@@ -6279,8 +6279,12 @@ defer {
 
 ## D160. `okdefer` + reason-aware `defer |result|`
 
-> **Plan 100.4.3.** Принято 2026-05-23 (proposed). Новые scope-level
-> statements; complement к D90 defer/errdefer family.
+> **Plan 100.4.3.** Принято 2026-05-23 (proposed). **Статус: RETRACTED**
+> by D189 (Plan 110.5.7 hard cutover, 2026-05-31). Replaced by
+> `consume X = ... { body }` scope-block с `match outcome { Success/
+> Failure(_)/Panic(_) }` в `on_exit` method (D188).
+>
+> Новые scope-level statements; complement к D90 defer/errdefer family.
 
 ### Что
 
@@ -7172,9 +7176,10 @@ type-checker автоматически снимает требование `Fai
 
 ## D189. Прямое удаление `okdefer` + `errdefer` + `defer |result|`
 
-> **Plan 110 Ф.9.** Принято 2026-05-31 (proposed). Hard cutover; никакого
-> migration window. Auto-fix tool (`nova fix --simplify-cleanup`) делает
-> 100% миграции перед удалением парсер-поддержки.
+> **Plan 110 Ф.9.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.5.7
+> hard cutover landed; parser rejects retracted forms с D189-removed-*
+> errors). Fixture migration via deletion + behavior coverage preserved
+> в plan110/ (Plan 110.5.5).
 
 ### Что удаляется
 
@@ -7273,9 +7278,10 @@ suggestion на новую форму:
 
 ## D190. Rejected alternative cleanup designs
 
-> **Plan 110.** Принято 2026-05-31. Документирует rejected design choices
-> для будущих ревизоров с rationale почему именно `Consumable[E]` +
-> `consume {}`.
+> **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (pure documentation
+> of rejected design choices; no impl required). Документирует rejected
+> design choices для будущих ревизоров с rationale почему именно
+> `Consumable[E]` + `consume {}`.
 
 ### Drop-trait (Rust-style)
 
@@ -7751,8 +7757,10 @@ mutex/atomic patterns. Disasm-verified в T2.9.
 
 ## D196. Init type constraints для `consume X = expr { body }`
 
-> **Plan 110 Ф.2.9.** Принято 2026-05-31. Определяет какие expression'ы
-> могут служить init для consume scope-block.
+> **Plan 110 Ф.2.9.** Принято 2026-05-31. **Статус: ACTIVE** (Plan
+> 110.1.2 + 110.1.3 + refine landed; forms 1-3, 5 implemented в
+> type-checker; form 4 method-chain deep recursion partial). Определяет
+> какие expression'ы могут служить init для consume scope-block.
 
 ### Правило
 
@@ -7835,7 +7843,9 @@ semantics). `nv_consume_enter` имеет implicit memory fence перед
 
 ## D197. Cleanup re-entrance — nested `consume {}` inside `on_exit`
 
-> **Plan 110 Ф.2.12.** Принято 2026-05-31. Разрешает вложенные consume
+> **Plan 110 Ф.2.12.** Принято 2026-05-31. **Статус: ACTIVE** (Plan
+> 110.1.8 landed; codegen handles re-entrance correctly through nested
+> scope-blocks). Разрешает вложенные consume
 > scope-block'и внутри `on_exit`.
 
 ### Правило
