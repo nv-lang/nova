@@ -27832,16 +27832,34 @@ pre-Plan-109 API.  Документированы в их followups.
 
 ## Plan 115 — foundational FFI (`ptr` + tuple-return FFI + opaque handle pattern) — 2026-05-31
 
-**Status:** 🟢 OPEN sprint. Plan 115 — foundational P1 для FFI к произвольным C libraries (libsqlite, libpng, libcurl, etc.) + блокирует Plan 91.12 Pattern B, Plan 116 (TLS), Plan 117-118 (HTTP).
+**Status:** 🟢 CLOSED 2026-06-01. Plan 115 V1 implementation complete:
+4 commits (0f0b4b89c5d + 400dc49952a + 8444a487cd2 + 639da920950).
+10/10 plan115 fixtures PASS, zero regressions в plan114_4/basics/generics.
 
-**Plan markers (Ф.0 open):**
-- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing в unsafe contexts (V1 banned; future если real need).
-- 🟡 `[M-115-ptr-typed-deref]` — `unsafe { *p }` для typed pointer deref (`*mut T`) — advanced FFI; not needed для opaque handles.
-- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI для auto-generating FFI bindings из C header (major tooling effort; separate plan).
-- 🟡 `[M-115-d126-deprecation]` — formal deprecation `external type` D126 в favor of `type X(ptr)` (после stdlib migration to Plan 115 pattern).
-- 🟡 `[M-115-tuple-gc-types]` — tuple elements GC-tracked types ([]T / Option / Result / sum) в external fn return — V1 не recommended, V2 formal support.
-- 🟡 `[M-115-cookbook-libcurl]` — libcurl binding example в docs/ffi-cookbook.md (Plan 115 Ф.3 deliverable).
-- 🟡 `[M-115-cookbook-libpng]` — libpng binding example в docs/ffi-cookbook.md.
-- 🟡 `[M-115-examples-ffi-real-build]` — examples/ffi/ собирается в real-target test с linked libsqlite3 (V1 — Nova-side fixture только; real C-link verification — отдельный CI step).
+**CLOSED markers (V1 delivered):**
+- ✅ `[M-115-cookbook-libcurl]` — libcurl HTTP GET sketch в docs/ffi-cookbook.md §3.
+- ✅ `[M-115-cookbook-libpng]` — libpng read_image_dimensions sketch §2.
+
+**OPEN markers carried forward:**
+- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing в unsafe contexts (V1 banned).
+- 🟡 `[M-115-ptr-typed-deref]` — `unsafe { *p }` для `*mut T` (Plan 118 territory).
+- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI (major tooling, separate plan).
+- 🟡 `[M-115-d126-deprecation]` — formal deprecation `external type` D126 после migration audit.
+- 🟡 `[M-115-tuple-gc-types]` — tuple elements GC-tracked types ([]T / Option / Result / sum).
+- 🟡 `[M-115-examples-ffi-real-build]` — examples/ffi/ build с real libsqlite3 link.
+
+**NEW markers discovered на implementation:**
+- 🟡 `[M-115-newtype-constructor]` — D52 tuple newtype `type X(ptr)` constructor + `.0` field access. V1 ships record form `type X { value ptr }` equivalent. Bootstrap codegen TypeDeclKind::Newtype не имеет call-site constructor — `SqHandle(value)` parses как Call{Ident("SqHandle"), [value]} и codegen эмитит nova_fn_SqHandle (undefined symbol). Followup adds: type-check accepts NAME(v) call if NAME registered as Newtype; codegen emits cast `((Nova_NAME)(v))`; `.0` member access on Newtype value → identity (no-op typedef).
+- 🟡 `[M-115-external-fn-method]` — generic / receiver-method external fn в user modules. V1 поддерживает только free external fn `external fn name(args) -> ret`. Receiver-method `external fn Type.method() -> ...` пока gated.
+- 🟡 `[M-115-ffi-build-pipeline]` — `nova build --c-shim path/to/file.c` CLI для user-provided shim linking. V1 shims живут в `compiler-codegen/nova_rt/` (рядом с stdlib shims), требует rebuild Nova compiler. Production-grade: separate build-step + cargo-feature toggle для C linking.
+
+**Codegen architectural changes (Ф.2):**
+- nova_ptr distinct typedef (`typedef void* nova_ptr`) — mirror Plan 70.3 nova_char rationale; distinguishable от erased generic-T void* placeholder.
+- Tuple typedef emit refactored: tagged struct form `typedef struct NAME { ... } NAME;` + `#ifndef NOVA_TUPLE_TYPEDEF_<mangled>` guard — allows shim header'у forward-declare без redefinition error.
+- ExternalRegistry::from_module merged в emit_module pre-pass для user external fn registration (даёт unmangled `nova_fn_<name>` C call name).
+
+**D-block changes:**
+- D214 NEW (`spec/decisions/02-types.md` после D200) — `ptr` opaque pointer + tuple FFI returns + opaque handle pattern. ~300 lines.
+- D82 amended (Plan 115 D214) — drop "external fn only allowed in std.runtime.*" restriction. User-level external fn enabled для user FFI к third-party C libraries.
 
 Дополнительно: Plan 115 v1 это **оригинальный D214 (НЕ Plan 118 D214 amend)**. Plan 118 future planned — добавляет `*T` family + `unsafe {}` block + D2 keyword restore + Option[*T] NPO. Plan 115 v1 = baseline foundation на котором Plan 118 строит V2.

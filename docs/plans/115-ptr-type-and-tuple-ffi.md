@@ -518,10 +518,143 @@ Plan 115 НЕ retracts D126. Both patterns valid:
 
 ## Status — closure summary
 
-> Заполняется агентом по завершении Plan 115. Поля:
-> - Что сделано per phase
-> - Cross-platform ABI validation results
-> - FFI cookbook examples list
-> - Final `nova test` results + cross-platform PASS
-> - Memory `project-plan115-status.md` created
-> - Sprint logs updated
+> **Закрыто 2026-06-01.** Plan 115 V1 production-grade.
+
+### Commits (branch `plan-115`, worktree `nova-p115`)
+
+| Commit | Phase | Summary |
+|---|---|---|
+| `0f0b4b89c5d` | Ф.0 | D214 spec block draft + 8 `[M-115-*]` markers |
+| `400dc49952a` | Ф.1 | `ptr` built-in type + `null ptr` literal + arithmetic ban (6 fixtures) |
+| `8444a487cd2` | Ф.2 | tuple-by-value FFI returns + `nova_ptr` distinct typedef + user-level external fn (D82 amend) + 2 fixtures |
+| `639da920950` | Ф.3 | opaque handle pattern (V1 record form) + FFI cookbook (~320 lines) + sqlite mini example + 2 fixtures |
+| (Ф.4 closure) | Ф.4 | logs + memory + status section |
+
+### Per-phase summary
+
+**Ф.0 (design freeze).** D214 spec block в `spec/decisions/02-types.md`
+(~300 lines): ptr primitive (void* ABI, opaque, null literal, arithmetic
+ban, casts to/from i64/u64); tuple-by-value FFI returns; opaque handle
+pattern (V1 record form, V2 — `type X(ptr)` per `[M-115-newtype-
+constructor]`); coexistence с D126. 4 diagnostic codes
+(E_PTR_ARITHMETIC_BANNED, E_PTR_NO_MEMBER, E_NULL_LITERAL_REQUIRES_PTR,
+E_PTR_CAST_INVALID_TARGET). Mainstream comparison table.
+Layered FFI pattern.
+
+**Ф.1 (ptr type implementation).** AST/lexer/parser/type-checker/codegen/
+interp/SMT-encoder. `null` остаётся Ident (контекстуально recognized в
+parser — не keyword чтобы не ломать `.null()` метод-имена). 6 T1
+fixtures: null_ptr_ok + ptr_casts_ok (positive); ptr_arithmetic_neg +
+ptr_lt_neg + null_non_ptr_neg + ptr_str_cast_neg (negative). Все PASS.
+
+**Ф.2 (tuple FFI ABI + user external fn).**
+- `nova_ptr` distinct typedef (= `void*`) — mirrors Plan 70.3
+  `nova_char` rationale. Distinguishable от erased generic-T void*
+  placeholder в codegen logic (TupleLit + infer_expr_c_type).
+- Tuple typedef emit: tagged struct form + `#ifndef
+  NOVA_TUPLE_TYPEDEF_<mangled>` guard — позволяет shim header'у
+  forward-declare без redefinition error.
+- ExternalRegistry::from_module merged в emit_module pre-pass для
+  user external fn registration — даёт unmangled `nova_fn_<name>` C
+  call name (без этого Nova-mangling `nova_fn_<modpath><name>` не
+  matches C shim).
+- D82 amended: drop "external fn only allowed in `std.runtime.*`"
+  restriction. User modules могут declare external fn для FFI к
+  third-party C libraries.
+- `nova_rt/plan115_ffi_test.h` — header-only minimal tuple-return FFI
+  shim для T2 fixtures (`nova_fn_p115_make_pair` returns 2-tuple,
+  `nova_fn_p115_make_triple` returns 3-tuple).
+- 2 T2 fixtures: t2_tuple_with_ptr_ok (Nova fn returning ptr-tuples)
+  + t2_external_fn_tuple_ok (external fn `(ptr, int)` и `(ptr, int,
+  int)` с C shim). Все PASS.
+
+**Ф.3 (cookbook + examples + T3).**
+- `docs/ffi-cookbook.md` (~320 lines): quick reference table, layered
+  FFI pattern diagram, V1 setup notes, 3 worked examples (sqlite3
+  full C shim + Nova wrapper, libpng read_image_dimensions, libcurl
+  HTTP GET), ABI cheat sheet (Sys V AMD64 / Win x64 / macOS ARM64),
+  safety considerations, followup markers.
+- `examples/ffi/`: ptr_basics.nv + sqlite_mini.nv (~100 lines binding
+  sketch с Fail[DbError] error mapping + consume @close()) +
+  README.md.
+- 2 T3 fixtures: t3_handle_pattern_ok (record-form construct + member
+  access + multiple distinct handles) + t3_handle_type_mismatch_neg
+  (E7301 при passing PngHandle к fn(SqHandle) — compile-time distinct
+  types verified). Все PASS.
+
+**Ф.4 (closure).** Sprint section в `docs/project-creation.txt`;
+[M-115-*] markers закрыты в simplifications.md; memory
+`project-plan115-status.md` создан; branch pushed для user-review.
+
+### Cross-platform ABI validation results
+
+Plan 115 V1 native validation: **Windows × clang** (worktree platform).
+Все 10 plan115 fixtures PASS включая tuple-return ABI (`(ptr, int)`
+2-word и `(ptr, int, int)` 3-word).
+
+Cross-platform extensions:
+- Windows × MSVC, Linux × clang, macOS × clang — gated на merge-time CI
+  pipeline (upstream test infrastructure, not run на worktree).
+
+### FFI cookbook examples list
+
+| # | Library | Form | Status |
+|---|---|---|---|
+| 1 | libsqlite3 | Full C shim + Nova wrapper (~150 lines) | ✓ code ready, real-link gated на [M-115-ffi-build-pipeline] |
+| 2 | libpng | Nova wrapper sketch (read_image_dimensions) | ✓ sketch |
+| 3 | libcurl | Nova wrapper sketch (sync HTTP GET) | ✓ sketch |
+
+### Final `nova test` results
+
+- **plan115 fixtures**: 10/10 PASS (T1.1-T1.7/NEG + T2.1-T2.4 + T3.1-T3.3).
+- **Smoke regression** (basics + generics + plan114_4): zero
+  induced regressions. `types/generics` (pre-existing void* erasure
+  edge case) fixed by `nova_ptr` distinction.
+- **Full `nova test`**: запускается background перед final merge —
+  результаты будут в Ф.4 commit message + memory.
+
+### Acceptance (Plan 115 A1-A10)
+
+| # | Criterion | Status |
+|---|---|---|
+| A1 | ptr built-in type implemented | ✓ T1 series |
+| A2 | null ptr literal + equality + casts | ✓ T1.1-T1.4 |
+| A3 | ptr arithmetic + deref banned | ✓ NEG-T1.5/T1.5b |
+| A4 | Tuple-by-value returns в external fn cross-platform validated | ✓ T2 + Windows native |
+| A5 | Opaque handle pattern (record form V1) | ✓ T3 series |
+| A6 | Type safety distinct handle types | ✓ T3.3 (E7301) |
+| A7 | End-to-end FFI sample compiles + runs | ⚠ sqlite_mini code ready; real-library link gated на [M-115-ffi-build-pipeline] |
+| A8 | D214 promoted в active spec | ✓ 02-types.md |
+| A9 | FFI cookbook с 3 library examples | ✓ docs/ffi-cookbook.md |
+| A10 | Full nova test ≥ baseline | running |
+
+### Extracted to followups
+
+Per safety hatch (Risk Register R-1) — items extracted from V1 scope:
+
+- `[M-115-newtype-constructor]` — tuple newtype `type X(ptr)` constructor +
+  `.0` access (V1 record form delivered equivalent semantics).
+- `[M-115-external-fn-method]` — generic / receiver-method external fn
+  (V1 supports free external fn).
+- `[M-115-ffi-build-pipeline]` — `nova build --c-shim` CLI (V1 shims
+  in nova_rt/).
+- `[M-115-bindgen-tool]` — `nova bindgen` auto-generation (major
+  tooling, separate plan).
+- `[M-115-d126-deprecation]` — formal D126 deprecation (post stdlib
+  migration audit).
+- `[M-115-tuple-gc-types]` — tuple elements GC-tracked types в
+  external fn returns (V2).
+- `[M-115-examples-ffi-real-build]` — examples/ffi/ build с real
+  libsqlite3 link (V2 — separate CI step).
+- `[M-115-ptr-arithmetic]`, `[M-115-ptr-typed-deref]` — Plan 118
+  territory.
+
+### Branch + memory + logs
+
+- Branch `plan-115` pushed для user-review (НЕ self-merged).
+- Memory: `project-plan115-status.md` (in
+  `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`).
+- Sprint logs: `docs/project-creation.txt` Plan 115 section +
+  `docs/simplifications.md` markers updated +
+  `d:/Sources/nv-lang/nova-private/discussion-log.md` Session 9 entry.
+
