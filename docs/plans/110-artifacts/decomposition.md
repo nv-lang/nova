@@ -142,35 +142,99 @@ form `consume X = expr;` сохраняется.
 
 ### 110.1.4 Codegen — basic desugaring (sync, no shield/timeout)
 
-**Scope:** codegen `Stmt::ConsumeScope` → desugared C:
-- init binding +
-- run-body-capturing (try/catch на throw/panic);
-- `on_exit(outcome)` dispatch через protocol vtable;
-- throw re-raise после `on_exit`.
+**Декомпозиция на 8 sub-sub-sub-steps** (2026-05-31):
 
-**No cancel-shield, no timeout resolution** — заглушки с TODO,
-имплементируются в Plan 110.2 (отдельная задача со своими тестами).
-**Не нарушение production-grade rule:** sync-only desugaring **работает
-end-to-end** для non-async кода; cancel-shield добавляется на уже
-рабочую базу.
+#### 110.1.4.a — Init binding emit + scope-block C structure
 
-**Files:**
-- `compiler-codegen/src/codegen/emit_c.rs` — emit ConsumeScope.
-- `nova_rt/cleanup.h` (new) — declarations.
+Emit C block `{ Nova_<Type> _consume_<binding>_<id> = <init expr>; ... }`.
+Binding visible в body как alias. Без on_exit dispatch (заглушка emits
+warning).
+
+**Files:** `emit_c.rs` ConsumeScope branch.
+**Tests:** `codegen_consume_init_only.nv` — verify init eval happens.
+**Acceptance:** A110.1.4.a — init evaluates, binding accessible в body.
+**Estimated:** 1 session, ≤ 150 LOC Rust + 1 fixture.
+
+#### 110.1.4.b — Body emit + return value capture
+
+Body block emit'ит C statements; trailing expr → return value of consume
+scope. Без try/catch (still no fail handling).
+
+**Tests:** `codegen_consume_body_value.nv` — body returns value через
+trailing expr.
+**Estimated:** 1 session, ≤ 100 LOC Rust + 1 fixture.
+
+#### 110.1.4.c — Runtime ScopeOutcome sum-type registration
+
+Register `ScopeOutcome` в `sum_schemas` (как Option/Result). Tags:
+SUCCESS=0, FAILURE=1, PANIC=2. Payload: nova_str для Failure/Panic.
+
+**Files:** `emit_c.rs` sum_schemas init + `nova_rt/cleanup.h` typedef.
+**Tests:** `codegen_scope_outcome_construct.nv` — construct + match.
+**Estimated:** 1 session, ≤ 100 LOC C + 80 LOC Rust + 1 fixture.
+
+#### 110.1.4.d — Setjmp fail-frame for body try/catch
+
+Wrap body in `setjmp(_consume_frame.jb) == 0 ? body : capture`. Capture
+err_msg в local var. Pop fail-frame после body.
+
+**Files:** `emit_c.rs` emit_consume_scope_body.
+**Tests:** `codegen_consume_throw_caught.nv` — body throws → caught,
+outcome=Failure.
+**Estimated:** 1 session, ≤ 150 LOC Rust + 1 fixture.
+
+#### 110.1.4.e — on_exit method dispatch via vtable
+
+После body, emit call `Nova_<Type>_method_on_exit(&binding, outcome)`.
+Method resolved через type_methods registry. Pass receiver pointer +
+outcome value.
+
+**Files:** `emit_c.rs` emit_consume_on_exit_call.
+**Tests:** `codegen_consume_on_exit_dispatch.nv` — verify on_exit
+called with correct outcome.
+**Estimated:** 1 session, ≤ 100 LOC Rust + 1 fixture.
+
+#### 110.1.4.f — Throw re-raise after on_exit на Failure
+
+Если outcome был Failure: после `on_exit` — re-emit `nova_throw(err_msg)`.
+Если Panic: `nv_panic(msg)`. Если on_exit сам throws — composes через
+D193 MultiError (но MultiError refactor в 110.4 — здесь basic).
+
+**Tests:** `codegen_consume_throw_reraise.nv` — body throws → on_exit
+called → re-raise propagates.
+**Estimated:** 1 session, ≤ 80 LOC Rust + 1 fixture.
+
+#### 110.1.4.g — Panic propagation через on_exit
+
+Panic в body → outcome=Panic → on_exit(Panic) → resume panic. Separate
+из throw path.
+
+**Tests:** `codegen_consume_panic.nv` — body panics → on_exit(Panic) →
+panic propagates.
+**Estimated:** 1 session, ≤ 60 LOC Rust + 1 fixture.
+
+#### 110.1.4.h — Tests T2.1-T2.8 + NEG + close
+
+Complete remaining T2.x positive tests + NEG-2.1-2.2 (exactly-once
+double invocation prevention) + close 110.1.4.
 
 **Tests:**
-- `nova_tests/plan110/codegen_consume_success.nv` — body завершился, on_exit(Success).
-- `nova_tests/plan110/codegen_consume_throw.nv` — body throws, on_exit(Failure).
-- `nova_tests/plan110/codegen_consume_panic.nv` — body panics, on_exit(Panic).
-- `nova_tests/plan110/codegen_consume_return.nv` — body returns value, on_exit(Success) runs.
+- `codegen_consume_success.nv` (T2 series).
+- `codegen_consume_return.nv` (body returns value → success path).
+- `neg_consume_double_on_exit.nv` (manual on_exit call inside body).
 
-**Acceptance:**
-- A110.1.4.a: 4 fixture'а PASS через release `nova test`.
-- A110.1.4.b: `on_exit` вызван ровно один раз на каждом exit-path.
+**Acceptance closure:**
+- A110.1.4.a-h ✅ all 8 sub-steps landed.
+- 8 fixtures PASS via release nova test.
 
-**Dependencies:** 110.1.3.
+**Estimated:** 1 session, ≤ 200 LOC Rust + 3 fixtures + closure docs.
 
-**Estimated:** 1 session, ≤ 500 LOC Rust + 200 LOC C + 4 fixture'а.
+---
+
+**Total Plan 110.1.4:** 8 sub-sub-sub-steps × ~1 session each = ~8 sessions.
+Each atomic merge. Production-grade staged delivery: каждый step
+landing'уется с working tests, последующие добавляют функциональность
+на coherent base.
 
 ---
 
