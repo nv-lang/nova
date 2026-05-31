@@ -1,0 +1,15 @@
+// Plan 120 Ф.2 negative — positional `.0` access on named tuple.
+//
+// EXPECT_COMPILE_ERROR E_TUPLE_POSITIONAL_ACCESS_ON_NAMED
+
+module plan120.neg_t6_positional_access_on_named
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 @bad_access() -> f64 =>
+    @.0
+
+test "should not compile: .0 on named tuple" {
+    ro v Vec3 = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.bad_access() == 1.0)
+}

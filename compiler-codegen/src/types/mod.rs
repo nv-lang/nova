@@ -2355,65 +2355,131 @@ impl<'a> TypeCheckCtx<'a> {
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         let Some(td) = self.types.get(tname) else { return; };
-        let TypeDeclKind::Record(fields) = &td.kind else { return; };
-        // embed (`use`) проксирует поля/методы вложенного типа — резолв
-        // слишком сложен для надёжной проверки, пропускаем такой тип.
-        if fields.iter().any(|f| f.is_embed) {
-            return;
+        match &td.kind {
+            TypeDeclKind::Record(fields) => {
+                // embed (`use`) проксирует поля/методы вложенного типа — резолв
+                // слишком сложен для надёжной проверки, пропускаем такой тип.
+                if fields.iter().any(|f| f.is_embed) {
+                    return;
+                }
+                if fields.iter().any(|f| f.name == name) {
+                    return;
+                }
+                // Метод? Имена операторных методов могут храниться с ведущим `@`.
+                let has_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_method {
+                    return;
+                }
+                // `into` / `try_into` синтезируются компилятором из `From` /
+                // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
+                // для любого типа-источника конверсии.
+                if matches!(name, "into" | "try_into") {
+                    return;
+                }
+                // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+                // generalized protocol default-body satisfiability. Replaces prior
+                // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
+                // `name` with `default_body`, and for each checks whether the body's
+                // top-level method/free-fn calls resolve for T (i.e. T provides every
+                // method/overload referenced by the body). If at least one protocol
+                // is satisfied → accept the bare call; codegen general synthesizer
+                // emits the concrete Nova_<T>_method_<name> on first use.
+                if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                let avail: Vec<&str> =
+                    fields.iter().map(|f| f.name.as_str()).collect();
+                let mut diag = Diagnostic::new(
+                    format!(
+                        "[E7320] no field or method `{}` on type `{}`",
+                        name, tname,
+                    ),
+                    span,
+                );
+                if !avail.is_empty() {
+                    diag = diag.with_note(format!(
+                        "`{}` has field{}: {}",
+                        tname,
+                        if avail.len() == 1 { "" } else { "s" },
+                        avail.join(", "),
+                    ));
+                }
+                errors.push(diag);
+            }
+            TypeDeclKind::NamedTuple(fields) => {
+                // Plan 120 (D215): named tuple — named access only (Q120-positional-access-on-named Option B)
+                if name.chars().all(|c| c.is_ascii_digit()) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_POSITIONAL_ACCESS_ON_NAMED] \
+                             named tuple `{}` does not support positional field access `.{}`; \
+                             use named access `.field_name` instead",
+                            tname, name
+                        ),
+                        span,
+                    ));
+                    return;
+                }
+                if fields.iter().any(|f| f.name == name) {
+                    return;
+                }
+                let has_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_method {
+                    return;
+                }
+                if matches!(name, "into" | "try_into") {
+                    return;
+                }
+                if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                let avail: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+                let mut diag = Diagnostic::new(
+                    format!(
+                        "[E7320] no field or method `{}` on named tuple `{}`",
+                        name, tname,
+                    ),
+                    span,
+                );
+                if !avail.is_empty() {
+                    diag = diag.with_note(format!(
+                        "`{}` has field{}: {}",
+                        tname,
+                        if avail.len() == 1 { "" } else { "s" },
+                        avail.join(", "),
+                    ));
+                }
+                errors.push(diag);
+            }
+            TypeDeclKind::Newtype(TypeRef::Tuple(_, _)) => {
+                // Positional tuple: named field access (`.x`) is invalid
+                if !name.chars().all(|c| c.is_ascii_digit()) {
+                    let has_method = self.method_table.get(tname).map_or(false, |m| {
+                        m.keys().any(|k| k.trim_start_matches('@') == name)
+                    });
+                    if has_method {
+                        return;
+                    }
+                    if matches!(name, "into" | "try_into") {
+                        return;
+                    }
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_NAMED_ACCESS_ON_POSITIONAL] \
+                             positional tuple `{}` does not have named fields; \
+                             use positional access `.0`, `.1`, … instead",
+                            tname
+                        ),
+                        span,
+                    ));
+                }
+            }
+            _ => {} // Sum, Effect, Protocol, Alias, Opaque, etc. — conservative, skip
         }
-        if fields.iter().any(|f| f.name == name) {
-            return;
-        }
-        // Метод? Имена операторных методов могут храниться с ведущим `@`.
-        let has_method = self.method_table.get(tname).map_or(false, |m| {
-            m.keys().any(|k| k.trim_start_matches('@') == name)
-        });
-        if has_method {
-            return;
-        }
-        // `into` / `try_into` синтезируются компилятором из `From` /
-        // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
-        // для любого типа-источника конверсии.
-        if matches!(name, "into" | "try_into") {
-            return;
-        }
-        // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
-        // generalized protocol default-body satisfiability. Replaces prior
-        // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
-        // `name` with `default_body`, and for each checks whether the body's
-        // top-level method/free-fn calls resolve for T (i.e. T provides every
-        // method/overload referenced by the body). If at least one protocol
-        // is satisfied → accept the bare call; codegen general synthesizer
-        // emits the concrete Nova_<T>_method_<name> on first use.
-        //
-        // Acceptance precision: a body's `@compare(other)` requires T to have
-        // `@compare`; `sb.append(str.from(@))` requires `str.from(T)` overload
-        // OR `T.@into() -> str`. Patterns recognized by a small AST inspector
-        // (collect_resolved_method_refs) — covers stdlib protocols (Equatable,
-        // Printable, Comparable.equals via coercion). Bodies using unsupported
-        // patterns are skipped (treated as not synthesizable) — type-checker
-        // returns E7320 normally.
-        if self.protocol_method_satisfiable_for(tname, name) {
-            return;
-        }
-        let avail: Vec<&str> =
-            fields.iter().map(|f| f.name.as_str()).collect();
-        let mut diag = Diagnostic::new(
-            format!(
-                "[E7320] no field or method `{}` on type `{}`",
-                name, tname,
-            ),
-            span,
-        );
-        if !avail.is_empty() {
-            diag = diag.with_note(format!(
-                "`{}` has field{}: {}",
-                tname,
-                if avail.len() == 1 { "" } else { "s" },
-                avail.join(", "),
-            ));
-        }
-        errors.push(diag);
     }
 
     /// Ф.4: имя типа в value-позиции (`let c = Foo`, `Foo + 1`) → E7330.
