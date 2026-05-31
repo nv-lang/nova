@@ -8,7 +8,7 @@ test "array literal and len" {
 }
 
 test "empty array" {
-    let a []int = []
+    let mut a []int = []
     assert(a.len() == 0)
 }
 
@@ -69,7 +69,7 @@ test "pop returns Some/None" {
 }
 
 test "pop empty returns None" {
-    let a []int = []
+    let mut a []int = []
     let r = a.pop()
     assert(r == None)
 }

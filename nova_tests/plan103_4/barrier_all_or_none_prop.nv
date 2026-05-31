@@ -18,7 +18,7 @@ test "all-or-none: all K parties proceed after barrier (5 rounds)" {
     let k = 6
     let rounds = 5
     let mut b = Barrier.new(k)
-    let after_barrier = AtomicInt.new(0)
+    let mut after_barrier = AtomicInt.new(0)
     let mut wg_outer = WaitGroup.new()
     wg_outer.add(k)
 
@@ -38,7 +38,7 @@ test "all-or-none: all K parties proceed after barrier (5 rounds)" {
 test "barrier atomicity: no fiber left behind under M:N" {
     let k = 4
     let mut b = Barrier.new(k)
-    let passed = AtomicInt.new(0)
+    let mut passed = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(k)
 

@@ -13,9 +13,9 @@
 module nova_tests.plan103_8.prop_once_exactly_once_under_pressure
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 Once objects Ð²Ð‚â€ each init == 1" {
-    let once1  = Once.new(); let cnt1 = AtomicI64.new(0)
-    let once2  = Once.new(); let cnt2 = AtomicI64.new(0)
-    let once3  = Once.new(); let cnt3 = AtomicI64.new(0)
+    let mut once1  = Once.new(); let mut cnt1 = AtomicI64.new(0)
+    let mut once2  = Once.new(); let mut cnt2 = AtomicI64.new(0)
+    let mut once3  = Once.new(); let mut cnt3 = AtomicI64.new(0)
 
     parallel for _i in 0..64 {
         once1.call_once() { cnt1.fetch_add(1) }
@@ -32,10 +32,10 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 Once objects Ð²Ð‚â
 }
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 OnceCells Ð²Ð‚â€ each init == 1, value stable" {
-    let cell1   = OnceCell[int].new(); let cinit1 = AtomicI64.new(0)
-    let cell2   = OnceCell[int].new(); let cinit2 = AtomicI64.new(0)
-    let cell3   = OnceCell[int].new(); let cinit3 = AtomicI64.new(0)
-    let wrong   = AtomicI64.new(0)
+    let cell1   = OnceCell[int].new(); let mut cinit1 = AtomicI64.new(0)
+    let cell2   = OnceCell[int].new(); let mut cinit2 = AtomicI64.new(0)
+    let cell3   = OnceCell[int].new(); let mut cinit3 = AtomicI64.new(0)
+    let mut wrong   = AtomicI64.new(0)
 
     parallel for _i in 0..64 {
         let v1 = cell1.get_or_init() { cinit1.fetch_add(1); 111 }
@@ -53,13 +53,13 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 OnceCells Ð²Ð‚â€
 }
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 Lazy objects Ð²Ð‚â€ each init == 1, value stable" {
-    let linit1 = AtomicI64.new(0)
-    let linit2 = AtomicI64.new(0)
-    let linit3 = AtomicI64.new(0)
+    let mut linit1 = AtomicI64.new(0)
+    let mut linit2 = AtomicI64.new(0)
+    let mut linit3 = AtomicI64.new(0)
     let lazy1  = Lazy[int].new() { linit1.fetch_add(1); 1001 }
     let lazy2  = Lazy[int].new() { linit2.fetch_add(1); 2002 }
     let lazy3  = Lazy[int].new() { linit3.fetch_add(1); 3003 }
-    let wrong  = AtomicI64.new(0)
+    let mut wrong  = AtomicI64.new(0)
 
     parallel for _i in 0..64 {
         let v1 = lazy1.force()
@@ -81,7 +81,7 @@ test "prop once exactly-once: 64 fibers Ð“â€” 3 Lazy objects Ð²Ð‚â
 
 test "prop once: state is Done after call_once completes" {
     let mut once = Once.new()
-    let inits = AtomicI64.new(0)
+    let mut inits = AtomicI64.new(0)
 
     once.call_once() { inits.fetch_add(1) }
     assert(once.is_completed())

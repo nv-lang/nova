@@ -14,7 +14,7 @@ test "barrier reused across 3 epochs of 4 parties" {
     let parties = 4
     let epochs = 3
     let mut b = Barrier.new(parties)
-    let epoch_counter = AtomicInt.new(0)
+    let mut epoch_counter = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(parties)
 
@@ -37,7 +37,7 @@ test "barrier index is consistent across multiple rounds" {
     let parties = 3
     let rounds = 5
     let mut b = Barrier.new(parties)
-    let total_indices = AtomicInt.new(0)
+    let mut total_indices = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(parties)
 

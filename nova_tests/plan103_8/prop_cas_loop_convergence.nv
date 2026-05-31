@@ -65,8 +65,8 @@ test "prop CAS convergence: 8 fibers × 50 weak CAS — final = 400" {
 
 test "prop CAS convergence: fetch_add vs CAS loop produce same final count" {
     // Validates that CAS-loop increment and fetch_add are equivalent in correctness.
-    let cas_counter    = AtomicI64.new(0)
-    let fetch_counter  = AtomicI64.new(0)
+    let mut cas_counter    = AtomicI64.new(0)
+    let mut fetch_counter  = AtomicI64.new(0)
     let n_fibers       = 4
     let n_per_fiber    = 50
     let mut wg = WaitGroup.new()

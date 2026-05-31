@@ -17,7 +17,7 @@ fn Buf mut @write() -> @ {
 fn Buf mut @push() -> @ => @write()
 
 test "fluent wrapper -> @ делегирует в -> @" {
-    let b = Buf.new()
+    let mut b = Buf.new()
     let r = b.push().push().push()
     assert(r.n == 3)
 }

@@ -42,7 +42,7 @@ test "lock_count invariant: balanced lock/unlock sequence" {
 
 test "lock_count() returns 0 for non-owner fiber" {
     let mut rm = ReentrantMutex.new()
-    let other_count = AtomicInt.new(-1)
+    let mut other_count = AtomicInt.new(-1)
 
     rm.lock()
 

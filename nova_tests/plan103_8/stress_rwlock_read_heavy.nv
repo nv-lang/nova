@@ -56,7 +56,7 @@ test "RwLock: readers see only consistent values" {
     // 3 readers observe value is always 0 or 100 while writer toggles.
     let mut rw = RwLock.new()
     let mut value = AtomicI64.new(0)  // 0 or 100
-    let bad_obs = AtomicI64.new(0)
+    let mut bad_obs = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(4)   // 3 readers + 1 writer
 

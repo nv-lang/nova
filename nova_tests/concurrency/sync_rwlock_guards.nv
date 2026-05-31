@@ -42,8 +42,8 @@ test "WriteGuard: exclusive write with explicit unlock" {
 
 test "ReadGuard: multiple readers coexist, writer waits" {
     let mut rw = RwLock.new()
-    let readers = AtomicInt.new(0)
-    let writer_ran = AtomicInt.new(0)
+    let mut readers = AtomicInt.new(0)
+    let mut writer_ran = AtomicInt.new(0)
 
     supervised {
         spawn {

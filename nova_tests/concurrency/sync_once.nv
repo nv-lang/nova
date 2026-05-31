@@ -130,8 +130,8 @@ test "Once: body side-effects visible to waiting fibers" {
 // post-init value.
 test "Once: multiple waiters all wake after done" {
     let mut once = Once.new()
-    let init_value = AtomicInt.new(0)
-    let saw_correct = AtomicInt.new(0)
+    let mut init_value = AtomicInt.new(0)
+    let mut saw_correct = AtomicInt.new(0)
     supervised {
         spawn {
             // Runner: yield to let waiters register, then init + done.

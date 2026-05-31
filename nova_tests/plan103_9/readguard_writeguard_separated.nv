@@ -29,8 +29,8 @@ test "WriteGuard explicit unlock" {
 test "multiple ReadGuards can coexist (multiple readers allowed)" {
     let mut rw = RwLock.new()
     let mut wg = WaitGroup.new()
-    let readers_inside = AtomicInt.new(0)
-    let max_inside = AtomicInt.new(0)
+    let mut readers_inside = AtomicInt.new(0)
+    let mut max_inside = AtomicInt.new(0)
     wg.add(4)
 
     parallel for _i in 0..4 {

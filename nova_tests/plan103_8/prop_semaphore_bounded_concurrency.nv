@@ -92,8 +92,8 @@ test "prop semaphore: available_permits stays in [0, initial] range" {
 
 test "prop semaphore: batch acquire_n bounded — K=6, acquire 3 at a time" {
     let mut sem = Semaphore.new(6)
-    let in_use  = AtomicI64.new(0)
-    let bad     = AtomicI64.new(0)
+    let mut in_use  = AtomicI64.new(0)
+    let mut bad     = AtomicI64.new(0)
     let mut wg = WaitGroup.new()
     wg.add(4)
 

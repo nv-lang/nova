@@ -61,7 +61,7 @@ test "method chaining" {
 }
 
 test "mut method modifies receiver field" {
-    let c = Counter { value: 0 }
+    let mut c = Counter { value: 0 }
     c.inc()
     c.inc()
     c.inc()

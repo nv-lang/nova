@@ -9,7 +9,7 @@ test "RwLock read-heavy stress: 10 readers + 1 writer, no deadlock" {
     let mut rw = RwLock.new()
     let mut shared = AtomicInt.new(0)
     let mut torn = AtomicInt.new(0)
-    let writer_iters = AtomicInt.new(0)
+    let mut writer_iters = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     wg.add(11)
 

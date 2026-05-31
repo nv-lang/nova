@@ -18,12 +18,12 @@ test "stress: 16-fiber mixed sync Ð²Ð‚â€ AtomicI64 + Mutex + Semaphore
     let mut barrier = Barrier.new(4)
 
     // Counters we verify at end
-    let atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers
-    let mutex_count   = AtomicI64.new(0)  // incremented under mutex
-    let sem_count     = AtomicI64.new(0)  // incremented inside semaphore permit
-    let sem_violation = AtomicI64.new(0)  // non-zero if >2 simultaneous
-    let in_permit     = AtomicI64.new(0)  // current in-permit count
-    let barrier_count = AtomicI64.new(0)  // barrier fibers complete
+    let mut atomic_count  = AtomicI64.new(0)  // incremented by atomic-fibers
+    let mut mutex_count   = AtomicI64.new(0)  // incremented under mutex
+    let mut sem_count     = AtomicI64.new(0)  // incremented inside semaphore permit
+    let mut sem_violation = AtomicI64.new(0)  // non-zero if >2 simultaneous
+    let mut in_permit     = AtomicI64.new(0)  // current in-permit count
+    let mut barrier_count = AtomicI64.new(0)  // barrier fibers complete
 
     let mut wg = WaitGroup.new()
     wg.add(16)
@@ -101,7 +101,7 @@ test "stress: mixed sync Ð²Ð‚â€ AtomicI64 + Mutex increments agree on 
     // non-atomic counter. Final sum from both must be equal.
     let n_each  = 500
     let mut mu = Mutex.new()
-    let atomic  = AtomicI64.new(0)
+    let mut atomic  = AtomicI64.new(0)
     let mut counter = AtomicI64.new(0)  // updated under mu (acts as non-atomic)
     let mut wg = WaitGroup.new()
     wg.add(8)

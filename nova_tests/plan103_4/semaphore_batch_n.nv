@@ -26,7 +26,7 @@ test "acquire_n(1) same as acquire" {
 test "batch acquire/release with multiple fibers" {
     // 4 fibers each take 2 permits from a pool of 8
     let mut sem = Semaphore.new(8)
-    let acquired = AtomicInt.new(0)
+    let mut acquired = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     let n        = 4
     wg.add(n)

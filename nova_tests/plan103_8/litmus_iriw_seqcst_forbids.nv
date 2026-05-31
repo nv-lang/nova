@@ -24,7 +24,7 @@ module nova_tests.plan103_8.litmus_iriw_seqcst_forbids
 
 test "IRIW SeqCst: forbidden observation (1,0)/(1,0) never occurs over 1000 iterations" {
     let n_iters   = 20
-    let violations = AtomicI64.new(0)
+    let mut violations = AtomicI64.new(0)
 
     for _iter in 0..n_iters {
         let mut x = AtomicI64.new(0)
@@ -33,8 +33,8 @@ test "IRIW SeqCst: forbidden observation (1,0)/(1,0) never occurs over 1000 iter
         // Results from readers
         let mut r1 = AtomicI64.new(-1)  // Reader1 sees X
         let mut r2 = AtomicI64.new(-1)  // Reader1 sees Y
-        let r3 = AtomicI64.new(-1)  // Reader2 sees Y
-        let r4 = AtomicI64.new(-1)  // Reader2 sees X
+        let mut r3 = AtomicI64.new(-1)  // Reader2 sees Y
+        let mut r4 = AtomicI64.new(-1)  // Reader2 sees X
 
         supervised {
             // Writer1: store X = 1

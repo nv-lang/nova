@@ -9,7 +9,7 @@ module nova_tests.plan103_3.rwlock_no_data_race_under_writes
 test "RwLock: no torn reads while writers update counter" {
     let mut rw = RwLock.new()
     let mut counter = AtomicInt.new(0)
-    let torn_read = AtomicInt.new(0)
+    let mut torn_read = AtomicInt.new(0)
     let mut wg = WaitGroup.new()
     let n_writers = 2
     let n_readers = 4
