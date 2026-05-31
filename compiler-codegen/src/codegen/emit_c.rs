@@ -14295,7 +14295,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.line(&format!("NovaFailFrame {};", frame));
                 self.line(&format!("nova_fail_push(&{});", frame));
                 self.line(&format!("{}.error_suppressed = NULL;", frame));
-                self.line(&format!("int {} = 0;  /* 0=Success, 1=Failure */", outcome_kind));
+                self.line(&format!("int {} = 0;  /* 0=Success, 1=Failure, 2=Panic */", outcome_kind));
 
                 // setjmp wrap around body.
                 self.line(&format!("if (setjmp({}.jmp) == 0) {{", frame));
@@ -14312,20 +14312,31 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.line("} else {");
                 self.indent += 1;
                 self.line("nova_fail_pop();");
-                self.line(&format!("{} = 1;", outcome_kind));
+                // 110.1.4.g: distinguish panic (NOVA_THROW_PANIC) vs throw.
+                self.line(&format!(
+                    "{} = ({}.error_kind == NOVA_THROW_PANIC) ? 2 : 1;",
+                    outcome_kind, frame
+                ));
                 self.indent -= 1;
                 self.line("}");
 
-                // 110.1.4.e: construct outcome + dispatch on_exit.
+                // 110.1.4.e + 110.1.4.g: construct outcome + dispatch on_exit.
                 self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
                 self.line(&format!("if ({} == 0) {{", outcome_kind));
                 self.indent += 1;
                 self.line(&format!("{} = nova_make_ScopeOutcome_Success();", outcome_val));
                 self.indent -= 1;
-                self.line("} else {");
+                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
                 self.indent += 1;
                 self.line(&format!(
                     "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Panic({}.error_msg);",
                     outcome_val, frame
                 ));
                 self.indent -= 1;
@@ -14333,9 +14344,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
 
                 // 110.1.4.f: re-raise после on_exit на Failure outcome.
+                // 110.1.4.g: re-panic на Panic outcome (через nv_panic →
+                // тот же setjmp routing, но preserves PANIC kind).
                 self.line(&format!("if ({} == 1) {{", outcome_kind));
                 self.indent += 1;
                 self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 2) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("nv_panic({}.error_msg);", frame));
                 self.indent -= 1;
                 self.line("}");
 

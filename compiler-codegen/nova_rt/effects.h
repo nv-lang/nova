@@ -31,6 +31,9 @@ typedef enum {
     NOVA_THROW_USER       = 0,
     NOVA_THROW_CANCEL     = 1,
     NOVA_THROW_USER_TYPED = 2,  /* Plan 61 Ф.2: typed user throw payload */
+    NOVA_THROW_PANIC      = 3,  /* Plan 110.1.4.g (D188): panic distinct
+                                   из throw для ConsumeScope outcome
+                                   discrimination (Panic vs Failure variant). */
 } NovaThrowKind;
 
 /* Plan 100.4.1 (D158): Suppressed-chain node для multi-error composition.
@@ -453,6 +456,12 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
 static inline void nv_panic(nova_str msg) {
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
+        /* Plan 110.1.4.g (D188): mark frame's error_kind = PANIC so
+         * ConsumeScope codegen может construct Panic(msg) variant вместо
+         * Failure(msg). Сохраняем backwards compatibility: existing
+         * defer/errdefer code не reads NOVA_THROW_PANIC специально
+         * (treated as throw для cleanup-cascade purposes). */
+        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
         longjmp(_nova_fail_top->jmp, 1);
     }
     if (_nova_test_frame) {
