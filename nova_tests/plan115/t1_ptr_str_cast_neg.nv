@@ -1,0 +1,11 @@
+// Plan 115 Ф.1 — `ptr as str` запрещён (E_PTR_CAST_INVALID_TARGET).
+
+// EXPECT_COMPILE_ERROR E_PTR_CAST_INVALID_TARGET
+
+module nova_tests.plan115.t1_ptr_str_cast_neg
+
+test "ptr as str is banned" {
+    ro p ptr = null ptr
+    ro bad = p as str
+    assert(bad.len == 0)
+}

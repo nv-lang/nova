@@ -1,0 +1,10 @@
+// Plan 115 Ф.1 — V1: `null TYPE` для не-ptr типа → E_NULL_LITERAL_REQUIRES_PTR.
+
+// EXPECT_COMPILE_ERROR E_NULL_LITERAL_REQUIRES_PTR
+
+module nova_tests.plan115.t1_null_non_ptr_neg
+
+test "null int is rejected" {
+    ro bad = null int
+    assert(bad == 0)
+}

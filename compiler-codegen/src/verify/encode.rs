@@ -315,6 +315,10 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         }
 
         ExprKind::UnitLit => Ok(SmtTerm::Var("_unit".into())),
+        // Plan 115 D214: null ptr literal — opaque integer 0 в SMT scope.
+        // SMT не moderates ptr semantics; модель trusts type-check'er и
+        // codegen для ptr correctness. V1 enough: SMT uses integer 0.
+        ExprKind::NullPtrLit => Ok(SmtTerm::Var("_null_ptr".into())),
 
         // Member access (record fields) — uninterpreted UF.
         // Ф.10.1 (Plan 33.6): type-aware naming `_field_<name>_<sort>` чтобы

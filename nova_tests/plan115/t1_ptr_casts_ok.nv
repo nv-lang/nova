@@ -1,0 +1,30 @@
+// Plan 115 Ф.1 T1.3-T1.4 — `as ptr` / `as u64` / `as i64` / `as int` casts.
+
+module nova_tests.plan115.t1_ptr_casts_ok
+
+test "u64 to ptr round-trip" {
+    ro original u64 = 0x1234ABCD
+    ro p ptr = original as ptr
+    ro back u64 = p as u64
+    assert(back == original)
+}
+
+test "i64 to ptr round-trip" {
+    ro original i64 = 0x5678
+    ro p ptr = original as ptr
+    ro back i64 = p as i64
+    assert(back == original)
+}
+
+test "int to ptr round-trip" {
+    ro original int = 42
+    ro p ptr = original as ptr
+    ro back int = p as int
+    assert(back == 42)
+}
+
+test "null ptr cast to u64 equals zero" {
+    ro p ptr = null ptr
+    ro n u64 = p as u64
+    assert(n == 0)
+}

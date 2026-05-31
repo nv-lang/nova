@@ -312,6 +312,10 @@ impl Interpreter {
             }
             ExprKind::BoolLit(b) => Ok(Flow::Value(Value::Bool(*b))),
             ExprKind::UnitLit => Ok(Flow::Value(Value::Unit)),
+            // Plan 115 D214: null ptr literal — bitwise 0 в interp как Int(0).
+            // Interp не имеет separate ptr value type; ptr-domain operations
+            // (cast, ==, FFI calls) work через Int representation.
+            ExprKind::NullPtrLit => Ok(Flow::Value(Value::Int(0))),
             ExprKind::SelfAccess => match env.lookup("@") {
                 Some(v) => Ok(Flow::Value(v)),
                 None => Err(Diagnostic::new("`@` used outside method", expr.span)),

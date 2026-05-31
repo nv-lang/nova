@@ -1283,6 +1283,11 @@ pub enum ExprKind {
     /// Q-char-literals: 'a' / '\n' / '\u{...}' — Unicode codepoint as u32.
     /// Тип char в bootstrap эмитируется как nova_int.
     CharLit(u32),
+    /// **Plan 115 D214:** `null ptr` two-token literal. Bitwise zero opaque
+    /// pointer. V1 ограничение: только `null ptr` (другие типы → parser
+    /// emit'ит `E_NULL_LITERAL_REQUIRES_PTR`). Plan 118 future расширит до
+    /// `null *T` family.
+    NullPtrLit,
     /// `arr` или `[1, 2, ...rest, 4]` — D60
     ArrayLit(Vec<ArrayElem>),
     /// `[k1: v1, k2: v2]` — map-литерал (D108, Plan 52). Конструирует

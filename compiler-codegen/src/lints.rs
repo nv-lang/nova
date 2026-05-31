@@ -679,6 +679,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         }
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::NullPtrLit
         | ExprKind::SelfAccess => {}
     }
 }
@@ -1475,7 +1476,8 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         // Листовые — нет под-выражений.
         ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
         | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::NullPtrLit => {}
     }
 }
 

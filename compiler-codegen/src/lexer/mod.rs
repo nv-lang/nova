@@ -653,6 +653,10 @@ impl<'a> Lexer<'a> {
             "select" => TokenKind::KwSelect,
             "lemma" => TokenKind::KwLemma,
             // "apply" — контекстуальный keyword (не резервируем глобально, чтобы не ломать идентификаторы)
+            // Plan 115 D214: `null` тоже контекстуально recognized (только в
+            // expression-position в комбинации `null ptr`). НЕ резервируем
+            // глобально чтобы не ломать `JsonValue.null()`, `AtomicPtr.null()`
+            // и подобные method names.
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))

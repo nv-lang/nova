@@ -346,7 +346,8 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         // Листовые — нет под-выражений.
         ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
         | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::NullPtrLit => {}
         // D.1.3: квантор — только в контрактах, не в runtime-коде.
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
             normalize_expr(range, sigs);

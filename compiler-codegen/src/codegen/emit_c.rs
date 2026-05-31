@@ -4263,6 +4263,12 @@ impl CEmitter {
                     // `nova_int` — консистентно с empty-sum (`typedef
                     // int64_t Nova_X`); слот никогда не читается/пишется.
                     "never" => Ok("nova_int".into()),
+                    // Plan 115 D214: `ptr` — opaque pointer primitive
+                    // (`void*` ABI). FFI-domain; GC ignores (conservative
+                    // collector scans pointer-sized slots regardless,
+                    // so explicit pin не нужен). Casts via `as ptr` / `as
+                    // u64` через standard C-cast в emit ExprKind::As.
+                    "ptr" => Ok("void*".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -14477,6 +14483,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
             ExprKind::BoolLit(b)  => Ok(if *b { "true".into() } else { "false".into() }),
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
+            // Plan 115 D214: `null ptr` literal → C `((void*)0)`.
+            ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
             ExprKind::StrLit(s)   => {
                 let escaped = Self::escape_c_str(s);
                 Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
@@ -25197,6 +25205,25 @@ _cp++; \
             ("f64",  "str",  "use `str.from(f)`"),
             ("bool", "str",  "use `str.from(b)`"),
             ("char", "str",  "use `str.from(c)` (UTF-8 encode)"),
+            // Plan 115 D214: ptr cast restrictions.
+            // Allowed: ptr ↔ {u64, i64, int} (для integer-storage).
+            // Banned: ptr ↔ {str, bool, f32, f64, char}.
+            ("ptr",  "str",  "[E_PTR_CAST_INVALID_TARGET] `ptr as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
+            ("ptr",  "bool", "[E_PTR_CAST_INVALID_TARGET] `ptr as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
+            ("ptr",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `ptr as f64` запрещён: pointer→float не имеет semantic meaning"),
+            ("ptr",  "f32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as f32` запрещён"),
+            ("ptr",  "char", "[E_PTR_CAST_INVALID_TARGET] `ptr as char` запрещён"),
+            ("ptr",  "i8",   "[E_PTR_CAST_INVALID_TARGET] `ptr as i8` запрещён: narrows pointer; используйте `as i64` или `as u64`"),
+            ("ptr",  "i16",  "[E_PTR_CAST_INVALID_TARGET] `ptr as i16` запрещён"),
+            ("ptr",  "i32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as i32` запрещён"),
+            ("ptr",  "u8",   "[E_PTR_CAST_INVALID_TARGET] `ptr as u8` запрещён"),
+            ("ptr",  "u16",  "[E_PTR_CAST_INVALID_TARGET] `ptr as u16` запрещён"),
+            ("ptr",  "u32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as u32` запрещён"),
+            ("str",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `str as ptr` запрещён: используйте `s.as_bytes().as_ptr()` (future FFI API)"),
+            ("bool", "ptr",  "[E_PTR_CAST_INVALID_TARGET] `bool as ptr` запрещён"),
+            ("f64",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `f64 as ptr` запрещён"),
+            ("f32",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `f32 as ptr` запрещён"),
+            ("char", "ptr",  "[E_PTR_CAST_INVALID_TARGET] `char as ptr` запрещён"),
         ];
         for (s, t, hint) in banned {
             if &src == s && &tgt_nova == t {
@@ -25244,6 +25271,13 @@ _cp++; \
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
     /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
     fn nova_type_name_from_c(c_ty: &str) -> String {
+        // Plan 115 D214: `void*` ↔ Nova `ptr`. Check raw c_ty BEFORE
+        // trim_end_matches'a — `void*` имеет `*` суффикс, который trim
+        // удалит, оставив `"void"` (не интерпретируется в Nova). Treating
+        // unstripped form позволяет распознать `void*` корректно.
+        if c_ty.trim() == "void*" {
+            return "ptr".into();
+        }
         let trimmed = c_ty.trim_end_matches('*').trim();
         match trimmed {
             "nova_int"  => "int".into(),
@@ -25458,6 +25492,8 @@ _cp++; \
             ExprKind::StrLit(_) => "nova_str".into(),
             ExprKind::InterpolatedStr { .. } => "nova_str".into(),
             ExprKind::UnitLit => "nova_unit".into(),
+            // Plan 115 D214: ptr inference — `null ptr` literal as `void*`.
+            ExprKind::NullPtrLit => "void*".into(),
             ExprKind::TupleLit(elems) => {
                 // Plan 59: prefer mono'd tuple struct если все element types
                 // concrete. Параллель с emit_expr::TupleLit decision.
