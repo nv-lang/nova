@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// EXPECT_COMPILE_ERROR D188-codegen-not-yet-implemented
 //
-// Plan 110.1.3 (D196 form 2): `consume X = expr? { body }` — Result-
-// unwrap form. type-checker infer'ит inner type через recursive ?-peel
-// (110.1.2 heuristic).
-//
-// Полная Result[T,E]/Option[T] semantics — staged delivery (110.1.4
-// codegen + type-check refinement).
+// Plan 110.1.3 (D196 form 2) + Plan 110.1.4.a: `consume X = expr? { body }`
+// — Result-unwrap form. type-checker infer'ит inner type через recursive
+// ?-peel (110.1.2 heuristic). Codegen эмитит init + body (110.1.4.a).
 
 module plan110.check_consume_unwrap_form
 
@@ -22,7 +18,16 @@ fn FailableResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // `consume r = try_new()? { body }` — `?` unwrap inferred via recurse.
 fn use_unwrap() Fail[str] -> int {
+    mut result = 0
     consume r = FailableResource.try_new(7)? {
-        r.id
+        result = r.id
     }
+    result
+}
+
+test "Plan 110.1.3 (D196 form 2): consume + ? Result unwrap — typecheck only" {
+    // Runtime invocation требует Fail handler; здесь verify только что
+    // fn compiles + типичные проверки D188+D196 проходят (110.1.4.a
+    // codegen эмитит init binding на success path).
+    assert(true)
 }

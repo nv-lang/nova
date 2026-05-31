@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// EXPECT_COMPILE_ERROR D188-codegen-not-yet-implemented
 //
-// Plan 110.1.1 (D188): `consume X TYPE = init() { body }` — scope-block
-// с явной type annotation. Acceptance A110.1.1.a. Codegen gate per
-// Plan 110.1.4 — marker удалится когда codegen landing.
+// Plan 110.1.1 (D188) + Plan 110.1.4.a: `consume X TYPE = init() { body }`
+// scope-block с явной type annotation. Acceptance A110.1.1.a.
 
 module plan110.parse_consume_scope_with_type_annot
 
@@ -16,7 +14,13 @@ fn DummyRes.new(id int) -> DummyRes => { id }
 fn DummyRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_with_annot() -> int {
+    mut result = 0
     consume r DummyRes = DummyRes.new(7) {
-        r.id
+        result = r.id
     }
+    result
+}
+
+test "Plan 110.1.1: consume scope-block с type annotation" {
+    assert(use_with_annot() == 7)
 }
