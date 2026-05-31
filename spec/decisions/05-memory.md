@@ -401,6 +401,12 @@ Compile-time проверка — основной механизм. В C-ран
 
 > **Plan 73.1.** Принято 2026-05-28. Расширяет [D131](#d131-consume--квалификатор-логической-линейности)
 > с receiver/param на let-binding site.
+>
+> **Cross-ref Plan 114 D184 (2026-05-31):** `consume X = expr` теперь
+> часть симметричной триады binding-statement keyword'ов `ro`/`mut`/
+> `consume` — `consume` уже был standalone keyword без `let`-prefix'а;
+> Plan 114 сделал другие две формы (`ro X = …` immutable, `mut X = …`
+> mutable) тоже без `let`-prefix'а. См. [D184](03-syntax.md#d184).
 
 ### Что
 
