@@ -55,7 +55,62 @@
 > Семантически Plan 110 self-contained через NEW D188-D198 — design intent
 > сохранён, intermediate D-блоки не нужны.
 >
-> **Acceptance:** A1–A30.
+> **Acceptance:** A1–A38.
+>
+> **Worktree convention:** `nova-p110` (create через worktree hook сразу
+>   первой Bash командой, register; все subsequent commands с cd-префиксом
+>   в worktree per `feedback-worktree-cwd-clarity` memory).
+>
+> **Recommended model:**
+>   - **Opus 4.7 + Thinking ON** — обязательно. Plan 110 design-heavy:
+>     11 новых D-блоков (D188-D198), radical simplification cleanup-
+>     семейства (~20 концептов → 5), 15 фаз, async cleanup + MultiError +
+>     Application effect — всё требует deep design judgement.
+>   - **Sonnet 4.6 НЕ рекомендую** — slip-risk слишком высокий.
+>
+> **Workflow требования (для агента):**
+>   1. **Work без остановок** — не запрашивай confirmation внутри фазы;
+>      переход между фазами только если smoke verify pass'нул.
+>   2. **Commit per phase** — после каждой Ф.N (или sub-фазы если она
+>      нетривиальная) — отдельный commit в формате
+>      `feat(Plan 110 Ф.N): <summary>`. Несколько задач в одной фазе →
+>      несколько commit'ов.
+>   3. **Update logs после каждой большой задачи:**
+>      - `docs/project-creation.txt` — sprint section
+>      - `docs/simplifications.md` — закрытые/открытые `[M-110-*]` маркеры
+>      - `d:\Sources\nv-lang\nova-private\discussion-log.md` — design decisions
+>   4. **Tests через release nova & компилятор:** все test series запускать
+>      через `cargo build --release -p nova-cli` + `target/release/nova test`
+>      (не debug; не cargo test stand-alone).
+>   5. **Записать финальный статус** в этот же файл в новой секции
+>      `## Status — closure summary` в конце файла: что сделано per phase,
+>      что extracted в followup planks (если safety hatches fire'нули),
+>      full `nova test` results (counts), cross-platform PASS status,
+>      ссылки на коммиты (sha + message), memory `project-plan110-status.md`
+>      created, sprint sections updated.
+>   6. **Safety hatch trigger'ы** в Ф.X preamble (если documented) — следуй
+>      им буквально; не «пушь дальше» если decision point говорит extract.
+>   7. **Migration auto-fix tool (Ф.9):** реализовать как mandatory deliverable
+>      — не оставлять «manual rewrite» для пользователей, даже internal
+>      (плана 110 много трогает; auto-tool делает 100%).
+>
+> **Production-grade требование:** реализация без упрощений. Никаких temporary
+> shortcuts, dual-syntax fallback'ов, silent compatibility-mode'ов, partial
+> migrations. Hard cutover за один merge: cleanup-семейство полностью
+> переписано (`errdefer`/`okdefer`/`defer |result|` удалены через auto-fix
+> tool); все 11 D-blocks promoted в active spec; full `nova test` ≥ baseline.
+> Если фича не влезает — выносится в followup-план (`[M-110-*]`) +
+> record'ится в `simplifications.md` как «explicitly deferred, not silently
+> dropped».
+>
+> **Note on Plan 114 / Plan 91.12 / Plan 108.4 syntax sync:** если эти
+> планы ещё не landed (по статусу main на момент запуска) — Plan 110
+> implementation использует **current syntax** (`let`/`readonly`/`if let`);
+> Plan 114 codemod конвертирует Plan 110 файлы post-merge (no work для
+> Plan 110 agent). Если эти планы уже landed — Plan 110 пишется directly
+> в post-114 syntax (`ro`/`mut`/`consume`/`if ro` или `if mut` patterns).
+> Agent должен detect actual main state первой Bash командой
+> (`grep -E "^export effect|let mut" std/prelude.nv` для quick check).
 
 ---
 
