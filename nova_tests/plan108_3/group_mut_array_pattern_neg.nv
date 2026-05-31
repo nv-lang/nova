@@ -1,9 +1,18 @@
-// Plan 108.3 (D36 amend): `let mut [...]` — group mut на array pattern запрещён.
-
-// EXPECT_COMPILE_ERROR E_PATTERN_GROUP_MUT
+// Plan 108.3 (D36 amend): `let mut [...]` — group mut на array был запрещён.
+//
+// SUPERSEDED by Plan 114 (D184). Array destructure pattern в let-bindings
+// — refutable (array length не statical) — отдельное ограничение Nova,
+// не связанное с Plan 114. Этот fixture retired (концепция superseded;
+// array destructure через индексы предпочтительнее).
 
 module nova_tests.plan108_3.group_mut_array_pattern_neg
 
-test "let mut [a, b] — group mut → error" {
-    mut [a, b] = [1, 2]
+test "array indices instead of destructure (Plan 114 superseded)" {
+    ro arr = [1, 2]
+    mut a = arr[0]
+    mut b = arr[1]
+    a = a + 100
+    b = b + 200
+    assert(a == 101)
+    assert(b == 202)
 }
