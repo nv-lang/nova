@@ -1673,20 +1673,76 @@ Wall-time:
 pre-existing `for_in_range_iter` (same error на main repo `nova/`,
 не induced Plan 110.1.1).
 
-#### Session 3 closure — остановка после 110.1.1
+#### Plan 110.1.2 ✅ (commit `98f96bf1af9`) — type-checker D188-not-consumable + malformed-on-exit
 
-Plan 110.1.1 — solid session-worth of work (~530 LOC code + 5 fixtures
-+ 16 match-site adaptation + regression check + commit). Continuing к
-110.1.2+ в same session risks:
-- Context window filling до точки compaction;
-- Quality degradation на сложных type-checker rules (D196 init
-  constraints + D194 Never special case + D188 R1/R2 logic);
-- Atomic-merge rule violation если 110.1.2 не довёл до end.
+- `compiler-codegen/src/types/mod.rs` TypeCheckCtx extension:
+  - `check_consume_scopes_in_block/stmt/expr` — recursive AST visitor для
+    всех ConsumeScope в module functions/tests/benches.
+  - `validate_consume_scope_init` — извлекает init type name через
+    `infer_consume_init_type` heuristic, ищет `on_exit` method в
+    `method_table`. Emit `[D188-not-consumable]` если method отсутствует.
+  - `validate_on_exit_signature` — basic check: первый параметр должен
+    быть `ScopeOutcome`. Emit `[D188-malformed-on-exit]` иначе.
+  - `infer_consume_init_type` heuristic для:
+    - `Type.method(args)` → return type через `method_table`.
+    - `Record literal Type { fields }` → type name.
+    - `?`/`!!` postfix unwrap → recurse в inner.
+    - `As` cast → cast target.
 
-Production-grade discipline: остановка на coherent point (Plan 110.1.1 ✅
-end-to-end working), не push'ить broken partial 110.1.2 attempts.
+- Tests (2 new fixtures, 7/7 PASS):
+  - NEGATIVE `neg_consume_not_consumable` — record без on_exit → D188-not-
+    consumable error с suggestion implement Consumable.
+  - NEGATIVE `neg_on_exit_malformed_sig` — on_exit с int вместо ScopeOutcome
+    → D188-malformed-on-exit с correct form hint.
 
-**Plan 110.1.2-110.1.10** — следующие sessions с Opus 4.7 + Thinking ON.
+- Acceptance A110.1.2:
+  - A110.1.2.a ✅ positive fixtures PASS type-check (110.1.1 preserved).
+  - A110.1.2.b ✅ 2/4 negative fixtures emit correct error codes
+    (D188-not-consumable + D188-malformed-on-exit). Remaining 2 (D196-
+    wrapped + D196-divergent) — staged delivery (require deeper type
+    inference).
+
+#### Plan 110.1.3 ✅ (commit `785bf04d88e`) — D194 never + D196 Result/Option unwrap
+
+- Refactor `infer_consume_init_type` → `infer_consume_init_typeref`
+  (returns full TypeRef) + `typeref_to_name` extractor.
+- Result/Option unwrap через `?` и `!!`:
+  - `Try(inner)` — unwrap `Result[T,E]` → T, `Option[T]` → T.
+  - `Bang(inner)` — unwrap `Option[T]` → T, `Result[T,_]` → T.
+- `Self` в method return-type разворачивается в receiver type.
+- D194 `Consumable[never]` verification: caller fn без `Fail[E]` →
+  type-check PASS (test fixture verifies).
+
+- Tests (3 new fixtures, 10/10 PASS total):
+  - POSITIVE `check_consume_never_no_fail_required` — Consumable[never]
+    caller без Fail[E] декларации → type-check PASS (D194).
+  - POSITIVE `check_consume_unwrap_form` — `consume r = try_new()? { body }`
+    с `Result[FailableResource, str]` → unwrap inner; PASS.
+  - NEGATIVE `neg_consume_wrapped_no_unwrap` — `Option[Wrapped]` без `?`/`!!`
+    → D188-not-consumable (current diagnostic; specific D196-wrapped-init-
+    needs-unwrap hint — staged 110.1.4).
+
+- Acceptance A110.1.3:
+  - A110.1.3.a ✅ `Consumable[never]` permits caller без `Fail[E]`.
+  - A110.1.3.b 🟡 partial: `[T Consumable[E]]` generic bound requires
+    generic-bound resolution (staged 110.1.4).
+  - A110.1.3.c 🟡 partial: `[T Consumable[never]]` same as .b.
+
+#### Session 3 closure — остановка после 110.1.3
+
+Plan 110.1.1-110.1.3 — substantial session-worth (~880 LOC code + 10
+fixtures + 18 match-site adaptation + recursive AST visitor + type
+inference heuristic + regression checks + 3 atomic commits). Continuing
+к 110.1.4 codegen risks:
+- Plan 110.1.4 = THE BIG ONE (full D188 desugaring с try/catch fail-frame
+  setup + on_exit dispatch + throw re-raise) — sustains multi-day scope.
+- Context window saturation.
+- Atomic-merge rule violation если codegen partial.
+
+Production-grade discipline: остановка на coherent point (110.1.3 ✅
+end-to-end working, three sub-sub-plans landed atomically).
+
+**Plan 110.1.4-110.1.10** — следующие sessions с Opus 4.7 + Thinking ON.
 Каждый sub-sub atomic-merge.
 
 ---

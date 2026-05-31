@@ -27871,3 +27871,36 @@ Foundation point delivered (Session 1+2):
 **Session 3 closure rationale:** Plan 110.1.1 — substantial session-worth (~530 LOC + 5 fixtures + 16 match-сайтов adaptation + regression check). Continuing к 110.1.2 (D188 R1+R2 + D196 init constraints + D194 Never special case) risks context window saturation + quality degradation. Production-grade discipline: остановка на coherent point.
 
 **Followup markers (Session 3):** нет новых.
+
+---
+
+## Plan 110 Session 3 extension — 110.1.2 + 110.1.3 landed (2026-05-31)
+
+После 110.1.1 closure session продолжилась. Закрыты ещё 2 sub-sub-плана:
+
+**Plan 110.1.2 ✅** (commit `98f96bf1af9`) — type-checker D188-not-consumable + D188-malformed-on-exit:
+- TypeCheckCtx extension с recursive AST visitor для всех ConsumeScope.
+- `validate_consume_scope_init` извлекает init type, ищет on_exit method, emit D188-not-consumable если отсутствует.
+- `validate_on_exit_signature` проверяет первый param = ScopeOutcome.
+- `infer_consume_init_type` heuristic для Type.method() / record literal / ?/!! / As cast.
+- 2 new fixtures (neg_consume_not_consumable, neg_on_exit_malformed_sig); 7/7 PASS.
+
+**Plan 110.1.3 ✅** (commit `785bf04d88e`) — D194 never + D196 Result/Option unwrap:
+- Refactor `infer_consume_init_typeref` (returns full TypeRef).
+- Try(inner) → Result[T,E] unwrap to T, Option[T] unwrap to T.
+- Bang(inner) → Option[T]/Result[T,_] unwrap to T.
+- Self в return-type → receiver type substitution.
+- D194 Consumable[never] caller verification: без Fail[E] passes.
+- 3 new fixtures (check_consume_never_no_fail_required, check_consume_unwrap_form, neg_consume_wrapped_no_unwrap); 10/10 PASS.
+
+**Session 3 total deliverable:** 3 sub-sub-plans landed atomically через release nova test. ~880 LOC code + 10 fixtures. Regression syntax/ 58/1 (pre-existing).
+
+**Plan 110.1 progress:** 3/10 sub-sub done (110.1.1+110.1.2+110.1.3).
+
+**Acceptance progress:**
+- A1 (Consumable + scope-block syntax + type-check D188-not-consumable + D196 unwrap): 🟡 partial — parser+AST+type-check ✅, codegen DEFERRED → 110.1.4-1.7.
+- A8 (Consumable[never] for infallible): 🟢 ✅ type-check passes без Fail[E].
+- A29 (generic constraint [T Consumable[E]]): 🟡 partial (staged 110.1.4).
+- A32 (init type constraints — D196 forms 2-3 working): 🟢 ✅ direct + Result/Option unwrap + As cast.
+
+**Session 3 final closure rationale:** Plan 110.1.4 codegen — THE BIG ONE (full D188 desugaring с try/catch fail-frame + on_exit dispatch + throw re-raise). Multi-day scope. Отложен на следующую session с Opus 4.7 + Thinking ON.
