@@ -27814,8 +27814,8 @@ pre-Plan-109 API.  Документированы в их followups.
 - ✅ D199 + D200 spec block drafts.
 
 **OPEN markers carried to Plan 114.4.1:**
-- 🟡 `[M-114.4-assoc-const]` — record-field assoc const D200 + sum-type + generic T-dependent per-mono codegen (~½ day; Plan 70.5 mono integration).
-- 🟡 `[M-114.4-const-fn]` — comptime evaluator + body checker + memoization + D199 promote (~1 day; safety-hatched extractable в 114.4.2).
+- ✅ `[M-114.4-assoc-const]` — extracted в [Plan 114.4.1](plans/114.4.1-associated-constants.md) (~½ day; Plan 70.5 mono integration; safety hatch на Ф.3 generic per-mono).
+- ✅ `[M-114.4-const-fn]` — extracted в [Plan 114.4.2](plans/114.4.2-const-fn.md) (~1 day; comptime evaluator subsystem; safety hatch на Ф.2 evaluator).
 - 🟡 `[M-114.4-scope-const-chain]` — scope-locals referencing other scope-locals.
 - 🟡 `[M-114.4-cross-module-const-ref]` — Path expr cross-module.
 - 🟡 `[M-114.4-ro-module-lazy-init]` — top-level ro X = compute() codegen.
