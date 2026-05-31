@@ -216,6 +216,39 @@ fn MultiError @suppressed() -> []str => @suppressed
 #stable(since = "0.1")
 fn MultiError @fmt_chain() -> str => @primary
 
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 110.4.1 (D193) — MultiError iteration + walk + panic detection
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Plan 110 D193: walk over all errors в chain LIFO order
+/// (primary first, then suppressed[0], suppressed[1], ...).
+/// Возвращает []str — массив всех messages.
+#stable(since = "0.1")
+fn MultiError @walk() -> []str {
+    mut result = []str.with_capacity(@suppressed.len() + 1)
+    result.push(@primary)
+    for s in @suppressed {
+        result.push(s)
+    }
+    result
+}
+
+/// Plan 110 D193: find first panic message в chain (если есть).
+/// Bootstrap: ищет prefix "panic:" в messages — full typed panic
+/// discrimination после `any` payload migration ([M-110-multierror-any]).
+#stable(since = "0.1")
+fn MultiError @find_first_panic() -> Option[str] {
+    if @primary.starts_with("panic:") {
+        return Some(@primary)
+    }
+    for s in @suppressed {
+        if s.starts_with("panic:") {
+            return Some(s)
+        }
+    }
+    None
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 110 D193 / D90 §7 amend — typed cancel/timeout/truncation errors
