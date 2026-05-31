@@ -1236,6 +1236,43 @@ impl Parser {
                 }
                 Item::Let(self.parse_let_decl()?)
             }
+            // Plan 114 (D184): `ro X = expr` — module-level immutable binding.
+            // Заменяет `let X = expr` host для non-constexpr lazy-init.
+            TokenKind::KwRo => {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `ro` is ignored \
+                         — `ro` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Let(self.parse_ro_mut_binding(false)?)
+            }
+            // Plan 114 (D184): `mut X = expr` запрещён на module-level
+            // (module-level mutable global — anti-pattern).
+            TokenKind::KwMut => {
+                return Err(Diagnostic::new(
+                    "[E_MUT_AT_MODULE_LEVEL] `mut X = expr` is not allowed at \
+                     module level — module-level mutable globals are an \
+                     anti-pattern. Use `ro X = …` for runtime constants, \
+                     `const X = …` for compile-time, or wrap mutable state in \
+                     a record type (Plan 114 D184).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Plan 114 (D184): `consume X = expr` запрещён на module-level
+            // (consume-obligation требует scope-exit; module-level scope
+            // никогда не выходит — ill-formed).
+            TokenKind::KwConsume => {
+                return Err(Diagnostic::new(
+                    "[E_CONSUME_AT_MODULE_LEVEL] `consume X = expr` is not \
+                     allowed at module level — consume-obligation requires \
+                     scope-exit, but module-level scope never exits. Move \
+                     the binding into a function (Plan 114 D184).".to_string(),
+                    self.peek().span,
+                ));
+            }
             TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwTest if !is_export => {
                 if let Some(d) = &pending_doc {
@@ -2403,8 +2440,11 @@ impl Parser {
         let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
         // D178 (Plan 91 Ф.2.6): `readonly name Type` — параметр с readonly-типом.
         // Сахар: `readonly name []u8` эквивалентно `name readonly []u8`.
-        // При парсинге оборачиваем тип в TypeRef::Readonly — семантически идентично.
-        let has_readonly_prefix = self.eat(&TokenKind::KwReadonly).is_some();
+        // Plan 114 (D184): `ro` — canonical short form для readonly type-prefix
+        // на параметре. Оба keyword'а принимаются parser'ом (legacy + new);
+        // codemod конвертирует readonly → ro в Ф.5/Ф.6.
+        let has_readonly_prefix = self.eat(&TokenKind::KwReadonly).is_some()
+            || self.eat(&TokenKind::KwRo).is_some();
         // Plan 73 (D131): `consume name Type` — consuming параметр. После
         // передачи аргумента в такой параметр переменная-источник
         // логически инвалидируется (use-after-consume → compile error).
@@ -2468,11 +2508,11 @@ impl Parser {
                     self.peek().span,
                 ));
             }
-            if matches!(self.peek().kind, TokenKind::KwReadonly) {
+            if matches!(self.peek().kind, TokenKind::KwReadonly | TokenKind::KwRo) {
+                let kw = if matches!(self.peek().kind, TokenKind::KwRo) { "ro" } else { "readonly" };
                 return Err(Diagnostic::new(
-                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
-                     `mut` и `readonly` (D176): взаимоисключающие квалификаторы."
-                        .to_string(),
+                    format!("[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `mut` и `{}` (D176 / D184): взаимоисключающие квалификаторы.", kw),
                     self.peek().span,
                 ));
             }
@@ -2904,7 +2944,12 @@ impl Parser {
         while !matches!(self.peek().kind, TokenKind::RBrace) {
             let mut readonly = false;
             let mut mutable = false;
-            if self.eat(&TokenKind::KwReadonly).is_some() {
+            // Plan 114 (D184): `ro` — canonical short form для readonly field
+            // modifier. Оба keyword'а принимаются parser'ом (legacy + new);
+            // codemod конвертирует readonly → ro в Ф.5/Ф.6.
+            if self.eat(&TokenKind::KwReadonly).is_some()
+                || self.eat(&TokenKind::KwRo).is_some()
+            {
                 readonly = true;
             } else if self.eat(&TokenKind::KwMut).is_some() {
                 mutable = true;
@@ -3401,6 +3446,84 @@ impl Parser {
         })
     }
 
+    /// Plan 114 (D184) helper: pattern is structural (constructor /
+    /// destructure form) — `Some(x)`, `(a, b)`, `{ name, age }`,
+    /// `None` (unit variant), `Cons(h, ..)`. Не identifier-only.
+    fn is_structural_pattern(pat: &Pattern) -> bool {
+        matches!(pat,
+            Pattern::Variant { .. }
+            | Pattern::Record { .. }
+            | Pattern::Array { .. }
+            | Pattern::Tuple(_, _))
+    }
+
+    /// Plan 114 (D184) helper: pattern — bare identifier (`x`).
+    fn is_ident_pattern(pat: &Pattern) -> bool {
+        matches!(pat, Pattern::Ident { .. })
+    }
+
+    /// Plan 114 (D184): `ro X = expr` / `mut X = expr` binding-statement.
+    /// Симметричен `consume X = expr` (Plan 73.1); leading keyword'ом
+    /// определяет mutability, без `let`-prefix'а. `let` retracted.
+    ///
+    /// `is_mut = false` → KwRo; `is_mut = true` → KwMut.
+    ///
+    /// Destructure-pattern (`(a, b)` / `{ name, age }`): leading keyword
+    /// distributes на все имена (`mut (a, b)` → оба mutable). Per-element
+    /// granularity (`(ro a, mut b)`) НЕ вводится (D184 «Out of scope V1»).
+    fn parse_ro_mut_binding(&mut self, is_mut: bool) -> Result<LetDecl, Diagnostic> {
+        let start = self.peek().span;
+        if is_mut {
+            self.expect(&TokenKind::KwMut)?;
+        } else {
+            self.expect(&TokenKind::KwRo)?;
+        }
+        let pattern = self.parse_pattern()?;
+        let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        // Plan 114 (D184) §«binding statements»: bare `ro x` / `mut x`
+        // без init'а — parse error.
+        if !matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new(
+                "[E_BINDING_REQUIRES_INIT] `ro` / `mut` binding requires \
+                 initialization. Write `ro x = expr` or `mut x = expr` \
+                 (Plan 114 D184).".to_string(),
+                self.peek().span,
+            ));
+        }
+        self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
+        let value = self.parse_expr()?;
+        let span = start.merge(value.span);
+        self.expect_newline_or_eof().ok();
+        // Plan 51 Ф.2: redundant `T = T { … }` (carry-over check).
+        if let Some(TypeRef::Named { path: ann_path, .. }) = &ty {
+            if let ExprKind::RecordLit { type_name: Some(lit_path), .. } = &value.kind {
+                if ann_path == lit_path {
+                    let kw = if is_mut { "mut" } else { "ro" };
+                    return Err(Diagnostic::new(
+                        format!(
+                            "redundant type prefix on record literal — the `{}` \
+                             annotation already declares `{}`; write `= {{ ... }}`",
+                            kw, ann_path.join(".")),
+                        value.span));
+                }
+            }
+        }
+        Ok(LetDecl {
+            mutable: is_mut,
+            pattern,
+            ty,
+            value,
+            span,
+            is_ghost: false,
+            consume: false,
+        })
+    }
+
     fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<ConstDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConst)?;
@@ -3837,8 +3960,10 @@ impl Parser {
         let start = self.peek().span;
         match self.peek().kind {
             // D176 (Plan 108): `readonly T` — compile-time immutability modifier.
-            // `readonly` as prefix of any type position: return type, param, field, let.
-            TokenKind::KwReadonly => {
+            // Plan 114 (D184): renamed `readonly` → `ro`. Оба keyword'а
+            // принимаются parser'ом (legacy + new); codemod конвертирует
+            // readonly → ro в Ф.5/Ф.6.
+            TokenKind::KwReadonly | TokenKind::KwRo => {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
@@ -5495,6 +5620,7 @@ impl Parser {
             TokenKind::KwLet => "let",
             TokenKind::KwConst => "const",
             TokenKind::KwMut => "mut",
+            TokenKind::KwRo => "ro",
             TokenKind::KwReadonly => "readonly",
             TokenKind::KwIf => "if",
             TokenKind::KwElse => "else",
@@ -5898,7 +6024,8 @@ impl Parser {
 
     fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwIf)?.span;
-        // `if let pattern = expr { ... }` — D34
+        // `if let pattern = expr { ... }` — D34 legacy (will be removed
+        // after Ф.5/Ф.6 corpus migration; oneday emits E_KW_REMOVED_LET).
         if matches!(self.peek().kind, TokenKind::KwLet) {
             self.bump();
             let pattern = self.parse_pattern()?;
@@ -5916,6 +6043,83 @@ impl Parser {
                 },
                 start.merge(end),
             ));
+        }
+        // Plan 114 (D184): `if ro IDENT = e` / `if mut IDENT = e` —
+        // identifier-pattern с explicit keyword (footgun protection).
+        if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut) {
+            let _is_mut = matches!(self.peek().kind, TokenKind::KwMut);
+            self.bump();
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::Eq)?;
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            let then = self.parse_block()?;
+            let else_ = self.parse_optional_else()?;
+            let end = then.span;
+            return Ok(Expr::new(
+                ExprKind::IfLet {
+                    pattern,
+                    scrutinee: Box::new(scrutinee),
+                    then,
+                    else_,
+                },
+                start.merge(end),
+            ));
+        }
+        // Plan 114 (D184): `if consume Pat = e` запрещён.
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            return Err(Diagnostic::new(
+                "[E_CONSUME_IN_CONDITION] `consume` binding не разрешён \
+                 в if/while condition — consume требует scope-exit \
+                 tracking, который complicated в condition-position. \
+                 Use match arm or extract в statement (Plan 114 D184).".to_string(),
+                self.peek().span,
+            ));
+        }
+        // Plan 114 (D184): speculative pattern-binding для constructor /
+        // destructure patterns (`if Some(x) = e`, `if (a, b) = pair`,
+        // `if { name, age } = user`). Если pattern парсится + следующий
+        // токен `=` — это IfLet, иначе восстанавливаем pos и парсим bool.
+        let save = self.pos;
+        if let Ok(pattern) = self.parse_pattern() {
+            if matches!(self.peek().kind, TokenKind::Eq) {
+                // Allow if it's a structural pattern (constructor / tuple /
+                // record / sum-variant). Plain identifier pattern в этой
+                // позиции отвергаем — footgun protection (визуально
+                // assignment-в-condition).
+                if Self::is_structural_pattern(&pattern) {
+                    self.expect(&TokenKind::Eq)?;
+                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    let then = self.parse_block()?;
+                    let else_ = self.parse_optional_else()?;
+                    let end = then.span;
+                    return Ok(Expr::new(
+                        ExprKind::IfLet {
+                            pattern,
+                            scrutinee: Box::new(scrutinee),
+                            then,
+                            else_,
+                        },
+                        start.merge(end),
+                    ));
+                }
+                // Identifier-pattern без keyword'а — explicit error.
+                if Self::is_ident_pattern(&pattern) {
+                    return Err(Diagnostic::new(
+                        "[E_AMBIGUOUS_IDENT_PATTERN] bare identifier pattern \
+                         в if/while condition требует explicit `ro` или `mut` \
+                         keyword (footgun protection: bare `if x = compute()` \
+                         визуально неотличимо от assignment). \
+                         Write `if ro IDENT = …` for immutable or \
+                         `if mut IDENT = …` for mutable (Plan 114 D184).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            // Pattern parsed but no `=` — restore and parse as bool expr.
+            self.pos = save;
+        } else {
+            // Pattern parse failed — restore and try bool expr.
+            self.pos = save;
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let then = self.parse_block()?;
@@ -6127,6 +6331,7 @@ impl Parser {
 
     fn parse_while(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwWhile)?.span;
+        // `while let pattern = expr` — D34 legacy.
         if matches!(self.peek().kind, TokenKind::KwLet) {
             self.bump();
             let pattern = self.parse_pattern()?;
@@ -6144,6 +6349,64 @@ impl Parser {
                 },
                 start.merge(end),
             ));
+        }
+        // Plan 114 (D184): `while ro IDENT = e` / `while mut IDENT = e`.
+        if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut) {
+            self.bump();
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::Eq)?;
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            let body = self.parse_block()?;
+            let end = body.span;
+            return Ok(Expr::new(
+                ExprKind::WhileLet {
+                    pattern,
+                    scrutinee: Box::new(scrutinee),
+                    body,
+                    invariants: vec![],
+                    decreases: None,
+                },
+                start.merge(end),
+            ));
+        }
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            return Err(Diagnostic::new(
+                "[E_CONSUME_IN_CONDITION] `consume` binding не разрешён \
+                 в while condition (Plan 114 D184).".to_string(),
+                self.peek().span,
+            ));
+        }
+        // Plan 114 (D184): speculative pattern-binding для constructor/destructure.
+        let save = self.pos;
+        if let Ok(pattern) = self.parse_pattern() {
+            if matches!(self.peek().kind, TokenKind::Eq) {
+                if Self::is_structural_pattern(&pattern) {
+                    self.expect(&TokenKind::Eq)?;
+                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    let body = self.parse_block()?;
+                    let end = body.span;
+                    return Ok(Expr::new(
+                        ExprKind::WhileLet {
+                            pattern,
+                            scrutinee: Box::new(scrutinee),
+                            body,
+                            invariants: vec![],
+                            decreases: None,
+                        },
+                        start.merge(end),
+                    ));
+                }
+                if Self::is_ident_pattern(&pattern) {
+                    return Err(Diagnostic::new(
+                        "[E_AMBIGUOUS_IDENT_PATTERN] bare identifier pattern в \
+                         while condition требует `ro` или `mut` (Plan 114 D184).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            self.pos = save;
+        } else {
+            self.pos = save;
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5/9.8: loop invariants/decreases.
@@ -6862,6 +7125,19 @@ impl Parser {
         match self.peek().kind {
             TokenKind::KwLet => {
                 let l = self.parse_let_decl()?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            // Plan 114 (D184): `ro X = expr` scope-binding (immutable).
+            TokenKind::KwRo => {
+                let l = self.parse_ro_mut_binding(false)?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            // Plan 114 (D184): `mut X = expr` scope-binding (mutable).
+            // Disambiguation: leading `mut` в stmt-position — binding.
+            // `mut` внутри patterns / params / receivers — обрабатывается
+            // в parse_pattern / parse_param / parse_method_decl.
+            TokenKind::KwMut => {
+                let l = self.parse_ro_mut_binding(true)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
             // Plan 33.3 (D24): `ghost let` — контекстный keyword `ghost`.
