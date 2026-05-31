@@ -925,6 +925,37 @@ Rust/C++/Swift; менять `@plus` → `@addition` бессмысленно.
 3. **Прецедент Swift API Guidelines.** Swift строго запрещает abbreviations,
    и это даёт API surface, которую читать как естественный язык.
 
+#### Leading underscore: «параметр / биндинг намеренно не используется»
+
+**Конвенция** (Plan 110.7.3.a, 2026-06-01): локальные биндинги и
+параметры с префиксом `_` явно сигналят compiler'у «эта переменная
+объявлена для интерфейсной совместимости, но не нужна телу». Это
+**подавляет** `W_UNUSED_PARAM` / `W_UNUSED_LOCAL` warning'и без
+необходимости комментариев.
+
+| Применение | Пример | Семантика |
+|---|---|---|
+| Unused parameter | `fn @on_exit(_outcome ScopeOutcome) -> ()` | param required by protocol, тело его не читает |
+| Unused let-binding | `ro _ = expensive_compute()` | side-effect важен, value irrelevant |
+| Unused pattern binding | `match v { Some(_x) => 0, None => 1 }` | wildcard с именем для diagnostic, не reading |
+| Discard tuple element | `ro (a, _b) = pair()` | первый нужен, второй — нет |
+
+**Правило компилятора:**
+* Имя начинается с `_` (включая чистый `_`) → unused-warning suppressed.
+* Любое другое имя → warning fires если binding не читается.
+* `_` (одиночное подчёркивание) — традиционная «throwaway» форма; допустимо
+  использовать многократно в одном scope (каждое — fresh binding).
+
+**Prior art:**
+* Rust: `let _x = compute()` — same convention.
+* Swift: `_` parameter labels — call-site suppression.
+* Go: `_` blank identifier — same purpose, syntax level.
+* Python: `_var` — informal convention, no enforcement.
+
+**Запрещено**: `_` префикс на **public exports** — это signals «private
+to module», и leading-underscore tied к unused-suppression cleanly
+разделимо только для local / private bindings.
+
 #### Типы ошибок: `Parse<TypeName>Error`, `<Operation><Domain>Error`
 
 Имена ошибок в публичных API должны включать **тип / домен** который
@@ -6279,8 +6310,12 @@ defer {
 
 ## D160. `okdefer` + reason-aware `defer |result|`
 
-> **Plan 100.4.3.** Принято 2026-05-23 (proposed). Новые scope-level
-> statements; complement к D90 defer/errdefer family.
+> **Plan 100.4.3.** Принято 2026-05-23 (proposed). **Статус: RETRACTED**
+> by D189 (Plan 110.5.7 hard cutover, 2026-05-31). Replaced by
+> `consume X = ... { body }` scope-block с `match outcome { Success/
+> Failure(_)/Panic(_) }` в `on_exit` method (D188).
+>
+> Новые scope-level statements; complement к D90 defer/errdefer family.
 
 ### Что
 
@@ -6924,6 +6959,7 @@ fn_return      ::= "->" "const"? type
 - [D180](05-memory.md#d180) — `consume` binding (cross-ref).
 - [D199](#d199-const-fn--comptime-evaluable-functions) — `const fn` comptime evaluable functions (Plan 114.4 Ф.3).
 - [D200](02-types.md#d200) — associated constants (Plan 114.4 Ф.2).
+- [D201](#d201-cancel_safe--attestation-на-ffi-safety-inside-cleanup) — `#cancel_safe` FFI attestation (Plan 110.7.3.a).
 - [Plan 114](../../docs/plans/114-keyword-refresh-ro-mut-no-let.md) — master plan.
 
 ---
@@ -7023,3 +7059,1155 @@ Errors на evaluator-side:
 ### Acceptance
 
 См. Plan 114.4 A14-A18 (T3 series).
+
+---
+
+## D188. `Consumable[E]` protocol + `consume X = expr { body }` scope-block
+
+> **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.1+110.2
+> +110.4+110.5 landed 2026-06-01). Radical simplification
+> cleanup-семейства: один keyword `consume` + один protocol `Consumable[E]`
+> покрывают ~95% cleanup use-cases, оставляя `defer { }` для оставшихся 5%.
+> Amends [D90](#d90), [D158](#d158), [D161](#d161), [D162](#d162).
+> Retracts [D160](#d160).
+
+### Что
+
+Вводятся два связанных языковых элемента:
+
+1. **`Consumable[E]` protocol** — контракт ресурсов, требующих cleanup.
+2. **`consume X = expr { body }`** — scope-block, гарантирующий exactly-once
+   вызов `on_exit` при выходе из `body` (success, throw, panic, cancel).
+
+```nova
+type Consumable[E] protocol {
+    on_exit(outcome ScopeOutcome) Fail[E] -> ()
+}
+
+type ScopeOutcome
+    | Success
+    | Failure(any)
+    | Panic(str)
+```
+
+- **`E`** — тип ошибок, которые `on_exit` ресурса сам может throw
+  (commit failure, flush failure). Если ресурс infallible — `E = Never`
+  (см. [D194](#d194)).
+- **`ScopeOutcome`** — type-erased (Python `__exit__` pattern): ресурс
+  не знает body error type. `Failure(any)` хранит throw/cancel-payload как
+  существенно динамическое значение; route'ит через `if err is T`
+  (D85 auto-narrowing).
+- `Panic(str)` отдельно — это **bug**, не recoverable error.
+
+### Syntax
+
+```nova
+consume IDENT = EXPR { BODY }
+```
+
+- Parser lookahead на `{` после `EXPR` решает между:
+  - `consume X = expr { body }` — scope-block (этот D188).
+  - `consume X = expr` — raw linear binding (D180; для builder/transfer).
+- `IDENT` — single name. Destructure (`consume (a, b) = ...`) не разрешается
+  для scope-block (один resource = один cleanup).
+- `EXPR` должен statically resolve к типу `Consumable[E]` для некоторого `E`
+  (см. [D196](#d196)).
+- `BODY` — block; `IDENT` доступен внутри как `ro` binding (нельзя reassign,
+  можно вызывать методы, mutating через interior mutability разрешено).
+
+### Desugaring
+
+`consume tx = init() { body }` развёрнуто codegen'ом эквивалентно:
+
+```nova
+{
+    ro _tx = init()                                  // R1: throws → exit
+    ro _timeout = nv_resolve_exit_timeout(_tx)       // R4 (D192 3-level)
+    ro _outcome = nv_run_body_capturing { body }     // captures Success/Failure(e)/Panic(m)
+    nv_enter_cancel_shield(deadline: _timeout)       // R3
+    match _outcome {
+        Success      => _tx.on_exit(Success)
+        Failure(e)   => { _tx.on_exit(Failure(e)); throw e }
+        Panic(m)     => { _tx.on_exit(Panic(m)); nv_resume_panic(m) }
+    }
+    nv_leave_cancel_shield()
+}
+```
+
+Где `nv_run_body_capturing { body }` — codegen-emitted construct:
+- normal exit → `Success`
+- `throw e` / `?` propagation / cancel-as-throw (D90 §7 amend) → `Failure(e)`
+- `panic(m)` → `Panic(m)`
+- `exit(code)` — НЕ captures; process exit'ы напрямую (handler.on_exit не runs).
+
+### Правила (R1-R6)
+
+#### R1 — Partial construction safety
+
+Если `init()` throws **до** scope-entry — `on_exit` не вызывается. Codegen
+эмитит установку `_outcome`/shield **только после** успешного завершения
+`init()`. Пример: если `db.begin()` throws, никакого `tx.on_exit(...)` не
+будет (некому).
+
+Это согласовано с [D195](04-effects.md#d195) §boot-order для `Application`
+handler'а.
+
+#### R2 — Exactly-once
+
+`on_exit` для данной consume-binding **гарантированно вызывается ровно один
+раз** на любом exit-path (включая `return`, `throw`, `panic`, cancel).
+Реализуется через runtime counter `_consume_count` в desugared coode: codegen
++ runtime инкрементируют при invocation, runtime panic'ит при ≥ 2.
+
+Double-invocation invariant нарушается только если programmer вручную
+зовёт `tx.on_exit(...)` из body — это runtime error
+`D188-on-exit-double-invocation` (linear types prevent double-consume в
+большинстве случаев, но FFI/reflection обход возможен).
+
+#### R3 — Cancel-shield by default
+
+Внутри cleanup-path (`tx.on_exit(...)`) cancel-доставка автоматически
+маскируется до завершения cleanup или превышения `exit_timeout`
+(см. [D192](#d192)). Это **default behavior**; opt-out не предоставляется
+(Rust scopeguard / C++23 lessons показывают что opt-in cancel-shield
+большинство забывает).
+
+Cancel остаётся pending в `fiber->cancel_pending`; доставляется после
+`nv_leave_cancel_shield()`. Если cleanup body превысил timeout — текущий
+suspend получает `CleanupTimeoutError`, дальше propagates через D161
+composition.
+
+#### R4 — Timeout resolution at scope-entry
+
+`exit_timeout` определяется **один раз** при scope-entry через 3-level
+fallback (см. [D192](#d192)):
+
+1. `WithExitTimeout` impl ресурса (если есть);
+2. Активный `Application` effect handler (см. [D195](04-effects.md#d195));
+3. Hardcoded fallback `Duration.seconds(5)`.
+
+Кэшируется в локалке `_timeout` для use в `nv_enter_cancel_shield`.
+Сохранение в локалке предотвращает race с асинхронным изменением handler'а
+во время body execution.
+
+#### R5 — LIFO composition
+
+Вложенные `consume {}` блоки выходят в LIFO порядке (наружный позже
+внутреннего). Если outer throws, inner.on_exit уже завершён. Если inner
+throws, outer.on_exit получает `Failure(inner_err)` в outcome.
+
+Mixed `consume {}` + `defer { }` LIFO — единый scope-stack per-fiber:
+
+```nova
+consume a = A.new() {
+    defer { cleanup_b() }
+    consume c = C.new() {
+        defer { cleanup_d() }
+        body
+    }
+    // exit: cleanup_d → c.on_exit → cleanup_b
+}
+// exit: a.on_exit
+```
+
+#### R6 — Memory ordering
+
+Acquire-release semantics между body и `on_exit`:
+- Все writes в `body` happen-before `on_exit` reads (release on exit,
+  acquire on entry).
+- Согласовано с [D167](06-concurrency.md#d167) memory ordering.
+- Reason: cleanup может flush/commit видимое состояние; должен видеть
+  финальную семантику ресурса.
+
+### Typed error dispatch в `on_exit`
+
+Resource решает что делать с body error через D85 auto-narrowing:
+
+```nova
+fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+    match outcome {
+        Success => @commit()?
+        Failure(err) => {
+            if err is DbError.Deadlock {
+                @retry_friendly_rollback()?     // err narrow'нут до DbError.Deadlock
+            } else if err is DbError {
+                @rollback_with_log(err.msg)?
+            } else {
+                @rollback()?                     // generic non-DB failure
+            }
+        }
+        Panic(_) => @rollback_emergency()
+    }
+}
+```
+
+Никакого `outcome.failure_as[T]()` helper'а не предоставляется — `is`-
+narrowing достаточен и идиоматичен (rejected alternative в [D190](#d190)).
+
+### Generic constraint
+
+```nova
+fn use_any[T Consumable[E]](r T) Fail[E] -> () {
+    consume binding = r {
+        // binding : T
+    }
+}
+```
+
+Generic bound `[T Consumable[E]]` следует синтаксису [D72](#d72). E может
+быть concrete (`Consumable[IoError]`) или generic param (`[T Consumable[E]]`
+с обоими свободными). **Never special case**: если `E = Never` в bound,
+type-checker автоматически снимает требование `Fail[E]` у caller'а
+(см. [D194](#d194)).
+
+### Что заменяется
+
+| Старая форма | Новая форма |
+|---|---|
+| `consume tx = begin(); errdefer { rollback }; okdefer { commit }` | `consume tx = begin() { body }` (Transaction impl Consumable) |
+| `defer \|result\| match { ... }` | `consume X = ... { }` или `with Cleanup = h { ... }` (D185) |
+| `consume X = ...; defer { X.close() }` | `consume X = ... { body }` (если X impl Consumable) |
+
+См. [D189](#d189) для прямого удаления.
+
+### Сравнение
+
+| Capability | Java | Kotlin | Swift | C++23 | Rust | Go | TS | Python | **Nova D188** |
+|---|---|---|---|---|---|---|---|---|---|
+| Cancel-shield by default | ❌ | ⚠️ opt-in | ⚠️ opt-in | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Exactly-once invariant | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ❌ | ⚠️ | ✅ runtime |
+| Partial-construction spec'd | ⚠️ stacked-using bug | ⚠️ | ⚠️ | ⚠️ | ⚠️ | n/a | ⚠️ | ⚠️ | ✅ R1 |
+| Single keyword | ✅ try-w-r | ✅ .use | ❌ | ❌ | ❌ | ❌ | ⚠️ using | ✅ with | ✅ `consume{}` |
+
+### Связь
+
+- [D72](#d72) — generic bounds syntax.
+- [D85](04-effects.md#d85) — `is` auto-narrowing.
+- [D90](#d90) §7 — amend: cancel as `Failure(CancelError)`.
+- [D158](#d158) — amend: ErrorKind discrimination retracted.
+- [D160](#d160) — **retract** в пользу D188.
+- [D161](#d161) — amend: MultiError без ErrorKind.
+- [D162](#d162) — amend: scope-block exhaustive by construction.
+- [D167](06-concurrency.md#d167) — memory ordering basis.
+- [D180](05-memory.md#d180) — raw `consume X = ...` (без block).
+- [D185](04-effects.md#d185) — Cleanup effect (telemetry).
+- [D189](#d189) — okdefer/errdefer/defer\|r\| removal.
+- [D190](#d190) — rejected alternatives.
+- [D191](#d191) — async cleanup.
+- [D192](#d192) — exit-timeout taxonomy + 3-level resolution.
+- [D193](#d193) — MultiError + cycle-safety.
+- [D194](#d194) — `Consumable[Never]`.
+- [D195](04-effects.md#d195) — Application nesting.
+- [D196](#d196) — init type constraints.
+- [D197](#d197) — cleanup re-entrance.
+- [D198](#d198) — realtime + cleanup interaction.
+- [Plan 110](../../docs/plans/110-scoped-resources-radical-simplification.md).
+
+---
+
+## D189. Прямое удаление `okdefer` + `errdefer` + `defer |result|`
+
+> **Plan 110 Ф.9.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.5.7
+> hard cutover landed; parser rejects retracted forms с D189-removed-*
+> errors). Fixture migration via deletion + behavior coverage preserved
+> в plan110/ (Plan 110.5.5).
+
+### Что удаляется
+
+| Construct | Origin | Replacement |
+|---|---|---|
+| `errdefer { ... }` | D90 §2 | Move logic в `Consumable.on_exit` через `match outcome { Failure(_) => ... }` или `defer + flag` для escape hatch |
+| `okdefer { ... }` | D160 | `match outcome { Success => ... }` |
+| `defer \|result\| { ... }` | D160 | `match outcome { ... }` в `on_exit` |
+| `DeferResult[T, E]` type | D160 | Заменён на `ScopeOutcome` (D188) |
+| `DeferWithResult` AST node | D160 | Удалён |
+
+### Parse errors (после Ф.5 удаления)
+
+После Ф.5 парсер не принимает старые формы — каждая выдаёт parse error с
+suggestion на новую форму:
+
+| Token | Error code | Hint |
+|---|---|---|
+| `okdefer` | `D189-removed-okdefer` | Use `consume X = ... { ... }` with `match outcome { Success => ... }` |
+| `errdefer` | `D189-removed-errdefer` | Use `consume X = ... { ... }` with `match outcome { Failure(_) => ... }` |
+| `defer \|...\| { ... }` | `D189-removed-defer-result` | Use `consume X = ... { ... }` |
+
+### Auto-fix mappings
+
+`nova fix --simplify-cleanup` применяется один раз перед удалением парсер-
+поддержки (Plan 110 Ф.9.2):
+
+1. **Pattern: linear `consume + errdefer + okdefer`**
+
+   ```nova
+   // before:
+   consume tx = db.begin()
+   errdefer { tx.rollback() }
+   okdefer  { tx.commit()?  }
+   do_work()?
+
+   // after:
+   consume tx = db.begin() {
+       do_work()?
+   }
+   // (предполагается Transaction impl Consumable: on_exit Success → commit, Failure → rollback)
+   ```
+
+2. **Pattern: `errdefer` без ресурса (cleanup state)**
+
+   ```nova
+   // before:
+   errdefer { log.warn("operation failed") }
+   risky()?
+
+   // after:
+   mut done = false
+   defer { if !done { log.warn("operation failed") } }
+   risky()?
+   done = true
+   ```
+
+3. **Pattern: `defer |result|`**
+
+   ```nova
+   // before:
+   defer |result| {
+       match result {
+           Ok(_)    => Log.info("ok")
+           Err(e)   => Log.error("fail: ${e}")
+           Panic(m) => Log.fatal("panic: ${m}")
+       }
+   }
+
+   // after (using Cleanup effect — D185):
+   with Cleanup = LogHandler.new(label: "operation") {
+       body
+   }
+   ```
+
+### Rationale (почему hard cutover без migration window)
+
+1. Nova ещё pre-0.1; breaking change acceptable per project-philosophy.
+2. Кода на `.nv` мало (стдлиб + tests + examples; ~десятки fixture'ов).
+3. Auto-fix tool покрывает 100% паттернов (3 правила выше).
+4. Dual-syntax fallback запутывал бы users во время transition (Rust
+   scope-bracket lessons).
+5. Spec maintenance cost dual-форм > value migration window.
+
+### Связь
+
+- [D90](#d90) §«errdefer» — retract.
+- [D160](#d160) — retract целиком.
+- [D158](#d158) — amend.
+- [D161](#d161) — amend.
+- [D162](#d162) — amend.
+- [D188](#d188) — replacement.
+- [Plan 110 Ф.9](../../docs/plans/110-scoped-resources-radical-simplification.md#ф9-migration).
+
+---
+
+## D190. Rejected alternative cleanup designs
+
+> **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (pure documentation
+> of rejected design choices; no impl required). Документирует rejected
+> design choices для будущих ревизоров с rationale почему именно
+> `Consumable[E]` + `consume {}`.
+
+### Drop-trait (Rust-style)
+
+```rust
+impl Drop for File { fn drop(&mut self) { self.close(); } }
+```
+
+**Отвергнуто** потому что:
+- Implicit cleanup невидим в call-site — code review загромождён.
+- Async-Drop unresolved (Rust open RFC с 2019); Nova first-class async.
+- `drop()` нельзя throw — Rust решает через `abort`, Nova хочет typed
+  propagation.
+- Order-of-drop magic (struct field order); programmer ошибки скрыты.
+
+### Priority-defer (`defer priority=10 { ... }`)
+
+**Отвергнуто**: LIFO достаточен для всех known patterns. Priority вводит
+новый axis сложности без killer use-case (ни один индустриальный язык
+не имеет).
+
+### `module_finalizer { ... }` keyword
+
+**Отвергнуто**: добавление primitive для редкого паттерна. Достижимо через
+`Consumable[Application]` idiom (см. [D195](04-effects.md#d195)).
+
+### Two-method protocol (`on_success` / `on_failure`)
+
+```nova
+type Consumable[E] protocol {
+    on_success() Fail[E] -> ()
+    on_failure(err any) Fail[E] -> ()
+}
+```
+
+**Отвергнуто**:
+- Resource'ы которые делают одинаковое cleanup в обоих случаях (Mutex,
+  File) — дублирование кода.
+- Panic-handling требует третий метод → 3 method protocol → readability
+  страдает.
+- Single `on_exit(outcome)` с match — лучше структурирован, легче
+  generic'и пишутся.
+
+### Generic `ScopeOutcome[E]`
+
+```nova
+type ScopeOutcome[E]
+    | Success
+    | Failure(E)
+    | Panic(str)
+```
+
+**Отвергнуто**: resource не знает body error type (transactionResource не
+знает что body может throw `OrderError`). Type-erased `Failure(any)` —
+canonical Python `__exit__` pattern. Routing через `if err is T` (D85).
+
+### Отдельный `Cancelled` variant
+
+```nova
+type ScopeOutcome | Success | Failure(any) | Cancelled(any) | Panic(str)
+```
+
+**Отвергнуто**: ни один из benchmark-языков (Java/Kotlin/Swift/C++/Rust)
+не выделяет cancel отдельно. Cancel — special case throw'а; semantics
+identical для resource cleanup. См. [D90 §7](#d90) amend.
+
+### `using` / `scoped` keyword
+
+```nova
+using tx = db.begin() { ... }
+scoped tx = db.begin() { ... }
+```
+
+**Отвергнуто**: re-use existing `consume` keyword снижает keyword count
+на 1. `consume` уже описывает "linear, owned, single-use" semantics —
+scope-block — естественное расширение.
+
+### `outcome.failure_as[T]() -> Option[T]` helper
+
+```nova
+match outcome {
+    Failure(_) => {
+        if dbErr = outcome.failure_as[DbError]() {
+            ...
+        }
+    }
+}
+```
+
+**Отвергнуто**: D85 `is` auto-narrowing уже даёт smart-cast; helper —
+дублирование. Kotlin smart-cast precedent.
+
+### Связь
+
+- [D188](#d188) — accepted design.
+- [Plan 110 §«Rejected»](../../docs/plans/110-scoped-resources-radical-simplification.md).
+
+---
+
+## D191. Async cleanup — `suspend` в `on_exit` body
+
+> **Plan 110 Ф.3.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.2.1.a
+> +110.2.2.a landed 2026-06-01). Расширяет [D159](#d159) async
+> cleanup на `Consumable.on_exit`.
+
+### Что разрешено
+
+`on_exit` body может содержать `suspend`-операции:
+- `Time.sleep(d)` — для retry с backoff.
+- `Net.*` — для grace-close TCP socket.
+- `Db.*` — для commit/rollback с round-trip.
+- `await fut` — для произвольного `Future[T]`.
+
+### Что запрещено
+
+- `spawn { ... }` — fire-and-forget fiber внутри cleanup нарушает exactly-
+  once и cancel propagation (D159 правило).
+- `parallel { ... }` — concurrent cleanup-tasks непредсказуемы.
+- `supervised { ... }` — supervisor-frame inside cleanup-frame double-nested
+  cancel routing (Plan 83.10 lessons).
+
+Эти запреты эмитятся checker'ом как `E_CLEANUP_FORBIDDEN_OPERATION` с
+suggestion переписать как sequential `await`.
+
+### Cancel-shield пробрасывается через suspend
+
+Внутри `on_exit` cancel доставка отложена до `exit_timeout` (R3 [D188](#d188)).
+На каждом suspend-point runtime проверяет deadline:
+
+```nova
+fn TcpStream consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+    @send_eof()?                    // suspend ok; cancel masked
+    @wait_for_ack(timeout: 1.s())?  // suspend ok; deadline check
+    @close()?                       // suspend ok; cancel masked
+    // если cumulative time > exit_timeout → CleanupTimeoutError throws здесь
+}
+```
+
+### Timeout exceedance
+
+Если cumulative cleanup-suspend-time превысил `_timeout` (computed at
+scope-entry per [D192](#d192) 3-level resolution):
+
+1. Текущий active suspend получает `CleanupTimeoutError`.
+2. Эта ошибка propagates через `on_exit`'s normal error path (`?`/`!!`).
+3. Если `on_exit` throws — `MultiError.suppressed.push(CleanupTimeoutError)`
+   composed с primary error.
+4. Cancel доставка снимается (shield off), cancel re-raises после exit.
+
+### Realtime context
+
+В `#realtime` fn (D172) — `_timeout = Duration.zero` (D198). Любой suspend
+в `on_exit` запрещён checker'ом через D172 правила (parking ops not
+allowed in `#realtime`). Это compile error, не runtime.
+
+### Связь
+
+- [D90](#d90) §7 — cancel/throw routing.
+- [D158](#d158) — failable cleanup base.
+- [D159](#d159) — async cleanup base; этот D191 — amend для Consumable.
+- [D172](04-effects.md#d172) — `#realtime` parking ban.
+- [D188](#d188) §R3 — cancel-shield.
+- [D192](#d192) — 3-level timeout resolution.
+- [Plan 100.4.2](../../docs/plans/100.4.2-async-suspend-cleanup.md).
+
+---
+
+## D192. `exit_timeout` taxonomy + 3-level resolution
+
+> **Plan 110 Ф.3.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.2.3
+> + 110.4.6.a Level-2 Application landed 2026-06-01). Определяет как ресурс получает
+> свой cleanup deadline.
+
+### Taxonomy Duration значений
+
+| Value | Семантика | Diagnostic |
+|---|---|---|
+| `Duration.zero` | Sync-only cleanup; любой suspend → runtime error | `D192-zero-timeout-suspend` (runtime) |
+| `Duration.positive(d)` | Normal timeout; deadline = now + d | — |
+| `Duration.MAX` | Без timeout; cleanup ждёт неограниченно | `D192-infinite-timeout-warn` (compile warn) |
+| `Duration.negative` | Invalid; runtime panic при resolve | `D192-negative-timeout` (runtime panic) |
+
+`Duration.zero` использует `#realtime` (D198). Realtime-context
+автоматически устанавливает zero без 3-level resolution.
+
+### 3-level resolution (от ближайшего к дальнему)
+
+При входе в `consume X = ... { body }` runtime resolves timeout один раз:
+
+#### Level 1 — `WithExitTimeout` impl
+
+```nova
+type WithExitTimeout protocol {
+    exit_timeout() -> Duration
+}
+
+fn Transaction @exit_timeout() -> Duration => 30.s()
+```
+
+- Structural match — ресурс не обязан явно объявлять impl, достаточно
+  иметь метод правильной signature.
+- Если method присутствует — runtime зовёт его при scope-entry, result
+  кэшируется в локалке.
+- НЕ часть Consumable protocol (опционально); Mutex/Sem/Lock не нужны.
+
+#### Level 2 — `Application` effect handler
+
+```nova
+with Application = Application.handler(default_exit_timeout: 10.s()) {
+    run_server()                            // все consume{} получают 10s
+}
+```
+
+- Если активен `Application` effect handler и ресурс НЕ имеет
+  `WithExitTimeout` impl — runtime вызывает `Application.default_exit_timeout()`.
+- См. [D195](04-effects.md#d195).
+- Nested Application handlers: inner handler побеждает (effect-stack
+  semantics).
+
+#### Level 3 — hardcoded fallback
+
+`Duration.seconds(5)` если ни Level 1 ни Level 2 не сработали. Конечная
+safety net.
+
+### Implementation: единая runtime функция
+
+```c
+// runtime emit:
+nv_duration_t nv_resolve_exit_timeout(nv_typeid_t type, void* obj) {
+    // 1) check WithExitTimeout via vtable lookup
+    if (nv_type_has_method(type, "exit_timeout")) {
+        return nv_call_method_exit_timeout(type, obj);
+    }
+    // 2) check Application effect
+    nv_handler_t* app = nv_effect_lookup("Application");
+    if (app) {
+        return nv_call_application_default_exit_timeout(app);
+    }
+    // 3) hardcoded
+    return nv_duration_seconds(5);
+}
+```
+
+Codegen вызывает `nv_resolve_exit_timeout` один раз per scope, результат
+кэшируется в локалке. Преимущества vs per-callsite codegen:
+- меньше binary size;
+- единая точка модификации;
+- проще для inlining в VM/JIT.
+
+### Per-instance конфигурация — library pattern
+
+```nova
+fn Db.connect(url str, exit_timeout Duration = 30.s()) -> Db => ...
+fn Db @begin() -> Transaction => Transaction {
+    exit_timeout_value: @config.exit_timeout, ...
+}
+fn Transaction @exit_timeout() -> Duration => @exit_timeout_value
+```
+
+Когда `Db.connect(url, exit_timeout: 60.s())` — все транзакции через этот
+Db унаследуют 60s, потому что `Transaction.exit_timeout()` структурно
+satisfies `WithExitTimeout`. **Это library pattern, не language feature.**
+
+### Что НЕ делаем
+
+- ❌ Нет `exit_timeout()` в `Consumable` — оптимизация для infallible
+  cleanup (`MutexGuard`).
+- ❌ Нет scope-level override через `with X = Y { }` — этот syntax только
+  для effect-handlers.
+- ❌ Нет global mutable setting через прямой setter — конфиг через
+  `Application` effect handler.
+
+### Связь
+
+- [D188](#d188) §R4 — resolution at scope-entry.
+- [D194](#d194) — `Consumable[Never]` hot-path opt.
+- [D195](04-effects.md#d195) — `Application` effect.
+- [D198](#d198) — realtime bypass.
+- [Plan 110 Ф.3](../../docs/plans/110-scoped-resources-radical-simplification.md#ф3-cancel-shield).
+
+---
+
+## D193. `MultiError` — iteration + cycle-safety + depth-limit
+
+> **Plan 110 Ф.6.** Принято 2026-05-31. **Статус: ACTIVE** (MultiError API
+> + cycle-safety + depth-limit 256 landed 2026-05-31). Refactor [D158](#d158) / [D161](#d161)
+> MultiError API + добавление cycle-safety из Java JDK-8287921 lesson.
+
+### Structure
+
+```nova
+type MultiError {
+    ro primary    any
+    ro suppressed []any
+}
+```
+
+`primary` — первая ошибка цепочки (chronologically first failure).
+`suppressed` — последующие ошибки, добавленные через `compose`.
+
+`any` (не `Error`) — потому что MultiError может composit'ить `CancelError`,
+`CleanupTimeoutError`, `DbError`, panic-string и пр. Type-erased.
+
+### API
+
+```nova
+fn MultiError @primary() -> any => @primary
+fn MultiError @suppressed() -> []any => @suppressed
+
+fn MultiError @walk() -> Iter[any] {
+    // returns: primary, then suppressed in LIFO order
+}
+
+fn MultiError @fmt_chain() -> str {
+    // formatted: "primary: X\n  suppressed: Y\n  suppressed: Z"
+}
+
+fn MultiError @find_first_panic() -> Option[str] {
+    // первый panic-string в chain (primary or suppressed); None если none
+}
+```
+
+### Cycle-safety (Java JDK-8287921 lesson)
+
+В Java HotSpot обнаружили deadlock когда `Throwable.addSuppressed(this)` —
+self-suppression создавала self-reference cycle. Nova избегает через
+identity-check в compose operation:
+
+```c
+void nv_compose_error(nv_multi_err_t* m, void* secondary) {
+    // identity check: ignore self
+    if (secondary == m->primary) return;
+    // dedup: ignore if already in suppressed
+    for (size_t i = 0; i < m->suppressed_len; i++) {
+        if (m->suppressed[i] == secondary) return;
+    }
+    nv_multi_err_push(m, secondary);
+}
+```
+
+### Depth limit
+
+Runtime invariant: `suppressed.len <= 256`. Если cleanup-cascade глубже —
+очередная compose добавляет sentinel entry `MultiErrorTruncated { depth }`
+и дальше silently ignores дальнейшие composes.
+
+256 выбран как:
+- порядок MAX_DEFER_DEPTH (D193);
+- достаточно для всех reasonable cleanup-cascades (10 levels nesting × 25
+  resources per level);
+- protects from O(N²) compose-чейнов с pathological recursion.
+
+### Concrete error types в prelude
+
+```nova
+type CancelError { reason str }
+type CleanupTimeoutError { duration Duration }
+type MultiErrorTruncated { depth int }
+```
+
+Эти типы emerge из D90 §7 amend (CancelError) и D192 deadline enforcement
+(CleanupTimeoutError).
+
+### Что удаляется
+
+- `ErrorKind` enum (D158) — типизация через прямой `if err is T`.
+- `DeferResult[T, E]` (D160) — заменён `ScopeOutcome`.
+- Raw `MultiError.suppressed.push(...)` — должен идти через `nv_compose_error`
+  с cycle-check (compile error D193-direct-mutation).
+
+### Сравнение
+
+| Capability | Java | Kotlin | Swift | C++23 | Rust | TS | **Nova D193** |
+|---|---|---|---|---|---|---|---|
+| Iterable walk | ✅ getSuppressed | ✅ | ✅ | ⚠️ stdexception_ptr | n/a | ✅ AggregateError | ✅ `walk()` |
+| Cycle-safety spec'd | ⚠️ JDK-8287921 bug | ⚠️ inherit | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ identity-check |
+| Depth-limit explicit | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ 256 |
+| Fast panic finder | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ `find_first_panic` |
+
+### Связь
+
+- [D90](#d90) §7 — CancelError.
+- [D158](#d158) — amend: ErrorKind retracted.
+- [D161](#d161) — amend: MultiError structure.
+- [D188](#d188) §R3 — cancel-shield exit composition.
+- [D191](#d191) — async cleanup compose path.
+- [D192](#d192) — CleanupTimeoutError.
+
+---
+
+## D194. `Consumable[Never]` — infallible cleanup + hot-path elision
+
+> **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (codegen recognizes
+> `Consumable[Never]` для hot-path elision, 2026-05-31). Special-case для resource'ов которые
+> гарантированно не fail в cleanup (Mutex, Sem, Lock).
+
+### Что
+
+Resource-типы которые **гарантированно не fail в cleanup** используют
+`Consumable[Never]`:
+
+```nova
+fn MutexGuard consume @on_exit(outcome ScopeOutcome) -> () => @release()
+//                                                       ^^^^ no Fail[E]
+```
+
+`Fail[Never]` — empty effect set, эквивалентно «не throws».
+
+### Caller relaxation
+
+Type-checker special-case: если binding имеет тип `Consumable[Never]`,
+требование `Fail[E]` у caller'а **снимается**:
+
+```nova
+fn use_mutex() -> () {                // нет Fail[E]
+    consume _l = mu.acquire() {        // MutexGuard: Consumable[Never] — ОК
+        do_work()
+    }
+}
+```
+
+Это аналог Rust `Result<T, !>` или Haskell `IO ()` без `bracket throws`.
+Делает API для locks/permits эргономичным.
+
+### Generic Never special case
+
+```nova
+fn use_any[T Consumable[Never]](r T) -> () {     // нет Fail[E]
+    consume binding = r { do_work() }
+}
+```
+
+Generic с `[T Consumable[Never]]` тоже не требует `Fail[E]` у caller'а
+(см. [D188](#d188) generic constraint).
+
+### Hot-path optimization (D194 §perf)
+
+Codegen detect'ит case когда:
+1. Binding имеет тип `Consumable[Never]` И
+2. Type не satisfies `WithExitTimeout` (нет custom `exit_timeout()` method).
+
+В этом случае codegen **eliminates**:
+- Cancel-shield setup/teardown (на throw на cleanup-path → нет MultiError compose).
+- Timeout resolution (5s hardcoded не нужен — release инстант).
+- `outcome` construction (Mutex не различает Success/Failure/Panic).
+
+```c
+// regular case:
+nv_consume_enter(timeout);
+... body ...
+nv_call_on_exit(tx, outcome);
+nv_consume_leave();
+
+// elided case (Consumable[Never] + no WithExitTimeout):
+... body ...
+nv_call_release(mu);
+```
+
+**Critical для hot-paths**: lock contention, high-frequency permits, fast
+mutex/atomic patterns. Disasm-verified в T2.9.
+
+### Когда elision НЕ применяется
+
+- `Consumable[Never]` + `WithExitTimeout` impl → timeout resolution не
+  нужен (5s default), но shield нужен для potential `await exit_timeout()`
+  call.
+- `Consumable[E]` где `E != Never` → cleanup может throw, shield нужен.
+- Body содержит cancel-points даже если `E = Never` — shield нужен для
+  cancel-routing.
+
+### Связь
+
+- [D188](#d188) — Consumable base.
+- [D192](#d192) — WithExitTimeout protocol.
+- [Plan 110 Ф.2.8](../../docs/plans/110-scoped-resources-radical-simplification.md#ф2-codegen).
+
+---
+
+## D196. Init type constraints для `consume X = expr { body }`
+
+> **Plan 110 Ф.2.9.** Принято 2026-05-31. **Статус: ACTIVE** (Plan
+> 110.1.2 + 110.1.3 + refine landed; forms 1-3, 5 implemented в
+> type-checker; form 4 method-chain deep recursion partial). Определяет
+> какие expression'ы могут служить init для consume scope-block.
+
+### Правило
+
+`expr` после `=` должен statically resolve к типу implementing
+`Consumable[E]` для какого-то `E`. Type-checker проверяет в Ф.1.5 (после
+type inference body init expression'а).
+
+### Acceptable init forms
+
+#### 1. Прямой Consumable
+
+```nova
+consume tx = db.begin() { ... }     // db.begin() : Transaction (Consumable[DbError])
+```
+
+#### 2. Result/Option unwrap через `?` / `!!`
+
+```nova
+consume tx = db.try_begin()? { ... }    // try_begin() : Result[Transaction, DbError]
+                                        // после `?` → Transaction
+```
+
+```nova
+consume tx = maybe_tx()!! { ... }       // maybe_tx() : Option[Transaction]
+                                        // после `!!` → Transaction
+```
+
+#### 3. Conditional (if/match)
+
+```nova
+consume tx = if cond { open_a() } else { open_b() } { ... }
+```
+
+- Обе ветки должны возвращать совместимый Consumable type.
+- Если a и b возвращают разные Consumable типы → `D196-divergent-consumable`.
+
+#### 4. Method chain
+
+```nova
+consume tx = db.with_config(cfg).begin() { ... }
+```
+
+Финальный return type должен быть Consumable.
+
+### Rejected init forms
+
+#### Wrapped без unwrap
+
+```nova
+consume tx = maybe_tx() { ... }     // maybe_tx() : Option[Transaction]
+// → D196-wrapped-init-needs-unwrap
+```
+
+Suggestion: «use `consume tx = maybe_tx()!! { ... }` или distinguish None
+сначала через `if Some(tx) = maybe_tx() { consume tx = tx { ... } }`».
+
+#### Non-Consumable
+
+```nova
+consume x = 42 { ... }     // int не Consumable
+// → D188-not-consumable
+```
+
+### Memory ordering для acquisition
+
+`init` evaluation полностью завершается **до** scope-entry (acquire
+semantics). `nv_consume_enter` имеет implicit memory fence перед
+`nv_run_body_capturing`. Cleanup видит финальное состояние ресурса
+(см. [D188](#d188) §R6).
+
+### Связь
+
+- [D85](04-effects.md#d85) — `?`/`!!` operators.
+- [D86](04-effects.md#d86) — `??` coalesce.
+- [D188](#d188) — Consumable base.
+- [D194](#d194) — Never special case.
+- [D196](#d196).
+
+---
+
+## D197. Cleanup re-entrance — nested `consume {}` inside `on_exit`
+
+> **Plan 110 Ф.2.12.** Принято 2026-05-31. **Статус: ACTIVE** (Plan
+> 110.1.8 landed; codegen handles re-entrance correctly through nested
+> scope-blocks). Разрешает вложенные consume
+> scope-block'и внутри `on_exit`.
+
+### Правило
+
+`on_exit` body **может содержать** вложенные `consume {}` блоки:
+
+```nova
+fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+    // closing the connection requires acquiring lock
+    consume _l = @cleanup_mutex.acquire() {
+        @do_close()?
+    }
+}
+```
+
+### Семантика
+
+1. **Outer cancel-shield остаётся активен** на время всей outer `on_exit`
+   body. Inner consume{} наследует масштабы shield (nested mask).
+
+2. **Inner consume{} создаёт свой shield** с своим timeout. Cancel
+   доставка остаётся **глобально pending** до выхода **outer cleanup**.
+
+3. **Inner `on_exit` ошибки compose в локальный MultiError**. Если он
+   throws — outer `on_exit` получает это в propagation:
+   - outer.on_exit started → outcome = Failure(orig)
+   - inner.on_exit failed → MultiError { primary: orig, suppressed: [inner_err] }
+   - outer cleanup completes; outer body re-throws с composed.
+
+4. **Depth limit 256** (same as MultiError D193). При превышении — runtime
+   error `D197-cleanup-reentrance-depth-exceeded` composes в MultiError;
+   cleanup продолжает разворачиваться с этой ошибкой как «...truncated»
+   entry.
+
+5. **Запрещено**: re-entrance с тем же ресурсом — linear types prevent
+   (D131 use-after-consume). Программер пытающийся `consume X = X { ... }`
+   внутри `X.on_exit` получает compile error до reaching this rule.
+
+### Use case
+
+Connection close требующий lock acquisition; Database flush требующий
+internal transaction; HTTP keep-alive close требующий buffer flush. Все
+эти паттерны — composable resources с inner cleanup.
+
+### Связь
+
+- [D131](05-memory.md#d131) — linear types.
+- [D188](#d188) §R5 — LIFO composition base.
+- [D192](#d192) — timeout per-scope.
+- [D193](#d193) — MultiError + depth limit.
+- [Plan 110 Ф.2.12](../../docs/plans/110-scoped-resources-radical-simplification.md#ф2-codegen).
+
+---
+
+## D198. `#realtime` + cleanup-timeout interaction
+
+> **Plan 110 Ф.3.6.** Принято 2026-05-31. **Статус: ACTIVE** (codegen
+> `in_realtime` check emits 0-timeout, 2026-05-31). Cross-ref [D172](04-effects.md#d172).
+
+### Семантика `#realtime` (recap)
+
+`#realtime` на функции — **гарантия callee**:
+- Внутри `#realtime` fn body: можно вызывать только другие `#realtime` fns
+  или `#realtime`-annotated primitive operations.
+- Parking ops, allocations, GC pauses запрещены.
+- **Никаких ограничений на caller**: обычная fn свободно может вызвать
+  `#realtime` fn. Атрибут описывает свойство callee.
+
+См. [D172](04-effects.md#d172) полную семантику attribute.
+
+### Правило для cleanup
+
+Codegen смотрит на **enclosing function** где находится `consume {}`:
+
+```nova
+// в обычной fn:
+fn foo() Fail[E] -> () {
+    consume r = expr { body }
+    // codegen: let _timeout = nv_resolve_exit_timeout(r);  // WithExitTimeout / App / 5s
+}
+
+// в #realtime fn:
+#realtime
+fn bar() -> () {
+    consume r = expr { body }
+    // codegen: let _timeout = Duration.zero();             // hardcoded
+}
+```
+
+`#realtime` контекст **полностью bypass'ит 3-level resolution** —
+runtime functions для timeout lookup не вызываются вовсе.
+
+### Следствия (автоматические из правила #realtime)
+
+1. **`on_exit` метод ресурса должен быть `#realtime`**, иначе compile
+   error внутри `bar` body (нельзя вызвать non-`#realtime` fn из
+   `#realtime`). Это значит resource-тип используемый в realtime-
+   context уже спроектирован для него (`MutexGuard.release`, atomic
+   ops).
+
+2. **`WithExitTimeout` impl ресурса не вызывается** — потому что
+   `nv_resolve_exit_timeout` не вызывается.
+
+3. **`Application` effect не запрашивается** — same reason.
+
+4. **Suspend в `on_exit` невозможен** — D172 body restriction (parking
+   ban), не через нашу new проверку.
+
+### Что НЕ делаем
+
+- ❌ Compile-time heuristic «попытается ли Application override» — не нужно;
+  правило `#realtime` body уже всё ограничивает.
+- ❌ Runtime fallback к Application в realtime — codegen эмитит zero
+  напрямую.
+- ❌ Дополнительные constraints на caller — не нужно, атрибут это callee
+  promise.
+
+### Diagnostic
+
+`D198-realtime-application-override`: warning если статически detect'имо
+что `#realtime` fn внутри `with Application = handler(default_exit_timeout:
+non-zero)` scope'е. Application timeout будет ignored — warn user. Это
+heuristic detection (не точная analysis); warning, не error.
+
+### Связь
+
+- [D172](04-effects.md#d172) — `#realtime` attribute model.
+- [D188](#d188) §R4 — timeout resolution baseline.
+- [D191](#d191) — async cleanup parking restrictions.
+- [D192](#d192) — 3-level resolution bypassed.
+- [D194](#d194) — `Consumable[Never]` typical realtime pattern.
+- [Plan 103.6](../../docs/plans/103.6-realtime-blocking-integration.md).
+- [Plan 113](../../docs/plans/113-realtime-blocking-attribute-only.md).
+
+---
+
+## D201. `#cancel_safe` — attestation на FFI safety inside cleanup
+
+> **Plan 110.7.3.a.** Принято 2026-06-01. Cross-ref
+> [D188](#d188) §R3 (cancel-shield), [D192](#d192) (exit_timeout).
+
+### Что
+
+`#cancel_safe` — fn-level attribute который аттестует, что функция
+**безопасна для вызова из `Consumable.on_exit` body** под активным
+cancel-shield'ом (D188 R3).
+
+```nova
+#cancel_safe
+external fn sqlite3_close(handle int) -> int
+
+#cancel_safe
+fn local_cleanup_helper(state State) -> () { ... }
+```
+
+### Зачем
+
+Когда `consume X = expr { body }` выходит, runtime поднимает
+cancel-shield (mask_count++). Внешние cancel'ы откладываются до
+`leave_shield`. Если `on_exit` вызывает C-функцию, которая:
+
+1. **Блокируется неограниченно** (например, classic POSIX `read(fd)`
+   на TTY-устройстве без `O_NONBLOCK`) — fiber виснет на C-стэке,
+   shield deadline сгорит впустую.
+2. **Не идемпотентна при повторе** — если cancel в итоге сработает
+   и unwind рестартанёт cleanup, partial-effect C-state может оставить
+   garbage.
+3. **Требует Nova fail-frame state** — например читает `_nova_fail_top`
+   — это нестабильно через FFI boundary.
+
+`#cancel_safe` — обещание разработчика, что вызываемая функция отвечает
+**трём требованиям**:
+
+1. **Bounded completion time.** Функция завершится за разумное время даже
+   под cancel-shield'ом — то есть **не может зависеть от внешнего cancel
+   для пробуждения / завершения** (внешний cancel игнорируется shield'ом).
+   Конкретно:
+   * Никаких `read()` / `recv()` / `poll()` без timeout'а на файл-дескрипторах
+     которые могут никогда не получить данные.
+   * Никаких `pthread_cond_wait` / event-loop wait'ов без timeout'а.
+   * Никаких busy-loop'ов которые ожидают «снаружи что-то изменится».
+   *Антипаттерн:* C-функция «жди новой записи в очереди пока не отменят» —
+   под shield'ом отмена не прилетит → fiber висит до exit_timeout.
+   *Хороший паттерн:* C-функция делает свою работу sync'но (`fclose`,
+   `sqlite3_close`, `free`) и возвращается.
+
+2. **Idempotent для cleanup семантики.** D188 R2 «exactly-once»
+   гарантия требует чтобы partial-effect cleanup был safe для рестарта
+   (multi-cancel / multi-throw scenarios — компилятор не дублирует, но
+   если повтор в коде → должен быть OK).
+
+3. **Не зависит от Nova fail-frame TLS state.** Внутри Nova fail-frame
+   chain (`_nova_fail_top` TLS pointer) — это runtime mechanism Nova для
+   throw routing. C-код **не должен**:
+   * Читать `_nova_fail_top` / `_nova_active_scope` / другие internal
+     TLS-переменные runtime'а.
+   * Вызывать `nova_throw_*` / `nova_fail_push/pop` напрямую.
+   * Полагаться на Nova handler stack или ScopeOutcome.
+   *Причина:* shield'ом fail-frame в strange mid-unwinding state; C-кода
+   таких допущений делать не должен. C-код возвращает int код ошибки —
+   Nova-обёртка (caller) сама конвертирует в throw если надо.
+
+### Lint
+
+При вызове FFI fn БЕЗ `#cancel_safe` из `on_exit` body — компилятор
+выдаёт **`W_FFI_CANCEL_UNSAFE`** warning с suggestion:
+* Добавить `#cancel_safe` к декларации FFI fn если действительно safe.
+* Обернуть call в sync-only wrapper если cancel-safety не гарантирована.
+
+Внутри тела обычной Nova fn (не FFI) — `#cancel_safe` не требуется;
+весь Nova-код cancel-safe by construction (cancel routed через
+nova_throw_cancel + fail-frame).
+
+### Что НЕ делает `#cancel_safe`
+
+* Не меняет codegen вызова — это статическая аттестация.
+* Не отключает cancel-shield (это всегда активно under ConsumeScope).
+* Не предоставляет runtime check на cancel-safety — только compile-time
+  warn'ит на отсутствующую аттестацию.
+
+### Связь
+
+- [D188](#d188) §R3 — cancel-shield механизм.
+- [D192](#d192) — exit_timeout taxonomy.
+- [Plan 110.7](../../docs/plans/110.7-ffi-consumable.md) — FFI
+  Consumable integration.
+- [Plan 100.5](../../docs/plans/100.5-ffi-external-integration.md) —
+  general FFI rules.
+- Followup [M-110.7.3-w-ffi-cancel-unsafe-lint] — runtime lint
+  enforcement (currently parser stores attribute, lint check pending).

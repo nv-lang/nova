@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.1.4.a (D188): codegen emit init binding + body access
+// (success path, no fail-frame, no on_exit dispatch — those land
+// в 110.1.4.b-g поэтапно).
+//
+// Acceptance A110.1.4.a: init evaluates, binding accessible в body,
+// scope executes без runtime error.
+
+module plan110.codegen_consume_init_only
+
+type SimpleRes {
+    ro id int
+}
+
+fn SimpleRes.new(id int) -> SimpleRes => { id }
+
+fn SimpleRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn use_simple() -> int {
+    mut result = 0
+    consume r = SimpleRes.new(99) {
+        result = r.id
+    }
+    result
+}
+
+test "Plan 110.1.4.a: init binding emit + body access — success path" {
+    ro v = use_simple()
+    assert(v == 99)
+}

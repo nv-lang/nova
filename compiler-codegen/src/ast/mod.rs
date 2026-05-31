@@ -360,6 +360,12 @@ pub struct FnDecl {
     /// Plan 113 (D172): `#blocking` attribute перед `fn`.
     /// Runtime threadpool offload — callers wrap fn in uv_queue_work, fiber parks.
     pub blocking_attr: bool,
+    /// Plan 110.7.3.a (D188 §FFI): `#cancel_safe` attribute на `external fn`.
+    /// Attests что C-side function is cancel-safe — can be invoked from inside
+    /// ConsumeScope on_exit body (under cancel-shield). Without this attribute,
+    /// the cancel-unsafe lint (W_FFI_CANCEL_UNSAFE) fires at the call site
+    /// when the call appears inside an on_exit body. Default `false`.
+    pub cancel_safe_attr: bool,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
     pub contracts: Vec<Contract>,
@@ -1156,6 +1162,36 @@ pub enum Stmt {
     DeferWithResult {
         result_binding: String,
         body: Expr,
+        span: Span,
+    },
+    /// Plan 110 (D188): `consume IDENT (':' TYPE)? '=' EXPR '{' BODY '}'`
+    /// — scope-block с автоматическим вызовом `Consumable.on_exit` при
+    /// выходе из BODY (success/throw/panic/cancel).
+    ///
+    /// Parser detect block-form через lookahead `{` после init EXPR
+    /// (с disabled `no_trailing_block` чтобы не путать с trailing-block
+    /// call syntax).
+    ///
+    /// `binding`: single identifier (D188 disallows destructure для scope-
+    /// block).
+    /// `type_annot`: optional type annotation (parallel с `LetDecl`).
+    /// `init`: expression — должна resolve к типу implementing
+    /// `Consumable[E]` (D196 init type constraints; D188 R1 partial-
+    /// construction safety).
+    /// `body`: scope body — sequence of statements + optional trailing
+    /// expression.
+    ///
+    /// Codegen pipeline:
+    /// - Plan 110.1.4: basic desugaring (sync, no shield/timeout).
+    /// - Plan 110.2: cancel-shield + 3-level timeout resolution.
+    /// - Plan 110.1.7: D194 hot-path elision для `Consumable[never]`.
+    ///
+    /// См. spec/decisions/03-syntax.md D188.
+    ConsumeScope {
+        binding: String,
+        type_annot: Option<TypeRef>,
+        init: Expr,
+        body: Block,
         span: Span,
     },
     /// Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate proof

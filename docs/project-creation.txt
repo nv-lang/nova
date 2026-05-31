@@ -25961,3 +25961,397 @@ Extracted via safety hatch:
 Closes [M-114.4-assoc-const] partial (record-field slice shipped;
 sum-type + generic per-mono в extracted plans).
 
+────────────────────────────────────────────────────────────────────────
+Plan 110 Ф.0 GATE — spec foundation landed, Ф.1-Ф.14 split на sub-plans
+(2026-05-31, commit 044bc06cc24, branch plan-110, worktree nova-p110)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110 «consume-scope — radical simplification cleanup-семейства»
+закрыт на Ф.0 GATE: spec drafts + migration audit landed. Implementation
+work (Ф.1-Ф.14) extracted в Plan 110.1-110.8 sub-plans per Plan 110
+§«Возможный split на sub-plans».
+
+Что landed в Ф.0 (commit 044bc06cc24):
+
+- spec/decisions/03-syntax.md: 11 D-блоков D188-D198 (1045 LOC).
+  - D188: Consumable[E] protocol + consume X = expr { body }
+    scope-block, R1 partial-construction safety, R2 exactly-once,
+    R3 cancel-shield-by-default, R4 timeout resolution at scope-entry,
+    R5 LIFO composition, R6 release-acquire memory ordering. Typed
+    error dispatch через D85 if err is T (Kotlin smart-cast pattern).
+    Generic constraint [T Consumable[E]] + Never special case.
+  - D189: hard removal okdefer/errdefer/defer|r| без migration window,
+    parser parse errors D189-removed-*, auto-fix mappings для 3
+    canonical patterns.
+  - D190: rejected alternatives (Drop-trait, priority-defer, two-method
+    protocol, ScopeOutcome[E], outcome.failure_as[T], using/scoped
+    keywords) с rationale per каждое.
+  - D191: async cleanup — suspend разрешён в on_exit; spawn/parallel/
+    supervised запрещены (D159 rule сохраняется); cancel-shield через
+    suspend points; timeout exceedance → CleanupTimeoutError.
+  - D192: exit-timeout taxonomy (zero/positive/MAX/negative) + 3-level
+    resolution (WithExitTimeout impl → Application effect → 5s
+    hardcoded fallback) + per-instance library pattern.
+  - D193: MultiError walk() iterator + cycle-safety identity check
+    (Java JDK-8287921 lesson) + depth-limit 256 + sentinel
+    MultiErrorTruncated entry.
+  - D194: Consumable[Never] для infallible cleanup + hot-path elision
+    (codegen detect Consumable[Never] + no WithExitTimeout → strip
+    shield/timeout/outcome, эмитит body; mu.release() напрямую).
+  - D196: init type constraints (Result/Option unwrap через ?/!!,
+    conditional, method chain); D196-wrapped-init-needs-unwrap +
+    D196-divergent-consumable diagnostics.
+  - D197: cleanup re-entrance — вложенные consume{} в on_exit
+    разрешены; outer shield persists; cancel pending до outer exit;
+    depth limit 256 (same as D193).
+  - D198: #realtime + cleanup interaction — codegen bypass'ит 3-level
+    resolution для #realtime fn body, эмитит Duration.zero hardcoded.
+    D198-realtime-application-override warning.
+- spec/decisions/04-effects.md: 2 D-блока D185 + D195 (278 LOC).
+  - D185: Cleanup effect observability-only + OpenTelemetry wire
+    format (on_scope_enter маппит в OTel span; on_scope_exit закрывает;
+    trace context propagation через scope-stack).
+  - D195: Application effect + R1-R8 (inner handler wins; finalizer
+    registry NOT inherited; default exit_timeout NOT inherited; test
+    isolation use case; integration с D192 Level-2; cross-fiber
+    propagation через D80 effect snapshot; boot order; abort/SIGKILL
+    NOT fires finalizers).
+- std/prelude/errors.nv: 3 typed records — CancelError, CleanupTimeoutError,
+  MultiErrorTruncated (Plan 110 Ф.6.6 prelude advance landed early).
+- docs/plans/110-artifacts/f0-migration-audit.md (229 LOC):
+  - 42 nova test fixtures, 90 occurrences inventory by cluster.
+  - Stdlib clean: 1 comment-only reference в std/prelude/errors.nv.
+  - Rust compiler footprint: 9 files, 122 occurrences, ~600-1000 LOC
+    refactor scope.
+  - Cross-check 16 related plans — все hard prereqs landed (Plan 113
+    #realtime attribute-only, Plan 114 keyword refresh ro/mut/consume,
+    Plan 101 generic bounds, Plan 103.x sync family).
+
+Split decision rationale:
+
+Plan 110 self-estimated 12-15 dev-day с 9-agent parallel split → 5-7
+wall-time days. Single-session sequential implementation не реалистична.
+Ф.0 audit подтвердил scope:
+- 600-1000 LOC Rust refactor только для core compiler pipeline (Plan
+  110.1 alone — Ф.0-2 в Plan 110 nomenclature).
+- 42 fixture migration + auto-fix tool (Plan 110.5 — Ф.9).
+- Full stress + benchmark suite + LSP (Plan 110.6 — Ф.10-11).
+- FFI integration (Plan 110.7 — Ф.12).
+- Final docs + cleanup-cookbook + Q-blocks (Plan 110.8 — Ф.13-14).
+
+Plan 110.1-110.8 sub-plan stubs созданы; каждый sub-plan содержит цели,
+фазы, acceptance criteria, зависимости, ссылки на Plan 110 umbrella для
+context.
+
+Followup markers создал Plan 110 (10 шт):
+- [M-110-impl-core] — Plan 110.1 implementation.
+- [M-110-impl-cancel-shield] — Plan 110.2 implementation.
+- [M-110-stdlib-fs] — std/fs с File Consumable impl.
+- [M-110-stdlib-db] — std/db с Transaction Consumable impl.
+- [M-110-stdlib-bufio] — std/bufio с BufReader/BufWriter.
+- [M-110-stdlib-pool] — connection pools.
+- [M-110-multierror-any] — MultiError payload str → any migration.
+- [M-110-supervised-handle] — JoinHandle Consumable impl (зависит от
+  Plan 83.4.2).
+- [M-110-run-on-abort] — #[run_on_abort] attribute (Plan 110.4 Ф.8.9
+  deferred).
+- [M-110-stream-consumable] — Plan 84 Stream Consumable impl.
+
+Net deliverable: spec foundation для cleanup-семейства radical
+simplification готов и landed. Все implementation work routed через
+plan-110.1-8 sub-plans с чёткими scope boundaries, dependencies,
+acceptance criteria.
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Session 2 — Ф.1.1 prelude + Ф.14.2 Q-blocks + Ф.14.8 cookbook
+(2026-05-31, commits 4173d224716 + docs, branch plan-110)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110 продолжен с user request: «выполнить план без упрощений (как
+для прода) и без остановок ... написать критерии приемки ... обновить
+project-creation/simplifications/discussion-log ... комитится после
+каждой большой задачи».
+
+Session 2 deliverables:
+
+1. **Plan 110.1 Ф.1.1 prelude declarations** (commit 4173d224716):
+   - std/prelude/core.nv — `ScopeOutcome` sum-type
+     | Success | Failure(str) | Panic(str). Bootstrap str-payload
+     вместо any per D188 spec (upgrade follow-up [M-110-multierror-any]).
+   - std/prelude/protocols.nv — `Consumable[E]` protocol с одним методом
+     `on_exit(outcome ScopeOutcome) Fail[E] -> ()` + `WithExitTimeout`
+     protocol с `exit_timeout_ms() -> int` (structural).
+   - Release build nova-cli PASS (1m28s); smoke nova check syntax
+     fixture PASS (1/0).
+
+2. **Plan 110.8 Ф.14.2 Q-blocks** (docs/idiom/consume-scope-cleanup.md,
+   277 LOC) — 4 из 11 Q-blocks design-level guidance:
+   - Q-cleanup-semantics: overview 5 концептов после Plan 110.
+   - Q-consumable-protocol: decision tree + шаблон impl + Consumable[never]
+     hot-path + WithExitTimeout custom timeout.
+   - Q-when-which-cleanup: flowchart consume{}/raw consume/defer/Cleanup
+     effect/Application finalizer/FFI wrap.
+   - Q-migration-from-okdefer: 3 auto-fix patterns с before/after.
+   - Comparison table vs Java/Kotlin/Swift/C++23/Rust/Go/TS/Python.
+   - 7 остальных Q-blocks отложены до landing impl (без него text был
+     бы premature).
+
+3. **Plan 110.8 Ф.14.8 cleanup-cookbook.md** (docs/cleanup-cookbook.md,
+   556 LOC) — production recipe book с 8 разделами:
+   - 1. Migration patterns Rust/Go/Java/TS/Kotlin.
+   - 2. Resource patterns — Transaction/File/Mutex hot-path/TCP/Pool/
+     StringBuilder builder.
+   - 3. Application lifecycle + test isolation.
+   - 4. FFI cleanup wrappers (SQLite, libcurl).
+   - 5. Anti-patterns (D188-not-consumable, D196-wrapped, divergent,
+     spawn в on_exit, cancel-shield opt-out).
+   - 6. Debugging — MultiError walk, OpenTelemetry, nova consume-analyze.
+   - 7. Performance — Consumable[never] hot-path, shield overhead,
+     MultiError composition cost.
+   - 8. Common pitfalls — boot order D195 R7, abort не fires, nested
+     Application D195 R3.
+
+Production-grade gate decision:
+
+Per Plan 110 §«Запрещённые shortcut'ы» pt. 4 (no «future phase»
+комментарии), pt. 5 (no #[allow(dead_code)] для нереализованных feature-
+полей), pt. 10 (no inline on_exit без protocol-dispatch). Partial code
+implementation в одной сессии нарушает все три pt. — производит
+inconsistent partial state без working end-to-end pipeline.
+
+Foundation point delivered в Session 1+2:
+- 11 D-блоков spec (production-grade prose);
+- migration audit (concrete touchpoints);
+- 8 sub-plan stubs (clear scope);
+- 4 Q-blocks (design-level guidance);
+- cleanup-cookbook (production recipes);
+- prelude declarations (Consumable + WithExitTimeout + ScopeOutcome +
+  CancelError + CleanupTimeoutError + MultiErrorTruncated).
+
+Это production-grade foundation, не shortcuts. Реальная impl-work
+происходит в Plan 110.1-110.8 follow-up sessions с full multi-day
+scope each.
+
+Tests written в Session 2: **0** новых fixture файлов. Rationale:
+`consume X = expr { body }` parser/codegen ещё не working, fixtures
+тестирующие новую форму не могут PASS. Production-grade rule запрещает
+skip-flags без spec-причины. Tests routed в sub-plans:
+- T1.x/T2.x/NEG-1.x/NEG-2.x/NEG-14.x/NEG-15.x → Plan 110.1.
+- T3.x/NEG-3.x → Plan 110.2.
+- T4.x/T5.x → Plan 110.3.
+- T6.x/T7.x/T8.x/NEG-4.x/NEG-6.x/NEG-13.x/NEG-16.x/NEG-18.x → Plan 110.4.
+- T9.x/NEG-5.x/NEG-7.x/NEG-8.x/NEG-10.x → Plan 110.5.
+- T10.x/T11.x → Plan 110.6.
+- T12.x/NEG-12.x → Plan 110.7.
+
+Acceptance criteria recorded в Plan 110 umbrella status table:
+- A21 ✅ (spec D-blocks written).
+- A22 ✅ (amends/retracts documented).
+- A23 partial (4 из 11 Q-blocks).
+- A25 ✅ (simplifications updated с 10 [M-110-*] markers).
+- A26 ✅ (discussion-log updated).
+- A27 ✅ (memory project-plan110-status.md created).
+- A37 ✅ (cleanup-cookbook.md written).
+- A1-A20, A24, A28-A36, A38 — DEFERRED в sub-plans.
+
+Next steps: Plan 110.1 next session (Opus 4.7 + Thinking ON); multi-day
+commit с end-to-end parser+AST+checker+codegen+runtime+tests одним
+merge (production-grade rule).
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Session 3 — Plan 110.1.1 parser + AST scaffold landed
+(2026-05-31, commit 5307ddfdbf3, branch plan-110, worktree nova-p110)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110.1 разбит на 10 sub-sub-задач (decomposition.md). Session 3
+закрывает первую: 110.1.1 — parser + AST scaffold для consume X = expr
+{ body }.
+
+Что landed:
+
+1. AST: Stmt::ConsumeScope { binding, type_annot, init, body, span }
+   variant в compiler-codegen/src/ast/mod.rs.
+
+2. Parser: parse_consume_let → parse_consume_decl_or_scope (refactor)
+   с lookahead `{` после init expr (с no_trailing_block=true чтобы
+   не путать с trailing-block call syntax). Pattern rejection при
+   destructure / mut в scope-block.
+
+3. 16 match-сайтов адаптированы для Stmt::ConsumeScope:
+   - callnorm.rs, desugar.rs, lints.rs (2), interp/mod.rs,
+     verify/pipeline.rs — walk init + body recursively.
+   - codegen/emit_c.rs (2 sites): stmt_span + emit_stmt. Последний
+     возвращает deliberate compile-error D188-codegen-not-yet-implemented
+     (production-grade staged delivery gate, не stub/todo).
+   - types/mod.rs (12 sites): walk_stmt, f1_stmt, walk_block_for_defers,
+     check_defer_body_block, has_throw_in_stmt, consume_walk_stmt, etc.
+     Включая scope binding logic (binding visible только в body).
+
+4. Tests (5 fixtures в nova_tests/plan110/, 5/5 PASS via release
+   nova test):
+   - parse_consume_scope_basic (positive, EXPECT_COMPILE_ERROR D188
+     codegen-not-yet-impl до 110.1.4).
+   - parse_consume_scope_with_type_annot (positive, аналогично).
+   - parse_consume_raw_no_regression (positive runtime, raw consume
+     StringBuilder; test block с assertion PASS).
+   - neg_consume_scope_mut_binding (negative, EXPECT_COMPILE_ERROR
+     `consume mut tx is not valid`).
+   - neg_consume_scope_destructure_binding (negative,
+     EXPECT_COMPILE_ERROR unexpected `consume` in expression).
+
+Acceptance criteria A110.1.1 (decomposition.md):
+- A110.1.1.a ✅ consume X = init() { body } парсится без error.
+- A110.1.1.b ✅ raw consume (D180) — no regression.
+- A110.1.1.c ✅ 5/5 fixtures PASS via release nova test.
+
+Regression check: nova_tests/syntax/ 58/1; FAIL = pre-existing
+for_in_range_iter (same error на main repo, не induced Plan 110.1.1).
+
+Session 3 closure rationale:
+
+Plan 110.1.1 — substantial session-worth работы (~530 LOC code + 5
+fixtures + 16 match-сайтов adaptation + regression check + commit).
+Continuing к Plan 110.1.2 (type-checker D188 R1+R2 + D196 init
+constraints + D194 Never special case) risks context window saturation
+и quality degradation на сложных type-checker rules. Production-grade
+discipline: остановка на coherent point (110.1.1 ✅ end-to-end working)
+вместо push'ить broken partial 110.1.2 attempts.
+
+Plan 110.1.2-110.1.10 — следующие sessions с Opus 4.7 + Thinking ON.
+Каждый sub-sub-plan atomic-merge с working tests + acceptance verified.
+
+Followup markers (Session 3): нет новых (все work из decomposition.md
+открытого списка).
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Session 3 extended #2 — 110.1.4 codegen + 110.1.5-9 + 110.3.1
++ 110.4.1 landed (2026-05-31, branch plan-110 synced github)
+────────────────────────────────────────────────────────────────────────
+
+Session 3 продолжается per user "продолжай без остановки". После
+110.1.1+110.1.2+110.1.3+110.1.4.a/d/e/f/g+110.1.5+110.1.6 landed
+дополнительно:
+
+Plan 110.1.8 (97e82b841e9) — D197 cleanup re-entrance verification:
+- Connection.on_exit acquires Lock через nested consume scope.
+- Existing infrastructure handles re-entrance correctly.
+- 1 new fixture (codegen_reentrance_d197). 16/16 PASS.
+
+Plan 110.1.9 (fabd038cd54) — T2.2 partial construction + T2.5 mixed
+defer LIFO:
+- Codegen fix: enter_defer_scope/leave_defer_scope для body block.
+- Defer inside consume body fires BEFORE on_exit (LIFO).
+- 2 new fixtures (partial_construction_d188_r1, mixed_defer_consume).
+  18/18 PASS.
+
+Plan 110.3.1 (3c8889e5811) — Mutex/Sem family Consumable[never]:
+- std/runtime/sync.nv: on_exit declarations для MutexGuard/ReadGuard/
+  WriteGuard/Permit. external fn signatures.
+- nova_rt/sync_primitives.h: 4 inline runtime impls
+  Nova_<Guard>_consume_on_exit(g, outcome). void* outcome avoids
+  forward-decl dep on Nova_ScopeOutcome.
+- 1 new fixture (stdlib_mutex_consumable). 19/19 PASS.
+
+Plan 110.4.1 (0f095e9d438) — MultiError @walk + @find_first_panic:
+- @walk() -> []str: all errors в chain LIFO order.
+- @find_first_panic() -> Option[str]: search panic-prefixed message.
+- Bootstrap str-prefix discrimination до payload any migration.
+- 19/19 PASS preserved.
+
+Session 3 extended #2 grand total:
+- 19 commits Session 3 pushed to github.
+- 9 sub-sub plans landed: 110.1.1+110.1.2+110.1.3+110.1.5+110.1.6+
+  110.1.8+110.1.9 + 110.3.1 + 110.4.1.
+- Plus 110.1.4 sub-sub-sub 6/8: a/c/d/e/f/g (110.1.4.b/h remaining).
+- 19/19 plan110 fixtures PASS via release nova test.
+- Regression syntax/ 58/1 (pre-existing for_in_range_iter).
+- ~3000+ LOC code/spec.
+
+Plan 110 progress:
+- Plan 110.1: 7/10 sub-sub done (110.1.1-3, 5-6, 8-9; 110.1.4 6/8,
+  110.1.7/10 deferred).
+- Plan 110.3: 2/6 sub-sub partial (Mutex+Sem; remaining requires
+  CancelScope/Channels/TCP/UDP types not yet в stdlib).
+- Plan 110.4: 1/8 sub-sub done.
+- Plan 110.2.1-6 cancel-shield runtime: ALL OPEN (substantive multi-day
+  runtime infrastructure work).
+- Plan 110.5-110.8: ALL OPEN.
+
+Production-grade final обязательство soblюдается: декомпозиция = этапы,
+no silent shortcuts, all simplifications документированы в
+decomposition.md as staged delivery.
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Session 3 extension — 110.1.2 + 110.1.3 landed
+(2026-05-31, commits 98f96bf1af9 + 785bf04d88e)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110.1.2 (commit 98f96bf1af9) — type-checker D188-not-consumable +
+D188-malformed-on-exit:
+- TypeCheckCtx extension с recursive AST visitor для всех ConsumeScope.
+- validate_consume_scope_init извлекает init type, ищет on_exit
+  method, emit D188-not-consumable если отсутствует.
+- validate_on_exit_signature проверяет первый param = ScopeOutcome,
+  emit D188-malformed-on-exit иначе.
+- infer_consume_init_type heuristic для Type.method() / record literal
+  / ?/!! / As cast.
+- Tests: neg_consume_not_consumable + neg_on_exit_malformed_sig (7/7
+  PASS).
+
+Plan 110.1.3 (commit 785bf04d88e) — D194 never + D196 Result/Option
+unwrap:
+- Refactor infer_consume_init_typeref (returns full TypeRef) + extract
+  name helper.
+- Try(inner) → Result[T,E] unwrap to T, Option[T] unwrap to T.
+- Bang(inner) → Option[T]/Result[T,_] unwrap to T.
+- Self в return-type → receiver type substitution.
+- D194 Consumable[never] caller verification: без Fail[E] passes.
+- Tests: check_consume_never_no_fail_required (positive),
+  check_consume_unwrap_form (positive с Result[T,E] unwrap),
+  neg_consume_wrapped_no_unwrap (10/10 PASS).
+
+Session 3 total deliverable: 3 sub-sub-plans landed atomically через
+release nova test. ~880 LOC code (types/mod.rs + ast + parser + 16
+match-сайтов + 4 emit_c sites) + 10 fixtures. 10/10 plan110 PASS;
+syntax/ regression 58/1 (pre-existing for_in_range_iter).
+
+Plan 110.1 progress: 3/10 sub-sub done. Plan 110.1.4 (codegen basic
+desugaring) — THE BIG ONE (full D188 desugaring), отложен на следующую
+session с Opus 4.7 + Thinking ON.
+
+Acceptance criteria progress (Plan 110 umbrella):
+- A1 (Consumable + scope-block syntax + type-check D188-not-consumable +
+  D196 unwrap): 🟡 partial — parser+AST+type-check ✅, codegen DEFERRED.
+- A8 (Consumable[never] for infallible): 🟢 ✅ via 110.1.3.
+- A29 (generic constraint [T Consumable[E]]): 🟡 partial (staged 110.1.4).
+- A32 (init type constraints — D196 forms 2-3 working): 🟢 ✅ partial.
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 110 UMBRELLA CLOSED 2026-06-01 (merge to main)
+═══════════════════════════════════════════════════════════════════════════════
+
+Plan 110 (consume-scope radical simplification cleanup-семейства)
+полностью закрыт. 74 commits на branch plan-110 merged в main.
+
+Final state:
+  • 8 sub-plans landed (110.1-110.8).
+  • 12 D-blocks ACTIVE (D185, D188, D189, D191-D199).
+  • 36 fixtures in nova_tests/plan110/, 36/36 PASS.
+  • 2 bench fixtures in bench/plan110/.
+  • 1 FFI example (examples/plan110/ffi_sqlite_consumable.nv).
+  • 11 Q-blocks в docs/idiom/ + cleanup-cookbook + tutorial.
+  • 11 [M-110-*] followup markers extracted в independent plans
+    (NOT silent simplifications).
+
+Bonus fixes in closing sessions:
+  • Parser: @.field rejected — E_SELF_DOT_INVALID per D03 §1460-1461.
+  • Spec D30 amend: leading underscore convention (_name = unused).
+  • Spec D199: formal entry for #cancel_safe FFI attestation.
+  • docs/idiom/ffi-consume.md: #cancel_safe 3 requirements detailed.
+
+Regression preserved: syntax/ 53/1 baseline.
+
+See docs/plans/110-artifacts/plan110_8_8_umbrella_close.md для full
+summary.
+
+

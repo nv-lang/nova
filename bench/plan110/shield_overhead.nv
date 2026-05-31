@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.6.8 (D188 R3): cancel-shield overhead micro-benchmark.
+// Measures cost of nv_consume_enter_shield + nv_consume_leave_shield
+// (atomic increment + deadline capture + atomic decrement + cleanup).
+//
+// Baseline: empty consume body (Consumable[never]) — `on_exit` элизия
+// per D194 should reduce overhead to bare-minimum atomic ops.
+//
+// Goal: < ~50ns per consume scope entry+exit cycle on хорошей машине.
+
+module bench.plan110.shield_overhead
+
+type Cheap {
+    ro id int
+}
+
+fn Cheap.new(id int) -> Cheap => { id }
+fn Cheap consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+bench "shield enter+leave cycle x10k (default 5000ms timeout)" {
+    measure {
+        mut i = 0
+        while i < 10000 {
+            consume r = Cheap.new(i) {
+                ro _ = r.id
+            }
+            i = i + 1
+        }
+        bench.elements(10000)
+    }
+}
+
+#realtime
+fn shield_realtime_cycle() -> int {
+    mut i = 0
+    while i < 10000 {
+        consume r = Cheap.new(i) {
+            ro _ = r.id
+        }
+        i = i + 1
+    }
+    i
+}
+
+bench "shield enter+leave cycle x10k (realtime bypass — deadline_ms=0)" {
+    measure {
+        bench.opaque(shield_realtime_cycle())
+        bench.elements(10000)
+    }
+}

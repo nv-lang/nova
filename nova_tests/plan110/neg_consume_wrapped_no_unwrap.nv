@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR D196-wrapped-init-needs-unwrap
+//
+// Plan 110.1.3 (D196 form 5 — wrapped без unwrap): `consume X = expr {
+// body }` where expr returns `Option[Consumable]` без unwrap →
+// D196-wrapped-init-needs-unwrap (specific hint suggest ?/!!).
+
+module plan110.neg_consume_wrapped_no_unwrap
+
+type WrappedResource {
+    ro id int
+}
+
+fn WrappedResource.maybe_new(id int) -> Option[WrappedResource] => Some({ id })
+
+fn WrappedResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn bad_wrapped() -> int {
+    // ❌ Option[WrappedResource] не Consumable — required unwrap через
+    // `!!` или `?` (если Result), или `if Some(r) = ... {}`.
+    consume r = WrappedResource.maybe_new(3) {
+        r.id
+    }
+}

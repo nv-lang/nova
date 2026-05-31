@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR E_SELF_DOT_INVALID
+//
+// Plan 110.7.3.a (D03 §D35/D37 amend): parser rejects `@.field`
+// syntax. Canonical self-field access is `@field` без точки.
+// (Spec/decisions/03-syntax.md line ~1461.)
+
+module plan110.neg_self_dot_invalid
+
+type Box {
+    ro id int
+}
+
+fn Box.new(id int) -> Box => { id }
+
+fn Box @leak() -> int {
+    @.id  // ❌ E_SELF_DOT_INVALID — use `@id`
+}

@@ -315,3 +315,75 @@ export type Printable protocol {
         sb.append(str.from(@))
     }
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 110 (D188 / D192 / D194) — Consumable[E] + WithExitTimeout
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Plan 110 (D188): контракт ресурса для `consume X = expr { body }`
+/// scope-block'а. **Один** метод `on_exit` вызывается ровно один раз
+/// при выходе из body (success/throw/panic/cancel).
+///
+/// **`E`** — тип ошибок, которые `on_exit` сам может throw (commit
+/// failure, flush failure). Если ресурс infallible — используйте
+/// `Consumable[never]` (D194), это даёт caller'у право не объявлять
+/// `Fail[E]` + codegen hot-path elision.
+///
+/// **R-rules (D188):**
+/// - R1: если `init` throws — `on_exit` не вызывается (partial-construction).
+/// - R2: exactly-once invariant (runtime counter).
+/// - R3: cancel-shield by default внутри `on_exit` body.
+/// - R4: timeout resolution at scope-entry (3-level, D192).
+/// - R5: LIFO composition для вложенных consume{}.
+/// - R6: release-acquire memory ordering между body и on_exit.
+///
+/// # Examples
+///
+/// ```nova
+/// type Transaction { /* ... */ }
+///
+/// fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+///     match outcome {
+///         Success      => @commit()?
+///         Failure(_)   => @rollback()?
+///         Panic(_)     => @rollback_emergency()
+///     }
+/// }
+///
+/// fn process() Fail[DbError] -> () {
+///     consume tx = Db.begin() {
+///         do_work()?
+///     }
+///     // tx.on_exit вызван ровно один раз; commit/rollback по outcome.
+/// }
+/// ```
+#stable(since = "0.1")
+export type Consumable[E] protocol {
+    on_exit(outcome ScopeOutcome) Fail[E] -> ()
+}
+
+/// Plan 110 (D192): опциональный protocol для ресурсов с custom
+/// `exit_timeout`. **Не** часть Consumable — structural-match: любой
+/// тип с методом `exit_timeout_ms() -> int` автоматически satisfies.
+///
+/// Используется codegen'ом `nv_resolve_exit_timeout` (3-level resolution):
+/// 1. WithExitTimeout impl (этот protocol) — если есть;
+/// 2. Application effect handler — `default_exit_timeout_ms()`;
+/// 3. Hardcoded fallback — 5000 ms.
+///
+/// `Mutex` / `Sem` / `Lock` намеренно **не** implement — для них
+/// hardcoded 5s достаточен (releases instant).
+///
+/// **Bootstrap:** `int` милисекунд вместо `Duration` (последний в std/time/,
+/// не prelude — избегаем cross-module import).
+///
+/// # Examples
+///
+/// ```nova
+/// fn Transaction @exit_timeout_ms() -> int => 30_000   // 30 секунд
+/// ```
+#stable(since = "0.1")
+export type WithExitTimeout protocol {
+    exit_timeout_ms() -> int
+}

@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR D188-not-consumable
+//
+// Plan 110.1.2 (D188 / D196): type WITHOUT `on_exit` method не может быть
+// использован как init для `consume X = init { body }` scope-block.
+// Type-checker emits [D188-not-consumable] error с suggestion как
+// implement Consumable.
+
+module plan110.neg_consume_not_consumable
+
+// NotConsumable — record без on_exit method.
+type NotConsumable {
+    ro value int
+}
+
+fn NotConsumable.new(value int) -> NotConsumable => { value }
+
+fn bad_use() -> int {
+    // ❌ NotConsumable не implements Consumable[E] — нет on_exit method.
+    consume r = NotConsumable.new(5) {
+        r.value
+    }
+}

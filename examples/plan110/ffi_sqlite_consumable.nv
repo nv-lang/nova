@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.7.2: FFI Consumable example — SQLite connection wrapper.
+// Demonstrates the production pattern for C-side resources requiring
+// cleanup via `consume X = expr { body }` scope-blocks.
+//
+// Compile-only example: no SQLite library shipped в bootstrap, so the
+// fn body of c_close uses a stub. The pattern transfers 1:1 to a real
+// `external fn c_close(...)` against libsqlite3.so/.dll.
+
+module plan110.ffi_sqlite_consumable
+
+// ──────────────────────────────────────────────────────────────────────────
+// Resource type wrapping an opaque C handle.
+// ──────────────────────────────────────────────────────────────────────────
+
+type SqliteConn {
+    ro handle int  // void* sqlite3* as int (FFI passthrough)
+}
+
+fn SqliteConn.new(handle int) -> SqliteConn => { handle }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Consumable[IoError] impl — calls c_close on scope-exit.
+// Bootstrap: stub body returns OK. Production: wrap real sqlite3_close().
+// ──────────────────────────────────────────────────────────────────────────
+
+type IoError {
+    ro reason str
+}
+
+// Production: this would be:
+//   #cancel_safe
+//   external fn sqlite3_close(handle int) -> int
+// Bootstrap stub:
+fn close_handle(_handle int) -> int { 0 }
+
+fn SqliteConn consume @on_exit(_outcome ScopeOutcome) -> () {
+    // close_handle is idempotent and cancel-safe (sqlite3_close finalizes
+    // pending statements then closes). Real impl would check return code
+    // and throw IoError on failure; bootstrap returns ().
+    ro _rc = close_handle(@handle)
+    return ()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Production pattern usage.
+// ──────────────────────────────────────────────────────────────────────────
+
+fn run_query(path str) -> int {
+    // In production:
+    //   let raw = sqlite3_open(path)
+    //   consume conn = SqliteConn.new(raw) {
+    //       perform_select(conn, "SELECT 1")
+    //   }
+    // Stub: pretend the open succeeded with handle=42.
+    ro _ = path
+    mut result = 0
+    consume conn = SqliteConn.new(42) {
+        // body uses conn; on scope-exit, on_exit runs (close_handle).
+        // Cancel-shield (D188 R3) ensures close completes even if
+        // outer fiber receives cancel mid-body.
+        result = conn.handle
+    }
+    result
+}
+
+test "Plan 110.7.2: FFI SQLite Consumable pattern compiles + runs (stub)" {
+    ro h = run_query("/tmp/test.db")
+    assert(h == 42)
+}

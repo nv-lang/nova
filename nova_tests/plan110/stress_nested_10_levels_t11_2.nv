@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.6.6 T11.2 (D188 R5 LIFO stress): 10-level nested consume{}.
+// Verifies codegen handles deep nesting + LIFO order correct + no stack
+// exhaustion.
+
+module plan110.stress_nested_10_levels_t11_2
+
+type StressRes {
+    ro depth int
+}
+
+fn StressRes.new(depth int) -> StressRes => { depth }
+fn StressRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+// 10 nested consume scopes; accumulates each binding's depth into sum.
+fn use_deep_nested() -> int {
+    mut sum = 0
+    consume r1 = StressRes.new(1) {
+        sum = sum + r1.depth
+        consume r2 = StressRes.new(2) {
+            sum = sum + r2.depth
+            consume r3 = StressRes.new(3) {
+                sum = sum + r3.depth
+                consume r4 = StressRes.new(4) {
+                    sum = sum + r4.depth
+                    consume r5 = StressRes.new(5) {
+                        sum = sum + r5.depth
+                        consume r6 = StressRes.new(6) {
+                            sum = sum + r6.depth
+                            consume r7 = StressRes.new(7) {
+                                sum = sum + r7.depth
+                                consume r8 = StressRes.new(8) {
+                                    sum = sum + r8.depth
+                                    consume r9 = StressRes.new(9) {
+                                        sum = sum + r9.depth
+                                        consume r10 = StressRes.new(10) {
+                                            sum = sum + r10.depth
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    sum
+}
+
+test "Plan 110.6.6 T11.2: 10-level nested ConsumeScope LIFO" {
+    // Sum 1+2+...+10 = 55.
+    assert(use_deep_nested() == 55)
+}

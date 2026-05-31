@@ -2068,6 +2068,29 @@ impl Interpreter {
             | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => {
                 Ok(Flow::Value(Value::Unit))
             }
+            // Plan 110 D188 / Plan 110.1.4: `consume X = expr { body }` —
+            // interpreter execution отложена до Plan 110.1.4 codegen impl
+            // (требует scope-stack + cancel-shield + on_exit dispatch +
+            // exactly-once invariant). Здесь — diagnostic stub чтобы
+            // существующий test runner не silently no-op (как у Defer).
+            // Interp пока eval init expr (evaluate side-effects) + body
+            // stmts (без on_exit вызова). Production-grade impl — 110.1.4.
+            Stmt::ConsumeScope { binding: _, type_annot: _, init, body, span: _ } => {
+                let _ = match self.eval_expr(init, env)? {
+                    Flow::Value(_) => {}
+                    other => return Ok(other),
+                };
+                for s in &body.stmts {
+                    match self.exec_stmt(s, env)? {
+                        Flow::Value(_) => {}
+                        other => return Ok(other),
+                    }
+                }
+                if let Some(t) = &body.trailing {
+                    return self.eval_expr(t, env);
+                }
+                Ok(Flow::Value(Value::Unit))
+            }
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — в interp
             // выполняется как обычный assert (runtime-check); SMT-verify
             // через types/verify в compile-time.

@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.4.4.a + 110.4.4.b (D185): Cleanup observability effect
+// dispatch from ConsumeScope.
+//
+// Verifies codegen emit:
+//   • on_scope_enter fires при entry в `consume X = expr { body }` IF
+//     Cleanup handler bound. Receives (label="<type-name>", timeout_ms).
+//   • on_scope_exit fires at scope exit (after user on_exit body).
+//     Receives (label, outcome).
+//   • Without handler bound — silent no-op (verified by existing 28
+//     plan110 fixtures continuing to PASS без any Cleanup binding).
+//
+// Acceptance:
+//   A110.4.4.a.a — handler.on_scope_enter called с type name + timeout_ms.
+//   A110.4.4.b.a — handler.on_scope_exit called с outcome value.
+
+module plan110.cleanup_effect_dispatch_t7_1
+
+type TracedRes {
+    ro id int
+}
+
+fn TracedRes.new(id int) -> TracedRes => { id }
+fn TracedRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+test "Plan 110.4.4.a A110.4.4.a.a + A110.4.4.b.a: Cleanup handler observes enter+exit" {
+    mut enter_calls = 0
+    mut exit_calls = 0
+    mut last_enter_label = ""
+    mut last_enter_timeout = -1
+    with Cleanup = effect Cleanup {
+        on_scope_enter(label, timeout_ms) {
+            enter_calls += 1
+            last_enter_label = label
+            last_enter_timeout = timeout_ms
+            return ()
+        }
+        on_scope_exit(_label, _outcome) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = TracedRes.new(99) {
+            ro _ = r.id
+        }
+    }
+    assert(enter_calls == 1)
+    assert(exit_calls == 1)
+    assert(last_enter_label == "TracedRes")
+    // Default exit_timeout (Level 3) hardcoded = 5000ms.
+    assert(last_enter_timeout == 5000)
+}
+
+test "Plan 110.4.4.a/b: no handler bound → silent no-op (no crash, body runs)" {
+    mut completed = 0
+    consume r = TracedRes.new(11) {
+        completed = r.id
+    }
+    assert(completed == 11)
+}

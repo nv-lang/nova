@@ -31,6 +31,9 @@ typedef enum {
     NOVA_THROW_USER       = 0,
     NOVA_THROW_CANCEL     = 1,
     NOVA_THROW_USER_TYPED = 2,  /* Plan 61 Ф.2: typed user throw payload */
+    NOVA_THROW_PANIC      = 3,  /* Plan 110.1.4.g (D188): panic distinct
+                                   из throw для ConsumeScope outcome
+                                   discrimination (Panic vs Failure variant). */
 } NovaThrowKind;
 
 /* Plan 100.4.1 (D158): Suppressed-chain node для multi-error composition.
@@ -172,6 +175,22 @@ static inline void nv_compose_suppressed(NovaFailFrame* primary,
                                           void* user_payload,
                                           NovaTypeId tid) {
     if (!primary) return;
+    /* Plan 110.4.2 (D193): cycle-safety + depth-limit.
+     * - Cycle-safety: identity check на msg.ptr + kind + user_payload
+     *   prevents self-suppression cycles (Java JDK-8287921 lesson).
+     * - Depth-limit 256: after 256 nodes, dalee compose silently no-op'ит
+     *   (debugger can observe length truncation via NovaErrorChain count).
+     */
+    int depth = 0;
+    for (NovaErrorChain* it = primary->error_suppressed; it && depth < 256; it = it->next, depth++) {
+        /* Identity check: existing node points к same payload? */
+        if (it->msg.ptr == msg.ptr && it->kind == kind && it->user_payload == user_payload) {
+            return;  /* duplicate — silently skip (cycle-safety) */
+        }
+    }
+    if (depth >= 256) {
+        return;  /* depth-limit 256 reached — silently no-op (D193) */
+    }
     NovaErrorChain* node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));
     node->msg          = msg;
     node->kind         = kind;
@@ -217,6 +236,36 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
 /* Accessors для MultiError prelude — count + indexed access на chain.
  * Caller (codegen MultiError @suppressed()) uses этих для materialize'а
  * Nova-side []Err array. */
+/* Plan 110.2.3 (D192): 3-level exit_timeout resolution runtime.
+ *
+ * Called by ConsumeScope codegen at scope-entry to resolve cleanup
+ * deadline в milliseconds. Bootstrap:
+ *
+ * - Level 1 (WithExitTimeout impl per type): vtable check для
+ *   `Nova_<T>_method_exit_timeout_ms` symbol. Not yet implemented —
+ *   Plan 110.2.x lookup integration.
+ * - Level 2 (Application effect handler): scan effect-stack для
+ *   bound `Application` handler; if found, call
+ *   `default_exit_timeout_ms()`. Not yet implemented — Plan 110.4.6
+ *   integration.
+ * - Level 3 (hardcoded fallback): 5000 ms.
+ *
+ * Currently bootstrap returns Level 3 unconditionally; Level 1/2
+ * integration после Plan 110.2.x + 110.4.6 codegen.
+ */
+static inline int nv_resolve_exit_timeout_ms(void) {
+    /* TODO Plan 110.2.x: Level 1 — WithExitTimeout vtable lookup. */
+    /* TODO Plan 110.4.6: Level 2 — Application effect handler check. */
+    return 5000;  /* Level 3 hardcoded fallback (D192). */
+}
+
+/* Plan 110.2.1.a (D188 R3): cancel-shield runtime — `nv_consume_enter_shield`
+ * + `nv_consume_leave_shield` defined в fibers.h после NovaSpawnCtxBase
+ * (нужен доступ к per-fiber state). Codegen-emitted call sites компилятся
+ * после nova_rt.h inclusion, которое включает fibers.h транзитивно, так что
+ * inline-определения видны в user TU. Прототипа здесь нет специально —
+ * `static inline` в fibers.h не может быть forward-declared как non-static. */
+
 static inline int nova_failframe_suppressed_count(const NovaFailFrame* frame) {
     if (!frame) return 0;
     int n = 0;
@@ -453,6 +502,12 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
 static inline void nv_panic(nova_str msg) {
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
+        /* Plan 110.1.4.g (D188): mark frame's error_kind = PANIC so
+         * ConsumeScope codegen может construct Panic(msg) variant вместо
+         * Failure(msg). Сохраняем backwards compatibility: existing
+         * defer/errdefer code не reads NOVA_THROW_PANIC специально
+         * (treated as throw для cleanup-cascade purposes). */
+        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
         longjmp(_nova_fail_top->jmp, 1);
     }
     if (_nova_test_frame) {
