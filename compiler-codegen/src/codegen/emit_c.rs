@@ -14304,6 +14304,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // setjmp wrap around body.
                 self.line(&format!("if (setjmp({}.jmp) == 0) {{", frame));
                 self.indent += 1;
+                // Plan 110.1.9 T2.5: enter defer scope для body block.
+                // Defer inside body должен fire BEFORE on_exit (LIFO),
+                // используя стандартный defer mechanism.
+                let body_defer_id = self.enter_defer_scope(body, false);
                 for s in &body.stmts {
                     self.emit_stmt(s)?;
                 }
@@ -14311,6 +14315,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let v = self.emit_expr(t)?;
                     self.line(&format!("(void)({});", v));
                 }
+                // Leave defer scope перед nova_fail_pop — runs defers в LIFO.
+                self.leave_defer_scope(body_defer_id);
                 self.line("nova_fail_pop();");
                 self.indent -= 1;
                 self.line("} else {");
