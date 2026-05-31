@@ -1925,3 +1925,34 @@ Remaining sub-sub-(sub) tasks: ~40 (down from 55 at start of Session 3,
 - spec: `spec/decisions/06-concurrency.md` (D90 §7 amend; D75 CancelToken)
 - project-philosophy.md — основание для breaking change pre-0.1
 
+---
+
+## Session 3 extended #5 — final summary
+
+40+ commits pushed Session 3 total. Plan 110 progress:
+
+| Plan | Sub-sub done | Notes |
+|---|---|---|
+| 110.1 | 8/10 + 6/8 sub-sub-sub в 110.1.4 + close summary | A1 ✅ |
+| 110.3 | 2/6 (Mutex/RwLock/Sem) | A5 partial |
+| 110.4 | 4/8 + close progress | A7 partial |
+| 110.5 | 2/7 + scope decision documented | A11/A12 partial |
+| 110.6 | 2/11 (T11.2 + T11.8) | A14 partial |
+| 110.8.1 | **11/11 Q-blocks** ✅ | **A23 ✅** |
+| 110.2 | 0/6 cancel-shield runtime | A3/A4 OPEN |
+| 110.7 | 0/3 FFI | A15 OPEN |
+| 110.8.3-9 | 0/8 finalize | A18/A19/A24/A30 OPEN |
+
+**25/25 plan110 fixtures PASS** via release `nova test`.
+
+Remaining sub-sub-(sub): ~30 (down from 55 at Session 3 start).
+
+Hard blockers для Plan 110 umbrella closure:
+1. Plan 110.2 cancel-shield runtime — substantive multi-day work.
+2. Plan 110.5.2-5 auto-fix tool OR manual migration (decision pending).
+3. Plan 110.6 LSP + stress + benchmarks.
+4. Plan 110.7 FFI integration.
+5. Plan 110.8.3-9 final regression + cross-platform + tutorial + merge.
+
+Production-grade final обязательство в plan header preserved.
+
