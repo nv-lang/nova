@@ -1,0 +1,19 @@
+// Plan 114.4 Ф.2: scope-local `const N = …` inside fn body.
+
+module nova_tests.plan114_4.scope_const_ok
+
+test "scope-local const literal" {
+    const N = 16
+    assert(N == 16)
+}
+
+test "scope-local const arithmetic" {
+    const FACTOR = 5 * 2
+    assert(FACTOR == 10)
+}
+
+test "scope-local const used in expression" {
+    const BASE = 100
+    ro doubled = BASE + BASE
+    assert(doubled == 200)
+}

@@ -145,6 +145,7 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
     match s {
         Stmt::Expr(e) => normalize_expr(e, sigs),
         Stmt::Let(d) => normalize_expr(&mut d.value, sigs),
+        Stmt::Const(d) => normalize_expr(&mut d.value, sigs),
         Stmt::Assign { target, value, .. } => {
             normalize_expr(target, sigs);
             normalize_expr(value, sigs);

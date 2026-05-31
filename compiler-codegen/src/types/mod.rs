@@ -1326,6 +1326,20 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 self.walk_expr(&d.value, gs, errors);
             }
+            // Plan 114.4 Ф.2: scope-local const — strict constexpr enforce.
+            // Same eligibility rule as module-level const (check_const_constexpr).
+            // known_consts здесь conservatively empty (referencing другие
+            // scope-locals — followup [M-114.4-scope-const-chain]).
+            Stmt::Const(d) => {
+                if let Some(t) = &d.ty {
+                    self.walk_typeref(t, gs, errors);
+                }
+                self.walk_expr(&d.value, gs, errors);
+                let empty_consts: HashSet<String> = HashSet::new();
+                if let Err(diag) = check_const_constexpr(&d.value, &empty_consts) {
+                    errors.push(diag);
+                }
+            }
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, gs, errors);
                 self.walk_expr(value, gs, errors);
@@ -1716,6 +1730,8 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.f1_expr(target, gs, scope, errors);
                 self.f1_expr(value, gs, scope, errors);
@@ -2569,6 +2585,7 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(e) => self.walk_default_body_expr(e, tname, ok),
             Stmt::Return { value: Some(e), .. } => self.walk_default_body_expr(e, tname, ok),
             Stmt::Let(d) => self.walk_default_body_expr(&d.value, tname, ok),
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_default_body_expr(target, tname, ok);
                 self.walk_default_body_expr(value, tname, ok);
@@ -3699,6 +3716,8 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, scope, errors);
                 self.walk_expr(value, scope, errors);
@@ -5029,6 +5048,7 @@ impl<'a> CapabilityCtx<'a> {
         match s {
             Stmt::Expr(e) => self.walk_expr(e, state, errors),
             Stmt::Let(d) => self.walk_expr(&d.value, state, errors),
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, state, errors);
                 self.walk_expr(value, state, errors);
@@ -5933,6 +5953,8 @@ impl NameResCtx {
                     for n in bindings { top.insert(n); }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, file_id, scope, errors);
                 self.walk_expr(value, file_id, scope, errors);
@@ -6675,6 +6697,7 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
     match s {
         Stmt::Expr(e) => has_throw_in_expr(e),
         Stmt::Let(decl) => has_throw_in_expr(&decl.value),
+        Stmt::Const(_) => false,
         Stmt::Assign { target, value, .. } =>
             has_throw_in_expr(target) || has_throw_in_expr(value),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, has_throw_in_expr),
@@ -7029,6 +7052,7 @@ fn walk_block_for_with_gate(b: &Block, eff_pv: &HashSet<String>, errors: &mut Ve
         match s {
             Stmt::Expr(e) => walk_expr_for_with_gate(e, eff_pv, errors),
             Stmt::Let(LetDecl { value, .. }) => walk_expr_for_with_gate(value, eff_pv, errors),
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 walk_expr_for_with_gate(target, eff_pv, errors);
                 walk_expr_for_with_gate(value, eff_pv, errors);
@@ -7433,6 +7457,7 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
     for s in &b.stmts {
         match s {
             Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, errors),
+            Stmt::Const(_) => {}
             Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, errors),
             Stmt::Assign { target, value, .. } => {
                 walk_expr_for_handler_lits(target, never_ops, errors);
@@ -7771,6 +7796,7 @@ fn stmt_has_throw(s: &Stmt) -> bool {
         Stmt::Throw { .. } => true,
         Stmt::Expr(e) => expr_has_throw(e),
         Stmt::Let(d) => expr_has_throw(&d.value),
+        Stmt::Const(_) => false,
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } | Stmt::OkDefer { body, .. }
         | Stmt::DeferWithResult { body, .. }
             => expr_has_throw(body),
@@ -9739,6 +9765,8 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 }
             }
         }
+        // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+        Stmt::Const(_) => {}
         Stmt::Expr(e) => consume_walk_expr(ctx, e, errors),
         Stmt::Assign { target, op, value, .. } => {
             consume_walk_expr(ctx, value, errors);
@@ -9941,6 +9969,7 @@ fn d162_collect_covers_stmt(s: &Stmt, pre_obligations: &HashSet<String>,
         Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d162_collect_covers(e, pre_obligations, ctx, out),
         Stmt::Return { value: Some(v), .. } => d162_collect_covers(v, pre_obligations, ctx, out),
         Stmt::Let(decl) => d162_collect_covers(&decl.value, pre_obligations, ctx, out),
+        Stmt::Const(_) => {}
         _ => {}
     }
 }
@@ -10018,6 +10047,7 @@ fn d157_scan_block(b: &Block, outer: &HashSet<String>, ctx: &ConsumeCtx, out: &m
             Stmt::Expr(e) | Stmt::Throw { value: e, .. } => d157_scan_expr(e, outer, ctx, out),
             Stmt::Return { value: Some(v), .. } => d157_scan_expr(v, outer, ctx, out),
             Stmt::Let(decl) => d157_scan_expr(&decl.value, outer, ctx, out),
+            Stmt::Const(_) => {}
             _ => {}
         }
     }
@@ -10867,6 +10897,7 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
                 check_defer_body(body, "defer |result|", fn_effects, current_fn_effects, errors);
             }
             Stmt::Let(decl) => walk_expr_for_defers(&decl.value, fn_effects, current_fn_effects, errors),
+            Stmt::Const(_) => {}
             Stmt::Expr(e) => walk_expr_for_defers(e, fn_effects, current_fn_effects, errors),
             Stmt::Assign { target, value, .. } => {
                 walk_expr_for_defers(target, fn_effects, current_fn_effects, errors);
@@ -11355,6 +11386,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                 check_defer_body_inner(value, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, current_fn_effects, ctx, errors),
+            Stmt::Const(_) => {}
             Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors),
             Stmt::Assign { target, value, .. } => {
                 check_defer_body_inner(target, kw, fn_effects, current_fn_effects, ctx, errors);
@@ -11873,6 +11905,8 @@ fn check_ghost_in_stmt(s: &Stmt, ghosts: &HashSet<String>, errors: &mut Vec<Diag
             // Non-ghost let: value РЅРµ РґРѕР»Р¶РµРЅ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ ghost-vars.
             check_ghost_in_expr(&decl.value, ghosts, errors);
         }
+        // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+        Stmt::Const(_) => {}
         Stmt::Expr(e) => check_ghost_in_expr(e, ghosts, errors),
         Stmt::Assign { target, value, .. } => {
             check_ghost_in_expr(target, ghosts, errors);
@@ -12249,6 +12283,8 @@ impl MapLitCtx {
                 // let-аннотация — known-target-type position (D55).
                 self.walk_expr(&d.value, d.ty.as_ref(), errors);
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, None, errors);
                 self.walk_expr(value, None, errors);
@@ -13094,6 +13130,8 @@ impl MapLitAnnotator {
                     }
                 }
             }
+            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
+            Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, None);
                 self.walk_expr(value, None);

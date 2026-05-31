@@ -7195,6 +7195,13 @@ impl Parser {
                 let l = self.parse_ro_mut_binding(true)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
+            // Plan 114.4 Ф.2: scope-local `const N = expr` inside fn body /
+            // block. Constexpr-only (checker enforces); inline literal в
+            // codegen. Reuses parse_const_decl (без is_export / doc).
+            TokenKind::KwConst => {
+                let c = self.parse_const_decl(false, None, Vec::new())?;
+                Ok(StmtOrExpr::Stmt(Stmt::Const(c)))
+            }
             // Plan 33.3 (D24): `ghost let` — контекстный keyword `ghost`.
             TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwLet) => {
                 let l = self.parse_let_decl()?;
