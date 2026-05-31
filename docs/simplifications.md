@@ -27904,3 +27904,46 @@ Foundation point delivered (Session 1+2):
 - A32 (init type constraints — D196 forms 2-3 working): 🟢 ✅ direct + Result/Option unwrap + As cast.
 
 **Session 3 final closure rationale:** Plan 110.1.4 codegen — THE BIG ONE (full D188 desugaring с try/catch fail-frame + on_exit dispatch + throw re-raise). Multi-day scope. Отложен на следующую session с Opus 4.7 + Thinking ON.
+
+---
+
+## Plan 110 Session 3 extended #2 — autonomous continuation (2026-05-31)
+
+Per user "продолжай без остановки" Session 3 продолжилась после initial closure. Дополнительно landed:
+
+**Plan 110.1.8 ✅** (`97e82b841e9`) — D197 cleanup re-entrance verification:
+- Nested consume{} inside on_exit body — works through existing infrastructure.
+- 1 new fixture (codegen_reentrance_d197).
+
+**Plan 110.1.9 ✅** (`fabd038cd54`) — T2.2 partial construction + T2.5 mixed defer LIFO:
+- Codegen fix: enter_defer_scope/leave_defer_scope для body block.
+- Defer inside consume body fires BEFORE on_exit (LIFO).
+- 2 new fixtures.
+
+**Plan 110.3.1 ✅** (`3c8889e5811`) — Mutex/Sem family Consumable[never]:
+- std/runtime/sync.nv: on_exit declarations for MutexGuard/ReadGuard/WriteGuard/Permit.
+- nova_rt/sync_primitives.h: 4 inline runtime impls.
+- 1 new fixture verifying `consume g = mu.lock() { body }` runtime path.
+
+**Plan 110.4.1 ✅** (`0f095e9d438`) — MultiError @walk + @find_first_panic API.
+
+**Session 3 grand total:** 19 commits Session 3 pushed; 9 sub-sub plans + 6 sub-sub-sub steps + 19/19 plan110 fixtures PASS; ~3000+ LOC.
+
+**Plan 110 progress overall:**
+- Plan 110.1: 7/10 sub-sub done.
+- Plan 110.3: 2/6 partial (Mutex/Sem; remaining requires not-yet-existing stdlib types CancelScope/Channels/TCP/UDP).
+- Plan 110.4: 1/8 done.
+- Plan 110.2 / 110.5-110.8: ALL OPEN.
+
+**Documented simplifications (staged delivery, не silent shortcuts):**
+- 🟡 `infer_consume_init_type` heuristic — handles Type.method/record-lit/?/!!/As; conditional/method-chain → None silently (staged 110.1.4+).
+- 🟡 D196-wrapped-init-needs-unwrap / D196-divergent-consumable error codes → general D188-not-consumable (staged).
+- 🟡 on_exit signature check first param ScopeOutcome only (return type / Fail[E] check → staged).
+- 🟡 `#define` binding aliasing вместо proper C var.
+- 🟡 110.1.4.b body trailing value capture (DEFERRED — substantive AST refactor).
+- 🟡 110.1.7 D194 hot-path elision (DEFERRED — runtime infrastructure).
+- 🟡 110.2.1-6 cancel-shield runtime (DEFERRED — multi-day runtime work).
+- 🟡 110.3.3-5 stdlib resources (DEFERRED — types not in main yet).
+- 🟡 MultiError payload `str` → `any` ([M-110-multierror-any]).
+
+Production-grade final обязательство (в plan header) — все это MUST land до закрытия Plan 110 umbrella.
