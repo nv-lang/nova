@@ -215,3 +215,73 @@ fn MultiError @suppressed() -> []str => @suppressed
 /// suppressed. Used by D7 diagnostic format.
 #stable(since = "0.1")
 fn MultiError @fmt_chain() -> str => @primary
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 110 D193 / D90 §7 amend — typed cancel/timeout/truncation errors
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Cancel-as-error payload (D90 §7 amend, Plan 110). При cancel/interrupt
+/// в `consume {}` body — outcome приходит как `Failure(CancelError { ... })`.
+/// Resource'у видна типизированная причина cancel'а вместо опаковой
+/// «cancellation».
+///
+/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; codegen path
+/// `nv_consume_emit_cancel_as_failure` материализует payload при
+/// cancel-доставке в body (Plan 110 Ф.9.4).
+///
+/// # Examples
+///
+/// ```nova
+/// fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+///     match outcome {
+///         Success => @commit()?
+///         Failure(err) => {
+///             if err is CancelError {
+///                 // explicit cancel — rollback w/o full retry logic
+///                 @rollback()?
+///             } else {
+///                 @rollback_with_log(err.msg)?
+///             }
+///         }
+///         Panic(_) => @rollback_emergency()
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export type CancelError {
+    ro reason str
+}
+
+/// Cleanup timeout exceeded (D192). Выбрасывается runtime'ом из текущего
+/// suspend-point внутри `Consumable.on_exit` body когда cumulative cleanup
+/// время превысило resolved `exit_timeout`.
+///
+/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; runtime emit
+/// в `nv_consume_check_deadline` (Plan 110 Ф.3.2).
+///
+/// # Examples
+///
+/// ```nova
+/// fn cleanup_with_timeout() Fail[CleanupTimeoutError] -> () {
+///     consume tcp = TcpStream.connect(addr) {
+///         body  // если cleanup TCP > exit_timeout — CleanupTimeoutError
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export type CleanupTimeoutError {
+    ro duration_ms int
+}
+
+/// Sentinel composed в `MultiError.suppressed` когда cleanup-cascade
+/// глубина превышает `D193` depth-limit (256). Дальнейшие compose silently
+/// ignored; pointer на этот sentinel signal'ит «cascade was truncated at
+/// depth N».
+///
+/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; emission
+/// в `nv_compose_error` (Plan 110 Ф.6.5).
+#stable(since = "0.1")
+export type MultiErrorTruncated {
+    ro depth int
+}

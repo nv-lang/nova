@@ -27782,3 +27782,26 @@ pre-Plan-109 API.  Документированы в их followups.
   3. Ф.1.5 финальный commit закрывает legacy paths (KwLet → E_KW_REMOVED_LET).
 
 Без шага (2) перед (3) — testsuite сломан между commit'ами. Plan специально допускает этот порядок: «scripts/sed/perl + parallel subagents» — это и есть стейджинг discipline в рамках одного hard-cutover merge.
+
+---
+
+## Plan 110 Ф.0 GATE landed; Ф.1-Ф.14 split на Plan 110.1-110.8 (2026-05-31, commit 044bc06cc24)
+
+**Closed markers:**
+- 🆕 `[M-100.4.*-cleanup-family-radical-simplify]` — Plan 110 spec drafts D188-D198 + D185 + D195 written; cleanup-семейство (~20 концептов) → 5 концептов (`consume X = expr { body }` + `defer { ... }` + `Consumable[E]` protocol + `consume self` modifier + control flow). D160 retracted в spec (was: `okdefer` + `defer |result|` Plan 100.4.3); D158/D161/D162/D90 §7 amended. Implementation extracted в Plan 110.1-110.8.
+
+**OPEN markers (created by Plan 110):**
+- 🟡 `[M-110-impl-core]` — Plan 110.1 compiler pipeline implementation (parser + AST + type-checker + codegen + runtime для `consume X = expr { body }`). ~3-4 dev-day.
+- 🟡 `[M-110-impl-cancel-shield]` — Plan 110.2 cancel-shield + async cleanup + 3-level timeout resolution. ~2 dev-day.
+- 🟡 `[M-110-stdlib-fs]` — `std/fs` модуль с `File` Consumable impl (зависит от std/fs type design, который сам по себе отдельный модуль).
+- 🟡 `[M-110-stdlib-db]` — `std/db` модуль с `Transaction` Consumable impl.
+- 🟡 `[M-110-stdlib-bufio]` — `std/bufio` модуль с `BufReader`/`BufWriter` Consumable impls.
+- 🟡 `[M-110-stdlib-pool]` — Connection pools (`Consumable[ConnPoolError]`).
+- 🟡 `[M-110-multierror-any]` — Миграция `MultiError.primary/suppressed` payload `str` → `any` (bootstrap continues с `str` для compat; Plan 110.4 Ф.6.2 closes когда `any` mature в codegen).
+- 🟡 `[M-110-supervised-handle]` — `JoinHandle` Consumable impl (зависит от Plan 83.4.2 supervised drain ownership).
+- 🟡 `[M-110-run-on-abort]` — `#[run_on_abort]` attribute для finalizers на abort/SIGKILL (Plan 110.4 Ф.8.9 deferred — нужно изучать platform-specific signal handling).
+- 🟡 `[M-110-stream-consumable]` — Plan 84 `Stream[T]` Consumable impl.
+
+**Why split:** Plan 110 sам в §«Возможный split на sub-plans» (lines 1245-1257) формулирует точку решения для разбиения если scope > прогноза. Ф.0 GATE audit подтвердил scope: 600-1000 LOC Rust refactor + 42 fixture migration + auto-fix tool + LSP integration + benchmarks + FFI integration > single-session feasibility. Sub-plan split сохраняет ценность Ф.0 spec foundation + предоставляет concrete next-steps для последующих агентов. **НЕ silent drop** — explicit follow-up plans с acceptance criteria, dependencies, references.
+
+**Cross-platform & regression:** Plan 110.8 Ф.13 — full regression + cross-platform PASS deferred до closure всех 110.1-110.7.

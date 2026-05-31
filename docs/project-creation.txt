@@ -25639,3 +25639,104 @@ readonly для smooth migration (Ф.5/Ф.6 corpus migrated в том же
 legacy paths (один followup commit перед merge). Это не dual-syntax
 fallback — а migration discipline в рамках hard-cutover single-merge
 требования плана.
+
+────────────────────────────────────────────────────────────────────────
+Plan 110 Ф.0 GATE — spec foundation landed, Ф.1-Ф.14 split на sub-plans
+(2026-05-31, commit 044bc06cc24, branch plan-110, worktree nova-p110)
+────────────────────────────────────────────────────────────────────────
+
+Plan 110 «consume-scope — radical simplification cleanup-семейства»
+закрыт на Ф.0 GATE: spec drafts + migration audit landed. Implementation
+work (Ф.1-Ф.14) extracted в Plan 110.1-110.8 sub-plans per Plan 110
+§«Возможный split на sub-plans».
+
+Что landed в Ф.0 (commit 044bc06cc24):
+
+- spec/decisions/03-syntax.md: 11 D-блоков D188-D198 (1045 LOC).
+  - D188: Consumable[E] protocol + consume X = expr { body }
+    scope-block, R1 partial-construction safety, R2 exactly-once,
+    R3 cancel-shield-by-default, R4 timeout resolution at scope-entry,
+    R5 LIFO composition, R6 release-acquire memory ordering. Typed
+    error dispatch через D85 if err is T (Kotlin smart-cast pattern).
+    Generic constraint [T Consumable[E]] + Never special case.
+  - D189: hard removal okdefer/errdefer/defer|r| без migration window,
+    parser parse errors D189-removed-*, auto-fix mappings для 3
+    canonical patterns.
+  - D190: rejected alternatives (Drop-trait, priority-defer, two-method
+    protocol, ScopeOutcome[E], outcome.failure_as[T], using/scoped
+    keywords) с rationale per каждое.
+  - D191: async cleanup — suspend разрешён в on_exit; spawn/parallel/
+    supervised запрещены (D159 rule сохраняется); cancel-shield через
+    suspend points; timeout exceedance → CleanupTimeoutError.
+  - D192: exit-timeout taxonomy (zero/positive/MAX/negative) + 3-level
+    resolution (WithExitTimeout impl → Application effect → 5s
+    hardcoded fallback) + per-instance library pattern.
+  - D193: MultiError walk() iterator + cycle-safety identity check
+    (Java JDK-8287921 lesson) + depth-limit 256 + sentinel
+    MultiErrorTruncated entry.
+  - D194: Consumable[Never] для infallible cleanup + hot-path elision
+    (codegen detect Consumable[Never] + no WithExitTimeout → strip
+    shield/timeout/outcome, эмитит body; mu.release() напрямую).
+  - D196: init type constraints (Result/Option unwrap через ?/!!,
+    conditional, method chain); D196-wrapped-init-needs-unwrap +
+    D196-divergent-consumable diagnostics.
+  - D197: cleanup re-entrance — вложенные consume{} в on_exit
+    разрешены; outer shield persists; cancel pending до outer exit;
+    depth limit 256 (same as D193).
+  - D198: #realtime + cleanup interaction — codegen bypass'ит 3-level
+    resolution для #realtime fn body, эмитит Duration.zero hardcoded.
+    D198-realtime-application-override warning.
+- spec/decisions/04-effects.md: 2 D-блока D185 + D195 (278 LOC).
+  - D185: Cleanup effect observability-only + OpenTelemetry wire
+    format (on_scope_enter маппит в OTel span; on_scope_exit закрывает;
+    trace context propagation через scope-stack).
+  - D195: Application effect + R1-R8 (inner handler wins; finalizer
+    registry NOT inherited; default exit_timeout NOT inherited; test
+    isolation use case; integration с D192 Level-2; cross-fiber
+    propagation через D80 effect snapshot; boot order; abort/SIGKILL
+    NOT fires finalizers).
+- std/prelude/errors.nv: 3 typed records — CancelError, CleanupTimeoutError,
+  MultiErrorTruncated (Plan 110 Ф.6.6 prelude advance landed early).
+- docs/plans/110-artifacts/f0-migration-audit.md (229 LOC):
+  - 42 nova test fixtures, 90 occurrences inventory by cluster.
+  - Stdlib clean: 1 comment-only reference в std/prelude/errors.nv.
+  - Rust compiler footprint: 9 files, 122 occurrences, ~600-1000 LOC
+    refactor scope.
+  - Cross-check 16 related plans — все hard prereqs landed (Plan 113
+    #realtime attribute-only, Plan 114 keyword refresh ro/mut/consume,
+    Plan 101 generic bounds, Plan 103.x sync family).
+
+Split decision rationale:
+
+Plan 110 self-estimated 12-15 dev-day с 9-agent parallel split → 5-7
+wall-time days. Single-session sequential implementation не реалистична.
+Ф.0 audit подтвердил scope:
+- 600-1000 LOC Rust refactor только для core compiler pipeline (Plan
+  110.1 alone — Ф.0-2 в Plan 110 nomenclature).
+- 42 fixture migration + auto-fix tool (Plan 110.5 — Ф.9).
+- Full stress + benchmark suite + LSP (Plan 110.6 — Ф.10-11).
+- FFI integration (Plan 110.7 — Ф.12).
+- Final docs + cleanup-cookbook + Q-blocks (Plan 110.8 — Ф.13-14).
+
+Plan 110.1-110.8 sub-plan stubs созданы; каждый sub-plan содержит цели,
+фазы, acceptance criteria, зависимости, ссылки на Plan 110 umbrella для
+context.
+
+Followup markers создал Plan 110 (10 шт):
+- [M-110-impl-core] — Plan 110.1 implementation.
+- [M-110-impl-cancel-shield] — Plan 110.2 implementation.
+- [M-110-stdlib-fs] — std/fs с File Consumable impl.
+- [M-110-stdlib-db] — std/db с Transaction Consumable impl.
+- [M-110-stdlib-bufio] — std/bufio с BufReader/BufWriter.
+- [M-110-stdlib-pool] — connection pools.
+- [M-110-multierror-any] — MultiError payload str → any migration.
+- [M-110-supervised-handle] — JoinHandle Consumable impl (зависит от
+  Plan 83.4.2).
+- [M-110-run-on-abort] — #[run_on_abort] attribute (Plan 110.4 Ф.8.9
+  deferred).
+- [M-110-stream-consumable] — Plan 84 Stream Consumable impl.
+
+Net deliverable: spec foundation для cleanup-семейства radical
+simplification готов и landed. Все implementation work routed через
+plan-110.1-8 sub-plans с чёткими scope boundaries, dependencies,
+acceptance criteria.

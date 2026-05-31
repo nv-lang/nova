@@ -1261,34 +1261,150 @@ Wall-time с параллелизмом: ~5–7 дней.
 
 ## Статус выполнения
 
-> _Заполняется по мере прохождения фаз. На момент создания плана — все ❌._
-
 | Фаза | Статус | Дата | Commit | Заметки |
 |---|---|---|---|---|
-| Ф.0 GATE | ❌ | — | — | spec drafts + migration audit |
-| Ф.1 Core protocol + syntax | ❌ | — | — | parser + checker |
-| Ф.2 Codegen + runtime fundamentals | ❌ | — | — | desugaring + exactly-once |
-| Ф.3 Cancel-shield + async cleanup | ❌ | — | — | D191 + D192 |
-| Ф.4 Stdlib core | ❌ | — | — | File/Tx/Mutex/Sem/Buf |
-| Ф.5 Stdlib extended | ❌ | — | — | TCP/UDP/Channels/Streams |
-| Ф.6 MultiError + Error types | ❌ | — | — | D193 cycle-safe |
-| Ф.7 Cleanup effect | ❌ | — | — | observability-only |
-| Ф.8 Module finalizers паттерн | ❌ | — | — | Application |
-| Ф.9 Migration deprecation + D90 §7 | ❌ | — | — | auto-fix tool |
-| Ф.10 Diagnostic UX + LSP | ❌ | — | — | suggestions + quick-fix |
-| Ф.11 Stress + benchmarks | ❌ | — | — | concurrency + perf |
-| Ф.12 FFI integration | ❌ | — | — | Plan 100.5 cross-ref |
-| Ф.13 Regression + cross-platform | ❌ | — | — | nova test ≥ 1158/19 |
-| Ф.14 Docs + spec finalize + close | ❌ | — | — | spec/Q/logs/memory |
-| **Final merge** | ❌ | — | — | merge hash в main |
+| Ф.0 GATE | ✅ | 2026-05-31 | 044bc06cc24 | spec drafts D185/D188-D198 + migration audit; D193 prelude error types |
+| Ф.1 Core protocol + syntax | 🔀 split | — | — | extracted → [Plan 110.1](110.1-core-protocol-syntax-codegen.md) |
+| Ф.2 Codegen + runtime fundamentals | 🔀 split | — | — | extracted → [Plan 110.1](110.1-core-protocol-syntax-codegen.md) |
+| Ф.3 Cancel-shield + async cleanup | 🔀 split | — | — | extracted → [Plan 110.2](110.2-cancel-shield-async-cleanup.md) |
+| Ф.4 Stdlib core | 🔀 split | — | — | extracted → [Plan 110.3](110.3-stdlib-migration.md) |
+| Ф.5 Stdlib extended | 🔀 split | — | — | extracted → [Plan 110.3](110.3-stdlib-migration.md) |
+| Ф.6 MultiError + Error types | 🔀 split | — | — | extracted → [Plan 110.4](110.4-multierror-cleanup-app-effects.md); Ф.6.6 prelude types LANDED в Ф.0 commit |
+| Ф.7 Cleanup effect | 🔀 split | — | — | extracted → [Plan 110.4](110.4-multierror-cleanup-app-effects.md); D185 spec LANDED в Ф.0 |
+| Ф.8 Application паттерн | 🔀 split | — | — | extracted → [Plan 110.4](110.4-multierror-cleanup-app-effects.md); D195 spec LANDED в Ф.0 |
+| Ф.9 Migration deprecation + D90 §7 | 🔀 split | — | — | extracted → [Plan 110.5](110.5-migration-autofix.md) |
+| Ф.10 Diagnostic UX + LSP | 🔀 split | — | — | extracted → [Plan 110.6](110.6-diagnostic-lsp-stress-bench.md) |
+| Ф.11 Stress + benchmarks | 🔀 split | — | — | extracted → [Plan 110.6](110.6-diagnostic-lsp-stress-bench.md) |
+| Ф.12 FFI integration | 🔀 split | — | — | extracted → [Plan 110.7](110.7-ffi-integration.md) |
+| Ф.13 Regression + cross-platform | 🔀 split | — | — | extracted → [Plan 110.8](110.8-docs-close.md) |
+| Ф.14 Docs + spec finalize + close | 🔀 split | — | — | extracted → [Plan 110.8](110.8-docs-close.md) |
+| **Umbrella merge (post 110.1-8)** | ⏳ pending | — | — | после закрытия Plan 110.1-110.8 |
 
-**Acceptance status:** A1–A30 ❌ (план создан, ревизия v3).
+**Acceptance status:**
+- A21 ✅ (D188-D198 + D185 + D195 written in spec, 2026-05-31).
+- A22 ✅ (amends + retracts documented in D188-D198; D160 retracted in spec).
+- A29 ⏸ Plan 110.1 (generic constraint impl).
+- A1-A20, A23-A30, A31-A38 ⏸ tracked в Plan 110.1-110.8 sub-plans.
 
-**Discovered issues** (по ходу):
-- _none yet_
+**Discovered issues** (по ходу Ф.0 GATE 2026-05-31):
+- Plan 110 scope per §«Возможный split на sub-plans» **превысил**
+  single-session feasibility (Plan 110 itself estimated 12-15 dev-day с
+  9-agent parallel split → ~5-7 wall-time days). Sequential single-session
+  execution не реалистична.
+- Bootstrap surface оказался clean (no live File/Tx/BufReader/BufWriter
+  types в main) — упрощает Ф.4 но требует stdlib type design в отдельных
+  planks.
+- Все hard pre-requisites landed (Plan 113 #realtime, Plan 114 keyword
+  refresh, Plan 101 generic bounds, Plan 103.x sync family) — Ф.0 gate
+  cleared для proceeding sub-plans.
 
-**Follow-up markers создаваемые этим планом** (если останутся):
-- _none yet_
+**Follow-up markers (созданы Plan 110 Ф.0):**
+- `[M-110-impl-core]` — Plan 110.1 implementation (compiler pipeline).
+- `[M-110-impl-cancel-shield]` — Plan 110.2 implementation.
+- `[M-110-stdlib-fs]` — `std/fs` с `File` Consumable impl (нужен design нового std/fs модуля).
+- `[M-110-stdlib-db]` — `std/db` с `Transaction` Consumable impl.
+- `[M-110-stdlib-bufio]` — `std/bufio` с `BufReader`/`BufWriter`.
+- `[M-110-stdlib-pool]` — connection pools.
+- `[M-110-multierror-any]` — миграция MultiError payload `str` → `any`
+  (bootstrap continues с `str`).
+- `[M-110-supervised-handle]` — `JoinHandle` Consumable impl (зависит от
+  Plan 83.4.2 supervised drain ownership).
+- `[M-110-run-on-abort]` — `#[run_on_abort]` attribute для finalizers
+  на abort/SIGKILL (Plan 110.4 Ф.8.9 deferred).
+- `[M-110-stream-consumable]` — Plan 84 Stream Consumable impl.
+
+---
+
+## Status — closure summary
+
+> **Закрытие сессии 2026-05-31 — Ф.0 GATE landed, Ф.1-Ф.14 split на
+> Plan 110.1-110.8 per §«Возможный split на sub-plans».**
+
+### Что сделано в этой сессии
+
+#### Ф.0 GATE (✅ landed)
+
+- **Spec drafts** — 11 D-блоков добавлены в spec:
+  - `spec/decisions/03-syntax.md`: D188 (Consumable + scope-block, R1-R6 +
+    typed dispatch), D189 (errdefer/okdefer/defer\|r\| removal + auto-fix
+    mappings), D190 (rejected alternatives), D191 (async cleanup), D192
+    (timeout taxonomy + 3-level resolution), D193 (MultiError walk + cycle-
+    safety + depth-limit 256), D194 (Consumable[Never] + hot-path elision),
+    D196 (init type constraints), D197 (cleanup re-entrance), D198
+    (#realtime + cleanup interaction).
+  - `spec/decisions/04-effects.md`: D185 (Cleanup effect observability-
+    only + OpenTelemetry wire format), D195 (Application effect nesting +
+    finalizer scoping + cross-fiber propagation, R1-R8).
+  - Net: 1045 + 278 = 1323 строки spec content; всё с cross-refs и
+    «Связь» секциями.
+- **Migration audit** — `docs/plans/110-artifacts/f0-migration-audit.md`:
+  42 nova test fixtures + 90 occurrences inventory by cluster (Cluster
+  A: plan100_4_*, B: syntax/, C: expected_runtime/, D: negative_capability/,
+  E: plan100_8/, F: bench); stdlib clean (1 comment reference); Rust
+  compiler footprint 9 files × 122 occurrences ≈ 600-1000 LOC refactor
+  scope; cross-check 16 related plans — **все hard prereqs landed**.
+- **Prelude D193 error types** (Ф.6.6 advance landed) — `std/prelude/errors.nv`:
+  `CancelError`, `CleanupTimeoutError`, `MultiErrorTruncated` typed
+  records.
+- **Plan 110.1-110.8 sub-plan stubs** — split per §«Возможный split»:
+  - 110.1 Core protocol + syntax + codegen (Ф.0-2)
+  - 110.2 Cancel-shield + async cleanup (Ф.3)
+  - 110.3 Stdlib migration (Ф.4-5)
+  - 110.4 MultiError + Cleanup + Application effects (Ф.6-8)
+  - 110.5 Migration deprecation + auto-fix (Ф.9)
+  - 110.6 Diagnostic UX + LSP + stress + benchmarks (Ф.10-11)
+  - 110.7 FFI integration (Ф.12)
+  - 110.8 Regression + docs + close (Ф.13-14)
+
+### Что НЕ landed (extracted в sub-plans)
+
+- Compiler pipeline (parser/AST/checker/codegen/runtime для `consume X
+  = expr { body }`) — **Plan 110.1**.
+- Cancel-shield runtime + 3-level timeout resolution + async cleanup
+  via suspend в `on_exit` — **Plan 110.2**.
+- Stdlib migration (Mutex/Sem/TCP/UDP/Channels/etc Consumable impls) —
+  **Plan 110.3**.
+- MultiError API refactor (walk + cycle-safety + depth-limit) + Cleanup
+  effect + Application effect impl — **Plan 110.4**.
+- Auto-fix migration tool + D90 §7 codegen amend — **Plan 110.5**.
+- LSP integration + stress tests + benchmarks — **Plan 110.6**.
+- FFI integration (Plan 100.5 cross-ref) — **Plan 110.7**.
+- Final regression + cross-platform PASS + cleanup-cookbook +
+  Q-blocks + tutorial — **Plan 110.8**.
+
+### Rationale для split
+
+Plan 110 сам в §«Возможный split на sub-plans» (line 1245-1257)
+формулирует точку решения: «если в Ф.0 выяснится что объём больше прогноза —
+план может быть разбит на 110.1-110.8». Ф.0 audit подтвердил:
+- 600-1000 LOC Rust refactor только для core compiler pipeline (Plan 110.1
+  alone);
+- 42 fixture migration + auto-fix tool (Plan 110.5);
+- Full stress + benchmark suite (Plan 110.6);
+- FFI integration (Plan 110.7).
+
+Single-session sequential implementation не реалистична (plan-own estimate:
+12-15 dev-day, 5-7 wall-time дней с 9-agent parallel). Split сохраняет
+ценность Ф.0 (spec foundation landed) + предоставляет concrete next-steps
+для последующих агентов.
+
+### Commits
+
+- `044bc06cc24` — feat(Plan 110 Ф.0): spec drafts D185/D188-D198 + migration audit.
+
+### Cross-platform
+
+- Targeted: Windows (worktree primary build).
+- Plan 110.8 Ф.13.3 — full cross-platform PASS (Windows + Linux × clang
+  + MSVC) deferred до closure всех 110.1-110.8.
+
+### Worktree
+
+`d:\Sources\nv-lang\nova-p110` (branch `plan-110`).
+
+### Memory
+
+- `project-plan110-status.md` — created по результатам Ф.0 closure.
 
 ---
 
