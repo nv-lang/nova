@@ -1842,6 +1842,29 @@ decomposed.
 ConsumeScope wraps body with shield enter/leave). Substantive multi-day
 work; runtime infrastructure changes.
 
+#### Session 3 extended #3 — additional sub-sub plans landed
+
+| Sub-sub | Commit | Notes |
+|---|---|---|
+| 110.4.2 MultiError cycle-safety + depth-limit 256 | 2b4a90e5569 | nv_compose_suppressed extension |
+| 110.4.3 + 110.4.5 Cleanup + Application effect decls | 7188bab69fb | std/prelude/effects.nv |
+| 110.5.1 D189 deprecation warnings | 40dcb25e6c0 | lints.rs walker |
+| 110.1.3 refine — D196 wrapped + divergent specific errors | 7d4a8c2e817 | type-check enhancement + 2 fixtures |
+| 110.5.6 D90 §7 cancel-as-CancelError outcome | 6b040dbaa90 | codegen NOVA_THROW_CANCEL routing |
+
+Plan 110 progress (Session 3 extended #3 grand total):
+- Plan 110.1: 7/10 sub-sub done + 110.1.4 6/8 sub-sub-sub + D196 refinements.
+- Plan 110.3: 2/6 done (Mutex/Sem).
+- Plan 110.4: 4/8 done (4.1/4.2/4.3/4.5).
+- Plan 110.5: 2/7 done (5.1/5.6).
+- Plan 110.2: 0/6 (cancel-shield runtime — multi-day).
+- Plan 110.6/110.7/110.8: 0 (LSP/stress/bench/FFI/finalize).
+
+**Session 3 extended #3 grand total:** 24+ commits Session 3 pushed.
+20/20 plan110 fixtures PASS via release nova test.
+
+**Sub-sub-(sub) tasks remaining:** ~45 (down from 55 at Session 3 start).
+
 **Plan production-grade FINAL обязательство** (записано в plan header):
 все sub-sub-(sub) plans MUST land end-to-end через release nova test
 до закрытия Plan 110 umbrella; никаких «good enough» или silent leftovers.
