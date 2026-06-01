@@ -146,6 +146,8 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         mode: opts.mode,
         libuv: libuv.as_ref(),
         gc_kind: opts.gc_kind,
+        // Plan 115 D214: bench без manifest-driven FFI (followup).
+        ffi: None,
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
 
@@ -398,6 +400,8 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
         mode: opts.mode,
         libuv: libuv.as_ref(),
         gc_kind: opts.gc_kind,
+        // Plan 115 D214: bench без manifest-driven FFI (followup).
+        ffi: None,
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
     Ok(exe_file)

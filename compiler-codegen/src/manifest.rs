@@ -99,6 +99,45 @@ pub struct Manifest {
     /// Resource    = "1.0"
     /// ```
     pub exports_consume_types: HashMap<String, String>,
+    /// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section — user FFI
+    /// build pipeline. Объявляет C shim header'ы, include-каталоги и
+    /// system libraries которые передаются clang при сборке тестов и
+    /// бинарей этого пакета.
+    ///
+    /// Все paths относительные к директории `nova.toml`.
+    ///
+    /// Пример в nova.toml:
+    /// ```toml
+    /// [ffi]
+    /// c_shims      = ["src/sqlite3_shim.c", "src/libpng_shim.c"]
+    /// include_dirs = ["src/", "third_party/sqlite3/"]
+    /// libs         = ["sqlite3", "png"]
+    /// ```
+    ///
+    /// Семантика: `c_shims` — дополнительные `.c` или `.h` файлы для
+    /// compilation (header-only inline shims OK); `include_dirs` →
+    /// clang `-I` flags; `libs` → clang `-l<name>` flags для linking.
+    ///
+    /// Пусто (None), если секция отсутствует.
+    pub ffi: Option<FfiConfig>,
+}
+
+/// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section config.
+///
+/// Все пути относительные к директории `nova.toml`. Test_runner +
+/// build pipeline резолвят их в absolute paths перед передачей clang.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FfiConfig {
+    /// Список C / header файлов для compilation. Header-only inline shim'ы
+    /// (как `nova_rt/sqlite_mini_ffi.h`) включаются через `#include`,
+    /// .c файлы compilation units компилируются и линкуются.
+    pub c_shims: Vec<String>,
+    /// Include directories для clang `-I`. Дают доступ к user shim header'ам
+    /// и third-party C library headers.
+    pub include_dirs: Vec<String>,
+    /// System library names для clang `-l<name>` linking. Например
+    /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
+    pub libs: Vec<String>,
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -247,6 +286,32 @@ pub fn find_manifest(file: &Path) -> Option<Manifest> {
 /// manifest-relative source-root anchor. Public for use from
 /// `nova-cli::build_lint_config_for` fallback path и в integration
 /// tests (Plan 71 Ф.1 / Ф.5).
+/// Plan 115 D214 [M-115-ffi-build-pipeline]: parse TOML array of strings
+/// `["a.c", "b.c", "c.c"]`. Quote-aware; trims whitespace и outer
+/// double-quotes. Returns empty vec для invalid input.
+fn parse_toml_string_array(raw_val: &str) -> Vec<String> {
+    let v = raw_val.trim();
+    let inner = match v.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_str = false;
+    for ch in inner.chars() {
+        match ch {
+            '"' => { in_str = !in_str; cur.push(ch); }
+            ',' if !in_str => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(ch),
+        }
+    }
+    parts.push(cur);
+    parts.iter()
+        .map(|p| p.trim().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let text = std::fs::read_to_string(toml_path).ok()?;
     let mut package_name: Option<String> = None;
@@ -256,6 +321,11 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut dependencies: Vec<Dependency> = Vec::new();
     // Plan 100.6 (D164 §6): [exports.consume_types] — type_name → version_contract.
     let mut exports_consume_types: HashMap<String, String> = HashMap::new();
+    // Plan 115 D214 [M-115-ffi-build-pipeline]: [ffi] config.
+    let mut ffi_c_shims: Vec<String> = Vec::new();
+    let mut ffi_include_dirs: Vec<String> = Vec::new();
+    let mut ffi_libs: Vec<String> = Vec::new();
+    let mut ffi_section_seen: bool = false;
     // Section tracking: use String to support "exports.consume_types".
     let mut section = String::new();
 
@@ -272,6 +342,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 "lib"                  => "lib",
                 "dependencies"         => "dependencies",
                 "exports.consume_types" => "exports.consume_types",
+                "ffi"                  => { ffi_section_seen = true; "ffi" }
                 _                      => "",  // ignore other sections
             }.to_string();
             continue;
@@ -296,6 +367,16 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
             // Plan 100.6 (D164 §6): [exports.consume_types] — type_name = "version".
             if section == "exports.consume_types" {
                 exports_consume_types.insert(key.to_string(), str_val);
+                continue;
+            }
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: [ffi] section.
+            if section == "ffi" {
+                match key {
+                    "c_shims"      => ffi_c_shims = parse_toml_string_array(raw_val),
+                    "include_dirs" => ffi_include_dirs = parse_toml_string_array(raw_val),
+                    "libs"         => ffi_libs = parse_toml_string_array(raw_val),
+                    _ => {} // ignore unknown keys для forward-compat
+                }
                 continue;
             }
             match (section.as_str(), key) {
@@ -326,6 +407,18 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     } else {
         dir.join(src_subdir)
     };
+    // Plan 115 D214 [M-115-ffi-build-pipeline]: assemble FfiConfig only если
+    // секция [ffi] явно присутствует (даже с пустыми arrays — explicit
+    // intent сигнализирует "FFI-aware package но shim'ы ещё не declared").
+    let ffi = if ffi_section_seen {
+        Some(FfiConfig {
+            c_shims: ffi_c_shims,
+            include_dirs: ffi_include_dirs,
+            libs: ffi_libs,
+        })
+    } else {
+        None
+    };
     Some(Manifest {
         package_name: pkg,
         source_root,
@@ -333,6 +426,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         enforce_stability,
         dependencies,
         exports_consume_types,
+        ffi,
     })
 }
 

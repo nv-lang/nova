@@ -36,6 +36,10 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+/* Plan 115 D214 [M-115-ffi-build-pipeline]: user shim header self-includes
+ * nova_rt для access к nova_int / nova_ptr / nova_str typedefs. Path
+ * относительный к cg_include (passed via clang -I). */
+#include "nova_rt/nova_rt.h"
 
 /* SQLite-compatible return codes (subset). */
 #define MINI_SQLITE_OK   0

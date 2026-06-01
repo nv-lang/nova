@@ -3342,6 +3342,9 @@ fn cmd_build(
     test_runner::install_cancel_handler();
 
     // compile .c → .exe
+    // Plan 115 D214 [M-115-ffi-build-pipeline]: nova-cli build не подхватывает
+    // [ffi] (это test-runner job; standalone build пока без manifest-driven
+    // FFI). Followup: extend nova-cli build чтобы также резолвить manifest.
     let build_opts = test_runner::BuildOpts {
         c_file: &c_file,
         exe_file: &exe_file,
@@ -3351,6 +3354,7 @@ fn cmd_build(
         mode,
         libuv: libuv.as_ref(),
         gc_kind: test_runner::GcKind::default(),
+        ffi: None,
     };
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");

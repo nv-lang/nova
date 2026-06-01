@@ -17,20 +17,36 @@ Plan 115 V1 ships:
 - `ptr` opaque pointer type ✓
 - Tuple-by-value FFI returns ✓
 - User-level `external fn` declarations ✓ (D82 amend)
-- Record-form typed handles ✓
+- Tuple newtype handles `type X(ptr)` ✓ ([M-115-newtype-constructor] closed)
+- `[ffi]` build pipeline в nova.toml ✓ ([M-115-ffi-build-pipeline] closed)
 
-Pending followups before real-library examples build:
-- `[M-115-ffi-build-pipeline]` — `nova build --c-shim` CLI for linking
-  user-provided C shim files. Currently shims must live in
-  `compiler-codegen/nova_rt/*.h`.
+## How user FFI works
+
+Plan 115 V1 ships **manifest-driven FFI build pipeline** через `[ffi]`
+секцию в `nova.toml`:
+
+```toml
+[ffi]
+c_shims      = ["src/sqlite3_shim.c", "src/libpng_shim.c"]
+include_dirs = ["third_party/sqlite3/", "third_party/libpng/"]
+libs         = ["sqlite3", "png"]
+```
+
+Paths относительные к `nova.toml`. Test-runner + future `nova build`
+автоматически:
+- **`.h` файлы** — force-included через clang `-include` (или MSVC `/FI`)
+- **`.c` файлы** — добавляются как compilation units
+- **`include_dirs`** → `-I<path>`
+- **`libs`** → `-l<name>` (или `<name>.lib` для MSVC)
+
+Пример в работе: `nova_tests/nova.toml` объявляет
+`c_shims = ["../examples/ffi/sqlite_mini_ffi.h"]` — Nova test runner
+автоматически force-включает этот header в каждый тестовый TU, что даёт
+доступ к `nova_fn_mini_sqlite_*` функциям из любой test fixture.
+
+Pending followups:
 - `[M-115-bindgen-tool]` — `nova bindgen header.h` auto-generated
-  bindings.
-
-For `sqlite_mini.nv`: the shim header in `docs/ffi-cookbook.md`
-§«Example 1» can be dropped into `compiler-codegen/nova_rt/` and the
-example compiles + links if libsqlite3 is on the system. This is the
-"manual integration" path — `[M-115-ffi-build-pipeline]` will automate
-it for user code.
+  bindings (major tooling, separate plan).
 
 ## See also
 
