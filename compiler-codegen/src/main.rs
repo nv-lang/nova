@@ -303,6 +303,11 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
+    // Plan 123.1 (D217): field caching (interp-path).
+    {
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        nova_codegen::field_cache::cache_module(&mut module, &cfg);
+    }
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(
@@ -356,6 +361,12 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     nova_codegen::types::infer_effects(&mut module);
     if lint {
         run_lints(&module, &src, &path.to_string_lossy());
+    }
+    // Plan 123.1 (D217): method-local receiver field caching. Pass —
+    // pure AST→AST трансформация, semantic equivalence guaranteed.
+    {
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        nova_codegen::field_cache::cache_module(&mut module, &cfg);
     }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
@@ -411,6 +422,11 @@ fn cmd_test(path: &PathBuf) -> Result<()> {
     }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
+    // Plan 123.1 (D217): field caching (test-interp-path).
+    {
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        nova_codegen::field_cache::cache_module(&mut module, &cfg);
+    }
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(

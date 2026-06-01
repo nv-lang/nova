@@ -11,6 +11,7 @@ pub mod desugar;
 pub mod diag;
 pub mod doc;
 pub mod effect_surface;
+pub mod field_cache;
 pub mod git_cache;
 pub mod imports;
 pub mod interp;

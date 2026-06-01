@@ -2337,6 +2337,18 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
         let _t = crate::perf_timer::PerfTimer::new("callnorm");
         crate::callnorm::normalize_module(&mut module);
     }
+    // Plan 123.1 (D217): method-local receiver field caching. AST-pass
+    // вставляет prefix-let `let _at_<F> = @<F>` для ro-fields accessed
+    // ≥ threshold times — устраняет redundant `self->X` derefs в .c
+    // output. Pass — pure AST→AST трансформация, semantic equivalence
+    // guaranteed (D217 §1). Escape hatch — env var NOVA_FIELD_CACHE=0
+    // или CLI flag (см. cmd_test_all). Threshold default 2, max 8
+    // per fn.
+    {
+        let _t = crate::perf_timer::PerfTimer::new("field-cache");
+        let cfg = crate::field_cache::FieldCacheConfig::from_env_or_default();
+        crate::field_cache::cache_module(&mut module, &cfg);
+    }
 
     let (c_code, warnings) = {
         let _t = crate::perf_timer::PerfTimer::new("codegen");
