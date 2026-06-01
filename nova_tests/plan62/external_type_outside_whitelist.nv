@@ -25,11 +25,15 @@
 
 module plan62.external_type_outside_whitelist
 
-// Trailing test/fn omitted: parser body-detect heuristic иначе treat'ит
-// `fn ...` после `external type X` как newtype body и fail'ит parser
-// stage (E_EXTERNAL_TYPE_BODY) до того, как type-checker эмитит
-// E_EXTERNAL_TYPE_RETRACTED. После V2 hard retract — единственный
-// ожидаемый сценарий: parser принимает declaration → type-checker emit'ит
-// retract error. EOF после декларации обеспечивает type-checker reach.
-
 external type FooBar
+
+// Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic] (closed
+// 2026-06-01): parser теперь корректно различает «next module decl» vs
+// «newtype body» — добавлен trailing test block для проверки что
+// type-checker reach'ает декларацию и emit'ит E_EXTERNAL_TYPE_RETRACTED
+// (вместо ложного parser body error на следующий fn).
+fn dummy() -> int => 1
+
+test "should never reach this — type-check must fail with E_EXTERNAL_TYPE_RETRACTED" {
+    ro _ = dummy()
+}

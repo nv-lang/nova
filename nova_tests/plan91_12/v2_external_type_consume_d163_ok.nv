@@ -10,13 +10,15 @@
 
 module plan91_12.v2_external_type_consume_d163_ok
 
-// Smoke test: тип компилируется (parser + type-checker accept). External
-// type декларация в конце файла — parser body-detect heuristic иначе
-// treat'ит следующее объявление как newtype body.
+external type FileResource consume
+
+// Smoke test: тип компилируется (parser + type-checker accept).
+// Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic] (closed
+// 2026-06-01): parser теперь корректно различает «next module decl» vs
+// «newtype body» — fn/test/const после external type на новой строке
+// не treat'ится больше как ложный newtype body.
 fn dummy() -> int => 42
 
 test "D163 FFI consume-type compiles" {
     assert(dummy() == 42)
 }
-
-external type FileResource consume
