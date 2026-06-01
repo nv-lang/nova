@@ -1,0 +1,35 @@
+// Plan 118 Ф.1 T1.1 — parse `*T` / `*ro T` / `*mut T` / `*unsafe T` typed
+// pointer family в TYPE positions (declarations).
+//
+// Coverage:
+//   - `*T` (default ro per D216 §1)
+//   - `*ro T` (explicit ro)
+//   - `*mut T` (mutable)
+//   - `*unsafe T` (after arithmetic)
+//
+// V1 scope: parse + type-check declarations only. Pointer ops (deref,
+// `&value`, auto-deref) — landing в Ф.2-Ф.4 unsafe model.
+
+module plan118.t1_1_parse_pointer_types_ok
+
+type Acc {
+    ro id i64
+    ro balance i64
+}
+
+// All 4 modifier variants в external fn signatures.
+external fn p118_take_ptr_default(p *Acc) -> i64
+external fn p118_take_ptr_ro(p *ro Acc) -> i64
+external fn p118_take_ptr_mut(p *mut Acc) -> i64
+external fn p118_take_ptr_unsafe(p *unsafe Acc) -> i64
+
+external fn p118_return_ptr_default() -> *Acc
+external fn p118_return_ptr_ro() -> *ro Acc
+external fn p118_return_ptr_mut() -> *mut Acc
+external fn p118_return_ptr_unsafe() -> *unsafe Acc
+
+test "typed pointer family parses + type-checks в external fn signatures" {
+    // Declarations alone exercise parser + type-checker. Runtime ops
+    // (& / *) — landing в Ф.2-Ф.4 unsafe model.
+    assert(1 == 1)
+}

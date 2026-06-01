@@ -1,0 +1,30 @@
+// Plan 118 Ф.1 T1.6 — typed pointer `*T` valid в record field position.
+// (D216 §1, §18 FFI handle allocation contract).
+//
+// Tuple newtype `type Handle(*T)` — canonical для opaque FFI handles
+// (zero-overhead, single-pointer ABI). Record form `type Handle { ro p
+// *T, ro extra State }` — для handles с extra state.
+
+module plan118.t1_6_record_field_pointer_ok
+
+type Buffer {
+    ro length i64
+}
+
+// Tuple newtype form — canonical (stack, single pointer ABI per D216 §18).
+type BufferHandle(*Buffer)
+
+// Record form — heap-allocated, для extra state attached к handle.
+type BufferSession {
+    ro handle BufferHandle
+    ro opened_at i64
+    ro byte_count i64
+}
+
+// External fn принимает handle и возвращает по tuple-newtype convention.
+external fn p118_buffer_open(size i64) -> BufferHandle
+external fn p118_buffer_close(h BufferHandle) -> i64
+
+test "tuple newtype + record form pointers parse + type-check" {
+    assert(1 == 1)
+}
