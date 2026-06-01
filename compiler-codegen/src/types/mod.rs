@@ -27,6 +27,16 @@ pub enum Ty {
     /// Arithmetic banned (E_PTR_ARITHMETIC_BANNED); member access banned
     /// (E_PTR_NO_MEMBER); equality + casts (as u64/i64/int) allowed.
     Ptr,
+    /// Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` / `*mut T`
+    /// / `*unsafe T`. Distinct от `Ty::Ptr` (opaque Plan 115 D214) на
+    /// type-check уровне — typed pointer carries pointee type + modifier.
+    ///
+    /// Auto-deref `p.field` / `p.method()` / `p.field = v` (only в unsafe
+    /// context — D216 §5) использует inner Ty для member resolution.
+    /// Binding-mut rule (D216 §2): `mut p *T` infers modifier=Mut. ABI:
+    /// same as `Ty::Ptr` (`void*` / `T*` в codegen, см. emit_c.rs
+    /// type_ref_to_c для TypeRef::Pointer).
+    TypedPtr(crate::ast::PointerModifier, Box<Ty>),
     /// Р›СЋР±РѕР№ С‚РёРї / РЅРµРёР·РІРµСЃС‚РЅС‹Р№ (РґР»СЏ bootstrap'Р° вЂ” fallback).
     Any,
     /// РРјРµРЅРѕРІР°РЅРЅС‹Р№ С‚РёРї (record, sum, effect, newtype, alias).
@@ -7809,12 +7819,10 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
         TypeRef::Unit(_) => Ty::Unit,
         // D176 (Plan 108): readonly T — same Ty as inner (transparent).
         TypeRef::Readonly(inner, _) => ty_of_ref(inner),
-        // Plan 118 D216 §1 (Ф.1 scaffolding): typed pointer `*T` family →
-        // Ty::Ptr (opaque ptr from D214). Modifier + inner type info
-        // tracked в TypeRef but не propagated в Ty yet. Ф.1.5-1.7 followup
-        // добавит Ty::TypedPtr proper variant + binding mut rule + chain
-        // order enforcement в type-checker.
-        TypeRef::Pointer(_, _, _) => Ty::Ptr,
+        // Plan 118 D216 §1: typed pointer `*T` family → Ty::TypedPtr.
+        // Modifier (Ro/Mut/Unsafe) + inner Ty propagated; используется
+        // в auto-deref resolution (Ф.4) + binding mut rule (D216 §2).
+        TypeRef::Pointer(modif, inner, _) => Ty::TypedPtr(*modif, Box::new(ty_of_ref(inner))),
     }
 }
 
