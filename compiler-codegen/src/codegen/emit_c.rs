@@ -18941,7 +18941,8 @@ _cp++; \
                         // Plan 90.1 (D141 amendment): append/insert (renamed from
                         // extend_from/insert_from); copy_from/copy_within/fill/reserve/truncate.
                         // Plan 91.7 (D181): возвращают `@` для fluent chain.
-                        "copy_from" | "copy_within" | "fill" |
+                        // append_zero(n): extend by N zero-init elements (memset).
+                        "copy_from" | "copy_within" | "fill" | "append_zero" |
                         "append" | "insert" | "reserve" | "truncate" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c.clone()];
@@ -27229,7 +27230,7 @@ _cp++; \
                             // fluent), чтобы поддерживать chain: arr.push(1).push(2).
                             // Type-check: return type = receiver type (NovaArray_T*).
                             "push" |
-                            "copy_from" | "copy_within" | "fill" |
+                            "copy_from" | "copy_within" | "fill" | "append_zero" |
                             "append" | "insert" | "reserve" | "truncate"
                                 => return obj_ty.clone(),
                             // Plan 90: compare → int (-1/0/1).

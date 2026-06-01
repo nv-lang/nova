@@ -11751,7 +11751,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     .unwrap_or(false);
                                 let builtin_mut_method = matches!(
                                     method.as_str(),
-                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
                                     | "clear" | "truncate" | "reserve" | "swap"
                                     | "sort" | "sort_by" | "set" | "extend" | "extend_from"
                                     | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
@@ -11791,7 +11791,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     .unwrap_or(false);
                                 let builtin_mut_method = matches!(
                                     method.as_str(),
-                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
                                     | "clear" | "truncate" | "reserve" | "swap"
                                     | "sort" | "sort_by" | "set" | "extend" | "extend_from"
                                     | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
