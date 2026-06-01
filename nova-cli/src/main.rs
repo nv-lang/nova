@@ -1126,8 +1126,17 @@ impl Drop for TmpDirGuard<'_> {
 // ---------- subcommand implementations ----------
 
 fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<()> {
-    nova_codegen::manifest::check_module_path(path, &module.name)
-        .map_err(|msg| anyhow!("{}", msg))
+    use nova_codegen::manifest::ModulePathCheck;
+    // Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning для rev-1
+    // legacy declarations вместо silent acceptance.
+    match nova_codegen::manifest::check_module_path(path, &module.name) {
+        Ok(ModulePathCheck::Rev3) => Ok(()),
+        Ok(ModulePathCheck::Rev1Deprecated(msg)) => {
+            eprintln!("warning: {}", msg);
+            Ok(())
+        }
+        Err(msg) => Err(anyhow!("{}", msg)),
+    }
 }
 
 // Plan 35 R31: resolve_imports_inline extracted в nova_codegen::imports

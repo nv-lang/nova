@@ -964,6 +964,8 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_consume_scopes_in_block(body, errors);
             }
             Stmt::Let(d) => self.check_consume_scopes_in_expr(&d.value, errors),
+            // Plan 114.4 Ф.2: scope-local const — walk value for nested ConsumeScope.
+            Stmt::Const(d) => self.check_consume_scopes_in_expr(&d.value, errors),
             Stmt::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
             Stmt::Assign { target, value, .. } => {
                 self.check_consume_scopes_in_expr(target, errors);
