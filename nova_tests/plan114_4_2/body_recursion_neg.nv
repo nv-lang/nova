@@ -1,0 +1,7 @@
+// Plan 114.4.2 NEG: self-recursion в const fn → E_CONST_FN_RECURSION.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_RECURSION
+
+module plan114_4_2.body_recursion_neg
+
+fn fact(const n int) -> const int => fact(n)

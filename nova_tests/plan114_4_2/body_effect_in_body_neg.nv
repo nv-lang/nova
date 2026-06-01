@@ -1,0 +1,9 @@
+// Plan 114.4.2 NEG: вызов runtime fn в body → E_CONST_FN_EFFECT_IN_BODY.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EFFECT_IN_BODY
+
+module plan114_4_2.body_effect_in_body_neg
+
+fn make(n int) -> int => n + 1
+
+fn bad(const a int) -> const int => make(a)

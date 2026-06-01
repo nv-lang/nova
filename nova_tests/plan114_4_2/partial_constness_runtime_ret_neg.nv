@@ -1,0 +1,7 @@
+// Plan 114.4.2 NEG: const params + runtime return → E_CONST_FN_PARTIAL_CONSTNESS.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_PARTIAL_CONSTNESS
+
+module plan114_4_2.partial_constness_runtime_ret_neg
+
+fn ret_runtime(const a int) -> int => a + 1

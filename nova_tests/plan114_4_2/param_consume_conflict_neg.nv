@@ -1,0 +1,7 @@
+// Plan 114.4.2 NEG: const + consume на параметре → E_CONST_PARAM_MOD_CONFLICT.
+
+// EXPECT_COMPILE_ERROR E_CONST_PARAM_MOD_CONFLICT
+
+module plan114_4_2.param_consume_conflict_neg
+
+fn bad(const consume a int) -> const int => a

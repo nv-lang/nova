@@ -499,7 +499,6 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         let mut const_fns: Vec<&FnDecl> = Vec::new();
         for item in &module.items {
             if let Item::Fn(fd) = item {
-                // const fn = return_is_const ИЛИ any param const.
                 let any_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
                 if any_const {
                     const_fn_names.insert(fd.name.clone());
@@ -966,9 +965,12 @@ fn check_const_fn_block(
 ) -> Result<(), Diagnostic> {
     use crate::ast::Stmt;
     let mut locals = local_consts.clone();
+    // Block has stmts (non-final) + optional trailing expr (final value).
+    // Если trailing нет — последний stmt из stmts становится final.
     let n = block.stmts.len();
+    let has_trailing = block.trailing.is_some();
     for (idx, st) in block.stmts.iter().enumerate() {
-        let is_last = idx == n - 1;
+        let is_last = !has_trailing && idx == n - 1;
         match st {
             Stmt::Const(cd) => {
                 // Validate RHS as const-fn expression (allowed const fn calls).
@@ -1074,6 +1076,12 @@ fn check_const_fn_block(
                 ));
             }
         }
+    }
+    // Trailing expression — финальное значение блока.
+    if let Some(trail) = &block.trailing {
+        check_const_fn_expr(
+            trail, param_consts, const_fn_names, &locals, current_fn, call_targets,
+        )?;
     }
     Ok(())
 }
