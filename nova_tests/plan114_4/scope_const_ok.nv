@@ -1,6 +1,6 @@
 // Plan 114.4 Ф.2: scope-local `const N = …` inside fn body.
 
-module nova_tests.plan114_4.scope_const_ok
+module plan114_4.scope_const_ok
 
 test "scope-local const literal" {
     const N = 16

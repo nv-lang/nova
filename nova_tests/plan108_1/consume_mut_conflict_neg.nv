@@ -3,7 +3,7 @@
 
 // EXPECT_COMPILE_ERROR consume
 
-module nova_tests.plan108_1.consume_mut_conflict_neg
+module plan108_1.consume_mut_conflict_neg
 
 fn bad(consume mut sb StringBuilder) -> str => sb.as_str()
 

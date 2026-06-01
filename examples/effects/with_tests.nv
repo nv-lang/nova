@@ -1,6 +1,6 @@
 // with_tests.nv — тесты прямо в файле.
 
-module with_tests
+module effects.with_tests
 
 fn double(x int) -> int => x * 2
 

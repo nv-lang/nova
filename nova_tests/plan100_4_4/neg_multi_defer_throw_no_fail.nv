@@ -3,7 +3,7 @@
 // Plan 100.4.4 (D161): multi-defer composition requires fn-sig declare Fail[E]
 // if any defer body throws. D158 enforcement carries through D161 wrap.
 
-module nova_tests.plan100_4_4.neg_multi_defer_throw_no_fail
+module plan100_4_4.neg_multi_defer_throw_no_fail
 
 type Err { msg str }
 

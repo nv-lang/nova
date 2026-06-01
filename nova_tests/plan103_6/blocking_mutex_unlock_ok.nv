@@ -4,7 +4,7 @@
 // EXPECT_TIMEOUT_MS 60000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_6.blocking_mutex_unlock_ok
+module plan103_6.blocking_mutex_unlock_ok
 
 #blocking fn _blk_mutex_unlock(m mut Mutex) {
     m.unlock()

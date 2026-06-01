@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @filter.
 
-module nova_tests.plan101_1.vec_filter
+module plan101_1.vec_filter
 
 fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
     mut out []T = []

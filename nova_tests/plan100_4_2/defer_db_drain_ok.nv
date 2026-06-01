@@ -1,6 +1,6 @@
 // Plan 100.4.2 (D159): graceful DB-like drain через defer + Time-suspend.
 
-module nova_tests.plan100_4_2.defer_db_drain_ok
+module plan100_4_2.defer_db_drain_ok
 
 fn drain(_timeout_ms int) Time -> () {
     Time.sleep(10)

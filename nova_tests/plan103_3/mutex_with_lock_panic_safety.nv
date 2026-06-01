@@ -5,7 +5,7 @@
 // panic() is a hard crash that bypasses Fail handlers (goes to fail-frame directly).
 // This test uses throw to demonstrate the error-path unlock pattern.
 
-module nova_tests.plan103_3.mutex_with_lock_panic_safety
+module plan103_3.mutex_with_lock_panic_safety
 
 test "mutex released via Fail handler on throw" {
     mut mu = Mutex.new()

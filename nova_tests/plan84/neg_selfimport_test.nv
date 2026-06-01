@@ -2,7 +2,7 @@
 // в модуль самого импортирующего файла (здесь — self-import). Тот же чек
 // ловит и импорт peer-файла своего folder-модуля.
 // EXPECT_COMPILE_ERROR импортирующего файла
-module nova_tests.plan84.neg_selfimport_test
+module plan84.neg_selfimport_test
 
 import ./neg_selfimport_test.{nope}
 

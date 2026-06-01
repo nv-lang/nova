@@ -11,7 +11,7 @@
 //     и не возвращается мгновенно).
 //   - Time.sleep корректно работает несколько раз подряд.
 
-module nova_tests.concurrency.mn_runtime_main_sleep_after_init
+module concurrency.mn_runtime_main_sleep_after_init
 
 test "Time.sleep on main thread after runtime.init(2)" {
     runtime.init(2)

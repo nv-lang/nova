@@ -1,7 +1,7 @@
 // Plan 100.8 D6: bench — check_consume pass standalone overhead.
 // Measures: O(N) `check_consume` over consume-typed bindings.
 // Baseline: < 5% overhead vs nova check without consume analysis.
-module bench.plan100
+module plan100.check_consume_pass
 
 // Consume-typed resource — every instance must be consumed.
 type Handle consume { id int; name str }

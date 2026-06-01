@@ -3,7 +3,7 @@
 // Plan 73 (D131): `mut` и `consume` на одном receiver — взаимо-
 // исключающие квалификаторы. Парсер должен отвергнуть `mut consume`.
 
-module nova_tests.plan73.consume_err_mut_conflict
+module plan73.consume_err_mut_conflict
 
 type Gadget { x int }
 

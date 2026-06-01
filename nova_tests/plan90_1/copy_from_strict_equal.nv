@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: copy_from strict equal-length + memmove.
 // D141 amend: src.len != dst.len → panic (breaking change from silent truncation).
 
-module nova_tests.plan90_1.copy_from_strict_equal
+module plan90_1.copy_from_strict_equal
 
 test "copy_from — equal length []u8" {
     mut dst []u8 = [0, 0, 0]

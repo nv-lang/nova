@@ -5,7 +5,7 @@
 // Это canonical use-case из D142, который разблокирует stdlib Plan 18
 // типа Process.spawn -> (Stdin, Stdout, Stderr) etc.
 
-module nova_tests.plan97.pos_protocol_lit_three_caps
+module plan97.pos_protocol_lit_three_caps
 
 
 export type Reader protocol { read() -> int }

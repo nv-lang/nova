@@ -5,7 +5,7 @@
 // `@` не идентификатор → parse error. Это базовая защита: смешение
 // static-маркера (точка) и instance-маркера (`@`) недопустимо.
 
-module nova_tests.plan97.neg_dot_at_mixed
+module plan97.neg_dot_at_mixed
 
 
 type Bad protocol {

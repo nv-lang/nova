@@ -11,7 +11,7 @@
 //! - `#doc(inline)` / `#doc(no_inline)` / `#doc(summary=...)` /
 //!   `#doc(section=...)` / `#doc(test_handlers=...)`
 
-module nova_tests.doc.fixtures.real_attrs.sample
+module real_attrs.sample
 
 /// Старая функция сложения.
 #deprecated(since = "0.4.0", note = "use [add] instead")

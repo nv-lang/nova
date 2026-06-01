@@ -7,7 +7,7 @@
 // type-decl без `consume` qualifier. Compiler enforces double-marker:
 // если есть consume-поле, type сам должен быть consume.
 
-module nova_tests.plan100_1.consume_err_type_marker_missing
+module plan100_1.consume_err_type_marker_missing
 
 type Transaction consume {
     id int,

@@ -4,7 +4,7 @@
 // Mutation `let mut counter` через метод литерала должна быть visible
 // при последующих вызовах.
 
-module nova_tests.plan97.pos_protocol_lit_closure_capture
+module plan97.pos_protocol_lit_closure_capture
 
 
 export type Incrementer protocol {

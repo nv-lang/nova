@@ -1,7 +1,7 @@
 // Plan 100.4.1 (D158): explicit `throw` expression в defer body —
 // разрешён если enclosing fn-sig declares Fail[E].
 
-module nova_tests.plan100_4_1.defer_fail_ok_with_explicit_throw
+module plan100_4_1.defer_fail_ok_with_explicit_throw
 
 type Err { msg str }
 

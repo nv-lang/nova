@@ -7,7 +7,7 @@
 // Note: try_start() (Nova-body) is the high-level API; try_start_won() +
 // make_guard() are the external fns that power it.
 
-module nova_tests.concurrency.sync_once_guard
+module concurrency.sync_once_guard
 
 test "OnceGuard: single caller commits" {
     mut once = Once.new()

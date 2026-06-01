@@ -1,5 +1,5 @@
 // Plan 57.G.5 smoke test для bench.metric custom metrics.
-module bench.micro.metric_smoke
+module micro.custom_metric
 
 bench "metric_smoke_emits" {
     measure {

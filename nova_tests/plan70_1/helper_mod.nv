@@ -3,7 +3,7 @@
 // Не сам test (no test/main блоков) — only export'ы. Подгружается через
 // import в f1_alias_call_pos.nv / f3_whole_module_pos.nv.
 
-module nova_tests.plan70_1.helper_mod
+module plan70_1.helper_mod
 
 export fn add_one(x int) -> int => x + 1
 

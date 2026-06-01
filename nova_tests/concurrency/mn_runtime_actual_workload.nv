@@ -28,7 +28,7 @@
 //       `TestGoroutineParallelism`), не упрощение. Early-break держит
 //       стоимость теста на уровне исходного (обычно 1 batch).
 
-module nova_tests.concurrency.mn_runtime_actual_workload
+module concurrency.mn_runtime_actual_workload
 
 test "M:N: 16 fibers выполняются на worker-пуле + распределяются" {
     runtime.init(4)

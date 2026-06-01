@@ -1,4 +1,4 @@
-module nova_tests.plan70_5.f1_uint_basic_pos
+module plan70_5.f1_uint_basic_pos
 
 // Plan 70.5 Ф.1+Ф.4: uint = alias u64 — declaration, cast, and max value.
 

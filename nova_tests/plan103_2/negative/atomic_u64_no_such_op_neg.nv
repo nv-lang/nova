@@ -6,7 +6,7 @@
 // included. Codegen emits a member access of `rotate_left` on `Nova_AtomicU64`
 // → clang error: "no member named 'rotate_left' in 'Nova_AtomicU64'".
 
-module nova_tests.plan103_2.negative.atomic_u64_no_such_op_neg
+module negative.atomic_u64_no_such_op_neg
 
 fn bad(a AtomicU64) => a.rotate_left()
 

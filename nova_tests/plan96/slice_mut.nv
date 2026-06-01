@@ -1,7 +1,7 @@
 // Plan 96 Ф.4/Ф.5 — позитив: mut-view пишет в shared backing.
 // D-mut-rule: mut-view от mut-источника; mut-write видна в parent.
 
-module nova_tests.plan96.slice_mut
+module plan96.slice_mut
 
 test "mut view write propagates to parent" {
     mut arr []int = [10, 20, 30, 40, 50]

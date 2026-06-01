@@ -3,7 +3,7 @@
 // internal sub-module — разрешено (importing module starts with
 // `folder_internal`, который parent of internal).
 
-module modules.folder_internal
+module folder_internal.public
 
 import nova_tests.modules.folder_internal.internal.{make_token}
 

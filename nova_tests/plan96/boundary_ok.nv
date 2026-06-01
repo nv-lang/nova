@@ -1,7 +1,7 @@
 // Plan 96 Ф.1 — позитив: индексация в границах не падает.
 // arr[0] и arr[len-1] — крайние валидные позиции.
 
-module nova_tests.plan96.boundary_ok
+module plan96.boundary_ok
 
 test "arr[0] and arr[len-1] don't panic" {
     mut arr = [10, 20, 30, 40, 50]

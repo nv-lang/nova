@@ -5,7 +5,7 @@
 // Это important для downstream Plan 103.2 где ordering передаётся в
 // atomic-операции как runtime argument.
 
-module nova_tests.plan103_1.ordering_passed_as_param
+module plan103_1.ordering_passed_as_param
 
 /// Вызывает fence с переданным ordering — runtime-value path.
 fn use_ordering(ord MemOrdering) {

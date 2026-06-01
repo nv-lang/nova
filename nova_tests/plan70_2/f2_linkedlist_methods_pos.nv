@@ -9,7 +9,7 @@
 // generic_type_methods lookup + base_method_name construction →
 // emits `Nova_LL____nova_int_method_len(l)` correctly.
 
-module nova_tests.plan70_2.f2_linkedlist_methods_pos
+module plan70_2.f2_linkedlist_methods_pos
 
 type LinkedList[T]
     | Nil

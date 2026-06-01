@@ -4,7 +4,7 @@
 // type. `Box[T]` declares one parameter — `Box[int, str].new(...)` is
 // invalid.
 
-module nova_tests.plan79.arity_turbofish
+module plan79.arity_turbofish
 
 type Box[T] { value T }
 

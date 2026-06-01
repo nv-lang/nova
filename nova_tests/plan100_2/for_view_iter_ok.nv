@@ -4,7 +4,7 @@
 // obligation on loop variable tx. vec stays Live (not consumed by view loop).
 // Demonstrates backward-compat: view-mode iteration unchanged from Plan 100.1.
 
-module nova_tests.plan100_2.for_view_iter_ok
+module plan100_2.for_view_iter_ok
 
 type Transaction consume {
     id int,

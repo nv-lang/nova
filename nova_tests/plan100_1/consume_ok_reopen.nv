@@ -4,7 +4,7 @@
 // на exit'е mut-метода consume-поля обязаны быть Live (invariant).
 // Compiler tracks: close → Consumed → rebind → Live. ✅
 
-module nova_tests.plan100_1.consume_ok_reopen
+module plan100_1.consume_ok_reopen
 
 type File consume {
     fd int,

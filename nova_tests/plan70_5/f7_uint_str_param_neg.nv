@@ -5,7 +5,7 @@
 //
 // Параллель Rust: `fn f(x: &str) {}; f(u64::MAX)` — compile error.
 
-module nova_tests.plan70_5.f7_uint_str_param_neg
+module plan70_5.f7_uint_str_param_neg
 
 fn format_str(s str) -> str { s }
 

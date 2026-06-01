@@ -5,7 +5,7 @@
 //   - тип `throw` / `panic` выражений (совместим с любым типом);
 //   - bottom-тип ⊥ — подтип любого `T`.
 
-module nova_tests.plan76.never_positive
+module plan76.never_positive
 
 // `never` как return type функции — D25/D65 non-returning fn.
 fn fail_always(msg str) -> never {

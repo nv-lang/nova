@@ -6,7 +6,7 @@
 //
 // Post-fix: "f32" → "NovaArray_nova_f32*" distinct struct with float* data.
 
-module nova_tests.plan70_4.f1_array_f32_vs_f64_pos
+module plan70_4.f1_array_f32_vs_f64_pos
 
 test "[]f64 stores f64 values" {
     ro vals []f64 = [1.0, 2.5, 3.5]

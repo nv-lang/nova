@@ -1,7 +1,7 @@
 // Plan 108.1 (D176 amend): `consume` параметр неявно подразумевает `mut`
 // (ownership transfer → callee владеет → может мутировать).
 
-module nova_tests.plan108_1.consume_implies_mut_ok
+module plan108_1.consume_implies_mut_ok
 
 fn build_str(consume sb StringBuilder) -> str {
     sb.append("!")        // ✓ consume → mut неявный

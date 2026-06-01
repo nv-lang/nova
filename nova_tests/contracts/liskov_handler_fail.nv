@@ -3,7 +3,7 @@
 // Handler возвращает константу 5, но ensures требует result == 10.
 // Trivial backend: 5 == 10 → false → Liskov-нарушение.
 
-module nova_tests.contracts.liskov_handler_fail
+module contracts.liskov_handler_fail
 
 type ConstEffect effect {
     get_ten() -> int

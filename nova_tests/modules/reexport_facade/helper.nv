@@ -1,6 +1,6 @@
 // Plan 42.09: второй peer (≥2 для folder-module).
 
-module modules.reexport_facade
+module reexport_facade.helper
 
 export fn helper() -> int =>
     2

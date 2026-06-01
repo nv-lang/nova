@@ -3,7 +3,7 @@
 
 // EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
 
-module nova_tests.plan108_1.nomut_hashmap_insert_neg
+module plan108_1.nomut_hashmap_insert_neg
 
 fn put(m HashMap[str, int], k str, v int) -> int {
     m.insert(k, v)             // ✗ E_PARAM_NOT_MUT — нет `mut`

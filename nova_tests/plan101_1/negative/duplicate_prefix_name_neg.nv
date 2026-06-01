@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR
 
-module nova_tests.plan101_1.negative.duplicate_prefix_name_neg
+module negative.duplicate_prefix_name_neg
 
 fn[T, T] T @bad() -> T => @
 

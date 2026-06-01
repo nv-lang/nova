@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.uint_new_test
+module plan91_8a_2.uint_new_test
 
 // Plan 91.7 followup: uint.new() canonical default (D180).
 // uint = Plan 70.5 alias на u64.

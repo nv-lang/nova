@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_CONST_NOT_CONSTEXPR
 
-module nova_tests.plan114_4.const_member_neg
+module plan114_4.const_member_neg
 
 type Point { x f64, y f64 }
 

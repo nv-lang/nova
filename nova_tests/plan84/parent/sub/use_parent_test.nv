@@ -1,6 +1,6 @@
 // Plan 84 Ф.5 POSITIVE — относительный импорт родителя `../shared`.
 // rel_root = директория файла, поднятая на 1 уровень (../).
-module nova_tests.plan84.parent.sub.use_parent_test
+module sub.use_parent_test
 
 import ../shared.{base}
 

@@ -20,7 +20,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.litmus_iriw_seqcst_forbids
+module plan103_8.litmus_iriw_seqcst_forbids
 
 test "IRIW SeqCst: forbidden observation (1,0)/(1,0) never occurs over 1000 iterations" {
     ro n_iters   = 20

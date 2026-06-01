@@ -19,7 +19,7 @@
 //            + errdefer { tx.rollback() }
 //            + tx.commit()?
 
-module nova_tests.plan100_8.diag_d133_not_consumed_format
+module plan100_8.diag_d133_not_consumed_format
 
 type Transaction consume {
     id int,

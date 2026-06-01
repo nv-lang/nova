@@ -1,5 +1,5 @@
 // Plan 57.B.5 smoke: group/case sub-benchmarks DSL.
-module bench.micro
+module micro.groups
 
 bench "math" {
     group "int" {

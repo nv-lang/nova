@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a.protocol_renames_test
+module plan91_8a.protocol_renames_test
 
 // Plan 91.8a (D183): protocol renames — Iter→Iterable, Display→Printable,
 // Equatable.eq→equals, Comparable.cmp→compare -> int.

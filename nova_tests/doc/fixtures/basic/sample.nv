@@ -5,7 +5,7 @@
 //!
 //! #stable
 
-module nova_tests.doc.fixtures.basic.sample
+module basic.sample
 
 /// Возвращает абсолютное значение `x`.
 ///

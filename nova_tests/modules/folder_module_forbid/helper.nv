@@ -1,6 +1,6 @@
 // Plan 42.10: второй peer (≥2 для folder-module).
 
-module modules.folder_module_forbid
+module folder_module_forbid.helper
 
 export fn double(x int) -> int =>
     x * 2

@@ -3,7 +3,7 @@
 
 // EXPECT_COMPILE_ERROR E_KW_REMOVED_LET
 
-module nova_tests.plan114.let_removed_neg
+module plan114.let_removed_neg
 
 test "let X retracted" {
     let x = 5

@@ -3,7 +3,7 @@
 // Проверяет что runtime.yield() позволяет другим fiber'ам запустить
 // в worker контексте — cooperative multitasking в рамках M:N runtime.
 
-module nova_tests.concurrency.mn_runtime_yield
+module concurrency.mn_runtime_yield
 
 // --- Базовый: yield позволяет другому fiber'у прогресс ---
 // Два fiber'а по очереди increment'ят счётчик через yield.

@@ -9,7 +9,7 @@
 //
 // Goal: < ~50ns per consume scope entry+exit cycle on хорошей машине.
 
-module bench.plan110.shield_overhead
+module plan110.shield_overhead
 
 type Cheap {
     ro id int

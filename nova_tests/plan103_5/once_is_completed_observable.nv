@@ -1,6 +1,6 @@
 // Plan 103.5 — Once.is_completed(): observability transitions.
 
-module nova_tests.plan103_5.once_is_completed_observable
+module plan103_5.once_is_completed_observable
 
 test "Once.is_completed: false initially, true after call_once" {
     mut once = Once.new()

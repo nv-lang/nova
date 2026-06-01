@@ -2,7 +2,7 @@
 // Lint должен срабатывать только когда вызывается grow-метод на parent
 // после создания view из него. Read-only view usage = no warning.
 
-module nova_tests.plan90_1.lint_view_no_grow_no_warn
+module plan90_1.lint_view_no_grow_no_warn
 
 test "slice-view without append — no lint" {
     mut parent []int = [10, 20, 30, 40, 50]

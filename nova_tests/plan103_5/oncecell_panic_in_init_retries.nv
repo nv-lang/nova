@@ -3,7 +3,7 @@
 // Unlike Once.call_once (which poisons), OnceCell.get_or_init allows retry
 // if the init closure panics.
 
-module nova_tests.plan103_5.oncecell_panic_in_init_retries
+module plan103_5.oncecell_panic_in_init_retries
 
 test "OnceCell.get_or_init: panic in init keeps cell empty; retry succeeds" {
     mut cell = OnceCell[int].new()

@@ -2,7 +2,7 @@
 // (а не C-трамплины). Проверяем через `match @`-эквиваленты и реальные
 // контексты использования: переменные, элементы массива, generic-функция.
 
-module nova_tests.plan95.option_predicates_migrated
+module plan95.option_predicates_migrated
 
 test "Option[int]: is_some/is_none — базовый паритет с match" {
     ro a Option[int] = Some(42)

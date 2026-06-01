@@ -2,7 +2,7 @@
 // literal and a constructor call ARE values; only the bare type name is
 // the misuse Ф.4 rejects. Guards against false positives.
 
-module nova_tests.plan79.type_as_value_pos
+module plan79.type_as_value_pos
 
 type Widget { w int }
 

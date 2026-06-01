@@ -1,7 +1,7 @@
 // Plan 101.4 — positive: comma-separated `use A, B` форма
 // (D145 spec parallel с line-per-use).
 
-module nova_tests.plan101_4.compose_comma_separated
+module plan101_4.compose_comma_separated
 
 
 type ReaderC protocol {

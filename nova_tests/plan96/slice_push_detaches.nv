@@ -4,7 +4,7 @@
 // чужой backing): у нас `cap == len` гарантирует, что push всегда
 // реаллоцирует и view становится independent.
 
-module nova_tests.plan96.slice_push_detaches
+module plan96.slice_push_detaches
 
 test "push on view detaches from parent backing" {
     mut parent []int = [1, 2, 3, 4, 5]

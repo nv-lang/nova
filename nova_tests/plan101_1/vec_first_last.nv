@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @first/last → Option[T].
 
-module nova_tests.plan101_1.vec_first_last
+module plan101_1.vec_first_last
 
 fn[T] []T @my_first() -> Option[T] =>
     if @len() == 0 { None } else { Some(@[0]) }

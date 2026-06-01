@@ -6,7 +6,7 @@
 //
 // Документирует поведение codegen для неизвестных type-path констант.
 
-module nova_tests.plan70_5.f8_uint_undefined_const_neg
+module plan70_5.f8_uint_undefined_const_neg
 
 // EXPECT_CC_ERROR undeclared identifier
 fn bad() -> uint {

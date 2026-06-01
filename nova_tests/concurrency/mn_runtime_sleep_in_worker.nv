@@ -5,7 +5,7 @@
 // реальный slot, dispatch_ready hook re-queue'ит fiber в deque
 // после таймера. Без этого Time.sleep в worker → assert/deadlock.
 
-module nova_tests.concurrency.mn_runtime_sleep_in_worker
+module concurrency.mn_runtime_sleep_in_worker
 
 test "M:N: 1 fiber Time.sleep в worker — park/wake" {
     runtime.init(2)

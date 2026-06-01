@@ -1,6 +1,6 @@
 // Plan 100.8 D6: bench — nested field-path consume analysis.
 // Measures: O(N×depth) worst-case where depth = nested field access levels.
-module bench.plan100
+module plan100.nested_field_path
 
 // Leaf consume type.
 type Leaf consume { value int }

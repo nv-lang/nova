@@ -4,7 +4,7 @@
 // Guards are distinct types — compile-time enforcement that read guards
 // cannot be used as write guards and vice versa.
 
-module nova_tests.plan103_9.readguard_writeguard_separated
+module plan103_9.readguard_writeguard_separated
 
 test "ReadGuard explicit unlock" {
     mut rw = RwLock.new()

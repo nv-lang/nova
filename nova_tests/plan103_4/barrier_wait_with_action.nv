@@ -9,7 +9,7 @@
 //
 // EXPECT_TIMEOUT_MS 90000
 
-module nova_tests.plan103_4.barrier_wait_with_action
+module plan103_4.barrier_wait_with_action
 
 test "last-arrival fiber executes action exactly once per epoch" {
     ro parties = 4

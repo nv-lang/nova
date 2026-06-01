@@ -28097,8 +28097,57 @@ W_D78_REV1_DEPRECATED warning с migration hint.
 
 **Documented:** D29 rev-3 section + diagnostic codes table в spec.
 
-**OPEN marker:** `[M-D78-strict-removal]` — full corpus migration (~847
-files) + remove rev-1 acceptance branch. Separate plan (massive refactor).
+**Migration helper:** `scripts/d78_audit_migrate.py` — audit + rewrite
+с `_test.nv` peer detection (правило F) и `internal/` rev-3.1 special-case.
+
+---
+
+## D78 strict removal — [M-D78-strict-removal] ✅ CLOSED (2026-06-01)
+
+**Что:** rev-1 acceptance branch удалён из
+`check_module_path_with_kind`. Compiler теперь принимает **только** rev-3
+form (`parent.target`, 2 segments; либо `owner.internal.target` для
+rev-3.1). rev-1 form (full path от package, `nova_tests.X.Y`) теперь →
+hard error `E_D78_MODULE_PATH_MISMATCH`.
+
+**Scope корпус-миграции:**
+- ~846 файлов: `nova_tests/` (797) + `examples/` (22) + `bench/` (27).
+- Переименование directory `nova_tests/plan100.3/` → `nova_tests/plan100_3/`
+  (dot в имени директории несовместим с rev-3 parts split).
+- Все module declarations внутри переписаны с 3-segment на 2-segment.
+- Audit financial: pre-migrate ~847 violators / ~1104 compliant →
+  post-migrate **1951 compliant / 0 violators**.
+
+**Compiler delta:**
+- `ModulePathCheck::Rev1Deprecated` variant kept в enum как
+  `#[allow(dead_code)]` — ABI stability + potential per-package opt-in
+  legacy mode в будущем. Никогда не produces.
+- `W_D78_REV1_DEPRECATED` warning retired — никогда не fires (rev-1
+  form ловится раньше как mismatch с rev-3 expected).
+
+**Smoke regression (release nova-cli):**
+- basics 8/0, syntax 53/1 (pre-existing fail `for_in_range_iter`), plan114 10/0,
+  plan114_4 9/0, plan114_4_1 5/0, plan73 25/0, plan108 6/0, plan100_3 10/0,
+  plan120 8/0 — **134 PASS / 1 pre-existing baseline fail**.
+- Probe fixture rev-1 form → корректно fail'ит c
+  `[E_D78_MODULE_PATH_MISMATCH] ... expected (rev-3 parent.X): ...`.
+
+**Branch:** `d78-strict-removal` (merged into main as merge `<TBD>`).
+
+**Commits:**
+- `cb94a567f7a` — corpus migration (846 files).
+- `ac16bba654f` — compiler: remove rev-1 acceptance.
+- `f459ea376e5` — spec D29/D78 update.
+
+**Lessons:**
+- Большой scope migration совершенно безопасен, если есть
+  идемпотентный audit-script с absolute counts — после миграции запускаем
+  тот же script и видим 0 violators.
+- `_test.nv` peer detection (правило F D29 Plan 42): strip `_test`
+  suffix только если sibling file/folder existing — иначе fixture'ы вида
+  `X_test.nv` без peer некорректно мигрируются.
+- Dot в имени директории (`plan100.3/`) ломает rev-3 parts split —
+  такие имена надо избегать в новых fixtures (используем `_`).
 
 ---
 

@@ -3,7 +3,7 @@
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module nova_tests.plan103_3.mutex_mutual_exclusion_observed_interleave
+module plan103_3.mutex_mutual_exclusion_observed_interleave
 
 test "mutual exclusion: inside counter never exceeds 1" {
     mut mu = Mutex.new()

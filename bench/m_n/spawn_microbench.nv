@@ -12,7 +12,7 @@
 //   - tokio: task spawn <100ns → ~10⁷/sec.
 //   - Nova (pre-83.6 baseline): ~10-100µs → ~10³-10⁴/sec.
 
-module bench_m_n.spawn_microbench
+module m_n.spawn_microbench
 
 bench "100 no-op spawn throughput" {
     measure {

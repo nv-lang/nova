@@ -7,7 +7,7 @@
 // делает `@tx.rollback()`. На exit'е mut-метода @.tx должен быть Live
 // (D5), но он Consumed → error.
 
-module nova_tests.plan100_1.consume_err_record_partial
+module plan100_1.consume_err_record_partial
 
 type Transaction consume {
     id int,

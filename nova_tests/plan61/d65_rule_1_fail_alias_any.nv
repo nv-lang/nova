@@ -1,4 +1,4 @@
-module nova_tests.plan61.d65_rule_1_fail_alias_any
+module plan61.d65_rule_1_fail_alias_any
 
 // Plan 61 / D65 правило 1: `Fail` ≡ `Fail[any]` — alias / catch-all.
 // `with Fail = |e| ...` (без [E]) ловит **любой** throw.

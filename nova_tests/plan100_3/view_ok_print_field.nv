@@ -3,7 +3,7 @@
 // `fn print_id(t Transaction)` — view-param. Source `tx` остаётся
 // Live после вызова; функция читает поле без consume.
 
-module nova_tests.plan100_3.view_ok_print_field
+module plan100_3.view_ok_print_field
 
 type Transaction consume {
     id int,

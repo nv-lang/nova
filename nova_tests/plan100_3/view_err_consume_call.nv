@@ -3,7 +3,7 @@
 // Plan 100.3 (D157): через view-param нельзя вызывать consume-метод.
 // view = read-only borrow; consume нарушит invariant ownership'а.
 
-module nova_tests.plan100_3.view_err_consume_call
+module plan100_3.view_err_consume_call
 
 type Transaction consume {
     id int,

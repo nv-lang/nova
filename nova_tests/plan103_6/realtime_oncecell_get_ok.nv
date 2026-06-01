@@ -3,7 +3,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_6.realtime_oncecell_get_ok
+module plan103_6.realtime_oncecell_get_ok
 
 #realtime fn _rt_oncecell_get_check(c mut OnceCell[int]) -> bool {
     ro v = c.get()

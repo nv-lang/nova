@@ -1,7 +1,7 @@
 // Plan 42.12 Ф.2: core peer без cfg-guards.
 // Использует stable_fn() (всегда доступна).
 
-module cfg.feature_gate
+module feature_gate.core
 
 export fn stable_value() -> int =>
     stable_fn() + 1

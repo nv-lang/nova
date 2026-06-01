@@ -3,7 +3,7 @@
 // генерируется, overload-mangling работает, dispatch всех методов
 // через box правильный.
 
-module nova_tests.plan97.pos_protocol_lit_multi_method
+module plan97.pos_protocol_lit_multi_method
 
 
 export type Storage protocol {

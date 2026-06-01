@@ -5,7 +5,7 @@
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module nova_tests.plan103_9.permit_balanced_prop
+module plan103_9.permit_balanced_prop
 
 test "Semaphore: acquire M times, release M times — sequential" {
     ro k = 5

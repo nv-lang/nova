@@ -10,7 +10,7 @@
 // возвращает unit. Результаты — через mut-захваты или `parallel for`
 // (homogeneous fan-out с массивом результатов).
 
-module gc_coroutines_test
+module effects.gc_coroutines_test
 
 type Point {
     x int

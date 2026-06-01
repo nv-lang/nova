@@ -1,6 +1,6 @@
 // Plan 103.5 — Lazy[T].is_forced: observability.
 
-module nova_tests.plan103_5.lazy_is_forced
+module plan103_5.lazy_is_forced
 
 test "Lazy.is_forced: false before any force, true after successful force" {
     ro lazy = Lazy[str].new() { "hello" }

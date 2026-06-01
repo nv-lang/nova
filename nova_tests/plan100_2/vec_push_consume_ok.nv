@@ -4,7 +4,7 @@
 // Inline Transaction literals avoid named consume-obligations outside loop.
 // After for-consume: txs is Consumed (pragmatic D156 marking).
 
-module nova_tests.plan100_2.vec_push_consume_ok
+module plan100_2.vec_push_consume_ok
 
 type Transaction consume {
     id int,

@@ -5,7 +5,7 @@
 // ожидается по значению, элемент — указатель). Подход A (разбокс в
 // emit_for) чинит их вместе с pattern-match одной точкой.
 
-module nova_tests.plan89.eq_and_method
+module plan89.eq_and_method
 
 
 test "for-in []Option + оператор ==" {

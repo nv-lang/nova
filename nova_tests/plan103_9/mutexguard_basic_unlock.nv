@@ -3,7 +3,7 @@
 // `consume g = mu.lock()` creates a consume obligation.
 // `g.unlock()` satisfies it → no E_CONSUME_NOT_CONSUMED.
 
-module nova_tests.plan103_9.mutexguard_basic_unlock
+module plan103_9.mutexguard_basic_unlock
 
 test "MutexGuard explicit unlock satisfies consume obligation" {
     mut mu = Mutex.new()

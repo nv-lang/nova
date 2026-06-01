@@ -1,6 +1,6 @@
 // Plan 108.3 (D36 amend): `let (a, b) = pair` — оба immutable, read OK.
 
-module nova_tests.plan108_3.pattern_default_readonly_ok
+module plan108_3.pattern_default_readonly_ok
 
 test "pattern default — both immutable read OK" {
     ro (a, b) = ([10, 20], [30, 40])

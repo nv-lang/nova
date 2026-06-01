@@ -7,7 +7,7 @@
 // требует codegen handler-vtable-inside-defer wiring — Plan 100.4.1
 // followup).
 
-module nova_tests.plan100_4_1.defer_fail_ok_with_explicit_handler
+module plan100_4_1.defer_fail_ok_with_explicit_handler
 
 type CleanupErr { msg str }
 

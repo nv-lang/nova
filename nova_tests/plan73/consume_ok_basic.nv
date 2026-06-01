@@ -3,7 +3,7 @@
 // `StringBuilder consume @into()` — после @into() переменная не
 // используется → ошибки нет, программа компилируется и работает.
 
-module nova_tests.plan73.consume_ok_basic
+module plan73.consume_ok_basic
 
 test "StringBuilder.into — consume без последующего использования" {
     consume sb = StringBuilder.new()

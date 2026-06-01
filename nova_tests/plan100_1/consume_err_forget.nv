@@ -4,7 +4,7 @@
 // `consume tx = begin()` без consume-метода и без передачи наверх →
 // E (D133-not-consumed).
 
-module nova_tests.plan100_1.consume_err_forget
+module plan100_1.consume_err_forget
 
 type Transaction consume {
     id int,

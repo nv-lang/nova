@@ -2,7 +2,7 @@
 //
 // EXPECT_TIMEOUT_MS 15000
 
-module nova_tests.plan103_3.rwlock_reader_priority_opt_in
+module plan103_3.rwlock_reader_priority_opt_in
 
 test "reader-priority: writer eventually acquires (no deadlock)" {
     mut rw = RwLock.new_reader_priority()

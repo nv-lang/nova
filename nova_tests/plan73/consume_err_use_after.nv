@@ -3,7 +3,7 @@
 // Plan 73 (D131): use-after-consume — использование StringBuilder
 // после consume-метода `@into()` должно давать compile error.
 
-module nova_tests.plan73.consume_err_use_after
+module plan73.consume_err_use_after
 
 test "use after into — отвергается" {
     consume sb = StringBuilder.new()

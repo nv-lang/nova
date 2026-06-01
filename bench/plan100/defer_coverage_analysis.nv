@@ -1,6 +1,6 @@
 // Plan 100.8 D6: bench — defer coverage analysis overhead.
 // Measures: scan_defer_coverage + check_d162_coverage pass cost.
-module bench.plan100
+module plan100.defer_coverage_analysis
 
 type Conn consume { id int }
 fn Conn consume @close() -> () { }

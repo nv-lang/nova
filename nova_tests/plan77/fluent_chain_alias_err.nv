@@ -7,7 +7,7 @@
 // alias-binding site syntactically — dangling-view impossible by
 // construction.)
 
-module nova_tests.plan77.fluent_chain_alias_err
+module plan77.fluent_chain_alias_err
 
 test "use after consume через builder-chain alias" {
     consume sb = StringBuilder.new()

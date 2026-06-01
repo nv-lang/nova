@@ -1,6 +1,6 @@
 // Plan 108.3 (D36 amend): nested for-mut loops.
 
-module nova_tests.plan108_3.nested_for_mut_ok
+module plan108_3.nested_for_mut_ok
 
 test "nested for mut" {
     mut matrix = [[1, 2], [3, 4]]

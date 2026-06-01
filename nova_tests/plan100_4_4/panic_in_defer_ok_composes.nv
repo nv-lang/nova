@@ -5,7 +5,7 @@
 // NovaFailFrame wrap catches panic = throw в _nova_fail_top). Этот fixture
 // — compile-pass only; runtime panic verification — manual.
 
-module nova_tests.plan100_4_4.panic_in_defer_ok_composes
+module plan100_4_4.panic_in_defer_ok_composes
 
 fn process() -> () {
     defer { () }   // infallible cleanup placeholder

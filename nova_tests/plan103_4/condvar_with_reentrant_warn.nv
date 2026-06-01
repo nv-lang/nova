@@ -9,7 +9,7 @@
 //
 // EXPECT_COMPILE_WARNING W_REENTRANT_CONDVAR_RECOMMEND
 
-module nova_tests.plan103_4.condvar_with_reentrant_warn
+module plan103_4.condvar_with_reentrant_warn
 
 test "Condvar.wait(ReentrantMutex) emits W_REENTRANT_CONDVAR_RECOMMEND and works" {
     mut rm = ReentrantMutex.new()

@@ -3,7 +3,7 @@
 // Проверяет: парсер принимает leading-точку в protocol-теле; реализация
 // через D35 static-метод (`fn Type.name(...)`); прямой вызов работает.
 
-module nova_tests.plan97.pos_user_protocol_static
+module plan97.pos_user_protocol_static
 
 
 export type MyBuilder[T] protocol {

@@ -1,4 +1,4 @@
-module nova_tests.plan61.d65_rule_3_rethrow
+module plan61.d65_rule_3_rethrow
 
 // Plan 61 / D65 правило 3: re-throw в handler-body skip'ает current frame
 // → outer handler ловит. Это и есть classic Plan 20 Ф.8 (4) prev-link swap,

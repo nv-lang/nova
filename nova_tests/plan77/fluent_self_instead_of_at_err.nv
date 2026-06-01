@@ -4,7 +4,7 @@
 // возвращают `@` (receiver). Это ошибка — должно быть `-> @`.
 // Ловится check_fluent_return (инверсная проверка).
 
-module nova_tests.plan77.fluent_self_instead_of_at_err
+module plan77.fluent_self_instead_of_at_err
 
 type Bldr { mut k int }
 

@@ -1,7 +1,7 @@
 // Plan 42.08 Ф.1 + Ф.2: peer того же конфликтующего admin/.
 // Создаёт ambiguity: folder-module `admin` + single-file `admin.nv`.
 
-module folder_file_conflict_setup.admin
+module admin.users
 
 export fn user_count() -> int =>
     42

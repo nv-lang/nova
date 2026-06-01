@@ -4,7 +4,7 @@
 // `type TxState consume { consume tx Transaction, writes []Write }`.
 // Consume-метод record'а consume'ит поле через `@tx.commit()` — covered.
 
-module nova_tests.plan100_1.consume_ok_record_field
+module plan100_1.consume_ok_record_field
 
 type Write {
     value int,

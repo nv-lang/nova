@@ -3,7 +3,7 @@
 // Любой из declared consume-methods type-а удовлетворяет обязательство.
 // Programmer выбирает по situation.
 
-module nova_tests.plan100_1.consume_ok_rollback
+module plan100_1.consume_ok_rollback
 
 type Transaction consume {
     id int,

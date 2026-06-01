@@ -3,7 +3,7 @@
 // (D44): `let x u8 = 200` must stay valid even though the literal's
 // default type is `int`.
 
-module nova_tests.plan79.assign_correct_pos
+module plan79.assign_correct_pos
 
 type Point { x int, y int }
 

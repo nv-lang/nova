@@ -9,7 +9,7 @@
 // `protocol_method_registry[<Proto>]` lookup (а не общие method_overloads).
 // Этот тест — guard от регрессии.
 
-module nova_tests.plan97.pos_protocol_lit_method_name_shadowing
+module plan97.pos_protocol_lit_method_name_shadowing
 
 
 // Имя метода `next` НАМЕРЕННО совпадает с stdlib `Iter.next`.

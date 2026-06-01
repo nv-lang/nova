@@ -3,7 +3,7 @@
 // `fn Token consume @release()` — consuming receiver.
 // `fn drain(consume t Token)` — consuming параметр.
 
-module nova_tests.plan73.consume_ok_user
+module plan73.consume_ok_user
 
 type Token { val int }
 

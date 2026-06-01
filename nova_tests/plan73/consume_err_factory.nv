@@ -4,7 +4,7 @@
 // функции (`let sb = make_builder()`), не только из явного конструктора —
 // поэтому consume-метод `into()` корректно распознаётся.
 
-module nova_tests.plan73.consume_err_factory
+module plan73.consume_err_factory
 
 fn make_builder() -> StringBuilder => StringBuilder.new()
 

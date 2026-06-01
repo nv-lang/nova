@@ -1,7 +1,7 @@
 // Plan 03.1 Ф.3 NEGATIVE — `std` объявлен в `[dependencies]`. `std` —
 // зарезервированное имя неявного stdlib-пакета (как Rust `std`).
 // EXPECT_COMPILE_ERROR зарезервированное имя
-module std_reserved_pkg.std_reserved_test
+module std_reserved_neg.std_reserved_test
 
 import notreal.thing.{anything}
 

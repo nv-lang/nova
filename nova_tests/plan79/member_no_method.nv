@@ -2,7 +2,7 @@
 //
 // Plan 79 Ф.3: a call to a method that does not exist on the type.
 
-module nova_tests.plan79.member_no_method
+module plan79.member_no_method
 
 type Counter { n int }
 

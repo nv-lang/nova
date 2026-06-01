@@ -4,7 +4,7 @@
 // push на mut-view детачится от parent backing'а (cap == len). Lint
 // предупреждает программиста, что parent НЕ модифицируется.
 
-module nova_tests.plan96_1.lint_view_push_warns
+module plan96_1.lint_view_push_warns
 
 fn main() -> () {
     mut parent []int = [1, 2, 3, 4, 5]

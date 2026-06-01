@@ -12,7 +12,7 @@
 //
 // EXPECT_TIMEOUT_MS 120000
 
-module nova_tests.plan103_4.condvar_no_lost_wakeup_prop
+module plan103_4.condvar_no_lost_wakeup_prop
 
 test "no lost wakeup: producer/consumer over 100 iterations" {
     mut mu = Mutex.new()

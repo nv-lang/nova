@@ -1,6 +1,6 @@
 // Plan 84 Ф.5 — facade: re-export относительного модуля `./inner`.
 // Аудит Ф.4: `export import ./X` — относительная резолюция при re-export.
-module nova_tests.plan84.reexport.facade
+module reexport.facade
 
 export import ./inner.{compute}
 

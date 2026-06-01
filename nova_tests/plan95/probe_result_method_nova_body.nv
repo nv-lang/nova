@@ -5,7 +5,7 @@
 // Имя `my_succeeded` — не-конфликтующее с трамплинами `is_ok`/`is_err`
 // (Ф.5 коммитится отдельно и удаляет трамплины).
 
-module nova_tests.plan95.probe_result_method_nova_body
+module plan95.probe_result_method_nova_body
 
 fn Result[T, E] @my_succeeded() -> bool => match @ { Ok(_) => true, Err(_) => false }
 

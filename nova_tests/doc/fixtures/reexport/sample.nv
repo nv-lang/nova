@@ -1,5 +1,5 @@
 //! Module demonstrating re-export doc attrs.
-module nova_tests.doc.fixtures.reexport.sample
+module reexport.sample
 
 export fn square(x int) -> int => x * x
 

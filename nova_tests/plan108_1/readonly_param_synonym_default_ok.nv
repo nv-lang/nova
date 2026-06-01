@@ -2,7 +2,7 @@
 // семантически идентичны (оба = read-only).  Доступны: read fields,
 // non-mut методы, итерация.
 
-module nova_tests.plan108_1.readonly_param_synonym_default_ok
+module plan108_1.readonly_param_synonym_default_ok
 
 fn count_default(b []int) -> int => b.len()
 fn count_readonly(ro b []int) -> int => b.len()

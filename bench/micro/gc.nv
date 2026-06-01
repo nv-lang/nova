@@ -2,7 +2,7 @@
 //
 // Эти benches проверяют alloc-tracking (через `bench.allocs()` →
 // bench result JSON содержит `allocs_per_iter` / `allocs_total`).
-module bench.micro
+module micro.gc
 
 // Plan 82 followup: HashMap нужен явный import для корректной
 // мономорфизации в codegen (см. bench/micro/hashmap.nv).

@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
-module nova_tests.plan103_6.realtime_countdown_await_neg
+module plan103_6.realtime_countdown_await_neg
 
 #realtime fn _rt_check_cdl_await(latch mut CountDownLatch) {
     latch.await()

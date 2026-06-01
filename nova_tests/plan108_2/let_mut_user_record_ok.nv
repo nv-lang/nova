@@ -1,6 +1,6 @@
 // Plan 108.2 (D36 enforcement): `let mut` для user-defined record с mut @method.
 
-module nova_tests.plan108_2.let_mut_user_record_ok
+module plan108_2.let_mut_user_record_ok
 
 type Counter {
     mut value int

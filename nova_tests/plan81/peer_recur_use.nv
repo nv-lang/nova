@@ -3,7 +3,7 @@
 // функции вызывают друг друга. Verify: компилируется и работает
 // независимо от порядка peer'ов (order-independent, как Go package).
 
-module nova_tests.plan81.peer_recur_use
+module plan81.peer_recur_use
 
 import nova_tests.plan81.peer_recur.{is_even, is_odd}
 

@@ -8,7 +8,7 @@
 // dispatch DeclaredBody-ветка тихо отойдёт от mono'd Nova_Option* —
 // undefined symbol будет проигнорирован → silent miscompilation.
 
-module nova_tests.plan95.option_method_undefined_body_fail
+module plan95.option_method_undefined_body_fail
 
 fn Option[T] @whoops() -> bool => not_a_real_function_xyz()
 

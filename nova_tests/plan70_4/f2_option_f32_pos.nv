@@ -3,7 +3,7 @@
 // Pre-fix: both would map to NovaOpt_nova_f64 via collapse.
 // Post-fix: Option[f32] → NovaOpt_nova_f32, Option[f64] → NovaOpt_nova_f64.
 
-module nova_tests.plan70_4.f2_option_f32_pos
+module plan70_4.f2_option_f32_pos
 
 test "Option[f64] Some/None" {
     ro a Option[f64] = Some(3.14)

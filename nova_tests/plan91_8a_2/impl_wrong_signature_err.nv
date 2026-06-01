@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR E_IMPL_WRONG_SIGNATURE
 
-module nova_tests.plan91_8a_2.impl_wrong_signature_err
+module plan91_8a_2.impl_wrong_signature_err
 
 // Plan 91.9: type claims #impl(Comparable) но @compare имеет wrong signature.
 // Comparable.compare(other Self) -> int. У Item compare возвращает bool — mismatch.

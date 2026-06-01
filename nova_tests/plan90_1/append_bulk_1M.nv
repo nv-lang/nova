@@ -1,7 +1,7 @@
 // Plan 90.1 — stress: append bulk 1M elements smoke perf test.
 // Single append of 1M elements — verify correctness, should complete < 5s.
 
-module nova_tests.plan90_1.append_bulk_1M
+module plan90_1.append_bulk_1M
 
 test "append 1M elements" {
     // Build source array of 1M elements

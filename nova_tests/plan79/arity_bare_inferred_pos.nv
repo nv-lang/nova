@@ -7,7 +7,7 @@
 // and broke 6 existing tests (concurrency/fiber_throw, effects/throws,
 // runtime/unwrap_or, ...).
 
-module nova_tests.plan79.arity_bare_inferred_pos
+module plan79.arity_bare_inferred_pos
 
 // Bare `Result` — type arguments inferred from Ok/Err in the body.
 fn validated(n int) -> Result {

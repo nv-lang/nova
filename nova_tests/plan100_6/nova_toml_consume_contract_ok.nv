@@ -9,7 +9,7 @@
 // D164: consume-status is part of the exported API. Consumers depend on it.
 // v1.x → consume-status unchanged. v1 → v2 may change (major-bump required).
 
-module nova_tests.plan100_6.nova_toml_consume_contract_ok
+module plan100_6.nova_toml_consume_contract_ok
 
 // Declared in nova.toml [exports.consume_types] as "Transaction = 1.0":
 export type Transaction consume {

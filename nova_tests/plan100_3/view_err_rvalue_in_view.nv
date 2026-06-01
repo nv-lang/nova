@@ -6,7 +6,7 @@
 // slot'а для tracking → ресурс утечёт молча. Запрет — единственное
 // безопасное правило.
 
-module nova_tests.plan100_3.view_err_rvalue_in_view
+module plan100_3.view_err_rvalue_in_view
 
 type Transaction consume {
     id int,

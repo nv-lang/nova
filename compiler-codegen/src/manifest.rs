@@ -558,20 +558,26 @@ pub fn check_module_path(
     check_module_path_with_kind(file, declared, is_folder_module)
 }
 
-/// Plan 42 D29 / D78 check result. `Ok(None)` — strict rev-3 match.
-/// `Ok(Some(warning))` — legacy rev-1 match (deprecation warning to emit).
-/// `Err(msg)` — neither rev-3 nor legacy matches.
+/// Plan 42 D29 / D78 check result. `Ok(ModulePathCheck::Rev3)` — strict
+/// rev-3 match. `Err(msg)` — declaration не соответствует rev-3.
 ///
-/// Bug fix 2026-06-01: ранее check_module_path silently accepted rev-1
-/// legacy form без any warning — нарушитель не видел deviation от spec.
-/// Теперь legacy match → explicit `W_D78_REV1_DEPRECATED` warning, чтобы
-/// сделать migration visible. Hard error для rev-1 — отдельный followup
-/// `[M-D78-strict-removal]` после full corpus migration.
+/// History:
+/// - **2026-05-13 (rev-3):** parent.target made canonical.
+/// - **2026-06-01 bug fix:** ранее compiler silently accepted rev-1
+///   legacy form. Fix добавил `W_D78_REV1_DEPRECATED` warning + audit/
+///   migration script.
+/// - **2026-06-01 strict removal `[M-D78-strict-removal]`:** rev-1
+///   acceptance removed после full corpus migration (846 files). rev-1
+///   form now → `E_D78_MODULE_PATH_MISMATCH` hard error. Rev1Deprecated
+///   variant kept в enum для potential per-package opt-in legacy mode
+///   (currently never produced — dead variant for ABI stability).
 pub enum ModulePathCheck {
     /// Declaration matches strict rev-3 (parent.target).
     Rev3,
-    /// Declaration matches deprecated rev-1 (full path from package).
-    /// Embedded message — actionable warning text для caller'а.
+    /// **Dead variant (kept для ABI stability).** Rev-1 legacy match —
+    /// больше не produces после [M-D78-strict-removal] (2026-06-01).
+    /// rev-1 form now → hard error.
+    #[allow(dead_code)]
     Rev1Deprecated(String),
 }
 
@@ -601,30 +607,16 @@ pub fn check_module_path_with_kind(
     };
     let expected_rev3 = expected_module_path_rev3(file, &manifest, is_folder_module);
 
-    // rev-3 strict match — clean acceptance.
+    // rev-3 strict match — only acceptable form (Plan 42 rev-3 canonical).
     if let Some(exp) = &expected_rev3 {
         if declared == exp.as_slice() {
             return Ok(ModulePathCheck::Rev3);
         }
     }
-    // rev-1 legacy match — deprecation warning (still accepted to avoid
-    // big-bang breaking change на existing corpus).
-    if let Some(exp) = &expected_legacy {
-        if declared == exp.as_slice() {
-            let warning = format!(
-                "[W_D78_REV1_DEPRECATED] module declaration `{}` uses Plan 42 rev-1 \
-                 legacy form (full path from package). D78 rev-3 (2026-05-13) made \
-                 `parent.target` (2 segments) canonical. Migrate `{}` → `{}` \
-                 (scripts/d78_audit_migrate.py --migrate). Compiler accepts rev-1 \
-                 temporarily; will become hard error в Plan [M-D78-strict-removal]. \
-                 См. spec/decisions/07-modules.md D29 rev-3.",
-                declared.join("."),
-                declared.join("."),
-                expected_rev3.as_ref().map(|e| e.join(".")).unwrap_or_else(|| "<n/a>".into()),
-            );
-            return Ok(ModulePathCheck::Rev1Deprecated(warning));
-        }
-    }
+    // [M-D78-strict-removal] 2026-06-01: rev-1 legacy form больше не
+    // accepted (full corpus migration completed; ~846 files migrated to
+    // rev-3 via scripts/d78_audit_migrate.py). Declaration в rev-1 form
+    // теперь → hard error E_D78_MODULE_PATH_MISMATCH.
 
     let exp_legacy_str = expected_legacy
         .as_ref()

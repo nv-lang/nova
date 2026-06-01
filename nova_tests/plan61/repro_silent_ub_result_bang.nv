@@ -1,4 +1,4 @@
-module nova_tests.plan61.repro_silent_ub_result_bang
+module plan61.repro_silent_ub_result_bang
 
 // Plan 61 Ф.4 repro: Silent UB #2 — `expr!!` на Err бросает payload.
 //

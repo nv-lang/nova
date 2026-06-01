@@ -1,6 +1,6 @@
 // Plan 101.3 — positive: three bounds `[T A + B + C]`.
 
-module nova_tests.plan101_3.multibound_three
+module plan101_3.multibound_three
 
 
 type HasA protocol {

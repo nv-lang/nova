@@ -1,7 +1,7 @@
 // Plan 96 Ф.4 — позитив: slice-of-slice arr[a..b][c..d].
 // Offset arithmetic: arr[a..b][c..d] ≡ arr[a+c..a+d].
 
-module nova_tests.plan96.slice_of_slice
+module plan96.slice_of_slice
 
 test "slice of slice — basic" {
     mut arr = [10, 20, 30, 40, 50]

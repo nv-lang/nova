@@ -1,7 +1,7 @@
 // Plan 99.3 Ф.1: Option.map[U] на Nova-body (`match @ { Some(v)
 // => Some(f(v)), None => None }`). Full mono per (T, U).
 
-module nova_tests.plan99.option_map_migrated
+module plan99.option_map_migrated
 
 type User { id int, name str }
 

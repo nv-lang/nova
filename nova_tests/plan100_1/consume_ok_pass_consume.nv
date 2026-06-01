@@ -4,7 +4,7 @@
 // `fn finish(consume tx Transaction)` — callee обязан consume внутри.
 // Caller передал — у него tx стал Consumed.
 
-module nova_tests.plan100_1.consume_ok_pass_consume
+module plan100_1.consume_ok_pass_consume
 
 type Transaction consume {
     id int,

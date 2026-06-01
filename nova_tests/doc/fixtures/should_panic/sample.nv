@@ -3,7 +3,7 @@
 //! Демонстрирует `nova,should_panic` модификатор — тест ожидает,
 //! что код завершится с panic во время выполнения.
 
-module nova_tests.doc.fixtures.should_panic.sample
+module should_panic.sample
 
 /// Возвращает элемент массива по индексу.
 ///

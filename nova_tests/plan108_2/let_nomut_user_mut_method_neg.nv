@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
 
-module nova_tests.plan108_2.let_nomut_user_mut_method_neg
+module plan108_2.let_nomut_user_mut_method_neg
 
 type Box {
     mut value int

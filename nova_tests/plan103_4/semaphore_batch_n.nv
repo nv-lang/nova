@@ -5,7 +5,7 @@
 // EXPECT_TIMEOUT_MS 30000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_4.semaphore_batch_n
+module plan103_4.semaphore_batch_n
 
 test "acquire_n(3) and release_n(3) basic accounting" {
     mut sem = Semaphore.new(5)

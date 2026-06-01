@@ -3,7 +3,7 @@
 // Positive: state() == Poisoned after panic.
 // Negative: subsequent call_once re-panics.
 
-module nova_tests.plan103_5.once_call_once_panic_poisons
+module plan103_5.once_call_once_panic_poisons
 
 test "Once.call_once: body panic → state is Poisoned" {
     mut once = Once.new()

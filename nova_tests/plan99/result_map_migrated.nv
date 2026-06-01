@@ -1,6 +1,6 @@
 // Plan 99.3 Ф.5: Result.map[U] на Nova-body. Mono per (T, U, E).
 
-module nova_tests.plan99.result_map_migrated
+module plan99.result_map_migrated
 
 test "Result[int, str].map int→str (T≠U)" {
     ro r Result[int, str] = Ok(7)

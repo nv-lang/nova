@@ -4,7 +4,7 @@
 // слияния путей она однозначно Consumed (не MaybeConsumed) —
 // ошибки нет.
 
-module nova_tests.plan73.consume_ok_branches
+module plan73.consume_ok_branches
 
 fn pick(flag bool) -> str {
     consume sb = StringBuilder.new()

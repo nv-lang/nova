@@ -1,7 +1,7 @@
 // Plan 42.08 Ф.1 + Ф.2: второй peer чтобы папка считалась folder-module
 // (is_folder_module_dir requires ≥2 peers с одинаковым decl).
 
-module folder_file_conflict_setup.admin
+module admin.groups
 
 export fn group_count() -> int =>
     7

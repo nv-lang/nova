@@ -4,7 +4,7 @@
 // = 1000 вызовов fence. Проверяет что runtime (nova_fn_fence/atomic_thread_fence)
 // не падает при многократном вызове с разными orderings.
 
-module nova_tests.plan103_1.fence_smoke_no_crash
+module plan103_1.fence_smoke_no_crash
 
 /// 5 fence-вызовов — один полный цикл по всем вариантам ordering.
 fn fence_cycle() {

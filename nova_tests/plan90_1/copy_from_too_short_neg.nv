@@ -4,7 +4,7 @@
 // D141 amend: old behavior was silent truncation; new behavior = panic.
 // Migration: use dst[..src.len()].copy_from(src) for partial copy intent.
 
-module nova_tests.plan90_1.copy_from_too_short_neg
+module plan90_1.copy_from_too_short_neg
 
 fn main() -> () {
     mut dst []int = [0, 0, 0, 0]

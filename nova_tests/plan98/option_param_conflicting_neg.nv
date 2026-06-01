@@ -5,7 +5,7 @@
 // «no silent fallback»). Параллель Plan 95.bis negative — убеждаемся,
 // что Plan 98 inference не вводит silent fallback path.
 
-module nova_tests.plan98.option_param_conflicting_neg
+module plan98.option_param_conflicting_neg
 
 fn bad[T](o Option[T]) -> bool => plan98_undef_helper(o)
 

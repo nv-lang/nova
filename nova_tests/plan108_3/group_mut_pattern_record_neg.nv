@@ -3,7 +3,7 @@
 // SUPERSEDED by Plan 114 (D184): `mut { a, b } = pair` — canonical
 // (leading keyword distributes). Этот fixture сохранён как positive.
 
-module nova_tests.plan108_3.group_mut_pattern_record_neg
+module plan108_3.group_mut_pattern_record_neg
 
 type Pair { a int, b int }
 

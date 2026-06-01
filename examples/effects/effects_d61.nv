@@ -6,7 +6,7 @@
 //   - `return v` или финальное выражение в handler-method
 //   - `interrupt v` для досрочного завершения with-блока
 
-module effects_d61
+module effects.effects_d61
 
 type Counter effect {
     next() -> int

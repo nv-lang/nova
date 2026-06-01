@@ -1,7 +1,7 @@
 // Plan 114 (D184): `ro T` type-modifier — renamed from `readonly T`
 // (D176 amend). Семантика immutable view сохранена.
 
-module nova_tests.plan114.ro_type_modifier_ok
+module plan114.ro_type_modifier_ok
 
 fn sum(view ro []int) -> int {
     mut total = 0

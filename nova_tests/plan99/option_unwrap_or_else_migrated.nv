@@ -1,6 +1,6 @@
 // Plan 99.3 Ф.2: Option.unwrap_or_else lazy default (Nova-body).
 
-module nova_tests.plan99.option_unwrap_or_else_migrated
+module plan99.option_unwrap_or_else_migrated
 
 test "Option[int].unwrap_or_else — Some skip closure" {
     ro a Option[int] = Some(42)

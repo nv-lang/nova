@@ -3,7 +3,7 @@
 // V2 pattern: sem.acquire() → Permit consume.
 // Permit.release(consume self) satisfies the obligation.
 //
-module nova_tests.concurrency.sync_semaphore_permit
+module concurrency.sync_semaphore_permit
 
 // Plan 103.9 (D174) pilot: basic V2 API tests.
 // Stress/parallel-for tests deferred to plan103_9/permit_balanced_prop + permit_release_explicit.

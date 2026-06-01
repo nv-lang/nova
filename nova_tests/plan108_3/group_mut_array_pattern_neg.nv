@@ -5,7 +5,7 @@
 // не связанное с Plan 114. Этот fixture retired (концепция superseded;
 // array destructure через индексы предпочтительнее).
 
-module nova_tests.plan108_3.group_mut_array_pattern_neg
+module plan108_3.group_mut_array_pattern_neg
 
 test "array indices instead of destructure (Plan 114 superseded)" {
     ro arr = [1, 2]

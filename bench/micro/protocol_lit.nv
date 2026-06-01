@@ -8,7 +8,7 @@
 // - Метод dispatch cost (indirect call через vtable->method).
 // - Сравнение vs direct method call (baseline).
 
-module bench.micro
+module micro.protocol_lit
 
 
 type Counter protocol {

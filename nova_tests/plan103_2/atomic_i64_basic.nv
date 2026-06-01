@@ -3,7 +3,7 @@
 // Canonical 64-bit signed integer atomic. Verifies new(), load(), store(),
 // fetch_add, fetch_sub, compare_exchange (default SeqCst ordering).
 
-module nova_tests.plan103_2.atomic_i64_basic
+module plan103_2.atomic_i64_basic
 
 test "AtomicI64 new and load" {
     mut a = AtomicI64.new(42)

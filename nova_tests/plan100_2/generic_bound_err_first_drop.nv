@@ -8,7 +8,7 @@
 // Без bound (Plan 100.1 silent-ignore) этот код бы прошёл. С bound
 // compiler ловит реальный leak.
 
-module nova_tests.plan100_2.generic_bound_err_first_drop
+module plan100_2.generic_bound_err_first_drop
 
 // ❌ strict mode: pair.1 не consumed → error.
 fn first[T consume](pair (T, T)) -> T => pair.0

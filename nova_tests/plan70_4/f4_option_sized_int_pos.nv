@@ -1,4 +1,4 @@
-module nova_tests.plan70_4.f4_option_sized_int_pos
+module plan70_4.f4_option_sized_int_pos
 
 // Plan 70.4 Ф.2: Option[i32]/Option[u32] etc. must emit distinct
 // NovaOpt_int32_t / NovaOpt_uint32_t types, not collapse to NovaOpt_nova_int.

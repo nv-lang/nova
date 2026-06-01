@@ -4,7 +4,7 @@
 // До Plan 96 codegen эмитил raw `arr->data[5] = v` (controlled buffer
 // overflow на запись — silent corruption соседних аллокаций).
 
-module nova_tests.plan96.neg_index_oob_write
+module plan96.neg_index_oob_write
 
 fn main() -> () {
     mut arr []int = [1, 2, 3]

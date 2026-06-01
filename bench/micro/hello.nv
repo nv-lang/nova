@@ -1,5 +1,5 @@
 // Trivial smoke bench for Plan 57 MVP verification.
-module bench.micro
+module micro.hello
 
 bench "noop" {
     measure {

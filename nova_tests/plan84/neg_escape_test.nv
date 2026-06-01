@@ -1,7 +1,7 @@
 // Plan 84 Ф.5 NEGATIVE — относительный импорт за границу пакета.
 // `../../` из nova_tests/plan84/ поднимается выше корня пакета `nova_tests/`.
 // EXPECT_COMPILE_ERROR границу пакета
-module nova_tests.plan84.neg_escape_test
+module plan84.neg_escape_test
 
 import ../../outside.{nope}
 

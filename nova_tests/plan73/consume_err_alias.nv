@@ -6,7 +6,7 @@
 // Previously this fixture relied on D131-use-after-consume firing later;
 // V3 cross-module enforcement detects alias-binding earlier.
 
-module nova_tests.plan73.consume_err_alias
+module plan73.consume_err_alias
 
 test "use after consume через alias" {
     consume sb = StringBuilder.new()

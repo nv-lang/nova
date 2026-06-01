@@ -1,7 +1,7 @@
 // Plan 108.1 (D176 amend): функция с несколькими параметрами с разными
 // модификаторами — mut / readonly / consume / default.
 
-module nova_tests.plan108_1.multi_param_mixed_modifiers_ok
+module plan108_1.multi_param_mixed_modifiers_ok
 
 fn merge(mut dst []int, ro src []int, scale int) -> int {
     for x in src {

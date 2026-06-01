@@ -1,5 +1,5 @@
 // Plan 57.C.2 smoke: gc.last_pause_ns API.
-module bench.micro
+module micro.gc_pause
 
 bench "gc pause measurement" {
     measure {

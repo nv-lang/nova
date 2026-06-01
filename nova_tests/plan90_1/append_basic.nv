@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: append — append with growth.
 // D141 amend: 2x cap growth, memmove, self-extend safe.
 
-module nova_tests.plan90_1.append_basic
+module plan90_1.append_basic
 
 
 test "append basic []int" {

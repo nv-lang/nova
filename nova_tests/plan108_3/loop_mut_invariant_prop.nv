@@ -3,7 +3,7 @@
 // Свойство: `for mut x in iter` корректно мутирует каждый элемент N раз;
 // `let (mut a, b) = ...` дает per-name mutability.
 
-module nova_tests.plan108_3.loop_mut_invariant_prop
+module plan108_3.loop_mut_invariant_prop
 
 test "property: for mut N iterations" {
     mut arrs = [[1], [2], [3]]

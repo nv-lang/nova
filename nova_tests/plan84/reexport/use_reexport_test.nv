@@ -1,5 +1,5 @@
 // Plan 84 Ф.5 POSITIVE — импорт реэкспортнутого имени через `./facade`.
-module nova_tests.plan84.reexport.use_reexport_test
+module reexport.use_reexport_test
 
 import ./facade.{compute}
 

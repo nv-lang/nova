@@ -5,7 +5,7 @@
 // Раньше ловилось только C-side как `no member in NovaVtable_<X>`;
 // сейчас ловится на Nova-этапе с readable hint.
 
-module nova_tests.plan97.neg_protocol_lit_call_undefined
+module plan97.neg_protocol_lit_call_undefined
 
 
 type Single protocol {

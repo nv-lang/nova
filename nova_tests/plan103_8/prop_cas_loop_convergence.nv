@@ -7,7 +7,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.prop_cas_loop_convergence
+module plan103_8.prop_cas_loop_convergence
 
 test "prop CAS convergence: 8 fibers × 50 strong CAS — final = 400" {
     mut counter = AtomicI64.new(0)

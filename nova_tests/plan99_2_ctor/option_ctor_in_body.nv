@@ -3,7 +3,7 @@
 // для return-type `-> Option[X]`, вместо legacy
 // `nova_make_Option_Some` (которая всегда returns `NovaOpt_nova_int`).
 
-module nova_tests.plan99_2_ctor.option_ctor_in_body
+module plan99_2_ctor.option_ctor_in_body
 
 type User { id int, name str }
 

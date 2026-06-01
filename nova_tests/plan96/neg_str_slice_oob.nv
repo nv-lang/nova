@@ -3,7 +3,7 @@
 // Plan 96 Ф.4 D-str-slice — негатив: s[a..b] с OOB → panic
 // (НЕ clamp, в отличие от старого s.slice(a, b) метода).
 
-module nova_tests.plan96.neg_str_slice_oob
+module plan96.neg_str_slice_oob
 
 fn main() -> () {
     ro s = "abc"

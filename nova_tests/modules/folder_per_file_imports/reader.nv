@@ -3,7 +3,7 @@
 // и использует range в своей функции.
 // Peer-сосед (writer.nv) имеет другой набор imports.
 
-module modules.folder_per_file_imports
+module folder_per_file_imports.reader
 
 import std.collections.range.{Range}
 

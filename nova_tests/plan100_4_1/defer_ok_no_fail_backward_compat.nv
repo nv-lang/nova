@@ -1,7 +1,7 @@
 // Plan 100.4.1 (D158): backward-compat — defer без Fail effect работает
 // как раньше (Plan 20 D90). Verify D158 не ломает infallible defer.
 
-module nova_tests.plan100_4_1.defer_ok_no_fail_backward_compat
+module plan100_4_1.defer_ok_no_fail_backward_compat
 
 fn cleanup() -> () { () }
 
