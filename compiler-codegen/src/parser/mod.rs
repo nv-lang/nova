@@ -4323,10 +4323,10 @@ impl Parser {
                         self.bump();
                         crate::ast::PointerModifier::Mut
                     }
-                    // `unsafe` пока ident (KwUnsafe не введён в lexer'е до Ф.3).
-                    // Plan 118 Ф.3 добавит KwUnsafe — здесь оба branches будут
-                    // работать (Ident("unsafe") legacy + KwUnsafe canonical).
-                    TokenKind::Ident(s) if s == "unsafe" => {
+                    // Plan 118 Ф.3 (D2 amend): KwUnsafe keyword. Used в
+                    // `*unsafe T` pointer modifier + `unsafe { }` block +
+                    // `#unsafe` attribute.
+                    TokenKind::KwUnsafe => {
                         self.bump();
                         crate::ast::PointerModifier::Unsafe
                     }
@@ -5648,6 +5648,21 @@ impl Parser {
                     let span = block.span;
                     Ok(Expr::new(ExprKind::Block(block), span))
                 }
+            }
+            // Plan 118 D216 §8 (D2 amend): `unsafe { ... }` block. Syntactic
+            // sugar над built-in `unsafe_handler` effect handler (D2 v2):
+            //   unsafe { expr } ≡ with unsafe_handler { perform UnsafeOps.<op>(expr) }
+            //
+            // V1 Ф.3 scaffold: parsed как regular Block expression (no
+            // runtime overhead — block emits identical C code). Type-checker
+            // enforcement (Ф.3.5 E_UNSAFE_REQUIRED / E_UNSAFE_CALL_REQUIRES_WRAP)
+            // — followup phase. Effect propagation: D216 §8 «no propagation
+            // up» — unsafe encapsulates per fn (canonical Rust pattern).
+            TokenKind::KwUnsafe => {
+                self.bump(); // eat 'unsafe' keyword; LBrace остаётся для parse_block
+                let block = self.parse_block()?;
+                let span = start.merge(block.span);
+                Ok(Expr::new(ExprKind::Block(block), span))
             }
             TokenKind::LBracket => self.parse_array_lit(),
             TokenKind::LParen => {

@@ -81,6 +81,10 @@ pub enum TokenKind {
     /// Plan 114 (D184): retracted in favour of `ro`. Lexer still recognizes
     /// the lexeme `readonly` so parser can emit `E_KW_REMOVED_READONLY`.
     KwReadonly,
+    /// Plan 118 (D216 §8, D2 amend): `unsafe` keyword.
+    /// Used: `*unsafe T` modifier (Ф.1), `unsafe { ... }` block (Ф.3),
+    /// `#unsafe` attribute on fn declarations (Ф.3).
+    KwUnsafe,
     KwIf,
     KwElse,
     KwMatch,
@@ -226,6 +230,7 @@ impl TokenKind {
             TokenKind::KwConsume => "`consume`",
             TokenKind::KwRo => "`ro`",
             TokenKind::KwReadonly => "`readonly`",
+            TokenKind::KwUnsafe => "`unsafe`",
             TokenKind::KwIf => "`if`",
             TokenKind::KwElse => "`else`",
             TokenKind::KwMatch => "`match`",

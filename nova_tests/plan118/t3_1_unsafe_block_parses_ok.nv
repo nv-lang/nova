@@ -1,0 +1,34 @@
+// Plan 118 Ф.3 T3.1 — `unsafe { ... }` block parses + type-checks.
+// (D216 §8, D2 amend).
+//
+// V1 scaffold: block parses + executes as regular Block expression
+// (sugar over built-in unsafe_handler per D2 amend). Type-checker
+// enforcement (Ф.3.5 E_UNSAFE_REQUIRED для pointer ops vне unsafe) —
+// followup phase work.
+
+module plan118.t3_1_unsafe_block_parses_ok
+
+test "unsafe block parses + evaluates to last expression" {
+    ro x = unsafe {
+        42
+    }
+    assert(x == 42)
+}
+
+test "unsafe block with multiple statements" {
+    ro result = unsafe {
+        ro a = 10
+        ro b = 20
+        a + b
+    }
+    assert(result == 30)
+}
+
+test "unsafe block nested" {
+    ro y = unsafe {
+        unsafe {
+            7
+        }
+    }
+    assert(y == 7)
+}
