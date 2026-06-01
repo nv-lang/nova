@@ -1,0 +1,29 @@
+// Plan 118 D216 §8 (D2 amend) — `unsafe { ... }` block example.
+//
+// Restores `unsafe` keyword as syntactic sugar over built-in
+// `unsafe_handler` effect handler (D2 v2). Encapsulates per fn — no
+// effect propagation up the call stack (canonical Rust pattern).
+
+module typed_pointers.unsafe_block
+
+test "unsafe block — basic usage" {
+    // Block evaluates as value (last expression).
+    ro doubled = unsafe {
+        21 * 2
+    }
+    assert(doubled == 42)
+}
+
+test "unsafe block — multi-statement" {
+    ro result = unsafe {
+        ro a = 10
+        ro b = 5
+        a + b * 2
+    }
+    assert(result == 20)
+}
+
+test "unsafe block — composed в expression position" {
+    ro sum = unsafe { 10 } + unsafe { 32 }
+    assert(sum == 42)
+}

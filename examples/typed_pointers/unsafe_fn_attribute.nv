@@ -1,0 +1,32 @@
+// Plan 118 D216 §9 — `#unsafe` attribute on fn declaration.
+//
+// `#unsafe fn` body implicitly в unsafe context (pointer ops без
+// unsafe{} wrap). Callers must `unsafe { ... }` wrap the call (V1
+// scaffold; full E_UNSAFE_CALL_REQUIRES_WRAP enforcement landing
+// в Ф.3.3-3.5 followup).
+
+module typed_pointers.unsafe_fn_attribute
+
+#unsafe
+fn risky_compute(x i64, y i64) -> i64 {
+    // Body implicitly unsafe — pointer ops would not require additional
+    // unsafe { } wrap here (per D216 §9).
+    x * y + 100
+}
+
+#unsafe
+fn opaque_init() -> i64 {
+    42
+}
+
+test "#unsafe fn — declarable + callable" {
+    ro r = risky_compute(7, 6)
+    assert(r == 142)
+}
+
+test "#unsafe fn — callable from inside unsafe block" {
+    ro v = unsafe {
+        opaque_init()
+    }
+    assert(v == 42)
+}
