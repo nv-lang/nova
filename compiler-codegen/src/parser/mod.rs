@@ -1115,6 +1115,12 @@ impl Parser {
         // `type`. Контекстный разбор после `#` (не keyword).
         let (type_attrs, impl_protocols) = self.parse_type_attrs()?;
 
+        // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
+        // form `#cancel_safe\nexternal fn ...` работала (attribute может
+        // стоять перед `external`). Дополнительный pass позже подберёт
+        // attribute если он был между `external` и `fn`.
+        let pre_cancel_safe = self.parse_cancel_safe_attr();
+
         let is_export = self.eat(&TokenKind::KwExport).is_some();
         // D82: `external` modifier — между `export` и `fn`.
         // Plan 62.D.bis (D126): `external` теперь также валиден перед `type`
@@ -1140,12 +1146,31 @@ impl Parser {
         // Парсим в RealtimeAttr enum, передаём в parse_fn.
         // Plan 113 (D172): `#blocking` — fn-level threadpool offload attr.
         // Both `#realtime` and `#blocking` may appear before `fn` in either order.
-        let realtime_attr = self.parse_realtime_attr()?;
-        let blocking_attr = self.parse_blocking_attr();
-        // Re-try realtime if blocking came first (allow either order)
-        let realtime_attr = if matches!(realtime_attr, RealtimeAttr::None) {
-            self.parse_realtime_attr()?
-        } else { realtime_attr };
+        // Plan 110.7.3.a: parse #cancel_safe / #realtime / #blocking в любом
+        // порядке. Iterate пока хотя бы один pattern matches. Pre-seed
+        // cancel_safe_attr с pre_cancel_safe (consumed выше до eat KwExternal).
+        let mut realtime_attr = self.parse_realtime_attr()?;
+        let mut blocking_attr = self.parse_blocking_attr();
+        let mut cancel_safe_attr = pre_cancel_safe || self.parse_cancel_safe_attr();
+        loop {
+            let mut progressed = false;
+            if matches!(realtime_attr, RealtimeAttr::None) {
+                let r = self.parse_realtime_attr()?;
+                if !matches!(r, RealtimeAttr::None) {
+                    realtime_attr = r;
+                    progressed = true;
+                }
+            }
+            if !blocking_attr && self.parse_blocking_attr() {
+                blocking_attr = true;
+                progressed = true;
+            }
+            if !cancel_safe_attr && self.parse_cancel_safe_attr() {
+                cancel_safe_attr = true;
+                progressed = true;
+            }
+            if !progressed { break; }
+        }
         if !matches!(realtime_attr, RealtimeAttr::None)
             && !matches!(self.peek().kind, TokenKind::KwFn)
             && !matches!(self.peek().kind, TokenKind::Hash)
@@ -1221,7 +1246,7 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -1235,6 +1260,43 @@ impl Parser {
                     );
                 }
                 Item::Let(self.parse_let_decl()?)
+            }
+            // Plan 114 (D184): `ro X = expr` — module-level immutable binding.
+            // Заменяет `let X = expr` host для non-constexpr lazy-init.
+            TokenKind::KwRo => {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `ro` is ignored \
+                         — `ro` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Let(self.parse_ro_mut_binding(false)?)
+            }
+            // Plan 114 (D184): `mut X = expr` запрещён на module-level
+            // (module-level mutable global — anti-pattern).
+            TokenKind::KwMut => {
+                return Err(Diagnostic::new(
+                    "[E_MUT_AT_MODULE_LEVEL] `mut X = expr` is not allowed at \
+                     module level — module-level mutable globals are an \
+                     anti-pattern. Use `ro X = …` for runtime constants, \
+                     `const X = …` for compile-time, or wrap mutable state in \
+                     a record type (Plan 114 D184).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Plan 114 (D184): `consume X = expr` запрещён на module-level
+            // (consume-obligation требует scope-exit; module-level scope
+            // никогда не выходит — ill-formed).
+            TokenKind::KwConsume => {
+                return Err(Diagnostic::new(
+                    "[E_CONSUME_AT_MODULE_LEVEL] `consume X = expr` is not \
+                     allowed at module level — consume-obligation requires \
+                     scope-exit, but module-level scope never exits. Move \
+                     the binding into a function (Plan 114 D184).".to_string(),
+                    self.peek().span,
+                ));
             }
             TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwTest if !is_export => {
@@ -1344,6 +1406,26 @@ impl Parser {
         self.bump(); // blocking
         self.skip_newlines();
         true
+    }
+
+    /// Plan 110.7.3.a (D188 §FFI): parse `#cancel_safe` attribute перед
+    /// `external fn` (or any fn). Attests на cancel-safety при invocation
+    /// из ConsumeScope on_exit body. `cancel_safe` — обычный identifier
+    /// (не keyword в lexer'е), парсится контекстно после `#`.
+    /// Returns true if attribute present.
+    fn parse_cancel_safe_attr(&mut self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return false;
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "cancel_safe" => {
+                self.bump(); // #
+                self.bump(); // cancel_safe
+                self.skip_newlines();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
@@ -2041,7 +2123,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -2374,6 +2456,7 @@ impl Parser {
             span: start.merge(end_span),
             realtime_attr,
             blocking_attr,
+            cancel_safe_attr,
             // Plan 33.1 (D24): contracts + verify attributes.
             // Backward-compat: пустой Vec для функций без контрактов;
             // Default verify_mode / Unknown purity для функций без атрибутов.
@@ -2402,9 +2485,17 @@ impl Parser {
         // выполняется в parse_fn после сбора всех params'ов.
         let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
         // D178 (Plan 91 Ф.2.6): `readonly name Type` — параметр с readonly-типом.
-        // Сахар: `readonly name []u8` эквивалентно `name readonly []u8`.
-        // При парсинге оборачиваем тип в TypeRef::Readonly — семантически идентично.
-        let has_readonly_prefix = self.eat(&TokenKind::KwReadonly).is_some();
+        // Plan 114 (D184) Ф.1.5: `readonly` retracted; используется `ro`.
+        if matches!(self.peek().kind, TokenKind::KwReadonly) {
+            return Err(Diagnostic::new(
+                "[E_KW_REMOVED_READONLY] `readonly` keyword renamed to `ro` \
+                 in Plan 114 (D184). Use `ro name Type` instead of \
+                 `readonly name Type`. Error code E_READONLY_* preserved as \
+                 stable API. Run scripts/plan114_rewrite.py to migrate.".to_string(),
+                self.peek().span,
+            ));
+        }
+        let has_readonly_prefix = self.eat(&TokenKind::KwRo).is_some();
         // Plan 73 (D131): `consume name Type` — consuming параметр. После
         // передачи аргумента в такой параметр переменная-источник
         // логически инвалидируется (use-after-consume → compile error).
@@ -2429,19 +2520,82 @@ impl Parser {
         } else {
             false
         };
-        // Plan 72 P1-A (D6): `mut name type` prefix form — allow `mut` BEFORE
-        // the parameter name. Previously only `name mut type` was accepted, which
-        // prevented writing `fn sum_iter[U, T Iter[U]](mut it T)`. Both forms
-        // are semantically identical (mut is noop in bootstrap GC semantics).
+        // Plan 72 P1-A (D6): `mut name type` prefix form.
+        // Plan 108.1 (D176 amend): `mut` now carries semantic weight —
+        // params без `mut` = readonly (default).  Mut-method/index-assign
+        // на параметре без `mut` → E_PARAM_NOT_MUT.
+        //
+        // Сочетания с `consume`/`readonly` запрещены parser-level —
+        // E_PARAM_MOD_CONFLICT.
+        let mut is_mut = false;
         if matches!(self.peek().kind, TokenKind::KwMut) {
+            if is_consume {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `consume` и `mut`: `consume` подразумевает ownership transfer \
+                     (D131) — receiver уже владеет и может мутировать.  Убери `mut`."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            if has_readonly_prefix {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `readonly` и `mut` (D176): взаимоисключающие квалификаторы."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
             self.bump(); // consume leading `mut`
+            is_mut = true;
+            // Plan 108.1: after consuming `mut`, check for following
+            // `consume`/`readonly` which would create conflict.
+            if matches!(self.peek().kind, TokenKind::KwConsume) {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `mut` и `consume`: `consume` подразумевает ownership transfer \
+                     (D131) — receiver уже владеет и может мутировать.  Убери `mut`."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwReadonly) {
+                return Err(Diagnostic::new(
+                    "[E_KW_REMOVED_READONLY] `readonly` renamed to `ro` (Plan 114 D184). \
+                     Also: cannot combine `mut` and `ro` — взаимоисключающие квалификаторы.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwRo) {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `mut` и `ro` (D176 / D184): взаимоисключающие квалификаторы.".to_string(),
+                    self.peek().span,
+                ));
+            }
         }
         let (name, name_span) = self.parse_ident()?;
         // D6: mut-маркер после имени — `name mut type` (legacy form).
-        // В bootstrap'е GC + reference-семантика делают это noop.
-        // Игнорируем `mut`, оставляем тип.
+        // Plan 108.1: тоже принимаем, помечаем is_mut.
         if matches!(self.peek().kind, TokenKind::KwMut) {
+            if is_consume {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `consume` и `mut` (D131 + D176)."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            if has_readonly_prefix {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `readonly` и `mut` (D176)."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
             self.bump();
+            is_mut = true;
         }
         let ty = {
             let inner = self.parse_type()?;
@@ -2485,6 +2639,7 @@ impl Parser {
             is_variadic,
             default,
             consume: is_consume,
+            is_mut,
         })
     }
 
@@ -2663,6 +2818,7 @@ impl Parser {
                 kind: TypeDeclKind::Opaque,
                 impl_protocols: impl_protocols.clone(),
                 span: start.merge(last_span),
+                assoc_consts: Vec::new(),
                 attrs,
                 invariants: Vec::new(),
                 axioms: Vec::new(),
@@ -2732,6 +2888,7 @@ impl Parser {
                     generics,
                     kind,
                     span: start.merge(last_span),
+                    assoc_consts: Vec::new(),
                     attrs,
                     invariants: Vec::new(),
                     axioms: Vec::new(),
@@ -2742,6 +2899,9 @@ impl Parser {
         }
 
         let mut effect_axioms: Vec<EffectAxiom> = Vec::new();
+        // Plan 114.4.1 (D200): assoc consts собираются здесь; populates только
+        // для Record-types в Ф.1 (Sum-type + Generic — Ф.2/Ф.3 followup).
+        let mut assoc_consts: Vec<AssocConst> = Vec::new();
         let kind = match self.peek().kind {
             TokenKind::KwEffect => {
                 self.bump();
@@ -2775,7 +2935,8 @@ impl Parser {
             }
             TokenKind::LBrace => {
                 self.bump();
-                let fields = self.parse_record_fields()?;
+                let (fields, acs) = self.parse_record_fields()?;
+                assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
             }
@@ -2783,7 +2944,17 @@ impl Parser {
                 let variants = self.parse_sum_variants()?;
                 TypeDeclKind::Sum(variants)
             }
-            // type Name OtherType — newtype
+            // Plan 120 (D215): named tuple `type Point(x f64, y f64)` vs
+            // positional tuple `type Point(f64, f64)` — disambiguate here.
+            // Lookahead: after `(`, if IDENT followed by type-starting token
+            // → named tuple. Otherwise delegate to parse_type() as before.
+            TokenKind::LParen if self.is_named_tuple_decl() => {
+                self.bump(); // consume `(`
+                let fields = self.parse_named_tuple_fields()?;
+                self.expect(&TokenKind::RParen)?;
+                TypeDeclKind::NamedTuple(fields)
+            }
+            // type Name OtherType — newtype (includes positional tuple `type X(T, U)`)
             _ => {
                 let ty = self.parse_type()?;
                 TypeDeclKind::Newtype(ty)
@@ -2832,6 +3003,7 @@ impl Parser {
             generics,
             kind,
             span,
+            assoc_consts,
             attrs,
             invariants,
             axioms: effect_axioms,
@@ -2840,13 +3012,162 @@ impl Parser {
         })
     }
 
-    fn parse_record_fields(&mut self) -> Result<Vec<RecordField>, Diagnostic> {
+    /// Plan 120 (D215): lookahead to detect named tuple field pattern.
+    /// Returns true if tokens[pos] = IDENT and tokens[pos+1] = type-start.
+    /// This is called when we're positioned AT `(` in type decl.
+    /// tokens[pos] = `(`, tokens[pos+1] = first token inside parens.
+    fn is_named_tuple_decl(&self) -> bool {
+        // tokens[pos] = `(` (current), tokens[pos+1] = first in parens
+        let first = &self.peek_at(1).kind;
+        let second = &self.peek_at(2).kind;
+        // Named field: IDENT followed by a type-starting token (not `,` not `)`)
+        matches!(first, TokenKind::Ident(_))
+            && matches!(second,
+                TokenKind::Ident(_)
+                | TokenKind::LBracket
+                | TokenKind::KwFn
+                | TokenKind::KwRo
+            )
+    }
+
+    /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
+    /// Called after consuming `(`. Stops before `)`.
+    fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
+        let mut fields: Vec<NamedTupleField> = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RParen) {
+                break;
+            }
+            let field_start = self.peek().span;
+            // Expect IDENT (field name)
+            if !matches!(self.peek().kind, TokenKind::Ident(_)) {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_MIXED_FIELDS] tuple fields must be all named (`name type`) \
+                         or all positional (bare `type`); expected field name (identifier), \
+                         got `{}`",
+                        self.peek().kind.name()
+                    ),
+                    sp,
+                ));
+            }
+            // After the IDENT, must be a type-start; otherwise this is a positional
+            // field smuggled in after named fields (mixed).
+            if !matches!(self.peek_at(1).kind,
+                TokenKind::Ident(_)
+                | TokenKind::LBracket
+                | TokenKind::KwFn
+                | TokenKind::KwRo
+            ) {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_MIXED_FIELDS] tuple fields must be all named (`name type`) \
+                         or all positional (bare `type`); field `{}` lacks a type annotation \
+                         (looks like a bare positional type mixed with named fields)",
+                        if let TokenKind::Ident(n) = &self.peek().kind { n } else { "?" }
+                    ),
+                    sp,
+                ));
+            }
+            let (name, _) = self.parse_ident()?;
+            let ty = self.parse_type()?;
+            let span = field_start.merge(ty.span());
+            fields.push(NamedTupleField { name, ty, span });
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        if fields.is_empty() {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_NAMED_TUPLE_EMPTY] named tuple must have at least one field; \
+                 use `type X` (unit/empty-sum) for parameterless types",
+                sp,
+            ));
+        }
+        Ok(fields)
+    }
+
+    /// Plan 114.4.1 (D200): расширено возвращать tuple
+    /// `(Vec<RecordField>, Vec<AssocConst>)`. Поля типа `const NAME T = expr`
+    /// внутри `type X { ... }` collected отдельно как associated constants —
+    /// НЕ в instance layout, accessible через namespace `Type.NAME`.
+    fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
+        let mut assoc_consts = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // Plan 114.4.1 (D200) Ф.1: `const NAME T = expr` — associated
+            // constant. Modifier-conflicts detected via lookahead.
+            if matches!(self.peek().kind, TokenKind::KwConst) {
+                let ac = self.parse_assoc_const_field(false)?;
+                assoc_consts.push(ac);
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                } else {
+                    self.skip_newlines();
+                }
+                continue;
+            }
+            // Plan 114.4.1 (D200) Ф.1: `export const NAME T = expr` —
+            // public assoc const (cross-module access).
+            if matches!(self.peek().kind, TokenKind::KwExport)
+                && matches!(self.peek_at(1).kind, TokenKind::KwConst)
+            {
+                self.bump(); // export
+                let ac = self.parse_assoc_const_field(true)?;
+                assoc_consts.push(ac);
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                } else {
+                    self.skip_newlines();
+                }
+                continue;
+            }
             let mut readonly = false;
             let mut mutable = false;
-            if self.eat(&TokenKind::KwReadonly).is_some() {
+            // Plan 114 (D184) Ф.1.5: `readonly` retracted; `ro` — canonical
+            // short form для read-only field modifier.
+            if matches!(self.peek().kind, TokenKind::KwReadonly) {
+                return Err(Diagnostic::new(
+                    "[E_KW_REMOVED_READONLY] `readonly` field modifier \
+                     renamed to `ro` in Plan 114 (D184). Use `ro NAME TYPE` \
+                     instead of `readonly NAME TYPE`. Error code \
+                     E_READONLY_FIELD preserved as stable API. Run \
+                     scripts/plan114_rewrite.py to migrate.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Plan 114.4.1 (D200) modifier-conflicts: `mut const` / `ro const`
+            // / `consume const` — error before consuming modifier (ambiguous
+            // intent: assoc const vs instance field).
+            if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut | TokenKind::KwConsume)
+                && matches!(self.peek_at(1).kind, TokenKind::KwConst)
+            {
+                let kw = match self.peek().kind {
+                    TokenKind::KwRo => "ro",
+                    TokenKind::KwMut => "mut",
+                    TokenKind::KwConsume => "consume",
+                    _ => unreachable!(),
+                };
+                let code = match self.peek().kind {
+                    TokenKind::KwRo => "E_CONST_RO_REDUNDANT",
+                    TokenKind::KwMut => "E_CONST_MUT_CONFLICT",
+                    TokenKind::KwConsume => "E_CONST_CONSUME_CONFLICT",
+                    _ => unreachable!(),
+                };
+                return Err(Diagnostic::new(
+                    format!("[{code}] cannot combine `{kw}` with `const` field — \
+                     `const` field — это associated constant (zero-storage, \
+                     namespace access Type.NAME); `{kw}` относится к instance \
+                     field. Choose one (Plan 114.4.1 D200)."),
+                    self.peek().span,
+                ));
+            }
+            if self.eat(&TokenKind::KwRo).is_some() {
                 readonly = true;
             } else if self.eat(&TokenKind::KwMut).is_some() {
                 mutable = true;
@@ -2910,7 +3231,32 @@ impl Parser {
                 self.skip_newlines();
             }
         }
-        Ok(fields)
+        Ok((fields, assoc_consts))
+    }
+
+    /// Plan 114.4.1 (D200) Ф.1: parse `const NAME [T] = expr` внутри
+    /// `type X { ... }` body. Caller гарантирует что `const`/`export const`
+    /// уже peek'нут; `KwConst` consumed внутри.
+    fn parse_assoc_const_field(&mut self, is_export: bool) -> Result<AssocConst, Diagnostic> {
+        let start = self.peek().span;
+        self.expect(&TokenKind::KwConst)?;
+        let (name, _) = self.parse_ident()?;
+        let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
+        let value = self.parse_expr()?;
+        let span = start.merge(value.span);
+        Ok(AssocConst {
+            name,
+            ty,
+            value,
+            span,
+            is_export,
+        })
     }
 
     fn parse_sum_variants(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
@@ -2935,7 +3281,12 @@ impl Parser {
                 }
                 TokenKind::LBrace => {
                     self.bump();
-                    let fields = self.parse_record_fields()?;
+                    // Plan 114.4.1 Ф.2 followup: per-variant assoc const
+                    // НЕ поддерживается V1 ([M-114.4.1-per-variant-const]).
+                    // Здесь записываем фактические assoc consts найденные
+                    // парсером — но Ф.2 sum-type assoc на sum-level
+                    // обрабатывается отдельно. Пока для variant — ignored.
+                    let (fields, _variant_acs) = self.parse_record_fields()?;
                     self.expect(&TokenKind::RBrace)?;
                     SumVariantKind::Record(fields)
                 }
@@ -3241,6 +3592,24 @@ impl Parser {
     // ─── let / const / test ──────────────────────────────────────────────
 
     fn parse_let_decl(&mut self) -> Result<LetDecl, Diagnostic> {
+        // Plan 114 (D184) Ф.1.5: `let` keyword retracted. Lexer всё ещё
+        // узнаёт лексему — здесь parser отвергает с понятным сообщением
+        // вместо generic 'unknown identifier'. Migrate через
+        // scripts/plan114_rewrite.py (R1-R10).
+        let span = self.peek().span;
+        return Err(Diagnostic::new(
+            "[E_KW_REMOVED_LET] `let` keyword removed in Plan 114 (D184). \
+             Use `ro X = expr` for immutable binding, `mut X = expr` for \
+             mutable, `consume X = expr` for owned. For pattern-bind in \
+             condition use `if Some(x) = e` (drop `let`) or `if ro X = e` \
+             for identifier-pattern. Run scripts/plan114_rewrite.py to \
+             migrate.".to_string(),
+            span,
+        ));
+    }
+
+    #[allow(dead_code)]
+    fn parse_let_decl_legacy(&mut self) -> Result<LetDecl, Diagnostic> {
         let start = self.peek().span;
         // Plan 33.3 (D24): `ghost let` / `ghost var` — spec-only binding.
         // Прификс `ghost` перед `let`/`var`. Контекстный keyword.
@@ -3252,6 +3621,21 @@ impl Parser {
         } else { false };
         self.expect(&TokenKind::KwLet)?;
         let mutable = self.eat(&TokenKind::KwMut).is_some();
+        // Plan 108.3 (D36 amend): запрет group-mut на pattern.
+        // `let mut (a, b) = ...` — `mut` относится к pattern целиком,
+        // что неоднозначно (a mutable? b mutable? оба?).  Правильная
+        // форма — per-name: `let (mut a, b) = ...`.
+        if mutable && matches!(self.peek().kind,
+            TokenKind::LParen | TokenKind::LBrace | TokenKind::LBracket)
+        {
+            return Err(Diagnostic::new(
+                "[E_PATTERN_GROUP_MUT] `let mut` не может применяться к pattern \
+                 (tuple/record/array).  Используй per-name `mut` внутри pattern: \
+                 `let (mut a, b) = ...` (D36 amend Plan 108.3)."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
         let pattern = self.parse_pattern()?;
         let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
             Some(self.parse_type()?)
@@ -3291,8 +3675,13 @@ impl Parser {
     }
 
     /// Plan 100.1 (D133 / D9): `consume tx = expr` — explicit ownership binding.
+    /// Plan 110 (D188): `consume tx = expr { body }` — scope-block с
+    /// автоматическим вызовом `Consumable.on_exit` при выходе.
+    ///
     /// Парсится из `parse_stmt_or_expr` при lookahead KwConsume + Ident/KwMut.
-    fn parse_consume_let(&mut self) -> Result<LetDecl, Diagnostic> {
+    /// Lookahead `{` после init expr (с disabled trailing-block) решает между
+    /// scope-block (Stmt::ConsumeScope) и raw form (Stmt::Let).
+    fn parse_consume_decl_or_scope(&mut self) -> Result<Stmt, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConsume)?;
         // `consume mut tx` — не валидно: consume = full transfer,
@@ -3314,10 +3703,58 @@ impl Parser {
         };
         self.expect(&TokenKind::Eq)?;
         self.skip_newlines();
-        let value = self.parse_expr()?;
+        // Parse init expression с disabled trailing-block чтобы не путать
+        // `init() { body }` с trailing-block call syntax. Struct literals
+        // разрешены (no_struct_lit НЕ устанавливаем — `Config { ... }`
+        // как init остаётся валидным).
+        let saved_trailing = self.no_trailing_block;
+        self.no_trailing_block = true;
+        let value_result = self.parse_expr();
+        self.no_trailing_block = saved_trailing;
+        let value = value_result?;
+
+        // Plan 110 D188: lookahead `{` после init expr — scope-block form.
+        // Newline между init и `{` разрешён.
+        let saved_pos = self.pos;
+        self.skip_newlines();
+        if matches!(self.peek().kind, TokenKind::LBrace) {
+            // Scope-block form требует single-ident immutable binding.
+            let binding = match &pattern {
+                Pattern::Ident { name, is_mut: false, .. } => name.clone(),
+                Pattern::Ident { is_mut: true, .. } => {
+                    return Err(Diagnostic::new(
+                        "Plan 110 D188: `consume mut X = expr { body }` is not valid; \
+                         scope-block requires immutable single-ident binding."
+                            .to_string(),
+                        self.peek().span,
+                    ));
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "Plan 110 D188: `consume X = expr { body }` requires single \
+                         identifier binding (destructure not allowed in scope-block; \
+                         use raw `consume X = expr` for linear ownership transfer)."
+                            .to_string(),
+                        self.peek().span,
+                    ));
+                }
+            };
+            let body = self.parse_block()?;
+            let span = start.merge(body.span);
+            self.expect_newline_or_eof().ok();
+            return Ok(Stmt::ConsumeScope {
+                binding,
+                type_annot: ty,
+                init: value,
+                body,
+                span,
+            });
+        }
+        // Не scope-block — rewind newlines + raw form (D180).
+        self.pos = saved_pos;
         let span = start.merge(value.span);
         self.expect_newline_or_eof().ok();
-        Ok(LetDecl {
+        Ok(Stmt::Let(LetDecl {
             mutable: false,
             pattern,
             ty,
@@ -3325,6 +3762,94 @@ impl Parser {
             span,
             is_ghost: false,
             consume: true,
+        }))
+    }
+
+    /// Plan 114 (D184) helper: pattern is structural (constructor /
+    /// destructure form) — `Some(x)`, `(a, b)`, `{ name, age }`,
+    /// `None` (unit variant), `Cons(h, ..)`. Не identifier-only.
+    fn is_structural_pattern(pat: &Pattern) -> bool {
+        matches!(pat,
+            Pattern::Variant { .. }
+            | Pattern::Record { .. }
+            | Pattern::Array { .. }
+            | Pattern::Tuple(_, _))
+    }
+
+    /// Plan 114 (D184) helper: pattern — bare identifier (`x`).
+    fn is_ident_pattern(pat: &Pattern) -> bool {
+        matches!(pat, Pattern::Ident { .. })
+    }
+
+    /// Plan 114 (D184): `ro X = expr` / `mut X = expr` binding-statement.
+    /// Симметричен `consume X = expr` (Plan 73.1); leading keyword'ом
+    /// определяет mutability, без `let`-prefix'а. `let` retracted.
+    ///
+    /// `is_mut = false` → KwRo; `is_mut = true` → KwMut.
+    ///
+    /// Destructure-pattern (`(a, b)` / `{ name, age }`): leading keyword
+    /// distributes на все имена (`mut (a, b)` → оба mutable). Per-element
+    /// granularity (`(ro a, mut b)`) НЕ вводится (D184 «Out of scope V1»).
+    fn parse_ro_mut_binding(&mut self, is_mut: bool) -> Result<LetDecl, Diagnostic> {
+        let start = self.peek().span;
+        // Plan 33.3 (D24) carry-over: `ghost ro X = …` / `ghost mut X = …`
+        // — spec-only binding. Контекстный keyword `ghost` перед ro/mut.
+        let is_ghost = if let TokenKind::Ident(n) = &self.peek().kind {
+            if n == "ghost" && matches!(self.peek_at(1).kind,
+                TokenKind::KwRo | TokenKind::KwMut)
+            {
+                self.bump();
+                true
+            } else { false }
+        } else { false };
+        if is_mut {
+            self.expect(&TokenKind::KwMut)?;
+        } else {
+            self.expect(&TokenKind::KwRo)?;
+        }
+        let pattern = self.parse_pattern()?;
+        let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        // Plan 114 (D184) §«binding statements»: bare `ro x` / `mut x`
+        // без init'а — parse error.
+        if !matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new(
+                "[E_BINDING_REQUIRES_INIT] `ro` / `mut` binding requires \
+                 initialization. Write `ro x = expr` or `mut x = expr` \
+                 (Plan 114 D184).".to_string(),
+                self.peek().span,
+            ));
+        }
+        self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
+        let value = self.parse_expr()?;
+        let span = start.merge(value.span);
+        self.expect_newline_or_eof().ok();
+        // Plan 51 Ф.2: redundant `T = T { … }` (carry-over check).
+        if let Some(TypeRef::Named { path: ann_path, .. }) = &ty {
+            if let ExprKind::RecordLit { type_name: Some(lit_path), .. } = &value.kind {
+                if ann_path == lit_path {
+                    let kw = if is_mut { "mut" } else { "ro" };
+                    return Err(Diagnostic::new(
+                        format!(
+                            "redundant type prefix on record literal — the `{}` \
+                             annotation already declares `{}`; write `= {{ ... }}`",
+                            kw, ann_path.join(".")),
+                        value.span));
+                }
+            }
+        }
+        Ok(LetDecl {
+            mutable: is_mut,
+            pattern,
+            ty,
+            value,
+            span,
+            is_ghost,
+            consume: false,
         })
     }
 
@@ -3763,9 +4288,20 @@ impl Parser {
     fn parse_type(&mut self) -> Result<TypeRef, Diagnostic> {
         let start = self.peek().span;
         match self.peek().kind {
-            // D176 (Plan 108): `readonly T` — compile-time immutability modifier.
-            // `readonly` as prefix of any type position: return type, param, field, let.
+            // Plan 114 (D184) Ф.1.5: `readonly T` renamed to `ro T`.
             TokenKind::KwReadonly => {
+                return Err(Diagnostic::new(
+                    "[E_KW_REMOVED_READONLY] `readonly` type-modifier \
+                     renamed to `ro` in Plan 114 (D184). Use `ro TYPE` \
+                     instead of `readonly TYPE` in param/return/field/binding \
+                     positions. Error codes E_READONLY_* preserved as stable \
+                     API. Run scripts/plan114_rewrite.py to migrate.".to_string(),
+                    start,
+                ));
+            }
+            // D176 (Plan 108): compile-time immutability modifier
+            // (Plan 114 keyword: `ro`).
+            TokenKind::KwRo => {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
@@ -4856,6 +5392,17 @@ impl Parser {
             }
             TokenKind::At => {
                 self.bump();
+                // Plan 110.7.3.a (D03 строка 1460-1461): `@.field` невалидно.
+                // Канонический доступ к полю self — `@field` без точки.
+                // `(@).field` через postfix-парсер also rejected here (sole
+                // entry point для @).
+                if matches!(self.peek().kind, TokenKind::Dot) {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[E_SELF_DOT_INVALID] `@.field` is invalid syntax — use `@field` for self-field access (D03 §D35/D37)",
+                        span,
+                    ));
+                }
                 // @ или @field
                 if matches!(self.peek().kind, TokenKind::Ident(_)) {
                     let (name, name_span) = self.parse_ident()?;
@@ -4874,6 +5421,42 @@ impl Parser {
             TokenKind::Ident(ref kw) if kw == "forall" || kw == "exists" => {
                 let is_forall = kw == "forall";
                 self.parse_quantifier(is_forall)
+            }
+            // Plan 115 D214: `null ptr` two-token opaque pointer literal.
+            // Контекстуальный keyword — recognized только при
+            // Ident("null") + Ident("ptr") combo в expression position. Это
+            // сохраняет существующие method names типа `JsonValue.null()` и
+            // `AtomicPtr.null()` без breaking change.
+            //
+            // Other `null T` (где T — known primitive ident) → diagnostic
+            // `E_NULL_LITERAL_REQUIRES_PTR` (V1; Plan 118 future расширит).
+            TokenKind::Ident(ref n)
+                if n == "null"
+                    && matches!(&self.peek_at(1).kind, TokenKind::Ident(ty)
+                        if ty == "ptr" || ty == "int" || ty == "i8" || ty == "i16"
+                           || ty == "i32" || ty == "i64" || ty == "u8" || ty == "u16"
+                           || ty == "u32" || ty == "u64" || ty == "uint" || ty == "f32"
+                           || ty == "f64" || ty == "bool" || ty == "char" || ty == "str") =>
+            {
+                let null_span = self.bump().span;
+                let TokenKind::Ident(ty_name) = self.peek().kind.clone() else {
+                    unreachable!("guarded by matches! above");
+                };
+                let ty_span = self.bump().span;
+                let full_span = null_span.merge(ty_span);
+                if ty_name == "ptr" {
+                    Ok(Expr::new(ExprKind::NullPtrLit, full_span))
+                } else {
+                    Err(Diagnostic::new(
+                        format!(
+                            "[E_NULL_LITERAL_REQUIRES_PTR] `null {}` invalid: V1 \
+                             поддерживает только `null ptr` (Plan 115 D214). Для не-pointer \
+                             типов используйте Option[T] (`None`) или приведение к ptr.",
+                            ty_name
+                        ),
+                        full_span,
+                    ))
+                }
             }
             // Plan 97 Ф.3 (D142): hint при `handler IDENT {` —
             // legacy literal-форма, снята clean-break'ом. Подсказка
@@ -4922,6 +5505,11 @@ impl Parser {
                     | "f32" | "f64" | "bool" | "char" | "str"
                     // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
                     | "never"
+                    // Plan 115 D214: `ptr` — opaque pointer primitive type
+                    // (for FFI). Recognized в primitive position для
+                    // `ptr.method()` static dispatch (currently — no methods
+                    // defined в V1, но reserved для future ptr.MAX и подобных).
+                    | "ptr"
                 );
                 if (starts_uppercase || is_primitive_type)
                     && matches!(self.peek().kind, TokenKind::Dot)
@@ -5422,6 +6010,7 @@ impl Parser {
             TokenKind::KwLet => "let",
             TokenKind::KwConst => "const",
             TokenKind::KwMut => "mut",
+            TokenKind::KwRo => "ro",
             TokenKind::KwReadonly => "readonly",
             TokenKind::KwIf => "if",
             TokenKind::KwElse => "else",
@@ -5825,7 +6414,8 @@ impl Parser {
 
     fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwIf)?.span;
-        // `if let pattern = expr { ... }` — D34
+        // `if let pattern = expr { ... }` — D34 legacy (will be removed
+        // after Ф.5/Ф.6 corpus migration; oneday emits E_KW_REMOVED_LET).
         if matches!(self.peek().kind, TokenKind::KwLet) {
             self.bump();
             let pattern = self.parse_pattern()?;
@@ -5843,6 +6433,83 @@ impl Parser {
                 },
                 start.merge(end),
             ));
+        }
+        // Plan 114 (D184): `if ro IDENT = e` / `if mut IDENT = e` —
+        // identifier-pattern с explicit keyword (footgun protection).
+        if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut) {
+            let _is_mut = matches!(self.peek().kind, TokenKind::KwMut);
+            self.bump();
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::Eq)?;
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            let then = self.parse_block()?;
+            let else_ = self.parse_optional_else()?;
+            let end = then.span;
+            return Ok(Expr::new(
+                ExprKind::IfLet {
+                    pattern,
+                    scrutinee: Box::new(scrutinee),
+                    then,
+                    else_,
+                },
+                start.merge(end),
+            ));
+        }
+        // Plan 114 (D184): `if consume Pat = e` запрещён.
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            return Err(Diagnostic::new(
+                "[E_CONSUME_IN_CONDITION] `consume` binding не разрешён \
+                 в if/while condition — consume требует scope-exit \
+                 tracking, который complicated в condition-position. \
+                 Use match arm or extract в statement (Plan 114 D184).".to_string(),
+                self.peek().span,
+            ));
+        }
+        // Plan 114 (D184): speculative pattern-binding для constructor /
+        // destructure patterns (`if Some(x) = e`, `if (a, b) = pair`,
+        // `if { name, age } = user`). Если pattern парсится + следующий
+        // токен `=` — это IfLet, иначе восстанавливаем pos и парсим bool.
+        let save = self.pos;
+        if let Ok(pattern) = self.parse_pattern() {
+            if matches!(self.peek().kind, TokenKind::Eq) {
+                // Allow if it's a structural pattern (constructor / tuple /
+                // record / sum-variant). Plain identifier pattern в этой
+                // позиции отвергаем — footgun protection (визуально
+                // assignment-в-condition).
+                if Self::is_structural_pattern(&pattern) {
+                    self.expect(&TokenKind::Eq)?;
+                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    let then = self.parse_block()?;
+                    let else_ = self.parse_optional_else()?;
+                    let end = then.span;
+                    return Ok(Expr::new(
+                        ExprKind::IfLet {
+                            pattern,
+                            scrutinee: Box::new(scrutinee),
+                            then,
+                            else_,
+                        },
+                        start.merge(end),
+                    ));
+                }
+                // Identifier-pattern без keyword'а — explicit error.
+                if Self::is_ident_pattern(&pattern) {
+                    return Err(Diagnostic::new(
+                        "[E_AMBIGUOUS_IDENT_PATTERN] bare identifier pattern \
+                         в if/while condition требует explicit `ro` или `mut` \
+                         keyword (footgun protection: bare `if x = compute()` \
+                         визуально неотличимо от assignment). \
+                         Write `if ro IDENT = …` for immutable or \
+                         `if mut IDENT = …` for mutable (Plan 114 D184).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            // Pattern parsed but no `=` — restore and parse as bool expr.
+            self.pos = save;
+        } else {
+            // Pattern parse failed — restore and try bool expr.
+            self.pos = save;
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let then = self.parse_block()?;
@@ -5978,13 +6645,20 @@ impl Parser {
         // Mutually exclusive with `mut` (view and consume are different modes).
         // Must be checked BEFORE `mut` since consume is a distinct mode.
         let iter_consume = self.eat(&TokenKind::KwConsume).is_some();
-        // Plan 87: `for mut x [TYPE] in` — `mut` помечает loop-переменную
-        // мутабельной (D32/D33). `parse_pattern` не съедает `mut`, поэтому
-        // обрабатываем здесь. В bootstrap'е binding-иммутабельность нигде
-        // не enforce'ится — `mut` информационен (см. simplifications.md
-        // `[M-for-loop-var-mut]`).
-        let _loop_var_mut = if !iter_consume { self.eat(&TokenKind::KwMut).is_some() } else { false };
-        let pattern = self.parse_pattern()?;
+        // Plan 87 → Plan 108.3: `for mut x [TYPE] in` — `mut` помечает
+        // loop-переменную мутабельной (D32/D33).  После Plan 108.3
+        // `mut` semantic: enforce'ится type-checker'ом через `local_mut`.
+        // `parse_pattern` ТОЖЕ принимает `mut` для per-name в pattern
+        // (`for (mut a, b) in pairs`); здесь съедаем leading mut на
+        // for-уровне для backward compat и инжектим в pattern.
+        let loop_var_mut = if !iter_consume { self.eat(&TokenKind::KwMut).is_some() } else { false };
+        let mut pattern = self.parse_pattern()?;
+        // Plan 108.3: leading `for mut x` распространяется на pattern's Ident.
+        if loop_var_mut {
+            if let Pattern::Ident { is_mut, .. } = &mut pattern {
+                *is_mut = true;
+            }
+        }
         // Plan 87: явный тип элемента — `for x TYPE in iter`. Если после
         // loop-pattern сразу не `in` — это аннотация типа по правилу
         // «name type» (как `let x int`, `fn(x int)`, `[T Bound]`).
@@ -6047,6 +6721,7 @@ impl Parser {
 
     fn parse_while(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwWhile)?.span;
+        // `while let pattern = expr` — D34 legacy.
         if matches!(self.peek().kind, TokenKind::KwLet) {
             self.bump();
             let pattern = self.parse_pattern()?;
@@ -6064,6 +6739,64 @@ impl Parser {
                 },
                 start.merge(end),
             ));
+        }
+        // Plan 114 (D184): `while ro IDENT = e` / `while mut IDENT = e`.
+        if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut) {
+            self.bump();
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::Eq)?;
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            let body = self.parse_block()?;
+            let end = body.span;
+            return Ok(Expr::new(
+                ExprKind::WhileLet {
+                    pattern,
+                    scrutinee: Box::new(scrutinee),
+                    body,
+                    invariants: vec![],
+                    decreases: None,
+                },
+                start.merge(end),
+            ));
+        }
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            return Err(Diagnostic::new(
+                "[E_CONSUME_IN_CONDITION] `consume` binding не разрешён \
+                 в while condition (Plan 114 D184).".to_string(),
+                self.peek().span,
+            ));
+        }
+        // Plan 114 (D184): speculative pattern-binding для constructor/destructure.
+        let save = self.pos;
+        if let Ok(pattern) = self.parse_pattern() {
+            if matches!(self.peek().kind, TokenKind::Eq) {
+                if Self::is_structural_pattern(&pattern) {
+                    self.expect(&TokenKind::Eq)?;
+                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    let body = self.parse_block()?;
+                    let end = body.span;
+                    return Ok(Expr::new(
+                        ExprKind::WhileLet {
+                            pattern,
+                            scrutinee: Box::new(scrutinee),
+                            body,
+                            invariants: vec![],
+                            decreases: None,
+                        },
+                        start.merge(end),
+                    ));
+                }
+                if Self::is_ident_pattern(&pattern) {
+                    return Err(Diagnostic::new(
+                        "[E_AMBIGUOUS_IDENT_PATTERN] bare identifier pattern в \
+                         while condition требует `ro` или `mut` (Plan 114 D184).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            self.pos = save;
+        } else {
+            self.pos = save;
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5/9.8: loop invariants/decreases.
@@ -6147,7 +6880,7 @@ impl Parser {
         // Synthesize: let _nova_decr_old = <d>
         let snapshot_let = Stmt::Let(LetDecl {
             mutable: false,
-            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span },
+            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span, is_mut: false },
             ty: None,
             value: d.clone(),
             span,
@@ -6784,9 +7517,38 @@ impl Parser {
                 let l = self.parse_let_decl()?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
+            // Plan 114 (D184): `ro X = expr` scope-binding (immutable).
+            TokenKind::KwRo => {
+                let l = self.parse_ro_mut_binding(false)?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            // Plan 114 (D184): `mut X = expr` scope-binding (mutable).
+            // Disambiguation: leading `mut` в stmt-position — binding.
+            // `mut` внутри patterns / params / receivers — обрабатывается
+            // в parse_pattern / parse_param / parse_method_decl.
+            TokenKind::KwMut => {
+                let l = self.parse_ro_mut_binding(true)?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            // Plan 114.4 Ф.2: scope-local `const N = expr` inside fn body /
+            // block. Constexpr-only (checker enforces); inline literal в
+            // codegen. Reuses parse_const_decl (без is_export / doc).
+            TokenKind::KwConst => {
+                let c = self.parse_const_decl(false, None, Vec::new())?;
+                Ok(StmtOrExpr::Stmt(Stmt::Const(c)))
+            }
             // Plan 33.3 (D24): `ghost let` — контекстный keyword `ghost`.
             TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwLet) => {
                 let l = self.parse_let_decl()?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            // Plan 114 (D184): `ghost ro X` / `ghost mut X` — spec-only binding.
+            TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwRo) => {
+                let l = self.parse_ro_mut_binding(false)?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
+            TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwMut) => {
+                let l = self.parse_ro_mut_binding(true)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
             TokenKind::KwReturn => {
@@ -6827,49 +7589,43 @@ impl Parser {
             // DeferWithResult; иначе обычный Defer.
             TokenKind::KwDefer => {
                 self.bump();
-                // Lookahead: `defer |ident|` → DeferWithResult?
+                // Plan 110.5.7 (D189): `defer |result_binding|` form removed.
+                // Hard cutover — emit D189-removed-defer-result error.
                 if matches!(self.peek().kind, TokenKind::Pipe) {
-                    // `defer |binding| body` — reason-aware form (D160).
-                    self.bump(); // consume `|`
-                    // Expect identifier for the result binding.
-                    let result_binding = match &self.peek().kind {
-                        TokenKind::Ident(n) => {
-                            let n = n.clone();
-                            self.bump();
-                            n
-                        }
-                        _ => {
-                            let span = self.peek().span;
-                            return Err(Diagnostic::new(
-                                "expected identifier after `defer |` (D160: result binding name)".to_string(),
-                                span,
-                            ));
-                        }
-                    };
-                    // Expect closing `|`.
-                    self.expect(&TokenKind::Pipe)?;
-                    let body = self.parse_expr()?;
-                    let span = start.merge(body.span);
-                    return Ok(StmtOrExpr::Stmt(Stmt::DeferWithResult { result_binding, body, span }));
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[D189-removed-defer-result] `defer |result| { ... }` reason-aware \
+                         form retracted by Plan 110 D189. Migrate к `consume X = init() { body }` \
+                         scope-block с `match outcome` в `on_exit` method, OR `with Cleanup = \
+                         handler { body }` (D185) для observability-only logging pattern.".to_string(),
+                        span,
+                    ));
                 }
                 let body = self.parse_expr()?;
                 let span = start.merge(body.span);
                 Ok(StmtOrExpr::Stmt(Stmt::Defer { body, span }))
             }
-            // D90: `errdefer body` — cleanup только на throw/panic-exit.
+            // Plan 110.5.7 (D189): `errdefer` retracted. Hard cutover.
             TokenKind::KwErrDefer => {
-                self.bump();
-                let body = self.parse_expr()?;
-                let span = start.merge(body.span);
-                Ok(StmtOrExpr::Stmt(Stmt::ErrDefer { body, span }))
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[D189-removed-errdefer] `errdefer { body }` retracted by Plan 110 D189. \
+                     Migrate к `consume X = init() { body }` scope-block с `match outcome \
+                     { Failure(_) => ... }` в `on_exit` method, OR use \
+                     `mut done = false; defer { if !done { ... } }; ...; done = true` для \
+                     bare cleanup-state pattern.".to_string(),
+                    span,
+                ));
             }
-            // D160 Plan 100.4.3: `okdefer body` — complement к errdefer.
-            // Cleanup только на success-path (normal exit / return).
+            // Plan 110.5.7 (D189): `okdefer` retracted. Hard cutover.
             TokenKind::KwOkDefer => {
-                self.bump();
-                let body = self.parse_expr()?;
-                let span = start.merge(body.span);
-                Ok(StmtOrExpr::Stmt(Stmt::OkDefer { body, span }))
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[D189-removed-okdefer] `okdefer { body }` retracted by Plan 110 D189. \
+                     Migrate к `consume X = init() { body }` scope-block с `match outcome \
+                     { Success => ... }` в `on_exit` method.".to_string(),
+                    span,
+                ));
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate
             // proof obligation. Контекстный keyword (Ident в лексере).
@@ -6946,8 +7702,10 @@ impl Parser {
             // Lookahead: `consume <ident>` или `consume mut` — не путать
             // с `consume` как часть expression (method call на receiver).
             TokenKind::KwConsume if matches!(self.peek_at(1).kind, TokenKind::Ident(_) | TokenKind::KwMut) => {
-                let let_decl = self.parse_consume_let()?;
-                Ok(StmtOrExpr::Stmt(Stmt::Let(let_decl)))
+                // Plan 110 D188: returns either Stmt::Let (raw form, D180)
+                // или Stmt::ConsumeScope (block form, D188).
+                let stmt = self.parse_consume_decl_or_scope()?;
+                Ok(StmtOrExpr::Stmt(stmt))
             }
             _ => {
                 let expr = self.parse_expr()?;
@@ -7018,9 +7776,21 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> Result<Pattern, Diagnostic> {
         let start = self.peek().span;
+        // Plan 108.3 (D36 amend): `mut name` in pattern position —
+        // per-name mutability marker для destructure (tuple/record) и
+        // loop-var.  `let (mut a, b) = pair` → a mutable, b immutable.
+        // Запрет group-mut `let mut (a, b)` обрабатывается parse_let'ом
+        // на верхнем уровне (E_PATTERN_GROUP_MUT).
+        let pat_is_mut = self.eat(&TokenKind::KwMut).is_some();
         match self.peek().kind.clone() {
             TokenKind::Ident(s) if s == "_" => {
                 self.bump();
+                if pat_is_mut {
+                    return Err(Diagnostic::new(
+                        "[E_PATTERN_GROUP_MUT] `mut _` бессмысленно (wildcard не bind'ит).",
+                        start,
+                    ));
+                }
                 Ok(Pattern::Wildcard(start))
             }
             TokenKind::Int(n) => {
@@ -7138,7 +7908,7 @@ impl Parser {
                             span: start,
                         })
                     } else {
-                        Ok(Pattern::Ident { name, span: start })
+                        Ok(Pattern::Ident { name, span: start, is_mut: pat_is_mut })
                     }
                 } else {
                     Ok(Pattern::Variant {

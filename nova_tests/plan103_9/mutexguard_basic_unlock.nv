@@ -3,21 +3,21 @@
 // `consume g = mu.lock()` creates a consume obligation.
 // `g.unlock()` satisfies it → no E_CONSUME_NOT_CONSUMED.
 
-module nova_tests.plan103_9.mutexguard_basic_unlock
+module plan103_9.mutexguard_basic_unlock
 
 test "MutexGuard explicit unlock satisfies consume obligation" {
-    let mu = Mutex.new()
+    mut mu = Mutex.new()
     consume g = mu.lock()
     // Critical section placeholder
     g.unlock()
     // mu is now free — try_lock should succeed
-    let acquired = mu.try_lock()
+    ro acquired = mu.try_lock()
     assert(acquired == true)
     mu.unlock()
 }
 
 test "MutexGuard defer unlock panic-safe" {
-    let mu = Mutex.new()
+    mut mu = Mutex.new()
     consume g = mu.lock()
     defer g.unlock()
     // Deferred unlock runs even if body throws
@@ -25,8 +25,8 @@ test "MutexGuard defer unlock panic-safe" {
 }
 
 test "MutexGuard lock/unlock round-trip multiple times" {
-    let mu = Mutex.new()
-    let counter = AtomicInt.new(0)
+    mut mu = Mutex.new()
+    mut counter = AtomicInt.new(0)
     for _i in 0..10 {
         consume g = mu.lock()
         counter.fetch_add(1)

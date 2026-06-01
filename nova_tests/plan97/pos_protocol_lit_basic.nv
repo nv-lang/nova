@@ -5,7 +5,7 @@
 // allocation + NovaBox fat-pointer). Allocation должна работать
 // без CC-FAIL.
 
-module nova_tests.plan97.pos_protocol_lit_basic
+module plan97.pos_protocol_lit_basic
 
 
 export type Runnable protocol {
@@ -14,7 +14,7 @@ export type Runnable protocol {
 
 
 test "protocol-литерал создаётся и присваивается" {
-    let r = protocol Runnable {
+    ro r = protocol Runnable {
         run() => ()
     }
     // Bootstrap: значение создано, allocation работает.

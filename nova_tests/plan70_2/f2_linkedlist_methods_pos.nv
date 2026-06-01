@@ -9,7 +9,7 @@
 // generic_type_methods lookup + base_method_name construction →
 // emits `Nova_LL____nova_int_method_len(l)` correctly.
 
-module nova_tests.plan70_2.f2_linkedlist_methods_pos
+module plan70_2.f2_linkedlist_methods_pos
 
 type LinkedList[T]
     | Nil
@@ -21,11 +21,11 @@ fn LinkedList[T] @len() -> int => match @ {
 }
 
 test "LinkedList[int] @len method (mono'd dispatch)" {
-    let l = Cons(1, Cons(2, Cons(3, Nil)))
+    ro l = Cons(1, Cons(2, Cons(3, Nil)))
     assert(l.@len() == 3)
 }
 
 test "LinkedList[int] empty @len = 0" {
-    let l LinkedList[int] = Nil
+    ro l LinkedList[int] = Nil
     assert(l.@len() == 0)
 }

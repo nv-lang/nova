@@ -14,7 +14,7 @@
 // не SIGURG (minicoro mco_yield не async-signal-safe), но observable
 // поведение совпадает с Go.
 
-module nova_tests.concurrency.mn_runtime_preemption
+module concurrency.mn_runtime_preemption
 
 // ─── Positive: observable interleave ───────────────────────────────
 //
@@ -33,13 +33,13 @@ module nova_tests.concurrency.mn_runtime_preemption
 // цикла, не доехав до конца. saw_peer_done_mid_loop == true.
 test "preemption: peer fiber progresses while CPU-bound fiber loops (1 worker)" {
     runtime.init(1)
-    let peer_done = AtomicBool.new(false)
-    let saw_mid_loop = AtomicBool.new(false)
+    mut peer_done = AtomicBool.new(false)
+    mut saw_mid_loop = AtomicBool.new(false)
     supervised {
         spawn {
             // CPU-bound: длинный loop без явного yield. Backedge safepoint
             // ловит sysmon-флаг и yield'ит нас, давая peer'у CPU.
-            let mut i = 0
+            mut i = 0
             while i < 1_000_000_000 {
                 i = i + 1
                 if peer_done.load() {
@@ -69,17 +69,17 @@ test "preemption: peer fiber progresses while CPU-bound fiber loops (1 worker)" 
 // что ни один increment не потерян из-за yield'ов посреди работы.
 test "preemption: shared state stays exact across many preemptions" {
     runtime.init(2)
-    let total = AtomicInt.new(0)
+    mut total = AtomicInt.new(0)
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 400_000 {
                 total.fetch_add(1)
                 i = i + 1
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 400_000 {
                 total.fetch_add(1)
                 i = i + 1
@@ -99,8 +99,8 @@ test "preemption: shared state stays exact across many preemptions" {
 // но это чистый no-op (TLS-load + predicted-not-taken branch). Default
 // single-thread поведение не меняется.
 test "preemption: no-op without runtime.init (single-thread default)" {
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < 2_000_000 {
         sum = sum + 1
         i = i + 1
@@ -116,8 +116,8 @@ test "preemption: no-op without runtime.init (single-thread default)" {
 // (mco_running() == NULL). Ни hang, ни crash.
 test "preemption: main-thread loop after runtime.init is safe" {
     runtime.init(2)
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < 1_000_000 {
         sum = sum + 1
         i = i + 1

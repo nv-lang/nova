@@ -5,5 +5,5 @@
 module str.neg_cast_int_as_str
 
 fn main() Io {
-    let _ = 42 as str
+    ro _ = 42 as str
 }

@@ -1,0 +1,17 @@
+// Plan 114 (D184) NEG-T2: bare identifier pattern в if condition без
+// keyword'а — E_AMBIGUOUS_IDENT_PATTERN (footgun protection: визуально
+// неотличимо от assignment в условии).
+
+// EXPECT_COMPILE_ERROR E_AMBIGUOUS_IDENT_PATTERN
+
+module plan114.ambiguous_ident_pattern_neg
+
+fn compute() -> Option {
+    Some(1)
+}
+
+test "bare ident pattern in if" {
+    if user = compute() {
+        assert(true)
+    }
+}

@@ -46,14 +46,14 @@ module encoding.url
 /// ```
 #stable(since = "0.1")
 export type Url {
-    readonly scheme    str
-    readonly user      Option[str]
-    readonly password  Option[str]
-    readonly host      Option[str]
-    readonly port      Option[int]
-    readonly path      str
-    readonly query     Option[str]
-    readonly fragment  Option[str]
+    ro scheme    str
+    ro user      Option[str]
+    ro password  Option[str]
+    ro host      Option[str]
+    ro port      Option[int]
+    ro path      str
+    ro query     Option[str]
+    ro fragment  Option[str]
 }
 
 
@@ -78,10 +78,10 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
     if s.len() == 0 { throw EmptyInput }
 
     // 1. Извлечь scheme (до первого ":") и валидировать.
-    let (scheme, after_scheme) = parse_scheme(s)
+    ro (scheme, after_scheme) = parse_scheme(s)
 
     // 2. Если "://" — есть authority (user/host/port), иначе path сразу.
-    let (user, password, host, port, after_authority) =
+    ro (user, password, host, port, after_authority) =
         if after_scheme.starts_with("//") {
             parse_authority(after_scheme[2..after_scheme.len()])
         } else {
@@ -89,11 +89,11 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
         }
 
     // 3. Path — до "?" или "#".
-    let (path, after_path) = parse_path(after_authority)
+    ro (path, after_path) = parse_path(after_authority)
 
     // 4. Query — после "?", до "#".
-    let (query, after_query) = if after_path.starts_with("?") {
-        let rest = after_path[1..after_path.len()]
+    ro (query, after_query) = if after_path.starts_with("?") {
+        ro rest = after_path[1..after_path.len()]
         match rest.find("#") {
             Some(i) => (Some(rest[0..i]), rest[i..rest.len()])
             None    => (Some(rest), "")
@@ -103,7 +103,7 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
     }
 
     // 5. Fragment — после "#".
-    let fragment = if after_query.starts_with("#") {
+    ro fragment = if after_query.starts_with("#") {
         Some(after_query[1..after_query.len()])
     } else {
         None
@@ -120,7 +120,7 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
         None => throw MissingScheme
         Some(i) => {
             if i == 0 { throw MissingScheme }
-            let scheme = s[0..i]
+            ro scheme = s[0..i]
             // Первый символ — letter
             match scheme.char_at(0) {
                 Some(c) if !is_alpha(c) =>
@@ -144,8 +144,8 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
 // Заканчивается на "/", "?", "#" или EOF.
 fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Option[str], Option[int], str) {
     // Найти конец authority — первый из /, ?, #.
-    let auth_end = find_first_of(s, "/?#")
-    let (auth, rest) = match auth_end {
+    ro auth_end = find_first_of(s, "/?#")
+    ro (auth, rest) = match auth_end {
         Some(i) => (s[0..i], s[i..s.len()])
         None    => (s, "")
     }
@@ -155,13 +155,13 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     }
 
     // Userinfo — до "@", если есть
-    let (userinfo_opt, host_port) = match auth.find("@") {
+    ro (userinfo_opt, host_port) = match auth.find("@") {
         Some(i) => (Some(auth[0..i]), auth[i + 1..auth.len()])
         None    => (None, auth)
     }
 
     // Userinfo разбираем на user[:password]
-    let (user, password) = match userinfo_opt {
+    ro (user, password) = match userinfo_opt {
         None => (None, None)
         Some(ui) => match ui.find(":") {
             Some(i) => (Some(ui[0..i]), Some(ui[i + 1..ui.len()]))
@@ -170,14 +170,14 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     }
 
     // host[:port]
-    let (host, port) = match host_port.find(":") {
+    ro (host, port) = match host_port.find(":") {
         Some(i) => {
-            let port_str = host_port[i + 1..host_port.len()]
-            let port_num = match int.try_from(port_str) {
+            ro port_str = host_port[i + 1..host_port.len()]
+            ro port_num = match int.try_from(port_str) {
                 Ok(n) if n >= 0 && n <= 65535 => n
                 _                              => throw InvalidPort { value: port_str }
             }
-            let h = host_port[0..i]
+            ro h = host_port[0..i]
             (Some(h), Some(port_num))
         }
         None => (Some(host_port), None)
@@ -188,7 +188,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
 
 fn parse_path(s str) -> (str, str) {
     // Path до "?" или "#" или EOF
-    let path_end = find_first_of(s, "?#")
+    ro path_end = find_first_of(s, "?#")
     match path_end {
         Some(i) => (s[0..i], s[i..s.len()])
         None    => (s, "")
@@ -196,7 +196,7 @@ fn parse_path(s str) -> (str, str) {
 }
 
 fn find_first_of(s str, chars str) -> Option[int] {
-    let mut i = 0
+    mut i = 0
     while i < s.len() {
         match s.char_at(i) {
             Some(c) => if chars.contains(str.from(c)) { return Some(i) }
@@ -208,12 +208,12 @@ fn find_first_of(s str, chars str) -> Option[int] {
 }
 
 fn is_alpha(c char) -> bool {
-    let n = c as int
+    ro n = c as int
     (n >= 65 && n <= 90) || (n >= 97 && n <= 122)
 }
 
 fn is_alphanum(c char) -> bool {
-    let n = c as int
+    ro n = c as int
     is_alpha(c) || (n >= 48 && n <= 57)
 }
 
@@ -228,7 +228,7 @@ fn is_scheme_char(c char) -> bool =>
 /// `Into[str]` — serialize Url обратно в string. Round-trip с `Url.from`.
 #stable(since = "0.1")
 export fn Url @into() -> str {
-    let mut buf = StringBuilder.with_capacity(64)
+    consume buf = StringBuilder.with_capacity(64)
     buf = buf + @scheme + ":"
 
     if @host != None {
@@ -302,7 +302,7 @@ export fn Url @into() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    let mut buf = StringBuilder.with_capacity(s.len() * 2)    // worst case
+    consume buf = StringBuilder.with_capacity(s.len() * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)
@@ -311,7 +311,7 @@ export fn Url.encode_query(s str) -> str {
         } else {
             // UTF-8 encode и percent-encode каждый байт.
             // Простая версия для ASCII; для unicode требуется UTF-8 u8 iteration.
-            let n = c as int
+            ro n = c as int
             if n < 128 {
                 buf.append('%')
                 buf.append(hex_upper((n / 16) as u8))
@@ -353,17 +353,17 @@ export fn Url.encode_query(s str) -> str {
 /// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
-    let mut buf = WriteBuffer.with_capacity(s.len())
-    let mut i = 0
+    mut buf = WriteBuffer.with_capacity(s.len())
+    mut i = 0
     while i < s.len() {
         match s.char_at(i) {
             Some('%') => {
                 if i + 2 >= s.len() {
                     throw InvalidPercentEncoding { position: i }
                 }
-                let hi = hex_value_or_throw(s, i + 1)
-                let lo = hex_value_or_throw(s, i + 2)
-                let byte_val = (hi * 16 + lo) as u8
+                ro hi = hex_value_or_throw(s, i + 1)
+                ro lo = hex_value_or_throw(s, i + 2)
+                ro byte_val = (hi * 16 + lo) as u8
                 buf.write_byte(byte_val as u8)
                 i += 3
             }
@@ -377,7 +377,7 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
             }
             None => {
                 // Out-of-bounds char_at — закрываем early.
-                let bytes = buf.into()
+                ro bytes = buf.into()
                 match str.try_from(bytes) {
                     Ok(t)  => return t
                     Err(_) => throw InvalidPercentEncoding { position: i }
@@ -385,7 +385,7 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
             }
         }
     }
-    let bytes = buf.into()
+    ro bytes = buf.into()
     match str.try_from(bytes) {
         Ok(t)  => t
         Err(_) => throw InvalidPercentEncoding { position: i }
@@ -405,7 +405,7 @@ fn hex_upper(n u8) -> char =>
 fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
     match s.char_at(pos) {
         Some(c) => {
-            let n = c as int
+            ro n = c as int
             if n >= 48 && n <= 57 {
                 (n - 48) as u8
             } else if n >= 97 && n <= 102 {
@@ -426,7 +426,7 @@ fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: простой HTTP URL" {
-    let u = Url.from("http://example.com/")
+    ro u = Url.from("http://example.com/")
     assert(u.scheme == "http")
     assert(u.host == Some("example.com"))
     assert(u.port == None)
@@ -436,7 +436,7 @@ test "parse: простой HTTP URL" {
 }
 
 test "parse: HTTPS с портом и path" {
-    let u = Url.from("https://api.example.com:8443/v1/users")
+    ro u = Url.from("https://api.example.com:8443/v1/users")
     assert(u.scheme == "https")
     assert(u.host == Some("api.example.com"))
     assert(u.port == Some(8443))
@@ -444,51 +444,51 @@ test "parse: HTTPS с портом и path" {
 }
 
 test "parse: с query string и fragment" {
-    let u = Url.from("https://example.com/search?q=nova&lang=en#results")
+    ro u = Url.from("https://example.com/search?q=nova&lang=en#results")
     assert(u.path == "/search")
     assert(u.query == Some("q=nova&lang=en"))
     assert(u.fragment == Some("results"))
 }
 
 test "parse: userinfo (user:pass)" {
-    let u = Url.from("https://alice:s3cret@example.com/")
+    ro u = Url.from("https://alice:s3cret@example.com/")
     assert(u.user == Some("alice"))
     assert(u.password == Some("s3cret"))
 }
 
 test "parse: только user без password" {
-    let u = Url.from("ftp://anonymous@ftp.example.org/")
+    ro u = Url.from("ftp://anonymous@ftp.example.org/")
     assert(u.user == Some("anonymous"))
     assert(u.password == None)
 }
 
 test "parse: file:// без host" {
-    let u = Url.from("file:///etc/hosts")
+    ro u = Url.from("file:///etc/hosts")
     assert(u.scheme == "file")
     assert(u.host == Some(""))
     assert(u.path == "/etc/hosts")
 }
 
 test "parse: scheme нормализуется в lowercase" {
-    let u = Url.from("HTTP://example.com/")
+    ro u = Url.from("HTTP://example.com/")
     assert(u.scheme == "http")
 }
 
 test "round-trip: стандартный URL" {
-    let s = "https://api.example.com:8443/v1/users?id=42&active=true#section1"
-    let u = Url.from(s)
+    ro s = "https://api.example.com:8443/v1/users?id=42&active=true#section1"
+    ro u = Url.from(s)
     assert(u.into() == s)
 }
 
 test "round-trip: с userinfo" {
-    let s = "https://alice:s3cret@example.com/path"
-    let u = Url.from(s)
+    ro s = "https://alice:s3cret@example.com/path"
+    ro u = Url.from(s)
     assert(u.into() == s)
 }
 
 test "parse: ошибка — пустой ввод" {
-    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        let _ = Url.from("")
+    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
+        ro _ = Url.from("")
         None
     }
     assert(match r {
@@ -498,8 +498,8 @@ test "parse: ошибка — пустой ввод" {
 }
 
 test "parse: ошибка — нет scheme" {
-    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        let _ = Url.from("example.com/path")          // нет ":"
+    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
+        ro _ = Url.from("example.com/path")          // нет ":"
         None
     }
     assert(match r {
@@ -509,8 +509,8 @@ test "parse: ошибка — нет scheme" {
 }
 
 test "parse: ошибка — порт не число" {
-    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        let _ = Url.from("http://example.com:abc/")
+    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
+        ro _ = Url.from("http://example.com:abc/")
         None
     }
     assert(match r {
@@ -520,8 +520,8 @@ test "parse: ошибка — порт не число" {
 }
 
 test "parse: ошибка — порт > 65535" {
-    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        let _ = Url.from("http://example.com:99999/")
+    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
+        ro _ = Url.from("http://example.com:99999/")
         None
     }
     assert(match r {
@@ -544,17 +544,17 @@ test "encode_query: спецсимволы → %XX" {
 }
 
 test "decode_query: round-trip" {
-    let cases = ["hello", "hello world", "a&b=c", "100%"]
+    ro cases = ["hello", "hello world", "a&b=c", "100%"]
     for s in cases {
-        let encoded = Url.encode_query(s)
-        let decoded = Url.decode_query(encoded)
+        ro encoded = Url.encode_query(s)
+        ro decoded = Url.decode_query(encoded)
         assert(decoded == s)
     }
 }
 
 test "decode_query: ошибка — обрезанное %X" {
-    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        let _ = Url.decode_query("abc%2")             // обрезано
+    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
+        ro _ = Url.decode_query("abc%2")             // обрезано
         None
     }
     assert(match r {

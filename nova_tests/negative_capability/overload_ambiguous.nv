@@ -23,12 +23,12 @@ fn convert(n int) -> bool { n != 0 }
 
 
 fn caller() -> str {
-    let s str = convert(42)    // ❌ ambiguous: оба matching по (int)
+    ro s str = convert(42)    // ❌ ambiguous: оба matching по (int)
     s
 }
 
 
 test "ambiguous overload по return-type — compile error (negative)" {
-    let _ = caller()
+    ro _ = caller()
     assert(true)
 }

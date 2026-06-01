@@ -10,60 +10,60 @@ module str_builder.consume_test
 
 
 test "into — ASCII content" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("hello world")
-    let s = sb.into()
+    ro s = sb.into()
     assert(s == "hello world")
     assert(s.len() == 11)
 }
 
 test "into — пустой буфер даёт пустую строку" {
-    let sb = StringBuilder.new()
-    let s = sb.into()
+    mut sb = StringBuilder.new()
+    ro s = sb.into()
     assert(s == "")
     assert(s.len() == 0)
 }
 
 test "into — Unicode паритет len с str" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("Привет")
-    let cp_before = sb.len()    // sb.len() = codepoints
-    let s = sb.into()
+    ro cp_before = sb.len()    // sb.len() = codepoints
+    ro s = sb.into()
     // Plan 108 D26 rev: str.len() = bytes O(1), str.char_len() = codepoints O(n).
     assert(s.char_len() == cp_before)   // 6 codepoints == sb.len()
     assert(s.len() == 12)               // 12 bytes (2 bytes per Cyrillic codepoint)
 }
 
 test "into — после from(str)" {
-    let sb = StringBuilder.from("preloaded")
+    mut sb = StringBuilder.from("preloaded")
     assert(sb.into() == "preloaded")
 }
 
 test "into — после from(char)" {
-    let sb = StringBuilder.from('Я')
+    mut sb = StringBuilder.from('Я')
     assert(sb.into() == "Я")
 }
 
 test "into — после chaining" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("a").append("b").append("c")
     assert(sb.into() == "abc")
 }
 
 test "into — emoji сохраняется" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("done ")
     sb.append('🎉')
-    let s = sb.into()
+    ro s = sb.into()
     assert(s == "done 🎉")
     assert(s.char_len() == 6)  // d,o,n,e,space,🎉 = 6 codepoints (D26 rev: use char_len)
     assert(s.len() == 9)       // 4 ASCII + 1 space + 4 emoji bytes = 9 bytes
 }
 
 test "into — результат можно использовать дальше" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("XYZ")
-    let s = sb.into()
+    ro s = sb.into()
     assert(s.starts_with("X"))
     assert(s.ends_with("Z"))
 }

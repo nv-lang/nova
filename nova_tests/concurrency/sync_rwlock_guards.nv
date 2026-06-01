@@ -5,16 +5,16 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.concurrency.sync_rwlock_guards
+module concurrency.sync_rwlock_guards
 
 test "ReadGuard: explicit unlock after read" {
-    let rw = RwLock.new()
-    let v = AtomicInt.new(100)
+    mut rw = RwLock.new()
+    mut v = AtomicInt.new(100)
 
     supervised {
         spawn {
             consume rg = rw.read()
-            let x = v.load()
+            ro x = v.load()
             rg.unlock()
             assert(x == 100)
         }
@@ -22,8 +22,8 @@ test "ReadGuard: explicit unlock after read" {
 }
 
 test "WriteGuard: exclusive write with explicit unlock" {
-    let rw = RwLock.new()
-    let v = AtomicInt.new(0)
+    mut rw = RwLock.new()
+    mut v = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -41,9 +41,9 @@ test "WriteGuard: exclusive write with explicit unlock" {
 }
 
 test "ReadGuard: multiple readers coexist, writer waits" {
-    let rw = RwLock.new()
-    let readers = AtomicInt.new(0)
-    let writer_ran = AtomicInt.new(0)
+    mut rw = RwLock.new()
+    mut readers = AtomicInt.new(0)
+    mut writer_ran = AtomicInt.new(0)
 
     supervised {
         spawn {

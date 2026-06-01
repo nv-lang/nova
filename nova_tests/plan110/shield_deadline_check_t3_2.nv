@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.2.2.a (D188 R3 + D192): cleanup-deadline check at suspend
+// entry.
+//
+// Positive fixture verifying the deadline-check code path is wired:
+//   • ConsumeScope body calls Time.sleep(N), N < default exit_timeout
+//     (5000ms). Suspend entry now calls nv_shield_check_deadline()
+//     which checks mask>0 + deadline > now — passes here.
+//   • Body completes; on_exit runs; outer code observes finalised
+//     state. No CleanupTimeoutError thrown.
+//
+// Acceptance:
+//   A110.2.2.a.a — deadline check hooks invoked at suspend entry
+//                  (Time.sleep). Verified by code review +
+//                  non-fire-path test (this fixture).
+//   A110.2.2.a.b — non-firing path does not regress existing throw
+//                  semantics; ConsumeScope still completes successfully.
+//
+// Full E2E fire-path test (deadline truly exceeded → CleanupTimeoutError
+// thrown) gated on Plan 110.4.6.a (Application Level-2 / per-type
+// WithExitTimeout) so a sub-5-second budget can be configured per-scope.
+// See followup marker [M-110-deadline-fire-fixture] in Plan 110.2.6.
+
+module plan110.shield_deadline_check_t3_2
+
+type ShortLivedRes {
+    ro id int
+}
+
+fn ShortLivedRes.new(id int) -> ShortLivedRes => { id }
+
+fn ShortLivedRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn use_with_short_sleep() -> int {
+    mut completed = 0
+    consume r = ShortLivedRes.new(42) {
+        // Tiny sleep — far below the 5000ms default deadline.
+        // Suspend entry MUST consult shield deadline_ns and NOT throw.
+        Time.sleep(1)
+        completed = r.id
+    }
+    completed
+}
+
+test "Plan 110.2.2.a A110.2.2.a.b: Time.sleep inside consume body completes within budget" {
+    ro v = use_with_short_sleep()
+    assert(v == 42)
+}

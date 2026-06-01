@@ -3,7 +3,7 @@
 // для return-type `-> Option[X]`, вместо legacy
 // `nova_make_Option_Some` (которая всегда returns `NovaOpt_nova_int`).
 
-module nova_tests.plan99_2_ctor.option_ctor_in_body
+module plan99_2_ctor.option_ctor_in_body
 
 type User { id int, name str }
 
@@ -14,29 +14,29 @@ fn make_none_str() -> Option[str] => None
 fn make_none_user() -> Option[User] => None
 
 test "Some(int) bare → contextual NovaOpt_nova_int" {
-    let o = make_some_int()
+    ro o = make_some_int()
     assert(o.is_some())
     assert(o.unwrap_or(0) == 42)
 }
 
 test "Some(str) bare → contextual NovaOpt_nova_str" {
-    let o = make_some_str()
+    ro o = make_some_str()
     assert(o.is_some())
     assert(o.unwrap_or("") == "hello")
 }
 
 test "Some(char) bare → contextual NovaOpt_nova_char" {
-    let o = make_some_char()
+    ro o = make_some_char()
     assert(o.is_some())
     assert(o.unwrap_or('?') == 'A')
 }
 
 test "None bare с Option[str] context" {
-    let o = make_none_str()
+    ro o = make_none_str()
     assert(o.is_none())
 }
 
 test "None bare с Option[User] context (non-primitive)" {
-    let o = make_none_user()
+    ro o = make_none_user()
     assert(o.is_none())
 }

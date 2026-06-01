@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR D188-malformed-on-exit
+//
+// Plan 110.1.2 (D188-malformed-on-exit): `on_exit` method declared but
+// с неправильной signature — первый параметр должен быть `outcome ScopeOutcome`.
+// Type-checker emits diagnostic at consume{} use-site (где init type
+// resolved).
+
+module plan110.neg_on_exit_malformed_sig
+
+type BadResource {
+    ro id int
+}
+
+fn BadResource.new(id int) -> BadResource => { id }
+
+// ❌ on_exit с неправильным первым параметром (int вместо ScopeOutcome).
+fn BadResource consume @on_exit(wrong_param int) -> () => ()
+
+fn use_bad() -> int {
+    consume r = BadResource.new(1) {
+        r.id
+    }
+}

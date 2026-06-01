@@ -1,0 +1,12 @@
+// Plan 108.3 (D36 amend): `for x in iter` без mut → push даёт E_LOCAL_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan108_3.for_no_mut_push_neg
+
+test "for default loop-var + push → error" {
+    mut arrs = [[1]]
+    for x in arrs {
+        x.push(99)
+    }
+}

@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.7.3.a: #cancel_safe attribute parses on external fn.
+// Attests on C-side function as callable from ConsumeScope on_exit
+// body without firing W_FFI_CANCEL_UNSAFE warning.
+
+module plan110.cancel_safe_attr_parses
+
+// Production-like usage: `#cancel_safe` attribute attests that a fn
+// is safe to call from inside a ConsumeScope on_exit body (under
+// cancel-shield). Bootstrap: parser recognizes the attribute and
+// stores it on FnDecl. Future lint W_FFI_CANCEL_UNSAFE will fire at
+// FFI call sites без attribute when called from on_exit.
+//
+// `external fn` form is restricted to std.runtime.* per D82; this
+// fixture verifies the attribute parses on plain Nova fns.
+#cancel_safe
+fn close_safe(handle int) -> int {
+    handle  // stub
+}
+
+#cancel_safe
+fn close_safe_realtime(handle int) -> int => handle
+
+// Без attribute — control case.
+fn close_unsafe(handle int) -> int => handle
+
+type Conn {
+    ro h int
+}
+
+fn Conn.new(h int) -> Conn => { h }
+
+fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {
+    ro _rc = close_safe(@h)
+    return ()
+}
+
+fn run_with_cancel_safe() -> int {
+    mut result = 0
+    consume conn = Conn.new(7) {
+        result = conn.h
+    }
+    result
+}
+
+test "Plan 110.7.3.a: #cancel_safe fn parses + ConsumeScope uses it" {
+    ro v = run_with_cancel_safe()
+    assert(v == 7)
+    ro _silence = close_unsafe(0)
+    ro _silence2 = close_safe_realtime(1)
+    assert(true)
+}

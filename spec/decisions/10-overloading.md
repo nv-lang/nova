@@ -101,12 +101,12 @@ non-variadic параметров.
 Если контекста нет — compile error:
 
 ```nova
-let x = c.into()                    // ❌ нет ожидаемого типа
+ro x = c.into()                    // ❌ нет ожидаемого типа
 //      ^^^^^^^^ cannot resolve overload `Celsius.@into()`:
 //               candidates: -> Fahrenheit, -> Kelvin
 //               hint: add type annotation `let x Fahrenheit = ...`
 
-let x Fahrenheit = c.into()         // ✅ контекст из аннотации
+ro x Fahrenheit = c.into()         // ✅ контекст из аннотации
 ```
 
 #### Turbofish не обходит concrete
@@ -210,7 +210,7 @@ log.log(2, "ok")          // → @log(int, str) — arity 2
 с suggestion'ом disambiguate через `as fn(...)` annotation:
 
 ```nova
-let f = t.@m as fn(str) -> int
+ro f = t.@m as fn(str) -> int
 ```
 
 #### Дисамбигуация программистом

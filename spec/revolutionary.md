@@ -37,7 +37,7 @@ fn process(x int) Logger -> int {
 }
 
 // handler — обычное значение через `handler` keyword
-let console = effect Logger {
+ro console = effect Logger {
     log(msg) => println("[LOG] ${msg}")
 }
 
@@ -75,8 +75,8 @@ value» для `Fail` запрещена.
 
 ```nova
 test "process logs correctly" {
-    let mut buf = []
-    let collect = effect Logger {
+    mut buf = []
+    ro collect = effect Logger {
         log(msg) { buf.push(msg); return () }
     }
     with Logger = collect {
@@ -171,7 +171,7 @@ test "complex flow is deterministic" {
          Random = seed(42),
          Net = record_or_replay("testdata/flow.json"),
          Db = in_memory() {
-        let result = run_complex_flow()
+        ro result = run_complex_flow()
         assert(result.snapshot() == expected_snapshot)
     }
 }
@@ -532,8 +532,8 @@ channel.recv, async-Db) — но это **никак не выражается �
 fn fetch(url str) Net -> Response => ...
 
 fn handler(req Request) Net Db -> Response {
-    let user = fetch_user(req.id)        // suspendable, но не в типах
-    let posts = fetch_posts(user.id)
+    ro user = fetch_user(req.id)        // suspendable, но не в типах
+    ro posts = fetch_posts(user.id)
     Response.json(posts)
 }
 ```
@@ -637,13 +637,13 @@ Erlang/OTP supervision — встроена в язык, без отдельно
 
 **Уровень 1 — типизированный планировщик** (дефолт):
 ```nova
-let order_queue Queue[fn(OrderId) Db Log Fail -> ()]
+ro order_queue Queue[fn(OrderId) Db Log Fail -> ()]
 ```
 
 **Уровень 2 — явное стирание** (когда нужна разнородность):
 ```nova
 fn erase[E](task fn() E -> ()) E -> fn() -> () {
-    let captured = capture_handlers[E]()
+    ro captured = capture_handlers[E]()
     || with captured { task() }
 }
 
@@ -713,8 +713,8 @@ type TransferError | AccountNotFound(AccountId) | InsufficientFunds
 fn transfer(from AccountId, to AccountId, amount money)
     Db Fail[TransferError] -> Receipt
 {
-    let src = Db.find(from) ?? throw AccountNotFound(from)
-    let dst = Db.find(to)   ?? throw AccountNotFound(to)
+    ro src = Db.find(from) ?? throw AccountNotFound(from)
+    ro dst = Db.find(to)   ?? throw AccountNotFound(to)
     if src.balance < amount { throw InsufficientFunds }
     Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
     Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
@@ -737,7 +737,7 @@ fn transfer(from AccountId, to AccountId, amount money)
 fn replicated(nodes [Node], quorum int, real Effect[Db]) -> Effect[Db] => effect Db {
     query(q) => return real.query(q)    // чтения локальны
     exec(q) {                             // записи на все узлы
-        let acks = parallel for node in nodes {
+        ro acks = parallel for node in nodes {
             node.exec(q)
         }
         if acks.count(Ok) < quorum { throw QuorumLost }
@@ -754,7 +754,7 @@ fn idempotent_by(tx_id str, real Effect[Db]) -> Effect[Db] => effect Db {
     exec(q)  => match Cache.get(tx_id) {
         Some(cached) => return cached         // повтор — вернуть кеш
         None => {
-            let result = real.exec(q)
+            ro result = real.exec(q)
             Cache.put(tx_id, result)
             return result
         }
@@ -770,7 +770,7 @@ fn idempotent_by(tx_id str, real Effect[Db]) -> Effect[Db] => effect Db {
 ```nova
 fn retry(max_attempts int, real Effect[Net]) -> Effect[Net, Response] => effect Net {
     get(url) {
-        let mut attempt = 0
+        mut attempt = 0
         loop {
             match try_fail[NetError] { real.get(url) } {
                 Ok(resp) => interrupt resp           // IRT = Response
@@ -791,7 +791,7 @@ handler'ов:
 
 ```nova
 fn exactly_once(tx_id str, log PersistentLog, real Effect[Db]) -> Effect[Db] {
-    let logged = with_log(log, real)              // пишет в WAL до Db
+    ro logged = with_log(log, real)              // пишет в WAL до Db
     idempotent_by(tx_id, logged)                  // и кеширует результат
 }
 ```

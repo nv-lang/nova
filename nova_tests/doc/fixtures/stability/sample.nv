@@ -2,7 +2,7 @@
 //!
 //! #stable
 
-module nova_tests.doc.fixtures.stability.sample
+module stability.sample
 
 /// Сложить два числа.
 ///

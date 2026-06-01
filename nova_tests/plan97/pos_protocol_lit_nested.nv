@@ -4,7 +4,7 @@
 // Проверяет: scan_expr_fwd корректно recurse'ит в method body,
 // counter не ломается, GC справляется с nested allocation.
 
-module nova_tests.plan97.pos_protocol_lit_nested
+module plan97.pos_protocol_lit_nested
 
 
 export type Maker protocol {
@@ -18,17 +18,17 @@ export type Adder protocol {
 
 
 test "Nested literals: literal returns int from inner-literal method-call" {
-    let m = protocol Maker {
+    ro m = protocol Maker {
         make(x) {
             // Inner literal — locally constructed на каждый вызов make.
-            let inner = protocol Adder {
+            ro inner = protocol Adder {
                 apply(y) => y + x
             }
             inner.apply(10)
         }
     }
-    let r1 = m.make(5)
-    let r2 = m.make(100)
+    ro r1 = m.make(5)
+    ro r2 = m.make(100)
     assert(r1 == 15)
     assert(r2 == 110)
 }

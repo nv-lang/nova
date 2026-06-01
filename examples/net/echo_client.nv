@@ -10,37 +10,37 @@
 //
 // See also: examples/net/echo_server.nv
 
-module examples.net.echo_client
+module net.echo_client
 
 const PORT u16 = 7777
 const MESSAGE str = "hello from nova"
 
 fn main() {
-    let addr = SocketAddr.loopback(PORT)
+    ro addr = SocketAddr.loopback(PORT)
     supervised {
         spawn {
-            let conn_r = TcpStream.connect(addr)
+            ro conn_r = TcpStream.connect(addr)
             if conn_r.is_err() {
                 println("Connect failed — is echo_server running on port " + str.from(PORT) + "?")
                 return
             }
-            let stream = conn_r.unwrap()
+            ro stream = conn_r.unwrap()
             println("Connected to " + str.from(PORT))
 
-            let write_r = stream.write(MESSAGE)
+            ro write_r = stream.write(MESSAGE)
             if write_r.is_err() {
                 println("Write failed")
                 stream.close()
                 return
             }
 
-            let read_r = stream.read_bytes(256)
+            ro read_r = stream.read_bytes(256)
             if read_r.is_err() {
                 println("Read failed")
                 stream.close()
                 return
             }
-            let echo = read_r.unwrap()
+            ro echo = read_r.unwrap()
             println("Echo: " + echo)
             assert(echo == MESSAGE)
             stream.close()

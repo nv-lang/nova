@@ -1,0 +1,16 @@
+// Plan 114.4.1 (D200) NEG: assoc const в record literal → error.
+
+// EXPECT_COMPILE_ERROR E_CONST_FIELD_IN_LITERAL
+
+module plan114_4_1.literal_includes_assoc_neg
+
+type Config {
+    const VERSION int = 2
+    name str
+    timeout int
+}
+
+test "literal includes assoc const" {
+    ro c = Config { VERSION: 5, name: "x", timeout: 1 }
+    assert(c.name == "x")
+}

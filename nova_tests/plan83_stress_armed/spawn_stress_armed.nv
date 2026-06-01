@@ -22,13 +22,13 @@
 module plan83_stress_armed.spawn_stress_armed
 
 test "1K spawn armed M:N — baseline" {
-    let xs = parallel for i in 0..1000 { i }
+    ro xs = parallel for i in 0..1000 { i }
     assert(xs[999] == 999)
     assert(xs[0] == 0)
 }
 
 test "10K spawn armed M:N — V1 stretch (jobs-safe)" {
-    let xs = parallel for i in 0..10_000 { i + 1 }
+    ro xs = parallel for i in 0..10_000 { i + 1 }
     assert(xs[9999] == 10_000)
     assert(xs[0] == 1)
     assert(xs[5000] == 5001)

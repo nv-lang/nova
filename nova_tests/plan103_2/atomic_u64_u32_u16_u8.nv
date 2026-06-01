@@ -4,59 +4,59 @@
 // and compare_exchange. Tests wrap-around not included here (handled in
 // property tests).
 
-module nova_tests.plan103_2.atomic_u64_u32_u16_u8
+module plan103_2.atomic_u64_u32_u16_u8
 
 test "AtomicU64 new load store" {
-    let a = AtomicU64.new(1000)
+    mut a = AtomicU64.new(1000)
     assert(a.load() == 1000)
     a.store(9999)
     assert(a.load() == 9999)
 }
 
 test "AtomicU64 fetch_add" {
-    let a = AtomicU64.new(10)
-    let prev = a.fetch_add(5)
+    mut a = AtomicU64.new(10)
+    ro prev = a.fetch_add(5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
 test "AtomicU64 compare_exchange success" {
-    let a = AtomicU64.new(42)
-    let ok = a.compare_exchange(42, 0)
+    mut a = AtomicU64.new(42)
+    ro ok = a.compare_exchange(42, 0)
     assert(ok)
     assert(a.load() == 0)
 }
 
 test "AtomicU32 new load store" {
-    let a = AtomicU32.new(7)
+    mut a = AtomicU32.new(7)
     assert(a.load() == 7)
     a.store(99)
     assert(a.load() == 99)
 }
 
 test "AtomicU32 fetch_sub" {
-    let a = AtomicU32.new(100)
-    let prev = a.fetch_sub(10)
+    mut a = AtomicU32.new(100)
+    ro prev = a.fetch_sub(10)
     assert(prev == 100)
     assert(a.load() == 90)
 }
 
 test "AtomicU16 new load store" {
-    let a = AtomicU16.new(0)
+    mut a = AtomicU16.new(0)
     a.store(65535)
     assert(a.load() == 65535)
 }
 
 test "AtomicU8 new load store" {
-    let a = AtomicU8.new(255)
+    mut a = AtomicU8.new(255)
     assert(a.load() == 255)
     a.store(0)
     assert(a.load() == 0)
 }
 
 test "AtomicU8 fetch_add" {
-    let a = AtomicU8.new(10)
-    let prev = a.fetch_add(3)
+    mut a = AtomicU8.new(10)
+    ro prev = a.fetch_add(3)
     assert(prev == 10)
     assert(a.load() == 13)
 }

@@ -4,7 +4,7 @@
 module str.split_edge
 
 test "split: basic multi-part" {
-    let parts = "a,b,c".split(",")
+    ro parts = "a,b,c".split(",")
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "b")
@@ -12,7 +12,7 @@ test "split: basic multi-part" {
 }
 
 test "split: adjacent separators produce empty element" {
-    let parts = "a,,b".split(",")
+    ro parts = "a,,b".split(",")
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "")
@@ -20,34 +20,34 @@ test "split: adjacent separators produce empty element" {
 }
 
 test "split: separator not found returns single element" {
-    let parts = "abc".split("X")
+    ro parts = "abc".split("X")
     assert(parts.len() == 1)
     assert(parts[0] == "abc")
 }
 
 test "split: separator at start produces leading empty" {
-    let parts = ",abc".split(",")
+    ro parts = ",abc".split(",")
     assert(parts.len() == 2)
     assert(parts[0] == "")
     assert(parts[1] == "abc")
 }
 
 test "split: separator at end produces trailing empty" {
-    let parts = "abc,".split(",")
+    ro parts = "abc,".split(",")
     assert(parts.len() == 2)
     assert(parts[0] == "abc")
     assert(parts[1] == "")
 }
 
 test "split: single separator only produces two empty strings" {
-    let parts = ",".split(",")
+    ro parts = ",".split(",")
     assert(parts.len() == 2)
     assert(parts[0] == "")
     assert(parts[1] == "")
 }
 
 test "split: multi-char separator" {
-    let parts = "aXXbXXc".split("XX")
+    ro parts = "aXXbXXc".split("XX")
     assert(parts.len() == 3)
     assert(parts[0] == "a")
     assert(parts[1] == "b")

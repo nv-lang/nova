@@ -15,7 +15,7 @@ module concurrency.fn_array_generic_smoke
 // Single-T generic-fn, consume []fn->T, return concrete int. Покрывает
 // for-in + closure-call + .len() в mono-context.
 fn sum_via_fns[T](fns []fn() -> T) -> int {
-    let mut total = 0
+    mut total = 0
     for _f in fns {
         total = total + 1
     }
@@ -27,18 +27,18 @@ fn count_fns[T](fns []fn() -> T) -> int => fns.len()
 
 
 test "[]fn->T в generic: for-in считает количество" {
-    let total = sum_via_fns[int]([|| 1, || 2, || 3])
+    ro total = sum_via_fns[int]([|| 1, || 2, || 3])
     assert(total == 3)
 }
 
 
 test "[]fn->T в generic: .len() для T=int" {
-    let n = count_fns[int]([|| 1, || 2, || 3, || 4])
+    ro n = count_fns[int]([|| 1, || 2, || 3, || 4])
     assert(n == 4)
 }
 
 
 test "[]fn->T в generic: .len() для T=str" {
-    let n = count_fns[str]([|| "a", || "b"])
+    ro n = count_fns[str]([|| "a", || "b"])
     assert(n == 2)
 }

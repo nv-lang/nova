@@ -22,64 +22,64 @@ module plan65.f11a_timer_metrics
 import std.time.duration
 
 test "Time.timer_alloc_total increments on each close_after alloc" {
-    let before = Time.timer_alloc_total()
+    ro before = Time.timer_alloc_total()
     supervised {
         spawn {
             // 5 separate alloc calls.
-            let _t1 = ChanReader.close_after(Duration.from_millis(1))
-            let _t2 = ChanReader.close_after(Duration.from_millis(1))
-            let _t3 = ChanReader.close_after(Duration.from_millis(1))
-            let _t4 = ChanReader.close_after(Duration.from_millis(1))
-            let _t5 = ChanReader.close_after(Duration.from_millis(1))
+            ro _t1 = ChanReader.close_after(Duration.from_millis(1))
+            ro _t2 = ChanReader.close_after(Duration.from_millis(1))
+            ro _t3 = ChanReader.close_after(Duration.from_millis(1))
+            ro _t4 = ChanReader.close_after(Duration.from_millis(1))
+            ro _t5 = ChanReader.close_after(Duration.from_millis(1))
             // drain so scope can exit cleanly.
-            let _ = _t1.recv()
-            let _ = _t2.recv()
-            let _ = _t3.recv()
-            let _ = _t4.recv()
-            let _ = _t5.recv()
+            ro _ = _t1.recv()
+            ro _ = _t2.recv()
+            ro _ = _t3.recv()
+            ro _ = _t4.recv()
+            ro _ = _t5.recv()
         }
     }
-    let after = Time.timer_alloc_total()
+    ro after = Time.timer_alloc_total()
     // Zero-duration fast-path doesn't increment; only real alloc counts.
     // 5 timers actually allocated.
     assert(after - before == 5)
 }
 
 test "Time.timer_alloc_active returns to baseline after natural fire" {
-    let baseline = Time.timer_alloc_active()
+    ro baseline = Time.timer_alloc_active()
     supervised {
         spawn {
-            let t = ChanReader.close_after(Duration.from_millis(10))
-            let _ = t.recv()
+            ro t = ChanReader.close_after(Duration.from_millis(10))
+            ro _ = t.recv()
         }
     }
     // After scope exit, all timers fired naturally → alloc_active back to baseline.
-    let after = Time.timer_alloc_active()
+    ro after = Time.timer_alloc_active()
     assert(after == baseline)
 }
 
 test "Time.timer_fired increments on natural fire" {
-    let before = Time.timer_fired()
+    ro before = Time.timer_fired()
     supervised {
         spawn {
-            let t = ChanReader.close_after(Duration.from_millis(5))
-            let _ = t.recv()
+            ro t = ChanReader.close_after(Duration.from_millis(5))
+            ro _ = t.recv()
         }
     }
-    let after = Time.timer_fired()
+    ro after = Time.timer_fired()
     assert(after - before >= 1)
 }
 
 test "Time.timer_cancelled increments on cancel-token cleanup" {
-    let before = Time.timer_cancelled()
-    let tok = CancelToken.new()
+    ro before = Time.timer_cancelled()
+    ro tok = CancelToken.new()
     with Fail = effect Fail {
         fail(_msg) => interrupt ()
     } {
         supervised(cancel: tok) {
             spawn {
-                let t = ChanReader.close_after(Duration.from_millis(10_000))
-                let _ = t.recv()
+                ro t = ChanReader.close_after(Duration.from_millis(10_000))
+                ro _ = t.recv()
             }
             spawn {
                 Time.sleep(20)
@@ -87,21 +87,21 @@ test "Time.timer_cancelled increments on cancel-token cleanup" {
             }
         }
     }
-    let after = Time.timer_cancelled()
+    ro after = Time.timer_cancelled()
     assert(after - before >= 1)
 }
 
 test "Time.timer_longest_pending_ms is rolling max" {
-    let before = Time.timer_longest_pending_ms()
+    ro before = Time.timer_longest_pending_ms()
     supervised {
         spawn {
             // Allocate a 7-second timer (but cancel immediately) — the
             // metric should reflect the 7000 ms upper bound.
-            let _t = ChanReader.close_after(Duration.from_millis(7_000))
+            ro _t = ChanReader.close_after(Duration.from_millis(7_000))
             // Don't wait for it; let scope-exit cleanup close it via on_select_lost-like path.
         }
     }
-    let after = Time.timer_longest_pending_ms()
+    ro after = Time.timer_longest_pending_ms()
     assert(after >= 7_000)
     // Rolling: it never decreases.
     assert(after >= before)

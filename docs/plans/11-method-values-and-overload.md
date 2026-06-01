@@ -39,9 +39,9 @@ Account.new                // static, тип fn(str) -> Account
 Программист может только **вызвать** метод, не сохранить.
 
 ```nova
-let f = acc.balance        // ❌ скорее всего compile error или
+ro f = acc.balance        // ❌ скорее всего compile error или
                             //    некорректный codegen
-let m = nums.map(double)   // ❌ если double это метод/named fn,
+ro m = nums.map(double)   // ❌ если double это метод/named fn,
                             //    не работает как value
 ```
 
@@ -66,7 +66,7 @@ let m = nums.map(double)   // ❌ если double это метод/named fn,
 fn Buffer mut @write(s str) -> () => ...
 fn Buffer mut @write(b []byte) -> () => ...   // ← перезаписывает первое в bootstrap
 
-let buf = Buffer.new()
+ro buf = Buffer.new()
 buf.write("hello")           // ✓ или ✗ — зависит от порядка
 buf.write([0xDE, 0xAD])      // ✗ если первое было write(str)
 ```
@@ -85,15 +85,15 @@ type T {}
 fn T @m(s str) -> int => ...
 fn T @m(b []byte) -> int => ...
 
-let f = t.@m            // ← КАКОЙ метод? str-версия или []byte?
+ro f = t.@m            // ← КАКОЙ метод? str-версия или []byte?
 ```
 
 Если **только один** метод с именем `m` — `t.@m` это однозначное
 method value. Если **два** перегруженных — нужен **disambiguation**:
 
 ```nova
-let f1 = t.@m as fn(str) -> int        // явная aннотация
-let f2 = t.@m as fn([]byte) -> int     // другая
+ro f1 = t.@m as fn(str) -> int        // явная aннотация
+ro f2 = t.@m as fn([]byte) -> int     // другая
 ```
 
 Поэтому method values **должны** учитывать overload-resolution. Один
@@ -326,9 +326,9 @@ fn Account.with_initial(amount money) -> Self =>
 ### Ф.5 — Type annotation для disambiguation
 
 ```nova
-let f = t.@m                                  // ambiguous (два overload'а)
-let f = t.@m as fn(str) -> int                // disambiguated
-let f fn(str) -> int = t.@m                   // через let-annotation, тоже работает
+ro f = t.@m                                  // ambiguous (два overload'а)
+ro f = t.@m as fn(str) -> int                // disambiguated
+ro f fn(str) -> int = t.@m                   // через ro-annotation, тоже работает
 ```
 
 Codegen использует **target type** из контекста — let-annotation,
@@ -805,7 +805,7 @@ Compiler emit'ит handler call с wrong type cast.
 **Workaround (применён в std/data/semver_range.nv)**: Ok/Err wrapping вокруг
 operation + outer match:
 ```nova
-let r = with Fail[OldErr] = |e| interrupt Err(e) {
+ro r = with Fail[OldErr] = |e| interrupt Err(e) {
     Ok(operation())
 }
 match r { Ok(v) => v, Err(_) => throw NewErr { ... } }

@@ -6,7 +6,7 @@
 // Это reuse Plan 15 D72 bound-checker для receiver-prefix позиции;
 // формального ввода новой машины нет — только cross-cut verification.
 
-module nova_tests.plan101_2.receiver_bound_smoke
+module plan101_2.receiver_bound_smoke
 
 
 type Showable_ protocol {
@@ -26,7 +26,7 @@ fn print_one[T Showable_](x T) -> str => x.show()
 
 
 test "free-fn bounded T satisfies protocol" {
-    let i = Item { label: "alpha" }
+    ro i = Item { label: "alpha" }
     assert(print_one(i) == "alpha")
 }
 
@@ -40,7 +40,7 @@ fn[T Showable_] []T @first_label() -> str {
 
 
 test "fn[T Showable_] []T @method dispatch satisfies bound" {
-    let xs []Item = [Item { label: "alpha" }, Item { label: "beta" }]
-    let s = xs.first_label()
+    ro xs []Item = [Item { label: "alpha" }, Item { label: "beta" }]
+    ro s = xs.first_label()
     assert(s == "alpha")
 }

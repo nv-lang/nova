@@ -1,0 +1,11 @@
+// Plan 73.1 (D180): regular `let` для regular record (не consume-type).
+
+module plan73.binding_let_value_record
+
+type Point { x int, y int }
+
+test "let для regular record — без consume keyword" {
+    ro p = Point { x: 3, y: 4 }
+    assert(p.x == 3)
+    assert(p.y == 4)
+}

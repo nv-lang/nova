@@ -23,8 +23,8 @@ fn check_positive(n int) -> int {
 }
 
 test "throw in match-arm — handler catches" {
-    let mut caught = ""
-    let mut got = -1
+    mut caught = ""
+    mut got = -1
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
@@ -37,7 +37,7 @@ test "throw in match-arm — handler catches" {
 }
 
 test "throw in match-arm — happy path returns value" {
-    let mut got = -1
+    mut got = -1
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {
@@ -61,20 +61,20 @@ fn assert_not_zero(n int) -> int {
 }
 
 test "throw before fall-through statement" {
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
             interrupt ()
         }
     } {
-        let _ = assert_not_zero(0)
+        ro _ = assert_not_zero(0)
     }
     assert(caught == "zero forbidden")
 }
 
 test "throw before fall-through — happy path" {
-    let mut got = -1
+    mut got = -1
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {
@@ -98,15 +98,15 @@ test "throw before fall-through — happy path" {
 // ================================================================
 
 test "?? throw — Some-ветка НЕ выполняет throw (short-circuit)" {
-    let mut caught_msg = ""
+    mut caught_msg = ""
     with Fail = effect Fail {
         fail(msg) {
             caught_msg = msg
             interrupt ()
         }
     } {
-        let opt = Some(42)
-        let v = opt ?? throw "should not throw"
+        ro opt = Some(42)
+        ro v = opt ?? throw "should not throw"
         assert(v == 42)
     }
     // Throw НЕ вызвался — handler не сработал, caught_msg пуст.
@@ -115,22 +115,22 @@ test "?? throw — Some-ветка НЕ выполняет throw (short-circuit)
 
 
 test "?? throw — None-ветка реально бросает" {
-    let mut caught_msg = ""
+    mut caught_msg = ""
     with Fail = effect Fail {
         fail(msg) {
             caught_msg = msg
             interrupt ()
         }
     } {
-        let opt Option[int] = None
-        let _v = opt ?? throw "expected Some"
+        ro opt Option[int] = None
+        ro _v = opt ?? throw "expected Some"
     }
     assert(caught_msg == "expected Some")
 }
 
 
 test "?? throw в цепочке lookup'ов" {
-    let mut last_thrown = ""
+    mut last_thrown = ""
     with Fail = effect Fail {
         fail(msg) {
             last_thrown = msg
@@ -138,9 +138,9 @@ test "?? throw в цепочке lookup'ов" {
         }
     } {
         // Все Some — throw'ов не должно быть.
-        let a = Some(1) ?? throw "a is None"
-        let b = Some(2) ?? throw "b is None"
-        let c = Some(3) ?? throw "c is None"
+        ro a = Some(1) ?? throw "a is None"
+        ro b = Some(2) ?? throw "b is None"
+        ro c = Some(3) ?? throw "c is None"
         assert(a + b + c == 6)
     }
     assert(last_thrown == "")

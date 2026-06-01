@@ -7,12 +7,12 @@
 // Используем match (а не `==`) чтобы не требовать nova_opt_eq_<T>
 // runtime helper.
 
-module nova_tests.generics.p48_none_in_mono_body
+module generics.p48_none_in_mono_body
 
 
 // `result` объявлен с Option[T]; None initializer должен матчиться target типу.
 export fn lookup[T](found bool, value T) -> Option[T] {
-    let mut result Option[T] = None
+    mut result Option[T] = None
     if found {
         result = Some(value)
     }
@@ -21,8 +21,8 @@ export fn lookup[T](found bool, value T) -> Option[T] {
 
 
 test "None init in mono body: int found" {
-    let r = lookup(true, 42)
-    let got = match r {
+    ro r = lookup(true, 42)
+    ro got = match r {
         Some(v) => v
         None    => -1
     }
@@ -30,8 +30,8 @@ test "None init in mono body: int found" {
 }
 
 test "None init in mono body: int not found" {
-    let r = lookup(false, 0)
-    let is_none = match r {
+    ro r = lookup(false, 0)
+    ro is_none = match r {
         Some(_) => false
         None    => true
     }
@@ -39,8 +39,8 @@ test "None init in mono body: int not found" {
 }
 
 test "None init in mono body: str found" {
-    let r = lookup(true, "hello")
-    let got = match r {
+    ro r = lookup(true, "hello")
+    ro got = match r {
         Some(v) => v
         None    => "fallback"
     }
@@ -48,8 +48,8 @@ test "None init in mono body: str found" {
 }
 
 test "None init in mono body: str not found" {
-    let r = lookup(false, "default")
-    let is_none = match r {
+    ro r = lookup(false, "default")
+    ro is_none = match r {
         Some(_) => false
         None    => true
     }

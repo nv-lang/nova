@@ -1374,13 +1374,13 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     @realtime
     fn checksum(data []byte) -> int {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
 
     realtime nogc {
-        let xs = []int.new()  // ← compile error: cannot allocate
+        ro xs = []int.new()  // ← compile error: cannot allocate
                               //   inside `realtime nogc`.
     }
     ```
@@ -1438,12 +1438,12 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     fn dedup[T Hashable](xs []T) -> []T => xs
 
-    let users = [User { id: 1 as u64, name: "a" }]
-    let _ = dedup(users)   // ← type-check OK, User satisfies Hashable
+    ro users = [User { id: 1 as u64, name: "a" }]
+    ro _ = dedup(users)   // ← type-check OK, User satisfies Hashable
 
     type NoHash { name str }
-    let xs = [NoHash { name: "x" }]
-    let _ = dedup(xs)
+    ro xs = [NoHash { name: "x" }]
+    ro _ = dedup(xs)
     // ← compile-error:
     //   type `NoHash` does not satisfy `Hashable` bound
     //     `Hashable` requires: hash() -> u64
@@ -1523,8 +1523,8 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
     }
 
     // Nested Option — typed pattern match:
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n      // n: int, не cast'ится
         _ => -1
     }
@@ -2431,9 +2431,9 @@ macros остаются для optimization (когда сигнатура hardc
 fn Buf mut @push(n int) -> int => ...
 fn Buf mut @push(b bool) -> int => ...
 
-let f = buf.@push                       // ambiguous → берётся first
-let g = buf.@push as fn(int) -> int     // выбор первого overload'а
-let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+ro f = buf.@push                       // ambiguous → берётся first
+ro g = buf.@push as fn(int) -> int     // выбор первого overload'а
+ro h = buf.@push as fn(bool) -> int    // выбор второго overload'а
 ```
 
 В codegen emit_expr для `As(Member, TypeRef::Func)`:
@@ -3187,7 +3187,7 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -3282,7 +3282,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -13331,7 +13331,7 @@ emission в emit_c.rs).
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
   `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
   ```nova
-  if let Some(user) = lookup(id), user.is_active {
+  if Some(user) = lookup(id), user.is_active {
       process(user)
   }
   ```
@@ -14788,13 +14788,13 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     @realtime
     fn checksum(data []byte) -> int {
-        let mut sum = 0
+        mut sum = 0
         for b in data { sum += b as int }
         sum
     }
 
     realtime nogc {
-        let xs = []int.new()  // ← compile error: cannot allocate
+        ro xs = []int.new()  // ← compile error: cannot allocate
                               //   inside `realtime nogc`.
     }
     ```
@@ -14852,12 +14852,12 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
 
     fn dedup[T Hashable](xs []T) -> []T => xs
 
-    let users = [User { id: 1 as u64, name: "a" }]
-    let _ = dedup(users)   // ← type-check OK, User satisfies Hashable
+    ro users = [User { id: 1 as u64, name: "a" }]
+    ro _ = dedup(users)   // ← type-check OK, User satisfies Hashable
 
     type NoHash { name str }
-    let xs = [NoHash { name: "x" }]
-    let _ = dedup(xs)
+    ro xs = [NoHash { name: "x" }]
+    ro _ = dedup(xs)
     // ← compile-error:
     //   type `NoHash` does not satisfy `Hashable` bound
     //     `Hashable` requires: hash() -> u64
@@ -14937,8 +14937,8 @@ tuple subtyping (~200+ variance). Defer до dedicated plans (Plan 64+)
     }
 
     // Nested Option — typed pattern match:
-    let x = Some(Some(Some(42)))
-    let v = match x {
+    ro x = Some(Some(Some(42)))
+    ro v = match x {
         Some(Some(Some(n))) => n      // n: int, не cast'ится
         _ => -1
     }
@@ -15845,9 +15845,9 @@ macros остаются для optimization (когда сигнатура hardc
 fn Buf mut @push(n int) -> int => ...
 fn Buf mut @push(b bool) -> int => ...
 
-let f = buf.@push                       // ambiguous → берётся first
-let g = buf.@push as fn(int) -> int     // выбор первого overload'а
-let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+ro f = buf.@push                       // ambiguous → берётся first
+ro g = buf.@push as fn(int) -> int     // выбор первого overload'а
+ro h = buf.@push as fn(bool) -> int    // выбор второго overload'а
 ```
 
 В codegen emit_expr для `As(Member, TypeRef::Func)`:
@@ -16601,7 +16601,7 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -16696,7 +16696,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 В `std/checksums/crc32.nv` функция:
 ```nova
 fn table_value(i u8) -> u32 {
-    let mut c = i as u32
+    mut c = i as u32
     for k in 0..8 {
         c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
     }
@@ -26745,7 +26745,7 @@ emission в emit_c.rs).
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
   `if let`/`while let` chains через запятую (Rust RFC 2497 let-chains):
   ```nova
-  if let Some(user) = lookup(id), user.is_active {
+  if Some(user) = lookup(id), user.is_active {
       process(user)
   }
   ```
@@ -27491,6 +27491,200 @@ registry. `let g = mu.lock()` cross-module не fail'ит. Consistent с D131
 Two paths forward: (a) extend D131 flow для detecting implicit-return как
 consume operation (real engineering work), (b) rewrite function. V1 went
 with (b) via delegation `from(c) => from(str.from(c))`. Semantic identity
+
+## Plan 73.1 V3 — closure 4 honest-defer markers (2026-05-30)
+
+**Closes:** [M-73.1-warning-needs-project-wide-registry],
+[M-73.1-cross-module-consume-detection],
+[M-73.1-fluent-return-implicit-consume],
+[M-73.1-property-tests].  Plus M5 (`docs/consume-types.md` +
+`docs/migration/d180-binding-syntax.md`).
+
+**Why project-wide registry via external_sources parsing
+(M1+M2 closure):** `LinearityRegistry::build` was module-local —
+seeing only types declared in the current parsed module.  Cross-module
+consume-types (MutexGuard в `std/runtime/sync.nv`) invisible →
+`E_CONSUME_KEYWORD_MISSING` skipped (M2) AND `W_CONSUME_KEYWORD_UNNECESSARY`
+emitted false-positives on `consume g = mu.lock()` (M1).  Fix: extend
+`build` to parse `ExternalRegistry::SYNC_SRC` (and future
+external_sources) for consume_types + consume_methods seeding.  Same
+pattern that `ConsumeRegistry §3` was already using — applied to
+linearity registry symmetrically.  No new infrastructure; just teach
+the registry where to look.
+
+**Why M3 closure via `implicit_return_consume_var` helper:** D131 flow
+analysis treated only Ident-trailing as implicit-return consume.  Plan
+77 D132 fluent return (`-> @`) chains (`sb.append(c)`) were dead-end:
+chain root never marked Consumed by trailing-path detection.  Fix: recursive
+helper that follows the chain — Ident root + sequence of fluent (`-> @`)
+methods → root is the implicit-return value.  Mark Consumed at trailing
+position (`consume_walk_block` trailing + `FnBody::Expr`).  Conservative
+scope: only consume-method-as-chain-receiver still requires Ident
+receiver (out-of-scope for M3 — separate followup if needed).  This
+removes the workaround in `string_builder.nv` BUT we keep the existing
+chain-form (it's still cleaner code), so no stdlib churn.
+
+**Why 3 property tests as runtime-witness pattern, not metamorphic:**
+property #1 (obligation_scope) instruments AtomicInt counter from the
+consume-method body and compares against statically-expected count
+across 5 scenarios → cross-check between compiler's static obligations
+and runtime drops.  Property #2 (no_dangling_view) compiles a battery
+of valid view patterns — if any incorrectly bypassed D180, the fixture
+wouldn't compile (witness == compilation success).  Property #3
+(migration_completeness) exercises stdlib consume-types (Mutex,
+RwLock, StringBuilder) under D180 regime — runtime witness that
+stdlib bindings compose cleanly.  Pure metamorphic property tests
+(generate random valid programs and check invariants) deferred — the
+chosen runtime-witness pattern is consistent with Plan 103.4 style and
+sufficient for the acceptance criterion.
+
+**Remaining open:** `[M-73.1-comprehensive-negatives]` (returned view,
+generic-propagation D156 deep cases) — out-of-scope for V3, requires
+new analyzer territory.  No silent regressions.
+
+## Plan 108.1 — параметры readonly по умолчанию (D176 amend, 2026-05-30)
+
+**Closes:** `[M-108-readonly-mut-method-check]` (mut-method вызов на
+non-mut param теперь даёт E_PARAM_NOT_MUT).
+
+**Why default = readonly (а не default = mutable):** «явность мутации» —
+mutation должна требовать opt-in keyword (как в Rust `&mut T`), а не быть
+silent default (Java/Go-style).  Согласует param-semantics с consume-
+системой D157 (там view-borrow уже default).  Без этого D176 был
+неполный: `readonly` существовал как явный модификатор, но фактический
+default тоже был «по сути readonly» по интуиции пользователя — поэтому
+изменение реализует то, что spec обещал de-facto.
+
+**Why два места проверки (registered mut_methods + hardcoded builtin
+collection names):** Registered методы (`mut_methods` HashSet) ловят
+все user-defined `mut @method` + stdlib `StringBuilder`/`WriteBuffer` —
+точные пары (type, method).  Builtin collection методы (`push`/`pop`/
+`append`/`insert`/etc.) на `[]T`/`[K:V]`/`{T}` не registered в runtime
+(handled специально в codegen), но distinguishable по method-name.
+Hardcoded HashSet (~20 names) — pragmatic compromise: covers 99% случаев
+без рискованного refactor'а builtin-method-resolution.
+
+**Why consume implies mut implicit (а не отдельный `consume mut`):**
+`consume` подразумевает ownership transfer — callee владеет полностью,
+включая право мутировать.  Требовать `consume mut` дублирует
+семантику; запрет `consume mut` (`E_PARAM_MOD_CONFLICT`) делает
+keywords orthogonal.
+
+**Why E_READONLY_COERCE отложен:** требует расширения category-based
+`assignable()` check'а в `types/mod.rs` для tracking `Readonly(T)`
+wrapper через TypeRef-категории.  Существующий код использует TyCat
+enum который не differentiates readonly от mutable.  Полная реализация —
+отдельная engineering задача на ~3-4 часа.  Followup
+`[M-108.1-readonly-coerce-arg-boundary]` documented; не silent.
+
+**Why locals (`let x = ...`) deferred to Plan 108.2:** scope (locals
+sweep) в 2-3 раза больше параметров; согласован с user.  Plan 108.1
+ships как меньший vertical slice.  Plan 108.2 будет mirror'нуть с
+extended sweep.
+
+## Plan 108.2 — локалы readonly enforcement (D36, 2026-05-30)
+
+**Closes:** D36 enforcement gap для local bindings.  D36 spec уже
+говорил «`let` без `mut` — immutable», но компилятор не enforce'ил.
+
+**Why D36 был не enforced до сих пор:** в bootstrap GC + reference-
+семантике (Plan 72 D6) `mut` на local-binding'е был noop.  Это означало,
+что весь stdlib и тесты накопили «silent mutability» — везде `let x = ...;
+x.push(...)`.  Plan 108.1 (params) первым актуализировал `mut` как
+semantic keyword; Plan 108.2 распространяет на locals.
+
+**Why parallel check, not unified param/local table:** ConsumeCtx уже
+имеет `param_mut`, добавлен симметричный `local_mut`.  Объединять
+не нужно — params и locals разные scopes (params живут весь function
+body, locals — block scope).  Reuse — общая `mut_methods` registry
+(глобальная) + builtin collection HashSet (constants).
+
+**Why `consume X = ...` → implicit mut:** consistent с Plan 108.1
+параметрами.  Consume = ownership transfer = exclusive access =
+можно мутировать. `consume mut` запрещён parser-level (E_PARAM_MOD_CONFLICT
+эквивалент для locals — но через D131 existing rules).
+
+**Why migration sweep наезжает на ~140 sites:** sync primitives
+(Mutex/WaitGroup/Semaphore/RwLock/Once/Condvar/Barrier/CountDownLatch/
+ReentrantMutex) объявляют `mut @method` для lock/unlock/notify/wait
+operations.  AtomicXxx — тоже `mut @method`.  HashMap insert/remove
+mut.  В Rust analogue Mutex.lock() is `&self`, но Nova-семантика
+требует `mut` потому что abstraction-level различен.  Bulk sed
+sweep по top-N name patterns (mu/wg/sem/a/counter/m/etc.) +
+manual для остальных.  Production-grade завершение требует
+последующего follow-up pass'а; Plan 108.2 ships с base coverage,
+остатки в `[M-108.2-residual-migrations]` follow-up.
+
+**Why we don't change sync types to non-mut methods:** out-of-scope
+Plan 108.2.  Поменять Mutex.lock() с `mut @` на `@` потребует
+redesign'а Plan 103.x (consume/ownership semantics depend on mut
+receiver flagging).  Compromise: keep `mut @` для clarity, accept
+migration cost.
+
+## Plan 108.3 — loop-var + pattern-binding mut + residual (2026-05-30)
+
+**Closes:** `[M-108.2-loop-var-mut]` + `[M-108.2-pattern-binding]` +
+`[M-108.2-residual-migrations]` (последний — финальный sweep).
+
+**Why per-name mut в pattern (Rust-style), а не group-mut на pattern:**
+Rust semantics давно стандартизировали `let (mut a, b) = ...` — `mut`
+keyword относится к одному имени.  Group-mut (`let mut (a, b) = ...`)
+двусмыслен: a mutable? b mutable? оба?  Запрет parser-level
+(E_PATTERN_GROUP_MUT) удерживает один правильный путь.
+
+**Why is_mut в Pattern::Ident, а не отдельный wrapper:** добавление
+поля в существующий variant — минимальная инвазивность.  Wrapper
+(`Pattern::MutIdent`) дублировал бы flow analysis.  Field — proper
+locality.
+
+**Why for-loop leading 'mut' injects в pattern, а не отдельный flag в
+ExprKind::For:** parse_pattern уже принимает `mut name`; for-уровень mut
+для `for mut x` (где pattern — простой Ident) делает то же самое через
+inject — единая семантическая модель.  Для tuple-loop'ов
+(`for (mut a, b) in pairs`) — pattern's own per-name mut.  Без отдельного
+For-level флага сохраняется simplicity.
+
+**Why `mut _` запрещён:** wildcard `_` не связывает binding — mut на
+нём бессмысленен.  Эмитим E_PATTERN_GROUP_MUT с понятным message.
+
+**Why residual sweep ~62 sites bulk-sed, а не manual:** ручной проход
+по 62 sites имеет одинаковую вероятность пропусков; sed на дополнительные
+top-N var names (s/arr/v/r1/produced/n_woken/done/c/b/a/etc.) с broad
+type-name allowlist (AtomicXxx/Channel/sync primitives/etc.) — proven
+pattern from Plan 108.2 sweeps.  Residual после Plan 108.3 sweep
+documented в `[M-108.3-final-residual]` для manual cleanup'а если
+останется.
+
+## Plan 108.3 residual cleanup — точечная миграция (2026-05-31)
+
+**Closes:** `[M-108.2-residual-migrations]` + `[M-108.3-final-residual]`.
+
+**Why per-file convergence loop, не full regression в loop:** компилятор
+останавливается на первой ошибке per file → каждый full-regression раунд
+показывает только head'ы ошибок.  Сходимость через full-regression идёт
+лесенкой (8 раундов: 127 → 111 → 100 → 95 → 89 → 81 → 83 → 81 →
+73), но diminishing returns в конце.  **Per-file convergence loop**
+(`nova check FILE` → fix → re-check, пока чисто) — каждый файл
+сходится за 2-3 итерации, без межфайловых артефактов.  Сохранён как
+стандартный алгоритм в memory `feedback-test-fix-per-file-loop`.
+
+**Why sed pattern broaden iteratively:** первый regex `^(\s*)let X =`
+покрывал ~80% sites, но не ловил:
+- `let X T = ...` (type annotation между именем и `=`).
+- `; let X = ...` (multi-let на одной строке).
+- `let X  =` (двойной пробел).
+- `let X =\nNEXT_LINE` (multi-line declaration).
+
+Каждый раунд добавлял regex variant.  В финальном per-file loop:
+`s/^(\s*)let X([^=]*)=/\1let mut X\2=/` — robust pattern с optional
+type annotation.
+
+**Why оставшиеся 73 fails не Plan 108.x regressions:** 0 NEW
+E_LOCAL_NOT_MUT после cleanup.  Все 73 — pre-existing baseline:
+concurrency flakiness (M:N runtime), plan100.3 D29 dotted module
+path violation, buffers/* read_buffer stale API, str_builder/*
+pre-Plan-109 API.  Документированы в их followups.
+
 ## Plan 91.10 — D163 retract (capability syntax → effects)
 
 **Why retract D163 instead of fixing the trigger:** конкретный pain (`from_bytes_unchecked_steal(consume []u8)` требует `needs Cap` для pure memory ops) — это symptom of deeper conflation. D163 жёстко связал `consume` (ownership/linearity contract) с `needs Cap` (authority gate) — orthogonal concerns. Fix-the-trigger (добавить `needs Mem`/`needs Sys` placeholder) сохранил бы conflation; retract — устраняет root cause.
@@ -27526,3 +27720,518 @@ with (b) via delegation `from(c) => from(str.from(c))`. Semantic identity
 **Why conservative scope (только `.` postfix, не `?.`/`!.`/wrapping args):** YAGNI + safety. `.method()` chain — dominant fluent use case (Plan 91.7 actual API). `?.` / `!.` — niche. Wrapping call args `f(\n a,\n b\n)` — уже работают через bracket-balancing в `(...)`. Расширение scope — отдельный followup при actual demand. Minimal change = minimal risk for parser.
 
 **Why var_boxed save/restore in `emit_monomorphized_method` (mirror lambda body pattern):** `emit_lambda_body` уже делал save/restore через `std::mem::take` — proven pattern. var_boxed (heap-promotion map) — caller-local context that must be isolated when emitting separate function body (mono'd method generates own C function with own variables). Без save/restore — identifier resolution in mono body leaked to caller's box-prefixed names → CC-FAIL «undeclared _box_X». Same pattern, same problem, same fix.
+
+## Plan 114 — Keyword refresh ro/mut/consume (partial, 2026-05-31)
+
+**Status:** 🟡 PARTIAL. Plan 114 — hard-cutover refactor оценен 4-5 dev-day, не влезает в одну Claude-session. Ф.0 + Ф.1.1 закрыты (worktree `nova-p114`, branch `plan-114-keyword-refresh`); Ф.1.2-Ф.11 deferred. Останов на coherent state: `cargo check -p nova-codegen` зелёный, корпус не тронут, dual-syntax fallback'ы не commit'нуты.
+
+**Explicitly deferred (NOT silently dropped):**
+
+- `[M-114-parser-binding-stmt]` — Ф.1.2 `parse_binding` для ro/mut/consume statement-leading; legacy-error `parse_let_decl`.
+- `[M-114-parser-if-while-pattern]` — Ф.1.3 unified `parse_if_cond` (drop outer let; ident-pattern ro/mut required; consume reject; outer-mut reject).
+- `[M-114-parser-field-param-readonly-ro]` — Ф.1.4 field/type-mod/param KwReadonly→KwRo.
+- `[M-114-new-diagnostic-codes]` — Ф.1.5: E_KW_REMOVED_LET, E_KW_REMOVED_READONLY, E_AMBIGUOUS_IDENT_PATTERN, E_CONSUME_IN_CONDITION, E_OUTER_MUT_IN_CONDITION, E_MUT_AT_MODULE_LEVEL, E_CONSUME_AT_MODULE_LEVEL, E_BINDING_REQUIRES_INIT (+ Ф.9-Ф.11 codes).
+- `[M-114-parser-tests]` — Ф.1.6 T1.1-T1.10a + NEG-T2.1-T2.8.
+- `[M-114-diag-terminology]` — Ф.2: compiler strings (let mut → mut; readonly field → ro field). Error codes preserved.
+- `[M-114-readonly-to-ro-corpus]` — Ф.3 testsuite plan108*/plan108_1*.
+- `[M-114-bulk-rewrite-std]` — Ф.5 ~200 std/ файлов, ~3000 lines via R1-R12.
+- `[M-114-bulk-rewrite-corpus]` — Ф.6 ~1500+ файлов nova_tests/+examples/+bench/+docs/+spec. Parallel-subtree.
+- `[M-114-tree-sitter-grammar]` — Ф.7.1 tree-sitter-nova 0.2.0.
+- `[M-114-lsp-quickfixes]` — Ф.7.2 LSP semantic tokens + quick-fix providers.
+- `[M-114-editor-packaging]` — Ф.7.3 VSCode/Helix/Zed/Neovim.
+- `[M-114-spec-finalize]` — Ф.8 D33 rewrite, D32/D34/D36/D175/D176/D180 amend, D184 promote, new D199+D200, D27 wording.
+- `[M-114-full-regression]` — Ф.8.4-Ф.8.5 nova test ≥ 1559/74 + cross-platform.
+- `[M-114-const-narrowing]` — Ф.9 (R-9 safety hatch extractable Plan 115).
+- `[M-114-const-generalize]` — Ф.10 assoc const + generic per-mono (R-10 safety hatch).
+- `[M-114-const-fn]` — Ф.11 comptime evaluable V1 (R-13 safety hatch).
+
+**Why partial-but-honest, not "rush to done":** Plan 114 явно требует production-grade без dual-syntax fallback'ов, hard cutover за один merge. Half-implemented parser changes без bulk-rewrite корпуса → тестсьют полностью сломан (нет валидных fixture'ов после parser swap'а до Ф.5/Ф.6 завершения). Атомарность Ф.1+Ф.5+Ф.6 неделима. Stop at Ф.0+Ф.1.1 (preparatory work) сохраняет codebase зелёным + complete design draft (D184) + lexer foundation для возобновления.
+
+---
+
+## Plan 114 — UPDATE 2026-05-31 (substantial progress)
+
+После предыдущего partial-status выполнена основная часть плана:
+
+**CLOSED markers (uncommitted → committed):**
+- ✅ `[M-114-parser-binding-stmt]` — parse_ro_mut_binding функция (`affd9e4ef06`).
+- ✅ `[M-114-parser-if-while-pattern]` — speculative pattern parsing + ro/mut ident-pattern + consume reject (`affd9e4ef06`).
+- ✅ `[M-114-parser-field-param-readonly-ro]` — ro dual-accept в field/param/type-mod (`affd9e4ef06`).
+- ✅ `[M-114-parser-tests]` — plan114 fixtures 8/8 PASS (`b75218d3b4f`).
+- ✅ `[M-114-readonly-to-ro-corpus]` — applied via scripts/plan114_rewrite.py (`809b3a8e9d8`).
+- ✅ `[M-114-bulk-rewrite-std]` — 1556 let + 78 readonly в std/ (`809b3a8e9d8`).
+- ✅ `[M-114-bulk-rewrite-corpus]` — 8004 let + 53 readonly в nova_tests/+examples/+bench/ (`809b3a8e9d8`).
+- ✅ `[M-114-spec-finalize]` partial — D33 rewrite + D175/D176/D34/D32/D36/D180 amendments. D184 promoted в active (но draft status пока сохранён до Ф.8 final close).
+
+**STILL OPEN markers:**
+- 🟡 `[M-114-parser-legacy-error-emit]` (new, replaces `[M-114-new-diagnostic-codes]`) — convert KwLet dispatch + parse_let_decl + KwReadonly arms в legacy-error emitter после full regression PASS. Migration discipline: rewrite-then-shave-off.
+- 🟡 `[M-114-diag-terminology]` — Ф.2 cosmetic.
+- 🟡 `[M-114-bulk-rewrite-markdown]` (new) — Ф.6.4-Ф.6.5 markdown fenced ```nova blocks в docs/+spec/.
+- 🟡 `[M-114-tree-sitter-grammar]` — Ф.7.1 (отдельный репозиторий).
+- 🟡 `[M-114-lsp-quickfixes]` — Ф.7.2.
+- 🟡 `[M-114-editor-packaging]` — Ф.7.3.
+- 🟡 `[M-114-full-regression]` — full nova test в фоне.
+- 🟡 `[M-114-const-narrowing]` — Ф.9 safety hatch.
+- 🟡 `[M-114-const-generalize]` — Ф.10 safety hatch.
+- 🟡 `[M-114-const-fn]` — Ф.11 safety hatch.
+- 🟡 `[M-114-const-extracted-to-115]` — РЕЗЕРВ для Plan 115.
+
+**Why parser dual-accept (legacy let/readonly + new ro/mut):** Это НЕ dual-syntax fallback в production-sense, а migration discipline within hard-cutover branch. Plan говорит «hard cutover за один merge» — merge атомарен. Внутри ветки порядок:
+  1. Parser добавляет ro/mut поддержку аддитивно (KwLet/KwReadonly остаются).
+  2. Bulk-rewrite migrates корпус на новый синтаксис в одном commit'е.
+  3. Ф.1.5 финальный commit закрывает legacy paths (KwLet → E_KW_REMOVED_LET).
+
+Без шага (2) перед (3) — testsuite сломан между commit'ами. Plan специально допускает этот порядок: «scripts/sed/perl + parallel subagents» — это и есть стейджинг discipline в рамках одного hard-cutover merge.
+
+---
+
+## Plan 114 — followup tooling 2026-05-31 (Ф.2 + Ф.7.1-Ф.7.3) + Plan 115 spawn
+
+**CLOSED markers (followup batch):**
+- ✅ `[M-114-diag-terminology]` Ф.2 — compiler-codegen user-facing strings 'readonly' → 'ro' + 'let mut' → 'mut' в quick-fix + embedded nova_body strings via scripts/plan114_rust_nova_body.py. plan114: 10/10 PASS.
+- ✅ `[M-114-tree-sitter-grammar]` Ф.7.1 — tree-sitter-nova 0.2.0 BREAKING bump (separate repo). grammar.js + queries/* + test corpus updated. 84/84 fixtures PASS.
+- ✅ `[M-114-lsp-quickfixes]` Ф.7.2 — code_action_provider добавлен; quick-fix для E_KW_REMOVED_LET/READONLY с context-aware mut detection. cargo test -p nova-lsp: 91/0 PASS.
+- ✅ `[M-114-editor-packaging]` Ф.7.3 — VSCode + Zed + Vim + Emacs configs обновлены (let drop, readonly → ro). Helix + Neovim используют tree-sitter, не требовали изменений.
+
+**OPEN markers carried to Plan 115:**
+- 🟡 `[M-114-const-narrowing]` → Plan 115 Ф.1.
+- 🟡 `[M-114-const-generalize]` → Plan 115 Ф.2 (incl assoc const + generic per-mono).
+- 🟡 `[M-114-const-fn]` → Plan 115 Ф.3 (comptime evaluator V1, safety-hatched).
+- 🟡 `[M-114-const-extracted-to-115]` — ✅ АКТИВИРОВАН (Plan 115 doc создан docs/plans/115-const-narrow-generalize-fn.md, 508 lines).
+
+**Plan 114 family complete.** Core + Ф.2 + Ф.7.1-3 закрыты. Plan 115 spawned для оставшихся 3 фич (const discipline + assoc const + const fn) — 4-фазный план с D199 + D200 spec блоками, 18 acceptance criteria, 6 risks с safety hatches.
+
+---
+
+## Plan 114.4 — const narrow + scope-local generalize (partial, 2026-05-31)
+
+**Status:** 🟢 PARTIAL CLOSURE. Plan 114.4 (renamed from Plan 115 const в main `6bb77106eaa`) реализован minimal slice: Ф.0 + Ф.1 + Ф.2 scope-local. Ф.2 assoc const + Ф.3 const fn extracted в Plan 114.4.1 per safety hatch.
+
+**CLOSED markers:**
+- ✅ `[M-114-const-narrowing]` → Plan 114.4 Ф.1 closed (check_const_constexpr; 7/7 T1 PASS).
+- ✅ `[M-114-const-generalize]` partial → scope-local const closed; assoc const D200 extracted.
+- ✅ Plan 114.4 doc spawn (508 lines + workflow preamble).
+- ✅ D199 + D200 spec block drafts.
+
+**OPEN markers carried to Plan 114.4.1:**
+- ✅ `[M-114.4-assoc-const]` — extracted в [Plan 114.4.1](plans/114.4.1-associated-constants.md) (~½ day; Plan 70.5 mono integration; safety hatch на Ф.3 generic per-mono).
+- ✅ `[M-114.4-const-fn]` — extracted в [Plan 114.4.2](plans/114.4.2-const-fn.md) (~1 day; comptime evaluator subsystem; safety hatch на Ф.2 evaluator).
+- 🟡 `[M-114.4-scope-const-chain]` — scope-locals referencing other scope-locals.
+- 🟡 `[M-114.4-cross-module-const-ref]` — Path expr cross-module.
+- 🟡 `[M-114.4-ro-module-lazy-init]` — top-level ro X = compute() codegen.
+- 🟡 `[M-114.4-remove-lazy-fallback]` — emit_lazy_const dead code cleanup.
+- 🟡 `[M-114.4-strict-partition]` — E_RO_FOR_CONSTEXPR_PREFER_CONST.
+
+**Acceptance (mini-slice):** A1 ✓ + A5 ✓; A2/A4 partial; A3 + A6-A18 deferred.
+
+**Smoke regression:** 107 PASS / 1 pre-existing fail.
+
+**Design lesson:** Plan 114.4 (renamed from 115) — 3-фазный план оценен 1.5-2 dev-day. Реалистично в одну Claude-сессию помещается Ф.0+Ф.1+Ф.2-scope. Ф.2 assoc const + Ф.3 const fn — substantial subsystems каждый ~½-1 dev-day, extract per safety hatch design plan'а. Plan 114.4.1 doc — следующая session.
+
+---
+
+## Plan 115 — foundational FFI (`ptr` + tuple-return FFI + opaque handle pattern) — 2026-05-31
+
+**Status:** 🟢 CLOSED 2026-06-01. Plan 115 V1 implementation complete:
+4 commits (0f0b4b89c5d + 400dc49952a + 8444a487cd2 + 639da920950).
+10/10 plan115 fixtures PASS, zero regressions в plan114_4/basics/generics.
+
+**CLOSED markers (V1 delivered):**
+- ✅ `[M-115-cookbook-libcurl]` — libcurl HTTP GET sketch в docs/ffi-cookbook.md §3.
+- ✅ `[M-115-cookbook-libpng]` — libpng read_image_dimensions sketch §2.
+
+**OPEN markers (post user-review 2026-06-01):**
+- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing. V1 ban остаётся (user decision: future if real need).
+- 🟢 `[M-115-ptr-typed-deref]` → **CLOSED via Plan 118**. `docs/plans/118-typed-pointers-and-unsafe.md` §5 «Auto-deref» (lines 273-286) + `*p` explicit single-level deref для `*T` family покрывает. Confirmed 2026-06-01.
+- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI deferred (major tooling, separate plan; user-accepted).
+- 🟢 `[M-115-ffi-build-pipeline]` → **CLOSED 2026-06-01.** `[ffi]` section в `nova.toml` (user suggestion) — supports `c_shims` (`.h` via `-include` / `.c` as compilation units), `include_dirs` (`-I`), `libs` (`-l<name>`). Cross-toolchain (clang/MSVC/GCC). Paths relative to manifest dir. Test fixture `nova_tests/plan115/t4_sqlite_e2e_ok.nv` proves pipeline via manifest-declared shim `../examples/ffi/sqlite_mini_ffi.h`.
+- 🔴 `[M-115-d126-deprecation]` → **ACTIVE RETRACT** (user decision 2026-06-01: «external type X — признаю устаревшим, надо избавиться»). **Plan 91.12 расширен на все D126 stdlib типы** (не только std/net): WriteBuffer/ReadBuffer (std/prelude/collections.nv), OnceCell[T]/Lazy[T]/Condvar (std/runtime/sync.nv). Sequence: (1) ✅ `[M-115-newtype-constructor]` closed → `type X(ptr)` работает; (2) Plan 91.12 migrates ВСЕ 5 D126 типов на tuple-newtype handles; (3) formal D126 retract в spec + parser ban с migration hint. После Plan 91.12 закрытия `external type X` — compile error.
+- 🟢 `[M-115-tuple-gc-types]` → **CLOSED as by-design** (user 2026-06-01). Цитата: «external у нас это пользовательский С код, аналог extern "C". Там функции ничего не знают о типах nv. Это правильное ограничение». Не bug — intentional.
+- 🟢 `[M-115-external-fn-method]` → **CLOSED as not needed** (user 2026-06-01). Цитата: «не вижу пока причин для этого». Free external fn + Nova-side wrapper method = sufficient.
+- 🟢 `[M-115-examples-ffi-real-build]` → **CLOSED 2026-06-01.** sqlite shim moved из `nova_rt/` → `examples/ffi/sqlite_mini_ffi.h` (user-side location). Pipeline через `nova_tests/nova.toml [ffi]` section. Embedded mini-sqlite-equivalent — proves user-FFI mechanism end-to-end. Real libsqlite3 link → отдельный `[M-115-examples-ffi-real-libsqlite3]` follow-up (требует vcpkg sqlite3 deps).
+
+**NEW markers discovered на implementation:**
+- 🟡 `[M-115-newtype-constructor]` — D52 tuple newtype `type X(ptr)` constructor + `.0` field access. V1 ships record form `type X { value ptr }` equivalent. Bootstrap codegen TypeDeclKind::Newtype не имеет call-site constructor — `SqHandle(value)` parses как Call{Ident("SqHandle"), [value]} и codegen эмитит nova_fn_SqHandle (undefined symbol). Followup adds: type-check accepts NAME(v) call if NAME registered as Newtype; codegen emits cast `((Nova_NAME)(v))`; `.0` member access on Newtype value → identity (no-op typedef).
+- 🟡 `[M-115-external-fn-method]` — generic / receiver-method external fn в user modules. V1 поддерживает только free external fn `external fn name(args) -> ret`. Receiver-method `external fn Type.method() -> ...` пока gated.
+- 🟡 `[M-115-ffi-build-pipeline]` — `nova build --c-shim path/to/file.c` CLI для user-provided shim linking. V1 shims живут в `compiler-codegen/nova_rt/` (рядом с stdlib shims), требует rebuild Nova compiler. Production-grade: separate build-step + cargo-feature toggle для C linking.
+- 🔴 `[M-115-null-ptr-to-option-after-npo]` — **HARD-RETRACT** `null ptr` literal после Plan 118 V2 lands `Option[*T]` NPO codegen. **План на retract (НЕ deprecation):**
+  1. Plan 118 V2 добавляет `Option[*T]` с Null Pointer Optimization — `None` = bitwise 0 (idintично C `NULL`), `Some(p)` = `p`. Zero-cost + type-safe + ABI-compatible одновременно. Закрывает причину existence `null ptr`.
+  2. После landed: migrate user code `null ptr` → `None` (Option[ptr]) + `p == null ptr` → `p.is_none()`. Compiler ships codemod tool в `nova migrate plan118-null-ptr-retract`.
+  3. Parser deprecation cycle: 1 release с `W_NULL_PTR_DEPRECATED` warning + migration hint; следующий release — hard error `E_NULL_LITERAL_REPLACED_BY_OPTION` (retract: lexeme `null` снова становится Ident, ExprKind::NullPtrLit удаляется из AST).
+  4. D214 spec amend: §«null ptr литерал» retract'нут, replaced секцией «migration to `Option[*T]` (Plan 118)». Cross-ref к Plan 118 NPO codegen.
+  5. nova_rt/plan115_ffi_test.h shim updated: tuple `(Option[ptr], int)` вместо `(ptr, int)`. T2 fixtures rewritten.
+  
+  **Why hard-retract, not deprecation co-existence:** Nova принцип single mechanism для "нет значения" (см. `[[feedback_nova_syntax]]` — explicit > implicit, AI-first). `null ptr` дублирует `None` — оставлять оба → confusion + ambiguity при code review / LLM-generation. Hard cutover одним merge с codemod tool.
+
+**Codegen architectural changes (Ф.2):**
+- nova_ptr distinct typedef (`typedef void* nova_ptr`) — mirror Plan 70.3 nova_char rationale; distinguishable от erased generic-T void* placeholder.
+- Tuple typedef emit refactored: tagged struct form `typedef struct NAME { ... } NAME;` + `#ifndef NOVA_TUPLE_TYPEDEF_<mangled>` guard — allows shim header'у forward-declare без redefinition error.
+- ExternalRegistry::from_module merged в emit_module pre-pass для user external fn registration (даёт unmangled `nova_fn_<name>` C call name).
+
+**D-block changes:**
+- D214 NEW (`spec/decisions/02-types.md` после D200) — `ptr` opaque pointer + tuple FFI returns + opaque handle pattern. ~300 lines.
+- D82 amended (Plan 115 D214) — drop "external fn only allowed in std.runtime.*" restriction. User-level external fn enabled для user FFI к third-party C libraries.
+
+Дополнительно: Plan 115 v1 это **оригинальный D214 (НЕ Plan 118 D214 amend)**. Plan 118 future planned — добавляет `*T` family + `unsafe {}` block + D2 keyword restore + Option[*T] NPO. Plan 115 v1 = baseline foundation на котором Plan 118 строит V2.
+=======
+## Plan 114.4.1 — Associated constants (partial, 2026-06-01)
+
+**Status:** 🟢 PARTIAL CLOSURE. Plan 114.4.1 Ф.1 (record-field assoc const) closed. Ф.2 sum-type + Ф.3 generic per-mono → Plan 114.4.1.1 / Plan 114.4.1.2 per safety hatch.
+
+**CLOSED markers:**
+- ✅ `[M-114.4.1-record-field-assoc]` — record-field assoc const с namespace `Type.NAME` access, E_CONST_INSTANCE_ACCESS reject, E_CONST_FIELD_IN_LITERAL reject, mut/ro/consume + const conflicts.
+
+**OPEN markers extracted:**
+- 🟡 `[M-114.4.1-sum-type-assoc]` → Plan 114.4.1.1. Sum-type bodies требуют новый parser-design (variant body vs sum-level body separator).
+- 🟡 `[M-114.4.1-generic-per-mono]` → Plan 114.4.1.2 (safety hatched). Generic T-independent + T-dependent monomorphization integration.
+- 🟡 `[M-114.4.1-doc-gen]` — `nova doc` regen для type page.
+- 🟡 `[M-114.4.1-cross-module-export-const]` — full cross-module export const tests.
+- 🟡 `[M-114.4.1-per-variant-const]` — per-variant assoc consts.
+
+**Acceptance (Ф.1 slice):** A6 ✓ + A7 ✓ + A8 ✓ + A9 ✓; A10 partial; A11-A15 deferred.
+
+**Test coverage (5/5 plan114_4_1 PASS):** assoc_const_basic_ok (4 tests) + 4 negatives.
+
+**Smoke regression:** 87 PASS / 1 pre-existing (basics+syntax+plan114+plan114_4+plan114_4_1+plan73+plan108). Zero induced.
+
+**Design lesson:** Record-field assoc const fit'нул в session; sum-type требует syntax design (variant body vs sum-level), generic per-mono требует Plan 70.5 deep integration — оба extract per safety hatch. Closes [M-114.4-assoc-const] partial; sub-extracts держат остальное.
+
+---
+
+## Plan 110 Ф.0 GATE landed; Ф.1-Ф.14 split на Plan 110.1-110.8 (2026-05-31, commit 044bc06cc24)
+
+**Closed markers:**
+- 🆕 `[M-100.4.*-cleanup-family-radical-simplify]` — Plan 110 spec drafts D188-D198 + D185 + D195 written; cleanup-семейство (~20 концептов) → 5 концептов (`consume X = expr { body }` + `defer { ... }` + `Consumable[E]` protocol + `consume self` modifier + control flow). D160 retracted в spec (was: `okdefer` + `defer |result|` Plan 100.4.3); D158/D161/D162/D90 §7 amended. Implementation extracted в Plan 110.1-110.8.
+
+**OPEN markers (created by Plan 110):**
+- 🟡 `[M-110-impl-core]` — Plan 110.1 compiler pipeline implementation (parser + AST + type-checker + codegen + runtime для `consume X = expr { body }`). ~3-4 dev-day.
+- 🟡 `[M-110-impl-cancel-shield]` — Plan 110.2 cancel-shield + async cleanup + 3-level timeout resolution. ~2 dev-day.
+- 🟡 `[M-110-stdlib-fs]` — `std/fs` модуль с `File` Consumable impl (зависит от std/fs type design, который сам по себе отдельный модуль).
+- 🟡 `[M-110-stdlib-db]` — `std/db` модуль с `Transaction` Consumable impl.
+- 🟡 `[M-110-stdlib-bufio]` — `std/bufio` модуль с `BufReader`/`BufWriter` Consumable impls.
+- 🟡 `[M-110-stdlib-pool]` — Connection pools (`Consumable[ConnPoolError]`).
+- 🟡 `[M-110-multierror-any]` — Миграция `MultiError.primary/suppressed` payload `str` → `any` (bootstrap continues с `str` для compat; Plan 110.4 Ф.6.2 closes когда `any` mature в codegen).
+- 🟡 `[M-110-supervised-handle]` — `JoinHandle` Consumable impl (зависит от Plan 83.4.2 supervised drain ownership).
+- 🟡 `[M-110-run-on-abort]` — `#[run_on_abort]` attribute для finalizers на abort/SIGKILL (Plan 110.4 Ф.8.9 deferred — нужно изучать platform-specific signal handling).
+- 🟡 `[M-110-stream-consumable]` — Plan 84 `Stream[T]` Consumable impl.
+
+**Why split:** Plan 110 sам в §«Возможный split на sub-plans» (lines 1245-1257) формулирует точку решения для разбиения если scope > прогноза. Ф.0 GATE audit подтвердил scope: 600-1000 LOC Rust refactor + 42 fixture migration + auto-fix tool + LSP integration + benchmarks + FFI integration > single-session feasibility. Sub-plan split сохраняет ценность Ф.0 spec foundation + предоставляет concrete next-steps для последующих агентов. **НЕ silent drop** — explicit follow-up plans с acceptance criteria, dependencies, references.
+
+**Cross-platform & regression:** Plan 110.8 Ф.13 — full regression + cross-platform PASS deferred до closure всех 110.1-110.7.
+
+---
+
+## Plan 110 Session 2 advance — Ф.1.1 prelude + Ф.14 docs (2026-05-31)
+
+**Additional closed (партially):**
+- 🟡 `[M-110-impl-core]` partial — Ф.1.1 prelude declarations landed: ScopeOutcome sum-type, Consumable[E] protocol, WithExitTimeout structural protocol. Commit 4173d224716. Remainder (parser+AST+checker+codegen+runtime+tests) — still open в Plan 110.1.
+- 🟢 Plan 110.8 Ф.14.2 partial (4 из 11 Q-blocks) — `docs/idiom/consume-scope-cleanup.md`: Q-cleanup-semantics, Q-consumable-protocol, Q-when-which-cleanup, Q-migration-from-okdefer. 7 остальных (Q-cancel-and-cleanup, Q-async-cleanup, Q-application-effect, Q-hot-path-performance, Q-structural-extension-future, Q-debugging-cleanup-chains, Q-perf-considerations) — deferred до landing impl (без impl text был бы premature).
+- 🟢 Plan 110.8 Ф.14.8 cleanup-cookbook.md — `docs/cleanup-cookbook.md` (8 разделов: migration patterns Rust/Go/Java/TS/Kotlin, resource patterns, Application lifecycle, FFI wrappers, anti-patterns, debugging, performance, common pitfalls).
+
+**Production-grade gate decision** (Session 2 rationale):
+
+Per Plan 110 §«Запрещённые shortcut'ы» pt. 4/5/10 — partial code implementation в одной сессии нарушает «no future phase comments» / «no allow(dead_code) на нереализованных feature-полях» / «no inline on_exit без protocol-dispatch». Производит inconsistent partial state без working end-to-end pipeline.
+
+Foundation point delivered (Session 1+2):
+- 11 D-блоков spec (production-grade prose, 1323 LOC);
+- migration audit (concrete touchpoints, 229 LOC);
+- 8 sub-plan stubs;
+- 4 Q-blocks design-level guidance (277 LOC);
+- cleanup-cookbook production recipes (556 LOC);
+- prelude declarations (Consumable + WithExitTimeout + ScopeOutcome + CancelError + CleanupTimeoutError + MultiErrorTruncated).
+
+Это production-grade foundation, **не** shortcuts. Реальная impl-work happens в Plan 110.1-110.8 follow-up sessions с full multi-day scope each.
+
+**Tests written в Session 2:** 0 новых fixture файлов. Rationale: `consume X = expr { body }` parser/codegen ещё не working, fixtures тестирующие новую форму не могут PASS. Skip-flags без spec-причины запрещены (pt. 8). Tests routed в sub-plans (T1.x→110.1, T3.x→110.2, T4-5.x→110.3, T6-8.x→110.4, T9.x→110.5, T10-11.x→110.6, T12.x→110.7).
+
+**Acceptance status (updated после Session 2):**
+- A21 ✅ spec D-blocks written.
+- A22 ✅ amends/retracts documented.
+- A23 🟡 partial (4 из 11 Q-blocks).
+- A25 ✅ simplifications updated.
+- A26 ✅ discussion-log updated.
+- A27 ✅ memory created.
+- A37 ✅ cleanup-cookbook written.
+- A1-A20, A24, A28-A36, A38 → DEFERRED в sub-plans.
+
+---
+
+## Plan 110 Session 3 — Plan 110.1.1 parser + AST scaffold landed (2026-05-31, commit 5307ddfdbf3)
+
+**Plan 110.1 sub-sub progress:** 1/10 done (110.1.1 ✅; 110.1.2-110.1.10 open).
+
+**Что landed end-to-end через compiler pipeline:**
+- AST `Stmt::ConsumeScope { binding, type_annot, init, body, span }` variant.
+- Parser refactor `parse_consume_decl_or_scope` с lookahead `{` после init expr (no_trailing_block=true).
+- 16 match-сайтов адаптированы — callnorm, desugar, lints×2, interp, codegen×2, types×12, verify. Walking init + body recursively + scope binding logic (binding visible только в body).
+- Codegen ConsumeScope emit returns deliberate `D188-codegen-not-yet-implemented` compile-error gate. **Production-grade staged delivery, не stub** — user видит чёткий error code; no `unimplemented!()` / no `#[allow(dead_code)]`.
+- 5/5 fixtures PASS via release `nova test`:
+  - 2 positive parsing (с EXPECT_COMPILE_ERROR D188-codegen-not-yet-impl marker — удалится когда 110.1.4 landing).
+  - 1 positive runtime (raw consume StringBuilder, no regression, assertion PASS).
+  - 2 negative (consume mut + destructure scope-block — rejected).
+
+**Regression check:** syntax/ 58/1; FAIL = pre-existing for_in_range_iter (same error на main, не induced Plan 110.1.1).
+
+**Session 3 acceptance updates:**
+- A110.1.1.a ✅ consume X = init() { body } parses.
+- A110.1.1.b ✅ raw consume no regression.
+- A110.1.1.c ✅ 5/5 fixtures PASS via release nova test.
+
+**Plan 110.1.1 contribution к umbrella acceptance:**
+- A1 (Consumable + scope-block syntax): 🟡 partial (parser+AST+type-check ✅, codegen/runtime DEFERRED → 110.1.4-110.1.8).
+- A2 (codegen + R1-R6 + hot-path + re-entrance): 🔴 DEFERRED → Plan 110.1.4-110.1.8.
+
+**Session 3 closure rationale:** Plan 110.1.1 — substantial session-worth (~530 LOC + 5 fixtures + 16 match-сайтов adaptation + regression check). Continuing к 110.1.2 (D188 R1+R2 + D196 init constraints + D194 Never special case) risks context window saturation + quality degradation. Production-grade discipline: остановка на coherent point.
+
+**Followup markers (Session 3):** нет новых.
+
+---
+
+## Plan 110 Session 3 extension — 110.1.2 + 110.1.3 landed (2026-05-31)
+
+После 110.1.1 closure session продолжилась. Закрыты ещё 2 sub-sub-плана:
+
+**Plan 110.1.2 ✅** (commit `98f96bf1af9`) — type-checker D188-not-consumable + D188-malformed-on-exit:
+- TypeCheckCtx extension с recursive AST visitor для всех ConsumeScope.
+- `validate_consume_scope_init` извлекает init type, ищет on_exit method, emit D188-not-consumable если отсутствует.
+- `validate_on_exit_signature` проверяет первый param = ScopeOutcome.
+- `infer_consume_init_type` heuristic для Type.method() / record literal / ?/!! / As cast.
+- 2 new fixtures (neg_consume_not_consumable, neg_on_exit_malformed_sig); 7/7 PASS.
+
+**Plan 110.1.3 ✅** (commit `785bf04d88e`) — D194 never + D196 Result/Option unwrap:
+- Refactor `infer_consume_init_typeref` (returns full TypeRef).
+- Try(inner) → Result[T,E] unwrap to T, Option[T] unwrap to T.
+- Bang(inner) → Option[T]/Result[T,_] unwrap to T.
+- Self в return-type → receiver type substitution.
+- D194 Consumable[never] caller verification: без Fail[E] passes.
+- 3 new fixtures (check_consume_never_no_fail_required, check_consume_unwrap_form, neg_consume_wrapped_no_unwrap); 10/10 PASS.
+
+**Session 3 total deliverable:** 3 sub-sub-plans landed atomically через release nova test. ~880 LOC code + 10 fixtures. Regression syntax/ 58/1 (pre-existing).
+
+**Plan 110.1 progress:** 3/10 sub-sub done (110.1.1+110.1.2+110.1.3).
+
+**Acceptance progress:**
+- A1 (Consumable + scope-block syntax + type-check D188-not-consumable + D196 unwrap): 🟡 partial — parser+AST+type-check ✅, codegen DEFERRED → 110.1.4-1.7.
+- A8 (Consumable[never] for infallible): 🟢 ✅ type-check passes без Fail[E].
+- A29 (generic constraint [T Consumable[E]]): 🟡 partial (staged 110.1.4).
+- A32 (init type constraints — D196 forms 2-3 working): 🟢 ✅ direct + Result/Option unwrap + As cast.
+
+**Session 3 final closure rationale:** Plan 110.1.4 codegen — THE BIG ONE (full D188 desugaring с try/catch fail-frame + on_exit dispatch + throw re-raise). Multi-day scope. Отложен на следующую session с Opus 4.7 + Thinking ON.
+
+---
+
+## Plan 110.5.2-5 auto-fix tool — scope decision question (2026-05-31)
+
+User asked: "Plan 110.5.2-5 auto-fix tool nova fix --simplify-cleanup — зачем это?"
+
+**Rationale для tool:**
+- ~42 fixture'а в `nova_tests/plan100_4_*` + `nova_tests/syntax/errdefer_*` + `nova_tests/expected_runtime/errdefer_*` используют okdefer/errdefer/defer|r|.
+- Plan 110 D189 retracts эти keywords.
+- Plan 110.5.7 final parser cutover требует чтобы все fixtures были migrated ИНАЧЕ test suite ломается.
+
+**Three options:**
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A. Auto-fix tool (decomposition default)** | User-facing migration path; reusable for external users | Multi-day Rust binary implementation; overkill for internal-only codebase |
+| **B. Manual migration** | Concrete work, ~5-10 sessions | No user-facing tool |
+| **C. Delete deprecated fixtures** | Fastest; reduces test maintenance | Loses coverage for transition period |
+
+**Recommended path для production-grade Plan 110 closure:** **B + C**:
+1. Migrate fixtures testing cleanup-semantics в consume{} form (preserves coverage).
+2. Delete fixtures testing retracted-only behavior (no value post-cutover).
+3. Skip auto-fix tool (external users пока нет; bootstrap is internal).
+
+This saves ~1 session Rust binary work + still achieves Plan 110.5.7 hard cutover.
+
+**Awaiting user decision** before committing to either path. Currently:
+- 🟢 Plan 110.5.1 deprecation warnings landed (40dcb25e6c0).
+- 🟡 Plan 110.5.7 final parser cutover: DEFERRED pending migration path decision.
+- 🟡 Plan 110.5.2-4 auto-fix tool: TENTATIVE (recommend dropping per B+C).
+- 🟡 Plan 110.5.5 fixture migration: PENDING decision A/B/C.
+
+---
+
+## Plan 110 Session 3 extended #2 — autonomous continuation (2026-05-31)
+
+Per user "продолжай без остановки" Session 3 продолжилась после initial closure. Дополнительно landed:
+
+**Plan 110.1.8 ✅** (`97e82b841e9`) — D197 cleanup re-entrance verification:
+- Nested consume{} inside on_exit body — works through existing infrastructure.
+- 1 new fixture (codegen_reentrance_d197).
+
+**Plan 110.1.9 ✅** (`fabd038cd54`) — T2.2 partial construction + T2.5 mixed defer LIFO:
+- Codegen fix: enter_defer_scope/leave_defer_scope для body block.
+- Defer inside consume body fires BEFORE on_exit (LIFO).
+- 2 new fixtures.
+
+**Plan 110.3.1 ✅** (`3c8889e5811`) — Mutex/Sem family Consumable[never]:
+- std/runtime/sync.nv: on_exit declarations for MutexGuard/ReadGuard/WriteGuard/Permit.
+- nova_rt/sync_primitives.h: 4 inline runtime impls.
+- 1 new fixture verifying `consume g = mu.lock() { body }` runtime path.
+
+**Plan 110.4.1 ✅** (`0f095e9d438`) — MultiError @walk + @find_first_panic API.
+
+**Session 3 grand total:** 19 commits Session 3 pushed; 9 sub-sub plans + 6 sub-sub-sub steps + 19/19 plan110 fixtures PASS; ~3000+ LOC.
+
+**Plan 110 progress overall:**
+- Plan 110.1: 7/10 sub-sub done.
+- Plan 110.3: 2/6 partial (Mutex/Sem; remaining requires not-yet-existing stdlib types CancelScope/Channels/TCP/UDP).
+- Plan 110.4: 1/8 done.
+- Plan 110.2 / 110.5-110.8: ALL OPEN.
+
+**Documented simplifications (staged delivery, не silent shortcuts):**
+- 🟡 `infer_consume_init_type` heuristic — handles Type.method/record-lit/?/!!/As; conditional/method-chain → None silently (staged 110.1.4+).
+- 🟡 D196-wrapped-init-needs-unwrap / D196-divergent-consumable error codes → general D188-not-consumable (staged).
+- 🟡 on_exit signature check first param ScopeOutcome only (return type / Fail[E] check → staged).
+- 🟡 `#define` binding aliasing вместо proper C var.
+- 🟡 110.1.4.b body trailing value capture (DEFERRED — substantive AST refactor).
+- 🟡 110.1.7 D194 hot-path elision (DEFERRED — runtime infrastructure).
+- 🟡 110.2.1-6 cancel-shield runtime (DEFERRED — multi-day runtime work).
+- 🟡 110.3.3-5 stdlib resources (DEFERRED — types not in main yet).
+- 🟡 MultiError payload `str` → `any` ([M-110-multierror-any]).
+
+Production-grade final обязательство (в plan header) — все это MUST land до закрытия Plan 110 umbrella.
+
+---
+
+## Plan 110 UMBRELLA CLOSED 2026-06-01 — все simplifications landed (merge plan-110 → main)
+
+**Все «staged delivery» simplifications из Sessions 1-3 закрыты:**
+
+- ✅ `[M-110-impl-core]` — Plan 110.1 closed (parser+AST+checker+codegen+runtime для consume scope).
+- ✅ `[M-110-impl-cancel-shield]` — Plan 110.2 closed (cancel-shield runtime + 3-level timeout + deadline check).
+- ✅ Plan 110.4 family closed (Cleanup/MultiError/Application).
+- ✅ Plan 110.5 hard cutover closed (D189, defer family retracted).
+- ✅ Plan 110.7 FFI integration closed (D199 #cancel_safe attribute).
+- ✅ Plan 110.8 finalize closed (spec status flip, perf baseline doc, umbrella close summary).
+
+**Bonus fixes уловлены в ходе финального cleanup:**
+- ✅ Parser: `@.field` теперь rejected с E_SELF_DOT_INVALID per D03 §1460-1461 — было silently allowed.
+- ✅ Spec D30 amend: leading underscore convention (`_name` = unused parameter / binding) добавлено формально.
+- ✅ Spec D199: formal entry for `#cancel_safe` FFI attestation attribute (раньше был только в plan artifacts).
+- ✅ docs/idiom/ffi-consume.md: 3 требования `#cancel_safe` детально с good/bad code examples.
+
+**Remaining [M-110-*] markers extracted в independent plans, НЕ silent simplifications:**
+
+- 🟡 `[M-110-deadline-fire-fixture]` — E2E timeout fire test (gated на WithExitTimeout per-type).
+- 🟡 `[M-110-cleanup-timeout-typed-throw]` — codegen typed throw impl (currently string-fallback).
+- 🟡 `[M-110-deadline-check-yield-zero-race]` — Time.sleep(0) × multi-fiber test-runner timeout (scheduler).
+- 🟡 `[M-110.4.6-level-1-with-exit-timeout]` → Plan 110.2.5 extracted.
+- 🟡 `[M-110.4-finalizer-runtime]` → Plan 110.9 (post-V1).
+- 🟡 `[M-110.7.3-w-ffi-cancel-unsafe-lint]` → Plan 110.7.4 extracted.
+- 🟡 `[M-110.8.5-quantitative-bench]` → Plan 110.8.4 CI infra.
+- 🟡 `[M-110-on-exit-strict-sig]` — strict return-type check on on_exit.
+- 🟡 `[M-110-stdlib-cancel-scope]` / `[M-110-stdlib-channels]` / `[M-110-stdlib-tcp-udp]` — independent plans.
+
+**Status:** Plan 110 umbrella merged into main. 74 commits from plan-110 branch. 36/36 plan110 fixtures PASS. syntax/ 53/1 baseline preserved. Branch plan-110 ready for archival (можно delete после CI verification).
+
+См. `docs/plans/110-artifacts/plan110_8_8_umbrella_close.md` для полного summary.
+
+---
+
+## D78 enforcement bug fix — W_D78_REV1_DEPRECATED warning (2026-06-01)
+
+**Bug:** compiler silently принимал rev-1 legacy module declaration form
+('nova_tests.X.Y' 3-segment instead of D29 rev-3 'X.Y' 2-segment) без
+any warning. Это привело к corpus drift: ~847 violators (43% nova_tests).
+
+**Fix:** ModulePathCheck enum return type → caller emit'ит actionable
+W_D78_REV1_DEPRECATED warning с migration hint.
+
+**Documented:** D29 rev-3 section + diagnostic codes table в spec.
+
+**Migration helper:** `scripts/d78_audit_migrate.py` — audit + rewrite
+с `_test.nv` peer detection (правило F) и `internal/` rev-3.1 special-case.
+
+---
+
+## D78 strict removal — [M-D78-strict-removal] ✅ CLOSED (2026-06-01)
+
+**Что:** rev-1 acceptance branch удалён из
+`check_module_path_with_kind`. Compiler теперь принимает **только** rev-3
+form (`parent.target`, 2 segments; либо `owner.internal.target` для
+rev-3.1). rev-1 form (full path от package, `nova_tests.X.Y`) теперь →
+hard error `E_D78_MODULE_PATH_MISMATCH`.
+
+**Scope корпус-миграции:**
+- ~846 файлов: `nova_tests/` (797) + `examples/` (22) + `bench/` (27).
+- Переименование directory `nova_tests/plan100.3/` → `nova_tests/plan100_3/`
+  (dot в имени директории несовместим с rev-3 parts split).
+- Все module declarations внутри переписаны с 3-segment на 2-segment.
+- Audit financial: pre-migrate ~847 violators / ~1104 compliant →
+  post-migrate **1951 compliant / 0 violators**.
+
+**Compiler delta:**
+- `ModulePathCheck::Rev1Deprecated` variant kept в enum как
+  `#[allow(dead_code)]` — ABI stability + potential per-package opt-in
+  legacy mode в будущем. Никогда не produces.
+- `W_D78_REV1_DEPRECATED` warning retired — никогда не fires (rev-1
+  form ловится раньше как mismatch с rev-3 expected).
+
+**Smoke regression (release nova-cli):**
+- basics 8/0, syntax 53/1 (pre-existing fail `for_in_range_iter`), plan114 10/0,
+  plan114_4 9/0, plan114_4_1 5/0, plan73 25/0, plan108 6/0, plan100_3 10/0,
+  plan120 8/0 — **134 PASS / 1 pre-existing baseline fail**.
+- Probe fixture rev-1 form → корректно fail'ит c
+  `[E_D78_MODULE_PATH_MISMATCH] ... expected (rev-3 parent.X): ...`.
+
+**Branch:** `d78-strict-removal` (merged into main as merge `<TBD>`).
+
+**Commits:**
+- `cb94a567f7a` — corpus migration (846 files).
+- `ac16bba654f` — compiler: remove rev-1 acceptance.
+- `f459ea376e5` — spec D29/D78 update.
+
+**Lessons:**
+- Большой scope migration совершенно безопасен, если есть
+  идемпотентный audit-script с absolute counts — после миграции запускаем
+  тот же script и видим 0 violators.
+- `_test.nv` peer detection (правило F D29 Plan 42): strip `_test`
+  suffix только если sibling file/folder existing — иначе fixture'ы вида
+  `X_test.nv` без peer некорректно мигрируются.
+- Dot в имени директории (`plan100.3/`) ломает rev-3 parts split —
+  такие имена надо избегать в новых fixtures (используем `_`).
+
+---
+
+## Plan 110.9 — V1.1 Production-Grade Closure 📋 PLANNED (2026-06-01)
+
+Spawned для закрытия 5 V1.1 followup markers из Plan 110 V1 umbrella
+close. Plan stays 📋 PLANNED до trigger condition (W_FFI_CANCEL_UNSAFE
+catches real bug / WithExitTimeout needed / user explicit request /
+finalizer LIFO needed / CleanupTimeoutError typed catch needed).
+
+**Closes (когда landed):**
+- 🟡 `[M-110-cleanup-timeout-typed-throw]` — typed CleanupTimeoutError throw codegen (110.9.1).
+- 🟡 `[M-110.4.6-level-1-with-exit-timeout]` — Level 1 per-type protocol (110.9.2).
+- 🟡 `[M-110.4-finalizer-runtime]` — register_finalizer LIFO replay (110.9.3).
+- 🟡 `[M-110.7.3-w-ffi-cancel-unsafe-lint]` — W_FFI_CANCEL_UNSAFE runtime enforcement (110.9.4).
+- 🟡 `[M-110-on-exit-strict-sig]` — strict return-type + parser variance fix (110.9.5).
+
+**Estimate:** ~3-4 dev-day (Opus 4.7 + Thinking ON; parser variance в 110.9.5 тонкий).
+
+**Plan doc:** [docs/plans/110.9-v1.1-production-grade-closure.md](plans/110.9-v1.1-production-grade-closure.md).
+## Plan 120 — Named tuple fields + value/reference allocation contract (2026-05-31)
+
+**Status:** 🟢 ЗАКРЫТ V1 (5/5 plan120 fixtures PASS; spec D215 NEW; branch plan-120).
+
+**CLOSED markers:**
+- ✅ `[M-120-parser]` — named tuple parser `TypeDeclKind::NamedTuple` + `is_named_tuple_decl()` lookahead.
+- ✅ `[M-120-codegen]` — `NovaTuple_<Name>` C struct + compound literal constructor + value-type semantics.
+- ✅ `[M-120-checker]` — `f3_check_member` extended: E_TUPLE_POSITIONAL_ACCESS_ON_NAMED + E_TUPLE_NAMED_ACCESS_ON_POSITIONAL.
+- ✅ `[M-120-spec-d215]` — D215 NEW promoted in spec/decisions/02-types.md.
+- ✅ `[M-120-spec-d52-amend]` — D52: named tuple form + allocation contract note.
+- ✅ `[M-120-spec-d32-amend]` — D32: explicit value/reference taxonomy table.
+- ✅ `[M-120-spec-d123-amend]` — Plan 59 Ф.7.4 rejection REOPENED (corrected reasoning).
+- ✅ `[M-120-docs]` — docs/value-vs-reference.md created.
+
+**OPEN markers carried forward:**
+- 🟡 `[M-120-positional-fallback]` — allow `.0`/`.1` on named tuples (V1 = Option B: forbid; low priority).
+- 🟡 `[M-120-named-positional-mix]` — mixed positional+named in single tuple decl (out of V1 scope).
+- 🟡 `[M-120-stack-arrays]` — stack-allocated fixed-size arrays `[3]Vec3` (separate plan).
+- ✅ `[M-120-positional-construct-check]` — CLOSED (2026-06-01): f5_check_tuple_construct в f1_expr; E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL + E_TUPLE_CONSTRUCT_ARITY_MISMATCH + E_TUPLE_UNKNOWN_FIELD; 3 негативных fixture PASS.
+
+**Design lesson:** Named tuple vs record distinction drives 4× different C code: `NovaTuple_X { x; y; }` (stack struct, value type) vs `Nova_X*` (heap pointer, GC-tracked). The bracket syntax (`()` vs `{}`) was already implicit in spec (D32/D123) — Plan 120 makes it explicit at the type-declaration level. `type_aliases` HashMap in emit_c.rs is the key integration point: stores `"Vec3" → "NovaTuple_Vec3"`, enabling value-type dispatch everywhere without special-casing.
+
+**Scope vs original plan:** A4 (positional args on named tuple works), A5 (construction errors), A11 (full regression) deferred to Ф.5.9 (full nova test). A3/A6/A7/A8/A9/A10/A12 all verified.

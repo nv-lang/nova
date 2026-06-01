@@ -1,6 +1,6 @@
 // match_demo.nv — sum-types и pattern matching.
 
-module match_demo
+module basics.match_demo
 
 type Shape
     | Circle(f64)

@@ -1,6 +1,6 @@
 // Plan 42 D29 rev-3 + правило F: folder-module с test-only peer.
 // `helpers_test.nv` имеет suffix `_test` → test-only.
 
-module modules.folder_module_with_test
+module folder_module_with_test.core
 
 export fn double(x int) -> int => x * 2

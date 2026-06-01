@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.equatable_only_test
+module plan91_8a_2.equatable_only_test
 
 // Plan 91.8a.2 part 3: type только Equatable (no @compare) satisfies
 // Equatable bound через explicit @equals. Default body fallback не
@@ -12,9 +12,9 @@ fn Vector3 @equals(other Self) -> bool =>
 fn check_eq[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "Vector3 без @compare satisfies Equatable bound (explicit @equals)" {
-    let v1 = Vector3 { x: 1, y: 2, z: 3 }
-    let v2 = Vector3 { x: 1, y: 2, z: 3 }
-    let v3 = Vector3 { x: 4, y: 5, z: 6 }
+    ro v1 = Vector3 { x: 1, y: 2, z: 3 }
+    ro v2 = Vector3 { x: 1, y: 2, z: 3 }
+    ro v3 = Vector3 { x: 4, y: 5, z: 6 }
     assert(check_eq(v1, v2))
     assert(!check_eq(v1, v3))
 }

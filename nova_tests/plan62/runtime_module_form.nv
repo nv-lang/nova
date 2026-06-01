@@ -20,25 +20,25 @@
 module plan62.runtime_module_form
 
 test "f64 @sqrt — declared в std/runtime/math.nv (module runtime.math)" {
-    let x = 16.0
-    let r = x.sqrt()
+    ro x = 16.0
+    ro r = x.sqrt()
     // sqrt(16) = 4. Используем abs+epsilon чтобы избежать
     // floating-point равенства.
-    let diff = (r - 4.0).abs()
+    ro diff = (r - 4.0).abs()
     assert(diff < 0.0001)
 }
 
 test "f64 @abs — runtime registry resolves через 2-seg declaration" {
-    let neg = -7.5
-    let r = neg.abs()
-    let diff = (r - 7.5).abs()
+    ro neg = -7.5
+    ro r = neg.abs()
+    ro diff = (r - 7.5).abs()
     assert(diff < 0.0001)
 }
 
 test "f64.PI — static constant из runtime module" {
     // f64.PI — type-checker built-in, но проверяет что numeric
     // constants пайплайн совместим с runtime-math 2-seg form.
-    let p = f64.PI
+    ro p = f64.PI
     assert(p > 3.14)
     assert(p < 3.15)
 }

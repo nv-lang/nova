@@ -52,9 +52,9 @@ fn get_time_c() -> int {
 }
 
 test "armed M:N — three fibers each see their own Time handler" {
-    let mut a = 0
-    let mut b = 0
-    let mut c = 0
+    mut a = 0
+    mut b = 0
+    mut c = 0
     supervised {
         spawn { a = get_time_a() }
         spawn { b = get_time_b() }
@@ -70,7 +70,7 @@ test "armed M:N — three fibers each see their own Time handler" {
 // ================================================================
 
 test "armed M:N — spawn inherits outer with-handler from parent" {
-    let mut got = 0
+    mut got = 0
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 7777 }
@@ -89,8 +89,8 @@ test "armed M:N — spawn inherits outer with-handler from parent" {
 // ================================================================
 
 test "armed M:N — inner with overrides outer within same fiber" {
-    let mut outer_val = 0
-    let mut inner_val = 0
+    mut outer_val = 0
+    mut inner_val = 0
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 444 }
@@ -109,8 +109,8 @@ test "armed M:N — inner with overrides outer within same fiber" {
 // ================================================================
 
 test "armed M:N — fiber A handler does not affect fiber B" {
-    let mut got_a = 0
-    let mut got_b = 0
+    mut got_a = 0
+    mut got_b = 0
     supervised {
         spawn {
             with Time = effect Time {

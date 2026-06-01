@@ -12,6 +12,6 @@ module negative_capability.folder_file_vs_folder_conflict
 import nova_tests.negative_capability.folder_file_conflict_setup.admin.{version}
 
 test "ambiguous module rejected with clear error" {
-    let _v = version()
+    ro _v = version()
     assert(true)
 }

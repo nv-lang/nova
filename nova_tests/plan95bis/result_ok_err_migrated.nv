@@ -5,28 +5,28 @@
 //   ok()  => match @ { Ok(v)  => Some(v), Err(_) => None }
 //   err() => match @ { Ok(_) => None,    Err(e) => Some(e) }
 
-module nova_tests.plan95bis.result_ok_err_migrated
+module plan95bis.result_ok_err_migrated
 
 test "Result.ok() — Ok → Some, Err → None" {
-    let ok_r Result[int, str] = Ok(123)
-    let err_r Result[int, str] = Err("boom")
+    ro ok_r Result[int, str] = Ok(123)
+    ro err_r Result[int, str] = Err("boom")
 
-    let some_v = ok_r.ok()
+    ro some_v = ok_r.ok()
     assert(some_v.is_some())
     assert(some_v.unwrap_or(0) == 123)
 
-    let none_v = err_r.ok()
+    ro none_v = err_r.ok()
     assert(none_v.is_none())
 }
 
 test "Result.err() — Ok → None, Err → Some" {
-    let ok_r Result[int, str] = Ok(123)
-    let err_r Result[int, str] = Err("boom")
+    ro ok_r Result[int, str] = Ok(123)
+    ro err_r Result[int, str] = Err("boom")
 
-    let none_e = ok_r.err()
+    ro none_e = ok_r.err()
     assert(none_e.is_none())
 
-    let some_e = err_r.err()
+    ro some_e = err_r.err()
     assert(some_e.is_some())
     assert(some_e.unwrap_or("") == "boom")
 }

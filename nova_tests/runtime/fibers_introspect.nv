@@ -8,22 +8,22 @@ module runtime.fibers_introspect
 import std.runtime.fibers
 
 test "fibers.virtual_reserved: возвращает int >= 0" {
-    let v = fibers.virtual_reserved()
+    ro v = fibers.virtual_reserved()
     assert(v >= 0)
 }
 
 test "fibers.slot_count: возвращает int >= 0" {
-    let s = fibers.slot_count()
+    ro s = fibers.slot_count()
     assert(s >= 0)
 }
 
 test "fibers.slots_active: возвращает int >= 0" {
-    let a = fibers.slots_active()
+    ro a = fibers.slots_active()
     assert(a >= 0)
 }
 
 test "fibers.high_water: возвращает int >= 0" {
-    let h = fibers.high_water()
+    ro h = fibers.high_water()
     assert(h >= 0)
 }
 
@@ -33,7 +33,7 @@ test "fibers.compact: не падает" {
 }
 
 test "fibers: arena-платформы дают slot_count > 0, иначе всё = 0" {
-    let sc = fibers.slot_count()
+    ro sc = fibers.slot_count()
     if sc == 0 {
         // Платформа без arena — честный sentinel
         assert(fibers.virtual_reserved() == 0)
@@ -47,8 +47,8 @@ test "fibers: arena-платформы дают slot_count > 0, иначе вс�
 }
 
 test "fibers.slots_active <= fibers.slot_count" {
-    let sc = fibers.slot_count()
-    let sa = fibers.slots_active()
+    ro sc = fibers.slot_count()
+    ro sa = fibers.slots_active()
     if sc > 0 {
         assert(sa <= sc)
     } else {
@@ -57,7 +57,7 @@ test "fibers.slots_active <= fibers.slot_count" {
 }
 
 test "fibers.high_water >= fibers.slots_active" {
-    let hw = fibers.high_water()
-    let sa = fibers.slots_active()
+    ro hw = fibers.high_water()
+    ro sa = fibers.slots_active()
     assert(hw >= sa)
 }

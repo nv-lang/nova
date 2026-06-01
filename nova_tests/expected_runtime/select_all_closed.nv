@@ -11,12 +11,12 @@
 module expected_runtime.select_all_closed
 
 fn main() Io -> () {
-    let ch1 = Channel.new(1)
-    let tx1 = ch1.tx
-    let rx1 = ch1.rx
-    let ch2 = Channel.new(1)
-    let tx2 = ch2.tx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro rx1 = ch1.rx
+    ro ch2 = Channel.new(1)
+    ro tx2 = ch2.tx
+    ro rx2 = ch2.rx
     tx1.close()
     tx2.close()
     select {

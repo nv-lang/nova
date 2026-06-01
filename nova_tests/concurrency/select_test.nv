@@ -17,15 +17,15 @@ import std.time.duration
 // ================================================================
 
 test "select single recv: value from channel" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     supervised {
         spawn {
             tx.send(42)
         }
         spawn {
-            let mut got = 0
+            mut got = 0
             select {
                 Some(v) = rx => { got = v }
             }
@@ -35,9 +35,9 @@ test "select single recv: value from channel" {
 }
 
 test "select recv with default: default when channel empty" {
-    let ch = Channel.new(1)
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro rx = ch.rx
+    mut branch = 0
     select {
         Some(_) = rx => { branch = 1 }
         _            => { branch = 2 }
@@ -46,11 +46,11 @@ test "select recv with default: default when channel empty" {
 }
 
 test "select recv with default: data path when channel has value" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
     tx.send(7)
-    let mut branch = 0
+    mut branch = 0
     select {
         Some(v) = rx => { branch = v }
         _            => { branch = -1 }
@@ -63,16 +63,16 @@ test "select recv with default: data path when channel has value" {
 // ================================================================
 
 test "select multi-arm: receives from whichever channel has data" {
-    let ch1 = Channel.new(1)
-    let ch2 = Channel.new(1)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
     tx2.send(99)   // ch2 has data, ch1 empty
 
-    let mut result = 0
+    mut result = 0
     select {
         Some(v) = rx1 => { result = v }
         Some(v) = rx2 => { result = v }
@@ -83,21 +83,21 @@ test "select multi-arm: receives from whichever channel has data" {
 test "select multi-arm: fairness — both channels get served" {
     // Producer sends N items to each channel; consumer select'ит из обоих.
     // Asserting that total received = N*2 and both channels contributed.
-    let n = 50
-    let ch1 = Channel.new(n)
-    let ch2 = Channel.new(n)
-    let tx1 = ch1.tx
-    let tx2 = ch2.tx
-    let rx1 = ch1.rx
-    let rx2 = ch2.rx
+    ro n = 50
+    ro ch1 = Channel.new(n)
+    ro ch2 = Channel.new(n)
+    ro tx1 = ch1.tx
+    ro tx2 = ch2.tx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
 
-    let mut from1 = 0
-    let mut from2 = 0
+    mut from1 = 0
+    mut from2 = 0
 
     supervised {
         // Fill both channels
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < n {
                 tx1.send(1)
                 tx2.send(2)
@@ -106,16 +106,16 @@ test "select multi-arm: fairness — both channels get served" {
         }
         // Drain via select
         spawn {
-            let mut total = 0
+            mut total = 0
             while total < n * 2 {
                 select {
                     Some(v) = rx1 => {
                         from1 += 1
-                        let _ = v
+                        ro _ = v
                     }
                     Some(v) = rx2 => {
                         from2 += 1
-                        let _ = v
+                        ro _ = v
                     }
                 }
                 total += 1
@@ -133,17 +133,17 @@ test "select multi-arm: fairness — both channels get served" {
 // ================================================================
 
 test "select send arm: sends to channel with space" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut sent = 0
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut sent = 0
     select {
         tx.send(77) => { sent = 1 }
         _           => { sent = -1 }
     }
     assert(sent == 1)
-    let opt = rx.recv()
-    let mut got = 0
+    ro opt = rx.recv()
+    mut got = 0
     match opt {
         Some(v) => { got = v }
         None    => { got = -1 }
@@ -156,11 +156,11 @@ test "select send arm: sends to channel with space" {
 // ================================================================
 
 test "select guard: disabled arm skips to default" {
-    let ch = Channel.new(1)
+    ro ch = Channel.new(1)
     ch.tx.send(10)
-    let rx = ch.rx
-    let enabled = false
-    let mut branch = 0
+    ro rx = ch.rx
+    ro enabled = false
+    mut branch = 0
     select {
         Some(v) = rx if enabled => { branch = v }
         _                       => { branch = -1 }
@@ -169,11 +169,11 @@ test "select guard: disabled arm skips to default" {
 }
 
 test "select guard: enabled arm receives value" {
-    let ch = Channel.new(1)
+    ro ch = Channel.new(1)
     ch.tx.send(10)
-    let rx = ch.rx
-    let enabled = true
-    let mut branch = 0
+    ro rx = ch.rx
+    ro enabled = true
+    mut branch = 0
     select {
         Some(v) = rx if enabled => { branch = v }
         _                       => { branch = -1 }
@@ -186,9 +186,9 @@ test "select guard: enabled arm receives value" {
 // ================================================================
 
 test "select timeout: fires when channel stays empty" {
-    let ch = Channel.new(1)
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro rx = ch.rx
+    mut branch = 0
     supervised {
         spawn {
             select {
@@ -201,10 +201,10 @@ test "select timeout: fires when channel stays empty" {
 }
 
 test "select timeout: data wins over timeout" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut branch = 0
     supervised {
         spawn {
             tx.send(99)
@@ -218,10 +218,10 @@ test "select timeout: data wins over timeout" {
 }
 
 test "select timeout: producer wins race before timeout" {
-    let ch = Channel.new(1)
-    let tx = ch.tx
-    let rx = ch.rx
-    let mut branch = 0
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut branch = 0
     supervised {
         spawn {
             Time.sleep(10)

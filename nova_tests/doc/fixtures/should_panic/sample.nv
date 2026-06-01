@@ -3,7 +3,7 @@
 //! Демонстрирует `nova,should_panic` модификатор — тест ожидает,
 //! что код завершится с panic во время выполнения.
 
-module nova_tests.doc.fixtures.should_panic.sample
+module should_panic.sample
 
 /// Возвращает элемент массива по индексу.
 ///
@@ -12,14 +12,14 @@ module nova_tests.doc.fixtures.should_panic.sample
 /// Нормальный доступ:
 ///
 /// ```nova
-/// let arr = [10, 20, 30]
+/// let mut arr = [10, 20, 30]
 /// assert(arr[1] == 20)
 /// ```
 ///
 /// Доступ за границы → panic (ожидаемое поведение):
 ///
 /// ```nova,should_panic
-/// let arr = [1, 2, 3]
+/// let mut arr = [1, 2, 3]
 /// let _ = arr[99]
 /// ```
 export fn get(arr []int, i int) -> int => arr[i]

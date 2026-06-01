@@ -9,5 +9,5 @@ module negative_capability.p50_typo_suggestion
 fn connect(host str, port int = 8080) Time -> bool => true
 
 test "typo in keyword arg suggests closest param" {
-    let _ = connect("h", prot: 9000)
+    ro _ = connect("h", prot: 9000)
 }

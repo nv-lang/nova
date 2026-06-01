@@ -6,6 +6,6 @@
 module contracts.f9_ghost_as_return_fail
 
 fn leak_ghost(x int) -> int {
-    ghost let secret = x * 100
+    ghost ro secret = x * 100
     secret  // trailing expr — return value, не spec-position → error
 }

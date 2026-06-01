@@ -19,9 +19,9 @@ module syntax.closure_free_var_resolution
 // Положительный тест: каждый closure видит **своё** окружение, не
 // чужие параметры.
 fn outer() -> int {
-    let n = 100
-    let f = |a| a + n        // f captures n; параметр a only in f's body
-    let g = |b| b + n        // g captures n; параметр b only in g's body
+    ro n = 100
+    ro f = |a| a + n        // f captures n; параметр a only in f's body
+    ro g = |b| b + n        // g captures n; параметр b only in g's body
     // n виден обоим, но a/b изолированы по scope'у.
     f(1) + g(2)              // 101 + 102 = 203
 }
@@ -33,7 +33,7 @@ test "free-var resolution: lexical scoping per closure" {
 // Параметр closure'а живёт только в его body — после `}` он не
 // доступен в enclosing scope.
 fn after_closure_body() -> int {
-    let f = |x| x + 1
+    ro f = |x| x + 1
     f(10)
     // здесь `x` уже не в scope — но parser не позволяет ссылаться,
     // потому что x не объявлен. Если бы кто-то написал `let _ = x`

@@ -18,8 +18,8 @@ type Counter { mut value int }
 fn Counter @clone() -> Self => { @value }
 
 test "shallow @clone — примитивные поля независимы" {
-    let mut a = Counter { value: 10 }
-    let mut b = a.clone()
+    mut a = Counter { value: 10 }
+    mut b = a.clone()
     a.value = 99
     assert(a.value == 99)
     assert(b.value == 10)        // b не затронут — int копируется
@@ -34,9 +34,9 @@ type Outer { inner Inner, label str }
 fn Outer @clone() -> Self => { @inner, @label }
 
 test "shallow @clone — nested record share'ится по ссылке" {
-    let nested = Inner { x: 1 }
-    let mut a = Outer { inner: nested, label: "a" }
-    let mut b = a.clone()
+    ro nested = Inner { x: 1 }
+    mut a = Outer { inner: nested, label: "a" }
+    mut b = a.clone()
     a.inner.x = 42
     // shallow: a.inner и b.inner — одна managed-reference,
     // мутация через a видна через b
@@ -51,9 +51,9 @@ test "shallow @clone — nested record share'ится по ссылке" {
 // === 3. StringBuilder.@clone() — DEEP (исключение для accumulator) ===
 
 test "StringBuilder.@clone() — независимые буферы (исключение)" {
-    let mut a = StringBuilder.new()
+    mut a = StringBuilder.new()
     a.append("hello")
-    let mut b = a.clone()
+    mut b = a.clone()
     b.append(" world")
     // оба независимы — accumulator clone deep по семантике типа
     assert(a.len() == 5)
@@ -64,10 +64,10 @@ test "StringBuilder.@clone() — независимые буферы (исклю
 // === 4. WriteBuffer.@clone() — DEEP ===
 
 test "WriteBuffer.@clone() — независимые буферы (исключение)" {
-    let mut a = WriteBuffer.new()
+    mut a = WriteBuffer.new()
     a.write_u8(1)
     a.write_u8(2)
-    let mut b = a.clone()
+    mut b = a.clone()
     b.write_u8(3)
     // a.len = 2, b.len = 3 (a не получил третьего байта)
     assert(a.len() == 2)
@@ -78,8 +78,8 @@ test "WriteBuffer.@clone() — независимые буферы (исключ
 // === 5. str — clone-эквивалент простого присваивания ===
 
 test "str — присваивание = логическая копия (immutable)" {
-    let s1 = "hello"
-    let s2 = s1                  // тот же ptr или новый — неважно
+    ro s1 = "hello"
+    ro s2 = s1                  // тот же ptr или новый — неважно
     assert(s1 == s2)
     assert(s1.len() == 5)
     assert(s2.len() == 5)

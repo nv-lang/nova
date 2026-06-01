@@ -1,21 +1,21 @@
 // Plan 99.3 Ф.2: Option.unwrap_or_else lazy default (Nova-body).
 
-module nova_tests.plan99.option_unwrap_or_else_migrated
+module plan99.option_unwrap_or_else_migrated
 
 test "Option[int].unwrap_or_else — Some skip closure" {
-    let a Option[int] = Some(42)
-    let v = a.unwrap_or_else(|| 99)
+    ro a Option[int] = Some(42)
+    ro v = a.unwrap_or_else(|| 99)
     assert(v == 42)
 }
 
 test "Option[int].unwrap_or_else — None invokes closure" {
-    let a Option[int] = None
-    let v = a.unwrap_or_else(|| 99)
+    ro a Option[int] = None
+    ro v = a.unwrap_or_else(|| 99)
     assert(v == 99)
 }
 
 test "Option[str].unwrap_or_else — None → closure result" {
-    let a Option[str] = None
-    let s = a.unwrap_or_else(|| "computed")
+    ro a Option[str] = None
+    ro s = a.unwrap_or_else(|| "computed")
     assert(s == "computed")
 }

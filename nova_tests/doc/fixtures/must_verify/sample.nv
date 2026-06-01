@@ -2,7 +2,7 @@
 //! contracts (requires/ensures). Проверяет что doc pipeline извлекает
 //! contracts в Signature и populate verify_status.
 
-module nova_tests.doc.fixtures.must_verify.sample
+module must_verify.sample
 
 /// Вычисляет абсолютное значение целого числа.
 ///

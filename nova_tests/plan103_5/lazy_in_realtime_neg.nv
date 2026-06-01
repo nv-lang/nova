@@ -3,13 +3,13 @@
 //
 // EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
-module nova_tests.plan103_5.lazy_in_realtime_neg
+module plan103_5.lazy_in_realtime_neg
 
 #realtime fn _rt_check_lazy_force(lazy mut Lazy[int]) -> int {
     lazy.force()
 }
 
 test "Lazy.force banned in #realtime fn" {
-    let lazy = Lazy[int].new() { 42 }
-    let _ = _rt_check_lazy_force(lazy)
+    ro lazy = Lazy[int].new() { 42 }
+    ro _ = _rt_check_lazy_force(lazy)
 }

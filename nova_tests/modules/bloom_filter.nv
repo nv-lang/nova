@@ -7,7 +7,7 @@ module modules.bloom_filter
 import std._experimental.collections.bloom_filter.{BloomFilter}
 
 test "BloomFilter: вставленные элементы всегда contains=true" {
-    let mut bf = BloomFilter.new(1024, 3)
+    mut bf = BloomFilter.new(1024, 3)
     bf.insert("hello")
     bf.insert("world")
     bf.insert("nova")
@@ -17,14 +17,14 @@ test "BloomFilter: вставленные элементы всегда contains
 }
 
 test "BloomFilter: пустой filter не содержит ничего" {
-    let bf = BloomFilter.new(1024, 3)
+    ro bf = BloomFilter.new(1024, 3)
     assert(bf.contains("anything") == false)
     assert(bf.contains("") == false)
     assert(bf.contains("hello") == false)
 }
 
 test "BloomFilter: optimal — вставленные гарантированно contains" {
-    let mut bf = BloomFilter.optimal(100, 0.01)
+    mut bf = BloomFilter.optimal(100, 0.01)
     bf.insert("item1")
     bf.insert("item2")
     bf.insert("item3")
@@ -34,11 +34,11 @@ test "BloomFilter: optimal — вставленные гарантированн
 }
 
 test "BloomFilter: false positive rate приемлемый" {
-    let mut bf = BloomFilter.new(1024, 4)
+    mut bf = BloomFilter.new(1024, 4)
     for i in 0..50 {
         bf.insert("item-" + str.from(i))
     }
-    let mut fp = 0
+    mut fp = 0
     for j in 50..150 {
         if bf.contains("item-" + str.from(j)) {
             fp += 1
@@ -49,7 +49,7 @@ test "BloomFilter: false positive rate приемлемый" {
 }
 
 test "BloomFilter: разные строки независимы" {
-    let mut bf = BloomFilter.new(256, 2)
+    mut bf = BloomFilter.new(256, 2)
     bf.insert("abc")
     // "xyz" не вставляли — не обязан быть true (может быть false positive,
     // но проверяем что "abc" точно присутствует)
@@ -57,7 +57,7 @@ test "BloomFilter: разные строки независимы" {
 }
 
 test "BloomFilter: много вставок — no false negatives" {
-    let mut bf = BloomFilter.optimal(200, 0.05)
+    mut bf = BloomFilter.optimal(200, 0.05)
     for i in 0..100 {
         bf.insert("key-" + str.from(i))
     }

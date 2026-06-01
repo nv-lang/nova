@@ -1,4 +1,4 @@
-module nova_tests.plan48_mpm.f1_method_param_mono
+module plan48_mpm.f1_method_param_mono
 
 // Plan 48 method-param mono: production-grade coverage для generic methods
 // с собственными type params. Каждый test exercises different aspect.
@@ -14,30 +14,30 @@ export fn Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U] {
 
 // 2) Chained mono — map + map.
 test "map chain int → int → int" {
-    let w = Wrapper[int].of(5)
-    let a = w.map(|x| x * 2)
-    let b = a.map(|x| x + 1)
+    ro w = Wrapper[int].of(5)
+    ro a = w.map(|x| x * 2)
+    ro b = a.map(|x| x + 1)
     assert(b.inner == 11, "chained map mono'd")
 }
 
 // 3) Cross-type chain — int → str → str.
 test "map chain int → str → str" {
-    let w = Wrapper[int].of(7)
-    let s = w.map(|x| str.from(x))
-    let s2 = s.map(|x| x + "!")
+    ro w = Wrapper[int].of(7)
+    ro s = w.map(|x| str.from(x))
+    ro s2 = s.map(|x| x + "!")
     assert(s2.inner == "7!", "int → str → str")
 }
 
 // 4) Same-T identity map.
 test "map identity int → int" {
-    let w = Wrapper[int].of(42)
-    let id = w.map(|x| x)
+    ro w = Wrapper[int].of(42)
+    ro id = w.map(|x| x)
     assert(id.inner == 42, "identity preserves value")
 }
 
 // 5) Each test creates fresh mono instances (test isolation check).
 test "isolated str → int via codepoint" {
-    let w = Wrapper[str].of("a")
-    let n = w.map(|s| s.len())
+    ro w = Wrapper[str].of("a")
+    ro n = w.map(|s| s.len())
     assert(n.inner == 1, "str → int mono per-test")
 }

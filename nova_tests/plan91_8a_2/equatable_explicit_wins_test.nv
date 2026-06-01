@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.equatable_explicit_wins_test
+module plan91_8a_2.equatable_explicit_wins_test
 
 // Plan 91.8a.2 part 3: тип с ОБОИМИ @compare и @equals — explicit
 // @equals takes precedence (NOT default body synthesis). Synthesis
@@ -19,9 +19,9 @@ fn Marker @equals(other Self) -> bool => @tag == other.tag
 fn check_eq[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "explicit @equals wins over synthesized default" {
-    let m1 = Marker { id: 1, tag: "alpha" }
-    let m2 = Marker { id: 2, tag: "alpha" }
-    let m3 = Marker { id: 1, tag: "beta" }
+    ro m1 = Marker { id: 1, tag: "alpha" }
+    ro m2 = Marker { id: 2, tag: "alpha" }
+    ro m3 = Marker { id: 1, tag: "beta" }
     // m1 vs m2: same tag (alpha), different id → explicit @equals returns true
     //                                            synthesized default would return false (compare != 0)
     assert(check_eq(m1, m2))

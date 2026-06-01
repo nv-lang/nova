@@ -4,16 +4,16 @@
 // use-after-consume. Анализ циклов пессимистичный: переменная,
 // потреблённая в теле, помечается maybe-consumed.
 
-module nova_tests.plan73.consume_err_loop
+module plan73.consume_err_loop
 
 fn drain_loop() -> int {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("x")
-    let mut n = 0
+    mut n = 0
     while n < 3 {
         // ОШИБКА D131: sb потребляется в теле цикла — на 2-й
         // итерации значение уже отдано.
-        let _gone = sb.as_str()
+        ro _gone = sb.as_str()
         n = n + 1
     }
     n

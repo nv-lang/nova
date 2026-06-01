@@ -7,7 +7,7 @@ module plan11_followup.f9_assert_failure_negative
 // EXPECT_RUNTIME_PANIC false
 
 test "assert в match arm должен fail когда cond false" {
-    let n = 0
+    ro n = 0
     match n {
         0 => assert(false)         // ← должен fail здесь
         _ => assert(true)

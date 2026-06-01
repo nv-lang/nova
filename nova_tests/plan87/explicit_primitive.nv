@@ -4,11 +4,11 @@
 // Spec/syntax.md документирует её (`for id u64 in ids`); Plan 87 закрывает
 // spec/impl drift. Аннотация опциональна и проверяется (Ф.3).
 
-module nova_tests.plan87.explicit_primitive
+module plan87.explicit_primitive
 
 
 test "for x int in array literal" {
-    let mut sum = 0
+    mut sum = 0
     for x int in [1, 2, 3] {
         sum = sum + x
     }
@@ -16,8 +16,8 @@ test "for x int in array literal" {
 }
 
 test "for b u8 in []u8" {
-    let bytes []u8 = [10, 20, 30]
-    let mut total = 0
+    ro bytes []u8 = [10, 20, 30]
+    mut total = 0
     for b u8 in bytes {
         total = total + (b as int)
     }
@@ -25,16 +25,16 @@ test "for b u8 in []u8" {
 }
 
 test "for c char in char array" {
-    let mut count = 0
+    mut count = 0
     for c char in ['a', 'b', 'c'] {
-        let _ = c
+        ro _ = c
         count = count + 1
     }
     assert(count == 3)
 }
 
 test "for i int in range" {
-    let mut acc = 0
+    mut acc = 0
     for i int in 0..5 {
         acc = acc + i
     }

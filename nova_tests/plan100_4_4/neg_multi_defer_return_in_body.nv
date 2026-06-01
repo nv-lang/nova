@@ -3,7 +3,7 @@
 // Plan 100.4.4 (D161): top-level return в defer body — D90 §6 error
 // (hijack scope exit), unchanged by D161.
 
-module nova_tests.plan100_4_4.neg_multi_defer_return_in_body
+module plan100_4_4.neg_multi_defer_return_in_body
 
 fn process() -> int {
     defer { return 0 }   // ❌ D90 §6

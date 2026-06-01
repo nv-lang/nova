@@ -1,0 +1,25 @@
+// Plan 108.3 (D36 amend): `let (mut a, b) = pair` — per-name mut.
+
+module plan108_3.pattern_per_name_mut_ok
+
+test "per-name mut: (mut a, b) — a mutable" {
+    ro (mut a, b) = ([1], [2])
+    a.push(99)
+    assert(a.len() == 2)
+    assert(b.len() == 1)
+}
+
+test "per-name mut: (a, mut b) — b mutable" {
+    ro (a, mut b) = ([1], [2])
+    b.push(99)
+    assert(a.len() == 1)
+    assert(b.len() == 2)
+}
+
+test "per-name mut: (mut a, mut b) — both mutable" {
+    ro (mut a, mut b) = ([1], [2])
+    a.push(99)
+    b.push(99)
+    assert(a.len() == 2)
+    assert(b.len() == 2)
+}

@@ -45,7 +45,7 @@ test "very stable works" {
 }
 
 test "all stability tiers produce correct results" {
-    let x = 10
+    ro x = 10
     assert(stable_fn(x) == 11)
     assert(unstable_fn(x) == 30)
     assert(experimental_fn(x) == 9)

@@ -35,21 +35,21 @@ export fn Stamp @is_zero() => @nanos == 0
 
 
 test "Color.@into() -> str инфирится автоматически" {
-    let c = Color { r: 1, g: 2, b: 3 }
-    let s = c.into()
+    ro c = Color { r: 1, g: 2, b: 3 }
+    ro s = c.into()
     assert(s == "#1,2,3")
 }
 
 
 test "Stamp.@as_nanos -> i64 инфирится из body" {
-    let s = Stamp { nanos: 42 }
+    ro s = Stamp { nanos: 42 }
     assert(s.as_nanos() == 42)
 }
 
 
 test "Stamp.@is_zero -> bool инфирится из == выражения" {
-    let s_zero = Stamp { nanos: 0 }
-    let s_nz   = Stamp { nanos: 5 }
+    ro s_zero = Stamp { nanos: 0 }
+    ro s_nz   = Stamp { nanos: 5 }
     assert(s_zero.is_zero())
     assert(!s_nz.is_zero())
 }

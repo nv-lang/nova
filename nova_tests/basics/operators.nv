@@ -18,7 +18,7 @@ test "int precedence" {
 }
 
 test "unary negation" {
-    let x = 10
+    ro x = 10
     assert(-x == 0 - 10)
     assert(-(-5) == 5)
 }
@@ -63,7 +63,7 @@ test "logical not" {
 }
 
 test "compound assignment" {
-    let mut x = 10
+    mut x = 10
     x += 5
     assert(x == 15)
     x -= 3

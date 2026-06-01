@@ -29,7 +29,7 @@ fn do_throw(msg str) -> int {
 // ================================================================
 
 test "armed M:N — Fail handler catches throw from spawned fiber" {
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
@@ -44,8 +44,8 @@ test "armed M:N — Fail handler catches throw from spawned fiber" {
 }
 
 test "armed M:N — Fail handler invoked exactly once" {
-    let mut count = 0
-    let mut msg = ""
+    mut count = 0
+    mut msg = ""
     with Fail = effect Fail {
         fail(m) {
             count += 1
@@ -62,7 +62,7 @@ test "armed M:N — Fail handler invoked exactly once" {
 }
 
 test "armed M:N — Fail handler catches indirect throw via function" {
-    let mut caught = ""
+    mut caught = ""
     with Fail = effect Fail {
         fail(msg) {
             caught = msg
@@ -70,7 +70,7 @@ test "armed M:N — Fail handler catches indirect throw via function" {
         }
     } {
         supervised {
-            spawn { let _ = do_throw("indirect") }
+            spawn { ro _ = do_throw("indirect") }
         }
     }
     assert(caught == "indirect")
@@ -81,8 +81,8 @@ test "armed M:N — Fail handler catches indirect throw via function" {
 // ================================================================
 
 test "armed M:N — Fail handler not triggered on success path" {
-    let mut handler_ran = false
-    let mut result = 0
+    mut handler_ran = false
+    mut result = 0
     with Fail = effect Fail {
         fail(_msg) {
             handler_ran = true
@@ -102,8 +102,8 @@ test "armed M:N — Fail handler not triggered on success path" {
 // ================================================================
 
 test "armed M:N — Fail handler captures outer mut variable" {
-    let mut errors = 0
-    let mut last_err = ""
+    mut errors = 0
+    mut last_err = ""
     with Fail = effect Fail {
         fail(msg) {
             errors += 1
@@ -124,8 +124,8 @@ test "armed M:N — Fail handler captures outer mut variable" {
 // ================================================================
 
 test "armed M:N — Fail handler works across multiple supervised blocks" {
-    let mut caught1 = ""
-    let mut caught2 = ""
+    mut caught1 = ""
+    mut caught2 = ""
     with Fail = effect Fail {
         fail(msg) {
             if caught1 == "" {

@@ -1,22 +1,22 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T chained map+filter.
 
-module nova_tests.plan101_1.vec_chained
+module plan101_1.vec_chained
 
 fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
-    let mut out []U = []U.with_capacity(@len())
+    mut out []U = []U.with_capacity(@len())
     for x in @ { out.push(f(x)) }
     out
 }
 
 fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
-    let mut out []T = []
+    mut out []T = []
     for x in @ { if pred(x) { out.push(x) } }
     out
 }
 
 test "chained map → filter" {
-    let v []int = [1, 2, 3, 4, 5]
-    let filtered = v.my_map(|x| x * 2).my_filter(|x| x > 4)
+    ro v []int = [1, 2, 3, 4, 5]
+    ro filtered = v.my_map(|x| x * 2).my_filter(|x| x > 4)
     assert(filtered.len() == 3)
     assert(filtered.get(0) == Some(6))
     assert(filtered.get(1) == Some(8))

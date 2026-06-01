@@ -12,7 +12,7 @@ type BoolSetter effect {
 }
 
 test "handler match without wildcard" {
-    let mut store = false
+    mut store = false
     with #verify BoolSetter = effect BoolSetter {
         SetFlag(v) {
             match v {

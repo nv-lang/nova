@@ -18,7 +18,7 @@ export fn PairCounter mut @next() -> Option[(int, int)] {
     if @idx >= @end {
         None
     } else {
-        let pair = (@idx, @idx * 10)
+        ro pair = (@idx, @idx * 10)
         @idx = @idx + 1
         Some(pair)
     }
@@ -30,7 +30,7 @@ export fn PairCounter.new(end int) -> PairCounter =>
 
 
 test "for (a, b, c) in iter-of-2-tuple — should reject" {
-    let mut total = 0
+    mut total = 0
     for (i, v, w) in PairCounter.new(3) {
         total = total + i + v + w
     }

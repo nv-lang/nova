@@ -5,23 +5,23 @@
 //
 // EXPECT_TIMEOUT_MS 10000
 
-module nova_tests.plan103_3.mutex_try_lock_for_timeout
+module plan103_3.mutex_try_lock_for_timeout
 
 import std.time.duration
 
 test "try_lock_for times out when mutex already held" {
-    let mu = Mutex.new()
+    mut mu = Mutex.new()
     // Acquire lock (main thread, non-fiber path)
     mu.lock()
     // Non-reentrant: try_lock_for on already-locked mutex spins and times out
-    let ok = mu.try_lock_for(Duration.from_millis(50))
+    ro ok = mu.try_lock_for(Duration.from_millis(50))
     assert(ok == false)
     mu.unlock()
 }
 
 test "try_lock_for succeeds when mutex is free" {
-    let mu = Mutex.new()
-    let ok = mu.try_lock_for(Duration.from_millis(100))
+    mut mu = Mutex.new()
+    ro ok = mu.try_lock_for(Duration.from_millis(100))
     assert(ok == true)
     assert(mu.is_locked() == true)
     mu.unlock()

@@ -8,7 +8,7 @@ bench "smoke-noop" {
 }
 
 bench "smoke-with-setup" {
-    let x = 10
+    ro x = 10
     measure {
         bench.opaque(x + 1)
     }

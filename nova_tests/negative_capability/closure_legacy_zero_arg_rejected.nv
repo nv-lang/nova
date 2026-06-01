@@ -7,6 +7,6 @@
 module negative_capability.closure_legacy_zero_arg_rejected
 
 test "legacy `() => expr` rejected" {
-    let zero = () => 0
+    ro zero = () => 0
     assert(zero() == 0)
 }

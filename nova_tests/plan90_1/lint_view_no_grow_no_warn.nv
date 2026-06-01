@@ -2,11 +2,11 @@
 // Lint должен срабатывать только когда вызывается grow-метод на parent
 // после создания view из него. Read-only view usage = no warning.
 
-module nova_tests.plan90_1.lint_view_no_grow_no_warn
+module plan90_1.lint_view_no_grow_no_warn
 
 test "slice-view without append — no lint" {
-    let mut parent []int = [10, 20, 30, 40, 50]
-    let view = parent[1..4]
+    mut parent []int = [10, 20, 30, 40, 50]
+    ro view = parent[1..4]
     // Read from view — no grow → no warning
     assert(view.len() == 3)
     assert(view[0] == 20)
@@ -14,21 +14,21 @@ test "slice-view without append — no lint" {
 }
 
 test "append without prior view — no lint" {
-    let mut arr []int = [1, 2, 3]
-    let more []int = [4, 5, 6]
+    mut arr []int = [1, 2, 3]
+    ro more []int = [4, 5, 6]
     arr.append(more)  // no view was created → no W_VIEW_EXTEND_DETACH
     assert(arr.len() == 6)
 }
 
 test "insert without prior view — no lint" {
-    let mut arr []int = [1, 4]
+    mut arr []int = [1, 4]
     arr.insert(1, [2, 3])
     assert(arr.len() == 4)
     assert(arr[1] == 2)
 }
 
 test "reserve without prior view — no lint" {
-    let mut arr []int = []
+    mut arr []int = []
     arr.reserve(10)
     arr.push(1)
     assert(arr.len() == 1)

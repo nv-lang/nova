@@ -14,55 +14,55 @@ module syntax.as_cast_char_literal
 
 
 test "decimal literal as char — basic ASCII" {
-    let a = 65 as char
+    ro a = 65 as char
     assert(a == 'A')
 }
 
 
 test "hex literal as char — ASCII boundary" {
-    let zero = 0x30 as char
-    let nine = 0x39 as char
+    ro zero = 0x30 as char
+    ro nine = 0x39 as char
     assert(zero == '0')
     assert(nine == '9')
 }
 
 
 test "hex literal as char — NUL и DEL" {
-    let nul = 0 as char
-    let del = 0x7F as char
+    ro nul = 0 as char
+    ro del = 0x7F as char
     assert(nul as int == 0)
     assert(del as int == 0x7F)
 }
 
 
 test "hex literal as char — кириллица (U+0410 = 'А')" {
-    let cyr_a = 0x0410 as char
+    ro cyr_a = 0x0410 as char
     assert(cyr_a as int == 0x0410)
 }
 
 
 test "hex literal as char — верхняя граница U+10FFFF" {
-    let max = 0x10FFFF as char
+    ro max = 0x10FFFF as char
     assert(max as int == 0x10FFFF)
 }
 
 
 test "hex literal as char — у surrogate range (D7FF и E000)" {
     // Граничные значения — валидные, не surrogate.
-    let before = 0xD7FF as char
-    let after = 0xE000 as char
+    ro before = 0xD7FF as char
+    ro after = 0xE000 as char
     assert(before as int == 0xD7FF)
     assert(after as int == 0xE000)
 }
 
 
 test "binary literal as char" {
-    let a = 0b0100_0001 as char
+    ro a = 0b0100_0001 as char
     assert(a == 'A')
 }
 
 
 test "underscore-separated literal as char" {
-    let v = 1_114_111 as char  // U+10FFFF
+    ro v = 1_114_111 as char  // U+10FFFF
     assert(v as int == 0x10FFFF)
 }

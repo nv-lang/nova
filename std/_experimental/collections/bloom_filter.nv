@@ -40,8 +40,8 @@ module collections.bloom_filter
 /// - `[BloomFilter.optimal]` — создать с target false-positive rate
 #stable(since = "0.1")
 export type BloomFilter {
-    readonly bits_size int          // public config
-    readonly num_hashes int         // public config (k)
+    ro bits_size int          // public config
+    ro num_hashes int         // public config (k)
     mut _bits []u8                // internal: packed bit array (1 u8 = 8 bits)
 }
 
@@ -60,8 +60,8 @@ export type BloomFilter {
 /// ```
 #stable(since = "0.1")
 export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
-    let byte_size = (bits_size + 7) / 8
-    let mut _bits []u8 = []
+    ro byte_size = (bits_size + 7) / 8
+    mut _bits []u8 = []
     for i in 0..byte_size { _bits.push(0) }
     {
         bits_size,
@@ -88,12 +88,12 @@ export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
 #stable(since = "0.1")
 export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
     // m = -n * ln(p) / ln(2)^2
-    let n = expected_n as f64
-    let ln2 = 0.6931471805599453
-    let m = (-n * false_pos_rate.ln() / (ln2 * ln2)).ceil() as int
+    ro n = expected_n as f64
+    ro ln2 = 0.6931471805599453
+    ro m = (-n * false_pos_rate.ln() / (ln2 * ln2)).ceil() as int
     // k = (m/n) * ln(2)
-    let k = ((m as f64 / n) * ln2).ceil() as int
-    let k_safe = if k < 1 { 1 } else { k }
+    ro k = ((m as f64 / n) * ln2).ceil() as int
+    ro k_safe = if k < 1 { 1 } else { k }
     Self.new(m, k_safe)
 }
 
@@ -101,11 +101,11 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
 /// Добавить строку в filter. После этого `contains(s)` гарантированно вернёт `true`.
 #stable(since = "0.1")
 export fn BloomFilter mut @insert(s str) -> () {
-    let h1 = hash1(s)
-    let h2 = hash2(s)
+    ro h1 = hash1(s)
+    ro h2 = hash2(s)
     for i in 0..@num_hashes {
-        let bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
-        let safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
+        ro bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
+        ro safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
         @set_bit(safe_idx)
     }
 }
@@ -114,12 +114,12 @@ export fn BloomFilter mut @insert(s str) -> () {
 /// Проверить вероятное наличие строки. `false` — точно отсутствует. `true` — вероятно присутствует.
 #stable(since = "0.1")
 export fn BloomFilter @contains(s str) -> bool {
-    let h1 = hash1(s)
-    let h2 = hash2(s)
-    let mut i = 0
+    ro h1 = hash1(s)
+    ro h2 = hash2(s)
+    mut i = 0
     while i < @num_hashes {
-        let bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
-        let safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
+        ro bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
+        ro safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
         if !@get_bit(safe_idx) { return false }
         i += 1
     }
@@ -132,17 +132,17 @@ export fn BloomFilter @contains(s str) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn BloomFilter mut @set_bit(idx int) -> () {
-    let byte_idx = idx / 8
-    let bit_in_byte = idx % 8
-    let mask = (1 << bit_in_byte) as u8
+    ro byte_idx = idx / 8
+    ro bit_in_byte = idx % 8
+    ro mask = (1 << bit_in_byte) as u8
     @_bits[byte_idx] = ((@_bits[byte_idx] as int) | (mask as int)) as u8
 }
 
 
 fn BloomFilter @get_bit(idx int) -> bool {
-    let byte_idx = idx / 8
-    let bit_in_byte = idx % 8
-    let mask = (1 << bit_in_byte)
+    ro byte_idx = idx / 8
+    ro bit_in_byte = idx % 8
+    ro mask = (1 << bit_in_byte)
     ((@_bits[byte_idx] as int) & mask) != 0
 }
 
@@ -152,7 +152,7 @@ fn BloomFilter @get_bit(idx int) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn hash1(s str) -> u64 {
-    let mut h u64 = 0xCBF29CE484222325        // FNV offset basis
+    mut h u64 = 0xCBF29CE484222325        // FNV offset basis
     for c in s.to_chars() {
         h = h ^ ((c as int) as u64)
         h = h * 0x100000001B3                  // FNV prime
@@ -161,7 +161,7 @@ fn hash1(s str) -> u64 {
 }
 
 fn hash2(s str) -> u64 {
-    let mut h u64 = 0x100000001B3              // другая seed
+    mut h u64 = 0x100000001B3              // другая seed
     for c in s.to_chars() {
         h = h * 31
         h = h + ((c as int) as u64)
@@ -175,7 +175,7 @@ fn hash2(s str) -> u64 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "no false negatives" {
-    let mut bf = BloomFilter.new(1024, 3)
+    mut bf = BloomFilter.new(1024, 3)
     bf.insert("hello")
     bf.insert("world")
     bf.insert("nova")
@@ -186,12 +186,12 @@ test "no false negatives" {
 }
 
 test "empty filter — никого не содержит" {
-    let bf = BloomFilter.new(1024, 3)
+    ro bf = BloomFilter.new(1024, 3)
     assert(!bf.contains("anything"))
 }
 
 test "optimal sizing" {
-    let mut bf = BloomFilter.optimal(100, 0.01)         // 100 items, 1% false-positive
+    mut bf = BloomFilter.optimal(100, 0.01)         // 100 items, 1% false-positive
     bf.insert("test1")
     bf.insert("test2")
     assert(bf.contains("test1"))
@@ -199,12 +199,12 @@ test "optimal sizing" {
 }
 
 test "false positive rate приемлемый для small set" {
-    let mut bf = BloomFilter.new(1024, 4)
+    mut bf = BloomFilter.new(1024, 4)
     for i in 0..50 {
         bf.insert("item-" + str.from(i))
     }
     // Сколько false positives на 100 неинсёртенных?
-    let mut false_pos = 0
+    mut false_pos = 0
     for j in 50..150 {
         if bf.contains("item-" + str.from(j)) {
             false_pos += 1

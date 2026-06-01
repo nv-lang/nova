@@ -1,12 +1,12 @@
 // Ф.1.3 (Plan 33.5): Loop decreases SMT verify.
 // while i > 0 decreases i { i -= 1 } — Z3 verifies termination.
 
-module nova_tests.contracts.loop_decreases_smt_positive
+module contracts.loop_decreases_smt_positive
 
 fn count_down(n int) -> int
     requires n >= 0
 {
-    let mut i = n
+    mut i = n
     while i > 0 decreases i {
         i -= 1
     }

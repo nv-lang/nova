@@ -6,29 +6,29 @@
 // simultaneously → violation. This is an observable interleave property,
 // not just a final-value check.
 
-module nova_tests.concurrency.sync_mutex
+module concurrency.sync_mutex
 
 // ─── Basic API ─────────────────────────────────────────────────
 
 test "Mutex: try_lock on fresh mutex succeeds" {
-    let m = Mutex.new()
-    let ok = m.try_lock()
+    mut m = Mutex.new()
+    ro ok = m.try_lock()
     assert(ok == true)
     m.unlock()
 }
 
 test "Mutex: try_lock while locked returns false" {
-    let m = Mutex.new()
-    let ok1 = m.try_lock()
+    mut m = Mutex.new()
+    ro ok1 = m.try_lock()
     assert(ok1 == true)
-    let ok2 = m.try_lock()
+    ro ok2 = m.try_lock()
     assert(ok2 == false)
     m.unlock()
 }
 
 test "Mutex: lock and unlock in single fiber" {
-    let m = Mutex.new()
-    let mut counter = 0
+    mut m = Mutex.new()
+    mut counter = 0
     supervised {
         spawn {
             m.lock()
@@ -48,13 +48,13 @@ test "Mutex: lock and unlock in single fiber" {
 // lock and decremented before unlock. If mutual exclusion holds, `inside`
 // never exceeds 1 → violations == 0.
 test "Mutex: mutual exclusion — inside never > 1" {
-    let m = Mutex.new()
-    let mut inside = 0
-    let mut violations = 0
+    mut m = Mutex.new()
+    mut inside = 0
+    mut violations = 0
 
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 50 {
                 m.lock()
                 inside = inside + 1
@@ -66,7 +66,7 @@ test "Mutex: mutual exclusion — inside never > 1" {
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 50 {
                 m.lock()
                 inside = inside + 1
@@ -85,11 +85,11 @@ test "Mutex: mutual exclusion — inside never > 1" {
 // Protected counter: two fibers increment without atomic ops — mutex must
 // prevent lost updates. Final value must equal sum of both.
 test "Mutex: protected counter — no lost updates" {
-    let m = Mutex.new()
-    let mut counter = 0
+    mut m = Mutex.new()
+    mut counter = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 100 {
                 m.lock()
                 counter = counter + 1
@@ -98,7 +98,7 @@ test "Mutex: protected counter — no lost updates" {
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 100 {
                 m.lock()
                 counter = counter + 1
@@ -116,12 +116,12 @@ test "Mutex: protected counter — no lost updates" {
 // The park/wake cross-worker path gets exercised.
 test "Mutex: mutual exclusion in M:N mode" {
     runtime.init(2)
-    let m = Mutex.new()
-    let mut inside = 0
-    let mut violations = 0
+    mut m = Mutex.new()
+    mut inside = 0
+    mut violations = 0
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 30 {
                 m.lock()
                 inside = inside + 1
@@ -132,7 +132,7 @@ test "Mutex: mutual exclusion in M:N mode" {
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 30 {
                 m.lock()
                 inside = inside + 1

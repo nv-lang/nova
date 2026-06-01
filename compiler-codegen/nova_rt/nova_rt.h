@@ -25,6 +25,13 @@ typedef int64_t  nova_char;
 typedef double   nova_f64;
 typedef float    nova_f32;
 typedef bool     nova_bool;
+/* Plan 115 D214: distinct typedef для `ptr` — same underlying `void*` storage,
+ * но distinct C type. Mirrors Plan 70.3 nova_char rationale: `Option[ptr]` и
+ * other generics не должны silent-stomp'ить в erased `void*` mono mangling.
+ * Также explicit `ptr` value distinguishable от erased generic-T placeholder
+ * на codegen уровне (TupleLit + infer_expr_c_type решают mono'd vs legacy
+ * fallback). Zero ABI cost — typedef alias `void*`. */
+typedef void*    nova_ptr;
 
 /* ---- Closure representation ---- */
 /* Closures are stored as void* pointing to a struct { fn_ptr; void* env }. */
@@ -470,5 +477,17 @@ typedef struct { char _dummy; } nova_unit;
 /* Plan 57: bench DSL runtime (header-only). Подключается после alloc.h
  * (uses nova_gc_alloc_count) и eventloop.h (optional uv_hrtime). */
 #include "bench.h"
+
+/* Plan 115 D214 Ф.2: tuple-return FFI test shim. Header-only inline
+ * helpers used by `nova_tests/plan115/t2_external_fn_tuple_ok.nv`.
+ * Plan 115 v1 ships minimum FFI scaffolding here; full user-side shim
+ * pipeline (`nova build --c-shim path/to/file.c`) — followup
+ * `[M-115-ffi-build-pipeline]`. */
+#include "plan115_ffi_test.h"
+
+/* Plan 115 D214 Ф.3 / A7: sqlite_mini_ffi.h moved → `examples/ffi/`
+ * (user-side location). Now wired through `[M-115-ffi-build-pipeline]` —
+ * `nova_tests/nova.toml [ffi] c_shims` force-includes header per package.
+ * См. examples/ffi/sqlite_mini_ffi.h + nova_tests/nova.toml. */
 
 #endif /* NOVA_RT_H */

@@ -8,7 +8,7 @@
 // D156-strict-forget: x — consume-obligation (от [T consume] bound + `consume x T`).
 // На exit'е функции x Live → D156-strict-forget error (generic-consume obligation).
 
-module nova_tests.plan100_2.generic_bound_err_pass_non_consume
+module plan100_2.generic_bound_err_pass_non_consume
 
 type Transaction consume {
     id int,

@@ -15,19 +15,19 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.litmus_iriw_acqrel_allows
+module plan103_8.litmus_iriw_acqrel_allows
 
 test "IRIW AcqRel: 1000 iterations complete without crash, all values valid {0,1}" {
-    let n_iters  = 20
-    let bad_vals = AtomicI64.new(0)  // values outside {0,1}
+    ro n_iters  = 20
+    mut bad_vals = AtomicI64.new(0)  // values outside {0,1}
 
     for _iter in 0..n_iters {
-        let x = AtomicI64.new(0)
-        let y = AtomicI64.new(0)
-        let r1 = AtomicI64.new(-1)
-        let r2 = AtomicI64.new(-1)
-        let r3 = AtomicI64.new(-1)
-        let r4 = AtomicI64.new(-1)
+        mut x = AtomicI64.new(0)
+        mut y = AtomicI64.new(0)
+        mut r1 = AtomicI64.new(-1)
+        mut r2 = AtomicI64.new(-1)
+        mut r3 = AtomicI64.new(-1)
+        mut r4 = AtomicI64.new(-1)
 
         supervised {
             // Writer1: Release store X = 1
@@ -51,8 +51,8 @@ test "IRIW AcqRel: 1000 iterations complete without crash, all values valid {0,1
         }
 
         // All values must be in {0, 1} — no garbage
-        let v1 = r1.load(); let v2 = r2.load()
-        let v3 = r3.load(); let v4 = r4.load()
+        ro v1 = r1.load(); ro v2 = r2.load()
+        ro v3 = r3.load(); ro v4 = r4.load()
         if v1 < 0 || v1 > 1 || v2 < 0 || v2 > 1 ||
            v3 < 0 || v3 > 1 || v4 < 0 || v4 > 1 {
             bad_vals.fetch_add(1)

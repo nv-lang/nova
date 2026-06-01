@@ -2,7 +2,7 @@
 // consume tx (Consumed на любом arm-exit).
 // Uses inline Transaction literals to avoid loose consume-obligations.
 
-module nova_tests.plan100_2.for_consume_break_ok
+module plan100_2.for_consume_break_ok
 
 type Transaction consume {
     id int,
@@ -11,7 +11,7 @@ fn Transaction consume @commit() -> () { () }
 fn Transaction consume @rollback() -> () { () }
 
 test "for + break — обе arm-ветки consume" {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
     for consume tx in txs {
         if tx.id == 2 {
             tx.commit()

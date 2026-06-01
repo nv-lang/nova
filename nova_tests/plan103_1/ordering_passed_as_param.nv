@@ -5,7 +5,7 @@
 // Это important для downstream Plan 103.2 где ordering передаётся в
 // atomic-операции как runtime argument.
 
-module nova_tests.plan103_1.ordering_passed_as_param
+module plan103_1.ordering_passed_as_param
 
 /// Вызывает fence с переданным ordering — runtime-value path.
 fn use_ordering(ord MemOrdering) {
@@ -31,8 +31,8 @@ test "fence(ord) где ord — параметр функции" {
 }
 
 test "default_ordering() возвращает SeqCst" {
-    let ord = default_ordering()
-    let tag = match ord {
+    ro ord = default_ordering()
+    ro tag = match ord {
         Relaxed => 0
         Acquire => 1
         Release => 2

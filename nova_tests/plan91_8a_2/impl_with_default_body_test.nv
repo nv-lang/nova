@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.impl_with_default_body_test
+module plan91_8a_2.impl_with_default_body_test
 
 // Plan 91.9 acceptance: #impl(Equatable + Comparable) с только @compare.
 // `equals` auto-derived из Equatable.equals default body (uses @compare).
@@ -14,9 +14,9 @@ fn Price @compare(other Self) -> int {
 }
 
 test "verification passes with default-body derivation" {
-    let a = Price { cents: 100 }
-    let b = Price { cents: 100 }
-    let c = Price { cents: 200 }
+    ro a = Price { cents: 100 }
+    ro b = Price { cents: 100 }
+    ro c = Price { cents: 200 }
     // equals derived from Equatable.equals default body (uses @compare)
     assert(a.equals(b))
     assert(!a.equals(c))

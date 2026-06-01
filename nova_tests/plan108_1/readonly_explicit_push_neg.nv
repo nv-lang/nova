@@ -1,0 +1,16 @@
+// Plan 108.1 (D176 amend): явный `readonly` параметр — вызов `.push`
+// должен дать E_PARAM_NOT_MUT (default semantics same as missing modifier).
+
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+
+module plan108_1.readonly_explicit_push_neg
+
+fn append_99(ro b []int) -> int {
+    b.push(99)             // ✗ E_PARAM_NOT_MUT — `ro` строго запрещает
+    b.len()
+}
+
+test "ro + push → error" {
+    mut arr = [1, 2]
+    ro _ = append_99(arr)
+}

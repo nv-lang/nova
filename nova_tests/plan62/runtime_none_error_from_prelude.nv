@@ -43,7 +43,7 @@ fn unwrap_opt(opt Option[int]) Fail[RuntimeNoneError] -> int =>
 
 
 test "RuntimeNoneError: Fail[RuntimeNoneError] signature + opt!! Some path" {
-    let r = unwrap_opt(Some(10))
+    ro r = unwrap_opt(Some(10))
     assert(r == 10)
 }
 
@@ -52,13 +52,13 @@ test "RuntimeNoneError: opt!! на None — Fail catchable, no abort" {
     // opt!! на None бросает RuntimeNoneError. with-блок перехватывает
     // Fail — программа НЕ abort'ится, выполнение продолжается после
     // блока. `reached` ставится только если throw был перехвачен.
-    let mut reached = false
+    mut reached = false
     with Fail = effect Fail {
         fail(_e) {
             interrupt ()
         }
     } {
-        let _ = unwrap_opt(None)
+        ro _ = unwrap_opt(None)
     }
     reached = true
     assert(reached)

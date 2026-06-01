@@ -1,0 +1,13 @@
+// Plan 108.1 (D176 amend): `consume mut` параметр — parser-level
+// E_PARAM_MOD_CONFLICT (D131 existing rule + D176 amend).
+
+// EXPECT_COMPILE_ERROR consume
+
+module plan108_1.consume_mut_conflict_neg
+
+fn bad(consume mut sb StringBuilder) -> str => sb.as_str()
+
+test "consume + mut → parser error" {
+    consume sb = StringBuilder.from("x")
+    ro _ = bad(sb)
+}

@@ -2,33 +2,33 @@
 // (а не C-трамплины). Проверяем через `match @`-эквиваленты и реальные
 // контексты использования: переменные, элементы массива, generic-функция.
 
-module nova_tests.plan95.option_predicates_migrated
+module plan95.option_predicates_migrated
 
 test "Option[int]: is_some/is_none — базовый паритет с match" {
-    let a Option[int] = Some(42)
-    let b Option[int] = None
+    ro a Option[int] = Some(42)
+    ro b Option[int] = None
     // Прямой вызов:
     assert(a.is_some())
     assert(!a.is_none())
     assert(!b.is_some())
     assert(b.is_none())
     // Паритет с match (тем же выражением что и тело перенесённого метода):
-    let match_some = match a { Some(_) => true, None => false }
-    let match_none = match b { Some(_) => true, None => false }
+    ro match_some = match a { Some(_) => true, None => false }
+    ro match_none = match b { Some(_) => true, None => false }
     assert(a.is_some() == match_some)
     assert(b.is_some() == match_none)
 }
 
 test "Option[str]: is_some/is_none на nova_str" {
-    let s Option[str] = Some("hi")
-    let n Option[str] = None
+    ro s Option[str] = Some("hi")
+    ro n Option[str] = None
     assert(s.is_some() && !s.is_none())
     assert(n.is_none() && !n.is_some())
 }
 
 test "Option[char]: is_some/is_none на nova_char" {
-    let c Option[char] = Some('x')
-    let n Option[char] = None
+    ro c Option[char] = Some('x')
+    ro n Option[char] = None
     assert(c.is_some())
     assert(n.is_none())
 }
@@ -36,8 +36,8 @@ test "Option[char]: is_some/is_none на nova_char" {
 type Inner { val int }
 
 test "Option[user-record]: is_some/is_none на pointer-T" {
-    let r Option[Inner] = Some(Inner{val: 7})
-    let n Option[Inner] = None
+    ro r Option[Inner] = Some(Inner{val: 7})
+    ro n Option[Inner] = None
     assert(r.is_some())
     assert(!r.is_none())
     assert(n.is_none())
@@ -45,9 +45,9 @@ test "Option[user-record]: is_some/is_none на pointer-T" {
 }
 
 test "[]Option[int] — for-in c is_some/is_none (Plan 89 интеграция)" {
-    let opts []Option[int] = [Some(1), None, Some(3), None, Some(5)]
-    let mut present = 0
-    let mut absent = 0
+    ro opts []Option[int] = [Some(1), None, Some(3), None, Some(5)]
+    mut present = 0
+    mut absent = 0
     for o in opts {
         if o.is_some() { present = present + 1 }
         if o.is_none() { absent = absent + 1 }
@@ -57,9 +57,9 @@ test "[]Option[int] — for-in c is_some/is_none (Plan 89 интеграция)"
 }
 
 test "nested Option[Option[int]] — outer is_some" {
-    let a Option[Option[int]] = Some(Some(7))
-    let b Option[Option[int]] = Some(None)
-    let c Option[Option[int]] = None
+    ro a Option[Option[int]] = Some(Some(7))
+    ro b Option[Option[int]] = Some(None)
+    ro c Option[Option[int]] = None
     assert(a.is_some())
     assert(b.is_some())
     assert(c.is_none())

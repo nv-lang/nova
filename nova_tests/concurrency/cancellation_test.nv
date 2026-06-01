@@ -12,8 +12,8 @@ import std.concurrency.cancellation
 
 test "within: body fast → Some(result)" {
     // Body тривиальный — должен завершиться сразу.
-    let r = within(1000, || 42)
-    let got = match r {
+    ro r = within(1000, || 42)
+    ro got = match r {
         Some(v) => v
         None    => -1
     }
@@ -22,8 +22,8 @@ test "within: body fast → Some(result)" {
 
 
 test "within: body str → Some str" {
-    let r = within(1000, || "hello")
-    let got = match r {
+    ro r = within(1000, || "hello")
+    ro got = match r {
         Some(s) => s
         None    => "timeout"
     }
@@ -32,8 +32,8 @@ test "within: body str → Some str" {
 
 
 test "within: body bool → Some bool" {
-    let r = within(1000, || true)
-    let got = match r {
+    ro r = within(1000, || true)
+    ro got = match r {
         Some(b) => b
         None    => false
     }
@@ -46,13 +46,13 @@ test "within: body bool → Some bool" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "race2: оба возвращают одно значение → любой wins" {
-    let r = race2(|| 7, || 7)
+    ro r = race2(|| 7, || 7)
     assert(r == 7)
 }
 
 
 test "race2: разные значения — winner один из них" {
-    let r = race2(|| 10, || 20)
+    ro r = race2(|| 10, || 20)
     assert(r == 10 || r == 20)
 }
 
@@ -63,7 +63,7 @@ test "race2: разные значения — winner один из них" {
 
 
 test "race2 одинаковые closures wins одинаковый" {
-    let r = race2(|| 5, || 5)
+    ro r = race2(|| 5, || 5)
     assert(r == 5)
 }
 
@@ -78,14 +78,14 @@ test "race2 одинаковые closures wins одинаковый" {
 
 test "negative within не throw наружу на success" {
     // Plan 49 Ф.3: после within scope нормально продолжается.
-    let _ = within(1000, || 1)
-    let after = true
+    ro _ = within(1000, || 1)
+    ro after = true
     assert(after)
 }
 
 
 test "negative race2 не throw на normal completion" {
-    let _ = race2(|| 1, || 2)
-    let after = true
+    ro _ = race2(|| 1, || 2)
+    ro after = true
     assert(after)
 }

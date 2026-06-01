@@ -145,6 +145,7 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
     match s {
         Stmt::Expr(e) => normalize_expr(e, sigs),
         Stmt::Let(d) => normalize_expr(&mut d.value, sigs),
+        Stmt::Const(d) => normalize_expr(&mut d.value, sigs),
         Stmt::Assign { target, value, .. } => {
             normalize_expr(target, sigs);
             normalize_expr(value, sigs);
@@ -155,6 +156,17 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         Stmt::Throw { value, .. } => normalize_expr(value, sigs),
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => normalize_expr(body, sigs),
+        // Plan 110 D188: consume X = init() { body } — walk init expr +
+        // body block (stmts + trailing).
+        Stmt::ConsumeScope { init, body, .. } => {
+            normalize_expr(init, sigs);
+            for stmt in &mut body.stmts {
+                normalize_stmt(stmt, sigs);
+            }
+            if let Some(t) = &mut body.trailing {
+                normalize_expr(t, sigs);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => normalize_expr(expr, sigs),
         Stmt::Break(_) | Stmt::Continue(_) => {}
         // Ф.4.1: apply — ghost, аргументы нормализуем.
@@ -345,7 +357,8 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         // Листовые — нет под-выражений.
         ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
         | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::NullPtrLit => {}
         // D.1.3: квантор — только в контрактах, не в runtime-коде.
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
             normalize_expr(range, sigs);
@@ -502,7 +515,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
 fn let_stmt(name: &str, value: Expr, span: Span) -> Stmt {
     Stmt::Let(LetDecl {
         mutable: false,
-        pattern: Pattern::Ident { name: name.to_string(), span },
+        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
         ty: None,
         value,
         span,

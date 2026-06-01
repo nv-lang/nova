@@ -22,24 +22,24 @@ fn nested_first(deep ((int, int), int)) -> int {
 
 
 test "tuple as fn arg — (int, int)" {
-    let result = sum_pair((3, 4))
+    ro result = sum_pair((3, 4))
     assert(result == 7)
 }
 
 
 test "tuple as fn arg — heterogeneous (str, int)" {
-    let r = label_value(("answer", 42))
+    ro r = label_value(("answer", 42))
     assert(r == "answer")
 }
 
 
 test "tuple as fn arg — nested mono'd struct" {
-    let r = nested_first(((10, 20), 30))
+    ro r = nested_first(((10, 20), 30))
     assert(r == 10)
 }
 
 
 test "tuple from variable passed to fn — мono'd struct copy" {
-    let p = (5, 6)
+    ro p = (5, 6)
     assert(sum_pair(p) == 11)
 }

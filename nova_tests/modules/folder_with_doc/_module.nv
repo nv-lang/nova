@@ -5,4 +5,4 @@
 #doc "Folder-with-doc — demo для Plan 42.11."
 #doc ""
 #doc "Module-level documentation, видна Plan 45 nova doc."
-module modules.folder_with_doc
+module folder_with_doc._module

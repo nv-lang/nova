@@ -3,7 +3,7 @@
 // Проверяет: парсер принимает leading-точку в protocol-теле; реализация
 // через D35 static-метод (`fn Type.name(...)`); прямой вызов работает.
 
-module nova_tests.plan97.pos_user_protocol_static
+module plan97.pos_user_protocol_static
 
 
 export type MyBuilder[T] protocol {
@@ -19,12 +19,12 @@ fn Box.make(x int) -> Box => { value: x }
 
 
 test "static-protocol метод объявлен через .make, вызов через Type.method" {
-    let b = Box.make(42)
+    ro b = Box.make(42)
     assert(b.value == 42)
 }
 
 test "несколько вызовов" {
-    let a = Box.make(1)
-    let b = Box.make(99)
+    ro a = Box.make(1)
+    ro b = Box.make(99)
     assert(a.value + b.value == 100)
 }

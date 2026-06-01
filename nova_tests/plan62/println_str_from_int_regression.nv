@@ -30,6 +30,6 @@ test "println(str.from(int_literal)) basic" {
 }
 
 test "println(str.from(int_var)) с variable" {
-    let n = 7
+    ro n = 7
     println(str.from(n))
 }

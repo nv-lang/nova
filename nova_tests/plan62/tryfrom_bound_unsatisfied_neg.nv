@@ -21,7 +21,7 @@ fn needs_try_from[T TryFrom[int, str]](v T) -> T => v
 
 
 test "TryFrom bound — non-implementing type должен быть отвергнут" {
-    let p = Plain { x: 1 }
-    let _ = needs_try_from(p)
+    ro p = Plain { x: 1 }
+    ro _ = needs_try_from(p)
     assert(true)
 }

@@ -23,16 +23,16 @@ fn checked[T TryFrom[int, str]](n int) -> Result[T, str] => T.try_from(n)
 
 
 test "generic TryFrom-bound — T.try_from Ok-ветка" {
-    let r = checked[Pos](42)
+    ro r = checked[Pos](42)
     assert(r.is_ok())
 }
 
 test "generic TryFrom-bound — T.try_from Err-ветка" {
-    let r = checked[Pos](-5)
+    ro r = checked[Pos](-5)
     assert(r.is_err())
 }
 
 test "TryFrom-bound enforced — Pos удовлетворяет TryFrom[int, str]" {
-    let r = checked[Pos](1)
+    ro r = checked[Pos](1)
     assert(r.is_ok())
 }

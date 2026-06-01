@@ -8,21 +8,21 @@ module str.utf8_invalid
 
 test "lone continuation byte is invalid UTF-8" {
     // 0x80 сам по себе — continuation byte без leading byte: invalid.
-    let arr []u8 = []u8.new()
+    mut arr []u8 = []u8.new()
     arr.push(0x80 as u8)
     assert(str.try_from(arr).is_err())
 }
 
 test "0xFF byte is always invalid UTF-8" {
     // 0xFF никогда не встречается в корректном UTF-8.
-    let arr []u8 = []u8.new()
+    mut arr []u8 = []u8.new()
     arr.push(0xFF as u8)
     assert(str.try_from(arr).is_err())
 }
 
 test "overlong encoding is invalid UTF-8" {
     // 0xC0 0x80 — overlong encoding нулевого символа (Modified UTF-8, не стандарт).
-    let arr []u8 = []u8.new()
+    mut arr []u8 = []u8.new()
     arr.push(0xC0 as u8)
     arr.push(0x80 as u8)
     assert(str.try_from(arr).is_err())
@@ -30,14 +30,14 @@ test "overlong encoding is invalid UTF-8" {
 
 test "incomplete multibyte sequence is invalid UTF-8" {
     // 0xC3 без следующего continuation byte — неполная 2-байтная последовательность.
-    let arr []u8 = []u8.new()
+    mut arr []u8 = []u8.new()
     arr.push(0xC3 as u8)
     assert(str.try_from(arr).is_err())
 }
 
 test "valid UTF-8 bytes succeed" {
     // Контрольный позитивный тест: "Hi" в ASCII.
-    let arr []u8 = []u8.new()
+    mut arr []u8 = []u8.new()
     arr.push(0x48 as u8) // 'H'
     arr.push(0x69 as u8) // 'i'
     assert(str.try_from(arr).is_ok())
@@ -45,6 +45,6 @@ test "valid UTF-8 bytes succeed" {
 
 test "empty byte array gives Ok empty string" {
     // Пустой массив — валидный UTF-8 (пустая строка).
-    let arr []u8 = []u8.new()
+    mut arr []u8 = []u8.new()
     assert(str.try_from(arr).is_ok())
 }

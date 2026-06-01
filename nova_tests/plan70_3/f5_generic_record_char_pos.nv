@@ -5,7 +5,7 @@
 // type instantiation. `Box[char]` mono'ится в `Nova_Box____nova_char`,
 // `Box[int]` — в `Nova_Box____nova_int` — independent C structs.
 
-module nova_tests.plan70_3.f5_generic_record_char_pos
+module plan70_3.f5_generic_record_char_pos
 
 type Box[T] {
     value T
@@ -14,20 +14,20 @@ type Box[T] {
 fn unwrap_box[T](b Box[T]) -> T => b.value
 
 test "Box[char] holds char field" {
-    let bc Box[char] = { value: 'z' }
+    ro bc Box[char] = { value: 'z' }
     assert(bc.value == 'z')
     assert(unwrap_box(bc) == 'z')
 }
 
 test "Box[int] holds int field — distinct mono instance" {
-    let bi Box[int] = { value: 100 }
+    ro bi Box[int] = { value: 100 }
     assert(bi.value == 100)
     assert(unwrap_box(bi) == 100)
 }
 
 test "char + int Box coexist без collapse" {
-    let bc Box[char] = { value: 'A' }
-    let bi Box[int] = { value: 65 }
+    ro bc Box[char] = { value: 'A' }
+    ro bi Box[int] = { value: 65 }
     // Underlying codepoint совпадает (A = 65), но C-типы distinct.
     assert(bc.value == 'A')
     assert(bi.value == 65)

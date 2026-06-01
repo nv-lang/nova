@@ -3,9 +3,9 @@
 // Plan 96 Ф.4 — негатив: arr[0..100] где len==3 → panic.
 // D-neg-panic: OOB → детерминированный panic (D13), не clamp.
 
-module nova_tests.plan96.neg_slice_oob_to
+module plan96.neg_slice_oob_to
 
 fn main() -> () {
-    let arr = [1, 2, 3]
-    let _ = arr[0..100]
+    mut arr = [1, 2, 3]
+    ro _ = arr[0..100]
 }

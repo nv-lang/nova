@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.impl_optin_test
+module plan91_8a_2.impl_optin_test
 
 // Plan 91.9 (D186): `#impl(P + Q + ...)` opt-in annotation.
 // Verifies:
@@ -26,27 +26,27 @@ fn Coin @compare(other Self) -> int =>
 fn str.from(c Coin) -> str => "Coin(${c.value})"
 
 test "#impl(Greetable): bare call works" {
-    let u = User { display_name: "World" }
+    ro u = User { display_name: "World" }
     assert(u.greet() == "Hello, World")
 }
 
 test "#impl(A + B + C): multi-protocol opt-in" {
-    let a = Coin { value: 5 }
-    let b = Coin { value: 5 }
-    let c = Coin { value: 9 }
+    ro a = Coin { value: 5 }
+    ro b = Coin { value: 5 }
+    ro c = Coin { value: 9 }
     // Equatable.equals via @compare default — opted in
     assert(a.equals(b))
     assert(!a.equals(c))
     // Comparable.compare — explicit method (always works)
     assert(a.compare(c) < 0)
     // Printable.fmt via str.from(Coin) default — opted in
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     a.fmt(sb)
     assert(sb.as_str() == "Coin(5)")
 }
 
 test "#impl(Greetable): generic bound mono'd through opted-in type" {
-    let u = User { display_name: "Bound" }
+    ro u = User { display_name: "Bound" }
     assert(make_greeting(u) == "Hello, Bound")
 }
 

@@ -3,7 +3,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_6.realtime_atomic_load_ok
+module plan103_6.realtime_atomic_load_ok
 
 #realtime fn _rt_load_i64(a mut AtomicI64) -> int {
     a.load()
@@ -14,13 +14,13 @@ module nova_tests.plan103_6.realtime_atomic_load_ok
 }
 
 test "AtomicI64.load allowed in #realtime fn" {
-    let a = AtomicI64.new(42)
-    let v = _rt_load_i64(a)
+    mut a = AtomicI64.new(42)
+    ro v = _rt_load_i64(a)
     assert(v == 42)
 }
 
 test "AtomicBool.load allowed in #realtime fn" {
-    let b = AtomicBool.new(true)
-    let v = _rt_load_bool(b)
+    mut b = AtomicBool.new(true)
+    ro v = _rt_load_bool(b)
     assert(v == true)
 }

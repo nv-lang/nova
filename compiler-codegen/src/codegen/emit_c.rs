@@ -1250,6 +1250,7 @@ impl CEmitter {
     fn stmt_span(stmt: &Stmt) -> Span {
         match stmt {
             Stmt::Let(d) => d.span,
+            Stmt::Const(d) => d.span,
             Stmt::Expr(e) => e.span,
             Stmt::Assign { span, .. }
             | Stmt::Return { span, .. }
@@ -1262,7 +1263,8 @@ impl CEmitter {
             | Stmt::Assume { span, .. }
             | Stmt::Apply { span, .. }
             | Stmt::Calc { span, .. }
-            | Stmt::Reveal { span, .. } => *span,
+            | Stmt::Reveal { span, .. }
+            | Stmt::ConsumeScope { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -1338,6 +1340,47 @@ impl CEmitter {
                         self.fn_module_map
                             .entry(f.name.clone())
                             .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
+        // Plan 115 D214: user-level `external fn` registration. Pre-populates
+        // `external_registry` с entries из текущего module — даёт unmangled
+        // `nova_fn_<name>` resolve в emit_call (без него Nova-mangling
+        // делает `nova_fn_<modpath><name>` который не matches C shim).
+        //
+        // Plan 115 v1 ограничение: только FREE external fn (без receiver) и
+        // с simple types. Generic / receiver-method external fn — followup
+        // `[M-115-external-fn-method]`.
+        match super::external_registry::ExternalRegistry::from_module(module) {
+            Ok(user_reg) => {
+                for (key, decls) in user_reg.by_key {
+                    self.external_registry.by_key.entry(key).or_default().extend(decls);
+                }
+            }
+            Err(_) => {
+                // Type-checker emits a более user-friendly diagnostic для
+                // type-resolution issues — registry merge молча skip'ает.
+            }
+        }
+        // Plan 115 D214: pre-register mono'd tuple instances для external fn
+        // return types — гарантирует emit'ит typedef в финальный output (без
+        // этого call-site видит unresolved `_NovaTuple_2_8_nova_ptr_8_nova_int`).
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if !f.is_external { continue; }
+                if let Some(TypeRef::Tuple(elems, _)) = &f.return_type {
+                    let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                    let mut all_concrete = true;
+                    for e in elems {
+                        match self.type_ref_to_c(e) {
+                            Ok(c) if !c.is_empty() && c != "void*" => elem_cs.push(c),
+                            _ => { all_concrete = false; break; }
+                        }
+                    }
+                    if all_concrete && !elem_cs.is_empty() {
+                        self.register_mono_tuple(&elem_cs);
                     }
                 }
             }
@@ -2743,13 +2786,24 @@ impl CEmitter {
         let mut tuple_decls = String::new();
         if !sorted.is_empty() {
             tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
+            tuple_decls.push_str("/* Plan 115 D214: tagged struct form — позволяет shim header'у\n");
+            tuple_decls.push_str(" * forward-declare same typedef для external fn tuple-return ABI без redefinition. */\n");
             for inst in &sorted {
                 let mangled = Self::compute_mono_tuple_c_name(inst);
                 let fields: String = inst.iter().enumerate()
                     .map(|(i, c)| format!("{} f{}; ", c, i))
                     .collect();
+                // Plan 115: tagged form (`struct NAME { ... }`) — multiple
+                // identical declarations of same tag are compatible per C99 §6.7.2.3.
+                // Forward-declared (via shim header) typedef и Nova-emitted typedef
+                // resolve к same type — no redefinition error.
                 tuple_decls.push_str(&format!(
-                    "typedef struct {{ {}}} {};\n", fields, mangled));
+                    "#ifndef NOVA_TUPLE_TYPEDEF_{}\n", mangled));
+                tuple_decls.push_str(&format!(
+                    "#define NOVA_TUPLE_TYPEDEF_{}\n", mangled));
+                tuple_decls.push_str(&format!(
+                    "typedef struct {} {{ {}}} {};\n", mangled, fields, mangled));
+                tuple_decls.push_str("#endif\n");
             }
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
@@ -2831,7 +2885,7 @@ impl CEmitter {
         };
         Stmt::Let(LetDecl {
             mutable: false,
-            pattern: Pattern::Ident { name: name.to_string(), span },
+            pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
             ty: None,
             value: int_lit,
             span,
@@ -3385,6 +3439,42 @@ impl CEmitter {
                 };
                 Ok(format!("({}({}))", op_str, inner))
             }
+            // Plan 114.4 Ф.1: arithmetic/bitwise/comparison над constexpr
+            // operands — допустимо в const RHS. C compiler constant-fold'ит.
+            ExprKind::Binary { op, left, right } => {
+                let l = self.emit_const_expr(left)?;
+                let r = self.emit_const_expr(right)?;
+                let op_str = match op {
+                    crate::ast::BinOp::Add => "+",
+                    crate::ast::BinOp::Sub => "-",
+                    crate::ast::BinOp::Mul => "*",
+                    crate::ast::BinOp::Div => "/",
+                    crate::ast::BinOp::Mod => "%",
+                    crate::ast::BinOp::Eq => "==",
+                    crate::ast::BinOp::Neq => "!=",
+                    crate::ast::BinOp::Lt => "<",
+                    crate::ast::BinOp::Le => "<=",
+                    crate::ast::BinOp::Gt => ">",
+                    crate::ast::BinOp::Ge => ">=",
+                    crate::ast::BinOp::And => "&&",
+                    crate::ast::BinOp::Or => "||",
+                    crate::ast::BinOp::BitAnd => "&",
+                    crate::ast::BinOp::BitOr => "|",
+                    crate::ast::BinOp::BitXor => "^",
+                    crate::ast::BinOp::Shl => "<<",
+                    crate::ast::BinOp::Shr => ">>",
+                    // Contract-only ops (D24) — not allowed в const initialiser.
+                    crate::ast::BinOp::Implies | crate::ast::BinOp::Iff => {
+                        return Err(format!(
+                            "contract-only operator {:?} not allowed в const initialiser",
+                            op
+                        ));
+                    }
+                };
+                Ok(format!("(({}) {} ({}))", l, op_str, r))
+            }
+            // Reference на another top-level const — emit C identifier.
+            ExprKind::Ident(name) => Ok(name.clone()),
             _ => Err(format!("non-constant expression in const declaration: {:?}", expr.kind)),
         }
     }
@@ -4226,6 +4316,15 @@ impl CEmitter {
                     // `nova_int` — консистентно с empty-sum (`typedef
                     // int64_t Nova_X`); слот никогда не читается/пишется.
                     "never" => Ok("nova_int".into()),
+                    // Plan 115 D214: `ptr` — opaque pointer primitive.
+                    // Distinct typedef `nova_ptr` (= void*) — mirrors
+                    // Plan 70.3 nova_char rationale: distinguishable от
+                    // erased generic-T void* placeholder в codegen logic
+                    // (TupleLit + infer_expr_c_type решают mono'd vs
+                    // legacy fallback по this distinction). ABI = void*,
+                    // zero cost. FFI-domain — GC ignores (conservative
+                    // collector scans pointer-sized slots regardless).
+                    "ptr" => Ok("nova_ptr".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -8216,6 +8315,26 @@ impl CEmitter {
             }
             return Ok(());
         }
+        // Plan 114.4.1 (D200): emit associated constants как top-level
+        // `static const T Type_NAME = literal;` в .rodata. Generic
+        // T-dependent assoc consts (sizeof(T) etc) — followup Ф.3
+        // [M-114.4.1-generic-per-mono]; non-generic + T-independent
+        // обрабатываются здесь.
+        for ac in &t.assoc_consts {
+            let ty_c = if let Some(ty) = &ac.ty {
+                self.type_ref_to_c(ty)?
+            } else {
+                self.infer_expr_c_type(&ac.value)
+            };
+            let val = self.emit_const_expr_typed(&ac.value, Some(&ty_c))
+                .map_err(|e| format!(
+                    "assoc const `{}.{}` codegen failed: {}",
+                    t.name, ac.name, e
+                ))?;
+            let symbol = format!("{}_{}", t.name, ac.name);
+            self.line(&format!("static const {} {} = {};", ty_c, symbol, val));
+            self.var_types.insert(symbol, ty_c);
+        }
         match &t.kind {
             TypeDeclKind::Record(fields) => {
                 self.emit_record_type(&t.name, fields)?;
@@ -8246,6 +8365,10 @@ impl CEmitter {
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
             TypeDeclKind::Protocol { .. } => {}
+            // Plan 120 (D215): named tuple — value-type struct with named fields.
+            TypeDeclKind::NamedTuple(fields) => {
+                self.emit_named_tuple_type(&t.name, fields)?;
+            }
             // Plan 62.D.bis (D126): unreachable — early-return on top
             // of emit_type_decl уже отфильтровал Opaque kind. Branch
             // present для exhaustiveness; semantically meaningful no-op.
@@ -8487,6 +8610,29 @@ impl CEmitter {
         self.line("};");
         self.line("");
         self.record_schemas.insert(name.to_string(), schema);
+        Ok(())
+    }
+
+    /// Plan 120 (D215): emit a named-tuple type as a value-type C struct.
+    /// `type Point(x f64, y f64)` → `typedef struct NovaTuple_Point { double x; double y; } NovaTuple_Point;`
+    /// Registered in `type_aliases` so `type_ref_to_c(Named{Point})` returns `NovaTuple_Point` (no pointer).
+    fn emit_named_tuple_type(&mut self, name: &str, fields: &[NamedTupleField]) -> Result<(), String> {
+        self.line(&format!("typedef struct NovaTuple_{0} NovaTuple_{0};", name));
+        self.line(&format!("struct NovaTuple_{} {{", name));
+        self.indent += 1;
+        let mut schema = HashMap::new();
+        for f in fields {
+            let ty_c = self.type_ref_to_c(&f.ty)?;
+            schema.insert(f.name.clone(), ty_c.clone());
+            let mangled = Self::mangle_field_name(&f.name);
+            self.line(&format!("{} {};", ty_c, mangled));
+        }
+        self.indent -= 1;
+        self.line("};");
+        self.line("");
+        self.record_schemas.insert(name.to_string(), schema);
+        // Value type: Named{Point} → "NovaTuple_Point" (no pointer, like type alias).
+        self.type_aliases.insert(name.to_string(), format!("NovaTuple_{}", name));
         Ok(())
     }
 
@@ -9082,6 +9228,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // не префиксуем повторно "Nova_" — просто добавляем `*`.
                 if other.starts_with("NovaArray_") {
                     return format!("{}*", other);
+                }
+                // Plan 120 (D215): named tuple receiver — value type, no pointer.
+                if let Some(c_ty) = self.type_aliases.get(other) {
+                    if c_ty.starts_with("NovaTuple_") {
+                        return c_ty.clone();
+                    }
                 }
                 format!("Nova_{}*", other)
             }
@@ -13559,6 +13711,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // originating Nova source as a /* SRC: ... */ comment.
         self.emit_source_annotation_for_stmt(stmt);
         match stmt {
+            // Plan 114.4 Ф.2: scope-local `const N = expr` — constexpr,
+            // emit как block-scope C const declaration. Тип / значение
+            // через emit_const_expr_typed (как для module-level const).
+            Stmt::Const(decl) => {
+                let ty_c = if let Some(ty) = &decl.ty {
+                    self.type_ref_to_c(ty)?
+                } else {
+                    self.infer_expr_c_type(&decl.value)
+                };
+                let val = self.emit_const_expr_typed(&decl.value, Some(&ty_c))
+                    .map_err(|e| format!("scope-local const `{}` codegen failed: {}", decl.name, e))?;
+                self.line(&format!("const {} {} = {};", ty_c, decl.name, val));
+                self.var_types.insert(decl.name.clone(), ty_c);
+                return Ok(());
+            }
             Stmt::Let(decl) => {
                 // Plan 33.3 Ф.9.1 (D24): ghost erasure.
                 // `ghost let x = ...` НЕ emit'ится в C-output (паритет с
@@ -14220,6 +14387,249 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 scope.next_idx += 1;
                 self.line(&format!("{} = 1;", var));
             }
+            // Plan 110 D188: `consume X = expr { body }` — codegen
+            // (desugaring + on_exit dispatch + cancel-shield + 3-level
+            // timeout resolution + LIFO scope-stack) lands в Plan 110.1.4-
+            // 110.1.8 поэтапно. Здесь — deliberate compile-time gate:
+            // user видит чёткий error code "D188 codegen not yet impl"
+            // вместо silent unsoundness. Это production-grade staged
+            // delivery (не unimplemented!/todo! шорткат).
+            // Plan 110.1.4 ConsumeScope codegen — full D188 desugaring
+            // (success + failure paths, on_exit dispatch + re-raise).
+            //
+            // 110.1.4.a init binding + body emit ✅.
+            // 110.1.4.d setjmp fail-frame для throw catching ✅.
+            // 110.1.4.e on_exit dispatch via *_consume_on_exit symbol ✅.
+            // 110.1.4.f throw re-raise after on_exit на Failure outcome ✅.
+            //
+            // Pending: 110.1.4.b trailing value capture, 110.1.4.g panic
+            // propagation distinct из throw, 110.2 cancel-shield + timeout.
+            //
+            // Desugared C:
+            // {
+            //     <C_type> _consume_<binding>_<id> = <init expr>;
+            //     #define <binding> _consume_<binding>_<id>
+            //     NovaFailFrame _consume_frame_<id>;
+            //     nova_fail_push(&_consume_frame_<id>);
+            //     _consume_frame_<id>.error_suppressed = NULL;
+            //     int _consume_outcome_<id> = 0;
+            //     if (setjmp(_consume_frame_<id>.jmp) == 0) {
+            //         // body stmts
+            //         // body trailing (discarded)
+            //         nova_fail_pop();
+            //     } else {
+            //         nova_fail_pop();
+            //         _consume_outcome_<id> = 1;
+            //     }
+            //     Nova_ScopeOutcome* _outcome_<id>;
+            //     if (_consume_outcome_<id> == 0) {
+            //         _outcome_<id> = nova_make_ScopeOutcome_Success();
+            //     } else {
+            //         _outcome_<id> = nova_make_ScopeOutcome_Failure(
+            //             _consume_frame_<id>.error_msg);
+            //     }
+            //     Nova_<Type>_consume_on_exit(_consume_<binding>_<id>, _outcome_<id>);
+            //     if (_consume_outcome_<id> == 1) {
+            //         nova_rethrow_with_suppressed(&_consume_frame_<id>);
+            //     }
+            //     #undef <binding>
+            // }
+            Stmt::ConsumeScope { binding, type_annot: _, init, body, span } => {
+                let init_c_type = self.infer_expr_c_type(init);
+                let init_c_code = self.emit_expr(init)?;
+                let scope_id = self.defer_block_counter;
+                self.defer_block_counter += 1;
+                let c_binding = format!("_consume_{}_{}", binding, scope_id);
+                let frame = format!("_consume_frame_{}", scope_id);
+                let outcome_kind = format!("_consume_outcome_{}", scope_id);
+                let outcome_val = format!("_consume_outcome_val_{}", scope_id);
+                // Strip Nova_ prefix + pointer star для symbol resolution.
+                let type_name = init_c_type
+                    .trim_start_matches("Nova_")
+                    .trim_end_matches('*')
+                    .trim()
+                    .to_string();
+                let on_exit_c = format!("Nova_{}_consume_on_exit", type_name);
+
+                self.line(&format!("/* Plan 110.1.4: consume {} = ... {{ ... }} */", binding));
+                self.line("{");
+                self.indent += 1;
+                self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
+                self.line(&format!("#define {} {}", binding, c_binding));
+                // Register binding's C type для downstream member/method
+                // dispatch (codegen uses var_types для `r.field` → `r->field`
+                // detection на pointer types).
+                self.var_types.insert(binding.clone(), init_c_type.clone());
+
+                // Plan 110.2.3 (D192): resolve exit_timeout via 3-level
+                // fallback.
+                //   - Level 1: WithExitTimeout per-type impl (vtable lookup,
+                //     gated on Plan 110.2.5 stdlib protocol impl).
+                //   - Level 2: Application effect handler (Plan 110.4.6.a) —
+                //     check `_nova_handler_Application` and dispatch
+                //     `default_exit_timeout_ms()`.
+                //   - Level 3: hardcoded 5000ms via nv_resolve_exit_timeout_ms().
+                // Plan 110.2.4 (D198): #realtime fn bypasses 3-level resolution,
+                // emits hardcoded 0 (no timeout = realtime-incompatible suspend).
+                let timeout_var = format!("_consume_timeout_{}", scope_id);
+                if self.in_realtime {
+                    self.line(&format!(
+                        "int {} = 0;  /* Plan 110.2.4 (D198): #realtime bypass — no timeout */",
+                        timeout_var
+                    ));
+                } else if self.effect_schemas.contains_key("Application") {
+                    // Plan 110.4.6.a (D192 Level 2 + D195): consult Application
+                    // handler если bound; else Level 3 fallback.
+                    self.line(&format!("int {};", timeout_var));
+                    self.line(&format!("if (_nova_handler_Application) {{"));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "{} = (int)Nova_Application_default_exit_timeout_ms();",
+                        timeout_var
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!("{} = nv_resolve_exit_timeout_ms();", timeout_var));
+                    self.indent -= 1;
+                    self.line("}");
+                } else {
+                    self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
+                }
+
+                // Plan 110.2.1 (D188 R3): enter cancel-shield для body
+                // execution + cleanup. Runtime: nova_cancel_mask_inc +
+                // deadline_ns capture (Plan 110.2.1.a + 110.2.2.a).
+                self.line(&format!("nv_consume_enter_shield({});", timeout_var));
+
+                // Plan 110.4.4.a (D185): Cleanup effect on_scope_enter
+                // dispatch. Observability-only — invoked если user handler
+                // bound, else silent no-op. Guard by NULL-check; the
+                // `_nova_handler_Cleanup` TLS slot is emitted by
+                // emit_effect_type when Cleanup decl is in scope (via
+                // std/prelude/effects.nv import-by-default). Label = type
+                // name; timeout_ms = resolved exit deadline.
+                if self.effect_schemas.contains_key("Cleanup") {
+                    self.line(&format!(
+                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
+                        type_name, timeout_var
+                    ));
+                }
+
+                // 110.1.4.d: setup fail-frame for throw catching.
+                self.line(&format!("NovaFailFrame {};", frame));
+                self.line(&format!("nova_fail_push(&{});", frame));
+                self.line(&format!("{}.error_suppressed = NULL;", frame));
+                self.line(&format!("int {} = 0;  /* 0=Success, 1=Failure, 2=Panic */", outcome_kind));
+
+                // setjmp wrap around body.
+                self.line(&format!("if (setjmp({}.jmp) == 0) {{", frame));
+                self.indent += 1;
+                // Plan 110.1.9 T2.5: enter defer scope для body block.
+                // Defer inside body должен fire BEFORE on_exit (LIFO),
+                // используя стандартный defer mechanism.
+                let body_defer_id = self.enter_defer_scope(body, false);
+                for s in &body.stmts {
+                    self.emit_stmt(s)?;
+                }
+                if let Some(t) = &body.trailing {
+                    let v = self.emit_expr(t)?;
+                    self.line(&format!("(void)({});", v));
+                }
+                // Leave defer scope перед nova_fail_pop — runs defers в LIFO.
+                self.leave_defer_scope(body_defer_id);
+                self.line("nova_fail_pop();");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("nova_fail_pop();");
+                // 110.1.4.g: distinguish panic (NOVA_THROW_PANIC) vs throw.
+                self.line(&format!(
+                    "{} = ({}.error_kind == NOVA_THROW_PANIC) ? 2 : 1;",
+                    outcome_kind, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+
+                // 110.1.4.e + 110.1.4.g + 110.5.6: construct outcome + dispatch
+                // on_exit. D90 §7 amend (Plan 110.5.6): cancel-routed throws
+                // (NOVA_THROW_CANCEL) prefixed with "cancel: " marker для
+                // resource discrimination через ScopeOutcome::Failure variant.
+                // Full typed CancelError construction после MultiError payload
+                // any migration ([M-110-multierror-any]).
+                self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
+                self.line(&format!("if ({} == 0) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("{} = nova_make_ScopeOutcome_Success();", outcome_val));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!(
+                    "/* D90 §7 amend (Plan 110.5.6): cancel marker prepended */"
+                ));
+                self.line(&format!(
+                    "if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame
+                ));
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Panic({}.error_msg);",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
+
+                // Plan 110.4.4.b (D185): Cleanup effect on_scope_exit
+                // dispatch. Pairs with on_scope_enter — fires after the
+                // user on_exit body has run (so observability sees the
+                // final outcome). Guarded by NULL-check; same scoping
+                // rules as enter.
+                if self.effect_schemas.contains_key("Cleanup") {
+                    self.line(&format!(
+                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
+                        type_name, outcome_val
+                    ));
+                }
+
+                // Plan 110.2.1: leave cancel-shield before re-propagation.
+                // Pending cancel (if any) delivered после leave_shield.
+                self.line(&format!("nv_consume_leave_shield();"));
+
+                // 110.1.4.f: re-raise после on_exit на Failure outcome.
+                // 110.1.4.g: re-panic на Panic outcome (через nv_panic →
+                // тот же setjmp routing, но preserves PANIC kind).
+                self.line(&format!("if ({} == 1) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 2) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("nv_panic({}.error_msg);", frame));
+                self.indent -= 1;
+                self.line("}");
+
+                self.line(&format!("#undef {}", binding));
+                self.var_types.remove(binding);
+                self.indent -= 1;
+                self.line("}");
+                let _ = span;
+            }
             // Plan 33.2 Ф.8 (D24): `assert_static <expr>` — intermediate
             // proof obligation. Сейчас (без full SMT body-encoding)
             // эмитим как runtime check в debug. В release без
@@ -14425,6 +14835,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
             ExprKind::BoolLit(b)  => Ok(if *b { "true".into() } else { "false".into() }),
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
+            // Plan 115 D214: `null ptr` literal → C `((nova_ptr)0)`.
+            ExprKind::NullPtrLit  => Ok("((nova_ptr)0)".into()),
             ExprKind::StrLit(s)   => {
                 let escaped = Self::escape_c_str(s);
                 Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
@@ -14534,6 +14946,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Mapping table в `numeric_type_constant_mapping`.
                 if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(parts) {
                     return Ok(c_expr.to_string());
+                }
+                // Plan 114.4.1 (D200): associated constants — `Type.NAME`
+                // emitted as `Type_NAME` C-symbol. Symbol present в var_types
+                // если emit_type_decl уже emitted assoc const declaration.
+                if parts.len() == 2 {
+                    let symbol = format!("{}_{}", parts[0], parts[1]);
+                    if self.var_types.contains_key(&symbol) {
+                        return Ok(symbol);
+                    }
                 }
                 // D109: qualified unit variant constructor: `Type.Variant`.
                 // In monomorphized context, Type may be a generic type (e.g. Slot[K,V]).
@@ -15065,6 +15486,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Tuple field access: t.0 → t.f0, t.1 → t.f1, etc.
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     let idx: usize = name.parse().unwrap_or(0);
+                    // Plan 115 D214 [M-115-newtype-constructor]: `.0` on a
+                    // scalar-typed value (e.g. `h.0` where h: SqHandle = ptr)
+                    // → identity. Single-element newtype `type X(Y)` is
+                    // typedef Y Nova_X — `h.0` extracts the inner Y value =
+                    // the same C value. Without this, emit_c эмитит `h.f0`
+                    // → C error (h не struct).
+                    if idx == 0
+                        && !obj_ty.starts_with("_NovaTuple")
+                        && Self::is_value_type(&obj_ty)
+                    {
+                        return Ok(o);
+                    }
                     let field_name = format!("f{}", idx);
                     // For void* (erased generic return), cast to _NovaTupleN* if we know the element types
                     if obj_ty == "void*" {
@@ -15309,6 +15742,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Real type storage — no nova_int slot erasure, no heap boxing
                 // для struct elements (nova_str fits directly).
                 // Legacy fallback на `_NovaTupleN` — для erased generic contexts.
+                //
+                // Plan 115 D214: `ptr` primitive имеет distinct typedef
+                // `nova_ptr` (= void*) — distinguishable от erased generic-T
+                // `void*` placeholder. `void*` остаётся erased indicator;
+                // `nova_ptr` — legitimate ptr-typed element для mono path.
                 let n = elems.len();
                 let mut emitted_vals: Vec<String> = Vec::new();
                 let mut emitted_types: Vec<String> = Vec::new();
@@ -15318,7 +15756,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let v = self.emit_expr(e)?;
                     emitted_vals.push(v);
                     emitted_types.push(ety.clone());
-                    // "void*" or empty type — too erased для mono.
+                    // "void*" or empty type — erased generic placeholder.
+                    // `nova_ptr` (Plan 115 D214) — explicit ptr, мelt mono path.
                     if ety.is_empty() || ety == "void*" {
                         all_concrete = false;
                     }
@@ -16710,6 +17149,47 @@ _cp++; \
                 let code_val = self.emit_expr(args[0].expr())?;
                 let msg_val = self.emit_expr(args[1].expr())?;
                 return Ok(format!("(nv_exit({}, {}), (nova_int)0LL)", code_val, msg_val));
+            }
+            // Plan 120 (D215): named tuple constructor `Point(x: 1.0, y: 2.0)`.
+            // type_aliases maps "Point" → "NovaTuple_Point"; emit compound literal.
+            if let Some(c_ty) = self.type_aliases.get(name.as_str()).cloned() {
+                if c_ty.starts_with("NovaTuple_") {
+                    let mut field_inits = Vec::new();
+                    for a in args {
+                        match a {
+                            CallArg::Named { name: field_name, value } => {
+                                let v = self.emit_expr(value)?;
+                                let mangled = Self::mangle_field_name(field_name);
+                                field_inits.push(format!(".{} = {}", mangled, v));
+                            }
+                            CallArg::Item(e) => {
+                                let v = self.emit_expr(e)?;
+                                field_inits.push(v);
+                            }
+                            CallArg::Spread(_) => {}
+                        }
+                    }
+                    return Ok(format!("(({}){{{}}})", c_ty, field_inits.join(", ")));
+                }
+            }
+        }
+
+        // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` newtype
+        // constructor. `type SqHandle(ptr)` → `typedef nova_ptr Nova_SqHandle;`
+        // (см. emit_type_decl TypeDeclKind::Newtype branch). Constructor call
+        // `SqHandle(raw_ptr)` is identity (newtype = transparent typedef). Без
+        // этого intercept'а codegen падал в general dispatch → undefined
+        // symbol `nova_fn_SqHandle`. Single-arg only — multi-arg tuple newtype
+        // `type X(A, B)` — followup `[M-115-newtype-multiarg-constructor]`.
+        // Tuple-newtype (single-element with parens) treated identically:
+        // `(Y)` collapses to `Y` в parse_type, и TypeDeclKind::Newtype(Y) =
+        // identity wrapping.
+        if let ExprKind::Ident(name) = &func.kind {
+            if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                if args.len() == 1 {
+                    let v = self.emit_expr(args[0].expr())?;
+                    return Ok(format!("(({})({}))", aliased_c, v));
+                }
             }
         }
 
@@ -21583,7 +22063,7 @@ _cp++; \
                     for f in fields {
                         let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
                         let inner_pat = f.pattern.clone()
-                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                            .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false });
                         out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &ty, this));
                     }
                     return out;
@@ -21604,7 +22084,7 @@ _cp++; \
                         if let Some(field_c) = field_c {
                             // `field: pat` — recurse pat; `field` shorthand — bind directly.
                             let inner_pat = f.pattern.clone()
-                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span });
+                                .unwrap_or_else(|| Pattern::Ident { name: f.name.clone(), span: f.span, is_mut: false });
                             out.extend(Self::collect_pattern_inner_bindings(&inner_pat, &field_c, this));
                         } else if f.pattern.is_none() {
                             // Shorthand field без type info — bind как scr_ty (fallback).
@@ -25145,6 +25625,25 @@ _cp++; \
             ("f64",  "str",  "use `str.from(f)`"),
             ("bool", "str",  "use `str.from(b)`"),
             ("char", "str",  "use `str.from(c)` (UTF-8 encode)"),
+            // Plan 115 D214: ptr cast restrictions.
+            // Allowed: ptr ↔ {u64, i64, int} (для integer-storage).
+            // Banned: ptr ↔ {str, bool, f32, f64, char}.
+            ("ptr",  "str",  "[E_PTR_CAST_INVALID_TARGET] `ptr as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
+            ("ptr",  "bool", "[E_PTR_CAST_INVALID_TARGET] `ptr as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
+            ("ptr",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `ptr as f64` запрещён: pointer→float не имеет semantic meaning"),
+            ("ptr",  "f32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as f32` запрещён"),
+            ("ptr",  "char", "[E_PTR_CAST_INVALID_TARGET] `ptr as char` запрещён"),
+            ("ptr",  "i8",   "[E_PTR_CAST_INVALID_TARGET] `ptr as i8` запрещён: narrows pointer; используйте `as i64` или `as u64`"),
+            ("ptr",  "i16",  "[E_PTR_CAST_INVALID_TARGET] `ptr as i16` запрещён"),
+            ("ptr",  "i32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as i32` запрещён"),
+            ("ptr",  "u8",   "[E_PTR_CAST_INVALID_TARGET] `ptr as u8` запрещён"),
+            ("ptr",  "u16",  "[E_PTR_CAST_INVALID_TARGET] `ptr as u16` запрещён"),
+            ("ptr",  "u32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as u32` запрещён"),
+            ("str",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `str as ptr` запрещён: используйте `s.as_bytes().as_ptr()` (future FFI API)"),
+            ("bool", "ptr",  "[E_PTR_CAST_INVALID_TARGET] `bool as ptr` запрещён"),
+            ("f64",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `f64 as ptr` запрещён"),
+            ("f32",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `f32 as ptr` запрещён"),
+            ("char", "ptr",  "[E_PTR_CAST_INVALID_TARGET] `char as ptr` запрещён"),
         ];
         for (s, t, hint) in banned {
             if &src == s && &tgt_nova == t {
@@ -25192,6 +25691,14 @@ _cp++; \
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
     /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
     fn nova_type_name_from_c(c_ty: &str) -> String {
+        // Plan 115 D214: `nova_ptr` (typedef void*) ↔ Nova `ptr`. Distinct
+        // от `void*` (erased generic-T placeholder) на codegen уровне.
+        // External fn API tools (как-`s as ptr`) могут вернуть raw `void*`
+        // через C library — treat both as Nova ptr для cast/check purposes.
+        let t = c_ty.trim();
+        if t == "nova_ptr" || t == "void*" {
+            return "ptr".into();
+        }
         let trimmed = c_ty.trim_end_matches('*').trim();
         match trimmed {
             "nova_int"  => "int".into(),
@@ -25293,11 +25800,19 @@ _cp++; \
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
             return true;
         }
+        // Plan 120 (D215): named tuples are value types (stack-allocated structs).
+        if ty.starts_with("NovaTuple_") && !ty.ends_with('*') {
+            return true;
+        }
         matches!(ty,
             "nova_int" | "nova_f64" | "nova_f32" | "nova_bool" |
             "nova_str" | "nova_unit" | "nova_byte" |
             "int32_t" | "int16_t" | "int8_t" |
             "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t" |
+            // Plan 70.3 distinct typedef.
+            "nova_char" |
+            // Plan 115 D214: nova_ptr (typedef void*) — value type.
+            "nova_ptr" |
             "Nova_ChannelPair"
         )
     }
@@ -25406,6 +25921,10 @@ _cp++; \
             ExprKind::StrLit(_) => "nova_str".into(),
             ExprKind::InterpolatedStr { .. } => "nova_str".into(),
             ExprKind::UnitLit => "nova_unit".into(),
+            // Plan 115 D214: ptr inference — `null ptr` literal as `nova_ptr`
+            // (distinct typedef = void*; distinguishable от erased generic-T
+            // void* placeholder в TupleLit mono detection).
+            ExprKind::NullPtrLit => "nova_ptr".into(),
             ExprKind::TupleLit(elems) => {
                 // Plan 59: prefer mono'd tuple struct если все element types
                 // concrete. Параллель с emit_expr::TupleLit decision.
@@ -26151,6 +26670,29 @@ _cp++; \
                     if let Some(t) = self.var_types.get(&key).cloned() {
                         return t;
                     }
+                    // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
+                    // newtype constructor — return type = aliased C type.
+                    // Mirror emit_call newtype intercept (single-arg only).
+                    if args.len() == 1 {
+                        if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                            return aliased_c;
+                        }
+                    }
+                    // Plan 115 D214: free external fn (declared в user module
+                    // OR stdlib runtime) return-type через ExternalRegistry.
+                    // Без этого `nova_p115_make_pair() -> (ptr, int)` infer'ит
+                    // в "nova_int" fallback → call-site assigns to _NovaTuple2
+                    // mismatch'ит с mono'd `_NovaTuple_2_8_nova_ptr_8_nova_int`.
+                    if let Some(decls) = self.external_registry.by_key
+                        .get(&(String::new(), name.clone()))
+                    {
+                        if let Some(decl) = decls.first() {
+                            let c_ret = &decl.return_c_type;
+                            if !c_ret.is_empty() && c_ret != "void*" {
+                                return c_ret.clone();
+                            }
+                        }
+                    }
                     // Plan 48: infer concrete return type for monomorphized generic fn calls.
                     // When a generic fn's return type is a bare type param T, resolve T
                     // from the first matching argument type.
@@ -26256,6 +26798,12 @@ _cp++; \
                     // `pred fn(int) -> bool` инфер'ится как nova_int.
                     if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
                         return ret_ty.clone();
+                    }
+                    // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
+                    if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
+                        if c_ty.starts_with("NovaTuple_") {
+                            return c_ty.clone();
+                        }
                     }
                     "nova_int".into()
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
@@ -27059,6 +27607,18 @@ _cp++; \
                                 }
                             }
                         }
+                    }
+                    // Plan 115 D214 [M-115-newtype-constructor]: `.0` on a
+                    // scalar-typed value (newtype value `type X(Y)` where Y
+                    // is scalar) returns Y identity. Mirror emit_expr path:
+                    // если obj_ty — value type (not tuple), `.0` = identity.
+                    let idx: usize = name.parse().unwrap_or(usize::MAX);
+                    if idx == 0
+                        && !obj_ty.is_empty()
+                        && !obj_ty.starts_with("_NovaTuple")
+                        && Self::is_value_type(&obj_ty)
+                    {
+                        return obj_ty;
                     }
                 }
                 // Unknown generic stub (void*): field access returns void*

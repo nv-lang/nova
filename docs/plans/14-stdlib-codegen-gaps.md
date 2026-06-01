@@ -198,8 +198,8 @@ first-class. Было:
 
 ```nova
 fn inc(x int) -> int => x + 1
-let f = inc                 // ❌ codegen эмитил extern fn-pointer
-let ys = xs.map(inc)        // ❌ same
+ro f = inc                 // ❌ codegen эмитил extern fn-pointer
+ro ys = xs.map(inc)        // ❌ same
 ```
 
 `emit_c.rs:3580` (Ident → `nova_fn_<name>`) делал только половину
@@ -281,7 +281,7 @@ let ys = xs.map(inc)        // ❌ same
 ```nova
 type Op { name str, f fn(int) -> int }
 
-let op = Op { name: "inc", f: (x) => x + 1 }
+ro op = Op { name: "inc", f: (x) => x + 1 }
 op.f(5)                      // ❌ codegen эмитил direct-call вместо closure-call
 ```
 

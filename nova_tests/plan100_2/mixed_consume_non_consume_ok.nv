@@ -4,7 +4,7 @@
 // `fn drop[T](x T) -> ()` — без bound, silent-ignore. При T=int
 // валидно (int не consume). Это документирует backward-compat policy.
 
-module nova_tests.plan100_2.mixed_consume_non_consume_ok
+module plan100_2.mixed_consume_non_consume_ok
 
 // Generic без bound — silent-ignore mode (Plan 100.1 default).
 // При T=int (не consume) — forget валиден.

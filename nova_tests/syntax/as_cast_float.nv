@@ -13,17 +13,17 @@ module syntax.as_cast_float
 // ───── Helper'ы для NaN / Inf — bootstrap не имеет констант ─────
 
 fn make_nan() -> f64 {
-    let z f64 = 0.0
+    ro z f64 = 0.0
     z / z
 }
 
 fn make_pos_inf() -> f64 {
-    let z f64 = 0.0
+    ro z f64 = 0.0
     1.0 / z
 }
 
 fn make_neg_inf() -> f64 {
-    let z f64 = 0.0
+    ro z f64 = 0.0
     -1.0 / z
 }
 
@@ -31,69 +31,69 @@ fn make_neg_inf() -> f64 {
 // ───── Tests ─────
 
 test "f64 as i16 — in range, truncate towards zero" {
-    let f f64 = 100.7
+    ro f f64 = 100.7
     assert(f as i16 as int == 100)
 }
 
 
 test "f64 as i16 — out of range positive saturates to INT16_MAX" {
-    let f f64 = 70000.0
+    ro f f64 = 70000.0
     assert(f as i16 as int == 32767)
 }
 
 
 test "f64 as i16 — out of range negative saturates to INT16_MIN" {
-    let f f64 = -70000.0
+    ro f f64 = -70000.0
     assert(f as i16 as int == -32768)
 }
 
 
 test "f64 as i16 — NaN gives 0" {
-    let f = make_nan()
+    ro f = make_nan()
     assert(f as i16 as int == 0)
 }
 
 
 test "f64 as i16 — +Infinity saturates to INT16_MAX" {
-    let f = make_pos_inf()
+    ro f = make_pos_inf()
     assert(f as i16 as int == 32767)
 }
 
 
 test "f64 as i16 — -Infinity saturates to INT16_MIN" {
-    let f = make_neg_inf()
+    ro f = make_neg_inf()
     assert(f as i16 as int == -32768)
 }
 
 
 test "f64 as u16 — negative becomes 0 (not wraparound)" {
-    let f f64 = -100.0
+    ro f f64 = -100.0
     assert(f as u16 as int == 0)
 }
 
 
 test "f64 as u8 — out of range saturates to UINT8_MAX" {
-    let f f64 = 1000.0
+    ro f f64 = 1000.0
     assert(f as u8 as int == 255)
 }
 
 
 test "f64 as u8 — NaN gives 0" {
-    let f = make_nan()
+    ro f = make_nan()
     assert(f as u8 as int == 0)
 }
 
 
 test "f64 as int — preserves precision in range" {
-    let f f64 = 12345.0
+    ro f f64 = 12345.0
     assert(f as int == 12345)
 }
 
 
 test "f64 as int — large positive saturates to INT64_MAX" {
-    let f f64 = 1.0e20
+    ro f f64 = 1.0e20
     // INT64_MAX = 9223372036854775807; 1e20 ≫ INT64_MAX → saturate
-    let n = f as int
+    ro n = f as int
     // Проверяем что результат — INT64_MAX, через сравнение с
     // n+1 переполнением: если n == INT64_MAX, то n + 1 wraps.
     // Простое сравнение: n должен быть очень большим положительным.
@@ -102,17 +102,17 @@ test "f64 as int — large positive saturates to INT64_MAX" {
 
 
 test "f64 as int — large negative saturates to INT64_MIN" {
-    let f f64 = -1.0e20
-    let n = f as int
+    ro f f64 = -1.0e20
+    ro n = f as int
     assert(n < -9000000000000000000)
 }
 
 
 test "int wraparound (план 05) не сломан" {
-    let big int = 0x100000000
-    let small = big as i32
+    ro big int = 0x100000000
+    ro small = big as i32
     // 2^32 mod 2^32 = 0
     assert(small as int == 0)
-    let big2 int = 0x1FF
+    ro big2 int = 0x1FF
     assert(big2 as u8 as int == 255)
 }

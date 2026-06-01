@@ -7,7 +7,7 @@ module plan11_followup.f19_self_factory_simple_positive
 import std.collections.hashmap.{HashMap}
 
 test "HashMap.new + insert не использует tuple param" {
-    let mut m HashMap[str, int] = HashMap[str, int].new()
+    mut m HashMap[str, int] = HashMap[str, int].new()
     m.insert("a", 1)
     m.insert("b", 2)
     assert(m.len() == 2)
@@ -16,15 +16,15 @@ test "HashMap.new + insert не использует tuple param" {
 }
 
 test "HashMap.with_capacity + Self dispatch" {
-    let m HashMap[str, int] = HashMap[str, int].with_capacity(32)
+    ro m HashMap[str, int] = HashMap[str, int].with_capacity(32)
     assert(m.len() == 0)
     assert(m.capacity() >= 32)
 }
 
 test "HashMap.clone + Self dispatch" {
-    let mut m HashMap[str, int] = HashMap[str, int].new()
+    mut m HashMap[str, int] = HashMap[str, int].new()
     m.insert("k", 42)
-    let c HashMap[str, int] = m.clone()
+    ro c HashMap[str, int] = m.clone()
     assert(c.len() == 1)
     assert(c.get("k") == Some(42))
 }

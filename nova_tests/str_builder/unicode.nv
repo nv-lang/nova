@@ -7,28 +7,28 @@ module str_builder.unicode
 
 
 test "Cyrillic — byte_len вдвое больше len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("Программирование")
     assert(sb.len() == 16)        // 16 codepoints
     assert(sb.byte_len() == 32)   // 2 байта на codepoint
 }
 
 test "CJK — byte_len втрое больше len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("中文字符")
     assert(sb.len() == 4)
     assert(sb.byte_len() == 12)
 }
 
 test "emoji — byte_len вчетверо больше len" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("😀😁😂")
     assert(sb.len() == 3)
     assert(sb.byte_len() == 12)
 }
 
 test "смешанный скрипт — точный подсчёт" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("ASCII")            // 5 cp, 5 b
     sb.append("Кир")              // 3 cp, 6 b
     sb.append("中")               // 1 cp, 3 b
@@ -38,7 +38,7 @@ test "смешанный скрипт — точный подсчёт" {
 }
 
 test "Unicode — starts_with на codepoint-границе" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("日本語テキスト")
     assert(sb.starts_with("日本"))
     assert(sb.starts_with("日本語"))
@@ -46,14 +46,14 @@ test "Unicode — starts_with на codepoint-границе" {
 }
 
 test "Unicode — ends_with на codepoint-границе" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("текст конца 🎉")
     assert(sb.ends_with("🎉"))
     assert(sb.ends_with("конца 🎉"))
 }
 
 test "Unicode — append(char) по одному codepoint'у" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append('П')
     sb.append('р')
     sb.append('и')
@@ -66,16 +66,16 @@ test "Unicode — append(char) по одному codepoint'у" {
 }
 
 test "Unicode — clone сохраняет многобайтные codepoint'ы" {
-    let mut a = StringBuilder.new()
+    mut a = StringBuilder.new()
     a.append("Ёлка 🎄 中")
-    let b = a.clone()
+    ro b = a.clone()
     assert(b.len() == a.len())
     assert(b.byte_len() == a.byte_len())
     assert(b.into() == "Ёлка 🎄 中")
 }
 
 test "Unicode — peek возвращает многобайтный контент" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("Тест")
     assert(sb.peek() == "Тест")
     sb.append(" 😀")
@@ -83,10 +83,10 @@ test "Unicode — peek возвращает многобайтный конте�
 }
 
 test "Unicode — into паритет codepoint count со str" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append("Привет, 世界 😀")
-    let n = sb.len()    // sb.len() = codepoints
-    let s = sb.into()
+    ro n = sb.len()    // sb.len() = codepoints
+    ro s = sb.into()
     // Plan 108 D26 rev: s.char_len() = codepoints == sb.len() before consume.
     assert(s.char_len() == n)
 }

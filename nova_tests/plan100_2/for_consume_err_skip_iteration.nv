@@ -3,7 +3,7 @@
 // Plan 100.2 (D156): `for consume tx in vec` — arm body does NOT consume tx.
 // Accessing a field without calling a consume method → tx stays Live → error.
 
-module nova_tests.plan100_2.for_consume_err_skip_iteration
+module plan100_2.for_consume_err_skip_iteration
 
 type Transaction consume {
     id int,
@@ -11,7 +11,7 @@ type Transaction consume {
 fn Transaction consume @commit() -> () { () }
 
 test "for consume — skip consume in arm → D156-iter-not-consumed" {
-    let txs = [Transaction { id: 1 }, Transaction { id: 2 }]
+    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }]
     for consume tx in txs {
         // Read tx.id but do NOT call any consume method.
         // ОШИБКА D156-iter-not-consumed: tx is Live on arm exit.

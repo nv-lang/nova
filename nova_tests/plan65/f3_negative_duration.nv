@@ -9,11 +9,11 @@ module plan65.f3_negative_duration
 import std.time.duration
 
 fn main() -> () {
-    let neg = Duration.from_nanos(-1)
+    ro neg = Duration.from_nanos(-1)
     supervised {
         spawn {
             // Should panic before recv returns.
-            let _t = ChanReader.close_after(neg)
+            ro _t = ChanReader.close_after(neg)
             println("unreachable")
         }
     }

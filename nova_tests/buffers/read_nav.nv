@@ -8,15 +8,15 @@ module buffers.read_nav
 // ── from + начальное состояние ─────────────────────────────────────
 
 test "from([]u8) — начальная позиция 0" {
-    let bytes []u8 = [0x11, 0x22, 0x33]
-    let rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [0x11, 0x22, 0x33]
+    ro rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
     assert(rb.remaining() == 3)
 }
 
 test "from([]u8) — пустой буфер" {
-    let bytes []u8 = []
-    let rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = []
+    ro rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
     assert(rb.remaining() == 0)
     assert(rb.has_remaining(1) == false)
@@ -27,21 +27,21 @@ test "from([]u8) — пустой буфер" {
 // ── @position продвигается ────────────────────────────────────────
 
 test "position продвигается после read_byte" {
-    let bytes []u8 = [0xAA, 0xBB, 0xCC]
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [0xAA, 0xBB, 0xCC]
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
-    let _ = rb.read_byte()
+    ro _ = rb.read_byte()
     assert(rb.position() == 1)
-    let _ = rb.read_byte()
+    ro _ = rb.read_byte()
     assert(rb.position() == 2)
 }
 
 test "position продвигается на ширину типа" {
-    let bytes []u8 = [0, 0, 0, 0, 0, 0]
-    let mut rb = ReadBuffer.from(bytes)
-    let _ = rb.read_u16_le()
+    ro bytes []u8 = [0, 0, 0, 0, 0, 0]
+    mut rb = ReadBuffer.from(bytes)
+    ro _ = rb.read_u16_le()
     assert(rb.position() == 2)
-    let _ = rb.read_u32_le()
+    ro _ = rb.read_u32_le()
     assert(rb.position() == 6)
 }
 
@@ -49,22 +49,22 @@ test "position продвигается на ширину типа" {
 // ── @remaining ─────────────────────────────────────────────────────
 
 test "remaining уменьшается по мере чтения" {
-    let bytes []u8 = [1, 2, 3, 4]
-    let mut rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [1, 2, 3, 4]
+    mut rb = ReadBuffer.from(bytes)
     assert(rb.remaining() == 4)
-    let _ = rb.read_byte()
+    ro _ = rb.read_byte()
     assert(rb.remaining() == 3)
-    let _ = rb.read_u16_le()
+    ro _ = rb.read_u16_le()
     assert(rb.remaining() == 1)
-    let _ = rb.read_byte()
+    ro _ = rb.read_byte()
     assert(rb.remaining() == 0)
 }
 
 test "position + remaining = общая длина" {
-    let bytes []u8 = [1, 2, 3, 4, 5]
-    let mut rb = ReadBuffer.from(bytes)
-    let _ = rb.read_byte()
-    let _ = rb.read_byte()
+    ro bytes []u8 = [1, 2, 3, 4, 5]
+    mut rb = ReadBuffer.from(bytes)
+    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()
     assert(rb.position() + rb.remaining() == 5)
 }
 
@@ -72,8 +72,8 @@ test "position + remaining = общая длина" {
 // ── @has_remaining ─────────────────────────────────────────────────
 
 test "has_remaining — точная граница" {
-    let bytes []u8 = [1, 2, 3]
-    let rb = ReadBuffer.from(bytes)
+    ro bytes []u8 = [1, 2, 3]
+    ro rb = ReadBuffer.from(bytes)
     assert(rb.has_remaining(0))
     assert(rb.has_remaining(1))
     assert(rb.has_remaining(3))
@@ -81,9 +81,9 @@ test "has_remaining — точная граница" {
 }
 
 test "has_remaining — после чтения" {
-    let bytes []u8 = [1, 2, 3, 4]
-    let mut rb = ReadBuffer.from(bytes)
-    let _ = rb.read_u16_le()
+    ro bytes []u8 = [1, 2, 3, 4]
+    mut rb = ReadBuffer.from(bytes)
+    ro _ = rb.read_u16_le()
     assert(rb.has_remaining(2))
     assert(!rb.has_remaining(3))
 }
@@ -92,28 +92,28 @@ test "has_remaining — после чтения" {
 // ── @remaining_bytes ───────────────────────────────────────────────
 
 test "remaining_bytes — весь буфер до чтения" {
-    let bytes []u8 = [0x10, 0x20, 0x30]
-    let rb = ReadBuffer.from(bytes)
-    let rest = rb.remaining_bytes()
+    ro bytes []u8 = [0x10, 0x20, 0x30]
+    ro rb = ReadBuffer.from(bytes)
+    ro rest = rb.remaining_bytes()
     assert(rest.len() == 3)
     assert(rest[0] == 0x10)
     assert(rest[2] == 0x30)
 }
 
 test "remaining_bytes — после частичного чтения" {
-    let bytes []u8 = [0x11, 0x22, 0x33]
-    let mut rb = ReadBuffer.from(bytes)
-    let _ = rb.read_byte()
-    let rest = rb.remaining_bytes()
+    ro bytes []u8 = [0x11, 0x22, 0x33]
+    mut rb = ReadBuffer.from(bytes)
+    ro _ = rb.read_byte()
+    ro rest = rb.remaining_bytes()
     assert(rest.len() == 2)
     assert(rest[0] == 0x22)
     assert(rest[1] == 0x33)
 }
 
 test "remaining_bytes — после полного чтения пуст" {
-    let bytes []u8 = [0x99]
-    let mut rb = ReadBuffer.from(bytes)
-    let _ = rb.read_byte()
-    let rest = rb.remaining_bytes()
+    ro bytes []u8 = [0x99]
+    mut rb = ReadBuffer.from(bytes)
+    ro _ = rb.read_byte()
+    ro rest = rb.remaining_bytes()
     assert(rest.len() == 0)
 }

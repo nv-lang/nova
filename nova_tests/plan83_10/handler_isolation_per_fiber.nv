@@ -30,8 +30,8 @@ fn helper_h_999() Time -> int {
 }
 
 test "per-fiber handler isolation — different values seen" {
-    let mut a = 0
-    let mut b = 0
+    mut a = 0
+    mut b = 0
     supervised {
         spawn { a = helper_h_100() }
         spawn { b = helper_h_999() }

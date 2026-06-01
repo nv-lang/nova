@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.heterogeneous_array_test
+module plan91_8a_2.heterogeneous_array_test
 
 // Plan 91.8a.2 followup: heterogeneous []Printable array.
 // Storage: NovaArray_void_p where each slot holds heap-alloc'd
@@ -15,11 +15,11 @@ type Tag { name str }
 fn str.from(t Tag) -> str => "Tag(" + t.name + ")"
 
 test "[]Printable holds Money + Coin + Tag, iterate + fmt all" {
-    let m = Money { cents: 10 }
-    let c = Coin { value: 5 }
-    let t = Tag { name: "x" }
-    let xs []Printable = [m, c, t]
-    let mut sb = StringBuilder.new()
+    ro m = Money { cents: 10 }
+    ro c = Coin { value: 5 }
+    ro t = Tag { name: "x" }
+    ro xs []Printable = [m, c, t]
+    consume sb = StringBuilder.new()
     for x in xs {
         x.fmt(sb)
         sb.append("|")
@@ -28,9 +28,9 @@ test "[]Printable holds Money + Coin + Tag, iterate + fmt all" {
 }
 
 test "[]Printable single element works" {
-    let m = Money { cents: 42 }
-    let xs []Printable = [m]
-    let mut sb = StringBuilder.new()
+    ro m = Money { cents: 42 }
+    ro xs []Printable = [m]
+    consume sb = StringBuilder.new()
     for x in xs {
         x.fmt(sb)
     }
@@ -38,8 +38,8 @@ test "[]Printable single element works" {
 }
 
 test "[]Printable пустой массив — for-loop не выполняется" {
-    let xs []Printable = []
-    let mut sb = StringBuilder.new()
+    ro xs []Printable = []
+    consume sb = StringBuilder.new()
     sb.append("before")
     for x in xs {
         x.fmt(sb)

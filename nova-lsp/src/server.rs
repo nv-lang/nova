@@ -204,11 +204,19 @@ impl LanguageServer for Backend {
                         })),
                     },
                 )),
+                // Plan 114 Ф.7.2: code_action_provider — quick-fix
+                // для E_KW_REMOVED_LET / E_KW_REMOVED_READONLY.
+                code_action_provider: Some(CodeActionProviderCapability::Options(
+                    CodeActionOptions {
+                        code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                        resolve_provider: Some(false),
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
                 // Future capabilities (uncomment as sub-plans land):
                 // 104.2: hover_provider, definition_provider, signature_help_provider
                 // 104.3: completion_provider
                 // 104.4: document_symbol_provider, workspace_symbol_provider
-                // 104.5: code_action_provider
                 // 104.6: rename_provider, document_formatting_provider
                 ..Default::default()
             },
@@ -320,4 +328,92 @@ impl LanguageServer for Backend {
         // Clear diagnostics in the editor (LSP convention: empty list on close).
         self.publish_empty_diagnostics(uri).await;
     }
+
+    /// Plan 114 Ф.7.2: code_action — quick-fix providers.
+    ///
+    /// Сейчас поддерживается:
+    /// - `E_KW_REMOVED_LET` → replace `let X = …` → `ro X = …`,
+    ///   `let mut X = …` → `mut X = …`.
+    /// - `E_KW_REMOVED_READONLY` → replace `readonly` → `ro` в field/type/param.
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri.clone();
+        let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+        for diag in params.context.diagnostics.iter() {
+            if let Some(NumberOrString::String(code)) = &diag.code {
+                let (label, replacement) = match code.as_str() {
+                    "E_KW_REMOVED_LET" => (
+                        "Plan 114: change `let` → `ro` / `mut`",
+                        plan114_fix_let(&self.state, &uri, diag.range),
+                    ),
+                    "E_KW_REMOVED_READONLY" => (
+                        "Plan 114: change `readonly` → `ro`",
+                        plan114_fix_readonly(&self.state, &uri, diag.range),
+                    ),
+                    _ => continue,
+                };
+                let Some(new_text) = replacement else { continue };
+                let mut changes = std::collections::HashMap::new();
+                changes.insert(
+                    uri.clone(),
+                    vec![TextEdit { range: diag.range, new_text }],
+                );
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: label.to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diag.clone()]),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(changes),
+                        document_changes: None,
+                        change_annotations: None,
+                    }),
+                    command: None,
+                    is_preferred: Some(true),
+                    disabled: None,
+                    data: None,
+                }));
+            }
+        }
+        Ok(if actions.is_empty() { None } else { Some(actions) })
+    }
+}
+
+/// Plan 114 Ф.7.2 helper: read the `let`-keyword span (range от LSP-диагностики
+/// должен указывать на сам keyword) и подставить `ro` или `mut` в зависимости
+/// от следующего за ним токена. Если open-document отсутствует или range
+/// out-of-bounds — возвращаем `None`.
+fn plan114_fix_let(
+    state: &Arc<WorkspaceState>,
+    uri: &Url,
+    range: Range,
+) -> Option<String> {
+    let doc = state.docs.get(uri)?;
+    let rope = &doc.text;
+    // LSP range is UTF-16; convert to char-offset for ropey via line+char.
+    let line_idx = range.start.line as usize;
+    let line_end_idx = range.end.line as usize;
+    if line_idx >= rope.len_lines() || line_end_idx >= rope.len_lines() {
+        return None;
+    }
+    // Extract context after the `let` keyword on the same line.
+    let line = rope.line(line_idx).to_string();
+    let after_let_col = (range.end.character as usize).min(line.len());
+    let tail = line[after_let_col..].trim_start();
+    // `let mut X = …` → `mut`; `let X = …` → `ro`.
+    if tail.starts_with("mut") {
+        Some("mut".to_string())
+    } else {
+        Some("ro".to_string())
+    }
+}
+
+/// Plan 114 Ф.7.2: `readonly` → `ro` всегда (canonical rename).
+fn plan114_fix_readonly(
+    _state: &Arc<WorkspaceState>,
+    _uri: &Url,
+    _range: Range,
+) -> Option<String> {
+    Some("ro".to_string())
 }

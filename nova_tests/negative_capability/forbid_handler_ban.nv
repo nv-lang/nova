@@ -10,7 +10,7 @@ type Counter effect {
 }
 
 test "with Counter внутри forbid Counter — error" {
-    let _ = forbid Counter {
+    ro _ = forbid Counter {
         with Counter = Counter { next() => 42 } {
             Counter.next()
         }

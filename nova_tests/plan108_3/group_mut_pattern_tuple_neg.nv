@@ -1,0 +1,17 @@
+// Plan 108.3 (D36 amend): `let mut (a, b)` — group mut на pattern был запрещён.
+//
+// SUPERSEDED by Plan 114 (D184): теперь `mut (a, b) = pair` — canonical
+// form. Leading keyword distributes на все имена в destructure pattern.
+// Per-element granularity (`(ro a, mut b)`) НЕ вводится — Plan 114 design.
+//
+// Этот fixture сохранён как positive test: `mut (a, b)` теперь работает.
+
+module plan108_3.group_mut_pattern_tuple_neg
+
+test "mut (a, b) — group mut distributes, both mutable (Plan 114)" {
+    mut (a, b) = ([1], [2])
+    a.push(99)
+    b.push(88)
+    assert(a.len() == 2)
+    assert(b.len() == 2)
+}

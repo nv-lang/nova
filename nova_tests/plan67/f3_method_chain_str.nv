@@ -6,6 +6,6 @@ module plan67.f3_method_chain_str
 // EXPECT_STDOUT HELLO
 
 fn main() Io -> () {
-    let s = "hello"
+    ro s = "hello"
     println(s.to_upper())
 }

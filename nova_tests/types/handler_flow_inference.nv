@@ -13,7 +13,7 @@ module types.handler_flow_inference
 type WrapperError { msg str }
 
 type Box {
-    readonly value int
+    ro value int
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -22,14 +22,14 @@ type Box {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "int body, int interrupt — basic happy-path" {
-    let r = with Fail[WrapperError] = |e| interrupt -1 {
+    ro r = with Fail[WrapperError] = |e| interrupt -1 {
         42
     }
     assert(r == 42)
 }
 
 test "int body, int interrupt — fail-path" {
-    let r = with Fail[WrapperError] = |e| interrupt -1 {
+    ro r = with Fail[WrapperError] = |e| interrupt -1 {
         throw WrapperError { msg: "fail" }
     }
     assert(r == -1)
@@ -41,16 +41,16 @@ test "int body, int interrupt — fail-path" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "pointer body, pointer interrupt — happy-path" {
-    let fallback = Box { value: -999 }
-    let r = with Fail[WrapperError] = |e| interrupt fallback {
+    ro fallback = Box { value: -999 }
+    ro r = with Fail[WrapperError] = |e| interrupt fallback {
         Box { value: 100 }
     }
     assert(r.value == 100)
 }
 
 test "pointer body, pointer interrupt — fail-path uses fallback" {
-    let fallback = Box { value: -999 }
-    let r = with Fail[WrapperError] = |e| interrupt fallback {
+    ro fallback = Box { value: -999 }
+    ro r = with Fail[WrapperError] = |e| interrupt fallback {
         throw WrapperError { msg: "boom" }
     }
     assert(r.value == -999)
@@ -62,7 +62,7 @@ test "pointer body, pointer interrupt — fail-path uses fallback" {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "option-of-pointer body, None interrupt — happy-path" {
-    let r = with Fail[WrapperError] = |e| interrupt None {
+    ro r = with Fail[WrapperError] = |e| interrupt None {
         Some(Box { value: 7 })
     }
     // r == Some(Box{value:7})
@@ -70,7 +70,7 @@ test "option-of-pointer body, None interrupt — happy-path" {
 }
 
 test "option-of-pointer body, None interrupt — fail-path" {
-    let r = with Fail[WrapperError] = |e| interrupt None {
+    ro r = with Fail[WrapperError] = |e| interrupt None {
         if false { Some(Box { value: 1 }) } else { throw WrapperError { msg: "x" } }
     }
     // r == None

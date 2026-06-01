@@ -4,7 +4,7 @@
 // в protocol-литерале → diagnostic «static methods cannot be
 // implemented in protocol-literal».
 
-module nova_tests.plan97.neg_protocol_lit_static_method
+module plan97.neg_protocol_lit_static_method
 
 
 type WithStatic protocol {
@@ -14,7 +14,7 @@ type WithStatic protocol {
 
 
 test "literal реализует static .make — запрещено" {
-    let l = protocol WithStatic {
+    ro l = protocol WithStatic {
         make(x) => ()       // ❌ static — не имеет value-level реализации
         run() => ()
     }

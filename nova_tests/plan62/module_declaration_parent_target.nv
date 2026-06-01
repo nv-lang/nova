@@ -30,7 +30,7 @@ import std.prelude.runtime.{assert}
 fn box_value(v int) -> Option[int] => Some(v)
 
 test "parent.target form: Some constructor через full-path import" {
-    let s = box_value(101)
+    ro s = box_value(101)
     // Match без method-dispatch — структурное сравнение через Option
     // variants, declared в std/prelude/core.nv (declares `module
     // prelude.core`). Если resolver не сопоставил full-path → 2-seg,
@@ -42,7 +42,7 @@ test "parent.target form: Some constructor через full-path import" {
 }
 
 test "parent.target form: None constructor через full-path import" {
-    let n Option[int] = None
+    ro n Option[int] = None
     match n {
         Some(_) => assert(false),
         None    => assert(true),

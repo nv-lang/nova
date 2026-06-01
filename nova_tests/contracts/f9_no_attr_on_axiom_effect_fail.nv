@@ -12,7 +12,7 @@ type Counter effect {
 }
 
 test "handler без attr на axiom-effect → error" {
-    let mut n = 0
+    mut n = 0
     with Counter = effect Counter {
         Increment() { n = n + 1 }
         value() => n

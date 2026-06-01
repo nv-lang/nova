@@ -4,7 +4,7 @@
 // Проверяет: парсер принимает `let h = effect X { ops }`, `with X = h`
 // работает, прямой вызов `X.op()` диспатчится корректно.
 
-module nova_tests.plan97.pos_effect_literal_basic
+module plan97.pos_effect_literal_basic
 
 
 type Logger effect {
@@ -12,8 +12,8 @@ type Logger effect {
 }
 
 
-test "effect-литерал в let-биндинге + with" {
-    let h = effect Logger {
+test "effect-литерал в ro-биндинге + with" {
+    ro h = effect Logger {
         log(msg) => ()
     }
     with Logger = h {
@@ -23,10 +23,10 @@ test "effect-литерал в let-биндинге + with" {
 
 
 test "несколько с-with блоков с одним литералом" {
-    let h = effect Logger {
+    ro h = effect Logger {
         log(msg) => ()
     }
-    let r1 = with Logger = h { 1 }
-    let r2 = with Logger = h { 2 }
+    ro r1 = with Logger = h { 1 }
+    ro r2 = with Logger = h { 2 }
     assert(r1 + r2 == 3)
 }

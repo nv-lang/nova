@@ -12,23 +12,23 @@
 //
 // EXPECT_TIMEOUT_MS 120000
 
-module nova_tests.plan103_8.prop_barrier_all_or_none
+module plan103_8.prop_barrier_all_or_none
 
 test "prop barrier all-or-none: 8 fibers × 10 rounds, all indices covered each round" {
-    let n        = 8
-    let n_rounds = 10
-    let barrier  = Barrier.new(n)
-    let round_sum = AtomicI64.new(0)  // sum of all arrival indices across all rounds
-    let wg       = WaitGroup.new()
+    ro n        = 8
+    ro n_rounds = 10
+    mut barrier = Barrier.new(n)
+    mut round_sum = AtomicI64.new(0)  // sum of all arrival indices across all rounds
+    mut wg = WaitGroup.new()
     wg.add(n)
 
     // Expected sum per round = 0+1+...+(n-1) = n*(n-1)/2
     // Expected total over all rounds = n_rounds * n*(n-1)/2
-    let expected_sum = n_rounds * n * (n - 1) / 2
+    ro expected_sum = n_rounds * n * (n - 1) / 2
 
     parallel for _i in 0..n {
         for _r in 0..n_rounds {
-            let idx = barrier.wait()
+            ro idx = barrier.wait()
             assert(idx >= 0, "barrier index must be >= 0")
             assert(idx < n, "barrier index must be < n")
             round_sum.fetch_add(idx)
@@ -42,34 +42,34 @@ test "prop barrier all-or-none: 8 fibers × 10 rounds, all indices covered each 
 }
 
 test "prop barrier: cyclic reuse — two consecutive rounds both complete" {
-    let n       = 4
-    let barrier = Barrier.new(n)
-    let r1_sum  = AtomicI64.new(0)
-    let r2_sum  = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    ro n       = 4
+    mut barrier = Barrier.new(n)
+    mut r1_sum  = AtomicI64.new(0)
+    mut r2_sum  = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(n)
 
     parallel for _i in 0..n {
         // Round 1
-        let idx1 = barrier.wait()
+        ro idx1 = barrier.wait()
         r1_sum.fetch_add(idx1)
         // Round 2 — barrier automatically reset
-        let idx2 = barrier.wait()
+        ro idx2 = barrier.wait()
         r2_sum.fetch_add(idx2)
         wg.done()
     }
 
     wg.wait()
-    let expected = n * (n - 1) / 2
+    ro expected = n * (n - 1) / 2
     assert(r1_sum.load() == expected, "round 1 index sum must equal n*(n-1)/2")
     assert(r2_sum.load() == expected, "round 2 index sum must equal n*(n-1)/2")
 }
 
 test "prop barrier: wait_with_action — action runs exactly once per round" {
-    let n             = 4
-    let barrier       = Barrier.new(n)
-    let action_count  = AtomicI64.new(0)
-    let wg            = WaitGroup.new()
+    ro n             = 4
+    mut barrier = Barrier.new(n)
+    mut action_count  = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(n)
 
     parallel for _i in 0..n {
@@ -85,9 +85,9 @@ test "prop barrier: wait_with_action — action runs exactly once per round" {
 }
 
 test "prop barrier: is_broken stays false when no timeout" {
-    let n       = 4
-    let barrier = Barrier.new(n)
-    let wg      = WaitGroup.new()
+    ro n       = 4
+    mut barrier = Barrier.new(n)
+    mut wg = WaitGroup.new()
     wg.add(n)
 
     parallel for _i in 0..n {

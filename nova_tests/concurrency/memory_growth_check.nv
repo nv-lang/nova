@@ -20,8 +20,8 @@ module concurrency.memory_growth_check
 type Point { x int, y int, z int }
 
 test "100 string concatenations — bounded under GC, unbounded под malloc" {
-    let mut s str = ""
-    let mut count int = 0
+    mut s str = ""
+    mut count int = 0
     for i in 0..100 {
         s = "${s}x"
         count = count + 1
@@ -38,9 +38,9 @@ test "10k record allocations — process не падает по OOM" {
     // Создаём 10k records. На default malloc это ~10k × sizeof(record)
     // памяти leaked. ~80 bytes/record = ~800 KB. Не критично для
     // single process, но demonstrates leak rate.
-    let mut last_z int = 0
+    mut last_z int = 0
     for i in 0..10_000 {
-        let p = Point { x: i, y: i * 2, z: i * 3 }
+        ro p = Point { x: i, y: i * 2, z: i * 3 }
         last_z = p.z
     }
     assert(last_z == 29_997)
@@ -50,7 +50,7 @@ test "1M small ops без OOM в boundary case" {
     // 1M простых аллокаций. Должно работать на 64-bit machine с >2 GB
     // free RAM даже под malloc-only (each ~64 bytes ≈ 64 MB).
     // Если процесс падает OOM — это уже production concern.
-    let mut sum int = 0
+    mut sum int = 0
     for i in 0..1_000_000 {
         sum = sum + i
     }

@@ -4,9 +4,9 @@
 // standalone-прогона, поэтому отсутствие `test`-блоков здесь не
 // порождает CC-FAIL.
 
-module named_params.imported_mod
+module imported_mod.config
 
 export fn configure(name str, retries int = 3, verbose bool = false) -> int {
-    let v = if verbose { 1000 } else { 0 }
+    ro v = if verbose { 1000 } else { 0 }
     name.len() + retries * 10 + v
 }

@@ -13,6 +13,6 @@ module negative_capability.trailing_block_legacy_params_rejected
 fn dummy(p fn(int) -> int) -> int => p(0)
 
 test "legacy `f() { x => body }` rejected" {
-    let r = dummy() { x => x + 1 }
+    ro r = dummy() { x => x + 1 }
     assert(r == 1)
 }

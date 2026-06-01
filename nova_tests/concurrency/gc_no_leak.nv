@@ -32,27 +32,27 @@ test "gc no-leak: heap stable после 20 циклов × 10k allocs (records)
     // Warm-up: первые 3 цикла прогревают heap, не учитываем.
     for _ in 0..3 {
         for i in 0..10_000 {
-            let _ = make_junk(i)
+            ro _ = make_junk(i)
         }
         gc.collect()
     }
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
     // 20 измерительных циклов
-    let mut max_growth = 0
+    mut max_growth = 0
     for cycle in 0..20 {
         for i in 0..10_000 {
-            let _ = make_junk(i)
+            ro _ = make_junk(i)
         }
         gc.collect()
-        let h = gc.heap_size()
+        ro h = gc.heap_size()
         if h > baseline {
-            let growth = h - baseline
+            ro growth = h - baseline
             if growth > max_growth {
                 max_growth = growth
             }
         }
-        let _ = cycle
+        ro _ = cycle
     }
 
     println("baseline=${baseline} max_growth=${max_growth} bytes")
@@ -60,7 +60,7 @@ test "gc no-leak: heap stable после 20 циклов × 10k allocs (records)
     // Acceptance: growth не должен превышать 50% baseline'а.
     // 50% — щедрая граница (Boehm может удерживать heap ~2x peak).
     // Linear leak давал бы growth = N × 10k × 32b ≈ 6.4 MB за 20 циклов.
-    let bound = baseline / 2
+    ro bound = baseline / 2
     assert(max_growth < bound)
 }
 
@@ -69,30 +69,30 @@ test "gc no-leak: heap stable после 20 циклов × 10k allocs (records)
 test "gc no-leak: heap stable с nested records (10 циклов × 5k Wrap)" {
     for _ in 0..3 {
         for i in 0..5_000 {
-            let _ = make_wrap(i)
+            ro _ = make_wrap(i)
         }
         gc.collect()
     }
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
-    let mut max_growth = 0
+    mut max_growth = 0
     for cycle in 0..10 {
         for i in 0..5_000 {
-            let _ = make_wrap(i)
+            ro _ = make_wrap(i)
         }
         gc.collect()
-        let h = gc.heap_size()
+        ro h = gc.heap_size()
         if h > baseline {
-            let growth = h - baseline
+            ro growth = h - baseline
             if growth > max_growth {
                 max_growth = growth
             }
         }
-        let _ = cycle
+        ro _ = cycle
     }
 
     println("nested baseline=${baseline} max_growth=${max_growth} bytes")
-    let bound = baseline / 2
+    ro bound = baseline / 2
     assert(max_growth < bound)
 }
 
@@ -101,32 +101,32 @@ test "gc no-leak: heap stable с nested records (10 циклов × 5k Wrap)" {
 test "gc no-leak: stable heap при mixed alloc (15 циклов × 5k)" {
     for _ in 0..3 {
         for i in 0..5_000 {
-            let _ = make_junk(i)
-            let _ = "item_${i}_alloc"
+            ro _ = make_junk(i)
+            ro _ = "item_${i}_alloc"
         }
         gc.collect()
     }
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
-    let mut max_growth = 0
+    mut max_growth = 0
     for cycle in 0..15 {
         for i in 0..5_000 {
-            let _ = make_junk(i)
-            let _ = "item_${i}_alloc"
+            ro _ = make_junk(i)
+            ro _ = "item_${i}_alloc"
         }
         gc.collect()
-        let h = gc.heap_size()
+        ro h = gc.heap_size()
         if h > baseline {
-            let growth = h - baseline
+            ro growth = h - baseline
             if growth > max_growth {
                 max_growth = growth
             }
         }
-        let _ = cycle
+        ro _ = cycle
     }
 
     println("mixed baseline=${baseline} max_growth=${max_growth} bytes")
-    let bound = baseline / 2
+    ro bound = baseline / 2
     assert(max_growth < bound)
 }
 
@@ -137,32 +137,32 @@ test "gc no-leak: stable heap при fiber-allocations (10 циклов × 32 fi
         supervised {
             for i in 0..32 {
                 spawn {
-                    let _ = make_junk(i)
+                    ro _ = make_junk(i)
                 }
             }
         }
         gc.collect()
     }
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
-    let mut max_growth = 0
+    mut max_growth = 0
     for cycle in 0..10 {
         supervised {
             for i in 0..32 {
                 spawn {
-                    let _ = make_junk(i)
+                    ro _ = make_junk(i)
                 }
             }
         }
         gc.collect()
-        let h = gc.heap_size()
+        ro h = gc.heap_size()
         if h > baseline {
-            let growth = h - baseline
+            ro growth = h - baseline
             if growth > max_growth {
                 max_growth = growth
             }
         }
-        let _ = cycle
+        ro _ = cycle
     }
 
     println("fibers baseline=${baseline} max_growth=${max_growth} bytes")
@@ -172,6 +172,6 @@ test "gc no-leak: stable heap при fiber-allocations (10 циклов × 32 fi
     // uncollectable buffers (256 × 4 classes × 16 workers × max 512B =
     // 8 MB cap; per-test ~64-256 KB). Retention BOUNDED, не unbounded leak.
     // Bound = 2 × baseline учитывает pool retention + Boehm overhead.
-    let bound = baseline * 2
+    ro bound = baseline * 2
     assert(max_growth < bound)
 }

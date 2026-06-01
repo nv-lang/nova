@@ -2,7 +2,7 @@
 // `alpha_fn`, использует `beta_fn` из peer B (Rule C: peers share
 // declarations namespace — это OK).
 
-module modules.peer_isolation_ok
+module peer_isolation_ok.alpha
 
 export fn alpha_fn() -> int =>
     beta_fn() + 1

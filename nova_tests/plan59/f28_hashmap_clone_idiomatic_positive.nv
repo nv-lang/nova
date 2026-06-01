@@ -10,35 +10,35 @@ import std.collections.hashmap.{HashMap}
 
 
 test "HashMap[str, int] @clone() — idiomatic iter" {
-    let m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
-    let copy = m.clone()
+    ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    ro copy = m.clone()
     assert(copy.len() == 3)
-    if let Some(v) = copy.get("a") { assert(v == 1) } else { assert(false) }
-    if let Some(v) = copy.get("b") { assert(v == 2) } else { assert(false) }
-    if let Some(v) = copy.get("c") { assert(v == 3) } else { assert(false) }
+    if Some(v) = copy.get("a") { assert(v == 1) } else { assert(false) }
+    if Some(v) = copy.get("b") { assert(v == 2) } else { assert(false) }
+    if Some(v) = copy.get("c") { assert(v == 3) } else { assert(false) }
 }
 
 
 test "HashMap[int, str] @clone() — heterogeneous swap" {
-    let m HashMap[int, str] = [1: "one", 2: "two"]
-    let copy = m.clone()
+    ro m HashMap[int, str] = [1: "one", 2: "two"]
+    ro copy = m.clone()
     assert(copy.len() == 2)
-    if let Some(s) = copy.get(1) { assert(s == "one") } else { assert(false) }
-    if let Some(s) = copy.get(2) { assert(s == "two") } else { assert(false) }
+    if Some(s) = copy.get(1) { assert(s == "one") } else { assert(false) }
+    if Some(s) = copy.get(2) { assert(s == "two") } else { assert(false) }
 }
 
 
 test "HashMap @clone() — empty map" {
-    let m HashMap[str, int] = HashMap[str, int].new()
-    let copy = m.clone()
+    ro m HashMap[str, int] = HashMap[str, int].new()
+    ro copy = m.clone()
     assert(copy.len() == 0)
     assert(copy.is_empty())
 }
 
 
 test "HashMap @clone() — mutate copy doesn't affect original" {
-    let mut m HashMap[str, int] = ["x": 100]
-    let mut copy = m.clone()
+    mut m HashMap[str, int] = ["x": 100]
+    mut copy = m.clone()
     copy.insert("y", 200)
     assert(m.len() == 1)
     assert(copy.len() == 2)

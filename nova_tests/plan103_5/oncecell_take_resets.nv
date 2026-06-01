@@ -1,40 +1,40 @@
 // Plan 103.5 — OnceCell[T].take: atomic remove; cell re-initializable.
 
-module nova_tests.plan103_5.oncecell_take_resets
+module plan103_5.oncecell_take_resets
 
 test "OnceCell.take: returns Some then None" {
-    let cell = OnceCell[int].new()
-    let _ = cell.set(42)
-    let v1 = cell.take()
-    let v2 = cell.take()
+    mut cell = OnceCell[int].new()
+    ro _ = cell.set(42)
+    ro v1 = cell.take()
+    ro v2 = cell.take()
 
     assert(match v1 { Some(x) => x == 42, None => false })
     assert(match v2 { Some(_) => false, None => true })
 }
 
 test "OnceCell.take: cell becomes re-initializable after take" {
-    let cell = OnceCell[int].new()
-    let _ = cell.set(1)
-    let _ = cell.take()
+    mut cell = OnceCell[int].new()
+    ro _ = cell.set(1)
+    ro _ = cell.take()
 
     // Re-initialize with get_or_init
-    let v = cell.get_or_init() { 99 }
+    ro v = cell.get_or_init() { 99 }
     assert(v == 99)
     assert(cell.is_initialized() == true)
 }
 
 test "OnceCell.take: take on empty cell returns None" {
-    let cell = OnceCell[str].new()
-    let v = cell.take()
+    mut cell = OnceCell[str].new()
+    ro v = cell.take()
     assert(match v { Some(_) => false, None => true })
 }
 
 test "OnceCell: set → take → set sequence" {
-    let cell = OnceCell[int].new()
-    let _ = cell.set(10)
-    let _ = cell.take()
-    let r = cell.set(20)
+    mut cell = OnceCell[int].new()
+    ro _ = cell.set(10)
+    ro _ = cell.take()
+    ro r = cell.set(20)
     assert(r == true)
-    let v = cell.get()
+    ro v = cell.get()
     assert(match v { Some(x) => x == 20, None => false })
 }

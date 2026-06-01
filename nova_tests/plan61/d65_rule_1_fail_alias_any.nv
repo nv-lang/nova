@@ -1,4 +1,4 @@
-module nova_tests.plan61.d65_rule_1_fail_alias_any
+module plan61.d65_rule_1_fail_alias_any
 
 // Plan 61 / D65 правило 1: `Fail` ≡ `Fail[any]` — alias / catch-all.
 // `with Fail = |e| ...` (без [E]) ловит **любой** throw.
@@ -10,8 +10,8 @@ fn raise() Fail[ParseError] -> int {
 }
 
 test "Fail без [E] ловит любой typed throw" {
-    let n = with Fail = |_e| interrupt 42 {
-        let _ = raise()
+    ro n = with Fail = |_e| interrupt 42 {
+        ro _ = raise()
         0
     }
     assert(n == 42, "Fail catch-all interrupts to 42")

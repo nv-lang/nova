@@ -42,14 +42,14 @@ Drop-on-overflow behavior:
 
 API draft:
 ```nova
-let ticks = ChanReader.tick_every(Duration.from_secs(1))
+ro ticks = ChanReader.tick_every(Duration.from_secs(1))
 loop {
-    let _ = ticks.recv()  // wait 1 second
+    ro _ = ticks.recv()  // wait 1 second
     do_periodic_work()
 }
 
 // Or with explicit behavior:
-let ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst)
+ro ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst)
 ```
 
 ### R2. Custom timer-wheel runtime
@@ -118,7 +118,7 @@ let ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst
    **(a) `detach (cancel: tok) { ... }` — block-scoped cancel**
    ```nova
    detach (cancel: tok) {
-       let ticker = ChanReader.tick_every(d)   // auto-bound to tok
+       ro ticker = ChanReader.tick_every(d)   // auto-bound to tok
        while true {
            match ticker.recv() {
                Some(_) => f()
@@ -134,7 +134,7 @@ let ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst
 
    **(b) `tick_every(d, cancel: tok)` — per-constructor**
    ```nova
-   let ticker = ChanReader.tick_every(d, cancel: tok)
+   ro ticker = ChanReader.tick_every(d, cancel: tok)
    while true {
        match ticker.recv() {
            Some(_) => f()
@@ -149,7 +149,7 @@ let ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst
 
    **(c) Return `Ticker` type вместо `ChanReader[()]` — Go-style**
    ```nova
-   let ticker = ChanReader.tick_every(d)   // returns Ticker, not ChanReader
+   ro ticker = ChanReader.tick_every(d)   // returns Ticker, not ChanReader
    defer ticker.stop()                      // explicit cleanup
    while true {
        match ticker.recv() {
@@ -194,9 +194,9 @@ let ticks = ChanReader.tick_every_with(Duration.from_secs(1), TickBehavior.Burst
 ```nova
 // std/concurrency/timer.nv (после Plan 66)
 export fn set_interval(d Duration, f fn()) Detach -> CancelToken {
-    let tok = CancelToken.new()
+    ro tok = CancelToken.new()
     detach (cancel: tok) {           // option (d): block-scoped cancel
-        let ticker = ChanReader.tick_every(d)
+        ro ticker = ChanReader.tick_every(d)
         while true {
             match ticker.recv() {
                 Some(_) => f()
@@ -219,8 +219,8 @@ export fn set_interval(d Duration, f fn()) Detach -> CancelToken {
 До Plan 66 теоретически можно implement set_interval через sleep-loop:
 ```nova
 export fn set_interval(d Duration, f fn()) Detach -> CancelToken {
-    let tok = CancelToken.new()
-    let ms = d.nanos / 1_000_000     // precision loss
+    ro tok = CancelToken.new()
+    ro ms = d.nanos / 1_000_000     // precision loss
     detach {
         while !tok.is_cancelled() {
             Time.sleep(ms)

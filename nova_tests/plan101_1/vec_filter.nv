@@ -1,16 +1,16 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @filter.
 
-module nova_tests.plan101_1.vec_filter
+module plan101_1.vec_filter
 
 fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
-    let mut out []T = []
+    mut out []T = []
     for x in @ { if pred(x) { out.push(x) } }
     out
 }
 
 test "fn[T] []T @filter int" {
-    let v []int = [1, 2, 3, 4, 5]
-    let even = v.my_filter(|x| x % 2 == 0)
+    ro v []int = [1, 2, 3, 4, 5]
+    ro even = v.my_filter(|x| x % 2 == 0)
     assert(even.len() == 2)
     assert(even.get(0) == Some(2))
     assert(even.get(1) == Some(4))

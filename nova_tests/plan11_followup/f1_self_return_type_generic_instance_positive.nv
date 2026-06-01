@@ -10,9 +10,9 @@ export type Box[T]
 export fn Box[T] @swap_empty() -> Self => Empty
 
 test "Self в return type generic instance method резолвится" {
-    let b Box[int] = Full(42)
-    let e = b.swap_empty()
-    let is_empty = match e {
+    ro b Box[int] = Full(42)
+    ro e = b.swap_empty()
+    ro is_empty = match e {
         Empty   => true
         Full(_) => false
     }

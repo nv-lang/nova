@@ -3,45 +3,45 @@
 // Verifies lock-free integer and boolean operations.
 // Concurrent tests confirm no data race — final values must be exact.
 
-module nova_tests.concurrency.sync_atomic
+module concurrency.sync_atomic
 
 // ─── AtomicInt: single-fiber baseline ──────────────────────────
 
 test "AtomicInt: new and load" {
-    let a = AtomicInt.new(42)
+    mut a = AtomicInt.new(42)
     assert(a.load() == 42)
 }
 
 test "AtomicInt: store and load" {
-    let a = AtomicInt.new(0)
+    mut a = AtomicInt.new(0)
     a.store(99)
     assert(a.load() == 99)
 }
 
 test "AtomicInt: fetch_add returns previous, updates value" {
-    let a = AtomicInt.new(10)
-    let prev = a.fetch_add(5)
+    mut a = AtomicInt.new(10)
+    ro prev = a.fetch_add(5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
 test "AtomicInt: fetch_sub returns previous, updates value" {
-    let a = AtomicInt.new(20)
-    let prev = a.fetch_sub(7)
+    mut a = AtomicInt.new(20)
+    ro prev = a.fetch_sub(7)
     assert(prev == 20)
     assert(a.load() == 13)
 }
 
 test "AtomicInt: compare_exchange success" {
-    let a = AtomicInt.new(5)
-    let ok = a.compare_exchange(5, 100)
+    mut a = AtomicInt.new(5)
+    ro ok = a.compare_exchange(5, 100)
     assert(ok == true)
     assert(a.load() == 100)
 }
 
 test "AtomicInt: compare_exchange failure (wrong expected)" {
-    let a = AtomicInt.new(5)
-    let ok = a.compare_exchange(99, 100)
+    mut a = AtomicInt.new(5)
+    ro ok = a.compare_exchange(99, 100)
     assert(ok == false)
     assert(a.load() == 5)
 }
@@ -52,17 +52,17 @@ test "AtomicInt: compare_exchange failure (wrong expected)" {
 // a plain `mut n = n + 1` would race and produce < 400. With AtomicInt,
 // the final value must be exactly 400.
 test "AtomicInt: concurrent fetch_add — no data race" {
-    let counter = AtomicInt.new(0)
+    mut counter = AtomicInt.new(0)
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 200 {
                 counter.fetch_add(1)
                 i = i + 1
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 200 {
                 counter.fetch_add(1)
                 i = i + 1
@@ -75,13 +75,13 @@ test "AtomicInt: concurrent fetch_add — no data race" {
 // CAS-based increment loop: each fiber increments via CAS retry.
 // Verifies compare_exchange is usable as a building block.
 test "AtomicInt: CAS loop — cooperative increment" {
-    let val = AtomicInt.new(0)
+    mut val = AtomicInt.new(0)
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 10 {
-                let mut cur = val.load()
-                let mut ok = false
+                mut cur = val.load()
+                mut ok = false
                 while ok == false {
                     ok = val.compare_exchange(cur, cur + 1)
                     if ok == false {
@@ -93,10 +93,10 @@ test "AtomicInt: CAS loop — cooperative increment" {
             }
         }
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 10 {
-                let mut cur = val.load()
-                let mut ok = false
+                mut cur = val.load()
+                mut ok = false
                 while ok == false {
                     ok = val.compare_exchange(cur, cur + 1)
                     if ok == false {
@@ -114,17 +114,17 @@ test "AtomicInt: CAS loop — cooperative increment" {
 // ─── AtomicBool: single-fiber baseline ─────────────────────────
 
 test "AtomicBool: new false and load" {
-    let a = AtomicBool.new(false)
+    mut a = AtomicBool.new(false)
     assert(a.load() == false)
 }
 
 test "AtomicBool: new true and load" {
-    let b = AtomicBool.new(true)
+    mut b = AtomicBool.new(true)
     assert(b.load() == true)
 }
 
 test "AtomicBool: store and load" {
-    let a = AtomicBool.new(false)
+    mut a = AtomicBool.new(false)
     a.store(true)
     assert(a.load() == true)
     a.store(false)
@@ -132,30 +132,30 @@ test "AtomicBool: store and load" {
 }
 
 test "AtomicBool: compare_exchange success" {
-    let a = AtomicBool.new(false)
-    let ok = a.compare_exchange(false, true)
+    mut a = AtomicBool.new(false)
+    ro ok = a.compare_exchange(false, true)
     assert(ok == true)
     assert(a.load() == true)
 }
 
 test "AtomicBool: compare_exchange failure (wrong expected)" {
-    let a = AtomicBool.new(false)
-    let ok = a.compare_exchange(true, false)
+    mut a = AtomicBool.new(false)
+    ro ok = a.compare_exchange(true, false)
     assert(ok == false)
     assert(a.load() == false)
 }
 
 // swap() sets new value, returns previous.
 test "AtomicBool: swap false→true returns previous" {
-    let a = AtomicBool.new(false)
-    let prev = a.swap(true)
+    mut a = AtomicBool.new(false)
+    ro prev = a.swap(true)
     assert(prev == false)
     assert(a.load() == true)
 }
 
 test "AtomicBool: swap true→false returns previous" {
-    let a = AtomicBool.new(true)
-    let prev = a.swap(false)
+    mut a = AtomicBool.new(true)
+    ro prev = a.swap(false)
     assert(prev == true)
     assert(a.load() == false)
 }
@@ -166,23 +166,23 @@ test "AtomicBool: swap true→false returns previous" {
 // the previous value — the "winner" of the one-shot ownership race.
 // This is the canonical once-flag pattern without Once.
 test "AtomicBool: swap one-shot ownership — exactly one winner" {
-    let flag = AtomicBool.new(false)
-    let winners = AtomicInt.new(0)
+    mut flag = AtomicBool.new(false)
+    mut winners = AtomicInt.new(0)
     supervised {
         spawn {
-            let was_false = flag.swap(true)
+            ro was_false = flag.swap(true)
             if was_false == false {
                 winners.fetch_add(1)
             }
         }
         spawn {
-            let was_false = flag.swap(true)
+            ro was_false = flag.swap(true)
             if was_false == false {
                 winners.fetch_add(1)
             }
         }
         spawn {
-            let was_false = flag.swap(true)
+            ro was_false = flag.swap(true)
             if was_false == false {
                 winners.fetch_add(1)
             }

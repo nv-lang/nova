@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.1.9 T2.5 (D188 R5 LIFO): defer inside consume body fires
+// BEFORE on_exit. LIFO exit order verification.
+
+module plan110.codegen_mixed_defer_consume
+
+type ResZ {
+    ro id int
+}
+
+fn ResZ.new(id int) -> ResZ => { id }
+fn ResZ consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn use_mixed() -> int {
+    mut counter = 0
+    consume r = ResZ.new(5) {
+        defer { counter = counter + 100 }
+        counter = counter + r.id
+        // Exit order: defer body runs (counter += 100),
+        // then on_exit (no observable side effect here).
+    }
+    counter
+}
+
+test "Plan 110.1.9 T2.5: mixed defer + consume LIFO" {
+    assert(use_mixed() == 105)
+}

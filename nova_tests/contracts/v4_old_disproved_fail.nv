@@ -13,5 +13,5 @@ fn lying(x int) -> int
 }
 
 test "lying fn → ensures violated at runtime" {
-    let _ = lying(5)
+    ro _ = lying(5)
 }

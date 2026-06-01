@@ -15,7 +15,7 @@ fn freebsd_only() -> int =>
     42
 
 test "inactive cfg-gated item not callable" {
-    let _ = always_fn()
-    let _x = freebsd_only()
+    ro _ = always_fn()
+    ro _x = freebsd_only()
     assert(true)
 }

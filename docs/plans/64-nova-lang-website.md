@@ -575,7 +575,7 @@ WantedBy=multi-user.target
 fn main() !
     uses Net, Http, Log, Fs
 {
-    let cancel = CancelToken.new()
+    ro cancel = CancelToken.new()
     signal_handler(SIGTERM, fn() { cancel.cancel() })
 
     serve("127.0.0.1:8080", router(), cancel: cancel)

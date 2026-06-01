@@ -1,11 +1,11 @@
 // Plan 90 Ф.4.3 — []T.copy_from: memcpy distinct-срезов.
 
-module nova_tests.plan90.copy_from
+module plan90.copy_from
 
 
 test "copy_from — полное копирование" {
-    let mut dst []u8 = [0, 0, 0]
-    let src []u8 = [7, 8, 9]
+    mut dst []u8 = [0, 0, 0]
+    ro src []u8 = [7, 8, 9]
     dst.copy_from(src)
     assert(dst.compare(src) == 0)
 }
@@ -13,16 +13,16 @@ test "copy_from — полное копирование" {
 test "copy_from — partial copy via slice idiom (dst[..n].copy_from(src))" {
     // Plan 90.1 migration: old silent truncation → explicit slice prefix.
     // dst[..2].copy_from(src) copies src into first 2 elements; tail untouched.
-    let mut dst []u8 = [1, 2, 3, 4]
-    let src []u8 = [9, 9]
+    mut dst []u8 = [1, 2, 3, 4]
+    ro src []u8 = [9, 9]
     dst[..2].copy_from(src)
-    let expect []u8 = [9, 9, 3, 4]
+    ro expect []u8 = [9, 9, 3, 4]
     assert(dst.compare(expect) == 0)
 }
 
 test "copy_from — []int" {
-    let mut dst []int = [0, 0]
-    let src []int = [100, 200]
+    mut dst []int = [0, 0]
+    ro src []int = [100, 200]
     dst.copy_from(src)
     assert(dst == src)
 }

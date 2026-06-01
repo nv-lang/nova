@@ -3,7 +3,7 @@
 // Plan 97 Ф.4 (D142) — protocol-литерал без обязательного метода
 // → type-checker diagnostic «missing required instance methods».
 
-module nova_tests.plan97.neg_protocol_lit_missing_method
+module plan97.neg_protocol_lit_missing_method
 
 
 type TwoMethod protocol {
@@ -13,7 +13,7 @@ type TwoMethod protocol {
 
 
 test "literal без bar" {
-    let l = protocol TwoMethod {
+    ro l = protocol TwoMethod {
         foo() => ()
         // bar отсутствует — должна быть compile ошибка
     }

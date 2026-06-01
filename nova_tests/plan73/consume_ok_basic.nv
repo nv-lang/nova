@@ -3,19 +3,19 @@
 // `StringBuilder consume @into()` — после @into() переменная не
 // используется → ошибки нет, программа компилируется и работает.
 
-module nova_tests.plan73.consume_ok_basic
+module plan73.consume_ok_basic
 
 test "StringBuilder.into — consume без последующего использования" {
     consume sb = StringBuilder.new()
     sb.append("hi")
     sb.append(" there")
-    let s = sb.as_str()
+    ro s = sb.as_str()
     // sb после @into() НЕ используется — D131 не нарушен.
     assert(s == "hi there")
 }
 
 test "into сразу после new — пустой буфер" {
     consume sb = StringBuilder.new()
-    let s = sb.as_str()
+    ro s = sb.as_str()
     assert(s == "")
 }

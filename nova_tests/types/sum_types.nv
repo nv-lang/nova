@@ -30,19 +30,19 @@ fn status_msg(s Status) -> str => match s {
 }
 
 test "construct unit variants" {
-    let c = Red
-    let _ = Green
-    let _ = Blue
+    ro c = Red
+    ro _ = Green
+    ro _ = Blue
     assert(c == Red)
     assert(c != Green)
 }
 
 test "construct tuple variants" {
-    let s = Square(5)
+    ro s = Square(5)
     assert(area(s) == 25)
-    let r = Rectangle(3, 4)
+    ro r = Rectangle(3, 4)
     assert(area(r) == 12)
-    let c = Circle(2)
+    ro c = Circle(2)
     assert(area(c) == 12)
 }
 
@@ -53,14 +53,14 @@ test "mixed variants" {
 }
 
 test "Option from prelude" {
-    let some = Some(42)
-    let none = None
-    let v = match some {
+    ro some = Some(42)
+    ro none = None
+    ro v = match some {
         Some(n) => n
         None    => 0
     }
     assert(v == 42)
-    let v2 = match none {
+    ro v2 = match none {
         Some(n) => n
         None    => -1
     }
@@ -68,14 +68,14 @@ test "Option from prelude" {
 }
 
 test "Result from prelude" {
-    let ok = Ok(100)
-    let err = Err("boom")
-    let v = match ok {
+    ro ok = Ok(100)
+    ro err = Err("boom")
+    ro v = match ok {
         Ok(n)  => n
         Err(_) => 0
     }
     assert(v == 100)
-    let s = match err {
+    ro s = match err {
         Ok(_)   => "ok"
         Err(msg) => msg
     }

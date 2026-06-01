@@ -4,10 +4,10 @@
 //
 // EXPECT_TIMEOUT_MS 10000
 
-module nova_tests.plan103_3.reentrant_unlock_from_wrong_fiber_neg
+module plan103_3.reentrant_unlock_from_wrong_fiber_neg
 
 test "unlock from non-owner fiber panics" {
-    let rm = ReentrantMutex.new()
+    mut rm = ReentrantMutex.new()
 
     // Main acquires lock
     rm.lock()

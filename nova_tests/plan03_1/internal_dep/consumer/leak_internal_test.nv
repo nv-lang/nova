@@ -2,7 +2,7 @@
 // зависимости напрямую. Rule H: `internal/` доступен только изнутри
 // своего пакета — межпакетный импорт запрещён.
 // EXPECT_COMPILE_ERROR internal module
-module consumer_int.leak_internal_test
+module consumer.leak_internal_test
 
 import deplib_int.internal.secret.{secret_base}
 

@@ -6,11 +6,11 @@
 // limitation, EXPECT_COMPILE_ERROR could not catch it); now it is a
 // proper Nova compile error.
 
-module nova_tests.plan70_1.f3_alias_unknown_fn_neg
+module plan70_1.f3_alias_unknown_fn_neg
 
 import nova_tests.plan70_1.helper_mod as h
 
 test "alias call to a non-existent function is rejected" {
-    let _r = h.add_two(1)
+    ro _r = h.add_two(1)
     assert(true)
 }

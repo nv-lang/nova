@@ -8,14 +8,14 @@
 module plan83_10.fiber_deep_recursion_panic
 
 fn recurse(n int) -> int {
-    let v = n + 1
+    ro v = n + 1
     recurse(v) + v
 }
 
 fn main() {
     supervised {
         spawn {
-            let _r = recurse(0)
+            ro _r = recurse(0)
         }
     }
 }

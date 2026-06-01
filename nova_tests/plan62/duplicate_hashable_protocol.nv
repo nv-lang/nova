@@ -27,7 +27,7 @@ type Bucket {
 fn Bucket @hash_with_seed(seed u64) -> u64 => (@value as u64) ^ seed
 
 test "user-defined Hashable shadow — runs OK через user-version" {
-    let b = Bucket { value: 42 }
-    let h = b.hash_with_seed(7 as u64)
+    ro b = Bucket { value: 42 }
+    ro h = b.hash_with_seed(7 as u64)
     assert(h != (0 as u64))
 }

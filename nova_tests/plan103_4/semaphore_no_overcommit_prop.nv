@@ -7,23 +7,23 @@
 // EXPECT_TIMEOUT_MS 30000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_4.semaphore_no_overcommit_prop
+module plan103_4.semaphore_no_overcommit_prop
 
 test "no-overcommit: concurrent_in_region never exceeds N (16 fibers, 3 permits, 100 iters)" {
-    let n_permits = 3
-    let n_fibers  = 16
-    let n_iters   = 100
-    let sem       = Semaphore.new(n_permits)
-    let inside    = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
-    let wg        = WaitGroup.new()
+    ro n_permits = 3
+    ro n_fibers  = 16
+    ro n_iters   = 100
+    mut sem = Semaphore.new(n_permits)
+    mut inside = AtomicInt.new(0)
+    mut violation = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(n_fibers)
 
     parallel for _i in 0..n_fibers {
         for _j in 0..n_iters {
             sem.acquire()
             // Sample: count inside critical region
-            let cnt = inside.fetch_add(1) + 1
+            ro cnt = inside.fetch_add(1) + 1
             if cnt > n_permits {
                 violation.fetch_add(1)
             }
@@ -38,19 +38,19 @@ test "no-overcommit: concurrent_in_region never exceeds N (16 fibers, 3 permits,
 }
 
 test "no-overcommit: acquire/defer-release variant (8 fibers, 2 permits, 200 iters)" {
-    let n_permits = 2
-    let n_fibers  = 8
-    let n_iters   = 200
-    let sem       = Semaphore.new(n_permits)
-    let inside    = AtomicInt.new(0)
-    let violation = AtomicInt.new(0)
-    let wg        = WaitGroup.new()
+    ro n_permits = 2
+    ro n_fibers  = 8
+    ro n_iters   = 200
+    mut sem = Semaphore.new(n_permits)
+    mut inside = AtomicInt.new(0)
+    mut violation = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(n_fibers)
 
     parallel for _i in 0..n_fibers {
         for _j in 0..n_iters {
             sem.acquire()
-            let cnt = inside.fetch_add(1) + 1
+            ro cnt = inside.fetch_add(1) + 1
             if cnt > n_permits {
                 violation.fetch_add(1)
             }

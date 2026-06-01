@@ -2,7 +2,7 @@
 // Bootstrap: returns primary; full chain rendering — production-grade
 // followup ([M-100.4.4-fmt-chain-rich]).
 
-module nova_tests.plan100_4_4.multi_error_fmt_chain_ok
+module plan100_4_4.multi_error_fmt_chain_ok
 
 fn empty_multi() -> MultiError =>
     { primary: "single", suppressed: [] }

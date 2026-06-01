@@ -1,6 +1,6 @@
 // Plan 42.12 Ф.1: active только на Windows (filename suffix `_windows`).
 
-module cfg.platform_route
+module platform_route.impl_windows
 
 export fn platform_name() -> str =>
     "windows"

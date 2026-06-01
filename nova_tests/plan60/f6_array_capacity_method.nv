@@ -1,21 +1,21 @@
-module nova_tests.plan60.f6_array_capacity_method
+module plan60.f6_array_capacity_method
 
 // Plan 60 / D112: `.capacity()` method (renamed from `.cap`).
 // Rust/C++/Swift parity. Должен возвращать ≥ len() (capacity ≥ size).
 
 fn main() -> () {
-    let a []int = [1, 2, 3]
-    let n int = a.len()
-    let c int = a.capacity()
+    ro a []int = [1, 2, 3]
+    ro n int = a.len()
+    ro c int = a.capacity()
     assert(c >= n, "capacity >= len")
     assert(n == 3, "len == 3")
 
-    let b []int = []
+    ro b []int = []
     assert(b.len() == 0, "empty len")
     assert(b.is_empty(), "empty is_empty")
     // capacity для empty array может быть 0 или > 0 (impl-defined);
     // важно что метод вызывается без ошибок.
-    let _c2 int = b.capacity()
+    ro _c2 int = b.capacity()
 
     println("plan60/f6 OK")
 }

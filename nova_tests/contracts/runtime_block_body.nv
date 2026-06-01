@@ -12,7 +12,7 @@ fn abs_block(x int) -> int
     requires x >= 0
     ensures result == x
 {
-    let y = x
+    ro y = x
     y
 }
 

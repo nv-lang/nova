@@ -1,0 +1,18 @@
+// Plan 73.1 (D180): E_VIEW_BINDING_FORBIDDEN — let Y = consume_var (alias).
+
+// EXPECT_COMPILE_ERROR E_VIEW_BINDING_FORBIDDEN
+
+module plan73.binding_let_view_in_body_neg
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn Token consume @release() -> int => @val
+
+test "let Y = consume_var (alias) → E_VIEW_BINDING_FORBIDDEN" {
+    consume tok = Token.new(1)
+    ro twin = tok                  // ОШИБКА D180 Rule 2 — alias-binding запрещён
+    ro v = twin.release()
+    assert(v == 1)
+}

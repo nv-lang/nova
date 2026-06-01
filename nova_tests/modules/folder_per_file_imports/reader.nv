@@ -3,12 +3,12 @@
 // и использует range в своей функции.
 // Peer-сосед (writer.nv) имеет другой набор imports.
 
-module modules.folder_per_file_imports
+module folder_per_file_imports.reader
 
 import std.collections.range.{Range}
 
 export fn sum_range(lo int, hi int) -> int {
-    let mut total = 0
+    mut total = 0
     for i in lo..hi {
         total = total + i
     }

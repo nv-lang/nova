@@ -4,13 +4,13 @@
 // После if (без else) sb потреблён только если flag истинно —
 // использование после = compile error.
 
-module nova_tests.plan73.consume_err_maybe
+module plan73.consume_err_maybe
 
 fn run(flag bool) -> int {
-    let sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("data")
     if flag {
-        let _gone = sb.as_str()
+        ro _gone = sb.as_str()
     }
     // ОШИБКА D131: sb maybe-consumed (then-ветка потребила, else — нет).
     sb.append("more")

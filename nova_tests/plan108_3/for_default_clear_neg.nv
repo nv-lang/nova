@@ -1,0 +1,12 @@
+// Plan 108.3 (D36 amend): `for x in iter` default — `.clear()` тоже даёт E_LOCAL_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan108_3.for_default_clear_neg
+
+test "for default + clear → error" {
+    mut arrs = [[1, 2]]
+    for x in arrs {
+        x.clear()
+    }
+}

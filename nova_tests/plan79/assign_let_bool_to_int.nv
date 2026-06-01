@@ -3,9 +3,9 @@
 // Plan 79 Ф.1: annotation ↔ RHS assignability. `let x int = true` used
 // to compile AND run wrong (silent miscompilation). Now → E7301.
 
-module nova_tests.plan79.assign_let_bool_to_int
+module plan79.assign_let_bool_to_int
 
 fn run() -> int {
-    let x int = true
+    ro x int = true
     x
 }

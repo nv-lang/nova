@@ -1,0 +1,16 @@
+// Plan 73.1 [M-73.1-cross-module-consume-detection] CLOSED:
+// `let g = mu.lock()` где MutexGuard объявлен в std/runtime/sync.nv —
+// project-wide registry теперь видит cross-module consume-types →
+// E_CONSUME_KEYWORD_MISSING срабатывает правильно.
+
+// EXPECT_COMPILE_ERROR E_CONSUME_KEYWORD_MISSING
+
+module plan73.binding_cross_module_consume_neg
+
+import std.runtime.sync
+
+test "let X = mu.lock() (cross-module consume-type) → E_CONSUME_KEYWORD_MISSING" {
+    mut mu = Mutex.new()
+    ro g = mu.lock()              // ❌ MutexGuard consume-type cross-module
+    g.unlock()
+}

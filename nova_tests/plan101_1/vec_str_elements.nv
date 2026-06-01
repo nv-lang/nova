@@ -1,29 +1,29 @@
 // Plan 101.1 Ф.5 — positive: T = str (non-int element).
 
-module nova_tests.plan101_1.vec_str_elements
+module plan101_1.vec_str_elements
 
 fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
-    let mut out []U = []U.with_capacity(@len())
+    mut out []U = []U.with_capacity(@len())
     for x in @ { out.push(f(x)) }
     out
 }
 
 fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
-    let mut out []T = []
+    mut out []T = []
     for x in @ { if pred(x) { out.push(x) } }
     out
 }
 
 test "T=str filter on string-array" {
-    let names []str = ["a", "bb", "ccc", "dddd"]
-    let long_ones = names.my_filter(|n| n.len() > 1)
+    ro names []str = ["a", "bb", "ccc", "dddd"]
+    ro long_ones = names.my_filter(|n| n.len() > 1)
     assert(long_ones.len() == 3)
     assert(long_ones.get(0) == Some("bb"))
 }
 
 test "T=str map T → int (len)" {
-    let names []str = ["alice", "bob", "ch"]
-    let lens = names.my_map(|n| n.len())
+    ro names []str = ["alice", "bob", "ch"]
+    ro lens = names.my_map(|n| n.len())
     assert(lens.len() == 3)
     assert(lens.get(0) == Some(5))
     assert(lens.get(2) == Some(2))

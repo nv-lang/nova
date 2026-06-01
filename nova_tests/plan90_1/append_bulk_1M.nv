@@ -1,13 +1,13 @@
 // Plan 90.1 — stress: append bulk 1M elements smoke perf test.
 // Single append of 1M elements — verify correctness, should complete < 5s.
 
-module nova_tests.plan90_1.append_bulk_1M
+module plan90_1.append_bulk_1M
 
 test "append 1M elements" {
     // Build source array of 1M elements
-    let mut src []int = []
+    mut src []int = []
     src.reserve(1000000)
-    let mut i = 0
+    mut i = 0
     while i < 1000000 {
         src.push(i)
         i = i + 1
@@ -15,7 +15,7 @@ test "append 1M elements" {
     assert(src.len() == 1000000)
 
     // Extend empty dst by 1M elements in one call
-    let mut dst []int = []
+    mut dst []int = []
     dst.append(src)
     assert(dst.len() == 1000000)
     assert(dst[0] == 0)

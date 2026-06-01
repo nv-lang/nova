@@ -1,6 +1,6 @@
 // Plan 42.12 Ф.1: active только на Linux.
 
-module cfg.platform_route
+module platform_route.impl_linux
 
 export fn platform_name() -> str =>
     "linux"

@@ -1,0 +1,13 @@
+// Plan 108.1 (D176 amend): `readonly mut` параметр — parser-level
+// E_PARAM_MOD_CONFLICT (взаимоисключающие квалификаторы).
+
+// EXPECT_COMPILE_ERROR E_PARAM_MOD_CONFLICT
+
+module plan108_1.readonly_mut_conflict_neg
+
+fn bad(ro mut b []int) -> int => b.len()
+
+test "ro + mut → parser error" {
+    mut arr = [1]
+    ro _ = bad(arr)
+}

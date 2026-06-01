@@ -18,6 +18,6 @@ fn bad_max(a int, b int) -> int
 }
 
 fn main() Io -> () {
-    let _ = bad_max(1, 5)
+    ro _ = bad_max(1, 5)
     println("UNREACHABLE")
 }

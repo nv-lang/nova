@@ -13,6 +13,6 @@ module negative_capability.selective_import_unknown_item_rejected
 import std.collections.range.{NonExistentType}
 
 test "usage of unknown selective item rejected (negative)" {
-    let _x NonExistentType = 0
+    ro _x NonExistentType = 0
     assert(true)
 }

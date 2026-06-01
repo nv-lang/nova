@@ -64,7 +64,7 @@ export type ParseRangeError
 /// `*` (any).
 #stable(since = "0.1")
 export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
-    let trimmed = s.trim()
+    ro trimmed = s.trim()
     if trimmed.len() == 0 { throw EmptyInput }
 
     if trimmed == "*" {
@@ -72,23 +72,23 @@ export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
     }
 
     // Split by ||
-    let mut sets []ComparatorSet = []
-    let or_groups = trimmed.split("||")
+    mut sets []ComparatorSet = []
+    ro or_groups = trimmed.split("||")
     for group in or_groups {
-        let comps = parse_comparator_set(group.trim())
+        ro comps = parse_comparator_set(group.trim())
         sets.push({ comparators: comps })
     }
     { sets, any_match: false }
 }
 
 fn parse_comparator_set(s str) Fail[ParseRangeError] -> []Comparator {
-    let mut out []Comparator = []
+    mut out []Comparator = []
     // Split by whitespace
-    let tokens = s.split(" ")
+    ro tokens = s.split(" ")
     for tok in tokens {
-        let t = tok.trim()
+        ro t = tok.trim()
         if t.len() == 0 { continue }
-        let comps = parse_one_comparator(t)
+        ro comps = parse_one_comparator(t)
         for c in comps { out.push(c) }
     }
     out
@@ -98,14 +98,14 @@ fn parse_comparator_set(s str) Fail[ParseRangeError] -> []Comparator {
 fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
     if s.starts_with("^") {
         // ^1.2.3 → >=1.2.3 <2.0.0
-        let v = parse_version(s[1..s.len()])
-        let upper = Version.new(v.major + 1, 0, 0)
+        ro v = parse_version(s[1..s.len()])
+        ro upper = Version.new(v.major + 1, 0, 0)
         return [Ge(v), Lt(upper)]
     }
     if s.starts_with("~") {
         // ~1.2.3 → >=1.2.3 <1.3.0
-        let v = parse_version(s[1..s.len()])
-        let upper = Version.new(v.major, v.minor + 1, 0)
+        ro v = parse_version(s[1..s.len()])
+        ro upper = Version.new(v.major, v.minor + 1, 0)
         return [Ge(v), Lt(upper)]
     }
     if s.starts_with(">=") {
@@ -171,14 +171,14 @@ fn comparator_matches(c Comparator, v Version) -> bool => match c {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "exact: 1.2.3 matches только 1.2.3" {
-    let req = VersionReq.parse("1.2.3")
+    ro req = VersionReq.parse("1.2.3")
     assert(req.matches(Version.from("1.2.3")))
     assert(!req.matches(Version.from("1.2.4")))
     assert(!req.matches(Version.from("1.2.2")))
 }
 
 test "caret ^1.2.3 = >=1.2.3 <2.0.0" {
-    let req = VersionReq.parse("^1.2.3")
+    ro req = VersionReq.parse("^1.2.3")
     assert(req.matches(Version.from("1.2.3")))
     assert(req.matches(Version.from("1.2.4")))
     assert(req.matches(Version.from("1.5.0")))
@@ -188,7 +188,7 @@ test "caret ^1.2.3 = >=1.2.3 <2.0.0" {
 }
 
 test "tilde ~1.2.3 = >=1.2.3 <1.3.0" {
-    let req = VersionReq.parse("~1.2.3")
+    ro req = VersionReq.parse("~1.2.3")
     assert(req.matches(Version.from("1.2.3")))
     assert(req.matches(Version.from("1.2.99")))
     assert(!req.matches(Version.from("1.3.0")))
@@ -196,28 +196,28 @@ test "tilde ~1.2.3 = >=1.2.3 <1.3.0" {
 }
 
 test ">=1.0.0 — нижняя граница" {
-    let req = VersionReq.parse(">=1.0.0")
+    ro req = VersionReq.parse(">=1.0.0")
     assert(req.matches(Version.from("1.0.0")))
     assert(req.matches(Version.from("99.0.0")))
     assert(!req.matches(Version.from("0.9.9")))
 }
 
 test "AND: >1.0.0 <2.0.0" {
-    let req = VersionReq.parse(">1.0.0 <2.0.0")
+    ro req = VersionReq.parse(">1.0.0 <2.0.0")
     assert(req.matches(Version.from("1.5.0")))
     assert(!req.matches(Version.from("1.0.0")))        // строгое >
     assert(!req.matches(Version.from("2.0.0")))
 }
 
 test "OR: 1.0.0 || 2.0.0" {
-    let req = VersionReq.parse("1.0.0 || 2.0.0")
+    ro req = VersionReq.parse("1.0.0 || 2.0.0")
     assert(req.matches(Version.from("1.0.0")))
     assert(req.matches(Version.from("2.0.0")))
     assert(!req.matches(Version.from("1.5.0")))
 }
 
 test "wildcard *: matches anything" {
-    let req = VersionReq.parse("*")
+    ro req = VersionReq.parse("*")
     assert(req.matches(Version.from("0.0.1")))
     assert(req.matches(Version.from("99.99.99")))
 }

@@ -3,15 +3,15 @@
 //
 // EXPECT_COMPILE_WARNING W_REALTIME_TRY_LOCK_FOR_TIMER
 
-module nova_tests.plan103_6.realtime_try_lock_for_zero_warn
+module plan103_6.realtime_try_lock_for_zero_warn
 
 #realtime fn _rt_try_lock_for_short(m mut Mutex) -> bool {
     m.try_lock_for(Duration.from_millis(1))
 }
 
 test "Mutex.try_lock_for warns in #realtime fn" {
-    let m = Mutex.new()
-    let got = _rt_try_lock_for_short(m)
+    mut m = Mutex.new()
+    ro got = _rt_try_lock_for_short(m)
     if got {
         m.unlock()
     }

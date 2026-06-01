@@ -2,12 +2,12 @@
 // Rewritten to use explicit read()/write() + defer unlock() since Nova-body
 // methods (with_read, with_write) use a codegen path not yet supported here.
 
-module nova_tests.plan103_3.rwlock_with_read_with_write_helpers
+module plan103_3.rwlock_with_read_with_write_helpers
 
 test "read lock released after block" {
-    let rw = RwLock.new()
+    mut rw = RwLock.new()
     rw.read()
-    let count_during = rw.reader_count()
+    ro count_during = rw.reader_count()
     rw.read_unlock()
     assert(count_during == 1)
     assert(rw.reader_count() == 0)
@@ -17,8 +17,8 @@ test "read lock released after block" {
 }
 
 test "write lock released and read can follow" {
-    let rw = RwLock.new()
-    let counter = AtomicInt.new(0)
+    mut rw = RwLock.new()
+    mut counter = AtomicInt.new(0)
     rw.write()
     counter.store(99)
     rw.write_unlock()
@@ -30,7 +30,7 @@ test "write lock released and read can follow" {
 }
 
 test "write lock released on panic via defer" {
-    let rw = RwLock.new()
+    mut rw = RwLock.new()
     with Fail = effect Fail {
         fail(_msg) { interrupt () }
     } {

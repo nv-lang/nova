@@ -23,7 +23,7 @@ export fn Counter mut @next() -> Option[int] {
     if @cur >= @end {
         None
     } else {
-        let v = @cur
+        ro v = @cur
         @cur = @cur + 1
         Some(v)
     }
@@ -36,8 +36,8 @@ export fn Counter.new(end int) -> Counter {
 
 
 test "for-in over custom Iterable[T] (Counter)" {
-    let mut sum = 0
-    let it = Counter.new(5)
+    mut sum = 0
+    ro it = Counter.new(5)
     for x in it {
         sum = sum + x
     }
@@ -47,8 +47,8 @@ test "for-in over custom Iterable[T] (Counter)" {
 
 
 test "for-in over Counter — empty range" {
-    let mut count = 0
-    let it = Counter.new(0)
+    mut count = 0
+    ro it = Counter.new(0)
     for _ in it {
         count = count + 1
     }
@@ -57,8 +57,8 @@ test "for-in over Counter — empty range" {
 
 
 test "for-in over Counter — single element" {
-    let mut last = -1
-    let it = Counter.new(1)
+    mut last = -1
+    ro it = Counter.new(1)
     for x in it {
         last = x
     }
@@ -73,7 +73,7 @@ type Doubler {
 
 
 export fn Doubler mut @next() -> Option[int] {
-    let v = @value
+    ro v = @value
     @value = @value * 2
     if v > 100 {
         None
@@ -84,8 +84,8 @@ export fn Doubler mut @next() -> Option[int] {
 
 
 test "for-in over stateful iterator (Doubler)" {
-    let it = Doubler { value: 1 }
-    let mut last = 0
+    ro it = Doubler { value: 1 }
+    mut last = 0
     for x in it {
         last = x
     }

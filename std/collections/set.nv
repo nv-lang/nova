@@ -61,7 +61,7 @@ export fn Set[T].with_capacity(cap int) -> Self =>
 /// Построить множество из итератора.
 #stable(since = "0.1")
 export fn Set[T].from_iter(it Iterable[T]) -> Self {
-    let mut s = Self.new()
+    mut s = Self.new()
     for x in it {
         s.insert(x)
     }
@@ -118,7 +118,7 @@ export fn Set[T] mut @clear() -> () => @map.clear()
 /// Объединение `a | b` — все элементы из обоих множеств.
 #stable(since = "0.1")
 export fn Set[T] @or(other Set[T]) -> Self {
-    let mut out = Self.new()
+    mut out = Self.new()
     for x in @map.keys() { out.insert(x) }
     for x in other.map.keys() { out.insert(x) }
     out
@@ -127,7 +127,7 @@ export fn Set[T] @or(other Set[T]) -> Self {
 /// Пересечение `a & b` — элементы присутствующие в обоих множествах.
 #stable(since = "0.1")
 export fn Set[T] @and(other Set[T]) -> Self {
-    let mut out = Self.new()
+    mut out = Self.new()
     for x in @map.keys() {
         if other.contains(x) { out.insert(x) }
     }
@@ -137,7 +137,7 @@ export fn Set[T] @and(other Set[T]) -> Self {
 /// Разность `a - b` — элементы `a`, которых нет в `b`.
 #stable(since = "0.1")
 export fn Set[T] @minus(other Set[T]) -> Self {
-    let mut out = Self.new()
+    mut out = Self.new()
     for x in @map.keys() {
         if !other.contains(x) { out.insert(x) }
     }
@@ -159,7 +159,7 @@ export fn Set[T] @iter() => @map.keys()
 // ──────────────────────────────────────────────────────────────────────────
 
 test "insert returns true for new, false for existing" {
-    let mut s = Set[int].new()
+    mut s = Set[int].new()
     assert(s.insert(1) == true)
     assert(s.insert(1) == false)     // повтор
     assert(s.insert(2) == true)
@@ -167,7 +167,7 @@ test "insert returns true for new, false for existing" {
 }
 
 test "contains works after insert/remove" {
-    let mut s = Set[str].new()
+    mut s = Set[str].new()
     s.insert("alice")
     s.insert("bob")
     assert(s.contains("alice"))
@@ -182,7 +182,7 @@ test "contains works after insert/remove" {
 // emits for-in on unresolved 'Iter' type. Use insert() directly instead.
 
 test "basic insert and contains" {
-    let mut s = Set[int].new()
+    mut s = Set[int].new()
     s.insert(1)
     s.insert(2)
     s.insert(3)

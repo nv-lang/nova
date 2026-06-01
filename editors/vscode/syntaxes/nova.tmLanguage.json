@@ -154,11 +154,11 @@
                 },
                 {
                     "name": "keyword.declaration.nova",
-                    "match": "\\b(fn|type|alias|effect|handler|protocol|let|const|module|import|export|as|use|test|external)\\b"
+                    "match": "\\b(fn|type|alias|effect|handler|protocol|const|module|import|export|as|use|test|external)\\b"
                 },
                 {
                     "name": "storage.modifier.nova",
-                    "match": "\\b(mut|readonly|consume)\\b"
+                    "match": "\\b(ro|mut|consume)\\b"
                 },
                 {
                     "name": "variable.language.self.nova",

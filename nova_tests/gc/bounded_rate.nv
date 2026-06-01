@@ -11,15 +11,15 @@ module gc.bounded_rate
 
 test "100k string allocs — process does not OOM" {
     Mem.reset()
-    let before = Mem.alloc_count()
-    let mut i = 0
+    ro before = Mem.alloc_count()
+    mut i = 0
     while i < 100_000 {
-        let s = "alloc-" + str.from(i)
+        ro s = "alloc-" + str.from(i)
         // prevent dead-code elimination: use the string
         assert(s.len() > 0)
         i += 1
     }
-    let after = Mem.alloc_count()
+    ro after = Mem.alloc_count()
     // At least one alloc per iteration (concat creates new buffer).
     assert(after > before)
 }
@@ -27,8 +27,8 @@ test "100k string allocs — process does not OOM" {
 test "100k iterations — sum correct, no OOM" {
     // Pure integer accumulation — verifies GC switch doesn't corrupt arithmetic.
     // Under Boehm: GC may run during loop, must not corrupt live stack.
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < 100_000 {
         sum += i
         i += 1
@@ -40,15 +40,15 @@ test "100k iterations — sum correct, no OOM" {
 test "alloc rate: 1k strings — growth bounded" {
     // Sanity: alloc rate does not explode after GC switch.
     Mem.reset()
-    let before = Mem.alloc_count()
-    let mut i = 0
+    ro before = Mem.alloc_count()
+    mut i = 0
     while i < 1000 {
-        let s = str.from(i)
-        let _ = s.len()
+        ro s = str.from(i)
+        ro _ = s.len()
         i += 1
     }
-    let after = Mem.alloc_count()
-    let delta = after - before
+    ro after = Mem.alloc_count()
+    ro delta = after - before
     // At most ~10 allocs per iteration (string buffer + intermediate).
     assert(delta < 1000 * 10)
 }

@@ -1,9 +1,9 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @map[U] inline.
 
-module nova_tests.plan101_1.vec_map_int_int
+module plan101_1.vec_map_int_int
 
 fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
-    let mut out []U = []U.with_capacity(@len())
+    mut out []U = []U.with_capacity(@len())
     for x in @ {
         out.push(f(x))
     }
@@ -11,8 +11,8 @@ fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
 }
 
 test "fn[T] []T @map int → int" {
-    let v []int = [1, 2, 3]
-    let doubled = v.my_map(|x| x * 2)
+    ro v []int = [1, 2, 3]
+    ro doubled = v.my_map(|x| x * 2)
     assert(doubled.len() == 3)
     assert(doubled.get(0) == Some(2))
     assert(doubled.get(2) == Some(6))

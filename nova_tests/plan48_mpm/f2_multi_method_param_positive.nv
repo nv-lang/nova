@@ -1,4 +1,4 @@
-module nova_tests.plan48_mpm.f2_multi_method_param_positive
+module plan48_mpm.f2_multi_method_param_positive
 
 // Plan 48 Ф.9 / D119 positive: метод с ДВУМЯ собственными type params.
 // Exercises method-level multi-param mono: каждая (T, U, V) combination
@@ -10,24 +10,24 @@ export fn Box[T].of(x T) -> Box[T] => { v: x }
 
 // Оба U, V inferred из closure return types.
 export fn Box[T] @combine[U, V](f fn(T) -> U, g fn(T) -> V) -> Box[U] {
-    let _gv = g(@v)        // V binding — exercises V mono per call-site
+    ro _gv = g(@v)        // V binding — exercises V mono per call-site
     Box[U].of(f(@v))
 }
 
 test "combine: T=int, U=int, V=str" {
-    let b = Box[int].of(5)
-    let r = b.combine(|x| x + 1, |x| str.from(x))
+    ro b = Box[int].of(5)
+    ro r = b.combine(|x| x + 1, |x| str.from(x))
     assert(r.v == 6, "U=int result")
 }
 
 test "combine: T=int, U=str, V=int (V differs from U)" {
-    let b = Box[int].of(7)
-    let r = b.combine(|x| str.from(x), |x| x * 10)
+    ro b = Box[int].of(7)
+    ro r = b.combine(|x| str.from(x), |x| x * 10)
     assert(r.v == "7", "U=str result")
 }
 
 test "combine: T=str, U=int, V=str (T=str path)" {
-    let b = Box[str].of("hi")
-    let r = b.combine(|s| s.len(), |s| s + "!")
+    ro b = Box[str].of("hi")
+    ro r = b.combine(|s| s.len(), |s| s + "!")
     assert(r.v == 2, "U=int from str len")
 }

@@ -17,7 +17,7 @@ fn bump(mut c Counter) -> () {
 }
 
 test "P1-A — mut-параметр функции принимается парсером и мутирует поле" {
-    let c = Counter { value: 0 }
+    ro c = Counter { value: 0 }
     bump(c)
     bump(c)
     bump(c)

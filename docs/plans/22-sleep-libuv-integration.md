@@ -881,54 +881,54 @@ void nova_cancel_token_cancel(NovaCancelToken* t) {
 - `nova_tests/concurrency/sleep_real_clock.nv` (новый):
   ```nova
   test "sleep waits at least ms (within slack)" {
-      let t0 = Time.now()
+      ro t0 = Time.now()
       supervised {
           spawn { Time.sleep(100) }
       }
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed >= 100)
       assert(elapsed < 200)        // 100ms slack для CI
   }
 
   test "many fibers sleeping concurrently" {
-      let t0 = Time.now()
+      ro t0 = Time.now()
       supervised {
           for _ in 0..100 { spawn { Time.sleep(100) } }
       }
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed >= 100)
       assert(elapsed < 300)        // ВСЕ 100 спят параллельно
   }
 
   test "cancel during long sleep wakes immediately" {
-      let t0 = Time.now()
+      ro t0 = Time.now()
       cancel_scope { tok =>
           spawn { Time.sleep(10000); panic("should not reach") }
           spawn { Time.sleep(50); tok.cancel() }
       }
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed < 200)        // wake-up через cancel R4
   }
 
   test "sleep(0) is fast yield" {
-      let t0 = Time.now()
+      ro t0 = Time.now()
       supervised {
           spawn { for _ in 0..1000 { Time.sleep(0) } }
       }
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed < 100)        // 1000 yields завершаются быстро
   }
 
   test "sleep precision under load" {
       // Загружаем scheduler 100 background fiber'ами + измеряем
       // одиночный sleep — должен оставаться в пределах ±50ms.
-      let t0 = Time.now()
+      ro t0 = Time.now()
       supervised {
           for _ in 0..100 { spawn { Time.sleep(500) } }
           spawn {
-              let t1 = Time.now()
+              ro t1 = Time.now()
               Time.sleep(100)
-              let dt = Time.now() - t1
+              ro dt = Time.now() - t1
               assert(dt >= 100)
               assert(dt < 200)
           }
@@ -936,8 +936,8 @@ void nova_cancel_token_cancel(NovaCancelToken* t) {
   }
 
   test "sleep handler override still works" {
-      let mut calls = 0
-      let mock = handler Time {
+      mut calls = 0
+      ro mock = handler Time {
           sleep(ms) { calls += 1; return () }
           now() => 12345
       }
@@ -952,9 +952,9 @@ void nova_cancel_token_cancel(NovaCancelToken* t) {
   ```nova
   test "top-level sleep wall-clock" {
       // После D92 (Ф.5) top-level имеет implicit scope, sleep работает.
-      let t0 = Time.now()
+      ro t0 = Time.now()
       Time.sleep(100)
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed >= 100)
       assert(elapsed < 200)
   }
@@ -1097,7 +1097,7 @@ scope. Это **финализирует** унификацию: одна сем
 - `nova_tests/runtime/implicit_main_scope.nv` (новый):
   ```nova
   test "top-level detach completes before exit" {
-      let mut completed = false
+      mut completed = false
       detach { completed = true }
       // detach в top-level кладёт fiber в main-scope (D92).
       // main завершается → drain → detach-fiber выполняется.
@@ -1111,7 +1111,7 @@ scope. Это **финализирует** унификацию: одна сем
 
   test "top-level sleep works (was kernel-block before D92)" {
       // Это дубликат sleep_top_level.nv — оставлен для readability.
-      let t0 = Time.now()
+      ro t0 = Time.now()
       Time.sleep(100)
       assert(Time.now() - t0 >= 100)
   }
@@ -1196,21 +1196,21 @@ bench для regression coverage.
       // На single thread Nova bootstrap — это **парк/wake bench**,
       // не CPU-bound. 10k fiber'ов в sleep + wake — должно укладываться
       // в 1 секунду wall-clock (далеко не sequential 10*100=1000s).
-      let t0 = Time.now()
+      ro t0 = Time.now()
       supervised {
           for _ in 0..10_000 { spawn { Time.sleep(100) } }
       }
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed < 1000)      // 10× headroom vs precision
   }
 
   test "1M sleep(0) yields в < 1 секунды" {
       // CPU-bound stress: scheduler throughput.
-      let t0 = Time.now()
+      ro t0 = Time.now()
       supervised {
           spawn { for _ in 0..1_000_000 { Time.sleep(0) } }
       }
-      let elapsed = Time.now() - t0
+      ro elapsed = Time.now() - t0
       assert(elapsed < 1000)
   }
   ```

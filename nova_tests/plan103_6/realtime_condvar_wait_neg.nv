@@ -3,15 +3,15 @@
 //
 // EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
 
-module nova_tests.plan103_6.realtime_condvar_wait_neg
+module plan103_6.realtime_condvar_wait_neg
 
 #realtime fn _rt_check_condvar_wait(cv mut Condvar, m mut Mutex) {
     cv.wait(m)
 }
 
 test "Condvar.wait banned in #realtime fn" {
-    let m = Mutex.new()
-    let cv = Condvar.new()
+    mut m = Mutex.new()
+    mut cv = Condvar.new()
     m.lock()
     _rt_check_condvar_wait(cv, m)
     m.unlock()

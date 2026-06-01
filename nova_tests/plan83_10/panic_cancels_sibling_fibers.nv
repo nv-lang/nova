@@ -10,15 +10,15 @@
 module plan83_10.panic_cancels_sibling_fibers
 
 test "panic в одном fiber — runtime cleanup correct" {
-    let mut caught = false
-    let _ = with Fail[int] = |e| {
+    mut caught = false
+    ro _ = with Fail[int] = |e| {
         caught = true
         0
     } {
         supervised {
             spawn { throw 7 }
             spawn {
-                let mut i = 0
+                mut i = 0
                 while i < 1000 {
                     i = i + 1
                 }

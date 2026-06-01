@@ -12,14 +12,14 @@
 //
 // EXPECT_TIMEOUT_MS 120000
 
-module nova_tests.plan103_4.condvar_no_lost_wakeup_prop
+module plan103_4.condvar_no_lost_wakeup_prop
 
 test "no lost wakeup: producer/consumer over 100 iterations" {
-    let mu       = Mutex.new()
-    let cv       = Condvar.new()
-    let produced = AtomicInt.new(0)
-    let consumed = AtomicInt.new(0)
-    let n_iters  = 100
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut produced = AtomicInt.new(0)
+    mut consumed = AtomicInt.new(0)
+    ro n_iters  = 100
 
     supervised {
         // Consumer fiber: loops n_iters times
@@ -52,15 +52,15 @@ test "no lost wakeup: producer/consumer over 100 iterations" {
 }
 
 test "no lost wakeup under high contention: 5 producers × 20 items, 5 consumers × 20 items" {
-    let mu       = Mutex.new()
-    let cv       = Condvar.new()
-    let pending  = AtomicInt.new(0)  // produced - consumed
-    let total_consumed = AtomicInt.new(0)
-    let n_prod   = 5
-    let n_cons   = 5
-    let items_pp = 20  // items per producer
-    let items_pc = 20  // items per consumer
-    let wg       = WaitGroup.new()
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut pending  = AtomicInt.new(0)  // produced - consumed
+    mut total_consumed = AtomicInt.new(0)
+    ro n_prod   = 5
+    ro n_cons   = 5
+    ro items_pp = 20  // items per producer
+    ro items_pc = 20  // items per consumer
+    mut wg = WaitGroup.new()
     wg.add(n_prod + n_cons)
 
     supervised {

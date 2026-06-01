@@ -20,13 +20,13 @@ fn make_obj(a int, b int, c int) -> Obj =>
 // ── 1. alloc_count монотонно растёт ───────────────────────────────────────
 
 test "gc: alloc_count монотонно растёт после аллокаций" {
-    let before = gc.alloc_count()
-    let mut sum = 0
+    ro before = gc.alloc_count()
+    mut sum = 0
     for i in 0..1_000 {
-        let o = make_obj(i, i, i)
+        ro o = make_obj(i, i, i)
         sum = sum + o.a
     }
-    let after = gc.alloc_count()
+    ro after = gc.alloc_count()
     assert(after >= before + 1_000)
     assert(sum == 499_500)
 }
@@ -43,12 +43,12 @@ test "gc: collect() безопасен при отсутствии мусора"
 
 test "gc: heap_size — backend-marker (malloc 0, boehm >0)" {
     // Аллоцируем чтобы наполнить heap.
-    let mut keep = make_obj(1, 2, 3)
+    mut keep = make_obj(1, 2, 3)
     for i in 0..1_000 {
-        let o = make_obj(i, i, i)
+        ro o = make_obj(i, i, i)
         keep = o  // удерживает последний live
     }
-    let h = gc.heap_size()
+    ro h = gc.heap_size()
     // Под malloc h == 0 (honest "not supported").
     // Под boehm  h > 0 (heap не пустой).
     // Оба варианта acceptable — проверяем что значение non-negative.
@@ -61,24 +61,24 @@ test "gc: heap_size — backend-marker (malloc 0, boehm >0)" {
 test "gc: после collect() heap не растёт линейно (только под boehm)" {
     // Под boehm — этот тест демонстрирует bounded heap.
     // Под malloc — early-exit через heap_size() == 0.
-    let h0 = gc.heap_size()
+    ro h0 = gc.heap_size()
     if h0 == 0 {
         // malloc backend: skip — нет introspection, тест trivially passes
         assert(true)
     } else {
         // boehm: создаём 10k короткоживущих, явный collect
-        let mut discard = 0
+        mut discard = 0
         for i in 0..10_000 {
-            let o = make_obj(i, i + 1, i + 2)
+            ro o = make_obj(i, i + 1, i + 2)
             discard = discard + o.a
         }
         gc.collect()
-        let h1 = gc.heap_size()
+        ro h1 = gc.heap_size()
         // 10k × 24 bytes = 240k bytes если бы leak. Boehm должен держать
         // heap в разумных пределах (не больше чем h0 + 10x).
         // Если linear leak — h1 был бы ~h0 + 240k или больше.
         // Mild: h1 < h0 * 10 + 1MB (consery).
-        let bound = h0 * 10 + 1_048_576
+        ro bound = h0 * 10 + 1_048_576
         assert(h1 < bound)
         assert(discard > 0)
     }
@@ -88,15 +88,15 @@ test "gc: после collect() heap не растёт линейно (тольк
 
 test "gc: reset_stats обнуляет alloc_count" {
     // Сначала аллоцируем чтобы счётчик был > 0
-    let mut s = 0
+    mut s = 0
     for i in 0..100 {
-        let o = make_obj(i, i, i)
+        ro o = make_obj(i, i, i)
         s = s + o.a
     }
-    let before = gc.alloc_count()
+    ro before = gc.alloc_count()
     assert(before > 0)
     gc.reset_stats()
-    let after = gc.alloc_count()
+    ro after = gc.alloc_count()
     // После reset_stats счётчик должен упасть (либо до 0, либо
     // близко — pending аллокации с момента reset не считаем).
     assert(after < before)
@@ -106,15 +106,15 @@ test "gc: reset_stats обнуляет alloc_count" {
 // ── 6. live_count >= 0 и не "ломается" ────────────────────────────────────
 
 test "gc: live_count — sanity, non-negative" {
-    let lc = gc.live_count()
+    ro lc = gc.live_count()
     assert(lc >= 0)
     // Аллоцируем
-    let mut keep = make_obj(7, 8, 9)
+    mut keep = make_obj(7, 8, 9)
     for i in 0..50 {
-        let o = make_obj(i, i, i)
+        ro o = make_obj(i, i, i)
         keep = o
     }
-    let lc2 = gc.live_count()
+    ro lc2 = gc.live_count()
     // Под malloc live_count = alloc_count (free всегда 0) — растёт.
     // Под boehm  live_count = alloc_count (upper bound) — тоже растёт.
     // Оба варианта: lc2 >= lc.

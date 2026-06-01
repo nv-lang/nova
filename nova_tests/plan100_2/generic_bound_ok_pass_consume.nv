@@ -4,7 +4,7 @@
 // Transaction)`. Since `finish` has param[0] as consume, x is consumed
 // through the call. Demonstrates consume tracking inside generic body.
 
-module nova_tests.plan100_2.generic_bound_ok_pass_consume
+module plan100_2.generic_bound_ok_pass_consume
 
 type Transaction consume {
     id int,

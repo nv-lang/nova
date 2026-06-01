@@ -16,9 +16,9 @@
 **не компилируется**:
 
 ```nova
-let opts []Option[int] = [Some(1), None, Some(3)]
+ro opts []Option[int] = [Some(1), None, Some(3)]
 for o in opts {
-    if let Some(v) = o { ... }     // ← CC-FAIL
+    if Some(v) = o { ... }     // ← CC-FAIL
 }
 ```
 

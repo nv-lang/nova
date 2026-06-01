@@ -1,0 +1,10 @@
+// Plan 108.2 (D36 enforcement): `let` без `mut` → array.clear даёт E_LOCAL_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan108_2.let_nomut_clear_neg
+
+test "let no-mut + clear → error" {
+    mut arr = [1, 2, 3]
+    arr.clear()
+}

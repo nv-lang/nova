@@ -109,6 +109,7 @@ impl DesugarCtx {
     fn desugar_stmt(&mut self, s: &mut Stmt) {
         match s {
             Stmt::Let(d) => self.desugar_expr(&mut d.value),
+            Stmt::Const(d) => self.desugar_expr(&mut d.value),
             Stmt::Expr(e) => self.desugar_expr(e),
             Stmt::Assign { target, value, .. } => {
                 self.desugar_expr(target);
@@ -121,6 +122,11 @@ impl DesugarCtx {
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => self.desugar_expr(body),
+            // Plan 110 D188: desugar init + body block.
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.desugar_expr(init);
+                self.desugar_block(body);
+            }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.desugar_expr(expr),
             // Plan 33.3 Ф.13: Apply/Calc — proof-statements внутри lemma-body.
             // Spec-only, не emit'ятся в codegen. Map-литералы внутри proof —
@@ -221,7 +227,7 @@ impl DesugarCtx {
         );
         stmts.push(Stmt::Let(LetDecl {
             mutable: true,
-            pattern: Pattern::Ident { name: tmp.clone(), span },
+            pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false },
             ty: None,
             value: with_capacity_call,
             span,
@@ -369,7 +375,7 @@ impl DesugarCtx {
         );
         stmts.push(Stmt::Let(LetDecl {
             mutable: true,
-            pattern: Pattern::Ident { name: tmp.clone(), span },
+            pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false },
             ty: None,
             value: with_capacity_call,
             span,
@@ -400,7 +406,7 @@ impl DesugarCtx {
                     let v_tmp = format!("{}_v{}", tmp, idx);
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: k_tmp.clone(), span },
+                        pattern: Pattern::Ident { name: k_tmp.clone(), span, is_mut: false },
                         ty: None,
                         value: k,
                         span,
@@ -409,7 +415,7 @@ impl DesugarCtx {
                     }));
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: v_tmp.clone(), span },
+                        pattern: Pattern::Ident { name: v_tmp.clone(), span, is_mut: false },
                         ty: None,
                         value: v,
                         span,
@@ -456,7 +462,7 @@ impl DesugarCtx {
                     let src_tmp = format!("{}_spr{}", tmp, idx);
                     stmts.push(Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: src_tmp.clone(), span },
+                        pattern: Pattern::Ident { name: src_tmp.clone(), span, is_mut: false },
                         ty: None,
                         value: src_map,
                         span,
@@ -510,7 +516,7 @@ impl DesugarCtx {
                     );
                     let v_let = Stmt::Let(LetDecl {
                         mutable: false,
-                        pattern: Pattern::Ident { name: v_name.clone(), span },
+                        pattern: Pattern::Ident { name: v_name.clone(), span, is_mut: false },
                         ty: None,
                         value: unwrap_call,
                         span,
@@ -541,7 +547,7 @@ impl DesugarCtx {
                     };
                     let for_expr = Expr::new(
                         ExprKind::For {
-                            pattern: Pattern::Ident { name: k_name, span },
+                            pattern: Pattern::Ident { name: k_name, span, is_mut: false },
                             iter: Box::new(keys_call),
                             body: for_body,
                             elem_type: None,
@@ -570,7 +576,7 @@ impl DesugarCtx {
             let typed = format!("{}_typed", tmp);
             stmts.push(Stmt::Let(LetDecl {
                 mutable: false,
-                pattern: Pattern::Ident { name: typed.clone(), span },
+                pattern: Pattern::Ident { name: typed.clone(), span, is_mut: false },
                 ty: Some(TypeRef::Named {
                     path: vec![target_for_hint],
                     generics: vec![k_ty, v_ty],
@@ -767,7 +773,8 @@ impl DesugarCtx {
             // Листовые — нет под-выражений.
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit => {}
         }
     }
 

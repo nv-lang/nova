@@ -11,7 +11,7 @@ type Account {
     invariant balance >= 0
 
 fn main() Io -> () {
-    let bad = Account { balance: -100 }
+    ro bad = Account { balance: -100 }
     println("UNREACHABLE")
-    let _ = bad
+    ro _ = bad
 }

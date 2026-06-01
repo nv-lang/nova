@@ -1,0 +1,51 @@
+// Plan 73.1 V3 — Property #3: migration completeness.
+//
+// Property: stdlib consume-types compile and operate under the D180
+// binding-syntax regime — every consume-binding is `consume X = …`
+// and every view is a function-parameter.  No `let Y = consume_var`
+// dangling.  If any stdlib consume-type were incorrectly migrated,
+// THIS fixture would fail with E_CONSUME_KEYWORD_MISSING or
+// E_VIEW_BINDING_FORBIDDEN at compile-time.
+//
+// Compiling + running this test IS the property's runtime witness.
+//
+// Exercises:
+//   * MutexGuard (Mutex.lock → consume)
+//   * ReadGuard + WriteGuard (RwLock)
+//   * StringBuilder (Plan 109 pure-Nova consume-type)
+//   * Cross-module recognition (M1+M2 closure) — guards are declared in
+//     `std/runtime/sync.nv` but recognized in user-code consume-bindings.
+//
+// EXPECT_PASS
+
+module plan73.binding_migration_completeness_prop
+
+test "property: Mutex consume-bind compiles + commits" {
+    mut m = Mutex.new()
+    consume g = m.lock()
+    g.unlock()
+}
+
+test "property: RwLock read/write consume-binds compile + commit" {
+    mut rw = RwLock.new()
+
+    consume rg = rw.read()
+    rg.unlock()
+
+    consume wg = rw.write()
+    wg.unlock()
+}
+
+test "property: StringBuilder consume-bind + consume @as_str()" {
+    consume sb = StringBuilder.new()
+    sb.append("hi")
+    ro s = sb.as_str()
+    assert(s.len() == 2)
+}
+
+test "property: StringBuilder via fluent-chain mutators then consume" {
+    consume sb = StringBuilder.with_capacity(8)
+    sb.append("a").append("b").append("c")
+    ro s = sb.as_str()
+    assert(s == "abc")
+}

@@ -4,7 +4,7 @@
 // ТОЛЬКО в return type (никакого args не bind'ит его) → должен fail
 // с clean diagnostic, не silent CC-FAIL с Nova_U_p placeholder.
 
-module nova_tests.plan48_mpm.f5_cannot_infer_u_negative
+module plan48_mpm.f5_cannot_infer_u_negative
 
 export type Wrapper[T] { inner T }
 export fn Wrapper[T].of(v T) -> Wrapper[T] => { inner: v }
@@ -15,7 +15,7 @@ export fn Wrapper[T] @produce[U]() -> Wrapper[U] {
 }
 
 test "cannot infer U from no args" {
-    let w = Wrapper[int].of(5)
-    let r = w.produce()
+    ro w = Wrapper[int].of(5)
+    ro r = w.produce()
     assert(true, "never reaches — compile fails")
 }

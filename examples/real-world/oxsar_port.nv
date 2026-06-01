@@ -11,7 +11,7 @@
 // Каждый блок прокомментирован: что было в Go, что стало в Nova и
 // почему. Не полная компиляция — это для чтения, как audit.nv.
 
-module examples.oxsar_port
+module real-world.oxsar_port
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -149,13 +149,13 @@ type FleetReceipt { id str, eta_seconds int }
 export fn send_fleet(req Request)
     Db Net Logger CurrentUser Idem Fail[FleetError] -> Response
 {
-    let input = req.body.parse[SendInput]()?
+    ro input = req.body.parse[SendInput]()?
 
     // Валидация mission уже сделана в parse через тип Mission —
     // невалидное значение не получится создать. В Go было руками:
     //   if req.Mission != 0 && req.Mission != 7 && ... { error }
 
-    let receipt = transport_send(input)  // Fail[FleetError] пробрасывается напрямую
+    ro receipt = transport_send(input)  // Fail[FleetError] пробрасывается напрямую
 
     // Idem.record автоматически — handler сам кэширует ответ по
     // X-Idempotency-Key. В Go это были ручные idem.Record(...).
@@ -186,9 +186,9 @@ fn fleet_error_response(err FleetError) -> Response => match err {
 export fn list_fleets(req Request)
     Db Logger CurrentUser Fail -> Response
 {
-    let user_id = CurrentUser.id().ok_or(Unauthorized)?
-    let list = transport_list(user_id)
-    let (slots_used, slots_max) = transport_slots(user_id)
+    ro user_id = CurrentUser.id().ok_or(Unauthorized)?
+    ro list = transport_list(user_id)
+    ro (slots_used, slots_max) = transport_slots(user_id)
 
     Response.json(200, {
         "fleets": list,
@@ -207,20 +207,20 @@ export fn list_fleets(req Request)
 export fn phalanx(req Request)
     Db Logger CurrentUser Fail[PhalanxError] -> Response
 {
-    let q = req.query
-    let source = q.get("source_planet_id")
+    ro q = req.query
+    ro source = q.get("source_planet_id")
         .ok_or(PhalanxError.MissingSource)?
-    let galaxy = q.get("target_galaxy")
+    ro galaxy = q.get("target_galaxy")
         .ok_or(PhalanxError.MissingGalaxy)?
         .parse[int]()
         .map_err(|_| PhalanxError.InvalidGalaxy)?
-    let system = q.get("target_system")
+    ro system = q.get("target_system")
         .ok_or(PhalanxError.MissingSystem)?
         .parse[int]()
         .map_err(|_| PhalanxError.InvalidSystem)?
 
-    let user_id = CurrentUser.id().ok_or(Unauthorized)?
-    let scans = phalanx_scan(user_id, source, galaxy, system)
+    ro user_id = CurrentUser.id().ok_or(Unauthorized)?
+    ro scans = phalanx_scan(user_id, source, galaxy, system)
 
     Response.json(200, { "scans": scans })
 }
@@ -290,15 +290,15 @@ type RunAcc {
 // В Go возврат (SimStats, Report, error) — три значения. В Nova
 // кортеж + Fail.
 export fn multi_run(input BattleInput, n int) Time Fail[BattleError] -> (SimStats, BattleReport) {
-    let n = if n < 1 { 1 } else { n }
-    let t0 = Time.now()
+    ro n = if n < 1 { 1 } else { n }
+    ro t0 = Time.now()
 
     // План 72.1.3 / BA-021: при seed=0 первая итерация попадает на
     // guard `rng.New(0) → golden_ratio`, остальные — нормальный xorshift.
     // Если seed0 пуст — смещаем индексирование на 1.
-    let seed_offset = if input.seed == 0 { 1 } else { 0 }
+    ro seed_offset = if input.seed == 0 { 1 } else { 0 }
 
-    let mut acc = RunAcc {
+    mut acc = RunAcc {
         att_wins: 0, def_wins: 0, draws: 0,
         total_rounds: 0, total_moon_chance: 0.0,
         atk_lost_m: 0, atk_lost_s: 0, atk_lost_h: 0,
@@ -308,16 +308,16 @@ export fn multi_run(input BattleInput, n int) Time Fail[BattleError] -> (SimStat
         debris_m: 0, debris_s: 0,
         atk_exp: 0, def_exp: 0,
     }
-    let mut last = BattleReport.empty()
+    mut last = BattleReport.empty()
 
     for i in 0..n {
         // Каждая итерация — детерминированный run с seed = base + i.
         // calculate использует handler Random — для теста замена на
         // seeded RNG, для прода — настоящий.
-        let mut iter_input = input
+        mut iter_input = input
         iter_input.seed = input.seed + i + seed_offset
 
-        let rep = with Random = seeded(iter_input.seed) { calculate(iter_input) }
+        ro rep = with Random = seeded(iter_input.seed) { calculate(iter_input) }
 
         last = rep
         acc.total_rounds += rep.rounds
@@ -353,10 +353,10 @@ export fn multi_run(input BattleInput, n int) Time Fail[BattleError] -> (SimStat
         acc.def_exp += rep.defender_exp
     }
 
-    let elapsed = Time.elapsed_seconds(t0)
-    let fn_n = n as f64
+    ro elapsed = Time.elapsed_seconds(t0)
+    ro fn_n = n as f64
 
-    let stats = SimStats {
+    ro stats = SimStats {
         num_sim: n,
         attacker_win_pct: (acc.att_wins as f64) * 100.0 / fn_n,
         defender_win_pct: (acc.def_wins as f64) * 100.0 / fn_n,
@@ -422,11 +422,11 @@ export fn calculate(input BattleInput)
 {
     if !validate(input) { throw BattleError.InvalidInput }
 
-    let rounds = if input.rounds <= 0 { 6 } else { input.rounds }
+    ro rounds = if input.rounds <= 0 { 6 } else { input.rounds }
 
-    let mut atk = new_state(input.attackers, input.rapidfire)
-    let mut def_state = new_state(input.defenders, input.rapidfire)
-    let mut report = BattleReport.empty(input.seed)
+    mut atk = new_state(input.attackers, input.rapidfire)
+    mut def_state = new_state(input.defenders, input.rapidfire)
+    mut report = BattleReport.empty(input.seed)
 
     for round in 0..rounds {
         if round > 0 {
@@ -436,24 +436,24 @@ export fn calculate(input BattleInput)
         atk.start_turn()
         def_state.start_turn()
 
-        let atk_snap = atk.snapshot()
-        let def_snap = def_state.snapshot()
+        ro atk_snap = atk.snapshot()
+        ro def_snap = def_state.snapshot()
 
         // shoot_at_sides использует Random — в сигнатуре виден эффект.
         // Тесты: with Random = seeded(...) { calculate(input) }
-        let atk_stats = shoot_at_sides(atk_snap, def_state)
-        let def_stats = shoot_at_sides(def_snap, atk)
+        ro atk_stats = shoot_at_sides(atk_snap, def_state)
+        ro def_stats = shoot_at_sides(def_snap, atk)
 
-        let atk_before = total_units(atk)
-        let def_before = total_units(def_state)
+        ro atk_before = total_units(atk)
+        ro def_before = total_units(def_state)
 
         atk.finish_turn()
         def_state.finish_turn()
 
-        let atk_destroyed = atk_before - total_units(atk)
-        let def_destroyed = def_before - total_units(def_state)
+        ro atk_destroyed = atk_before - total_units(atk)
+        ro def_destroyed = def_before - total_units(def_state)
 
-        let trace = RoundTrace {
+        ro trace = RoundTrace {
             index: round,
             attackers_alive: atk.total_alive(),
             defenders_alive: def_state.total_alive(),
@@ -474,13 +474,13 @@ export fn calculate(input BattleInput)
 
     // Опыт сторон — порт Java Assault.java:817-847 (план 72.1.1 ч.2).
     // План 72.1.3 / BA-011: ракетная атака не даёт опыта.
-    let atk_power = start_battle_power(atk)
-    let def_power = start_battle_power(def_state)
+    ro atk_power = start_battle_power(atk)
+    ro def_power = start_battle_power(def_state)
     if report.rounds > 0 && atk_power > 0.0 && def_power > 0.0 && !input.is_rocket_attack {
         // План 87 / BA-007: hasPlanet, не IsMoon. До фикса IsMoon
         // передавалось напрямую, что делало bpc *= 0.5 для обычных
         // атак планет.
-        let (atk_exp, def_exp) = compute_experience(
+        ro (atk_exp, def_exp) = compute_experience(
             report.winner, report.rounds, atk_power, def_power, input.has_planet
         )
         report.attacker_exp = atk_exp
@@ -498,11 +498,11 @@ export fn calculate(input BattleInput)
 // В Go: math.Pow, math.Atan, math.Sqrt из stdlib. В Nova: тот же
 // math из prelude.
 fn compute_experience(winner Winner, rounds int, atk_power f64, def_power f64, has_planet bool) -> (int, int) {
-    let battle_max_turns = 6.0
-    let turns_coef = (rounds as f64).pow(1.1) / battle_max_turns
+    ro battle_max_turns = 6.0
+    ro turns_coef = (rounds as f64).pow(1.1) / battle_max_turns
 
-    let mut atter = (math.atan(def_power / atk_power * 1.5 - 1.5) + 1.0) * 0.4 * 3.0 * turns_coef + 1.0
-    let mut defender = (math.atan(atk_power / def_power * 1.5 - 1.5) + 1.0) * 0.4 * 3.0 * turns_coef + 1.0
+    mut atter = (math.atan(def_power / atk_power * 1.5 - 1.5) + 1.0) * 0.4 * 3.0 * turns_coef + 1.0
+    mut defender = (math.atan(atk_power / def_power * 1.5 - 1.5) + 1.0) * 0.4 * 3.0 * turns_coef + 1.0
 
     match winner {
         Winner.Attackers => atter *= 3.0
@@ -513,8 +513,8 @@ fn compute_experience(winner Winner, rounds int, atk_power f64, def_power f64, h
         }
     }
 
-    let battle_power = math.sqrt(atk_power * def_power) / 1_000_000.0
-    let mut bpc = (math.atan(battle_power * 10.0 * 0.2 - 1.6) + 1.0) * 0.4 * 19.0 + 1.0
+    ro battle_power = math.sqrt(atk_power * def_power) / 1_000_000.0
+    mut bpc = (math.atan(battle_power * 10.0 * 0.2 - 1.6) + 1.0) * 0.4 * 19.0 + 1.0
     if !has_planet { bpc *= 0.5 }
 
     atter *= bpc
@@ -537,7 +537,7 @@ fn compute_experience(winner Winner, rounds int, atk_power f64, def_power f64, h
 test "multi_run with fixed seed gives deterministic stats" {
     with Random = seeded(42),
          Time = fixed(2026-05-01T10:00:00) {
-        let input = BattleInput {
+        ro input = BattleInput {
             attackers: test_fleet(),
             defenders: test_defenders(),
             rapidfire: standard_rapidfire(),
@@ -547,7 +547,7 @@ test "multi_run with fixed seed gives deterministic stats" {
             is_rocket_attack: false,
         }
 
-        let (stats, _) = multi_run(input, 100)
+        ro (stats, _) = multi_run(input, 100)
 
         // С детерминированным seed результат стабилен между запусками.
         assert stats.num_sim == 100
@@ -566,7 +566,7 @@ test "send_fleet returns 400 on invalid mission" {
 
         // В Go тесте: httptest.NewRecorder, чтение body, проверка статуса.
         // В Nova: запрос — обычное значение, ответ — обычное значение.
-        let req = Request.post("/api/fleet", json`{
+        ro req = Request.post("/api/fleet", json`{
             "src_planet_id": "planet-1",
             "ships": {"3": 100},
             "speed_percent": 100,
@@ -579,7 +579,7 @@ test "send_fleet returns 400 on invalid mission" {
         // Невалидная mission в Nova не пройдёт parse[SendInput]() —
         // тип Mission = sum-type без вариантов для 999. В Go было
         // ручное `if req.Mission != 0 && req.Mission != 7 && ...`.
-        let resp = send_fleet(req)
+        ro resp = send_fleet(req)
         assert resp.status == 400
     }
 }

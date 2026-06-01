@@ -16,17 +16,17 @@ module types.char_literals
 // ================================================================
 
 test "ASCII char 'A' = 65" {
-    let c = 'A'
+    ro c = 'A'
     assert(c == 65)
 }
 
 test "ASCII char 'a' = 97" {
-    let c = 'a'
+    ro c = 'a'
     assert(c == 97)
 }
 
 test "ASCII char '0' = 48" {
-    let c = '0'
+    ro c = '0'
     assert(c == 48)
 }
 
@@ -35,27 +35,27 @@ test "ASCII char '0' = 48" {
 // ================================================================
 
 test "escape '\\n' = 10" {
-    let c = '\n'
+    ro c = '\n'
     assert(c == 10)
 }
 
 test "escape '\\t' = 9" {
-    let c = '\t'
+    ro c = '\t'
     assert(c == 9)
 }
 
 test "escape '\\\\' (backslash) = 92" {
-    let c = '\\'
+    ro c = '\\'
     assert(c == 92)
 }
 
 test "escape '\\'' (single quote) = 39" {
-    let c = '\''
+    ro c = '\''
     assert(c == 39)
 }
 
 test "escape '\\0' (nul) = 0" {
-    let c = '\0'
+    ro c = '\0'
     assert(c == 0)
 }
 
@@ -64,17 +64,17 @@ test "escape '\\0' (nul) = 0" {
 // ================================================================
 
 test "Unicode \\u{41} = 65 ('A')" {
-    let c = '\u{41}'
+    ro c = '\u{41}'
     assert(c == 65)
 }
 
 test "Unicode \\u{410} = 1040 (Cyrillic 'А')" {
-    let c = '\u{410}'
+    ro c = '\u{410}'
     assert(c == 1040)
 }
 
 test "Unicode \\u{1F600} = 128512 (😀)" {
-    let c = '\u{1F600}'
+    ro c = '\u{1F600}'
     assert(c == 128512)
 }
 
@@ -106,15 +106,15 @@ test "match с char literal patterns" {
 // ================================================================
 
 test "StringBuilder.append with char literals" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append('h')
     sb.append('i')
-    let s = sb.into()
+    ro s = sb.into()
     assert(s == "hi")
 }
 
 test "StringBuilder.append with Unicode codepoint" {
-    let mut sb = StringBuilder.new()
+    mut sb = StringBuilder.new()
     sb.append('\u{410}')           // Cyrillic 'А' — 1 codepoint, 2 bytes UTF-8
     assert(sb.len() == 1)          // Plan 13 Ф.9: codepoint count
     assert(sb.byte_len() == 2)

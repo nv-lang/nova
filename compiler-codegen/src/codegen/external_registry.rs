@@ -321,6 +321,10 @@ impl ExternalRegistry {
                     "str" => "nova_str".into(),
                     // Plan 70.3: distinct nova_char typedef (mirror emit_c.rs:2680).
                     "char" => "nova_char".into(),
+                    // Plan 115 D214: nova_ptr distinct typedef (mirror
+                    // emit_c.rs type_ref_to_c). External fn use this для
+                    // ptr-parameter/return ABI.
+                    "ptr" => "nova_ptr".into(),
                     "Self" => match recv {
                         Some("str") => "nova_str".into(),
                         Some(t) => format!("Nova_{}*", t),
@@ -410,7 +414,50 @@ impl ExternalRegistry {
                 }
                 Ok("NovaArray_nova_int*".into())
             }
-            TypeRef::Tuple(elems, _) => Ok(format!("_NovaTuple{}", elems.len())),
+            // Plan 115 D214: external fn tuple-by-value returns. Compute
+            // mono'd `_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>...` mangled
+            // name matching CEmitter::compute_mono_tuple_c_name. C ABI
+            // handles struct return per platform (register vs hidden-out).
+            // Fallback на legacy `_NovaTupleN` если элементы non-concrete
+            // (generic-erased).
+            TypeRef::Tuple(elems, _) => {
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                let mut all_concrete = true;
+                for el in elems {
+                    match Self::type_ref_to_c(el, recv) {
+                        Ok(c) => {
+                            // void* / empty — erased fallback. nova_ptr ОК.
+                            if c.is_empty() || c == "void*" {
+                                all_concrete = false;
+                                break;
+                            }
+                            elem_cs.push(c);
+                        }
+                        Err(_) => { all_concrete = false; break; }
+                    }
+                }
+                if all_concrete && !elem_cs.is_empty() {
+                    // Mirror CEmitter::compute_mono_tuple_c_name.
+                    let mut out = String::from("_NovaTuple_");
+                    out.push_str(&elem_cs.len().to_string());
+                    for c_ty in &elem_cs {
+                        let sanitized = c_ty
+                            .replace("* ", "_p_")
+                            .replace('*', "_p")
+                            .replace(' ', "_")
+                            .replace('[', "_arr_")
+                            .replace(']', "")
+                            .replace('-', "_");
+                        out.push('_');
+                        out.push_str(&sanitized.len().to_string());
+                        out.push('_');
+                        out.push_str(&sanitized);
+                    }
+                    Ok(out)
+                } else {
+                    Ok(format!("_NovaTuple{}", elems.len()))
+                }
+            }
             TypeRef::Func { .. } => Ok("void*".into()),
             TypeRef::FixedArray(_, inner, _) => Self::type_ref_to_c(inner, recv),
             // Plan 97 Ф.2 (D142): анонимный protocol-тип в external-fn

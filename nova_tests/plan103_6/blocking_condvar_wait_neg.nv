@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR E_BLOCKING_SYNC_PARK
 
-module nova_tests.plan103_6.blocking_condvar_wait_neg
+module plan103_6.blocking_condvar_wait_neg
 
 #blocking fn _blk_check_condvar_wait(cv mut Condvar, m mut Mutex) {
     m.lock()

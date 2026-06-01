@@ -36,20 +36,20 @@ fn unwrap_or_bool(opt Option[bool], fallback bool) -> bool {
 
 test "match Some(v) — int inner" {
     assert(unwrap_or_int(Some(42), 0) == 42)
-    let none_int Option[int] = None
+    ro none_int Option[int] = None
     assert(unwrap_or_int(none_int, -1) == -1)
 }
 
 
 test "match Some(v) — str inner" {
     assert(unwrap_or_str(Some("hello"), "fb") == "hello")
-    let none_str Option[str] = None
+    ro none_str Option[str] = None
     assert(unwrap_or_str(none_str, "fb") == "fb")
 }
 
 
 test "match Some(v) — bool inner" {
     assert(unwrap_or_bool(Some(true), false) == true)
-    let none_bool Option[bool] = None
+    ro none_bool Option[bool] = None
     assert(unwrap_or_bool(none_bool, false) == false)
 }

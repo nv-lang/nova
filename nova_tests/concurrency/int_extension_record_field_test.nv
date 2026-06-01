@@ -37,14 +37,14 @@ fn make_config() -> Config => {
 
 
 test "int extension method в record-literal field — generic context" {
-    let c = make_config()
+    ro c = make_config()
     assert(c.initial.nanos == 100_000_000)
     assert(c.multiplier == 2)
 }
 
 
 test "разные int extension methods в record field" {
-    let c2 Config = {
+    ro c2 Config = {
         initial: 2.my_seconds(),
         multiplier: 5,
     }
@@ -53,7 +53,7 @@ test "разные int extension methods в record field" {
 }
 
 
-test "int extension method прямо в let-binding" {
-    let d = 500.my_millis()
+test "int extension method прямо в ro-binding" {
+    ro d = 500.my_millis()
     assert(d.nanos == 500_000_000)
 }

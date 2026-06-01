@@ -6,9 +6,9 @@ module plan65.f12_d_close_at_ts_neg
 import std.time.duration
 
 fn main() -> () {
-    let ts = Timestamp.from_unix_secs(2000)
+    ro ts = Timestamp.from_unix_secs(2000)
     // Wrong: ChanReader.close_at expects Monotonic. Diagnostic must
     // reference D124 / Monotonic.now() + Duration.
-    let _t = ChanReader.close_at(ts)
+    ro _t = ChanReader.close_at(ts)
     println("unreachable")
 }

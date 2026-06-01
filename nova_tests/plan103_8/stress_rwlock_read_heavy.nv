@@ -9,21 +9,21 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.stress_rwlock_read_heavy
+module plan103_8.stress_rwlock_read_heavy
 
 test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
-    let rw      = RwLock.new()
-    let shared  = AtomicI64.new(0)   // always even (writer adds 2)
-    let torn    = AtomicI64.new(0)
-    let written = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    mut rw = RwLock.new()
+    mut shared = AtomicI64.new(0)   // always even (writer adds 2)
+    mut torn = AtomicI64.new(0)
+    mut written = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(5)   // 4 readers + 1 writer
 
     // 4 readers (parallel for = M:N, concurrent with writer)
     parallel for _i in 0..4 {
         for _j in 0..10 {
             rw.read()
-            let v = shared.load(Acquire)
+            ro v = shared.load(Acquire)
             if v % 2 != 0 {
                 torn.fetch_add(1)
             }
@@ -37,7 +37,7 @@ test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
         spawn {
             for _j in 0..10 {
                 rw.write()
-                let v = shared.load()
+                ro v = shared.load()
                 shared.store(v + 2, Release)
                 rw.write_unlock()
                 written.fetch_add(1)
@@ -54,16 +54,16 @@ test "RwLock read-heavy: 4 readers + 1 writer, 10 iters -- no torn reads" {
 
 test "RwLock: readers see only consistent values" {
     // 3 readers observe value is always 0 or 100 while writer toggles.
-    let rw      = RwLock.new()
-    let value   = AtomicI64.new(0)  // 0 or 100
-    let bad_obs = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    mut rw = RwLock.new()
+    mut value = AtomicI64.new(0)  // 0 or 100
+    mut bad_obs = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(4)   // 3 readers + 1 writer
 
     parallel for _r in 0..3 {
         for _j in 0..5 {
             rw.read()
-            let v = value.load()
+            ro v = value.load()
             if v != 0 && v != 100 {
                 bad_obs.fetch_add(1)
             }

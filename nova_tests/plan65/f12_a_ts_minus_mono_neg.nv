@@ -7,10 +7,10 @@ module plan65.f12_a_ts_minus_mono_neg
 import std.time.duration
 
 fn main() -> () {
-    let ts = Timestamp.from_unix_secs(1000)
-    let mn = Monotonic.now()
+    ro ts = Timestamp.from_unix_secs(1000)
+    ro mn = Monotonic.now()
     // Attempting to subtract a Monotonic from a Timestamp must be a
     // compile error per D124 §3 (no cross-clock arithmetic).
-    let _bad = ts - mn
+    ro _bad = ts - mn
     println("unreachable")
 }

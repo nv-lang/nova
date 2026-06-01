@@ -1,22 +1,22 @@
 // Plan 99.3 Ф.5: Result.map[U] на Nova-body. Mono per (T, U, E).
 
-module nova_tests.plan99.result_map_migrated
+module plan99.result_map_migrated
 
 test "Result[int, str].map int→str (T≠U)" {
-    let r Result[int, str] = Ok(7)
-    let s = r.map(|x| str.from(x))
+    ro r Result[int, str] = Ok(7)
+    ro s = r.map(|x| str.from(x))
     assert(s.is_ok())
     assert(s.unwrap_or("") == "7")
 }
 
 test "Result[int, str].map — Err passes through" {
-    let r Result[int, str] = Err("oops")
-    let s = r.map(|x| str.from(x))
+    ro r Result[int, str] = Err("oops")
+    ro s = r.map(|x| str.from(x))
     assert(s.is_err())
 }
 
 test "Result[int, str].map int→int (T==U)" {
-    let r Result[int, str] = Ok(10)
-    let m = r.map(|x| x * 2)
+    ro r Result[int, str] = Ok(10)
+    ro m = r.map(|x| x * 2)
     assert(m.unwrap_or(0) == 20)
 }

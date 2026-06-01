@@ -1,0 +1,78 @@
+// Plan 73.1 V3 — Property #2: no dangling view-binding.
+//
+// Property: pattern `consume X = …; let Y = X; … use(Y) …` cannot exist
+// in any compiling source.  Rule 2 (D180) statically forbids
+// `let Y = consume_var` (E_VIEW_BINDING_FORBIDDEN).  Thus no `let Y`
+// binding can dangle past `consume(X)` — the binding never compiles.
+//
+// This test exercises the SAFE view pattern (function-parameter view) end-to-end
+// and verifies the source-of-truth invariant: a non-consume view aborts at
+// function boundary, never leaks across `consume` of the source.  Compiling
+// this fixture without modification is itself the property's runtime witness.
+//
+// EXPECT_PASS
+
+module plan73.binding_no_dangling_view_prop
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn Token consume @take() -> int => @val
+
+// Allowed view-borrow: function-param of consume-type — not move,
+// not alias; bounded by function-scope.
+fn snapshot_value(t Token) -> int => t.val
+
+// Allowed: pass the consume-var to a function expecting a consume-param
+// (move semantics: caller's binding becomes Consumed).
+fn drain_into(consume t Token) -> int => t.take()
+
+test "property: view via function-param is bounded and never dangles" {
+    consume t = Token.new(11)
+    // Take a view (function-param) — t still live in caller scope.
+    ro snapshot = snapshot_value(t)
+    assert(snapshot == 11)
+    // After view returns, t is still live; consume it explicitly.
+    ro final_v = t.take()
+    assert(final_v == 11)
+}
+
+test "property: consume-param move — source binding becomes Consumed" {
+    consume t = Token.new(22)
+    // Move into callee — t is dead in caller after this line.
+    ro v = drain_into(t)
+    assert(v == 22)
+}
+
+test "property: branch view + branch consume — no dangling" {
+    ro pick = 1
+    consume t = Token.new(33)
+    if pick == 1 {
+        ro v = snapshot_value(t)
+        assert(v == 33)
+        ro final_v = t.take()
+        assert(final_v == 33)
+    } else {
+        ro final_v = t.take()
+        assert(final_v == 33)
+    }
+}
+
+// N consume-binds, each goes through view + consume — runtime witness of
+// «no dangling» across N iterations.  If any iteration mis-detected, the
+// loop body would not compile (E_VIEW_BINDING_FORBIDDEN or D133).
+test "property: N consume bindings — each view-bounded + consume-satisfied" {
+    ro n = 8
+    mut total = 0
+    for i in 0..n {
+        consume t = Token.new(i)
+        ro view_v = snapshot_value(t)
+        ro owned_v = t.take()
+        assert(view_v == i)
+        assert(owned_v == i)
+        total = total + owned_v
+    }
+    // Sum 0+1+…+(n-1) = n*(n-1)/2 = 8*7/2 = 28.
+    assert(total == 28)
+}

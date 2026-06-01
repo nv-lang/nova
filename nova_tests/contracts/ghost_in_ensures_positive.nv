@@ -6,7 +6,7 @@ module contracts.ghost_in_ensures_positive
 fn abs_with_ghost(x int) -> int
     ensures result >= 0
 {
-    ghost let _witness = x
+    ghost ro _witness = x
     if x >= 0 { x } else { -x }
 }
 

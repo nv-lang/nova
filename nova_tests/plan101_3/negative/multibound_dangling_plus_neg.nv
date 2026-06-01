@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR expected type
 
-module nova_tests.plan101_3.negative.multibound_dangling_plus_neg
+module negative.multibound_dangling_plus_neg
 
 type HasA protocol {
     a() -> int

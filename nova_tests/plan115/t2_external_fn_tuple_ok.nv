@@ -1,0 +1,44 @@
+// Plan 115 Ф.2 T2.2 — external fn tuple-by-value return.
+//
+// Exercises tuple-return ABI lowering для external C functions:
+//   - 2-word tuple (ptr, int) → register-return на Sys V AMD64,
+//     hidden-out на Win x64 (struct > 8 bytes).
+//   - 3-word tuple (ptr, int, int) → hidden-out на Win x64 и Sys V (≥ 24
+//     bytes), hidden-out на AArch64 (Apple ABI struct return).
+//
+// C-side shim — compiler-codegen/nova_rt/plan115_ffi_test.h. Header
+// forward-declares Nova mono'd tuple typedef'ы через `#ifndef
+// NOVA_TUPLE_TYPEDEF_<mangled>` guards (Plan 115 D214) → Nova skip'ает
+// redefinition при emit'е.
+
+module plan115.t2_external_fn_tuple_ok
+
+external fn p115_make_pair(seed int) -> (ptr, int)
+external fn p115_make_triple(seed int) -> (ptr, int, int)
+external fn p115_ptr_to_int(p ptr) -> int
+
+test "external fn returns 2-tuple (ptr, int)" {
+    ro (h, code) = p115_make_pair(42)
+    ro h_int = p115_ptr_to_int(h)
+    assert(h_int == 42 + 0x100)
+    assert(code == 84)
+}
+
+test "external fn returns 3-tuple (ptr, int, int)" {
+    ro (h, a, b) = p115_make_triple(10)
+    ro h_int = p115_ptr_to_int(h)
+    assert(h_int == 10 + 0x200)
+    assert(a == 30)
+    assert(b == 1010)
+}
+
+test "external fn tuple result destructured multiple times" {
+    ro pair1 = p115_make_pair(1)
+    ro pair2 = p115_make_pair(2)
+    ro (h1, c1) = pair1
+    ro (h2, c2) = pair2
+    assert(p115_ptr_to_int(h1) == 1 + 0x100)
+    assert(p115_ptr_to_int(h2) == 2 + 0x100)
+    assert(c1 == 2)
+    assert(c2 == 4)
+}

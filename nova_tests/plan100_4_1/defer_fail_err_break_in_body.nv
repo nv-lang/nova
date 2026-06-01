@@ -3,7 +3,7 @@
 // Plan 100.4.1 (D158): top-level break в defer body — запрещён (D90 §6
 // unchanged by D158).
 
-module nova_tests.plan100_4_1.defer_fail_err_break_in_body
+module plan100_4_1.defer_fail_err_break_in_body
 
 fn process() -> () {
     for i in 0..10 {

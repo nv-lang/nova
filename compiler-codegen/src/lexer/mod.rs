@@ -610,6 +610,10 @@ impl<'a> Lexer<'a> {
             "const" => TokenKind::KwConst,
             "mut" => TokenKind::KwMut,
             "consume" => TokenKind::KwConsume,
+            // Plan 114 (D184): `ro` — canonical short keyword.
+            "ro" => TokenKind::KwRo,
+            // Plan 114 (D184): retracted; lexer still recognizes the lexeme
+            // so parser can emit `E_KW_REMOVED_READONLY` with a clear hint.
             "readonly" => TokenKind::KwReadonly,
             "if" => TokenKind::KwIf,
             "else" => TokenKind::KwElse,
@@ -649,6 +653,10 @@ impl<'a> Lexer<'a> {
             "select" => TokenKind::KwSelect,
             "lemma" => TokenKind::KwLemma,
             // "apply" — контекстуальный keyword (не резервируем глобально, чтобы не ломать идентификаторы)
+            // Plan 115 D214: `null` тоже контекстуально recognized (только в
+            // expression-position в комбинации `null ptr`). НЕ резервируем
+            // глобально чтобы не ломать `JsonValue.null()`, `AtomicPtr.null()`
+            // и подобные method names.
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))

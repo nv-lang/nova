@@ -11,7 +11,7 @@ module plan55.f1_closure_array_with_capture
 
 
 fn run_all(fns []fn() -> int) -> []int {
-    let mut out []int = []
+    mut out []int = []
     for f in fns {
         out.push(f())
     }
@@ -20,10 +20,10 @@ fn run_all(fns []fn() -> int) -> []int {
 
 
 test "captured int — каждый closure возвращает свой capture" {
-    let a = 10
-    let b = 20
-    let c = 30
-    let xs = run_all([|| a, || b, || c])
+    ro a = 10
+    ro b = 20
+    ro c = 30
+    ro xs = run_all([|| a, || b, || c])
     assert(xs.len() == 3)
     assert(xs[0] == 10)
     assert(xs[1] == 20)
@@ -31,10 +31,10 @@ test "captured int — каждый closure возвращает свой captur
 }
 
 
-test "captured expression — closures видят результат let'ов" {
-    let x = 5
-    let y = 7
-    let xs = run_all([|| x + y, || x * y, || y - x])
+test "captured expression — closures видят результат ro'ов" {
+    ro x = 5
+    ro y = 7
+    ro xs = run_all([|| x + y, || x * y, || y - x])
     assert(xs[0] == 12)
     assert(xs[1] == 35)
     assert(xs[2] == 2)

@@ -3,7 +3,7 @@
 // Закрывает Plan 15 [P-15-anon-protocol-bound]: bound `[T protocol { ... }]`
 // без отдельного `type X protocol {...}`-объявления.
 
-module nova_tests.plan97.pos_anon_protocol_bound
+module plan97.pos_anon_protocol_bound
 
 
 type Box {
@@ -20,7 +20,7 @@ fn print_one[T protocol { show() -> str }](x T) -> str => x.show()
 
 
 test "inline-protocol bound удовлетворён структурно" {
-    let b = Box { value: 7 }
-    let s = print_one(b)
+    ro b = Box { value: 7 }
+    ro s = print_one(b)
     assert(s == "Box(7)")
 }

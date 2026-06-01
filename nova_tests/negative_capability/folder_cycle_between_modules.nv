@@ -14,6 +14,6 @@ module negative_capability.folder_cycle_between_modules
 import nova_tests.negative_capability.folder_cycle_setup.modA.{a_val}
 
 test "folder-module cycle rejected" {
-    let _v = a_val()
+    ro _v = a_val()
     assert(true)
 }

@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a.default_body_parsed_test
+module plan91_8a.default_body_parsed_test
 
 // Plan 91.8a (D183): default body в protocol-decl парсится.
 // Codegen synthesis для defaults — followup 91.8a.2.
@@ -15,7 +15,7 @@ fn Impl @abstract_method() -> int => @x
 fn Impl @default_method() -> int => 42
 
 test "protocol с default body парсится + используется" {
-    let i = Impl { x: 7 }
+    ro i = Impl { x: 7 }
     assert(i.abstract_method() == 7)
     assert(i.default_method() == 42)
 }
@@ -30,8 +30,8 @@ fn Sortable @compare(other Sortable) -> int =>
 fn Sortable @equals(other Sortable) -> bool => @compare(other) == 0
 
 test "Comparable use Equatable + default equals body — компилится" {
-    let a = Sortable { weight: 5 }
-    let b = Sortable { weight: 10 }
+    ro a = Sortable { weight: 5 }
+    ro b = Sortable { weight: 10 }
     assert(a.compare(b) < 0)
     assert(a.equals(a))
 }

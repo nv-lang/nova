@@ -5,7 +5,7 @@
 // Это и есть главная проверка тезиса «десятки эффектов в каждой функции».
 // Считайте перед чтением. После — сравните.
 
-module examples.effect_density.service
+module effect-density.service
 
 import examples.effect_density.domain.*
 import examples.effect_density.repository as repo
@@ -72,18 +72,18 @@ fn do_transfer(req TransferRequest) -> Transfer {
     validate_amount(req.amount)
 
     Db.in_transaction(|| {
-        let from = repo.account_get(req.from)
-        let to   = repo.account_get(req.to)
+        ro from = repo.account_get(req.from)
+        ro to   = repo.account_get(req.to)
 
         validate_pair(from, to, req.amount)
 
-        let new_from_balance = sub_money(from.balance, req.amount)
-        let new_to_balance   = add_money(to.balance, req.amount)
+        ro new_from_balance = sub_money(from.balance, req.amount)
+        ro new_to_balance   = add_money(to.balance, req.amount)
 
         repo.account_update_balance(from.id, new_from_balance)
         repo.account_update_balance(to.id, new_to_balance)
 
-        let t = Transfer {
+        ro t = Transfer {
             id:         IdGen.next(),
             from:       from.id,
             to:         to.id,
@@ -148,7 +148,7 @@ fn sub_money(a Money, b Money) Fail[TransferError] -> Money =>
 // нет идемпотентности, нет генерации id, нет clock'а, нет Metrics
 // (зашиты ниже на уровне HTTP middleware).
 export fn account_view(id AccountId) Db Cache AuthContext Fail[TransferError] -> AccountDto {
-    let acc = match repo.account_get(id) {
+    ro acc = match repo.account_get(id) {
         Ok(a) => a
         Err(NotFound) => throw AccountNotFound(id)
         Err(e) => throw TransferError.from_repo(e)

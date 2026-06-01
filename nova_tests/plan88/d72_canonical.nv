@@ -7,7 +7,7 @@
 // `K`. Static-вызов `T.from(v)` на typevar `T` + `K` в параметре —
 // end-to-end через мономорфизацию (Rust-паритет).
 
-module nova_tests.plan88.d72_canonical
+module plan88.d72_canonical
 
 
 type Label { s str }
@@ -21,11 +21,11 @@ fn func[K, T From[K]](v K) -> T => T.from(v)
 
 
 test "D72 func[str, Label] — K=str, T=Label" {
-    let l = func[str, Label]("hello")
+    ro l = func[str, Label]("hello")
     assert(l.s == "hello")
 }
 
 test "D72 func[int, Code] — K=int, T=Code" {
-    let c = func[int, Code](42)
+    ro c = func[int, Code](42)
     assert(c.n == 42)
 }

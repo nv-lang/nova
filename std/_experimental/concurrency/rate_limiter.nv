@@ -23,8 +23,8 @@ import std.testing.handlers as th
 /// Использует Time effect → детерминирован в тестах под `th.fixed_ms(...)`.
 #stable(since = "0.1")
 export type TokenBucket {
-    readonly capacity i64
-    readonly refill_per_sec f64
+    ro capacity i64
+    ro refill_per_sec f64
     mut _tokens f64           // internal: текущее число tokens (может быть дробное)
     mut _last_refill Timestamp
 }
@@ -49,9 +49,9 @@ export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
 
 // Refill bucket на основе прошедшего времени.
 fn TokenBucket mut @refill() Time -> () {
-    let now = Time.now()
-    let elapsed = (now - @_last_refill).as_secs_f64()
-    let to_add = elapsed * @refill_per_sec
+    ro now = Time.now()
+    ro elapsed = (now - @_last_refill).as_secs_f64()
+    ro to_add = elapsed * @refill_per_sec
     @_tokens = @_tokens + to_add
     if @_tokens > (@capacity as f64) {
         @_tokens = @capacity as f64
@@ -93,7 +93,7 @@ export fn TokenBucket mut @available() Time -> f64 {
 
 test "burst в пределах capacity" {
     with Time = th.fixed_ms(0) {
-        let mut bucket = TokenBucket.new(5, 1.0)        // 1 token/sec, burst=5
+        mut bucket = TokenBucket.new(5, 1.0)        // 1 token/sec, burst=5
         // 5 запросов подряд — все проходят
         for i in 0..5 {
             assert(bucket.try_acquire())
@@ -104,7 +104,7 @@ test "burst в пределах capacity" {
 }
 
 test "refill через прошедшее время" {
-    let mut bucket = with Time = th.fixed_ms(0) {
+    mut bucket = with Time = th.fixed_ms(0) {
         TokenBucket.new(2, 1.0)
     }
 
@@ -129,7 +129,7 @@ test "refill через прошедшее время" {
 }
 
 test "capacity ограничивает refill" {
-    let mut bucket = with Time = th.fixed_ms(0) {
+    mut bucket = with Time = th.fixed_ms(0) {
         TokenBucket.new(3, 10.0)           // 10/sec, capacity 3
     }
 
@@ -144,7 +144,7 @@ test "capacity ограничивает refill" {
 }
 
 test "try_acquire_n: атомарность" {
-    let mut bucket = with Time = th.fixed_ms(0) {
+    mut bucket = with Time = th.fixed_ms(0) {
         TokenBucket.new(5, 1.0)
     }
 

@@ -18,28 +18,28 @@ fn lookup(n int) -> Option {
 }
 
 fn use_ok() -> Result {
-    let v = parse_pos("good")?
+    ro v = parse_pos("good")?
     Ok(v + 1)
 }
 
 fn use_err() -> Result {
-    let _v = parse_pos("nope")?
+    ro _v = parse_pos("nope")?
     Ok(0)
 }
 
 fn use_some() -> Option {
-    let v = lookup(5)?
+    ro v = lookup(5)?
     Some(v + 1)
 }
 
 fn use_none() -> Option {
-    let _v = lookup(-1)?
+    ro _v = lookup(-1)?
     Some(0)
 }
 
 test "? unwraps Ok" {
-    let r = use_ok()
-    let v = match r {
+    ro r = use_ok()
+    ro v = match r {
         Ok(n)  => n
         Err(_) => -1
     }
@@ -47,8 +47,8 @@ test "? unwraps Ok" {
 }
 
 test "? on Err propagates as Err in caller" {
-    let r = use_err()
-    let s = match r {
+    ro r = use_err()
+    ro s = match r {
         Ok(_)   => "ok"
         Err(msg) => msg
     }
@@ -56,8 +56,8 @@ test "? on Err propagates as Err in caller" {
 }
 
 test "? unwraps Some" {
-    let r = use_some()
-    let v = match r {
+    ro r = use_some()
+    ro v = match r {
         Some(n) => n
         None    => -1
     }
@@ -65,8 +65,8 @@ test "? unwraps Some" {
 }
 
 test "? on None propagates" {
-    let r = use_none()
-    let v = match r {
+    ro r = use_none()
+    ro v = match r {
         Some(n) => n
         None    => 999
     }
@@ -74,9 +74,9 @@ test "? on None propagates" {
 }
 
 test "?? coalesce on None" {
-    let a = Some(5) ?? 0
+    ro a = Some(5) ?? 0
     assert(a == 5)
-    let b = None ?? 10
+    ro b = None ?? 10
     assert(b == 10)
 }
 
@@ -95,9 +95,9 @@ fn validate_d28(n int) -> int {
 }
 
 test "D28: private fn компилируется + работает на happy path" {
-    let r = validate_d28(7)
+    ro r = validate_d28(7)
     assert(r == 14)
-    let r2 = validate_d28(0)
+    ro r2 = validate_d28(0)
     assert(r2 == 0)
 }
 

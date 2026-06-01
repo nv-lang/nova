@@ -19,17 +19,17 @@
 
 ```nova
 \ несколько условий через запятую
-if let Some(user) = lookup(id), user.is_active {
+if Some(user) = lookup(id), user.is_active {
     process(user)
 }
 
-\ смешанные let + bool-cond
-if let Some(a) = lookup_a(), let Some(b) = lookup_b(a.id), b.valid {
+\ смешанные ro + bool-cond
+if Some(a) = lookup_a(), ro Some(b) = lookup_b(a.id), b.valid {
     handle(a, b)
 }
 
 \ while-форма
-while let Some(item) = queue.pop(), !item.poisoned {
+while Some(item) = queue.pop(), !item.poisoned {
     process(item)
 }
 ```
@@ -47,7 +47,7 @@ tmp:11:35: error: expected `{`, got `,`
 
 ```nova
 \ Workaround сейчас (некрасиво)
-if let Some(user) = lookup(id) {
+if Some(user) = lookup(id) {
     if user.is_active {
         process(user)
     }

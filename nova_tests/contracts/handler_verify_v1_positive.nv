@@ -11,7 +11,7 @@ type Counter effect {
 }
 
 test "#verify handler с тривиальным static axiom компилируется" {
-    let mut n = 0
+    mut n = 0
     with #verify Counter = effect Counter {
         Increment() { n = n + 1 }
         value() => 0

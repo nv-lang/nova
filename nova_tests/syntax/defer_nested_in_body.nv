@@ -18,12 +18,12 @@ module syntax.defer_nested_in_body
 // Используем block-expression в defer body — внутри неё свой defer.
 
 test "defer внутри nested block в defer body" {
-    let mut outer_tick = 0
-    let mut inner_tick = 0
-    let _ = {
+    mut outer_tick = 0
+    mut inner_tick = 0
+    ro _ = {
         defer {
             // Внутри outer defer body — inner block с defer.
-            let _ = {
+            ro _ = {
                 defer { inner_tick = inner_tick + 1 }
                 42
             }
@@ -39,9 +39,9 @@ test "defer внутри nested block в defer body" {
 // ───── defer в loop body внутри defer body ─────
 
 test "defer в for-loop body внутри defer body" {
-    let mut outer_tick = 0
-    let mut loop_tick = 0
-    let _ = {
+    mut outer_tick = 0
+    mut loop_tick = 0
+    ro _ = {
         defer {
             for _i in 0..3 {
                 defer { loop_tick = loop_tick + 1 }

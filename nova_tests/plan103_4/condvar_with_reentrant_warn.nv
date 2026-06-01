@@ -9,13 +9,13 @@
 //
 // EXPECT_COMPILE_WARNING W_REENTRANT_CONDVAR_RECOMMEND
 
-module nova_tests.plan103_4.condvar_with_reentrant_warn
+module plan103_4.condvar_with_reentrant_warn
 
 test "Condvar.wait(ReentrantMutex) emits W_REENTRANT_CONDVAR_RECOMMEND and works" {
-    let rm   = ReentrantMutex.new()
-    let cv   = Condvar.new()
-    let done = AtomicBool.new(false)
-    let n_waiting = AtomicInt.new(0)
+    mut rm = ReentrantMutex.new()
+    mut cv = Condvar.new()
+    mut done = AtomicBool.new(false)
+    mut n_waiting = AtomicInt.new(0)
 
     supervised {
         spawn {
@@ -28,7 +28,7 @@ test "Condvar.wait(ReentrantMutex) emits W_REENTRANT_CONDVAR_RECOMMEND and works
         }
 
         // Wait for fiber to be in cv.wait
-        let mut w = false
+        mut w = false
         while !w {
             Time.sleep(1)
             rm.lock()

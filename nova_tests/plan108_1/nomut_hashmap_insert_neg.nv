@@ -1,0 +1,16 @@
+// Plan 108.1 (D176 amend): параметр без `mut` — вызов `.insert` на
+// HashMap должен дать E_PARAM_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+
+module plan108_1.nomut_hashmap_insert_neg
+
+fn put(m HashMap[str, int], k str, v int) -> int {
+    m.insert(k, v)             // ✗ E_PARAM_NOT_MUT — нет `mut`
+    m.len()
+}
+
+test "no-mut + HashMap insert → error" {
+    mut m = HashMap[str, int].new()
+    ro _ = put(m, "x", 1)
+}

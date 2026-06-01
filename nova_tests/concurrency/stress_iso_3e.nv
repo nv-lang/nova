@@ -4,8 +4,8 @@
 module concurrency.stress_iso_3e
 
 test "99+1 fibers sleep(10000), cancel(30ms) — STALE-slot stress" {
-    let tok = CancelToken.new()
-    let t0 = Time.now()
+    ro tok = CancelToken.new()
+    ro t0 = Time.now()
     supervised(cancel: tok) {
         for _ in 0..99 {
             spawn { Time.sleep(10_000) }
@@ -15,7 +15,7 @@ test "99+1 fibers sleep(10000), cancel(30ms) — STALE-slot stress" {
             tok.cancel()
         }
     }
-    let elapsed = Time.now() - t0
-    let after_cancel = elapsed - 30
+    ro elapsed = Time.now() - t0
+    ro after_cancel = elapsed - 30
     assert(after_cancel < 300)
 }

@@ -1,5 +1,5 @@
 // Plan 84 Ф.5 — sibling-модуль для относительного импорта `./helper`.
-module nova_tests.plan84.sibling.helper
+module sibling.helper
 
 export fn add(a int, b int) -> int => a + b
 

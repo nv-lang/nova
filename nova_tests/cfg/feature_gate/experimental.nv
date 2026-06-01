@@ -4,7 +4,7 @@
 // невидимы импортирующему.
 
 #cfg(feature = "experimental")
-module cfg.feature_gate
+module feature_gate.experimental
 
 export fn experimental_value() -> int =>
     999

@@ -9,8 +9,8 @@ module contracts.parse_loop_invariants
 fn sum_to(n int) -> int
     requires n >= 0
 {
-    let mut s = 0
-    let mut i = 0
+    mut s = 0
+    mut i = 0
     while i < n
         invariant 0 <= i
         invariant i <= n
@@ -25,7 +25,7 @@ fn sum_to(n int) -> int
 #unverified
 fn count_array(xs []int) -> int
 {
-    let mut count = 0
+    mut count = 0
     for x in xs
         invariant count >= 0
     {
@@ -38,8 +38,8 @@ fn count_array(xs []int) -> int
 fn loop_with_decreases(n int) -> int
     requires n > 0
 {
-    let mut i = n
-    let mut total = 0
+    mut i = n
+    mut total = 0
     loop
         invariant total >= 0
         decreases i

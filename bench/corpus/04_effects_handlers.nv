@@ -30,8 +30,8 @@ fn process(x int) Logger Counter -> int {
 }
 
 fn fetch_with_cache(key str) Cache[str, int] Logger -> Option[int] {
-    let cached = Cache.fetch(key)
-    if let Some(v) = cached {
+    ro cached = Cache.fetch(key)
+    if Some(v) = cached {
         Logger.log("cache hit")
         return Some(v)
     }
@@ -46,48 +46,48 @@ fn audit_action(action str) Audit Logger -> () {
 
 fn main() Io -> () {
     // 8 handler literals — each emits its own ctx struct + impl fn.
-    let console = effect Logger {
+    ro console = effect Logger {
         log(msg) => println("[LOG] ${msg}")
     }
-    let null_log = effect Logger {
+    ro null_log = effect Logger {
         log(_msg) => ()
     }
-    let mut count_val = 0
-    let counter = effect Counter {
+    mut count_val = 0
+    ro counter = effect Counter {
         incr() => { count_val = count_val + 1 }
         get()  => count_val
     }
-    let zero_counter = effect Counter {
+    ro zero_counter = effect Counter {
         incr() => ()
         get()  => 0
     }
-    let in_memory_cache = effect Cache[str, int] {
+    ro in_memory_cache = effect Cache[str, int] {
         fetch(_k)    => None
         store(_k, _v) => ()
     }
-    let always_42 = effect Random {
+    ro always_42 = effect Random {
         next_int() => 42
     }
-    let stdout_audit = effect Audit {
+    ro stdout_audit = effect Audit {
         record(event) => println("AUDIT: ${event}")
     }
-    let silent_audit = effect Audit {
+    ro silent_audit = effect Audit {
         record(_event) => ()
     }
 
     with Logger = console, Counter = counter {
-        let r = process(10)
+        ro r = process(10)
         println(str.from(r))
     }
 
     with Logger = null_log, Counter = zero_counter {
-        let r = process(5)
+        ro r = process(5)
         println(str.from(r))
     }
 
     with Cache[str, int] = in_memory_cache, Logger = console {
-        let r = fetch_with_cache("key")
-        println(if let Some(v) = r { str.from(v) } else { "none" })
+        ro r = fetch_with_cache("key")
+        println(if Some(v) = r { str.from(v) } else { "none" })
     }
 
     with Audit = stdout_audit, Logger = console {
@@ -98,5 +98,5 @@ fn main() Io -> () {
         audit_action("noop-action")
     }
 
-    let _ = always_42
+    ro _ = always_42
 }

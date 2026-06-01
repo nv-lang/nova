@@ -17,13 +17,13 @@ module runtime.read_text
 // ================================================================
 
 test "read_char ASCII (1 u8)" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('H')
     wb.write_char('i')
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let c1 = rb.read_char()
-    let c2 = rb.read_char()
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro c1 = rb.read_char()
+    ro c2 = rb.read_char()
     assert(c1 == 'H')
     assert(c2 == 'i')
     assert(rb.remaining() == 0)
@@ -31,46 +31,46 @@ test "read_char ASCII (1 u8)" {
 
 test "read_char Cyrillic (2 bytes UTF-8)" {
     // 'П' = U+041F → 0xD0 0x9F (2 bytes)
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('П')
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 2)            // 2 байта
-    let mut rb = ReadBuffer.from(bs)
-    let c = rb.read_char()
+    mut rb = ReadBuffer.from(bs)
+    ro c = rb.read_char()
     assert(c == 'П')
     assert(rb.remaining() == 0)
 }
 
 test "read_char emoji (4 bytes UTF-8)" {
     // '😀' = U+1F600 → 4-byte UTF-8 sequence
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('😀')
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 4)
-    let mut rb = ReadBuffer.from(bs)
-    let c = rb.read_char()
+    mut rb = ReadBuffer.from(bs)
+    ro c = rb.read_char()
     assert(c == '😀')
     assert(rb.remaining() == 0)
 }
 
 test "read_char advances by codepoint width, not byte" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('A')   // 1 u8
     wb.write_char('П')   // 2 bytes
     wb.write_char('B')   // 1 u8
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 4)            // 1+2+1
-    let mut rb = ReadBuffer.from(bs)
+    mut rb = ReadBuffer.from(bs)
 
-    let c1 = rb.read_char()
+    ro c1 = rb.read_char()
     assert(c1 == 'A')
     assert(rb.position() == 1)     // advanced 1 u8
 
-    let c2 = rb.read_char()
+    ro c2 = rb.read_char()
     assert(c2 == 'П')
     assert(rb.position() == 3)     // advanced 2 bytes
 
-    let c3 = rb.read_char()
+    ro c3 = rb.read_char()
     assert(c3 == 'B')
     assert(rb.position() == 4)     // advanced 1 u8
 }
@@ -81,28 +81,28 @@ test "read_char advances by codepoint width, not byte" {
 // ================================================================
 
 test "read_str ASCII (n codepoints == n bytes)" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("hello world")
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
 
-    let s = rb.read_str(5)
+    ro s = rb.read_str(5)
     assert(s == "hello")
     assert(rb.position() == 5)
     assert(rb.remaining() == 6)    // " world"
 }
 
 test "read_str mixed ASCII + Cyrillic (n codepoints != n bytes)" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("a Привет")        // 1 + 1 + 6*2 = 14 bytes, 8 codepoints
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
 
-    let s = rb.read_str(2)         // "a "
+    ro s = rb.read_str(2)         // "a "
     assert(s == "a ")
     assert(rb.position() == 2)     // 2 bytes для 2 ASCII codepoints
 
-    let cyr = rb.read_str(6)        // "Привет"
+    ro cyr = rb.read_str(6)        // "Привет"
     assert(cyr == "Привет")
     assert(rb.position() == 14)    // 2 + 12 bytes
     assert(rb.remaining() == 0)
@@ -114,34 +114,34 @@ test "read_str mixed ASCII + Cyrillic (n codepoints != n bytes)" {
 // ================================================================
 
 test "try_read_char Ok happy path" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('X')
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
 
-    let r = rb.try_read_char()
+    ro r = rb.try_read_char()
     assert(r.is_ok())
-    let c = r.unwrap_or(0)
+    ro c = r.unwrap_or(0)
     assert(c == 'X')
 }
 
 test "try_read_char Err when buffer empty" {
     // Empty buffer.
-    let mut wb = WriteBuffer.new()
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
+    mut wb = WriteBuffer.new()
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
 
-    let r = rb.try_read_char()
+    ro r = rb.try_read_char()
     assert(r.is_err())
 }
 
 test "try_read_str Err when too few codepoints" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("hi")              // 2 codepoints
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
 
     // Просим больше codepoint'ов чем доступно.
-    let r = rb.try_read_str(5)
+    ro r = rb.try_read_str(5)
     assert(r.is_err())
 }

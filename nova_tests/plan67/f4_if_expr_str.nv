@@ -7,8 +7,8 @@ module plan67.f4_if_expr_str
 // EXPECT_STDOUT neg
 
 fn main() Io -> () {
-    let x = 5
+    ro x = 5
     println(if x > 0 { "pos" } else { "neg" })
-    let y = -1
+    ro y = -1
     println(if y > 0 { "pos" } else { "neg" })
 }

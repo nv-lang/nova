@@ -4,7 +4,7 @@
 // `tx.commit()` — consume-метод (D131), переводит tx в Consumed.
 // На exit'е scope'а tx Consumed — нет ошибки.
 
-module nova_tests.plan100_1.consume_ok_commit
+module plan100_1.consume_ok_commit
 
 type Transaction consume {
     id int,

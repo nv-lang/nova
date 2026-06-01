@@ -287,7 +287,7 @@ with #trusted Log = handler Log {
 ```nova
 #trusted
 fn call_ffi() -> int {
-    let result = extern_fn()
+    ro result = extern_fn()
     assume result >= 0    // documented FFI postcondition
     result
 }
@@ -350,7 +350,7 @@ warning `trust-introduced` unless inside a `#trusted` function.
 ```nova
 #trusted
 fn read_positive_from_device() -> int {
-    let v = device_read()
+    ro v = device_read()
     assume v >= 0    // documented hardware guarantee
     v
 }
@@ -408,8 +408,8 @@ fn sum_nonneg_array(n int) -> int
     requires n >= 0
     ensures  result >= 0
 {
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < n {
         invariant sum >= 0
         invariant i >= 0
@@ -428,7 +428,7 @@ fn countdown(n int) -> int
     requires n >= 0
     ensures  result == 0
 {
-    let mut k = n
+    mut k = n
     while k > 0 {
         invariant k >= 0
         decreases k

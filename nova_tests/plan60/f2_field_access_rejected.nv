@@ -1,10 +1,10 @@
-module nova_tests.plan60.f2_field_access_rejected
+module plan60.f2_field_access_rejected
 
 // Plan 60 / D112: field-style size-accessor → compile error.
 // EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
 
 fn main() -> () {
-    let a []int = [1, 2, 3]
-    let n int = a.len   // ← should error: append `()`
+    ro a []int = [1, 2, 3]
+    ro n int = a.len   // ← should error: append `()`
     println(n)
 }

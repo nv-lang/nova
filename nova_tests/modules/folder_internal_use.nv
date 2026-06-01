@@ -9,7 +9,7 @@ module modules.folder_internal_use
 import nova_tests.modules.folder_internal.{make_user_token}
 
 test "internal module accessed via public peer works" {
-    let token = make_user_token(10)
+    ro token = make_user_token(10)
     // expected: 10 * 31 + 17 = 327
     assert(token == 327)
 }

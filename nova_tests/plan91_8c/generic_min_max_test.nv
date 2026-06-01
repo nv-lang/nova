@@ -1,11 +1,11 @@
-module nova_tests.plan91_8c.generic_min_max_test
+module plan91_8c.generic_min_max_test
 
 import std.sort
 
 // Plan 91.8c (D185): generic min_of/max_of для [T Comparable].
 
 test "min_of/max_of для []int" {
-    let xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    ro xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
     match xs.min_of() {
         Some(m) => assert(m == 1)
         None    => assert(false)
@@ -17,7 +17,7 @@ test "min_of/max_of для []int" {
 }
 
 test "min_of/max_of для []str" {
-    let xs []str = ["zebra", "apple", "mango"]
+    ro xs []str = ["zebra", "apple", "mango"]
     match xs.min_of() {
         Some(m) => assert(m == "apple")
         None    => assert(false)
@@ -29,7 +29,7 @@ test "min_of/max_of для []str" {
 }
 
 test "min_of/max_of empty array → None" {
-    let empty []int = []
+    ro empty []int = []
     match empty.min_of() {
         Some(_) => assert(false)
         None    => assert(true)

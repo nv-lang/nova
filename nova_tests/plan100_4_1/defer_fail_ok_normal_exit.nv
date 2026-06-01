@@ -2,7 +2,7 @@
 // propagates как обычный Fail. Compile pass — D158 checker permits
 // Fail-throws когда enclosing fn-sig declares Fail[E].
 
-module nova_tests.plan100_4_1.defer_fail_ok_normal_exit
+module plan100_4_1.defer_fail_ok_normal_exit
 
 type CommitErr { msg str }
 

@@ -3,54 +3,54 @@
 // AtomicPtr stores a nova_int (int64_t) as a pointer-address proxy.
 // Generic AtomicPtr[T] deferred to Plan 103.7.
 
-module nova_tests.plan103_2.atomic_ptr_basic
+module plan103_2.atomic_ptr_basic
 
 test "AtomicPtr null initializes to 0" {
-    let a = AtomicPtr.null()
+    mut a = AtomicPtr.null()
     assert(a.load() == 0)
 }
 
 test "AtomicPtr new and load" {
-    let a = AtomicPtr.new(12345)
+    mut a = AtomicPtr.new(12345)
     assert(a.load() == 12345)
 }
 
 test "AtomicPtr store and load" {
-    let a = AtomicPtr.null()
+    mut a = AtomicPtr.null()
     a.store(42)
     assert(a.load() == 42)
 }
 
 test "AtomicPtr swap" {
-    let a = AtomicPtr.new(10)
-    let old = a.swap(20)
+    mut a = AtomicPtr.new(10)
+    ro old = a.swap(20)
     assert(old == 10)
     assert(a.load() == 20)
 }
 
 test "AtomicPtr compare_exchange success" {
-    let a = AtomicPtr.new(5)
-    let ok = a.compare_exchange(5, 99)
+    mut a = AtomicPtr.new(5)
+    ro ok = a.compare_exchange(5, 99)
     assert(ok)
     assert(a.load() == 99)
 }
 
 test "AtomicPtr compare_exchange failure" {
-    let a = AtomicPtr.new(5)
-    let ok = a.compare_exchange(999, 0)
+    mut a = AtomicPtr.new(5)
+    ro ok = a.compare_exchange(999, 0)
     assert(!ok)
     assert(a.load() == 5)
 }
 
 test "AtomicPtr store with explicit ordering" {
-    let a = AtomicPtr.null()
+    mut a = AtomicPtr.null()
     a.store(77, Release)
     assert(a.load(Acquire) == 77)
 }
 
 test "AtomicPtr compare_exchange with ordering" {
-    let a = AtomicPtr.new(10)
-    let ok = a.compare_exchange(10, 20, SeqCst, Acquire)
+    mut a = AtomicPtr.new(10)
+    ro ok = a.compare_exchange(10, 20, SeqCst, Acquire)
     assert(ok)
     assert(a.load() == 20)
 }

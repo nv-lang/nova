@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.char_compare_test
+module plan91_8a_2.char_compare_test
 
 // Plan 91.8a.2 part 3 followup: char comparison operators.
 // char codepoint-based ordering: <, <=, >, >= должны работать natively.
@@ -29,12 +29,12 @@ test "char == and !=" {
 }
 
 test "char range '0'..='9'" {
-    let c = '5'
+    ro c = '5'
     assert(c >= '0' && c <= '9')
 }
 
 test "char range 'a'..='z'" {
-    let c = 'm'
+    ro c = 'm'
     assert(c >= 'a' && c <= 'z')
 }
 

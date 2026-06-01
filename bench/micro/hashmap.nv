@@ -1,5 +1,5 @@
 // Plan 57: HashMap micro-benches.
-module bench.micro
+module micro.hashmap
 
 // Plan 82 followup: без явного import codegen не резолвит
 // `HashMap[int,int].new()` и до fail-loudly-фикса тихо падал на
@@ -8,9 +8,9 @@ import std.collections.hashmap.{HashMap}
 
 bench "hashmap insert n=1000" {
     measure {
-        let mut m = HashMap[int, int].new()
-        let n = 1000
-        let mut i = 0
+        mut m = HashMap[int, int].new()
+        ro n = 1000
+        mut i = 0
         while i < n {
             m.insert(i, i)
             i = i + 1
@@ -21,11 +21,11 @@ bench "hashmap insert n=1000" {
 }
 
 bench "hashmap get hit n=1000" {
-    let mut m = HashMap[int, int].new()
-    let mut k = 0
+    mut m = HashMap[int, int].new()
+    mut k = 0
     while k < 1000 { m.insert(k, k); k = k + 1 }
     measure {
-        let mut i = 0
+        mut i = 0
         while i < 1000 {
             bench.opaque(m.get(i))
             i = i + 1
@@ -35,11 +35,11 @@ bench "hashmap get hit n=1000" {
 }
 
 bench "hashmap get miss n=1000" {
-    let mut m = HashMap[int, int].new()
-    let mut k = 0
+    mut m = HashMap[int, int].new()
+    mut k = 0
     while k < 1000 { m.insert(k, k); k = k + 1 }
     measure {
-        let mut i = 0
+        mut i = 0
         while i < 1000 {
             bench.opaque(m.get(i + 1000))
             i = i + 1

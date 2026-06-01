@@ -54,8 +54,8 @@ fn require_hashable[T GbHashable](x T) -> T => x
 
 
 test "bound satisfied — GbUser имеет hash() → type-check OK" {
-    let user = GbUser { id: 42 as u64, name: "alice" }
-    let _ = require_hashable(user)   // type-checker валидирует bound
+    ro user = GbUser { id: 42 as u64, name: "alice" }
+    ro _ = require_hashable(user)   // type-checker валидирует bound
     assert(true)
 }
 
@@ -65,9 +65,9 @@ fn require_two_hashable[A GbHashable, B GbHashable](a A, _b B) -> A => a
 
 
 test "multi-bound — оба satisfied" {
-    let u = GbUser { id: 7 as u64, name: "x" }
-    let v = GbUser { id: 8 as u64, name: "y" }
-    let _ = require_two_hashable(u, v)
+    ro u = GbUser { id: 7 as u64, name: "x" }
+    ro v = GbUser { id: 8 as u64, name: "y" }
+    ro _ = require_two_hashable(u, v)
     assert(true)
 }
 
@@ -77,8 +77,8 @@ fn identity_no_bound[T](x T) -> T => x
 
 
 test "no-bound generic — компилируется как раньше" {
-    let u = GbUser { id: 1 as u64, name: "n" }
-    let _ = identity_no_bound(u)
+    ro u = GbUser { id: 1 as u64, name: "n" }
+    ro _ = identity_no_bound(u)
     assert(true)
 }
 
@@ -88,8 +88,8 @@ fn lookup_or_bound[K GbHashable, V](_key K, fallback V) -> V => fallback
 
 
 test "mixed bound — один с bound, другой без" {
-    let key = GbUser { id: 1 as u64, name: "k" }
-    let r = lookup_or_bound(key, 99)
+    ro key = GbUser { id: 1 as u64, name: "k" }
+    ro r = lookup_or_bound(key, 99)
     // r — int (primitive), roundtrip через void* работает (intptr_t).
     assert(r == 99)
 }
@@ -100,9 +100,9 @@ fn require_countable[T GbCountable](x T) -> T => x
 
 
 test "different bound — GbCountable vs GbHashable" {
-    let u = GbUser { id: 5 as u64, name: "o" }
-    let _ = require_countable(u)   // GbUser имеет @count → OK
-    let _ = require_hashable(u)    // GbUser имеет @hash → OK
+    ro u = GbUser { id: 5 as u64, name: "o" }
+    ro _ = require_countable(u)   // GbUser имеет @count → OK
+    ro _ = require_hashable(u)    // GbUser имеет @hash → OK
     assert(true)
 }
 
@@ -142,8 +142,8 @@ fn pair_forward[K GbHashable, V GbFromKey[K]](k K, v V) -> V => v
 
 
 test "forward-dependency — bound[V] ссылается на K" {
-    let k = GbKey { raw: 100 as u64 }
-    let v = GbValue { derived: 0 as u64 }
-    let _ = pair_forward(k, v)
+    ro k = GbKey { raw: 100 as u64 }
+    ro v = GbValue { derived: 0 as u64 }
+    ro _ = pair_forward(k, v)
     assert(true)
 }

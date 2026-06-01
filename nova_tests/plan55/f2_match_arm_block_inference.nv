@@ -7,7 +7,7 @@ module plan55.f2_match_arm_block_inference
 fn inc_or_zero(opt Option[int]) -> int {
     match opt {
         Some(v) => {
-            let q = v + 1
+            ro q = v + 1
             q
         }
         None => 0
@@ -18,7 +18,7 @@ fn inc_or_zero(opt Option[int]) -> int {
 fn concat_or_empty(opt Option[str]) -> str {
     match opt {
         Some(s) => {
-            let q = s + "!"
+            ro q = s + "!"
             q
         }
         None => ""
@@ -28,13 +28,13 @@ fn concat_or_empty(opt Option[str]) -> str {
 
 test "Block arm inference: int + 1" {
     assert(inc_or_zero(Some(41)) == 42)
-    let none_int Option[int] = None
+    ro none_int Option[int] = None
     assert(inc_or_zero(none_int) == 0)
 }
 
 
 test "Block arm inference: str concat" {
     assert(concat_or_empty(Some("hi")) == "hi!")
-    let none_str Option[str] = None
+    ro none_str Option[str] = None
     assert(concat_or_empty(none_str) == "")
 }

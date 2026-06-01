@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR does not satisfy `HasB`
 
-module nova_tests.plan101_3.negative.multibound_missing_method_neg
+module negative.multibound_missing_method_neg
 
 
 type HasA protocol {
@@ -26,7 +26,7 @@ fn needs_both[T HasA + HasB](x T) -> int => x.a() + x.b()
 
 
 test "should error" {
-    let p = Partial { v: 1 }
-    let _ = needs_both(p)
+    ro p = Partial { v: 1 }
+    ro _ = needs_both(p)
     assert(1 == 1)
 }

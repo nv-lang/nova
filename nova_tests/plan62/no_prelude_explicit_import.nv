@@ -25,7 +25,7 @@ fn make_none() -> Option[int] {
 }
 
 test "no_prelude + explicit import — Some constructor works" {
-    let o = make_some()
+    ro o = make_some()
     // `is_some` — method на Option, registered через runtime helper.
     // Доступен independent от prelude auto-import (lookup идёт через
     // method-receiver registry, не через name-scope).
@@ -33,6 +33,6 @@ test "no_prelude + explicit import — Some constructor works" {
 }
 
 test "no_prelude + explicit import — None constructor works" {
-    let n = make_none()
+    ro n = make_none()
     assert(n.is_none())
 }

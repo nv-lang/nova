@@ -3,7 +3,7 @@
 // Plan 100.4.5 (D162): failable function + consume binding + ничего —
 // errdefer уж точно отсутствует, D162-uncovered-error-path.
 
-module nova_tests.plan100_4_5.neg_failable_consume_no_cover_at_all
+module plan100_4_5.neg_failable_consume_no_cover_at_all
 
 type Resource consume {
     handle int,

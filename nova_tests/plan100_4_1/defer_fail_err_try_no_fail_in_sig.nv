@@ -3,7 +3,7 @@
 // Plan 100.4.1 (D158): `?` operator в defer body без Fail[E] в fn-sig —
 // compile error.
 
-module nova_tests.plan100_4_1.defer_fail_err_try_no_fail_in_sig
+module plan100_4_1.defer_fail_err_try_no_fail_in_sig
 
 type Err { msg str }
 

@@ -5,9 +5,9 @@
 // `fn main` (не `test`-блок): panic должен дойти до runtime-frame
 // (внутри test-блока он перехватывается harness'ом).
 
-module nova_tests.plan90.neg_byte_at_oob
+module plan90.neg_byte_at_oob
 
 fn main() -> () {
-    let s = "AB"
-    let _ = s.byte_at(5)
+    ro s = "AB"
+    ro _ = s.byte_at(5)
 }

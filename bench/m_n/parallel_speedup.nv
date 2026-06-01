@@ -42,7 +42,7 @@
 //   - Try parallel_for на array-mode (potential parallel-friendly path).
 //   - Linux perf comparison (Windows может быть особенно медленным на
 //     thread create).
-module bench.m_n
+module m_n.parallel_speedup
 
 // CPU-bound recursive Fibonacci (no tail-call). Plain integer math;
 // no heap alloc, no I/O — pure computation, scales with cores.
@@ -60,7 +60,7 @@ bench "parallel_speedup: 16 × fib(30) parallel for" {
                 // `let _ = …` — делает body statement-mode (vs array-mode
                 // когда body trailing — expression). Statement-mode
                 // подпадает под Plan 83.4.5.10 Ф.3 inline-threshold.
-                let _r = bench.opaque(fib_speedup_workload(33))
+                ro _r = bench.opaque(fib_speedup_workload(33))
             }
         }
         bench.elements(16)
@@ -72,7 +72,7 @@ bench "parallel_speedup: 16 × fib(30) parallel for" {
 // multi-worker — speedup относительно sequential measure.
 bench "parallel_speedup: 16 × fib(30) sequential" {
     measure {
-        let mut i = 0
+        mut i = 0
         while i < 16 {
             bench.opaque(fib_speedup_workload(33))
             i = i + 1

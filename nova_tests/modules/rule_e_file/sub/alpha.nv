@@ -2,7 +2,7 @@
 // `rule_e_file/` direct `.nv` не содержит — только `sub/` — поэтому
 // `rule_e_file.nv` (single-file) и `rule_e_file/sub/` валидны вместе.
 
-module rule_e_file.sub
+module sub.alpha
 
 export fn from_sub_a() -> int =>
     20

@@ -14,7 +14,7 @@ export type Color
     | Blue(int)
 
 test "assert в match arm body — compiles + runs" {
-    let c Color = Red
+    ro c Color = Red
     match c {
         Red     => assert(true)
         Green   => assert(false)
@@ -23,8 +23,8 @@ test "assert в match arm body — compiles + runs" {
 }
 
 test "assert в обеих arm'ах match с side-effects" {
-    let mut entered = 0
-    let c Color = Blue(42)
+    mut entered = 0
+    ro c Color = Blue(42)
     match c {
         Red     => { entered += 100; assert(false) }
         Green   => { entered += 200; assert(false) }

@@ -62,8 +62,8 @@ fn tree_sum(t Tree) -> int => match t {
 fn tree_depth(t Tree) -> int => match t {
     Leaf => 0
     Node(_, l, r) => {
-        let dl = tree_depth(l)
-        let dr = tree_depth(r)
+        ro dl = tree_depth(l)
+        ro dr = tree_depth(r)
         1 + (if dl > dr { dl } else { dr })
     }
 }
@@ -74,7 +74,7 @@ fn tree_count(t Tree) -> int => match t {
 }
 
 test "tree sum рекурсивный" {
-    let t = Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Node(4, Leaf, Leaf)))
+    ro t = Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Node(4, Leaf, Leaf)))
     assert(tree_sum(t) == 10)
 }
 
@@ -84,12 +84,12 @@ test "tree depth — пустое и одиночное" {
 }
 
 test "tree depth — несбалансированное" {
-    let t = Node(1, Leaf, Node(2, Leaf, Node(3, Leaf, Leaf)))
+    ro t = Node(1, Leaf, Node(2, Leaf, Node(3, Leaf, Leaf)))
     assert(tree_depth(t) == 3)
 }
 
 test "tree count nodes" {
-    let t = Node(1, Node(2, Leaf, Leaf), Node(3, Node(4, Leaf, Leaf), Leaf))
+    ro t = Node(1, Node(2, Leaf, Leaf), Node(3, Node(4, Leaf, Leaf), Leaf))
     assert(tree_count(t) == 4)
 }
 

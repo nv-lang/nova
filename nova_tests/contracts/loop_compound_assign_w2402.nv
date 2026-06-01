@@ -13,8 +13,8 @@ module contracts.loop_compound_assign_w2402
 fn doubling(n int) -> int
     requires n >= 0
 {
-    let mut i = 0
-    let mut x = 1
+    mut i = 0
+    mut x = 1
     while i < n
         invariant x >= 1
         decreases n - i

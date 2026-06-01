@@ -12,16 +12,16 @@
 //
 // EXPECT_TIMEOUT_MS 90000
 
-module nova_tests.plan103_4.condvar_producer_consumer
+module plan103_4.condvar_producer_consumer
 
 test "producer/consumer bounded buffer — 20 rounds, no lost items" {
-    let mu        = Mutex.new()
-    let not_empty = Condvar.new()
-    let not_full  = Condvar.new()
+    mut mu = Mutex.new()
+    mut not_empty = Condvar.new()
+    mut not_full  = Condvar.new()
     // Buffer: AtomicInt stores item value (0 = empty, >0 = full).
-    let buffer    = AtomicInt.new(0)
-    let consumed  = AtomicInt.new(0)
-    let n_rounds  = 20
+    mut buffer    = AtomicInt.new(0)
+    mut consumed = AtomicInt.new(0)
+    ro n_rounds  = 20
 
     supervised {
         // Consumer fiber
@@ -32,7 +32,7 @@ test "producer/consumer bounded buffer — 20 rounds, no lost items" {
                 while buffer.load() == 0 {
                     not_empty.wait(mu)
                 }
-                let _ = buffer.store(0)   // take item
+                ro _ = buffer.store(0)   // take item
                 consumed.fetch_add(1)
                 not_full.notify_one()
                 mu.unlock()
@@ -59,13 +59,13 @@ test "producer/consumer bounded buffer — 20 rounds, no lost items" {
 }
 
 test "multiple producers, single consumer — no item lost" {
-    let mu        = Mutex.new()
-    let not_empty = Condvar.new()
-    let counter   = AtomicInt.new(0)   // total produced
-    let consumed  = AtomicInt.new(0)   // total consumed
-    let done_flag = AtomicBool.new(false)
-    let n_items   = 10   // items per producer
-    let n_prod    = 3    // 3 producers
+    mut mu = Mutex.new()
+    mut not_empty = Condvar.new()
+    mut counter = AtomicInt.new(0)   // total produced
+    mut consumed = AtomicInt.new(0)   // total consumed
+    mut done_flag = AtomicBool.new(false)
+    ro n_items   = 10   // items per producer
+    ro n_prod    = 3    // 3 producers
 
     supervised {
         // Consumer — in spawn fiber
@@ -77,7 +77,7 @@ test "multiple producers, single consumer — no item lost" {
                     not_empty.wait(mu)
                 }
                 // Consume all available
-                let avail = counter.load() - consumed.load()
+                ro avail = counter.load() - consumed.load()
                 consumed.fetch_add(avail)
                 mu.unlock()
             }

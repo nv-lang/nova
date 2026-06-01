@@ -1,27 +1,27 @@
-module nova_tests.plan70_5.f2_int_to_uint_saturation_pos
+module plan70_5.f2_int_to_uint_saturation_pos
 
 // Plan 70.5 Ф.2 Q2: int → uint cast saturates (negative → 0).
 
 test "positive int as uint unchanged" {
-    let x int = 42
-    let u uint = x as uint
+    ro x int = 42
+    ro u uint = x as uint
     assert(u == 42 as uint)
 }
 
 test "zero as uint" {
-    let x int = 0
-    let u uint = x as uint
+    ro x int = 0
+    ro u uint = x as uint
     assert(u == 0 as uint)
 }
 
 test "negative int as uint saturates to zero" {
-    let x int = -1
-    let u uint = x as uint
+    ro x int = -1
+    ro u uint = x as uint
     assert(u == 0 as uint)
 }
 
 test "large negative saturates to zero" {
-    let x int = -1000
-    let u uint = x as uint
+    ro x int = -1000
+    ro u uint = x as uint
     assert(u == 0 as uint)
 }

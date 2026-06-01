@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.general_synthesis_test
+module plan91_8a_2.general_synthesis_test
 
 // Plan 91.8a.2 [M-91.8a.2-default-body-general]: synthesis is generalized.
 // Defines a NEW protocol (not Equatable/Printable) with a default body that
@@ -17,14 +17,14 @@ type User { display_name str }
 fn User @name() -> str => @display_name
 
 test "general synthesis: Greetable.greet via T.@name (no hardcoded case)" {
-    let u = User { display_name: "World" }
-    let s = u.greet()
+    ro u = User { display_name: "World" }
+    ro s = u.greet()
     assert(s == "Hello, World")
 }
 
 test "generic bound [T Greetable] dispatches to synthesized method" {
-    let u = User { display_name: "Alice" }
-    let r = make_greeting(u)
+    ro u = User { display_name: "Alice" }
+    ro r = make_greeting(u)
     assert(r == "Hello, Alice")
 }
 

@@ -19,11 +19,11 @@ module runtime.read_buffer
 // ================================================================
 
 test "ReadBuffer.from() — initial state" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x11)
     wb.write_byte(0x22)
-    let bs = wb.into()
-    let rb = ReadBuffer.from(bs)
+    ro bs = wb.into()
+    ro rb = ReadBuffer.from(bs)
     assert(rb.position() == 0)
     assert(rb.remaining() == 2)
     assert(rb.has_remaining(2) == true)
@@ -36,15 +36,15 @@ test "ReadBuffer.from() — initial state" {
 // ================================================================
 
 test "read_byte advances position" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0xAA)
     wb.write_byte(0xBB)
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let b1 = rb.read_byte()
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro b1 = rb.read_byte()
     assert(b1 == 0xAA)
     assert(rb.position() == 1)
-    let b2 = rb.read_byte()
+    ro b2 = rb.read_byte()
     assert(b2 == 0xBB)
     assert(rb.position() == 2)
     assert(rb.remaining() == 0)
@@ -56,52 +56,52 @@ test "read_byte advances position" {
 // ================================================================
 
 test "round-trip u32_le" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_le(0xCAFEBABE)
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let v = rb.read_u32_le()
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro v = rb.read_u32_le()
     assert(v == 0xCAFEBABE)
 }
 
 test "round-trip u32_be" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_be(0xDEADBEEF)
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let v = rb.read_u32_be()
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro v = rb.read_u32_be()
     assert(v == 0xDEADBEEF)
 }
 
 test "round-trip u16_le / be" {
-    let mut wb1 = WriteBuffer.new()
+    mut wb1 = WriteBuffer.new()
     wb1.write_u16_le(0x1234)
-    let mut rb1 = ReadBuffer.from(wb1.into())
+    mut rb1 = ReadBuffer.from(wb1.into())
     assert(rb1.read_u16_le() == 0x1234)
 
-    let mut wb2 = WriteBuffer.new()
+    mut wb2 = WriteBuffer.new()
     wb2.write_u16_be(0x1234)
-    let mut rb2 = ReadBuffer.from(wb2.into())
+    mut rb2 = ReadBuffer.from(wb2.into())
     assert(rb2.read_u16_be() == 0x1234)
 }
 
 test "round-trip i32_le — negative" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i32_le(-42)
-    let mut rb = ReadBuffer.from(wb.into())
-    let v = rb.read_i32_le()
+    mut rb = ReadBuffer.from(wb.into())
+    ro v = rb.read_i32_le()
     assert(v == -42)
 }
 
 test "multi-value round-trip" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_be(0x11223344)
     wb.write_u16_be(0xAABB)
     wb.write_byte(0xCC)
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 7)
 
-    let mut rb = ReadBuffer.from(bs)
+    mut rb = ReadBuffer.from(bs)
     assert(rb.read_u32_be() == 0x11223344)
     assert(rb.read_u16_be() == 0xAABB)
     assert(rb.read_byte() == 0xCC)
@@ -114,29 +114,29 @@ test "multi-value round-trip" {
 // ================================================================
 
 test "try_read_byte Ok на достаточных данных" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x42)
-    let mut rb = ReadBuffer.from(wb.into())
-    let r = rb.try_read_byte()
+    mut rb = ReadBuffer.from(wb.into())
+    ro r = rb.try_read_byte()
     assert(r.is_ok())
-    let v = r.unwrap_or(0)
+    ro v = r.unwrap_or(0)
     assert(v == 0x42)
 }
 
 test "try_read_u32_le Ok" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_le(0x12345678)
-    let mut rb = ReadBuffer.from(wb.into())
-    let r = rb.try_read_u32_le()
+    mut rb = ReadBuffer.from(wb.into())
+    ro r = rb.try_read_u32_le()
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 0x12345678)
 }
 
 test "try_read_u32_le Err на коротком буфере" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0xFF)             // только 1 u8, нужно 4
-    let mut rb = ReadBuffer.from(wb.into())
-    let r = rb.try_read_u32_le()
+    mut rb = ReadBuffer.from(wb.into())
+    ro r = rb.try_read_u32_le()
     assert(r.is_err())
 }
 
@@ -150,36 +150,36 @@ test "try_read_u32_le Err на коротком буфере" {
 // Pair: int.to_bits(d) для упаковки в обратную сторону.
 
 test "f64 round-trip read_f64_le через Fail-form" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_le(3.14159)
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 8)
-    let mut rb = ReadBuffer.from(bs)
-    let d = rb.read_f64_le()
+    mut rb = ReadBuffer.from(bs)
+    ro d = rb.read_f64_le()
     // IEEE 754 bit-perfect round-trip → точное равенство.
     assert(d == 3.14159)
 }
 
 test "f64.from_bits + try_read_f64_le round-trip" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_be(2.71828)
-    let mut rb = ReadBuffer.from(wb.into())
-    let r = rb.try_read_f64_be()
+    mut rb = ReadBuffer.from(wb.into())
+    ro r = rb.try_read_f64_be()
     assert(r.is_ok())
-    let bits = r.unwrap_or(0)
-    let d = f64.from_bits(bits)
+    ro bits = r.unwrap_or(0)
+    ro d = f64.from_bits(bits)
     assert(d == 2.71828)
 }
 
 test "int.to_bits round-trip pair" {
     // 0.0 имеет bits = 0; round-trip 0 → 0.0 → 0.
-    let bits0 = int.to_bits(0.0)
+    ro bits0 = int.to_bits(0.0)
     assert(bits0 == 0)
-    let d = f64.from_bits(bits0)
+    ro d = f64.from_bits(bits0)
     assert(d == 0.0)
     // f64.from_bits(int.to_bits(d)) == d для произвольного d.
-    let bits = int.to_bits(1.5)
-    let back = f64.from_bits(bits)
+    ro bits = int.to_bits(1.5)
+    ro back = f64.from_bits(bits)
     assert(back == 1.5)
 }
 
@@ -189,14 +189,14 @@ test "int.to_bits round-trip pair" {
 // ================================================================
 
 test "read_bytes — slice copy" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x01)
     wb.write_byte(0x02)
     wb.write_byte(0x03)
     wb.write_byte(0x04)
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let chunk = rb.read_bytes(3)
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro chunk = rb.read_bytes(3)
     assert(chunk.len() == 3)
     assert(chunk[0] == 0x01)
     assert(chunk[2] == 0x03)
@@ -209,14 +209,14 @@ test "read_bytes — slice copy" {
 // ================================================================
 
 test "remaining_bytes после частичного чтения" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x11)
     wb.write_byte(0x22)
     wb.write_byte(0x33)
-    let bs = wb.into()
-    let mut rb = ReadBuffer.from(bs)
-    let _ = rb.read_byte()           // потребили 1
-    let rest = rb.remaining_bytes()
+    ro bs = wb.into()
+    mut rb = ReadBuffer.from(bs)
+    ro _ = rb.read_byte()           // потребили 1
+    ro rest = rb.remaining_bytes()
     assert(rest.len() == 2)
     assert(rest[0] == 0x22)
     assert(rest[1] == 0x33)

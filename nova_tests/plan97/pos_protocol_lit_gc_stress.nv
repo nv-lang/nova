@@ -4,7 +4,7 @@
 // Production-grade: capability-split factories могут вызываться много раз
 // (e.g. per-request); GC overhead не должен расти линейно.
 
-module nova_tests.plan97.pos_protocol_lit_gc_stress
+module plan97.pos_protocol_lit_gc_stress
 
 
 export type Increment protocol {
@@ -20,9 +20,9 @@ fn make_adder(delta int) -> Increment {
 
 
 test "много protocol-литералов через factory (GC stress)" {
-    let mut total = 0
+    mut total = 0
     for i in 0..1000 {
-        let add_i = make_adder(i)
+        ro add_i = make_adder(i)
         total = total + add_i.apply(0)
     }
     // sum(0..1000) = 999*1000/2 = 499500
@@ -31,9 +31,9 @@ test "много protocol-литералов через factory (GC stress)" {
 
 
 test "захват разных state в литералах не путается" {
-    let lit_5 = make_adder(5)
-    let lit_10 = make_adder(10)
-    let lit_99 = make_adder(99)
+    ro lit_5 = make_adder(5)
+    ro lit_10 = make_adder(10)
+    ro lit_99 = make_adder(99)
     assert(lit_5.apply(0) == 5)
     assert(lit_10.apply(0) == 10)
     assert(lit_99.apply(0) == 99)

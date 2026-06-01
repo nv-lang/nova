@@ -16,11 +16,11 @@ module plan65.f12_c_mono_as_unix_neg
 import std.time.duration
 
 test "documented gap: m.as_unix_secs() compiles silently (wrong dispatch)" {
-    let m = Monotonic.now()
+    ro m = Monotonic.now()
     // Compiles + runs returning meaningless value (nanos / 1e9 of monotonic
     // clock, NOT Unix epoch seconds). Documented pre-existing behavior.
-    let bogus = m.as_unix_secs()
+    ro bogus = m.as_unix_secs()
     // The actual value is irrelevant — what matters is the call compiled.
-    let _ = bogus
+    ro _ = bogus
     assert(true)
 }

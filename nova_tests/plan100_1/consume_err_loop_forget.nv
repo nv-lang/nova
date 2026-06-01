@@ -7,7 +7,7 @@
 // Pattern: `loop { consume tx = begin() }` — каждая iteration создаёт
 // новый tx, никогда не consume'ит → forget на каждой iteration.
 
-module nova_tests.plan100_1.consume_err_loop_forget
+module plan100_1.consume_err_loop_forget
 
 type Transaction consume {
     id int,
@@ -19,8 +19,8 @@ fn Transaction consume @rollback() -> () { () }
 fn begin() -> Transaction => { id: 1 }
 
 test "loop без consume — каждая iteration teryает tx" {
-    let n = 3
-    let mut i = 0
+    ro n = 3
+    mut i = 0
     while i < n {
         consume tx = begin()
         // ОШИБКА D133-not-consumed: tx Live на exit'е iteration body.

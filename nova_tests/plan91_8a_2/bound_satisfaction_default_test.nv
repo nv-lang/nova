@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.bound_satisfaction_default_test
+module plan91_8a_2.bound_satisfaction_default_test
 
 // Plan 91.8a.2 part 2 (D183 amendment): type satisfies [T Equatable] bound
 // via default body fallback. Type Money имеет только @compare; @equals
@@ -19,8 +19,8 @@ fn Money @compare(other Self) -> int =>
 fn cmp_via_bound[T Comparable](a T, b T) -> int => a.compare(b)
 
 test "Comparable bound — Money satisfies через @compare" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 200 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 200 }
     assert(cmp_via_bound(a, b) < 0)
     assert(cmp_via_bound(b, a) > 0)
     assert(cmp_via_bound(a, a) == 0)
@@ -32,7 +32,7 @@ test "Comparable bound — Money satisfies через @compare" {
 fn eq_via_bound[T Equatable](a T, b T) -> bool => a.equals(b)
 
 test "Equatable bound — Money satisfies через default body fallback" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 100 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 100 }
     assert(eq_via_bound(a, b))
 }

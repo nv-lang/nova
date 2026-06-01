@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.coercion_equatable_test
+module plan91_8a_2.coercion_equatable_test
 
 // Plan 91.8a.2 followup: Equatable coercion с Self-typed param.
 // `let x Equatable = m` works; `x.equals(y)` virtual dispatch where y is
@@ -12,20 +12,20 @@ fn Score @compare(other Self) -> int =>
     else { 0 }
 
 test "Score coerced to Equatable, virtual equals() call" {
-    let a = Score { value: 7 }
-    let b = Score { value: 7 }
-    let c = Score { value: 8 }
-    let ea Equatable = a
-    let eb Equatable = b
-    let ec Equatable = c
+    ro a = Score { value: 7 }
+    ro b = Score { value: 7 }
+    ro c = Score { value: 8 }
+    ro ea Equatable = a
+    ro eb Equatable = b
+    ro ec Equatable = c
     assert(ea.equals(eb))
     assert(!ea.equals(ec))
 }
 
 test "Equatable coerced — equals with concrete RHS (auto-passthrough)" {
-    let a = Score { value: 42 }
-    let b = Score { value: 42 }
-    let ea Equatable = a
+    ro a = Score { value: 42 }
+    ro b = Score { value: 42 }
+    ro ea Equatable = a
     // Note: ea.equals(b) where b is concrete Score — codegen passes b
     // directly (not via .data unwrap). Type-checker accepts because
     // Equatable.equals(other Self) — Self here resolved через ea's

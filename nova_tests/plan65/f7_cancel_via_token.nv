@@ -40,19 +40,19 @@ const TIMEOUT_MS i64 = 5000
 const SLACK_MS   i64 = 1500
 
 test "tok.cancel() closes a pending close_after timer (no leak)" {
-    let tok = CancelToken.new()
-    let t0 = Time.now()
+    ro tok = CancelToken.new()
+    ro t0 = Time.now()
     with Fail = effect Fail {
         fail(_msg) => interrupt ()
     } {
         supervised(cancel: tok) {
             spawn {
-                let t = ChanReader.close_after(Duration.from_millis(TIMEOUT_MS))
+                ro t = ChanReader.close_after(Duration.from_millis(TIMEOUT_MS))
                 // recv blocks until the timer fires or until our cancel
                 // closes the writer end of the channel.
-                let v = t.recv()
+                ro v = t.recv()
                 // v is None either way — fire (closed) or cancel (closed).
-                let _ = v.is_none()
+                ro _ = v.is_none()
             }
             spawn {
                 // Short pause so fiber A is parked on recv() when we cancel.
@@ -61,7 +61,7 @@ test "tok.cancel() closes a pending close_after timer (no leak)" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // If cancel did NOT close the timer, elapsed >= TIMEOUT_MS.
     // With cancel, elapsed ≈ 50 ms + scope-drain time.
     assert(elapsed < SLACK_MS)

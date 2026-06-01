@@ -22,7 +22,7 @@ export fn ByteCounter mut @next() -> Option[u8] {
     if @cur >= @end {
         None
     } else {
-        let v = @cur
+        ro v = @cur
         @cur = (@cur as int + 1) as u8
         Some(v)
     }
@@ -35,8 +35,8 @@ export fn ByteCounter.new(end u8) -> ByteCounter {
 
 
 test "for-in over Iterable[u8]" {
-    let it = ByteCounter.new(5 as u8)
-    let mut sum int = 0
+    ro it = ByteCounter.new(5 as u8)
+    mut sum int = 0
     for b in it {
         sum = sum + b as int
     }
@@ -57,7 +57,7 @@ export fn BoolToggler mut @next() -> Option[bool] {
     if @cur >= @end {
         None
     } else {
-        let v = @on
+        ro v = @on
         @on = !@on
         @cur += 1
         Some(v)
@@ -71,9 +71,9 @@ export fn BoolToggler.new(end int) -> BoolToggler {
 
 
 test "for-in over Iterable[bool]" {
-    let it = BoolToggler.new(4)
-    let mut trues int = 0
-    let mut falses int = 0
+    ro it = BoolToggler.new(4)
+    mut trues int = 0
+    mut falses int = 0
     for b in it {
         if b { trues = trues + 1 } else { falses = falses + 1 }
     }
@@ -93,7 +93,7 @@ export fn I32Seq mut @next() -> Option[i32] {
     if @cur >= @end {
         None
     } else {
-        let v = (-100 + @cur * 50) as i32
+        ro v = (-100 + @cur * 50) as i32
         @cur += 1
         Some(v)
     }
@@ -106,8 +106,8 @@ export fn I32Seq.new(end int) -> I32Seq {
 
 
 test "for-in over Iterable[i32]" {
-    let it = I32Seq.new(4)
-    let mut sum int = 0
+    ro it = I32Seq.new(4)
+    mut sum int = 0
     for n in it {
         sum = sum + n as int
     }
@@ -144,11 +144,11 @@ export fn StrSeq.new() -> StrSeq {
 
 
 test "for-in over Iterable[str]" {
-    let it = StrSeq.new()
-    let mut found_alpha bool = false
-    let mut found_beta bool = false
-    let mut found_gamma bool = false
-    let mut count int = 0
+    ro it = StrSeq.new()
+    mut found_alpha bool = false
+    mut found_beta bool = false
+    mut found_gamma bool = false
+    mut count int = 0
     for s in it {
         if s == "alpha" { found_alpha = true }
         if s == "beta" { found_beta = true }
@@ -189,9 +189,9 @@ export fn PairSeq.new() -> PairSeq {
 
 
 test "for-in over Iterable[(int, int)] — tuple destructure" {
-    let it = PairSeq.new()
-    let mut sum_keys int = 0
-    let mut sum_vals int = 0
+    ro it = PairSeq.new()
+    mut sum_keys int = 0
+    mut sum_vals int = 0
     for (k, v) in it {
         sum_keys = sum_keys + k
         sum_vals = sum_vals + v

@@ -1,6 +1,6 @@
 // Plan 42.10: второй peer (нужно ≥2 для folder-module detection).
 
-module negative_capability.module_forbid_violation_setup
+module module_forbid_violation_setup.helper
 
 export fn helper() -> int =>
     1

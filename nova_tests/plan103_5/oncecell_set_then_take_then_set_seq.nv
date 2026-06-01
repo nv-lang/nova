@@ -2,20 +2,20 @@
 //
 // Verifies that take() resets cell to empty and set() works again.
 
-module nova_tests.plan103_5.oncecell_set_then_take_then_set_seq
+module plan103_5.oncecell_set_then_take_then_set_seq
 
 test "OnceCell: set(a) take() set(b) get() == Some(b)" {
-    let cell = OnceCell[int].new()
+    mut cell = OnceCell[int].new()
 
-    let r1 = cell.set(100)
+    ro r1 = cell.set(100)
     assert(r1 == true)
 
-    let taken = cell.take()
+    ro taken = cell.take()
     assert(match taken { Some(x) => x == 100, None => false })
 
-    let r2 = cell.set(200)
+    ro r2 = cell.set(200)
     assert(r2 == true)   // after take(), cell is empty again
 
-    let v = cell.get()
+    ro v = cell.get()
     assert(match v { Some(x) => x == 200, None => false })
 }

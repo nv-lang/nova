@@ -201,9 +201,9 @@ module nova_tests.gc.bounded_rate
 fn make_str(i int) -> str => "alloc-" + i.to_string()
 
 fn main() {
-    let mut i = 0
+    mut i = 0
     while i < 100_000 {
-        let s = make_str(i)
+        ro s = make_str(i)
         // prevent trivial dead-code elimination: use len
         assert(s.len() > 0)
         i += 1
@@ -221,8 +221,8 @@ module nova_tests.gc.stress_100k_ints
 // Boehm backend не ломает простые программы.
 
 fn main() {
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < 100_000 {
         sum = sum + i
         i = i + 1

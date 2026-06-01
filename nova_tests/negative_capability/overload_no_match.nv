@@ -19,6 +19,6 @@ fn caller() -> str {
 
 
 test "no matching overload — compile error (negative)" {
-    let _ = caller()
+    ro _ = caller()
     assert(true)
 }

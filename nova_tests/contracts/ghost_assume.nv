@@ -10,7 +10,7 @@ fn use_ghost(x int) -> int {
     // ghost let — spec-only, не emit'ится в codegen.
     // В runtime значение не существует; читать его из non-ghost кода
     // нельзя (codegen эрейзит).
-    ghost let initial_snapshot = x
+    ghost ro initial_snapshot = x
     // initial_snapshot можно использовать в спеке (requires/ensures),
     // но не в обычном коде.
     x

@@ -3,10 +3,10 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_6.realtime_oncecell_get_ok
+module plan103_6.realtime_oncecell_get_ok
 
 #realtime fn _rt_oncecell_get_check(c mut OnceCell[int]) -> bool {
-    let v = c.get()
+    ro v = c.get()
     match v { Some(x) => x == 99, None => false }
 }
 
@@ -15,17 +15,17 @@ module nova_tests.plan103_6.realtime_oncecell_get_ok
 }
 
 test "OnceCell.get allowed in #realtime fn" {
-    let c = OnceCell[int].new()
-    let _ = c.set(99)
-    let got = _rt_oncecell_get_check(c)
+    mut c = OnceCell[int].new()
+    ro _ = c.set(99)
+    ro got = _rt_oncecell_get_check(c)
     assert(got)
 }
 
 test "OnceCell.is_initialized allowed in #realtime fn" {
-    let c = OnceCell[int].new()
-    let before = _rt_oncecell_is_initialized(c)
-    let _ = c.set(1)
-    let after = _rt_oncecell_is_initialized(c)
+    mut c = OnceCell[int].new()
+    ro before = _rt_oncecell_is_initialized(c)
+    ro _ = c.set(1)
+    ro after = _rt_oncecell_is_initialized(c)
     assert(before == false)
     assert(after == true)
 }

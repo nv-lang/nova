@@ -3,7 +3,7 @@
 // (D44): `let x u8 = 200` must stay valid even though the literal's
 // default type is `int`.
 
-module nova_tests.plan79.assign_correct_pos
+module plan79.assign_correct_pos
 
 type Point { x int, y int }
 
@@ -14,16 +14,16 @@ fn want_point(p Point) -> int => p.x
 
 test "Ф.1 — correct assignments compile" {
     // integer literal adapts to the annotated type (D44)
-    let a u8 = 200
-    let b i64 = 5
-    let c int = 42
+    ro a u8 = 200
+    ro b i64 = 5
+    ro c int = 42
     assert(a == 200)
     assert(b == 5)
     assert(c == 42)
 
-    let s str = "hello"
-    let flag bool = true
-    let g f64 = 2.5
+    ro s str = "hello"
+    ro flag bool = true
+    ro g f64 = 2.5
     assert(g > 2.0)
 
     // variable passed to a parameter of the same category
@@ -32,6 +32,6 @@ test "Ф.1 — correct assignments compile" {
     assert(want_str(s) == 5)
 
     // record passed to a parameter of the matching type
-    let p Point = { x: 1, y: 2 }
+    ro p Point = { x: 1, y: 2 }
     assert(want_point(p) == 1)
 }

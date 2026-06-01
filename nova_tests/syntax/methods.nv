@@ -25,43 +25,43 @@ fn Counter mut @inc() -> () { @value = @value + 1 }
 fn Counter @get() -> int => @value
 
 test "instance method @-access" {
-    let p = Point { x: 3, y: 4 }
+    ro p = Point { x: 3, y: 4 }
     assert(p.sum() == 7)
 }
 
 test "method returning new value" {
-    let p = Point { x: 2, y: 3 }
-    let p2 = p.scale(10)
+    ro p = Point { x: 2, y: 3 }
+    ro p2 = p.scale(10)
     assert(p2.x == 20)
     assert(p2.y == 30)
 }
 
 test "magnitude squared" {
-    let p = Point { x: 3, y: 4 }
+    ro p = Point { x: 3, y: 4 }
     assert(p.magnitude_sq() == 25)
 }
 
 test "static method origin" {
-    let o = Point.origin()
+    ro o = Point.origin()
     assert(o.x == 0)
     assert(o.y == 0)
 }
 
 test "static method from tuple" {
-    let p = Point.from_pair((7, 9))
+    ro p = Point.from_pair((7, 9))
     assert(p.x == 7)
     assert(p.y == 9)
 }
 
 test "method chaining" {
-    let p = Point { x: 1, y: 1 }
-    let r = p.scale(2).scale(3)
+    ro p = Point { x: 1, y: 1 }
+    ro r = p.scale(2).scale(3)
     assert(r.x == 6)
     assert(r.y == 6)
 }
 
 test "mut method modifies receiver field" {
-    let c = Counter { value: 0 }
+    mut c = Counter { value: 0 }
     c.inc()
     c.inc()
     c.inc()

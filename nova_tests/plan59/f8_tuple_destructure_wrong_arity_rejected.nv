@@ -14,7 +14,7 @@ fn make_triple() -> (int, int, int) {
 
 
 test "destructure 3-tuple as 2-tuple — should reject" {
-    let (a, b) = make_triple()
+    ro (a, b) = make_triple()
     assert(a == 1)
     assert(b == 2)
 }

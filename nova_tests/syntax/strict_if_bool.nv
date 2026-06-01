@@ -19,7 +19,7 @@ test "if с bool literal" {
 
 
 test "if с comparison (== / != / < / >)" {
-    let n = 5
+    ro n = 5
     if n > 0 {
         assert(true)
     }
@@ -30,7 +30,7 @@ test "if с comparison (== / != / < / >)" {
 
 
 test "if с unary !" {
-    let b = true
+    ro b = true
     if !b {
         assert(false)
     } else {
@@ -40,8 +40,8 @@ test "if с unary !" {
 
 
 test "if с && / ||" {
-    let a = true
-    let b = false
+    ro a = true
+    ro b = false
     if a && !b {
         assert(true)
     }
@@ -52,8 +52,8 @@ test "if с && / ||" {
 
 
 test "if с block expression" {
-    let cond = {
-        let n = 5
+    ro cond = {
+        ro n = 5
         n > 0
     }
     if cond {
@@ -63,7 +63,7 @@ test "if с block expression" {
 
 
 test "while с bool condition" {
-    let mut count = 0
+    mut count = 0
     while count < 3 {
         count = count + 1
     }
@@ -72,8 +72,8 @@ test "while с bool condition" {
 
 
 test "while с unary ! (smoke — не зацикливается)" {
-    let mut iters = 0
-    let total = 3
+    mut iters = 0
+    ro total = 3
     while iters < total {
         iters = iters + 1
     }
@@ -97,7 +97,7 @@ test "if с function-call возвращающим bool" {
 
 
 test "if с closure-call возвращающим bool" {
-    let pred = fn(n int) -> bool => n > 10
+    ro pred = fn(n int) -> bool => n > 10
     if pred(15) {
         assert(true)
     }

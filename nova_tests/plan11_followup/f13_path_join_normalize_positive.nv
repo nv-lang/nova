@@ -9,81 +9,81 @@ module plan11_followup.f13_path_join_normalize_positive
 import std._experimental.path.path.{Path}
 
 test "Path.join: basic concatenation" {
-    let r = Path.join("a", "b", "c")
+    ro r = Path.join("a", "b", "c")
     assert(r == "a/b/c")
 }
 
 test "Path.join: absolute prefix" {
-    let r = Path.join("/usr", "bin")
+    ro r = Path.join("/usr", "bin")
     assert(r == "/usr/bin")
 }
 
 test "Path.join: strip leading slash на не-первой части" {
-    let r = Path.join("a", "/b")
+    ro r = Path.join("a", "/b")
     assert(r == "a/b")
 }
 
 test "Path.join: пропуск пустых частей" {
-    let r = Path.join("", "b")
+    ro r = Path.join("", "b")
     assert(r == "b")
 }
 
 test "Path.join: spread" {
-    let parts []str = ["x", "y", "z"]
-    let result = Path.join(...parts)
+    ro parts []str = ["x", "y", "z"]
+    ro result = Path.join(...parts)
     assert(result == "x/y/z")
 }
 
 test "Path.normalize: basic collapse .." {
-    let r = Path.normalize("/a/b/../c")
+    ro r = Path.normalize("/a/b/../c")
     assert(r == "/a/c")
 }
 
 test "Path.normalize: collapse ." {
-    let r = Path.normalize("/a/./b")
+    ro r = Path.normalize("/a/./b")
     assert(r == "/a/b")
 }
 
 test "Path.normalize: relative .. вверх" {
-    let r = Path.normalize("a/b/..")
+    ro r = Path.normalize("a/b/..")
     assert(r == "a")
 }
 
 test "Path.normalize: collapse double slashes" {
-    let r = Path.normalize("//a//b//")
+    ro r = Path.normalize("//a//b//")
     assert(r == "/a/b")
 }
 
 test "Path.normalize: dot alone" {
-    let r = Path.normalize(".")
+    ro r = Path.normalize(".")
     assert(r == ".")
 }
 
 test "Path.normalize: double-dot alone (relative)" {
-    let r = Path.normalize("..")
+    ro r = Path.normalize("..")
     assert(r == "..")
 }
 
 test "Path.parent + basename" {
-    let par = Path.parent("/usr/bin/ls")
-    let base = Path.basename("/usr/bin/ls")
+    ro par = Path.parent("/usr/bin/ls")
+    ro base = Path.basename("/usr/bin/ls")
     assert(par == Some("/usr/bin"))
     assert(base == "ls")
 }
 
 test "Path.extension с dotfile" {
-    let e1 = Path.extension("file.txt")
-    let e2 = Path.extension("README")
-    let e3 = Path.extension(".bashrc")
+    ro e1 = Path.extension("file.txt")
+    ro e2 = Path.extension("README")
+    ro e3 = Path.extension(".bashrc")
     assert(e1 == Some("txt"))
     assert(e2 == None)
     assert(e3 == None)
 }
 
 test "Path.is_absolute" {
-    let abs1 = Path.is_absolute("/usr/bin")
-    let abs2 = Path.is_absolute("relative/path")
-    let abs3 = Path.is_absolute("")
+    ro abs1 = Path.is_absolute("/usr/bin")
+    ro abs2 = Path.is_absolute("relative/path")
+    ro abs3 = Path.is_absolute("")
     assert(abs1)
     assert(!abs2)
     assert(!abs3)

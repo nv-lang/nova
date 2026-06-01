@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.coercion_test
+module plan91_8a_2.coercion_test
 
 // Plan 91.8a.2 followup: protocol coercion via vtable + virtual dispatch.
 // `let x Printable = m` → fat pointer; `x.fmt(sb)` → virtual dispatch
@@ -16,27 +16,27 @@ type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
 test "Money coerced to Printable via str.from, virtual fmt() call" {
-    let m = Money { cents: 99 }
-    let x Printable = m
-    let mut sb = StringBuilder.new()
+    ro m = Money { cents: 99 }
+    ro x Printable = m
+    consume sb = StringBuilder.new()
     x.fmt(sb)
     assert(sb.as_str() == "Money(99)")
 }
 
 test "Coin coerced to Printable via @into, virtual fmt() call" {
-    let c = Coin { value: 5 }
-    let x Printable = c
-    let mut sb = StringBuilder.new()
+    ro c = Coin { value: 5 }
+    ro x Printable = c
+    consume sb = StringBuilder.new()
     x.fmt(sb)
     assert(sb.as_str() == "Coin(5)")
 }
 
 test "multiple Printable values composed in same StringBuilder" {
-    let m = Money { cents: 10 }
-    let c = Coin { value: 3 }
-    let xm Printable = m
-    let xc Printable = c
-    let mut sb = StringBuilder.new()
+    ro m = Money { cents: 10 }
+    ro c = Coin { value: 3 }
+    ro xm Printable = m
+    ro xc Printable = c
+    consume sb = StringBuilder.new()
     sb.append("[")
     xm.fmt(sb)
     sb.append(", ")

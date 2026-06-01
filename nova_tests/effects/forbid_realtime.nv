@@ -11,16 +11,16 @@ type Counter effect {
 }
 
 test "forbid block — syntax parsed, body executes" {
-    let r = forbid Counter {
+    ro r = forbid Counter {
         42
     }
     assert(r == 42)
 }
 
 test "forbid with multiple effects" {
-    let r = forbid Counter, Fail {
-        let x = 10
-        let y = 20
+    ro r = forbid Counter, Fail {
+        ro x = 10
+        ro y = 20
         x + y
     }
     assert(r == 30)
@@ -28,8 +28,8 @@ test "forbid with multiple effects" {
 
 // Plan 113: realtime tests use #realtime fn form.
 #realtime fn _rt_sum_to_n(n int) -> int {
-    let mut sum = 0
-    let mut i = 1
+    mut sum = 0
+    mut i = 1
     while i <= n {
         sum += i
         i += 1
@@ -38,7 +38,7 @@ test "forbid with multiple effects" {
 }
 
 test "#realtime fn — body works correctly" {
-    let s = _rt_sum_to_n(5)
+    ro s = _rt_sum_to_n(5)
     // 1+2+3+4+5 = 15
     assert(s == 15)
 }
@@ -52,9 +52,9 @@ test "#realtime fn with arithmetic — pure body OK" {
 }
 
 test "forbid nested in loop" {
-    let mut total = 0
+    mut total = 0
     for i in 1..4 {
-        let v = forbid Counter {
+        ro v = forbid Counter {
             i * 10
         }
         total += v
@@ -63,7 +63,7 @@ test "forbid nested in loop" {
 }
 
 test "forbid in expression position" {
-    let r = if true {
+    ro r = if true {
         forbid Counter {
             100
         }
@@ -77,7 +77,7 @@ test "forbid in expression position" {
 fn pure_double(x int) -> int => x * 2
 
 test "forbid with pure-fn inside — type-check OK" {
-    let r = forbid Counter, Fail {
+    ro r = forbid Counter, Fail {
         pure_double(21)
     }
     assert(r == 42)
@@ -86,8 +86,8 @@ test "forbid with pure-fn inside — type-check OK" {
 // Plan 16 Ф.5: #realtime attribute on fn (D64 §3697).
 #realtime
 fn rt_compute(n int) -> int {
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < n {
         sum += i
         i += 1
@@ -96,7 +96,7 @@ fn rt_compute(n int) -> int {
 }
 
 test "#realtime attribute — body executes correctly" {
-    let s = rt_compute(10)
+    ro s = rt_compute(10)
     // 0+1+2+...+9 = 45
     assert(s == 45)
 }

@@ -1,0 +1,15 @@
+// Plan 108.2 (D36 enforcement): nested блоки — `let mut` корректно работает
+// в inner scope.
+
+module plan108_2.nested_let_mut_ok
+
+test "nested mut in block" {
+    ro outer = 5
+    ro result = {
+        mut acc = []
+        acc.push(outer)
+        acc.push(outer * 2)
+        acc.len()
+    }
+    assert(result == 2)
+}

@@ -6,7 +6,7 @@
 // `if cond { tx.commit() }` без else — tx Live на else-path. Branch join:
 // Live ⊔ Consumed = MaybeConsumed. На exit'е → E (D133-not-consumed).
 
-module nova_tests.plan100_1.consume_err_branch_forget
+module plan100_1.consume_err_branch_forget
 
 type Transaction consume {
     id int,
@@ -18,7 +18,7 @@ fn Transaction consume @rollback() -> () { () }
 fn begin() -> Transaction => { id: 1 }
 
 test "consume только на then-branch — ошибка MaybeConsumed" {
-    let condition = true
+    ro condition = true
     consume tx = begin()
     if condition {
         tx.commit()

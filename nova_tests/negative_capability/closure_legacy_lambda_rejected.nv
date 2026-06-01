@@ -7,6 +7,6 @@
 module negative_capability.closure_legacy_lambda_rejected
 
 test "legacy `(x) => body` rejected" {
-    let inc = (x) => x + 1
+    ro inc = (x) => x + 1
     assert(inc(5) == 6)
 }

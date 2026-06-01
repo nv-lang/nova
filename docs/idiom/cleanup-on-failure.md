@@ -23,7 +23,7 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
     consume tx = db.begin()
     errdefer { tx.rollback()? }                 // error → rollback (D158 failable)
     okdefer  { tx.commit()?   }                 // success → commit (D160 + D158)
-    let order = db.insert(data)?
+    ro order = db.insert(data)?
     db.notify(order)?
     return Receipt { id: order.id }
 }
@@ -43,7 +43,7 @@ Exhaustive cover (D162): errdefer + okdefer — оба exit-paths covered
 fn process() Fs -> () {
     consume f = File.open("x.txt")?
     defer { f.close() }                         // и success, и error
-    let data = f.read_all()?
+    ro data = f.read_all()?
     println(data)
 }
 ```

@@ -5,10 +5,10 @@
 //
 // Uses Once.make_guard() (internal external fn) to create a guard directly.
 
-module nova_tests.plan103_9.onceguard_commit_and_abort_neg
+module plan103_9.onceguard_commit_and_abort_neg
 
 test "commit then abort → D131 compile error" {
-    let once = Once.new()
+    mut once = Once.new()
     consume g = once.make_guard()
     g.commit()
     g.abort()   // ERROR: g already consumed by commit()

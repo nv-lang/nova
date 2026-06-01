@@ -4,7 +4,7 @@
 // arm-binding'и Live linear, обязан consumed в arm. D157 решает через
 // view-match: arm-binding'и — view, source остаётся Live.
 
-module nova_tests.plan100_3.match_view_ok_option
+module plan100_3.match_view_ok_option
 
 type File consume {
     fd int,
@@ -34,7 +34,7 @@ fn Service @file_id() -> Option[int] {
 
 test "match @file — deep peek без consume" {
     consume svc = Service { file: Some(File { fd: 7 }) }
-    let id = svc.file_id()
+    ro id = svc.file_id()
     assert(id == Some(7))
     svc.shutdown()                             // svc Live после view-match
 }

@@ -4,7 +4,7 @@
 module named_params.keyword_only
 
 fn connect(host str, port int = 8080, tls bool = false) -> int {
-    let t = if tls { 1 } else { 0 }
+    ro t = if tls { 1 } else { 0 }
     host.len() + port + t
 }
 
@@ -41,7 +41,7 @@ fn run_with(x int, body fn(int) -> int = identity_fn) -> int =>
     body(x)
 
 test "trailing-форма заполняет дефолтный последний функциональный параметр — ок" {
-    let v = run_with(7) fn(n int) -> int {
+    ro v = run_with(7) fn(n int) -> int {
         n * n
     }
     assert(v == 49)
@@ -69,7 +69,7 @@ test "вызов через fn-value — позиционный, без дефо
     // `add_scaled` как значение fn(int,int,int)->int НЕ берётся (3-арный
     // с дефолтом). Берём 2-арную функцию: fn-value стирает сигнатуру до
     // позиционной.
-    let total = apply2(combine2, 3, 4)
+    ro total = apply2(combine2, 3, 4)
     assert(total == 7)
 }
 

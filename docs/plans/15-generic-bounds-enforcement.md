@@ -37,8 +37,8 @@ fn fold[T, Acc Numeric](xs Iter[T], init Acc) -> Acc => ...
 ```nova
 type User { id u64, name str }   // у User нет @hash() / @eq()
 
-let xs []User = [...]
-let unique = dedup(xs)            // ✅ компилируется
+ro xs []User = [...]
+ro unique = dedup(xs)            // ✅ компилируется
                                   // ❌ позже падает с непонятным error
                                   //    "Nova_User has no method @hash"
 ```

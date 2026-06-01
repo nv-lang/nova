@@ -18,13 +18,13 @@ fn identity_with_default[T = int](x T) -> T => x
 
 test "generic default: вызов с явным аргументом (T выводится)" {
     // T выводится из аргумента 42 → T = int. Default не нужен.
-    let r = identity_with_default(42)
+    ro r = identity_with_default(42)
     assert(r == 42)
 }
 
 test "generic default: вызов с другим типом (default переопределяется)" {
     // T выводится из строки → T = str.
-    let s = identity_with_default("hello")
+    ro s = identity_with_default("hello")
     assert(s == "hello")
 }
 
@@ -41,6 +41,6 @@ type Pair[T = int] {
 fn double_value[T Display = int](x T) -> T => x
 
 test "generic default with bound: parser принимает `[T Bound = Default]`" {
-    let r = double_value(7)
+    ro r = double_value(7)
     assert(r == 7)
 }

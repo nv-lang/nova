@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR E_BLOCKING_SYNC_PARK
 
-module nova_tests.plan103_6.blocking_mutex_lock_neg
+module plan103_6.blocking_mutex_lock_neg
 
 #blocking fn _blk_check_mutex_lock(m mut Mutex) {
     m.lock()

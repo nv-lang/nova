@@ -1,0 +1,16 @@
+// Plan 108.1 (D176 amend): параметр без `mut` — вызов `.push` на []T
+// должен дать E_PARAM_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+
+module plan108_1.nomut_array_push_neg
+
+fn append_99(b []int) -> int {
+    b.push(99)             // ✗ E_PARAM_NOT_MUT — нет `mut`
+    b.len()
+}
+
+test "no-mut + array push → error" {
+    mut arr = [1, 2]
+    ro _ = append_99(arr)
+}

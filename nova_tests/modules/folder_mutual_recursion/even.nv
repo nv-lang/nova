@@ -1,7 +1,7 @@
 // Plan 42.5 smoke test: cross-peer mutual recursion.
 // even.nv вызывает is_odd из odd.nv — forward decl покрывает это.
 
-module modules.folder_mutual_recursion
+module folder_mutual_recursion.even
 
 export fn is_even(n int) -> bool {
     if n == 0 { true }

@@ -6,8 +6,8 @@
 module plan83_10_3.triple_nested_throw
 
 test "triple nested throw — outermost handler catches" {
-    let mut caught = false
-    let _ = with Fail[int] = |e| {
+    mut caught = false
+    ro _ = with Fail[int] = |e| {
         caught = true
         0
     } {
@@ -28,7 +28,7 @@ test "triple nested throw — outermost handler catches" {
 }
 
 test "triple nested — normal completion all levels" {
-    let mut depth = 0
+    mut depth = 0
     supervised {
         spawn {
             depth += 1

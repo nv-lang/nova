@@ -13,15 +13,15 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.litmus_message_passing
+module plan103_8.litmus_message_passing
 
 test "MP litmus: Acquire/Release -- payload visible after flag observed" {
-    let n_iters   = 5
-    let wrong_payload = AtomicI64.new(0)
+    ro n_iters   = 5
+    mut wrong_payload = AtomicI64.new(0)
 
     for _iter in 0..n_iters {
-        let payload = AtomicI64.new(0)
-        let flag    = AtomicBool.new(false)
+        mut payload = AtomicI64.new(0)
+        mut flag = AtomicBool.new(false)
 
         supervised {
             // Writer: publish payload under Release
@@ -35,7 +35,7 @@ test "MP litmus: Acquire/Release -- payload visible after flag observed" {
                     runtime.yield()
                 }
                 // After seeing flag=true (Acquire), payload must be 42
-                let v = payload.load(Acquire)
+                ro v = payload.load(Acquire)
                 if v != 42 {
                     wrong_payload.fetch_add(1)
                 }
@@ -48,13 +48,13 @@ test "MP litmus: Acquire/Release -- payload visible after flag observed" {
 }
 
 test "MP litmus: Release/Acquire chain with multiple payloads" {
-    let n_iters  = 5
-    let failures = AtomicI64.new(0)
+    ro n_iters  = 5
+    mut failures = AtomicI64.new(0)
 
     for _iter in 0..n_iters {
-        let data_a  = AtomicI64.new(0)
-        let data_b  = AtomicI64.new(0)
-        let ready   = AtomicI64.new(0)  // 0=not ready, 1=data_a ready, 2=both ready
+        mut data_a  = AtomicI64.new(0)
+        mut data_b  = AtomicI64.new(0)
+        mut ready   = AtomicI64.new(0)  // 0=not ready, 1=data_a ready, 2=both ready
 
         supervised {
             // Stage 1 producer: write data_a, signal stage=1
@@ -75,8 +75,8 @@ test "MP litmus: Release/Acquire chain with multiple payloads" {
                 while ready.load(Acquire) < 2 {
                     runtime.yield()
                 }
-                let a = data_a.load(Acquire)
-                let b = data_b.load(Acquire)
+                ro a = data_a.load(Acquire)
+                ro b = data_b.load(Acquire)
                 if a != 111 || b != 222 {
                     failures.fetch_add(1)
                 }
@@ -91,12 +91,12 @@ test "MP litmus: Release/Acquire chain with multiple payloads" {
 test "MP litmus: SeqCst store/load is also correct for message passing" {
     // SeqCst is strictly stronger than Release/Acquire for MP --
     // this test confirms SeqCst also works for the MP pattern.
-    let n_iters  = 5
-    let wrong    = AtomicI64.new(0)
+    ro n_iters  = 5
+    mut wrong    = AtomicI64.new(0)
 
     for _iter in 0..n_iters {
-        let payload = AtomicI64.new(0)
-        let flag    = AtomicBool.new(false)
+        mut payload = AtomicI64.new(0)
+        mut flag = AtomicBool.new(false)
 
         supervised {
             spawn {

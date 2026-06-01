@@ -4,10 +4,10 @@
 // past initial (Java-compatible semantics, V1). No panic.
 // This test verifies that documented behavior: available_permits() grows.
 
-module nova_tests.plan103_4.semaphore_release_more_than_acquired_neg
+module plan103_4.semaphore_release_more_than_acquired_neg
 
 test "over-release increments permits past initial (Java semantics, D170 §2)" {
-    let sem = Semaphore.new(2)
+    mut sem = Semaphore.new(2)
     assert(sem.available_permits() == 2)
 
     // Release without prior acquire: permits exceed initial
@@ -15,9 +15,9 @@ test "over-release increments permits past initial (Java semantics, D170 §2)" {
     assert(sem.available_permits() == 3)
 
     // Verify the extra permit is usable
-    let ok1 = sem.try_acquire()
-    let ok2 = sem.try_acquire()
-    let ok3 = sem.try_acquire()
+    ro ok1 = sem.try_acquire()
+    ro ok2 = sem.try_acquire()
+    ro ok3 = sem.try_acquire()
     assert(ok1 == true)
     assert(ok2 == true)
     assert(ok3 == true)
@@ -25,7 +25,7 @@ test "over-release increments permits past initial (Java semantics, D170 §2)" {
 }
 
 test "release_n over-release increments by n" {
-    let sem = Semaphore.new(1)
+    mut sem = Semaphore.new(1)
     sem.release_n(3)
     // 1 + 3 = 4 permits
     assert(sem.available_permits() == 4)

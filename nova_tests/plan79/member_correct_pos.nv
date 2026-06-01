@@ -1,7 +1,7 @@
 // Plan 79 Ф.3: positive — valid field and method access compiles and
 // runs. Guards against false positives.
 
-module nova_tests.plan79.member_correct_pos
+module plan79.member_correct_pos
 
 type Account { owner str, balance int }
 
@@ -9,7 +9,7 @@ fn Account @summary() -> str => @owner
 fn Account mut @deposit(amount int) { @balance += amount }
 
 test "Ф.3 — valid field/method access compiles" {
-    let mut a Account = { owner: "alice", balance: 100 }
+    mut a Account = { owner: "alice", balance: 100 }
     assert(a.balance == 100)        // field access
     assert(a.owner == "alice")      // field access
     a.deposit(50)                   // method call

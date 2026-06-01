@@ -16,46 +16,46 @@ type Outer {
 fn make_pair(a int, b int) -> Pair => { tx: a, rx: b }
 
 test "shorthand basic" {
-    let { tx, rx } = make_pair(1, 2)
+    ro { tx, rx } = make_pair(1, 2)
     assert(tx == 1)
     assert(rx == 2)
 }
 
 test "type-prefix" {
-    let p = Pair { tx: 5, rx: 6 }
-    let Pair { tx, rx } = p
+    ro p = Pair { tx: 5, rx: 6 }
+    ro Pair { tx, rx } = p
     assert(tx == 5)
     assert(rx == 6)
 }
 
 test "rest .. без bind" {
-    let p = Pair { tx: 7, rx: 8 }
-    let { tx, .. } = p
+    ro p = Pair { tx: 7, rx: 8 }
+    ro { tx, .. } = p
     assert(tx == 7)
 }
 
 test "renaming через под-pattern" {
-    let p = Pair { tx: 9, rx: 10 }
-    let { tx: sender, rx: receiver } = p
+    ro p = Pair { tx: 9, rx: 10 }
+    ro { tx: sender, rx: receiver } = p
     assert(sender == 9)
     assert(receiver == 10)
 }
 
 test "nested destructure" {
-    let o = Outer { inner: Pair { tx: 11, rx: 12 }, label: 42 }
-    let { inner: { tx, rx }, label } = o
+    ro o = Outer { inner: Pair { tx: 11, rx: 12 }, label: 42 }
+    ro { inner: { tx, rx }, label } = o
     assert(tx == 11)
     assert(rx == 12)
     assert(label == 42)
 }
 
 test "одиночный eval RHS — порядок side-effects" {
-    let count = []int.new()
-    let p = {
+    mut count = []int.new()
+    ro p = {
         count.push(1)
         Pair { tx: 100, rx: 200 }
     }
-    let { tx, rx } = p
+    ro { tx, rx } = p
     assert(tx == 100)
     assert(rx == 200)
     // p eval'нулся один раз; count.push выполнен ровно один раз.
@@ -63,9 +63,9 @@ test "одиночный eval RHS — порядок side-effects" {
 }
 
 test "Channel.new use case" {
-    let { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel.new(1)
     tx.close()
-    let _ = rx
+    ro _ = rx
     assert(true)
 }
 
@@ -75,9 +75,9 @@ test "Channel.new use case" {
 // проверял что `tx.close()` not crash — не verified что обе половины
 // действительно функциональны после destructure.
 test "Channel.new round-trip — destructured tx send → rx recv" {
-    let { tx, rx } = Channel.new(4)
-    let _ = tx.send(42)
-    let _ = tx.send(99)
+    ro { tx, rx } = Channel.new(4)
+    ro _ = tx.send(42)
+    ro _ = tx.send(99)
     tx.close()
     // Receive через destructured rx — оба handle должны работать.
     // Используем == сравнение вместо if-let (pre-existing codegen

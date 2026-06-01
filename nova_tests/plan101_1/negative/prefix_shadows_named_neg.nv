@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR: [E_PREFIX_SHADOWS_NAMED_TYPE]
 
-module nova_tests.plan101_1.negative.prefix_shadows_named_neg
+module negative.prefix_shadows_named_neg
 
 type T { v int }
 

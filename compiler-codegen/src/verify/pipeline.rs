@@ -2308,11 +2308,18 @@ fn stmt_has_assignment(s: &Stmt) -> bool {
     match s {
         Stmt::Assign { .. } => true,
         Stmt::Let(ld) => expr_has_assignment(&ld.value),
+        // Plan 114.4 Ф.2: scope-local const — constexpr-only, no assignment.
+        Stmt::Const(_) => false,
         Stmt::Expr(e) => expr_has_assignment(e),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, expr_has_assignment),
         Stmt::Throw { value, .. } => expr_has_assignment(value),
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => expr_has_assignment(body),
+        // Plan 110 D188: consume scope-block — assignment в init или body
+        // — учитывается.
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_has_assignment(init) || block_has_assignment(body)
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_has_assignment(expr),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,

@@ -16,10 +16,11 @@ endif
 " ============================================================================
 
 " Declarations
-syntax keyword novaDeclaration fn type alias effect handler protocol let const module import export as use test external
+" Plan 114 (D184): let/readonly retracted; ro/mut/consume binding triad.
+syntax keyword novaDeclaration fn type alias effect handler protocol const module import export as use test external
 
 " Storage modifiers
-syntax keyword novaModifier mut readonly
+syntax keyword novaModifier ro mut consume
 
 " Control flow
 syntax keyword novaConditional if else match

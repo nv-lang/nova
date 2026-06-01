@@ -136,7 +136,7 @@ export fn Queue[T] mut @clear() -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "FIFO order" {
-    let mut q = Queue[int].new()
+    mut q = Queue[int].new()
     q.push(1)
     q.push(2)
     q.push(3)
@@ -147,7 +147,7 @@ test "FIFO order" {
 }
 
 test "interleaved push/pop" {
-    let mut q = Queue[int].new()
+    mut q = Queue[int].new()
     q.push(1)
     q.push(2)
     assert(q.pop() == Some(1))
@@ -162,7 +162,7 @@ test "interleaved push/pop" {
 }
 
 test "peek doesn't remove" {
-    let mut q = Queue[int].new()
+    mut q = Queue[int].new()
     q.push(42)
     assert(q.peek() == Some(42))
     assert(q.peek() == Some(42))             // повторно — то же значение
@@ -172,7 +172,7 @@ test "peek doesn't remove" {
 }
 
 test "empty queue" {
-    let mut q Queue[int] = Queue[int].new()
+    mut q Queue[int] = Queue[int].new()
     assert(q.is_empty())
     assert(q.len() == 0)
     assert(q.pop() == None)

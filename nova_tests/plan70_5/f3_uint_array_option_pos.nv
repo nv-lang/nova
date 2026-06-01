@@ -1,9 +1,9 @@
-module nova_tests.plan70_5.f3_uint_array_option_pos
+module plan70_5.f3_uint_array_option_pos
 
 // Plan 70.5: []uint and Option[uint] use NovaArray_uint64_t / NovaOpt_uint64_t.
 
 test "[]uint push and access" {
-    let arr []uint = []uint.new()
+    mut arr []uint = []uint.new()
     arr.push(1 as uint)
     arr.push(2 as uint)
     arr.push(3 as uint)
@@ -13,8 +13,8 @@ test "[]uint push and access" {
 }
 
 test "Option[uint] Some and unwrap_or" {
-    let a Option[uint] = Some(99 as uint)
-    let b Option[uint] = None
+    ro a Option[uint] = Some(99 as uint)
+    ro b Option[uint] = None
     assert(a.is_some())
     assert(b.is_none())
     assert(a.unwrap_or(0 as uint) == 99 as uint)

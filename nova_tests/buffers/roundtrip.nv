@@ -9,68 +9,68 @@ module buffers.roundtrip
 // ── целые числа ────────────────────────────────────────────────────
 
 test "round-trip byte" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0xA5)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_byte() == 0xA5)
 }
 
 test "round-trip i8" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i8(-77)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i8() == -77)
 }
 
 test "round-trip u16 LE и BE" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u16_le(0xBEEF)
     wb.write_u16_be(0xBEEF)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u16_le() == 0xBEEF)
     assert(rb.read_u16_be() == 0xBEEF)
 }
 
 test "round-trip i16 LE и BE — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i16_le(-12345)
     wb.write_i16_be(-12345)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i16_le() == -12345)
     assert(rb.read_i16_be() == -12345)
 }
 
 test "round-trip u32 LE и BE" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_le(0xDEADBEEF)
     wb.write_u32_be(0xDEADBEEF)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u32_le() == 0xDEADBEEF)
     assert(rb.read_u32_be() == 0xDEADBEEF)
 }
 
 test "round-trip i32 LE и BE — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i32_le(-1000000)
     wb.write_i32_be(-1000000)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i32_le() == -1000000)
     assert(rb.read_i32_be() == -1000000)
 }
 
 test "round-trip u64 LE и BE" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u64_le(0x0102030405060708)
     wb.write_u64_be(0x0102030405060708)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_u64_le() == 0x0102030405060708)
     assert(rb.read_u64_be() == 0x0102030405060708)
 }
 
 test "round-trip i64 BE — отрицательное" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_i64_be(-1000000)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_i64_be() == -1000000)
 }
 
@@ -78,25 +78,25 @@ test "round-trip i64 BE — отрицательное" {
 // ── float ──────────────────────────────────────────────────────────
 
 test "round-trip f32 LE и BE" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f32_le(0.125)
     wb.write_f32_be(0.125)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f32_le() == 0.125)
     assert(rb.read_f32_be() == 0.125)
 }
 
 test "round-trip f64 LE — IEEE 754 bit-perfect" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_le(3.14159)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f64_le() == 3.14159)
 }
 
 test "round-trip f64 BE — IEEE 754 bit-perfect" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_f64_be(2.71828)
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_f64_be() == 2.71828)
 }
 
@@ -104,23 +104,23 @@ test "round-trip f64 BE — IEEE 754 bit-perfect" {
 // ── char ───────────────────────────────────────────────────────────
 
 test "round-trip char ASCII" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('Q')
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_char() == 'Q')
 }
 
 test "round-trip char Cyrillic" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('Я')
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_char() == 'Я')
 }
 
 test "round-trip char emoji" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_char('🎉')
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_char() == '🎉')
 }
 
@@ -128,16 +128,16 @@ test "round-trip char emoji" {
 // ── str ────────────────────────────────────────────────────────────
 
 test "round-trip str ASCII" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("hello")
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_str(5) == "hello")
 }
 
 test "round-trip str Unicode" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_str("Привет мир")
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_str(10) == "Привет мир")
 }
 
@@ -145,11 +145,11 @@ test "round-trip str Unicode" {
 // ── bytes ──────────────────────────────────────────────────────────
 
 test "round-trip bytes — write_bytes / read_bytes" {
-    let src []u8 = [0x11, 0x22, 0x33, 0x44]
-    let mut wb = WriteBuffer.new()
+    ro src []u8 = [0x11, 0x22, 0x33, 0x44]
+    mut wb = WriteBuffer.new()
     wb.write_bytes(src)
-    let mut rb = ReadBuffer.from(wb.into())
-    let got = rb.read_bytes(4)
+    mut rb = ReadBuffer.from(wb.into())
+    ro got = rb.read_bytes(4)
     assert(got.len() == 4)
     assert(got[0] == 0x11)
     assert(got[3] == 0x44)
@@ -159,7 +159,7 @@ test "round-trip bytes — write_bytes / read_bytes" {
 // ── смешанная гетерогенная запись/чтение ──────────────────────────
 
 test "round-trip гетерогенный пакет" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_byte(0x01)
     wb.write_u16_be(0x0203)
     wb.write_i32_le(-42)
@@ -167,7 +167,7 @@ test "round-trip гетерогенный пакет" {
     wb.write_char('Ё')
     wb.write_str("end")
 
-    let mut rb = ReadBuffer.from(wb.into())
+    mut rb = ReadBuffer.from(wb.into())
     assert(rb.read_byte() == 0x01)
     assert(rb.read_u16_be() == 0x0203)
     assert(rb.read_i32_le() == -42)

@@ -1,0 +1,88 @@
+// Plan 73.1 V3 — Property #1: consume-obligation scope invariant.
+//
+// Property: for every `consume X = ctor()` introduced in scope, the
+// consume-method is invoked exactly once on the live execution path —
+// no double-consume, no leak.
+//
+// Test instruments an atomic counter incremented from the consume-method.
+// After running multiple scenarios (basic / alias-move / branch / loop /
+// fluent-chain) the counter equals the expected number of consume ops.
+// Compiler enforces single-consume statically; runtime counter cross-
+// checks correspondence between static obligations and runtime drops.
+//
+// EXPECT_PASS
+
+module plan73.binding_consume_obligation_scope_prop
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn Token consume @release(mut counter AtomicInt) -> int {
+    counter.fetch_add(1)
+    @val
+}
+
+// Fluent mutator — no semantic change; exercises M3 path
+// (fluent-chain `-> @` before consume).
+fn Token mut @bump() -> @ { @ }
+
+test "property: each consume-binding satisfied exactly once across scenarios" {
+    mut counter = AtomicInt.new(0)
+    mut expected = 0
+
+    // Scenario A: basic consume.
+    {
+        consume t = Token.new(1)
+        ro v = t.release(counter)
+        assert(v == 1)
+        expected = expected + 1
+    }
+
+    // Scenario B: alias-move via `consume Y = X`.
+    {
+        consume a = Token.new(2)
+        consume b = a
+        ro v = b.release(counter)
+        assert(v == 2)
+        expected = expected + 1
+    }
+
+    // Scenario C: branch — each branch consumes exactly once.
+    {
+        ro pick = 1
+        consume t = Token.new(3)
+        if pick == 1 {
+            ro v = t.release(counter)
+            assert(v == 3)
+        } else {
+            ro v = t.release(counter)
+            assert(v == 3)
+        }
+        expected = expected + 1
+    }
+
+    // Scenario D: fluent-chain mutators before consume.  Chain is a
+    // statement (not trailing) so it does not implicit-return-consume;
+    // explicit `release` consumes `t` on a separate stmt.
+    {
+        consume t = Token.new(4)
+        t.bump().bump()
+        ro v = t.release(counter)
+        assert(v == 4)
+        expected = expected + 1
+    }
+
+    // Scenario E: loop — N iterations, each owns + consumes its own token.
+    ro n = 5
+    for i in 0..n {
+        consume t = Token.new(i)
+        ro v = t.release(counter)
+        assert(v == i)
+        expected = expected + 1
+    }
+
+    // Property: 4 scoped scenarios + 5 loop iterations = 9 consume operations.
+    assert(counter.load() == expected)
+    assert(expected == 9)
+}

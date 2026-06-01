@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.1.1 (D188) + Plan 110.1.4.a: basic `consume X = init() { body }`
+// scope-block parses + type-checks + codegen эмитит init binding +
+// body emit + on_exit placeholder. Acceptance A110.1.1.a / A110.1.4.a.
+
+module plan110.parse_consume_scope_basic
+
+// Минимальный Consumable[never] resource type для scope-block init.
+type DummyResource {
+    ro id int
+}
+
+fn DummyResource.new(id int) -> DummyResource => { id }
+
+fn DummyResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+// Basic scope-block — parser scaffold + AST variant existence.
+fn use_resource() -> int {
+    mut result = 0
+    consume r = DummyResource.new(42) {
+        result = r.id
+    }
+    result
+}
+
+test "Plan 110.1.1 + 110.1.4.a: basic consume scope-block" {
+    assert(use_resource() == 42)
+}

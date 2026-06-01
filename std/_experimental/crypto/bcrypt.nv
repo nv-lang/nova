@@ -76,11 +76,11 @@ export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
         throw PasswordTooLong { length: password.bytes().len(), max: MAX_PASSWORD_LEN }
     }
 
-    let salt = Random.bytes(SALT_LEN)
-    let hashed = bcrypt_kdf(password.bytes(), salt, cost)
+    ro salt = Random.bytes(SALT_LEN)
+    ro hashed = bcrypt_kdf(password.bytes(), salt, cost)
 
     // Format: $2b$<cost>$<salt><hash>
-    let cost_str = if cost < 10 { "0" + str.from(cost) } else { str.from(cost) }
+    ro cost_str = if cost < 10 { "0" + str.from(cost) } else { str.from(cost) }
     "$2b$" + cost_str + "$" + bcrypt_base64_encode(salt) + bcrypt_base64_encode(hashed)
 }
 
@@ -90,31 +90,31 @@ export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
 #stable(since = "0.1")
 export fn Bcrypt.verify(password str, hash_str str) -> bool {
     // Parse format
-    let parts = hash_str.split("$")
+    ro parts = hash_str.split("$")
     // ["", "2b", "<cost>", "<salt><hash>"]
     if parts.len() != 4 { return false }
     if parts[1] != "2b" && parts[1] != "2a" && parts[1] != "2y" { return false }
 
-    let cost = match int.try_from(parts[2]) {
+    ro cost = match int.try_from(parts[2]) {
         Ok(c) if c >= MIN_COST && c <= MAX_COST => c
         _                                        => return false
     }
 
-    let combined = parts[3]
+    ro combined = parts[3]
     if combined.len() < 53 { return false }    // 22 salt + 31 hash
-    let salt_b64 = combined[0..22]
-    let hash_b64 = combined[22..]
+    ro salt_b64 = combined[0..22]
+    ro hash_b64 = combined[22..]
 
-    let salt = match bcrypt_base64_decode(salt_b64) {
+    ro salt = match bcrypt_base64_decode(salt_b64) {
         Some(b) if b.len() == SALT_LEN => b
         _                             => return false
     }
-    let expected_hash = match bcrypt_base64_decode(hash_b64) {
+    ro expected_hash = match bcrypt_base64_decode(hash_b64) {
         Some(h) => h
         None    => return false
     }
 
-    let computed = bcrypt_kdf(password.bytes(), salt, cost)
+    ro computed = bcrypt_kdf(password.bytes(), salt, cost)
     constant_time_eq(computed, expected_hash)
 }
 
@@ -128,26 +128,26 @@ export fn Bcrypt.verify(password str, hash_str str) -> bool {
 // через SHA-256 для демонстрации API.
 
 fn bcrypt_kdf(password []u8, salt []u8, cost int) -> []u8 {
-    let rounds = 1 << cost          // 2^cost
-    let mut state = Sha256.new()
+    ro rounds = 1 << cost          // 2^cost
+    mut state = Sha256.new()
     state.update(salt)
     state.update(password)
-    let mut digest = state.finalize()
-    let mut bytes []u8 = []
+    mut digest = state.finalize()
+    mut bytes []u8 = []
     for i in 0..32 { bytes.push(digest[i]) }
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
     for k in 0..rounds {
-        let mut s = Sha256.new()
+        mut s = Sha256.new()
         s.update(bytes)
         s.update(salt)
-        let d = s.finalize()
-        let mut new_bytes []u8 = []
+        ro d = s.finalize()
+        mut new_bytes []u8 = []
         for j in 0..32 { new_bytes.push(d[j]) }
         bytes = new_bytes
     }
     // Берём первые 23 байта (как bcrypt — 184 бита output)
-    let mut out []u8 = []
+    mut out []u8 = []
     for p in 0..23 { out.push(bytes[p]) }
     out
 }
@@ -155,7 +155,7 @@ fn bcrypt_kdf(password []u8, salt []u8, cost int) -> []u8 {
 
 fn constant_time_eq(a []u8, b []u8) -> bool {
     if a.len() != b.len() { return false }
-    let mut diff = 0
+    mut diff = 0
     for i in 0..a.len() {
         diff = diff | ((a[i] as int) ^ (b[i] as int))
     }
@@ -176,27 +176,27 @@ const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 
 
 fn bcrypt_base64_encode(data []u8) -> str {
-    let mut buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
-    let mut i = 0
+    consume buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
+    mut i = 0
     while i + 2 < data.len() {
-        let b0 = data[i] as u32
-        let b1 = data[i + 1] as u32
-        let b2 = data[i + 2] as u32
-        let triple = (b0 << 16) | (b1 << 8) | b2
+        ro b0 = data[i] as u32
+        ro b1 = data[i + 1] as u32
+        ro b2 = data[i + 2] as u32
+        ro triple = (b0 << 16) | (b1 << 8) | b2
         buf.append(alphabet_char(((triple >> 18) & 0x3F) as int))
         buf.append(alphabet_char(((triple >> 12) & 0x3F) as int))
         buf.append(alphabet_char(((triple >> 6) & 0x3F) as int))
         buf.append(alphabet_char((triple & 0x3F) as int))
         i += 3
     }
-    let remaining = data.len() - i
+    ro remaining = data.len() - i
     if remaining == 1 {
-        let b0 = data[i] as u32
+        ro b0 = data[i] as u32
         buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
         buf.append(alphabet_char(((b0 << 4) & 0x3F) as int))
     } else if remaining == 2 {
-        let b0 = data[i] as u32
-        let b1 = data[i + 1] as u32
+        ro b0 = data[i] as u32
+        ro b1 = data[i + 1] as u32
         buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
         buf.append(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
         buf.append(alphabet_char(((b1 << 2) & 0x3F) as int))
@@ -210,16 +210,16 @@ fn alphabet_char(idx int) -> char =>
 
 
 fn bcrypt_base64_decode(s str) -> Option[[]u8] {
-    let mut out []u8 = []
-    let mut i = 0
+    mut out []u8 = []
+    mut i = 0
     while i + 3 < s.len() {
-        let c0 = bcrypt_decode_char(s.char_at(i))
-        let c1 = bcrypt_decode_char(s.char_at(i + 1))
-        let c2 = bcrypt_decode_char(s.char_at(i + 2))
-        let c3 = bcrypt_decode_char(s.char_at(i + 3))
+        ro c0 = bcrypt_decode_char(s.char_at(i))
+        ro c1 = bcrypt_decode_char(s.char_at(i + 1))
+        ro c2 = bcrypt_decode_char(s.char_at(i + 2))
+        ro c3 = bcrypt_decode_char(s.char_at(i + 3))
         match (c0, c1, c2, c3) {
             (Some(a), Some(b), Some(c), Some(d)) => {
-                let triple = (a << 18) | (b << 12) | (c << 6) | d
+                ro triple = (a << 18) | (b << 12) | (c << 6) | d
                 out.push(((triple >> 16) & 0xFF) as u8)
                 out.push(((triple >> 8) & 0xFF) as u8)
                 out.push((triple & 0xFF) as u8)
@@ -243,7 +243,7 @@ fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
     match c {
         None => None
         Some(ch) => {
-            let mut idx = 0
+            mut idx = 0
             for ach in BCRYPT_ALPHABET.chars() {
                 if ach == ch { return Some(idx) }
                 idx += 1
@@ -259,7 +259,7 @@ fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "hash + verify round-trip" {
-    let h = with Random = th.seeded(42) {
+    ro h = with Random = th.seeded(42) {
         Bcrypt.hash("my-password", 4)        // cost=4 для скорости тестов
     }
     assert(Bcrypt.verify("my-password", h))
@@ -267,15 +267,15 @@ test "hash + verify round-trip" {
 }
 
 test "детерминизм через seeded Random (тестовый сценарий)" {
-    let h1 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
-    let h2 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
+    ro h1 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
+    ro h2 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
     // Тот же seed → тот же salt → тот же hash
     assert(h1 == h2)
 }
 
 test "разные salts → разные hashes" {
-    let h1 = with Random = th.seeded(1) { Bcrypt.hash("password", 4) }
-    let h2 = with Random = th.seeded(2) { Bcrypt.hash("password", 4) }
+    ro h1 = with Random = th.seeded(1) { Bcrypt.hash("password", 4) }
+    ro h2 = with Random = th.seeded(2) { Bcrypt.hash("password", 4) }
     assert(h1 != h2)
     // Но оба verify правильным паролем
     assert(Bcrypt.verify("password", h1))
@@ -283,13 +283,13 @@ test "разные salts → разные hashes" {
 }
 
 test "формат hash правильный" {
-    let h = with Random = th.seeded(0) { Bcrypt.hash("test", 4) }
+    ro h = with Random = th.seeded(0) { Bcrypt.hash("test", 4) }
     assert(h.starts_with("$2b$04$"))
 }
 
 test "ошибка: cost вне диапазона" {
-    let r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
-        let _ = Bcrypt.hash("x", 1)
+    ro r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
+        ro _ = Bcrypt.hash("x", 1)
         None
     }
     assert(match r {
@@ -299,10 +299,10 @@ test "ошибка: cost вне диапазона" {
 }
 
 test "ошибка: пароль > 72 байта" {
-    let mut long = ""
+    mut long = ""
     for i in 0..100 { long = long + "a" }
-    let r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
-        let _ = Bcrypt.hash(long, 4)
+    ro r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
+        ro _ = Bcrypt.hash(long, 4)
         None
     }
     assert(match r {

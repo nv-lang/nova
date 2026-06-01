@@ -1,0 +1,16 @@
+// Plan 108.1 (D176 amend): параметр без `mut` — вызов `.append` на
+// StringBuilder должен дать E_PARAM_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+
+module plan108_1.nomut_stringbuilder_append_neg
+
+fn add_suffix(sb StringBuilder) -> int {
+    sb.append("!")             // ✗ E_PARAM_NOT_MUT — нет `mut`
+    sb.len()
+}
+
+test "no-mut + StringBuilder append → error" {
+    consume sb = StringBuilder.from("hi")
+    ro _ = add_suffix(sb)
+}

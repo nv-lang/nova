@@ -105,7 +105,7 @@ typedef enum {
 
 ```nova
 type TaskCancel { Timeout { after_ms int }, UserAborted, ParentDied }
-let tok = CancelToken[TaskCancel].new()
+ro tok = CancelToken[TaskCancel].new()
 // ...
 match tok.reason() {
     Some(Timeout { after_ms }) => retry_longer(after_ms)

@@ -11,11 +11,11 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_4.countdown_one_shot_signal
+module plan103_4.countdown_one_shot_signal
 
 test "CountDownLatch one-shot signal: 5 workers count_down wakes awaiter" {
-    let latch = CountDownLatch.new(5)
-    let woke = AtomicInt.new(0)
+    mut latch = CountDownLatch.new(5)
+    mut woke = AtomicInt.new(0)
 
     // fiber i=0: calls await and marks woke
     // fibers i=1..5: each calls count_down() once (5 total)
@@ -35,7 +35,7 @@ test "CountDownLatch one-shot signal: 5 workers count_down wakes awaiter" {
 }
 
 test "CountDownLatch.try_await: false when count > 0, true when 0" {
-    let latch = CountDownLatch.new(3)
+    mut latch = CountDownLatch.new(3)
 
     // Before any count_down: not yet done
     assert(latch.try_await() == false)

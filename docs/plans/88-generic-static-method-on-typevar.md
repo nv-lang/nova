@@ -17,7 +17,7 @@
 
 ```nova
 fn wrap[T From[str]](s str) -> T => T.from(s)
-let n = wrap[Name]("alice")     // ← lld-link: undefined symbol nova_fn_T_from
+ro n = wrap[Name]("alice")     // ← lld-link: undefined symbol nova_fn_T_from
 ```
 
 `wrap` инстанцируется в `wrap____Nova_Name_p` (T→Name **в сигнатуре**),

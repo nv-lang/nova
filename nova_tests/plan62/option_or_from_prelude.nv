@@ -12,9 +12,9 @@ module plan62.option_or_from_prelude
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.or: Some.or(Some) returns left value" {
-    let a = Some(1)
-    let b = Some(2)
-    let r = a.or(b)
+    ro a = Some(1)
+    ro b = Some(2)
+    ro r = a.or(b)
     assert(r.is_some())
     assert(r.unwrap() == 1)
 }
@@ -24,9 +24,9 @@ test "Option.or: Some.or(Some) returns left value" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.or: Some.or(None) returns left value" {
-    let a = Some(42)
-    let b Option[int] = None
-    let r = a.or(b)
+    ro a = Some(42)
+    ro b Option[int] = None
+    ro r = a.or(b)
     assert(r.is_some())
     assert(r.unwrap() == 42)
 }
@@ -36,9 +36,9 @@ test "Option.or: Some.or(None) returns left value" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.or: None.or(Some) returns right value" {
-    let a Option[int] = None
-    let b = Some(99)
-    let r = a.or(b)
+    ro a Option[int] = None
+    ro b = Some(99)
+    ro r = a.or(b)
     assert(r.is_some())
     assert(r.unwrap() == 99)
 }
@@ -48,10 +48,10 @@ test "Option.or: None.or(Some) returns right value" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.or: chain finds first Some" {
-    let a Option[int] = None
-    let b Option[int] = None
-    let c = Some(7)
-    let r = a.or(b).or(c)
+    ro a Option[int] = None
+    ro b Option[int] = None
+    ro c = Some(7)
+    ro r = a.or(b).or(c)
     assert(r.is_some())
     assert(r.unwrap() == 7)
 }
@@ -61,9 +61,9 @@ test "Option.or: chain finds first Some" {
 // ────────────────────────────────────────────────────────────────────
 
 test "Option.or: works with str payload" {
-    let a = Some("hello")
-    let b = Some("world")
-    let r = a.or(b)
+    ro a = Some("hello")
+    ro b = Some("world")
+    ro r = a.or(b)
     assert(r.is_some())
     assert(r.unwrap() == "hello")
 }

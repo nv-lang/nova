@@ -6,7 +6,7 @@
 //   - `return v` или финальное выражение в handler-method
 //   - `interrupt v` для досрочного завершения with-блока
 
-module effects_d61
+module effects.effects_d61
 
 type Counter effect {
     next() -> int
@@ -17,40 +17,40 @@ type Switch effect {
 }
 
 fn count_three() Counter -> int {
-    let a = Counter.next()
-    let b = Counter.next()
-    let c = Counter.next()
+    ro a = Counter.next()
+    ro b = Counter.next()
+    ro c = Counter.next()
     a + b + c
 }
 
 fn main() {
     // Базовый случай: handler с состоянием через return
-    let mut state = 0
+    mut state = 0
     with Counter = effect Counter {
         next() {
             state += 1
             return state
         }
     } {
-        let total = count_three()
+        ro total = count_three()
         println("total = ", total)        // 1 + 2 + 3 = 6
     }
 
     // D61: interrupt прерывает with-блок
-    let r = with Switch = effect Switch {
+    ro r = with Switch = effect Switch {
         flip() {
             interrupt 999       // вместо bool отдаём int как результат всего with
         }
     } {
-        let _ = Switch.flip()
+        ro _ = Switch.flip()
         0                        // эта строка не выполнится
     }
     println("interrupt result = ", r)    // 999
 
     // D61: handler-значение через переменную, прямой вызов h.op
-    let switcher = effect Switch {
+    ro switcher = effect Switch {
         flip() => true
     }
-    let b = switcher.flip()              // прямой вызов, минуя with
+    ro b = switcher.flip()              // прямой вызов, минуя with
     println("direct flip = ", b)         // true
 }

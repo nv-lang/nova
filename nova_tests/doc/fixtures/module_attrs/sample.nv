@@ -5,7 +5,7 @@
 
 #stable(since = "1.0.0")
 
-module nova_tests.doc.fixtures.module_attrs.sample
+module module_attrs.sample
 
 /// Функция без собственного stability — наследует module-stable.
 export fn foo(x int) -> int => x

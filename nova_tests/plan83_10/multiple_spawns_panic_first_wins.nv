@@ -9,13 +9,13 @@
 module plan83_10.multiple_spawns_panic_first_wins
 
 test "multiple concurrent throws — first wins, runtime intact" {
-    let mut caught = false
-    let _ = with Fail[int] = |e| {
+    mut caught = false
+    ro _ = with Fail[int] = |e| {
         caught = true
         0
     } {
         supervised {
-            let mut i = 0
+            mut i = 0
             while i < 5 {
                 spawn { throw 13 }
                 i = i + 1

@@ -4,7 +4,7 @@
 // (E_VIEW_BINDING_FORBIDDEN). Эквивалент с move: `consume view = sb`
 // transfers ownership; sb становится dead, view — owner; consume через view.
 
-module nova_tests.plan73.consume_ok_alias
+module plan73.consume_ok_alias
 
 fn build_via_move() -> str {
     consume sb = make_sb()

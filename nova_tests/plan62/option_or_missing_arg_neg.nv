@@ -12,7 +12,7 @@
 module plan62.option_or_missing_arg_neg
 
 test "Option.or без аргумента — compile error" {
-    let a = Some(1)
-    let r = a.or()
+    ro a = Some(1)
+    ro r = a.or()
     assert(r.is_some())
 }

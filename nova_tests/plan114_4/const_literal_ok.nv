@@ -1,0 +1,15 @@
+// Plan 114.4 Ф.1: const X = LITERAL — constexpr-eligible.
+
+module plan114_4.const_literal_ok
+
+const MAX_PAYLOAD int = 4096
+const GREETING str = "hello"
+const PI f64 = 3.14
+const ON bool = true
+
+test "const literals" {
+    assert(MAX_PAYLOAD == 4096)
+    assert(GREETING == "hello")
+    assert(PI == 3.14)
+    assert(ON == true)
+}

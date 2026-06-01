@@ -14,8 +14,8 @@ fn invoker(tap fn(int) -> int) -> int {
 
 
 test "closure capture mut local through fn-typed param" {
-    let mut tapped = 0
-    let r = invoker(|v| {
+    mut tapped = 0
+    ro r = invoker(|v| {
         tapped = v
         v
     })

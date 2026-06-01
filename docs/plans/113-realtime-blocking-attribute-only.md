@@ -44,7 +44,7 @@ fn write_samples(b Buffer) -> () {
 
 // Любая обычная функция может вызвать write_samples:
 fn audio_callback() -> () {
-    let cfg = load_config()   // обычный код, allocate можно
+    ro cfg = load_config()   // обычный код, allocate можно
     write_samples(cfg.buf)    // ✅ вызов #realtime fn из обычной — OK
 }
 ```

@@ -1,6 +1,6 @@
 // hello.nv — простейшая программа.
 
-module hello
+module basics.hello
 
 fn main() {
     println("Hello, Nova!")

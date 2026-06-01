@@ -16,7 +16,7 @@ module plan83_6.spawn_pool_size_class_variation
 
 test "varied ctx sizes — small ctx routing correct" {
     // Small: 1 capture → 64B class.
-    let xs = parallel for i in 0..100 { i * 2 }
+    ro xs = parallel for i in 0..100 { i * 2 }
     assert(xs[99] == 198)
     assert(xs[0] == 0)
     assert(xs[50] == 100)
@@ -24,9 +24,9 @@ test "varied ctx sizes — small ctx routing correct" {
 
 test "varied ctx sizes — medium ctx routing correct" {
     // Medium: closure-by-value captures sum into result. Pool routes 128B class.
-    let multiplier = 3
-    let offset = 7
-    let xs = parallel for i in 0..100 { i * multiplier + offset }
+    ro multiplier = 3
+    ro offset = 7
+    ro xs = parallel for i in 0..100 { i * multiplier + offset }
     assert(xs[99] == 99 * 3 + 7)
     assert(xs[0] == 7)
 }

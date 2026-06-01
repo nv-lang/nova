@@ -7,11 +7,11 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.prop_cas_loop_convergence
+module plan103_8.prop_cas_loop_convergence
 
 test "prop CAS convergence: 8 fibers × 50 strong CAS — final = 400" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    mut counter = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -19,9 +19,9 @@ test "prop CAS convergence: 8 fibers × 50 strong CAS — final = 400" {
             spawn {
                 for _j in 0..50 {
                     // Strong CAS retry loop — must converge
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = counter.load(Acquire)
+                        ro cur = counter.load(Acquire)
                         done = counter.compare_exchange(cur, cur + 1, AcqRel, Acquire)
                     }
                 }
@@ -37,8 +37,8 @@ test "prop CAS convergence: 8 fibers × 50 strong CAS — final = 400" {
 }
 
 test "prop CAS convergence: 8 fibers × 50 weak CAS — final = 400" {
-    let counter = AtomicI64.new(0)
-    let wg      = WaitGroup.new()
+    mut counter = AtomicI64.new(0)
+    mut wg = WaitGroup.new()
     wg.add(8)
 
     supervised {
@@ -46,9 +46,9 @@ test "prop CAS convergence: 8 fibers × 50 weak CAS — final = 400" {
             spawn {
                 for _j in 0..50 {
                     // Weak CAS — tolerates spurious failure, still converges
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = counter.load(Relaxed)
+                        ro cur = counter.load(Relaxed)
                         done = counter.compare_exchange_weak(cur, cur + 1, Release, Relaxed)
                     }
                 }
@@ -65,11 +65,11 @@ test "prop CAS convergence: 8 fibers × 50 weak CAS — final = 400" {
 
 test "prop CAS convergence: fetch_add vs CAS loop produce same final count" {
     // Validates that CAS-loop increment and fetch_add are equivalent in correctness.
-    let cas_counter    = AtomicI64.new(0)
-    let fetch_counter  = AtomicI64.new(0)
-    let n_fibers       = 4
-    let n_per_fiber    = 50
-    let wg             = WaitGroup.new()
+    mut cas_counter    = AtomicI64.new(0)
+    mut fetch_counter  = AtomicI64.new(0)
+    ro n_fibers       = 4
+    ro n_per_fiber    = 50
+    mut wg = WaitGroup.new()
     wg.add(n_fibers * 2)
 
     supervised {
@@ -77,9 +77,9 @@ test "prop CAS convergence: fetch_add vs CAS loop produce same final count" {
         for _i in 0..n_fibers {
             spawn {
                 for _j in 0..n_per_fiber {
-                    let done = false
+                    ro done = false
                     while !done {
-                        let cur = cas_counter.load(Acquire)
+                        ro cur = cas_counter.load(Acquire)
                         done = cas_counter.compare_exchange(cur, cur + 1, AcqRel, Acquire)
                     }
                 }
@@ -99,7 +99,7 @@ test "prop CAS convergence: fetch_add vs CAS loop produce same final count" {
         wg.wait()
     }
 
-    let expected = n_fibers * n_per_fiber
+    ro expected = n_fibers * n_per_fiber
     assert(cas_counter.load() == expected,
         "CAS counter must match expected")
     assert(fetch_counter.load() == expected,

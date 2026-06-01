@@ -11,7 +11,7 @@ type IntCounter {
 
 fn IntCounter mut @next() -> Option[int] => {
     if @cur < @end {
-        let v = @cur
+        ro v = @cur
         @cur += 1
         Some(v)
     } else {
@@ -23,11 +23,11 @@ type Summer { tag int }
 
 // instance method with a protocol-typed parameter
 fn Summer @drain(mut it Iterable[int]) -> int => {
-    let mut count = 0
-    let mut go = true
+    mut count = 0
+    mut go = true
     loop {
         if !go { break }
-        let r = it.next()
+        ro r = it.next()
         if r.is_some() { count += 1 } else { go = false }
     }
     count
@@ -35,8 +35,8 @@ fn Summer @drain(mut it Iterable[int]) -> int => {
 
 // static method with a protocol-typed parameter
 fn Summer.count_static(mut it Iterable[int]) -> int => {
-    let mut n = 0
-    let mut go = true
+    mut n = 0
+    mut go = true
     loop {
         if !go { break }
         if it.next().is_some() { n += 1 } else { go = false }
@@ -45,14 +45,14 @@ fn Summer.count_static(mut it Iterable[int]) -> int => {
 }
 
 test "method protocol param — instance call boxes arg" {
-    let s = Summer { tag: 0 }
-    let c = IntCounter { cur: 0, end: 4 }
-    let n = s.drain(c)
+    mut s = Summer { tag: 0 }
+    ro c = IntCounter { cur: 0, end: 4 }
+    ro n = s.drain(c)
     assert(n == 4)
 }
 
 test "method protocol param — static call boxes arg" {
-    let c = IntCounter { cur: 0, end: 3 }
-    let n = Summer.count_static(c)
+    ro c = IntCounter { cur: 0, end: 3 }
+    ro n = Summer.count_static(c)
     assert(n == 3)
 }

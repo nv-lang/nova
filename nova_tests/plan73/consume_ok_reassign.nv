@@ -4,13 +4,13 @@
 // Move через `consume twin = sb` transfers ownership; sb dead;
 // twin становится новым owner и консумится через consume-метод.
 
-module nova_tests.plan73.consume_ok_reassign
+module plan73.consume_ok_reassign
 
 test "move-binding — twin owns and consumes" {
     consume sb = StringBuilder.new()
     sb.append("first")
     consume twin = sb               // move (Rule 3 D180); sb dead
-    let a = twin.as_str()           // consume через twin
+    ro a = twin.as_str()           // consume через twin
     assert(a == "first")
 }
 
@@ -19,8 +19,8 @@ test "две независимые consume-bindings — каждая свой �
     sb1.append("alpha")
     consume sb2 = StringBuilder.new()
     sb2.append("beta")
-    let a = sb1.as_str()
-    let b = sb2.as_str()
+    ro a = sb1.as_str()
+    ro b = sb2.as_str()
     assert(a == "alpha")
     assert(b == "beta")
 }

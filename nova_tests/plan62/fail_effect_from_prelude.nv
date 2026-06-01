@@ -22,7 +22,7 @@ fn raise_int(x int) Fail[int] -> int {
 }
 
 test "Fail[int] auto-imported from prelude — throw + handler" {
-    let result = with Fail[int] = |e| interrupt e + 1 {
+    ro result = with Fail[int] = |e| interrupt e + 1 {
         raise_int(-1)
     }
     // throw 42 → handler interrupts с 42 + 1 = 43.
@@ -30,7 +30,7 @@ test "Fail[int] auto-imported from prelude — throw + handler" {
 }
 
 test "Fail[int] handler bypassed when no throw" {
-    let result = with Fail[int] = |_e| interrupt 0 {
+    ro result = with Fail[int] = |_e| interrupt 0 {
         raise_int(5)
     }
     // 5 * 2 = 10 (handler не triggered, raise_int возвращает normally).
@@ -42,7 +42,7 @@ fn raise_str() Fail[str] -> int {
 }
 
 test "Fail[str] — different E parameter than [int]" {
-    let result = with Fail[str] = |e| interrupt (if e == "boom" { 1 } else { 999 }) {
+    ro result = with Fail[str] = |e| interrupt (if e == "boom" { 1 } else { 999 }) {
         raise_str()
     }
     assert(result == 1)

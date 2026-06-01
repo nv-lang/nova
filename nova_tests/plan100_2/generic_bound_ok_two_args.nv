@@ -2,7 +2,7 @@
 // — оба явно consume. Оба обязательства удовлетворяются передачей в
 // consume-param функцию `finish`.
 
-module nova_tests.plan100_2.generic_bound_ok_two_args
+module plan100_2.generic_bound_ok_two_args
 
 type Transaction consume {
     id int,

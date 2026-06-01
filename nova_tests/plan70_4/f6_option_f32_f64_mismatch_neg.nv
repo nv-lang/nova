@@ -5,12 +5,12 @@
 //
 // Параллель Rust: Option<f32> и Option<f64> — разные типы, compile error.
 
-module nova_tests.plan70_4.f6_option_f32_f64_mismatch_neg
+module plan70_4.f6_option_f32_f64_mismatch_neg
 
 fn take_opt_f64(o Option[f64]) -> bool { o.is_some() }
 
 // EXPECT_CC_ERROR incompatible type
 fn bad() -> bool {
-    let o Option[f32] = Some(1.0 as f32)
+    ro o Option[f32] = Some(1.0 as f32)
     take_opt_f64(o)
 }

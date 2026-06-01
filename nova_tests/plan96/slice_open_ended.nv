@@ -1,35 +1,35 @@
 // Plan 96 Ф.4 — позитив: open-ended slice (a../..b/..).
 // D-open-ended: 5 форм Range (Rust RangeBounds parity).
 
-module nova_tests.plan96.slice_open_ended
+module plan96.slice_open_ended
 
 test "open-end arr[a..]" {
-    let arr = [10, 20, 30, 40, 50]
-    let suffix = arr[2..]
+    mut arr = [10, 20, 30, 40, 50]
+    ro suffix = arr[2..]
     assert(suffix.len() == 3)
     assert(suffix[0] == 30)
     assert(suffix[2] == 50)
 }
 
 test "open-start arr[..b]" {
-    let arr = [10, 20, 30, 40, 50]
-    let prefix = arr[..3]
+    mut arr = [10, 20, 30, 40, 50]
+    ro prefix = arr[..3]
     assert(prefix.len() == 3)
     assert(prefix[0] == 10)
     assert(prefix[2] == 30)
 }
 
 test "full slice arr[..]" {
-    let arr = [10, 20, 30]
-    let all = arr[..]
+    mut arr = [10, 20, 30]
+    ro all = arr[..]
     assert(all.len() == 3)
     assert(all[0] == 10)
     assert(all[2] == 30)
 }
 
 test "open-end inclusive arr[..=b]" {
-    let arr = [10, 20, 30, 40, 50]
-    let prefix = arr[..=2]
+    mut arr = [10, 20, 30, 40, 50]
+    ro prefix = arr[..=2]
     assert(prefix.len() == 3)
     assert(prefix[0] == 10)
     assert(prefix[2] == 30)

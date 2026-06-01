@@ -206,7 +206,7 @@ sum_schemas.insert("Result", vec![Variant::Tuple("Ok", vec!["nova_int"]), Varian
   module std.prelude.core
   export type Option[T] | Some(T) | None
   export type Result[T, E] | Ok(T) | Err(E)
-  export type Error { readonly msg str }
+  export type Error { ro msg str }
   export type Ordering | Less | Equal | Greater
   // DEFER: type Never — empty-sum syntax не поддержан parser'ом
   ```
@@ -528,7 +528,7 @@ non-str + multi-arg callers. Real test files используют все чет�
   ```nova
   module std.prelude.collections
   export type Iter[T] protocol { mut next() -> Option[T] }
-  export type Range { readonly start int; readonly end int; readonly inclusive bool }
+  export type Range { ro start int; ro end int; ro inclusive bool }
   export type RangeIter { end int; inclusive bool; mut cur int }
   external type StringBuilder
   external type WriteBuffer

@@ -73,13 +73,13 @@ export external fn str @hash() -> u64
 export external fn str @to_bytes() -> []u8
 
 // D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
-export external fn str @as_bytes() -> readonly []u8
+export external fn str @as_bytes() -> ro []u8
 
 // D178: []u8 → str. D178: параметр `readonly bytes` (синтаксис D178).
 // Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
-export external fn str.from_bytes_lossy(readonly bytes []u8) -> str
+export external fn str.from_bytes_lossy(ro bytes []u8) -> str
 // Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
-export external fn str.from_bytes_unchecked(readonly bytes []u8) -> str
+export external fn str.from_bytes_unchecked(ro bytes []u8) -> str
 // Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
 // (writes '\0' at data[len] in-place); falls back to alloc+copy if cap == len.
 // Caller must consume the source array — array unusable after call.
@@ -90,18 +90,18 @@ export external fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str
 export external fn str @to_chars() -> []char
 
 // Split по separator. Returns zero-copy views (readonly). D178: readonly return.
-export external fn str @split(sep str) -> readonly []str
+export external fn str @split(sep str) -> ro []str
 
 // D178: merge of parse_int() + parse_int_radix(). Default radix=10 → decimal.
 // Digits 0-9, a-z/A-Z (case-insensitive for radix>10). None при error.
 // Nova body — единый путь для всех баз через Plan 54 Ф.2 dispatch.
 export fn str @parse_int(radix int = 10) -> Option[int] {
     if radix < 2 || radix > 36 { return None }
-    let bytes = @as_bytes()
-    let n = @byte_len()
+    ro bytes = @as_bytes()
+    ro n = @byte_len()
     if n == 0 { return None }
-    let mut neg = false
-    let mut start = 0
+    mut neg = false
+    mut start = 0
     if bytes[0] as int == '-' as int {
         neg = true
         start = 1
@@ -109,10 +109,10 @@ export fn str @parse_int(radix int = 10) -> Option[int] {
         start = 1
     }
     if start >= n { return None }
-    let mut acc = 0
+    mut acc = 0
     for j in start..n {
-        let c = bytes[j] as int
-        let mut d = -1
+        ro c = bytes[j] as int
+        mut d = -1
         if c >= '0' as int && c <= '9' as int {
             d = c - '0' as int
         } else if c >= 'a' as int && c <= 'z' as int {
@@ -132,17 +132,17 @@ export external fn str @compare(other str) -> int
 
 // Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_left(width int, fill char) -> str {
-    let pad = width - @len()
+    ro pad = width - @len()
     if pad <= 0 { return @ }
-    let fill_s = str.from(fill)
+    ro fill_s = str.from(fill)
     StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
 }
 
 // Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_right(width int, fill char) -> str {
-    let pad = width - @len()
+    ro pad = width - @len()
     if pad <= 0 { return @ }
-    let fill_s = str.from(fill)
+    ro fill_s = str.from(fill)
     StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
 }
 
@@ -157,11 +157,11 @@ export fn str @repeat(n int) -> str {
 // many replacements — acceptable for bootstrap; StringBuilder followup is [str-replace-buffered].
 export fn str @replace(from str, to str) -> str {
     if from.len() == 0 { return @ }
-    let parts = @split(from)
-    let n = parts.len()
+    ro parts = @split(from)
+    ro n = parts.len()
     if n == 0 { return @ }
-    let mut result = parts[0]
-    let mut i = 1
+    mut result = parts[0]
+    mut i = 1
     while i < n {
         result = result.concat(to).concat(parts[i])
         i = i + 1

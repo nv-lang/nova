@@ -18,13 +18,13 @@
 module syntax.for_in_range_iter
 
 type Range {
-    readonly start int
-    readonly end int
+    ro start int
+    ro end int
 }
 
 type StepRangeIter {
-    readonly end  int
-    readonly step int
+    ro end  int
+    ro step int
     mut cur       int
 }
 
@@ -34,13 +34,13 @@ fn Range @step_by(step int) -> StepRangeIter {
 
 fn StepRangeIter mut @next() -> Option[int] {
     if @cur >= @end { return None }
-    let v = @cur
+    ro v = @cur
     @cur += @step
     Some(v)
 }
 
 test "step_by(2) on Range literal — even numbers" {
-    let mut sum = 0
+    mut sum = 0
     for i in (0..10).step_by(2) {
         sum = sum + i
     }
@@ -49,8 +49,8 @@ test "step_by(2) on Range literal — even numbers" {
 }
 
 test "step_by(3) on Range literal — every third" {
-    let mut count = 0
-    let mut last = -1
+    mut count = 0
+    mut last = -1
     for i in (0..10).step_by(3) {
         count = count + 1
         last = i
@@ -61,8 +61,8 @@ test "step_by(3) on Range literal — every third" {
 }
 
 test "step_by(100) — единственный элемент start" {
-    let mut count = 0
-    let mut first = -1
+    mut count = 0
+    mut first = -1
     for i in (0..5).step_by(100) {
         if count == 0 { first = i }
         count = count + 1
@@ -72,7 +72,7 @@ test "step_by(100) — единственный элемент start" {
 }
 
 test "regression: plain Range loop still works (Case 1 primitive)" {
-    let mut sum = 0
+    mut sum = 0
     for i in 0..5 {
         sum = sum + i
     }

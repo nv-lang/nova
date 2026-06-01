@@ -27,12 +27,12 @@ fn use_all(c Counter) -> int
     requires c.value >= 0
 {
     // 9.1 + 9.7: ghost let, виден только в spec.
-    ghost let initial = c.value
+    ghost ro initial = c.value
     assert_static initial == c.value  // 9.7: ghost OK в spec
 
     // 9.3 + 9.5: loop с invariants. Pre-entry + per-iter.
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < c.value
         invariant 0 <= i
         invariant i <= c.value
@@ -46,7 +46,7 @@ fn use_all(c Counter) -> int
 }
 
 test "combined features positive" {
-    let c = Counter { value: 5 }   // 9.2 invariant passes
+    ro c = Counter { value: 5 }   // 9.2 invariant passes
     assert(c.value == 5)
     assert(use_all(c) == 0 + 1 + 2 + 3 + 4)
     assert(fact(5) == 120)         // 9.4 normal recursion

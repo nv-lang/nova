@@ -1,0 +1,16 @@
+// Plan 108.1 (D176 amend): `mut` параметр позволяет вызов mut-методов
+// на встроенных коллекциях (массив).
+
+module plan108_1.mut_param_array_push_ok
+
+fn append_99(mut b []int) -> int {
+    b.push(99)
+    b.len()
+}
+
+test "mut param + array push" {
+    mut arr = [1, 2, 3]
+    ro n = append_99(arr)
+    assert(n == 4)
+    assert(arr.len() == 4)        // мутация видна caller'у (reference semantics)
+}

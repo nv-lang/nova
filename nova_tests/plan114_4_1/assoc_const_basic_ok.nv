@@ -1,0 +1,29 @@
+// Plan 114.4.1 (D200): basic assoc const — namespace access.
+
+module plan114_4_1.assoc_const_basic_ok
+
+type Config {
+    const VERSION int = 2
+    const MAX_PEERS int = 1024
+    name str
+    timeout int
+}
+
+test "Config.VERSION resolves to const" {
+    assert(Config.VERSION == 2)
+}
+
+test "Config.MAX_PEERS resolves to const" {
+    assert(Config.MAX_PEERS == 1024)
+}
+
+test "type still instantiable without const fields" {
+    ro c = Config { name: "alice", timeout: 30 }
+    assert(c.name == "alice")
+    assert(c.timeout == 30)
+}
+
+test "arithmetic over assoc const" {
+    ro doubled = Config.MAX_PEERS * 2
+    assert(doubled == 2048)
+}

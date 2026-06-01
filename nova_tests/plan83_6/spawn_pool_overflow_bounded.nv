@@ -11,18 +11,18 @@ module plan83_6.spawn_pool_overflow_bounded
 
 test "pool overflow N=2000 — heap bounded" {
     gc.collect()
-    let baseline = gc.heap_size()
+    ro baseline = gc.heap_size()
 
     // 2000 fibers via parallel-for. Pool max ~4096 entries cap
     // distributed. Excess freed через Boehm. Verify no unbounded leak.
-    let xs = parallel for i in 0..2000 { i }
+    ro xs = parallel for i in 0..2000 { i }
     assert(xs[1999] == 1999)
     assert(xs[0] == 0)
 
     gc.collect()
-    let heap_after = gc.heap_size()
+    ro heap_after = gc.heap_size()
 
-    let growth = if heap_after > baseline { heap_after - baseline } else { 0 }
+    ro growth = if heap_after > baseline { heap_after - baseline } else { 0 }
     println("baseline=${baseline} after=${heap_after} growth=${growth}")
     // Bound: 8MB cap pool + reasonable Boehm overhead + result array.
     // Actual growth должно быть < 32MB (very generous bound — includes

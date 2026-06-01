@@ -312,6 +312,10 @@ impl Interpreter {
             }
             ExprKind::BoolLit(b) => Ok(Flow::Value(Value::Bool(*b))),
             ExprKind::UnitLit => Ok(Flow::Value(Value::Unit)),
+            // Plan 115 D214: null ptr literal — bitwise 0 в interp как Int(0).
+            // Interp не имеет separate ptr value type; ptr-domain operations
+            // (cast, ==, FFI calls) work через Int representation.
+            ExprKind::NullPtrLit => Ok(Flow::Value(Value::Int(0))),
             ExprKind::SelfAccess => match env.lookup("@") {
                 Some(v) => Ok(Flow::Value(v)),
                 None => Err(Diagnostic::new("`@` used outside method", expr.span)),
@@ -2029,6 +2033,28 @@ impl Interpreter {
                 };
                 Ok(Flow::Return(v))
             }
+            // Plan 114.4 Ф.2: scope-local const — interp uses match_pattern
+            // helper for the Ident binding (consistent с Let-handling).
+            Stmt::Const(decl) => {
+                let v = match self.eval_expr(&decl.value, env)? {
+                    Flow::Value(v) => v,
+                    flow => return Ok(flow),
+                };
+                use crate::ast::Pattern;
+                let pat = Pattern::Ident {
+                    name: decl.name.clone(),
+                    span: decl.span,
+                    is_mut: false,
+                };
+                let local = env.clone();
+                if !self.match_pattern(&pat, &v, &local) {
+                    return Err(Diagnostic::new(
+                        format!("const `{}` binding failed", decl.name),
+                        decl.span,
+                    ));
+                }
+                Ok(Flow::Value(Value::Unit))
+            }
             Stmt::Break(_) => Ok(Flow::Break),
             Stmt::Continue(_) => Ok(Flow::Continue),
             Stmt::Throw { value, .. } => {
@@ -2044,6 +2070,29 @@ impl Interpreter {
             //          ErrDefer — флаг is_error_exit, invoke только если true.
             Stmt::Defer { .. } | Stmt::ErrDefer { .. }
             | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => {
+                Ok(Flow::Value(Value::Unit))
+            }
+            // Plan 110 D188 / Plan 110.1.4: `consume X = expr { body }` —
+            // interpreter execution отложена до Plan 110.1.4 codegen impl
+            // (требует scope-stack + cancel-shield + on_exit dispatch +
+            // exactly-once invariant). Здесь — diagnostic stub чтобы
+            // существующий test runner не silently no-op (как у Defer).
+            // Interp пока eval init expr (evaluate side-effects) + body
+            // stmts (без on_exit вызова). Production-grade impl — 110.1.4.
+            Stmt::ConsumeScope { binding: _, type_annot: _, init, body, span: _ } => {
+                let _ = match self.eval_expr(init, env)? {
+                    Flow::Value(_) => {}
+                    other => return Ok(other),
+                };
+                for s in &body.stmts {
+                    match self.exec_stmt(s, env)? {
+                        Flow::Value(_) => {}
+                        other => return Ok(other),
+                    }
+                }
+                if let Some(t) = &body.trailing {
+                    return self.eval_expr(t, env);
+                }
                 Ok(Flow::Value(Value::Unit))
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — в interp

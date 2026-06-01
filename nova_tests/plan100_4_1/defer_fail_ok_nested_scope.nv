@@ -2,7 +2,7 @@
 // outer fn-sig's Fail-effect (через walk_block_for_defers passes
 // current_fn_effects к recursive scopes).
 
-module nova_tests.plan100_4_1.defer_fail_ok_nested_scope
+module plan100_4_1.defer_fail_ok_nested_scope
 
 type CleanupErr { msg str }
 

@@ -21,9 +21,9 @@ fn Box.zero() -> Self {
 }
 
 test "Self в static-методе" {
-    let b = Box.new(42)
+    ro b = Box.new(42)
     assert(b.value == 42)
-    let z = Box.zero()
+    ro z = Box.zero()
     assert(z.value == 0)
 }
 
@@ -38,14 +38,14 @@ fn Box @doubled() -> Self {
 }
 
 test "Self в @clone" {
-    let b = Box { value: 7 }
-    let c = b.clone()
+    ro b = Box { value: 7 }
+    ro c = b.clone()
     assert(c.value == 7)
 }
 
 test "Self в return type instance-метода (builder)" {
-    let b = Box { value: 5 }
-    let d = b.doubled()
+    ro b = Box { value: 5 }
+    ro d = b.doubled()
     assert(d.value == 10)
 }
 
@@ -61,8 +61,8 @@ fn Pair[A, B] @swap() -> Pair[B, A] {
 }
 
 test "Self не нужен — но альтернатива через Pair[B, A] явная" {
-    let p = Pair { fst: 1, snd: "x" }
-    let s = p.swap()
+    mut p = Pair { fst: 1, snd: "x" }
+    ro s = p.swap()
     assert(s.fst == "x")
     assert(s.snd == 1)
 }
@@ -79,7 +79,7 @@ fn Tree @count() -> int => match @ {
 }
 
 test "Self в sum-варианте через @count" {
-    let t = Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Node(4, Leaf, Leaf)))
+    ro t = Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Node(4, Leaf, Leaf)))
     assert(t.count() == 4)
 }
 
@@ -91,14 +91,14 @@ type Counter effect {
 }
 
 test "effect методы используют обычные типы (не Self) для return" {
-    let mut s = 0
+    mut s = 0
     with Counter = effect Counter {
         next() {
             s += 1
             return s
         }
     } {
-        let v = Counter.next()
+        ro v = Counter.next()
         assert(v == 1)
     }
 }
@@ -114,8 +114,8 @@ type UserId { id u64 }
 fn UserId @into() -> str => "user#" + str.from(@id)
 
 test "Into[str] for UserId — string conversion via D73" {
-    let u = UserId { id: 42 }
-    let s str = u.into()
+    ro u = UserId { id: 42 }
+    ro s str = u.into()
     assert(s == "user#42")
 }
 
@@ -134,13 +134,13 @@ fn Account.zero_balance() -> Self {
 }
 
 test "Self literal — Self { ... } работает в bootstrap" {
-    let a = Account.zero_balance()
+    ro a = Account.zero_balance()
     assert(a.balance == 0)
 }
 
 test "обе формы возвращают тот же тип" {
-    let a1 = Account.with_balance(100)
-    let a2 = Account.zero_balance()
+    ro a1 = Account.with_balance(100)
+    ro a2 = Account.zero_balance()
     assert(a1.balance == 100)
     assert(a2.balance == 0)
 }

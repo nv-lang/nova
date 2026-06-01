@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.operators_via_compare_test
+module plan91_8a_2.operators_via_compare_test
 
 // Plan 91.8a.2 part 3 (D183 amendment): operators `==`/`!=`/`<`/`<=`/`>`/`>=`
 // dispatch через @compare если type satisfies Comparable. Raньше fallback
@@ -12,23 +12,23 @@ fn Money @compare(other Self) -> int =>
     else { 0 }
 
 test "< через @compare synthesis" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 200 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 200 }
     assert(a < b)
     assert(!(b < a))
 }
 
 test "> через @compare synthesis" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 200 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 200 }
     assert(b > a)
     assert(!(a > b))
 }
 
 test "<= и >= через @compare synthesis" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 100 }
-    let c = Money { cents: 200 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 100 }
+    ro c = Money { cents: 200 }
     assert(a <= b)
     assert(a <= c)
     assert(!(c <= a))
@@ -37,9 +37,9 @@ test "<= и >= через @compare synthesis" {
 }
 
 test "== / != через @compare synthesis (no explicit @equals)" {
-    let a = Money { cents: 100 }
-    let b = Money { cents: 100 }
-    let c = Money { cents: 200 }
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 100 }
+    ro c = Money { cents: 200 }
     assert(a == b)
     assert(!(a == c))
     assert(a != c)

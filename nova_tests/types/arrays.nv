@@ -3,34 +3,34 @@
 module types.arrays
 
 test "array literal and len" {
-    let a = [1, 2, 3]
+    mut a = [1, 2, 3]
     assert(a.len() == 3)
 }
 
 test "empty array" {
-    let a []int = []
+    mut a []int = []
     assert(a.len() == 0)
 }
 
 test "indexing" {
-    let a = [10, 20, 30]
+    mut a = [10, 20, 30]
     assert(a[0] == 10)
     assert(a[1] == 20)
     assert(a[2] == 30)
 }
 
 test "spread concat (D60)" {
-    let a = [1, 2, 3]
-    let b = [4, 5]
-    let c = [...a, ...b]
+    mut a = [1, 2, 3]
+    mut b = [4, 5]
+    mut c = [...a, ...b]
     assert(c.len() == 5)
     assert(c[0] == 1)
     assert(c[4] == 5)
 }
 
 test "spread with literals around" {
-    let mid = [2, 3]
-    let full = [1, ...mid, 4, 5]
+    ro mid = [2, 3]
+    ro full = [1, ...mid, 4, 5]
     assert(full.len() == 5)
     assert(full[0] == 1)
     assert(full[1] == 2)
@@ -38,23 +38,23 @@ test "spread with literals around" {
 }
 
 test "multiple spreads" {
-    let a = [1]
-    let b = [2]
-    let c = [3]
-    let combined = [...a, ...b, ...c]
+    mut a = [1]
+    mut b = [2]
+    mut c = [3]
+    ro combined = [...a, ...b, ...c]
     assert(combined.len() == 3)
     assert(combined[1] == 2)
 }
 
 test "spread copy is independent" {
-    let a = [1, 2, 3]
-    let b = [...a]
+    mut a = [1, 2, 3]
+    mut b = [...a]
     assert(b.len() == 3)
     assert(b[0] == 1)
 }
 
 test "push and len" {
-    let a = [1, 2]
+    mut a = [1, 2]
     a.push(3)
     a.push(4)
     assert(a.len() == 4)
@@ -62,33 +62,33 @@ test "push and len" {
 }
 
 test "pop returns Some/None" {
-    let a = [10, 20, 30]
-    let last = a.pop()
+    mut a = [10, 20, 30]
+    ro last = a.pop()
     assert(last == Some(30))
     assert(a.len() == 2)
 }
 
 test "pop empty returns None" {
-    let a []int = []
-    let r = a.pop()
+    mut a []int = []
+    ro r = a.pop()
     assert(r == None)
 }
 
 test "get with valid index" {
-    let a = [10, 20, 30]
-    let v = a.get(1)
+    mut a = [10, 20, 30]
+    ro v = a.get(1)
     assert(v == Some(20))
 }
 
 test "get with out-of-range index" {
-    let a = [10]
-    let v = a.get(99)
+    mut a = [10]
+    ro v = a.get(99)
     assert(v == None)
 }
 
 test "for-in over array" {
-    let xs = [1, 2, 3, 4, 5]
-    let mut sum = 0
+    ro xs = [1, 2, 3, 4, 5]
+    mut sum = 0
     for x in xs {
         sum += x
     }
@@ -96,7 +96,7 @@ test "for-in over array" {
 }
 
 test "index assignment" {
-    let a = [1, 2, 3]
+    mut a = [1, 2, 3]
     a[0] = 100
     a[2] = 300
     assert(a[0] == 100)
@@ -105,15 +105,15 @@ test "index assignment" {
 }
 
 test "compound index assignment" {
-    let a = [10, 20]
+    mut a = [10, 20]
     a[0] += 5
     assert(a[0] == 15)
 }
 
 test "tuple of arrays" {
-    let pair = ([1, 2], [3, 4])
-    let left = pair.0
-    let right = pair.1
+    ro pair = ([1, 2], [3, 4])
+    ro left = pair.0
+    ro right = pair.1
     assert(left[0] == 1)
     assert(right[1] == 4)
 }

@@ -8,7 +8,7 @@
 // compile error ДО codegen (static-dispatch на typevar даже не
 // достигается).
 
-module nova_tests.plan88.neg_bound_violation
+module plan88.neg_bound_violation
 
 
 type NoConv { x int }            // НЕ реализует From[str]
@@ -17,6 +17,6 @@ fn wrap[T From[str]](s str) -> T => T.from(s)
 
 
 test "тип без From[str] в generic bound — compile error" {
-    let bad = wrap[NoConv]("oops")
+    ro bad = wrap[NoConv]("oops")
     assert(bad.x == 0)
 }

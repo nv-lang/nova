@@ -16,7 +16,7 @@ module negative_capability.peer_path_leak
 import nova_tests.negative_capability.peer_path_leak_setup.{use_target, leak_attempt}
 
 test "cross-peer Path-form import leak rejected" {
-    let _ = use_target()
-    let _l = leak_attempt()
+    ro _ = use_target()
+    ro _l = leak_attempt()
     assert(true)
 }

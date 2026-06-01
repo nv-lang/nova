@@ -1,0 +1,45 @@
+// Plan 108.2 (D36 enforcement) — Property test: let-binding mutability invariant.
+//
+// Свойство: `let mut buf = []` корректно accumulates N элементов,
+// аналогичный `let buf2 = ...` с readonly observation возвращает sum.
+// Compile-time witness: фикстура компилируется только если both bindings
+// корректно классифицированы.
+
+module plan108_2.let_mut_count_invariant_prop
+
+test "property: N=10 accumulation in mut" {
+    mut buf = []
+    mut i = 0
+    while i < 10 {
+        buf.push(i)
+        i = i + 1
+    }
+    assert(buf.len() == 10)
+    mut sum = 0
+    for x in buf { sum = sum + x }
+    assert(sum == 45)             // 0+1+...+9
+}
+
+test "property: N=100 accumulation in mut" {
+    mut buf = []
+    mut i = 0
+    while i < 100 {
+        buf.push(i)
+        i = i + 1
+    }
+    assert(buf.len() == 100)
+    mut sum = 0
+    for x in buf { sum = sum + x }
+    assert(sum == 4950)           // 0+1+...+99
+}
+
+test "property: ro observation of mut state" {
+    mut buf = []
+    buf.push(1)
+    buf.push(2)
+    buf.push(3)
+    ro len = buf.len()
+    mut sum = 0
+    for x in buf { sum = sum + x }
+    assert(len == 3 && sum == 6)
+}

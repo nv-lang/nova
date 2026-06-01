@@ -9,21 +9,21 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.stress_producer_consumer_bounded
+module plan103_8.stress_producer_consumer_bounded
 
 test "bounded buffer: 4 producers + 4 consumers Ð“â€” 500 items Ð²Ð‚â€ no item lost" {
-    let mu           = Mutex.new()
-    let not_empty    = Condvar.new()
-    let not_full     = Condvar.new()
-    let pending      = AtomicI64.new(0)  // items in buffer (bounded by cap=8)
-    let total_prod   = AtomicI64.new(0)
-    let total_cons   = AtomicI64.new(0)
-    let cap          = 8   // buffer capacity
-    let items_each   = 500 // items per producer/consumer
-    let n_prod       = 4
-    let n_cons       = 4
+    mut mu = Mutex.new()
+    mut not_empty    = Condvar.new()
+    mut not_full     = Condvar.new()
+    mut pending      = AtomicI64.new(0)  // items in buffer (bounded by cap=8)
+    mut total_prod   = AtomicI64.new(0)
+    mut total_cons   = AtomicI64.new(0)
+    ro cap          = 8   // buffer capacity
+    ro items_each   = 500 // items per producer/consumer
+    ro n_prod       = 4
+    ro n_cons       = 4
 
-    let wg = WaitGroup.new()
+    mut wg = WaitGroup.new()
     wg.add(n_prod + n_cons)
 
     supervised {
@@ -77,15 +77,15 @@ test "bounded buffer: 4 producers + 4 consumers Ð“â€” 500 items Ð²Ð�
 }
 
 test "bounded buffer: 2 producers + 2 consumers Ð“â€” 100 items Ð²Ð‚â€ ordering relaxed, no loss" {
-    let mu         = Mutex.new()
-    let not_empty  = Condvar.new()
-    let not_full   = Condvar.new()
-    let pending    = AtomicI64.new(0)
-    let produced   = AtomicI64.new(0)
-    let consumed   = AtomicI64.new(0)
-    let cap        = 4
-    let items_each = 100
-    let wg         = WaitGroup.new()
+    mut mu = Mutex.new()
+    mut not_empty  = Condvar.new()
+    mut not_full   = Condvar.new()
+    mut pending    = AtomicI64.new(0)
+    mut produced = AtomicI64.new(0)
+    mut consumed = AtomicI64.new(0)
+    ro cap        = 4
+    ro items_each = 100
+    mut wg = WaitGroup.new()
     wg.add(4)
 
     supervised {

@@ -27,8 +27,8 @@ export fn pow_pure(base int, exp int) -> int {
 
 /// Mixed — pure helper for non-pure code.
 export fn use_pure_helpers(x int) -> int {
-    let sq = square(x)
-    let ok = is_positive(x)
+    ro sq = square(x)
+    ro ok = is_positive(x)
     if ok { sq } else { 0 }
 }
 
@@ -74,9 +74,9 @@ test "use_pure_helpers composes" {
 
 test "capabilities don't affect runtime" {
     // #pure / #realtime — only doc/verify metadata, no runtime difference.
-    let r1 = square(7)
-    let r2 = add_realtime(7, 7)
-    let r3 = max_realtime_nogc(r1, r2)
+    ro r1 = square(7)
+    ro r2 = add_realtime(7, 7)
+    ro r3 = max_realtime_nogc(r1, r2)
     assert(r1 == 49)
     assert(r2 == 14)
     assert(r3 == 49)

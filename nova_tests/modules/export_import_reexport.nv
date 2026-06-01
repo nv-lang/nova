@@ -17,6 +17,6 @@ module modules.export_import_reexport
 export import std.collections.range.{Range}
 
 test "export import синтаксис parsed and items merged" {
-    let r = 0..5
+    ro r = 0..5
     assert(r.len() == 5)
 }

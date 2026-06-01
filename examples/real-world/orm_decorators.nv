@@ -21,7 +21,7 @@
 // - `Sql.with_filter` ([stdlib_sql.nv](stdlib_sql.nv)) — добавить
 //   предикат к существующему запросу
 
-module examples.orm_decorators
+module real-world.orm_decorators
 
 use std.sql                              // Sql, Db, DbRow, DbError
 
@@ -49,7 +49,7 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
         // SELECT: добавляем фильтр. Простая реализация — `with_filter`
         // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
         // чтобы корректно работать с UNION/подзапросами.
-        let filtered = q.with_filter(sql`deleted_at IS NULL`)
+        ro filtered = q.with_filter(sql`deleted_at IS NULL`)
         real.query(filtered)
     }
     exec(q) {
@@ -58,11 +58,11 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
             // Простой rewrite: "DELETE FROM <t> WHERE ..."
             //              → "UPDATE <t> SET deleted_at = NOW() WHERE ..."
             // strip_prefix возвращает Option[str]; на None — Constraint-ошибка.
-            let rest = match q.template.strip_prefix("DELETE FROM ") {
+            ro rest = match q.template.strip_prefix("DELETE FROM ") {
                 Some(r) => r
                 None    => throw DbError.Other("expected DELETE FROM prefix")
             }
-            let rewritten Sql = {
+            ro rewritten Sql = {
                 template: "UPDATE ${rest.until(" WHERE ")} "
                         + "SET deleted_at = NOW() WHERE ${rest.after(" WHERE ")}",
                 args: q.args,
@@ -92,7 +92,7 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
 export fn with_audit(real Effect[Db], current_user_id u64) -> Effect[Db] => effect Db {
     query(q) => real.query(q)                     // SELECT не аудируем
     exec(q) {
-        let result = real.exec(q)
+        ro result = real.exec(q)
 
         // detach — fire-and-forget audit-запись (D50). В тестах
         // `with Detach = SyncDetach` делает тест-цикл полностью
@@ -164,9 +164,9 @@ export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db
 //   с запросом.
 export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64)
     -> Effect[Db] {
-    let with_sd_primary = with_soft_delete(primary)
-    let with_sd_replica = with_soft_delete(replica)
-    let with_audited    = with_audit(with_sd_primary, current_user_id)
+    ro with_sd_primary = with_soft_delete(primary)
+    ro with_sd_replica = with_soft_delete(replica)
+    ro with_audited    = with_audit(with_sd_primary, current_user_id)
     with_read_replica(with_audited, with_sd_replica)
 }
 
@@ -217,7 +217,7 @@ fn capturing_handler(log mut []CapturedQuery) -> Effect[Db] => effect Db {
 }
 
 test "soft-delete: SELECT augmented with deleted_at IS NULL" {
-    let mut log []CapturedQuery = []
+    mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
         Db.query(sql`SELECT * FROM users WHERE id = ${1}`)
@@ -228,7 +228,7 @@ test "soft-delete: SELECT augmented with deleted_at IS NULL" {
 }
 
 test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
-    let mut log []CapturedQuery = []
+    mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
         Db.exec(sql`DELETE FROM users WHERE id = ${1}`)
@@ -240,8 +240,8 @@ test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
 }
 
 test "read-replica: SELECT идёт на replica, exec — на primary" {
-    let mut primary_log []CapturedQuery = []
-    let mut replica_log []CapturedQuery = []
+    mut primary_log []CapturedQuery = []
+    mut replica_log []CapturedQuery = []
 
     with Db = with_read_replica(
         capturing_handler(primary_log),
@@ -258,8 +258,8 @@ test "read-replica: SELECT идёт на replica, exec — на primary" {
 }
 
 test "read-replica: внутри transaction всё на primary" {
-    let mut primary_log []CapturedQuery = []
-    let mut replica_log []CapturedQuery = []
+    mut primary_log []CapturedQuery = []
+    mut replica_log []CapturedQuery = []
 
     with Db = with_read_replica(
         capturing_handler(primary_log),
@@ -277,8 +277,8 @@ test "read-replica: внутри transaction всё на primary" {
 }
 
 test "audit: каждый exec пишется в detach-задачу" {
-    let mut log []CapturedQuery = []
-    let mut audit_count = 0
+    mut log []CapturedQuery = []
+    mut audit_count = 0
 
     // Перехватываем Detach, чтобы посчитать audit'ы. В реальном тесте
     // мы бы заменили AuditDb handler.
@@ -301,14 +301,14 @@ test "audit: каждый exec пишется в detach-задачу" {
 
 // Композиционный тест: все три декоратора одновременно.
 test "compose: soft-delete + audit + read-replica" {
-    let mut primary_log []CapturedQuery = []
-    let mut replica_log []CapturedQuery = []
-    let mut audit_count = 0
+    mut primary_log []CapturedQuery = []
+    mut replica_log []CapturedQuery = []
+    mut audit_count = 0
 
     with Detach = effect Detach {
         run(body) { audit_count += 1 }
     } {
-        let composed = with_read_replica(
+        ro composed = with_read_replica(
             with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
             with_soft_delete(capturing_handler(replica_log)),
         )

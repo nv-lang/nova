@@ -12,8 +12,8 @@
 module plan83_10.panic_propagates_to_supervised
 
 test "spawn body USER throw propagates до with Fail handler" {
-    let mut caught = false
-    let r = with Fail[int] = |e| {
+    mut caught = false
+    ro r = with Fail[int] = |e| {
         caught = true
         0
     } {

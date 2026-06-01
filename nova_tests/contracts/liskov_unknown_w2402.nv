@@ -13,7 +13,7 @@ test "liskov encoding fail → W2402" {
     with #verify Branchy = effect Branchy {
         classify(x) => x
     } {
-        let r = Branchy.classify(5)
+        ro r = Branchy.classify(5)
         assert(r == 5)
     }
 }

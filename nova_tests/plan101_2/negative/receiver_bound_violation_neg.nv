@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR does not satisfy `Showable_`
 
-module nova_tests.plan101_2.negative.receiver_bound_violation_neg
+module negative.receiver_bound_violation_neg
 
 
 type Showable_ protocol {
@@ -24,7 +24,7 @@ fn[T Showable_] []T @desc() -> str {
 
 
 test "should error: NoShow does not satisfy Showable_" {
-    let xs []NoShow = [NoShow { n: 1 }]
-    let _ = xs.desc()
+    ro xs []NoShow = [NoShow { n: 1 }]
+    ro _ = xs.desc()
     assert(1 == 1)
 }

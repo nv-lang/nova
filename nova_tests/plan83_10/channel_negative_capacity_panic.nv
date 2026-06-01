@@ -7,5 +7,5 @@
 module plan83_10.channel_negative_capacity_panic
 
 fn main() {
-    let _ = Channel.new(-5)
+    ro _ = Channel.new(-5)
 }

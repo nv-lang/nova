@@ -3,33 +3,33 @@
 module basics.tuples
 
 test "tuple literal" {
-    let t = (1, 2, 3)
+    ro t = (1, 2, 3)
     assert(t.0 == 1)
     assert(t.1 == 2)
     assert(t.2 == 3)
 }
 
 test "tuple of mixed types" {
-    let t = (42, "hi", true)
+    ro t = (42, "hi", true)
     assert(t.0 == 42)
     assert(t.1 == "hi")
     assert(t.2 == true)
 }
 
-test "tuple destructuring let" {
-    let (a, b) = (10, 20)
+test "tuple destructuring ro" {
+    ro (a, b) = (10, 20)
     assert(a == 10)
     assert(b == 20)
 }
 
 test "tuple destructuring with wildcard" {
-    let (a, _, c) = (1, 2, 3)
+    ro (a, _, c) = (1, 2, 3)
     assert(a == 1)
     assert(c == 3)
 }
 
 test "nested tuple" {
-    let t = ((1, 2), (3, 4))
+    ro t = ((1, 2), (3, 4))
     assert(t.0.0 == 1)
     assert(t.0.1 == 2)
     assert(t.1.0 == 3)
@@ -50,7 +50,7 @@ test "tuple as function argument" {
 }
 
 test "tuple returned from fn" {
-    let (x, y) = make_pair(7, 9)
+    ro (x, y) = make_pair(7, 9)
     assert(x == 7)
     assert(y == 9)
 }

@@ -1,12 +1,12 @@
 // Plan 103.3 — Mutex.try_lock_for(100ms) on free mutex → true; ≤500ms wall-clock.
 
-module nova_tests.plan103_3.mutex_try_lock_for_success
+module plan103_3.mutex_try_lock_for_success
 
 import std.time.duration
 
 test "try_lock_for succeeds immediately on free mutex" {
-    let mu = Mutex.new()
-    let acquired = mu.try_lock_for(Duration.from_millis(100))
+    mut mu = Mutex.new()
+    ro acquired = mu.try_lock_for(Duration.from_millis(100))
     assert(acquired == true)
     assert(mu.is_locked() == true)
     mu.unlock()
@@ -14,8 +14,8 @@ test "try_lock_for succeeds immediately on free mutex" {
 }
 
 test "try_lock_for with zero timeout behaves like try_lock" {
-    let mu = Mutex.new()
-    let acquired = mu.try_lock_for(Duration.from_millis(0))
+    mut mu = Mutex.new()
+    ro acquired = mu.try_lock_for(Duration.from_millis(0))
     assert(acquired == true)
     mu.unlock()
 }

@@ -562,6 +562,18 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                 .collect();
             ItemKind::Protocol { methods: sigs, implementors: Vec::new() }
         }
+        // Plan 120 (D215): named tuple — render like a record for doc purposes.
+        TypeDeclKind::NamedTuple(fields) => {
+            let record_fields = fields
+                .iter()
+                .map(|f| RecordField {
+                    name: f.name.clone(),
+                    ty: render_type(&f.ty),
+                    mutable: false,
+                })
+                .collect();
+            ItemKind::Type(TypeDefinition::Record(record_fields))
+        }
         TypeDeclKind::Newtype(inner_ty) => {
             ItemKind::Type(TypeDefinition::Newtype {
                 inner: render_type(inner_ty),
@@ -848,8 +860,8 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
             format!("protocol {{ {} }}", sigs.join("; "))
         }
         TypeRef::Unit(_) => "()".to_string(),
-        // D176 (Plan 108): readonly T — display as "readonly T"
-        TypeRef::Readonly(inner, _) => format!("readonly {}", render_type(inner)),
+        // D176 (Plan 108) / Plan 114 D184: ro T — display as "ro T"
+        TypeRef::Readonly(inner, _) => format!("ro {}", render_type(inner)),
     }
 }
 

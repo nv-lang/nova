@@ -3,26 +3,26 @@
 // Result. Проверяем base cases, паритет с match @, нестандартные
 // типы ok/err, generic context.
 
-module nova_tests.plan95.result_predicates_migrated
+module plan95.result_predicates_migrated
 
 test "Result[int, str]: is_ok/is_err — базовый паритет с match" {
-    let ok Result[int, str] = Ok(42)
-    let err Result[int, str] = Err("oops")
+    ro ok Result[int, str] = Ok(42)
+    ro err Result[int, str] = Err("oops")
     // Прямой вызов:
     assert(ok.is_ok())
     assert(!ok.is_err())
     assert(!err.is_ok())
     assert(err.is_err())
     // Паритет с match:
-    let match_ok = match ok { Ok(_) => true, Err(_) => false }
-    let match_err = match err { Ok(_) => true, Err(_) => false }
+    ro match_ok = match ok { Ok(_) => true, Err(_) => false }
+    ro match_err = match err { Ok(_) => true, Err(_) => false }
     assert(ok.is_ok() == match_ok)
     assert(err.is_ok() == match_err)
 }
 
 test "Result[str, str]: оба-string варианты" {
-    let a Result[str, str] = Ok("yes")
-    let b Result[str, str] = Err("no")
+    ro a Result[str, str] = Ok("yes")
+    ro b Result[str, str] = Err("no")
     assert(a.is_ok() && !a.is_err())
     assert(b.is_err() && !b.is_ok())
 }
@@ -30,8 +30,8 @@ test "Result[str, str]: оба-string варианты" {
 type Payload { x int }
 
 test "Result[Payload, str]: user-record на Ok-стороне" {
-    let r Result[Payload, str] = Ok(Payload{x: 7})
-    let e Result[Payload, str] = Err("nope")
+    ro r Result[Payload, str] = Ok(Payload{x: 7})
+    ro e Result[Payload, str] = Err("nope")
     assert(r.is_ok())
     assert(!r.is_err())
     assert(e.is_err())

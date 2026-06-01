@@ -7,12 +7,12 @@
 // Codegen emits a member access of `count_ones` on `Nova_AtomicIsize`
 // → clang error: "no member named 'count_ones' in 'Nova_AtomicIsize'".
 
-module nova_tests.plan103_2.negative.atomic_isize_no_such_method_neg
+module negative.atomic_isize_no_such_method_neg
 
 fn bad(a AtomicIsize) -> int => a.count_ones()
 
 test "should not compile" {
-    let a = AtomicIsize.new(42)
-    let _ = bad(a)
+    mut a = AtomicIsize.new(42)
+    ro _ = bad(a)
     assert(true)
 }

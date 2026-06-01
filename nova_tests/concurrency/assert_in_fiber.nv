@@ -19,7 +19,7 @@ module concurrency.assert_in_fiber
 // ================================================================
 
 test "assert(true) inside spawn body — fiber returns cleanly" {
-    let mut k = 0
+    mut k = 0
     supervised {
         spawn {
             assert(true)
@@ -34,7 +34,7 @@ test "assert(true) inside spawn body — fiber returns cleanly" {
 // ================================================================
 
 test "assert(true) inside parallel for body" {
-    let mut total = 0
+    mut total = 0
     parallel for i in 0..3 {
         assert(i >= 0)   // всегда true
         total += i
@@ -47,7 +47,7 @@ test "assert(true) inside parallel for body" {
 // ================================================================
 
 test "assert after Time.sleep yields — fiber fail-frame survives switch" {
-    let mut hits = 0
+    mut hits = 0
     parallel for i in 0..3 {
         Time.sleep(0)         // yield: fiber paused, scope switches frames
         assert(i < 5)         // на возврате _nova_fail_top снова правильный
@@ -63,8 +63,8 @@ test "assert after Time.sleep yields — fiber fail-frame survives switch" {
 // ================================================================
 
 test "nested supervised: inner fiber assert ok, outer asserts ok" {
-    let mut outer_count = 0
-    let mut inner_count = 0
+    mut outer_count = 0
+    mut inner_count = 0
     supervised {
         spawn {
             assert(true)

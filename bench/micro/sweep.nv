@@ -1,10 +1,10 @@
 // Plan 57.B.3 smoke: parameterized sweep DSL.
-module bench.micro
+module micro.sweep
 
 bench "param sum" (n in [10, 100, 1000]) {
     measure {
-        let mut acc = 0
-        let mut i = 0
+        mut acc = 0
+        mut i = 0
         while i < n {
             acc = bench.opaque(acc + i)
             i = i + 1

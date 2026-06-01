@@ -1,13 +1,13 @@
 // Plan 90.1 — позитив: reserve + push — preallocate hint.
 // D141 amend: reserve(extra) grows cap to at least len+extra; len unchanged.
 
-module nova_tests.plan90_1.reserve_then_push
+module plan90_1.reserve_then_push
 
 test "reserve then push 100 elements" {
-    let mut arr []int = []
+    mut arr []int = []
     arr.reserve(100)
     // After reserve(100), pushing 100 elements should not realloc
-    let mut i = 0
+    mut i = 0
     while i < 100 {
         arr.push(i)
         i = i + 1
@@ -18,14 +18,14 @@ test "reserve then push 100 elements" {
 }
 
 test "reserve 0 — no-op" {
-    let mut arr []int = [1, 2, 3]
+    mut arr []int = [1, 2, 3]
     arr.reserve(0)
     assert(arr.len() == 3)
     assert(arr[0] == 1)
 }
 
 test "reserve on non-empty array" {
-    let mut arr []int = [10, 20, 30]
+    mut arr []int = [10, 20, 30]
     arr.reserve(50)
     arr.push(40)
     assert(arr.len() == 4)

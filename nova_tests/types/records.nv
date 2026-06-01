@@ -14,61 +14,61 @@ type User {
 }
 
 type Boxed {
-    readonly id int
+    ro id int
     mut value int
 }
 
 test "construct and access" {
-    let p = Point { x: 3, y: 4 }
+    ro p = Point { x: 3, y: 4 }
     assert(p.x == 3)
     assert(p.y == 4)
 }
 
 test "named type construction" {
-    let u = User { id: 1, name: "alice", role: "admin" }
+    ro u = User { id: 1, name: "alice", role: "admin" }
     assert(u.id == 1)
     assert(u.name == "alice")
     assert(u.role == "admin")
 }
 
 test "field punning shorthand (D52)" {
-    let x = 5
-    let y = 6
-    let p = Point { x, y }
+    ro x = 5
+    ro y = 6
+    ro p = Point { x, y }
     assert(p.x == 5)
     assert(p.y == 6)
 }
 
 test "spread copy (D60)" {
-    let p1 = Point { x: 1, y: 2 }
-    let p2 = { ...p1 }
+    ro p1 = Point { x: 1, y: 2 }
+    ro p2 = { ...p1 }
     assert(p2.x == 1)
     assert(p2.y == 2)
 }
 
 test "spread with override (D60)" {
-    let p1 = Point { x: 1, y: 2 }
-    let p2 = { ...p1, y: 10 }
+    ro p1 = Point { x: 1, y: 2 }
+    ro p2 = { ...p1, y: 10 }
     assert(p2.x == 1)
     assert(p2.y == 10)
 }
 
 test "spread with multiple overrides" {
-    let u = User { id: 1, name: "alice", role: "user" }
-    let admin = { ...u, name: "ALICE", role: "admin" }
+    ro u = User { id: 1, name: "alice", role: "user" }
+    ro admin = { ...u, name: "ALICE", role: "admin" }
     assert(admin.id == 1)
     assert(admin.name == "ALICE")
     assert(admin.role == "admin")
 }
 
 test "spread + field punning together" {
-    let role = "user"
-    let u = User { id: 1, name: "bob", role }
+    ro role = "user"
+    ro u = User { id: 1, name: "bob", role }
     assert(u.role == "user")
 }
 
-test "readonly + mut fields parse" {
-    let b = Boxed { id: 1, value: 100 }
+test "ro + mut fields parse" {
+    ro b = Boxed { id: 1, value: 100 }
     assert(b.id == 1)
     assert(b.value == 100)
 }
@@ -83,13 +83,13 @@ fn make_point() -> Point => { x: 7, y: 11 }
 fn make_admin(uid int) -> User => { id: uid, name: "admin", role: "admin" }
 
 test "anonymous record в return-position по сигнатуре fn" {
-    let p = make_point()
+    ro p = make_point()
     assert(p.x == 7)
     assert(p.y == 11)
 }
 
 test "anonymous record для record с большим числом полей" {
-    let u = make_admin(42)
+    ro u = make_admin(42)
     assert(u.id == 42)
     assert(u.name == "admin")
     assert(u.role == "admin")

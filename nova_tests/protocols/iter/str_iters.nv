@@ -8,7 +8,7 @@ module iter.str_iters
 
 
 test "str.to_chars() — обход codepoint'ов ASCII" {
-    let mut count = 0
+    mut count = 0
     for c in "hello".to_chars() {
         count = count + 1
     }
@@ -16,7 +16,7 @@ test "str.to_chars() — обход codepoint'ов ASCII" {
 }
 
 test "str.to_chars() — Unicode codepoint'ы (не байты)" {
-    let mut count = 0
+    mut count = 0
     for c in "Привет".to_chars() {
         count = count + 1
     }
@@ -24,7 +24,7 @@ test "str.to_chars() — Unicode codepoint'ы (не байты)" {
 }
 
 test "str.to_chars() — значения codepoint'ов" {
-    let cs = "Abc".to_chars()
+    ro cs = "Abc".to_chars()
     assert(cs.len() == 3)
     assert(cs[0] == 'A')
     assert(cs[1] == 'b')
@@ -32,13 +32,13 @@ test "str.to_chars() — значения codepoint'ов" {
 }
 
 test "str.to_chars() — первый и последний Unicode codepoint" {
-    let cs = "Привет".to_chars()
+    ro cs = "Привет".to_chars()
     assert(cs[0] == 'П')
     assert(cs[5] == 'т')
 }
 
 test "str.to_bytes() — сырые UTF-8 байты" {
-    let mut count = 0
+    mut count = 0
     for b in "Hi".to_bytes() {
         count = count + 1
     }
@@ -46,14 +46,14 @@ test "str.to_bytes() — сырые UTF-8 байты" {
 }
 
 test "str.to_bytes() — Unicode даёт больше байт чем codepoint'ов" {
-    let bs = "Я".to_bytes()
+    ro bs = "Я".to_bytes()
     assert(bs.len() == 2)        // 'Я' — 2 байта UTF-8
     assert(bs[0] == 0xD0)
     assert(bs[1] == 0xAF)
 }
 
 test "str.to_chars() — пустая строка" {
-    let mut count = 0
+    mut count = 0
     for c in "".to_chars() {
         count = count + 1
     }
@@ -61,7 +61,7 @@ test "str.to_chars() — пустая строка" {
 }
 
 test "str.to_chars() — сумма codepoint-значений" {
-    let mut sum = 0
+    mut sum = 0
     for c in "ABC".to_chars() {
         sum = sum + (c as int)
     }

@@ -2,7 +2,7 @@
 // двух независимых concrete-типов (sanity check, что flatten не
 // прибит к одному вызову).
 
-module nova_tests.plan101_4.compose_independent_concretes
+module plan101_4.compose_independent_concretes
 
 
 type Hashable_ protocol {
@@ -41,11 +41,11 @@ fn sum_hs[T HashSize](x T) -> int => x.hash() + x.size()
 
 
 test "IntBox satisfies HashSize" {
-    let b = IntBox { v: 7 }
+    ro b = IntBox { v: 7 }
     assert(sum_hs(b) == 11)
 }
 
 test "Tag satisfies HashSize" {
-    let t = Tag { name: "abc" }
+    ro t = Tag { name: "abc" }
     assert(sum_hs(t) == 7)
 }

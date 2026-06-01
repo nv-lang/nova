@@ -2,11 +2,11 @@
 //
 // EXPECT_TIMEOUT_MS 15000
 
-module nova_tests.plan103_3.rwlock_writer_excludes_readers
+module plan103_3.rwlock_writer_excludes_readers
 
 test "write lock excludes readers: reader_count stays 0 while writer holds" {
-    let rw = RwLock.new()
-    let reader_saw_write = AtomicInt.new(0)  // if >0, readers got through during write
+    mut rw = RwLock.new()
+    mut reader_saw_write = AtomicInt.new(0)  // if >0, readers got through during write
 
     // Hold write lock
     rw.write()
@@ -34,7 +34,7 @@ test "write lock excludes readers: reader_count stays 0 while writer holds" {
 }
 
 test "try_write fails when readers hold lock" {
-    let rw = RwLock.new()
+    mut rw = RwLock.new()
     rw.read()
     assert(rw.try_write() == false)
     rw.read_unlock()

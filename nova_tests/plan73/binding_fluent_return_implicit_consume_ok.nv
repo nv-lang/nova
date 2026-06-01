@@ -1,0 +1,59 @@
+// Plan 73.1 V3 [M-73.1-fluent-return-implicit-consume]:
+// Fluent-chain `-> @` method calls as trailing expression mark chain-root
+// consume-obligation satisfied — implicit-return treated as consume operation.
+//
+// Без M3: trailing `sb.push(1).push(2)` НЕ помечает sb Consumed →
+// D131 «consume-obligation not satisfied» false-positive.
+// С M3: chain root (`sb`) → recursed through fluent `push` → marked Consumed.
+
+module plan73.binding_fluent_return_implicit_consume_ok
+
+type Box consume {
+    mut data []int
+}
+
+fn Box.new() -> Self => { data: [].with_capacity(4) }
+
+fn Box mut @push(x int) -> @ { @data.push(x); @ }
+
+fn Box consume @sum() -> int {
+    mut s = 0
+    for v in @data { s = s + v }
+    s
+}
+
+// M3 case 1: 2-deep fluent chain as implicit return.
+fn make_box_two() -> Box {
+    consume sb = Box.new()
+    sb.push(1).push(2)
+}
+
+// M3 case 2: 3-deep fluent chain as implicit return.
+fn make_box_three() -> Box {
+    consume sb = Box.new()
+    sb.push(10).push(20).push(30)
+}
+
+// M3 case 3: single-element fluent chain (1-method) as implicit return.
+fn make_box_one() -> Box {
+    consume sb = Box.new()
+    sb.push(7)
+}
+
+test "fluent-chain 2-deep — implicit return consumes chain root" {
+    consume b = make_box_two()
+    ro total = b.sum()
+    assert(total == 3)
+}
+
+test "fluent-chain 3-deep — implicit return consumes chain root" {
+    consume b = make_box_three()
+    ro total = b.sum()
+    assert(total == 60)
+}
+
+test "fluent-chain 1-deep — implicit return consumes chain root" {
+    consume b = make_box_one()
+    ro total = b.sum()
+    assert(total == 7)
+}

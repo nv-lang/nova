@@ -2,9 +2,9 @@
 //
 // Plan 79 Ф.1: integer literal assigned to a `str` annotation.
 
-module nova_tests.plan79.assign_let_int_to_str
+module plan79.assign_let_int_to_str
 
 fn run() -> int {
-    let s str = 5
+    ro s str = 5
     0
 }

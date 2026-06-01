@@ -154,7 +154,7 @@ boxing penalty. **Лучше Go** — true mono per-type (вместо stencilin
 
 ```nova
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
-    let mut copy = HashMap[K, V].with_capacity(@count)
+    mut copy = HashMap[K, V].with_capacity(@count)
     for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
@@ -275,7 +275,7 @@ fn MyKey @hash() -> u64 => @id as u64
 fn MyKey @eq(other MyKey) -> bool => @id == other.id
 
 // User-bound:
-let m HashMap[MyKey, str] = [...]
+ro m HashMap[MyKey, str] = [...]
 ```
 
 Compiler detects MyKey satisfies Hashable, generates:
@@ -457,7 +457,7 @@ rejects effectful protocol methods.~~ — снято, см. выше.
 
 ```nova
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
-    let mut copy = HashMap[K, V].with_capacity(@count)
+    mut copy = HashMap[K, V].with_capacity(@count)
     for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)
@@ -494,9 +494,9 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 
 ```nova
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
-    let mut out = HashMap[K, V].with_capacity(@count)
+    mut out = HashMap[K, V].with_capacity(@count)
     for k in @keys() {
-        let v = @get(k).unwrap()
+        ro v = @get(k).unwrap()
         if pred(k, v) { out.insert_new(k, v) }
     }
     out
@@ -526,12 +526,12 @@ vtable dispatch:
 
 ```nova
 test "clone stress — no leak" {
-    let m HashMap[str, int] = [...]  // 1000 entries
+    ro m HashMap[str, int] = [...]  // 1000 entries
     for _ in 0..1000 {
-        let _ = m.clone()
+        ro _ = m.clone()
     }
     gc.collect()
-    let heap = gc.heap_size()
+    ro heap = gc.heap_size()
     // Assert heap bounded (< 10× initial).
 }
 ```
@@ -799,15 +799,15 @@ type IntCounter { mut cur int, end int }
 fn IntCounter mut @next() -> Option[int] => { ... }
 
 // Case A: binding-level — WORKS (mono coercion concrete → void*).
-let _x Iter[int] = IntCounter.new(1, 4)
+ro _x Iter[int] = IntCounter.new(1, 4)
 
 // Case B: method dispatch на existential — SILENT WRONG (deferred).
-let mut x Iter[int] = c
-let r = x.next()    // compiles, runs, но returns wrong result
+mut x Iter[int] = c
+ro r = x.next()    // compiles, runs, но returns wrong result
                     // (None вместо Some(1)) — silent miscompilation
 
 // Case C: protocol-as-param method dispatch — SAME silent bug.
-fn foo(x Iter[int]) -> bool => { let mut xx = x; xx.next().is_some() }
+fn foo(x Iter[int]) -> bool => { mut xx = x; xx.next().is_some() }
 foo(c)              // compiles, returns false вместо true
 ```
 

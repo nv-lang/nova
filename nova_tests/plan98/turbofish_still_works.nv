@@ -8,7 +8,7 @@
 // Plan 98. Plan 98 закрывает прямой `Option[T]` / `Result[T,E]` param.
 // Простой `[]int` (примитивный element) inference работает.
 
-module nova_tests.plan98.turbofish_still_works
+module plan98.turbofish_still_works
 
 fn first_or[T](items []T, default_v T) -> T {
     for x in items {
@@ -18,11 +18,11 @@ fn first_or[T](items []T, default_v T) -> T {
 }
 
 test "[]int — inference работает (примитив)" {
-    let xs []int = [10, 20, 30]
+    ro xs []int = [10, 20, 30]
     assert(first_or(xs, 0) == 10)
 }
 
 test "[]int — turbofish тоже работает (back-compat)" {
-    let xs []int = [10, 20, 30]
+    ro xs []int = [10, 20, 30]
     assert(first_or[int](xs, 0) == 10)
 }

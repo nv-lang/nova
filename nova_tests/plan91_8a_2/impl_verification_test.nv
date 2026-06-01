@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.impl_verification_test
+module plan91_8a_2.impl_verification_test
 
 // Plan 91.9 (D186) — verification pass for `#impl(P + Q + ...)`.
 // При декларации type X #impl(P) compiler проверяет что X provides все
@@ -17,16 +17,16 @@ type User { display_name str }
 fn User @name() -> str => @display_name
 
 test "verified #impl(Greetable) — bare call works" {
-    let u = User { display_name: "World" }
+    ro u = User { display_name: "World" }
     assert(u.greet() == "Hello, World")
 }
 
 test "verified #impl multi: Equatable + Comparable + Printable" {
-    let a = Coin { value: 5 }
-    let b = Coin { value: 5 }
+    ro a = Coin { value: 5 }
+    ro b = Coin { value: 5 }
     assert(a.equals(b))
     assert(a.compare(b) == 0)
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     a.fmt(sb)
     assert(sb.as_str() == "Coin(5)")
 }

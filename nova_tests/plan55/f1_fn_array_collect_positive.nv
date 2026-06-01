@@ -12,7 +12,7 @@ module plan55.f1_fn_array_collect_positive
 
 
 fn collect_int(fns []fn() -> int) -> []int {
-    let mut out []int = []
+    mut out []int = []
     for f in fns {
         out.push(f())
     }
@@ -21,7 +21,7 @@ fn collect_int(fns []fn() -> int) -> []int {
 
 
 fn collect_str(fns []fn() -> str) -> []str {
-    let mut out []str = []
+    mut out []str = []
     for f in fns {
         out.push(f())
     }
@@ -30,7 +30,7 @@ fn collect_str(fns []fn() -> str) -> []str {
 
 
 test "collect_int: вызов closures из массива возвращает значения" {
-    let xs = collect_int([|| 1, || 2, || 3])
+    ro xs = collect_int([|| 1, || 2, || 3])
     assert(xs.len() == 3)
     assert(xs[0] == 1)
     assert(xs[1] == 2)
@@ -39,7 +39,7 @@ test "collect_int: вызов closures из массива возвращает 
 
 
 test "collect_str: closures возвращают str" {
-    let xs = collect_str([|| "a", || "b", || "c"])
+    ro xs = collect_str([|| "a", || "b", || "c"])
     assert(xs.len() == 3)
     assert(xs[0] == "a")
     assert(xs[1] == "b")
@@ -48,6 +48,6 @@ test "collect_str: closures возвращают str" {
 
 
 test "collect_int: пустой массив closures" {
-    let xs = collect_int([])
+    ro xs = collect_int([])
     assert(xs.len() == 0)
 }

@@ -11,9 +11,9 @@
 module plan83_10.supervised_drain_completeness
 
 test "parallel-for 500 — every slot unique correct" {
-    let xs = parallel for i in 0..500 { i + 100 }
-    let mut seen_count = 0
-    let mut i = 0
+    ro xs = parallel for i in 0..500 { i + 100 }
+    mut seen_count = 0
+    mut i = 0
     while i < 500 {
         if xs[i] == i + 100 {
             seen_count = seen_count + 1
@@ -24,7 +24,7 @@ test "parallel-for 500 — every slot unique correct" {
 }
 
 test "parallel-for 100 — different test instance, no cross-leak" {
-    let ys = parallel for i in 0..100 { i + 1000 }
+    ro ys = parallel for i in 0..100 { i + 1000 }
     assert(ys[99] == 1099)
     assert(ys[0] == 1000)
 }

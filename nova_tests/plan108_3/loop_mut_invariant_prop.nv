@@ -1,0 +1,33 @@
+// Plan 108.3 (D36 amend) — Property test: loop-var + pattern mut invariant.
+//
+// Свойство: `for mut x in iter` корректно мутирует каждый элемент N раз;
+// `let (mut a, b) = ...` дает per-name mutability.
+
+module plan108_3.loop_mut_invariant_prop
+
+test "property: for mut N iterations" {
+    mut arrs = [[1], [2], [3]]
+    for mut x in arrs {
+        x.push(99)
+        x.push(100)
+    }
+}
+
+test "property: pattern (mut a, b) — only a mutates" {
+    ro (mut a, b) = ([], [10, 20])
+    a.push(1)
+    a.push(2)
+    a.push(3)
+    assert(a.len() == 3)
+    assert(b.len() == 2)         // b непосредственно не изменено
+}
+
+test "property: pattern (mut a, mut b) — both mutate independently" {
+    ro (mut a, mut b) = ([], [])
+    a.push(1)
+    b.push(10)
+    a.push(2)
+    b.push(20)
+    assert(a.len() == 2)
+    assert(b.len() == 2)
+}

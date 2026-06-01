@@ -15,6 +15,6 @@ fn Box .make(start int = 100) -> Box =>
     { base: start }
 
 test "positional arg on defaulted param of static method rejected" {
-    let _ = Box.make(7)
+    ro _ = Box.make(7)
     assert(true)
 }

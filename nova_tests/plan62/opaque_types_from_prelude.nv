@@ -23,10 +23,10 @@ module plan62.opaque_types_from_prelude
 
 
 test "StringBuilder visible через prelude (no explicit import)" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello, ")
     sb.append("world")
-    let s = sb.as_str()
+    ro s = sb.as_str()
     assert(s == "hello, world")
     // Plan 62.B.bis bump 6 → 7: print / println formally declared.
     // Маркер монотонный (`>=`) — 62.E.bis поднял PRELUDE_VERSION до 8.
@@ -35,9 +35,9 @@ test "StringBuilder visible через prelude (no explicit import)" {
 
 
 test "WriteBuffer visible через prelude (no explicit import)" {
-    let mut wb = WriteBuffer.new()
+    mut wb = WriteBuffer.new()
     wb.write_u32_be(0xDEADBEEF)
-    let bs = wb.into()
+    ro bs = wb.into()
     assert(bs.len() == 4)
     // BE encoding 0xDEADBEEF → 0xDE 0xAD 0xBE 0xEF
     assert(bs[0] == 0xDE)
@@ -48,9 +48,9 @@ test "WriteBuffer visible через prelude (no explicit import)" {
 
 
 test "ReadBuffer visible через prelude (no explicit import)" {
-    let bs []u8 = [0x12, 0x34, 0x56, 0x78]
-    let mut rb = ReadBuffer.from(bs)
-    let v = rb.try_read_u32_be()
+    ro bs []u8 = [0x12, 0x34, 0x56, 0x78]
+    mut rb = ReadBuffer.from(bs)
+    ro v = rb.try_read_u32_be()
     match v {
         Ok(n)  => assert(n == 0x12345678)
         Err(_) => assert(false)
@@ -66,7 +66,7 @@ fn takes_sb(consume sb StringBuilder) -> str => sb.as_str()
 
 
 test "StringBuilder usable as function parameter type" {
-    let mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("ok")
     assert(takes_sb(sb) == "ok")
 }

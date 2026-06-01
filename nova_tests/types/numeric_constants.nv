@@ -61,7 +61,7 @@ test "char.MIN = 0" {
 // ── floats ───────────────────────────────────────────────────────────────
 
 test "f64.NAN != self (IEEE 754)" {
-    let n = f64.NAN
+    ro n = f64.NAN
     assert(n != n)
 }
 
@@ -84,13 +84,13 @@ test "f64.EPSILON tiny" {
 }
 
 test "f64.PI close to pi" {
-    let p = f64.PI
+    ro p = f64.PI
     assert(p > 3.14)
     assert(p < 3.15)
 }
 
 test "f64.E close to e" {
-    let e = f64.E
+    ro e = f64.E
     assert(e > 2.71)
     assert(e < 2.72)
 }

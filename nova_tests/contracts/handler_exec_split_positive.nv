@@ -10,7 +10,7 @@ type Store effect {
 }
 
 test "handler verification после handler_exec.rs split работает" {
-    let mut s = 0
+    mut s = 0
     with #trusted Store = effect Store {
         Set(v) { s = v }
         get() => s

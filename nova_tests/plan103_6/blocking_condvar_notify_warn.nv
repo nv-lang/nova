@@ -4,13 +4,13 @@
 // EXPECT_COMPILE_WARNING W_BLOCKING_NOTIFY_RISK
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_6.blocking_condvar_notify_warn
+module plan103_6.blocking_condvar_notify_warn
 
-#blocking fn _blk_notify(cv Condvar) {
+#blocking fn _blk_notify(mut cv Condvar) {
     cv.notify_one()
 }
 
 test "Condvar.notify_one warns in #blocking fn" {
-    let cv = Condvar.new()
+    mut cv = Condvar.new()
     _blk_notify(cv)
 }

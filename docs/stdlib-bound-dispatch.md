@@ -83,14 +83,14 @@ type HashMap[K Hashable, V] { ... }
 
 // Methods use bound K methods через mono path (concrete K на use site):
 fn HashMap[K, V] @get(key K) -> Option[V] {
-    let idx = @find_slot(key)   // @find_slot uses key.hash(), key.eq()
+    ro idx = @find_slot(key)   // @find_slot uses key.hash(), key.eq()
     ...
 }
 
 // Через Plan 56 array element type propagation, direct field access
 // также работает в methods:
 fn HashMap[K, V] @clone() -> HashMap[K, V] {
-    let mut copy = HashMap[K, V].with_capacity(@count)
+    mut copy = HashMap[K, V].with_capacity(@count)
     for i in 0..@buckets.len() {
         match @buckets[i] {
             Occupied { key: k, value: v } => copy.insert_new(k, v)

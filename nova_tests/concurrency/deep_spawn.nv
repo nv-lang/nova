@@ -23,11 +23,11 @@ fn make_counter(val int) -> Counter => { val }
 fn make_stage(input int, output int) -> Stage => { input, output }
 
 fn fib(n int) -> int {
-    let mut a = 0
-    let mut b = 1
-    let mut i = 0
+    mut a = 0
+    mut b = 1
+    mut i = 0
     while i < n {
-        let t = a + b
+        ro t = a + b
         a = b
         b = t
         i += 1
@@ -36,8 +36,8 @@ fn fib(n int) -> int {
 }
 
 fn sum_range(n int) -> int {
-    let mut acc = 0
-    let mut i = 1
+    mut acc = 0
+    mut i = 1
     while i <= n {
         acc += i
         i += 1
@@ -46,8 +46,8 @@ fn sum_range(n int) -> int {
 }
 
 fn factorial(n int) -> int {
-    let mut acc = 1
-    let mut i = 1
+    mut acc = 1
+    mut i = 1
     while i <= n {
         acc = acc * i
         i += 1
@@ -65,7 +65,7 @@ fn factorial(n int) -> int {
 // ================================================================
 
 test "supervised: single spawn mutation visible after scope exit" {
-    let mut log = 0
+    mut log = 0
     supervised {
         spawn { log = 1 }
     }
@@ -75,7 +75,7 @@ test "supervised: single spawn mutation visible after scope exit" {
 test "supervised: three spawns mutate shared state" {
     // No yields inside fibers → cooperative-only scheduler runs them
     // sequentially in FIFO order: 1, 2, 3.
-    let mut seq = 0
+    mut seq = 0
     supervised {
         spawn { seq = seq * 10 + 1 }
         spawn { seq = seq * 10 + 2 }
@@ -85,11 +85,11 @@ test "supervised: three spawns mutate shared state" {
 }
 
 test "supervised: 10 spawns in loop, mutations accumulate" {
-    let mut acc = 0
+    mut acc = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 10 {
-            let cur = i
+            ro cur = i
             spawn { acc += cur + 1 }   // adds 1,2,...,10
             i += 1
         }
@@ -99,12 +99,12 @@ test "supervised: 10 spawns in loop, mutations accumulate" {
 }
 
 test "supervised: result via mut capture (no spawn-result needed)" {
-    let x = 7
-    let mut r = 0
+    ro x = 7
+    mut r = 0
     supervised {
         spawn { r = x * x * x }   // 343
     }
-    let r2 = r + 1
+    ro r2 = r + 1
     assert(r == 343)
     assert(r2 == 344)
 }
@@ -114,29 +114,29 @@ test "supervised: result via mut capture (no spawn-result needed)" {
 // ================================================================
 
 test "supervised: captures immutable int, writes via mut" {
-    let n = 42
-    let mut r = 0
+    ro n = 42
+    mut r = 0
     supervised { spawn { r = n * 2 } }
     assert(r == 84)
 }
 
 test "supervised: captures multiple immutable vars" {
-    let a = 3
-    let b = 4
-    let c = 5
-    let mut r = 0
+    ro a = 3
+    ro b = 4
+    ro c = 5
+    mut r = 0
     supervised { spawn { r = a * a + b * b + c * c } }   // 9 + 16 + 25 = 50
     assert(r == 50)
 }
 
 test "supervised: captures mutable var, mutation visible" {
-    let mut x = 10
+    mut x = 10
     supervised { spawn { x = x * 3 } }
     assert(x == 30)
 }
 
 test "supervised: two fibers capture same mutable var, both mutations apply" {
-    let mut n = 0
+    mut n = 0
     supervised {
         spawn { n += 5 }
         spawn { n += 3 }
@@ -145,14 +145,14 @@ test "supervised: two fibers capture same mutable var, both mutations apply" {
 }
 
 test "supervised: captures result of function call" {
-    let n = 10
-    let mut r = 0
+    ro n = 10
+    mut r = 0
     supervised { spawn { r = sum_range(n) } }   // 55
     assert(r == 55)
 }
 
 test "supervised: captures result of expensive function" {
-    let mut r = 0
+    mut r = 0
     supervised { spawn { r = fib(20) } }   // 6765
     assert(r == 6765)
 }
@@ -166,9 +166,9 @@ test "supervised: captures result of expensive function" {
 // ================================================================
 
 test "pipeline: 2 stages via prior values" {
-    let x = 6
-    let mut s1 = 0
-    let mut s2 = 0
+    ro x = 6
+    mut s1 = 0
+    mut s2 = 0
     supervised { spawn { s1 = x * x } }            // 36
     supervised { spawn { s2 = s1 + s1 } }          // 72
     assert(s1 == 36)
@@ -176,8 +176,8 @@ test "pipeline: 2 stages via prior values" {
 }
 
 test "pipeline: 3 stages doubling-squared" {
-    let base = 2
-    let mut s1 = 0; let mut s2 = 0; let mut s3 = 0
+    ro base = 2
+    mut s1 = 0; mut s2 = 0; mut s3 = 0
     supervised { spawn { s1 = base * base } }       // 4
     supervised { spawn { s2 = s1 * s1 } }          // 16
     supervised { spawn { s3 = s2 * s2 } }          // 256
@@ -187,8 +187,8 @@ test "pipeline: 3 stages doubling-squared" {
 }
 
 test "pipeline: 5 stages doubling" {
-    let start = 1
-    let mut v1 = 0; let mut v2 = 0; let mut v3 = 0; let mut v4 = 0; let mut v5 = 0
+    ro start = 1
+    mut v1 = 0; mut v2 = 0; mut v3 = 0; mut v4 = 0; mut v5 = 0
     supervised { spawn { v1 = start + 1 } }   // 2
     supervised { spawn { v2 = v1 * 2 } }      // 4
     supervised { spawn { v3 = v2 * 2 } }      // 8
@@ -200,14 +200,14 @@ test "pipeline: 5 stages doubling" {
 }
 
 test "pipeline: fork and join (two parallel + one combiner)" {
-    let x = 10
-    let mut left = 0
-    let mut right = 0
+    ro x = 10
+    mut left = 0
+    mut right = 0
     supervised {
         spawn { left = x + 1 }      // 11
         spawn { right = x * x }     // 100
     }
-    let mut joined = 0
+    mut joined = 0
     supervised { spawn { joined = left + right } }   // 111
     assert(left == 11)
     assert(right == 100)
@@ -219,10 +219,10 @@ test "pipeline: fork and join (two parallel + one combiner)" {
 // ================================================================
 
 test "state machine: 3-state protocol" {
-    let mut state = 0
-    let mut partial = 0
-    let mut result = 0
-    let input = 7
+    mut state = 0
+    mut partial = 0
+    mut result = 0
+    ro input = 7
 
     supervised {
         spawn {
@@ -245,8 +245,8 @@ test "state machine: 3-state protocol" {
 }
 
 test "state machine: 5-step accumulator" {
-    let mut step = 0
-    let mut total = 0
+    mut step = 0
+    mut total = 0
 
     supervised { spawn { step = 1; total += 1 } }
     assert(step == 1); assert(total == 1)
@@ -269,11 +269,11 @@ test "state machine: 5-step accumulator" {
 // ================================================================
 
 test "supervised: 100 fibers, sum correct" {
-    let mut total = 0
+    mut total = 0
     supervised {
-        let mut i = 1
+        mut i = 1
         while i <= 100 {
-            let cur = i
+            ro cur = i
             spawn { total += cur }
             i += 1
         }
@@ -282,11 +282,11 @@ test "supervised: 100 fibers, sum correct" {
 }
 
 test "supervised: 500 fibers, sum of squares" {
-    let mut total = 0
+    mut total = 0
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 500 {
-            let cur = i
+            ro cur = i
             spawn { total += cur * cur }
             i += 1
         }
@@ -300,21 +300,21 @@ test "supervised: 500 fibers, sum of squares" {
 // ================================================================
 
 test "spawn: factorial(10) via mut capture" {
-    let n = 10
-    let mut r = 0
+    ro n = 10
+    mut r = 0
     supervised { spawn { r = factorial(n) } }
     assert(r == 3628800)
 }
 
 test "spawn: fib(25) via mut capture" {
-    let mut r = 0
+    mut r = 0
     supervised { spawn { r = fib(25) } }
     assert(r == 75025)
 }
 
 test "spawn: sum_range(1000) via mut capture" {
-    let n = 1000
-    let mut r = 0
+    ro n = 1000
+    mut r = 0
     supervised { spawn { r = sum_range(n) } }
     assert(r == 500500)
 }
@@ -324,11 +324,11 @@ test "spawn: sum_range(1000) via mut capture" {
 // ================================================================
 
 test "spawn: factorial via sequential spawn mutations" {
-    let mut acc = 1
+    mut acc = 1
     supervised {
-        let mut i = 1
+        mut i = 1
         while i <= 12 {
-            let cur = i
+            ro cur = i
             spawn { acc = acc * cur }
             i += 1
         }
@@ -337,11 +337,11 @@ test "spawn: factorial via sequential spawn mutations" {
 }
 
 test "spawn: alternating add/multiply pattern" {
-    let mut val = 1
+    mut val = 1
     supervised {
-        let mut i = 0
+        mut i = 0
         while i < 10 {
-            let cur = i
+            ro cur = i
             spawn {
                 if cur * 2 == cur + cur {
                     val = val + cur + 1
@@ -358,29 +358,29 @@ test "spawn: alternating add/multiply pattern" {
 // ================================================================
 
 test "spawn: record field accessed via mut capture" {
-    let c = make_counter(42)
-    let mut r = 0
+    ro c = make_counter(42)
+    mut r = 0
     supervised { spawn { r = c.val * 2 } }
     assert(r == 84)
 }
 
 test "spawn: int captured from record before spawn" {
-    let c = make_counter(100)
-    let cap = c.val
-    let mut result = 0
+    ro c = make_counter(100)
+    ro cap = c.val
+    mut result = 0
     supervised { spawn { result = cap + 1 } }
     assert(result == 101)
 }
 
 test "pipeline: records through sequential spawn stages" {
-    let s1_in = 5
-    let s1 = make_stage(s1_in, 0)
-    let mut r1 = 0
+    ro s1_in = 5
+    ro s1 = make_stage(s1_in, 0)
+    mut r1 = 0
     supervised { spawn { r1 = s1.input * s1.input } }   // 25
 
-    let s2_in = r1
-    let s2 = make_stage(s2_in, 0)
-    let mut r2 = 0
+    ro s2_in = r1
+    ro s2 = make_stage(s2_in, 0)
+    mut r2 = 0
     supervised { spawn { r2 = s2.input + 1 } }          // 26
 
     assert(r1 == 25)
@@ -392,8 +392,8 @@ test "pipeline: records through sequential spawn stages" {
 // ================================================================
 
 test "supervised: independent mutations don't interfere" {
-    let mut a = 0
-    let mut b = 0
+    mut a = 0
+    mut b = 0
     supervised {
         spawn { a = 111 }
         spawn { b = 222 }
@@ -403,16 +403,16 @@ test "supervised: independent mutations don't interfere" {
 }
 
 test "supervised: 10 independent pairs, no cross-contamination" {
-    let mut r0 = 0
-    let mut r1 = 0
-    let mut r2 = 0
-    let mut r3 = 0
-    let mut r4 = 0
-    let mut r5 = 0
-    let mut r6 = 0
-    let mut r7 = 0
-    let mut r8 = 0
-    let mut r9 = 0
+    mut r0 = 0
+    mut r1 = 0
+    mut r2 = 0
+    mut r3 = 0
+    mut r4 = 0
+    mut r5 = 0
+    mut r6 = 0
+    mut r7 = 0
+    mut r8 = 0
+    mut r9 = 0
 
     supervised {
         spawn { r0 = 0 * 7 + 1 }

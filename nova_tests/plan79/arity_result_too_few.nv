@@ -4,6 +4,6 @@
 // arguments (T, E). `Result[int]` with a single argument used to compile
 // silently — a latent miscompilation. Now → E7310.
 
-module nova_tests.plan79.arity_result_too_few
+module plan79.arity_result_too_few
 
 fn classify(n int) -> Result[int] => Ok(n)

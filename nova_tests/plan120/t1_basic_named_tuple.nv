@@ -1,0 +1,17 @@
+// Plan 120 (D215): T1 — basic named tuple declaration, construction, field access.
+
+module plan120.t1_basic_named_tuple
+
+type Point(x f64, y f64)
+
+test "named tuple: construct and read fields" {
+    ro p = Point(x: 1.0, y: 2.0)
+    assert(p.x == 1.0)
+    assert(p.y == 2.0)
+}
+
+test "named tuple: field access order independence" {
+    ro p = Point(x: 3.14, y: 2.72)
+    assert(p.x == 3.14)
+    assert(p.y == 2.72)
+}

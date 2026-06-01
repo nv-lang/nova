@@ -1,0 +1,33 @@
+// Plan 114 (D184): `ro X = expr` — immutable binding statement.
+
+module plan114.ro_binding_ok
+
+test "ro binding immutable" {
+    ro x = 10
+    assert(x == 10)
+}
+
+test "ro binding with type" {
+    ro x int = 42
+    assert(x == 42)
+    ro s str = "abc"
+    assert(s == "abc")
+}
+
+test "ro tuple destructure" {
+    ro (a, b) = (1, 2)
+    assert(a == 1)
+    assert(b == 2)
+}
+
+type Point {
+    x int
+    y int
+}
+
+test "ro record destructure" {
+    ro p = Point { x: 7, y: 9 }
+    ro { x, y } = p
+    assert(x == 7)
+    assert(y == 9)
+}

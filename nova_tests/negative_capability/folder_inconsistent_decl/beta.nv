@@ -6,7 +6,7 @@
 // этот файл — нет → папка не folder-module → manifest check проваливается
 // на обоих peers.
 
-module negative_capability.folder_inconsistnet_decl
+module folder_inconsistent_decl.beta
 
 export fn beta_fn() -> int =>
     2

@@ -11,14 +11,14 @@
 //     и не возвращается мгновенно).
 //   - Time.sleep корректно работает несколько раз подряд.
 
-module nova_tests.concurrency.mn_runtime_main_sleep_after_init
+module concurrency.mn_runtime_main_sleep_after_init
 
 test "Time.sleep on main thread after runtime.init(2)" {
     runtime.init(2)
 
-    let t0 = Time.now()
+    ro t0 = Time.now()
     Time.sleep(20)
-    let dt = Time.now() - t0
+    ro dt = Time.now() - t0
 
     // Bounded check: должен спать ~20ms, но bounded'но (не более 200ms
     // даже под heavy CI). Lower bound 15ms — Windows timer gran ~16ms,

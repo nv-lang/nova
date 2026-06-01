@@ -1,0 +1,15 @@
+// Plan 114 (D184) NEG-T2: `consume` запрещён в if/while condition.
+
+// EXPECT_COMPILE_ERROR E_CONSUME_IN_CONDITION
+
+module plan114.consume_in_condition_neg
+
+fn maybe() -> Option {
+    Some(42)
+}
+
+test "consume in if condition" {
+    if consume x = maybe() {
+        assert(true)
+    }
+}

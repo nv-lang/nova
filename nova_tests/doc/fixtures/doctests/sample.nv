@@ -1,6 +1,6 @@
 //! Plan 45 Ф.7: fixture для doc-tests с модификаторами + hidden lines.
 
-module nova_tests.doc.fixtures.doctests.sample
+module doctests.sample
 
 /// Удваивает `x`.
 ///

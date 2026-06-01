@@ -20,17 +20,17 @@ import std.time.duration
 
 
 test "perf: select dispatch throughput — 1000 iterations × 4-arm" {
-    let t0 = Time.now()
-    let mut i = 0
+    ro t0 = Time.now()
+    mut i = 0
     while i < 1000 {
-        let ch0 = Channel.new(1)
-        let ch1 = Channel.new(1)
-        let ch2 = Channel.new(1)
-        let ch3 = Channel.new(1)
+        ro ch0 = Channel.new(1)
+        ro ch1 = Channel.new(1)
+        ro ch2 = Channel.new(1)
+        ro ch3 = Channel.new(1)
         supervised {
             spawn { ch0.tx.send(i) }
             spawn {
-                let mut got = 0
+                mut got = 0
                 select {
                     Some(v) = ch0.rx => { got = v }
                     Some(_) = ch1.rx => { }
@@ -42,7 +42,7 @@ test "perf: select dispatch throughput — 1000 iterations × 4-arm" {
         }
         i = i + 1
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // 1000 dispatches × ~spawn/supervised cost. На single-thread runtime
     // ожидаемо <5s (5ms per iter). Bound generous для CI (Docker slower).
     assert(elapsed < 60_000)
@@ -53,11 +53,11 @@ test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
     // Этот тест ДОЛЖЕН быть быстрым (<1s) с B7 cleanup.
     // Без B7: event-loop держит 200 uv_timer'ов, каждый ждёт fire,
     // supervised блокируется ~timeout × N => >>10s.
-    let t0 = Time.now()
-    let mut wins = 0
-    let mut i = 0
+    ro t0 = Time.now()
+    mut wins = 0
+    mut i = 0
     while i < 200 {
-        let ch = Channel.new(1)
+        ro ch = Channel.new(1)
         supervised {
             spawn { ch.tx.send(i) }
             spawn {
@@ -69,7 +69,7 @@ test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
         }
         i = i + 1
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     assert(wins == 200)
     // Bound: с B7 ожидаемо <5s; без B7 было бы >>200×5s = >>1000s.
     // Test guard: если elapsed > 60s — B7 сломан (Docker slower).
@@ -79,19 +79,19 @@ test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
 
 test "perf: channel throughput — 10000 send/recv pairs (single fiber)" {
     // Baseline для Plan 44.1 Ф.1 mutex overhead. После Ф.1 ожидаемо +2-3%.
-    let ch = Channel.new(1024)
-    let mut sum = 0
-    let t0 = Time.now()
+    ro ch = Channel.new(1024)
+    mut sum = 0
+    ro t0 = Time.now()
     supervised {
         spawn {
-            let mut i = 0
+            mut i = 0
             while i < 10_000 {
                 ch.tx.send(i)
                 i = i + 1
             }
         }
         spawn {
-            let mut got = 0
+            mut got = 0
             while got < 10_000 {
                 match ch.rx.recv() {
                     Some(v) => { sum = sum + v; got = got + 1 }
@@ -100,7 +100,7 @@ test "perf: channel throughput — 10000 send/recv pairs (single fiber)" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     // 10k send/recv через buffered channel cap=1024 — ожидаемо <2s.
     // Generous bound для CI (Docker slower than native).
     assert(elapsed < 60_000)

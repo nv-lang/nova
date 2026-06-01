@@ -2,9 +2,9 @@
 //
 // Plan 96 Ф.4 — негатив: arr[-1..3] → panic (D-neg-panic, не Python-wrap).
 
-module nova_tests.plan96.neg_slice_a_negative
+module plan96.neg_slice_a_negative
 
 fn main() -> () {
-    let arr = [10, 20, 30, 40, 50]
-    let _ = arr[-1..3]
+    mut arr = [10, 20, 30, 40, 50]
+    ro _ = arr[-1..3]
 }

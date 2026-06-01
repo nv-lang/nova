@@ -68,12 +68,12 @@ module concurrency.cancellation
 /// ```
 #stable(since = "0.1")
 export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
-    let tok = CancelToken.new()
-    let mut result Option[T] = None
+    ro tok = CancelToken.new()
+    mut result Option[T] = None
 
     supervised(cancel: tok) {
         spawn {
-            let r = body()
+            ro r = body()
             result = Some(r)
             tok.cancel("body completed")
         }
@@ -111,13 +111,13 @@ export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
 /// support в generic context (Plan 48 Ф.4).
 #stable(since = "0.1")
 export fn race2[T](a fn() -> T, b fn() -> T) -> T {
-    let tok = CancelToken.new()
-    let mut winner Option[T] = None
+    ro tok = CancelToken.new()
+    mut winner Option[T] = None
 
     supervised(cancel: tok) {
         spawn {
             if !tok.is_cancelled() {
-                let r = a()
+                ro r = a()
                 if !tok.is_cancelled() {
                     winner = Some(r)
                     tok.cancel("a wins")
@@ -126,7 +126,7 @@ export fn race2[T](a fn() -> T, b fn() -> T) -> T {
         }
         spawn {
             if !tok.is_cancelled() {
-                let r = b()
+                ro r = b()
                 if !tok.is_cancelled() {
                     winner = Some(r)
                     tok.cancel("b wins")

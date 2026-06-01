@@ -8,10 +8,10 @@
 //
 // Verify что N циклов не leak'ат, не hang'ят, не corrupt'ят main loop.
 
-module nova_tests.concurrency.mn_runtime_init_shutdown_cycles
+module concurrency.mn_runtime_init_shutdown_cycles
 
 test "5 init/shutdown cycles + main sleep between" {
-    let mut i = 0
+    mut i = 0
     while i < 5 {
         runtime.init(2)
         // Plan 83.1 Ф.4: пул ленивый — без spawn worker'ы не подняты.
@@ -27,8 +27,8 @@ test "5 init/shutdown cycles + main sleep between" {
 }
 
 test "varying worker counts cycle" {
-    let counts = [1, 2, 4, 0, 3]  // 0 = auto-detect
-    let mut idx = 0
+    ro counts = [1, 2, 4, 0, 3]  // 0 = auto-detect
+    mut idx = 0
     while idx < 5 {
         runtime.init(counts[idx])
         Time.sleep(1)

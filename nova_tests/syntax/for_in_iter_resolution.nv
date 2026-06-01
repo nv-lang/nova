@@ -24,14 +24,14 @@ type Counter {
 
 fn Counter mut @next() -> Option[int] {
     if @cur >= @end { return None }
-    let v = @cur
+    ro v = @cur
     @cur += 1
     Some(v)
 }
 
 test "Case 1: direct iterator (mut next)" {
-    let mut sum = 0
-    let it = Counter { cur: 0, end: 5 }
+    mut sum = 0
+    ro it = Counter { cur: 0, end: 5 }
     for x in it {
         sum = sum + x
     }
@@ -56,14 +56,14 @@ fn NumBag @iter() -> NumBagIter {
 
 fn NumBagIter mut @next() -> Option[int] {
     if @cur >= @end { return None }
-    let v = @cur * 10
+    ro v = @cur * 10
     @cur += 1
     Some(v)
 }
 
 test "Case 2: auto-iter() insertion (collection.iter() → next())" {
-    let mut total = 0
-    let bag = NumBag { cap: 3 }
+    mut total = 0
+    ro bag = NumBag { cap: 3 }
     // D58: `for x in bag` должен expand'нуться в `for x in bag.iter()`.
     for x in bag {
         total = total + x
@@ -78,7 +78,7 @@ test "Case 2: auto-iter() insertion (collection.iter() → next())" {
 // ── Regression: Range literal остаётся primitive int loop ────────────────
 
 test "regression: plain Range loop (primitive int Case 1 D58 optimisation)" {
-    let mut sum = 0
+    mut sum = 0
     for i in 0..5 {
         sum = sum + i
     }
@@ -89,8 +89,8 @@ test "regression: plain Range loop (primitive int Case 1 D58 optimisation)" {
 // ── Regression: array iteration остаётся primitive ───────────────────────
 
 test "regression: array iteration через NovaArray (Case 2 emit_for optimisation)" {
-    let xs = [10, 20, 30]
-    let mut total = 0
+    ro xs = [10, 20, 30]
+    mut total = 0
     for x in xs {
         total = total + x
     }
@@ -106,14 +106,14 @@ type Squares {
 
 fn Squares mut @next() -> Option[int] {
     if @i >= @n { return None }
-    let v = @i * @i
+    ro v = @i * @i
     @i += 1
     Some(v)
 }
 
 test "iterator with computed values" {
-    let mut sum = 0
-    let sq = Squares { i: 0, n: 4 }
+    mut sum = 0
+    ro sq = Squares { i: 0, n: 4 }
     for s in sq {
         sum = sum + s
     }

@@ -11,7 +11,7 @@
 
 module named_params.side_effects
 
-fn rec(sink []int, v int) -> int {
+fn rec(mut sink []int, v int) -> int {
     sink.push(v)
     v
 }
@@ -20,12 +20,12 @@ fn combine(first int, second int, third int) -> int =>
     first * 100 + second * 10 + third
 
 test "переставленные named: side-effects в source-order" {
-    let sink = []int.new()
+    mut sink = []int.new()
     // Source-order записи: rec(sink,7), rec(sink,8), rec(sink,9).
     // Param-order: first, second, third → first=9, second=8, third=7.
     // combine = 9*100 + 8*10 + 7 = 987.
     // sink = [7, 8, 9] — порядок ЗАПИСИ аргументов (source-order).
-    let r = combine(third: rec(sink, 7), second: rec(sink, 8), first: rec(sink, 9))
+    ro r = combine(third: rec(sink, 7), second: rec(sink, 8), first: rec(sink, 9))
     assert(r == 987)
     assert(sink.len() == 3)
     assert(sink[0] == 7)
@@ -34,10 +34,10 @@ test "переставленные named: side-effects в source-order" {
 }
 
 test "смешанно: позиционный + переставленные named" {
-    let sink = []int.new()
+    mut sink = []int.new()
     // first позиционно = rec(sink,1), named third=rec(sink,2), second=rec(sink,3).
     // source-order: 1, 2, 3.
-    let r = combine(rec(sink, 1), third: rec(sink, 2), second: rec(sink, 3))
+    ro r = combine(rec(sink, 1), third: rec(sink, 2), second: rec(sink, 3))
     // first=1, second=3, third=2 → 132.
     assert(r == 132)
     assert(sink[0] == 1)

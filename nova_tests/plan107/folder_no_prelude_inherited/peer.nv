@@ -7,7 +7,7 @@
 // (D26: 62.A.bis Ф.4 deferred). Runtime fns (assert/panic) only come through
 // prelude auto-import. So `assert` is the correct marker for suppressed prelude.
 
-module plan107.folder_no_prelude_inherited
+module folder_no_prelude_inherited.peer
 
 test "assert not visible — inherited #no_prelude from _module.nv" {
     assert(true)    // assert unavailable without prelude auto-import

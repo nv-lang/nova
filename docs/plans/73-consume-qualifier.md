@@ -256,38 +256,38 @@ static inline nova_str Nova_StringBuilder_method_into(Nova_StringBuilder* b) {
 **Позитивные:**
 ```nova
 // consume-ok-basic.nv
-let sb = StringBuilder.new()
+ro sb = StringBuilder.new()
 sb.@append("hi")
-let s = sb.@into()
+ro s = sb.@into()
 // sb не используется — ок
 ```
 
 ```nova
 // consume-ok-if-both.nv
-let sb = StringBuilder.new()
-let s = if cond { sb.@into() } else { sb.@into() }
+ro sb = StringBuilder.new()
+ro s = if cond { sb.@into() } else { sb.@into() }
 // оба пути consume — ок
 ```
 
 **Негативные:**
 ```nova
 // consume-err-use-after.nv
-let sb = StringBuilder.new()
-let s = sb.@into()
+ro sb = StringBuilder.new()
+ro s = sb.@into()
 sb.@append("oops")  // error: use of consumed variable `sb`
 ```
 
 ```nova
 // consume-err-maybe.nv
-let sb = StringBuilder.new()
-if cond { let _ = sb.@into() }
+ro sb = StringBuilder.new()
+if cond { ro _ = sb.@into() }
 sb.@append("oops")  // error: maybe-consumed
 ```
 
 ```nova
 // consume-err-loop.nv
-let sb = StringBuilder.new()
-loop { let _ = sb.@into() }  // error: sb maybe-consumed on 2nd iteration
+ro sb = StringBuilder.new()
+loop { ro _ = sb.@into() }  // error: sb maybe-consumed on 2nd iteration
 ```
 
 ---

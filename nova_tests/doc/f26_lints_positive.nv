@@ -102,9 +102,9 @@ test "sum_to_n" {
 }
 
 test "all lint-clean functions compose" {
-    let s = sum_to_n(10)
-    let f = factorial(min_int(s, 5))
-    let p = power(2, min_int(absolute(-3), 10))
+    ro s = sum_to_n(10)
+    ro f = factorial(min_int(s, 5))
+    ro p = power(2, min_int(absolute(-3), 10))
     assert(s == 55)
     assert(f == 120)
     assert(p == 8)

@@ -1,0 +1,7 @@
+// Plan 114 (D184) NEG-T2: `mut X = expr` запрещён на module-level.
+
+// EXPECT_COMPILE_ERROR E_MUT_AT_MODULE_LEVEL
+
+module plan114.mut_at_module_level_neg
+
+mut COUNTER = 0

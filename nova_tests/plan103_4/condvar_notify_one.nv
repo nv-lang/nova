@@ -7,14 +7,14 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_4.condvar_notify_one
+module plan103_4.condvar_notify_one
 
 test "notify_one wakes exactly 1 of 3 waiters" {
-    let mu = Mutex.new()
-    let cv = Condvar.new()
-    let n_waiting = AtomicInt.new(0)
-    let n_woken   = AtomicInt.new(0)
-    let wg        = WaitGroup.new()
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut n_waiting = AtomicInt.new(0)
+    mut n_woken = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(3)
 
     supervised {
@@ -34,7 +34,7 @@ test "notify_one wakes exactly 1 of 3 waiters" {
         // they are all in cv's waiter list by briefly acquiring mu.
         // After mu.lock() succeeds with n_waiting==3: all 3 have called
         // cv.wait(mu) which releases mu, so they are in cv's list.
-        let mut all_in = false
+        mut all_in = false
         while !all_in {
             Time.sleep(1)
             mu.lock()

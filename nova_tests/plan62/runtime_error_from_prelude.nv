@@ -18,22 +18,22 @@ module plan62.runtime_error_from_prelude
 // ─── RuntimeError variants (через Prelude) ───────────────────────────
 
 test "Plan 62.C: RuntimeError.DivByZero — unit-variant" {
-    let e = DivByZero
+    ro e = DivByZero
     assert(e is DivByZero)
 }
 
 test "Plan 62.C: RuntimeError.Overflow — unit-variant" {
-    let e = Overflow
+    ro e = Overflow
     assert(e is Overflow)
 }
 
 test "Plan 62.C: RuntimeError.IndexOutOfBounds — record-variant" {
-    let e = IndexOutOfBounds { index: 5, length: 3 }
+    ro e = IndexOutOfBounds { index: 5, length: 3 }
     assert(e is IndexOutOfBounds)
     // Destructure через if-let (избегаем assignment-style match).
-    let mut got_index = 0
-    let mut got_length = 0
-    if let IndexOutOfBounds { index, length } = e {
+    mut got_index = 0
+    mut got_length = 0
+    if IndexOutOfBounds { index, length } = e {
         got_index = index
         got_length = length
     }
@@ -42,30 +42,30 @@ test "Plan 62.C: RuntimeError.IndexOutOfBounds — record-variant" {
 }
 
 test "Plan 62.C: RuntimeError.TypeMismatch — positional tuple-variant" {
-    let e = TypeMismatch("expected int")
+    ro e = TypeMismatch("expected int")
     assert(e is TypeMismatch)
-    let mut got = ""
-    if let TypeMismatch(s) = e {
+    mut got = ""
+    if TypeMismatch(s) = e {
         got = s
     }
     assert(got == "expected int")
 }
 
 test "Plan 62.C: RuntimeError.AssertFailed — positional tuple-variant" {
-    let e = AssertFailed("x > 0")
+    ro e = AssertFailed("x > 0")
     assert(e is AssertFailed)
-    let mut got = ""
-    if let AssertFailed(s) = e {
+    mut got = ""
+    if AssertFailed(s) = e {
         got = s
     }
     assert(got == "x > 0")
 }
 
 test "Plan 62.C: RuntimeError.NoHandler — positional tuple-variant" {
-    let e = NoHandler("Db")
+    ro e = NoHandler("Db")
     assert(e is NoHandler)
-    let mut got = ""
-    if let NoHandler(s) = e {
+    mut got = ""
+    if NoHandler(s) = e {
         got = s
     }
     assert(got == "Db")
@@ -75,11 +75,11 @@ test "Plan 62.C: RuntimeError.NoHandler — positional tuple-variant" {
 // ─── ReadBufferError variant (через Prelude, no baseline) ────────────
 
 test "Plan 62.C: ReadBufferError.UnexpectedEnd — record-variant" {
-    let e = UnexpectedEnd { wanted: 10, available: 5 }
+    ro e = UnexpectedEnd { wanted: 10, available: 5 }
     assert(e is UnexpectedEnd)
-    let mut got_wanted = 0
-    let mut got_available = 0
-    if let UnexpectedEnd { wanted, available } = e {
+    mut got_wanted = 0
+    mut got_available = 0
+    if UnexpectedEnd { wanted, available } = e {
         got_wanted = wanted
         got_available = available
     }
@@ -94,8 +94,8 @@ test "Plan 62.C: RuntimeError и ReadBufferError независимы" {
     // Оба type'а должны быть declar'able одновременно — cross-file
     // resolve (R27 auto-import + R26 re-export через std/prelude.nv)
     // даёт user коду оба namespace'а.
-    let re = DivByZero
-    let rbe = UnexpectedEnd { wanted: 7, available: 0 }
+    ro re = DivByZero
+    ro rbe = UnexpectedEnd { wanted: 7, available: 0 }
     assert(re is DivByZero)
     assert(rbe is UnexpectedEnd)
     // NOTE: cross-type `is` checks (`re is UnexpectedEnd`) опущены — это

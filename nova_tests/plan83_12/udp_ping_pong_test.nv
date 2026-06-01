@@ -11,35 +11,35 @@ module plan83_12.udp_ping_pong_test
 
 test "UDP: bind, send_to, recv_from — is_ok" {
     // Bind receiver on OS port.
-    let rcv_r = UdpSocket.bind(SocketAddr.loopback(0))
+    ro rcv_r = UdpSocket.bind(SocketAddr.loopback(0))
     assert(rcv_r.is_ok())
-    let rcv = rcv_r.unwrap()
-    let rcv_port = rcv.local_port()
+    ro rcv = rcv_r.unwrap()
+    ro rcv_port = rcv.local_port()
     assert(rcv_port > 0)
 
     // Bind sender on OS port.
-    let snd_r = UdpSocket.bind(SocketAddr.loopback(0))
+    ro snd_r = UdpSocket.bind(SocketAddr.loopback(0))
     assert(snd_r.is_ok())
-    let snd = snd_r.unwrap()
-    let snd_port = snd.local_port()
+    ro snd = snd_r.unwrap()
+    ro snd_port = snd.local_port()
     assert(snd_port > 0)
     assert(snd_port != rcv_port)
 
-    let mut recv_ok = false
-    let mut sender_port_ok = false
+    mut recv_ok = false
+    mut sender_port_ok = false
     supervised {
         // Receiver fiber: recv_from, check last_sender port.
         spawn {
-            let r = rcv.recv_from(512)
+            ro r = rcv.recv_from(512)
             recv_ok = r.is_ok()
-            let sender = rcv.last_sender()
+            ro sender = rcv.last_sender()
             sender_port_ok = (sender.port() == snd_port)
             rcv.close()
         }
         // Sender fiber: send a datagram to the receiver.
         spawn {
-            let dest = SocketAddr.loopback(rcv_port)
-            let s = snd.send_to("ping", dest)
+            ro dest = SocketAddr.loopback(rcv_port)
+            ro s = snd.send_to("ping", dest)
             assert(s.is_ok())
             snd.close()
         }
@@ -49,12 +49,12 @@ test "UDP: bind, send_to, recv_from — is_ok" {
 }
 
 test "UDP: local_port and local_addr" {
-    let sock_r = UdpSocket.bind(SocketAddr.loopback(0))
+    ro sock_r = UdpSocket.bind(SocketAddr.loopback(0))
     assert(sock_r.is_ok())
-    let sock = sock_r.unwrap()
-    let port = sock.local_port()
+    ro sock = sock_r.unwrap()
+    ro port = sock.local_port()
     assert(port > 0)
-    let addr = sock.local_addr()
+    ro addr = sock.local_addr()
     assert(addr.is_v4())
     assert(addr.port() == port)
     sock.close()

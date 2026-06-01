@@ -1,0 +1,40 @@
+// Plan 120 (D215): T3 — methods on named tuples.
+
+module plan120.t3_methods
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 @dot(other Vec3) -> f64 =>
+    @x * other.x + @y * other.y + @z * other.z
+
+fn Vec3 @scale(s f64) -> Vec3 =>
+    Vec3(x: @x * s, y: @y * s, z: @z * s)
+
+fn Vec3 @add(other Vec3) -> Vec3 =>
+    Vec3(x: @x + other.x, y: @y + other.y, z: @z + other.z)
+
+test "Vec3 dot product" {
+    ro a = Vec3(x: 1.0, y: 0.0, z: 0.0)
+    ro b = Vec3(x: 0.0, y: 1.0, z: 0.0)
+    assert(a.dot(b) == 0.0)
+    ro c = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro d = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(c.dot(d) == 14.0)
+}
+
+test "Vec3 scale" {
+    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro scaled = v.scale(2.0)
+    assert(scaled.x == 2.0)
+    assert(scaled.y == 4.0)
+    assert(scaled.z == 6.0)
+}
+
+test "Vec3 add" {
+    ro a = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro b = Vec3(x: 4.0, y: 5.0, z: 6.0)
+    ro sum = a.add(b)
+    assert(sum.x == 5.0)
+    assert(sum.y == 7.0)
+    assert(sum.z == 9.0)
+}

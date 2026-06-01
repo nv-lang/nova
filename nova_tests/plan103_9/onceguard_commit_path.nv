@@ -4,11 +4,11 @@
 // Winning fiber receives guard; guard.commit() → Once → DONE.
 // Subsequent callers: try_start_won() returns false (Once already DONE).
 
-module nova_tests.plan103_9.onceguard_commit_path
+module plan103_9.onceguard_commit_path
 
 test "try_start_won returns true for first caller, false after commit" {
-    let once = Once.new()
-    let body_ran = AtomicInt.new(0)
+    mut once = Once.new()
+    mut body_ran = AtomicInt.new(0)
 
     if once.try_start_won() {
         consume g = once.make_guard()
@@ -31,7 +31,7 @@ test "try_start_won returns true for first caller, false after commit" {
 }
 
 test "OnceGuard commit makes once.is_completed() == true" {
-    let once = Once.new()
+    mut once = Once.new()
     assert(once.is_completed() == false)
 
     if once.try_start_won() {
@@ -43,11 +43,11 @@ test "OnceGuard commit makes once.is_completed() == true" {
 }
 
 test "make_guard + commit: single-fiber ownership" {
-    let once = Once.new()
-    let ran = AtomicInt.new(0)
+    mut once = Once.new()
+    mut ran = AtomicInt.new(0)
 
     // run() returns true exactly once
-    let won = once.try_start_won()
+    ro won = once.try_start_won()
     assert(won == true)
 
     // Create guard and commit

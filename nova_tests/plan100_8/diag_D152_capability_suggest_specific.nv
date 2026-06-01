@@ -10,7 +10,7 @@
 //
 // This validates that the suggestion renderer picks the first consume method.
 
-module nova_tests.plan100_8.diag_D152_capability_suggest_specific
+module plan100_8.diag_D152_capability_suggest_specific
 
 type File consume { fd int; path str }
 

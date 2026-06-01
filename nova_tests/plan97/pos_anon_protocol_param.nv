@@ -4,7 +4,7 @@
 // type-checker (compute_protocol_satisfaction inline) не требует named-
 // типа в registry; вызов метода через структурную совместимость работает.
 
-module nova_tests.plan97.pos_anon_protocol_param
+module plan97.pos_anon_protocol_param
 
 
 type Doc {
@@ -20,7 +20,7 @@ fn use_closer(c protocol { close() -> () }) -> () => c.close()
 
 
 test "анонимный protocol-тип в параметре, structural match" {
-    let d = Doc { title: "x" }
+    ro d = Doc { title: "x" }
     use_closer(d)
     assert(d.title == "x")
 }

@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @first/last → Option[T].
 
-module nova_tests.plan101_1.vec_first_last
+module plan101_1.vec_first_last
 
 fn[T] []T @my_first() -> Option[T] =>
     if @len() == 0 { None } else { Some(@[0]) }
@@ -9,13 +9,13 @@ fn[T] []T @my_last() -> Option[T] =>
     if @len() == 0 { None } else { Some(@[@len() - 1]) }
 
 test "first/last non-empty" {
-    let v []int = [10, 20, 30]
+    ro v []int = [10, 20, 30]
     assert(v.my_first() == Some(10))
     assert(v.my_last() == Some(30))
 }
 
 test "first/last empty → None" {
-    let empty []int = []
+    ro empty []int = []
     assert(empty.my_first() == None)
     assert(empty.my_last() == None)
 }

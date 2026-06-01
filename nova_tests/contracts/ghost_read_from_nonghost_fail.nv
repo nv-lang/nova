@@ -7,6 +7,6 @@
 module contracts.ghost_read_from_nonghost_fail
 
 fn bad_ghost(x int) -> int {
-    ghost let spec_only = x * 2
+    ghost ro spec_only = x * 2
     spec_only + 1
 }

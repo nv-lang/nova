@@ -64,8 +64,8 @@ export fn LinkedList[T].new() => Empty
 /// ```
 #stable(since = "0.1")
 export fn LinkedList[T].from_array(xs []T) -> Self {
-    let mut acc LinkedList[T] = Empty
-    let mut i = xs.len() - 1
+    mut acc LinkedList[T] = Empty
+    mut i = xs.len() - 1
     while i >= 0 {
         acc = Cons(xs[i], acc)
         i -= 1
@@ -78,7 +78,7 @@ export fn LinkedList[T].from_array(xs []T) -> Self {
 export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
-    let mut acc LinkedList[T] = Empty
+    mut acc LinkedList[T] = Empty
     for x in it {
         acc = Cons(x, acc)
     }
@@ -150,9 +150,9 @@ export fn LinkedList[T] @append(x T) -> Self =>
 /// Обратить порядок элементов. O(n) через accumulator без рекурсии.
 #stable(since = "0.1")
 export fn LinkedList[T] @reverse() -> Self {
-    let mut acc = Empty
-    let mut cur = @
-    let mut done = false
+    mut acc = Empty
+    mut cur = @
+    mut done = false
     while !done {
         match cur {
             Empty      => { done = true }
@@ -216,7 +216,7 @@ export fn LinkedList[T] @plus(other Self) -> Self =>
 // ──────────────────────────────────────────────────────────────────────────
 
 test "from_array preserves order" {
-    let l = LinkedList[int].from_array([1, 2, 3])
+    ro l = LinkedList[int].from_array([1, 2, 3])
     assert(l.length() == 3)
     assert(l.head() == Some(1))
     assert(l.tail().head() == Some(2))
@@ -225,50 +225,50 @@ test "from_array preserves order" {
 }
 
 test "prepend is O(1) and adds in front" {
-    let l = LinkedList[int].from_array([2, 3])
-    let l2 = l.prepend(1)
+    ro l = LinkedList[int].from_array([2, 3])
+    ro l2 = l.prepend(1)
     assert(l2.head() == Some(1))
     assert(l2.length() == 3)
 }
 
 test "reverse" {
-    let l = LinkedList[int].from_array([1, 2, 3])
-    let r = l.reverse()
+    ro l = LinkedList[int].from_array([1, 2, 3])
+    ro r = l.reverse()
     assert(r.head() == Some(3))
     assert(r.tail().head() == Some(2))
 }
 
 test "map applies function preserving structure" {
-    let l = LinkedList[int].from_array([1, 2, 3])
-    let doubled = l.map(|x| x * 2)
+    ro l = LinkedList[int].from_array([1, 2, 3])
+    ro doubled = l.map(|x| x * 2)
     assert(doubled.head() == Some(2))
     assert(doubled.length() == 3)
 }
 
 test "filter removes non-matching" {
-    let l = LinkedList[int].from_array([1, 2, 3, 4, 5])
-    let even = l.filter(|x| x % 2 == 0)
+    ro l = LinkedList[int].from_array([1, 2, 3, 4, 5])
+    ro even = l.filter(|x| x % 2 == 0)
     assert(even.length() == 2)
     assert(even.head() == Some(2))
 }
 
 test "fold sums" {
-    let l = LinkedList[int].from_array([1, 2, 3, 4])
-    let sum = l.fold(0, |acc, x| acc + x)
+    ro l = LinkedList[int].from_array([1, 2, 3, 4])
+    ro sum = l.fold(0, |acc, x| acc + x)
     assert(sum == 10)
 }
 
 test "concat with plus method" {
-    let a = LinkedList[int].from_array([1, 2])
-    let b = LinkedList[int].from_array([3, 4])
-    let c = a.plus(b)
+    ro a = LinkedList[int].from_array([1, 2])
+    ro b = LinkedList[int].from_array([3, 4])
+    ro c = a.plus(b)
     assert(c.length() == 4)
     assert(c.head() == Some(1))
 }
 
 test "Empty is identity for concat" {
-    let a = LinkedList[int].from_array([1, 2])
-    let e LinkedList[int] = Empty
+    ro a = LinkedList[int].from_array([1, 2])
+    ro e LinkedList[int] = Empty
     assert(a.plus(e).length() == 2)
     assert(e.plus(a).length() == 2)
 }

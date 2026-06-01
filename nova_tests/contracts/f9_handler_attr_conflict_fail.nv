@@ -12,6 +12,6 @@ test "conflicting attributes" {
     with #verify #trusted Db = effect Db {
         balance(id) => 0
     } {
-        let _ = Db.balance(1)
+        ro _ = Db.balance(1)
     }
 }

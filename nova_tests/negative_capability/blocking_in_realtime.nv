@@ -9,8 +9,8 @@
 module negative_capability.blocking_in_realtime
 
 fn rt_blocking(n int) Blocking -> int {
-    let mut r = 0
-    let _ = realtime {
+    mut r = 0
+    ro _ = realtime {
         blocking {
             r = n + 1
         }

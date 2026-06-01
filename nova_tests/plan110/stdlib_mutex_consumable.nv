@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.3.1 (D194): MutexGuard/ReadGuard/WriteGuard/Permit
+// implement Consumable[never] — `consume g = mu.acquire() { body }`
+// scope-block работает с auto-release on exit.
+
+module plan110.stdlib_mutex_consumable
+
+fn use_mutex() -> int {
+    mut mu = Mutex.new()
+    mut value = 0
+    consume g = mu.lock() {
+        value = 42
+    }
+    // g.on_exit auto-released the mutex.
+    value
+}
+
+fn use_semaphore() -> int {
+    mut sem = Semaphore.new(1)
+    mut value = 0
+    consume p = sem.acquire() {
+        value = 99
+    }
+    value
+}
+
+test "Plan 110.3.1: MutexGuard Consumable[never]" {
+    assert(use_mutex() == 42)
+}
+
+test "Plan 110.3.1: Permit Consumable[never]" {
+    assert(use_semaphore() == 99)
+}

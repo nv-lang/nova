@@ -7,8 +7,8 @@ module negative_capability.p53_let_variant_pattern
 
 type Maybe | None | Just(int)
 
-test "variant pattern in let — refutable" {
-    let m = Maybe.Just(5)
-    let Just(x) = m
+test "variant pattern in ro — refutable" {
+    ro m = Maybe.Just(5)
+    ro Just(x) = m
     assert(x == 5)
 }

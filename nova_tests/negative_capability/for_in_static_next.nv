@@ -17,9 +17,9 @@ fn Foo.next() -> Option[int] {
 }
 
 fn main() -> int {
-    let f = Foo { state: 0 }
+    ro f = Foo { state: 0 }
     for x in f {
-        let _ = x
+        ro _ = x
     }
     0
 }

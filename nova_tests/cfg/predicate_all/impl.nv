@@ -4,7 +4,7 @@
 // Проверяет precedence + скобки: группа || внутри &&, унарный !.
 
 #cfg((target_os = "windows" || target_os = "linux" || target_os = "macos") && !target_os = "freebsd")
-module cfg.predicate_all
+module predicate_all.impl
 
 export fn gated_value() -> int =>
     99

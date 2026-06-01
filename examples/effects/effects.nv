@@ -1,28 +1,28 @@
 // effects.nv — handler-substitution в действии (D61).
 
-module effects
+module effects.effects
 
 type Counter effect {
     next() -> int
 }
 
 fn count_three() Counter -> int {
-    let a = Counter.next()
-    let b = Counter.next()
-    let c = Counter.next()
+    ro a = Counter.next()
+    ro b = Counter.next()
+    ro c = Counter.next()
     a + b + c
 }
 
 fn main() {
     // Простой handler — closure захватывает mutable переменную.
-    let mut state = 0
+    mut state = 0
     with Counter = effect Counter {
         next() {
             state += 1
             return state
         }
     } {
-        let total = count_three()
+        ro total = count_three()
         println("total = ", total)        // 1 + 2 + 3 = 6
     }
 }

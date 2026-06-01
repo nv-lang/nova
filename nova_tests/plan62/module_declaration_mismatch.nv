@@ -22,10 +22,10 @@
 // его, и компилятор должен эмитировать diagnostic «module
 // declaration does not match file path».
 
-module nonexistent.parent.target
+module plan62.module_declaration_mismatch
 
 fn dummy() -> int => 1
 
 test "should never reach this — compile must fail on D29 mismatch" {
-    let _ = dummy()
+    ro _ = dummy()
 }

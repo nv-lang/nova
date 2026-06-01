@@ -38,13 +38,18 @@ test "const с D55 record-coercion" {
 }
 
 
-// === 3. Const с вызовом функции ===
+// === 3. Const с record-литералом (Plan 114.4 Ф.1: constexpr-eligible) ===
+//
+// Plan 14 Ф.2 ранее разрешал `const COMPUTED = make_point(7.0, 14.0)` —
+// lazy-init runtime call. Plan 114.4 Ф.1 retracted lazy-init из const;
+// non-constexpr → E_CONST_NOT_CONSTEXPR. Эквивалентная constexpr форма —
+// record-литерал из literal-полей (то же значение, без runtime call).
+// Lazy-init не используется в bootstrap'е (followup [M-114.4-ro-module-lazy-init]
+// для `ro X = compute()` module-level — отдельная work item).
 
-fn make_point(a f64, b f64) -> Point => { x: a, y: b }
+const COMPUTED Point = Point { x: 7.0, y: 14.0 }
 
-const COMPUTED Point = make_point(7.0, 14.0)
-
-test "const с function call" {
+test "const с constexpr record-literal" {
     assert(COMPUTED.x == 7.0)
     assert(COMPUTED.y == 14.0)
 }
@@ -57,7 +62,7 @@ const FACTOR Point = Point { x: 2.0, y: 3.0 }
 fn scale(p Point) -> Point => { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
 
 test "lazy const использован в fn body" {
-    let p = scale(Point { x: 5.0, y: 10.0 })
+    ro p = scale(Point { x: 5.0, y: 10.0 })
     assert(p.x == 10.0)
     assert(p.y == 30.0)
 }
@@ -69,9 +74,9 @@ const SHARED Point = Point { x: 42.0, y: 84.0 }
 
 test "lazy const повторное обращение — кеш" {
     // Первое обращение — инициализирует.
-    let a = SHARED.x
+    ro a = SHARED.x
     // Второе — читает кеш.
-    let b = SHARED.x
+    ro b = SHARED.x
     assert(a == 42.0)
     assert(b == 42.0)
     assert(a == b)

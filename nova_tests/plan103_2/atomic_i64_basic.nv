@@ -3,50 +3,50 @@
 // Canonical 64-bit signed integer atomic. Verifies new(), load(), store(),
 // fetch_add, fetch_sub, compare_exchange (default SeqCst ordering).
 
-module nova_tests.plan103_2.atomic_i64_basic
+module plan103_2.atomic_i64_basic
 
 test "AtomicI64 new and load" {
-    let a = AtomicI64.new(42)
+    mut a = AtomicI64.new(42)
     assert(a.load() == 42)
 }
 
 test "AtomicI64 store and load" {
-    let a = AtomicI64.new(0)
+    mut a = AtomicI64.new(0)
     a.store(100)
     assert(a.load() == 100)
 }
 
 test "AtomicI64 fetch_add" {
-    let a = AtomicI64.new(10)
-    let prev = a.fetch_add(5)
+    mut a = AtomicI64.new(10)
+    ro prev = a.fetch_add(5)
     assert(prev == 10)
     assert(a.load() == 15)
 }
 
 test "AtomicI64 fetch_sub" {
-    let a = AtomicI64.new(20)
-    let prev = a.fetch_sub(7)
+    mut a = AtomicI64.new(20)
+    ro prev = a.fetch_sub(7)
     assert(prev == 20)
     assert(a.load() == 13)
 }
 
 test "AtomicI64 compare_exchange success" {
-    let a = AtomicI64.new(5)
-    let ok = a.compare_exchange(5, 99)
+    mut a = AtomicI64.new(5)
+    ro ok = a.compare_exchange(5, 99)
     assert(ok)
     assert(a.load() == 99)
 }
 
 test "AtomicI64 compare_exchange failure — value unchanged" {
-    let a = AtomicI64.new(5)
-    let ok = a.compare_exchange(999, 0)
+    mut a = AtomicI64.new(5)
+    ro ok = a.compare_exchange(999, 0)
     assert(!ok)
     assert(a.load() == 5)
 }
 
 test "AtomicI64 swap" {
-    let a = AtomicI64.new(7)
-    let old = a.swap(42)
+    mut a = AtomicI64.new(7)
+    ro old = a.swap(42)
     assert(old == 7)
     assert(a.load() == 42)
 }

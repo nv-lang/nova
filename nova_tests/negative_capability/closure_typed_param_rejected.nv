@@ -6,6 +6,6 @@
 module negative_capability.closure_typed_param_rejected
 
 test "closure-light с типом параметра отвергается" {
-    let inc = |x int| x + 1
+    ro inc = |x int| x + 1
     assert(inc(5) == 6)
 }

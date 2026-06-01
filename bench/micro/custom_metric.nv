@@ -1,11 +1,11 @@
 // Plan 57.G.5 smoke test для bench.metric custom metrics.
-module bench.micro.metric_smoke
+module micro.custom_metric
 
 bench "metric_smoke_emits" {
     measure {
-        let n = bench.iterations()
-        let mut i = 0
-        let mut hits = 0
+        ro n = bench.iterations()
+        mut i = 0
+        mut hits = 0
         while i < n {
             hits = hits + bench.opaque(i)
             i = i + 1

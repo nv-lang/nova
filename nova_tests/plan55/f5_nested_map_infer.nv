@@ -5,9 +5,9 @@ module plan55.f5_nested_map_infer
 import std.collections.hashmap.{HashMap}
 
 
-test "let m = [str: int] множественное использование" {
-    let m1 = ["x": 10, "y": 20]
-    let m2 = ["a": 1, "b": 2, "c": 3]
+test "let mut m = [str: int] множественное использование" {
+    ro m1 = ["x": 10, "y": 20]
+    ro m2 = ["a": 1, "b": 2, "c": 3]
     assert(m1.len() == 2)
     assert(m2.len() == 3)
     assert(m1.get("x") == Some(10))
@@ -16,6 +16,6 @@ test "let m = [str: int] множественное использование" 
 
 
 test "[k:v] в выражении для conditional" {
-    let m = if true { ["a": 1] } else { ["a": 2] }
+    ro m = if true { ["a": 1] } else { ["a": 2] }
     assert(m.get("a") == Some(1))
 }

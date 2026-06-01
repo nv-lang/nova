@@ -22,7 +22,7 @@ export fn internal_helper(x int) -> int => x + 42
 export fn isqrt(n int) -> int {
     // Целочисленный квадратный корень — линейный поиск.
     if n <= 0 { 0 } else {
-        let mut r = 0
+        mut r = 0
         while (r + 1) * (r + 1) <= n {
             r = r + 1
         }
@@ -82,9 +82,9 @@ test "hypot_sq basic" {
 
 test "stability attrs do not affect runtime" {
     // #stable, #unstable, #experimental — только doc metadata.
-    let x = square(7)
-    let y = cube(3)
-    let z = hypot_sq(3, 4)
+    ro x = square(7)
+    ro y = cube(3)
+    ro z = hypot_sq(3, 4)
     assert(x == 49)
     assert(y == 27)
     assert(z == 25)

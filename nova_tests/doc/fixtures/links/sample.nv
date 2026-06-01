@@ -3,7 +3,7 @@
 //! См. [Point] для двумерных координат, [translate] для трансляции,
 //! и [unknown_link] чтобы убедиться, что broken-link обрабатывается.
 
-module nova_tests.doc.fixtures.links.sample
+module links.sample
 
 /// Двумерная точка.
 ///

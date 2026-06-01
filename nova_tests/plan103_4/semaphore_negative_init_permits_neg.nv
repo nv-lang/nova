@@ -4,8 +4,8 @@
 //
 // EXPECT_RUNTIME_PANIC Semaphore.new: initial permits must be >= 0
 
-module nova_tests.plan103_4.semaphore_negative_init_permits_neg
+module plan103_4.semaphore_negative_init_permits_neg
 
 test "Semaphore.new(-1) panics with permits must be >= 0" {
-    let _sem = Semaphore.new(-1)
+    ro _sem = Semaphore.new(-1)
 }

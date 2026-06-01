@@ -5,11 +5,11 @@
 // compile error (E7301, assignability — same machinery as Plan 79 Ф.1,
 // now reached through an alias).
 
-module nova_tests.plan70_1.f4_alias_arg_mismatch_neg
+module plan70_1.f4_alias_arg_mismatch_neg
 
 import nova_tests.plan70_1.helper_mod as h
 
 test "alias call with a wrong argument type is rejected" {
-    let _r = h.add_one("not an int")
+    ro _r = h.add_one("not an int")
     assert(true)
 }

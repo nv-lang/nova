@@ -1,0 +1,12 @@
+// Plan 108.2 (D36 enforcement): `let` без mut — read-only OK.
+// Доступны: read fields, len, iteration, non-mut методы.
+
+module plan108_2.let_no_mut_read_ok
+
+test "let no-mut + read operations" {
+    mut arr = [10, 20, 30]
+    assert(arr.len() == 3)
+    mut sum = 0
+    for x in arr { sum = sum + x }
+    assert(sum == 60)
+}

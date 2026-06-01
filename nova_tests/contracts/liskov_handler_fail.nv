@@ -3,7 +3,7 @@
 // Handler возвращает константу 5, но ensures требует result == 10.
 // Trivial backend: 5 == 10 → false → Liskov-нарушение.
 
-module nova_tests.contracts.liskov_handler_fail
+module contracts.liskov_handler_fail
 
 type ConstEffect effect {
     get_ten() -> int
@@ -14,7 +14,7 @@ test "liskov handler fail" {
     with #verify ConstEffect = effect ConstEffect {
         get_ten() => 5
     } {
-        let r = ConstEffect.get_ten()
+        ro r = ConstEffect.get_ten()
         assert(r == 5)
     }
 }

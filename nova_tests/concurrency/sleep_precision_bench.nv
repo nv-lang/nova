@@ -43,19 +43,19 @@ const OVER_SLACK int = 30
 const LOAD_SLACK int = 250
 
 test "sleep(50) precision — p99 within ±30ms on Windows" {
-    let mut max_dev int = 0
-    let mut min_dev int = 999_999
-    let mut sum_dev int = 0
-    let n int = 50
+    mut max_dev int = 0
+    mut min_dev int = 999_999
+    mut sum_dev int = 0
+    ro n int = 50
 
     for _ in 0..n {
-        let t0 = Time.now()
+        ro t0 = Time.now()
         Time.sleep(TARGET_MS)
-        let elapsed = Time.now() - t0
-        let dev = elapsed - TARGET_MS  // signed: negative = fired early
+        ro elapsed = Time.now() - t0
+        ro dev = elapsed - TARGET_MS  // signed: negative = fired early
 
         // Track absolute deviation
-        let abs_dev = if dev >= 0 { dev } else { 0 - dev }
+        ro abs_dev = if dev >= 0 { dev } else { 0 - dev }
         if abs_dev > max_dev { max_dev = abs_dev }
         if abs_dev < min_dev { min_dev = abs_dev }
         sum_dev = sum_dev + abs_dev
@@ -69,7 +69,7 @@ test "sleep(50) precision — p99 within ±30ms on Windows" {
         assert(elapsed < TARGET_MS + OVER_SLACK + LOAD_SLACK)
     }
 
-    let avg int = sum_dev / n
+    ro avg int = sum_dev / n
     // Документируем actual avg deviation для retro в Plan 22.
     // На typical Windows ожидается avg ~5-15ms; под нагрузкой выше.
     assert(avg < 50 + LOAD_SLACK)  // sanity bound — load-tolerant
@@ -83,7 +83,7 @@ test "sleep(0) zero-overhead yield <50ms (M:N-tolerant)" {
     // worker scheduling overhead добавляет ~250µs/yield → ~25-50ms total
     // под `nova test --jobs 16` oversubscription.
     // Ловим грубые баги (busy-loop = секунды), не precision-флейк.
-    let t0 = Time.now()
+    ro t0 = Time.now()
     supervised {
         spawn {
             for _ in 0..100 {
@@ -91,7 +91,7 @@ test "sleep(0) zero-overhead yield <50ms (M:N-tolerant)" {
             }
         }
     }
-    let elapsed = Time.now() - t0
+    ro elapsed = Time.now() - t0
     assert(elapsed < 50)  // 100 yields ≤ 50ms = 500µs avg (M:N-tolerant)
 }
 
@@ -99,11 +99,11 @@ test "sleep(1) minimum useful sleep — within Windows gran" {
     // sleep(1) target — на Windows реальная fire может быть 0-31ms
     // из-за timer-gran (2 тика по ~15.6ms). Не fail если выше 1ms,
     // fail если выше 50ms (3 тика — явный баг).
-    let mut max_observed int = 0
+    mut max_observed int = 0
     for _ in 0..10 {
-        let t0 = Time.now()
+        ro t0 = Time.now()
         Time.sleep(1)
-        let elapsed = Time.now() - t0
+        ro elapsed = Time.now() - t0
         if elapsed > max_observed { max_observed = elapsed }
     }
     // Документируем: sleep(1) на Windows фактически ~1-31ms (2 тика).

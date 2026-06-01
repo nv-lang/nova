@@ -7,17 +7,17 @@ module plan11_followup.f16_path_alias_variadic_positive
 import std._experimental.path.path as p
 
 test "alias import: variadic Path.join via p.Path.join" {
-    let r = p.Path.join("a", "b", "c")
+    ro r = p.Path.join("a", "b", "c")
     assert(r == "a/b/c")
 }
 
 test "alias import: spread через alias" {
-    let parts []str = ["x", "y", "z"]
-    let r = p.Path.join(...parts)
+    ro parts []str = ["x", "y", "z"]
+    ro r = p.Path.join(...parts)
     assert(r == "x/y/z")
 }
 
 test "alias import: non-variadic Path.normalize через alias" {
-    let r = p.Path.normalize("/a/b/../c")
+    ro r = p.Path.normalize("/a/b/../c")
     assert(r == "/a/c")
 }

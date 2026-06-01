@@ -3,7 +3,7 @@
 // Plan 77 (D132): `-> @` (возврат receiver'а) допустим только для
 // instance-метода. У static-метода нет `@`-receiver'а → parse error.
 
-module nova_tests.plan77.fluent_static_err
+module plan77.fluent_static_err
 
 type Gizmo { v int }
 
@@ -11,6 +11,6 @@ type Gizmo { v int }
 fn Gizmo.make() -> @ => { v: 1 }
 
 test "static -> @ rejected" {
-    let g = Gizmo { v: 0 }
+    ro g = Gizmo { v: 0 }
     assert(g.v == 0)
 }

@@ -3,23 +3,23 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_6.realtime_mutex_try_lock_ok
+module plan103_6.realtime_mutex_try_lock_ok
 
 #realtime fn _rt_try_lock(m mut Mutex) -> bool {
     m.try_lock()
 }
 
 test "Mutex.try_lock allowed in #realtime fn (unlocked)" {
-    let m = Mutex.new()
-    let acquired = _rt_try_lock(m)
+    mut m = Mutex.new()
+    ro acquired = _rt_try_lock(m)
     assert(acquired == true)
     m.unlock()
 }
 
 test "Mutex.try_lock returns false when locked" {
-    let m = Mutex.new()
+    mut m = Mutex.new()
     m.lock()
-    let acquired = _rt_try_lock(m)
+    ro acquired = _rt_try_lock(m)
     assert(acquired == false)
     m.unlock()
 }

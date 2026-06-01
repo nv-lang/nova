@@ -3,7 +3,7 @@
 module plan57.n1_bench_no_measure
 
 bench "no-measure-block" {
-    let x = 1
+    ro x = 1
     bench.opaque(x)
 }
 

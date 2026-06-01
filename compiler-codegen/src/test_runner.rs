@@ -709,6 +709,15 @@ impl GcKind {
     }
 }
 
+/// Plan 115 D214 [M-115-ffi-build-pipeline]: resolved [ffi] config.
+/// Paths уже абсолютные (resolved от nova.toml dir).
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedFfiConfig {
+    pub c_shims: Vec<PathBuf>,
+    pub include_dirs: Vec<PathBuf>,
+    pub libs: Vec<String>,
+}
+
 /// Параметры сборки одного теста.
 pub struct BuildOpts<'a> {
     pub c_file: &'a Path,
@@ -720,6 +729,10 @@ pub struct BuildOpts<'a> {
     pub libuv: Option<&'a LibuvConfig>,
     /// Plan 27 Ф.1: GC backend. Default = Malloc (current behavior).
     pub gc_kind: GcKind,
+    /// Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim files + libs
+    /// from `[ffi]` section в package nova.toml. None — нет [ffi] config'а
+    /// для test_file's package; пустой Some(...) — секция есть но пуста.
+    pub ffi: Option<&'a ResolvedFfiConfig>,
 }
 
 /// Windows system libs needed by libuv (linker dependencies).
@@ -952,6 +965,24 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-lpthread");
                 }
             }
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI flags
+            // BEFORE -o + c_file. include_dirs → -I; .h shims → -include
+            // (force-included в каждый TU AFTER cg_include setup чтобы
+            // shim header мог `#include "nova_rt/nova_rt.h"`); .c shims
+            // → отдельные compilation units; libs (-l) в link phase ниже.
+            if let Some(ffi) = opts.ffi {
+                for inc in &ffi.include_dirs {
+                    c.arg("-I").arg(inc);
+                }
+                for shim in &ffi.c_shims {
+                    let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
+                    if ext.eq_ignore_ascii_case("c") {
+                        c.arg(shim);
+                    } else if ext.eq_ignore_ascii_case("h") {
+                        c.arg("-include").arg(shim);
+                    }
+                }
+            }
             c.arg("-o").arg(opts.exe_file);
             c.arg(opts.c_file);
             c.arg(&rt_alloc);
@@ -963,6 +994,12 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: system libs (-l) в link phase.
+            if let Some(ffi) = opts.ffi {
+                for lib in &ffi.libs {
+                    c.arg(format!("-l{}", lib));
+                }
+            }
             c
         }
         Toolchain::Msvc { env, .. } => {
@@ -1022,6 +1059,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // что с несколькими source-файлами даёт D8036.
             c.arg(format!("/Fo{}\\", opts.obj_dir.display()));
             c.arg(format!("/Fe{}", opts.exe_file.display()));
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (MSVC).
+            // include_dirs → /I; .c shims → compilation units;
+            // .h shims → /FI<header> (force-include); libs → /link <name>.lib.
+            if let Some(ffi) = opts.ffi {
+                for inc in &ffi.include_dirs {
+                    c.arg(format!("/I{}", inc.display()));
+                }
+                for shim in &ffi.c_shims {
+                    let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
+                    if ext.eq_ignore_ascii_case("c") {
+                        c.arg(shim);
+                    } else if ext.eq_ignore_ascii_case("h") {
+                        c.arg("/FI").arg(shim);
+                    }
+                }
+            }
             // Plan 22: libuv for MSVC.
             if let (Some(inc_path), Some(lib_path), Some(evloop)) =
                 (&libuv_include, &libuv_lib, &libuv_eventloop)
@@ -1048,12 +1101,23 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
-            if opts.gc_kind == GcKind::Boehm {
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: also pass user FFI libs.
+            let has_link_phase = opts.gc_kind == GcKind::Boehm
+                || opts.ffi.map_or(false, |f| !f.libs.is_empty());
+            if has_link_phase {
                 c.arg("/link");
-                // PathBuf-аргумент — Command экранирует сам; ручные кавычки
-                // не нужны (и вредны, см. комментарий к /Fo выше).
-                c.arg(vcpkg_lib.join("gc.lib"));
-                c.arg(vcpkg_lib.join("atomic_ops.lib"));
+                if opts.gc_kind == GcKind::Boehm {
+                    // PathBuf-аргумент — Command экранирует сам; ручные кавычки
+                    // не нужны (и вредны, см. комментарий к /Fo выше).
+                    c.arg(vcpkg_lib.join("gc.lib"));
+                    c.arg(vcpkg_lib.join("atomic_ops.lib"));
+                }
+                if let Some(ffi) = opts.ffi {
+                    for lib in &ffi.libs {
+                        // MSVC: -l<name> не поддерживается, нужен <name>.lib.
+                        c.arg(format!("{}.lib", lib));
+                    }
+                }
             }
             c
         }
@@ -1099,6 +1163,21 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(syslib);
                 }
             }
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
+            // .h shims via -include (force-include); .c via compilation unit.
+            if let Some(ffi) = opts.ffi {
+                for inc in &ffi.include_dirs {
+                    c.arg("-I").arg(inc);
+                }
+                for shim in &ffi.c_shims {
+                    let ext = shim.extension().and_then(|s| s.to_str()).unwrap_or("");
+                    if ext.eq_ignore_ascii_case("c") {
+                        c.arg(shim);
+                    } else if ext.eq_ignore_ascii_case("h") {
+                        c.arg("-include").arg(shim);
+                    }
+                }
+            }
             c.arg("-o").arg(opts.exe_file);
             c.arg(opts.c_file);
             c.arg(&rt_alloc);
@@ -1110,6 +1189,12 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+            // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI libs (GCC).
+            if let Some(ffi) = opts.ffi {
+                for lib in &ffi.libs {
+                    c.arg(format!("-l{}", lib));
+                }
+            }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for GCC.
             if opts.gc_kind == GcKind::Boehm {
                 if let Some(cfg) = &boehm_cfg {
@@ -1822,6 +1907,26 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         };
     }
 
+    // Plan 115 D214 [M-115-ffi-build-pipeline]: resolve [ffi] section в
+    // package nova.toml для test_file. Paths становятся абсолютными
+    // относительно директории nova.toml. None — нет manifest или нет
+    // [ffi] section; пустой Some(...) — секция есть.
+    let resolved_ffi: Option<ResolvedFfiConfig> = {
+        let manifest = crate::manifest::find_manifest(opts.nv_file);
+        manifest.and_then(|m| m.ffi.map(|cfg| {
+            let base = m.source_root.clone();
+            ResolvedFfiConfig {
+                c_shims: cfg.c_shims.iter()
+                    .map(|p| base.join(p))
+                    .collect(),
+                include_dirs: cfg.include_dirs.iter()
+                    .map(|p| base.join(p))
+                    .collect(),
+                libs: cfg.libs.clone(),
+            }
+        }))
+    };
+
     let build_opts = BuildOpts {
         c_file: &c_file,
         exe_file: &exe_file,
@@ -1831,6 +1936,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         mode: opts.mode,
         libuv: opts.libuv,
         gc_kind: opts.gc_kind,
+        ffi: resolved_ffi.as_ref(),
     };
 
     // Windows file-lock retry (lld-link "cannot open output file *.exe").
@@ -2145,8 +2251,15 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
     // объявляют тот же `module X`. Если да — manifest check использует
     // is_folder_module=true (parent.X rule).
     let is_folder_module = is_folder_module_peer(path);
-    manifest::check_module_path_with_kind(path, &module.name, is_folder_module)
-        .map_err(|s| s.to_string())?;
+    // Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning instead of
+    // silent acceptance для rev-1 legacy declarations.
+    match manifest::check_module_path_with_kind(path, &module.name, is_folder_module) {
+        Ok(manifest::ModulePathCheck::Rev3) => {}
+        Ok(manifest::ModulePathCheck::Rev1Deprecated(msg)) => {
+            eprintln!("warning: {}", msg);
+        }
+        Err(s) => return Err(s.to_string()),
+    }
 
     // Plan 35 R31 (unified pipeline): cross-file resolve через inline
     // expansion. Тот же codepath что в `nova-cli::cmd_build`. Без этого

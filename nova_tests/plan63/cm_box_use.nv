@@ -1,4 +1,4 @@
-module nova_tests.plan63.cm_box_use
+module plan63.cm_box_use
 
 // Plan 63 Fix C cross-module: import generic factory из folder-module,
 // call с typeargs. Tests на anonymous record return mono enrollment
@@ -7,11 +7,11 @@ module nova_tests.plan63.cm_box_use
 import nova_tests.plan63.cm_box.{Box}
 
 test "cross-module Box[int].of" {
-    let m = Box[int].of(42)
+    ro m = Box[int].of(42)
     assert(m.v == 42, "cross-module factory mono'd correctly")
 }
 
 test "cross-module Box[str].of" {
-    let s = Box[str].of("hi")
+    ro s = Box[str].of("hi")
     assert(s.v == "hi", "str-typed cross-module")
 }

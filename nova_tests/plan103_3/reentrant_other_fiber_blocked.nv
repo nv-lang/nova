@@ -2,11 +2,11 @@
 //
 // EXPECT_TIMEOUT_MS 15000
 
-module nova_tests.plan103_3.reentrant_other_fiber_blocked
+module plan103_3.reentrant_other_fiber_blocked
 
 test "other fiber blocked until owner fully releases" {
-    let rm = ReentrantMutex.new()
-    let fiber_b_acquired = AtomicBool.new(false)
+    mut rm = ReentrantMutex.new()
+    mut fiber_b_acquired = AtomicBool.new(false)
 
     // Main acquires lock 3 times (depth = 3)
     rm.lock()

@@ -204,14 +204,14 @@ type Token
     | EofTok
 
 type TokenWithPos {
-    readonly tok Token
-    readonly line int
-    readonly col int
+    ro tok Token
+    ro line int
+    ro col int
 }
 
 // Lexer state — прогресс по входной строке + позиция для диагностики.
 type Lexer {
-    readonly input str
+    ro input str
     mut pos      int            // байтовая позиция (для slice)
     mut line     int            // 1-based
     mut col      int            // 1-based
@@ -224,7 +224,7 @@ fn Lexer.new(input str) -> Self =>
 fn Lexer @peek() -> Option[char] => @input.char_at(@pos)
 
 fn Lexer mut @advance() -> Option[char] {
-    let c = @peek()
+    ro c = @peek()
     match c {
         Some('\n') => { @line += 1; @col = 1 }
         Some(_)    => { @col += 1 }
@@ -235,7 +235,7 @@ fn Lexer mut @advance() -> Option[char] {
 }
 
 fn Lexer mut @skip_whitespace() -> () {
-    let mut done = false
+    mut done = false
     while !done {
         match @peek() {
             Some(' ') | Some('\t') | Some('\n') | Some('\r') => {
@@ -250,8 +250,8 @@ fn Lexer mut @skip_whitespace() -> () {
 // Fail[ParseJsonError] на лексической ошибке.
 fn Lexer mut @next_token() Fail[ParseJsonError] -> TokenWithPos {
     @skip_whitespace()
-    let line = @line
-    let col = @col
+    ro line = @line
+    ro col = @col
 
     match @peek() {
         None      => { tok: EofTok, line, col }
@@ -283,8 +283,8 @@ fn is_hex_digit(c char) -> bool =>
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
     for i in 0..kw.len() {
-        let expected = kw.char_at(i)
-        let actual = @peek()
+        ro expected = kw.char_at(i)
+        ro actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
             throw UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') }
         }
@@ -296,8 +296,8 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonErr
 // Чтение JSON-строки в кавычках. Возвращает декодированный str.
 fn Lexer mut @read_string() Fail[ParseJsonError] -> str {
     @advance()    // открывающая "
-    let mut buf = ""
-    let mut done = false
+    mut buf = ""
+    mut done = false
     while !done {
         match @advance() {
             None => throw UnexpectedEof { @line, @col }
@@ -328,22 +328,22 @@ fn Lexer mut @read_escape() Fail[ParseJsonError] -> str {
 
 // \uXXXX — 4 hex digits. Проверяем surrogate pair для чисел >= 0xD800.
 fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
-    let hex = @read_hex_quad()
-    let code = parse_hex(hex)
+    ro hex = @read_hex_quad()
+    ro code = parse_hex(hex)
     // Surrogate pair: high (D800-DBFF) + low (DC00-DFFF).
     if code >= 0xD800 && code <= 0xDBFF {
         // Ожидаем \u low-surrogate.
-        let next = @advance()
-        let next2 = @advance()
+        ro next = @advance()
+        ro next2 = @advance()
         if next != Some('\\') || next2 != Some('u') {
             throw InvalidUnicode { @line, @col, hex }
         }
-        let low_hex = @read_hex_quad()
-        let low = parse_hex(low_hex)
+        ro low_hex = @read_hex_quad()
+        ro low = parse_hex(low_hex)
         if low < 0xDC00 || low > 0xDFFF {
             throw InvalidUnicode { @line, @col, hex: low_hex }
         }
-        let codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
+        ro codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
         str.from_codepoint(codepoint)
     } else if code >= 0xDC00 && code <= 0xDFFF {
         // Lone low-surrogate — невалидно.
@@ -354,7 +354,7 @@ fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
 }
 
 fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
-    let mut hex = ""
+    mut hex = ""
     for i in 0..4 {
         match @advance() {
             None => throw UnexpectedEof { @line, @col }
@@ -368,9 +368,9 @@ fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
 }
 
 fn parse_hex(s str) -> int {
-    let mut acc = 0
+    mut acc = 0
     for c in s.to_chars() {
-        let d = if c >= '0' && c <= '9' {
+        ro d = if c >= '0' && c <= '9' {
             (c as int) - ('0' as int)
         } else if c >= 'a' && c <= 'f' {
             10 + (c as int) - ('a' as int)
@@ -385,9 +385,9 @@ fn parse_hex(s str) -> int {
 // Чтение числа: optional '-', integer part, optional '.fraction',
 // optional 'e[+-]exp'. Возвращает f64.
 fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
-    let start = @pos
-    let start_line = @line
-    let start_col = @col
+    ro start = @pos
+    ro start_line = @line
+    ro start_col = @col
 
     // Знак
     if @peek() == Some('-') { @advance() }
@@ -436,7 +436,7 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
         _ => ()
     }
 
-    let text = @input[start..@pos]
+    ro text = @input[start..@pos]
     match f64.try_parse(text) {
         Some(n) => n
         None    => throw InvalidNumber {
@@ -459,19 +459,19 @@ type Parser {
 }
 
 fn Parser.new(input str) Fail[ParseJsonError] -> Self {
-    let mut lex = Lexer.new(input)
-    let cur = lex.next_token()
+    mut lex = Lexer.new(input)
+    ro cur = lex.next_token()
     { lex, cur }
 }
 
 fn Parser mut @advance() Fail[ParseJsonError] -> TokenWithPos {
-    let prev = @cur
+    ro prev = @cur
     @cur = @lex.next_token()
     prev
 }
 
 fn Parser mut @parse_value() Fail[ParseJsonError] -> JsonValue {
-    let tp = @cur
+    ro tp = @cur
     match tp.tok {
         NullTok    => { @advance(); Null }
         TrueTok    => { @advance(); Bool(true) }
@@ -502,7 +502,7 @@ fn tok_first_char(t Token) -> char => match t {
 
 fn Parser mut @parse_array() Fail[ParseJsonError] -> JsonValue {
     @advance()    // [
-    let mut items []JsonValue = []
+    mut items []JsonValue = []
 
     // Пустой массив
     if @cur.tok == RBracket {
@@ -511,7 +511,7 @@ fn Parser mut @parse_array() Fail[ParseJsonError] -> JsonValue {
     }
 
     items.push(@parse_value())
-    let mut done = false
+    mut done = false
     while !done {
         match @cur.tok {
             Comma => {
@@ -533,7 +533,7 @@ fn Parser mut @parse_array() Fail[ParseJsonError] -> JsonValue {
 
 fn Parser mut @parse_object() Fail[ParseJsonError] -> JsonValue {
     @advance()    // {
-    let mut fields = HashMap[str, JsonValue].new()
+    mut fields = HashMap[str, JsonValue].new()
 
     // Пустой объект
     if @cur.tok == RBrace {
@@ -542,7 +542,7 @@ fn Parser mut @parse_object() Fail[ParseJsonError] -> JsonValue {
     }
 
     @parse_member(fields)
-    let mut done = false
+    mut done = false
     while !done {
         match @cur.tok {
             Comma => {
@@ -562,10 +562,10 @@ fn Parser mut @parse_object() Fail[ParseJsonError] -> JsonValue {
     Object(fields)
 }
 
-fn Parser mut @parse_member(fields HashMap[str, JsonValue]) Fail[ParseJsonError] -> () {
+fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) Fail[ParseJsonError] -> () {
     // ключ — string token
-    let key_tp = @cur
-    let key = match key_tp.tok {
+    ro key_tp = @cur
+    ro key = match key_tp.tok {
         StrTok(s) => s
         _ => throw UnexpectedChar {
             line: key_tp.line, col: key_tp.col,
@@ -584,7 +584,7 @@ fn Parser mut @parse_member(fields HashMap[str, JsonValue]) Fail[ParseJsonError]
     }
 
     // value
-    let value = @parse_value()
+    ro value = @parse_value()
 
     // RFC 8259: behavior on duplicate keys is implementation-defined.
     // Мы выбираем строгое поведение — DuplicateKey error. Это AI-friendly:
@@ -614,8 +614,8 @@ fn Parser mut @parse_member(fields HashMap[str, JsonValue]) Fail[ParseJsonError]
 /// ```
 #stable(since = "0.1")
 export fn Json.parse(s str) Fail[ParseJsonError] -> JsonValue {
-    let mut p = Parser.new(s)
-    let v = p.parse_value()
+    mut p = Parser.new(s)
+    ro v = p.parse_value()
 
     // Trailing content (после value должен быть только EOF).
     match p.cur.tok {
@@ -670,7 +670,7 @@ fn format_num(n f64) -> str {
 }
 
 fn format_string(s str) -> str {
-    let mut buf = "\""
+    mut buf = "\""
     for c in s.to_chars() {
         buf = buf + escape_char(c)
     }
@@ -690,22 +690,22 @@ fn escape_char(c char) -> str => match c {
 }
 
 fn unicode_escape(code int) -> str {
-    let hex = to_hex_4(code)
+    ro hex = to_hex_4(code)
     "\\u" + hex
 }
 
 fn to_hex_4(n int) -> str {
-    let chars = ['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f']
-    let h0 = chars[(n / 0x1000) % 16]
-    let h1 = chars[(n / 0x100) % 16]
-    let h2 = chars[(n / 0x10) % 16]
-    let h3 = chars[n % 16]
+    ro chars = ['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f']
+    ro h0 = chars[(n / 0x1000) % 16]
+    ro h1 = chars[(n / 0x100) % 16]
+    ro h2 = chars[(n / 0x10) % 16]
+    ro h3 = chars[n % 16]
     str.from(h0) + str.from(h1) + str.from(h2) + str.from(h3)
 }
 
 fn format_array(xs []JsonValue) -> str {
-    let mut buf = "["
-    let mut first = true
+    mut buf = "["
+    mut first = true
     for x in xs {
         if !first { buf = buf + "," }
         buf = buf + x.into()
@@ -715,8 +715,8 @@ fn format_array(xs []JsonValue) -> str {
 }
 
 fn format_object(m HashMap[str, JsonValue]) -> str {
-    let mut buf = "{"
-    let mut first = true
+    mut buf = "{"
+    mut first = true
     for entry in m.iter() {
         if !first { buf = buf + "," }
         buf = buf + format_string(entry.key)
@@ -756,10 +756,10 @@ fn pretty_at(v JsonValue, depth int) -> str => match v {
 }
 
 fn pretty_array(xs []JsonValue, depth int) -> str {
-    let inner_indent = indent(depth + 1)
-    let outer_indent = indent(depth)
-    let mut buf = "[\n"
-    let mut first = true
+    ro inner_indent = indent(depth + 1)
+    ro outer_indent = indent(depth)
+    mut buf = "[\n"
+    mut first = true
     for x in xs {
         if !first { buf = buf + ",\n" }
         buf = buf + inner_indent + pretty_at(x, depth + 1)
@@ -769,10 +769,10 @@ fn pretty_array(xs []JsonValue, depth int) -> str {
 }
 
 fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
-    let inner_indent = indent(depth + 1)
-    let outer_indent = indent(depth)
-    let mut buf = "{\n"
-    let mut first = true
+    ro inner_indent = indent(depth + 1)
+    ro outer_indent = indent(depth)
+    mut buf = "{\n"
+    mut first = true
     for entry in m.iter() {
         if !first { buf = buf + ",\n" }
         buf = buf + inner_indent + format_string(entry.key) + ": " + pretty_at(entry.value, depth + 1)
@@ -782,7 +782,7 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
 }
 
 fn indent(depth int) -> str {
-    let mut s = ""
+    mut s = ""
     for i in 0..depth { s = s + "  " }
     s
 }
@@ -803,19 +803,19 @@ test "parse: примитивы" {
 }
 
 test "parse: пустые collections" {
-    let arr = Json.parse("[]")
+    ro arr = Json.parse("[]")
     assert(arr.is_array())
     match arr.as_array() {
         Some(xs) => assert(xs.len() == 0)
         None     => assert(false)
     }
 
-    let obj = Json.parse("{}")
+    ro obj = Json.parse("{}")
     assert(obj.is_object())
 }
 
 test "parse: array элементов" {
-    let v = Json.parse("[1, 2, 3]")
+    ro v = Json.parse("[1, 2, 3]")
     match v.as_array() {
         Some(xs) => {
             assert(xs.len() == 3)
@@ -828,7 +828,7 @@ test "parse: array элементов" {
 }
 
 test "parse: object с полями" {
-    let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
+    ro v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
     match v.as_object() {
         Some(m) => {
             assert(m.get("name") == Some(Str("alice")))
@@ -839,8 +839,8 @@ test "parse: object с полями" {
 }
 
 test "parse: nested structures" {
-    let s = "{\"users\": [{\"id\": 1}, {\"id\": 2}]}"
-    let v = Json.parse(s)
+    ro s = "{\"users\": [{\"id\": 1}, {\"id\": 2}]}"
+    ro v = Json.parse(s)
     match v.as_object() {
         Some(root) => match root.get("users") {
             Some(users_v) => match users_v.as_array() {
@@ -857,17 +857,17 @@ test "parse: nested structures" {
 }
 
 test "parse: escape sequences в string" {
-    let v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")
+    ro v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")
     assert(v.as_str() == Some("line1\nline2\ttab\"quote"))
 }
 
 test "parse: unicode escape" {
-    let v = Json.parse("\"\\u00E9\"")          // é
+    ro v = Json.parse("\"\\u00E9\"")          // é
     assert(v.as_str() == Some("é"))
 }
 
 test "parse: surrogate pair (emoji)" {
-    let v = Json.parse("\"\\uD83D\\uDE00\"")   // 😀 (U+1F600)
+    ro v = Json.parse("\"\\uD83D\\uDE00\"")   // 😀 (U+1F600)
     match v.as_str() {
         Some(s) => assert(s.len() > 0)
         None    => assert(false)
@@ -875,8 +875,8 @@ test "parse: surrogate pair (emoji)" {
 }
 
 test "parse: ошибка — неизвестный токен" {
-    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        let _ = Json.parse("xyz")
+    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
+        ro _ = Json.parse("xyz")
         None
     }
     assert(match r {
@@ -886,8 +886,8 @@ test "parse: ошибка — неизвестный токен" {
 }
 
 test "parse: ошибка — незакрытая string" {
-    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        let _ = Json.parse("\"unclosed")
+    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
+        ro _ = Json.parse("\"unclosed")
         None
     }
     assert(match r {
@@ -897,8 +897,8 @@ test "parse: ошибка — незакрытая string" {
 }
 
 test "parse: ошибка — trailing content" {
-    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        let _ = Json.parse("42 garbage")
+    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
+        ro _ = Json.parse("42 garbage")
         None
     }
     assert(match r {
@@ -908,8 +908,8 @@ test "parse: ошибка — trailing content" {
 }
 
 test "parse: ошибка — duplicate key" {
-    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        let _ = Json.parse("{\"a\": 1, \"a\": 2}")
+    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
+        ro _ = Json.parse("{\"a\": 1, \"a\": 2}")
         None
     }
     assert(match r {
@@ -919,8 +919,8 @@ test "parse: ошибка — duplicate key" {
 }
 
 test "parse: ошибка — bad number" {
-    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        let _ = Json.parse("01")           // leading zero запрещён в JSON
+    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
+        ro _ = Json.parse("01")           // leading zero запрещён в JSON
         None
     }
     assert(match r {
@@ -930,7 +930,7 @@ test "parse: ошибка — bad number" {
 }
 
 test "into: примитивы — round-trip" {
-    let cases = [
+    ro cases = [
         Null,
         Bool(true),
         Bool(false),
@@ -939,50 +939,50 @@ test "into: примитивы — round-trip" {
         Str("hello"),
     ]
     for v in cases {
-        let s = v.into()
-        let parsed = Json.parse(s)
+        ro s = v.into()
+        ro parsed = Json.parse(s)
         assert(parsed == v)
     }
 }
 
 test "into: array round-trip" {
-    let v = Array([Num(1.0), Num(2.0), Str("three")])
-    let s = v.into()
-    let parsed = Json.parse(s)
+    ro v = Array([Num(1.0), Num(2.0), Str("three")])
+    ro s = v.into()
+    ro parsed = Json.parse(s)
     assert(parsed == v)
 }
 
 test "into: nested object round-trip" {
-    let mut m = HashMap[str, JsonValue].new()
+    mut m = HashMap[str, JsonValue].new()
     m.insert("name", Str("alice"))
     m.insert("score", Num(95.5))
-    let v = Object(m)
-    let s = v.into()
-    let parsed = Json.parse(s)
+    ro v = Object(m)
+    ro s = v.into()
+    ro parsed = Json.parse(s)
     assert(parsed == v)
 }
 
 test "into: escape в string" {
-    let v = Str("line1\nline2\ttab\"quote")
-    let s = v.into()
-    let parsed = Json.parse(s)
+    ro v = Str("line1\nline2\ttab\"quote")
+    ro s = v.into()
+    ro parsed = Json.parse(s)
     assert(parsed == v)
 }
 
 test "D73: JsonValue.from(s) и s.into() работают парно" {
-    let v JsonValue = JsonValue.from("[1, 2, 3]")
+    ro v JsonValue = JsonValue.from("[1, 2, 3]")
     assert(v.is_array())
 
     // Через .into() (D73 авто-Into)
-    let v2 JsonValue = "[1, 2, 3]".into()
+    ro v2 JsonValue = "[1, 2, 3]".into()
     assert(v == v2)
 }
 
 test "pretty: формат с отступами" {
-    let mut m = HashMap[str, JsonValue].new()
+    mut m = HashMap[str, JsonValue].new()
     m.insert("name", Str("alice"))
-    let v = Object(m)
-    let p = pretty(v)
+    ro v = Object(m)
+    ro p = pretty(v)
     // Проверяем что есть newlines (формат multi-line)
     assert(p.contains("\n"))
     // Round-trip через парсер всё ещё работает
@@ -990,7 +990,7 @@ test "pretty: формат с отступами" {
 }
 
 test "whitespace терпимость" {
-    let v = Json.parse("  [  1  ,  2  ]  ")
+    ro v = Json.parse("  [  1  ,  2  ]  ")
     match v.as_array() {
         Some(xs) => assert(xs.len() == 2)
         None     => assert(false)

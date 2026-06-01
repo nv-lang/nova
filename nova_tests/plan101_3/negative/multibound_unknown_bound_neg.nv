@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR [E_BOUND_UNKNOWN]
 
-module nova_tests.plan101_3.negative.multibound_unknown_bound_neg
+module negative.multibound_unknown_bound_neg
 
 
 type HasA protocol {

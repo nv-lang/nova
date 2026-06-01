@@ -8,7 +8,7 @@ module contracts.f9_loop_preentry_positive
 fn empty_loop_ok(n int) -> int
     requires n >= 0
 {
-    let mut i = 0
+    mut i = 0
     while i < n
         invariant i >= 0   // true when i == 0
         invariant i <= n
@@ -21,8 +21,8 @@ fn empty_loop_ok(n int) -> int
 fn deep_loop(n int) -> int
     requires n >= 0
 {
-    let mut sum = 0
-    let mut i = 0
+    mut sum = 0
+    mut i = 0
     while i < n
         invariant 0 <= i
         invariant i <= n

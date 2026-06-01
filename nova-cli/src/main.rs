@@ -1126,8 +1126,17 @@ impl Drop for TmpDirGuard<'_> {
 // ---------- subcommand implementations ----------
 
 fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<()> {
-    nova_codegen::manifest::check_module_path(path, &module.name)
-        .map_err(|msg| anyhow!("{}", msg))
+    use nova_codegen::manifest::ModulePathCheck;
+    // Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning для rev-1
+    // legacy declarations вместо silent acceptance.
+    match nova_codegen::manifest::check_module_path(path, &module.name) {
+        Ok(ModulePathCheck::Rev3) => Ok(()),
+        Ok(ModulePathCheck::Rev1Deprecated(msg)) => {
+            eprintln!("warning: {}", msg);
+            Ok(())
+        }
+        Err(msg) => Err(anyhow!("{}", msg)),
+    }
 }
 
 // Plan 35 R31: resolve_imports_inline extracted в nova_codegen::imports
@@ -3011,6 +3020,30 @@ fn count_consume_bindings_in_block(block: &nova_codegen::ast::Block) -> usize {
     }).count()
 }
 
+/// Plan 110.8.7 (D188): count `consume X = expr { body }` ConsumeScope
+/// variants — top-level stmts only.
+fn count_consume_scopes_in_block(block: &nova_codegen::ast::Block) -> usize {
+    block.stmts.iter().filter(|s| {
+        matches!(s, nova_codegen::ast::Stmt::ConsumeScope { .. })
+    }).count()
+}
+
+/// Plan 110.8.7: aggregate ConsumeScope count across all fn bodies.
+fn module_consume_scope_count(module: &nova_codegen::ast::Module) -> usize {
+    let mut total = 0;
+    for item in &module.items {
+        if let nova_codegen::ast::Item::Fn(fd) = item {
+            match &fd.body {
+                nova_codegen::ast::FnBody::Block(b) => {
+                    total += count_consume_scopes_in_block(b);
+                }
+                _ => {}
+            }
+        }
+    }
+    total
+}
+
 /// Count consume bindings across all top-level function blocks in a module.
 fn module_consume_count(module: &nova_codegen::ast::Module) -> usize {
     let mut total = 0;
@@ -3342,6 +3375,9 @@ fn cmd_build(
     test_runner::install_cancel_handler();
 
     // compile .c → .exe
+    // Plan 115 D214 [M-115-ffi-build-pipeline]: nova-cli build не подхватывает
+    // [ffi] (это test-runner job; standalone build пока без manifest-driven
+    // FFI). Followup: extend nova-cli build чтобы также резолвить manifest.
     let build_opts = test_runner::BuildOpts {
         c_file: &c_file,
         exe_file: &exe_file,
@@ -3351,6 +3387,7 @@ fn cmd_build(
         mode,
         libuv: libuv.as_ref(),
         gc_kind: test_runner::GcKind::default(),
+        ffi: None,
     };
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");

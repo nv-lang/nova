@@ -5,7 +5,7 @@
 //
 // parent.X = folder_internal.internal.
 
-module folder_internal.internal
+module folder_internal.internal.token
 
 export fn make_token(user_id int) -> int =>
     user_id * 31 + 17

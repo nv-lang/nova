@@ -22,37 +22,37 @@ fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int {
 }
 
 test "closure-light: захват параметра функции" {
-    let add5 = make_adder(5)
-    let add10 = make_adder(10)
+    ro add5 = make_adder(5)
+    ro add10 = make_adder(10)
     assert(add5(3) == 8)
     assert(add10(3) == 13)
 }
 
 test "closure-light: независимые closure'ы" {
-    let a = make_adder(1)
-    let b = make_adder(100)
+    ro a = make_adder(1)
+    ro b = make_adder(100)
     assert(a(0) == 1)
     assert(b(0) == 100)
 }
 
 test "closure-light: функция как параметр" {
-    let r = apply_twice(|x| x * 2, 3)
+    ro r = apply_twice(|x| x * 2, 3)
     assert(r == 12)
 }
 
 test "closure-light: композиция" {
-    let inc = |x| x + 1
-    let dbl = |x| x * 2
-    let f = compose(inc, dbl)
+    ro inc = |x| x + 1
+    ro dbl = |x| x * 2
+    ro f = compose(inc, dbl)
     // f(3) = inc(dbl(3)) = inc(6) = 7
     assert(f(3) == 7)
 }
 
 // ─── closure-light: блок-форма ───────────────────────────────────────
 
-test "closure-light: block-форма с let'ами" {
-    let f = |x| {
-        let y = x * 2
+test "closure-light: block-форма с ro'ами" {
+    ro f = |x| {
+        ro y = x * 2
         y + 1
     }
     assert(f(3) == 7)
@@ -66,7 +66,7 @@ fn call_zero(f fn() -> int) -> int {
 }
 
 test "closure-light: no-arg ||" {
-    let zero = || 0
+    ro zero = || 0
     assert(zero() == 0)
     assert(call_zero(|| 42) == 42)
 }
@@ -74,7 +74,7 @@ test "closure-light: no-arg ||" {
 // ─── closure-light: wildcard `_` ─────────────────────────────────────
 
 fn map_constant(xs []int, f fn(int) -> int) -> []int {
-    let out = []int.new()
+    mut out = []int.new()
     for x in xs {
         out.push(f(x))
     }
@@ -82,7 +82,7 @@ fn map_constant(xs []int, f fn(int) -> int) -> []int {
 }
 
 test "closure-light: wildcard игнорирует параметр" {
-    let zeros = map_constant([1, 2, 3], |_| 0)
+    ro zeros = map_constant([1, 2, 3], |_| 0)
     assert(zeros[0] == 0)
     assert(zeros[1] == 0)
     assert(zeros[2] == 0)
@@ -91,13 +91,13 @@ test "closure-light: wildcard игнорирует параметр" {
 // ─── closure-full с явными типами ────────────────────────────────────
 
 test "closure-full: типизированный с => expr" {
-    let inc = fn(x int) -> int => x + 1
+    ro inc = fn(x int) -> int => x + 1
     assert(inc(5) == 6)
 }
 
 test "closure-full: типизированный с { block }" {
-    let f = fn(x int, y int) -> int {
-        let s = x + y
+    ro f = fn(x int, y int) -> int {
+        ro s = x + y
         s * 2
     }
     assert(f(3, 4) == 14)
@@ -106,8 +106,8 @@ test "closure-full: типизированный с { block }" {
 // ─── closure-light: захват immutable ─────────────────────────────────
 
 test "closure-light: захват immutable переменной" {
-    let n = 10
-    let times_n = |x| x * n
+    ro n = 10
+    ro times_n = |x| x * n
     assert(times_n(3) == 30)
     assert(times_n(7) == 70)
 }
@@ -127,15 +127,15 @@ fn dummy_with_pred(value int, pred fn(int) -> bool) -> bool {
 }
 
 test "trailing-fn: expr-body" {
-    let r = dummy_with_pred(5) fn(x int) -> bool => x > 0
+    ro r = dummy_with_pred(5) fn(x int) -> bool => x > 0
     assert(r == true)
-    let q = dummy_with_pred(-3) fn(x int) -> bool => x > 0
+    ro q = dummy_with_pred(-3) fn(x int) -> bool => x > 0
     assert(q == false)
 }
 
 test "trailing-fn: block-body" {
-    let r = dummy_with_pred(7) fn(x int) -> bool {
-        let doubled = x * 2
+    ro r = dummy_with_pred(7) fn(x int) -> bool {
+        ro doubled = x * 2
         doubled > 10
     }
     assert(r == true)

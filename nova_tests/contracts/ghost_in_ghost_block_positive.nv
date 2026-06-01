@@ -4,14 +4,14 @@
 module contracts.ghost_in_ghost_block_positive
 
 fn ghost_chain(x int) -> int {
-    ghost let a = x + 1
-    ghost let b = a * 2   // ghost читает ghost — OK
-    ghost let c = b + a   // OK
+    ghost ro a = x + 1
+    ghost ro b = a * 2   // ghost читает ghost — OK
+    ghost ro c = b + a   // OK
     assert_static c > 0 || x <= -1
     x
 }
 
-test "цепочка ghost let — OK" {
+test "цепочка ghost ro — OK" {
     assert(ghost_chain(1) == 1)
     assert(ghost_chain(10) == 10)
 }

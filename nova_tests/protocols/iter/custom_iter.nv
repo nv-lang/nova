@@ -15,7 +15,7 @@ fn CountDown mut @next() -> Option[int] {
     if @current <= 0 {
         None
     } else {
-        let v = @current
+        ro v = @current
         @current = @current - 1
         Some(v)
     }
@@ -23,7 +23,7 @@ fn CountDown mut @next() -> Option[int] {
 
 
 test "next() — последовательность значений" {
-    let mut cd = CountDown.new(3)
+    mut cd = CountDown.new(3)
     assert(cd.next() == Some(3))
     assert(cd.next() == Some(2))
     assert(cd.next() == Some(1))
@@ -31,7 +31,7 @@ test "next() — последовательность значений" {
 }
 
 test "next() после исчерпания безопасен (idempotent None)" {
-    let mut cd = CountDown.new(1)
+    mut cd = CountDown.new(1)
     assert(cd.next() == Some(1))
     assert(cd.next() == None)
     assert(cd.next() == None)
@@ -39,15 +39,15 @@ test "next() после исчерпания безопасен (idempotent None
 }
 
 test "next() — старт с 1" {
-    let mut cd = CountDown.new(1)
+    mut cd = CountDown.new(1)
     assert(cd.next() == Some(1))
     assert(cd.next() == None)
 }
 
 test "next() — состояние продвигается" {
-    let mut cd = CountDown.new(5)
-    let a = cd.next()
-    let b = cd.next()
+    mut cd = CountDown.new(5)
+    ro a = cd.next()
+    ro b = cd.next()
     assert(a == Some(5))
     assert(b == Some(4))
     // следующий — Some(3), состояние не сбрасывается
@@ -55,8 +55,8 @@ test "next() — состояние продвигается" {
 }
 
 test "два независимых итератора не делят состояние" {
-    let mut a = CountDown.new(2)
-    let mut b = CountDown.new(2)
+    mut a = CountDown.new(2)
+    mut b = CountDown.new(2)
     assert(a.next() == Some(2))
     // b не затронут чтением a
     assert(b.next() == Some(2))

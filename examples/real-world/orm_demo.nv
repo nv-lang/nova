@@ -38,7 +38,7 @@
 // - [D55](../spec/decisions/02-types.md#d55) literal coercion для
 //   newtype → SqlValue.
 
-module examples.orm_demo
+module real-world.orm_demo
 
 use std.sql                              // Sql, SqlValue, Db, DbRow, SqlBuilder
 
@@ -53,20 +53,20 @@ type UserId u64
 type PostId u64
 
 type User {
-    readonly id    UserId
+    ro id    UserId
     name           str
     email          str
     balance        i64                   // для transfer пример
     version        i64                   // для optimistic locking
-    readonly created_at Timestamp
+    ro created_at Timestamp
 }
 
 type Post {
-    readonly id      PostId
-    readonly user_id UserId              // FK → User.id
+    ro id      PostId
+    ro user_id UserId              // FK → User.id
     title            str
     body             str
-    readonly created_at Timestamp
+    ro created_at Timestamp
 }
 
 
@@ -95,10 +95,10 @@ export type RepoError
 // Эти три функции — единственный type-specific код. CRUD-операции,
 // query-builder, relations, transactions — все generic.
 export type Repo[T] {
-    readonly table      str
-    readonly from_row   fn(DbRow) Fail[RepoError] -> T
-    readonly to_columns fn(T) -> []ColumnValue
-    readonly id_of      fn(T) -> u64
+    ro table      str
+    ro from_row   fn(DbRow) Fail[RepoError] -> T
+    ro to_columns fn(T) -> []ColumnValue
+    ro id_of      fn(T) -> u64
 }
 
 // ColumnValue — пара "имя колонки : SqlValue" для INSERT/UPDATE.
@@ -116,8 +116,8 @@ export type ColumnValue {
 // find_by_id — поиск по PK. NotFound отдельной ошибкой, чтобы caller
 // мог отличить «нет записи» от «БД упала».
 export fn Repo[T] @find_by_id(id u64) Db Fail[RepoError] -> T {
-    let q = sql`SELECT * FROM ${@table} WHERE id = ${id}`
-    let rows = Db.query(q)
+    ro q = sql`SELECT * FROM ${@table} WHERE id = ${id}`
+    ro rows = Db.query(q)
     match rows {
         []     => throw NotFound
         [r]    => @from_row(r)
@@ -127,7 +127,7 @@ export fn Repo[T] @find_by_id(id u64) Db Fail[RepoError] -> T {
 
 // find_one — первая строка из произвольного query. None если пусто.
 export fn Repo[T] @find_one(q Sql) Db Fail[RepoError] -> Option[T] {
-    let rows = Db.query(q)
+    ro rows = Db.query(q)
     match rows {
         []      => None
         [r, ..] => Some(@from_row(r))
@@ -141,8 +141,8 @@ export fn Repo[T] @list_all() Db Fail[RepoError] -> []T =>
 
 // list_with — выполнить произвольный SELECT, парсить каждую строку.
 export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
-    let rows = Db.query(q)
-    let mut out []T = []T.with_capacity(rows.len())
+    ro rows = Db.query(q)
+    mut out []T = []T.with_capacity(rows.len())
     for r in rows {
         out.push(@from_row(r))
     }
@@ -155,20 +155,20 @@ export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
 // программист исключает из to_columns — они выставляются БД через
 // DEFAULT/SERIAL.
 export fn Repo[T] @insert(value T) Db Fail[RepoError] -> u64 {
-    let cols = @to_columns(value)
+    ro cols = @to_columns(value)
     if cols.len() == 0 { throw Inconsistent("empty INSERT") }
 
     // Собираем имена и значения отдельно. Имена — статические идентификаторы
     // (не пользовательский ввод), значения — параметры.
-    let names_csv = cols.map(|c| c.name).join(", ")
-    let placeholders = cols.map(|_| "?").join(", ")
-    let args []SqlValue = cols.map(|c| c.value)
+    ro names_csv = cols.map(|c| c.name).join(", ")
+    ro placeholders = cols.map(|_| "?").join(", ")
+    ro args []SqlValue = cols.map(|c| c.value)
 
-    let q Sql = {
+    ro q Sql = {
         template: "INSERT INTO ${@table} (${names_csv}) VALUES (${placeholders}) RETURNING id",
         args,
     }
-    let rows = Db.query(q)
+    ro rows = Db.query(q)
     match rows {
         [r] => r.get_int("id") as u64
         _   => throw Inconsistent("INSERT...RETURNING expected exactly 1 row")
@@ -178,14 +178,14 @@ export fn Repo[T] @insert(value T) Db Fail[RepoError] -> u64 {
 // update — generic, через `to_columns` + `id_of`. Перезаписывает все
 // колонки из to_columns. Возвращает true если запись была.
 export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
-    let cols = @to_columns(value)
+    ro cols = @to_columns(value)
     if cols.len() == 0 { throw Inconsistent("empty UPDATE") }
 
-    let assigns = cols.map(|c| "${c.name} = ?").join(", ")
-    let mut args []SqlValue = cols.map(|c| c.value)
+    ro assigns = cols.map(|c| "${c.name} = ?").join(", ")
+    mut args []SqlValue = cols.map(|c| c.value)
     args.push(I(@id_of(value) as i64))
 
-    let q Sql = {
+    ro q Sql = {
         template: "UPDATE ${@table} SET ${assigns} WHERE id = ?",
         args,
     }
@@ -199,24 +199,24 @@ export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
 // ловит Conflict через handler-лямбду и решает retry/abort.
 export fn Repo[T] @update_versioned(value T, expected_version i64)
     Db Fail[RepoError] -> () {
-    let cols = @to_columns(value)
-    let assigns = cols.map(|c| "${c.name} = ?").join(", ")
-    let mut args []SqlValue = cols.map(|c| c.value)
+    ro cols = @to_columns(value)
+    ro assigns = cols.map(|c| "${c.name} = ?").join(", ")
+    mut args []SqlValue = cols.map(|c| c.value)
     args.push(I(@id_of(value) as i64))
     args.push(I(expected_version))
 
-    let q Sql = {
+    ro q Sql = {
         template: "UPDATE ${@table} SET ${assigns}, version = version + 1 "
                 + "WHERE id = ? AND version = ?",
         args,
     }
-    let affected = Db.exec(q)
+    ro affected = Db.exec(q)
     if affected == 0 { throw Conflict }
 }
 
 // delete — по id. true если запись была.
 export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
-    let q = sql`DELETE FROM ${@table} WHERE id = ${id}`
+    ro q = sql`DELETE FROM ${@table} WHERE id = ${id}`
     Db.exec(q) > 0
 }
 
@@ -230,8 +230,8 @@ export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlVal
     Db Fail[RepoError] -> []T {
     if keys.len() == 0 { return [] }
 
-    let sql_keys []SqlValue = keys.map(key_to_sql)
-    let q = Sql.builder(sql`SELECT * FROM ${@table} WHERE 1 = 1`)
+    ro sql_keys []SqlValue = keys.map(key_to_sql)
+    ro q = Sql.builder(sql`SELECT * FROM ${@table} WHERE 1 = 1`)
         .where_in(fk_col, sql_keys)
         .build()
     @list_with(q)
@@ -322,21 +322,21 @@ export type Page[T] {
 // между страницами (в отличие от LIMIT/OFFSET).
 export fn Repo[T] @fetch_page(after Option[u64], size int)
     Db Fail[RepoError] -> Page[T] {
-    let cursor_predicate Sql = match after {
+    ro cursor_predicate Sql = match after {
         Some(id) => { template: "AND id > ?", args: [id as i64] }
         None     => { template: "", args: [] }
     }
-    let q Sql = {
+    ro q Sql = {
         template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} "
                 + "ORDER BY id ASC LIMIT ?",
         args: [...cursor_predicate.args, (size + 1) as i64],
     }
-    let items = @list_with(q)
+    ro items = @list_with(q)
 
     if items.len() > size {
         // size + 1 строка — есть следующая. Обрезаем хвост.
-        let trimmed = items[0..size]
-        let last_id = @id_of(trimmed[size - 1])
+        ro trimmed = items[0..size]
+        ro last_id = @id_of(trimmed[size - 1])
         Page { items: trimmed, next_cursor: Some(last_id) }
     } else {
         Page { items, next_cursor: None }
@@ -357,12 +357,12 @@ export fn users_repo() -> Repo[User] =>
     }
 
 fn row_to_user(row DbRow) Fail[RepoError] -> User {
-    let id        = row.get_int("id")
-    let name      = row.get_str("name")
-    let email     = row.get_str("email")
-    let balance   = row.get_int("balance")
-    let version   = row.get_int("version")
-    let ts        = row.get_int("created_at")
+    ro id        = row.get_int("id")
+    ro name      = row.get_str("name")
+    ro email     = row.get_str("email")
+    ro balance   = row.get_int("balance")
+    ro version   = row.get_int("version")
+    ro ts        = row.get_int("created_at")
 
     User {
         id: id as UserId,
@@ -395,11 +395,11 @@ export fn posts_repo() -> Repo[Post] =>
     }
 
 fn row_to_post(row DbRow) Fail[RepoError] -> Post {
-    let id      = row.get_int("id")
-    let user_id = row.get_int("user_id")
-    let title   = row.get_str("title")
-    let body    = row.get_str("body")
-    let ts      = row.get_int("created_at")
+    ro id      = row.get_int("id")
+    ro user_id = row.get_int("user_id")
+    ro title   = row.get_str("title")
+    ro body    = row.get_str("body")
+    ro ts      = row.get_int("created_at")
 
     Post {
         id: id as PostId,
@@ -435,15 +435,15 @@ export fn posts_of(user_id UserId) Db Fail[RepoError] -> []Post =>
 // Каноническое анти-N+1: вызывающий получает []User, потом одной
 // функцией собирает посты для всех сразу.
 export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId, []Post] {
-    let posts = posts_repo().bulk_load(
+    ro posts = posts_repo().bulk_load(
         "user_id",
         user_ids,
         |uid| I(uid as i64),
     )
 
-    let mut grouped = HashMap[UserId, []Post].new()
+    mut grouped = HashMap[UserId, []Post].new()
     for p in posts {
-        let bucket = grouped.get_or_insert(p.user_id, [])
+        ro bucket = grouped.get_or_insert(p.user_id, [])
         bucket.push(p)
     }
     grouped
@@ -472,17 +472,17 @@ export fn transfer_balance(from_id UserId, to_id UserId, amount i64)
     if amount <= 0 { throw Inconsistent("amount must be positive") }
 
     Db.in_transaction(|| {
-        let repo = users_repo()
-        let from = repo.find_by_id(from_id as u64)
-        let to   = repo.find_by_id(to_id as u64)
+        ro repo = users_repo()
+        ro from = repo.find_by_id(from_id as u64)
+        ro to   = repo.find_by_id(to_id as u64)
 
         if from.balance < amount {
             throw Inconsistent("insufficient balance for ${from_id as u64}")
         }
 
         // D60 spread — immutable update без перечисления остальных полей.
-        let from_updated = { ...from, balance: from.balance - amount }
-        let to_updated   = { ...to,   balance: to.balance + amount }
+        ro from_updated = { ...from, balance: from.balance - amount }
+        ro to_updated   = { ...to,   balance: to.balance + amount }
 
         // Optimistic locking: если кто-то параллельно обновил баланс,
         // version mismatch → Conflict → handler rollback'ит.
@@ -506,7 +506,7 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Effect[Db] => effect
     query(q) {
         // SELECT WHERE id = ?
         if q.template.contains("WHERE id = ?") {
-            let id = match q.args[0] {
+            ro id = match q.args[0] {
                 I(n) => n as u64
                 _    => panic("expected i64 id arg")
             }
@@ -516,11 +516,11 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Effect[Db] => effect
             }
         } else if q.template.contains("WHERE id IN") {
             // SELECT WHERE id IN (?, ?, ...) — bulk_load
-            let ids []u64 = q.args.map(|a| match a {
+            ro ids []u64 = q.args.map(|a| match a {
                 I(n) => n as u64
                 _    => 0
             })
-            let mut out []DbRow = []
+            mut out []DbRow = []
             for id in ids {
                 match storage.get(id) {
                     Some(r) => out.push(r)
@@ -532,11 +532,11 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Effect[Db] => effect
             // INSERT — возвращаем фиктивный id (реальный handler выдал бы
             // следующий sequence). Тесты, которые проверяют конкретный id
             // после insert, должны использовать другой handler.
-            let new_id = (storage.len() + 1) as u64
+            ro new_id = (storage.len() + 1) as u64
             [{ columns: ["id"], values: [I(new_id as i64)] }]
         } else {
             // SELECT FROM <table> — все записи.
-            let mut out []DbRow = []
+            mut out []DbRow = []
             for v in storage.values() { out.push(v) }
             out
         }
@@ -544,7 +544,7 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Effect[Db] => effect
     exec(q) {
         // DELETE / UPDATE — упрощённо: ищем `id = ?` среди args.
         if q.template.starts_with("DELETE") {
-            let id = match q.args[0] {
+            ro id = match q.args[0] {
                 I(n) => n as u64
                 _    => 0
             }
@@ -556,7 +556,7 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Effect[Db] => effect
             }
         } else {
             // UPDATE — последний arg обычно id.
-            let id = match q.args[q.args.len() - 1] {
+            ro id = match q.args[q.args.len() - 1] {
                 I(n) => n as u64
                 _    => 0
             }
@@ -575,11 +575,11 @@ fn seed_user(storage mut HashMap[u64, DbRow], id u64, name str, email str, balan
 }
 
 test "find_by_id returns the user" {
-    let mut storage = HashMap[u64, DbRow].new()
+    mut storage = HashMap[u64, DbRow].new()
     seed_user(storage, 1, "alice", "a@example.com", 100)
 
     with Db = in_memory_db_handler(storage) {
-        let u = users_repo().find_by_id(1)
+        ro u = users_repo().find_by_id(1)
         assert u.name == "alice"
         assert u.email == "a@example.com"
         assert u.balance == 100
@@ -587,10 +587,10 @@ test "find_by_id returns the user" {
 }
 
 test "find_by_id throws NotFound for missing id" {
-    let mut storage = HashMap[u64, DbRow].new()
+    mut storage = HashMap[u64, DbRow].new()
     with Db = in_memory_db_handler(storage),
          Fail[RepoError] = |e| interrupt e {
-        let r = users_repo().find_by_id(999)
+        ro r = users_repo().find_by_id(999)
         match r {
             NotFound => ()                   // ожидаемый исход
             _        => assert false
@@ -599,14 +599,14 @@ test "find_by_id throws NotFound for missing id" {
 }
 
 test "Query fluent builder — where_eq + limit + fetch_all" {
-    let mut storage = HashMap[u64, DbRow].new()
+    mut storage = HashMap[u64, DbRow].new()
     seed_user(storage, 1, "alice", "a@example.com", 100)
     seed_user(storage, 2, "bob",   "b@example.com", 200)
 
     with Db = in_memory_db_handler(storage) {
         // В упрощённом handler'е WHERE name = ? игнорируется, и мы получаем
         // всех — но композиция запроса демонстрируется.
-        let active = users_repo().query()
+        ro active = users_repo().query()
             .where_eq("name", S("alice"))
             .limit(10)
             .fetch_all()
@@ -615,24 +615,24 @@ test "Query fluent builder — where_eq + limit + fetch_all" {
 }
 
 test "delete returns true when row existed" {
-    let mut storage = HashMap[u64, DbRow].new()
+    mut storage = HashMap[u64, DbRow].new()
     seed_user(storage, 1, "alice", "a@example.com", 100)
 
     with Db = in_memory_db_handler(storage) {
-        let repo = users_repo()
+        ro repo = users_repo()
         assert repo.delete(1) == true
         assert repo.delete(1) == false       // повторно — нечего удалять
     }
 }
 
 test "bulk_load — anti-N+1 для списка id'ов" {
-    let mut storage = HashMap[u64, DbRow].new()
+    mut storage = HashMap[u64, DbRow].new()
     seed_user(storage, 1, "alice", "a@example.com", 100)
     seed_user(storage, 2, "bob",   "b@example.com", 200)
     seed_user(storage, 3, "carol", "c@example.com", 300)
 
     with Db = in_memory_db_handler(storage) {
-        let users = users_repo().bulk_load(
+        ro users = users_repo().bulk_load(
             "id",
             [1 as UserId, 2 as UserId, 3 as UserId],
             |uid| I(uid as i64),
@@ -643,17 +643,17 @@ test "bulk_load — anti-N+1 для списка id'ов" {
 
 // transfer с rollback на throw — главный transaction-тест.
 test "transfer rolls back on throw" {
-    let mut commits = 0
-    let mut rollbacks = 0
+    mut commits = 0
+    mut rollbacks = 0
 
-    let captured = with Db = effect Db {
+    ro captured = with Db = effect Db {
         query(q)  => []                     // всегда пусто → NotFound
         exec(q)   => 0
         in_transaction(b) {
             // Симулируем postgres-handler: при throw делаем rollback,
             // при успехе — commit. На реальном соединении это были бы
             // BEGIN/COMMIT/ROLLBACK SQL-команды.
-            let r = try_run(b)
+            ro r = try_run(b)
             match r {
                 Ok(v)  => { commits += 1; v }
                 Err(e) => { rollbacks += 1; throw e }
@@ -674,11 +674,11 @@ test "transfer rolls back on throw" {
 
 // Optimistic locking — Conflict при mismatch версии.
 test "update_versioned throws Conflict on version mismatch" {
-    let mut storage = HashMap[u64, DbRow].new()
+    mut storage = HashMap[u64, DbRow].new()
     seed_user(storage, 1, "alice", "a@example.com", 100)
 
     // exec возвращает 0 affected rows → handler сообщит "не совпала версия".
-    let captured = with Db = effect Db {
+    ro captured = with Db = effect Db {
         query(q) {
             match storage.get(1) {
                 Some(r) => [r]
@@ -689,9 +689,9 @@ test "update_versioned throws Conflict on version mismatch" {
         in_transaction(b)  => b()
     },
          Fail[RepoError] = |e| interrupt Some(e) {
-        let repo = users_repo()
-        let u = repo.find_by_id(1)
-        let updated = { ...u, balance: 999 }
+        ro repo = users_repo()
+        ro u = repo.find_by_id(1)
+        ro updated = { ...u, balance: 999 }
         repo.update_versioned(updated, u.version)
         None                                  // throw'а не было — None
     }
@@ -702,8 +702,8 @@ test "update_versioned throws Conflict on version mismatch" {
 }
 
 test "Page pagination — cursor + has_next" {
-    let mut storage = HashMap[u64, DbRow].new()
-    let mut i = 1
+    mut storage = HashMap[u64, DbRow].new()
+    mut i = 1
     while i <= 5 {
         seed_user(storage, i as u64, "user${i}", "u${i}@x.com", 0)
         i += 1
@@ -714,7 +714,7 @@ test "Page pagination — cursor + has_next" {
         // (Упрощённый handler возвращает все записи; реальный соблюдает
         //  LIMIT.) Тест демонстрирует API; точные значения зависят от
         //  handler'а.
-        let page = users_repo().fetch_page(None, 2)
+        ro page = users_repo().fetch_page(None, 2)
         assert page.items.len() <= 2 || page.next_cursor != None
     }
 }

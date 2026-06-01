@@ -1,0 +1,11 @@
+// Plan 108.3 (D36 amend): `let (a, b) = pair` — оба immutable, read OK.
+
+module plan108_3.pattern_default_readonly_ok
+
+test "pattern default — both immutable read OK" {
+    ro (a, b) = ([10, 20], [30, 40])
+    assert(a.len() == 2)
+    assert(b.len() == 2)
+    assert(a[0] == 10)
+    assert(b[1] == 40)
+}

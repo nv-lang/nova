@@ -10,18 +10,18 @@ module plan11_followup.f10_hashmap_self_restored_positive
 import std.collections.hashmap.{HashMap}
 
 test "HashMap.new() через Self → Self.with_capacity(16)" {
-    let m HashMap[str, int] = HashMap[str, int].new()
+    ro m HashMap[str, int] = HashMap[str, int].new()
     assert(m.len() == 0)
     assert(m.is_empty())
 }
 
 test "HashMap.with_capacity(n) через Self return type" {
-    let m HashMap[str, int] = HashMap[str, int].with_capacity(32)
+    ro m HashMap[str, int] = HashMap[str, int].with_capacity(32)
     assert(m.len() == 0)
 }
 
 test "HashMap.new + insert + lookup roundtrip" {
-    let mut m HashMap[str, int] = HashMap[str, int].new()
+    mut m HashMap[str, int] = HashMap[str, int].new()
     m.insert("k1", 10)
     m.insert("k2", 20)
     assert(m.len() == 2)

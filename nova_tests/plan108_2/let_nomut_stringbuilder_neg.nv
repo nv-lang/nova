@@ -1,0 +1,11 @@
+// Plan 108.2 (D36 enforcement): `let` без `mut` → StringBuilder.append даёт E_LOCAL_NOT_MUT.
+
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan108_2.let_nomut_stringbuilder_neg
+
+test "let no-mut + StringBuilder.append → error" {
+    consume sb = StringBuilder.from("x")
+    ro other = sb.clone()
+    other.append("y")
+}

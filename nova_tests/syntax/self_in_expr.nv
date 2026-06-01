@@ -28,9 +28,9 @@ export fn Account.acc_new() -> Self =>
 
 
 test "Self.method(...) в static — default → parameterized" {
-    let a = Account.acc_new()
+    ro a = Account.acc_new()
     assert(a.balance == 0)
-    let b = Account.acc_with_initial(100)
+    ro b = Account.acc_with_initial(100)
     assert(b.balance == 100)
 }
 
@@ -50,9 +50,9 @@ export fn Box.box_tagged(v int, t int) -> Self =>
 
 
 test "Self { ... } literal" {
-    let b1 = Box.box_empty()
+    ro b1 = Box.box_empty()
     assert(b1.value == 0 && b1.tag == 0)
-    let b2 = Box.box_tagged(42, 7)
+    ro b2 = Box.box_tagged(42, 7)
     assert(b2.value == 42 && b2.tag == 7)
 }
 
@@ -74,9 +74,9 @@ export fn Builder.bld_from_default() -> Self =>
 
 
 test "Self.method chain в нескольких constructors" {
-    let b = Builder.bld_from_default()
+    ro b = Builder.bld_from_default()
     assert(b.count == 0)
-    let c = Builder.bld_with_count(5)
+    ro c = Builder.bld_with_count(5)
     assert(c.count == 5)
 }
 
@@ -95,7 +95,7 @@ export fn Counter.ctr_from_pair(a int, b int) -> Self =>
 
 
 test "Self.method с несколькими args" {
-    let c = Counter.ctr_from_pair(3, 4)
+    ro c = Counter.ctr_from_pair(3, 4)
     assert(c.value == 7)
 }
 
@@ -116,8 +116,8 @@ export fn SelfInstance @si_double() -> Self =>
 
 
 test "Self.method из instance-метода" {
-    let a = SelfInstance.si_make(5)
-    let b = a.si_double()
+    ro a = SelfInstance.si_make(5)
+    ro b = a.si_double()
     assert(b.n == 10)
 }
 
@@ -136,9 +136,9 @@ export fn Chain @chain_next() -> Self =>
 
 
 test "Self в return + Self literal в body" {
-    let c0 = Chain.chain_zero()
-    let c1 = c0.chain_next()
-    let c2 = c1.chain_next()
+    ro c0 = Chain.chain_zero()
+    ro c1 = c0.chain_next()
+    ro c2 = c1.chain_next()
     assert(c2.step == 2)
 }
 
@@ -160,6 +160,6 @@ export fn Nest.nst_two() -> Self =>
 
 
 test "nested Self.method calls" {
-    let n = Nest.nst_two()
+    ro n = Nest.nst_two()
     assert(n.depth == 2)
 }

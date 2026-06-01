@@ -4,17 +4,17 @@
 // EXPECT_TIMEOUT_MS 60000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_6.blocking_mutex_unlock_ok
+module plan103_6.blocking_mutex_unlock_ok
 
 #blocking fn _blk_mutex_unlock(m mut Mutex) {
     m.unlock()
 }
 
 test "Mutex.unlock (wake-only) allowed in #blocking fn" {
-    let m = Mutex.new()
+    mut m = Mutex.new()
     m.lock()
     _blk_mutex_unlock(m)
-    let acquired = m.try_lock()
+    ro acquired = m.try_lock()
     assert(acquired == true)
     m.unlock()
 }

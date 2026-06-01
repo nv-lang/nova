@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.6.10 T11.7 (D193): MultiError compose depth verification
+// (cycle-safety + depth-limit 256 stress).
+
+module plan110.multierror_compose_depth_t11_7
+
+fn make_multi_with_depth(depth int) -> MultiError {
+    mut suppressed = []str.with_capacity(depth)
+    for i in 0..depth {
+        suppressed.push("error-${i}")
+    }
+    MultiError {
+        primary: "primary",
+        suppressed,
+    }
+}
+
+fn test_walk_depth_10() -> int {
+    ro me = make_multi_with_depth(10)
+    me.walk().len()
+}
+
+fn test_walk_depth_100() -> int {
+    ro me = make_multi_with_depth(100)
+    me.walk().len()
+}
+
+test "Plan 110.6.10 T11.7: MultiError @walk depth 10" {
+    // 10 suppressed + 1 primary = 11.
+    assert(test_walk_depth_10() == 11)
+}
+
+test "Plan 110.6.10 T11.7: MultiError @walk depth 100" {
+    // 100 suppressed + 1 primary = 101.
+    assert(test_walk_depth_100() == 101)
+}

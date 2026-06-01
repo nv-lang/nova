@@ -1,15 +1,15 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @fold[Acc].
 
-module nova_tests.plan101_1.vec_fold_int_int
+module plan101_1.vec_fold_int_int
 
 fn[T] []T @my_fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
-    let mut acc = init
+    mut acc = init
     for x in @ { acc = f(acc, x) }
     acc
 }
 
 test "fn[T] []T @fold sum int" {
-    let v []int = [1, 2, 3, 4]
-    let sum = v.my_fold(0, |acc, x| acc + x)
+    ro v []int = [1, 2, 3, 4]
+    ro sum = v.my_fold(0, |acc, x| acc + x)
     assert(sum == 10)
 }

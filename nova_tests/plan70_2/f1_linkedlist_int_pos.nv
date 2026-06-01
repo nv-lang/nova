@@ -4,7 +4,7 @@
 // constructor name; Cons destructure → t: void* вместо LinkedList____nova_int*;
 // method dispatch collides с StringBuilder.
 
-module nova_tests.plan70_2.f1_linkedlist_int_pos
+module plan70_2.f1_linkedlist_int_pos
 
 type LinkedList[T]
     | Nil
@@ -25,15 +25,15 @@ fn sum_int(l LinkedList[int]) -> int {
 }
 
 test "LinkedList[int]: nil + cons + len" {
-    let l0 LinkedList[int] = Nil
-    let l1 = Cons(1, l0)
-    let l2 = Cons(2, l1)
-    let l3 = Cons(3, l2)
+    ro l0 LinkedList[int] = Nil
+    ro l1 = Cons(1, l0)
+    ro l2 = Cons(2, l1)
+    ro l3 = Cons(3, l2)
     assert(len_int(l0) == 0)
     assert(len_int(l3) == 3)
 }
 
 test "LinkedList[int]: sum" {
-    let l = Cons(10, Cons(20, Cons(30, Nil)))
+    ro l = Cons(10, Cons(20, Cons(30, Nil)))
     assert(sum_int(l) == 60)
 }

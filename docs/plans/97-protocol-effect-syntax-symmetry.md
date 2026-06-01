@@ -61,15 +61,15 @@ effect. Раздельные планы 97 и 98 объединены 2026-05-23
 type Cron effect   { run() -> () }      // declaration
 type Fan  protocol { run() -> () }      // declaration
 
-let h = handler Cron { run() => () }    // literal — иной keyword
-let p = ???                              // literal — НЕТ
+ro h = handler Cron { run() => () }    // literal — иной keyword
+ro p = ???                              // literal — НЕТ
 ```
 
 Закрывается единой решёткой:
 
 ```nova
-let h = effect   Db  { query(q) => mock_rows() }    // keyword из declaration
-let p = protocol Fan { run() => spin_blades() }     // keyword из declaration
+ro h = effect   Db  { query(q) => mock_rows() }    // keyword из declaration
+ro p = protocol Fan { run() => spin_blades() }     // keyword из declaration
 
 fn db()  -> Effect[Db]                              // rename Handler → Effect
 fn db2() -> Effect[Db, ShutdownSignal]
@@ -82,9 +82,9 @@ type Locker   protocol { lock()   -> () }
 type Unlocker protocol { unlock() -> () }
 
 fn Lock.new() -> (Locker, Unlocker) {
-    let state = MutexState { ... }
-    let l = protocol Locker   { lock()   => state.lock() }
-    let u = protocol Unlocker { unlock() => state.unlock() }
+    ro state = MutexState { ... }
+    ro l = protocol Locker   { lock()   => state.lock() }
+    ro u = protocol Unlocker { unlock() => state.unlock() }
     (l, u)
 }
 ```

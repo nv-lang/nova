@@ -476,16 +476,16 @@ out.push_str(&format!("Nova_Receiver* {} = {}.rx;\n", rx_name, tmp));
 Паттерн замены:
 ```nova
 // Было:
-let ch = Channel.new(4)
+ro ch = Channel.new(4)
 ch.send(10)
-let v = ch.recv()
+ro v = ch.recv()
 ch.close()
 
 // Стало:
-let (tx, rx) = Channel.new(4)
+ro (tx, rx) = Channel.new(4)
 defer tx.close()
 tx.send(10)
-let v = rx.recv()
+ro v = rx.recv()
 ```
 
 **Специфика:**
@@ -500,15 +500,15 @@ let v = rx.recv()
 
 ```nova
 test "channel: concurrent send+recv via spawn" {
-    let (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel.new(1)
     defer tx.close()
-    let mut received = 0
+    mut received = 0
     supervised {
         spawn {
             tx.send(42)
         }
         spawn {
-            let v = rx.recv()
+            ro v = rx.recv()
             received = v.unwrap_or(-1)
         }
     }
@@ -516,9 +516,9 @@ test "channel: concurrent send+recv via spawn" {
 }
 
 test "channel: producer-consumer pipeline" {
-    let (tx, rx) = Channel.new(4)
+    ro (tx, rx) = Channel.new(4)
     defer tx.close()
-    let mut sum = 0
+    mut sum = 0
     supervised {
         spawn {
             for i in 1..=5 {
@@ -526,7 +526,7 @@ test "channel: producer-consumer pipeline" {
             }
         }
         spawn {
-            while let Some(v) = rx.recv() {
+            while Some(v) = rx.recv() {
                 sum = sum + v
             }
         }
@@ -535,13 +535,13 @@ test "channel: producer-consumer pipeline" {
 }
 
 test "channel: cancel during recv" {
-    let (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel.new(1)
     defer tx.close()
-    let mut cancelled = false
+    mut cancelled = false
     supervised {
         spawn {
             // recv на пустом канале — park'ается
-            let _ = rx.recv()  // должен проснуться от cancel
+            ro _ = rx.recv()  // должен проснуться от cancel
         }
     }
     // supervised закрывается после cancel → rx.recv() бросает
@@ -562,8 +562,8 @@ test "channel: cancel during recv" {
 // EXPECT: error
 module nova_tests.negative.channel_sender_no_recv
 test "sender cannot recv" {
-    let (tx, _rx) = Channel.new(1)
-    let _ = tx.recv()  // Sender не имеет метода recv
+    ro (tx, _rx) = Channel.new(1)
+    ro _ = tx.recv()  // Sender не имеет метода recv
 }
 ```
 
@@ -572,7 +572,7 @@ test "sender cannot recv" {
 // EXPECT: error
 module nova_tests.negative.channel_receiver_no_send
 test "receiver cannot send" {
-    let (_tx, rx) = Channel.new(1)
+    ro (_tx, rx) = Channel.new(1)
     rx.send(1)  // Receiver не имеет метода send
 }
 ```
@@ -582,7 +582,7 @@ test "receiver cannot send" {
 // EXPECT: error
 module nova_tests.negative.channel_type_as_value
 test "Channel[T] as value is forbidden" {
-    let ch: Channel[int] = Channel.new(1)  // Channel — не тип
+    ro ch: Channel[int] = Channel.new(1)  // Channel — не тип
 }
 ```
 

@@ -1,0 +1,16 @@
+// Plan 73.1 (D180): consume binding simple positive case.
+// `consume X = Type.new()` где Type — consume-type; X owns; X consumes via метод.
+
+module plan73.binding_consume_simple
+
+type Token consume { val int }
+
+fn Token.new(v int) -> Token => { val: v }
+
+fn Token consume @release() -> int => @val
+
+test "consume binding + consume method release" {
+    consume tok = Token.new(7)
+    ro v = tok.release()
+    assert(v == 7)
+}

@@ -6,7 +6,7 @@
 // gc.nv) забывали `import HashMap`, а codegen тихо подменял неизвестный
 // `.new()` на Error-конструктор. Импорты восстановлены; codegen дополнен
 // fail-loudly-проверкой; этот бенч — позитивный regression-guard.
-module bench.micro
+module micro.supervised_spawn
 
 bench "supervised spawn smoke" {
     measure {

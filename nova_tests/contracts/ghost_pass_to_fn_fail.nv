@@ -6,6 +6,6 @@
 module contracts.ghost_pass_to_fn_fail
 
 fn bad_println(v int) {
-    ghost let x = v * 2
+    ghost ro x = v * 2
     println(x)  // ghost в аргументе non-ghost call → error
 }

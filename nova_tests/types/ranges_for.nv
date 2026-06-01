@@ -3,7 +3,7 @@
 module types.ranges_for
 
 test "range exclusive 0..n" {
-    let mut sum = 0
+    mut sum = 0
     for i in 0..5 {
         sum += i
     }
@@ -11,7 +11,7 @@ test "range exclusive 0..n" {
 }
 
 test "range from positive lower" {
-    let mut sum = 0
+    mut sum = 0
     for i in 3..6 {
         sum += i
     }
@@ -19,7 +19,7 @@ test "range from positive lower" {
 }
 
 test "empty range" {
-    let mut count = 0
+    mut count = 0
     for _ in 5..5 {
         count += 1
     }
@@ -27,7 +27,7 @@ test "empty range" {
 }
 
 test "range over single value" {
-    let mut count = 0
+    mut count = 0
     for _ in 0..1 {
         count += 1
     }
@@ -35,8 +35,8 @@ test "range over single value" {
 }
 
 test "for over array" {
-    let xs = [10, 20, 30]
-    let mut sum = 0
+    ro xs = [10, 20, 30]
+    mut sum = 0
     for x in xs {
         sum += x
     }
@@ -44,7 +44,7 @@ test "for over array" {
 }
 
 test "nested for" {
-    let mut total = 0
+    mut total = 0
     for i in 0..3 {
         for j in 0..3 {
             total += i * 3 + j
@@ -54,7 +54,7 @@ test "nested for" {
 }
 
 test "for collects via array.push" {
-    let squares = []
+    mut squares = []
     for i in 1..6 {
         squares.push(i * i)
     }
@@ -64,7 +64,7 @@ test "for collects via array.push" {
 }
 
 test "break inside for" {
-    let mut found = -1
+    mut found = -1
     for x in [10, 20, 30, 40] {
         if x == 30 {
             found = x
@@ -75,7 +75,7 @@ test "break inside for" {
 }
 
 test "continue inside for" {
-    let mut sum = 0
+    mut sum = 0
     for x in [1, 2, 3, 4, 5] {
         if x % 2 == 0 { continue }
         sum += x
@@ -84,7 +84,7 @@ test "continue inside for" {
 }
 
 test "inclusive range 1..=n" {
-    let mut sum = 0
+    mut sum = 0
     for i in 1..=5 {
         sum += i
     }
@@ -92,7 +92,7 @@ test "inclusive range 1..=n" {
 }
 
 test "inclusive range single value 7..=7" {
-    let mut count = 0
+    mut count = 0
     for _ in 7..=7 {
         count += 1
     }
@@ -100,9 +100,9 @@ test "inclusive range single value 7..=7" {
 }
 
 test "exclusive vs inclusive size" {
-    let mut a = 0
+    mut a = 0
     for _ in 0..5 { a += 1 }
-    let mut b = 0
+    mut b = 0
     for _ in 0..=5 { b += 1 }
     assert(a == 5)
     assert(b == 6)

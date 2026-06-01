@@ -15,7 +15,7 @@ fn make_adder(n int) -> fn(int) -> int => |x| x + n
 test "free fn + HOF param + fn-returning-fn все компилируются" {
     assert(add(2, 3) == 5)
     assert(apply(add_one, 10) == 11)
-    let plus5 = make_adder(5)
+    ro plus5 = make_adder(5)
     assert(plus5(7) == 12)
 }
 

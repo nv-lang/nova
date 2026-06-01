@@ -7,6 +7,6 @@
 module contracts.soundness_guard_ghost_runtime_must_error
 
 fn bad_ghost_use(x int) -> int {
-    ghost let g = x * 2
+    ghost ro g = x * 2
     g + 1  // ghost в non-ghost trailing expr → error
 }

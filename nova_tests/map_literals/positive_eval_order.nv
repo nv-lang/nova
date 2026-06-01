@@ -26,7 +26,7 @@ fn rec_v(label str) -> int {
 }
 
 fn main() -> () {
-    let _m HashMap[str, int] = [
+    ro _m HashMap[str, int] = [
         rec_k("k1"): rec_v("v1"),
         rec_k("k2"): rec_v("v2"),
         rec_k("k3"): rec_v("v3"),

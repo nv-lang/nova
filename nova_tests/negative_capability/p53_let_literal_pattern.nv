@@ -5,7 +5,7 @@
 
 module negative_capability.p53_let_literal_pattern
 
-test "literal pattern in let — refutable" {
-    let 42 = 1 + 1
+test "literal pattern in ro — refutable" {
+    ro 42 = 1 + 1
     assert(true)
 }

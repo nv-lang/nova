@@ -3,24 +3,24 @@
 // Pre-fix: оба array element types map'ились в `NovaArray_nova_int*`.
 // Post-fix: `[]char` → `NovaArray_nova_char*`, `[]int` → `NovaArray_nova_int*`.
 
-module nova_tests.plan70_3.f2_array_char_vs_int_pos
+module plan70_3.f2_array_char_vs_int_pos
 
 test "[]char stores char literals" {
-    let chars []char = ['a', 'b', 'c']
+    ro chars []char = ['a', 'b', 'c']
     assert(chars.len() == 3)
     assert(chars[0] == 'a')
     assert(chars[2] == 'c')
 }
 
 test "[]int stores int literals" {
-    let ints []int = [10, 20, 30]
+    ro ints []int = [10, 20, 30]
     assert(ints.len() == 3)
     assert(ints[0] == 10)
     assert(ints[2] == 30)
 }
 
 test "[]char index access" {
-    let chars []char = ['x', 'y', 'z']
-    let middle = chars[1]
+    ro chars []char = ['x', 'y', 'z']
+    ro middle = chars[1]
     assert(middle == 'y')
 }

@@ -5,10 +5,10 @@
 // EXPECT_TIMEOUT_MS 30000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_4.semaphore_batch_n
+module plan103_4.semaphore_batch_n
 
 test "acquire_n(3) and release_n(3) basic accounting" {
-    let sem = Semaphore.new(5)
+    mut sem = Semaphore.new(5)
     sem.acquire_n(3)
     assert(sem.available_permits() == 2)
     sem.release_n(3)
@@ -16,7 +16,7 @@ test "acquire_n(3) and release_n(3) basic accounting" {
 }
 
 test "acquire_n(1) same as acquire" {
-    let sem = Semaphore.new(3)
+    mut sem = Semaphore.new(3)
     sem.acquire_n(1)
     assert(sem.available_permits() == 2)
     sem.release_n(1)
@@ -25,10 +25,10 @@ test "acquire_n(1) same as acquire" {
 
 test "batch acquire/release with multiple fibers" {
     // 4 fibers each take 2 permits from a pool of 8
-    let sem      = Semaphore.new(8)
-    let acquired = AtomicInt.new(0)
-    let wg       = WaitGroup.new()
-    let n        = 4
+    mut sem = Semaphore.new(8)
+    mut acquired = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
+    ro n        = 4
     wg.add(n)
 
     parallel for _i in 0..n {
@@ -45,9 +45,9 @@ test "batch acquire/release with multiple fibers" {
 
 test "acquire_n blocks until N permits available" {
     // acquire_n(3) blocks when only 2 permits present; unblocks on release_n(1)
-    let sem  = Semaphore.new(2)
-    let done = AtomicInt.new(0)
-    let wg   = WaitGroup.new()
+    mut sem = Semaphore.new(2)
+    mut done = AtomicInt.new(0)
+    mut wg = WaitGroup.new()
     wg.add(1)
 
     supervised {

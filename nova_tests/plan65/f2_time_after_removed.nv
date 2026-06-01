@@ -6,6 +6,6 @@ module plan65.f2_time_after_removed
 
 test "Time.after rejected with E5101" {
     // This call must fail codegen with the structured Plan 65 diagnostic.
-    let _t = Time.after(50)
+    ro _t = Time.after(50)
     assert(false)
 }

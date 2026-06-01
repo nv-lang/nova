@@ -11,8 +11,8 @@
 module concurrency.blocking_cancel_test
 
 #blocking fn _busy_work(upto int) -> int {
-    let mut acc = 0
-    let mut i = 0
+    mut acc = 0
+    mut i = 0
     while i < upto {
         acc = acc + 1
         i = i + 1
@@ -29,8 +29,8 @@ fn busy(upto int) -> int {
 // ================================================================
 
 test "blocking: offload in supervised(cancel:) — no cancel, runs normally" {
-    let tok = CancelToken.new()
-    let mut got = 0
+    ro tok = CancelToken.new()
+    mut got = 0
     supervised(cancel: tok) {
         spawn { got = busy(50000) }
     }
@@ -43,8 +43,8 @@ test "blocking: offload in supervised(cancel:) — no cancel, runs normally" {
 // ================================================================
 
 test "blocking: offload + scope cancel — after_work_cb always wakes, no deadlock" {
-    let tok = CancelToken.new()
-    let mut reached_end = false
+    ro tok = CancelToken.new()
+    mut reached_end = false
     with Fail = effect Fail {
         fail(_msg) {
             interrupt ()
@@ -53,7 +53,7 @@ test "blocking: offload + scope cancel — after_work_cb always wakes, no deadlo
         supervised(cancel: tok) {
             spawn { tok.cancel() }
             spawn {
-                let _ = busy(50000)
+                ro _ = busy(50000)
             }
         }
     }
@@ -66,8 +66,8 @@ test "blocking: offload + scope cancel — after_work_cb always wakes, no deadlo
 // ================================================================
 
 test "blocking: cancel() on finished scope after offload — harmless no-op" {
-    let tok = CancelToken.new()
-    let mut got = 0
+    ro tok = CancelToken.new()
+    mut got = 0
     supervised(cancel: tok) {
         spawn { got = busy(30000) }
     }

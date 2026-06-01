@@ -24,8 +24,8 @@ export fn future_proof(x int) -> int => x + 100
 /// #[unknown_thing]
 /// Все три должны warning, runtime — ok.
 export fn problematic(n int) -> int {
-    let mut sum = 0
-    let mut i = 1
+    mut sum = 0
+    mut i = 1
     while i <= n {
         sum = sum + i
         i = i + 1
@@ -72,8 +72,8 @@ test "double runtime" {
 }
 
 test "doc-warnings dont affect runtime" {
-    let a = legacy_add(future_proof(1), double(2))
+    ro a = legacy_add(future_proof(1), double(2))
     assert(a == 105)
-    let b = problematic(double(3))
+    ro b = problematic(double(3))
     assert(b == 21)
 }

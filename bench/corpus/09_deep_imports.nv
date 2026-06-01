@@ -3,7 +3,7 @@
 // (Self-contained, не использует actual stdlib imports — измеряет
 //  parser performance with many `module X.Y.Z.W` declarations.)
 
-module bench.corpus.deep.module_with_long_namespace_name
+module corpus.09_deep_imports
 
 type DeepType { value int }
 
@@ -25,7 +25,7 @@ type Layer9 { inner Layer8 }
 type Layer10 { inner Layer9 }
 
 fn wrap10(v int) -> Layer10 {
-    let dt = DeepType.new(v)
+    ro dt = DeepType.new(v)
     Layer10 { inner:
         Layer9 { inner:
             Layer8 { inner:
@@ -52,7 +52,7 @@ fn unwrap10(l Layer10) -> int {
 }
 
 fn main() Io -> () {
-    let w = wrap10(42)
-    let u = unwrap10(w)
+    ro w = wrap10(42)
+    ro u = unwrap10(w)
     println(str.from(u))
 }
