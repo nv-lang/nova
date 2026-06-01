@@ -8,7 +8,7 @@
 //
 // EXPECT_TIMEOUT_MS 90000
 
-module nova_tests.plan103_4.barrier_cyclic_reusable
+module plan103_4.barrier_cyclic_reusable
 
 test "barrier reused across 3 epochs of 4 parties" {
     ro parties = 4

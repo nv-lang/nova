@@ -1,4 +1,4 @@
-module nova_tests.plan63.cm_box_use
+module plan63.cm_box_use
 
 // Plan 63 Fix C cross-module: import generic factory из folder-module,
 // call с typeargs. Tests на anonymous record return mono enrollment

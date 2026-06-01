@@ -1,7 +1,7 @@
 // Plan 108.2 (D36 enforcement): nested блоки — `let mut` корректно работает
 // в inner scope.
 
-module nova_tests.plan108_2.nested_let_mut_ok
+module plan108_2.nested_let_mut_ok
 
 test "nested mut in block" {
     ro outer = 5

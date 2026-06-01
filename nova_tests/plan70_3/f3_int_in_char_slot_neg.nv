@@ -10,7 +10,7 @@
 //
 // EXPECT_CC_ERROR incompatible type
 
-module nova_tests.plan70_3.f3_int_in_char_slot_neg
+module plan70_3.f3_int_in_char_slot_neg
 
 test "int literal rejected in Option[char] slot" {
     ro c Option[char] = Some(42)

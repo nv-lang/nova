@@ -3,7 +3,7 @@
 // (Self-contained, не использует actual stdlib imports — измеряет
 //  parser performance with many `module X.Y.Z.W` declarations.)
 
-module bench.corpus.deep.module_with_long_namespace_name
+module corpus.09_deep_imports
 
 type DeepType { value int }
 

@@ -1,6 +1,6 @@
 // Plan 98 Ф.2.1: вложенный Option[Option[T]] — recursive inference.
 
-module nova_tests.plan98.nested_option_inference
+module plan98.nested_option_inference
 
 fn outer_some[T](o Option[Option[T]]) -> bool => o.is_some()
 

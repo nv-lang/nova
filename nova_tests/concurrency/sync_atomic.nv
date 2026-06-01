@@ -3,7 +3,7 @@
 // Verifies lock-free integer and boolean operations.
 // Concurrent tests confirm no data race — final values must be exact.
 
-module nova_tests.concurrency.sync_atomic
+module concurrency.sync_atomic
 
 // ─── AtomicInt: single-fiber baseline ──────────────────────────
 

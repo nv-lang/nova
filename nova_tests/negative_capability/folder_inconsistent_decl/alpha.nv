@@ -6,7 +6,7 @@
 // требует идентичных decl) → каждый peer проверяется как single-file
 // и проваливает manifest check (rev-3 ожидает `folder_inconsistent_decl.alpha`).
 
-module negative_capability.folder_inconsistent_decl
+module folder_inconsistent_decl.alpha
 
 export fn alpha_fn() -> int =>
     1

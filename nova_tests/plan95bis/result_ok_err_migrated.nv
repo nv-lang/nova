@@ -5,7 +5,7 @@
 //   ok()  => match @ { Ok(v)  => Some(v), Err(_) => None }
 //   err() => match @ { Ok(_) => None,    Err(e) => Some(e) }
 
-module nova_tests.plan95bis.result_ok_err_migrated
+module plan95bis.result_ok_err_migrated
 
 test "Result.ok() — Ok → Some, Err → None" {
     ro ok_r Result[int, str] = Ok(123)

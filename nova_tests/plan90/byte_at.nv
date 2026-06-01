@@ -1,6 +1,6 @@
 // Plan 90 Ф.4.1 — str.byte_at: O(1) доступ к байту строки.
 
-module nova_tests.plan90.byte_at
+module plan90.byte_at
 
 
 test "byte_at — ASCII байты" {

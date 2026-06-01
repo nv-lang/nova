@@ -1,4 +1,4 @@
-module nova_tests.doc.fixtures.expect_output.sample
+module expect_output.sample
 
 /// Compute sum of two integers.
 ///

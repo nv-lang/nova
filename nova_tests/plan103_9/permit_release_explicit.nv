@@ -3,7 +3,7 @@
 // Semaphore.acquire() → Permit consume.
 // Permit.release() consumes the permit.
 
-module nova_tests.plan103_9.permit_release_explicit
+module plan103_9.permit_release_explicit
 
 test "Permit explicit release" {
     mut sem = Semaphore.new(2)

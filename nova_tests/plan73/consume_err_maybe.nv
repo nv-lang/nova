@@ -4,7 +4,7 @@
 // После if (без else) sb потреблён только если flag истинно —
 // использование после = compile error.
 
-module nova_tests.plan73.consume_err_maybe
+module plan73.consume_err_maybe
 
 fn run(flag bool) -> int {
     consume sb = StringBuilder.new()

@@ -4,7 +4,7 @@
 // Production-grade: capability-split factories могут вызываться много раз
 // (e.g. per-request); GC overhead не должен расти линейно.
 
-module nova_tests.plan97.pos_protocol_lit_gc_stress
+module plan97.pos_protocol_lit_gc_stress
 
 
 export type Increment protocol {

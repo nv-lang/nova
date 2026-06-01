@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T chained map+filter.
 
-module nova_tests.plan101_1.vec_chained
+module plan101_1.vec_chained
 
 fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
     mut out []U = []U.with_capacity(@len())

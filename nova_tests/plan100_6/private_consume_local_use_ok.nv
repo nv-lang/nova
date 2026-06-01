@@ -2,7 +2,7 @@
 // D164 D7: private consume не leak cross-package. Внутри пакета — полная
 // consume-semantics: must-consume enforced, methods доступны.
 
-module nova_tests.plan100_6.private_consume_local_use_ok
+module plan100_6.private_consume_local_use_ok
 
 // Private consume-type — нет `export`, не видна из других пакетов:
 type MutexGuard consume {

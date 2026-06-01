@@ -4,7 +4,7 @@
 // constructor name; Cons destructure → t: void* вместо LinkedList____nova_int*;
 // method dispatch collides с StringBuilder.
 
-module nova_tests.plan70_2.f1_linkedlist_int_pos
+module plan70_2.f1_linkedlist_int_pos
 
 type LinkedList[T]
     | Nil

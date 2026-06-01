@@ -1,4 +1,4 @@
-module nova_tests.plan91_7.str_new_test
+module plan91_7.str_new_test
 
 // Plan 91.7 Part D: str.new() canonical default.
 

@@ -1,4 +1,4 @@
-module modules.rename_import_source
+module rename_import_source.helper
 
 export fn other_fn() -> int =>
     7

@@ -1,7 +1,7 @@
 // Plan 89 Ф.2.3 — передача боксированного Option-элемента массива
 // в функцию, ожидающую `Option[T]` по значению.
 
-module nova_tests.plan89.fnarg_option_elem
+module plan89.fnarg_option_elem
 
 
 fn unwrap_or_zero(o Option[int]) -> int =>

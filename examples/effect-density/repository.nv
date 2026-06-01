@@ -6,7 +6,7 @@
 //   - Кэширование account'а оставлено в repository (read-through),
 //     потому что это деталь хранения, а не бизнес-логики.
 
-module examples.effect_density.repository
+module effect-density.repository
 
 import examples.effect_density.domain.*
 

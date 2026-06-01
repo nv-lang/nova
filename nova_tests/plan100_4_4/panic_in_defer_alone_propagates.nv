@@ -1,7 +1,7 @@
 // Plan 100.4.4 (D161): panic в defer на normal exit — propagates (или
 // abort if no enclosing handler).  Bootstrap: verify compile-pass.
 
-module nova_tests.plan100_4_4.panic_in_defer_alone_propagates
+module plan100_4_4.panic_in_defer_alone_propagates
 
 fn cleanup_ok() -> () { () }
 

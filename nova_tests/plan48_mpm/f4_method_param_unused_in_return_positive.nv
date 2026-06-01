@@ -1,4 +1,4 @@
-module nova_tests.plan48_mpm.f4_method_param_unused_in_return_positive
+module plan48_mpm.f4_method_param_unused_in_return_positive
 
 // Plan 48 Ф.9 / D119 positive: method-level U используется ТОЛЬКО в arg
 // (не в return). Inference должен работать чисто через arg position,

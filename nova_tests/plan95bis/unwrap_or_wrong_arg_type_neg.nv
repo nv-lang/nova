@@ -8,7 +8,7 @@
 // убеждаемся, что Plan 95.bis перенос предикатов не вводит silent
 // fallback path для builtin Option-методов.
 
-module nova_tests.plan95bis.unwrap_or_wrong_arg_type_neg
+module plan95bis.unwrap_or_wrong_arg_type_neg
 
 fn Option[T] @plan95bis_probe() -> bool => plan95bis_no_such_fn()
 

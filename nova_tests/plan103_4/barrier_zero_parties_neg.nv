@@ -5,7 +5,7 @@
 //
 // EXPECT_RUNTIME_PANIC Barrier.new(): parties must be >= 1
 
-module nova_tests.plan103_4.barrier_zero_parties_neg
+module plan103_4.barrier_zero_parties_neg
 
 test "Barrier.new(0) panics" {
     ro _b = Barrier.new(0)

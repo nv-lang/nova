@@ -4,7 +4,7 @@
 // Tests the explicit acquire/defer release pattern that with_permit wraps.
 // (with_permit body methods on external types use the same acquire+defer path.)
 
-module nova_tests.plan103_4.semaphore_with_permit_panic_safety
+module plan103_4.semaphore_with_permit_panic_safety
 
 test "explicit acquire + defer release: fires on throw — permit returned" {
     mut sem = Semaphore.new(1)

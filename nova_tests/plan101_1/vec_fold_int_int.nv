@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @fold[Acc].
 
-module nova_tests.plan101_1.vec_fold_int_int
+module plan101_1.vec_fold_int_int
 
 fn[T] []T @my_fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init

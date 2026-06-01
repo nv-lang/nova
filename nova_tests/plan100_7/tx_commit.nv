@@ -4,7 +4,7 @@
 // Pattern: consume tx + errdefer rollback + okdefer commit (D162).
 // D157: plain param = view (non-consuming, default).
 
-module nova_tests.plan100_7.tx_commit
+module plan100_7.tx_commit
 
 type Db { id int }
 type OrderErr { msg str }

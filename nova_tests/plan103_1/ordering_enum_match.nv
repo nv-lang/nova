@@ -4,7 +4,7 @@
 // как patterns в match-выражении и что match exhaustive (wildcard не нужен
 // если все 5 покрыты).
 
-module nova_tests.plan103_1.ordering_enum_match
+module plan103_1.ordering_enum_match
 
 fn ordering_to_int(ord MemOrdering) -> int =>
     match ord {

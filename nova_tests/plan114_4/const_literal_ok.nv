@@ -1,6 +1,6 @@
 // Plan 114.4 Ф.1: const X = LITERAL — constexpr-eligible.
 
-module nova_tests.plan114_4.const_literal_ok
+module plan114_4.const_literal_ok
 
 const MAX_PAYLOAD int = 4096
 const GREETING str = "hello"

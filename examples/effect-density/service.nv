@@ -5,7 +5,7 @@
 // Это и есть главная проверка тезиса «десятки эффектов в каждой функции».
 // Считайте перед чтением. После — сравните.
 
-module examples.effect_density.service
+module effect-density.service
 
 import examples.effect_density.domain.*
 import examples.effect_density.repository as repo

@@ -1,5 +1,5 @@
 // Plan 57.B.3 smoke: parameterized sweep DSL.
-module bench.micro
+module micro.sweep
 
 bench "param sum" (n in [10, 100, 1000]) {
     measure {

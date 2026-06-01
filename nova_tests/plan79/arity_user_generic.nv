@@ -3,7 +3,7 @@
 // Plan 79 Ф.2: arity for user-declared generics is taken from the
 // declaration. `Box[T]` has one parameter — `Box[int, str]` is invalid.
 
-module nova_tests.plan79.arity_user_generic
+module plan79.arity_user_generic
 
 type Box[T] { value T }
 

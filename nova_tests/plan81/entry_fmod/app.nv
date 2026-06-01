@@ -8,7 +8,7 @@
 // Проверяется через `nova check` (см. nova-cli/tests/entry_folder_module.rs).
 // Без Ф.10 sibling `lib.nv` не собирался бы → `helper` undefined.
 
-module nova_tests.plan81.entry_fmod
+module entry_fmod.app
 
 fn main() -> int {
     helper()

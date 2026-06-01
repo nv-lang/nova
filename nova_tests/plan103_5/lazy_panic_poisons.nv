@@ -3,7 +3,7 @@
 // Unlike OnceCell.get_or_init (which allows retry),
 // Lazy.force poisons on first panic.
 
-module nova_tests.plan103_5.lazy_panic_poisons
+module plan103_5.lazy_panic_poisons
 
 test "Lazy.force: panic in init poisons; subsequent force also panics" {
     ro lazy = Lazy[int].new() { throw "lazy-init-failed"; 0 }

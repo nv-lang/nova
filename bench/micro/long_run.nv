@@ -1,5 +1,5 @@
 // Plan 57.C.3 smoke: long-running bench для heap sampler verification.
-module bench.micro
+module micro.long_run
 
 bench "slow work" {
     measure {

@@ -8,7 +8,7 @@
 // suit бы failed at type-check.  Прохождение фикстуры = compile-time
 // доказательство.
 
-module nova_tests.plan108_1.param_mut_count_invariant_prop
+module plan108_1.param_mut_count_invariant_prop
 
 fn append_n(mut buf []int, n int) -> int {
     mut i = 0

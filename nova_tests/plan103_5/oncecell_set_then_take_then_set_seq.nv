@@ -2,7 +2,7 @@
 //
 // Verifies that take() resets cell to empty and set() works again.
 
-module nova_tests.plan103_5.oncecell_set_then_take_then_set_seq
+module plan103_5.oncecell_set_then_take_then_set_seq
 
 test "OnceCell: set(a) take() set(b) get() == Some(b)" {
     mut cell = OnceCell[int].new()

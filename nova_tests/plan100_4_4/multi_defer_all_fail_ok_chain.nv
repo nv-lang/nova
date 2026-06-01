@@ -2,7 +2,7 @@
 // LIFO continues — все 3 attempted regardless of partial failure. Runtime
 // composition chain materialized в outer fail-frame через nova_rethrow_with_suppressed.
 
-module nova_tests.plan100_4_4.multi_defer_all_fail_ok_chain
+module plan100_4_4.multi_defer_all_fail_ok_chain
 
 type Err1 { msg str }
 type Err2 { msg str }

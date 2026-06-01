@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: append empty src — no-op, no realloc.
 // D141 amend: append([]) leaves dst unchanged (len == 0 * sizeof(T) = 0 memmove).
 
-module nova_tests.plan90_1.append_empty
+module plan90_1.append_empty
 
 test "append empty src — no-op" {
     mut dst []int = [1, 2, 3]

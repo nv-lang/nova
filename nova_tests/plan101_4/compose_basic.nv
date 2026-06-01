@@ -2,7 +2,7 @@
 // `use TypeName`. `ReadWriter` композирует `Reader` + `Writer`;
 // type satisfies `ReadWriter` iff it satisfies оба embedded protocol'а.
 
-module nova_tests.plan101_4.compose_basic
+module plan101_4.compose_basic
 
 
 type Reader protocol {

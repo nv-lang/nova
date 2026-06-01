@@ -1,6 +1,6 @@
 // Plan 103.3 — Mutex.try_lock_for(100ms) on free mutex → true; ≤500ms wall-clock.
 
-module nova_tests.plan103_3.mutex_try_lock_for_success
+module plan103_3.mutex_try_lock_for_success
 
 import std.time.duration
 

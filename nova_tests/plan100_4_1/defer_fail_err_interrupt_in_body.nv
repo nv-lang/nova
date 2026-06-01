@@ -4,7 +4,7 @@
 // D158 НЕ amend'ает D90 §6: interrupt hijack'ит scope-exit, это не
 // failable cleanup.
 
-module nova_tests.plan100_4_1.defer_fail_err_interrupt_in_body
+module plan100_4_1.defer_fail_err_interrupt_in_body
 
 fn process() -> int {
     ro x = with Time = effect Time {

@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR does not satisfy `HasB`
 
-module nova_tests.plan101_3.negative.multibound_missing_method_neg
+module negative.multibound_missing_method_neg
 
 
 type HasA protocol {

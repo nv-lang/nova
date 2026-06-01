@@ -4,7 +4,7 @@
 // _nova_str specialization в array.h) ЗАМЕНЁН на Nova-body
 // `=> match @ { Some(v) => Some(v), None => other }`.
 
-module nova_tests.plan95bis.option_or_migrated
+module plan95bis.option_or_migrated
 
 test "Option[int].or — chain None.or(Some).or(None) → Some" {
     ro a Option[int] = None

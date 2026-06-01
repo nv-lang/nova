@@ -2,7 +2,7 @@
 // View разделяет backing с parent (single-type design, D-single-type).
 // `cap == len` для view → push реаллокает и детачится (D-cap-len).
 
-module nova_tests.plan96.slice_basic
+module plan96.slice_basic
 
 test "basic sub-slice — len + element access" {
     mut arr = [10, 20, 30, 40, 50]

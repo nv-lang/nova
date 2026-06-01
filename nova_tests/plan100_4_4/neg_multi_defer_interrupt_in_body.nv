@@ -3,7 +3,7 @@
 // Plan 100.4.4 (D161): interrupt в defer body — ВСЕГДА запрещён (D90 §6),
 // independently of D161 wrap. Hijack scope-exit ≠ failable cleanup.
 
-module nova_tests.plan100_4_4.neg_multi_defer_interrupt_in_body
+module plan100_4_4.neg_multi_defer_interrupt_in_body
 
 fn process() -> int {
     ro x = with Time = effect Time {

@@ -1,6 +1,6 @@
 // Plan 100.8 D6: bench — generic type parameter consume propagation overhead.
 // Measures: Plan 100.2 bound-resolution for generic consume types.
-module bench.plan100
+module plan100.generic_propagation
 
 // Non-generic consume resource.
 type Token consume { id int }

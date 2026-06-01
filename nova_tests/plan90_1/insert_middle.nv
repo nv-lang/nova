@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: insert at middle position.
 // D141 amend: insert(i, src) with memmove tail right.
 
-module nova_tests.plan90_1.insert_middle
+module plan90_1.insert_middle
 
 test "insert middle — basic []int" {
     mut dst []int = [1, 2, 5, 6]

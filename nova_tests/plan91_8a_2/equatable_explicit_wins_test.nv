@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.equatable_explicit_wins_test
+module plan91_8a_2.equatable_explicit_wins_test
 
 // Plan 91.8a.2 part 3: тип с ОБОИМИ @compare и @equals — explicit
 // @equals takes precedence (NOT default body synthesis). Synthesis

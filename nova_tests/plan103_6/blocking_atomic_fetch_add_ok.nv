@@ -4,7 +4,7 @@
 // EXPECT_TIMEOUT_MS 60000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_6.blocking_atomic_fetch_add_ok
+module plan103_6.blocking_atomic_fetch_add_ok
 
 #blocking fn _blk_fetch_add(a mut AtomicI64, delta int) -> int {
     a.fetch_add(delta)

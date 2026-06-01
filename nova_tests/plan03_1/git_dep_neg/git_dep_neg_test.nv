@@ -1,7 +1,7 @@
 // Plan 03.1 Ф.2 NEGATIVE — импорт из git-зависимости, репозиторий
 // которой недоступен (clone падает). Ошибка резолва — диагностируемая.
 // EXPECT_COMPILE_ERROR git-зависимость
-module git_dep_pkg.git_dep_neg_test
+module git_dep_neg.git_dep_neg_test
 
 import remotelib.calc.{add}
 

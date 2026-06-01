@@ -1,4 +1,4 @@
-module nova_tests.plan48_mpm.repro_wrapper_map
+module plan48_mpm.repro_wrapper_map
 
 // Plan 48 method-param mono: generic method с собственным type param.
 // Currently codegen mono'ит только по receiver T, U остаётся Nova_U_p

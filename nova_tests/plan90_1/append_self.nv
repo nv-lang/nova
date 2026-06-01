@@ -2,7 +2,7 @@
 // D141 amend: snapshot src_data/src_len before potential realloc handles
 // self-extend correctly. With Boehm GC, old allocation retained until collected.
 
-module nova_tests.plan90_1.append_self
+module plan90_1.append_self
 
 test "append self — doubles prefix" {
     mut dst []int = [1, 2, 3]

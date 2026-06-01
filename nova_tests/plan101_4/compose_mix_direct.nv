@@ -2,7 +2,7 @@
 // собственные методы. Concrete type должен удовлетворить ВСЕ
 // (direct + flatten'нутые из embed'ов).
 
-module nova_tests.plan101_4.compose_mix_direct
+module plan101_4.compose_mix_direct
 
 
 type Reader protocol {

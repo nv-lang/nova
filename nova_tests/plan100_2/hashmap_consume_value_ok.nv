@@ -5,7 +5,7 @@
 // Models the HashMap value-ownership pattern: V consume items must all be
 // explicitly handled, not silently dropped.
 
-module nova_tests.plan100_2.hashmap_consume_value_ok
+module plan100_2.hashmap_consume_value_ok
 
 type Transaction consume {
     id int,

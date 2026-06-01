@@ -3,7 +3,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_3.rwlock_read_heavy_stress
+module plan103_3.rwlock_read_heavy_stress
 
 test "RwLock read-heavy stress: 10 readers + 1 writer, no deadlock" {
     mut rw = RwLock.new()

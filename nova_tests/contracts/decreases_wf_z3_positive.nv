@@ -1,5 +1,5 @@
 // REQUIRES_SMT_BACKEND z3
-module nova_tests.contracts.decreases_wf_z3_positive
+module contracts.decreases_wf_z3_positive
 
 // Verify decreases well-foundedness: measure `n` is non-negative at entry
 // (requires n >= 0), and decreases at the recursive call (n-1 < n).

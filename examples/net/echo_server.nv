@@ -11,7 +11,7 @@
 //
 // See also: examples/net/echo_client.nv
 
-module examples.net.echo_server
+module net.echo_server
 
 const PORT u16 = 7777
 

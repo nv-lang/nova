@@ -3,6 +3,6 @@
 // тогда `is_folder_module_peer` истинно и файлы не запускаются как
 // standalone-тесты (отсутствие `test`-блоков не даёт CC-FAIL).
 
-module named_params.imported_mod
+module imported_mod.limits
 
 export const MAX_RETRIES int = 10

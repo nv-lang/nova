@@ -2,6 +2,6 @@
 
 // EXPECT_COMPILE_ERROR E_CONST_REFERS_NON_CONSTEXPR
 
-module nova_tests.plan114_4.const_refers_non_const_neg
+module plan114_4.const_refers_non_const_neg
 
 const BAD int = unknown_binding

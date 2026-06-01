@@ -4,7 +4,7 @@
 // disabled_value() невидима импортирующему.
 
 #cfg(!(target_os = "windows" || target_os = "linux" || target_os = "macos"))
-module cfg.predicate_not
+module predicate_not.disabled
 
 export fn disabled_value() -> int =>
     999

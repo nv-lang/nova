@@ -1,4 +1,4 @@
-module nova_tests.plan61.repro_silent_ub_throw_typed
+module plan61.repro_silent_ub_throw_typed
 
 // Plan 61 Ф.0 repro: Silent UB #1 — throw user-error становится garbage.
 //

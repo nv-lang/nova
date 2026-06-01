@@ -4,7 +4,7 @@
 // ConsumeCtx хранит state по произвольно глубокому пути. Closure через
 // deep-path consume + rebind на промежуточном уровне.
 
-module nova_tests.plan100_1.consume_ok_nested_consume
+module plan100_1.consume_ok_nested_consume
 
 type Transaction consume {
     id int,

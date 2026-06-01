@@ -2,7 +2,7 @@
 // в другой `-> @` метод. StringBuilder.@append chain — эталонный пример.
 // Plan 91 followup: @plus убран, заменён на explicit .append() chain.
 
-module nova_tests.plan77.fluent_wrapper_ok
+module plan77.fluent_wrapper_ok
 
 type Buf { mut n int }
 

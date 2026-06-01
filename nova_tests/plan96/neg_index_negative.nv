@@ -3,7 +3,7 @@
 // Plan 96 Ф.1 — негатив: arr[-1] → panic, НЕ wrap-around.
 // Nova не следует Python-семантике negative-index wrap.
 
-module nova_tests.plan96.neg_index_negative
+module plan96.neg_index_negative
 
 fn main() -> () {
     mut arr = [10, 20, 30]

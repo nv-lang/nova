@@ -7,7 +7,7 @@
 // Baseline expectation: deadline check on non-shielded path is one
 // atomic load (mask_count) + branch. Cost should be < ~5ns per call.
 
-module bench.plan110.timeout_check
+module plan110.timeout_check
 
 bench "Time.sleep(0) x100k без shield (deadline check no-op fast path)" {
     measure {

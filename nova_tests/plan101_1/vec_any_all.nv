@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @any/all predicates.
 
-module nova_tests.plan101_1.vec_any_all
+module plan101_1.vec_any_all
 
 fn[T] []T @my_any(pred fn(T) -> bool) -> bool {
     for x in @ { if pred(x) { return true } }

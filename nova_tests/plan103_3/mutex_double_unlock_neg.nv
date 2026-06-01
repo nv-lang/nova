@@ -4,7 +4,7 @@
 //
 // EXPECT_RUNTIME_PANIC Mutex.unlock() called on an unlocked mutex
 
-module nova_tests.plan103_3.mutex_double_unlock_neg
+module plan103_3.mutex_double_unlock_neg
 
 test "unlock without lock panics" {
     mut mu = Mutex.new()

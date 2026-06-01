@@ -1,6 +1,6 @@
 // Plan 114.4 Ф.1: const X = ref на другой top-level const — constexpr-eligible.
 
-module nova_tests.plan114_4.const_ref_const_ok
+module plan114_4.const_ref_const_ok
 
 const BASE int = 100
 const DERIVED int = BASE + 10

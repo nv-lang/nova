@@ -1,7 +1,7 @@
 // Plan 114 (D184): `ro field T` — renamed from `readonly field T`
 // (D175 amend). Семантика freeze + транзитивность сохранена.
 
-module nova_tests.plan114.ro_field_ok
+module plan114.ro_field_ok
 
 type Account {
     ro id u64

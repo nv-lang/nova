@@ -10,7 +10,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.prop_once_exactly_once_under_pressure
+module plan103_8.prop_once_exactly_once_under_pressure
 
 test "prop once exactly-once: 64 fibers Ð“â€” 3 Once objects Ð²Ð‚â€ each init == 1" {
     mut once1  = Once.new(); mut cnt1 = AtomicI64.new(0)

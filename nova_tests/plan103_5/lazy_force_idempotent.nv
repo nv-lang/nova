@@ -1,6 +1,6 @@
 // Plan 103.5 — Lazy[T].force: idempotent; init closure runs exactly once.
 
-module nova_tests.plan103_5.lazy_force_idempotent
+module plan103_5.lazy_force_idempotent
 
 test "Lazy.force: returns same value on multiple calls" {
     mut call_count = AtomicInt.new(0)

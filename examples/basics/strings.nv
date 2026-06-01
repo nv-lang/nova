@@ -1,6 +1,6 @@
 // strings.nv — работа со строками (нужно для написания компилятора).
 
-module strings
+module basics.strings
 
 fn count_lines(s str) -> int {
     mut count = 1

@@ -9,7 +9,7 @@
 // После Ф.7.2: static `Type.method[T]()` работает через sentinel
 // routing с правильной C signature (без nova_self).
 
-module nova_tests.generics.p48_mono_method
+module generics.p48_mono_method
 
 
 type Counter {

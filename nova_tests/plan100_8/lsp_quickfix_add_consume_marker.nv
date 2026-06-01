@@ -6,7 +6,7 @@
 //
 // This fixture verifies: a properly-declared consume type compiles without errors.
 
-module nova_tests.plan100_8.lsp_quickfix_add_consume_marker
+module plan100_8.lsp_quickfix_add_consume_marker
 
 // Correctly declared consume type — no D133-type-marker-missing error.
 type Buffer consume { data str; size int }

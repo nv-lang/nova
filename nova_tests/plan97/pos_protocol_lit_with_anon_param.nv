@@ -4,7 +4,7 @@
 // fn принимает анонимный protocol-type `c protocol { close() -> () }`
 // (Plan 97 Ф.2). Caller передаёт protocol-литерал значение.
 
-module nova_tests.plan97.pos_protocol_lit_with_anon_param
+module plan97.pos_protocol_lit_with_anon_param
 
 
 export type Resource protocol {

@@ -4,7 +4,7 @@
 //
 // Simulated single-file mock: folder-module с consume-types.
 
-module nova_tests.plan100_6.folder_module_consume_ok
+module plan100_6.folder_module_consume_ok
 
 // "resources/" folder-module — File + Socket consume-types:
 

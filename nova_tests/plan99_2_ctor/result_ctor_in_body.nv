@@ -4,7 +4,7 @@
 // `nova_make_Result_Ok/Err` (которая возвращает `Nova_Result*` с
 // erased (nova_int, nova_str)).
 
-module nova_tests.plan99_2_ctor.result_ctor_in_body
+module plan99_2_ctor.result_ctor_in_body
 
 fn make_ok_int_str() -> Result[int, str] => Ok(42)
 fn make_err_int_str() -> Result[int, str] => Err("oops")

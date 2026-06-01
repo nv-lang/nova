@@ -2,7 +2,7 @@
 //
 // lock_count() increments on lock, decrements on unlock, 0 after balanced sequence.
 
-module nova_tests.plan103_3.reentrant_count_invariant
+module plan103_3.reentrant_count_invariant
 
 test "lock_count invariant: balanced lock/unlock sequence" {
     mut rm = ReentrantMutex.new()

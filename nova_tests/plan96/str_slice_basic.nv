@@ -1,7 +1,7 @@
 // Plan 96 Ф.4 D-str-slice — позитив: s[a..b] для строк (codepoint-indexed,
 // panic при OOB). Унифицирует idiom: arr[a..b] ≡ str[a..b].
 
-module nova_tests.plan96.str_slice_basic
+module plan96.str_slice_basic
 
 test "basic str slice" {
     ro s = "hello"

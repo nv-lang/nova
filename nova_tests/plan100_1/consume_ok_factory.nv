@@ -4,7 +4,7 @@
 // `consume tx = ...; return tx` — обязательство передаётся caller'у.
 // Caller получает Live consume-binding и обязан его закрыть/передать.
 
-module nova_tests.plan100_1.consume_ok_factory
+module plan100_1.consume_ok_factory
 
 type Transaction consume {
     id int,

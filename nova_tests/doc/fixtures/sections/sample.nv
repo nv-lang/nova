@@ -2,7 +2,7 @@
 //!
 //! #stable
 
-module nova_tests.doc.fixtures.sections.sample
+module sections.sample
 
 /// Делит `a` на `b`.
 ///

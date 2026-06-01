@@ -1,4 +1,4 @@
-module nova_tests.plan60.f2_field_access_rejected
+module plan60.f2_field_access_rejected
 
 // Plan 60 / D112: field-style size-accessor → compile error.
 // EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD

@@ -8,7 +8,7 @@
 // compile error ДО codegen (static-dispatch на typevar даже не
 // достигается).
 
-module nova_tests.plan88.neg_bound_violation
+module plan88.neg_bound_violation
 
 
 type NoConv { x int }            // НЕ реализует From[str]

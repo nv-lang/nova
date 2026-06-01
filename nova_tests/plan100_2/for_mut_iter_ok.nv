@@ -4,7 +4,7 @@
 // No consume obligation on loop variable. Uses non-consume type (int) to
 // keep test focused on `for mut` parsing semantics.
 
-module nova_tests.plan100_2.for_mut_iter_ok
+module plan100_2.for_mut_iter_ok
 
 test "for mut — mutable binding in loop body" {
     ro items = [1, 2, 3]

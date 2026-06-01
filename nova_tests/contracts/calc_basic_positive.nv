@@ -1,7 +1,7 @@
 // Plan 33.5 Ф.4.2: calc-блок — структурированное экваториальное рассуждение.
 // Trivial backend доказывает рефлексивные шаги (x == x).
 
-module nova_tests.contracts.calc_basic_positive
+module contracts.calc_basic_positive
 
 #verify
 fn double_is_double(x int) -> int

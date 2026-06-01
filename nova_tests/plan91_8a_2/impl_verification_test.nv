@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.impl_verification_test
+module plan91_8a_2.impl_verification_test
 
 // Plan 91.9 (D186) — verification pass for `#impl(P + Q + ...)`.
 // При декларации type X #impl(P) compiler проверяет что X provides все

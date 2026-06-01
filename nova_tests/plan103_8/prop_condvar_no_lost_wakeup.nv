@@ -11,7 +11,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.prop_condvar_no_lost_wakeup
+module plan103_8.prop_condvar_no_lost_wakeup
 
 test "prop no lost wakeup: 1 producer + 1 consumer Ð“â€” 1000 cycles" {
     mut mu = Mutex.new()

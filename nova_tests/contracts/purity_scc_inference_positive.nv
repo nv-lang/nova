@@ -2,7 +2,7 @@
 // fn is_positive без @pure авто-определяется как pure через SCC,
 // можно использовать в requires другой функции.
 
-module nova_tests.contracts.purity_scc_inference_positive
+module contracts.purity_scc_inference_positive
 
 // Нет @pure — должно быть авто-выведено через SCC.
 fn is_positive(x int) -> bool => x > 0

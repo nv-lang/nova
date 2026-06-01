@@ -2,7 +2,7 @@
 // Classic: while i < n invariant 0 <= i <= n { i = i + 1 }
 // Z3 должен доказать что инвариант 0 <= i && i <= n сохраняется после каждой итерации.
 
-module nova_tests.contracts.loop_invariant_preservation_positive
+module contracts.loop_invariant_preservation_positive
 
 fn count_up(n int) -> int
     requires n >= 0

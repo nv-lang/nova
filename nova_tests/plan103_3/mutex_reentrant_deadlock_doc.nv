@@ -4,7 +4,7 @@
 // is already held (safe way to observe the non-reentrant behavior without
 // actually deadlocking). A real double-lock() would deadlock.
 
-module nova_tests.plan103_3.mutex_reentrant_deadlock_doc
+module plan103_3.mutex_reentrant_deadlock_doc
 
 test "regular Mutex is non-reentrant: try_lock from owner returns false" {
     mut mu = Mutex.new()

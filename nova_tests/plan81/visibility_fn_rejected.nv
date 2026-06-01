@@ -3,7 +3,7 @@
 // Plan 81 Ф.1: non-export function `hidden` от nova_tests.plan81.lib
 // не должна быть видна импортирующему модулю.
 
-module nova_tests.plan81.visibility_fn_rejected
+module plan81.visibility_fn_rejected
 
 import nova_tests.plan81.lib.{public_value}
 

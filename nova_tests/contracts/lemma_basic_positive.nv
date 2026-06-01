@@ -1,7 +1,7 @@
 // Plan 33.5 Ф.4.1: базовая лемма — тело рефлексивно доказывает ensures.
 // TrivialBackend proves reflexive: result == body → body == body (tautology).
 
-module nova_tests.contracts.lemma_basic_positive
+module contracts.lemma_basic_positive
 
 lemma identity_lemma(x int)
     ensures result == x

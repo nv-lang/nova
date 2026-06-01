@@ -6,7 +6,7 @@
 // После Plan 98: T выводится из NovaOpt_<sani> → реальный c_ty
 // через novaopt_value_types.
 
-module nova_tests.plan98.option_param_inference
+module plan98.option_param_inference
 
 type User { id int, name str }
 

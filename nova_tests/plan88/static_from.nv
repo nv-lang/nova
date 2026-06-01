@@ -5,7 +5,7 @@
 // `T.from` на type-параметре мономорфизируется (T подставляется в
 // obj-позицию static-вызова). До Plan 88 → undefined symbol nova_fn_T_from.
 
-module nova_tests.plan88.static_from
+module plan88.static_from
 
 
 type Name { s str }

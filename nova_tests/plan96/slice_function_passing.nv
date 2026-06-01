@@ -1,7 +1,7 @@
 // Plan 96 Ф.5 — позитив: view передаётся в функцию ждущую []T
 // (single-type design — view это []T).
 
-module nova_tests.plan96.slice_function_passing
+module plan96.slice_function_passing
 
 fn sum_array(arr []int) -> int {
     mut total = 0

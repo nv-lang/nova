@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.heterogeneous_array_test
+module plan91_8a_2.heterogeneous_array_test
 
 // Plan 91.8a.2 followup: heterogeneous []Printable array.
 // Storage: NovaArray_void_p where each slot holds heap-alloc'd

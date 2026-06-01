@@ -3,7 +3,7 @@
 // Plan 79 Ф.1: assignability also catches non-literal expressions —
 // a `bool`-typed variable assigned to an `int` annotation.
 
-module nova_tests.plan79.assign_var_category_mismatch
+module plan79.assign_var_category_mismatch
 
 fn run() -> int {
     ro flag bool = true

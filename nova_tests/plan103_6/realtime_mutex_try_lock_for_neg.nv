@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_WARNING W_REALTIME_TRY_LOCK_FOR_TIMER
 
-module nova_tests.plan103_6.realtime_mutex_try_lock_for_neg
+module plan103_6.realtime_mutex_try_lock_for_neg
 
 import std.time.duration
 

@@ -4,7 +4,7 @@
 // ident satisfies consume-obligation of x. Return value discarded by caller
 // (no `consume` let-binding on call site → no caller obligation).
 
-module nova_tests.plan100_2.generic_bound_ok_identity
+module plan100_2.generic_bound_ok_identity
 
 type Transaction consume {
     id int,

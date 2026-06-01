@@ -4,7 +4,7 @@
 //
 // Runtime behavior: deprecated API still works (backward compat).
 
-module nova_tests.plan103_5.once_deprecation_warning
+module plan103_5.once_deprecation_warning
 
 // EXPECT_COMPILE_WARNING W_ONCE_RUN_DONE_DEPRECATED
 

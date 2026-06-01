@@ -14,7 +14,7 @@
 // не SIGURG (minicoro mco_yield не async-signal-safe), но observable
 // поведение совпадает с Go.
 
-module nova_tests.concurrency.mn_runtime_preemption
+module concurrency.mn_runtime_preemption
 
 // ─── Positive: observable interleave ───────────────────────────────
 //

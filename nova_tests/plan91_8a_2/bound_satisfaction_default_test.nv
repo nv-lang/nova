@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.bound_satisfaction_default_test
+module plan91_8a_2.bound_satisfaction_default_test
 
 // Plan 91.8a.2 part 2 (D183 amendment): type satisfies [T Equatable] bound
 // via default body fallback. Type Money имеет только @compare; @equals

@@ -4,7 +4,7 @@
 // satisfy a cross-file generic bound. The bound `Showable` (declared in
 // `bound_lib`) is resolved and enforced at the call site.
 
-module nova_tests.plan81.bound_cross_file_neg
+module plan81.bound_cross_file_neg
 
 import nova_tests.plan81.bound_lib.{Showable}
 

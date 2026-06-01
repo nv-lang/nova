@@ -1,7 +1,7 @@
 // Plan 100.4.4 (D161): backward-compat — infallible defers работают
 // как раньше; D161 wrap не ломает Plan 20 D90 semantics.
 
-module nova_tests.plan100_4_4.backward_compat_no_fail_defers
+module plan100_4_4.backward_compat_no_fail_defers
 
 fn log(_n int) -> () { () }
 

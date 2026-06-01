@@ -4,7 +4,7 @@
 // на первой ошибке — оба несуществующих модуля репортятся в одном
 // прогоне («2 import error(s)»). Раньше виден был только первый.
 
-module nova_tests.plan81.multi_import_error_neg
+module plan81.multi_import_error_neg
 
 import nova_tests.plan81.no_such_module_a
 import nova_tests.plan81.no_such_module_b

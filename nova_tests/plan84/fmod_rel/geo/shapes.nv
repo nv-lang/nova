@@ -1,6 +1,6 @@
 // Plan 84 Ф.5 — folder-module `geo/`, импортируется через `./geo`.
 // Аудит Ф.4: относительный импорт указывает на folder-module.
-module nova_tests.plan84.fmod_rel.geo
+module geo.shapes
 
 export fn rect_area(w int, h int) -> int => w * h
 

@@ -3,7 +3,7 @@
 // `fn box_wrap[T consume](consume x T) -> T { x }` — FnBody::Block trailing
 // ident satisfies consume-obligation. Distinct from identity (FnBody::Expr).
 
-module nova_tests.plan100_2.generic_bound_ok_box
+module plan100_2.generic_bound_ok_box
 
 type Transaction consume {
     id int,

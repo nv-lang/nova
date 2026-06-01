@@ -3,7 +3,7 @@
 // peer A (importer.nv), Rule C: imports НЕ shared между peers.
 // Должна быть compile error на Path-form head `tgt`.
 
-module negative_capability.peer_path_leak_setup
+module peer_path_leak_setup.leaker
 
 export fn leak_attempt() -> int =>
     tgt.helper_value()

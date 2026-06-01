@@ -2,7 +2,7 @@
 // D141 amend: copy_from uses memmove (not memcpy) — overlap-safe by default.
 // Паритет с Go (всегда memmove), без runtime-детекции.
 
-module nova_tests.plan90_1.copy_from_overlap_via_view
+module plan90_1.copy_from_overlap_via_view
 
 test "copy_from view into same array — memmove handles overlap" {
     // dst и src[1..4] перекрываются в памяти.

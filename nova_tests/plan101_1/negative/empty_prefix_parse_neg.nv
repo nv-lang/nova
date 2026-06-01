@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR: [E_UNDECLARED_TYPEVAR_IN_RECEIVER]
 
-module nova_tests.plan101_1.negative.empty_prefix_parse_neg
+module negative.empty_prefix_parse_neg
 
 fn[] T @bad() -> T => @
 

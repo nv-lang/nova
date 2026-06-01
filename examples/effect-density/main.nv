@@ -10,7 +10,7 @@
 // Это и есть ключевой механизм управления плотностью: with-блок СНИМАЕТ
 // эффект из сигнатуры внутри своего тела.
 
-module examples.effect_density.main
+module effect-density.main
 
 import examples.effect_density.http as http
 import examples.effect_density.domain.*

@@ -4,7 +4,7 @@
 // type-checker (compute_protocol_satisfaction inline) не требует named-
 // типа в registry; вызов метода через структурную совместимость работает.
 
-module nova_tests.plan97.pos_anon_protocol_param
+module plan97.pos_anon_protocol_param
 
 
 type Doc {

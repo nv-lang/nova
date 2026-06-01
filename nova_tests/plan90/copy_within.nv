@@ -1,6 +1,6 @@
 // Plan 90 Ф.4.4 — []T.copy_within: memmove, overlap-safe.
 
-module nova_tests.plan90.copy_within
+module plan90.copy_within
 
 
 test "copy_within — без перекрытия" {

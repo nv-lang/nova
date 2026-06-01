@@ -1,7 +1,7 @@
 // Plan 96 Ф.4 — позитив: slice работает для []byte (mono check).
 // Net-byte-friendly: copy_from срезов = быстрые network/crypto-ops.
 
-module nova_tests.plan96.slice_byte_array
+module plan96.slice_byte_array
 
 test "byte slice" {
     ro buf []u8 = [0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x21]

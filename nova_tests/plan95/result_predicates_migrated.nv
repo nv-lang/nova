@@ -3,7 +3,7 @@
 // Result. Проверяем base cases, паритет с match @, нестандартные
 // типы ok/err, generic context.
 
-module nova_tests.plan95.result_predicates_migrated
+module plan95.result_predicates_migrated
 
 test "Result[int, str]: is_ok/is_err — базовый паритет с match" {
     ro ok Result[int, str] = Ok(42)

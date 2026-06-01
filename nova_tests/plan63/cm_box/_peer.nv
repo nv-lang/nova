@@ -1,4 +1,4 @@
-module nova_tests.plan63.cm_box
+module cm_box._peer
 
 // Plan 42 folder-module heuristic — ≥2 peers нужны чтобы folder
 // trigger'нул folder-module mode (vs treated как individual test file).

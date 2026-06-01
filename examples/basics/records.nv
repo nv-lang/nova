@@ -1,6 +1,6 @@
 // records.nv — записи, field punning, spread.
 
-module records
+module basics.records
 
 type Point {
     x f64

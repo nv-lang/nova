@@ -4,7 +4,7 @@
 // past initial (Java-compatible semantics, V1). No panic.
 // This test verifies that documented behavior: available_permits() grows.
 
-module nova_tests.plan103_4.semaphore_release_more_than_acquired_neg
+module plan103_4.semaphore_release_more_than_acquired_neg
 
 test "over-release increments permits past initial (Java semantics, D170 §2)" {
     mut sem = Semaphore.new(2)

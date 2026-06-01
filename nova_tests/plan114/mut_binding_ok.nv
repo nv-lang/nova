@@ -1,6 +1,6 @@
 // Plan 114 (D184): `mut X = expr` — mutable binding statement.
 
-module nova_tests.plan114.mut_binding_ok
+module plan114.mut_binding_ok
 
 test "mut binding allows reassign" {
     mut x = 1

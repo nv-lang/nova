@@ -5,7 +5,7 @@
 // на Nova-body `=> match @ { Ok(v) => v, Err(_) => default }`.
 // Mono-name всегда суффиксирован (Plan 95.bis Ф.2 dispatch fix).
 
-module nova_tests.plan95bis.result_unwrap_or_migrated
+module plan95bis.result_unwrap_or_migrated
 
 test "Result.unwrap_or — Ok → v" {
     ro ok_r Result[int, str] = Ok(7)

@@ -6,7 +6,7 @@
 // `fn main` (не `test`-блок): panic должен дойти до runtime-frame
 // (внутри test-блока он перехватывается harness'ом).
 
-module nova_tests.plan96.neg_index_oob_read
+module plan96.neg_index_oob_read
 
 fn main() -> () {
     mut arr = [1, 2, 3]

@@ -3,7 +3,7 @@
 // Plan 79 Ф.1: passing a value of one record type where a different
 // record type is expected.
 
-module nova_tests.plan79.assign_arg_wrong_record
+module plan79.assign_arg_wrong_record
 
 type User { id int }
 type Order { total int }

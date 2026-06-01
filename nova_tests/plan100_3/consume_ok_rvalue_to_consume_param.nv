@@ -2,7 +2,7 @@
 // промежуточного binding. Ownership передаётся напрямую; callee
 // обязан consumed внутри.
 
-module nova_tests.plan100_3.consume_ok_rvalue_to_consume_param
+module plan100_3.consume_ok_rvalue_to_consume_param
 
 type Transaction consume {
     id int,

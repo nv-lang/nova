@@ -4,7 +4,7 @@
 // D159 amend'нул D90 §5 (suspend allowed) НО spawn / parallel for /
 // supervised / detach / blocking — keep banned (leak supervised hierarchy).
 
-module nova_tests.plan100_4_2.defer_err_spawn_in_body
+module plan100_4_2.defer_err_spawn_in_body
 
 fn process() -> () {
     defer {

@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.synthesis_via_bound_test
+module plan91_8a_2.synthesis_via_bound_test
 
 // Plan 91.8a.2 part 3 MVP: full lifecycle test.
 // Type with only @compare → @equals synthesized → используется через

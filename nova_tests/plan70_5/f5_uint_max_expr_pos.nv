@@ -1,4 +1,4 @@
-module nova_tests.plan70_5.f5_uint_max_expr_pos
+module plan70_5.f5_uint_max_expr_pos
 
 // Plan 70.5 Ф.4: uint.MAX доступен напрямую как Path-выражение.
 // Проверяем все контексты где раньше требовался workaround `u64.MAX as uint`.

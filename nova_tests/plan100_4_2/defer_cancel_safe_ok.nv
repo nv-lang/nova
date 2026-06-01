@@ -3,7 +3,7 @@
 // [M-100.4.2-cancel-shielding]; bootstrap: defer runs after throw OR
 // cancel as throw тоже triggers defer cleanup.
 
-module nova_tests.plan100_4_2.defer_cancel_safe_ok
+module plan100_4_2.defer_cancel_safe_ok
 
 fn cleanup_async() Time -> () {
     Time.sleep(5)   // suspend-able cleanup

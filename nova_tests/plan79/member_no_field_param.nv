@@ -2,7 +2,7 @@
 //
 // Plan 79 Ф.3: field existence on a parameter-typed value.
 
-module nova_tests.plan79.member_no_field_param
+module plan79.member_no_field_param
 
 type User { id int, name str }
 

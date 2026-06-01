@@ -2,7 +2,7 @@
 // `StringBuilder.@append` теперь объявлен `-> @` — chaining работает
 // как раньше (regression: `-> @` рендеринг не сломал codegen).
 
-module nova_tests.plan77.fluent_stdlib_ok
+module plan77.fluent_stdlib_ok
 
 test "StringBuilder fluent chain через -> @" {
     consume sb = StringBuilder.new()

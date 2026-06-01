@@ -1,7 +1,7 @@
 // Plan 90.1 — property: append amortized O(1) growth (2x doubling).
 // N=1000 extends by 1, verify total elements = N, final array consistent.
 
-module nova_tests.plan90_1.append_grows_amortized
+module plan90_1.append_grows_amortized
 
 test "append amortized growth N=1000" {
     mut dst []int = []

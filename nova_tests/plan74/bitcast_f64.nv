@@ -4,7 +4,7 @@
 // reinterpret-cast между double и его bit-pattern. Реализация:
 // nova_rt/numeric.h (memcpy-based).
 
-module nova_tests.plan74.bitcast_f64
+module plan74.bitcast_f64
 
 test "f64.to_bits — known IEEE 754 patterns" {
     // 1.0 = 0x3FF0000000000000 (sign 0, exp 1023, mantissa 0).

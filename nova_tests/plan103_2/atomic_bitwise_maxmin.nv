@@ -3,7 +3,7 @@
 // fetch_max and fetch_min use a CAS-loop implementation (no __atomic_fetch_max
 // builtin in GCC/Clang). Tested with a small fixed set of values.
 
-module nova_tests.plan103_2.atomic_bitwise_maxmin
+module plan103_2.atomic_bitwise_maxmin
 
 test "AtomicI64 fetch_or" {
     mut a = AtomicI64.new(0b1010)

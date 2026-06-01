@@ -5,7 +5,7 @@
 // `parallel for` (homogeneous results). `let r = spawn { expr }` —
 // compile-error (spawn не возвращает значение).
 
-module spawn_demo
+module effects.spawn
 
 fn main() {
     // Простое spawn внутри supervised: fiber вычисляет, результат через

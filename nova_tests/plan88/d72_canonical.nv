@@ -7,7 +7,7 @@
 // `K`. Static-вызов `T.from(v)` на typevar `T` + `K` в параметре —
 // end-to-end через мономорфизацию (Rust-паритет).
 
-module nova_tests.plan88.d72_canonical
+module plan88.d72_canonical
 
 
 type Label { s str }

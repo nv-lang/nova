@@ -4,7 +4,7 @@
 // value) → compile error. Range struct требует обе границы; open-ended
 // допустим только при немедленном использовании в slice-index.
 
-module nova_tests.plan96.neg_range_open_in_let
+module plan96.neg_range_open_in_let
 
 fn main() -> () {
     ro r = 1..

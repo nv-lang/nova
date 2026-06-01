@@ -5,7 +5,7 @@
 //
 // Параллель Rust: `let x: &str = u64::MAX` — compile error.
 
-module nova_tests.plan70_5.f6_uint_str_assign_neg
+module plan70_5.f6_uint_str_assign_neg
 
 // EXPECT_CC_ERROR incompatible type
 fn bad() -> str {

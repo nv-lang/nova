@@ -3,7 +3,7 @@
 // Plan 100.2 (D156): `for consume tx in vec` — arm body does NOT consume tx.
 // Accessing a field without calling a consume method → tx stays Live → error.
 
-module nova_tests.plan100_2.for_consume_err_skip_iteration
+module plan100_2.for_consume_err_skip_iteration
 
 type Transaction consume {
     id int,

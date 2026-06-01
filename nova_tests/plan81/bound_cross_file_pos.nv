@@ -3,7 +3,7 @@
 // satisfied by a conforming type. Cross-file bounds work via the
 // Plan 35 import-merge (no orphan rule — structural conformance, D72).
 
-module nova_tests.plan81.bound_cross_file_pos
+module plan81.bound_cross_file_pos
 
 import nova_tests.plan81.bound_lib.{Showable}
 

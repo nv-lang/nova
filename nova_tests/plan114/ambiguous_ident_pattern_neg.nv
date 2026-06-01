@@ -4,7 +4,7 @@
 
 // EXPECT_COMPILE_ERROR E_AMBIGUOUS_IDENT_PATTERN
 
-module nova_tests.plan114.ambiguous_ident_pattern_neg
+module plan114.ambiguous_ident_pattern_neg
 
 fn compute() -> Option {
     Some(1)

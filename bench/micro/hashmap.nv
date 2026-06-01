@@ -1,5 +1,5 @@
 // Plan 57: HashMap micro-benches.
-module bench.micro
+module micro.hashmap
 
 // Plan 82 followup: без явного import codegen не резолвит
 // `HashMap[int,int].new()` и до fail-loudly-фикса тихо падал на

@@ -11,7 +11,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_4.countdown_one_shot_signal
+module plan103_4.countdown_one_shot_signal
 
 test "CountDownLatch one-shot signal: 5 workers count_down wakes awaiter" {
     mut latch = CountDownLatch.new(5)

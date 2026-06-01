@@ -1,5 +1,5 @@
 // Plan 84 Ф.5 — внутренний модуль, реэкспортируется facade'ом.
-module nova_tests.plan84.reexport.inner
+module reexport.inner
 
 export fn compute() -> int => 42
 

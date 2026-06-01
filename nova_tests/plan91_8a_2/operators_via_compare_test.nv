@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.operators_via_compare_test
+module plan91_8a_2.operators_via_compare_test
 
 // Plan 91.8a.2 part 3 (D183 amendment): operators `==`/`!=`/`<`/`<=`/`>`/`>=`
 // dispatch через @compare если type satisfies Comparable. Raньше fallback

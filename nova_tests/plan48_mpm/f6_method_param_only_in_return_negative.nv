@@ -4,7 +4,7 @@
 // (`U` из closure), второй (`V`) появляется ТОЛЬКО в return type —
 // все равно должен fail с clean diagnostic, упоминая именно `V`.
 
-module nova_tests.plan48_mpm.f6_method_param_only_in_return_negative
+module plan48_mpm.f6_method_param_only_in_return_negative
 
 export type Box[T] { v T }
 export fn Box[T].of(x T) -> Box[T] => { v: x }

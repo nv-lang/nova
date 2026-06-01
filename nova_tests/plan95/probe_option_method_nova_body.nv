@@ -9,7 +9,7 @@
 // тестируется ДО переноса самих предикатов (Ф.4 коммитится отдельно
 // и удаляет трамплины).
 
-module nova_tests.plan95.probe_option_method_nova_body
+module plan95.probe_option_method_nova_body
 
 fn Option[T] @my_present() -> bool => match @ { Some(_) => true, None => false }
 

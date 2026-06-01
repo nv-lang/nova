@@ -3,7 +3,7 @@
 // generic-context: monomorphizer должен раскрыть и Option и метод
 // per-T одинаково.
 
-module nova_tests.plan95.option_in_generic_fn
+module plan95.option_in_generic_fn
 
 fn check_some[T](o Option[T]) -> bool => o.is_some()
 fn check_none[T](o Option[T]) -> bool => o.is_none()

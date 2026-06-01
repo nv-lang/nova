@@ -4,7 +4,7 @@
 // После for — vec considered Consumed (pragmatic: `for consume` marks iter).
 // Uses inline Transaction literals (не consume-let) — no loose obligations.
 
-module nova_tests.plan100_2.for_consume_iter_ok
+module plan100_2.for_consume_iter_ok
 
 type Transaction consume {
     id int,

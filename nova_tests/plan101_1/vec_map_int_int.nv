@@ -1,6 +1,6 @@
 // Plan 101.1 Ф.5 — positive: fn[T] []T @map[U] inline.
 
-module nova_tests.plan101_1.vec_map_int_int
+module plan101_1.vec_map_int_int
 
 fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
     mut out []U = []U.with_capacity(@len())

@@ -2,7 +2,7 @@
 // `my_map` чтобы не сталкиваться с inline-emit `Option.map` (collision
 // будет fix'нута в Plan 99.3 atomic migration).
 
-module nova_tests.plan99_probe.my_map_probe
+module plan99_probe.my_map_probe
 
 fn Option[T] @my_map[U](f fn(T) -> U) -> Option[U]
   => match @ { Some(v) => Some(f(v)), None => None }

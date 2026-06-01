@@ -2,7 +2,7 @@
 // commit. D162 не fires когда нет Fail в sig (только failable functions
 // требуют errdefer cover error-path).
 
-module nova_tests.plan100_4_5.consume_no_fail_just_commit_ok
+module plan100_4_5.consume_no_fail_just_commit_ok
 
 type Transaction consume {
     id int,

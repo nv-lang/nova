@@ -1,6 +1,6 @@
 // Plan 114 (D184): `ro X = expr` — immutable binding statement.
 
-module nova_tests.plan114.ro_binding_ok
+module plan114.ro_binding_ok
 
 test "ro binding immutable" {
     ro x = 10

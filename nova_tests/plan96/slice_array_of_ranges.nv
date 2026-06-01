@@ -7,7 +7,7 @@
 // propagation, не Plan 96 scope). Поэтому тест проверяет только
 // что slice работает; element-field access — TODO.
 
-module nova_tests.plan96.slice_array_of_ranges
+module plan96.slice_array_of_ranges
 
 test "array of Range — Range slice returns slice" {
     ro ranges []Range = [0..5, 10..20, 30..40, 50..60]

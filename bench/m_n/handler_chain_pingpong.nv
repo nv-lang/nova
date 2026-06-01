@@ -9,7 +9,7 @@
 // Acceptance Plan 83.7 §3: 30%+ latency reduction vs pre-runnext
 // baseline.
 
-module bench_m_n.handler_chain_pingpong
+module m_n.handler_chain_pingpong
 
 bench "10K ping-pong same-worker latency" {
     measure {

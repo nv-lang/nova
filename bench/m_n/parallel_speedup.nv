@@ -42,7 +42,7 @@
 //   - Try parallel_for на array-mode (potential parallel-friendly path).
 //   - Linux perf comparison (Windows может быть особенно медленным на
 //     thread create).
-module bench.m_n
+module m_n.parallel_speedup
 
 // CPU-bound recursive Fibonacci (no tail-call). Plain integer math;
 // no heap alloc, no I/O — pure computation, scales with cores.

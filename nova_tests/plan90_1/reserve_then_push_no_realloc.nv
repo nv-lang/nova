@@ -2,7 +2,7 @@
 // After reserve(N), pushing N elements should not require realloc
 // (cap >= len+N means all pushes stay in-place).
 
-module nova_tests.plan90_1.reserve_then_push_no_realloc
+module plan90_1.reserve_then_push_no_realloc
 
 test "reserve 10000 then push 10000 elements" {
     mut arr []int = []

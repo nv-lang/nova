@@ -3,7 +3,7 @@
 // Plan 73 (D131): use-after-consume через consume-параметр.
 // После передачи переменной в `consume`-параметр она недоступна.
 
-module nova_tests.plan73.consume_err_param
+module plan73.consume_err_param
 
 type Token { val int }
 

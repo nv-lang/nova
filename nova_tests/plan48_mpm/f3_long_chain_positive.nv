@@ -1,4 +1,4 @@
-module nova_tests.plan48_mpm.f3_long_chain_positive
+module plan48_mpm.f3_long_chain_positive
 
 // Plan 48 Ф.9 / D119 positive: длинная цепочка .map().map().map().map()
 // с разными типами на каждом шаге → каждая step требует своей mono-instance.

@@ -3,7 +3,7 @@
 // Plan 100.4.5 (D162): failable function с consume binding но БЕЗ errdefer —
 // error D162-uncovered-error-path. На throw consume будет leaked.
 
-module nova_tests.plan100_4_5.neg_failable_no_errdefer
+module plan100_4_5.neg_failable_no_errdefer
 
 type Transaction consume {
     id int,

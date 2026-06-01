@@ -4,7 +4,7 @@
 //
 // Simulated mock: internal impl type + public wrapper.
 
-module nova_tests.plan100_6.internal_folder_consume_ok
+module plan100_6.internal_folder_consume_ok
 
 // "internal/cache.nv" — impl-detail consume type:
 type CacheHandle consume {

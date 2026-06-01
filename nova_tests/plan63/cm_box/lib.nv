@@ -1,4 +1,4 @@
-module nova_tests.plan63.cm_box
+module cm_box.lib
 
 export type Box[T] { v T }
 

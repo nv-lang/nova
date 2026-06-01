@@ -6,7 +6,7 @@
 // `compute_audit_id` из helpers.nv через shared namespace без import
 // (Go-style peer scope).
 
-module modules.folder_module_basic
+module folder_module_basic.users
 
 export type User {
     id   int

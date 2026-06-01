@@ -5,7 +5,7 @@
 // type instantiation. `Box[char]` mono'ится в `Nova_Box____nova_char`,
 // `Box[int]` — в `Nova_Box____nova_int` — independent C structs.
 
-module nova_tests.plan70_3.f5_generic_record_char_pos
+module plan70_3.f5_generic_record_char_pos
 
 type Box[T] {
     value T

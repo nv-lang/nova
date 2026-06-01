@@ -4,7 +4,7 @@
 // завершаться выражением `@`. Здесь тело кончается statement'ом без
 // `@` → compile error (иначе гарантия `-> @` была бы ложной).
 
-module nova_tests.plan77.fluent_body_err
+module plan77.fluent_body_err
 
 type Bldr { mut k int }
 

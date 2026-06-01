@@ -5,7 +5,7 @@
 // `T = WithoutClose` в `[T protocol { close() -> () }]` должна давать
 // compile error от check_satisfaction_against_methods.
 
-module nova_tests.plan97.neg_anon_protocol_missing_method
+module plan97.neg_anon_protocol_missing_method
 
 
 type WithoutClose {

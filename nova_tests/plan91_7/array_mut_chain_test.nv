@@ -1,4 +1,4 @@
-module nova_tests.plan91_7.array_mut_chain_test
+module plan91_7.array_mut_chain_test
 
 // Plan 91.7 Part A (D181): mut методы возвращают @ → fluent chain.
 

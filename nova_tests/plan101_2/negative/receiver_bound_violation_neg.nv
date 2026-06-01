@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR does not satisfy `Showable_`
 
-module nova_tests.plan101_2.negative.receiver_bound_violation_neg
+module negative.receiver_bound_violation_neg
 
 
 type Showable_ protocol {

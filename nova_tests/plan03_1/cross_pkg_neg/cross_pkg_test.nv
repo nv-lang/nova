@@ -4,7 +4,7 @@
 // импортируемым. Раньше резолвер неявно находил такой модуль через
 // repo-root — 03.1 Ф.3 эту looseness ужесточает.
 // EXPECT_COMPILE_ERROR границу пакета
-module xpkg_consumer.cross_pkg_test
+module cross_pkg_neg.cross_pkg_test
 
 import nova_tests.plan03_1.shared_target.{shared_value}
 

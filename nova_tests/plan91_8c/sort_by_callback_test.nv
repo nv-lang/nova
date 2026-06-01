@@ -1,4 +1,4 @@
-module nova_tests.plan91_8c.sort_by_callback_test
+module plan91_8c.sort_by_callback_test
 
 import std.sort
 

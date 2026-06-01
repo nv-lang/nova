@@ -7,7 +7,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.stress_cas_loop_high_contention
+module plan103_8.stress_cas_loop_high_contention
 
 test "CAS loop high contention: 16 fibers × 20 compare_exchange — final = 320" {
     mut counter = AtomicI64.new(0)

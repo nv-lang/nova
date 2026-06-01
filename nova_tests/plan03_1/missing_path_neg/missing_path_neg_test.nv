@@ -1,7 +1,7 @@
 // Plan 03.1 Ф.3 NEGATIVE — path-зависимость указывает на несуществующую
 // директорию.
 // EXPECT_COMPILE_ERROR несуществующую директорию
-module missing_path_pkg.missing_path_neg_test
+module missing_path_neg.missing_path_neg_test
 
 import gonelib.calc.{add}
 

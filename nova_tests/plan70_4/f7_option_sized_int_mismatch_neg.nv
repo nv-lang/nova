@@ -6,7 +6,7 @@
 //
 // Параллель Rust: Option<i16> и Option<i32> — разные типы.
 
-module nova_tests.plan70_4.f7_option_sized_int_mismatch_neg
+module plan70_4.f7_option_sized_int_mismatch_neg
 
 fn take_opt_i32(o Option[i32]) -> bool { o.is_some() }
 

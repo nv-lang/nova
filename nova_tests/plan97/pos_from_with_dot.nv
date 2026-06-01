@@ -5,7 +5,7 @@
 // Проверяем: реализация компилируется, вызов работает, Into[U]
 // auto-derive продолжает работать.
 
-module nova_tests.plan97.pos_from_with_dot
+module plan97.pos_from_with_dot
 
 
 type Fahrenheit {

@@ -5,7 +5,7 @@
 // Post-fix: distinct `nova_char` typedef → `NovaOpt_nova_char` vs
 // `NovaOpt_nova_int` — independent C structs.
 
-module nova_tests.plan70_3.f1_option_char_vs_int_pos
+module plan70_3.f1_option_char_vs_int_pos
 
 test "Option[char] holds char-literal correctly" {
     ro c Option[char] = Some('a')

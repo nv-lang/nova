@@ -1,6 +1,6 @@
 // Plan 89 Ф.2.2 — `match` по боксированному Option-элементу массива.
 
-module nova_tests.plan89.match_option_elem
+module plan89.match_option_elem
 
 
 test "for-in []Option + match Some/None" {

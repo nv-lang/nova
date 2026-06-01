@@ -2,7 +2,7 @@
 // import без alias). Last-segment `Z` registered как imported_modules
 // entry — same rewrite path как alias case.
 
-module nova_tests.plan70_1.f2_whole_module_pos
+module plan70_1.f2_whole_module_pos
 
 import nova_tests.plan70_1.helper_mod
 

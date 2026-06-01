@@ -3,7 +3,7 @@
 // Проверяет: после создания литерала вызов метода `r.run()`
 // диспатчится через vtable companion (Plan 72 P3-B).
 
-module nova_tests.plan97.pos_protocol_lit_dispatch
+module plan97.pos_protocol_lit_dispatch
 
 
 export type Counter protocol {
