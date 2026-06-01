@@ -26461,3 +26461,68 @@ Acceptance criteria status:
 - A12 ✓ docs/value-vs-reference.md explicit stack/heap distinction
 - A4/A5: T3.2 (positional args on named tuple) + NEG-T4 series deferred → [M-120-positional-construct-check]
 - A11: full nova test pending (final verification)
+
+================================================================================
+[M-D78-strict-removal] CLOSED (2026-06-01)
+================================================================================
+
+Branch: d78-strict-removal (worktree D:/Sources/nv-lang/nova-p114-4)
+Triggered by: accumulated corpus drift (~847 rev-1 violators detected
+by 2026-06-01 audit), making rev-3 strict enforcement impossible until
+migration completes.
+
+Что сделано:
+1. Corpus migration (~846 files):
+   - nova_tests/ ............ 797 files migrated
+   - examples/ .............. 22 files migrated
+   - bench/ ................. 27 files migrated
+   - plan100.3/ → plan100_3/ (directory rename: dot incompatible с
+     rev-3 parts split).
+   - Audit: было 847 violators / 1104 compliant →
+     стало 0 violators / 1951 compliant.
+
+2. Compiler strict removal (compiler-codegen/src/manifest.rs):
+   - check_module_path_with_kind: removed rev-1 acceptance branch.
+   - ModulePathCheck::Rev1Deprecated kept #[allow(dead_code)] для ABI
+     stability (potential per-package opt-in legacy mode будущем).
+   - rev-1 form теперь → hard error E_D78_MODULE_PATH_MISMATCH.
+
+3. Spec D29/D78 update (spec/decisions/07-modules.md):
+   - Diagnostic codes table: W_D78_REV1_DEPRECATED retired.
+   - Bug history: добавлен bullet 2026-06-01 strict removal.
+   - Эволюция: новый пункт rev-3 strict removal с migration deltas.
+
+4. Migration helper (scripts/d78_audit_migrate.py — landed earlier):
+   - _test.nv peer detection (правило F D29 Plan 42): strip _test
+     suffix только если sibling file/folder existing.
+   - internal/ rev-3.1 special-case (owner.internal.target).
+   - Idempotent: после migration повторный --audit показывает 0 violators.
+   - Bug fix регex: '[ \\t]*' вместо '\\s*' для trailing whitespace
+     (не есть blank lines после module declaration).
+
+Smoke regression (release nova-cli build):
+- basics 8/0
+- syntax 53/1 (pre-existing for_in_range_iter fail, unrelated)
+- plan114 10/0
+- plan114_4 9/0
+- plan114_4_1 5/0
+- plan73 25/0
+- plan108 6/0
+- plan100_3 10/0
+- plan120 8/0
+Total: 134 PASS / 1 pre-existing baseline fail / 0 new regressions.
+
+Probe fixture rev-1 form → корректно fail'ит:
+  [E_D78_MODULE_PATH_MISMATCH] module declaration does not match file
+  path (D29 rev-3 + legacy) ... declares 'nova_tests.plan114_4_1.<X>',
+  expected (rev-3 parent.X): 'plan114_4_1.<X>'.
+
+Commits на branch d78-strict-removal:
+- cb94a567f7a — wip(D78 strict removal): corpus migration (846 files)
+- ac16bba654f — feat([M-D78-strict-removal]): remove rev-1 acceptance
+- f459ea376e5 — docs(D29/D78): rev-3 strict closed
+- (this entry) — docs: project-creation log + simplifications log
+
+Closes marker: [M-D78-strict-removal].
+Unblocks: strict rev-3 enforcement в любых будущих кодогенерационных
+plans (manifest dispatch, cross-module symbol resolution).
