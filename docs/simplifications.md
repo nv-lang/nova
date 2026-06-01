@@ -28083,3 +28083,19 @@ Production-grade final обязательство (в plan header) — все э
 **Status:** Plan 110 umbrella merged into main. 74 commits from plan-110 branch. 36/36 plan110 fixtures PASS. syntax/ 53/1 baseline preserved. Branch plan-110 ready for archival (можно delete после CI verification).
 
 См. `docs/plans/110-artifacts/plan110_8_8_umbrella_close.md` для полного summary.
+
+---
+
+## D78 enforcement bug fix — W_D78_REV1_DEPRECATED warning (2026-06-01)
+
+**Bug:** compiler silently принимал rev-1 legacy module declaration form
+('nova_tests.X.Y' 3-segment instead of D29 rev-3 'X.Y' 2-segment) без
+any warning. Это привело к corpus drift: ~847 violators (43% nova_tests).
+
+**Fix:** ModulePathCheck enum return type → caller emit'ит actionable
+W_D78_REV1_DEPRECATED warning с migration hint.
+
+**Documented:** D29 rev-3 section + diagnostic codes table в spec.
+
+**OPEN marker:** `[M-D78-strict-removal]` — full corpus migration (~847
+files) + remove rev-1 acceptance branch. Separate plan (massive refactor).
