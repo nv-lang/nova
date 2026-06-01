@@ -1,0 +1,10 @@
+// Plan 114.4.2 T3-extra: const fn без параметров (-> const T только).
+
+module plan114_4_2.const_fn_no_args_ok
+
+fn answer() -> const int => 42
+
+test "const fn no args" {
+    const A = answer()
+    assert(A == 42)
+}

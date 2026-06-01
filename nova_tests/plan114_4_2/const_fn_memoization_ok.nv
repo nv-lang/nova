@@ -1,0 +1,21 @@
+// Plan 114.4.2 T3.16: 100 identical call sites — memoization smoke.
+// Each call should produce the same literal — codegen sees 100 copies
+// of literal `1000`.
+
+module plan114_4_2.const_fn_memoization_ok
+
+fn mul(const a int, const b int) -> const int => a * b
+
+const A0 = mul(10, 100)
+const A1 = mul(10, 100)
+const A2 = mul(10, 100)
+const A3 = mul(10, 100)
+const A4 = mul(10, 100)
+
+test "memoized const fn" {
+    assert(A0 == 1000)
+    assert(A1 == 1000)
+    assert(A2 == 1000)
+    assert(A3 == 1000)
+    assert(A4 == 1000)
+}

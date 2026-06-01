@@ -1,0 +1,12 @@
+// Plan 114.4.2 T3.6: const fn calls const fn (chain through 2 functions).
+
+module plan114_4_2.const_fn_chain_ok
+
+fn add(const a int, const b int) -> const int => a + b
+
+fn outer(const x int) -> const int => add(x, 1)
+
+test "const fn calls const fn" {
+    const R = outer(41)
+    assert(R == 42)
+}

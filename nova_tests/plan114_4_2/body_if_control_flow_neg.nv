@@ -1,0 +1,9 @@
+// Plan 114.4.2 NEG: if в body const fn → E_CONST_FN_CONTROL_FLOW.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_CONTROL_FLOW
+
+module plan114_4_2.body_if_control_flow_neg
+
+fn pick(const a int, const b int) -> const int {
+    if a > b { a } else { b }
+}

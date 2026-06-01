@@ -1,0 +1,7 @@
+// Plan 114.4.2 T3-NEG-extra: external + const fn → E_CONST_FN_EXTERNAL.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EXTERNAL
+
+module plan114_4_2.external_const_fn_neg
+
+external fn bad(const a int) -> const int

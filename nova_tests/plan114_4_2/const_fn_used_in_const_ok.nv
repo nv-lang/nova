@@ -1,0 +1,11 @@
+// Plan 114.4.2 T3.5: const fn used в module-level const initialiser.
+
+module plan114_4_2.const_fn_used_in_const_ok
+
+fn shift(const a int, const k int) -> const int => a * 1000 + k
+
+const KEY = shift(7, 3)
+
+test "module-level const populated by const fn" {
+    assert(KEY == 7003)
+}

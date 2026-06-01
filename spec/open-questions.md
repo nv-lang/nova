@@ -165,11 +165,30 @@ type Db effect {
 В overview.md сказано: «typed compile-time функции (как Zig comptime)».
 Но конкретный синтаксис, мощь, ограничения — не описаны.
 
-**Вопросы:**
+**Частичный ответ (Plan 114.4.2, 2026-06-01):** comptime-функции
+введены через **`const fn`** (D199) — V1 subset:
+- `fn calc(const a int, ...) -> const int { ... }`.
+- All-or-nothing const params (Rust-style; Zig-style partial — followup
+  `[M-114.4.2-mixed-args]`).
+- Whitelist: literals, arithmetic, `as`-casts, refs к const params/locals,
+  local `const` decls, final expr, calls к другим const fn.
+- Blacklist V1: control flow, mut/consume bindings, effects, allocations,
+  generic params, recursion.
+- Comptime evaluator (env-based interp + memoization) inline'ит result
+  литералом на call site, const fn drop'нут из codegen (zero runtime cost).
+
+**Что отложено (Q7 остаётся открытым для V2+):**
 - Comptime-функции имеют доступ к типам как первый класс?
+  → Нет в V1 (Plan 114.4.2 V1 — generic-aware const fn через
+  `[M-114.4.2-generic]`).
 - Можно ли генерировать код во время компиляции?
+  → Нет (без macro-system; followup в будущем Q-блоке).
 - Reflection во время компиляции — да или нет?
+  → Нет (out-of-scope V1).
 - Custom DSL через comptime — допускается?
+  → Нет (out-of-scope V1).
+
+См. [docs/plans/114.4.2-const-fn.md](../docs/plans/114.4.2-const-fn.md).
 
 ---
 

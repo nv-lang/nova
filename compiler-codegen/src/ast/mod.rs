@@ -347,6 +347,10 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub effects: Vec<TypeRef>, // эффекты между `)` и `->`
     pub return_type: Option<TypeRef>,
+    /// Plan 114.4.2 (D199): `-> const T` — return type marked `const`,
+    /// fn evaluates at compile time. Together with all-`const` params
+    /// makes the fn a `const fn`. All-or-nothing rule (см. is_const на Param).
+    pub return_is_const: bool,
     /// Plan 77 (D132): `-> @` — метод возвращает сам receiver (fluent).
     /// `return_type` при этом = `Self` (тип результата — receiver-тип);
     /// флаг добавляет гарантию «возвращается именно receiver». Валидно
@@ -590,6 +594,11 @@ pub struct Param {
     /// (read-only param).  Конфликтует с `consume` и `readonly` —
     /// parser-level error.
     pub is_mut: bool,
+    /// Plan 114.4.2 (D199): `const name Type` — comptime-only параметр.
+    /// All-or-nothing: если хоть один param `const`, ВСЕ должны быть
+    /// `const` И return должен быть `const`. Конфликтует с `mut`/
+    /// `consume` (E_CONST_PARAM_MOD_CONFLICT).
+    pub is_const: bool,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.

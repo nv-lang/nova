@@ -1410,6 +1410,7 @@ mod tests {
             params: vec![],
             effects: vec![],
             return_type: None,
+            return_is_const: false,
             returns_receiver: false,
             body: FnBody::External,
             span: Span::default(),
@@ -1493,6 +1494,7 @@ mod tests {
             params: vec![],
             effects: vec![],
             return_type: None,
+            return_is_const: false,
             returns_receiver: false,
             body: FnBody::External,
             span: Span::default(),
@@ -1552,7 +1554,7 @@ mod tests {
                 span: Span::default(),
             }),
             generics: vec![], params: vec![], effects: vec![],
-            return_type: None, returns_receiver: false,
+            return_type: None, return_is_const: false, returns_receiver: false,
             // Stub Nova-body для теста — `=> false` (контент не важен,
             // важно только `is_external == false` и `body != External`).
             body: if external { FnBody::External } else {
@@ -1633,7 +1635,7 @@ mod tests {
                 span: Span::default(),
             }),
             generics: vec![], params: vec![], effects: vec![],
-            return_type: None, returns_receiver: false,
+            return_type: None, return_is_const: false, returns_receiver: false,
             body: FnBody::Expr(Expr::new(
                 ExprKind::BoolLit(false), Span::default()
             )),
@@ -1920,6 +1922,7 @@ mod tests {
                 mutable: false, consume: false, span: Span::default(),
             }),
             generics: vec![], params: vec![], effects: vec![], return_type: None,
+            return_is_const: false,
             returns_receiver: false,
             body: FnBody::External, span: Span::default(),
             realtime_attr: RealtimeAttr::None, blocking_attr: false, contracts: vec![],

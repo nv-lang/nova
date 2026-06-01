@@ -1177,8 +1177,11 @@ counter += 1
   record/sum-type из const-значений.
 - **Не** runtime-вызовы, эффекты, ссылки на не-const.
 
-`const fn` (compile-time функции) — отложено до Q7 (comptime).
-До этого `const NOW = Time.now()` — ошибка.
+`const fn` (compile-time функции) — ✅ реализовано в Plan 114.4.2 (D199):
+функция с `const`-params + `-> const T` return вычисляется компилятором,
+call sites заменяются литералом в AST. См. [D199](#d199-const-fn--comptime-evaluable-functions).
+`const NOW = Time.now()` остаётся ошибкой (Time.now() — runtime call,
+не const fn).
 
 `const` живёт в data-segment (zero-cost). `let`-объекты — в managed
 heap (или на стеке через escape analysis).
@@ -4827,6 +4830,12 @@ cleanup ОБЯЗАН suspend — graceful socket close с FIN+ACK, DB drain че
 
 > **Status:** active (spec). Базовая реализация — [Plan 46](../../docs/plans/46-named-parameters.md)
 > (закрыт). Ревизия «дефолт → keyword-only» (2026-05-15) — [Plan 50](../../docs/plans/50-default-keyword-only.md).
+> **2026-06-01 D199 amend:** default-value expression может вызывать
+> `const fn` (D199) — call-site replaced литералом во время компиляции,
+> default остаётся `Expr::IntLit/StrLit/...` после Plan 114.4.2 Ф.3.
+> Plan 114.4.2 fixture `const_fn_used_in_const_ok.nv` — proof-of-concept
+> с module-level `const`; default param сценарий — followup-сценарий
+> (parser + checker уже совместимы).
 
 ### Что
 
@@ -6966,8 +6975,15 @@ fn_return      ::= "->" "const"? type
 
 ## D199. `const fn` — comptime evaluable functions
 
-> **Plan 114.4 Ф.3** (extracted from Plan 114 Ф.11 safety hatch).
-> **Status:** 🆕 draft (финализируется в Ф.4).
+> **Plan 114.4.2** (extracted from Plan 114.4 Ф.3 safety hatch).
+> **Status:** ✅ **ACTIVE** (2026-06-01) — V1 implementation landed:
+> parser (const params + `-> const T` + all-or-nothing + modifier-conflicts
+> + effect-list/generic/external reject) + body checker (whitelist +
+> 7 error codes + call-graph cycle detection) + comptime evaluator
+> subsystem (env-based interp + memoization + overflow/div-zero) + AST
+> rewriter (call-site → literal replacement + codegen drop) +
+> 22 fixtures (8 NEG parser + 6 POS + 8 NEG checker/eval/external).
+> См. [Plan 114.4.2](../../docs/plans/114.4.2-const-fn.md) closure.
 
 ### Что
 
@@ -7058,7 +7074,31 @@ Errors на evaluator-side:
 
 ### Acceptance
 
-См. Plan 114.4 A14-A18 (T3 series).
+См. Plan 114.4.2 A14-A18 (T3 series), 22/22 fixtures PASS на release nova-cli.
+
+### Implementation notes (2026-06-01)
+
+- **Parser** (`compiler-codegen/src/parser/mod.rs`): `Param.is_const: bool`
+  + `FnDecl.return_is_const: bool` AST extensions. All-or-nothing check
+  + modifier-conflicts + effect-list / generic / external reject
+  выполняются в `parse_fn` после params + return parsing.
+- **Body checker** (`compiler-codegen/src/types/mod.rs::check_const_fn_decl`):
+  whitelist (literal / arith / as-cast / Ident param/local / direct
+  const-fn-call), blacklist (7 error codes). Stmt::Const внутри body
+  binds local const env. Call-graph DFS (WHITE/GRAY/BLACK) detects
+  direct + mutual recursion.
+- **Comptime evaluator** (`compiler-codegen/src/const_fn_eval.rs`):
+  `ConstValue` enum (Int/Float/Bool/Str/Char/Unit с manual Hash via
+  `to_bits` для floats) + `ConstFnEvaluator` (OwnedEvaluator variant
+  для rewrite borrow flow). Memoization `(fn_name, args) → result` per
+  compilation. Checked arithmetic — overflow / div-zero explicit errors.
+- **AST rewriter** (`rewrite_const_fn_calls`): walks все expressions
+  (включая Match arms / loops / closures / spawn / supervised / etc.),
+  заменяет Call(const_fn) на literal Expr. После walk — retain'ит
+  filter из items + peer_files.items_here removing const fn declarations.
+- **Pipeline placement**: после `types::check_module`, до
+  `annotate_map_literals` / `desugar_module`. Single pass через
+  module → fail-fast на первой error.
 
 ---
 
