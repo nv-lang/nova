@@ -106,8 +106,11 @@ enum FieldKind {
     /// `RecordField.readonly == true` — unconditional cache (Ф.1 path).
     Ro,
     /// `RecordField.mutable == true` — straight-line region cache
-    /// (Ф.2 path). Ф.1 collected but not emitted.
-    #[allow(dead_code)]
+    /// (Ф.2 path). V1 implements **first-region** caching only —
+    /// cache valid от body start до first write OR first call boundary;
+    /// subsequent reads stay as `@F` (conservative). Full multi-region
+    /// re-cache после write → `[M-123.1-mut-region-recache]` P2
+    /// followup.
     Mut,
 }
 
@@ -224,14 +227,16 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     }
     collect_local_names_fn(f, &mut local_names);
 
-    // Decide which fields to cache (Ф.1: ro only).
+    // Split candidates по kind: ro (full-body cache) vs mut (first-
+    // region cache). Both filtered by threshold + closure-capture.
     let mut field_names: Vec<&String> = analysis.read_counts.keys().collect();
     field_names.sort();
-    let mut to_cache: Vec<(String, FieldKind, crate::diag::Span)> = Vec::new();
+    let mut ro_candidates: Vec<(String, crate::diag::Span)> = Vec::new();
+    let mut mut_candidates: Vec<(String, crate::diag::Span)> = Vec::new();
+    let mut total_caches = 0usize;
     for fname in field_names {
-        let count = analysis.read_counts.get(fname).copied().unwrap_or(0);
-        if count < cfg.threshold {
-            continue;
+        if total_caches >= cfg.max_per_fn {
+            break;
         }
         if analysis.closure_captured.contains(fname) {
             continue;
@@ -240,24 +245,36 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
             Some(k) => *k,
             None => continue,
         };
-        // Ф.1: ro path only.
-        if !matches!(kind, FieldKind::Ro) {
-            continue;
-        }
+        let global_count = analysis.read_counts.get(fname).copied().unwrap_or(0);
         let span = analysis.first_span.get(fname).copied().unwrap_or(body_span);
-        to_cache.push((fname.clone(), kind, span));
-        if to_cache.len() >= cfg.max_per_fn {
-            break;
+        match kind {
+            FieldKind::Ro => {
+                if global_count >= cfg.threshold {
+                    ro_candidates.push((fname.clone(), span));
+                    total_caches += 1;
+                }
+            }
+            FieldKind::Mut => {
+                // For mut: count reads only in first-region prefix (до
+                // first write OR first call boundary). If prefix count
+                // < threshold — skip.
+                if let Some(prefix_count) = count_mut_prefix_reads(&f.body, fname) {
+                    if prefix_count >= cfg.threshold {
+                        mut_candidates.push((fname.clone(), span));
+                        total_caches += 1;
+                    }
+                }
+            }
         }
     }
 
-    if to_cache.is_empty() {
+    if ro_candidates.is_empty() && mut_candidates.is_empty() {
         return;
     }
 
     // Generate cache local names (collision-avoidance).
     let mut name_map: HashMap<String, String> = HashMap::new();
-    for (fname, _kind, _) in &to_cache {
+    for (fname, _) in ro_candidates.iter().chain(mut_candidates.iter()) {
         let base = format!("_at_{}", fname);
         let mut chosen = base.clone();
         let mut suffix = 0usize;
@@ -269,7 +286,577 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
         name_map.insert(fname.clone(), chosen);
     }
 
-    rewrite_fn_body(f, &to_cache, &name_map);
+    rewrite_fn_body_split(f, &ro_candidates, &mut_candidates, &name_map);
+}
+
+/// Count `@<fname>` reads в первой straight-line prefix region body'а.
+///
+/// Prefix region = top-level stmts от 0 до первого stmt, который
+/// содержит write to `@<fname>` OR содержит любой Call expression
+/// (V1 conservative — call может mutate `@F` через alias / IPA).
+/// Если body — Expr (не Block), trait как single-stmt region: count
+/// reads если no write/call в этом expr.
+///
+/// Возвращает `None` если field receiver-typed body не applicable
+/// (External / unhandled). Возвращает `Some(count)` иначе.
+fn count_mut_prefix_reads(body: &FnBody, fname: &str) -> Option<usize> {
+    match body {
+        FnBody::Block(b) => {
+            let mut count = 0usize;
+            for s in &b.stmts {
+                if stmt_is_barrier_for(s, fname) {
+                    return Some(count);
+                }
+                count += count_field_reads_in_stmt(s, fname);
+            }
+            // No barrier in stmts → trailing also part of prefix.
+            if let Some(t) = &b.trailing {
+                if expr_is_barrier_for(t, fname) {
+                    return Some(count);
+                }
+                count += count_field_reads_in_expr(t, fname);
+            }
+            Some(count)
+        }
+        FnBody::Expr(e) => {
+            if expr_is_barrier_for(e, fname) {
+                Some(0)
+            } else {
+                Some(count_field_reads_in_expr(e, fname))
+            }
+        }
+        FnBody::External => None,
+    }
+}
+
+/// True если stmt содержит write to `@<fname>` (top-level Assign on
+/// `Member{SelfAccess, fname}`) OR содержит любой Call expression
+/// anywhere (V1 conservative barrier).
+fn stmt_is_barrier_for(s: &Stmt, fname: &str) -> bool {
+    if stmt_has_write_to(s, fname) {
+        return true;
+    }
+    stmt_contains_call(s)
+}
+
+fn expr_is_barrier_for(e: &Expr, fname: &str) -> bool {
+    expr_contains_write_to(e, fname) || expr_contains_call(e)
+}
+
+fn stmt_has_write_to(s: &Stmt, fname: &str) -> bool {
+    if let Stmt::Assign { target, .. } = s {
+        if let Some(t_fname) = match_self_field(target) {
+            if t_fname == fname {
+                return true;
+            }
+        }
+    }
+    // Compound `@F[i] = v` or nested — handled below via expr walk.
+    stmt_contains_write_to(s, fname)
+}
+
+fn stmt_contains_write_to(s: &Stmt, fname: &str) -> bool {
+    // Conservative: any Assign with @F or @F[i] anywhere inside the
+    // stmt's expressions is a "write" for cache-invalidation purposes.
+    match s {
+        Stmt::Assign { target, value, .. } => {
+            expr_contains_write_to(target, fname) || expr_contains_write_to(value, fname)
+                || (match_self_field(target) == Some(fname))
+        }
+        Stmt::Let(d) => expr_contains_write_to(&d.value, fname),
+        Stmt::Const(d) => expr_contains_write_to(&d.value, fname),
+        Stmt::Expr(e) => expr_contains_write_to(e, fname),
+        Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_contains_write_to(v, fname)),
+        Stmt::Throw { value, .. } => expr_contains_write_to(value, fname),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            expr_contains_write_to(body, fname)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_contains_write_to(init, fname) || block_contains_write_to(body, fname)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            expr_contains_write_to(expr, fname)
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn block_contains_write_to(b: &Block, fname: &str) -> bool {
+    b.stmts.iter().any(|s| stmt_contains_write_to(s, fname))
+        || b.trailing.as_ref().map_or(false, |t| expr_contains_write_to(t, fname))
+}
+
+fn expr_contains_write_to(e: &Expr, fname: &str) -> bool {
+    // Walk all sub-exprs / sub-stmts; look for any control-flow Block
+    // with an Assign Stmt где target = `@<fname>` (or indexed @F).
+    match &e.kind {
+        ExprKind::Block(b) => block_contains_write_to(b, fname),
+        ExprKind::If { cond, then, else_ } => {
+            expr_contains_write_to(cond, fname)
+                || block_contains_write_to(then, fname)
+                || else_.as_ref().map_or(false, |eb| else_branch_contains_write_to(eb, fname))
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            expr_contains_write_to(scrutinee, fname)
+                || block_contains_write_to(then, fname)
+                || else_.as_ref().map_or(false, |eb| else_branch_contains_write_to(eb, fname))
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_contains_write_to(scrutinee, fname)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().map_or(false, |g| expr_contains_write_to(g, fname))
+                        || match &arm.body {
+                            MatchArmBody::Expr(e) => expr_contains_write_to(e, fname),
+                            MatchArmBody::Block(b) => block_contains_write_to(b, fname),
+                        }
+                })
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            expr_contains_write_to(iter, fname) || block_contains_write_to(body, fname)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_contains_write_to(cond, fname) || block_contains_write_to(body, fname)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            expr_contains_write_to(scrutinee, fname) || block_contains_write_to(body, fname)
+        }
+        ExprKind::Loop { body, .. } => block_contains_write_to(body, fname),
+        ExprKind::With { bindings, body } => {
+            bindings.iter().any(|wb| expr_contains_write_to(&wb.handler, fname))
+                || block_contains_write_to(body, fname)
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            block_contains_write_to(body, fname)
+        }
+        ExprKind::Supervised { body, cancel } => {
+            block_contains_write_to(body, fname)
+                || cancel.as_ref().map_or(false, |c| expr_contains_write_to(c, fname))
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => expr_contains_write_to(e, fname),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => expr_contains_write_to(e, fname),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            expr_contains_write_to(a, fname) || expr_contains_write_to(b, fname)
+        }
+        ExprKind::Index { obj, index } => {
+            expr_contains_write_to(obj, fname) || expr_contains_write_to(index, fname)
+        }
+        ExprKind::Call { func, args, trailing } => {
+            expr_contains_write_to(func, fname)
+                || args.iter().any(|a| expr_contains_write_to(a.expr(), fname))
+                || trailing.as_ref().map_or(false, |t| trailing_contains_write_to(t, fname))
+        }
+        ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
+            ArrayElem::Item(e) | ArrayElem::Spread(e) => expr_contains_write_to(e, fname),
+        }),
+        ExprKind::MapLit { elems, .. } => elems.iter().any(|el| match el {
+            MapElem::Pair(k, v) => expr_contains_write_to(k, fname) || expr_contains_write_to(v, fname),
+            MapElem::Spread(e) => expr_contains_write_to(e, fname),
+        }),
+        ExprKind::RecordLit { fields: rfields, .. } => rfields.iter().any(|rf| {
+            rf.value.as_ref().map_or(false, |v| expr_contains_write_to(v, fname))
+        }),
+        ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_write_to(el, fname)),
+        ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
+            if let InterpStrPart::Expr(e) = p { expr_contains_write_to(e, fname) } else { false }
+        }),
+        ExprKind::Select { arms } => arms.iter().any(|arm| {
+            block_contains_write_to(&arm.body, fname)
+                || arm.guard.as_ref().map_or(false, |g| expr_contains_write_to(g, fname))
+                || match &arm.op {
+                    SelectOp::Recv { chan, .. } => expr_contains_write_to(chan, fname),
+                    SelectOp::Send { chan, value } => expr_contains_write_to(chan, fname) || expr_contains_write_to(value, fname),
+                    SelectOp::Default => false,
+                }
+        }),
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().map_or(false, |s| expr_contains_write_to(s, fname))
+                || end.as_ref().map_or(false, |e| expr_contains_write_to(e, fname))
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            expr_contains_write_to(range, fname) || expr_contains_write_to(body, fname)
+        }
+        ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_write_to(e, fname)),
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            expr_contains_write_to(tag, fname)
+                || args.iter().any(|a| expr_contains_write_to(a, fname))
+        }
+        // Closures: their bodies could contain writes, but those are
+        // separate scope. V1 conservative: closures already cause
+        // skip-caching for captured fields (closure_captured).
+        // Here treat as no barrier (closures don't execute synchronously
+        // — they're values, не immediate execution).
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => false,
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::SelfAccess => false,
+    }
+}
+
+fn else_branch_contains_write_to(eb: &ElseBranch, fname: &str) -> bool {
+    match eb {
+        ElseBranch::Block(b) => block_contains_write_to(b, fname),
+        ElseBranch::If(e) => expr_contains_write_to(e, fname),
+    }
+}
+
+fn trailing_contains_write_to(t: &Trailing, fname: &str) -> bool {
+    match t {
+        Trailing::Block(b) => block_contains_write_to(b, fname),
+        Trailing::Fn(sb) => match &sb.body {
+            FnBody::Expr(e) => expr_contains_write_to(e, fname),
+            FnBody::Block(b) => block_contains_write_to(b, fname),
+            FnBody::External => false,
+        },
+        Trailing::LegacyBlockWithParams(tb) => block_contains_write_to(&tb.body, fname),
+    }
+}
+
+/// True если stmt syntactically contains any `ExprKind::Call` —
+/// V1 conservative barrier для mut field caching.
+fn stmt_contains_call(s: &Stmt) -> bool {
+    match s {
+        Stmt::Let(d) => expr_contains_call(&d.value),
+        Stmt::Const(d) => expr_contains_call(&d.value),
+        Stmt::Expr(e) => expr_contains_call(e),
+        Stmt::Assign { target, value, .. } => {
+            expr_contains_call(target) || expr_contains_call(value)
+        }
+        Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_contains_call(v)),
+        Stmt::Throw { value, .. } => expr_contains_call(value),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            expr_contains_call(body)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_contains_call(init) || block_contains_call(body)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_contains_call(expr),
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn block_contains_call(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_contains_call) || b.trailing.as_ref().map_or(false, |t| expr_contains_call(t))
+}
+
+fn expr_contains_call(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Call { .. } => true,
+        // Don't treat method-call sugar — already a Call.
+        // Spawn / Supervised / etc. — their body is async, не immediate
+        // execution. Still V1 conservative: their body may execute и
+        // mutate via aliased self. Treat as barrier для safety.
+        ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Detach(_)
+        | ExprKind::Blocking(_) => true,
+        // `with` body может invoke handler — treat as barrier.
+        ExprKind::With { .. } => true,
+        // Compound walks below.
+        ExprKind::Block(b) => block_contains_call(b),
+        ExprKind::If { cond, then, else_ } => {
+            expr_contains_call(cond) || block_contains_call(then)
+                || else_.as_ref().map_or(false, |eb| else_branch_contains_call(eb))
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            expr_contains_call(scrutinee) || block_contains_call(then)
+                || else_.as_ref().map_or(false, |eb| else_branch_contains_call(eb))
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_contains_call(scrutinee) || arms.iter().any(|arm| {
+                arm.guard.as_ref().map_or(false, |g| expr_contains_call(g))
+                    || match &arm.body {
+                        MatchArmBody::Expr(e) => expr_contains_call(e),
+                        MatchArmBody::Block(b) => block_contains_call(b),
+                    }
+            })
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            expr_contains_call(iter) || block_contains_call(body)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_contains_call(cond) || block_contains_call(body)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            expr_contains_call(scrutinee) || block_contains_call(body)
+        }
+        ExprKind::Loop { body, .. } => block_contains_call(body),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            block_contains_call(body)
+        }
+        ExprKind::Throw(e) => expr_contains_call(e),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => expr_contains_call(e),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            expr_contains_call(a) || expr_contains_call(b)
+        }
+        ExprKind::Index { obj, index } => expr_contains_call(obj) || expr_contains_call(index),
+        ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
+            ArrayElem::Item(e) | ArrayElem::Spread(e) => expr_contains_call(e),
+        }),
+        ExprKind::MapLit { elems, .. } => elems.iter().any(|el| match el {
+            MapElem::Pair(k, v) => expr_contains_call(k) || expr_contains_call(v),
+            MapElem::Spread(e) => expr_contains_call(e),
+        }),
+        ExprKind::RecordLit { fields: rfields, .. } => rfields.iter().any(|rf| {
+            rf.value.as_ref().map_or(false, |v| expr_contains_call(v))
+        }),
+        ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_call(el)),
+        ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
+            if let InterpStrPart::Expr(e) = p { expr_contains_call(e) } else { false }
+        }),
+        ExprKind::Select { .. } => true, // channel ops effectively are call/blocking
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().map_or(false, |s| expr_contains_call(s))
+                || end.as_ref().map_or(false, |e| expr_contains_call(e))
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            expr_contains_call(range) || expr_contains_call(body)
+        }
+        ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_call(e)),
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            expr_contains_call(tag) || args.iter().any(expr_contains_call)
+        }
+        // Closures — values, не immediate execution. Не barrier.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => false,
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::SelfAccess => false,
+    }
+}
+
+fn else_branch_contains_call(eb: &ElseBranch) -> bool {
+    match eb {
+        ElseBranch::Block(b) => block_contains_call(b),
+        ElseBranch::If(e) => expr_contains_call(e),
+    }
+}
+
+/// Count `@<fname>` reads in a single Stmt (recursive into sub-exprs).
+fn count_field_reads_in_stmt(s: &Stmt, fname: &str) -> usize {
+    match s {
+        Stmt::Let(d) => count_field_reads_in_expr(&d.value, fname),
+        Stmt::Const(d) => count_field_reads_in_expr(&d.value, fname),
+        Stmt::Expr(e) => count_field_reads_in_expr(e, fname),
+        Stmt::Assign { target, value, .. } => {
+            let t_count = if match_self_field(target).is_some() {
+                0 // top-level @F = ... — target is write, not read.
+            } else {
+                count_field_reads_in_expr(target, fname)
+            };
+            t_count + count_field_reads_in_expr(value, fname)
+        }
+        Stmt::Return { value, .. } => value.as_ref().map_or(0, |v| count_field_reads_in_expr(v, fname)),
+        Stmt::Throw { value, .. } => count_field_reads_in_expr(value, fname),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            count_field_reads_in_expr(body, fname)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            count_field_reads_in_expr(init, fname) + count_field_reads_in_block(body, fname)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            count_field_reads_in_expr(expr, fname)
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => 0,
+    }
+}
+
+fn count_field_reads_in_block(b: &Block, fname: &str) -> usize {
+    let mut c = 0;
+    for s in &b.stmts {
+        c += count_field_reads_in_stmt(s, fname);
+    }
+    if let Some(t) = &b.trailing {
+        c += count_field_reads_in_expr(t, fname);
+    }
+    c
+}
+
+fn count_field_reads_in_expr(e: &Expr, fname: &str) -> usize {
+    if let Some(t_fname) = match_self_field(e) {
+        return if t_fname == fname { 1 } else { 0 };
+    }
+    // Don't count inside closures (separate scope).
+    if matches!(&e.kind,
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. }
+    ) {
+        return 0;
+    }
+    let mut c = 0;
+    match &e.kind {
+        ExprKind::Block(b) => c += count_field_reads_in_block(b, fname),
+        ExprKind::If { cond, then, else_ } => {
+            c += count_field_reads_in_expr(cond, fname);
+            c += count_field_reads_in_block(then, fname);
+            if let Some(eb) = else_ {
+                c += match eb {
+                    ElseBranch::Block(b) => count_field_reads_in_block(b, fname),
+                    ElseBranch::If(e) => count_field_reads_in_expr(e, fname),
+                };
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            c += count_field_reads_in_expr(scrutinee, fname);
+            c += count_field_reads_in_block(then, fname);
+            if let Some(eb) = else_ {
+                c += match eb {
+                    ElseBranch::Block(b) => count_field_reads_in_block(b, fname),
+                    ElseBranch::If(e) => count_field_reads_in_expr(e, fname),
+                };
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            c += count_field_reads_in_expr(scrutinee, fname);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    c += count_field_reads_in_expr(g, fname);
+                }
+                c += match &arm.body {
+                    MatchArmBody::Expr(e) => count_field_reads_in_expr(e, fname),
+                    MatchArmBody::Block(b) => count_field_reads_in_block(b, fname),
+                };
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            c += count_field_reads_in_expr(iter, fname);
+            c += count_field_reads_in_block(body, fname);
+        }
+        ExprKind::While { cond, body, .. } => {
+            c += count_field_reads_in_expr(cond, fname);
+            c += count_field_reads_in_block(body, fname);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            c += count_field_reads_in_expr(scrutinee, fname);
+            c += count_field_reads_in_block(body, fname);
+        }
+        ExprKind::Loop { body, .. } => c += count_field_reads_in_block(body, fname),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings {
+                c += count_field_reads_in_expr(&wb.handler, fname);
+            }
+            c += count_field_reads_in_block(body, fname);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            c += count_field_reads_in_block(body, fname);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            c += count_field_reads_in_block(body, fname);
+            if let Some(cc) = cancel {
+                c += count_field_reads_in_expr(cc, fname);
+            }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => c += count_field_reads_in_expr(e, fname),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => c += count_field_reads_in_expr(e, fname),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            c += count_field_reads_in_expr(a, fname);
+            c += count_field_reads_in_expr(b, fname);
+        }
+        ExprKind::Index { obj, index } => {
+            c += count_field_reads_in_expr(obj, fname);
+            c += count_field_reads_in_expr(index, fname);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            c += count_field_reads_in_expr(func, fname);
+            for arg in args {
+                c += count_field_reads_in_expr(arg.expr(), fname);
+            }
+            if let Some(t) = trailing {
+                c += match t {
+                    Trailing::Block(b) => count_field_reads_in_block(b, fname),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => count_field_reads_in_expr(e, fname),
+                        FnBody::Block(b) => count_field_reads_in_block(b, fname),
+                        FnBody::External => 0,
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => count_field_reads_in_block(&tb.body, fname),
+                };
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                c += match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => count_field_reads_in_expr(e, fname),
+                };
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                c += match el {
+                    MapElem::Pair(k, v) => count_field_reads_in_expr(k, fname) + count_field_reads_in_expr(v, fname),
+                    MapElem::Spread(e) => count_field_reads_in_expr(e, fname),
+                };
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value {
+                    c += count_field_reads_in_expr(v, fname);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                c += count_field_reads_in_expr(el, fname);
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    c += count_field_reads_in_expr(e, fname);
+                }
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    c += count_field_reads_in_expr(g, fname);
+                }
+                c += count_field_reads_in_block(&arm.body, fname);
+                c += match &arm.op {
+                    SelectOp::Recv { chan, .. } => count_field_reads_in_expr(chan, fname),
+                    SelectOp::Send { chan, value } => count_field_reads_in_expr(chan, fname) + count_field_reads_in_expr(value, fname),
+                    SelectOp::Default => 0,
+                };
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { c += count_field_reads_in_expr(s, fname); }
+            if let Some(e) = end { c += count_field_reads_in_expr(e, fname); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            c += count_field_reads_in_expr(range, fname);
+            c += count_field_reads_in_expr(body, fname);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { c += count_field_reads_in_expr(e, fname); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            c += count_field_reads_in_expr(tag, fname);
+            for arg in args {
+                c += count_field_reads_in_expr(arg, fname);
+            }
+        }
+        _ => {}
+    }
+    c
 }
 
 #[derive(Debug, Default)]
@@ -1247,44 +1834,94 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
     }
 }
 
-// ----- REWRITE phase (Ф.1 — ro-fields only) -----
+// ----- REWRITE phase -----
 
-fn rewrite_fn_body(
+/// Объединённый rewrite: ro-fields → full-body replace; mut-fields →
+/// first-region replace (до first write OR first call boundary).
+fn rewrite_fn_body_split(
     f: &mut FnDecl,
-    to_cache: &[(String, FieldKind, crate::diag::Span)],
+    ro_cache: &[(String, crate::diag::Span)],
+    mut_cache: &[(String, crate::diag::Span)],
     name_map: &HashMap<String, String>,
 ) {
-    let replace_map: HashMap<String, String> = to_cache.iter()
-        .map(|(fname, _kind, _)| (fname.clone(), name_map[fname].clone()))
+    // Build replace maps.
+    let ro_map: HashMap<String, String> = ro_cache.iter()
+        .map(|(fname, _)| (fname.clone(), name_map[fname].clone()))
         .collect();
+    let mut_map: HashMap<String, String> = mut_cache.iter()
+        .map(|(fname, _)| (fname.clone(), name_map[fname].clone()))
+        .collect();
+    // Combined для prefix-let injection.
+    let mut combined_cache: Vec<(String, crate::diag::Span)> = Vec::new();
+    combined_cache.extend(ro_cache.iter().cloned());
+    combined_cache.extend(mut_cache.iter().cloned());
 
-    // Convert Expr-body → Block-body, чтобы prepend prefix lets.
+    // Ensure body is Block (coerce Expr → Block-with-trailing).
     match &mut f.body {
-        FnBody::Block(b) => {
-            rewrite_block(b, &replace_map);
-        }
+        FnBody::Block(_) => {}
         FnBody::Expr(_) => {
             let body_expr = match std::mem::replace(&mut f.body, FnBody::External) {
                 FnBody::Expr(e) => e,
                 _ => unreachable!(),
             };
             let span = body_expr.span;
-            let mut new_block = Block {
+            let new_block = Block {
                 stmts: Vec::new(),
                 trailing: Some(Box::new(body_expr)),
                 span,
             };
-            if let Some(t) = &mut new_block.trailing {
-                rewrite_expr(t, &replace_map);
-            }
             f.body = FnBody::Block(new_block);
         }
         FnBody::External => return,
     }
 
+    // Mut-cache rewrite — bounded к first-region. Done BEFORE prefix
+    // insertion (indices stable). For each mut field, find boundary
+    // в top-level stmts; replace reads only в stmts[0..boundary]
+    // (включая trailing если no barrier).
     if let FnBody::Block(b) = &mut f.body {
-        let mut prefix_stmts: Vec<Stmt> = Vec::with_capacity(to_cache.len());
-        for (fname, _kind, span) in to_cache {
+        for (fname, _) in mut_cache {
+            // Find first-barrier index в TOP-LEVEL stmts (not nested).
+            let mut barrier_idx = b.stmts.len();
+            for (i, s) in b.stmts.iter().enumerate() {
+                if stmt_is_barrier_for(s, fname) {
+                    barrier_idx = i;
+                    break;
+                }
+            }
+            // Build per-field single-entry map.
+            let single: HashMap<String, String> = std::iter::once((fname.clone(), mut_map[fname].clone())).collect();
+            // Rewrite stmts[0..barrier_idx].
+            for s in b.stmts.iter_mut().take(barrier_idx) {
+                rewrite_stmt(s, &single);
+            }
+            // If no barrier — also rewrite trailing.
+            if barrier_idx == b.stmts.len() {
+                // Trailing еще не обработан barrier — но мог сам быть
+                // barrier'ом. Проверим.
+                if let Some(t) = &mut b.trailing {
+                    let trailing_barrier = expr_is_barrier_for(t, fname);
+                    if !trailing_barrier {
+                        rewrite_expr(t, &single);
+                    }
+                }
+            }
+        }
+    }
+
+    // Ro-cache rewrite — full body.
+    if !ro_map.is_empty() {
+        if let FnBody::Block(b) = &mut f.body {
+            rewrite_block(b, &ro_map);
+        }
+    }
+
+    // Prepend cache lets. Order: ro first, then mut (sorted внутри
+    // через name_map keys insertion order, но мы передаём через
+    // combined_cache).
+    if let FnBody::Block(b) = &mut f.body {
+        let mut prefix_stmts: Vec<Stmt> = Vec::with_capacity(combined_cache.len());
+        for (fname, span) in &combined_cache {
             let local_name = &name_map[fname];
             let access = Expr {
                 kind: ExprKind::Member {
