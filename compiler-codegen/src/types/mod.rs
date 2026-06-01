@@ -1804,6 +1804,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_check_call(
                     func, args, trailing.is_some(), gs, scope, errors,
                 );
+                self.f5_check_tuple_construct(func, args, e.span, scope, errors);
             }
             ExprKind::TurboFish { base, .. } => {
                 self.f1_expr(base, gs, scope, errors)
@@ -2479,6 +2480,93 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             _ => {} // Sum, Effect, Protocol, Alias, Opaque, etc. — conservative, skip
+        }
+    }
+
+    /// Plan 120 (D215): validate tuple construction calls.
+    /// Checks direct construction `TypeName(args...)` where TypeName is a
+    /// known named or positional tuple type.  Conservative: skips if callee is
+    /// not a plain Ident or if the name is shadowed by a local variable.
+    fn f5_check_tuple_construct(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Ident(name) = &func.kind else { return; };
+        if scope.contains_key(name.as_str()) { return; }
+        let Some(td) = self.types.get(name.as_str()) else { return; };
+        match &td.kind {
+            TypeDeclKind::NamedTuple(fields) => {
+                for arg in args {
+                    if let CallArg::Named { name: field_name, .. } = arg {
+                        if !fields.iter().any(|f| &f.name == field_name) {
+                            let avail: Vec<&str> =
+                                fields.iter().map(|f| f.name.as_str()).collect();
+                            let mut diag = Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_UNKNOWN_FIELD] named tuple `{}` has no field `{}`",
+                                    name, field_name,
+                                ),
+                                span,
+                            );
+                            if !avail.is_empty() {
+                                diag = diag.with_note(format!(
+                                    "`{}` has field{}: {}",
+                                    name,
+                                    if avail.len() == 1 { "" } else { "s" },
+                                    avail.join(", "),
+                                ));
+                            }
+                            errors.push(diag);
+                        }
+                    }
+                }
+                if args.len() != fields.len() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] named tuple `{}` expects \
+                             {} argument{} but {} {} provided",
+                            name,
+                            fields.len(),
+                            if fields.len() == 1 { "" } else { "s" },
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                        span,
+                    ));
+                }
+            }
+            TypeDeclKind::Newtype(TypeRef::Tuple(elem_types, _)) => {
+                if args.iter().any(|a| matches!(a, CallArg::Named { .. })) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL] \
+                             positional tuple `{}` does not accept named arguments; \
+                             pass values by position instead",
+                            name,
+                        ),
+                        span,
+                    ));
+                }
+                if args.len() != elem_types.len() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] positional tuple `{}` expects \
+                             {} argument{} but {} {} provided",
+                            name,
+                            elem_types.len(),
+                            if elem_types.len() == 1 { "" } else { "s" },
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                        span,
+                    ));
+                }
+            }
+            _ => {}
         }
     }
 
