@@ -1,25 +1,35 @@
-// EXPECT_COMPILE_ERROR external type
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
 //
-// Plan 62.D.bis whitelist enforcement (negative test).
+// D126 hard retract (Plan 91.12 V2, 2026-06-01) — negative test.
 //
-// D126 §«Restriction whitelist»: `external type X` allowed только в
-// std.prelude.* / std.runtime.* modules. User-space modules должны
-// reject parser/type-checker'ом с explicit diagnostic — иначе любой
-// user может declare opaque type без runtime backing'а, что приведёт
-// к dangling pointer'у в codegen.
+// **Updated history:**
+// - Plan 62.D.bis Ф.1 (2026-05-18): `external type X` whitelisted к stdlib.
+//   User-space declarations отвергались с whitelist diagnostic.
+// - Plan 91.12 V1 (2026-06-01): WriteBuffer/ReadBuffer мигрированы на pure
+//   Nova (паттерн StringBuilder/Plan 109).
+// - Plan 91.12 V2 (2026-06-01): остающиеся OnceCell[T]/Lazy[T]/Condvar
+//   мигрированы на `type X[T](ptr)` (Plan 115 D214 tuple-newtype). После
+//   migration все 5 stdlib D126 типов retract'нуты. Plain `external type`
+//   теперь — hard error [E_EXTERNAL_TYPE_RETRACTED] для ВСЕХ модулей
+//   (включая stdlib).
 //
-// Этот файл вне whitelist'а пытается declare `external type FooBar`
-// — ожидается compile-fail.
+// **D163 (FFI opaque consume-types) сохраняется:** `external type X consume`
+// разрешено везде для FFI resource handles (File, Mutex и т.д.).
 //
-// Plan 62.D.bis Ф.1 implementation: `compiler-codegen/src/types/mod.rs`
-// whitelist check (is_stdlib_runtime_module || is_prelude_self_module).
+// Этот файл пытается declare `external type FooBar` (без consume) —
+// ожидается hard error E_EXTERNAL_TYPE_RETRACTED с migration hint
+// на `type FooBar(ptr)` (Plan 115 D214 tuple-newtype).
+//
+// Implementation: `compiler-codegen/src/types/mod.rs` — unconditional check
+// `Opaque && !consume → error`.
 
 module plan62.external_type_outside_whitelist
 
+// Trailing test/fn omitted: parser body-detect heuristic иначе treat'ит
+// `fn ...` после `external type X` как newtype body и fail'ит parser
+// stage (E_EXTERNAL_TYPE_BODY) до того, как type-checker эмитит
+// E_EXTERNAL_TYPE_RETRACTED. После V2 hard retract — единственный
+// ожидаемый сценарий: parser принимает declaration → type-checker emit'ит
+// retract error. EOF после декларации обеспечивает type-checker reach.
+
 external type FooBar
-
-fn dummy() -> int => 1
-
-test "should never reach this — compile must fail (whitelist)" {
-    ro _ = dummy()
-}

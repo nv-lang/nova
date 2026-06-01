@@ -1,0 +1,69 @@
+// Plan 91.12 V2 — positive test: OnceCell[T] post-migration на
+// `type OnceCell[T](ptr)` tuple-newtype работает идентично предшественнику.
+//
+// Acceptance A6 (см. docs/plans/91.12-d126-retract.md): API surface
+// неизменён — get/set/get_or_init/take/is_initialized.
+
+module plan91_12.v2_oncecell_tuple_newtype_ok
+
+test "OnceCell[int]: new + set + get round-trip" {
+    mut cell = OnceCell[int].new()
+    assert(cell.is_initialized() == false)
+    assert(cell.set(42) == true)
+    assert(cell.is_initialized() == true)
+    match cell.get() {
+        Some(v) => assert(v == 42)
+        None => assert(false)
+    }
+}
+
+test "OnceCell[int]: set returns false on already-initialized" {
+    mut cell = OnceCell[int].new()
+    assert(cell.set(1) == true)
+    assert(cell.set(2) == false)  // already init'd
+    match cell.get() {
+        Some(v) => assert(v == 1)  // original value preserved
+        None => assert(false)
+    }
+}
+
+test "OnceCell[int]: take resets to empty" {
+    mut cell = OnceCell[int].new()
+    assert(cell.set(99) == true)
+    match cell.take() {
+        Some(v) => assert(v == 99)
+        None => assert(false)
+    }
+    assert(cell.is_initialized() == false)
+    // Should accept new value after take()
+    assert(cell.set(100) == true)
+    match cell.get() {
+        Some(v) => assert(v == 100)
+        None => assert(false)
+    }
+}
+
+test "OnceCell[str]: works for non-primitive T" {
+    mut cell = OnceCell[str].new()
+    assert(cell.set("hello") == true)
+    match cell.get() {
+        Some(s) => assert(s == "hello")
+        None => assert(false)
+    }
+}
+
+test "OnceCell[T]: get_or_init runs init exactly once" {
+    mut counter = AtomicInt.new(0)
+    mut cell = OnceCell[int].new()
+    ro v1 = cell.get_or_init() {
+        counter.fetch_add(1)
+        7
+    }
+    ro v2 = cell.get_or_init() {
+        counter.fetch_add(1)
+        99  // should NOT run
+    }
+    assert(v1 == 7)
+    assert(v2 == 7)
+    assert(counter.load() == 1)
+}
