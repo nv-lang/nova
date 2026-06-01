@@ -209,15 +209,81 @@ export type Stack[T] {
    - Record literal init outside type-methods
    - Protocol implementations (которые extern fn'ы)
 
-### 3.3 Default visibility
+### 3.3 Default visibility — public (validated empirically)
 
-**Public by default + opt-in `priv`.** Reasoning:
-- Existing Nova code = all-public fields → migration purely additive
-- Aligned с TS/Go/Rust default
-- Forced encapsulation (priv-default) ломает all existing code
+**Public by default + opt-in `priv` per field.** Confirmed by
+**kubernetes statistical audit** ([06-field-visibility-go-kubernetes.md](../research/06-field-visibility-go-kubernetes.md)):
 
-V7 могут rethink через edition (Plan 62.F.bis): новая edition
-default = priv. V1-V6 preserve current default.
+| Layer | Public fields | Private fields |
+|---|---|---|
+| `pkg/` internal | 47.0% | 53.0% |
+| `staging/` library API | 63.7% | 36.3% |
+| `cmd/` entry points | 67.8% | 32.2% |
+| `core/v1/types.go` (API canonical) | **92.4%** | 7.6% |
+| **Aggregate** | **59.4%** | **40.6%** |
+
+В **public API surface** (analog Nova `export type`) — **~92% полей
+public**. Opt-in `priv` annotation требуется на ~8% полей — minimum
+boilerplate для most common case.
+
+### 3.3.1 Type-level default flip — `type X priv { ... }`
+
+Для invariant-heavy types (Account / Mutex / Connection / Cursor) где
+majority of fields should be private — **opt-in default flip per
+type** через syntactic marker `priv` после имени type'а:
+
+```nova
+export type Account priv {       // default = priv для этого type'а
+    pub ro name str              // explicit pub override
+    pub mut money f64            // explicit pub override
+    cache Cache                  // default = priv (inherits type-level)
+    mut last_modified Instant    // default = priv
+}
+```
+
+**Преимущества над edition flip (V7 alternative rejected):**
+- No edition migration tool needed (per-type opt-in)
+- No stdlib mass migration
+- Backward compat preserved (default-default остаётся public)
+- Locally explicit — reader видит `type X priv` сразу понимает что
+  это invariant-bearing type
+
+**Syntax position:** между type name и `{` (или `(` для tuples).
+Symmetric: `priv` keyword same в field-level AND type-level position.
+
+**Tuple form** (Plan 120 D215 extension):
+```nova
+export type Secret priv (key str, mut salt []u8)
+// все поля priv по умолчанию
+
+export type Secret(priv key str, priv mut salt []u8)
+// same semantics — per-field priv, explicit
+```
+
+V1 (Plan 124.1) — field-level `priv` modifier.
+V2 (Plan 124.2 или 124.X) — type-level `priv` flip.
+~~V7 edition default flip~~ — **REJECTED** в пользу type-level
+opt-in flip (cleaner, no migration cost).
+
+### 3.4 Architectural foundation
+
+**Parser/AST changes:**
+- `compiler-codegen/src/parser/`: per-field modifier parsing
+  расширяется на `priv` token (parallel `mut`/`ro`/`consume`).
+- `compiler-codegen/src/ast/`: `FieldDecl { visibility: Visibility,
+  mutability: Mutability, name, ty, ... }` — `Visibility` enum
+  `{ Public, Private }`.
+- **Type-level default:** `TypeDecl { default_visibility: Visibility,
+  fields: Vec<FieldDecl>, ... }`. Field's effective visibility =
+  field-level explicit OR type-level default OR module-level default
+  (`Public`).
+
+**Type-checker changes:**
+- New diagnostic codes (per Plan 50 D102 format):
+  - `E_PRIV_FIELD_READ` — read priv field outside type
+  - `E_PRIV_FIELD_WRITE` — write priv field outside type
+  - `E_PRIV_FIELD_PATTERN` — destructure priv field outside type
+  - `E_PRIV_FIELD_INIT` — init priv field via record/tuple literal
 
 ### 3.4 Architectural foundation
 
@@ -432,21 +498,57 @@ protocol infrastructure ✅.
 
 ---
 
-### 4.7 Plan 124.7 — Edition default flip evaluation
+### 4.7 Plan 124.7 — Type-level `priv` default flip syntax
 
-**Scope:** evaluate whether next edition (Plan 62.F.bis) should
-flip default to `priv`. Requires:
-1. Migration tool: `nova migrate --to-edition=next` adds `pub` to
-   currently-public fields.
-2. Stdlib audit: ensure all stdlib fields explicitly annotated.
-3. Decision: ship flip OR defer.
+**Scope:** `type X priv { ... }` (или `type X priv (...)` для tuples)
+— per-type opt-in flip default field visibility = private. Explicit
+`pub` modifier overrides field-level. Для invariant-heavy types
+(Account / Mutex / Connection / Cursor) где majority of fields
+private.
 
-**Status:** 🆕 PLANNED. Long-term. Gated на ALL above + Plan 62.F.bis
-edition infrastructure.
+**Rationale rejecting V7 edition flip:** Original Plan 124.7 plan
+proposed edition-level default flip (`nova migrate --to-edition=next
+--add-public`). Rejected 2026-06-02 because:
+1. Kubernetes data: aggregate 59.4% public — flipping default не дает
+   clear win.
+2. Per-type `priv {}` syntax granular — invariant-heavy types
+   opt-in, data-bag types stay default. Better fit для bimodal
+   distribution (kubernetes pkg/ 47% public vs core/v1 92%).
+3. No edition migration tool needed — purely additive.
+4. Backward compat preserved without effort.
 
-**Phases:** decision-tree process (audit + migration + ship/defer).
+**Syntax:**
+```nova
+// Record form: priv ПОСЛЕ имени type'а, ДО {
+export type Account priv {
+    pub ro name str          // explicit pub
+    mut money f64            // default = priv
+    cache Cache              // default = priv
+}
 
-**Эстимат:** ~1-2 dev-day (mostly audit + tooling).
+// Named tuple form (Plan 120 D215):
+export type Secret priv (key str, mut salt []u8)
+
+// Equivalent: per-field priv с public default:
+export type Secret(priv key str, priv mut salt []u8)
+```
+
+**Status:** 🆕 PLANNED. Gated на 124.1 ✅ + Plan 120 ✅ (named
+tuples для tuple form).
+
+**Phases (Ф.0-Ф.6):**
+- Ф.0 Parser lookahead audit: `priv` после type-name distinguishable
+  от field-level `priv` через context.
+- Ф.1 Parser: extend `TypeDecl` parser для optional `priv` после name.
+- Ф.2 AST: `TypeDecl { default_visibility: Visibility, ... }`.
+- Ф.3 Type-checker: field's effective visibility resolution
+  (field-level overrides type-level overrides module-default=Public).
+- Ф.4 Tests (10+ positive, 5+ negative — combos type-level priv +
+  field-level pub/priv overrides).
+- Ф.5 Spec D220 amend (type-level flip clause) — full description.
+- Ф.6 Closure.
+
+**Эстимат:** ~1.5 dev-day.
 
 **Acceptance:** см. §6.7.
 
@@ -582,16 +684,19 @@ umbrella + sub-plans. Каждый sub-plan:
 - **A6.7** Regression — 0 new FAIL.
 - **A6.8** Spec D220 amend (escape hatches clause).
 
-### 6.7 Plan 124.7 acceptance (A7.1-A7.6)
+### 6.7 Plan 124.7 acceptance (A7.1-A7.8)
 
-- **A7.1** Stdlib audit complete: all fields explicitly annotated
-  pub/priv.
-- **A7.2** Migration tool `nova migrate --to-edition=next` works:
-  adds `pub` to currently-public fields в old-edition code.
-- **A7.3** Edition decision documented (ship-flip OR defer).
-- **A7.4** If ship: cross-edition behavior verified.
-- **A7.5** Doc updated.
-- **A7.6** Regression — 0 new FAIL.
+- **A7.1** Parser принимает `type X priv { ... }` syntax (record form).
+- **A7.2** Parser принимает `type X priv (...)` syntax (named tuple
+  form, Plan 120 D215 ext).
+- **A7.3** `pub` modifier на field overrides type-level priv default.
+- **A7.4** Field без modifier inherits type-level default (priv).
+- **A7.5** Type-level default flip + field-level explicit modifiers
+  combine correctly (4 cases tested: default-default, default-explicit,
+  flip-default, flip-explicit).
+- **A7.6** plan124_7 fixtures ≥15 (10+ positive, 5+ negative) PASS.
+- **A7.7** Regression — 0 new FAIL.
+- **A7.8** Spec D220 amend (type-level flip clause) — landed.
 
 ### 6.8 Umbrella-level acceptance (Plan 124 total)
 
@@ -600,9 +705,14 @@ umbrella + sub-plans. Каждый sub-plan:
   match-or-exceeds на 14 capabilities + 3 Nova-only verified.
 - **AU.3** Full regression: 0 new FAIL across all existing nova
   test suites (baseline vs V7).
-- **AU.4** Stdlib field visibility audit complete (Plan 124.7).
+- **AU.4** Both per-field `priv` AND type-level `priv {...}` flip
+  working — kubernetes-validated bimodal coverage (API surface
+  default-public; invariant-heavy types use type-level flip).
 - **AU.5** Production deployment artifacts landed (LSP, doc,
-  migration tool, edition gating ready).
+  spec D220-D222, escape hatches V6, no edition migration tool
+  needed thanks to V7 type-level flip approach).
+- **AU.6** D47 (07-modules.md) amended — `_prefix` convention deprecated,
+  `priv` keyword normative; cross-ref to D220.
 
 ---
 
