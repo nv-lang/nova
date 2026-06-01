@@ -1,0 +1,44 @@
+// Plan 115 Ф.3 T3.1-T3.2 — opaque handle pattern via D52 tuple newtype
+// `type X(ptr)`.
+//
+// V2 (post `[M-115-newtype-constructor]` close, 2026-06-01): canonical
+// form работает. Constructor `SqHandle(value)` emit'тится как identity
+// cast `((nova_ptr)(value))`; `.0` access на scalar-typed newtype value
+// → identity (returns the stored value). Zero runtime overhead — pure
+// typedef-based wrapping (Plan 70.3 mirror).
+
+module plan115.t3_handle_pattern_ok
+
+type SqHandle(ptr)
+type PngHandle(ptr)
+type CurlHandle(ptr)
+
+external fn p115_int_to_ptr(value int) -> ptr
+
+test "tuple newtype — constructor + .0 destructure" {
+    ro raw = p115_int_to_ptr(42)
+    ro h = SqHandle(raw)
+    ro back = h.0
+    assert(back == raw)
+}
+
+test "distinct handle types — same underlying ptr, different Nova type" {
+    ro raw = p115_int_to_ptr(100)
+    ro sq = SqHandle(raw)
+    ro png = PngHandle(raw)
+    // Inner ptr is the same, but the wrapping types are nominally distinct.
+    assert(sq.0 == png.0)
+}
+
+test "handle construction from null ptr" {
+    ro h = SqHandle(null ptr)
+    assert(h.0 == null ptr)
+}
+
+test "multiple handles — independent values" {
+    ro h1 = SqHandle(p115_int_to_ptr(1))
+    ro h2 = SqHandle(p115_int_to_ptr(2))
+    ro h3 = CurlHandle(p115_int_to_ptr(3))
+    assert(h1.0 != h2.0)
+    assert(h2.0 != h3.0)
+}

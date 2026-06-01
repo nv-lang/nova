@@ -5422,6 +5422,42 @@ impl Parser {
                 let is_forall = kw == "forall";
                 self.parse_quantifier(is_forall)
             }
+            // Plan 115 D214: `null ptr` two-token opaque pointer literal.
+            // Контекстуальный keyword — recognized только при
+            // Ident("null") + Ident("ptr") combo в expression position. Это
+            // сохраняет существующие method names типа `JsonValue.null()` и
+            // `AtomicPtr.null()` без breaking change.
+            //
+            // Other `null T` (где T — known primitive ident) → diagnostic
+            // `E_NULL_LITERAL_REQUIRES_PTR` (V1; Plan 118 future расширит).
+            TokenKind::Ident(ref n)
+                if n == "null"
+                    && matches!(&self.peek_at(1).kind, TokenKind::Ident(ty)
+                        if ty == "ptr" || ty == "int" || ty == "i8" || ty == "i16"
+                           || ty == "i32" || ty == "i64" || ty == "u8" || ty == "u16"
+                           || ty == "u32" || ty == "u64" || ty == "uint" || ty == "f32"
+                           || ty == "f64" || ty == "bool" || ty == "char" || ty == "str") =>
+            {
+                let null_span = self.bump().span;
+                let TokenKind::Ident(ty_name) = self.peek().kind.clone() else {
+                    unreachable!("guarded by matches! above");
+                };
+                let ty_span = self.bump().span;
+                let full_span = null_span.merge(ty_span);
+                if ty_name == "ptr" {
+                    Ok(Expr::new(ExprKind::NullPtrLit, full_span))
+                } else {
+                    Err(Diagnostic::new(
+                        format!(
+                            "[E_NULL_LITERAL_REQUIRES_PTR] `null {}` invalid: V1 \
+                             поддерживает только `null ptr` (Plan 115 D214). Для не-pointer \
+                             типов используйте Option[T] (`None`) или приведение к ptr.",
+                            ty_name
+                        ),
+                        full_span,
+                    ))
+                }
+            }
             // Plan 97 Ф.3 (D142): hint при `handler IDENT {` —
             // legacy literal-форма, снята clean-break'ом. Подсказка
             // должна указывать на новый `effect IDENT { ... }`.
@@ -5469,6 +5505,11 @@ impl Parser {
                     | "f32" | "f64" | "bool" | "char" | "str"
                     // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
                     | "never"
+                    // Plan 115 D214: `ptr` — opaque pointer primitive type
+                    // (for FFI). Recognized в primitive position для
+                    // `ptr.method()` static dispatch (currently — no methods
+                    // defined в V1, но reserved для future ptr.MAX и подобных).
+                    | "ptr"
                 );
                 if (starts_uppercase || is_primitive_type)
                     && matches!(self.peek().kind, TokenKind::Dot)

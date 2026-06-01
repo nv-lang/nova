@@ -1,0 +1,15 @@
+// Plan 115 Ф.1 T1.1-T1.2 — `null ptr` literal + equality + default value.
+
+module plan115.t1_null_ptr_ok
+
+test "null ptr literal parses and assigns" {
+    ro p ptr = null ptr
+    assert(p == null ptr)
+}
+
+test "null ptr inequality with itself is false" {
+    ro p ptr = null ptr
+    ro q ptr = null ptr
+    assert(p == q)
+    assert(!(p != q))
+}

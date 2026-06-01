@@ -27830,6 +27830,50 @@ pre-Plan-109 API.  Документированы в их followups.
 
 ---
 
+## Plan 115 — foundational FFI (`ptr` + tuple-return FFI + opaque handle pattern) — 2026-05-31
+
+**Status:** 🟢 CLOSED 2026-06-01. Plan 115 V1 implementation complete:
+4 commits (0f0b4b89c5d + 400dc49952a + 8444a487cd2 + 639da920950).
+10/10 plan115 fixtures PASS, zero regressions в plan114_4/basics/generics.
+
+**CLOSED markers (V1 delivered):**
+- ✅ `[M-115-cookbook-libcurl]` — libcurl HTTP GET sketch в docs/ffi-cookbook.md §3.
+- ✅ `[M-115-cookbook-libpng]` — libpng read_image_dimensions sketch §2.
+
+**OPEN markers (post user-review 2026-06-01):**
+- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing. V1 ban остаётся (user decision: future if real need).
+- 🟢 `[M-115-ptr-typed-deref]` → **CLOSED via Plan 118**. `docs/plans/118-typed-pointers-and-unsafe.md` §5 «Auto-deref» (lines 273-286) + `*p` explicit single-level deref для `*T` family покрывает. Confirmed 2026-06-01.
+- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI deferred (major tooling, separate plan; user-accepted).
+- 🟢 `[M-115-ffi-build-pipeline]` → **CLOSED 2026-06-01.** `[ffi]` section в `nova.toml` (user suggestion) — supports `c_shims` (`.h` via `-include` / `.c` as compilation units), `include_dirs` (`-I`), `libs` (`-l<name>`). Cross-toolchain (clang/MSVC/GCC). Paths relative to manifest dir. Test fixture `nova_tests/plan115/t4_sqlite_e2e_ok.nv` proves pipeline via manifest-declared shim `../examples/ffi/sqlite_mini_ffi.h`.
+- 🔴 `[M-115-d126-deprecation]` → **ACTIVE RETRACT** (user decision 2026-06-01: «external type X — признаю устаревшим, надо избавиться»). **Plan 91.12 расширен на все D126 stdlib типы** (не только std/net): WriteBuffer/ReadBuffer (std/prelude/collections.nv), OnceCell[T]/Lazy[T]/Condvar (std/runtime/sync.nv). Sequence: (1) ✅ `[M-115-newtype-constructor]` closed → `type X(ptr)` работает; (2) Plan 91.12 migrates ВСЕ 5 D126 типов на tuple-newtype handles; (3) formal D126 retract в spec + parser ban с migration hint. После Plan 91.12 закрытия `external type X` — compile error.
+- 🟢 `[M-115-tuple-gc-types]` → **CLOSED as by-design** (user 2026-06-01). Цитата: «external у нас это пользовательский С код, аналог extern "C". Там функции ничего не знают о типах nv. Это правильное ограничение». Не bug — intentional.
+- 🟢 `[M-115-external-fn-method]` → **CLOSED as not needed** (user 2026-06-01). Цитата: «не вижу пока причин для этого». Free external fn + Nova-side wrapper method = sufficient.
+- 🟢 `[M-115-examples-ffi-real-build]` → **CLOSED 2026-06-01.** sqlite shim moved из `nova_rt/` → `examples/ffi/sqlite_mini_ffi.h` (user-side location). Pipeline через `nova_tests/nova.toml [ffi]` section. Embedded mini-sqlite-equivalent — proves user-FFI mechanism end-to-end. Real libsqlite3 link → отдельный `[M-115-examples-ffi-real-libsqlite3]` follow-up (требует vcpkg sqlite3 deps).
+
+**NEW markers discovered на implementation:**
+- 🟡 `[M-115-newtype-constructor]` — D52 tuple newtype `type X(ptr)` constructor + `.0` field access. V1 ships record form `type X { value ptr }` equivalent. Bootstrap codegen TypeDeclKind::Newtype не имеет call-site constructor — `SqHandle(value)` parses как Call{Ident("SqHandle"), [value]} и codegen эмитит nova_fn_SqHandle (undefined symbol). Followup adds: type-check accepts NAME(v) call if NAME registered as Newtype; codegen emits cast `((Nova_NAME)(v))`; `.0` member access on Newtype value → identity (no-op typedef).
+- 🟡 `[M-115-external-fn-method]` — generic / receiver-method external fn в user modules. V1 поддерживает только free external fn `external fn name(args) -> ret`. Receiver-method `external fn Type.method() -> ...` пока gated.
+- 🟡 `[M-115-ffi-build-pipeline]` — `nova build --c-shim path/to/file.c` CLI для user-provided shim linking. V1 shims живут в `compiler-codegen/nova_rt/` (рядом с stdlib shims), требует rebuild Nova compiler. Production-grade: separate build-step + cargo-feature toggle для C linking.
+- 🔴 `[M-115-null-ptr-to-option-after-npo]` — **HARD-RETRACT** `null ptr` literal после Plan 118 V2 lands `Option[*T]` NPO codegen. **План на retract (НЕ deprecation):**
+  1. Plan 118 V2 добавляет `Option[*T]` с Null Pointer Optimization — `None` = bitwise 0 (idintично C `NULL`), `Some(p)` = `p`. Zero-cost + type-safe + ABI-compatible одновременно. Закрывает причину existence `null ptr`.
+  2. После landed: migrate user code `null ptr` → `None` (Option[ptr]) + `p == null ptr` → `p.is_none()`. Compiler ships codemod tool в `nova migrate plan118-null-ptr-retract`.
+  3. Parser deprecation cycle: 1 release с `W_NULL_PTR_DEPRECATED` warning + migration hint; следующий release — hard error `E_NULL_LITERAL_REPLACED_BY_OPTION` (retract: lexeme `null` снова становится Ident, ExprKind::NullPtrLit удаляется из AST).
+  4. D214 spec amend: §«null ptr литерал» retract'нут, replaced секцией «migration to `Option[*T]` (Plan 118)». Cross-ref к Plan 118 NPO codegen.
+  5. nova_rt/plan115_ffi_test.h shim updated: tuple `(Option[ptr], int)` вместо `(ptr, int)`. T2 fixtures rewritten.
+  
+  **Why hard-retract, not deprecation co-existence:** Nova принцип single mechanism для "нет значения" (см. `[[feedback_nova_syntax]]` — explicit > implicit, AI-first). `null ptr` дублирует `None` — оставлять оба → confusion + ambiguity при code review / LLM-generation. Hard cutover одним merge с codemod tool.
+
+**Codegen architectural changes (Ф.2):**
+- nova_ptr distinct typedef (`typedef void* nova_ptr`) — mirror Plan 70.3 nova_char rationale; distinguishable от erased generic-T void* placeholder.
+- Tuple typedef emit refactored: tagged struct form `typedef struct NAME { ... } NAME;` + `#ifndef NOVA_TUPLE_TYPEDEF_<mangled>` guard — allows shim header'у forward-declare без redefinition error.
+- ExternalRegistry::from_module merged в emit_module pre-pass для user external fn registration (даёт unmangled `nova_fn_<name>` C call name).
+
+**D-block changes:**
+- D214 NEW (`spec/decisions/02-types.md` после D200) — `ptr` opaque pointer + tuple FFI returns + opaque handle pattern. ~300 lines.
+- D82 amended (Plan 115 D214) — drop "external fn only allowed in std.runtime.*" restriction. User-level external fn enabled для user FFI к third-party C libraries.
+
+Дополнительно: Plan 115 v1 это **оригинальный D214 (НЕ Plan 118 D214 amend)**. Plan 118 future planned — добавляет `*T` family + `unsafe {}` block + D2 keyword restore + Option[*T] NPO. Plan 115 v1 = baseline foundation на котором Plan 118 строит V2.
+=======
 ## Plan 114.4.1 — Associated constants (partial, 2026-06-01)
 
 **Status:** 🟢 PARTIAL CLOSURE. Plan 114.4.1 Ф.1 (record-field assoc const) closed. Ф.2 sum-type + Ф.3 generic per-mono → Plan 114.4.1.1 / Plan 114.4.1.2 per safety hatch.

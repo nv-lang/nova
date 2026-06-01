@@ -22,6 +22,11 @@ pub enum Ty {
     Bool,
     Unit,
     Never,
+    /// Plan 115 D214: `ptr` — opaque pointer-sized integer (ABI: `void*`).
+    /// Distinct от `Ty::Int` на type-check уровне (нельзя смешать без cast).
+    /// Arithmetic banned (E_PTR_ARITHMETIC_BANNED); member access banned
+    /// (E_PTR_NO_MEMBER); equality + casts (as u64/i64/int) allowed.
+    Ptr,
     /// Р›СЋР±РѕР№ С‚РёРї / РЅРµРёР·РІРµСЃС‚РЅС‹Р№ (РґР»СЏ bootstrap'Р° вЂ” fallback).
     Any,
     /// РРјРµРЅРѕРІР°РЅРЅС‹Р№ С‚РёРї (record, sum, effect, newtype, alias).
@@ -101,20 +106,22 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
             if let Item::Fn(fd) = item {
                 if fd.is_external {
                     // Plan 91.10 (D163 retracted): `needs <Cap>` clause удалён.
-                    // D82 restriction для plain external fn остаётся: only
-                    // stdlib-runtime modules могут декларировать external fn.
-                    // FFI to external C libraries — TBD (нужен `extern("C")`
-                    // или похожий механизм; пока stdlib-only).
+                    //
+                    // Plan 115 D214 amend D82 (2026-05-31): D82 restriction
+                    // "external fn only allowed in std.runtime.*" SNYATA.
+                    // Foundational FFI требует user-level `external fn` для
+                    // bindings к третьесторонним C libraries (libsqlite, libpng,
+                    // libcurl, etc) без участия compiler-team. User несёт
+                    // ответственность за:
+                    //   - правильную C shim implementation (Layer 4),
+                    //   - safe memory ownership (consume close() pattern),
+                    //   - link-time provision shim object files (`nova build
+                    //     --c-shim path/to/shim.c`).
+                    //
+                    // Verification: D214 §«Layered FFI pattern». Future
+                    // `[M-115-ffi-build-pipeline]` formalizes shim linking
+                    // CLI.
                     let _ = fd.needs_caps; // backward-compat field, всегда empty.
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "`external fn` is only allowed in `std.runtime.*` modules \
-                             (this module is `{}`). FFI to external C libraries — \
-                             см. D82 + future `extern(\"C\")` syntax.",
-                            module.name.join(".")
-                        ),
-                        fd.span,
-                    ));
                 }
             }
             // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with
@@ -2182,6 +2189,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         }
     }
@@ -2610,6 +2618,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         }
     }
@@ -3593,6 +3602,16 @@ impl<'a> TypeCheckCtx<'a> {
                     Compat::Bad { found: "()".to_string() }
                 };
             }
+            // Plan 115 D214: null ptr literal — only assignable к ptr или
+            // tuple newtype wrapping ptr (handle types). Mismatch flagged as
+            // ptr-not-X.
+            ExprKind::NullPtrLit => {
+                return if exp_cat == TyCat::Ptr {
+                    Compat::Ok
+                } else {
+                    Compat::Bad { found: "ptr".to_string() }
+                };
+            }
             _ => {}
         }
         // Не-литерал: вывести тип; не вышло → Unknown (skip, не ошибка).
@@ -3630,8 +3649,29 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(prim_ref("str", expr.span))
             }
             ExprKind::CharLit(_) => Some(prim_ref("char", expr.span)),
+            // Plan 115 D214: null ptr literal → Ty::Ptr.
+            ExprKind::NullPtrLit => Some(prim_ref("ptr", expr.span)),
             // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
             ExprKind::SelfAccess => scope.get("@").cloned(),
+            // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` call where
+            // Type is a known Newtype/Alias → infer as Named(Type). Without
+            // this, `ro h = SqHandle(raw)` binds `h` без типа в scope, и
+            // assignable() для `close_sqlite(h)` падает в Compat::Unknown
+            // (E7301 не fires при passing PngHandle к fn(SqHandle)).
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(td) = self.types.get(name) {
+                        if matches!(td.kind, TypeDeclKind::Newtype(_) | TypeDeclKind::Alias(_)) {
+                            return Some(TypeRef::Named {
+                                path: vec![name.clone()],
+                                generics: Vec::new(),
+                                span: expr.span,
+                            });
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         }
     }
@@ -3765,12 +3805,28 @@ impl<'a> TypeCheckCtx<'a> {
                     "bool" => TyCat::Bool,
                     "str" => TyCat::Str,
                     "char" => TyCat::Char,
+                    "ptr" => TyCat::Ptr,
                     "any" | "never" | "Self" => TyCat::Other,
                     other => match self.types.get(other) {
                         Some(td) => match &td.kind {
-                            TypeDeclKind::Alias(inner)
-                            | TypeDeclKind::Newtype(inner) => {
+                            // Alias всегда transparent (D52 явно: «X и Y совместимы»).
+                            TypeDeclKind::Alias(inner) => {
                                 self.cat_of_depth(inner, gs, depth + 1)
+                            }
+                            // Newtype: D52 явно: «X — новый тип, типизированно
+                            // отличный от Y». Plan 115 D214: critical для
+                            // opaque handle pattern (`type SqHandle(ptr)` ≠
+                            // `type PngHandle(ptr)` ≠ `ptr`). Возвращаем
+                            // Named(name) для nominal distinction.
+                            //
+                            // Backward-compat для существующих Go-style
+                            // newtype'ов с numeric/str/bool inner: literal
+                            // expressions (IntLit/FloatLit/etc.) checked
+                            // BEFORE cat_compatible в assignable() — литералы
+                            // адаптируются к контексту через path-specific
+                            // arms. Variable-typing — нужна distinction.
+                            TypeDeclKind::Newtype(_) => {
+                                TyCat::Named(other.to_string())
                             }
                             // Concrete data-типы — сравниваются по имени.
                             TypeDeclKind::Record(_)
@@ -3830,6 +3886,8 @@ enum TyCat {
     Str,
     Char,
     Unit,
+    /// Plan 115 D214: `ptr` — opaque pointer primitive.
+    Ptr,
     /// Concrete именованный тип (record/sum) — сравнивается по имени.
     Named(String),
     Array(Box<TyCat>),
@@ -3845,7 +3903,7 @@ fn cat_compatible(found: &TyCat, expected: &TyCat) -> bool {
     match (found, expected) {
         (Other, _) | (_, Other) => true,
         (Int, Int) | (Float, Float) | (Int, Float) | (Float, Int) => true,
-        (Bool, Bool) | (Str, Str) | (Char, Char) | (Unit, Unit) => true,
+        (Bool, Bool) | (Str, Str) | (Char, Char) | (Unit, Unit) | (Ptr, Ptr) => true,
         (Named(a), Named(b)) => a == b,
         (Array(a), Array(b)) => cat_compatible(a, b),
         _ => false,
@@ -3886,6 +3944,26 @@ fn is_intrinsic_namespace(name: &str) -> bool {
 }
 
 /// Ф.1: TypeRef примитива по имени.
+/// Plan 115 D214: syntactic ptr-detection для arithmetic-ban check в
+/// BoundCtx::walk_expr (где нет full type-inference). Покрывает literal
+/// (`null ptr`), explicit cast (`x as ptr`), scope-binding с typed ptr.
+/// Recursion в Ident lookup безопасна — scope содержит resolved TypeRef'ы.
+fn expr_is_ptr_typed(e: &Expr, scope: &HashMap<String, TypeRef>) -> bool {
+    match &e.kind {
+        ExprKind::NullPtrLit => true,
+        ExprKind::As(_, ty) => matches!(ty,
+            TypeRef::Named { path, .. }
+                if path.last().map_or(false, |s| s == "ptr")),
+        ExprKind::Ident(name) => matches!(scope.get(name),
+            Some(TypeRef::Named { path, .. })
+                if path.last().map_or(false, |s| s == "ptr")),
+        ExprKind::SelfAccess => matches!(scope.get("@"),
+            Some(TypeRef::Named { path, .. })
+                if path.last().map_or(false, |s| s == "ptr")),
+        _ => false,
+    }
+}
+
 fn prim_ref(name: &str, span: Span) -> TypeRef {
     TypeRef::Named {
         path: vec![name.to_string()],
@@ -4572,7 +4650,28 @@ impl<'a> BoundCtx<'a> {
                 }
             }
             ExprKind::TurboFish { base, .. } => self.walk_expr(base, scope, errors),
-            ExprKind::Binary { left, right, .. } => {
+            ExprKind::Binary { left, right, op } => {
+                // Plan 115 D214: ptr arithmetic banned (E_PTR_ARITHMETIC_BANNED).
+                // V1: only comparison (Eq/Neq) и cast (handled separately)
+                // разрешены на ptr. Все остальные binary ops — forbidden.
+                let is_arith_or_rel = !matches!(op, BinOp::Eq | BinOp::Neq);
+                if is_arith_or_rel {
+                    let l_is_ptr = expr_is_ptr_typed(left, scope);
+                    let r_is_ptr = expr_is_ptr_typed(right, scope);
+                    if l_is_ptr || r_is_ptr {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_PTR_ARITHMETIC_BANNED] арифметика и сравнения \
+                                 порядка на `ptr` запрещены (Plan 115 D214 V1): \
+                                 опаковый pointer не поддерживает `{:?}`. \
+                                 Используйте `==` / `!=` для null-check'ов; для integer-\
+                                 арифметики сделайте `(p as u64) <op> ...`.",
+                                op
+                            ),
+                            e.span,
+                        ));
+                    }
+                }
                 self.walk_expr(left, scope, errors);
                 self.walk_expr(right, scope, errors);
             }
@@ -4727,6 +4826,7 @@ impl<'a> BoundCtx<'a> {
             // Р›РёС‚РµСЂР°Р»С‹ / ident'С‹ / handler-Р»РёС‚РµСЂР°Р»С‹ вЂ” Р±РµР· СЂРµРєСѓСЂСЃРёРё РІ bound-РїСЂРѕРІРµСЂРєРµ.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. } => {}
         }
@@ -6144,6 +6244,7 @@ impl<'a> CapabilityCtx<'a> {
             // Р›РёС‚РµСЂР°Р»С‹ / ident'С‹ / handler-Р»РёС‚РµСЂР°Р»С‹ вЂ” Р±РµР· СЂРµРєСѓСЂСЃРёРё.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. }
             | ExprKind::ProtocolLit { .. } => {}
@@ -6862,7 +6963,8 @@ impl NameResCtx {
 
             // Р›РёС‚РµСЂР°Р»С‹.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit => {}
 
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
@@ -7644,6 +7746,8 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
             Some("bool") => Ty::Bool,
             // Plan 76: bottom-тип `never` — строчный встроенный примитив.
             Some("never") => Ty::Never,
+            // Plan 115 D214: `ptr` — opaque pointer primitive type.
+            Some("ptr") => Ty::Ptr,
             Some(name) => Ty::Named(name.to_string()),
             None => Ty::Any,
         },
@@ -8516,6 +8620,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         // Leaf expressions вЂ” nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
+        | ExprKind::NullPtrLit
         | ExprKind::SelfAccess => {}
     }
 }
@@ -11026,6 +11131,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         // ─── Листья ───
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit
         | ExprKind::Path(_) | ExprKind::SelfAccess => {}
 
         // ─── Использование переменной ───
@@ -13413,7 +13519,8 @@ impl MapLitCtx {
             // Листовые.
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit => {}
         }
     }
 
@@ -14351,7 +14458,8 @@ impl MapLitAnnotator {
             }
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
-            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::NullPtrLit => {}
         }
         // Подавляем unused warnings.
         let _ = &self.fn_generics;

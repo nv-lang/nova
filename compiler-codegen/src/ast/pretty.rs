@@ -40,6 +40,7 @@ fn write_expr(out: &mut String, e: &Expr) {
             let _ = write!(out, "'{}'", char::from_u32(*c).unwrap_or('?'));
         }
         ExprKind::UnitLit => out.push_str("()"),
+        ExprKind::NullPtrLit => out.push_str("null ptr"),
         ExprKind::InterpolatedStr { parts } => {
             out.push('"');
             for p in parts {

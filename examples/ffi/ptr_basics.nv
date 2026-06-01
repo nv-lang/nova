@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 115 D214 — `ptr` opaque pointer primitive: basics.
+//
+// Demonstrates:
+//   - `null ptr` literal
+//   - ptr ↔ integer casts (round-trip)
+//   - equality / null check
+//   - Distinct typed handle via record wrapper
+
+module examples.ffi.ptr_basics
+
+// Record-form typed handle (Plan 115 V1 — tuple newtype constructor
+// в Plan 115.1 followup).
+type FileHandle { ro value ptr }
+type SocketHandle { ro value ptr }
+
+fn ptr_basics_demo() -> int {
+    // 1. NULL literal — bitwise zero opaque pointer.
+    ro nothing ptr = null ptr
+
+    // 2. Construct ptr from integer (would normally come from C library).
+    ro raw ptr = 0x1000 as ptr
+
+    // 3. Round-trip cast: ptr → int → ptr.
+    ro raw_as_u64 u64 = raw as u64
+    ro raw_back ptr = raw_as_u64 as ptr
+
+    // Equality check.
+    if raw_back == raw {
+        // Same pointer value.
+    }
+
+    // 4. Wrap raw ptr in typed handle for type safety.
+    ro file = FileHandle { value: raw }
+    ro sock = SocketHandle { value: nothing }
+
+    // Distinct types: passing FileHandle to fn expecting SocketHandle
+    // is a compile error (E_TYPE_MISMATCH).
+    file.value as int
+}
+
+test "ptr basics — null + cast + handle wrap" {
+    ro result = ptr_basics_demo()
+    assert(result == 0x1000)
+}

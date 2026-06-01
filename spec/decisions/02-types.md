@@ -6690,3 +6690,330 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 ### Acceptance
 
 См. Plan 114.4 A5-A13 (T2 series).
+
+## D214. `ptr` opaque pointer type + tuple FFI returns + opaque handle pattern
+
+> **Plan 115** (foundational FFI). **Status:** 🆕 draft (V1, finalized в Ф.4).
+
+### Что
+
+Foundational FFI infrastructure для bindings к произвольным C libraries
+(`libsqlite3`, `libpng`, `libcurl`, etc.) без участия compiler-team.
+
+Три компонента:
+
+1. **`ptr` built-in primitive type** — opaque pointer-sized integer,
+   ABI-эквивалентен `void*` в C.
+2. **Tuple-by-value returns в `external fn`** — multi-value через
+   struct-return calling convention.
+3. **Opaque handle pattern** через `type X(ptr)` (D52 tuple newtype) —
+   compile-time-distinct typed wrappers.
+
+### 1. `ptr` built-in primitive type
+
+```nova
+ro p ptr = null ptr                          // NULL pointer literal
+ro q ptr = some_external_fn()                // получили ptr из FFI
+if p == null ptr { /* handle NULL */ }       // null check
+ro as_int = q as u64                         // explicit cast → integer
+ro back_to_ptr = (0x1000 as ptr)             // explicit cast int → ptr
+```
+
+#### Семантика
+
+- **Size.** `usize` (8 bytes на 64-bit, 4 bytes на 32-bit). Bootstrap
+  таргетит только 64-bit платформы (Linux x86_64, Windows x64, macOS
+  ARM64/x86_64).
+- **ABI.** `void*` в C. Передаётся в registers по платформенному ABI;
+  identity при passing через external fn boundary.
+- **Opaque.** Nova не имеет `*p` deref-операции (никогда не было), нет
+  field/method access на `ptr`. Только comparison + cast + pass-through.
+- **Default value.** `null ptr` (bitwise 0). Zero-init valid и обозначает
+  «нет указателя».
+- **Equality.** `==` / `!=` — bitwise pointer comparison (стандартная C
+  semantics).
+- **Casts.**
+  - `ptr as u64` / `ptr as i64` — извлечь integer representation.
+  - `u64 as ptr` / `i64 as ptr` — собрать ptr из integer (для opaque
+    handle storage).
+  - `ptr as ptr` — no-op (identity).
+- **Arithmetic banned.** `ptr + N`, `ptr - ptr`, `ptr * 2` —
+  `E_PTR_ARITHMETIC_BANNED`. Pointer arithmetic — unsafe operation,
+  отложен на followup (`[M-115-ptr-arithmetic]`).
+- **GC.** Conservative GC сканирует pointer-sized слоты как potential
+  references — `ptr` слот с GC-allocated адресом будет pin'ить allocation
+  (defensive, correct). `ptr` слот с non-GC адресом (e.g. sqlite3 handle)
+  не tracs ничего (адрес вне GC arena). Зачем это работает: Boehm-style
+  conservative collector реагирует только на адреса внутри tracked heap.
+- **Memory ownership.** FFI domain — **user responsibility**. `ptr`,
+  returned'ый из C library, должен быть освобождён matching C-side call
+  (`sqlite3_close`, `png_destroy_read_struct`, etc.). Pattern:
+  типизированный handle + `consume close()` метод на Nova-wrapper.
+
+#### `null ptr` литерал
+
+```nova
+ro p = null ptr                              // valid expression
+if p == null ptr { ... }                     // null check
+```
+
+Синтаксис: keyword `null` + type-name `ptr`. Two-token literal, parser
+expects `null` followed by `ptr` ident. Распространение синтаксиса на
+другие pointer types (Plan 118 `*T` family) — `null *T` — спроектировано
+forward-compatible, но не реализуется в V1.
+
+V1 ограничение: только `null ptr` valid. `null int`, `null str`, `null
+SomeRecord` — `E_NULL_LITERAL_REQUIRES_PTR`.
+
+> ⚠ **INTERIM construct (Plan 115 V1 only).** `null ptr` дублирует
+> функциональность `None` из `Option[T]` (sum-type из D-блока Option/
+> Result). Идиоматический Nova-путь — `Option[ptr]` с явной `None` /
+> `Some(p)` диспозицией и compiler-enforced null check'ом.
+>
+> **Почему `null ptr` существует в V1.** `Option[ptr]` в bootstrap
+> представлен как `NovaOpt_nova_ptr` struct (tag + value) — НЕ
+> ABI-совместим с raw `void*` из C library. FFI shim пришлось бы
+> оборачивать pointer'ы в Option struct'у — лишний overhead + struct
+> return convention вместо register return. `null ptr` = bitwise 0 =
+> идентично C `NULL` → zero-cost FFI.
+>
+> **Plan 118 NPO (Null Pointer Optimization).** После Plan 118 V2
+> добавит `Option[*T]` с NPO codegen — `None` представляется как
+> bitwise 0, `Some(p)` как `p`. Zero-cost + type-safe + ABI-compatible
+> одновременно. См. `[[project-plan118-status]]` §«Option[*T] NPO
+> codegen».
+>
+> **После Plan 118 landed: `null ptr` полностью удаляется** —
+> retract из spec, parser emit'ит `E_NULL_LITERAL_REPLACED_BY_OPTION`
+> с migration hint к `Option[ptr] / None`. См. marker
+> `[M-115-null-ptr-to-option-after-npo]` в `docs/simplifications.md`
+> для migration tracking.
+
+#### Type-checker rules
+
+| Операция | Результат | Diagnostic |
+|---|---|---|
+| `null ptr` | `Ty::Ptr` | — |
+| `ptr == ptr` / `ptr != ptr` | `bool` | — |
+| `ptr == null ptr` | `bool` | — |
+| `ptr as u64` / `ptr as i64` | integer | — |
+| `u64 as ptr` / `i64 as ptr` | `ptr` | — |
+| `ptr as ptr` | `ptr` | no-op |
+| `ptr + N` / `ptr - ptr` / etc. | error | `E_PTR_ARITHMETIC_BANNED` |
+| `ptr.field` / `ptr.method()` | error | `E_PTR_NO_MEMBER` (нет деf членов на opaque) |
+| `int as ptr` (для `int = i64`-style) | `ptr` | — (transparent через i64 path) |
+| `ptr as int` | `int` | — |
+| `ptr` в record-field | OK | — (storage в struct slot) |
+
+`ptr` distinct от `i64`/`u64`/`int` на type-check уровне (нельзя смешать
+без cast'а). Distinction enforced через отдельный `Ty::Ptr` variant.
+
+### 2. Tuple-by-value returns в `external fn`
+
+```nova
+external fn nova_sqlite3_open(path str) -> (Sqlite3Handle, i64)
+//                                          ↑              ↑
+//                                          handle         error code
+```
+
+Соответствующий C shim:
+
+```c
+typedef struct {
+    void*   _0;   // handle slot
+    int64_t _1;   // error code slot
+} Nova_Sqlite3OpenResult;
+
+Nova_Sqlite3OpenResult nova_sqlite3_open(nova_str path) {
+    sqlite3* db;
+    int rc = sqlite3_open(path.data, &db);
+    return (Nova_Sqlite3OpenResult){ db, (int64_t)rc };
+}
+```
+
+#### ABI rules
+
+- **Layout** Nova tuple type `(T1, T2, ..., Tn)` ↔ C struct `{ T1 _0; T2
+  _1; ...; Tn _{n-1}; }`. **Element order preserved**, no padding inserted
+  beyond what C compiler emits по target ABI.
+- **Mangling.** Compiler emits `_NovaTuple_<arity>_<elem_mangles>` typedef
+  (Plan 59 mechanism, существующий — переиспользуется). C-side shim
+  должен иметь struct с тем же layout (struct typedef name произвольное —
+  ABI layout совпадает).
+- **Calling convention** — определяется C компилятором на target платформе:
+  - **Sys V AMD64 (Linux, macOS x86_64):** structs ≤ 16 bytes (2 GPR) →
+    return через `%rax:%rdx` registers. Bigger → caller passes hidden
+    out-pointer в `%rdi`.
+  - **AArch64 (macOS ARM64, Linux ARM64):** structs ≤ 16 bytes → `X0:X1`
+    registers. Bigger → hidden out-pointer.
+  - **Win x64 MSVC:** structs ≤ 8 bytes → `RAX`. Bigger → hidden
+    out-pointer в `RCX`, shifting all other args.
+- **Compiler responsibility.** Codegen эмитит struct return-type
+  declaration; платформенный C compiler делает rest. Nova не пытается
+  override calling convention — соответствие platform ABI делегировано
+  toolchain.
+- **Element type compatibility.** Tuple elements должны быть:
+  - Primitives (`int`/`i32`/etc., `f64`, `bool`, `u8`-`u64`, `ptr`),
+  - Newtype handles (`type X(ptr)`),
+  - Pointer-like types (`str` — actually `{ data ptr; len u64 }`
+    layout-equivalent struct),
+  - Other tuples (nested struct return) — supported, transitive.
+- **Прохибиции (V1).** Elements типа `[]T` (NovaArray pointer), Option,
+  Result, sum-types — **не рекомендуется**, т.к. GC-tracked layouts. Pass
+  them отдельно через out-params (если действительно нужно) или
+  переупаковывайте в opaque handle. Followup `[M-115-tuple-gc-types]` —
+  formal V2 support.
+
+#### Layered FFI pattern
+
+```
+LAYER 1  Public Nova API (Database.open)
+   ↓
+LAYER 2  Nova wrapper (construct typed handle from raw)
+   ↓
+LAYER 3  external fn declaration (typed handle + tuple return)
+            external fn nova_sqlite3_open(path str) -> (Sqlite3Handle, i64)
+   ↓
+LAYER 4  C shim (~5-10 lines per fn — adapts out-param convention → struct)
+            Nova_Sqlite3OpenResult nova_sqlite3_open(nova_str path) { ... }
+   ↓
+LAYER 5  Actual C library (libsqlite3.so / sqlite3.dll)
+            int sqlite3_open(const char* path, sqlite3** db_out);
+```
+
+Layer 4 (shim) — единственное место «где Nova ABI встречается с C
+library ABI». User пишет один раз per fn. ~5-10 строк per shim.
+
+### 3. Opaque handle pattern через `type X(ptr)` (D52 tuple newtype)
+
+```nova
+type Sqlite3Handle(ptr)                       // typed wrapper
+type PngImageHandle(ptr)
+type CurlEasyHandle(ptr)
+
+// Construct
+ro h = Sqlite3Handle(some_raw_ptr)
+
+// Destructure inner ptr (used rarely; usually pass-through)
+ro raw_ptr = h.0
+
+// Type safety: distinct types prevent mixing
+fn close_sqlite(h Sqlite3Handle) -> i64 { ... }
+
+ro png = PngImageHandle(other_raw_ptr)
+close_sqlite(png)                             // ✗ E_TYPE_MISMATCH — PngHandle ≠ Sqlite3Handle
+```
+
+#### Семантика
+
+- **D52 tuple newtype** (`type X(Y)`) — existing mechanism, leveraged
+  как-есть. Никаких новых parser/checker rules для handle pattern — он
+  buisness layer convention, не language feature.
+- **ABI.** Newtype = transparent wrapping. C-level Sqlite3Handle ≡ ptr ≡
+  `void*`. Zero runtime overhead.
+- **Distinct type.** Compile-time check `Sqlite3Handle ≠ PngHandle ≠
+  ptr` — нельзя передать без явного wrap/unwrap.
+- **Construct:** `Sqlite3Handle(ptr_value)` — standard tuple constructor.
+- **Destructure:** `handle.0` — D52 tuple field access.
+
+#### `consume close()` cleanup convention
+
+Recommended pattern для handle types с resource ownership:
+
+```nova
+type Database { ro handle Sqlite3Handle }
+
+fn Database.open(path str) Fail[DbError] -> Database {
+    ro (h, rc) = nova_sqlite3_open(path)
+    if rc != 0 { Fail.throw(DbError.OpenFailed(rc)) }
+    Database { handle: h }
+}
+
+fn Database consume @close() -> () {
+    nova_sqlite3_close(self.handle)
+    // Plan 100.4 defer machinery интегрируется автоматически:
+    // failable cleanup body допустим, ошибки propagate'ятся caller'у.
+}
+```
+
+Combined с D90 `defer` / `errdefer` для automatic cleanup — leak-resistant
+без runtime cost.
+
+### 4. Coexistence с D126 `external type`
+
+Plan 115 **не retracts** D126. Оба паттерна остаются valid:
+
+| Pattern | Use case | Trade-offs |
+|---|---|---|
+| **D126** `external type X` | stdlib internals (Nova-team владеет C struct) | Tighter integration; C-side knows Nova types; no `.0` boilerplate |
+| **D214** `type X(ptr)` | user FFI к third-party libs ИЛИ stdlib opting in | Universal; C-side не знает Nova internal layouts; `.0` для inner access |
+
+**Recommendation.** Stdlib мигрирует на Plan 115 pattern для consistency
+с user-FFI conventions (Plan 91.12 amend в Pattern B). D126 deprecation —
+followup `[M-115-d126-deprecation]` после migration audit.
+
+### Diagnostic codes
+
+- `E_PTR_ARITHMETIC_BANNED` — попытка арифметики на `ptr` (V1 banned).
+- `E_PTR_NO_MEMBER` — попытка `ptr.field` / `ptr.method()` — `ptr` opaque.
+- `E_NULL_LITERAL_REQUIRES_PTR` — `null T` где T ≠ ptr (V1 ограничение;
+  Plan 118 expand для `*T`).
+- `E_PTR_CAST_INVALID_TARGET` — `ptr as T` где T ≠ {i64, u64, int, ptr} —
+  string/float/bool casts не имеют semantic meaning для opaque pointer.
+
+### Implementation notes
+
+- **Parser** добавляет `"ptr"` в `is_primitive_type` allowlist (для
+  `ptr.method` / static-dispatch namespace). `null ptr` literal — special
+  case в `parse_atom` / `parse_primary`.
+- **Type-checker** добавляет `Ty::Ptr` variant; `ty_of_ref` mapping `"ptr"
+  => Ty::Ptr`; arithmetic / member access reject hooks.
+- **Codegen** добавляет `"ptr" => "void*"` mapping в `type_ref_to_c`;
+  `null ptr` → `((void*)0)`; cast emissions `((void*)(uint64_t)(...))`
+  для int→ptr; `((uint64_t)(...))` для ptr→int.
+- **GC** — no changes. Conservative GC handles `void*` слоты by-default.
+- **Tuple FFI** — leveraging existing `_NovaTuple_*` mono'd struct
+  pipeline (Plan 59 mechanism). C-side shim author writes matching struct
+  typedef с теми же elements.
+
+### Mainstream comparison
+
+| Язык | Opaque pointer type | Typed wrappers |
+|---|---|---|
+| Rust | `*mut c_void` / `*const c_void` | `struct H(*mut c_void)` |
+| Zig | `*anyopaque` / `?*anyopaque` | `const H = opaque {}; *H` |
+| Go | `unsafe.Pointer` | `type H = unsafe.Pointer` |
+| Haskell FFI | `Ptr ()` | `newtype H = H (Ptr ())` |
+| OCaml ctypes | `unit ptr` | `type h = unit ptr` |
+| Python ctypes | `c_void_p` | subclass `c_void_p` |
+| Java JNI | `jlong` | (just `long`) |
+| .NET P/Invoke | `IntPtr` / `nint` | `struct H { IntPtr h; }` |
+| **Nova V1** | (нет) — нужны compiler hacks | — |
+| **Nova V2 (Plan 115)** | `ptr` (built-in) | `type H(ptr)` (D52 tuple newtype) |
+
+Nova V2 = Rust/Zig tier (typed wrappers без runtime overhead, opaque
+deref, arithmetic banned by default).
+
+### Use cases
+
+- libsqlite3 binding (`type Sqlite3Handle(ptr)`, `type
+  Sqlite3StmtHandle(ptr)`).
+- libpng / libjpeg / libwebp image processing.
+- libcurl HTTP client (Plan 117/118 prerequisite).
+- rustls / OpenSSL TLS handles (Plan 116 prerequisite).
+- Plan 91.12 std/net Pattern B migration (replaces D126 для TcpListener /
+  TcpStream / UdpSocket если migration deemed worthwhile).
+- Any third-party C library без Nova-team coordination.
+
+### Cross-ref
+
+- [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) — tuple newtype `type X(Y)` (leveraged).
+- [D82](03-syntax.md#d82) — external fn syntax (extended для tuple returns).
+- [D126](03-syntax.md#d126) — external type (coexists; alternative
+  pattern для stdlib internals).
+- [D54](03-syntax.md#d54-explicit-cast-as-only) — `as`-cast operator
+  (added ptr↔integer casts).
+
+### Acceptance
+
+См. Plan 115 A1-A10 (T1, T2, T3 series).

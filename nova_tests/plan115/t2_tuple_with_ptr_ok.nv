@@ -1,0 +1,36 @@
+// Plan 115 Ф.2 T2.1-T2.4 — tuple with ptr destructure (regular Nova fn,
+// without external fn boundary). Verifies tuple-by-value layout +
+// destructuring + ptr-in-tuple semantics works end-to-end через codegen.
+//
+// External fn variant (T2 actual FFI) — см. t2_external_fn_tuple_ok.nv
+// (если присутствует) или extracted в Plan 115.1.
+
+module plan115.t2_tuple_with_ptr_ok
+
+fn make_handle_pair(seed int) -> (ptr, int) {
+    ro h = seed as ptr
+    (h, seed * 2)
+}
+
+fn make_three_ptrs() -> (ptr, ptr, ptr) {
+    (1 as ptr, 2 as ptr, 3 as ptr)
+}
+
+test "tuple with ptr — destructure" {
+    ro (h, code) = make_handle_pair(42)
+    assert(h as int == 42)
+    assert(code == 84)
+}
+
+test "tuple with three ptrs — all fields preserved" {
+    ro (a, b, c) = make_three_ptrs()
+    assert(a as int == 1)
+    assert(b as int == 2)
+    assert(c as int == 3)
+}
+
+test "null ptr inside tuple" {
+    ro (p, n) = (null ptr, 99)
+    assert(p == null ptr)
+    assert(n == 99)
+}

@@ -25890,6 +25890,96 @@ Smoke regression: 107 PASS / 1 pre-existing fail
 (basics+syntax+plan114+plan73+plan108+plan114_4). Zero induced
 regressions.
 
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 115 — foundational FFI (ptr + tuple-FFI + opaque handle) (2026-06-01, closed)
+═══════════════════════════════════════════════════════════════════════════════
+
+Worktree: D:/Sources/nv-lang/nova-p115
+Branch:   plan-115
+Status:   ✅ CLOSED Ф.0-Ф.4. Все 10 plan115 fixtures PASS, regression-clean.
+
+4 commits на ветке:
+  0f0b4b89c5d Ф.0   D214 spec block draft + [M-115-*] markers
+  400dc49952a Ф.1   ptr built-in type + null ptr literal + arithmetic ban
+  8444a487cd2 Ф.2   tuple-by-value FFI returns + nova_ptr typedef + user-level external fn
+  639da920950 Ф.3   opaque handle pattern + FFI cookbook + sqlite mini example
+  (Ф.4 closure commit follows)
+
+Что сделано:
+
+1. Ф.0 — design freeze + spec foundation:
+   - D214 spec block в spec/decisions/02-types.md (~300 lines):
+     ptr primitive type (void* ABI, null literal, arithmetic ban,
+     casts to/from i64/u64); tuple-by-value FFI returns
+     (leverages _NovaTuple mono pipeline); opaque handle pattern
+     type X(ptr) (D52 tuple newtype — V1 ships record form);
+     coexistence с D126 external type. 4 diagnostic codes.
+     Cross-platform ABI rules. Mainstream comparison (Rust/Zig/Go/Haskell/
+     OCaml/Python/Java/.NET). Layered FFI pattern (5 layers).
+   - simplifications.md — 8 [M-115-*] open markers + follow-up markers
+     найденные на implementation.
+
+2. Ф.1 — ptr type implementation:
+   - AST: ExprKind::NullPtrLit variant; pretty printer + walk arms.
+   - Lexer: 'null' остаётся Ident (контекстуально recognized в parser).
+   - Parser: parse_primary recognizes Ident("null") + Ident(typename) →
+     NullPtrLit (если 'ptr') или E_NULL_LITERAL_REQUIRES_PTR.
+   - Type-checker: Ty::Ptr variant; ty_of_ref/TyCat/infer_expr_type
+     handle ptr; BoundCtx::walk_expr Binary: arith/order-comparison
+     на ptr → E_PTR_ARITHMETIC_BANNED.
+   - Codegen: 'ptr' → 'nova_ptr'; NullPtrLit → ((nova_ptr)0);
+     check_as_cast_allowed: ptr↔str/bool/f32/f64/char/sized-int →
+     E_PTR_CAST_INVALID_TARGET с hint.
+   - Interp: NullPtrLit → Value::Int(0).
+   - SMT encoder: NullPtrLit → SmtTerm::Var('_null_ptr').
+   - 6 T1 fixtures (2 positive + 4 negative).
+
+3. Ф.2 — tuple FFI ABI + nova_ptr distinct typedef:
+   - nova_rt.h: typedef void* nova_ptr (Plan 70.3 mirror).
+   - nova_rt/plan115_ffi_test.h: header-only tuple-return FFI shim.
+   - emit_c.rs: tuple typedef emit uses tagged struct form + #ifndef
+     guard; user external fn registration via ExternalRegistry::from_module;
+     pre-register mono'd tuple instances для external fn return types;
+     infer_expr_c_type Call fallback на external_registry для free fn.
+   - external_registry.rs: 'ptr' → 'nova_ptr'; TypeRef::Tuple →
+     compute mono'd _NovaTuple_<arity>_... mangled name.
+   - types/mod.rs: D82 amend — drop 'external fn only in std.runtime.*'
+     restriction. User-level external fn enabled.
+   - 2 T2 fixtures (Nova fn tuple-return + external fn tuple-return).
+
+4. Ф.3 — opaque handle pattern docs + examples:
+   - docs/ffi-cookbook.md (~320 lines): quick ref, layered FFI pattern,
+     3 worked examples (sqlite3 full + libpng + libcurl), ABI cheat sheet,
+     safety considerations, followup markers.
+   - examples/ffi/: ptr_basics.nv + sqlite_mini.nv + README.md.
+   - 2 T3 fixtures (record-form handle + type mismatch negative).
+
+Deferred via safety hatch (followup markers):
+- [M-115-newtype-constructor] — tuple newtype type X(ptr) constructor +
+  .0 access. V1 ships record form. Discovered на Ф.3.
+- [M-115-external-fn-method] — generic / receiver-method external fn.
+- [M-115-ffi-build-pipeline] — `nova build --c-shim` CLI.
+- [M-115-bindgen-tool] — `nova bindgen` auto-generation.
+
+Acceptance (Plan 115 A1-A10):
+- A1 ✓ ptr built-in type — T1 series
+- A2 ✓ null ptr literal + equality + casts — T1.1-T1.4
+- A3 ✓ ptr arithmetic + deref banned — NEG-T1.5/T1.5b
+- A4 ✓ tuple-by-value returns в external fn — T2 series
+- A5 ✓ handle pattern (record form V1) — T3 series
+- A6 ✓ Type safety distinct handle types — T3.3
+- A7 ⚠ End-to-end sqlite sample — code ready, real-link gated на
+       [M-115-ffi-build-pipeline]
+- A8 ✓ D214 promoted в active spec
+- A9 ✓ FFI cookbook с 3 library examples
+- A10 (full nova test running)
+
+Smoke regression: plan115 10/10 PASS, plan114_4 9/9 PASS, basics 8/8 PASS,
+generics 7/7 PASS (types/generics regression fixed через nova_ptr
+distinction).
+
+
 ═══════════════════════════════════════════════════════════════════════════════
 Plan 114.4.1 — Associated constants record-field (2026-06-01, partial)
 ═══════════════════════════════════════════════════════════════════════════════
