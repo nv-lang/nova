@@ -2235,7 +2235,82 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ---
 
-## Status — progress checkpoint (2026-06-01)
+## Status — progress checkpoint (2026-06-01, evening)
+
+### Session 2 progress (autonomous continuation)
+
+**Ф.1.5 — Ty::TypedPtr proper variant landed:**
+- `5069e76a983` — types/mod.rs::Ty enum extended с `TypedPtr(PointerModifier,
+  Box<Ty>)` variant. ty_of_ref maps `TypeRef::Pointer → Ty::TypedPtr(modif,
+  Box::new(ty_of_ref(inner)))` — modifier + pointee propagated correctly.
+  Cargo check clean (no exhaustive-match fallout; existing Ty match sites
+  use `_` catch-all).
+
+**Ф.1.9 — T1 positive fixtures landed:**
+- `0c420b727fd` — 4 T1 fixtures PASS через release test-build (clang
+  toolchain, libuv enabled, GC linkage через main repo vcpkg_installed):
+  - t1_1_parse_pointer_types_ok.nv — `*T` / `*ro T` / `*mut T` / `*unsafe T`
+    в external fn params + returns
+  - t1_3_chain_multi_level_ok.nv — `*mut *ro T`, three-level chains
+  - t1_6_record_field_pointer_ok.nv — tuple newtype canonical vs record form
+  - t1_8_ptr_legacy_compat_ok.nv — Plan 115 ptr + Plan 118 *T coexist
+- Setup: libuv submodule copied из main + .git removed; env vars
+  NOVA_GC_INCLUDE_DIR/LIB_DIR pointing к main repo vcpkg_installed
+  (x64-windows-static/include + /lib).
+
+**Ф.2 — `&value` + `*expr` unary operators scaffold:**
+- `f9e2a7a9a89` — UnOp enum extended (AddrOf, Deref) + parser
+  recognizes TokenKind::Amp / TokenKind::Star prefix in parse_unary +
+  exhaustive arms updated в 5 files (ast/pretty, codegen/emit_c ×3:
+  emit_const_expr, emit_expr Unary, infer_expr_c_type, expr_to_display
+  + verify/encode). Codegen direct C `&(...)` / `*(...)` emission.
+
+**Ф.3 — `unsafe { }` block scaffold:**
+- `09be551b945` — Lexer KwUnsafe keyword added (D2 amend foundation);
+  parse_type uses KwUnsafe для `*unsafe T` modifier (cleaner vs legacy
+  Ident path); parse_primary new arm для `unsafe { ... }` block —
+  parsed as ExprKind::Block (V1 scaffold; full effect-handler desugar +
+  context tracking + E_UNSAFE_REQUIRED enforcement — Ф.3.3-3.5 followup).
+- T3 fixture t3_1_unsafe_block_parses_ok.nv — 3 test blocks PASS
+  (simple, multi-stmt, nested).
+
+**Ф.2/Ф.3 integration test:**
+- `25b39646639` — t2_1_addr_of_deref_in_unsafe_ok.nv — unsafe block в
+  expression position (3 tests PASS).
+
+### Regression smoke (release test-build)
+
+| Plan dir | PASS/FAIL | Status |
+|---|---|---|
+| plan118 (this) | 6/0 | ✅ new |
+| plan115 | 11/0 | ✅ D214 backward compat |
+| plan120 | 8/0 | ✅ unchanged |
+| plan114 | 10/0 | ✅ unchanged |
+| plan100_3 | 10/0 | ✅ unchanged |
+| plan108 | 6/0 | ✅ unchanged |
+| basics | 8/0 | ✅ unchanged |
+| syntax | 53/1 | ✅ 1 pre-existing FAIL (for_in_range_iter, unrelated) |
+
+**Smoke total: 112/1 (1 pre-existing unrelated failure).** No regression
+introduced by Plan 118 Ф.0-Ф.3 scaffolding.
+
+### Known V1 limitations (followup phases)
+
+- Type inference для AddrOf/Deref в expression position best-effort
+  (string append/strip `*`); proper Ty::TypedPtr inference в expr —
+  **Ф.4** (auto-deref + binding mut rule).
+- Escape analysis с auto-promote — **Ф.2.4** (separate IR pass).
+- `_i64` / `_u32` etc. typed-int suffix literals не работают в
+  pointer-ops context (causes "use of undeclared identifier 'i64'"
+  в generated C). Workaround в T2 fixture: avoid typed suffix.
+- Type-checker unsafe-context enforcement (E_UNSAFE_REQUIRED для
+  `&`/`*` вне unsafe block) — **Ф.3.3-3.5**.
+- `#unsafe` attribute on fn declarations — **Ф.3.2**.
+- Implementation as effect-handler sugar (D2 amend semantic) — **Ф.3.4**.
+
+---
+
+## Status — progress checkpoint (2026-06-01, morning)
 
 > Plan 118 в progress — incremental scaffolding landed; full implementation
 > в work. Текущий status reflected ниже. Этот раздел updated после каждой
