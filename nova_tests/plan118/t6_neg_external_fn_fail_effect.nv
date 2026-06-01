@@ -1,0 +1,14 @@
+// Plan 118 Ф.6 NEG — `external fn ... Fail -> ...` rejected.
+// (D216 §20).
+//
+// C runtime не propagates Nova exception machinery; Fail effect crossing
+// Nova→C FFI boundary = undefined behavior (no DWARF unwinder hookup).
+// User должен catch внутри callback / wrapper, return sentinel.
+//
+// EXPECT_COMPILE_ERROR E_EXTERNAL_FN_FAIL_EFFECT
+
+module plan118.t6_neg_external_fn_fail_effect
+
+external fn p118_bad_ffi(x i64) Fail -> i64
+
+test "rejects" { assert(1 == 1) }

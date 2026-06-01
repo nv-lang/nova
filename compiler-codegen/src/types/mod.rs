@@ -132,6 +132,33 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     // `[M-115-ffi-build-pipeline]` formalizes shim linking
                     // CLI.
                     let _ = fd.needs_caps; // backward-compat field, всегда empty.
+
+                    // Plan 118 (D216 §20): `external fn ... Fail -> ...` —
+                    // E_EXTERNAL_FN_FAIL_EFFECT. C ABI не propagates Nova
+                    // exception machinery; Fail effect crossing FFI boundary
+                    // = undefined behavior (no DWARF unwinder hookup). User
+                    // должен catch внутри callback / wrapper, return sentinel.
+                    // V1 enforcement: rejected on declaration. Future
+                    // `extern "C-unwind"` (Rust 2024 model) — V2 research
+                    // [M-118-extern-c-unwind].
+                    for eff in &fd.effects {
+                        if let TypeRef::Named { path, .. } = eff {
+                            if path.last().map_or(false, |n| n == "Fail") {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_EXTERNAL_FN_FAIL_EFFECT] `external fn {}` declares `Fail` effect — \
+                                         not allowed на Nova→C FFI boundary (D216 §20). C runtime не propagates \
+                                         Nova exception machinery; throwing across C ABI = undefined behavior. \
+                                         Workaround: catch внутри wrapper, return sentinel value (e.g. negative \
+                                         error code) — let Nova-side caller convert sentinel к Fail. Future \
+                                         `extern \"C-unwind\"` (Rust 2024 model) — `[M-118-extern-c-unwind]`.",
+                                        fd.name,
+                                    ),
+                                    eff.span(),
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with
