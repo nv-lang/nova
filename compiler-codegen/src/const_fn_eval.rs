@@ -908,6 +908,28 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     for (name, flags) in mixed_fns {
         owned.register_mixed(name, flags);
     }
+    // Plan 114.4.3 Ф.5 V2: first-class alias resolution.
+    // Detect `const ALIAS = const_fn_name` pattern. Build alias map:
+    // ALIAS → ORIGINAL_NAME. Substituted at call sites; alias decls
+    // removed from items в retain phase.
+    let mut const_fn_aliases: HashMap<String, String> = HashMap::new();
+    {
+        let const_fn_universe: std::collections::HashSet<String> = owned.fns
+            .keys()
+            .chain(owned.mixed_const_params.keys())
+            .cloned()
+            .collect();
+        for item in &module.items {
+            if let Item::Const(c) = item {
+                if let ExprKind::Ident(target) = &c.value.kind {
+                    if const_fn_universe.contains(target) {
+                        const_fn_aliases.insert(c.name.clone(), target.clone());
+                    }
+                }
+            }
+        }
+    }
+    owned.aliases = const_fn_aliases;
 
     fn walk_module(
         m: &mut Module,
@@ -926,15 +948,18 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
 
     walk_module(module, &mut owned, &mut errors);
 
-    // Drop const fn declarations from module.items + peer_files.items_here.
+    // Drop const fn declarations + alias const decls (V2 Ф.5) из items.
     let const_names = owned.names();
+    let alias_names: std::collections::HashSet<String> = owned.aliases.keys().cloned().collect();
     module.items.retain(|it| match it {
         Item::Fn(fd) => !const_names.contains(&fd.name),
+        Item::Const(c) => !alias_names.contains(&c.name),
         _ => true,
     });
     for pf in &mut module.peer_files {
         pf.items_here.retain(|it| match it {
             Item::Fn(fd) => !const_names.contains(&fd.name),
+            Item::Const(c) => !alias_names.contains(&c.name),
             _ => true,
         });
     }
@@ -953,6 +978,10 @@ struct OwnedEvaluator {
     /// indicating is_const. Used для call-site validation: const-param args
     /// must be constexpr literals. Mixed fns remain в codegen (not dropped).
     mixed_const_params: HashMap<String, Vec<bool>>,
+    /// Plan 114.4.3 Ф.5 V2: const fn aliases — `const ALIAS = const_fn`.
+    /// Walker substitutes Ident("ALIAS") → Ident("ORIGINAL") at call sites.
+    /// Alias decls removed из items в retain phase.
+    aliases: HashMap<String, String>,
 }
 
 impl OwnedEvaluator {
@@ -965,6 +994,7 @@ impl OwnedEvaluator {
             fns,
             memo: HashMap::new(),
             mixed_const_params: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
     /// Plan 114.4.3 Ф.3: register mixed const fn — для call-site validation.
@@ -1327,7 +1357,7 @@ fn walk_expr(
     // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
         // Plan 114.4.3 Ф.4 V2: turbofish callee — unwrap base Ident.
-        let name_opt: Option<String> = match &func.kind {
+        let raw_name_opt: Option<String> = match &func.kind {
             ExprKind::Ident(n) => Some(n.clone()),
             ExprKind::TurboFish { base, .. } => {
                 if let ExprKind::Ident(n) = &base.kind {
@@ -1336,8 +1366,11 @@ fn walk_expr(
             }
             _ => None,
         };
-        if let Some(name) = name_opt {
-            let name = &name;
+        if let Some(raw_name) = raw_name_opt {
+            // Plan 114.4.3 Ф.5 V2: alias resolution. Если callee — alias,
+            // redirect к original const fn name.
+            let resolved_name = ev.aliases.get(&raw_name).cloned().unwrap_or(raw_name);
+            let name = &resolved_name;
             if let Some(flags) = ev.mixed_const_params.get(name).cloned() {
                 for (idx, (a, is_const)) in args.iter().zip(flags.iter()).enumerate() {
                     if !is_const { continue; }

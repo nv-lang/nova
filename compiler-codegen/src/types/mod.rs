@@ -741,19 +741,20 @@ fn check_const_constexpr_ex(
             }
             Ok(())
         }
-        // Ident — должен ссылаться на другой known top-level `const`.
+        // Ident — должен ссылаться на другой known top-level `const`
+        // ИЛИ const fn (Plan 114.4.3 Ф.5 V2: first-class alias).
         E::Ident(name) => {
-            if known_consts.contains(name) {
+            if known_consts.contains(name) || const_fn_names.contains(name) {
                 Ok(())
             } else {
                 Err(Diagnostic::new(
                     format!(
                         "[E_CONST_REFERS_NON_CONSTEXPR] `const` initialiser \
-                         refers `{}` which is not a top-level `const`. Only \
-                         literals + arithmetic on literals + record/tuple/array \
+                         refers `{}` which is not a top-level `const` or `const fn`. \
+                         Only literals + arithmetic on literals + record/tuple/array \
                          literals из constexpr fields + references to other \
-                         `const` are allowed. For runtime / lazy-init use \
-                         `ro {} = …` (Plan 114.4 Ф.1 / D199).",
+                         `const` / `const fn` are allowed. For runtime / lazy-init \
+                         use `ro {} = …` (Plan 114.4 Ф.1 / D199).",
                         name, name
                     ),
                     expr.span,
@@ -1436,9 +1437,10 @@ impl<'a> TypeCheckCtx<'a> {
             collect(&pf.imports);
         }
         drop(collect);
-        // Plan 114.4.2 D199: precompute const fn names для scope-local
-        // const validation (Stmt::Const RHS может содержать const fn calls).
-        let const_fn_names: HashSet<String> = module.items.iter()
+        // Plan 114.4.2 D199 + Plan 114.4.3 Ф.5 V2: precompute const fn names
+        // для scope-local const validation. Includes const fn declarations
+        // AND const fn aliases (`const ALIAS = const_fn_name` form).
+        let mut const_fn_names: HashSet<String> = module.items.iter()
             .filter_map(|it| match it {
                 Item::Fn(fd) => {
                     let is_const = fd.return_is_const
@@ -1448,6 +1450,24 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => None,
             })
             .collect();
+        // Pass 2: include aliases (Ident RHS resolving to const fn name).
+        // Iterative — alias-to-alias chains supported up to depth=10.
+        for _ in 0..10 {
+            let mut added = false;
+            for item in &module.items {
+                if let Item::Const(c) = item {
+                    if let crate::ast::ExprKind::Ident(target) = &c.value.kind {
+                        if const_fn_names.contains(target)
+                            && !const_fn_names.contains(&c.name)
+                        {
+                            const_fn_names.insert(c.name.clone());
+                            added = true;
+                        }
+                    }
+                }
+            }
+            if !added { break; }
+        }
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false) }
     }
@@ -1531,8 +1551,9 @@ impl<'a> TypeCheckCtx<'a> {
                             _ => None,
                         })
                         .collect();
-                    // Plan 114.4.2 D199: const fn calls eligible в const RHS.
-                    let const_fn_names: HashSet<String> = module
+                    // Plan 114.4.2 D199 + 114.4.3 Ф.5 V2: const fn names
+                    // (including aliases — `const ALIAS = const_fn`).
+                    let mut const_fn_names: HashSet<String> = module
                         .items
                         .iter()
                         .filter_map(|it| match it {
@@ -1544,6 +1565,22 @@ impl<'a> TypeCheckCtx<'a> {
                             _ => None,
                         })
                         .collect();
+                    for _ in 0..10 {
+                        let mut added = false;
+                        for it in &module.items {
+                            if let Item::Const(c) = it {
+                                if let crate::ast::ExprKind::Ident(target) = &c.value.kind {
+                                    if const_fn_names.contains(target)
+                                        && !const_fn_names.contains(&c.name)
+                                    {
+                                        const_fn_names.insert(c.name.clone());
+                                        added = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !added { break; }
+                    }
                     if let Err(d) = check_const_constexpr_ex(
                         &cd.value, &known_consts, &const_fn_names,
                     ) {
