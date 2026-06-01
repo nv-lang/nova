@@ -775,6 +775,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
      * emit'ить overriding implementation в preamble; weak fallback —
      * safety-net для minimal tests. */
     let rt_typeid = opts.rt_dir.join("typeid.c");
+    /* Plan 83.11 §12.31: in-process SEGV crash localizer. Gated by
+     * NOVA_DIAG_SEGV env var; no overhead when unset. No-op TU on non-Windows. */
+    let rt_segv_diag = opts.rt_dir.join("segv_diag.c");
     // Plan 83.12: net.c — compiled only when libuv is available (conditional
     // on libuv presence, added inside the libuv if-let blocks per toolchain).
     let rt_net = opts.rt_dir.join("net.c");
@@ -994,6 +997,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+            c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 115 D214 [M-115-ffi-build-pipeline]: system libs (-l) в link phase.
             if let Some(ffi) = opts.ffi {
                 for lib in &ffi.libs {
@@ -1100,6 +1104,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+            c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             // Plan 115 D214 [M-115-ffi-build-pipeline]: also pass user FFI libs.
             let has_link_phase = opts.gc_kind == GcKind::Boehm
@@ -1189,6 +1194,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c.arg(&rt_driver);       /* Plan 83.11 Ф.2 */
             c.arg(&rt_typeid);       /* Plan 61 Ф.1 */
+            c.arg(&rt_segv_diag);    /* Plan 83.11 §12.31 */
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI libs (GCC).
             if let Some(ffi) = opts.ffi {
                 for lib in &ffi.libs {

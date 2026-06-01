@@ -58,7 +58,13 @@ static uint64_t _now_ns(void) {
 }
 #endif
 
+extern void _nova_install_segv_handler(void);  /* Plan 83.11 §12.31 — segv_diag.c */
+
 void nova_gc_init(void) {
+    /* Plan 83.11 §12.31: install in-process SEGV localizer FIRST (before any
+     * potentially-faulting init). Gated by NOVA_DIAG_SEGV env. No-op on Linux. */
+    _nova_install_segv_handler();
+
     /* Plan 44.2 Etap 1 wire-up fix (2026-05-12): Boehm/Docker hardening
      * before GC_INIT().
      *
