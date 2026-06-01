@@ -4218,7 +4218,7 @@ Q-buffer (REPLACED), Q-write-buffer, Q-read-buffer.
 
 ---
 
-## Q-write-buffer. `WriteBuffer` — binary serialization buffer ✅ ЗАКРЫТО (2026-05-08)
+## Q-write-buffer. `WriteBuffer` — binary serialization buffer ✅ ЗАКРЫТО (2026-05-08; **re-impl 2026-06-01 Plan 91.12 V1**)
 
 **Контекст.** Replaces binary-side унифицированного `Buffer` (Q-buffer).
 Бинарные протоколы (network, serialization) требуют **endianness-методы**
@@ -4226,9 +4226,21 @@ Q-buffer (REPLACED), Q-write-buffer, Q-read-buffer.
 В унифицированном Buffer'е такие методы не вписывались рядом с text
 (`add_str`, `add_char`).
 
-**Решение (2026-05-08):** отдельный тип `WriteBuffer` с **endianness-aware
+**Решение V1 (2026-05-08):** отдельный тип `WriteBuffer` с **endianness-aware
 write-методами**. `@into() -> []byte` infallible. Декларации API —
 через `external fn` (D82), реализация — `nova_rt/write_buffer.h`.
+
+**Re-implementation V2 (2026-06-01, Plan 91.12 V1):** `external type
+WriteBuffer` (D126) мигрирован на **pure Nova** record `{ mut buf []u8 }`
+(паттерн StringBuilder / Plan 109 D179). API surface неизменён — те же
+27 методов, та же семантика. C runtime `nova_rt/write_buffer.h` удалён.
+
+Migration motivation: D126 (`external type`) retracted (см. spec D126);
+WriteBuffer — тонкий обёртка над `[]u8` cursor — pure Nova реализация
+не требует C-side struct, использует существующие `[]u8` primitives
+(push/append/extend_from). Numeric LE/BE encoding через bit-shifts +
+`as u8` truncating casts. f32/f64 — через `f{32,64}.to_bits()` (D74,
+Plan 74) reinterpret-cast.
 
 ### API (Plan 04 Этап 3)
 
@@ -4307,16 +4319,28 @@ Q-string-builder, Q-read-buffer, Q-overloading.
 
 ---
 
-## Q-read-buffer. `ReadBuffer` — cursor-style binary reader ✅ ЗАКРЫТО (2026-05-08)
+## Q-read-buffer. `ReadBuffer` — cursor-style binary reader ✅ ЗАКРЫТО (2026-05-08; **re-impl 2026-06-01 Plan 91.12 V1**)
 
 **Контекст.** Pair к WriteBuffer для **читающей** стороны бинарных
 протоколов. View над `[]byte` с position-cursor; `@read_*` advance'ит
 position. Pair `@read_*` (Fail-form, throw на end-of-buffer) /
 `@try_read_*` (Result-form) — auto-derive на C-runtime уровне.
 
-**Решение (2026-05-08):** отдельный тип `ReadBuffer`. View, не value
+**Решение V1 (2026-05-08):** отдельный тип `ReadBuffer`. View, не value
 (нет `@into()` — явный throw блокирует D73 auto-derive). Декларации —
 через `external fn` (D82), реализация — `nova_rt/read_buffer.h`.
+
+**Re-implementation V2 (2026-06-01, Plan 91.12 V1):** `external type
+ReadBuffer` (D126) мигрирован на **pure Nova** cursor record `{ ro data
+[]u8, mut pos int }`. API surface неизменён — 22 try_read_X/read_X pair,
+UTF-8 decode helper. C runtime `nova_rt/read_buffer.h` удалён.
+
+`try_read_X` теперь — primary impl (Nova body с bit-extraction + sign-
+extension paths); `read_X` — thin Nova one-liners `=> @try_read_X()!!`
+(паритет D30 §2 try_* convention). Sign-extension для i16/i32 explicit:
+`if raw >= 2^(N-1) { raw - 2^N } else { raw }` (Nova int = i64 native).
+i64 без sign-extension (already in native range). UTF-8 char/str через
+`_decode_utf8_at` helper (mirror C runtime `_nova_rb_decode_utf8_one`).
 
 ### API (Plan 04 Этап 3)
 
