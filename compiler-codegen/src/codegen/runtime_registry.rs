@@ -791,6 +791,24 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
     vec![]
 }
 
+/// Plan 91.12 (D126 retract): WriteBuffer is now a Nova-defined consume type.
+/// All methods are implemented in std/runtime/write_buffer.nv as regular Nova
+/// functions over `mut buf []u8` (push / append / extend_from primitives).
+/// This registry is intentionally empty — no external C dispatch needed.
+/// Old registry (~30 entries) preserved as `write_buffer_runtime_unused`.
+fn write_buffer_runtime() -> Vec<RuntimeFn> {
+    vec![]
+}
+
+/// Plan 91.12 (D126 retract): ReadBuffer is now a Nova-defined cursor record
+/// `{ ro data []u8, mut pos int }`. All methods are implemented in
+/// std/runtime/read_buffer.nv. This registry is intentionally empty — no
+/// external C dispatch needed. Old registry (~60 entries) preserved as
+/// `read_buffer_runtime_unused`.
+fn read_buffer_runtime() -> Vec<RuntimeFn> {
+    vec![]
+}
+
 #[allow(dead_code)]
 fn string_builder_runtime_unused() -> Vec<RuntimeFn> {
     let m = "std.runtime.string_builder";
@@ -926,7 +944,8 @@ fn string_builder_runtime_unused() -> Vec<RuntimeFn> {
 }
 
 /// `std.runtime.write_buffer` — binary serialization buffer (Plan 04).
-fn write_buffer_runtime() -> Vec<RuntimeFn> {
+#[allow(dead_code)]
+fn write_buffer_runtime_unused() -> Vec<RuntimeFn> {
     let m = "std.runtime.write_buffer";
     let recv = Some("WriteBuffer");
     let mut v: Vec<RuntimeFn> = Vec::new();
@@ -1045,7 +1064,8 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
 /// `std.runtime.read_buffer` — cursor-style binary reader (Plan 04).
 /// Pair `@read_*` (Fail-form) / `@try_read_*` (Result-form) — auto-derive
 /// на C-runtime уровне (одна C-функция, две Nova-обёртки).
-fn read_buffer_runtime() -> Vec<RuntimeFn> {
+#[allow(dead_code)]
+fn read_buffer_runtime_unused() -> Vec<RuntimeFn> {
     let m = "std.runtime.read_buffer";
     let recv = Some("ReadBuffer");
     let mut v: Vec<RuntimeFn> = Vec::new();
