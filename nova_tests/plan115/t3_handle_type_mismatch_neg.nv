@@ -5,13 +5,13 @@
 
 module nova_tests.plan115.t3_handle_type_mismatch_neg
 
-type SqHandle { ro value ptr }
-type PngHandle { ro value ptr }
+type SqHandle(ptr)
+type PngHandle(ptr)
 
 fn close_sqlite(h SqHandle) -> int => 0
 
 test "passing PngHandle to fn expecting SqHandle is a type error" {
-    ro png = PngHandle { value: null ptr }
+    ro png = PngHandle(null ptr)
     ro result = close_sqlite(png)
     assert(result == 0)
 }

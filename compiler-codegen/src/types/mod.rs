@@ -2876,6 +2876,25 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::NullPtrLit => Some(prim_ref("ptr", expr.span)),
             // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
             ExprKind::SelfAccess => scope.get("@").cloned(),
+            // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` call where
+            // Type is a known Newtype/Alias → infer as Named(Type). Without
+            // this, `ro h = SqHandle(raw)` binds `h` без типа в scope, и
+            // assignable() для `close_sqlite(h)` падает в Compat::Unknown
+            // (E7301 не fires при passing PngHandle к fn(SqHandle)).
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(td) = self.types.get(name) {
+                        if matches!(td.kind, TypeDeclKind::Newtype(_) | TypeDeclKind::Alias(_)) {
+                            return Some(TypeRef::Named {
+                                path: vec![name.clone()],
+                                generics: Vec::new(),
+                                span: expr.span,
+                            });
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         }
     }
@@ -3013,9 +3032,24 @@ impl<'a> TypeCheckCtx<'a> {
                     "any" | "never" | "Self" => TyCat::Other,
                     other => match self.types.get(other) {
                         Some(td) => match &td.kind {
-                            TypeDeclKind::Alias(inner)
-                            | TypeDeclKind::Newtype(inner) => {
+                            // Alias всегда transparent (D52 явно: «X и Y совместимы»).
+                            TypeDeclKind::Alias(inner) => {
                                 self.cat_of_depth(inner, gs, depth + 1)
+                            }
+                            // Newtype: D52 явно: «X — новый тип, типизированно
+                            // отличный от Y». Plan 115 D214: critical для
+                            // opaque handle pattern (`type SqHandle(ptr)` ≠
+                            // `type PngHandle(ptr)` ≠ `ptr`). Возвращаем
+                            // Named(name) для nominal distinction.
+                            //
+                            // Backward-compat для существующих Go-style
+                            // newtype'ов с numeric/str/bool inner: literal
+                            // expressions (IntLit/FloatLit/etc.) checked
+                            // BEFORE cat_compatible в assignable() — литералы
+                            // адаптируются к контексту через path-specific
+                            // arms. Variable-typing — нужна distinction.
+                            TypeDeclKind::Newtype(_) => {
+                                TyCat::Named(other.to_string())
                             }
                             // Concrete data-типы — сравниваются по имени.
                             TypeDeclKind::Record(_)

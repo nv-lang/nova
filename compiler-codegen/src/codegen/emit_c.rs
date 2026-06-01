@@ -15180,6 +15180,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Tuple field access: t.0 → t.f0, t.1 → t.f1, etc.
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     let idx: usize = name.parse().unwrap_or(0);
+                    // Plan 115 D214 [M-115-newtype-constructor]: `.0` on a
+                    // scalar-typed value (e.g. `h.0` where h: SqHandle = ptr)
+                    // → identity. Single-element newtype `type X(Y)` is
+                    // typedef Y Nova_X — `h.0` extracts the inner Y value =
+                    // the same C value. Without this, emit_c эмитит `h.f0`
+                    // → C error (h не struct).
+                    if idx == 0
+                        && !obj_ty.starts_with("_NovaTuple")
+                        && Self::is_value_type(&obj_ty)
+                    {
+                        return Ok(o);
+                    }
                     let field_name = format!("f{}", idx);
                     // For void* (erased generic return), cast to _NovaTupleN* if we know the element types
                     if obj_ty == "void*" {
@@ -16831,6 +16843,25 @@ _cp++; \
                 let code_val = self.emit_expr(args[0].expr())?;
                 let msg_val = self.emit_expr(args[1].expr())?;
                 return Ok(format!("(nv_exit({}, {}), (nova_int)0LL)", code_val, msg_val));
+            }
+        }
+
+        // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` newtype
+        // constructor. `type SqHandle(ptr)` → `typedef nova_ptr Nova_SqHandle;`
+        // (см. emit_type_decl TypeDeclKind::Newtype branch). Constructor call
+        // `SqHandle(raw_ptr)` is identity (newtype = transparent typedef). Без
+        // этого intercept'а codegen падал в general dispatch → undefined
+        // symbol `nova_fn_SqHandle`. Single-arg only — multi-arg tuple newtype
+        // `type X(A, B)` — followup `[M-115-newtype-multiarg-constructor]`.
+        // Tuple-newtype (single-element with parens) treated identically:
+        // `(Y)` collapses to `Y` в parse_type, и TypeDeclKind::Newtype(Y) =
+        // identity wrapping.
+        if let ExprKind::Ident(name) = &func.kind {
+            if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                if args.len() == 1 {
+                    let v = self.emit_expr(args[0].expr())?;
+                    return Ok(format!("(({})({}))", aliased_c, v));
+                }
             }
         }
 
@@ -25446,6 +25477,10 @@ _cp++; \
             "nova_str" | "nova_unit" | "nova_byte" |
             "int32_t" | "int16_t" | "int8_t" |
             "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t" |
+            // Plan 70.3 distinct typedef.
+            "nova_char" |
+            // Plan 115 D214: nova_ptr (typedef void*) — value type.
+            "nova_ptr" |
             "Nova_ChannelPair"
         )
     }
@@ -26302,6 +26337,14 @@ _cp++; \
                     let key = format!("fn_ret_{}", name);
                     if let Some(t) = self.var_types.get(&key).cloned() {
                         return t;
+                    }
+                    // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
+                    // newtype constructor — return type = aliased C type.
+                    // Mirror emit_call newtype intercept (single-arg only).
+                    if args.len() == 1 {
+                        if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                            return aliased_c;
+                        }
                     }
                     // Plan 115 D214: free external fn (declared в user module
                     // OR stdlib runtime) return-type через ExternalRegistry.
@@ -27226,6 +27269,18 @@ _cp++; \
                                 }
                             }
                         }
+                    }
+                    // Plan 115 D214 [M-115-newtype-constructor]: `.0` on a
+                    // scalar-typed value (newtype value `type X(Y)` where Y
+                    // is scalar) returns Y identity. Mirror emit_expr path:
+                    // если obj_ty — value type (not tuple), `.0` = identity.
+                    let idx: usize = name.parse().unwrap_or(usize::MAX);
+                    if idx == 0
+                        && !obj_ty.is_empty()
+                        && !obj_ty.starts_with("_NovaTuple")
+                        && Self::is_value_type(&obj_ty)
+                    {
+                        return obj_ty;
                     }
                 }
                 // Unknown generic stub (void*): field access returns void*

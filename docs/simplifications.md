@@ -27840,13 +27840,14 @@ pre-Plan-109 API.  Документированы в их followups.
 - ✅ `[M-115-cookbook-libcurl]` — libcurl HTTP GET sketch в docs/ffi-cookbook.md §3.
 - ✅ `[M-115-cookbook-libpng]` — libpng read_image_dimensions sketch §2.
 
-**OPEN markers carried forward:**
-- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing в unsafe contexts (V1 banned).
-- 🟡 `[M-115-ptr-typed-deref]` — `unsafe { *p }` для `*mut T` (Plan 118 territory).
-- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI (major tooling, separate plan).
-- 🟡 `[M-115-d126-deprecation]` — formal deprecation `external type` D126 после migration audit.
-- 🟡 `[M-115-tuple-gc-types]` — tuple elements GC-tracked types ([]T / Option / Result / sum).
-- 🟡 `[M-115-examples-ffi-real-build]` — examples/ffi/ build с real libsqlite3 link.
+**OPEN markers (post user-review 2026-06-01):**
+- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing. V1 ban остаётся (user decision: future if real need).
+- 🟢 `[M-115-ptr-typed-deref]` → **CLOSED via Plan 118**. `docs/plans/118-typed-pointers-and-unsafe.md` §5 «Auto-deref» (lines 273-286) + `*p` explicit single-level deref для `*T` family покрывает. Confirmed 2026-06-01.
+- 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI deferred (major tooling, separate plan; user-accepted).
+- 🟡 `[M-115-d126-deprecation]` — formal D126 deprecation. **User 2026-06-01:** НЕ deprecate сейчас. Sequence: (1) close `[M-115-newtype-constructor]` для красивого `type X(ptr)`; (2) Plan 91.12 Pattern B migrates `std/net/` на tuple-newtype handles; (3) только после этого formal D126 retract.
+- 🟢 `[M-115-tuple-gc-types]` → **CLOSED as by-design** (user 2026-06-01). Цитата: «external у нас это пользовательский С код, аналог extern "C". Там функции ничего не знают о типах nv. Это правильное ограничение». Не bug — intentional.
+- 🟢 `[M-115-external-fn-method]` → **CLOSED as not needed** (user 2026-06-01). Цитата: «не вижу пока причин для этого». Free external fn + Nova-side wrapper method = sufficient.
+- 🟡 `[M-115-examples-ffi-real-build]` → **IN PROGRESS** (merged into A7 closure). `nova_rt/sqlite3_ffi.h` + link с -lsqlite3 в работе 2026-06-01.
 
 **NEW markers discovered на implementation:**
 - 🟡 `[M-115-newtype-constructor]` — D52 tuple newtype `type X(ptr)` constructor + `.0` field access. V1 ships record form `type X { value ptr }` equivalent. Bootstrap codegen TypeDeclKind::Newtype не имеет call-site constructor — `SqHandle(value)` parses как Call{Ident("SqHandle"), [value]} и codegen эмитит nova_fn_SqHandle (undefined symbol). Followup adds: type-check accepts NAME(v) call if NAME registered as Newtype; codegen emits cast `((Nova_NAME)(v))`; `.0` member access on Newtype value → identity (no-op typedef).
