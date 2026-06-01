@@ -1,0 +1,13 @@
+// Plan 114.4.3 T4.2 positive: recursive factorial (direct self-recursion).
+
+module plan114_4_3.recursion_factorial_ok
+
+fn fact(const n int) -> const int =>
+    if n <= 1 { 1 } else { n * fact(n - 1) }
+
+test "factorial recursion" {
+    const A = fact(5)
+    const B = fact(10)
+    assert(A == 120)
+    assert(B == 3628800)
+}

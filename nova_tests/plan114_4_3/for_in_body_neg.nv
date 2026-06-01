@@ -1,0 +1,10 @@
+// Plan 114.4.3 T4.1 NEG: for-loop в const fn body — V2.0 reject.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_CONTROL_FLOW
+
+module plan114_4_3.for_in_body_neg
+
+fn sum_to(const n int) -> const int {
+    for i in 0..n {}
+    n
+}

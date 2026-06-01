@@ -104,7 +104,12 @@ impl ConstValue {
 /// Recursion depth budget (defensive — checker rejects recursion, but
 /// in case mutual cycle escapes detection, this stops the evaluator
 /// from blowing the stack).
-const MAX_EVAL_DEPTH: usize = 64;
+/// Plan 114.4.3 Ф.2 (D199 V2): recursion depth limit для const fn evaluator.
+/// Raised from V1's 64 (defensive) to 256 (production — supports reasonable
+/// factorial / fibonacci / mutual recursion fixtures без crashing).
+/// При reach → E_CONST_FN_EVAL_DEPTH_EXCEEDED с suggestion increase OR
+/// add memoization (which V1 уже has).
+const MAX_EVAL_DEPTH: usize = 256;
 
 pub struct ConstFnEvaluator<'a> {
     /// Const fn declarations indexed by name. Owner is module.items via
@@ -122,8 +127,13 @@ impl<'a> ConstFnEvaluator<'a> {
         let mut fns = HashMap::new();
         for item in items {
             if let crate::ast::Item::Fn(fd) = item {
-                let is_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
-                if is_const {
+                // Plan 114.4.3 Ф.3 V2: ONLY fully-const fns evaluated and
+                // dropped from codegen. Mixed fns kept as runtime fns.
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
+                if is_fully_const {
                     fns.insert(fd.name.clone(), fd);
                 }
             }
@@ -161,9 +171,11 @@ impl<'a> ConstFnEvaluator<'a> {
         if depth >= MAX_EVAL_DEPTH {
             return Err(Diagnostic::new(
                 format!(
-                    "[E_CONST_FN_EVAL_PANIC] const fn evaluation exceeded depth \
-                     limit {} в call to `{}` — likely a recursion-detection bug \
-                     (checker should have rejected this). Plan 114.4.2 D199.",
+                    "[E_CONST_FN_EVAL_DEPTH_EXCEEDED] const fn evaluation exceeded \
+                     depth limit {} в call to `{}` — likely runaway recursion. \
+                     V2 supports recursion (Plan 114.4.3) — verify base case + \
+                     memoization работают. If legitimate deep recursion: file \
+                     followup `[M-114.4.3-configurable-depth]`. D199 V2.",
                     MAX_EVAL_DEPTH, name
                 ),
                 call_span,
@@ -317,17 +329,26 @@ impl<'a> ConstFnEvaluator<'a> {
                 eval_as_cast(&v, target, expr.span)
             }
             ExprKind::Call { func, args, trailing: None } => {
-                // Callee must be Ident (checker enforces).
-                let callee_name = if let ExprKind::Ident(n) = &func.kind {
-                    n.clone()
-                } else {
-                    return Err(Diagnostic::new(
+                // Callee: Ident OR TurboFish<Ident, ...> (generic const fn V2).
+                let callee_name = match &func.kind {
+                    ExprKind::Ident(n) => n.clone(),
+                    ExprKind::TurboFish { base, .. } => {
+                        if let ExprKind::Ident(n) = &base.kind {
+                            n.clone()
+                        } else {
+                            return Err(Diagnostic::new(
+                                "[E_CONST_FN_EVAL_PANIC] non-ident turbofish base \
+                                 (D199).".to_string(),
+                                expr.span,
+                            ));
+                        }
+                    }
+                    _ => return Err(Diagnostic::new(
                         "[E_CONST_FN_EVAL_PANIC] non-ident callee в const fn \
                          body — checker drift (D199).".to_string(),
                         expr.span,
-                    ));
+                    )),
                 };
-                // Evaluate args (positional only per checker).
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
                     if let crate::ast::CallArg::Item(e) = a {
@@ -343,12 +364,107 @@ impl<'a> ConstFnEvaluator<'a> {
                 self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
             }
             ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
+            // Plan 114.4.3 Ф.1 (V2): If — evaluate cond → bool; then/else branch.
+            ExprKind::If { cond, then, else_ } => {
+                let c = self.eval_expr(cond, env, current_fn, depth)?;
+                let b = match c {
+                    ConstValue::Bool(b) => b,
+                    _ => return Err(Diagnostic::new(
+                        format!(
+                            "[E_CONST_FN_EVAL_PANIC] if-condition не bool (got {}) \
+                             (D199).", c.type_name()
+                        ),
+                        cond.span,
+                    )),
+                };
+                if b {
+                    self.eval_block(then, env, current_fn, depth)
+                } else {
+                    match else_ {
+                        Some(crate::ast::ElseBranch::Block(blk)) =>
+                            self.eval_block(blk, env, current_fn, depth),
+                        Some(crate::ast::ElseBranch::If(ie)) =>
+                            self.eval_expr(ie, env, current_fn, depth),
+                        None => Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] if-без-else в const fn body — \
+                             checker should reject (D199 V2).".to_string(),
+                            expr.span,
+                        )),
+                    }
+                }
+            }
+            // Plan 114.4.3 Ф.1 (V2): Match — evaluate scrutinee; find first
+            // matching arm; evaluate its body. Pattern V2.0 subset:
+            // literal / wildcard / ident-bind / Or-alternation.
+            ExprKind::Match { scrutinee, arms } => {
+                let sv = self.eval_expr(scrutinee, env, current_fn, depth)?;
+                for arm in arms {
+                    if let Some(bindings) = match_const_pattern(&arm.pattern, &sv) {
+                        let mut new_env = env.clone();
+                        for (k, v) in bindings { new_env.insert(k, v); }
+                        if let Some(g) = &arm.guard {
+                            let gv = self.eval_expr(g, &new_env, current_fn, depth)?;
+                            if !matches!(gv, ConstValue::Bool(true)) { continue; }
+                        }
+                        return match &arm.body {
+                            crate::ast::MatchArmBody::Expr(e) =>
+                                self.eval_expr(e, &new_env, current_fn, depth),
+                            crate::ast::MatchArmBody::Block(b) =>
+                                self.eval_block(b, &new_env, current_fn, depth),
+                        };
+                    }
+                }
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_MATCH_EXHAUSTIVE] match не covered scrutinee \
+                         value {:?} (D199 V2). Add wildcard `_` arm.",
+                        sv
+                    ),
+                    expr.span,
+                ))
+            }
             _ => Err(Diagnostic::new(
                 "[E_CONST_FN_EVAL_PANIC] expression form not supported by const \
                  fn evaluator — checker should reject (D199).".to_string(),
                 expr.span,
             )),
         }
+    }
+}
+
+/// Plan 114.4.3 Ф.1: pattern-match V2.0 subset.
+/// Returns Some(bindings) if matches, None otherwise.
+/// Bindings: Ident pattern → (name, scrutinee_value).
+fn match_const_pattern(
+    pat: &crate::ast::Pattern,
+    val: &ConstValue,
+) -> Option<Vec<(String, ConstValue)>> {
+    use crate::ast::{Pattern, Literal};
+    match pat {
+        Pattern::Wildcard(_) => Some(Vec::new()),
+        Pattern::Ident { name, is_mut: false, .. } => {
+            Some(vec![(name.clone(), val.clone())])
+        }
+        Pattern::Literal(lit, _) => {
+            let matches = match (lit, val) {
+                (Literal::Int(a), ConstValue::Int(b)) => a == b,
+                (Literal::Float(a), ConstValue::Float(b)) => a.to_bits() == b.to_bits(),
+                (Literal::Str(a), ConstValue::Str(b)) => a == b,
+                (Literal::Bool(a), ConstValue::Bool(b)) => a == b,
+                (Literal::Char(a), ConstValue::Char(b)) => a == b,
+                _ => false,
+            };
+            if matches { Some(Vec::new()) } else { None }
+        }
+        Pattern::Or { alternatives, .. } => {
+            for alt in alternatives {
+                if let Some(b) = match_const_pattern(alt, val) {
+                    return Some(b);
+                }
+            }
+            None
+        }
+        _ => None, // checker rejects unsupported patterns
     }
 }
 
@@ -758,19 +874,62 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // so we can hold the immutable view while we mutate other parts of
     // the module. Const fn count в реальных модулях невелик; clone
     // overhead minimal.
+    let mut mixed_fns: Vec<(String, Vec<bool>)> = Vec::new();
     let const_fn_decls: Vec<crate::ast::FnDecl> = module.items.iter()
         .filter_map(|it| match it {
             Item::Fn(fd) => {
-                let is_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
-                if is_const { Some(fd.clone()) } else { None }
+                // Plan 114.4.3 Ф.3 V2:
+                // - Fully-const fn: ALL params const + const return. Walked + dropped.
+                // - Mixed fn: any const param OR const return, NOT fully-const.
+                //   Stays в codegen; const-args validated at call sites.
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
+                let any_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+                if is_fully_const {
+                    Some(fd.clone())
+                } else if any_const {
+                    // Mixed — collect for validation registration.
+                    let flags: Vec<bool> = fd.params.iter().map(|p| p.is_const).collect();
+                    mixed_fns.push((fd.name.clone(), flags));
+                    None
+                } else {
+                    None
+                }
             }
             _ => None,
         })
         .collect();
-    if const_fn_decls.is_empty() {
+    if const_fn_decls.is_empty() && mixed_fns.is_empty() {
         return errors;
     }
     let mut owned = OwnedEvaluator::new(const_fn_decls);
+    for (name, flags) in mixed_fns {
+        owned.register_mixed(name, flags);
+    }
+    // Plan 114.4.3 Ф.5 V2: first-class alias resolution.
+    // Detect `const ALIAS = const_fn_name` pattern. Build alias map:
+    // ALIAS → ORIGINAL_NAME. Substituted at call sites; alias decls
+    // removed from items в retain phase.
+    let mut const_fn_aliases: HashMap<String, String> = HashMap::new();
+    {
+        let const_fn_universe: std::collections::HashSet<String> = owned.fns
+            .keys()
+            .chain(owned.mixed_const_params.keys())
+            .cloned()
+            .collect();
+        for item in &module.items {
+            if let Item::Const(c) = item {
+                if let ExprKind::Ident(target) = &c.value.kind {
+                    if const_fn_universe.contains(target) {
+                        const_fn_aliases.insert(c.name.clone(), target.clone());
+                    }
+                }
+            }
+        }
+    }
+    owned.aliases = const_fn_aliases;
 
     fn walk_module(
         m: &mut Module,
@@ -789,15 +948,18 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
 
     walk_module(module, &mut owned, &mut errors);
 
-    // Drop const fn declarations from module.items + peer_files.items_here.
+    // Drop const fn declarations + alias const decls (V2 Ф.5) из items.
     let const_names = owned.names();
+    let alias_names: std::collections::HashSet<String> = owned.aliases.keys().cloned().collect();
     module.items.retain(|it| match it {
         Item::Fn(fd) => !const_names.contains(&fd.name),
+        Item::Const(c) => !alias_names.contains(&c.name),
         _ => true,
     });
     for pf in &mut module.peer_files {
         pf.items_here.retain(|it| match it {
             Item::Fn(fd) => !const_names.contains(&fd.name),
+            Item::Const(c) => !alias_names.contains(&c.name),
             _ => true,
         });
     }
@@ -809,8 +971,17 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
 /// borrow-checker conflict of holding `&FnDecl` from `module.items`
 /// while mutating other AST nodes.
 struct OwnedEvaluator {
+    /// Fully-const fn registry — evaluator inlines + drops these.
     fns: HashMap<String, crate::ast::FnDecl>,
     memo: HashMap<(String, Vec<ConstValue>), ConstValue>,
+    /// Plan 114.4.3 Ф.3 V2: mixed fn registry — name → Vec<bool> per param
+    /// indicating is_const. Used для call-site validation: const-param args
+    /// must be constexpr literals. Mixed fns remain в codegen (not dropped).
+    mixed_const_params: HashMap<String, Vec<bool>>,
+    /// Plan 114.4.3 Ф.5 V2: const fn aliases — `const ALIAS = const_fn`.
+    /// Walker substitutes Ident("ALIAS") → Ident("ORIGINAL") at call sites.
+    /// Alias decls removed из items в retain phase.
+    aliases: HashMap<String, String>,
 }
 
 impl OwnedEvaluator {
@@ -819,7 +990,16 @@ impl OwnedEvaluator {
         for fd in decls {
             fns.insert(fd.name.clone(), fd);
         }
-        Self { fns, memo: HashMap::new() }
+        Self {
+            fns,
+            memo: HashMap::new(),
+            mixed_const_params: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+    /// Plan 114.4.3 Ф.3: register mixed const fn — для call-site validation.
+    fn register_mixed(&mut self, name: String, const_param_flags: Vec<bool>) {
+        self.mixed_const_params.insert(name, const_param_flags);
     }
     fn names(&self) -> std::collections::HashSet<String> {
         self.fns.keys().cloned().collect()
@@ -845,8 +1025,10 @@ impl OwnedEvaluator {
         if depth >= MAX_EVAL_DEPTH {
             return Err(Diagnostic::new(
                 format!(
-                    "[E_CONST_FN_EVAL_PANIC] const fn evaluation exceeded depth \
-                     limit {} в call to `{}` (D199).",
+                    "[E_CONST_FN_EVAL_DEPTH_EXCEEDED] const fn evaluation exceeded \
+                     depth limit {} в call to `{}` — likely runaway recursion. \
+                     V2 supports recursion (Plan 114.4.3) — verify base case + \
+                     memoization работают. D199 V2.",
                     MAX_EVAL_DEPTH, name
                 ),
                 call_span,
@@ -973,13 +1155,24 @@ impl OwnedEvaluator {
                 eval_as_cast(&v, target, expr.span)
             }
             ExprKind::Call { func, args, trailing: None } => {
-                let callee_name = if let ExprKind::Ident(n) = &func.kind {
-                    n.clone()
-                } else {
-                    return Err(Diagnostic::new(
+                // Plan 114.4.3 Ф.4 V2: turbofish callee для generic const fn.
+                let callee_name = match &func.kind {
+                    ExprKind::Ident(n) => n.clone(),
+                    ExprKind::TurboFish { base, .. } => {
+                        if let ExprKind::Ident(n) = &base.kind {
+                            n.clone()
+                        } else {
+                            return Err(Diagnostic::new(
+                                "[E_CONST_FN_EVAL_PANIC] non-ident turbofish base \
+                                 (D199).".to_string(),
+                                expr.span,
+                            ));
+                        }
+                    }
+                    _ => return Err(Diagnostic::new(
                         "[E_CONST_FN_EVAL_PANIC] non-ident callee (D199).".to_string(),
                         expr.span,
-                    ));
+                    )),
                 };
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
@@ -995,6 +1188,63 @@ impl OwnedEvaluator {
                 self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
             }
             ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
+            // Plan 114.4.3 Ф.1 (V2): If — evaluate cond + branch.
+            ExprKind::If { cond, then, else_ } => {
+                let c = self.eval_expr(cond, env, current_fn, depth)?;
+                let b = match c {
+                    ConstValue::Bool(b) => b,
+                    _ => return Err(Diagnostic::new(
+                        format!(
+                            "[E_CONST_FN_EVAL_PANIC] if-condition не bool (got {}) (D199).",
+                            c.type_name()
+                        ),
+                        cond.span,
+                    )),
+                };
+                if b {
+                    self.eval_block(then, env, current_fn, depth)
+                } else {
+                    match else_ {
+                        Some(crate::ast::ElseBranch::Block(blk)) =>
+                            self.eval_block(blk, env, current_fn, depth),
+                        Some(crate::ast::ElseBranch::If(ie)) =>
+                            self.eval_expr(ie, env, current_fn, depth),
+                        None => Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] if без else в const fn body \
+                             (D199 V2).".to_string(),
+                            expr.span,
+                        )),
+                    }
+                }
+            }
+            // Plan 114.4.3 Ф.1 (V2): Match — find matching arm.
+            ExprKind::Match { scrutinee, arms } => {
+                let sv = self.eval_expr(scrutinee, env, current_fn, depth)?;
+                for arm in arms {
+                    if let Some(bindings) = match_const_pattern(&arm.pattern, &sv) {
+                        let mut new_env = env.clone();
+                        for (k, v) in bindings { new_env.insert(k, v); }
+                        if let Some(g) = &arm.guard {
+                            let gv = self.eval_expr(g, &new_env, current_fn, depth)?;
+                            if !matches!(gv, ConstValue::Bool(true)) { continue; }
+                        }
+                        return match &arm.body {
+                            crate::ast::MatchArmBody::Expr(e) =>
+                                self.eval_expr(e, &new_env, current_fn, depth),
+                            crate::ast::MatchArmBody::Block(b) =>
+                                self.eval_block(b, &new_env, current_fn, depth),
+                        };
+                    }
+                }
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_MATCH_EXHAUSTIVE] match не covered scrutinee \
+                         value {:?} (D199 V2). Add wildcard `_` arm.",
+                        sv
+                    ),
+                    expr.span,
+                ))
+            }
             _ => Err(Diagnostic::new(
                 "[E_CONST_FN_EVAL_PANIC] expression form not supported (D199).".to_string(),
                 expr.span,
@@ -1011,12 +1261,14 @@ fn walk_item(
     use crate::ast::Item;
     match item {
         Item::Fn(fd) => {
-            // Plan 114.4.2 D199: const fn bodies will be dropped — skip them.
-            // Их body interpreted at eval time через evaluator, не AST rewrite.
-            // Default params (D102) и runtime fn body — нужно walk'ать.
-            let is_const_fn = fd.return_is_const
-                || fd.params.iter().any(|p| p.is_const);
-            if is_const_fn {
+            // Plan 114.4.2/.4.3 V2: fully-const fn bodies will be dropped — skip.
+            // Mixed fns остаются runtime — walk их body для const-fn-call
+            // replacement и default param rewrite.
+            let all_const_params = !fd.params.is_empty()
+                && fd.params.iter().all(|p| p.is_const);
+            let is_fully_const = (all_const_params || fd.params.is_empty())
+                && fd.return_is_const;
+            if is_fully_const {
                 return;
             }
             for p in &mut fd.params {
@@ -1100,9 +1352,49 @@ fn walk_expr(
     errors: &mut Vec<Diagnostic>,
 ) {
     walk_children(e, ev, errors);
-    // Try replacement at this node.
+    // Plan 114.4.3 Ф.3 V2: mixed const fn call-site validation.
+    // Mixed fns остаются в codegen, не evaluated, но const params на call site
+    // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
-        if let ExprKind::Ident(name) = &func.kind {
+        // Plan 114.4.3 Ф.4 V2: turbofish callee — unwrap base Ident.
+        let raw_name_opt: Option<String> = match &func.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::TurboFish { base, .. } => {
+                if let ExprKind::Ident(n) = &base.kind {
+                    Some(n.clone())
+                } else { None }
+            }
+            _ => None,
+        };
+        if let Some(raw_name) = raw_name_opt {
+            // Plan 114.4.3 Ф.5 V2: alias resolution. Если callee — alias,
+            // redirect к original const fn name.
+            let resolved_name = ev.aliases.get(&raw_name).cloned().unwrap_or(raw_name);
+            let name = &resolved_name;
+            if let Some(flags) = ev.mixed_const_params.get(name).cloned() {
+                for (idx, (a, is_const)) in args.iter().zip(flags.iter()).enumerate() {
+                    if !is_const { continue; }
+                    let ok = match a {
+                        crate::ast::CallArg::Item(ae) => try_literal_to_value(ae).is_some(),
+                        _ => false,
+                    };
+                    if !ok {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_NON_CONST_ARG] call to mixed const fn `{}`: \
+                                 argument {} corresponds to `const` parameter — must be \
+                                 constexpr literal (D199 V2). Replace runtime expression \
+                                 с literal value либо помарковать parameter без `const`.",
+                                name, idx + 1
+                            ),
+                            e.span,
+                        ));
+                        break;
+                    }
+                }
+                // Mixed fns остаются в codegen — не evaluate / replace.
+                return;
+            }
             if ev.is_const_fn(name) {
                 // Collect arg values — only literal args eligible после
                 // children walk (which already replaced nested const fn calls).

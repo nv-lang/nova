@@ -1,0 +1,14 @@
+// Plan 114.4.3 Ф.5 T4.5 positive: const fn alias V2.0 — alias-only.
+
+module plan114_4_3.first_class_alias_ok
+
+fn double(const x int) -> const int => x * 2
+
+const DBL = double
+
+test "const fn alias" {
+    const A = DBL(7)
+    const B = DBL(21)
+    assert(A == 14)
+    assert(B == 42)
+}

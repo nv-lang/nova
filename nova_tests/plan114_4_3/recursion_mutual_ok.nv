@@ -1,0 +1,18 @@
+// Plan 114.4.3 T4.2 positive: mutual recursion (is_even ↔ is_odd).
+
+module plan114_4_3.recursion_mutual_ok
+
+fn is_even(const n int) -> const bool =>
+    if n == 0 { true } else { is_odd(n - 1) }
+
+fn is_odd(const n int) -> const bool =>
+    if n == 0 { false } else { is_even(n - 1) }
+
+test "mutual recursion" {
+    const E4 = is_even(4)
+    const E7 = is_even(7)
+    const O3 = is_odd(3)
+    assert(E4 == true)
+    assert(E7 == false)
+    assert(O3 == true)
+}

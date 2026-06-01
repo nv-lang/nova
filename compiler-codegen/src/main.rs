@@ -240,7 +240,7 @@ fn read_file(path: &PathBuf) -> Result<String> {
 
 fn cmd_check(path: &PathBuf) -> Result<()> {
     let src = read_file(path)?;
-    let module = nova_codegen::parser::parse(&src).map_err(|d| {
+    let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!(
             "{}",
             d.render(&src, &path.to_string_lossy())
@@ -254,6 +254,17 @@ fn cmd_check(path: &PathBuf) -> Result<()> {
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    // Plan 114.4.2 (D199) Ф.3 + 114.4.3 (V2): const fn AST rewrite + eval
+    // также должен запускаться в check-режиме чтобы evaluator errors
+    // (E_CONST_FN_EVAL_OVERFLOW / DIV_ZERO / DEPTH_EXCEEDED) fired.
+    let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    if !cfn_errs.is_empty() {
+        let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     println!("ok: {} parsed and checked", path.display());
     Ok(())
 }

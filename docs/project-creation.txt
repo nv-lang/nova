@@ -26846,3 +26846,75 @@ Unblocks:
 - Zero-init bulk operations через unified API в std/runtime.
 - Будущий Plan 121 ([N]T stack arrays) если он добавит fixed-size
   zero-init pattern — может reuse полиморфный memset rationale.
+
+================================================================================
+Plan 114.4.3 — `const fn` V2 extensions (5 markers closed) — 2026-06-01
+================================================================================
+
+Branch: plan-114.4.3 (worktree D:/Sources/nv-lang/nova-p114-4)
+Rebased on main 7280356abd6 (after Plan 90 followup landed).
+
+V2 extensions closing 5 Plan 114.4.2 followup markers:
+- [M-114.4.2-control-flow] → Ф.1 control-flow
+- [M-114.4.2-recursion] → Ф.2 recursion
+- [M-114.4.2-mixed-args] → Ф.3 mixed-args (covers [M-114.4.2-runtime-return])
+- [M-114.4.2-generic] → Ф.4 generic
+- [M-114.4.2-first-class] → Ф.5 first-class alias
+
+Что сделано (9 commits на branch):
+1. Ф.0 plan doc (3742ae43be8): docs/plans/114.4.3-const-fn-v2-extensions.md.
+2. Ф.1 control-flow (6ff72897e27): body checker + evaluator support
+   для if/else/match с pattern V2.0 subset (literal/wildcard/ident-bind/Or).
+   IfLet/for/while/loop остаются rejected (V2.1 followup).
+3. Ф.2 recursion (9e1d53224ac): direct + mutual recursion + MAX_EVAL_DEPTH
+   raised к 256 + new error E_CONST_FN_EVAL_DEPTH_EXCEEDED.
+4. Ф.3 mixed-args (d41403b069f): all-or-nothing reject removed. Two-tier
+   classification: fully-const (V1 behavior) vs mixed (runtime body +
+   call-site const-arg validation). Covers [M-114.4.2-runtime-return].
+5. Ф.4 generic (74010a5cc52): E_CONST_FN_GENERIC reject removed для
+   T-independent body. Turbofish callee supported в check/eval/rewrite.
+6. Ф.5 first-class (1a933ba0b2a): alias-only V2.0 — const ALIAS = const_fn.
+   Iterative alias-chain resolution в check + rewriter. Alias decls dropped.
+7. Spec update (df62adb88be): D199 V2 extensions section + Q7 expanded.
+
+V1 backward-compat:
+- 4 V1 fixtures removed (V2-superseded поведение now allowed):
+  body_if_control_flow_neg, body_recursion_neg, partial_constness_mixed_neg,
+  partial_constness_runtime_ret_neg.
+- Remaining 18/18 plan114_4_2 fixtures PASS.
+
+Tests T4 series — 16 new fixtures plan114_4_3/ (10 positive + 6 negative):
+- T4.1: if_branching_ok, nested_if_ok, match_literal_ok,
+  for_in_body_neg, if_no_else_neg, match_non_exhaustive_neg.
+- T4.2: recursion_factorial_ok, recursion_fibonacci_ok, recursion_mutual_ok,
+  recursion_depth_exceeded_neg.
+- T4.3: mixed_const_runtime_ok, const_param_runtime_ret_ok,
+  mixed_runtime_arg_to_const_neg.
+- T4.4: generic_const_id_ok, generic_sizeof_neg.
+- T4.5: first_class_alias_ok.
+
+Verification: 16/16 plan114_4_3 + 18/18 plan114_4_2 = 34/34 PASS на
+release nova-cli + clang toolchain (NOVA_GC vcpkg_installed).
+
+Acceptance criteria A19-A26 — all 🟢 (T4 series).
+
+Safety hatches:
+- Ф.4 (generic) — НЕ fire'нул. Реализован minimal V2.0 (T-independent
+  body); T reflection extracted в V3 followup.
+- Ф.5 (first-class) — НЕ fire'нул. Реализован alias-only V2.0;
+  runtime HOF + runtime-let enforcement → V3 followups.
+
+OPEN markers carried forward (V2.1/V3):
+- [M-114.4.3-loops] — for/while/loop в body (V2.1).
+- [M-114.4.3-pattern-record-sum] — record/sum patterns в match (V2.1).
+- [M-114.4.3-t-reflection] — sizeof[T]/T.field в generic const fn (V3).
+- [M-114.4.3-runtime-let-enforcement] — ro f = const_fn reject (V3).
+- [M-114.4.3-friendly-hof-error] — HOF pass friendly error (V3).
+- [M-114.4.3-runtime-hof] — real first-class через runtime trampoline (V3).
+- [M-114.4.3-closure-from-const-fn] — const FN = make_counter(N) (V3).
+- [M-114.4.3-mono-specialization] — per-const-arg true monomorphization (V3).
+- [M-114.4.3-configurable-depth] — #fn_eval_max_depth attribute (V3).
+
+Closes 5 markers from Plan 114.4.2 followup chain.
+Plan 114.4 const fn family (V1 + V2) — production-grade complete для
+all "main path" features. V3 — type reflection / closures / loops only.

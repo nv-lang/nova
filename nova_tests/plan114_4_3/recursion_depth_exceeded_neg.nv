@@ -1,0 +1,9 @@
+// Plan 114.4.3 T4.2 NEG: infinite recursion → depth limit exceeded.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EVAL_DEPTH_EXCEEDED
+
+module plan114_4_3.recursion_depth_exceeded_neg
+
+fn forever(const n int) -> const int => forever(n + 1)
+
+const BAD = forever(0)

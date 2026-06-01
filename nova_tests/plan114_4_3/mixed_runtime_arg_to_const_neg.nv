@@ -1,0 +1,15 @@
+// Plan 114.4.3 Ф.3 NEG: runtime arg в const param position
+// → E_CONST_FN_NON_CONST_ARG.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_NON_CONST_ARG
+
+module plan114_4_3.mixed_runtime_arg_to_const_neg
+
+fn shift(const k int, x int) -> int => k + x
+
+test "runtime arg to const param" {
+    ro k_runtime = 5
+    ro x = 10
+    ro r = shift(k_runtime, x)
+    assert(r == 15)
+}

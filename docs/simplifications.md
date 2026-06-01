@@ -28380,3 +28380,63 @@ T-dependent optimizations в array.h. Полиморфизм memset через b
 valid zero representation для `int`/`float`/`bool`/`ptr` (IEEE 754 +0,
 NULL pointer, false). Для compound value types (Plan 120 named tuples)
 работает при условии что все поля имеют zero-default representation.
+
+---
+
+## Plan 114.4.3 — `const fn` V2 extensions (5 followups) — CLOSED 2026-06-01
+
+**Что:** расширение V1 const fn surface до production-grade comptime:
+control flow + recursion + mixed-args + generic + first-class alias.
+
+**Status:** 🟢 V2 LANDED (без safety hatch fire). Branch `plan-114.4.3`,
+9 commits, 16/16 plan114_4_3 + 18/18 plan114_4_2 PASS, 0 regressions.
+
+**CLOSED markers (Plan 114.4.2 followup chain):**
+- ✅ `[M-114.4.2-control-flow]` — Ф.1 if/match V2.0.
+- ✅ `[M-114.4.2-recursion]` — Ф.2 direct+mutual + depth 256 + memo.
+- ✅ `[M-114.4.2-mixed-args]` — Ф.3 any const/runtime combination.
+- ✅ `[M-114.4.2-runtime-return]` — covered by mixed-args (subset).
+- ✅ `[M-114.4.2-generic]` — Ф.4 T-independent body V2.0.
+- ✅ `[M-114.4.2-first-class]` — Ф.5 alias-only V2.0.
+
+**Acceptance:** A19-A26 all green (T4 series, 16 fixtures).
+
+**Subsystems extended:**
+1. Parser: removed E_CONST_FN_PARTIAL_CONSTNESS (all-or-nothing) +
+   E_CONST_FN_GENERIC rejects.
+2. Body checker: if/match handling + V2.0 pattern subset + relaxed
+   recursion (V1 reject removed; depth-limit enforces at eval).
+3. Evaluator: If/Match arms в eval_expr; match_const_pattern helper;
+   MAX_EVAL_DEPTH 64 → 256.
+4. AST rewriter: fully-const vs mixed classification; mixed fn
+   call-site validation; turbofish callee unwrap; alias resolution.
+5. Type-checker: const_fn_names включает aliases (iterative depth-10).
+
+**Backward-compat:**
+- 4 V1 fixtures удалены (V2-superseded поведение now allowed):
+  body_if_control_flow_neg, body_recursion_neg,
+  partial_constness_mixed_neg, partial_constness_runtime_ret_neg.
+
+**OPEN markers carried forward (V2.1/V3):**
+- 🟡 `[M-114.4.3-loops]` — for/while/loop в body.
+- 🟡 `[M-114.4.3-pattern-record-sum]` — record/sum patterns в match.
+- 🟡 `[M-114.4.3-t-reflection]` — sizeof[T]/T.field intrinsics.
+- 🟡 `[M-114.4.3-runtime-let-enforcement]` — ro f = const_fn reject.
+- 🟡 `[M-114.4.3-friendly-hof-error]` — friendly HOF reject.
+- 🟡 `[M-114.4.3-runtime-hof]` — real first-class через runtime trampoline.
+- 🟡 `[M-114.4.3-closure-from-const-fn]` — closure-returning const fn.
+- 🟡 `[M-114.4.3-mono-specialization]` — per-const-arg monomorphization.
+- 🟡 `[M-114.4.3-configurable-depth]` — #fn_eval_max_depth attribute.
+
+**Design lessons:**
+1. **Two-tier fn classification** (fully-const vs mixed) ключ для V2 —
+   different surface (evaluator inlining vs runtime stay).
+2. **Turbofish callee unwrap** — generic const fn вызывается как
+   `name[T](args)`, callee.kind = TurboFish, не Ident. Все 3 visitor'а
+   (check / eval / rewrite) должны это handle (initial miss → false
+   reject).
+3. **Iterative alias-chain resolution** (depth 10) — позволяет
+   `const A = fn1; const B = A; const C = B; C(x)` работать через
+   transitive expansion. Fixed-iteration cap избегает infinite loops.
+4. **V1 fixture removal** — V2 relaxation semantics → V1 negatives
+   become invalid. Delete is correct path; documenting в plan doc.
