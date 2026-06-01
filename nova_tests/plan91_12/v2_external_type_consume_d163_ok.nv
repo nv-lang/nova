@@ -1,0 +1,24 @@
+// Plan 91.12 V2 — positive: D163 FFI `external type X consume` сохраняется
+// после D126 plain retract.
+//
+// `external type X consume` — Plan 100.5 (D163) FFI opaque consume-types
+// для resource handles (File, Mutex). Plain `external type X` retract'нут,
+// но consume-form остаётся allowed для FFI use case.
+//
+// Acceptance A8: V2 retract narrow — только plain external type. D163
+// FFI path unchanged.
+
+module plan91_12.v2_external_type_consume_d163_ok
+
+external type FileResource consume
+
+// Smoke test: тип компилируется (parser + type-checker accept).
+// Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic] (closed
+// 2026-06-01): parser теперь корректно различает «next module decl» vs
+// «newtype body» — fn/test/const после external type на новой строке
+// не treat'ится больше как ложный newtype body.
+fn dummy() -> int => 42
+
+test "D163 FFI consume-type compiles" {
+    assert(dummy() == 42)
+}

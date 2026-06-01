@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
+//
+// Plan 91.12 V2 — negative test: plain `external type X` (без consume)
+// retracted (hard error) после migration всех 5 stdlib D126 типов.
+//
+// User code пытается declare `external type UserOpaque` (без consume) —
+// type-checker должен emit hard error `[E_EXTERNAL_TYPE_RETRACTED]` с
+// migration hint на `type UserOpaque(ptr)` (Plan 115 D214 tuple-newtype).
+//
+// Acceptance A7: D126 retract effective; new declarations rejected.
+
+module plan91_12.v2_external_type_retract_neg
+
+external type UserOpaque

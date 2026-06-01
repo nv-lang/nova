@@ -1,0 +1,39 @@
+// Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic] —
+// positive test для parser fix (2026-06-01).
+//
+// Раньше parser body-detect эвристика была overly aggressive: после
+// `external type X` любой следующий token (ident/LBracket/fn/Amp) на
+// next line treat'ился как newtype body → false-positive error
+// "external type cannot have a newtype-style body" даже если это
+// legitimate next module-level declaration.
+//
+// Fix: parser теперь fix'ировал saw_newline_before_body перед
+// skip_newlines(); is_body_start триггерится ТОЛЬКО на same-line
+// (no newline separator) ident/LBracket/fn/Amp. После newline — это
+// next decl, parser продолжает нормально.
+//
+// Этот fixture demonstrates: `external type X consume` followed by
+// `fn`/`test`/etc на следующих строках compiles cleanly.
+
+module plan91_12.v2_parser_external_type_consume_followed_by_fn_ok
+
+external type FileResource consume
+
+// fn после external type — parser теперь не treat'ит как body.
+fn helper() -> int => 42
+
+external type SocketResource consume
+
+// test после external type — same OK.
+test "parser accepts external type X consume followed by fn/test" {
+    assert(helper() == 42)
+}
+
+external type DatabaseHandle consume
+
+// const после external type — same.
+const ANSWER = 42
+
+test "parser accepts external type X consume followed by const" {
+    assert(ANSWER == 42)
+}

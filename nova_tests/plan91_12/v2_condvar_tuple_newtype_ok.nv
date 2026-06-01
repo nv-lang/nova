@@ -1,0 +1,27 @@
+// Plan 91.12 V2 — positive test: Condvar post-migration на
+// `type Condvar(ptr)` non-generic tuple-newtype работает идентично
+// предшественнику.
+//
+// Acceptance A6: API surface неизменён — new/notify_one/notify_all/wait_for.
+
+module plan91_12.v2_condvar_tuple_newtype_ok
+
+import std.time.duration
+
+test "Condvar: new + notify_one no-op (no waiters)" {
+    mut cv = Condvar.new()
+    cv.notify_one()  // no-op без waiters
+    cv.notify_all()  // no-op без waiters
+}
+
+test "Condvar: wait_for with timeout returns TimedOut" {
+    mut cv = Condvar.new()
+    mut mu = Mutex.new()
+    mu.lock()
+    ro result = cv.wait_for(mu, Duration.from_millis(50))
+    match result {
+        WaitResult.TimedOut => {}
+        WaitResult.Notified => assert(false)  // shouldn't notify
+    }
+    mu.unlock()
+}

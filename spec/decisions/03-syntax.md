@@ -5597,9 +5597,68 @@ convention без compiler enforcement).
 
 ## D126. `external type` — opaque типы без body
 
-> **Status:** active (spec). Реализация — [Plan 62.D.bis](../../docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md).
-> (Номера D109–D125 заняты другими планами — см. memory
-> `project-spec-dblock-numbering.md`.)
+> **Status:** 🔴 **RETRACTED 2026-06-01 (Plan 91.12 V2)** для plain form
+> (`external type X` без `consume`).
+>
+> **Retract rationale:**
+>
+> Все 5 stdlib D126 типов мигрированы на более чистые альтернативы:
+>
+> | Тип | Migration | Pattern |
+> |---|---|---|
+> | `StringBuilder` | Plan 109 (D179) | Pure Nova consume record `{ mut buf []u8 }` |
+> | `WriteBuffer` | Plan 91.12 V1 | Pure Nova record `{ mut buf []u8 }` (consume @into) |
+> | `ReadBuffer` | Plan 91.12 V1 | Pure Nova cursor `{ ro data, mut pos }` |
+> | `OnceCell[T]` | Plan 91.12 V2 | Tuple-newtype `type OnceCell[T](ptr)` (Plan 115 D214) |
+> | `Lazy[T]` | Plan 91.12 V2 | Tuple-newtype `type Lazy[T](ptr)` (Plan 115 D214) |
+> | `Condvar` | Plan 91.12 V2 | Tuple-newtype `type Condvar(ptr)` (Plan 115 D214) |
+>
+> Plain `external type X` declarations в любом модуле теперь — hard error
+> [E_EXTERNAL_TYPE_RETRACTED]. Type-checker emit'ит diagnostic с migration
+> hint:
+>
+> ```
+> [E_EXTERNAL_TYPE_RETRACTED] `external type` (D126) retracted by Plan 91.12 V2
+> (2026-06-01). Replace `external type X` with `type X(ptr)` (tuple-newtype
+> opaque-handle pattern, Plan 115 D214). C runtime backing preserved через
+> `external fn` методы — ABI unchanged.
+> Migration guide: docs/migration/d126-to-tuple-newtype.md.
+> For FFI opaque consume-types оставайся на `external type X consume` (D163,
+> supported).
+> ```
+>
+> **D163 (FFI opaque consume-types) сохраняется:** `external type X consume`
+> остаётся allowed для FFI resource handles (`File consume`, `Mutex
+> consume`, etc) — это by-design ([D163](#d163-external-type-with-consume)),
+> Plan 100.5. Только plain (non-consume) form retracted.
+>
+> **Историческая справка:** D126 был bridge bootstrap для opaque runtime
+> types (Plan 62.D.bis, 2026-05-18). Через год эксплуатации стало ясно,
+> что эта форма не нужна:
+> - Для пользовательских FFI handles → D214 `type X(ptr)` tuple-newtype
+>   (Plan 115, 2026-06-01) даёт лучший type-safety + zero-overhead
+>   opaque-pointer wrap.
+> - Для stdlib runtime-backed generic types → тот же D214 паттерн +
+>   compiler special-case routing к existing emit_*_instance helpers
+>   (Plan 91.12 V2 §«codegen routing»).
+> - Для FFI resource handles с auto-cleanup → D163 `external type X
+>   consume` (Plan 100.5) — уже отдельная форма с правильной семантикой.
+>
+> **Реализация:**
+> - Plan 62.D.bis (2026-05-18) — D126 introduce.
+> - Plan 109 D179 (~2026-05-28) — StringBuilder pure Nova migration.
+> - Plan 91.12 V1 (2026-06-01) — WriteBuffer/ReadBuffer pure Nova.
+> - Plan 91.12 V2 (2026-06-01) — OnceCell/Lazy/Condvar tuple-newtype +
+>   formal D126 retract notice (this §).
+>
+> Cross-ref: [D214 — `ptr` type + tuple-newtype opaque-handle](02-types.md#d214-ptr-opaque-pointer-type--tuple-ffi-returns--opaque-handle-pattern)
+> (Plan 115), [D163 — FFI consume integration](02-types.md#d163-ffi-consume-integration--type-driven-без-отдельного-keywordа)
+> (Plan 100.5).
+
+---
+
+> **Legacy reference (для historical clarity — больше не применяется к
+> новому коду; type-checker emit'ит E_EXTERNAL_TYPE_RETRACTED):**
 
 ### Что
 

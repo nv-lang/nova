@@ -393,9 +393,13 @@ typedef struct { char _dummy; } nova_unit;
 #include "fibers.h"
 
 /* ---- Plan 04 Этап 6: Buffer удалён, заменён split'ом ---- */
+/* string_builder.h — Plan 109 (D179): только UTF-8 utility helpers
+ * (_nova_validate_utf8 для str.from_bytes_*). StringBuilder type сам теперь
+ * Nova-defined в std/runtime/string_builder.nv.
+ * write_buffer.h / read_buffer.h — Plan 91.12 (D126 retract, 2026-06-01)
+ * удалены целиком: WriteBuffer/ReadBuffer теперь Nova-defined records
+ * в std/runtime/{write,read}_buffer.nv (no C-side helpers needed). */
 #include "string_builder.h"
-#include "write_buffer.h"
-#include "read_buffer.h"
 
 /* ---- Plan 13: umbrella headers для runtime stdlib API ----
  *

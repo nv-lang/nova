@@ -667,6 +667,14 @@ pub struct CEmitter {
     /// Заполняется в `emit_module` из `module.peer_files`; `free_fn_c_name`
     /// использует для mangling `nova_fn_<modpath>_<name>`.
     fn_module_map: HashMap<String, Vec<String>>,
+    /// Plan 91.12 (D126 retract followup): module-private `const` C-name
+    /// mangling. Per-file resolution: ((file_id, source_name) → mangled C name).
+    /// Поскольку codegen эмитит всё в один TU, одноимённые private consts
+    /// в разных модулях коллидят в global symbol table. Mangling даёт
+    /// уникальный C-symbol (`Nova_const_<modpath>_<name>`), а per-file
+    /// lookup at Ident emission attribute'ит ссылку к её peer'у через
+    /// `expr.span.file_id`. Exported consts → no mangle.
+    private_const_c_names: HashMap<(crate::diag::FileId, String), String>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -1026,6 +1034,7 @@ impl CEmitter {
             strict_errors: std::cell::RefCell::new(Vec::new()),
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
+            private_const_c_names: HashMap::new(),
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -1340,6 +1349,77 @@ impl CEmitter {
                         self.fn_module_map
                             .entry(f.name.clone())
                             .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
+        // Plan 91.12 [M-91.12-const-resolution-via-types] (closed 2026-06-01):
+        // module-private const C-name mangling, production-grade per-peer
+        // resolution (заменил span-based fallback workaround).
+        //
+        // **Алгоритм (паттерн NameResCtx Rule C):**
+        //
+        // 1. Group peer_files по `(parent_dir, module_name)` ключу — каждая
+        //    группа = module's name resolution scope (peers одной folder-
+        //    module делят declarations namespace).
+        // 2. Для каждой группы: collect её private consts с mangled C-names.
+        // 3. Для каждого peer file (file_id) populate `(peer.file_id, name)`
+        //    → mangled для ВСЕХ consts его module-group. Это обеспечивает
+        //    корректный lookup на любом Ident use-site внутри module-group
+        //    (Rule C: peers share decls namespace).
+        //
+        // Это closes followup [M-91.12-const-resolution-via-types]: lookup
+        // на use-site больше не нуждается в single-candidate fallback —
+        // (file_id, name) однозначно резолвится к module-group's const.
+        //
+        // Exported consts не mangle'ятся — их имя стабильно как cross-module
+        // API; collision между export'нутыми consts двух модулей — ambiguity
+        // error type-checker'а уровня D29.
+        {
+            // Step 1: group by (parent_dir, module_name).
+            use std::path::PathBuf;
+            let mut group_consts: HashMap<
+                (PathBuf, Vec<String>),
+                Vec<(String, String)>,  // (source_name, mangled_c_name)
+            > = HashMap::new();
+            let mut peer_group_key: HashMap<crate::diag::FileId, (PathBuf, Vec<String>)>
+                = HashMap::new();
+
+            for pf in &module.peer_files {
+                if pf.module_name.is_empty() { continue; }
+                let dir_key = pf.path.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| pf.path.clone());
+                let group_key = (dir_key, pf.module_name.clone());
+                peer_group_key.insert(pf.file_id, group_key.clone());
+
+                let group_entry = group_consts.entry(group_key).or_default();
+                for item in &pf.items_here {
+                    if let Item::Const(c) = item {
+                        if !c.is_export {
+                            let mangled = format!(
+                                "Nova_const_{}_{}",
+                                pf.module_name.join("_"),
+                                c.name
+                            );
+                            group_entry.push((c.name.clone(), mangled));
+                        }
+                    }
+                }
+            }
+
+            // Step 2: distribute group's consts к каждому peer's file_id —
+            // обеспечивает correct lookup на любом Ident use-site внутри
+            // module-group (Rule C).
+            for pf in &module.peer_files {
+                if let Some(gk) = peer_group_key.get(&pf.file_id) {
+                    if let Some(consts) = group_consts.get(gk) {
+                        for (name, mangled) in consts {
+                            self.private_const_c_names
+                                .entry((pf.file_id, name.clone()))
+                                .or_insert_with(|| mangled.clone());
+                        }
                     }
                 }
             }
@@ -1676,9 +1756,10 @@ impl CEmitter {
             // with the runtime's `typedef struct { ... } Nova_X;` (different types).
             const BUILTIN_RUNTIME_TYPES: &[&str] = &[
                 "Result", "Error", "RuntimeError",
-                "ReadBuffer", "WriteBuffer",
                 // Plan 109 (D179): StringBuilder removed from BUILTIN_RUNTIME_TYPES —
                 // now a Nova-defined record type; needs local typedef struct fwd-decl.
+                // Plan 91.12 (D126 retract): WriteBuffer и ReadBuffer удалены отсюда —
+                // тоже Nova-defined records, нуждаются в local fwd-decl.
                 "ChanReader", "ChanWriter", "ChannelPair",
                 "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
                 // Plan 103.3: RwLock + ReentrantMutex pre-declared in sync_primitives.h.
@@ -1847,6 +1928,19 @@ impl CEmitter {
         for type_decl in self.external_registry.type_decls.clone() {
             match &type_decl.kind {
                 crate::ast::TypeDeclKind::Opaque => {
+                    if !type_decl.generics.is_empty() {
+                        self.generic_types.insert(type_decl.name.clone());
+                        self.generic_type_templates.entry(type_decl.name.clone())
+                            .or_insert(type_decl);
+                    }
+                }
+                // Plan 91.12 V2 (D126 retract — sync types migration):
+                // runtime-backed newtype declarations (`type X[T](ptr)`) need
+                // the same dispatch registration as their predecessor Opaque
+                // form (`external type X[T]`). Without this, type-checker fails
+                // to resolve `Lazy[int].new(closure)` as a static-method call
+                // — codegen falls back на misrouted `Nova_int_method_new(Lazy, ...)`.
+                crate::ast::TypeDeclKind::Newtype(_) => {
                     if !type_decl.generics.is_empty() {
                         self.generic_types.insert(type_decl.name.clone());
                         self.generic_type_templates.entry(type_decl.name.clone())
@@ -3241,6 +3335,14 @@ impl CEmitter {
         } else {
             self.infer_expr_c_type(&c.value)
         };
+        // Plan 91.12 (D126 retract followup): для module-private consts
+        // используем mangled C name из `private_const_c_names` (источник —
+        // pre-pass в emit_module). Ключ — (file_id из span декларации,
+        // source name). Exported consts → имя как есть.
+        let c_name = self.private_const_c_names
+            .get(&(c.span.file_id, c.name.clone()))
+            .cloned()
+            .unwrap_or_else(|| c.name.clone());
         // Emit as a static const variable (MSVC-safe, no VLAs or macros needed)
         // We emit the value as an expression; for string literals this needs
         // a compound literal initialiser which MSVC doesn't support at file scope.
@@ -3254,7 +3356,7 @@ impl CEmitter {
                 let len = s.len();
                 self.line(&format!(
                     "static const nova_str {} = {{(const char*)\"{}\" , {}}};",
-                    c.name, escaped, len
+                    c_name, escaped, len
                 ));
                 self.var_types.insert(c.name.clone(), ty_c.clone());
                 return Ok(());
@@ -3268,7 +3370,7 @@ impl CEmitter {
         // вне диапазона int64, баг был замечен в std/checksums/fnv.nv).
         match self.emit_const_expr_typed(&c.value, Some(&ty_c)) {
             Ok(val) => {
-                self.line(&format!("static const {} {} = {};", ty_c, c.name, val));
+                self.line(&format!("static const {} {} = {};", ty_c, c_name, val));
                 // Регистрируем тип const'а в var_types, чтобы Ident(name) на
                 // use-site инферился с правильным c-типом (например u32-const,
                 // используемый как `let mut h = FOO`, должен дать `uint32_t h`,
@@ -8030,11 +8132,12 @@ impl CEmitter {
             "Time", "Mem",
             // Plan 62.D.bis (D126, 2026-05-18): opaque types declared
             // through `external type` в std/prelude/collections.nv.
-            // Backing — nova_rt/{write_buffer,read_buffer}.h.
             // Plan 109 (D179): StringBuilder removed — now a Nova-defined
             // record type (type StringBuilder consume { mut buf []u8 }).
-            // emit_type_decl must emit the struct definition for it.
-            "WriteBuffer", "ReadBuffer",
+            // Plan 91.12 (2026-06-01, D126 retract): WriteBuffer and ReadBuffer
+            // removed — now Nova-defined records over `[]u8` primitives
+            // (std/runtime/{write,read}_buffer.nv). emit_type_decl must emit
+            // the struct definitions for them.
             // Plan 103.1 Ф.3: MemOrdering pre-declared in sync_primitives.h.
             // C struct + 5 constructors live there; skip emit_sum_type.
             // sum_schemas + sum_schema_registry populated below for pattern
@@ -8353,6 +8456,26 @@ impl CEmitter {
                 self.emit_sum_type(&t.name, variants)?;
             }
             TypeDeclKind::Newtype(inner) => {
+                // Plan 91.12 V2 (D126 retract — sync types migration):
+                // runtime-backed newtype declarations skip emit. Their C struct
+                // lives either in nova_rt/*.h (non-generic: Condvar in
+                // sync_condvar.h) or is emitted per-T by emit_generic_type_instance
+                // (generic: OnceCell/Lazy via emit_oncecell_instance /
+                // emit_lazy_instance). Emitting `typedef nova_ptr Nova_X` here
+                // would conflict with the actual struct typedef.
+                //
+                // List parallels Plan 91.12 V2 §«D126 retract — sync types»:
+                // ровно те 3 типа, что мигрировали с `external type` (Opaque)
+                // на `type X(ptr)` / `type X[T](ptr)`.
+                const RUNTIME_BACKED_NEWTYPES: &[&str] =
+                    &["OnceCell", "Lazy", "Condvar"];
+                if RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
+                    // Skip typedef emit — runtime / per-T mono handles it.
+                    // Register alias так чтобы type_ref_to_c для bare `OnceCell`
+                    // (без mono context) не падал. Generic refs резолвятся
+                    // через per-T mono mangling separately.
+                    return Ok(());
+                }
                 let inner_c = self.type_ref_to_c(inner)?;
                 self.line(&format!("typedef {} Nova_{};", inner_c, t.name));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
@@ -11869,7 +11992,41 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                 }
             }
-            _ => { /* Protocol/effect/alias/newtype — not generic record/sum */ }
+            // Plan 91.12 V2 (D126 retract — sync types migration): runtime-backed
+            // generic newtypes need the same per-T struct + methods emission as
+            // their predecessor `external type` (Opaque) form. After migration:
+            //   `external type OnceCell[T]` → `type OnceCell[T](ptr)`
+            //   `external type Lazy[T]`     → `type Lazy[T](ptr)`
+            // The Newtype declaration carries no body; per-T mono path routes to
+            // the same emit_oncecell_instance / emit_lazy_instance helpers.
+            // The Nova-level typedef declaration emission is suppressed for these
+            // names (see emit_type_decl Newtype branch — RUNTIME_BACKED_NEWTYPES
+            // list); per-T mono here defines the actual C struct.
+            TypeDeclKind::Newtype(_) => {
+                let base_name = template.name.clone();
+                match base_name.as_str() {
+                    "OnceCell" => {
+                        let t_cty = type_subst.iter()
+                            .find(|(k, _)| k == "T")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "nova_int".to_string());
+                        self.emit_oncecell_instance(mangled, &t_cty);
+                    }
+                    "Lazy" => {
+                        let t_cty = type_subst.iter()
+                            .find(|(k, _)| k == "T")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "nova_int".to_string());
+                        self.emit_lazy_instance(mangled, &t_cty);
+                    }
+                    _ => {
+                        // Regular newtype `type X(T)` — handled in emit_type_decl
+                        // (typedef T Nova_X). Generic newtype без runtime backing
+                        // currently не используется; per-T mono no-op для них.
+                    }
+                }
+            }
+            _ => { /* Protocol/effect/alias — not generic record/sum */ }
         }
 
         self.current_type_subst = saved_subst;
@@ -14949,6 +15106,26 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                     return Ok(self.free_fn_c_name(name));
                 }
+                // Plan 91.12 [M-91.12-const-resolution-via-types] (closed
+                // 2026-06-01, production-grade): module-private const C-name
+                // substitution через direct (file_id, name) lookup. Pre-pass
+                // в emit_module populated map ДЛЯ ВСЕХ peers module-group
+                // (Rule C: peers share decls namespace), поэтому lookup
+                // (use-site file_id, name) однозначно резолвится к const'у
+                // в module-group без single-candidate fallback или ambiguity.
+                //
+                // is_local_var bypass нужен: var_types популируется и для
+                // module-level const'ов (emit_const_decl вставляет name→type
+                // для type inference), что иначе заглушало бы const lookup
+                // при unrelated locals. Module-group resolution дает корректный
+                // mangled name; local var shadow case покрывается тем что
+                // emit_const_decl mangle'ит C-name → local var с тем же
+                // source-level name не shadow'ит mangled symbol.
+                if let Some(mangled) = self.private_const_c_names
+                    .get(&(expr.span.file_id, name.clone()))
+                {
+                    return Ok(mangled.clone());
+                }
                 Ok(name.clone())
             }
             ExprKind::Path(parts) => {
@@ -18027,8 +18204,18 @@ _cp++; \
                                 self.line(&format!("{} {};", ok_c_ty, result_v));
                                 self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
                                 self.indent += 1;
-                                let cast = Self::cast_from_nova_int(
-                                    &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
+                                // Plan 91.12 fix: typed Result mono (`NovaRes_<n>*`) stores
+                                // `Ok._0` natively as `ok_c_ty` — direct access без bit-pun.
+                                // Legacy `Nova_Result*` (single bootstrap mono) хранит
+                                // nova_int slot — для не-int target нужен cast_from_nova_int
+                                // (union-pun nova_int→nova_f64 для bits-encoded f64).
+                                // Detect by obj_ty prefix: `NovaRes_*` = typed mono.
+                                let payload_expr = format!("{}->payload.Ok._0", tmp);
+                                let cast = if obj_ty.starts_with("NovaRes_") {
+                                    payload_expr
+                                } else {
+                                    Self::cast_from_nova_int(&payload_expr, &ok_c_ty)
+                                };
                                 self.line(&format!("{} = {};", result_v, cast));
                                 self.indent -= 1;
                                 self.line("} else {");
@@ -18205,8 +18392,15 @@ _cp++; \
                                 self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
                                 self.indent -= 1;
                                 self.line("}");
-                                let cast = Self::cast_from_nova_int(
-                                    &format!("{}->payload.Ok._0", tmp), &ok_c_ty);
+                                // Plan 91.12 fix: typed Result mono (`NovaRes_<n>*`) stores
+                                // Ok._0 natively — direct access. Legacy `Nova_Result*`
+                                // (bootstrap) stores nova_int slot — нужен bit-pun cast.
+                                let payload_expr = format!("{}->payload.Ok._0", tmp);
+                                let cast = if obj_ty.starts_with("NovaRes_") {
+                                    payload_expr
+                                } else {
+                                    Self::cast_from_nova_int(&payload_expr, &ok_c_ty)
+                                };
                                 return Ok(format!("({})", cast));
                             }
                             _ => {}

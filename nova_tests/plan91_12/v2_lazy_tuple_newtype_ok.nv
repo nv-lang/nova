@@ -1,0 +1,31 @@
+// Plan 91.12 V2 — positive test: Lazy[T] post-migration на
+// `type Lazy[T](ptr)` tuple-newtype работает идентично предшественнику.
+//
+// Acceptance A6: API surface неизменён — force/is_forced + poison-on-panic.
+
+module plan91_12.v2_lazy_tuple_newtype_ok
+
+test "Lazy[int]: force returns init value" {
+    ro lazy = Lazy[int].new() { 42 }
+    assert(lazy.is_forced() == false)
+    assert(lazy.force() == 42)
+    assert(lazy.is_forced() == true)
+}
+
+test "Lazy[int]: force idempotent — init runs exactly once" {
+    mut counter = AtomicInt.new(0)
+    ro lazy = Lazy[int].new() {
+        counter.fetch_add(1)
+        100
+    }
+    assert(lazy.force() == 100)
+    assert(lazy.force() == 100)
+    assert(lazy.force() == 100)
+    assert(counter.load() == 1)
+}
+
+test "Lazy[str]: works for non-primitive T" {
+    ro lazy = Lazy[str].new() { "computed" }
+    assert(lazy.force() == "computed")
+    assert(lazy.force() == "computed")
+}

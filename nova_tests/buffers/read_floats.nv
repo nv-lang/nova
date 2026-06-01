@@ -97,11 +97,16 @@ test "try_read_f64_le Err — пустой буфер" {
 // ── f64 round-trip через f64.from_bits + try_read ─────────────────
 
 test "f64.from_bits + try_read_f64_be round-trip" {
+    // Plan 91.12 (D126 retract): прежний C-runtime бутстрап хранил f64
+    // в Result.Ok как u64-bits (через nova_int slot) и тесту приходилось
+    // декодировать через f64.from_bits. Новый pure-Nova try_read_f64_be
+    // возвращает уже декодированный f64 напрямую — bootstrap leak
+    // закрыт. Тест переписан под прямой f64 unwrap.
     mut wb = WriteBuffer.new()
     wb.write_f64_be(2.71828)
     mut rb = ReadBuffer.from(wb.into())
     ro r = rb.try_read_f64_be()
     assert(r.is_ok())
-    ro d = f64.from_bits(r.unwrap_or(0))
+    ro d = r.unwrap_or(0.0)
     assert(d == 2.71828)
 }

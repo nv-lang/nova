@@ -2922,7 +2922,23 @@ impl Parser {
         // `effect`, `protocol`, `alias TYPE`, newtype `TYPE`. Если parser
         // встречает что-то похожее на body — это compile error.
         if is_external {
-            // Skip newlines чтобы консистентно отвергать «external type X\n{...}».
+            // Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic]
+            // (closed 2026-06-01): зафиксировать наличие newline ДО skip,
+            // чтобы distinguish:
+            //   1. `external type X\n\nfn dummy()` — `fn` это next decl, не body.
+            //   2. `external type X\n{...}` — `{` это body (на любом расстоянии).
+            //   3. `external type X Foo` — `Foo` (на той же линии) это newtype body.
+            // Старая логика skip_newlines() → check is_body_start ловила (1)
+            // как ложный newtype body (fn after `external type X` treat'ился
+            // как body, не next decl). Новая: только same-line check (no newline)
+            // ловит newtype body case, иначе newlines = end of decl.
+            let saw_newline_before_body = matches!(
+                self.peek().kind,
+                TokenKind::Newline | TokenKind::Semicolon
+            );
+            // Always check brace/pipe/effect/protocol/alias на любом расстоянии —
+            // эти однозначные body markers даже при newline нарушают opaque-type
+            // контракт (`external type X\n{ ... }` — попытка body, error).
             self.skip_newlines();
             match self.peek().kind {
                 TokenKind::LBrace
@@ -2944,13 +2960,10 @@ impl Parser {
                 }
                 _ => {}
             }
-            // Дополнительно: если на line следует **ident, начинающийся с
-            // uppercase или примитива** — это похоже на newtype-тело
-            // (`external type Foo Bar`). Отвергаем для cleaner diagnostic.
-            // Heuristic: если следующий токен начинает type expression
-            // (ident начинающийся с letter, LBracket для array-type, или
-            // примитив-keyword), но НЕ newline/EOF — это newtype body.
-            let is_body_start = match &self.peek().kind {
+            // Ident/LBracket/KwFn/Amp body detect — ONLY на той же линии
+            // (no newline separator). Если был newline до пика — это next
+            // module-level declaration (fn / type / const / etc), не body.
+            let is_body_start = !saw_newline_before_body && match &self.peek().kind {
                 TokenKind::Ident(s) if !s.is_empty()
                     && s.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) => true,
                 TokenKind::LBracket => true, // []byte etc.
