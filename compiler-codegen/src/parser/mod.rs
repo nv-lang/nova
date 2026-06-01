@@ -4340,6 +4340,21 @@ impl Parser {
             // (recursive PointerType production, left-to-right).
             TokenKind::Star => {
                 self.bump(); // eat *
+                // Plan 118 (D216 §1): Rust-import error — `*const T`. Emit
+                // explicit E_INVALID_POINTER_MODIFIER с hint к canonical
+                // Nova syntax (`*ro T` или just `*T`).
+                if matches!(self.peek().kind, TokenKind::KwConst) {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[E_INVALID_POINTER_MODIFIER] `*const T` is not valid \
+                         Nova syntax — use `*ro T` (canonical readonly) or \
+                         just `*T` (default readonly per D216 §1). Nova \
+                         pointer modifiers: `ro` / `mut` / `unsafe`. \
+                         `const` is a keyword для const declarations, не \
+                         pointer modifier.".to_string(),
+                        span,
+                    ));
+                }
                 // Optional modifier (ro / mut / unsafe ident).
                 let modifier = match &self.peek().kind {
                     TokenKind::KwRo => {
