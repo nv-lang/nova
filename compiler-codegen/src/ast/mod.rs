@@ -2051,6 +2051,15 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    /// Plan 118 D216 §4: `&value` pointer creation. Result type =
+    /// `*ro T` или `*mut T` (per binding context). Inside unsafe context
+    /// only (E_UNSAFE_REQUIRED иначе). Escape analysis с auto-promote
+    /// (D32 amend) — stack values auto-promoted в heap если pointer
+    /// escapes scope.
+    AddrOf,
+    /// Plan 118 D216 §5: `*p` explicit deref (one level). Result type =
+    /// inner pointee T. Inside unsafe context only.
+    Deref,
 }
 
 /// Pattern для match / let / if-let.

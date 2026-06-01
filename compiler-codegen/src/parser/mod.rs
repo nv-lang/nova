@@ -5076,6 +5076,37 @@ impl Parser {
                     span,
                 ))
             }
+            // Plan 118 D216 §4: `&value` pointer creation (prefix operator,
+            // expr-position only — type-position `&Type` doesn't exist).
+            // Type-checker (Ф.2.3) enforces unsafe context требование +
+            // (Ф.2.4) escape analysis с auto-promote.
+            TokenKind::Amp => {
+                self.bump();
+                let operand = self.parse_unary()?;
+                let span = start.merge(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        op: UnOp::AddrOf,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
+            // Plan 118 D216 §5: `*p` explicit deref (prefix in expression
+            // position). Type-position `*T` parsed в parse_type (Ф.1.2).
+            // Type-checker (Ф.4) enforces unsafe context + one-level deref.
+            TokenKind::Star => {
+                self.bump();
+                let operand = self.parse_unary()?;
+                let span = start.merge(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        op: UnOp::Deref,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
             _ => self.parse_postfix(),
         }
     }

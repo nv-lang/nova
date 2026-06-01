@@ -3436,6 +3436,14 @@ impl CEmitter {
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Plan 118 D216 §4-5: pointer ops not valid в const
+                    // expressions (constexpr evaluation has no addressable
+                    // storage / runtime pointer values).
+                    UnOp::AddrOf | UnOp::Deref => {
+                        return Err("[E_PTR_OP_IN_CONST] pointer operators \
+                             (&/*) are not valid в const expression context"
+                            .to_string());
+                    }
                 };
                 Ok(format!("({}({}))", op_str, inner))
             }
@@ -15416,6 +15424,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Plan 118 D216 §4-5: pointer ops emit C address-of/deref.
+                    // V1 scaffolding: direct &(...) / *(...) emission.
+                    // Ф.2.4 escape analysis с auto-promote — separate IR pass
+                    // (currently locals NOT yet auto-promoted; user code
+                    // должен соблюдать contract вручную).
+                    UnOp::AddrOf => "&",
+                    UnOp::Deref => "*",
                 };
                 Ok(format!("({}{})", op_str, v))
             }
@@ -26005,6 +26020,23 @@ _cp++; \
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Not => "nova_bool".into(),
                 UnOp::Neg => self.infer_expr_c_type(operand),
+                // Plan 118 D216 §4-5: `&value` returns pointer-to-T;
+                // `*p` returns pointee-T. Inference best-effort: `&x` →
+                // `<x_type>*`; `*p` → strip trailing `*` если есть, иначе
+                // unknown. Ф.4 (auto-deref) добавит proper Ty::TypedPtr
+                // resolution; здесь scaffold.
+                UnOp::AddrOf => {
+                    let inner = self.infer_expr_c_type(operand);
+                    if inner.is_empty() || inner == "void*" { "void*".into() } else { format!("{}*", inner) }
+                }
+                UnOp::Deref => {
+                    let inner = self.infer_expr_c_type(operand);
+                    if let Some(stripped) = inner.strip_suffix('*') {
+                        stripped.to_string()
+                    } else {
+                        "void*".into()
+                    }
+                }
             },
             // Plan 08 Ф.4: Block — тип trailing expression.
             // Plan 52 Ф.16: enhancement — если trailing это Ident, и в
@@ -27873,7 +27905,12 @@ _cp++; \
                 format!("{}({})", fn_name, arg_strs.join(", "))
             }
             ExprKind::Unary { op, operand } => {
-                let op_str = match op { UnOp::Neg => "-", UnOp::Not => "!" };
+                let op_str = match op {
+                    UnOp::Neg => "-",
+                    UnOp::Not => "!",
+                    UnOp::AddrOf => "&",
+                    UnOp::Deref => "*",
+                };
                 format!("{}{}", op_str, Self::expr_to_display(operand))
             }
             _ => "assert".to_string(),
