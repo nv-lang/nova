@@ -26355,3 +26355,49 @@ See docs/plans/110-artifacts/plan110_8_8_umbrella_close.md для full
 summary.
 
 
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 110.9 — V1.1 Production-Grade Closure 📋 PLANNED (2026-06-01)
+═══════════════════════════════════════════════════════════════════════════════
+
+Spawned после Plan 110 V1 umbrella close (merge 874f5766ca5). Plan 110.9
+закрывает 5 V1.1 followup markers которые остались как documented
+simplifications.
+
+Status: 📋 PLANNED — deferred until trigger condition.
+
+Triggers (any):
+  - W_FFI_CANCEL_UNSAFE lint absence catches real production bug.
+  - User explicitly requests V1.1 closure.
+  - WithExitTimeout protocol needed в реальном stdlib type.
+  - finalizer LIFO replay needed для metrics flush.
+  - CleanupTimeoutError typed catch pattern needed в user code.
+
+5 sub-tasks (atomic-merge каждый):
+  110.9.1 — Typed CleanupTimeoutError throw codegen (~2-3ч).
+            Replace string-fallback в nv_shield_check_deadline на
+            allocated Nova_CleanupTimeoutError* + nova_throw_typed.
+  110.9.2 — Level 1 WithExitTimeout per-type protocol (~½ дня).
+            Codegen vtable lookup для Nova_<T>_method_exit_timeout_ms
+            в 3-level resolution cascade.
+  110.9.3 — Application.register_finalizer LIFO runtime (~½ дня).
+            NovaFinalizerStack + with-block exit hook iterating reverse.
+  110.9.4 — W_FFI_CANCEL_UNSAFE lint enforcement (~2-3ч).
+            lints.rs visitor с "inside on_exit body?" tracking; warn
+            при call к external fn без #cancel_safe attribute.
+  110.9.5 — on_exit strict signature check + parser variance fix
+            (~½ дня, рискованный). Fix -> () canonical representation
+            (Tuple([]) vs Named("unit")) + add strict return + Fail[E]
+            checks в validate_on_exit_signature.
+  110.9.6 — Plan 110.9 close + spec amend.
+
+Total estimate: ~3-4 dev-day.
+Model preference: Opus 4.7 + Thinking ON.
+
+Worktree (spawn at trigger): D:/Sources/nv-lang/nova-p110-v1.1.
+Branch: plan-110-v1.1.
+
+Plan doc: docs/plans/110.9-v1.1-production-grade-closure.md.
+
+V1.1 closure target: «✅ финал Plan 110 = ВСЁ без упрощений» полностью
+выполнить (header'а Plan 110 promise).

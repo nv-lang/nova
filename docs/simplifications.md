@@ -28099,3 +28099,23 @@ W_D78_REV1_DEPRECATED warning с migration hint.
 
 **OPEN marker:** `[M-D78-strict-removal]` — full corpus migration (~847
 files) + remove rev-1 acceptance branch. Separate plan (massive refactor).
+
+---
+
+## Plan 110.9 — V1.1 Production-Grade Closure 📋 PLANNED (2026-06-01)
+
+Spawned для закрытия 5 V1.1 followup markers из Plan 110 V1 umbrella
+close. Plan stays 📋 PLANNED до trigger condition (W_FFI_CANCEL_UNSAFE
+catches real bug / WithExitTimeout needed / user explicit request /
+finalizer LIFO needed / CleanupTimeoutError typed catch needed).
+
+**Closes (когда landed):**
+- 🟡 `[M-110-cleanup-timeout-typed-throw]` — typed CleanupTimeoutError throw codegen (110.9.1).
+- 🟡 `[M-110.4.6-level-1-with-exit-timeout]` — Level 1 per-type protocol (110.9.2).
+- 🟡 `[M-110.4-finalizer-runtime]` — register_finalizer LIFO replay (110.9.3).
+- 🟡 `[M-110.7.3-w-ffi-cancel-unsafe-lint]` — W_FFI_CANCEL_UNSAFE runtime enforcement (110.9.4).
+- 🟡 `[M-110-on-exit-strict-sig]` — strict return-type + parser variance fix (110.9.5).
+
+**Estimate:** ~3-4 dev-day (Opus 4.7 + Thinking ON; parser variance в 110.9.5 тонкий).
+
+**Plan doc:** [docs/plans/110.9-v1.1-production-grade-closure.md](plans/110.9-v1.1-production-grade-closure.md).
