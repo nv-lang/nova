@@ -1011,9 +1011,14 @@ fn walk_item(
     use crate::ast::Item;
     match item {
         Item::Fn(fd) => {
-            // const fn body itself будет dropped — но мы всё равно посмотрим
-            // её default param expressions (D102). И callsites внутри
-            // runtime fn body для replacement.
+            // Plan 114.4.2 D199: const fn bodies will be dropped — skip them.
+            // Их body interpreted at eval time через evaluator, не AST rewrite.
+            // Default params (D102) и runtime fn body — нужно walk'ать.
+            let is_const_fn = fd.return_is_const
+                || fd.params.iter().any(|p| p.is_const);
+            if is_const_fn {
+                return;
+            }
             for p in &mut fd.params {
                 if let Some(def) = &mut p.default {
                     walk_expr(def, ev, errors);

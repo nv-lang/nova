@@ -637,22 +637,38 @@ fn check_const_constexpr(
     expr: &crate::ast::Expr,
     known_consts: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    let empty: HashSet<String> = HashSet::new();
+    check_const_constexpr_ex(expr, known_consts, &empty)
+}
+
+/// Plan 114.4.2 (D199): extended constexpr validator с awareness of
+/// const fn names. Used by check_module's scope-local const validation
+/// + module-level const validation when const fn registry уже built.
+/// `const_fn_names` — set of all const fn names в module (если empty —
+/// backward-compatible с original check_const_constexpr behavior).
+fn check_const_constexpr_ex(
+    expr: &crate::ast::Expr,
+    known_consts: &HashSet<String>,
+    const_fn_names: &HashSet<String>,
+) -> Result<(), Diagnostic> {
     use crate::ast::ExprKind as E;
     match &expr.kind {
         // Literals — всегда constexpr.
         E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
         | E::CharLit(_) | E::UnitLit => Ok(()),
         // Unary над constexpr operand.
-        E::Unary { operand, .. } => check_const_constexpr(operand, known_consts),
+        E::Unary { operand, .. } => check_const_constexpr_ex(operand, known_consts, const_fn_names),
         // Binary над constexpr operands.
         E::Binary { left, right, .. } => {
-            check_const_constexpr(left, known_consts)?;
-            check_const_constexpr(right, known_consts)
+            check_const_constexpr_ex(left, known_consts, const_fn_names)?;
+            check_const_constexpr_ex(right, known_consts, const_fn_names)
         }
+        // Plan 114.4.2 D199: `as`-cast — constexpr if inner is constexpr.
+        E::As(inner, _) => check_const_constexpr_ex(inner, known_consts, const_fn_names),
         // Tuple-литерал — каждый элемент constexpr.
         E::TupleLit(elems) => {
             for e in elems {
-                check_const_constexpr(e, known_consts)?;
+                check_const_constexpr_ex(e, known_consts, const_fn_names)?;
             }
             Ok(())
         }
@@ -660,7 +676,7 @@ fn check_const_constexpr(
         E::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    crate::ast::ArrayElem::Item(e) => check_const_constexpr(e, known_consts)?,
+                    crate::ast::ArrayElem::Item(e) => check_const_constexpr_ex(e, known_consts, const_fn_names)?,
                     crate::ast::ArrayElem::Spread(_) => {
                         return Err(Diagnostic::new(
                             "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed \
@@ -685,7 +701,7 @@ fn check_const_constexpr(
                     ));
                 }
                 match &f.value {
-                    Some(v) => check_const_constexpr(v, known_consts)?,
+                    Some(v) => check_const_constexpr_ex(v, known_consts, const_fn_names)?,
                     None => {
                         // Shorthand `{ name }` — refers binding called `name`.
                         if !known_consts.contains(&f.name) {
@@ -736,17 +752,44 @@ fn check_const_constexpr(
              const → use `ro X = …` (runtime ok) (Plan 114.4 Ф.1).".to_string(),
             expr.span,
         )),
-        // Function calls / method calls / member access / index / etc. —
-        // runtime по дефолту. const fn (Plan 114.4 Ф.3) добавит исключение.
+        // Plan 114.4.2 D199: Call к const fn — constexpr, если callee = Ident
+        // и зарегистрирован как const fn, и каждый arg constexpr.
+        E::Call { func, args, trailing: None } => {
+            if let E::Ident(name) = &func.kind {
+                if const_fn_names.contains(name) {
+                    for a in args {
+                        match a {
+                            crate::ast::CallArg::Item(e) =>
+                                check_const_constexpr_ex(e, known_consts, const_fn_names)?,
+                            _ => {
+                                return Err(Diagnostic::new(
+                                    "[E_CONST_FN_NON_CONST_ARG] only positional \
+                                     constexpr args allowed when calling const fn \
+                                     в const initialiser (D199).".to_string(),
+                                    expr.span,
+                                ));
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+            Err(Diagnostic::new(
+                "[E_CONST_NOT_CONSTEXPR] non-const-fn call в `const` initialiser \
+                 — only literals, arithmetic, `as`-casts, record/tuple/array \
+                 literals, references to top-level consts, и calls to other \
+                 `const fn` are allowed. Use `ro X = …` для runtime / lazy-init, \
+                 либо declare `fn ... const param ... -> const T` (D199).".to_string(),
+                expr.span,
+            ))
+        }
+        // Member access / Index / InterpolatedStr / MapLit / call с trailing —
+        // runtime.
         E::Call { .. } | E::Member { .. } | E::Index { .. }
         | E::InterpolatedStr { .. } | E::MapLit { .. } => Err(Diagnostic::new(
             "[E_CONST_NOT_CONSTEXPR] non-constexpr expression в `const` \
-             initialiser — only literals, arithmetic over literals, \
-             record/tuple/array literals из constexpr fields, и references \
-             на другие top-level `const` are allowed. Runtime calls / member \
-             access / interpolation / map literals — not constexpr. Use \
-             `ro X = …` for runtime / lazy-init value, либо `const fn` для \
-             comptime function (Plan 114.4 Ф.1 / D199).".to_string(),
+             initialiser (member/index/interpolation/map/call-with-trailing). \
+             Use `ro X = …` для runtime / lazy-init value (D199).".to_string(),
             expr.span,
         )),
         // Любые другие конструкции (if, match, blocks, closures, etc.) — runtime.
@@ -1128,6 +1171,25 @@ struct TypeCheckCtx<'a> {
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
     imported_modules: HashSet<String>,
+    /// Plan 114.4.2 (D199): const fn names в текущем модуле — для
+    /// scope-local Stmt::Const RHS validation (calls к const fn разрешены).
+    const_fn_names: HashSet<String>,
+    /// Plan 114.4.2 (D199): flag — we are inside const fn body. Scope-local
+    /// const validation skipped (body checker `check_const_fn_decl` covers
+    /// param/local awareness more precisely).
+    in_const_fn: std::cell::Cell<bool>,
+}
+
+/// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
+/// Restoring previous value on drop — works regardless of error path.
+struct ConstFnFlagGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: bool,
+}
+impl<'a, 'b> Drop for ConstFnFlagGuard<'a, 'b> {
+    fn drop(&mut self) {
+        self.ctx.in_const_fn.set(self.prev);
+    }
 }
 
 /// `true` для имён, у которых arity **не** проверяется: referential-типы
@@ -1238,7 +1300,20 @@ impl<'a> TypeCheckCtx<'a> {
             collect(&pf.imports);
         }
         drop(collect);
-        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules }
+        // Plan 114.4.2 D199: precompute const fn names для scope-local
+        // const validation (Stmt::Const RHS может содержать const fn calls).
+        let const_fn_names: HashSet<String> = module.items.iter()
+            .filter_map(|it| match it {
+                Item::Fn(fd) => {
+                    let is_const = fd.return_is_const
+                        || fd.params.iter().any(|p| p.is_const);
+                    if is_const { Some(fd.name.clone()) } else { None }
+                }
+                _ => None,
+            })
+            .collect();
+        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
+            in_const_fn: std::cell::Cell::new(false) }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -1320,7 +1395,22 @@ impl<'a> TypeCheckCtx<'a> {
                             _ => None,
                         })
                         .collect();
-                    if let Err(d) = check_const_constexpr(&cd.value, &known_consts) {
+                    // Plan 114.4.2 D199: const fn calls eligible в const RHS.
+                    let const_fn_names: HashSet<String> = module
+                        .items
+                        .iter()
+                        .filter_map(|it| match it {
+                            Item::Fn(fd) => {
+                                let is_const = fd.return_is_const
+                                    || fd.params.iter().any(|p| p.is_const);
+                                if is_const { Some(fd.name.clone()) } else { None }
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if let Err(d) = check_const_constexpr_ex(
+                        &cd.value, &known_consts, &const_fn_names,
+                    ) {
                         errors.push(d);
                     }
                 }
@@ -1907,6 +1997,13 @@ impl<'a> TypeCheckCtx<'a> {
     // --- Ф.2: walk сигнатур ---------------------------------------------
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 114.4.2 (D199): set flag для scope-local const skip
+        // когда мы внутри const fn body. Body checker
+        // (check_const_fn_decl) точнее покрывает validation.
+        let is_const_fn = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+        let prev_in_const_fn = self.in_const_fn.get();
+        self.in_const_fn.set(is_const_fn);
+        let _guard = ConstFnFlagGuard { ctx: self, prev: prev_in_const_fn };
         // Generic-scope функции: её собственные generic-параметры +
         // generic-параметры receiver-типа (`fn Box[T] @get() -> T`).
         let mut gs: HashSet<String> = HashSet::new();
@@ -2330,9 +2427,18 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(t, gs, errors);
                 }
                 self.walk_expr(&d.value, gs, errors);
-                let empty_consts: HashSet<String> = HashSet::new();
-                if let Err(diag) = check_const_constexpr(&d.value, &empty_consts) {
-                    errors.push(diag);
+                // Plan 114.4.2 D199: внутри const fn body — scope-local
+                // const validated by check_const_fn_decl (param/local
+                // awareness). Здесь skip избегаем false-positives на
+                // const param refs (e.g. `const c = b as int` где
+                // `b` — const param).
+                if !self.in_const_fn.get() {
+                    let empty_consts: HashSet<String> = HashSet::new();
+                    if let Err(diag) = check_const_constexpr_ex(
+                        &d.value, &empty_consts, &self.const_fn_names,
+                    ) {
+                        errors.push(diag);
+                    }
                 }
             }
             Stmt::Assign { target, value, .. } => {
@@ -7289,8 +7395,15 @@ impl NameResCtx {
                     for n in bindings { top.insert(n); }
                 }
             }
-            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
-            Stmt::Const(_) => {}
+            // Plan 114.4 Ф.2 / Plan 114.4.2 (D199): scope-local const — walk
+            // RHS (may reference const fn calls) + bind name в текущий frame
+            // так чтобы subsequent expressions могли его использовать.
+            Stmt::Const(d) => {
+                self.walk_expr(&d.value, file_id, scope, errors);
+                if let Some(top) = scope.last_mut() {
+                    top.insert(d.name.clone());
+                }
+            }
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, file_id, scope, errors);
                 self.walk_expr(value, file_id, scope, errors);
