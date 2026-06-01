@@ -1,0 +1,27 @@
+// Plan 120 (D215): T2 — various named tuple types.
+
+module plan120.t2_types
+
+type Vec3(x f64, y f64, z f64)
+type Color(r u8, g u8, b u8, a u8)
+
+test "Vec3: construct and access all fields" {
+    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "Color: all four components" {
+    ro c = Color(r: 255, g: 0, b: 128, a: 255)
+    assert(c.r == 255)
+    assert(c.g == 0)
+    assert(c.b == 128)
+    assert(c.a == 255)
+}
+
+test "positional anonymous tuple back-compat" {
+    ro p = (3.0, 4.0)
+    assert(p.0 == 3.0)
+    assert(p.1 == 4.0)
+}

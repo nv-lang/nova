@@ -20243,7 +20243,6 @@ Total: ~6 dev-day. Critical path 101.1 → 101.2 → 101.5 = ~4 dev-day
 
 Status: 📋 proposed, не начат. P1.
 
-=======
 === Plan 83.4.5.7 Ф.1 — Atomic fiber state machine (2026-05-23) ===
 
 Plan 83.4.5.7 atomic-fiber-state-machine foundational work landed.
@@ -26401,3 +26400,64 @@ Plan doc: docs/plans/110.9-v1.1-production-grade-closure.md.
 
 V1.1 closure target: «✅ финал Plan 110 = ВСЁ без упрощений» полностью
 выполнить (header'а Plan 110 promise).
+
+=== Plan 120 Sprint — Named tuples + value/reference allocation contract (2026-05-31) ===
+
+Plan 120 (D215) implements named tuple fields for Nova:
+`type Vec3(x f64, y f64, z f64)` — stack-allocated value type with named
+field access (`.x`, `.y`, `.z`). Reopens Plan 59 Ф.7.4 rejection with
+corrected reasoning (tuple ≠ record: different allocation semantics).
+
+Ф.0 (23e584b): D215 spec draft + audit + worktree nova-p120 setup.
+- D215 drafted in spec/decisions/02-types.md (allocation contract)
+- Baseline: 1559/74 (post-Plan 113)
+
+Ф.1 (23e584b): Parser — named tuple syntax.
+- `TypeDeclKind::NamedTuple(Vec<NamedTupleField>)` — new AST variant
+- `is_named_tuple_decl()` — 1-token lookahead disambiguation
+- `parse_named_tuple_fields()` — `name type` pairs
+- `E_TUPLE_MIXED_FIELDS` — mixed positional+named declaration rejected at parse
+- 7 non-exhaustive match sites patched (emit_c, doc/collector, lints, types/mod)
+
+Ф.2 (b7f9b47): Type-checker enforcement.
+- `f3_check_member` extended: match on Record/NamedTuple/Newtype(Tuple) kinds
+- `E_TUPLE_POSITIONAL_ACCESS_ON_NAMED`: `.0` on named tuple → error
+- `E_TUPLE_NAMED_ACCESS_ON_POSITIONAL`: `.name` on positional tuple → error
+- 2 negative test fixtures pass: neg_t6_positional_access_on_named, neg_t6_named_access_on_positional
+
+Ф.3 (23e584b): Codegen — named tuple C struct + field access.
+- `NovaTuple_<Name>` C struct (distinct from `_NovaTuple_...` positional + `Nova_X*` records)
+- `emit_named_tuple_type()` — emits typedef + struct + registers schema + type_alias
+- `is_value_type()` extended — NovaTuple_* prefix → value type (no pointer)
+- `emit_call()` intercept — named tuple constructor → C compound literal
+- `infer_expr_c_type()` extended — constructor call returns NovaTuple_* type
+- `receiver_c_type()` extended — named tuple method receiver is value type
+- t1 (basic construct+access), t2 (Vec3+Color+positional anon), t3 (dot/scale/add methods) PASS
+
+Ф.4 (36f0e58): Spec amends D32/D52/D123 + D215 NEW.
+- D52: named tuple form + allocation contract note + parser disambiguation update
+- D32: explicit value/reference type taxonomy table
+- D123: Plan 59 Ф.7.4 rejection → REOPENED (Plan 120, corrected reasoning)
+- D215 NEW: full spec section (syntax, grammar, codegen, use cases, anti-patterns)
+
+Ф.5 (this entry): Docs + logs + close.
+- docs/value-vs-reference.md: explicit stack/heap allocation guide
+- 5/5 plan120 test fixtures PASS (3 positive + 2 negative)
+
+Open followup markers:
+- [M-120-positional-fallback]: .0/.1 access on named tuples (V1 = Option B: forbid)
+- [M-120-named-positional-mix]: mixed positional+named in single tuple decl
+- [M-120-stack-arrays]: stack-allocated fixed-size arrays [3]Vec3
+
+Acceptance criteria status:
+- A1 ✓ Parser accepts named tuple decl `type X(name1 T1, name2 T2)`
+- A2 ✓ Parser rejects mixed fields → E_TUPLE_MIXED_FIELDS
+- A3 ✓ Construction with named args `X(name: val, ...)` works
+- A6 ✓ Field access by name `.name` works on named tuple
+- A7 ✓ Cross-access errors (E_TUPLE_POSITIONAL_ACCESS_ON_NAMED, E_TUPLE_NAMED_ACCESS_ON_POSITIONAL)
+- A8 ✓ Codegen identical to positional (named tuple = zero-cost C struct)
+- A9 ✓ D-blocks D52/D32/D123 amended; D215 NEW promoted in active
+- A10 ✓ Plan 59 Ф.7.4 rejection withdrawn with corrected reasoning
+- A12 ✓ docs/value-vs-reference.md explicit stack/heap distinction
+- A4/A5: T3.2 (positional args on named tuple) + NEG-T4 series deferred → [M-120-positional-construct-check]
+- A11: full nova test pending (final verification)

@@ -2944,7 +2944,17 @@ impl Parser {
                 let variants = self.parse_sum_variants()?;
                 TypeDeclKind::Sum(variants)
             }
-            // type Name OtherType — newtype
+            // Plan 120 (D215): named tuple `type Point(x f64, y f64)` vs
+            // positional tuple `type Point(f64, f64)` — disambiguate here.
+            // Lookahead: after `(`, if IDENT followed by type-starting token
+            // → named tuple. Otherwise delegate to parse_type() as before.
+            TokenKind::LParen if self.is_named_tuple_decl() => {
+                self.bump(); // consume `(`
+                let fields = self.parse_named_tuple_fields()?;
+                self.expect(&TokenKind::RParen)?;
+                TypeDeclKind::NamedTuple(fields)
+            }
+            // type Name OtherType — newtype (includes positional tuple `type X(T, U)`)
             _ => {
                 let ty = self.parse_type()?;
                 TypeDeclKind::Newtype(ty)
@@ -3000,6 +3010,85 @@ impl Parser {
             consume: consume_marker,
             impl_protocols,
         })
+    }
+
+    /// Plan 120 (D215): lookahead to detect named tuple field pattern.
+    /// Returns true if tokens[pos] = IDENT and tokens[pos+1] = type-start.
+    /// This is called when we're positioned AT `(` in type decl.
+    /// tokens[pos] = `(`, tokens[pos+1] = first token inside parens.
+    fn is_named_tuple_decl(&self) -> bool {
+        // tokens[pos] = `(` (current), tokens[pos+1] = first in parens
+        let first = &self.peek_at(1).kind;
+        let second = &self.peek_at(2).kind;
+        // Named field: IDENT followed by a type-starting token (not `,` not `)`)
+        matches!(first, TokenKind::Ident(_))
+            && matches!(second,
+                TokenKind::Ident(_)
+                | TokenKind::LBracket
+                | TokenKind::KwFn
+                | TokenKind::KwRo
+            )
+    }
+
+    /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
+    /// Called after consuming `(`. Stops before `)`.
+    fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
+        let mut fields: Vec<NamedTupleField> = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RParen) {
+                break;
+            }
+            let field_start = self.peek().span;
+            // Expect IDENT (field name)
+            if !matches!(self.peek().kind, TokenKind::Ident(_)) {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_MIXED_FIELDS] tuple fields must be all named (`name type`) \
+                         or all positional (bare `type`); expected field name (identifier), \
+                         got `{}`",
+                        self.peek().kind.name()
+                    ),
+                    sp,
+                ));
+            }
+            // After the IDENT, must be a type-start; otherwise this is a positional
+            // field smuggled in after named fields (mixed).
+            if !matches!(self.peek_at(1).kind,
+                TokenKind::Ident(_)
+                | TokenKind::LBracket
+                | TokenKind::KwFn
+                | TokenKind::KwRo
+            ) {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_MIXED_FIELDS] tuple fields must be all named (`name type`) \
+                         or all positional (bare `type`); field `{}` lacks a type annotation \
+                         (looks like a bare positional type mixed with named fields)",
+                        if let TokenKind::Ident(n) = &self.peek().kind { n } else { "?" }
+                    ),
+                    sp,
+                ));
+            }
+            let (name, _) = self.parse_ident()?;
+            let ty = self.parse_type()?;
+            let span = field_start.merge(ty.span());
+            fields.push(NamedTupleField { name, ty, span });
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        if fields.is_empty() {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_NAMED_TUPLE_EMPTY] named tuple must have at least one field; \
+                 use `type X` (unit/empty-sum) for parameterless types",
+                sp,
+            ));
+        }
+        Ok(fields)
     }
 
     /// Plan 114.4.1 (D200): расширено возвращать tuple

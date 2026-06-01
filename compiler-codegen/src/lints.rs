@@ -439,6 +439,12 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                             collect_tr(e, out);
                         }
                     }
+                    // Plan 120 (D215): collect type refs from named tuple fields.
+                    TypeDeclKind::NamedTuple(fields) => {
+                        for f in fields {
+                            collect_tr(&f.ty, out);
+                        }
+                    }
                     TypeDeclKind::Newtype(tr) | TypeDeclKind::Alias(tr) => {
                         collect_tr(tr, out)
                     }

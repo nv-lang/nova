@@ -8304,6 +8304,10 @@ impl CEmitter {
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
             TypeDeclKind::Protocol { .. } => {}
+            // Plan 120 (D215): named tuple — value-type struct with named fields.
+            TypeDeclKind::NamedTuple(fields) => {
+                self.emit_named_tuple_type(&t.name, fields)?;
+            }
             // Plan 62.D.bis (D126): unreachable — early-return on top
             // of emit_type_decl уже отфильтровал Opaque kind. Branch
             // present для exhaustiveness; semantically meaningful no-op.
@@ -8545,6 +8549,29 @@ impl CEmitter {
         self.line("};");
         self.line("");
         self.record_schemas.insert(name.to_string(), schema);
+        Ok(())
+    }
+
+    /// Plan 120 (D215): emit a named-tuple type as a value-type C struct.
+    /// `type Point(x f64, y f64)` → `typedef struct NovaTuple_Point { double x; double y; } NovaTuple_Point;`
+    /// Registered in `type_aliases` so `type_ref_to_c(Named{Point})` returns `NovaTuple_Point` (no pointer).
+    fn emit_named_tuple_type(&mut self, name: &str, fields: &[NamedTupleField]) -> Result<(), String> {
+        self.line(&format!("typedef struct NovaTuple_{0} NovaTuple_{0};", name));
+        self.line(&format!("struct NovaTuple_{} {{", name));
+        self.indent += 1;
+        let mut schema = HashMap::new();
+        for f in fields {
+            let ty_c = self.type_ref_to_c(&f.ty)?;
+            schema.insert(f.name.clone(), ty_c.clone());
+            let mangled = Self::mangle_field_name(&f.name);
+            self.line(&format!("{} {};", ty_c, mangled));
+        }
+        self.indent -= 1;
+        self.line("};");
+        self.line("");
+        self.record_schemas.insert(name.to_string(), schema);
+        // Value type: Named{Point} → "NovaTuple_Point" (no pointer, like type alias).
+        self.type_aliases.insert(name.to_string(), format!("NovaTuple_{}", name));
         Ok(())
     }
 
@@ -9140,6 +9167,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // не префиксуем повторно "Nova_" — просто добавляем `*`.
                 if other.starts_with("NovaArray_") {
                     return format!("{}*", other);
+                }
+                // Plan 120 (D215): named tuple receiver — value type, no pointer.
+                if let Some(c_ty) = self.type_aliases.get(other) {
+                    if c_ty.starts_with("NovaTuple_") {
+                        return c_ty.clone();
+                    }
                 }
                 format!("Nova_{}*", other)
             }
@@ -17035,6 +17068,28 @@ _cp++; \
                 let code_val = self.emit_expr(args[0].expr())?;
                 let msg_val = self.emit_expr(args[1].expr())?;
                 return Ok(format!("(nv_exit({}, {}), (nova_int)0LL)", code_val, msg_val));
+            }
+            // Plan 120 (D215): named tuple constructor `Point(x: 1.0, y: 2.0)`.
+            // type_aliases maps "Point" → "NovaTuple_Point"; emit compound literal.
+            if let Some(c_ty) = self.type_aliases.get(name.as_str()).cloned() {
+                if c_ty.starts_with("NovaTuple_") {
+                    let mut field_inits = Vec::new();
+                    for a in args {
+                        match a {
+                            CallArg::Named { name: field_name, value } => {
+                                let v = self.emit_expr(value)?;
+                                let mangled = Self::mangle_field_name(field_name);
+                                field_inits.push(format!(".{} = {}", mangled, v));
+                            }
+                            CallArg::Item(e) => {
+                                let v = self.emit_expr(e)?;
+                                field_inits.push(v);
+                            }
+                            CallArg::Spread(_) => {}
+                        }
+                    }
+                    return Ok(format!("(({}){{{}}})", c_ty, field_inits.join(", ")));
+                }
             }
         }
 
@@ -25618,6 +25673,10 @@ _cp++; \
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
             return true;
         }
+        // Plan 120 (D215): named tuples are value types (stack-allocated structs).
+        if ty.starts_with("NovaTuple_") && !ty.ends_with('*') {
+            return true;
+        }
         matches!(ty,
             "nova_int" | "nova_f64" | "nova_f32" | "nova_bool" |
             "nova_str" | "nova_unit" | "nova_byte" |
@@ -26581,6 +26640,12 @@ _cp++; \
                     // `pred fn(int) -> bool` инфер'ится как nova_int.
                     if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
                         return ret_ty.clone();
+                    }
+                    // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
+                    if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
+                        if c_ty.starts_with("NovaTuple_") {
+                            return c_ty.clone();
+                        }
                     }
                     "nova_int".into()
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {

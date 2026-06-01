@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_CONSTRUCT_ARITY_MISMATCH
+module plan120.neg_t8_arity_mismatch_named
+type Vec3(x f64, y f64, z f64)
+test "should not compile: arity mismatch on named tuple" {
+    ro v Vec3 = Vec3(x: 1.0, y: 2.0)
+    assert(v.x == 1.0)
+}

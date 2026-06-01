@@ -1731,6 +1731,12 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(e, &gs, errors);
                 }
             }
+            // Plan 120 (D215): walk field types in named tuple declarations.
+            TypeDeclKind::NamedTuple(fields) => {
+                for f in fields {
+                    self.walk_typeref(&f.ty, &gs, errors);
+                }
+            }
             TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Opaque => {}
@@ -2397,6 +2403,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_check_call(
                     func, args, trailing.is_some(), gs, scope, errors,
                 );
+                self.f5_check_tuple_construct(func, args, e.span, scope, errors);
             }
             ExprKind::TurboFish { base, .. } => {
                 self.f1_expr(base, gs, scope, errors)
@@ -2948,85 +2955,236 @@ impl<'a> TypeCheckCtx<'a> {
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         let Some(td) = self.types.get(tname) else { return; };
-        let TypeDeclKind::Record(fields) = &td.kind else { return; };
-        // embed (`use`) проксирует поля/методы вложенного типа — резолв
-        // слишком сложен для надёжной проверки, пропускаем такой тип.
-        if fields.iter().any(|f| f.is_embed) {
-            return;
-        }
-        if fields.iter().any(|f| f.name == name) {
-            return;
-        }
-        // Метод? Имена операторных методов могут храниться с ведущим `@`.
-        let has_method = self.method_table.get(tname).map_or(false, |m| {
-            m.keys().any(|k| k.trim_start_matches('@') == name)
-        });
-        if has_method {
-            return;
-        }
-        // `into` / `try_into` синтезируются компилятором из `From` /
-        // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
-        // для любого типа-источника конверсии.
-        if matches!(name, "into" | "try_into") {
-            return;
-        }
-        // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
-        // generalized protocol default-body satisfiability. Replaces prior
-        // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
-        // `name` with `default_body`, and for each checks whether the body's
-        // top-level method/free-fn calls resolve for T (i.e. T provides every
-        // method/overload referenced by the body). If at least one protocol
-        // is satisfied → accept the bare call; codegen general synthesizer
-        // emits the concrete Nova_<T>_method_<name> on first use.
-        //
-        // Acceptance precision: a body's `@compare(other)` requires T to have
-        // `@compare`; `sb.append(str.from(@))` requires `str.from(T)` overload
-        // OR `T.@into() -> str`. Patterns recognized by a small AST inspector
-        // (collect_resolved_method_refs) — covers stdlib protocols (Equatable,
-        // Printable, Comparable.equals via coercion). Bodies using unsupported
-        // patterns are skipped (treated as not synthesizable) — type-checker
-        // returns E7320 normally.
-        if self.protocol_method_satisfiable_for(tname, name) {
-            return;
-        }
-        // Plan 114.4.1 (D200): assoc const detection — если `name` matches
-        // одну из assoc consts типа, hint user про namespace access.
-        let is_assoc_const = self.types.get(tname)
-            .map(|td| td.assoc_consts.iter().any(|ac| ac.name == name))
-            .unwrap_or(false);
-        if is_assoc_const {
-            errors.push(
-                Diagnostic::new(
+        match &td.kind {
+            TypeDeclKind::Record(fields) => {
+                // embed (`use`) проксирует поля/методы вложенного типа — резолв
+                // слишком сложен для надёжной проверки, пропускаем такой тип.
+                if fields.iter().any(|f| f.is_embed) {
+                    return;
+                }
+                if fields.iter().any(|f| f.name == name) {
+                    return;
+                }
+                // Метод? Имена операторных методов могут храниться с ведущим `@`.
+                let has_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_method {
+                    return;
+                }
+                // `into` / `try_into` синтезируются компилятором из `From` /
+                // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
+                // для любого типа-источника конверсии.
+                if matches!(name, "into" | "try_into") {
+                    return;
+                }
+                // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+                // generalized protocol default-body satisfiability. Replaces prior
+                // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
+                // `name` with `default_body`, and for each checks whether the body's
+                // top-level method/free-fn calls resolve for T (i.e. T provides every
+                // method/overload referenced by the body). If at least one protocol
+                // is satisfied → accept the bare call; codegen general synthesizer
+                // emits the concrete Nova_<T>_method_<name> on first use.
+                if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                // Plan 114.4.1 (D200): assoc const detection — если `name` matches
+                // одну из assoc consts типа, hint user про namespace access.
+                let is_assoc_const = self.types.get(tname)
+                    .map(|td| td.assoc_consts.iter().any(|ac| ac.name == name))
+                    .unwrap_or(false);
+                if is_assoc_const {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_CONST_INSTANCE_ACCESS] cannot access associated \
+                             constant `{}.{}` через instance — assoc constants \
+                             live на type-level (zero storage в instance). \
+                             Use `{}.{}` namespace access instead (Plan 114.4.1 D200).",
+                            tname, name, tname, name,
+                        ),
+                        span,
+                    ));
+                    return;
+                }
+                let avail: Vec<&str> =
+                    fields.iter().map(|f| f.name.as_str()).collect();
+                let mut diag = Diagnostic::new(
                     format!(
-                        "[E_CONST_INSTANCE_ACCESS] cannot access associated \
-                         constant `{}.{}` через instance — assoc constants \
-                         live на type-level (zero storage в instance). \
-                         Use `{}.{}` namespace access instead (Plan 114.4.1 D200).",
-                        tname, name, tname, name,
+                        "[E7320] no field or method `{}` on type `{}`",
+                        name, tname,
                     ),
                     span,
-                )
-            );
-            return;
+                );
+                if !avail.is_empty() {
+                    diag = diag.with_note(format!(
+                        "`{}` has field{}: {}",
+                        tname,
+                        if avail.len() == 1 { "" } else { "s" },
+                        avail.join(", "),
+                    ));
+                }
+                errors.push(diag);
+            }
+            TypeDeclKind::NamedTuple(fields) => {
+                // Plan 120 (D215): named tuple — named access only (Q120-positional-access-on-named Option B)
+                if name.chars().all(|c| c.is_ascii_digit()) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_POSITIONAL_ACCESS_ON_NAMED] \
+                             named tuple `{}` does not support positional field access `.{}`; \
+                             use named access `.field_name` instead",
+                            tname, name
+                        ),
+                        span,
+                    ));
+                    return;
+                }
+                if fields.iter().any(|f| f.name == name) {
+                    return;
+                }
+                let has_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_method {
+                    return;
+                }
+                if matches!(name, "into" | "try_into") {
+                    return;
+                }
+                if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                let avail: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+                let mut diag = Diagnostic::new(
+                    format!(
+                        "[E7320] no field or method `{}` on named tuple `{}`",
+                        name, tname,
+                    ),
+                    span,
+                );
+                if !avail.is_empty() {
+                    diag = diag.with_note(format!(
+                        "`{}` has field{}: {}",
+                        tname,
+                        if avail.len() == 1 { "" } else { "s" },
+                        avail.join(", "),
+                    ));
+                }
+                errors.push(diag);
+            }
+            TypeDeclKind::Newtype(TypeRef::Tuple(_, _)) => {
+                // Positional tuple: named field access (`.x`) is invalid
+                if !name.chars().all(|c| c.is_ascii_digit()) {
+                    let has_method = self.method_table.get(tname).map_or(false, |m| {
+                        m.keys().any(|k| k.trim_start_matches('@') == name)
+                    });
+                    if has_method {
+                        return;
+                    }
+                    if matches!(name, "into" | "try_into") {
+                        return;
+                    }
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_NAMED_ACCESS_ON_POSITIONAL] \
+                             positional tuple `{}` does not have named fields; \
+                             use positional access `.0`, `.1`, … instead",
+                            tname
+                        ),
+                        span,
+                    ));
+                }
+            }
+            _ => {} // Sum, Effect, Protocol, Alias, Opaque, etc. — conservative, skip
         }
-        let avail: Vec<&str> =
-            fields.iter().map(|f| f.name.as_str()).collect();
-        let mut diag = Diagnostic::new(
-            format!(
-                "[E7320] no field or method `{}` on type `{}`",
-                name, tname,
-            ),
-            span,
-        );
-        if !avail.is_empty() {
-            diag = diag.with_note(format!(
-                "`{}` has field{}: {}",
-                tname,
-                if avail.len() == 1 { "" } else { "s" },
-                avail.join(", "),
-            ));
+    }
+
+    /// Plan 120 (D215): validate tuple construction calls.
+    /// Checks direct construction `TypeName(args...)` where TypeName is a
+    /// known named or positional tuple type.  Conservative: skips if callee is
+    /// not a plain Ident or if the name is shadowed by a local variable.
+    fn f5_check_tuple_construct(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Ident(name) = &func.kind else { return; };
+        if scope.contains_key(name.as_str()) { return; }
+        let Some(td) = self.types.get(name.as_str()) else { return; };
+        match &td.kind {
+            TypeDeclKind::NamedTuple(fields) => {
+                for arg in args {
+                    if let CallArg::Named { name: field_name, .. } = arg {
+                        if !fields.iter().any(|f| &f.name == field_name) {
+                            let avail: Vec<&str> =
+                                fields.iter().map(|f| f.name.as_str()).collect();
+                            let mut diag = Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_UNKNOWN_FIELD] named tuple `{}` has no field `{}`",
+                                    name, field_name,
+                                ),
+                                span,
+                            );
+                            if !avail.is_empty() {
+                                diag = diag.with_note(format!(
+                                    "`{}` has field{}: {}",
+                                    name,
+                                    if avail.len() == 1 { "" } else { "s" },
+                                    avail.join(", "),
+                                ));
+                            }
+                            errors.push(diag);
+                        }
+                    }
+                }
+                if args.len() != fields.len() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] named tuple `{}` expects \
+                             {} argument{} but {} {} provided",
+                            name,
+                            fields.len(),
+                            if fields.len() == 1 { "" } else { "s" },
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                        span,
+                    ));
+                }
+            }
+            TypeDeclKind::Newtype(TypeRef::Tuple(elem_types, _)) => {
+                if args.iter().any(|a| matches!(a, CallArg::Named { .. })) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL] \
+                             positional tuple `{}` does not accept named arguments; \
+                             pass values by position instead",
+                            name,
+                        ),
+                        span,
+                    ));
+                }
+                if args.len() != elem_types.len() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] positional tuple `{}` expects \
+                             {} argument{} but {} {} provided",
+                            name,
+                            elem_types.len(),
+                            if elem_types.len() == 1 { "" } else { "s" },
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                        span,
+                    ));
+                }
+            }
+            _ => {}
         }
-        errors.push(diag);
     }
 
     /// Ф.4: имя типа в value-позиции (`let c = Foo`, `Foo + 1`) → E7330.
@@ -3616,7 +3774,9 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                             // Concrete data-типы — сравниваются по имени.
                             TypeDeclKind::Record(_)
-                            | TypeDeclKind::Sum(_) => {
+                            | TypeDeclKind::Sum(_)
+                            // Plan 120 (D215): named tuples are concrete value types.
+                            | TypeDeclKind::NamedTuple(_) => {
                                 TyCat::Named(other.to_string())
                             }
                             // protocol/effect — структурная конформность
@@ -3849,6 +4009,7 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
                 TypeDeclKind::Alias(_) => "alias",
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
+                TypeDeclKind::NamedTuple(_) => "named_tuple",
             };
             type_kinds.insert(t.name.clone(), kind_name);
             if let TypeDeclKind::Protocol { methods, embeds } = &t.kind {
@@ -4055,6 +4216,7 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
                 TypeDeclKind::Alias(_) => "alias",
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
+                TypeDeclKind::NamedTuple(_) => "named_tuple",
             };
             type_kinds.insert(t.name.clone(), kind_name);
         }
