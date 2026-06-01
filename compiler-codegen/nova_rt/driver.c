@@ -316,6 +316,12 @@ static void _nova_driver_handle_cancel_scope(NovaFiberQueue* scope) {
 
         st = next;
     }
+
+    /* Plan 83.11 §12.31: signal completion. Main thread spins on this counter
+     * in nova_supervised_run_impl before returning, so the scope's stack frame
+     * stays alive until we are done dereferencing its fields. RELEASE
+     * synchronizes-with the main's ACQUIRE load. */
+    (void)__atomic_fetch_sub(&scope->pending_driver_jobs, 1, __ATOMIC_RELEASE);
 }
 
 /* CANCEL_TIMER job handler — driver thread. Single-timer cancel (для
