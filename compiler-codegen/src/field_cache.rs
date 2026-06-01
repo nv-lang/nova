@@ -196,6 +196,12 @@ fn register_items(items: &[Item], reg: &mut FieldRegistry) {
 
 fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     let Some(recv) = &f.receiver else { return };
+    // Static-method receiver (`fn Type.method(...)`) — no `@self`,
+    // hence no `@field` access in body. Skip explicitly (analysis
+    // would return empty regardless, но это сэкономит walks).
+    if recv.kind == ReceiverKind::Static {
+        return;
+    }
     let type_name = &recv.type_name;
     if reg.skip_types.contains(type_name) {
         return;
@@ -204,6 +210,11 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
         return;
     };
     if fields.is_empty() {
+        return;
+    }
+    // External fn — no body. cache_fn returns в body match'е, но
+    // лишний контекст setup'а лучше пропустить заранее.
+    if f.is_external {
         return;
     }
 
@@ -2244,5 +2255,324 @@ fn rewrite_trailing(t: &mut Trailing, replace_map: &HashMap<String, String>) {
             // Trailing closure scopes — same logic as ClosureLight/Full
             // (different scope, no cache local). Skip recursion.
         }
+    }
+}
+
+// ===== AST-LEVEL UNIT TESTS (semantic equivalence verification §8.1 method #1) =====
+//
+// V1 verification methods 2-5 (codegen diff / runtime / property /
+// regression) — через nova_tests/plan123_1/*.nv fixtures.
+// Тесты в этом mod — направленные на edge cases которые сложно или
+// дорого тестировать through runtime (e.g. closure capture detection,
+// protocol receiver skip).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse;
+
+    fn run_pass(src: &str, cfg: FieldCacheConfig) -> Module {
+        let mut module = parse(src).expect("parse");
+        cache_module(&mut module, &cfg);
+        module
+    }
+
+    fn find_fn<'a>(module: &'a Module, name: &str) -> &'a FnDecl {
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if f.name == name {
+                    return f;
+                }
+            }
+        }
+        panic!("fn {} not found", name);
+    }
+
+    fn count_prefix_lets(f: &FnDecl) -> usize {
+        if let FnBody::Block(b) = &f.body {
+            b.stmts.iter().take_while(|s| {
+                matches!(s, Stmt::Let(d)
+                    if matches!(&d.pattern, Pattern::Ident { name, .. } if name.starts_with("_at_")))
+            }).count()
+        } else {
+            0
+        }
+    }
+
+    /// A1.1: ro field accessed 2+ раз → cache emitted.
+    #[test]
+    fn ro_two_reads_cached() {
+        let src = r#"
+module test.ro_cached
+type Point { ro x int, ro y int }
+fn Point @sum_squared() -> int { @x * @x + @y * @y }
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "sum_squared");
+        assert_eq!(count_prefix_lets(f), 2, "expected 2 ro caches");
+    }
+
+    /// A1.9: single read below threshold → no cache.
+    #[test]
+    fn ro_single_read_not_cached() {
+        let src = r#"
+module test.single
+type Point { ro x int }
+fn Point @just_x() -> int { @x }
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "just_x");
+        assert_eq!(count_prefix_lets(f), 0);
+    }
+
+    /// A1.5: escape hatch — threshold=0 disables полностью.
+    #[test]
+    fn escape_hatch_threshold_zero() {
+        let src = r#"
+module test.escape
+type P { ro x int }
+fn P @three() -> int { @x + @x + @x }
+"#;
+        let cfg = FieldCacheConfig::from_threshold(0, 8);
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "three");
+        assert_eq!(count_prefix_lets(f), 0);
+    }
+
+    /// A1.3: closure capturing @F → caching skipped for F (conservative).
+    #[test]
+    fn closure_capture_skips_cache() {
+        let src = r#"
+module test.closure
+type Box { ro v int }
+fn Box @sum() -> int {
+    ro f = || @v + 1
+    @v + @v + @v
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "sum");
+        // @v accessed 3 times in main body — would be cached if not
+        // for closure. Closure body refs @v → captured → skipped.
+        assert_eq!(count_prefix_lets(f), 0,
+            "closure captures @v → cache skipped");
+    }
+
+    /// A1.4: ANY call invalidates mut cache prefix region.
+    #[test]
+    fn mut_call_boundary_no_cache_after() {
+        let src = r#"
+module test.mut_call
+type C { mut v int }
+fn C.foo(x int) -> int { x + 1 }
+fn C @work() -> int {
+    ro y = @v + @v
+    ro _ = C.foo(0)
+    @v + @v
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "work");
+        // Prefix region: first 2 reads of @v before Call boundary →
+        // qualify (count=2 ≥ threshold). Mut cache emitted.
+        assert_eq!(count_prefix_lets(f), 1,
+            "mut field cached for prefix region");
+    }
+
+    /// A1.4 corollary: write boundary truncates mut prefix region.
+    #[test]
+    fn mut_write_boundary_truncates() {
+        let src = r#"
+module test.mut_write
+type C { mut v int }
+fn C mut @work() -> int {
+    ro a = @v + @v
+    @v = a
+    @v + @v
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "work");
+        // 2 reads BEFORE write → cached.
+        assert_eq!(count_prefix_lets(f), 1);
+    }
+
+    /// Protocol receiver — skipped полностью (vtable dispatch).
+    #[test]
+    fn protocol_receiver_skipped() {
+        let src = r#"
+module test.proto
+type Counted protocol { count() -> int }
+fn Counted @double_count() -> int { @count() + @count() }
+"#;
+        // Note: protocol method body using @count() syntactically valid
+        // в parser; type-checker может reject это. Здесь мы только
+        // проверяем что pass не падает и не emit'ит cache для protocol
+        // receiver. parse() может fail если syntax не allowed — в
+        // таком случае test skip'нется.
+        let parsed = parse(src);
+        if let Ok(mut module) = parsed {
+            cache_module(&mut module, &FieldCacheConfig::default());
+            let f = find_fn(&module, "double_count");
+            assert_eq!(count_prefix_lets(f), 0,
+                "protocol receiver — no caching");
+        }
+    }
+
+    /// Effect receiver — skipped.
+    #[test]
+    fn effect_receiver_skipped() {
+        let src = r#"
+module test.effect
+type Log effect { write(s str) -> () }
+"#;
+        // Just verify no panic — effect types have no record fields,
+        // so registry put в skip_types.
+        let mut m = parse(src).expect("parse");
+        cache_module(&mut m, &FieldCacheConfig::default());
+    }
+
+    /// Name collision: user has `_at_x` local → suffix appended.
+    #[test]
+    fn name_collision_suffix() {
+        let src = r#"
+module test.collision
+type Box { ro x int }
+fn Box @collide() -> int {
+    ro _at_x = 99
+    @x + @x + _at_x
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "collide");
+        // Cache local should be `_at_x_1` (suffix added due to user-
+        // local collision).
+        if let FnBody::Block(b) = &f.body {
+            // Find the first generated cache let (must be _at_x_1
+            // because user's _at_x = 99 occupies the bare name).
+            let cache_let_name = b.stmts.iter().find_map(|s| {
+                if let Stmt::Let(d) = s {
+                    if let Pattern::Ident { name, .. } = &d.pattern {
+                        // Must come from `@x` access — value should be
+                        // Member{SelfAccess, "x"}.
+                        if let ExprKind::Member { obj, name: fname } = &d.value.kind {
+                            if matches!(obj.kind, ExprKind::SelfAccess) && fname == "x" {
+                                return Some(name.clone());
+                            }
+                        }
+                    }
+                }
+                None
+            });
+            assert_eq!(cache_let_name.as_deref(), Some("_at_x_1"),
+                "expected suffix due to collision");
+        } else {
+            panic!("expected Block body");
+        }
+    }
+
+    /// Max-per-fn cap — limited number of caches per fn.
+    #[test]
+    fn max_per_fn_cap() {
+        let src = r#"
+module test.cap
+type Many { ro a int, ro b int, ro c int, ro d int }
+fn Many @sum() -> int {
+    @a + @a + @b + @b + @c + @c + @d + @d
+}
+"#;
+        let cfg = FieldCacheConfig {
+            enabled: true,
+            threshold: 2,
+            max_per_fn: 2,
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "sum");
+        // Only 2 caches (max_per_fn=2). Fields sorted by name → a,b.
+        assert_eq!(count_prefix_lets(f), 2);
+    }
+
+    /// Static-method receiver — no @field access → skip.
+    #[test]
+    fn static_receiver_skipped() {
+        let src = r#"
+module test.static_recv
+type P { ro x int }
+fn P.constant() -> int { 42 }
+"#;
+        // Static methods have no @field reads anyway; verify pass
+        // doesn't panic + doesn't emit cache.
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "constant");
+        assert_eq!(count_prefix_lets(f), 0);
+    }
+
+    /// Free function (no receiver) — skipped entirely.
+    #[test]
+    fn free_fn_skipped() {
+        let src = r#"
+module test.free
+type P { ro x int }
+fn helper(p int) -> int { p + 1 }
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "helper");
+        assert_eq!(count_prefix_lets(f), 0);
+    }
+
+    /// Sum-type receiver — skipped (no direct record fields).
+    #[test]
+    fn sum_type_receiver_skipped() {
+        let src = r#"
+module test.sum
+type Maybe | None | Some(int)
+fn Maybe @is_some() -> bool {
+    match @ {
+        Some(_) => true,
+        None => false,
+    }
+}
+"#;
+        // Test mostly for non-panic. Sum types are in skip_types.
+        let parsed = parse(src);
+        if let Ok(mut module) = parsed {
+            cache_module(&mut module, &FieldCacheConfig::default());
+        }
+    }
+
+    /// Determinism: same input → same output (sorted field iteration).
+    #[test]
+    fn deterministic_ordering() {
+        let src = r#"
+module test.deterministic
+type P { ro b int, ro a int, ro c int }
+fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
+"#;
+        let m1 = run_pass(src, FieldCacheConfig::default());
+        let m2 = run_pass(src, FieldCacheConfig::default());
+        let f1 = find_fn(&m1, "sum");
+        let f2 = find_fn(&m2, "sum");
+        // Compare cache local order in prefix.
+        let names1: Vec<String> = if let FnBody::Block(b) = &f1.body {
+            b.stmts.iter().take_while(|s| matches!(s, Stmt::Let(_))).filter_map(|s| {
+                if let Stmt::Let(d) = s {
+                    if let Pattern::Ident { name, .. } = &d.pattern {
+                        Some(name.clone())
+                    } else { None }
+                } else { None }
+            }).collect()
+        } else { vec![] };
+        let names2: Vec<String> = if let FnBody::Block(b) = &f2.body {
+            b.stmts.iter().take_while(|s| matches!(s, Stmt::Let(_))).filter_map(|s| {
+                if let Stmt::Let(d) = s {
+                    if let Pattern::Ident { name, .. } = &d.pattern {
+                        Some(name.clone())
+                    } else { None }
+                } else { None }
+            }).collect()
+        } else { vec![] };
+        assert_eq!(names1, names2);
+        // Verify alphabetical: _at_a, _at_b, _at_c.
+        assert_eq!(names1, vec!["_at_a", "_at_b", "_at_c"]);
     }
 }
