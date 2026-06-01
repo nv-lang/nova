@@ -2239,7 +2239,16 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ### Session 2 grand-final accomplishments
 
-**Total: 20 worktree commits + 2 nova-private commits.**
+**Total: 25 worktree commits + 2 nova-private commits.**
+
+**Latest additions (post-grand-closure):**
+- `6d6a18a2ab7` — NEG-T1.13: E_INVALID_POINTER_MODIFIER для `*const T`
+  (parser diagnostic с Rust-developer migration hint)
+- `f7c628ffa7d` — Ф.9 partial: ffi-cookbook Plan 118 preview section
+- `c2fb3f3b9cb` — NEG: t1_neg_pointer_incomplete + t1_neg_ro_in_expression_pos
+- `1634b0cb598` — NEG-T1.15: t1_neg_duplicate_modifier (`*ro mut T` rejected)
+
+**plan118: 13/0 PASS** (9 positive + 4 NEG) after additions.
 
 **Phases: Ф.0 + Ф.1 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.4 partial + Ф.5
 partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
