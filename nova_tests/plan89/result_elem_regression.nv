@@ -6,7 +6,7 @@
 // деболкситься НЕ должен. Этот тест ловит ошибочное расширение фикса
 // на pointer-семантику sum'ов.
 
-module nova_tests.plan89.result_elem_regression
+module plan89.result_elem_regression
 
 
 test "for-in []Result + if ro Ok" {

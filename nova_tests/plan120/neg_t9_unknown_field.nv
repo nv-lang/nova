@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_UNKNOWN_FIELD
+module plan120.neg_t9_unknown_field
+type Vec3(x f64, y f64, z f64)
+test "should not compile: unknown field on named tuple construct" {
+    ro v Vec3 = Vec3(x: 1.0, y: 2.0, w: 3.0)
+    assert(v.x == 1.0)
+}

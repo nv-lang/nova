@@ -3,7 +3,7 @@
 // Plan 103.9 (D174) — Negative: Permit not released at scope exit.
 // `consume p = sem.acquire()` without p.release() → D133.
 
-module nova_tests.plan103_9.permit_leak_neg
+module plan103_9.permit_leak_neg
 
 test "forget Permit release → compile error" {
     mut sem = Semaphore.new(2)

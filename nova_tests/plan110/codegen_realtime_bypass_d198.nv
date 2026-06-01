@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.2.4 (D198): #realtime fn bypasses 3-level timeout resolution.
+// Codegen emits hardcoded 0 instead of nv_resolve_exit_timeout_ms()
+// call. Verifies compile path для realtime cleanup contexts.
+
+module plan110.codegen_realtime_bypass_d198
+
+type RtRes {
+    ro id int
+}
+
+fn RtRes.new(id int) -> RtRes => { id }
+fn RtRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+// #realtime fn — codegen emits Duration.zero timeout (no suspend).
+#realtime
+fn use_rt() -> int {
+    mut result = 0
+    consume r = RtRes.new(7) {
+        result = r.id
+    }
+    result
+}
+
+test "Plan 110.2.4 (D198): #realtime consume scope bypass" {
+    assert(use_rt() == 7)
+}

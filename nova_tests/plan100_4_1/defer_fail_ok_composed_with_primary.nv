@@ -2,7 +2,7 @@
 // pass. Runtime composite chain — partial в bootstrap (Plan 100.4.4
 // followup для full composite materialize'а).
 
-module nova_tests.plan100_4_1.defer_fail_ok_composed_with_primary
+module plan100_4_1.defer_fail_ok_composed_with_primary
 
 type WorkErr { msg str }
 type CommitErr { msg str }

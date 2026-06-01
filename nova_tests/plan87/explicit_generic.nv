@@ -11,7 +11,7 @@
 // именно фичу Plan 87 (parse + type-check + итерация аннотированного
 // generic-элемента).
 
-module nova_tests.plan87.explicit_generic
+module plan87.explicit_generic
 
 
 test "for s str in string array" {

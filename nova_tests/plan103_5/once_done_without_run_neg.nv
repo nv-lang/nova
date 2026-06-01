@@ -3,7 +3,7 @@
 // Nova_Once_method_done checks state != RUNNING and calls NOVA_ONCE_REPANIC,
 // which goes through nova_throw (works in Dev and Release builds).
 
-module nova_tests.plan103_5.once_done_without_run_neg
+module plan103_5.once_done_without_run_neg
 
 // EXPECT_COMPILE_WARNING W_ONCE_RUN_DONE_DEPRECATED
 // EXPECT_RUNTIME_PANIC Once.done() called without a matching run() returning true

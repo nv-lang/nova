@@ -1,7 +1,7 @@
 // Plan 96 Ф.5 — позитив: Plan 90 bulk-ops (copy_from/compare/fill)
 // работают на view (view это []T → методы доступны автоматически).
 
-module nova_tests.plan96.slice_plan90_interop
+module plan96.slice_plan90_interop
 
 test "copy_from on slice view" {
     ro src = [10, 20, 30, 40, 50]

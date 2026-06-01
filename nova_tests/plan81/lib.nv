@@ -2,7 +2,7 @@
 // `hidden` — не `export`, не должна быть видна импортирующему модулю.
 // `public_value` — `export`, видна. Вызывает `hidden` внутри (codegen completeness).
 
-module nova_tests.plan81.lib
+module plan81.lib
 
 fn hidden() -> int {
     42

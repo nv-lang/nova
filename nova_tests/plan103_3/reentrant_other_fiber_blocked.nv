@@ -2,7 +2,7 @@
 //
 // EXPECT_TIMEOUT_MS 15000
 
-module nova_tests.plan103_3.reentrant_other_fiber_blocked
+module plan103_3.reentrant_other_fiber_blocked
 
 test "other fiber blocked until owner fully releases" {
     mut rm = ReentrantMutex.new()

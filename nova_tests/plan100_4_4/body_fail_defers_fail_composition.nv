@@ -2,7 +2,7 @@
 // + D161 composition. Compile pass + runtime catches primary через outer
 // handler (composite chain handled runtime-side).
 
-module nova_tests.plan100_4_4.body_fail_defers_fail_composition
+module plan100_4_4.body_fail_defers_fail_composition
 
 type WorkErr { msg str }
 type Err1 { msg str }

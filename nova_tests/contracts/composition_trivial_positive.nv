@@ -1,4 +1,4 @@
-module nova_tests.contracts.composition_trivial_positive
+module contracts.composition_trivial_positive
 
 #pure
 fn always_true(x int) -> bool => true

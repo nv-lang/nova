@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_CONSUME_KEYWORD_MISSING
 
-module nova_tests.plan73.binding_let_consume_obligated_ctor_neg
+module plan73.binding_let_consume_obligated_ctor_neg
 
 type Token consume { val int }
 

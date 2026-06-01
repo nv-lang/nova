@@ -1,7 +1,7 @@
 // Plan 87 Ф.4.4 — for-in с явным типом элемента: пользовательский
 // Iterable[T] и `parallel for`.
 
-module nova_tests.plan87.explicit_custom_iter
+module plan87.explicit_custom_iter
 
 
 type CountDown { mut current int }

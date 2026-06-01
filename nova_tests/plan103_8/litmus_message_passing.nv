@@ -13,7 +13,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.litmus_message_passing
+module plan103_8.litmus_message_passing
 
 test "MP litmus: Acquire/Release -- payload visible after flag observed" {
     ro n_iters   = 5

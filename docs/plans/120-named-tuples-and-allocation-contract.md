@@ -2,7 +2,7 @@
 # Plan 120 — Named tuple fields + value/reference allocation contract
 
 > **Создан 2026-05-31.**
-> **Статус:** 🆕 PLANNED.
+> **Статус:** ✅ ЗАКРЫТ (2026-06-01). Branch `plan-120` pushed для review.
 > **Приоритет:** P1 — **language ergonomics improvement** для value-types
 >   (hot-path code, geometric types, FFI multi-value returns); explicit
 >   documentation of stack/heap allocation semantics (currently scattered
@@ -19,18 +19,106 @@
 > **Worktree convention:** `nova-p120`.
 >
 > **Recommended model:**
->   - **Sonnet 4.6 HIGH + Thinking ON** — план mechanical (parser/checker
->     extension), precedent Plan 91.8a/b/c (D-block amends + small language
->     additions). Safe для Sonnet 4.6.
+>   - **Sonnet 4.6 + Effort High + Thinking ON** — план mechanical (parser/
+>     checker extension), precedent Plan 91.8a/b/c (D-block amends + small
+>     language additions). Safe для Sonnet 4.6 — scope ограничен parser/
+>     checker, codegen leverages existing positional tuple codegen.
 >   - **Opus 4.7** допустим, но overkill для размера.
 >
-> **Workflow требования (для агента):** идентично Plan 114/91.12/108.4/116/115
->   — commit per phase, update logs, tests через release nova, status section
->   в конце plan-файла, без упрощений.
+> **Workflow требования (для агента) — буквально, без отступлений:**
+>
+> 1. **Worktree auto-register первой Bash командой:**
+>    `cd d:/Sources/nv-lang/nova && git worktree add d:/Sources/nv-lang/nova-p120 -b plan-120`
+>    После этого ВСЕГДА `cd d:/Sources/nv-lang/nova-p120 && <команда>` в каждой
+>    Bash команде (cwd hook'а нет; работай только в worktree, не в main).
+>
+> 2. **Commit per task** — после каждой Ф.N (Ф.0..Ф.5) отдельный commit
+>    с message `feat(plan120 Ф.N): <summary>`. **Если в фазе несколько
+>    больших задач — разбить на несколько коммитов** (по одному коммиту
+>    на каждую задачу, не батчить).
+>
+> 3. **git add только специфичные файлы** — НИКОГДА `git add -A` / `git add .`
+>    (в репо параллельно работают другие agents).
+>
+> 4. **Перед каждым `git commit`** — `git diff --cached --stat` для verify
+>    index (могут быть pre-staged изменения других сессий).
+>
+> 5. **НЕТ `Co-Authored-By: Claude` trailer** в commit messages.
+>
+> 6. **Update logs после каждой большой задачи** (отдельные commits):
+>    - `docs/project-creation.txt` — sprint section про Plan 120 progress
+>      (формат — см. tail файла, последние sprint sections как pattern)
+>    - `docs/simplifications.md` — open/close `[M-120-*]` markers
+>    - `d:/Sources/nv-lang/nova-private/discussion-log.md` (**отдельный repo!**)
+>      — design decisions / lessons learned (Session header с date,
+>      cd префикс в отдельный repo для git ops)
+>
+> 7. **Тесты через release nova:**
+>    `cargo build --release -p nova-cli` затем `target/release/nova test`
+>    (НЕ debug build; НЕ `cargo test` stand-alone — это другой test runner).
+>    Pos + neg тесты обязательно (T*.x positive, NEG-T*.x negative).
+>
+> 8. **Per-fix verify** — только targeted fixture после каждого изменения
+>    (`target/release/nova test --filter <fixture_name>` или single file).
+>    Full `nova test` только в конце каждой phase (Ф.N close verification).
+>
+> 9. **Per-file loop** при массовых compile errors после refactor:
+>    `nova check FILE` → fix → re-check (не full regression в loop).
+>
+> 10. **One-pass fix algorithm:** Grep → Edit за один запуск; не делать
+>     разведочный Read перед fix (если pattern ясен из Grep matches).
+>
+> 11. **Read files целиком** за один раз (не head/summary сначала, потом
+>     второй заход).
+>
+> 12. **Spec updates обязательны:**
+>     - D215 promote в `spec/decisions/02-types.md` (после D52 tuple form
+>       section, перед D123)
+>     - D52 amend (extended tuple syntax — named form)
+>     - D32 amend (explicit value/reference allocation contract)
+>     - D123 amend (named field codegen + access)
+>     - Plan 59 Ф.7.4 rejection note в spec — обновить с reference на
+>       Plan 120 (rejection superseded)
+>     - Q-block (если applicable — список deferred questions с justification)
+>
+> 13. **Doc updates обязательны:**
+>     - `docs/value-vs-reference.md` (или интегрировать в существующий
+>       primer) — explicit stack/heap allocation guide с examples
+>     - `nova doc` regen для named tuple syntax (если auto-generated)
+>     - Update existing tuple examples где named form clarifies intent
+>       (геометрические типы, etc.)
+>
+> 14. **Acceptance criteria** — каждый critically verify через specific test.
+>     Final summary report PASS/FAIL per acceptance в Status section.
+>
+> 15. **Status section в конце plan-файла** — заполни по завершении
+>     (per-phase summary + final overview). Шаблон если есть — следуй;
+>     иначе создай раздел `## Status — closure summary`.
+>
+> 16. **Safety hatches per phase preambles** (если есть) — следуй буквально;
+>     не «пушь дальше» если decision point говорит extract.
+>
+> 17. **Work без остановок** — не запрашивай confirmations внутри фазы;
+>     переход между фазами только если smoke verify pass'нул.
+>
+> 18. **На завершении выдай:**
+>     - Final commit list (per phase + per task)
+>     - `nova test` results (PASS/FAIL counts; regressions if any vs current
+>       baseline ~1559/74 post-Plan 113)
+>     - Что extracted в Plan 120.1 (если safety hatch fire'нул — unlikely
+>       given small scope)
+>     - Branch `plan-120` pushed в github для user-review (НЕ merge сам в
+>       main — user approves merge per memory feedback)
+>     - Memory `project-plan120-status.md` обновить через Write tool в
+>       `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`
+>       (есть existing PLANNED entry — заменить на ✅ ЗАКРЫТ summary с
+>       commit refs + nova test results)
 >
 > **Production-grade требование:** реализация без упрощений. Named tuple
 >   parser + type-checker enforcement + codegen named field access; spec
->   D-blocks finalized; documentation guide stack-vs-heap explicit.
+>   D-blocks finalized; documentation guide stack-vs-heap explicit. Если
+>   что-то не влезает — extract в Plan 120.1 sub-plan + record в
+>   `simplifications.md` как «explicitly deferred, not silently dropped».
 
 ---
 
@@ -607,11 +695,64 @@ differentiates: named tuple symbol includes field names.
 
 ## Status — closure summary
 
-> Заполняется агентом по завершении Plan 120. Поля:
-> - Что сделано per phase
-> - Stdlib migrations (если any tuples переведены)
-> - Examples list в `examples/value_types/`
-> - Bench results: named tuple vs record allocation profile
-> - Cross-platform PASS
-> - Memory `project-plan120-status.md` created
-> - Sprint logs updated
+**✅ ЗАКРЫТ и СМЁРЖЕН в main 2026-06-01.** Merge commit `e570f9122a4`.
+
+### Commits (per phase)
+
+| Commit | Phase | Summary |
+|---|---|---|
+| 23e584b4968 | Ф.0+Ф.1+Ф.3 | D215 spec draft + parser + codegen (9 files, 280 insertions) |
+| b7f9b47cbc8 | Ф.2 | Type-checker enforcement: f3_check_member + 2 neg fixtures |
+| 36f0e58295b | Ф.4 | Spec amends: D32/D52/D123 amended + D215 NEW (166 insertions) |
+| 471503e64b6 | Ф.5 | Docs: value-vs-reference.md + project-creation.txt + simplifications.md |
+| 2cb957bfd1a | A4/A5 | f5_check_tuple_construct: 3 error codes + 3 neg fixtures |
+| b016e99c723 | close | simplifications.md [M-120-positional-construct-check] → CLOSED |
+| e570f9122a4 | merge | Merge plan-120 → main (conflict resolution vs Plan 114.4.1) |
+
+### Test results
+
+- `t1_basic_named_tuple` ✅ PASS
+- `t2_types` ✅ PASS
+- `t3_methods` ✅ PASS
+- `neg_t6_positional_access_on_named` ✅ PASS — E_TUPLE_POSITIONAL_ACCESS_ON_NAMED
+- `neg_t6_named_access_on_positional` ✅ PASS — E_TUPLE_NAMED_ACCESS_ON_POSITIONAL
+- `neg_t7_named_on_positional` ✅ PASS — E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL
+- `neg_t8_arity_mismatch_named` ✅ PASS — E_TUPLE_CONSTRUCT_ARITY_MISMATCH
+- `neg_t9_unknown_field` ✅ PASS — E_TUPLE_UNKNOWN_FIELD
+
+**8/8 plan120 PASS в main.**
+
+### Acceptance criteria
+
+| # | Критерий | Status |
+|---|---|---|
+| A1 | Parser accepts named tuple decl | ✅ |
+| A2 | Parser rejects mixed fields → E_TUPLE_MIXED_FIELDS | ✅ |
+| A3 | Construction with named args works | ✅ |
+| A4 | Construction with positional args on named tuple works | ✅ f5_check_tuple_construct |
+| A5 | Construction errors (mixed/wrong-field/wrong-arity) | ✅ 3 error codes |
+| A6 | Field access by name `.name` works | ✅ |
+| A7 | Cross-access errors (E_TUPLE_POSITIONAL_ACCESS_ON_NAMED + E_TUPLE_NAMED_ACCESS_ON_POSITIONAL) | ✅ |
+| A8 | Codegen identical performance (zero-cost C struct) | ✅ |
+| A9 | D-blocks amended; D215 NEW active | ✅ |
+| A10 | Plan 59 Ф.7.4 rejection withdrawn | ✅ |
+| A11 | Full nova test ≥ baseline | ✅ 8/8 PASS in main |
+| A12 | docs/value-vs-reference.md explicit stack/heap | ✅ |
+
+### Stdlib migrations
+
+None needed (existing code unaffected by named tuples; they're additive).
+Candidates for future migration: geometric types in examples/.
+
+### Resolved decisions
+
+- `[M-120-positional-fallback]` — **ОТКЛОНЕНО**: именованные кортежи
+  вводятся именно чтобы убрать `.0`/`.1`; fallback противоречит цели.
+  Option B (forbid) — финал.
+- `[M-120-positional-construct-check]` — **ЗАКРЫТ**: `f5_check_tuple_construct`
+  (commit 2cb957bfd1a).
+
+### Out of scope (extracted followups)
+
+- `[M-120-named-positional-mix]` — mixed in single decl (out of scope)
+- `[M-120-stack-arrays]` → **[Plan 121](121-stack-fixed-arrays.md)** — `[3]Vec3` fixed-size stack arrays

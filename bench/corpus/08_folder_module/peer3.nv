@@ -1,4 +1,4 @@
-module corpus.folder_demo
+module 08_folder_module.peer3
 
 fn helper3() -> int => 3
 fn combine() -> int => helper1() + helper2() + helper3()

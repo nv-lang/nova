@@ -3,7 +3,7 @@
 
 // EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
 
-module nova_tests.plan108_1.nomut_stringbuilder_append_neg
+module plan108_1.nomut_stringbuilder_append_neg
 
 fn add_suffix(sb StringBuilder) -> int {
     sb.append("!")             // ✗ E_PARAM_NOT_MUT — нет `mut`

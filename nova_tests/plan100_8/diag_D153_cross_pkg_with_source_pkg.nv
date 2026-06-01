@@ -8,7 +8,7 @@
 // This validates that the note context is present in D133 diagnostics
 // (per D166 §D3 context format).
 
-module nova_tests.plan100_8.diag_D153_cross_pkg_with_source_pkg
+module plan100_8.diag_D153_cross_pkg_with_source_pkg
 
 // Connection type — declared consume in this same file (simulates cross-pkg pattern).
 type Connection consume { id int; addr str }

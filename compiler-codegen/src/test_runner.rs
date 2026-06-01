@@ -2251,8 +2251,15 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
     // объявляют тот же `module X`. Если да — manifest check использует
     // is_folder_module=true (parent.X rule).
     let is_folder_module = is_folder_module_peer(path);
-    manifest::check_module_path_with_kind(path, &module.name, is_folder_module)
-        .map_err(|s| s.to_string())?;
+    // Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning instead of
+    // silent acceptance для rev-1 legacy declarations.
+    match manifest::check_module_path_with_kind(path, &module.name, is_folder_module) {
+        Ok(manifest::ModulePathCheck::Rev3) => {}
+        Ok(manifest::ModulePathCheck::Rev1Deprecated(msg)) => {
+            eprintln!("warning: {}", msg);
+        }
+        Err(s) => return Err(s.to_string()),
+    }
 
     // Plan 35 R31 (unified pipeline): cross-file resolve через inline
     // expansion. Тот же codepath что в `nova-cli::cmd_build`. Без этого

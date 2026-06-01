@@ -3,7 +3,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_6.realtime_fence_ok
+module plan103_6.realtime_fence_ok
 
 #realtime fn _rt_fence_seqcst(a mut AtomicI64) {
     fence(SeqCst)

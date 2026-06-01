@@ -1,5 +1,5 @@
 // Plan 57: string micro-benches.
-module bench.micro
+module micro.strings
 
 bench "string concat n=100" {
     measure {

@@ -4,7 +4,7 @@
 // «did you mean …» по расстоянию Левенштейна (`suggest_module_name`).
 // `bound_libb` — опечатка реального `bound_lib`.
 
-module nova_tests.plan81.module_typo_neg
+module plan81.module_typo_neg
 
 import nova_tests.plan81.bound_libb.{Showable}
 

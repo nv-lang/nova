@@ -1,7 +1,7 @@
 // Plan 101.3 (D145 Ред. 5) — positive: multi-bound `[T A + B]`.
 // T должен удовлетворить оба protocol'а (conjunction).
 
-module nova_tests.plan101_3.multibound_two
+module plan101_3.multibound_two
 
 
 type Show_ protocol {

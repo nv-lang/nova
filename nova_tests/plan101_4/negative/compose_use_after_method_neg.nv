@@ -3,7 +3,7 @@
 //
 // EXPECT_COMPILE_ERROR: [E_PROTOCOL_EMBED_AFTER_METHOD]
 
-module nova_tests.plan101_4.negative.compose_use_after_method_neg
+module negative.compose_use_after_method_neg
 
 type SomeProto protocol {
     other() -> int

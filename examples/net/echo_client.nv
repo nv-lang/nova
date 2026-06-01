@@ -10,7 +10,7 @@
 //
 // See also: examples/net/echo_server.nv
 
-module examples.net.echo_client
+module net.echo_client
 
 const PORT u16 = 7777
 const MESSAGE str = "hello from nova"

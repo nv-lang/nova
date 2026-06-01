@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.impl_optin_test
+module plan91_8a_2.impl_optin_test
 
 // Plan 91.9 (D186): `#impl(P + Q + ...)` opt-in annotation.
 // Verifies:

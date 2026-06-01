@@ -7,7 +7,7 @@
 //
 // EXPECT_TIMEOUT_MS 120000
 
-module nova_tests.plan103_4.barrier_n_party_rendezvous
+module plan103_4.barrier_n_party_rendezvous
 
 import std.time.duration
 

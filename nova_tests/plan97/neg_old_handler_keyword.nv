@@ -4,7 +4,7 @@
 // При попытке использовать старую форму парсер выдаёт diagnostic
 // с указанием миграционного пути.
 
-module nova_tests.plan97.neg_old_handler_keyword
+module plan97.neg_old_handler_keyword
 
 
 type Logger effect {

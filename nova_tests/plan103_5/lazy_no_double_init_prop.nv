@@ -3,7 +3,7 @@
 // Sequential property tests; concurrent Lazy stress is in once_stress_mn_4workers
 // (Lazy test block: 16 fibers × 100 force() calls passes there).
 
-module nova_tests.plan103_5.lazy_no_double_init_prop
+module plan103_5.lazy_no_double_init_prop
 
 test "Lazy.force: init runs exactly once across N sequential calls" {
     mut init_count = AtomicInt.new(0)

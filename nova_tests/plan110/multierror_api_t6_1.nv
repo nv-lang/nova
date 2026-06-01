@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.4.1 T6.1 (D193): MultiError @walk + @find_first_panic API
+// type-check + compile verification.
+
+module plan110.multierror_api_t6_1
+
+fn make_multi_error() -> MultiError {
+    MultiError {
+        primary: "primary-error",
+        suppressed: [
+            "suppressed-1",
+            "panic: middle-panic",
+            "suppressed-3",
+        ],
+    }
+}
+
+fn test_walk_returns_chain() -> int {
+    ro me = make_multi_error()
+    ro chain = me.walk()
+    // Walk returns []str с primary + suppressed in LIFO order.
+    chain.len()
+}
+
+fn test_find_first_panic_locates() -> bool {
+    ro me = make_multi_error()
+    match me.find_first_panic() {
+        Some(msg) => msg.starts_with("panic:")
+        None => false
+    }
+}
+
+test "Plan 110.4.1 T6.1: MultiError @walk count" {
+    // primary + 3 suppressed = 4 entries.
+    assert(test_walk_returns_chain() == 4)
+}
+
+test "Plan 110.4.1 T6.1: MultiError @find_first_panic detects" {
+    assert(test_find_first_panic_locates())
+}

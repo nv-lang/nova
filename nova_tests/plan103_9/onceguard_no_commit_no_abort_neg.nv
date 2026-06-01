@@ -3,7 +3,7 @@
 // Plan 103.9 (D174) — Negative: OnceGuard not consumed (no commit, no abort).
 // consume g = once.make_guard(); no commit/abort → E_NOT_CONSUMED (D133).
 
-module nova_tests.plan103_9.onceguard_no_commit_no_abort_neg
+module plan103_9.onceguard_no_commit_no_abort_neg
 
 test "onceguard not consumed → D133 compile error" {
     mut once = Once.new()

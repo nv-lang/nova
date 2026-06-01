@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.printable_fmt_synthesis_test
+module plan91_8a_2.printable_fmt_synthesis_test
 
 // Plan 91.8a.2 followup: Printable.fmt default body synthesis (MVP).
 // Type T без explicit @fmt но с `fn str.from(T) -> str` overload или

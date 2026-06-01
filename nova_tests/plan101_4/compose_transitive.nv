@@ -2,7 +2,7 @@
 // `Closeable use Reader` + `Reader` has @read. Flatten должен поднять
 // `read` через цепочку Closeable → Reader.
 
-module nova_tests.plan101_4.compose_transitive
+module plan101_4.compose_transitive
 
 
 type Reader protocol {

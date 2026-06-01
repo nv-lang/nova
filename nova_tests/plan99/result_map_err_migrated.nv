@@ -1,6 +1,6 @@
 // Plan 99.3 Ф.6: Result.map_err[F] на Nova-body. Mono per (T, E, F).
 
-module nova_tests.plan99.result_map_err_migrated
+module plan99.result_map_err_migrated
 
 test "Result[int, str].map_err — Err str→int (len)" {
     ro r Result[int, str] = Err("boom")

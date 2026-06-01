@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR: [E_UNDECLARED_TYPEVAR_IN_RECEIVER]
 
-module nova_tests.plan101_1.negative.undeclared_typevar_array_neg
+module negative.undeclared_typevar_array_neg
 
 fn []T @bad_method(x T) -> T => x
 

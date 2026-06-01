@@ -11,7 +11,7 @@
 // NOVA_TUPLE_TYPEDEF_<mangled>` guards (Plan 115 D214) → Nova skip'ает
 // redefinition при emit'е.
 
-module nova_tests.plan115.t2_external_fn_tuple_ok
+module plan115.t2_external_fn_tuple_ok
 
 external fn p115_make_pair(seed int) -> (ptr, int)
 external fn p115_make_triple(seed int) -> (ptr, int, int)

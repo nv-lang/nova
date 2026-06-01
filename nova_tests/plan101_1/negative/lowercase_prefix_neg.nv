@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR
 
-module nova_tests.plan101_1.negative.lowercase_prefix_neg
+module negative.lowercase_prefix_neg
 
 fn[t] t @bad() -> t => @
 

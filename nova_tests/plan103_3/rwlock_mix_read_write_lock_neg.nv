@@ -2,7 +2,7 @@
 //
 // EXPECT_RUNTIME_PANIC RwLock.write_unlock() called without a matching write()
 
-module nova_tests.plan103_3.rwlock_mix_read_write_lock_neg
+module plan103_3.rwlock_mix_read_write_lock_neg
 
 test "read then write_unlock panics" {
     mut rw = RwLock.new()

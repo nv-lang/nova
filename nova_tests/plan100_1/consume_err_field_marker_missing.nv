@@ -6,7 +6,7 @@
 // Field-тип `Transaction` — consume-тип, но field declared без
 // `consume` qualifier. Compiler enforces: tip ↔ marker consistency.
 
-module nova_tests.plan100_1.consume_err_field_marker_missing
+module plan100_1.consume_err_field_marker_missing
 
 type Transaction consume {
     id int,

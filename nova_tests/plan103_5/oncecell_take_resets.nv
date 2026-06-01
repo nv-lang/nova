@@ -1,6 +1,6 @@
 // Plan 103.5 — OnceCell[T].take: atomic remove; cell re-initializable.
 
-module nova_tests.plan103_5.oncecell_take_resets
+module plan103_5.oncecell_take_resets
 
 test "OnceCell.take: returns Some then None" {
     mut cell = OnceCell[int].new()

@@ -9,7 +9,7 @@
 // CI step с vcpkg sqlite3 install + replace `sqlite_mini_ffi.h` →
 // `sqlite3_ffi.h` per docs/ffi-cookbook.md §«Example 1».
 
-module nova_tests.plan115.t4_sqlite_e2e_ok
+module plan115.t4_sqlite_e2e_ok
 
 // ─── Typed handles via D52 tuple newtype (Plan 115 D214) ──────────
 type Db(ptr)

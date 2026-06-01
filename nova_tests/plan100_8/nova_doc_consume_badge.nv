@@ -13,7 +13,7 @@
 // This fixture verifies: consume type compiles clean (doc rendering is validated
 // by the doc renderer unit test / integration, not by nova test).
 
-module nova_tests.plan100_8.nova_doc_consume_badge
+module plan100_8.nova_doc_consume_badge
 
 /// A file handle — must be closed before scope exit.
 ///

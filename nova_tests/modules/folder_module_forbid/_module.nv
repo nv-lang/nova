@@ -4,4 +4,4 @@
 // Plan 42.16: attrs ПЕРЕД module.
 
 #forbid Net
-module modules.folder_module_forbid
+module folder_module_forbid._module

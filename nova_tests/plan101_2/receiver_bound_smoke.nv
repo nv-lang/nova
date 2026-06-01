@@ -6,7 +6,7 @@
 // Это reuse Plan 15 D72 bound-checker для receiver-prefix позиции;
 // формального ввода новой машины нет — только cross-cut verification.
 
-module nova_tests.plan101_2.receiver_bound_smoke
+module plan101_2.receiver_bound_smoke
 
 
 type Showable_ protocol {

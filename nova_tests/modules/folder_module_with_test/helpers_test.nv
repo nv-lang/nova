@@ -6,7 +6,7 @@
 // `_test`-peer реально компилируется в test mode (раньше `_use.nv`
 // дёргал только production-peer `double`, inclusion не проверялся).
 
-module modules.folder_module_with_test
+module folder_module_with_test.helpers_test
 
 // Test helper. Использует production-peer `double` — заодно доказывает
 // cross-peer доступ test-peer'а к production-peer'у в test mode.

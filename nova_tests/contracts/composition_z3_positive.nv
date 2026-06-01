@@ -1,5 +1,5 @@
 // REQUIRES_SMT_BACKEND z3
-module nova_tests.contracts.composition_z3_positive
+module contracts.composition_z3_positive
 
 #pure
 fn is_positive(x int) -> bool => x > 0

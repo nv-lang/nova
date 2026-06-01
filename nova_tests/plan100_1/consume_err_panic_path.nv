@@ -8,7 +8,7 @@
 // D162), но без defer'а — голый panic-path требует, чтобы tx был
 // Consumed до panic'а.
 
-module nova_tests.plan100_1.consume_err_panic_path
+module plan100_1.consume_err_panic_path
 
 type Transaction consume {
     id int,

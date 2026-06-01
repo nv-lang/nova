@@ -1,6 +1,6 @@
 // Plan 108.3 (D36 amend): `for consume x in iter` — consume implies mut.
 
-module nova_tests.plan108_3.for_consume_implies_mut_ok
+module plan108_3.for_consume_implies_mut_ok
 
 type Token consume { val int }
 fn Token.new(v int) -> Token => { val: v }

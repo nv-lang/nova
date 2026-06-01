@@ -5,7 +5,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.concurrency.sync_rwlock_guards
+module concurrency.sync_rwlock_guards
 
 test "ReadGuard: explicit unlock after read" {
     mut rw = RwLock.new()

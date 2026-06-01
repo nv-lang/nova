@@ -2,7 +2,7 @@
 // Container type в B содержит consume field типа из A.
 // Оба типа должны быть consume (D4 transitivity).
 
-module nova_tests.plan100_6.cross_pkg_consume_with_field_ok
+module plan100_6.cross_pkg_consume_with_field_ok
 
 // "Package A" — resource type:
 export type Lock consume {

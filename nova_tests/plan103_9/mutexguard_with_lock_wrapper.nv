@@ -3,7 +3,7 @@
 // Explicit guard usage: consume g = mu.lock(); defer g.unlock().
 // Tests the guard-based locking pattern that underpins with_lock.
 
-module nova_tests.plan103_9.mutexguard_with_lock_wrapper
+module plan103_9.mutexguard_with_lock_wrapper
 
 test "explicit guard: lock, work, unlock" {
     mut mu = Mutex.new()

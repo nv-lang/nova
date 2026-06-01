@@ -920,6 +920,554 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => {}
             }
         }
+
+        // Plan 110.1.2 (D188 / D196): Consumable[E] protocol satisfaction check.
+        // Для каждого `Stmt::ConsumeScope { init, body, .. }` проверяем что
+        // init expr resolves к типу с `on_exit` method. Если нет — emit
+        // [D188-not-consumable] error. Полный D196 (Result/Option unwrap,
+        // conditional, method chain — non-trivial type inference) — staged
+        // delivery: дополнительные формы validated в Plan 110.1.3 / 110.1.4.
+        for item in &module.items {
+            match item {
+                Item::Fn(fd) => {
+                    match &fd.body {
+                        FnBody::Block(b) => self.check_consume_scopes_in_block(b, errors),
+                        FnBody::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
+                        FnBody::External => {}
+                    }
+                }
+                Item::Test(t) => self.check_consume_scopes_in_block(&t.body, errors),
+                Item::Bench(b) => {
+                    for s in &b.setup { self.check_consume_scopes_in_stmt(s, errors); }
+                    self.check_consume_scopes_in_block(&b.measure_body, errors);
+                    for s in &b.teardown { self.check_consume_scopes_in_stmt(s, errors); }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Plan 110.1.2 (D188): recursive walk через Block для ConsumeScope check.
+    fn check_consume_scopes_in_block(&self, b: &Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.check_consume_scopes_in_stmt(s, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_consume_scopes_in_expr(t, errors);
+        }
+    }
+
+    /// Plan 110.1.2 (D188): walk Stmt looking for ConsumeScope, recurse into children.
+    fn check_consume_scopes_in_stmt(&self, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::ConsumeScope { binding, init, body, .. } => {
+                self.validate_consume_scope_init(init, errors);
+                // Plan 110.1.5 (D188 R2 enforcement at compile time):
+                // detect manual `binding.on_exit(...)` calls в body.
+                // Runtime exactly-once guard prevents double dispatch;
+                // здесь — compile-time gate чтобы избегать runtime panic.
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_consume_scopes_in_expr(init, errors);
+                self.check_consume_scopes_in_block(body, errors);
+            }
+            Stmt::Let(d) => self.check_consume_scopes_in_expr(&d.value, errors),
+            // Plan 114.4 Ф.2: scope-local const — walk value for nested ConsumeScope.
+            Stmt::Const(d) => self.check_consume_scopes_in_expr(&d.value, errors),
+            Stmt::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
+            Stmt::Assign { target, value, .. } => {
+                self.check_consume_scopes_in_expr(target, errors);
+                self.check_consume_scopes_in_expr(value, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.check_consume_scopes_in_expr(v, errors); }
+            }
+            Stmt::Throw { value, .. } => self.check_consume_scopes_in_expr(value, errors),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                self.check_consume_scopes_in_expr(body, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.check_consume_scopes_in_expr(expr, errors);
+            }
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. }
+            | Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+        }
+    }
+
+    /// Plan 110.1.2 (D188): walk Expr looking for nested ConsumeScope in
+    /// bodies (lambdas, blocks, if-then-else, match arms, etc).
+    fn check_consume_scopes_in_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_consume_scopes_in_block(b, errors),
+            ExprKind::If { cond, then, else_, .. } => {
+                self.check_consume_scopes_in_expr(cond, errors);
+                self.check_consume_scopes_in_block(then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.check_consume_scopes_in_block(b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_consume_scopes_in_expr(ei, errors),
+                    }
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.check_consume_scopes_in_expr(cond, errors);
+                self.check_consume_scopes_in_block(body, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.check_consume_scopes_in_expr(iter, errors);
+                self.check_consume_scopes_in_block(body, errors);
+            }
+            ExprKind::Loop { body, .. } => self.check_consume_scopes_in_block(body, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_consume_scopes_in_expr(func, errors);
+                for a in args {
+                    match a {
+                        crate::ast::CallArg::Item(e) | crate::ast::CallArg::Spread(e) => {
+                            self.check_consume_scopes_in_expr(e, errors);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ExprKind::Try(e) | ExprKind::Bang(e) => self.check_consume_scopes_in_expr(e, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.check_consume_scopes_in_expr(a, errors);
+                self.check_consume_scopes_in_expr(b, errors);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.check_consume_scopes_in_expr(left, errors);
+                self.check_consume_scopes_in_expr(right, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.check_consume_scopes_in_expr(operand, errors),
+            ExprKind::Member { obj, .. } => self.check_consume_scopes_in_expr(obj, errors),
+            // Lambda / closure bodies — separate scopes; walk their bodies too.
+            ExprKind::Lambda { body, .. } => self.check_consume_scopes_in_expr(body, errors),
+            _ => {}
+        }
+    }
+
+    /// Plan 110.1.2 (D188 / D196): validate init expression's type implements
+    /// Consumable. Uses простой heuristic для type inference (Type.method() →
+    /// return type; record literal → type; ?/!! → recurse). Полный inference
+    /// (method chain, conditional, generic) — staged delivery 110.1.3+.
+    fn validate_consume_scope_init(&self, init: &Expr, errors: &mut Vec<Diagnostic>) {
+        // Plan 110.1.3 (D196 form 5 — wrapped без unwrap): detect raw
+        // Option[T] / Result[T,_] returning expressions WITHOUT ?/!!
+        // unwrap. Emit specific D196-wrapped-init-needs-unwrap hint.
+        if let Some(wrapped) = self.detect_wrapped_init_typeref(init) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D196-wrapped-init-needs-unwrap] `consume X = expr {{ body }}` \
+                     init expr returns `{wrapped}[T, ...]` без unwrap. Required: \
+                     either `consume X = expr!! {{ body }}` (Option unwrap), \
+                     `consume X = expr? {{ body }}` (Result unwrap with Fail \
+                     propagation), or distinguish None case explicitly через \
+                     `if Some(X) = maybe_X() {{ consume X = X {{ ... }} }}`.",
+                    wrapped = wrapped
+                ),
+                init.span,
+            ));
+            return;
+        }
+        // Plan 110.1.3 (D196 form 3 — divergent conditional): if/match init
+        // with branches returning incompatible Consumable types.
+        if let Some((t1, t2)) = self.detect_divergent_consumable(init) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[D196-divergent-consumable] `consume X = if cond {{ ... }} \
+                     else {{ ... }} {{ body }}` branches return divergent \
+                     Consumable types: `{t1}` vs `{t2}`. Branches must return \
+                     compatible type. Extract в polymorphic wrapper type \
+                     или unify branches.",
+                    t1 = t1, t2 = t2
+                ),
+                init.span,
+            ));
+            return;
+        }
+        let Some(type_name) = self.infer_consume_init_type(init) else {
+            // Тип не выводится простыми heuristic'ами — staged delivery
+            // через codegen-gate D188-codegen-not-yet-implemented. Полное
+            // покрытие в Plan 110.1.4 / 110.1.3.
+            return;
+        };
+        // Special case: `never` (bottom-тип) — никогда не resolved init
+        // type, skip без ошибки.
+        if type_name == "never" || type_name == "Never" {
+            return;
+        }
+        // Look up on_exit method on the type.
+        let has_on_exit = self.method_table.get(&type_name)
+            .map(|methods| methods.contains_key("on_exit"))
+            .unwrap_or(false);
+        if !has_on_exit {
+            // Тип known? Если не known — это либо primitive (`int`/`str`)
+            // либо unresolved (caught by name resolution). Skip primitive
+            // случаи silently.
+            let is_known_type = self.types.contains_key(&type_name)
+                || self.method_table.contains_key(&type_name);
+            // Even for primitive types like `int`/`str` — нет on_exit → error.
+            // Но diagnostic должен быть полезный (suggest implement).
+            if is_known_type || self.method_table.contains_key(&type_name) {
+                let diag = Diagnostic::new(
+                    format!(
+                        "[D188-not-consumable] type `{name}` does not implement `Consumable[E]` \
+                         (method `on_exit` missing). \
+                         To use `consume X = expr {{ body }}` scope-block, type must declare:\n  \
+                         `fn {name} consume @on_exit(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`\n\
+                         where `E` is the cleanup-error type (or `never` for infallible — D194).\n\
+                         Alternative: use raw `consume X = expr` (D180 linear binding) without block.",
+                        name = type_name
+                    ),
+                    init.span,
+                ).with_note(format!(
+                    "Plan 110.6.1: see docs/idiom/consume-scope-cleanup.md \
+                     Q-consumable-protocol for decision tree + implementation template. \
+                     For infallible cleanup (Mutex/Sem/Lock) use `Consumable[never]` — \
+                     no Fail[E] effect (D194 hot-path eligible)."
+                ));
+                errors.push(diag);
+            }
+        } else {
+            // on_exit existsует — validate signature (Plan 110.1.2 §D188-malformed-on-exit).
+            // Минимальная проверка: первый param должен быть ScopeOutcome.
+            // Глубокая validation (Fail[E] check, return type ()) — 110.1.3.
+            self.validate_on_exit_signature(&type_name, init.span, errors);
+        }
+    }
+
+    /// Plan 110.1.2 / refine (D188-malformed-on-exit): on_exit signature check.
+    /// Verifies:
+    /// - Param[0] is `outcome ScopeOutcome`.
+    /// - Exactly 1 param (D188 protocol contract).
+    /// - Return type is `()` or absent (D188 protocol contract).
+    /// - Effects are either empty (Consumable[never]) or `Fail[E]` only
+    ///   (no other effects).
+    fn validate_on_exit_signature(&self, type_name: &str, init_span: Span, errors: &mut Vec<Diagnostic>) {
+        let Some(methods) = self.method_table.get(type_name) else { return; };
+        let Some(decls) = methods.get("on_exit") else { return; };
+        for decl in decls {
+            // Param[0] must be `outcome ScopeOutcome`.
+            let first_param_ok = decl.params.first()
+                .map(|p| matches!(&p.ty, TypeRef::Named { path, .. }
+                    if path.last().map_or(false, |s| s == "ScopeOutcome")))
+                .unwrap_or(false);
+            if !first_param_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` signature invalid: \
+                         first parameter must be `outcome ScopeOutcome` (D188 protocol contract). \
+                         Correct form: \
+                         `fn {tn} consume @on_exit(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`. \
+                         (Diagnostic emitted at `consume {{}}` use-site for context.)",
+                        tn = type_name
+                    ),
+                    init_span,
+                ));
+                continue;
+            }
+
+            // Exactly 1 param (D188 protocol contract).
+            if decl.params.len() != 1 {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` has {n} params; \
+                         protocol requires exactly 1 (`outcome ScopeOutcome`). \
+                         Remove extra parameters; resource state available via `@`.",
+                        tn = type_name, n = decl.params.len()
+                    ),
+                    init_span,
+                ));
+                continue;
+            }
+
+            // Return type strict check disabled bootstrap — `-> ()` имеет
+            // parser-specific TypeRef encoding не uniformly Tuple([]). Full
+            // return type / effects check после parser representation
+            // canonicalization ([M-110-on-exit-strict-sig]).
+            //
+            // Currently bootstrap: param count + first param ScopeOutcome
+            // enough for catching most malformed sigs.
+            let _ = decl.return_type.as_ref();
+            let _ = &decl.effects;
+        }
+    }
+
+    /// Plan 110.1.5 (D188 R2): detect manual `binding.on_exit(...)` calls
+    /// в ConsumeScope body. Auto on_exit dispatch happens at scope-exit;
+    /// manual call → double invocation → runtime panic (R2 exactly-once
+    /// violation). Compile-time gate preferred to runtime panic.
+    fn check_no_manual_on_exit_call_in_block(&self, binding: &str, b: &Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.check_no_manual_on_exit_call_in_stmt(binding, s, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_no_manual_on_exit_call_in_expr(binding, t, errors);
+        }
+    }
+
+    fn check_no_manual_on_exit_call_in_stmt(&self, binding: &str, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Let(d) => self.check_no_manual_on_exit_call_in_expr(binding, &d.value, errors),
+            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(binding, e, errors),
+            Stmt::Assign { target, value, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, target, errors);
+                self.check_no_manual_on_exit_call_in_expr(binding, value, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(binding, v, errors); }
+            }
+            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(binding, value, errors),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, body, errors);
+            }
+            Stmt::ConsumeScope { init, body, binding: inner_binding, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, init, errors);
+                // Nested consume scope с inner binding NEW — outer `binding`
+                // check still applies inside (если inner body references
+                // outer's binding manually — same violation).
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                // Дополнительно: recurse с inner binding (D197 re-entrance).
+                self.check_no_manual_on_exit_call_in_block(inner_binding, body, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, expr, errors);
+            }
+            _ => {}
+        }
+    }
+
+    fn check_no_manual_on_exit_call_in_expr(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        // Detect `binding.on_exit(...)` call: Call { func: Member { obj: Ident(binding), name: "on_exit" }, ... }
+        if let ExprKind::Call { func, .. } = &e.kind {
+            if let ExprKind::Member { obj, name, .. } = &func.kind {
+                if name == "on_exit" {
+                    if let ExprKind::Ident(obj_name) = &obj.kind {
+                        if obj_name == binding {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[D188-r2-manual-on-exit] `{binding}.on_exit(...)` cannot be \
+                                     called manually from inside `consume {binding} = ... {{ body }}` \
+                                     scope-block body. Auto on_exit dispatch на scope exit \
+                                     гарантирует exactly-once invariant (D188 R2). Manual call \
+                                     → double invocation → runtime panic. \
+                                     Remove the explicit call; scope-exit will dispatch on_exit \
+                                     с appropriate ScopeOutcome value.",
+                                    binding = binding
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        // Recurse into children regardless.
+        self.check_no_manual_on_exit_recurse(binding, e, errors);
+    }
+
+    fn check_no_manual_on_exit_recurse(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, func, errors);
+                for a in args {
+                    match a {
+                        crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
+                            self.check_no_manual_on_exit_call_in_expr(binding, ae, errors);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ExprKind::If { cond, then, else_, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(binding, then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(binding, ei, errors),
+                    }
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, iter, errors);
+                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+            }
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.check_no_manual_on_exit_call_in_expr(binding, a, errors);
+                self.check_no_manual_on_exit_call_in_expr(binding, b, errors);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(binding, left, errors);
+                self.check_no_manual_on_exit_call_in_expr(binding, right, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(binding, operand, errors),
+            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(binding, obj, errors),
+            _ => {}
+        }
+    }
+
+    /// Plan 110.1.2 / 110.1.3 (D196): infer the resulting type name from
+    /// `consume X = INIT { body }` init expression. Heuristics:
+    /// - `Type.method(args)` → look up method's return type via method_table.
+    /// - `Type { fields }` → type name directly.
+    /// - `expr?` / `expr!!` → если inner returns `Result[T,E]` / `Option[T]`,
+    ///   unwrap до T (D196 form 2: Result/Option unwrap).
+    /// - `expr as Type` → cast target.
+    /// - Other forms → None (staged delivery — full inference 110.1.4).
+    fn infer_consume_init_type(&self, e: &Expr) -> Option<String> {
+        self.infer_consume_init_typeref(e)
+            .as_ref()
+            .and_then(Self::typeref_to_name)
+    }
+
+    /// Extract final type name from TypeRef::Named (last path segment).
+    fn typeref_to_name(t: &TypeRef) -> Option<String> {
+        if let TypeRef::Named { path, .. } = t {
+            path.last().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Plan 110.1.3 (D196 form 5): detect if init returns raw `Option[T]`
+    /// or `Result[T,_]` без unwrap operator. Returns wrapper name если
+    /// detected, None если init is direct (unwrapped) or non-wrapped type.
+    fn detect_wrapped_init_typeref(&self, init: &Expr) -> Option<String> {
+        use crate::ast::ExprKind;
+        // `?` and `!!` are unwrap operators — they're EXPLICITLY safe.
+        if matches!(init.kind, ExprKind::Try(_) | ExprKind::Bang(_)) {
+            return None;
+        }
+        // For direct Call (e.g., `try_new()` without `?`), inspect return type.
+        if let ExprKind::Call { func, .. } = &init.kind {
+            if let ExprKind::Path(parts) = &func.kind {
+                if parts.len() >= 2 {
+                    let type_name = &parts[parts.len() - 2];
+                    let method_name = &parts[parts.len() - 1];
+                    if let Some(methods) = self.method_table.get(type_name) {
+                        if let Some(decls) = methods.get(method_name) {
+                            if let Some(decl) = decls.first() {
+                                if let Some(TypeRef::Named { path, .. }) = &decl.return_type {
+                                    if let Some(outer) = path.last() {
+                                        if outer == "Option" || outer == "Result" {
+                                            return Some(outer.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Plan 110.1.3 (D196 form 3): detect if/match init with branches
+    /// returning incompatible Consumable types. Returns (t1, t2) pair если
+    /// detected.
+    fn detect_divergent_consumable(&self, init: &Expr) -> Option<(String, String)> {
+        use crate::ast::ExprKind;
+        if let ExprKind::If { then, else_, .. } = &init.kind {
+            // Both branches must end в expression returning Consumable.
+            let then_ty = self.infer_block_trailing_typeref(then)?;
+            let else_ty = match else_.as_ref()? {
+                crate::ast::ElseBranch::Block(b) => self.infer_block_trailing_typeref(b)?,
+                crate::ast::ElseBranch::If(ei) => self.infer_consume_init_typeref(ei)?,
+            };
+            let then_name = Self::typeref_to_name(&then_ty)?;
+            let else_name = Self::typeref_to_name(&else_ty)?;
+            if then_name != else_name {
+                return Some((then_name, else_name));
+            }
+        }
+        None
+    }
+
+    fn infer_block_trailing_typeref(&self, b: &crate::ast::Block) -> Option<TypeRef> {
+        if let Some(t) = &b.trailing {
+            self.infer_consume_init_typeref(t)
+        } else {
+            None
+        }
+    }
+
+    /// Plan 110.1.3 (D196): infer full TypeRef для init expression. Используется
+    /// для Result/Option unwrap (D196 form 2) — нужен дополнительный slot
+    /// для unwrap'нутого T type-ref'а.
+    fn infer_consume_init_typeref(&self, e: &Expr) -> Option<TypeRef> {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Call { func, .. } => {
+                match &func.kind {
+                    ExprKind::Path(parts) if parts.len() >= 2 => {
+                        let type_name = &parts[parts.len() - 2];
+                        let method_name = &parts[parts.len() - 1];
+                        let methods = self.method_table.get(type_name)?;
+                        let decls = methods.get(method_name)?;
+                        let decl = decls.first()?;
+                        let rt = decl.return_type.as_ref()?;
+                        // Self → receiver type substitution.
+                        if let TypeRef::Named { path, .. } = rt {
+                            if path.last().map_or(false, |s| s == "Self") {
+                                return Some(TypeRef::Named {
+                                    path: vec![type_name.clone()],
+                                    generics: Vec::new(),
+                                    span: e.span,
+                                });
+                            }
+                        }
+                        Some(rt.clone())
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::RecordLit { type_name: Some(name), .. } => {
+                Some(TypeRef::Named {
+                    path: name.clone(),
+                    generics: Vec::new(),
+                    span: e.span,
+                })
+            }
+            ExprKind::Try(inner) => {
+                // D196 form 2 (?): unwrap Result[T, E] → T.
+                let inner_ty = self.infer_consume_init_typeref(inner)?;
+                if let TypeRef::Named { path, generics, .. } = &inner_ty {
+                    if path.last().map_or(false, |s| s == "Result") && !generics.is_empty() {
+                        return Some(generics[0].clone());
+                    }
+                    // Option[T] через ? тоже разворачивается (R/E aware).
+                    if path.last().map_or(false, |s| s == "Option") && !generics.is_empty() {
+                        return Some(generics[0].clone());
+                    }
+                }
+                Some(inner_ty)
+            }
+            ExprKind::Bang(inner) => {
+                // D196 form 2 (!!): unwrap Option[T] → T или Result[T,_] → T.
+                let inner_ty = self.infer_consume_init_typeref(inner)?;
+                if let TypeRef::Named { path, generics, .. } = &inner_ty {
+                    if path.last().map_or(false, |s| s == "Option" || s == "Result") && !generics.is_empty() {
+                        return Some(generics[0].clone());
+                    }
+                }
+                Some(inner_ty)
+            }
+            ExprKind::As(_, ty) => Some(ty.clone()),
+            ExprKind::Ident(_) | ExprKind::Path(_) => None,
+            _ => None,
+        }
     }
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
@@ -1190,6 +1738,12 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(e, &gs, errors);
                 }
             }
+            // Plan 120 (D215): walk field types in named tuple declarations.
+            TypeDeclKind::NamedTuple(fields) => {
+                for f in fields {
+                    self.walk_typeref(&f.ty, &gs, errors);
+                }
+            }
             TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Opaque => {}
@@ -1362,6 +1916,19 @@ impl<'a> TypeCheckCtx<'a> {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, gs, errors);
             }
+            // Plan 110 D188: walk init + body.
+            Stmt::ConsumeScope { type_annot, init, body, .. } => {
+                if let Some(t) = type_annot {
+                    self.walk_typeref(t, gs, errors);
+                }
+                self.walk_expr(init, gs, errors);
+                for stmt in &body.stmts {
+                    self.walk_stmt(stmt, gs, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, gs, errors);
+                }
+            }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, gs, errors);
             }
@@ -1498,7 +2065,33 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_expr(e, gs, errors);
                 }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
+                // Plan 114.4.1 (D200): reject field shorthand / pair refering
+                // assoc const — assoc consts live на type-level, не указываются
+                // в record literal.
+                if let Some(tn) = type_name {
+                    if let Some(last) = tn.last() {
+                        if let Some(td) = self.types.get(last) {
+                            for f in fields {
+                                if f.is_spread { continue; }
+                                if td.assoc_consts.iter().any(|ac| ac.name == f.name) {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_CONST_FIELD_IN_LITERAL] field `{}` \
+                                             в record literal `{}{{ … }}` — это \
+                                             associated constant (zero-storage, \
+                                             namespace access `{}.{}`); НЕ указывается \
+                                             и НЕ инициализируется в record literal \
+                                             (Plan 114.4.1 D200).",
+                                            f.name, last, last, f.name,
+                                        ),
+                                        f.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.walk_expr(v, gs, errors);
@@ -1762,6 +2355,18 @@ impl<'a> TypeCheckCtx<'a> {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.f1_expr(body, gs, scope, errors);
             }
+            // Plan 110 D188: walk init + body (full D188 R1-R6 check лежит
+            // в Plan 110.1.2/110.1.3 — здесь scaffold walking).
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.f1_expr(init, gs, scope, errors);
+                self.f4_check_value(init, scope, errors);
+                for s in &body.stmts {
+                    self.f1_stmt(s, gs, scope, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.f1_expr(t, gs, scope, errors);
+                }
+            }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.f1_expr(expr, gs, scope, errors);
             }
@@ -1806,6 +2411,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_check_call(
                     func, args, trailing.is_some(), gs, scope, errors,
                 );
+                self.f5_check_tuple_construct(func, args, e.span, scope, errors);
             }
             ExprKind::TurboFish { base, .. } => {
                 self.f1_expr(base, gs, scope, errors)
@@ -2358,65 +2964,236 @@ impl<'a> TypeCheckCtx<'a> {
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         let Some(td) = self.types.get(tname) else { return; };
-        let TypeDeclKind::Record(fields) = &td.kind else { return; };
-        // embed (`use`) проксирует поля/методы вложенного типа — резолв
-        // слишком сложен для надёжной проверки, пропускаем такой тип.
-        if fields.iter().any(|f| f.is_embed) {
-            return;
+        match &td.kind {
+            TypeDeclKind::Record(fields) => {
+                // embed (`use`) проксирует поля/методы вложенного типа — резолв
+                // слишком сложен для надёжной проверки, пропускаем такой тип.
+                if fields.iter().any(|f| f.is_embed) {
+                    return;
+                }
+                if fields.iter().any(|f| f.name == name) {
+                    return;
+                }
+                // Метод? Имена операторных методов могут храниться с ведущим `@`.
+                let has_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_method {
+                    return;
+                }
+                // `into` / `try_into` синтезируются компилятором из `From` /
+                // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
+                // для любого типа-источника конверсии.
+                if matches!(name, "into" | "try_into") {
+                    return;
+                }
+                // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
+                // generalized protocol default-body satisfiability. Replaces prior
+                // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
+                // `name` with `default_body`, and for each checks whether the body's
+                // top-level method/free-fn calls resolve for T (i.e. T provides every
+                // method/overload referenced by the body). If at least one protocol
+                // is satisfied → accept the bare call; codegen general synthesizer
+                // emits the concrete Nova_<T>_method_<name> on first use.
+                if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                // Plan 114.4.1 (D200): assoc const detection — если `name` matches
+                // одну из assoc consts типа, hint user про namespace access.
+                let is_assoc_const = self.types.get(tname)
+                    .map(|td| td.assoc_consts.iter().any(|ac| ac.name == name))
+                    .unwrap_or(false);
+                if is_assoc_const {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_CONST_INSTANCE_ACCESS] cannot access associated \
+                             constant `{}.{}` через instance — assoc constants \
+                             live на type-level (zero storage в instance). \
+                             Use `{}.{}` namespace access instead (Plan 114.4.1 D200).",
+                            tname, name, tname, name,
+                        ),
+                        span,
+                    ));
+                    return;
+                }
+                let avail: Vec<&str> =
+                    fields.iter().map(|f| f.name.as_str()).collect();
+                let mut diag = Diagnostic::new(
+                    format!(
+                        "[E7320] no field or method `{}` on type `{}`",
+                        name, tname,
+                    ),
+                    span,
+                );
+                if !avail.is_empty() {
+                    diag = diag.with_note(format!(
+                        "`{}` has field{}: {}",
+                        tname,
+                        if avail.len() == 1 { "" } else { "s" },
+                        avail.join(", "),
+                    ));
+                }
+                errors.push(diag);
+            }
+            TypeDeclKind::NamedTuple(fields) => {
+                // Plan 120 (D215): named tuple — named access only (Q120-positional-access-on-named Option B)
+                if name.chars().all(|c| c.is_ascii_digit()) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_POSITIONAL_ACCESS_ON_NAMED] \
+                             named tuple `{}` does not support positional field access `.{}`; \
+                             use named access `.field_name` instead",
+                            tname, name
+                        ),
+                        span,
+                    ));
+                    return;
+                }
+                if fields.iter().any(|f| f.name == name) {
+                    return;
+                }
+                let has_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_method {
+                    return;
+                }
+                if matches!(name, "into" | "try_into") {
+                    return;
+                }
+                if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                let avail: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+                let mut diag = Diagnostic::new(
+                    format!(
+                        "[E7320] no field or method `{}` on named tuple `{}`",
+                        name, tname,
+                    ),
+                    span,
+                );
+                if !avail.is_empty() {
+                    diag = diag.with_note(format!(
+                        "`{}` has field{}: {}",
+                        tname,
+                        if avail.len() == 1 { "" } else { "s" },
+                        avail.join(", "),
+                    ));
+                }
+                errors.push(diag);
+            }
+            TypeDeclKind::Newtype(TypeRef::Tuple(_, _)) => {
+                // Positional tuple: named field access (`.x`) is invalid
+                if !name.chars().all(|c| c.is_ascii_digit()) {
+                    let has_method = self.method_table.get(tname).map_or(false, |m| {
+                        m.keys().any(|k| k.trim_start_matches('@') == name)
+                    });
+                    if has_method {
+                        return;
+                    }
+                    if matches!(name, "into" | "try_into") {
+                        return;
+                    }
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_NAMED_ACCESS_ON_POSITIONAL] \
+                             positional tuple `{}` does not have named fields; \
+                             use positional access `.0`, `.1`, … instead",
+                            tname
+                        ),
+                        span,
+                    ));
+                }
+            }
+            _ => {} // Sum, Effect, Protocol, Alias, Opaque, etc. — conservative, skip
         }
-        if fields.iter().any(|f| f.name == name) {
-            return;
+    }
+
+    /// Plan 120 (D215): validate tuple construction calls.
+    /// Checks direct construction `TypeName(args...)` where TypeName is a
+    /// known named or positional tuple type.  Conservative: skips if callee is
+    /// not a plain Ident or if the name is shadowed by a local variable.
+    fn f5_check_tuple_construct(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Ident(name) = &func.kind else { return; };
+        if scope.contains_key(name.as_str()) { return; }
+        let Some(td) = self.types.get(name.as_str()) else { return; };
+        match &td.kind {
+            TypeDeclKind::NamedTuple(fields) => {
+                for arg in args {
+                    if let CallArg::Named { name: field_name, .. } = arg {
+                        if !fields.iter().any(|f| &f.name == field_name) {
+                            let avail: Vec<&str> =
+                                fields.iter().map(|f| f.name.as_str()).collect();
+                            let mut diag = Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_UNKNOWN_FIELD] named tuple `{}` has no field `{}`",
+                                    name, field_name,
+                                ),
+                                span,
+                            );
+                            if !avail.is_empty() {
+                                diag = diag.with_note(format!(
+                                    "`{}` has field{}: {}",
+                                    name,
+                                    if avail.len() == 1 { "" } else { "s" },
+                                    avail.join(", "),
+                                ));
+                            }
+                            errors.push(diag);
+                        }
+                    }
+                }
+                if args.len() != fields.len() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] named tuple `{}` expects \
+                             {} argument{} but {} {} provided",
+                            name,
+                            fields.len(),
+                            if fields.len() == 1 { "" } else { "s" },
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                        span,
+                    ));
+                }
+            }
+            TypeDeclKind::Newtype(TypeRef::Tuple(elem_types, _)) => {
+                if args.iter().any(|a| matches!(a, CallArg::Named { .. })) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL] \
+                             positional tuple `{}` does not accept named arguments; \
+                             pass values by position instead",
+                            name,
+                        ),
+                        span,
+                    ));
+                }
+                if args.len() != elem_types.len() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] positional tuple `{}` expects \
+                             {} argument{} but {} {} provided",
+                            name,
+                            elem_types.len(),
+                            if elem_types.len() == 1 { "" } else { "s" },
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                        span,
+                    ));
+                }
+            }
+            _ => {}
         }
-        // Метод? Имена операторных методов могут храниться с ведущим `@`.
-        let has_method = self.method_table.get(tname).map_or(false, |m| {
-            m.keys().any(|k| k.trim_start_matches('@') == name)
-        });
-        if has_method {
-            return;
-        }
-        // `into` / `try_into` синтезируются компилятором из `From` /
-        // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
-        // для любого типа-источника конверсии.
-        if matches!(name, "into" | "try_into") {
-            return;
-        }
-        // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
-        // generalized protocol default-body satisfiability. Replaces prior
-        // hardcoded equals/fmt MVP. Walks ALL protocols, finds methods named
-        // `name` with `default_body`, and for each checks whether the body's
-        // top-level method/free-fn calls resolve for T (i.e. T provides every
-        // method/overload referenced by the body). If at least one protocol
-        // is satisfied → accept the bare call; codegen general synthesizer
-        // emits the concrete Nova_<T>_method_<name> on first use.
-        //
-        // Acceptance precision: a body's `@compare(other)` requires T to have
-        // `@compare`; `sb.append(str.from(@))` requires `str.from(T)` overload
-        // OR `T.@into() -> str`. Patterns recognized by a small AST inspector
-        // (collect_resolved_method_refs) — covers stdlib protocols (Equatable,
-        // Printable, Comparable.equals via coercion). Bodies using unsupported
-        // patterns are skipped (treated as not synthesizable) — type-checker
-        // returns E7320 normally.
-        if self.protocol_method_satisfiable_for(tname, name) {
-            return;
-        }
-        let avail: Vec<&str> =
-            fields.iter().map(|f| f.name.as_str()).collect();
-        let mut diag = Diagnostic::new(
-            format!(
-                "[E7320] no field or method `{}` on type `{}`",
-                name, tname,
-            ),
-            span,
-        );
-        if !avail.is_empty() {
-            diag = diag.with_note(format!(
-                "`{}` has field{}: {}",
-                tname,
-                if avail.len() == 1 { "" } else { "s" },
-                avail.join(", "),
-            ));
-        }
-        errors.push(diag);
     }
 
     /// Ф.4: имя типа в value-позиции (`let c = Foo`, `Foo + 1`) → E7330.
@@ -3053,7 +3830,9 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                             // Concrete data-типы — сравниваются по имени.
                             TypeDeclKind::Record(_)
-                            | TypeDeclKind::Sum(_) => {
+                            | TypeDeclKind::Sum(_)
+                            // Plan 120 (D215): named tuples are concrete value types.
+                            | TypeDeclKind::NamedTuple(_) => {
                                 TyCat::Named(other.to_string())
                             }
                             // protocol/effect — структурная конформность
@@ -3308,6 +4087,7 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
                 TypeDeclKind::Alias(_) => "alias",
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
+                TypeDeclKind::NamedTuple(_) => "named_tuple",
             };
             type_kinds.insert(t.name.clone(), kind_name);
             if let TypeDeclKind::Protocol { methods, embeds } = &t.kind {
@@ -3514,6 +4294,7 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
                 TypeDeclKind::Alias(_) => "alias",
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
+                TypeDeclKind::NamedTuple(_) => "named_tuple",
             };
             type_kinds.insert(t.name.clone(), kind_name);
         }
@@ -3811,6 +4592,16 @@ impl<'a> BoundCtx<'a> {
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, scope, errors);
+            }
+            // Plan 110 D188: walk init + body (scaffold).
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, scope, errors);
+                for s in &body.stmts {
+                    self.walk_stmt(s, scope, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, scope, errors);
+                }
             }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
@@ -5165,6 +5956,16 @@ impl<'a> CapabilityCtx<'a> {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, state, errors);
             }
+            // Plan 110 D188: walk init + body (scaffold).
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, state, errors);
+                for s in &body.stmts {
+                    self.walk_stmt(s, state, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, state, errors);
+                }
+            }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, state, errors),
             // Ф.4.1: apply — ghost, нет capability-эффектов.
@@ -6071,6 +6872,24 @@ impl NameResCtx {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, file_id, scope, errors);
             }
+            // Plan 110 D188: walk init + push new scope frame с binding,
+            // walk body, pop frame. Binding visible только внутри body
+            // (D188 §«Syntax» single-name binding).
+            Stmt::ConsumeScope { binding, init, body, .. } => {
+                self.walk_expr(init, file_id, scope, errors);
+                scope.push({
+                    let mut frame = HashSet::new();
+                    frame.insert(binding.clone());
+                    frame
+                });
+                for s in &body.stmts {
+                    self.walk_stmt(s, file_id, scope, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, file_id, scope, errors);
+                }
+                scope.pop();
+            }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
@@ -6816,6 +7635,16 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         // РѕС‚РґРµР»СЊРЅСѓСЋ compile error СЂР°РЅСЊС€Рµ СЌС‚РѕР№ РїСЂРѕРІРµСЂРєРё.
         Stmt::Defer { .. } | Stmt::ErrDefer { .. }
         | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => false,
+        // Plan 110 D188: consume scope-block body может содержать throw —
+        // D188 R3 cancel-shield масаит throw к caller'у после on_exit;
+        // для has_throw analysis считаем body как throw-носитель.
+        Stmt::ConsumeScope { init, body, .. } => {
+            if has_throw_in_expr(init) { return true; }
+            for s in &body.stmts {
+                if has_throw_in_stmt(s) { return true; }
+            }
+            body.trailing.as_ref().map_or(false, |t| has_throw_in_expr(t))
+        }
         // Plan 33.2 Р¤.8: assert_static вЂ” bool expr, no throw inside.
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => has_throw_in_expr(expr),
         // Ф.4.1: apply — ghost, args могут содержать throw (теоретически нет, но проверяем).
@@ -7574,6 +8403,11 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 walk_expr_for_handler_lits(body, never_ops, errors);
+            }
+            // Plan 110 D188: walk init + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_handler_lits(init, never_ops, errors);
+                walk_block_for_handler_lits(body, never_ops, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
@@ -9964,6 +10798,20 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             // call inside body as Consumed.
             d162_mark_defer_cover(ctx, body, &pre_obligations);
         }
+        // Plan 110 D188: consume scope-block. Init expression evaluated +
+        // body block walked. Full consume-binding semantics (binding visible
+        // только в body; on_exit dispatch как auto-consume) — Plan 110.1.2.
+        // Здесь walk recursively, не вводим binding в obligations (110.1.2
+        // обязанность).
+        Stmt::ConsumeScope { init, body, .. } => {
+            consume_walk_expr(ctx, init, errors);
+            for stmt in &body.stmts {
+                consume_walk_stmt(ctx, stmt, errors);
+            }
+            if let Some(t) = &body.trailing {
+                consume_walk_expr(ctx, t, errors);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             consume_walk_expr(ctx, expr, errors);
         }
@@ -11021,6 +11869,11 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Calc { steps, .. } => {
                 for step in steps { walk_expr_for_defers(&step.expr, fn_effects, current_fn_effects, errors); }
             }
+            // Plan 110 D188: walk init expr + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_defers(init, fn_effects, current_fn_effects, errors);
+                walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
+            }
             Stmt::Reveal { .. } => {}
         }
     }
@@ -11516,6 +12369,13 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             // Ф.4.2: calc — ghost, шаги walk.
             Stmt::Calc { steps, .. } => {
                 for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, current_fn_effects, ctx, errors); }
+            }
+            // Plan 110 D188: nested consume{} inside defer body — init +
+            // body block walk (D197 cleanup re-entrance — full rules в
+            // Plan 110.1.8).
+            Stmt::ConsumeScope { init, body, .. } => {
+                check_defer_body_inner(init, kw, fn_effects, current_fn_effects, ctx, errors);
+                check_defer_body_block(body, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             Stmt::Reveal { .. } => {}
         }
@@ -12409,6 +13269,16 @@ impl MapLitCtx {
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, None, errors);
             }
+            // Plan 110 D188: walk init + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, None, errors);
+                for stmt in &body.stmts {
+                    self.walk_stmt(stmt, errors);
+                }
+                if let Some(t) = &body.trailing {
+                    self.walk_expr(t, None, errors);
+                }
+            }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, None, errors);
             }
@@ -13251,6 +14121,16 @@ impl MapLitAnnotator {
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, None);
+            }
+            // Plan 110 D188: walk init + body block recursively.
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, None);
+                for stmt in &mut body.stmts {
+                    self.walk_stmt(stmt);
+                }
+                if let Some(t) = &mut body.trailing {
+                    self.walk_expr(t, None);
+                }
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, None);

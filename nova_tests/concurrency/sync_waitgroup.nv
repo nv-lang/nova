@@ -5,7 +5,7 @@
 // completed, so any side effects produced before done() are visible.
 // Tests verify this by reading a shared counter after wait() returns.
 
-module nova_tests.concurrency.sync_waitgroup
+module concurrency.sync_waitgroup
 
 // ─── Basic API ─────────────────────────────────────────────────
 

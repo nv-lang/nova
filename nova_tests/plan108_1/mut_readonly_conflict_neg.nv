@@ -3,7 +3,7 @@
 
 // EXPECT_COMPILE_ERROR E_PARAM_MOD_CONFLICT
 
-module nova_tests.plan108_1.mut_readonly_conflict_neg
+module plan108_1.mut_readonly_conflict_neg
 
 fn bad(mut ro b []int) -> int => b.len()
 

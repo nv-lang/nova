@@ -1,4 +1,4 @@
-module nova_tests.plan61.repro_cross_effect_throw
+module plan61.repro_cross_effect_throw
 
 // Plan 61 Ф.0 repro: cross-effect throw в handler arm.
 // Закрывает Plan 11 open issue (see docs/plans/11-method-values-and-overload.md:791-814).

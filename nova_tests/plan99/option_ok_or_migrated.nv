@@ -1,6 +1,6 @@
 // Plan 99.3 Ф.3: Option.ok_or[E] на Nova-body. Mono per (T, E).
 
-module nova_tests.plan99.option_ok_or_migrated
+module plan99.option_ok_or_migrated
 
 test "Option[int].ok_or[str] — Some → Ok" {
     ro a Option[int] = Some(42)

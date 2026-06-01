@@ -3,7 +3,7 @@
 // Plan 97 Ф.4 (D142) — protocol-литерал ссылается на необъявленный
 // протокол → diagnostic.
 
-module nova_tests.plan97.neg_protocol_lit_unknown
+module plan97.neg_protocol_lit_unknown
 
 
 test "unknown protocol" {

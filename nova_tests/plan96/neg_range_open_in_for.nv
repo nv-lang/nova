@@ -4,7 +4,7 @@
 // `for x in 3..` не имеет смысла (нет верхней границы для остановки).
 // Open-ended Range допустим **только** в slice-context (arr[3..]).
 
-module nova_tests.plan96.neg_range_open_in_for
+module plan96.neg_range_open_in_for
 
 fn main() -> () {
     mut sum = 0

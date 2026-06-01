@@ -4,7 +4,7 @@
 // consume-closure: invoke = consume, повторный invoke → error.
 // Если closure не invoked — на scope-exit обязан Consumed (invoked / passed).
 
-module nova_tests.plan100_3.closure_consume_ok_once
+module plan100_3.closure_consume_ok_once
 
 type Transaction consume {
     id int,

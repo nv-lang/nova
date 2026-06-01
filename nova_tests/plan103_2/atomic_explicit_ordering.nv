@@ -3,7 +3,7 @@
 // Each method has two overloads: default (SeqCst) and explicit ordering.
 // This file exercises the explicit-ordering variants across multiple types.
 
-module nova_tests.plan103_2.atomic_explicit_ordering
+module plan103_2.atomic_explicit_ordering
 
 test "AtomicI64 load with Relaxed ordering" {
     mut a = AtomicI64.new(99)

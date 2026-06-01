@@ -6,7 +6,7 @@
 // `@file = File.open()?` без предшествующего `@file.close()` затёр бы
 // старый File без close → утечка. Compiler ловит assign-in-Live.
 
-module nova_tests.plan100_1.consume_err_assign_to_live_field
+module plan100_1.consume_err_assign_to_live_field
 
 type File consume {
     fd int,

@@ -7,7 +7,7 @@
 // NOTE: До Plan 100.3 (D133 bootstrap) этот паттерн давал ошибку
 // D133-move-to-non-consume. После D157 — разрешён: view-borrow.
 
-module nova_tests.plan100_1.consume_err_pass_non_consume
+module plan100_1.consume_err_pass_non_consume
 
 type Transaction consume {
     id int,

@@ -2,7 +2,7 @@
 //
 // EXPECT_COMPILE_ERROR: [E_UNUSED_PREFIX_TYPEVAR]
 
-module nova_tests.plan101_1.negative.unused_prefix_neg
+module negative.unused_prefix_neg
 
 fn[T, X] []T @bad(v T) -> T => v
 

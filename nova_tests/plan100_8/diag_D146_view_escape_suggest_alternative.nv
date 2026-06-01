@@ -8,7 +8,7 @@
 //
 // This validates the single-method fallback suggestion path.
 
-module nova_tests.plan100_8.diag_D146_view_escape_suggest_alternative
+module plan100_8.diag_D146_view_escape_suggest_alternative
 
 // Consume type with single consume method.
 type Opaque consume { handle int }

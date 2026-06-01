@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// EXPECT_COMPILE_ERROR `consume mut tx` is not valid
+//
+// Plan 110.1.1 (D188): scope-block требует immutable single-ident
+// binding. `consume mut X = init() { body }` — invalid (consume = full
+// ownership transfer; mut-методы доступны через receiver mut qualifier
+// D7/100.1).
+//
+// Existing parser rule (D133/D9) уже отклоняет `consume mut`; этот
+// fixture verifies продолжение работы после Plan 110.1.1 рефакторинга.
+
+module plan110.neg_consume_scope_mut_binding
+
+type DummyRes {
+    ro id int
+}
+
+fn DummyRes.new(id int) -> DummyRes => { id }
+
+fn DummyRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn bad() -> int {
+    // ❌ `consume mut` not valid (consume = full transfer)
+    consume mut r = DummyRes.new(1) {
+        r.id
+    }
+}

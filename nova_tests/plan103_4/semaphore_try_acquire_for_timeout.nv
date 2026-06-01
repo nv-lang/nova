@@ -6,7 +6,7 @@
 // EXPECT_TIMEOUT_MS 60000
 // ENV NOVA_AUTOARM=0
 
-module nova_tests.plan103_4.semaphore_try_acquire_for_timeout
+module plan103_4.semaphore_try_acquire_for_timeout
 
 import std.time.duration
 

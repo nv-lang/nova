@@ -1,7 +1,7 @@
 // Plan 108.1 (D176 amend): `mut` параметр для user-defined record-типа
 // с `mut @method` методом.
 
-module nova_tests.plan108_1.mut_param_user_record_ok
+module plan108_1.mut_param_user_record_ok
 
 type Counter {
     mut value int

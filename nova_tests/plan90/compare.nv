@@ -1,7 +1,7 @@
 // Plan 90 Ф.4.2 — []u8.compare: memcmp-класс, один примитив.
 // equality (== 0) — частный случай.
 
-module nova_tests.plan90.compare
+module plan90.compare
 
 
 test "compare — равно / меньше / больше" {

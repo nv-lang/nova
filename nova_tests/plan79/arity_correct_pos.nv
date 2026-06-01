@@ -2,7 +2,7 @@
 // position (signatures, fields, let annotations, turbofish, nested
 // generics) compiles and runs unchanged. Guards against false positives.
 
-module nova_tests.plan79.arity_correct_pos
+module plan79.arity_correct_pos
 
 import std.collections.hashmap.{HashMap}
 

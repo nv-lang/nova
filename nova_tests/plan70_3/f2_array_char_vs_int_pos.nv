@@ -3,7 +3,7 @@
 // Pre-fix: оба array element types map'ились в `NovaArray_nova_int*`.
 // Post-fix: `[]char` → `NovaArray_nova_char*`, `[]int` → `NovaArray_nova_int*`.
 
-module nova_tests.plan70_3.f2_array_char_vs_int_pos
+module plan70_3.f2_array_char_vs_int_pos
 
 test "[]char stores char literals" {
     ro chars []char = ['a', 'b', 'c']

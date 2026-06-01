@@ -2316,6 +2316,16 @@ static inline nova_unit Nova_MutexGuard_consume_unlock(Nova_MutexGuard* g) {
     return Nova_Mutex_method_unlock(m);
 }
 
+/* Plan 110 D194 (Consumable[never]): Nova_MutexGuard_consume_on_exit.
+ * Called by ConsumeScope codegen на scope-exit. Outcome игнорируется —
+ * unlock fires unconditionally (mutex semantics: always release).
+ * `void*` для outcome avoids forward-decl dependency on Nova_ScopeOutcome
+ * typedef (generated after sync_primitives.h include order). */
+static inline nova_unit Nova_MutexGuard_consume_on_exit(Nova_MutexGuard* g, void* outcome) {
+    (void)outcome;
+    return Nova_MutexGuard_consume_unlock(g);
+}
+
 /* ── ReadGuard ──────────────────────────────────────────────────────────── */
 
 /* Nova_ReadGuard_consume_unlock: release read lock via guard.
@@ -2323,6 +2333,11 @@ static inline nova_unit Nova_MutexGuard_consume_unlock(Nova_MutexGuard* g) {
 static inline nova_unit Nova_ReadGuard_consume_unlock(Nova_ReadGuard* g) {
     Nova_RwLock* rw = (Nova_RwLock*)(uintptr_t)(uint64_t)g->ptr;
     return Nova_RwLock_method_read_unlock(rw);
+}
+
+static inline nova_unit Nova_ReadGuard_consume_on_exit(Nova_ReadGuard* g, void* outcome) {
+    (void)outcome;
+    return Nova_ReadGuard_consume_unlock(g);
 }
 
 /* ── WriteGuard ─────────────────────────────────────────────────────────── */
@@ -2334,6 +2349,11 @@ static inline nova_unit Nova_WriteGuard_consume_unlock(Nova_WriteGuard* g) {
     return Nova_RwLock_method_write_unlock(rw);
 }
 
+static inline nova_unit Nova_WriteGuard_consume_on_exit(Nova_WriteGuard* g, void* outcome) {
+    (void)outcome;
+    return Nova_WriteGuard_consume_unlock(g);
+}
+
 /* ── Permit ─────────────────────────────────────────────────────────────── */
 
 /* Nova_Permit_consume_release: release permit via guard.
@@ -2341,6 +2361,11 @@ static inline nova_unit Nova_WriteGuard_consume_unlock(Nova_WriteGuard* g) {
 static inline nova_unit Nova_Permit_consume_release(Nova_Permit* p) {
     Nova_Semaphore* s = (Nova_Semaphore*)(uintptr_t)(uint64_t)p->ptr;
     return Nova_Semaphore_method_release(s);
+}
+
+static inline nova_unit Nova_Permit_consume_on_exit(Nova_Permit* p, void* outcome) {
+    (void)outcome;
+    return Nova_Permit_consume_release(p);
 }
 
 /* ── OnceGuard ──────────────────────────────────────────────────────────── */

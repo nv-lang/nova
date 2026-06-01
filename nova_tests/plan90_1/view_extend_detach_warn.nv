@@ -4,7 +4,7 @@
 // is called on parent array after creating a slice-view of it.
 // View may become dangling if append triggers realloc.
 
-module nova_tests.plan90_1.view_extend_detach_warn
+module plan90_1.view_extend_detach_warn
 
 fn main() -> () {
     mut parent []int = [1, 2, 3, 4, 5]

@@ -2,7 +2,7 @@
 //!
 //! #stable
 
-module nova_tests.doc.fixtures.kinds.sample
+module kinds.sample
 
 /// Sum-тип с unit-вариантами.
 ///

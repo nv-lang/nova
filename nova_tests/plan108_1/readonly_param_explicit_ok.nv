@@ -1,7 +1,7 @@
 // Plan 108.1 (D176 amend): `readonly` параметр — явный synonym дефолта
 // (без mut).  Только read-доступ — len, доступ к элементам без мутаций.
 
-module nova_tests.plan108_1.readonly_param_explicit_ok
+module plan108_1.readonly_param_explicit_ok
 
 fn count_items(ro b []int) -> int => b.len()
 

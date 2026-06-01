@@ -3,7 +3,7 @@
 // которые поддерживает Nova. Всегда active в реальных тестах.
 
 #cfg(target_os = "windows" || target_os = "linux" || target_os = "macos")
-module cfg.predicate_any
+module predicate_any.impl
 
 export fn helper_value() -> int =>
     41

@@ -1,4 +1,4 @@
-module nova_tests.plan91_8c.reverse_sum_test
+module plan91_8c.reverse_sum_test
 
 import std.sort
 

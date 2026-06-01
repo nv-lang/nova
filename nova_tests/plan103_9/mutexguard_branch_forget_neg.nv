@@ -3,7 +3,7 @@
 // Plan 103.9 (D174) — Negative: MutexGuard not consumed on one branch.
 // Both branches must consume the guard — missing unlock on false branch → D133.
 
-module nova_tests.plan103_9.mutexguard_branch_forget_neg
+module plan103_9.mutexguard_branch_forget_neg
 
 fn check_flag() -> bool => true
 

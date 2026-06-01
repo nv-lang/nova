@@ -6,7 +6,7 @@
 // rewrite в bare `add_one(...)` — alias prefix dropped, imported fn
 // доступен через bare name в scope.
 
-module nova_tests.plan70_1.f1_alias_call_pos
+module plan70_1.f1_alias_call_pos
 
 import nova_tests.plan70_1.helper_mod as h
 

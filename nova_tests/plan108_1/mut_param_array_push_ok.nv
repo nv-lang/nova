@@ -1,7 +1,7 @@
 // Plan 108.1 (D176 amend): `mut` параметр позволяет вызов mut-методов
 // на встроенных коллекциях (массив).
 
-module nova_tests.plan108_1.mut_param_array_push_ok
+module plan108_1.mut_param_array_push_ok
 
 fn append_99(mut b []int) -> int {
     b.push(99)

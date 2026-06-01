@@ -3,4 +3,4 @@
 // Plan 42.16: attrs ПЕРЕД module.
 
 #forbid Net
-module negative_capability.module_forbid_violation_setup
+module module_forbid_violation_setup._module

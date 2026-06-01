@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
 
-module nova_tests.plan108_3.for_no_mut_push_neg
+module plan108_3.for_no_mut_push_neg
 
 test "for default loop-var + push → error" {
     mut arrs = [[1]]

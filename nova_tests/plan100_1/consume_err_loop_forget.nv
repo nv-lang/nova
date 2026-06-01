@@ -7,7 +7,7 @@
 // Pattern: `loop { consume tx = begin() }` — каждая iteration создаёт
 // новый tx, никогда не consume'ит → forget на каждой iteration.
 
-module nova_tests.plan100_1.consume_err_loop_forget
+module plan100_1.consume_err_loop_forget
 
 type Transaction consume {
     id int,

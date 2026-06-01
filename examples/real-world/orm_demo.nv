@@ -38,7 +38,7 @@
 // - [D55](../spec/decisions/02-types.md#d55) literal coercion для
 //   newtype → SqlValue.
 
-module examples.orm_demo
+module real-world.orm_demo
 
 use std.sql                              // Sql, SqlValue, Db, DbRow, SqlBuilder
 

@@ -1,6 +1,6 @@
 // Plan 42: peer of folder-module `folder_internal`. Сделан для
 // активации folder-module detection (≥2 peers heuristic).
 
-module modules.folder_internal
+module folder_internal.helpers
 
 fn local_helper(x int) -> int => x + 1

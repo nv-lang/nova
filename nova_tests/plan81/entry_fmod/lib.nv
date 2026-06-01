@@ -4,7 +4,7 @@
 // entry-folder-module получают prelude auto-import так же, как сам
 // entry (prelude резолвится один раз и разделяется всей группой).
 
-module nova_tests.plan81.entry_fmod
+module entry_fmod.lib
 
 fn helper() -> int {
     println("entry-folder-module peer compiled")

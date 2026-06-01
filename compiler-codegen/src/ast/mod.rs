@@ -360,6 +360,12 @@ pub struct FnDecl {
     /// Plan 113 (D172): `#blocking` attribute перед `fn`.
     /// Runtime threadpool offload — callers wrap fn in uv_queue_work, fiber parks.
     pub blocking_attr: bool,
+    /// Plan 110.7.3.a (D188 §FFI): `#cancel_safe` attribute на `external fn`.
+    /// Attests что C-side function is cancel-safe — can be invoked from inside
+    /// ConsumeScope on_exit body (under cancel-shield). Without this attribute,
+    /// the cancel-unsafe lint (W_FFI_CANCEL_UNSAFE) fires at the call site
+    /// when the call appears inside an on_exit body. Default `false`.
+    pub cancel_safe_attr: bool,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
     pub contracts: Vec<Contract>,
@@ -679,6 +685,10 @@ pub struct TypeDecl {
     pub generics: Vec<GenericParam>,
     pub kind: TypeDeclKind,
     pub span: Span,
+    /// Plan 114.4.1 (D200): associated constants — `const NAME T = expr`
+    /// внутри `type X { ... }`. НЕ в instance layout; accessible через
+    /// namespace `Type.NAME`. Пустой вектор у типов без assoc consts.
+    pub assoc_consts: Vec<AssocConst>,
     /// Plan 52 Ф.1: атрибуты-маркеры перед `type` (`#from_fields`).
     /// Пустой вектор у типов без атрибутов (backward-compat).
     pub attrs: Vec<TypeAttr>,
@@ -745,6 +755,10 @@ pub enum TypeDeclKind {
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)
     Alias(TypeRef),
+    /// Plan 120 (D215): `type Name(field1 T1, field2 T2)` — named tuple.
+    /// Stack-allocated value type identical to positional tuple (D123)
+    /// but fields accessed by name (`.x`, `.y`) instead of position (`.0`).
+    NamedTuple(Vec<NamedTupleField>),
     /// Plan 62.D.bis (D126): `external type X [Generics]` — opaque
     /// type known to compiler by name, реализация в runtime
     /// (`nova_rt/<x>.h`/.c). Без body, без variants/fields. Restricted
@@ -753,6 +767,28 @@ pub enum TypeDeclKind {
     /// Codegen эмитит ссылку как `Nova_<Name>*` (pointer); struct
     /// определение живёт в runtime header.
     Opaque,
+}
+
+/// Plan 114.4.1 (D200): associated constant — `const NAME T = expr` inside
+/// `type X { ... }` body. НЕ в instance layout (zero storage); accessible
+/// через namespace `Type.NAME`. Codegen emit'ит как top-level
+/// `static const T Type_NAME = literal;` в .rodata.
+#[derive(Debug, Clone)]
+pub struct AssocConst {
+    pub name: String,
+    pub ty: Option<TypeRef>,
+    pub value: Expr,
+    pub span: Span,
+    /// `export const FOO …` — public cross-module access.
+    pub is_export: bool,
+}
+
+/// Plan 120 (D215): field in a named tuple type declaration.
+#[derive(Debug, Clone)]
+pub struct NamedTupleField {
+    pub name: String,
+    pub ty: TypeRef,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -1138,6 +1174,36 @@ pub enum Stmt {
     DeferWithResult {
         result_binding: String,
         body: Expr,
+        span: Span,
+    },
+    /// Plan 110 (D188): `consume IDENT (':' TYPE)? '=' EXPR '{' BODY '}'`
+    /// — scope-block с автоматическим вызовом `Consumable.on_exit` при
+    /// выходе из BODY (success/throw/panic/cancel).
+    ///
+    /// Parser detect block-form через lookahead `{` после init EXPR
+    /// (с disabled `no_trailing_block` чтобы не путать с trailing-block
+    /// call syntax).
+    ///
+    /// `binding`: single identifier (D188 disallows destructure для scope-
+    /// block).
+    /// `type_annot`: optional type annotation (parallel с `LetDecl`).
+    /// `init`: expression — должна resolve к типу implementing
+    /// `Consumable[E]` (D196 init type constraints; D188 R1 partial-
+    /// construction safety).
+    /// `body`: scope body — sequence of statements + optional trailing
+    /// expression.
+    ///
+    /// Codegen pipeline:
+    /// - Plan 110.1.4: basic desugaring (sync, no shield/timeout).
+    /// - Plan 110.2: cancel-shield + 3-level timeout resolution.
+    /// - Plan 110.1.7: D194 hot-path elision для `Consumable[never]`.
+    ///
+    /// См. spec/decisions/03-syntax.md D188.
+    ConsumeScope {
+        binding: String,
+        type_annot: Option<TypeRef>,
+        init: Expr,
+        body: Block,
         span: Span,
     },
     /// Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate proof

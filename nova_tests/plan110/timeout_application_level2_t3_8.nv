@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.4.6.a (D192 Level 2 + D195): Application effect Level-2
+// timeout resolution. ConsumeScope codegen consults
+// `_nova_handler_Application` and dispatches `default_exit_timeout_ms()`
+// IF Application handler bound, else falls back to Level 3 (5000ms).
+//
+// Acceptance:
+//   A110.4.6.a.a — 3-level resolution via Application: handler-bound
+//                  scope sees handler's timeout value; unbound scope
+//                  sees Level 3 default (5000ms).
+
+module plan110.timeout_application_level2_t3_8
+
+type Res {
+    ro id int
+}
+
+fn Res.new(id int) -> Res => { id }
+fn Res consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (Cleanup observes 250ms)" {
+    mut observed_timeout = -1
+    // Inner with Cleanup → observes timeout passed to on_scope_enter.
+    // Outer with Application → sets default_exit_timeout_ms to 250.
+    with Application = effect Application {
+        register_finalizer(_f) {
+            return ()
+        }
+        default_exit_timeout_ms() {
+            return 250
+        }
+    } {
+        with Cleanup = effect Cleanup {
+            on_scope_enter(_label, timeout_ms) {
+                observed_timeout = timeout_ms
+                return ()
+            }
+            on_scope_exit(_label, _outcome) {
+                return ()
+            }
+        } {
+            consume r = Res.new(1) {
+                ro _ = r.id
+            }
+        }
+    }
+    assert(observed_timeout == 250)
+}
+
+test "Plan 110.4.6.a A110.4.6.a.a: no Application handler → Level 3 fallback (5000ms)" {
+    mut observed_timeout = -1
+    with Cleanup = effect Cleanup {
+        on_scope_enter(_label, timeout_ms) {
+            observed_timeout = timeout_ms
+            return ()
+        }
+        on_scope_exit(_label, _outcome) {
+            return ()
+        }
+    } {
+        consume r = Res.new(2) {
+            ro _ = r.id
+        }
+    }
+    assert(observed_timeout == 5000)
+}

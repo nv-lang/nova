@@ -4,7 +4,7 @@
 // use-after-consume. Анализ циклов пессимистичный: переменная,
 // потреблённая в теле, помечается maybe-consumed.
 
-module nova_tests.plan73.consume_err_loop
+module plan73.consume_err_loop
 
 fn drain_loop() -> int {
     consume sb = StringBuilder.new()

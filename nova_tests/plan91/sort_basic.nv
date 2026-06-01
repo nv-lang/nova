@@ -1,5 +1,5 @@
 // Plan 91 Ф.4 conformance — std.sort basic operations.
-module nova_tests.plan91.sort_basic
+module plan91.sort_basic
 
 import std.sort
 

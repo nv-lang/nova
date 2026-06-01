@@ -5,7 +5,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.prop_semaphore_bounded_concurrency
+module plan103_8.prop_semaphore_bounded_concurrency
 
 test "prop semaphore bounded: K=3, N=8 fibers — max in-flight never exceeds 3" {
     mut sem = Semaphore.new(3)

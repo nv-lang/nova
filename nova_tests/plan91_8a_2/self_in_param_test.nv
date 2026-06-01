@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.self_in_param_test
+module plan91_8a_2.self_in_param_test
 
 // Plan 91.8a.2 (D183 amendment): Self в param-type position для instance methods.
 

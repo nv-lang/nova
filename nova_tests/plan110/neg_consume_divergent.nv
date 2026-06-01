@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR D196-divergent-consumable
+//
+// Plan 110.1.3 (D196 form 3): if-init с branches returning incompatible
+// Consumable types → D196-divergent-consumable error.
+
+module plan110.neg_consume_divergent
+
+type ResA {
+    ro id int
+}
+
+fn ResA.new() -> ResA => { id: 1 }
+fn ResA consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+type ResB {
+    ro id int
+}
+
+fn ResB.new() -> ResB => { id: 2 }
+fn ResB consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn bad_divergent(cond bool) -> () {
+    // ❌ if branches return divergent Consumable types (ResA vs ResB).
+    consume r = if cond { ResA.new() } else { ResB.new() } {
+        ()
+    }
+}

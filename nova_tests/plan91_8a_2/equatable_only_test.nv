@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.equatable_only_test
+module plan91_8a_2.equatable_only_test
 
 // Plan 91.8a.2 part 3: type только Equatable (no @compare) satisfies
 // Equatable bound через explicit @equals. Default body fallback не

@@ -3,7 +3,7 @@
 //
 // Also verifies: CAS is idempotent when applied to its own result.
 
-module nova_tests.plan103_2.atomic_property_additive
+module plan103_2.atomic_property_additive
 
 /// fetch_add(n) then fetch_sub(n) must restore the original value.
 fn check_add_sub_inverse_i64(init int, delta int) -> bool {

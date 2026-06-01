@@ -1,7 +1,7 @@
 // Plan 90.1 — позитив: insert(len, src) ≡ extend_from(src).
 // D141 amend: i == dst.len is valid (append-at-end case).
 
-module nova_tests.plan90_1.insert_at_end
+module plan90_1.insert_at_end
 
 test "insert at end (i == len) — equivalent to extend_from" {
     mut dst []int = [1, 2, 3]

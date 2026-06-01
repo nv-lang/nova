@@ -5,7 +5,7 @@
 //
 // Uses Once.make_guard() (internal external fn) to create a guard directly.
 
-module nova_tests.plan103_9.onceguard_commit_and_abort_neg
+module plan103_9.onceguard_commit_and_abort_neg
 
 test "commit then abort → D131 compile error" {
     mut once = Once.new()

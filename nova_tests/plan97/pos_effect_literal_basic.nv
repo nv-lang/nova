@@ -4,7 +4,7 @@
 // Проверяет: парсер принимает `let h = effect X { ops }`, `with X = h`
 // работает, прямой вызов `X.op()` диспатчится корректно.
 
-module nova_tests.plan97.pos_effect_literal_basic
+module plan97.pos_effect_literal_basic
 
 
 type Logger effect {

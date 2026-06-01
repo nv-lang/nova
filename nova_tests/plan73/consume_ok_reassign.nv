@@ -4,7 +4,7 @@
 // Move через `consume twin = sb` transfers ownership; sb dead;
 // twin становится новым owner и консумится через consume-метод.
 
-module nova_tests.plan73.consume_ok_reassign
+module plan73.consume_ok_reassign
 
 test "move-binding — twin owns and consumes" {
     consume sb = StringBuilder.new()

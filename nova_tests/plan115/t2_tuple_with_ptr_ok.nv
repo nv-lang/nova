@@ -5,7 +5,7 @@
 // External fn variant (T2 actual FFI) — см. t2_external_fn_tuple_ok.nv
 // (если присутствует) или extracted в Plan 115.1.
 
-module nova_tests.plan115.t2_tuple_with_ptr_ok
+module plan115.t2_tuple_with_ptr_ok
 
 fn make_handle_pair(seed int) -> (ptr, int) {
     ro h = seed as ptr

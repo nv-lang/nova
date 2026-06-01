@@ -1,6 +1,6 @@
 // Plan 103.5 — OnceCell[T].set: first-writer-wins semantics.
 
-module nova_tests.plan103_5.oncecell_set_first_wins
+module plan103_5.oncecell_set_first_wins
 
 test "OnceCell.set: first set returns true; second returns false; value unchanged" {
     mut cell = OnceCell[int].new()

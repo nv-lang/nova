@@ -4,7 +4,7 @@
 // Channel.recv park: sender на worker A вызывает nova_sched_wake(receiver_scope,
 // slot) → dispatch_ready → receiver попадает обратно в worker deque.
 
-module nova_tests.concurrency.mn_runtime_cross_channel
+module concurrency.mn_runtime_cross_channel
 
 // --- Базовый: 1 producer, 1 consumer ---
 // Consumer park'ится на recv, producer присылает значение → dispatch_ready wake.

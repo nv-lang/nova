@@ -7,7 +7,7 @@
 //   V1: m.lock() / defer m.unlock()  (statically unchecked; deprecated pair)
 //   V2: consume g = m.lock() / defer g.unlock()  (consume-checked; static guarantee)
 
-module nova_tests.concurrency.sync_mutex_guard
+module concurrency.sync_mutex_guard
 
 test "MutexGuard: lock and unlock single fiber" {
     mut m = Mutex.new()

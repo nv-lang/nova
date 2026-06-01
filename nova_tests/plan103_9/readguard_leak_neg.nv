@@ -3,7 +3,7 @@
 // Plan 103.9 (D174) — Negative: ReadGuard not consumed at scope exit.
 // `consume rg = rw.read()` creates obligation; missing rg.unlock() → D133.
 
-module nova_tests.plan103_9.readguard_leak_neg
+module plan103_9.readguard_leak_neg
 
 test "forget ReadGuard unlock → compile error" {
     mut rw = RwLock.new()

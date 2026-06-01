@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL
+module plan120.neg_t7_named_on_positional
+type Pos2(f64, f64)
+test "should not compile: named args on positional tuple" {
+    ro p Pos2 = Pos2(x: 3.0, y: 4.0)
+    assert(p.0 == 3.0)
+}

@@ -177,9 +177,19 @@ fn run_lints(module: &nova_codegen::ast::Module, src: &str, file: &str) {
 /// (нашли nova.toml в parent dirs), проверяем что declared module
 /// соответствует file path относительно source root.
 /// Если nova.toml не найден — skip (файл не часть пакета).
+///
+/// Bug fix 2026-06-01: emit W_D78_REV1_DEPRECATED warning для rev-1
+/// legacy forms (вместо silent acceptance).
 fn check_module_path(file: &PathBuf, module: &nova_codegen::ast::Module) -> Result<()> {
-    nova_codegen::manifest::check_module_path(file.as_path(), &module.name)
-        .map_err(|msg| anyhow!("{}", msg))
+    use nova_codegen::manifest::ModulePathCheck;
+    match nova_codegen::manifest::check_module_path(file.as_path(), &module.name) {
+        Ok(ModulePathCheck::Rev3) => Ok(()),
+        Ok(ModulePathCheck::Rev1Deprecated(msg)) => {
+            eprintln!("warning: {}", msg);
+            Ok(())
+        }
+        Err(msg) => Err(anyhow!("{}", msg)),
+    }
 }
 
 fn run() -> ExitCode {

@@ -1,4 +1,4 @@
-module nova_tests.plan91_7.sort_chain_test
+module plan91_7.sort_chain_test
 
 import std.sort
 

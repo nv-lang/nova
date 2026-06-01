@@ -4,7 +4,7 @@
 // reinterpret-cast между float и его bit-pattern. Реализация:
 // nova_rt/numeric.h (memcpy-based).
 
-module nova_tests.plan74.bitcast_f32
+module plan74.bitcast_f32
 
 test "f32.to_bits — known IEEE 754 patterns" {
     ro one f32 = 1.0

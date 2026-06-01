@@ -5,7 +5,7 @@
 // Compile-time witness: фикстура компилируется только если both bindings
 // корректно классифицированы.
 
-module nova_tests.plan108_2.let_mut_count_invariant_prop
+module plan108_2.let_mut_count_invariant_prop
 
 test "property: N=10 accumulation in mut" {
     mut buf = []

@@ -21,7 +21,7 @@
 // - `Sql.with_filter` ([stdlib_sql.nv](stdlib_sql.nv)) — добавить
 //   предикат к существующему запросу
 
-module examples.orm_decorators
+module real-world.orm_decorators
 
 use std.sql                              // Sql, Db, DbRow, DbError
 

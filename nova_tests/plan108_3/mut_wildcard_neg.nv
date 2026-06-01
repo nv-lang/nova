@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_PATTERN_GROUP_MUT
 
-module nova_tests.plan108_3.mut_wildcard_neg
+module plan108_3.mut_wildcard_neg
 
 test "let (mut _, b) → error" {
     ro (mut _, b) = ([1], [2])

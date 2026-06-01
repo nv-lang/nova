@@ -2,4 +2,4 @@
 // Все peers в этом folder-module наследуют #no_prelude.
 
 #no_prelude
-module plan107.folder_no_prelude_inherited
+module folder_no_prelude_inherited._module

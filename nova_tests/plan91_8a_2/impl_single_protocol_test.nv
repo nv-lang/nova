@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.impl_single_protocol_test
+module plan91_8a_2.impl_single_protocol_test
 
 // Plan 91.9 acceptance: #impl(SingleProtocol) с explicit @compare —
 // type verified, no error, bare-call works.

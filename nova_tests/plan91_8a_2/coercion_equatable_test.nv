@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.coercion_equatable_test
+module plan91_8a_2.coercion_equatable_test
 
 // Plan 91.8a.2 followup: Equatable coercion с Self-typed param.
 // `let x Equatable = m` works; `x.equals(y)` virtual dispatch where y is

@@ -1,4 +1,4 @@
-module nova_tests.plan91_8c.min_max_by_find_test
+module plan91_8c.min_max_by_find_test
 
 import std.sort
 

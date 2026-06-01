@@ -1,4 +1,4 @@
-module nova_tests.plan70_4.f3_array_sized_int_pos
+module plan70_4.f3_array_sized_int_pos
 
 // Plan 70.4 Ф.2: sized-int arrays must emit distinct NovaArray_T* types.
 // []i32 → NovaArray_int32_t*, []i16 → NovaArray_int16_t*, etc.

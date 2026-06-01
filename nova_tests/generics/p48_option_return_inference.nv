@@ -7,7 +7,7 @@
 // Используем `match` вместо `r == Some(...)` чтобы не требовать
 // runtime helper `nova_opt_eq_<T>` (он есть только для nova_int).
 
-module nova_tests.generics.p48_option_return_inference
+module generics.p48_option_return_inference
 
 
 // Generic-fn возвращает Option[T] (через Some(x)).

@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.1.1 (D188 / D180): raw `consume X = expr` (без block-формы)
+// продолжает работать как раньше (D180 linear ownership binding).
+// Acceptance A110.1.1.b — no regression.
+//
+// EXPECT: nova check PASS
+
+module plan110.parse_consume_raw_no_regression
+
+// StringBuilder — consume-required type (Plan 73.1 D180).
+// Raw `consume X = expr` без block — должно работать как раньше
+// (Stmt::Let consume:true), не диспатчиться в ConsumeScope.
+
+fn extract_str() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("hello").as_str()
+}
+
+test "Plan 110.1.1: raw consume binding without block — no regression" {
+    ro s = extract_str()
+    assert(s == "hello")
+}

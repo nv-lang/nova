@@ -625,18 +625,24 @@ pub fn expected_module_path_rev3(
     Some(vec![parent, target])
 }
 
-/// Проверить module declaration vs file path по D78. Returns Err с
-/// человекочитаемым сообщением, если mismatch. None manifest →
-/// enforcement skipped (не часть пакета).
+/// Проверить module declaration vs file path по D78. Returns:
+/// - `Ok(ModulePathCheck::Rev3)` — strict rev-3 match.
+/// - `Ok(ModulePathCheck::Rev1Deprecated(msg))` — rev-1 legacy match,
+///   actionable warning message embedded.
+/// - `Err(msg)` — neither match.
+/// None manifest → enforcement skipped (не часть пакета) — returns Rev3.
 ///
 /// **Plan 42 (2026-05-13) compatibility mode:** declaration валидно если
 /// matches **либо** rev-1 (legacy full path) **либо** rev-3 (parent.X).
-/// Это позволяет постепенную миграцию std/* без big-bang breaking change.
-/// После полной миграции rev-1 branch будет removed.
+/// Это позволяет постепенную миграцию corpus без big-bang breaking change.
+/// **Bug fix 2026-06-01:** legacy form теперь emit'ит deprecation warning
+/// `W_D78_REV1_DEPRECATED` вместо silent acceptance, чтобы migrate
+/// pressure был visible. После полной миграции rev-1 branch будет removed
+/// (followup `[M-D78-strict-removal]`).
 pub fn check_module_path(
     file: &Path,
     declared: &[String],
-) -> Result<(), String> {
+) -> Result<ModulePathCheck, String> {
     // Plan 81 Ф.10: auto-detect whether `file` is a peer of a folder-module
     // so a folder-module *entry* (`nova check` / `nova build` pointed at one
     // of its peers) is validated against the folder-module D29 rule, not the
@@ -646,13 +652,36 @@ pub fn check_module_path(
     check_module_path_with_kind(file, declared, is_folder_module)
 }
 
+/// Plan 42 D29 / D78 check result. `Ok(ModulePathCheck::Rev3)` — strict
+/// rev-3 match. `Err(msg)` — declaration не соответствует rev-3.
+///
+/// History:
+/// - **2026-05-13 (rev-3):** parent.target made canonical.
+/// - **2026-06-01 bug fix:** ранее compiler silently accepted rev-1
+///   legacy form. Fix добавил `W_D78_REV1_DEPRECATED` warning + audit/
+///   migration script.
+/// - **2026-06-01 strict removal `[M-D78-strict-removal]`:** rev-1
+///   acceptance removed после full corpus migration (846 files). rev-1
+///   form now → `E_D78_MODULE_PATH_MISMATCH` hard error. Rev1Deprecated
+///   variant kept в enum для potential per-package opt-in legacy mode
+///   (currently never produced — dead variant for ABI stability).
+pub enum ModulePathCheck {
+    /// Declaration matches strict rev-3 (parent.target).
+    Rev3,
+    /// **Dead variant (kept для ABI stability).** Rev-1 legacy match —
+    /// больше не produces после [M-D78-strict-removal] (2026-06-01).
+    /// rev-1 form now → hard error.
+    #[allow(dead_code)]
+    Rev1Deprecated(String),
+}
+
 pub fn check_module_path_with_kind(
     file: &Path,
     declared: &[String],
     is_folder_module: bool,
-) -> Result<(), String> {
+) -> Result<ModulePathCheck, String> {
     let Some(manifest) = find_manifest(file) else {
-        return Ok(());
+        return Ok(ModulePathCheck::Rev3);
     };
     // Plan 81 Ф.10: a folder-module peer's legacy (rev-1) declaration is the
     // path to the FOLDER — every peer of the folder shares one declaration,
@@ -672,17 +701,16 @@ pub fn check_module_path_with_kind(
     };
     let expected_rev3 = expected_module_path_rev3(file, &manifest, is_folder_module);
 
-    // rev-3 first (preferred); fallback rev-1 (legacy compatibility).
+    // rev-3 strict match — only acceptable form (Plan 42 rev-3 canonical).
     if let Some(exp) = &expected_rev3 {
         if declared == exp.as_slice() {
-            return Ok(());
+            return Ok(ModulePathCheck::Rev3);
         }
     }
-    if let Some(exp) = &expected_legacy {
-        if declared == exp.as_slice() {
-            return Ok(());
-        }
-    }
+    // [M-D78-strict-removal] 2026-06-01: rev-1 legacy form больше не
+    // accepted (full corpus migration completed; ~846 files migrated to
+    // rev-3 via scripts/d78_audit_migrate.py). Declaration в rev-1 form
+    // теперь → hard error E_D78_MODULE_PATH_MISMATCH.
 
     let exp_legacy_str = expected_legacy
         .as_ref()
@@ -693,7 +721,8 @@ pub fn check_module_path_with_kind(
         .map(|e| e.join("."))
         .unwrap_or_else(|| "<n/a>".into());
     Err(format!(
-        "module declaration does not match file path (D29 rev-3 + legacy)\n  \
+        "[E_D78_MODULE_PATH_MISMATCH] module declaration does not match file path \
+         (D29 rev-3 + legacy)\n  \
          in {}\n  \
          declares `{}`\n  \
          expected (rev-3 parent.X): `{}`\n  \

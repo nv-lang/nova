@@ -12,7 +12,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.litmus_refcount_drop
+module plan103_8.litmus_refcount_drop
 
 test "refcount drop: fetch_sub Release + fence Acquire -- exactly one last-fiber" {
     ro n_iters   = 5

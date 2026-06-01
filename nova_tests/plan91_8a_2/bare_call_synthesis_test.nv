@@ -1,4 +1,4 @@
-module nova_tests.plan91_8a_2.bare_call_synthesis_test
+module plan91_8a_2.bare_call_synthesis_test
 
 // Plan 91.8a.2 followup: bare-call synthesis (без [T Protocol] bound).
 // Type T satisfies Equatable/Printable через default body — прямой вызов

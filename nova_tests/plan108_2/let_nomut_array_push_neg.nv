@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
 
-module nova_tests.plan108_2.let_nomut_array_push_neg
+module plan108_2.let_nomut_array_push_neg
 
 test "let no-mut + push → error" {
     mut arr = [1]

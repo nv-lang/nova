@@ -9,7 +9,7 @@
 //
 // EXPECT_TIMEOUT_MS 300000
 
-module nova_tests.plan103_8.stress_producer_consumer_bounded
+module plan103_8.stress_producer_consumer_bounded
 
 test "bounded buffer: 4 producers + 4 consumers Ð“â€” 500 items Ð²Ð‚â€ no item lost" {
     mut mu = Mutex.new()

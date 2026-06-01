@@ -3,7 +3,7 @@
 // Plan 100.3 (D157): consume-closure (FnOnce) — повторный invoke
 // невозможен. Первый invoke = consume; closure становится Consumed.
 
-module nova_tests.plan100_3.closure_consume_err_double_invoke
+module plan100_3.closure_consume_err_double_invoke
 
 type Transaction consume {
     id int,

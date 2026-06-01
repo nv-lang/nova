@@ -3,7 +3,7 @@
 
 // EXPECT_COMPILE_ERROR E7301
 
-module nova_tests.plan115.t3_handle_type_mismatch_neg
+module plan115.t3_handle_type_mismatch_neg
 
 type SqHandle(ptr)
 type PngHandle(ptr)

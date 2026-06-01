@@ -4,7 +4,7 @@
 // Проверяет: scan_expr_fwd корректно recurse'ит в method body,
 // counter не ломается, GC справляется с nested allocation.
 
-module nova_tests.plan97.pos_protocol_lit_nested
+module plan97.pos_protocol_lit_nested
 
 
 export type Maker protocol {

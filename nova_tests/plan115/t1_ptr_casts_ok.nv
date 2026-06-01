@@ -1,6 +1,6 @@
 // Plan 115 Ф.1 T1.3-T1.4 — `as ptr` / `as u64` / `as i64` / `as int` casts.
 
-module nova_tests.plan115.t1_ptr_casts_ok
+module plan115.t1_ptr_casts_ok
 
 test "u64 to ptr round-trip" {
     ro original u64 = 0x1234ABCD

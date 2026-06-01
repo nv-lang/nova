@@ -24,11 +24,140 @@ pub struct LintWarning {
     pub diag: Diagnostic,
 }
 
+/// Plan 110.5.1 (D189): deprecation warning emit для okdefer / errdefer /
+/// defer |result| — pre-removal warning before Plan 110.5.7 final cutover.
+/// Auto-fix tool nova fix --simplify-cleanup (Plan 110.5.2-4) migrates
+/// usage перед removal.
+fn lint_deprecated_defer_family(s: &Stmt, warnings: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::OkDefer { span, .. } => {
+            warnings.push(LintWarning {
+                rule: "D189-deprecated-okdefer",
+                diag: Diagnostic::new(
+                    "[D189-deprecated-okdefer] `okdefer` is deprecated by Plan 110 \
+                     D189 (cleanup-семейство radical simplification). Migrate к \
+                     `consume X = init() { body }` scope-block с `match outcome { \
+                     Success => ... }` в `on_exit` method. Run `nova fix \
+                     --simplify-cleanup` for automatic migration. Parser will \
+                     reject `okdefer` после Plan 110.5.7 final cutover.".to_string(),
+                    *span,
+                ),
+            });
+        }
+        Stmt::ErrDefer { span, .. } => {
+            warnings.push(LintWarning {
+                rule: "D189-deprecated-errdefer",
+                diag: Diagnostic::new(
+                    "[D189-deprecated-errdefer] `errdefer` is deprecated by Plan 110 \
+                     D189. Migrate к `consume X = init() { body }` scope-block с \
+                     `match outcome { Failure(_) => ... }` в `on_exit` method, \
+                     OR use `mut done = false; defer { if !done { x } }` для \
+                     bare cleanup-state pattern. Run `nova fix --simplify-cleanup`.".to_string(),
+                    *span,
+                ),
+            });
+        }
+        Stmt::DeferWithResult { span, .. } => {
+            warnings.push(LintWarning {
+                rule: "D189-deprecated-defer-result",
+                diag: Diagnostic::new(
+                    "[D189-deprecated-defer-result] `defer |result| { ... }` is \
+                     deprecated by Plan 110 D189. Migrate к `consume X = ... { \
+                     body }` scope-block с `match outcome` в `on_exit` method, \
+                     OR `with Cleanup = handler { body }` для observability-only \
+                     logging pattern (D185). Run `nova fix --simplify-cleanup`.".to_string(),
+                    *span,
+                ),
+            });
+        }
+        _ => {}
+    }
+}
+
+fn lint_walk_stmts_for_d189(b: &crate::ast::Block, warnings: &mut Vec<LintWarning>) {
+    for s in &b.stmts {
+        lint_deprecated_defer_family(s, warnings);
+        // Recurse into nested blocks через body fields.
+        match s {
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                lint_walk_expr_for_d189(body, warnings);
+            }
+            Stmt::ConsumeScope { init, body, .. } => {
+                lint_walk_expr_for_d189(init, warnings);
+                lint_walk_stmts_for_d189(body, warnings);
+            }
+            Stmt::Let(d) => lint_walk_expr_for_d189(&d.value, warnings),
+            Stmt::Expr(e) => lint_walk_expr_for_d189(e, warnings),
+            Stmt::Assign { target, value, .. } => {
+                lint_walk_expr_for_d189(target, warnings);
+                lint_walk_expr_for_d189(value, warnings);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { lint_walk_expr_for_d189(v, warnings); }
+            }
+            Stmt::Throw { value, .. } => lint_walk_expr_for_d189(value, warnings),
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing {
+        lint_walk_expr_for_d189(t, warnings);
+    }
+}
+
+fn lint_walk_expr_for_d189(e: &crate::ast::Expr, warnings: &mut Vec<LintWarning>) {
+    use crate::ast::ExprKind;
+    match &e.kind {
+        ExprKind::Block(b) => lint_walk_stmts_for_d189(b, warnings),
+        ExprKind::If { cond, then, else_, .. } => {
+            lint_walk_expr_for_d189(cond, warnings);
+            lint_walk_stmts_for_d189(then, warnings);
+            if let Some(eb) = else_ {
+                match eb {
+                    crate::ast::ElseBranch::Block(b) => lint_walk_stmts_for_d189(b, warnings),
+                    crate::ast::ElseBranch::If(ei) => lint_walk_expr_for_d189(ei, warnings),
+                }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            lint_walk_expr_for_d189(cond, warnings);
+            lint_walk_stmts_for_d189(body, warnings);
+        }
+        ExprKind::For { iter, body, .. } => {
+            lint_walk_expr_for_d189(iter, warnings);
+            lint_walk_stmts_for_d189(body, warnings);
+        }
+        ExprKind::Loop { body, .. } => lint_walk_stmts_for_d189(body, warnings),
+        ExprKind::Call { func, args, .. } => {
+            lint_walk_expr_for_d189(func, warnings);
+            for a in args {
+                if let crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) = a {
+                    lint_walk_expr_for_d189(ae, warnings);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Прогон всех lint-проверок на модуле. Возвращает список warning'ов.
 pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     let mut warnings = Vec::new();
     let effect_names = collect_effect_names(m);
     let protocol_names = collect_protocol_names(m);
+
+    // Plan 110.5.1 (D189): walk for deprecated okdefer/errdefer/defer|r|.
+    for item in &m.items {
+        match item {
+            crate::ast::Item::Fn(fd) => {
+                if let crate::ast::FnBody::Block(b) = &fd.body {
+                    lint_walk_stmts_for_d189(b, &mut warnings);
+                }
+            }
+            crate::ast::Item::Test(t) => lint_walk_stmts_for_d189(&t.body, &mut warnings),
+            _ => {}
+        }
+    }
     // Plan 90.1 Ф.5: module-level suppress for W_VIEW_EXTEND_DETACH.
     let view_extend_suppressed = m.attrs.iter()
         .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::AllowViewExtendDetach));
@@ -310,6 +439,12 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                             collect_tr(e, out);
                         }
                     }
+                    // Plan 120 (D215): collect type refs from named tuple fields.
+                    TypeDeclKind::NamedTuple(fields) => {
+                        for f in fields {
+                            collect_tr(&f.ty, out);
+                        }
+                    }
                     TypeDeclKind::Newtype(tr) | TypeDeclKind::Alias(tr) => {
                         collect_tr(tr, out)
                     }
@@ -439,6 +574,16 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
             collect_expr(body, out)
+        }
+        // Plan 110 D188: collect referenced names from init expr + body block.
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_expr(init, out);
+            for stmt in &body.stmts {
+                collect_stmt(stmt, out);
+            }
+            if let Some(t) = &body.trailing {
+                collect_expr(t, out);
+            }
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             collect_expr(expr, out)
@@ -1039,6 +1184,16 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         Stmt::Break(_) | Stmt::Continue(_) => {}
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => walk_expr_lints(body, out),
+        // Plan 110 D188: lint walk through init + body block.
+        Stmt::ConsumeScope { init, body, .. } => {
+            walk_expr_lints(init, out);
+            for stmt in &body.stmts {
+                walk_stmt_lints(stmt, out);
+            }
+            if let Some(t) = &body.trailing {
+                walk_expr_lints(t, out);
+            }
+        }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
         // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}

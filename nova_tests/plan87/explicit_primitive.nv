@@ -4,7 +4,7 @@
 // Spec/syntax.md документирует её (`for id u64 in ids`); Plan 87 закрывает
 // spec/impl drift. Аннотация опциональна и проверяется (Ф.3).
 
-module nova_tests.plan87.explicit_primitive
+module plan87.explicit_primitive
 
 
 test "for x int in array literal" {

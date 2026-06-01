@@ -1,7 +1,7 @@
 // Plan 90.1 — property: insert preserves element order.
 // Insert segments and verify final order consistent with reference.
 
-module nova_tests.plan90_1.insert_preserves_order
+module plan90_1.insert_preserves_order
 
 test "insert order preservation — sequential inserts" {
     mut arr []int = [1, 5]

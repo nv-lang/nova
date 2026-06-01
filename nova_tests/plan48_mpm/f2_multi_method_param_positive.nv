@@ -1,4 +1,4 @@
-module nova_tests.plan48_mpm.f2_multi_method_param_positive
+module plan48_mpm.f2_multi_method_param_positive
 
 // Plan 48 Ф.9 / D119 positive: метод с ДВУМЯ собственными type params.
 // Exercises method-level multi-param mono: каждая (T, U, V) combination

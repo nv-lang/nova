@@ -1,4 +1,4 @@
-module nova_tests.plan61.f3_typed_result_err
+module plan61.f3_typed_result_err
 
 // Plan 61 followup #3: Result[T, CustomErr] с typed Err payload.
 // Hybrid: Nova_Result extended err_typed_payload + tid; constructor

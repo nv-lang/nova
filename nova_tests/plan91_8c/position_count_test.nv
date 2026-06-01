@@ -1,4 +1,4 @@
-module nova_tests.plan91_8c.position_count_test
+module plan91_8c.position_count_test
 
 import std.sort
 

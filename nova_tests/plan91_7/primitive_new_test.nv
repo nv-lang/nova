@@ -1,4 +1,4 @@
-module nova_tests.plan91_7.primitive_new_test
+module plan91_7.primitive_new_test
 
 // Plan 91.7 Part D: canonical .new() для primitive types (D180).
 

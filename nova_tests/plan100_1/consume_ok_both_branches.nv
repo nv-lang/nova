@@ -3,7 +3,7 @@
 // `if cond { tx.commit() } else { tx.rollback() }` — на обоих путях tx
 // Consumed. Branch join: Consumed ⊔ Consumed = Consumed. OK.
 
-module nova_tests.plan100_1.consume_ok_both_branches
+module plan100_1.consume_ok_both_branches
 
 type Transaction consume {
     id int,

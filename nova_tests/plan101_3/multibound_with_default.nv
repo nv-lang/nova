@@ -1,7 +1,7 @@
 // Plan 101.3 — positive: multi-bound + default. Грамматика
 // `[T A + B = Default]` — bounds list, потом `= Default`.
 
-module nova_tests.plan101_3.multibound_with_default
+module plan101_3.multibound_with_default
 
 
 type Show_ protocol {

@@ -8,7 +8,7 @@
 //
 // Verify что N циклов не leak'ат, не hang'ят, не corrupt'ят main loop.
 
-module nova_tests.concurrency.mn_runtime_init_shutdown_cycles
+module concurrency.mn_runtime_init_shutdown_cycles
 
 test "5 init/shutdown cycles + main sleep between" {
     mut i = 0

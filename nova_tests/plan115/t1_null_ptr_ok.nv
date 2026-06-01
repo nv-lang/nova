@@ -1,6 +1,6 @@
 // Plan 115 Ф.1 T1.1-T1.2 — `null ptr` literal + equality + default value.
 
-module nova_tests.plan115.t1_null_ptr_ok
+module plan115.t1_null_ptr_ok
 
 test "null ptr literal parses and assigns" {
     ro p ptr = null ptr

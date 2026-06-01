@@ -2,7 +2,7 @@
 // Rewritten to use explicit read()/write() + defer unlock() since Nova-body
 // methods (with_read, with_write) use a codegen path not yet supported here.
 
-module nova_tests.plan103_3.rwlock_with_read_with_write_helpers
+module plan103_3.rwlock_with_read_with_write_helpers
 
 test "read lock released after block" {
     mut rw = RwLock.new()

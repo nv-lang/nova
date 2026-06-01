@@ -7,7 +7,7 @@
 // → identity (returns the stored value). Zero runtime overhead — pure
 // typedef-based wrapping (Plan 70.3 mirror).
 
-module nova_tests.plan115.t3_handle_pattern_ok
+module plan115.t3_handle_pattern_ok
 
 type SqHandle(ptr)
 type PngHandle(ptr)

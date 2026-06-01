@@ -1,6 +1,6 @@
 // Plan 98 Ф.2.1: type-param inference из Result[T, E] параметра.
 
-module nova_tests.plan98.result_param_inference
+module plan98.result_param_inference
 
 fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
 

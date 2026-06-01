@@ -6,7 +6,7 @@
 // D131 «consume-obligation not satisfied» false-positive.
 // С M3: chain root (`sb`) → recursed through fluent `push` → marked Consumed.
 
-module nova_tests.plan73.binding_fluent_return_implicit_consume_ok
+module plan73.binding_fluent_return_implicit_consume_ok
 
 type Box consume {
     mut data []int

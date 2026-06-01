@@ -4,7 +4,7 @@
 // в protocol-литерале → diagnostic «static methods cannot be
 // implemented in protocol-literal».
 
-module nova_tests.plan97.neg_protocol_lit_static_method
+module plan97.neg_protocol_lit_static_method
 
 
 type WithStatic protocol {

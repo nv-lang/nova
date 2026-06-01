@@ -4,7 +4,7 @@
 // Заявленный bsd_only_value() невидим импортирующему.
 
 #cfg(target_os = "freebsd")
-module cfg.target_os_module
+module target_os_module.bsd_only
 
 export fn bsd_only_value() -> int =>
     111

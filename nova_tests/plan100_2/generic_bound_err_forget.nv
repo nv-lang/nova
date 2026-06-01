@@ -3,7 +3,7 @@
 // Plan 100.2 (D156): generic с `[T consume]` bound + consume-param —
 // callee обязан что-то сделать с x. Просто принять и забыть → error.
 
-module nova_tests.plan100_2.generic_bound_err_forget
+module plan100_2.generic_bound_err_forget
 
 type Transaction consume {
     id int,

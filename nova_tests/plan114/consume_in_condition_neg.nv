@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_CONSUME_IN_CONDITION
 
-module nova_tests.plan114.consume_in_condition_neg
+module plan114.consume_in_condition_neg
 
 fn maybe() -> Option {
     Some(42)

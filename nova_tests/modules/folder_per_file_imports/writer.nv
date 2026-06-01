@@ -3,7 +3,7 @@
 // Использует только встроенные операции — not Range.
 // Peer-сосед (reader.nv) импортирует Range — сюда не просачивается.
 
-module modules.folder_per_file_imports
+module folder_per_file_imports.writer
 
 export fn double(n int) -> int =>
     n * 2

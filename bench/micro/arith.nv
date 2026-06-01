@@ -1,5 +1,5 @@
 // Plan 57: arithmetic micro-benches — smoke tests для hot-loop codegen.
-module bench.micro
+module micro.arith
 
 bench "int add accumulate" {
     measure {

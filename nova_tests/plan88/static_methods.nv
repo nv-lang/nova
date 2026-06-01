@@ -2,7 +2,7 @@
 // и `T.try_from` на type-параметре. Обобщённый путь, не спец-кейс под
 // один метод `from`.
 
-module nova_tests.plan88.static_methods
+module plan88.static_methods
 
 
 // --- T.new() — user-defined static-метод через protocol ---

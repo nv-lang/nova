@@ -12,7 +12,7 @@
 //    side-effects produced before done() are visible to all of them.
 //  - Callers that arrive after done() skip the body entirely.
 
-module nova_tests.concurrency.sync_once
+module concurrency.sync_once
 
 // ─── Basic API ─────────────────────────────────────────────────
 

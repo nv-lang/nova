@@ -1,6 +1,6 @@
 // Plan 103.5 — OnceCell[T].get_or_init: exactly-once initialization across 5 fibers.
 
-module nova_tests.plan103_5.oncecell_get_or_init_exactly_once
+module plan103_5.oncecell_get_or_init_exactly_once
 
 test "OnceCell.get_or_init: init runs exactly once across 5 concurrent fibers" {
     mut cell = OnceCell[int].new()

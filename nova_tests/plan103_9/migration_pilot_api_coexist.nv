@@ -4,7 +4,7 @@
 // New-style `consume g = mu.lock(); g.unlock()` also works.
 // Both styles can be used in the same file/test.
 
-module nova_tests.plan103_9.migration_pilot_api_coexist
+module plan103_9.migration_pilot_api_coexist
 
 test "V1 bare lock/unlock still works after V2 upgrade" {
     mut mu = Mutex.new()

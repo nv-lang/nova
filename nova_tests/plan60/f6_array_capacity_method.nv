@@ -1,4 +1,4 @@
-module nova_tests.plan60.f6_array_capacity_method
+module plan60.f6_array_capacity_method
 
 // Plan 60 / D112: `.capacity()` method (renamed from `.cap`).
 // Rust/C++/Swift parity. Должен возвращать ≥ len() (capacity ≥ size).

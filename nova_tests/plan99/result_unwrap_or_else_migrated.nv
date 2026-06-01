@@ -1,6 +1,6 @@
 // Plan 99.3 Ф.4: Result.unwrap_or_else lazy recovery.
 
-module nova_tests.plan99.result_unwrap_or_else_migrated
+module plan99.result_unwrap_or_else_migrated
 
 test "Result[int,str].unwrap_or_else — Ok skip closure" {
     ro r Result[int, str] = Ok(42)

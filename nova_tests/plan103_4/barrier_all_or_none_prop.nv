@@ -12,7 +12,7 @@
 //
 // EXPECT_TIMEOUT_MS 60000
 
-module nova_tests.plan103_4.barrier_all_or_none_prop
+module plan103_4.barrier_all_or_none_prop
 
 test "all-or-none: all K parties proceed after barrier (5 rounds)" {
     ro k = 6

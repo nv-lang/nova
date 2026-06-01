@@ -1,6 +1,6 @@
 // demo.nv — компактный showcase нескольких фич сразу.
 
-module demo
+module basics.demo
 
 type User {
     id   int

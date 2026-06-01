@@ -3,7 +3,7 @@
 // Plan 90.1 — негатив: insert — negative index → panic.
 // D141 amend: i < 0 → panic "insert: index N out of bounds".
 
-module nova_tests.plan90_1.insert_oob_negative_i_neg
+module plan90_1.insert_oob_negative_i_neg
 
 fn main() -> () {
     mut dst []int = [1, 2, 3]

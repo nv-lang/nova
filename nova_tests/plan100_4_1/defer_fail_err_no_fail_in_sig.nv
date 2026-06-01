@@ -5,7 +5,7 @@
 //
 // Force'ит explicit visibility cleanup-fail в API.
 
-module nova_tests.plan100_4_1.defer_fail_err_no_fail_in_sig
+module plan100_4_1.defer_fail_err_no_fail_in_sig
 
 type CommitErr { msg str }
 

@@ -1,6 +1,6 @@
 // arithmetic.nv — базовые вычисления.
 
-module arithmetic
+module basics.arithmetic
 
 fn factorial(n int) -> int {
     if n <= 1 {

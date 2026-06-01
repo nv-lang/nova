@@ -2,7 +2,7 @@
 
 // EXPECT_COMPILE_ERROR E_PTR_ARITHMETIC_BANNED
 
-module nova_tests.plan115.t1_ptr_arithmetic_neg
+module plan115.t1_ptr_arithmetic_neg
 
 test "ptr + int is banned" {
     ro p ptr = null ptr

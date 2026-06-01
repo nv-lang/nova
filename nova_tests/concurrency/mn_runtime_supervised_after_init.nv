@@ -12,7 +12,7 @@
 // scalars writeable cross-thread; supervised waits через
 // `pending_remote` counter.
 
-module nova_tests.concurrency.mn_runtime_supervised_after_init
+module concurrency.mn_runtime_supervised_after_init
 
 test "M:N: workers run compute-only spawn bodies (4 workers)" {
     runtime.init(4)

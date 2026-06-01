@@ -2,7 +2,7 @@
 // consume tx (Consumed на любом arm-exit).
 // Uses inline Transaction literals to avoid loose consume-obligations.
 
-module nova_tests.plan100_2.for_consume_break_ok
+module plan100_2.for_consume_break_ok
 
 type Transaction consume {
     id int,

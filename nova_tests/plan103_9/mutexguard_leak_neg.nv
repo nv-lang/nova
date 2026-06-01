@@ -4,7 +4,7 @@
 // `consume g = mu.lock()` creates obligation; scope exit without unlock →
 // E_CONSUME_NOT_CONSUMED (D133).
 
-module nova_tests.plan103_9.mutexguard_leak_neg
+module plan103_9.mutexguard_leak_neg
 
 test "forget to unlock guard → compile error" {
     mut mu = Mutex.new()

@@ -3,7 +3,7 @@
 // 5 fibers all call call_once concurrently. The init body should execute exactly
 // once. Counter must equal 1 after all fibers complete.
 
-module nova_tests.plan103_5.once_call_once_exactly_once
+module plan103_5.once_call_once_exactly_once
 
 test "Once.call_once: init body executes exactly once across 5 concurrent fibers" {
     mut once = Once.new()

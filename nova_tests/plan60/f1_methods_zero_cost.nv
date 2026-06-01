@@ -1,4 +1,4 @@
-module nova_tests.plan60.f1_methods_zero_cost
+module plan60.f1_methods_zero_cost
 
 // Plan 60 Ф.1: smoke test что новые size-accessor methods работают.
 // После Ф.3 это будет единственный легальный путь; сейчас (Phase A)

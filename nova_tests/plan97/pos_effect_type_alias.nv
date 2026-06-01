@@ -3,7 +3,7 @@
 // (через D88 default); функция, возвращающая `Effect[E]` —
 // корректно типизирована.
 
-module nova_tests.plan97.pos_effect_type_alias
+module plan97.pos_effect_type_alias
 
 
 type Logger effect {

@@ -5,7 +5,7 @@
 // До Plan 88: `Result[T,E]` в return давал unsubstituted-mangle
 // `Nova_Result____<ok>__<err>` (CC-FAIL «unknown type name»).
 
-module nova_tests.plan88.result_return
+module plan88.result_return
 
 
 fn ok_of[T](x T) -> Result[T, str] => Ok(x)

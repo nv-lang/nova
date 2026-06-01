@@ -1,7 +1,7 @@
 // Plan 108.2 (D36 enforcement): `let` без mut — read-only OK.
 // Доступны: read fields, len, iteration, non-mut методы.
 
-module nova_tests.plan108_2.let_no_mut_read_ok
+module plan108_2.let_no_mut_read_ok
 
 test "let no-mut + read operations" {
     mut arr = [10, 20, 30]

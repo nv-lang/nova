@@ -5,7 +5,7 @@
 // (нужно для `let r = process(...)` — `r` должен быть правильно
 // типизирован, иначе assert ломается).
 
-module nova_tests.generics.p48_closure_arg_inference
+module generics.p48_closure_arg_inference
 
 
 // Generic-fn: T выводится из closure body return type.

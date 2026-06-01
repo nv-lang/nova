@@ -2,7 +2,7 @@
 //
 // Plan 100.4.2 (D159): parallel for в defer body — error.
 
-module nova_tests.plan100_4_2.defer_err_parallel_for_in_body
+module plan100_4_2.defer_err_parallel_for_in_body
 
 fn process() -> () {
     mut arr = [1, 2, 3]

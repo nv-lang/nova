@@ -1,7 +1,7 @@
 // Plan 100.4.4 (D161): caller inspects composite через MultiError
 // .primary() / .suppressed() / .fmt_chain() — public API verify.
 
-module nova_tests.plan100_4_4.multi_error_inspect_chain_ok
+module plan100_4_4.multi_error_inspect_chain_ok
 
 fn make_chain() -> MultiError =>
     { primary: "primary error", suppressed: ["suppr1", "suppr2", "suppr3"] }

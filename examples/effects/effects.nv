@@ -1,6 +1,6 @@
 // effects.nv — handler-substitution в действии (D61).
 
-module effects
+module effects.effects
 
 type Counter effect {
     next() -> int

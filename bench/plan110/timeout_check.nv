@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.6.9 (D192): exit_timeout enforcement micro-benchmark.
+// Measures cost of nv_shield_check_deadline() per cooperative suspend
+// entry — hot path when shield NOT active (mask==0 → early return).
+//
+// Baseline expectation: deadline check on non-shielded path is one
+// atomic load (mask_count) + branch. Cost should be < ~5ns per call.
+
+module plan110.timeout_check
+
+bench "Time.sleep(0) x100k без shield (deadline check no-op fast path)" {
+    measure {
+        mut i = 0
+        while i < 100000 {
+            Time.sleep(0)
+            i = i + 1
+        }
+        bench.elements(100000)
+    }
+}
+
+type R {
+    ro id int
+}
+
+fn R.new(id int) -> R => { id }
+fn R consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+bench "Time.sleep(0) x100k под shield (deadline check + mask-defer cancel)" {
+    measure {
+        consume r = R.new(0) {
+            mut i = 0
+            while i < 100000 {
+                Time.sleep(0)
+                i = i + 1
+            }
+            ro _ = r.id
+        }
+        bench.elements(100000)
+    }
+}

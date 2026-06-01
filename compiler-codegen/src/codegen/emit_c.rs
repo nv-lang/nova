@@ -1263,7 +1263,8 @@ impl CEmitter {
             | Stmt::Assume { span, .. }
             | Stmt::Apply { span, .. }
             | Stmt::Calc { span, .. }
-            | Stmt::Reveal { span, .. } => *span,
+            | Stmt::Reveal { span, .. }
+            | Stmt::ConsumeScope { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -8314,6 +8315,26 @@ impl CEmitter {
             }
             return Ok(());
         }
+        // Plan 114.4.1 (D200): emit associated constants как top-level
+        // `static const T Type_NAME = literal;` в .rodata. Generic
+        // T-dependent assoc consts (sizeof(T) etc) — followup Ф.3
+        // [M-114.4.1-generic-per-mono]; non-generic + T-independent
+        // обрабатываются здесь.
+        for ac in &t.assoc_consts {
+            let ty_c = if let Some(ty) = &ac.ty {
+                self.type_ref_to_c(ty)?
+            } else {
+                self.infer_expr_c_type(&ac.value)
+            };
+            let val = self.emit_const_expr_typed(&ac.value, Some(&ty_c))
+                .map_err(|e| format!(
+                    "assoc const `{}.{}` codegen failed: {}",
+                    t.name, ac.name, e
+                ))?;
+            let symbol = format!("{}_{}", t.name, ac.name);
+            self.line(&format!("static const {} {} = {};", ty_c, symbol, val));
+            self.var_types.insert(symbol, ty_c);
+        }
         match &t.kind {
             TypeDeclKind::Record(fields) => {
                 self.emit_record_type(&t.name, fields)?;
@@ -8344,6 +8365,10 @@ impl CEmitter {
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
             TypeDeclKind::Protocol { .. } => {}
+            // Plan 120 (D215): named tuple — value-type struct with named fields.
+            TypeDeclKind::NamedTuple(fields) => {
+                self.emit_named_tuple_type(&t.name, fields)?;
+            }
             // Plan 62.D.bis (D126): unreachable — early-return on top
             // of emit_type_decl уже отфильтровал Opaque kind. Branch
             // present для exhaustiveness; semantically meaningful no-op.
@@ -8585,6 +8610,29 @@ impl CEmitter {
         self.line("};");
         self.line("");
         self.record_schemas.insert(name.to_string(), schema);
+        Ok(())
+    }
+
+    /// Plan 120 (D215): emit a named-tuple type as a value-type C struct.
+    /// `type Point(x f64, y f64)` → `typedef struct NovaTuple_Point { double x; double y; } NovaTuple_Point;`
+    /// Registered in `type_aliases` so `type_ref_to_c(Named{Point})` returns `NovaTuple_Point` (no pointer).
+    fn emit_named_tuple_type(&mut self, name: &str, fields: &[NamedTupleField]) -> Result<(), String> {
+        self.line(&format!("typedef struct NovaTuple_{0} NovaTuple_{0};", name));
+        self.line(&format!("struct NovaTuple_{} {{", name));
+        self.indent += 1;
+        let mut schema = HashMap::new();
+        for f in fields {
+            let ty_c = self.type_ref_to_c(&f.ty)?;
+            schema.insert(f.name.clone(), ty_c.clone());
+            let mangled = Self::mangle_field_name(&f.name);
+            self.line(&format!("{} {};", ty_c, mangled));
+        }
+        self.indent -= 1;
+        self.line("};");
+        self.line("");
+        self.record_schemas.insert(name.to_string(), schema);
+        // Value type: Named{Point} → "NovaTuple_Point" (no pointer, like type alias).
+        self.type_aliases.insert(name.to_string(), format!("NovaTuple_{}", name));
         Ok(())
     }
 
@@ -9180,6 +9228,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // не префиксуем повторно "Nova_" — просто добавляем `*`.
                 if other.starts_with("NovaArray_") {
                     return format!("{}*", other);
+                }
+                // Plan 120 (D215): named tuple receiver — value type, no pointer.
+                if let Some(c_ty) = self.type_aliases.get(other) {
+                    if c_ty.starts_with("NovaTuple_") {
+                        return c_ty.clone();
+                    }
                 }
                 format!("Nova_{}*", other)
             }
@@ -14333,6 +14387,249 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 scope.next_idx += 1;
                 self.line(&format!("{} = 1;", var));
             }
+            // Plan 110 D188: `consume X = expr { body }` — codegen
+            // (desugaring + on_exit dispatch + cancel-shield + 3-level
+            // timeout resolution + LIFO scope-stack) lands в Plan 110.1.4-
+            // 110.1.8 поэтапно. Здесь — deliberate compile-time gate:
+            // user видит чёткий error code "D188 codegen not yet impl"
+            // вместо silent unsoundness. Это production-grade staged
+            // delivery (не unimplemented!/todo! шорткат).
+            // Plan 110.1.4 ConsumeScope codegen — full D188 desugaring
+            // (success + failure paths, on_exit dispatch + re-raise).
+            //
+            // 110.1.4.a init binding + body emit ✅.
+            // 110.1.4.d setjmp fail-frame для throw catching ✅.
+            // 110.1.4.e on_exit dispatch via *_consume_on_exit symbol ✅.
+            // 110.1.4.f throw re-raise after on_exit на Failure outcome ✅.
+            //
+            // Pending: 110.1.4.b trailing value capture, 110.1.4.g panic
+            // propagation distinct из throw, 110.2 cancel-shield + timeout.
+            //
+            // Desugared C:
+            // {
+            //     <C_type> _consume_<binding>_<id> = <init expr>;
+            //     #define <binding> _consume_<binding>_<id>
+            //     NovaFailFrame _consume_frame_<id>;
+            //     nova_fail_push(&_consume_frame_<id>);
+            //     _consume_frame_<id>.error_suppressed = NULL;
+            //     int _consume_outcome_<id> = 0;
+            //     if (setjmp(_consume_frame_<id>.jmp) == 0) {
+            //         // body stmts
+            //         // body trailing (discarded)
+            //         nova_fail_pop();
+            //     } else {
+            //         nova_fail_pop();
+            //         _consume_outcome_<id> = 1;
+            //     }
+            //     Nova_ScopeOutcome* _outcome_<id>;
+            //     if (_consume_outcome_<id> == 0) {
+            //         _outcome_<id> = nova_make_ScopeOutcome_Success();
+            //     } else {
+            //         _outcome_<id> = nova_make_ScopeOutcome_Failure(
+            //             _consume_frame_<id>.error_msg);
+            //     }
+            //     Nova_<Type>_consume_on_exit(_consume_<binding>_<id>, _outcome_<id>);
+            //     if (_consume_outcome_<id> == 1) {
+            //         nova_rethrow_with_suppressed(&_consume_frame_<id>);
+            //     }
+            //     #undef <binding>
+            // }
+            Stmt::ConsumeScope { binding, type_annot: _, init, body, span } => {
+                let init_c_type = self.infer_expr_c_type(init);
+                let init_c_code = self.emit_expr(init)?;
+                let scope_id = self.defer_block_counter;
+                self.defer_block_counter += 1;
+                let c_binding = format!("_consume_{}_{}", binding, scope_id);
+                let frame = format!("_consume_frame_{}", scope_id);
+                let outcome_kind = format!("_consume_outcome_{}", scope_id);
+                let outcome_val = format!("_consume_outcome_val_{}", scope_id);
+                // Strip Nova_ prefix + pointer star для symbol resolution.
+                let type_name = init_c_type
+                    .trim_start_matches("Nova_")
+                    .trim_end_matches('*')
+                    .trim()
+                    .to_string();
+                let on_exit_c = format!("Nova_{}_consume_on_exit", type_name);
+
+                self.line(&format!("/* Plan 110.1.4: consume {} = ... {{ ... }} */", binding));
+                self.line("{");
+                self.indent += 1;
+                self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
+                self.line(&format!("#define {} {}", binding, c_binding));
+                // Register binding's C type для downstream member/method
+                // dispatch (codegen uses var_types для `r.field` → `r->field`
+                // detection на pointer types).
+                self.var_types.insert(binding.clone(), init_c_type.clone());
+
+                // Plan 110.2.3 (D192): resolve exit_timeout via 3-level
+                // fallback.
+                //   - Level 1: WithExitTimeout per-type impl (vtable lookup,
+                //     gated on Plan 110.2.5 stdlib protocol impl).
+                //   - Level 2: Application effect handler (Plan 110.4.6.a) —
+                //     check `_nova_handler_Application` and dispatch
+                //     `default_exit_timeout_ms()`.
+                //   - Level 3: hardcoded 5000ms via nv_resolve_exit_timeout_ms().
+                // Plan 110.2.4 (D198): #realtime fn bypasses 3-level resolution,
+                // emits hardcoded 0 (no timeout = realtime-incompatible suspend).
+                let timeout_var = format!("_consume_timeout_{}", scope_id);
+                if self.in_realtime {
+                    self.line(&format!(
+                        "int {} = 0;  /* Plan 110.2.4 (D198): #realtime bypass — no timeout */",
+                        timeout_var
+                    ));
+                } else if self.effect_schemas.contains_key("Application") {
+                    // Plan 110.4.6.a (D192 Level 2 + D195): consult Application
+                    // handler если bound; else Level 3 fallback.
+                    self.line(&format!("int {};", timeout_var));
+                    self.line(&format!("if (_nova_handler_Application) {{"));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "{} = (int)Nova_Application_default_exit_timeout_ms();",
+                        timeout_var
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!("{} = nv_resolve_exit_timeout_ms();", timeout_var));
+                    self.indent -= 1;
+                    self.line("}");
+                } else {
+                    self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
+                }
+
+                // Plan 110.2.1 (D188 R3): enter cancel-shield для body
+                // execution + cleanup. Runtime: nova_cancel_mask_inc +
+                // deadline_ns capture (Plan 110.2.1.a + 110.2.2.a).
+                self.line(&format!("nv_consume_enter_shield({});", timeout_var));
+
+                // Plan 110.4.4.a (D185): Cleanup effect on_scope_enter
+                // dispatch. Observability-only — invoked если user handler
+                // bound, else silent no-op. Guard by NULL-check; the
+                // `_nova_handler_Cleanup` TLS slot is emitted by
+                // emit_effect_type when Cleanup decl is in scope (via
+                // std/prelude/effects.nv import-by-default). Label = type
+                // name; timeout_ms = resolved exit deadline.
+                if self.effect_schemas.contains_key("Cleanup") {
+                    self.line(&format!(
+                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
+                        type_name, timeout_var
+                    ));
+                }
+
+                // 110.1.4.d: setup fail-frame for throw catching.
+                self.line(&format!("NovaFailFrame {};", frame));
+                self.line(&format!("nova_fail_push(&{});", frame));
+                self.line(&format!("{}.error_suppressed = NULL;", frame));
+                self.line(&format!("int {} = 0;  /* 0=Success, 1=Failure, 2=Panic */", outcome_kind));
+
+                // setjmp wrap around body.
+                self.line(&format!("if (setjmp({}.jmp) == 0) {{", frame));
+                self.indent += 1;
+                // Plan 110.1.9 T2.5: enter defer scope для body block.
+                // Defer inside body должен fire BEFORE on_exit (LIFO),
+                // используя стандартный defer mechanism.
+                let body_defer_id = self.enter_defer_scope(body, false);
+                for s in &body.stmts {
+                    self.emit_stmt(s)?;
+                }
+                if let Some(t) = &body.trailing {
+                    let v = self.emit_expr(t)?;
+                    self.line(&format!("(void)({});", v));
+                }
+                // Leave defer scope перед nova_fail_pop — runs defers в LIFO.
+                self.leave_defer_scope(body_defer_id);
+                self.line("nova_fail_pop();");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("nova_fail_pop();");
+                // 110.1.4.g: distinguish panic (NOVA_THROW_PANIC) vs throw.
+                self.line(&format!(
+                    "{} = ({}.error_kind == NOVA_THROW_PANIC) ? 2 : 1;",
+                    outcome_kind, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+
+                // 110.1.4.e + 110.1.4.g + 110.5.6: construct outcome + dispatch
+                // on_exit. D90 §7 amend (Plan 110.5.6): cancel-routed throws
+                // (NOVA_THROW_CANCEL) prefixed with "cancel: " marker для
+                // resource discrimination через ScopeOutcome::Failure variant.
+                // Full typed CancelError construction после MultiError payload
+                // any migration ([M-110-multierror-any]).
+                self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
+                self.line(&format!("if ({} == 0) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("{} = nova_make_ScopeOutcome_Success();", outcome_val));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!(
+                    "/* D90 §7 amend (Plan 110.5.6): cancel marker prepended */"
+                ));
+                self.line(&format!(
+                    "if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame
+                ));
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_make_ScopeOutcome_Panic({}.error_msg);",
+                    outcome_val, frame
+                ));
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
+
+                // Plan 110.4.4.b (D185): Cleanup effect on_scope_exit
+                // dispatch. Pairs with on_scope_enter — fires after the
+                // user on_exit body has run (so observability sees the
+                // final outcome). Guarded by NULL-check; same scoping
+                // rules as enter.
+                if self.effect_schemas.contains_key("Cleanup") {
+                    self.line(&format!(
+                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
+                        type_name, outcome_val
+                    ));
+                }
+
+                // Plan 110.2.1: leave cancel-shield before re-propagation.
+                // Pending cancel (if any) delivered после leave_shield.
+                self.line(&format!("nv_consume_leave_shield();"));
+
+                // 110.1.4.f: re-raise после on_exit на Failure outcome.
+                // 110.1.4.g: re-panic на Panic outcome (через nv_panic →
+                // тот же setjmp routing, но preserves PANIC kind).
+                self.line(&format!("if ({} == 1) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 2) {{", outcome_kind));
+                self.indent += 1;
+                self.line(&format!("nv_panic({}.error_msg);", frame));
+                self.indent -= 1;
+                self.line("}");
+
+                self.line(&format!("#undef {}", binding));
+                self.var_types.remove(binding);
+                self.indent -= 1;
+                self.line("}");
+                let _ = span;
+            }
             // Plan 33.2 Ф.8 (D24): `assert_static <expr>` — intermediate
             // proof obligation. Сейчас (без full SMT body-encoding)
             // эмитим как runtime check в debug. В release без
@@ -14649,6 +14946,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Mapping table в `numeric_type_constant_mapping`.
                 if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(parts) {
                     return Ok(c_expr.to_string());
+                }
+                // Plan 114.4.1 (D200): associated constants — `Type.NAME`
+                // emitted as `Type_NAME` C-symbol. Symbol present в var_types
+                // если emit_type_decl уже emitted assoc const declaration.
+                if parts.len() == 2 {
+                    let symbol = format!("{}_{}", parts[0], parts[1]);
+                    if self.var_types.contains_key(&symbol) {
+                        return Ok(symbol);
+                    }
                 }
                 // D109: qualified unit variant constructor: `Type.Variant`.
                 // In monomorphized context, Type may be a generic type (e.g. Slot[K,V]).
@@ -16843,6 +17149,28 @@ _cp++; \
                 let code_val = self.emit_expr(args[0].expr())?;
                 let msg_val = self.emit_expr(args[1].expr())?;
                 return Ok(format!("(nv_exit({}, {}), (nova_int)0LL)", code_val, msg_val));
+            }
+            // Plan 120 (D215): named tuple constructor `Point(x: 1.0, y: 2.0)`.
+            // type_aliases maps "Point" → "NovaTuple_Point"; emit compound literal.
+            if let Some(c_ty) = self.type_aliases.get(name.as_str()).cloned() {
+                if c_ty.starts_with("NovaTuple_") {
+                    let mut field_inits = Vec::new();
+                    for a in args {
+                        match a {
+                            CallArg::Named { name: field_name, value } => {
+                                let v = self.emit_expr(value)?;
+                                let mangled = Self::mangle_field_name(field_name);
+                                field_inits.push(format!(".{} = {}", mangled, v));
+                            }
+                            CallArg::Item(e) => {
+                                let v = self.emit_expr(e)?;
+                                field_inits.push(v);
+                            }
+                            CallArg::Spread(_) => {}
+                        }
+                    }
+                    return Ok(format!("(({}){{{}}})", c_ty, field_inits.join(", ")));
+                }
             }
         }
 
@@ -25472,6 +25800,10 @@ _cp++; \
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
             return true;
         }
+        // Plan 120 (D215): named tuples are value types (stack-allocated structs).
+        if ty.starts_with("NovaTuple_") && !ty.ends_with('*') {
+            return true;
+        }
         matches!(ty,
             "nova_int" | "nova_f64" | "nova_f32" | "nova_bool" |
             "nova_str" | "nova_unit" | "nova_byte" |
@@ -26466,6 +26798,12 @@ _cp++; \
                     // `pred fn(int) -> bool` инфер'ится как nova_int.
                     if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
                         return ret_ty.clone();
+                    }
+                    // Plan 120 (D215): named tuple constructor — "Point" → "NovaTuple_Point".
+                    if let Some(c_ty) = self.type_aliases.get(name.as_str()) {
+                        if c_ty.starts_with("NovaTuple_") {
+                            return c_ty.clone();
+                        }
                     }
                     "nova_int".into()
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
