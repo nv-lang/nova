@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR cannot infer type argument
+//
+// Plan 59.1 — negative: generic fn без turbofish и где T используется только
+// в return position → T невыводим. Existing Plan 48/54 turbofish-required
+// diagnostic срабатывает (не Plan 59.1 specific, но verify что наш fix не
+// сломал этот path для tuple-returning fns).
+module plan59_1.turbofish_missing_neg
+
+fn[T] empty_pair() -> (T, T) => (T.default(), T.default())
+
+fn main() -> () {
+    ro p = empty_pair()
+    ro _ = p
+}

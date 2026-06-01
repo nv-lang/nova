@@ -1,0 +1,16 @@
+// Plan 59.1 A2 — multi-instantiation: same generic fn → разные typedef'ы.
+module plan59_1.multi_inst
+
+fn[T] dup(v T) -> (T, T) => (v, v)
+
+test "dup[int]" {
+    ro (a, b) = dup[int](42)
+    assert(a == 42)
+    assert(b == 42)
+}
+
+test "dup[str]" {
+    ro (s, t) = dup[str]("hi")
+    assert(s == "hi")
+    assert(t == "hi")
+}

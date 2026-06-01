@@ -1,0 +1,10 @@
+// Plan 59.1 A3 — multi-param: fn[T, U] pair(a T, b U) -> (T, U).
+module plan59_1.multi_param
+
+fn[T, U] pair(a T, b U) -> (T, U) => (a, b)
+
+test "pair[int, str]" {
+    ro (i, s) = pair[int, str](7, "x")
+    assert(i == 7)
+    assert(s == "x")
+}
