@@ -28235,3 +28235,85 @@ finalizer LIFO needed / CleanupTimeoutError typed catch needed).
 **Design lesson:** Named tuple vs record distinction drives 4× different C code: `NovaTuple_X { x; y; }` (stack struct, value type) vs `Nova_X*` (heap pointer, GC-tracked). The bracket syntax (`()` vs `{}`) was already implicit in spec (D32/D123) — Plan 120 makes it explicit at the type-declaration level. `type_aliases` HashMap in emit_c.rs is the key integration point: stores `"Vec3" → "NovaTuple_Vec3"`, enabling value-type dispatch everywhere without special-casing.
 
 **Scope vs original plan:** A4 (positional args on named tuple works), A5 (construction errors), A11 (full regression) deferred to Ф.5.9 (full nova test). A3/A6/A7/A8/A9/A10/A12 all verified.
+
+---
+
+## Plan 118 — Typed pointers `*T` family + unsafe model (revised + Ф.0 GATE, 2026-06-01)
+
+**Контекст.** Plan 118 — major language addition: typed pointer family `*T` /
+`*ro T` / `*mut T` / `*unsafe T` + unsafe model + NPO codegen. Ревизия
+2026-06-01 расширила scope до production-grade (35 acceptance criteria, ~100
+positive + ~50 negative tests) и декомпозировала на Plan 118 family (core +
+118.1 FFI intrinsics + 118.2 slice/uninit + 118.3 concurrency). Worktree
+`nova-p118` на ветке `plan-118`.
+
+**Ф.0 GATE landed 2026-06-01:**
+- D216 NEW drafted в `spec/decisions/02-types.md` (20 §-sections + diagnostic
+  codes + mainstream comparison + use cases + cross-refs).
+- D2 amend prepended в `spec/decisions/04-effects.md` — `unsafe { }` keyword
+  restored as effect-handler sugar (D2 spirit preserved).
+- D214 amend prepended в `spec/decisions/02-types.md` — `ptr` redefined как
+  `type ptr Option[*unsafe ()]` newtype; `null ptr` literal retracted.
+- D32 amend prepended в `spec/decisions/02-types.md` — `&value` creates typed
+  pointer (NOT Rust borrow); safety через escape + auto-promote + unsafe
+  gating.
+- Sub-plan stubs committed: 118.1 (628 lines), 118.2 (573 lines), 118.3 (578
+  lines).
+- README updated с 4 entries.
+- Audit: 47 `null ptr` occurrences across 10 .nv files; 4 files с
+  `external fn ... ptr` signatures; 25 files mention ptr globally; 6
+  compiler-codegen src файлов touch ptr (codegen/emit_c.rs +
+  codegen/external_registry.rs + lexer/mod.rs + lexer/token.rs +
+  parser/mod.rs + types/mod.rs).
+
+**Open `[M-118-*]` markers (Ф.0):**
+- 🟡 `[M-118-escape-precise]` — escape analysis precise mode (inlining +
+  per-callee analysis); V1 conservative (over-promote OK для correctness).
+- 🟡 `[M-118-pin-api]` — formal `Pin[T]` API; V1 honor-system + warning;
+  needs moving GC.
+- 🟡 `[M-118-handle-migration]` — Plan 115 V1 ffi-cookbook examples:
+  `type X { value ptr }` (record) → `type X(ptr)` (tuple newtype) для
+  zero-overhead ABI. Closes в Ф.9.4 + R5.
+- 🟡 `[M-118-amp-heap-safe]` — `&record` outside unsafe (since heap already);
+  V2 — needs careful safety analysis.
+- 🟡 `[M-118-optional-shorthand]` — `?T` syntax sugar для `Option[T]` (Zig/
+  Kotlin/Swift style); followup ergonomics; bigger design decision.
+- 🟡 `[M-118-vararg-ffi]` — C-style vararg `printf(fmt, ...)`. Niche; wrappers
+  через `args: [Any]` достаточны V1.
+- 🟡 `[M-118-stdcall-fn-ptr]` — non-default calling convention `*fn`
+  (stdcall, vectorcall). Niche (Win COM); add when needed.
+- 🟡 `[M-118-extern-c-unwind]` — `extern "C-unwind"` для FFI that can throw;
+  V2 research (Rust 2024 model).
+- 🟡 `[M-118-bindgen-tool]` — `nova bindgen` CLI auto-gen FFI bindings из
+  C headers. Major tooling effort; coord с Plan 115 [M-115-bindgen-tool].
+- 🟡 `[M-118-stdlib-pointer-helpers]` — std/ptr module utility fns; followup.
+- 🟡 `[M-118-offsetof]` / `[M-118-alignment-attribute]` / `[M-118-strict-provenance]`
+  — niche followups.
+
+**Deferred к Plan 118 sub-plans** (Plan 118.1/.2/.3 — отдельные docs):
+- `[M-118-volatile-rw]`, `[M-118-ptr-copy]`, `[M-118-ptr-read-write]`,
+  `[M-118-addr-of]`, `[M-118-cstring]` — Plan 118.1
+- `[M-118-slice-fat-ptr]`, `[M-118-maybeuninit]`, `[M-118-manuallydrop]` —
+  Plan 118.2
+- `[M-118-cross-fiber-ptr]`, `[M-118-suspend-safety]`, `[M-118-atomic-ptr]` —
+  Plan 118.3
+
+**Will be closed в Ф.5 (Plan 118 core):**
+- ✅ `[M-115-null-ptr-to-option-after-npo]` — `null ptr` literal retracted
+  + Option[*T] NPO codegen.
+
+**Permanently out (different design philosophy):**
+- 🔴 `[M-118-lifetimes-rust-style]` — Rust lifetime parameters + borrow checker;
+  у нас GC + auto-promote (отдельная philosophy).
+- 🔴 `[M-118-aliasing-xor-rules]` — Rust XOR aliasing для `*mut T`; не нужно
+  с GC; future если perf optimization потребует.
+- 🔴 `[M-118-inline-assembly]` — out of scope language entirely.
+
+**Plan progress:** Ф.0 GATE complete (audit + 4 spec drafts + 4 plan files +
+README + logs). Next: Ф.1 (parser/checker для *T family). Sub-plan markers
+`[M-118.1-*]` / `[M-118.2-*]` / `[M-118.3-*]` будут открыты на старте
+соответствующих sub-plans.
+
+**Spec foundation locked:** D216 + D2 amend + D214 amend + D32 amend в
+draft (promote к active в Ф.9 after implementation). Design freeze post-Ф.0
+— любые изменения требуют новый sub-plan или explicit user signoff.

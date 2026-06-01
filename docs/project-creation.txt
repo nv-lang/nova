@@ -26616,3 +26616,108 @@ Commits на branch d78-strict-removal:
 Closes marker: [M-D78-strict-removal].
 Unblocks: strict rev-3 enforcement в любых будущих кодогенерационных
 plans (manifest dispatch, cross-module symbol resolution).
+
+==========================================================================
+2026-06-01 Plan 118 (typed pointers `*T` family + unsafe model + NPO) —
+ревизия + Ф.0 GATE phase
+==========================================================================
+
+Контекст:
+Plan 118 — major language addition: typed pointer family `*T` / `*ro T` /
+`*mut T` / `*unsafe T` + unsafe model + NPO codegen + escape analysis с
+auto-promote + `*fn(...)` FFI + `ptr` redefine. Заменяет Plan 115 V1
+opaque-only `ptr` model на typed alternative; backward-compatible.
+
+Ревизия 2026-06-01 (по user request «production-grade без упрощений»):
+- Original Plan 118 (~1169 lines, 15 acceptance, 7 risks, ~50 tests) →
+  revised Plan 118 core (~2259 lines, 35 acceptance, 16 risks, ~100
+  positive + ~50 negative tests).
+- Decomposed into Plan 118 family для staged delivery:
+    * Plan 118 (core, ~8-10 dev-day): *T family + unsafe + NPO + escape +
+      *fn + GC honor-system + Debug fmt
+    * Plan 118.1 (~3-4 day): FFI memory intrinsics (volatile/copy/read/
+      write + addr_of + C-string cstr"..." literal)
+    * Plan 118.2 (~3-4 day): slice fat-pointer `*[T]` + MaybeUninit[T]
+      + ManuallyDrop[T]
+    * Plan 118.3 (~2-3 day): pointer concurrency safety + AtomicPtr[T]
+      + cross-fiber/suspend rules
+- Worktree: nova-p118 (sibling of main), branch plan-118.
+
+Locked design решения (через AskUserQuestion):
+- GC pin: honor-system + W_UNSAFE_GC_TRIGGER warning (vs formal pin API)
+- Slice → Plan 118.2 (staged delivery)
+- &acc syntax kept (vs *acc — deref ambiguity major risk)
+- Callback no-throw across C ABI enforced (E_CALLBACK_THROWS_OVER_C_ABI)
+- Tuple newtype `type Handle(*T)` canonical для opaque FFI handles
+  (zero-overhead vs record `{value ptr}` indirection)
+
+Commits на branch plan-118 (worktree D:/Sources/nv-lang/nova-p118):
+
+1. e642fc86d1e — docs(plans): revise Plan 118 production-grade + decompose
+   into Plan 118 family
+   - docs/plans/118-typed-pointers-and-unsafe.md (1169 → 2259 lines;
+     production-grade rewrite)
+   - docs/plans/118.1-ffi-intrinsics-and-cstring.md (NEW, 628 lines)
+   - docs/plans/118.2-slice-fat-pointer-and-uninit.md (NEW, 573 lines)
+   - docs/plans/118.3-pointer-concurrency-safety.md (NEW, 578 lines)
+   - docs/plans/README.md (4 entries updated/added)
+
+2. (next) feat(plan118 Ф.0): GATE — design freeze + D216/D2/D214/D32
+   amend drafts + audit + logs
+   - spec/decisions/02-types.md:
+       * D216 NEW appended (~290 lines, 20 §-sections + diagnostic codes
+         + mainstream comparison + use cases + cross-refs)
+       * D214 amend prepended (Plan 118 redefine + null ptr retraction
+         note)
+       * D32 amend prepended (`&value` is typed ptr construction, NOT
+         Rust borrow)
+   - spec/decisions/04-effects.md:
+       * D2 amend prepended (unsafe { } keyword restored as effect-
+         handler sugar)
+   - docs/simplifications.md: ## Plan 118 section appended (open 11
+     [M-118-*] markers; deferred markers map к sub-plans; permanently-out
+     list; Ф.0 progress)
+   - docs/project-creation.txt: this entry
+   - nova-private/discussion-log.md: design discussion log (3 round
+     decisions captured)
+
+Audit ptr usages (Ф.0.6):
+- 47 `null ptr` occurrences across 10 .nv files (Plan 115 fixtures +
+  examples/ffi + std/runtime + nova_tests/types)
+- 4 files с `external fn ... ptr` signatures (плans 115 + examples)
+- 25 files mention ptr globally
+- 6 compiler-codegen src файлов touch ptr:
+    * codegen/emit_c.rs (nova_ptr codegen)
+    * codegen/external_registry.rs
+    * lexer/mod.rs (Star, Amp tokens — already tokenized)
+    * lexer/token.rs (Star/Amp/AmpAmp/StarEq variants)
+    * parser/mod.rs (existing ptr type parsing)
+    * types/mod.rs (Ty::Ptr unit variant — needs extension к
+      Ty::Ptr(modifier, Box<Ty>))
+
+Acceptance gate (А1-А35 finalized в plan-118 file):
+- 35 acceptance criteria, все measurable с verification refs
+- Test plan: T1-T8 + R1-R5 series (~100 positive + ~50 negative)
+- Cross-platform CI matrix: Linux × clang/gcc + Win × MSVC/clang +
+  macOS × clang (5+ combos required)
+- Performance benchmarks: escape promote < 5ns, NPO == sizeof(*T) на
+  каждой platform, auto-deref zero-cost asm, arith unit-scaling correct
+
+Next steps (Ф.1+):
+- Ф.1 *T family parser/checker + ptr redefine (~1.5 day)
+- Ф.2 &value operator + escape analysis с auto-promote (~1.5 day)
+- Ф.3 unsafe { } block + #unsafe attribute (D2 amend) (~1 day)
+- Ф.4 Auto-deref + pointer ops (~1.5 day)
+- Ф.5 Option[*T] + NPO codegen + null-ptr retraction (~1 day)
+- Ф.6 *fn(...) function pointers + callback no-throw (~½-1 day)
+- Ф.7 GC honor-system warnings + Debug fmt (~½ day)
+- Ф.8 Regression + cross-platform + ABI snapshot + perf bench (~1 day)
+- Ф.9 Spec promote + ffi-cookbook + examples + closure (~½-1 day)
+- Ф.10 Reserved (safety hatch / post-review)
+
+Closes (planned по фазам):
+- Ф.5: [M-115-null-ptr-to-option-after-npo] ✅
+- Ф.9: [M-118-handle-migration] ✅
+
+Unblocks: Plan 118.1/118.2/118.3 sub-plans (parallel execution после core
+merge); Plan 121 (stack-fixed-arrays — uses `*[N]T` foundations).
