@@ -7157,9 +7157,47 @@ V2 значительно расширяет const fn surface, закрывая 
 V3 расширяет const fn surface с usability + control flow:
 
 **Ф.1 (`#fn_eval_max_depth(N)` attribute):**
-- Per-fn override recursion depth limit (default 256, range 1..=65535).
-- Useful for deep recursion (e.g. factorial с big-int) — caveat: actual
-  call stack still bounded by Rust thread stack.
+
+Per-fn override const fn evaluator recursion depth limit.
+
+*Syntax:*
+```nova
+#fn_eval_max_depth(N)
+fn deep_recursive(const x int) -> const int =>
+    if x <= 0 { 0 } else { x + deep_recursive(x - 1) }
+```
+
+- `N` — int literal в диапазоне `1..=65535` (parser-enforced;
+  out-of-range → compile error).
+- Default (без attribute) — **256** (constant `MAX_EVAL_DEPTH`
+  в `compiler-codegen/src/const_fn_eval.rs`).
+- При reach limit → `E_CONST_FN_EVAL_DEPTH_EXCEEDED` с error message
+  упоминающим attribute как способ override.
+
+*Семантика:*
+- Override применяется на eval_call_inner — depth check выполняется
+  ПЕРЕД memoization lookup (защита от runaway recursion даже когда
+  memo cache effective).
+- Attribute lookup происходит per-call-site через `FnDecl.fn_eval_max_depth:
+  Option<u32>` — каждая const fn имеет собственный override.
+- Memoization работает независимо: повторные calls с identical args
+  кэшируются вне зависимости от depth limit.
+
+*Use cases:*
+- Deep recursion: `#fn_eval_max_depth(1024)` для factorial / fibonacci
+  с большими аргументами (caveat below).
+- Conservative limit: `#fn_eval_max_depth(10)` для protect against
+  user-induced infinite recursion в API-design.
+
+*Caveat:* Rust thread call stack (~8 MB) limits actual deep recursion
+независимо от override. Practical limit `N <= ~150-200` без stack
+overflow в evaluator. Real production deep recursion — followup
+`[M-114.4.4-iterative-evaluator]` V4 (rewrite evaluator on iterative
+form с explicit stack).
+
+*Cross-ref:* `MAX_LOOP_ITERATIONS` (Ф.3 loops, default 10_000) —
+аналогичный guard для iteration-based termination; configurable
+attribute `#fn_eval_max_iterations(N)` — V4 followup.
 
 **Ф.2 (friendly UX errors):**
 - `ro f = const_fn` runtime binding → `E_CONST_FN_FIRST_CLASS` с
