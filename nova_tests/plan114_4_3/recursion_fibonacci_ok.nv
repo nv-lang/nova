@@ -1,0 +1,14 @@
+// Plan 114.4.3 T4.2 positive: Fibonacci с memoization (без memo eval
+// был бы O(2^n) — fib(20) timeout. With V1 memo: O(n) — instant).
+
+module plan114_4_3.recursion_fibonacci_ok
+
+fn fib(const n int) -> const int =>
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+
+test "fibonacci with memoization" {
+    const A = fib(10)
+    const B = fib(20)
+    assert(A == 55)
+    assert(B == 6765)
+}

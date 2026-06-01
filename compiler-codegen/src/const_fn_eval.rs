@@ -104,7 +104,12 @@ impl ConstValue {
 /// Recursion depth budget (defensive — checker rejects recursion, but
 /// in case mutual cycle escapes detection, this stops the evaluator
 /// from blowing the stack).
-const MAX_EVAL_DEPTH: usize = 64;
+/// Plan 114.4.3 Ф.2 (D199 V2): recursion depth limit для const fn evaluator.
+/// Raised from V1's 64 (defensive) to 256 (production — supports reasonable
+/// factorial / fibonacci / mutual recursion fixtures без crashing).
+/// При reach → E_CONST_FN_EVAL_DEPTH_EXCEEDED с suggestion increase OR
+/// add memoization (which V1 уже has).
+const MAX_EVAL_DEPTH: usize = 256;
 
 pub struct ConstFnEvaluator<'a> {
     /// Const fn declarations indexed by name. Owner is module.items via
@@ -161,9 +166,11 @@ impl<'a> ConstFnEvaluator<'a> {
         if depth >= MAX_EVAL_DEPTH {
             return Err(Diagnostic::new(
                 format!(
-                    "[E_CONST_FN_EVAL_PANIC] const fn evaluation exceeded depth \
-                     limit {} в call to `{}` — likely a recursion-detection bug \
-                     (checker should have rejected this). Plan 114.4.2 D199.",
+                    "[E_CONST_FN_EVAL_DEPTH_EXCEEDED] const fn evaluation exceeded \
+                     depth limit {} в call to `{}` — likely runaway recursion. \
+                     V2 supports recursion (Plan 114.4.3) — verify base case + \
+                     memoization работают. If legitimate deep recursion: file \
+                     followup `[M-114.4.3-configurable-depth]`. D199 V2.",
                     MAX_EVAL_DEPTH, name
                 ),
                 call_span,
@@ -940,8 +947,10 @@ impl OwnedEvaluator {
         if depth >= MAX_EVAL_DEPTH {
             return Err(Diagnostic::new(
                 format!(
-                    "[E_CONST_FN_EVAL_PANIC] const fn evaluation exceeded depth \
-                     limit {} в call to `{}` (D199).",
+                    "[E_CONST_FN_EVAL_DEPTH_EXCEEDED] const fn evaluation exceeded \
+                     depth limit {} в call to `{}` — likely runaway recursion. \
+                     V2 supports recursion (Plan 114.4.3) — verify base case + \
+                     memoization работают. D199 V2.",
                     MAX_EVAL_DEPTH, name
                 ),
                 call_span,

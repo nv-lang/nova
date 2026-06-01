@@ -543,6 +543,9 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
             color.insert(node.to_string(), C::Black);
             None
         }
+        // Plan 114.4.3 Ф.2 (V2): recursion (direct + mutual) allowed.
+        // Cycle detection retained but downgraded — no error fired.
+        // Evaluator enforces depth-limit + memoization runtime safety.
         let mut reported: Set<String> = Set::new();
         for fd in &const_fns {
             if matches!(color.get(&fd.name), Some(C::White)) {
@@ -552,14 +555,15 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                         v.sort();
                         v.join("→")
                     };
-                    if reported.insert(key) {
+                    // V2: cycle reported only once per cycle (dedup),
+                    // no error emitted — evaluator depth-limit enforces.
+                    let _ = reported.insert(key);
+                    let _ = cycle;
+                    if false {
                         errors.push(Diagnostic::new(
                             format!(
-                                "[E_CONST_FN_RECURSION] mutual recursion detected \
-                                 в const fn call-graph: {} — not allowed в V1 \
-                                 (D199). Followup `[M-114.4.2-recursion]`. \
-                                 Refactor to non-cyclic call structure.",
-                                cycle.join(" → ")
+                                "[E_CONST_FN_RECURSION] cycle detection: {}",
+                                fd.name
                             ),
                             fd.span,
                         ));
@@ -913,17 +917,11 @@ fn check_const_fn_expr(
                     expr.span,
                 ));
             }
-            if callee_name == current_fn {
-                return Err(Diagnostic::new(
-                    format!(
-                        "[E_CONST_FN_RECURSION] direct self-recursion: const fn `{}` \
-                         calls itself — not allowed в V1 (D199). Followup \
-                         `[M-114.4.2-recursion]`. Refactor to non-recursive form.",
-                        current_fn
-                    ),
-                    expr.span,
-                ));
-            }
+            // Plan 114.4.3 Ф.2 (V2): direct self-recursion allowed.
+            // Evaluator enforces depth limit + memoization.
+            // V1 reject removed; cycle detection (mutual) downgraded
+            // to informational — handled at module-pass level.
+            let _self_call = callee_name == current_fn;
             call_targets.insert(callee_name);
             // Args также constexpr-eligible — recurse.
             for a in args {
