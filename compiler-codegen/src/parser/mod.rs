@@ -27,6 +27,11 @@ pub(crate) struct ContractAttrs {
     pub no_overflow: bool,
     /// Plan 103.6 / Plan 113: sync interaction class from #realtime/#parks/#wakes.
     pub sync_class: Option<crate::ast::SyncClass>,
+    /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
+    /// Body implicitly в unsafe context; callers must `unsafe { }` wrap.
+    /// V1 Ф.3.2: parsed + stored в FnDecl.unsafe_attr; checker enforcement
+    /// E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
+    pub unsafe_attr: bool,
 }
 
 impl ContractAttrs {
@@ -39,6 +44,7 @@ impl ContractAttrs {
             && self.fuel.is_none()
             && !self.no_overflow
             && self.sync_class.is_none()
+            && !self.unsafe_attr
     }
 }
 
@@ -1787,7 +1793,24 @@ impl Parser {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
             }
-            // Look ahead: `#` затем Ident с одним из contract-keyword'ов.
+            // Look ahead: `#` затем Ident с одним из contract-keyword'ов,
+            // или KwUnsafe (Plan 118 Ф.3.2 — `#unsafe` keyword-attribute).
+            // KwUnsafe handled inline ниже; others via Ident branch.
+            if matches!(self.peek_at(1).kind, TokenKind::KwUnsafe) {
+                // Plan 118 (D216 §9, D2 amend): #unsafe attribute on fn.
+                if attrs.unsafe_attr {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "duplicate `#unsafe` attribute",
+                        span,
+                    ));
+                }
+                self.bump(); // #
+                self.bump(); // unsafe
+                attrs.unsafe_attr = true;
+                self.skip_newlines(); // align с parse_sync_class_attr pattern
+                continue;
+            }
             let next_name = match &self.peek_at(1).kind {
                 TokenKind::Ident(n) => n.clone(),
                 _ => break, // не идентификатор после `#` — выходим
@@ -2476,6 +2499,10 @@ impl Parser {
             sync_class: contract_attrs.sync_class,
             // Plan 100.5 (D163): capability requirements for external fn.
             needs_caps,
+            // Plan 118 (D216 §9, D2 amend): #unsafe attribute parsed в
+            // parse_contract_attrs (handles KwUnsafe inline). Type-checker
+            // enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
+            unsafe_attr: contract_attrs.unsafe_attr,
         })
     }
 

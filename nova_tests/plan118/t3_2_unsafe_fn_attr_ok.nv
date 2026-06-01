@@ -1,0 +1,33 @@
+// Plan 118 Ф.3.2 T3.2/T3.7 — `#unsafe` attribute on fn declarations.
+// (D216 §9, D2 amend).
+//
+// V1 scaffold: attribute parses + stored в FnDecl.unsafe_attr. Body
+// implicitly в unsafe context (pointer ops без unsafe{} wrap allowed).
+// Callers must `unsafe { ... }` wrap call (E_UNSAFE_CALL_REQUIRES_WRAP
+// enforcement — Ф.3.3-3.5 followup; currently no error emitted).
+
+module plan118.t3_2_unsafe_fn_attr_ok
+
+#unsafe
+fn ffi_wrapper(x i64) -> i64 {
+    x * 2
+}
+
+#unsafe
+fn another_unsafe_fn() -> i64 {
+    100
+}
+
+test "fn with #unsafe attribute parses + callable" {
+    ro v1 = ffi_wrapper(21)
+    assert(v1 == 42)
+    ro v2 = another_unsafe_fn()
+    assert(v2 == 100)
+}
+
+test "#unsafe fn can be called from unsafe block (V1 — no enforcement yet)" {
+    ro result = unsafe {
+        ffi_wrapper(50)
+    }
+    assert(result == 100)
+}

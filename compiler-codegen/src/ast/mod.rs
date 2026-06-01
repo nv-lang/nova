@@ -420,6 +420,14 @@ pub struct FnDecl {
     /// needs clause declared (used by type-checker to emit D163-missing-cap
     /// when the function carries consume-obligations).
     pub needs_caps: Vec<String>,
+    /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
+    /// Body implicitly в unsafe context (pointer ops без unsafe{} wrap).
+    /// Callers must `unsafe { ... }` wrap the call (E_UNSAFE_CALL_REQUIRES_WRAP
+    /// иначе). No effect propagation up — каждая fn decides encapsulate or
+    /// propagate (canonical Rust pattern). V1 Ф.3.2: parse + AST storage;
+    /// type-checker enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5
+    /// followup. Default `false`.
+    pub unsafe_attr: bool,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
