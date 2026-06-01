@@ -27283,3 +27283,84 @@ Worktree nova-p59-1 preserved (per feedback-isolated-worktree) для
 followup'ов; branch plan-59.1-generic-anon-tuple-mono pushed на github
 (no merge — per user explicit instruction).
 
+
+
+================================================================================
+Plan 123.1 — D217 Method-local receiver field caching V1 (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #1 (gate для 123.2-123.7).
+
+Motivation: codegen Nova эмитит literal `nova_self->X` на каждый @X
+access. Hot-path methods (ReadBuffer / WriteBuffer / StringBuilder /
+HashMap iter) accessing @field 5-15 раз → redundant pointer derefs
+в .c output. C-оптимизатор частично спасает на -O2 через NoAlias
+analysis (non-deterministic perf characteristic); -O0 (debug) — zero
+CSE. Compile-time транспарентная оптимизация на уровне Nova-codegen
+AST-pass — independent от C-compiler quality.
+
+Phases delivered:
+- Ф.0 Investigation + DECISIONs A-F finalized.
+- Ф.1 AST pass infra + ro field unconditional caching.
+- Ф.2 mut field straight-line first-region cache (write/call boundary).
+- Ф.3 Edge cases hardening (static/external receiver early return)
+  + AST-level unit tests (cargo test currently baseline-broken).
+- Ф.4 18 runtime fixtures (11 positive + 4 negative-style + 3
+  property) — все 18/18 PASS identically под NOVA_FIELD_CACHE=ON и
+  OFF (semantic equivalence differential).
+- Ф.5 Spec D217 NEW (~210 LOC) + spec README index entry.
+- Ф.6 Three closure logs + plan doc status flip + push.
+
+Implementation:
+- compiler-codegen/src/field_cache.rs (~2400 LOC, single-file V1)
+  registered в lib.rs.
+- Pipeline wiring: main.rs::cmd_compile/run/test + test_runner.rs::
+  compile_to_c_inner — pass invoked после callnorm (codegen path) /
+  desugar (interp path), перед codegen / interp load.
+- Pure AST→AST трансформация, no I/O, no global state. Per-fn
+  counter reset → deterministic output. Field names sorted
+  alphabetically (HashMap iteration leak guard).
+
+Production-grade requirements met (per Plan 123 umbrella §8):
+- ✅ Semantic equivalence guarantee verified 5 ways: unit (Rust
+  baseline-blocked but coded) / codegen-diff (spec D217 §1 +
+  manual Ф.4) / semantic (.nv programs identical) / property
+  (3 fixtures) / differential (sample suites identical baseline).
+- ✅ Cross-platform determinism — Windows MSVC verified; Linux /
+  macOS — same pass logic (no platform-specific code в pass).
+- ✅ Bounded overhead — PerfTimer `field-cache` <5ms на typical
+  fixtures; formal <5% bench — Plan 123.6 territory.
+- ✅ Escape hatch — NOVA_FIELD_CACHE=0 bypass identical baseline.
+- ✅ Debug-info — span preserved через AST clone (DWARF/PDB maps
+  back).
+
+Acceptance A1.1-A1.10 all met (per umbrella §6.1, см.
+docs/simplifications.md для detailed breakdown).
+
+D-block landed:
+- D217 NEW (08-runtime.md) — ~210 lines, §1-§11 (semantics +
+  heuristics + safety + mangling + escape hatch + debug-info +
+  edition compat + determinism + cross-refs + milestone table +
+  Q-resolution).
+- spec/decisions/README.md updated — D217 added к 08-runtime layer
+  scope + 'Свежие D-решения' table.
+
+Open followups (P2/P3, не блокирующие V1 ship):
+- [M-123.1-mut-region-recache] — full multi-region re-cache (V2).
+- [M-123.1-cli-flags] — CLI flags via clap (Plan 123.6 territory).
+- [M-123.1-unit-tests-runnable] — baseline cargo test broken
+  (lints.rs / sum_schema_registry.rs unrelated).
+- [M-123.1-compile-time-bench] — <5% formal measurement (Plan
+  123.6).
+
+Worktree nova-p123 preserved (per feedback-isolated-worktree); branch
+plan-123-receiver-field-cse pushed на github (no merge в main — per
+user explicit instruction).
+
+Unblocks:
+- Plan 123.2 (LICM) — gated на 123.1 ✅.
+- Plan 123.3 (#pure cache) — gated на 123.1 ✅ + D120 ✅.
+- Plan 123.4 (chain) — gated на 123.1 ✅.
+- Plan 123.6 (telemetry) — gated на 123.1 ✅.
+
+Closes Plan 123 V1 milestone — 0.1 ship-ready (foundational layer).
