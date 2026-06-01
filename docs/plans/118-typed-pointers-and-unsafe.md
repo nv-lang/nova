@@ -2239,7 +2239,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ### Session 2 grand-final accomplishments
 
-**Total: 25 worktree commits + 2 nova-private commits.**
+**Total: 27 worktree commits + 2 nova-private commits.**
 
 **Latest additions (post-grand-closure):**
 - `6d6a18a2ab7` — NEG-T1.13: E_INVALID_POINTER_MODIFIER для `*const T`
@@ -2247,8 +2247,36 @@ issue → extract в followup (`[M-118-perf-*]`).
 - `f7c628ffa7d` — Ф.9 partial: ffi-cookbook Plan 118 preview section
 - `c2fb3f3b9cb` — NEG: t1_neg_pointer_incomplete + t1_neg_ro_in_expression_pos
 - `1634b0cb598` — NEG-T1.15: t1_neg_duplicate_modifier (`*ro mut T` rejected)
+- `4ded191f7b5` — status update (intermediate)
+- `7ff3007f3af` — Ф.6 partial #2: E_EXTERNAL_FN_FAIL_EFFECT enforcement
+  + t6_neg_external_fn_fail_effect.nv (closes acceptance A26)
 
-**plan118: 13/0 PASS** (9 positive + 4 NEG) after additions.
+**plan118: 14/0 PASS** (9 positive + 5 NEG):
+- Positive: t1_1, t1_3, t1_6, t1_8, t2_1, t3_1, t3_2, t5_1, t6_1
+- NEG: t1_neg_const_modifier, t1_neg_pointer_incomplete,
+  t1_neg_ro_in_expression_pos, t1_neg_duplicate_modifier,
+  t6_neg_external_fn_fail_effect
+
+**Acceptance criteria coverage (A1-A35):**
+- A1 (typed pointer family parses) ✅ T1.1-T1.7
+- A3 (chain order) ✅ T1.3
+- A4 (codegen C T*) ✅ T1.10
+- A8 (& outside unsafe) — V1 permissive (Ф.3.5 followup)
+- A9 (unsafe block parses) ✅ T3.1
+- A10 (#unsafe attribute) ✅ T3.2 + Ф.3.2 (commit `3a4074423ad`)
+- A19 (Option[*T] NPO) — type parses, NPO codegen Ф.5 followup
+- A20-A22 (NPO newtype/fn/double-nested) — Ф.5 followup
+- A23 (null ptr retraction) — Ф.5 followup
+- A24-A25 (*fn cast checks) — Ф.6 followup (partial: A26 closed)
+- A26 (external fn no-Fail) ✅ Ф.6 partial #2
+- A29 (D214 backward compat) ✅ regression 11/0 plan115
+- A30 (D-blocks promoted) — Ф.9 follow-on
+- A33 (#realtime pointer ban) — Ф.7 followup
+- A34 (tuple newtype canonical) ✅ documented в docs/typed-pointers.md + ffi-cookbook
+- A35 (examples PASS) ✅ 3/3 examples/typed_pointers
+
+Remaining acceptance criteria (A2, A5-A7, A11-A18, A19-A28 partial, A31-A33)
+landing с full Ф.4-Ф.9 implementation work.
 
 **Phases: Ф.0 + Ф.1 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.4 partial + Ф.5
 partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
