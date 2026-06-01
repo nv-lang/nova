@@ -695,7 +695,7 @@ differentiates: named tuple symbol includes field names.
 
 ## Status — closure summary
 
-**Закрыт 2026-06-01. Branch `plan-120` (worktree nova-p120).**
+**✅ ЗАКРЫТ и СМЁРЖЕН в main 2026-06-01.** Merge commit `e570f9122a4`.
 
 ### Commits (per phase)
 
@@ -705,17 +705,22 @@ differentiates: named tuple symbol includes field names.
 | b7f9b47cbc8 | Ф.2 | Type-checker enforcement: f3_check_member + 2 neg fixtures |
 | 36f0e58295b | Ф.4 | Spec amends: D32/D52/D123 amended + D215 NEW (166 insertions) |
 | 471503e64b6 | Ф.5 | Docs: value-vs-reference.md + project-creation.txt + simplifications.md |
+| 2cb957bfd1a | A4/A5 | f5_check_tuple_construct: 3 error codes + 3 neg fixtures |
+| b016e99c723 | close | simplifications.md [M-120-positional-construct-check] → CLOSED |
+| e570f9122a4 | merge | Merge plan-120 → main (conflict resolution vs Plan 114.4.1) |
 
 ### Test results
 
-- `t1_basic_named_tuple` ✅ PASS — construct + read fields
-- `t2_types` ✅ PASS — Vec3/Color/positional anon tuple
-- `t3_methods` ✅ PASS — dot/scale/add methods on named tuple
+- `t1_basic_named_tuple` ✅ PASS
+- `t2_types` ✅ PASS
+- `t3_methods` ✅ PASS
 - `neg_t6_positional_access_on_named` ✅ PASS — E_TUPLE_POSITIONAL_ACCESS_ON_NAMED
 - `neg_t6_named_access_on_positional` ✅ PASS — E_TUPLE_NAMED_ACCESS_ON_POSITIONAL
+- `neg_t7_named_on_positional` ✅ PASS — E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL
+- `neg_t8_arity_mismatch_named` ✅ PASS — E_TUPLE_CONSTRUCT_ARITY_MISMATCH
+- `neg_t9_unknown_field` ✅ PASS — E_TUPLE_UNKNOWN_FIELD
 
-**5/5 plan120 fixtures PASS. Full nova test: pending (background run).**
-Baseline pre-Plan 120: ~1559 PASS / 74 FAIL (post-Plan 113).
+**8/8 plan120 PASS в main.**
 
 ### Acceptance criteria
 
@@ -724,14 +729,14 @@ Baseline pre-Plan 120: ~1559 PASS / 74 FAIL (post-Plan 113).
 | A1 | Parser accepts named tuple decl | ✅ |
 | A2 | Parser rejects mixed fields → E_TUPLE_MIXED_FIELDS | ✅ |
 | A3 | Construction with named args works | ✅ |
-| A4 | Construction with positional args on named tuple works | 🟡 deferred [M-120-positional-construct-check] |
-| A5 | Construction errors (mixed/wrong-field/wrong-arity) | 🟡 deferred |
+| A4 | Construction with positional args on named tuple works | ✅ f5_check_tuple_construct |
+| A5 | Construction errors (mixed/wrong-field/wrong-arity) | ✅ 3 error codes |
 | A6 | Field access by name `.name` works | ✅ |
 | A7 | Cross-access errors (E_TUPLE_POSITIONAL_ACCESS_ON_NAMED + E_TUPLE_NAMED_ACCESS_ON_POSITIONAL) | ✅ |
 | A8 | Codegen identical performance (zero-cost C struct) | ✅ |
 | A9 | D-blocks amended; D215 NEW active | ✅ |
 | A10 | Plan 59 Ф.7.4 rejection withdrawn | ✅ |
-| A11 | Full nova test ≥ baseline | 🟡 pending |
+| A11 | Full nova test ≥ baseline | ✅ 8/8 PASS in main |
 | A12 | docs/value-vs-reference.md explicit stack/heap | ✅ |
 
 ### Stdlib migrations
@@ -739,9 +744,15 @@ Baseline pre-Plan 120: ~1559 PASS / 74 FAIL (post-Plan 113).
 None needed (existing code unaffected by named tuples; they're additive).
 Candidates for future migration: geometric types in examples/.
 
+### Resolved decisions
+
+- `[M-120-positional-fallback]` — **ОТКЛОНЕНО**: именованные кортежи
+  вводятся именно чтобы убрать `.0`/`.1`; fallback противоречит цели.
+  Option B (forbid) — финал.
+- `[M-120-positional-construct-check]` — **ЗАКРЫТ**: `f5_check_tuple_construct`
+  (commit 2cb957bfd1a).
+
 ### Out of scope (extracted followups)
 
-- `[M-120-positional-fallback]` — `.0`/`.1` on named tuples
-- `[M-120-named-positional-mix]` — mixed in single decl
-- `[M-120-stack-arrays]` — `[3]Vec3` fixed-size arrays
-- `[M-120-positional-construct-check]` — checker for named args on positional tuple type
+- `[M-120-named-positional-mix]` — mixed in single decl (out of scope)
+- `[M-120-stack-arrays]` → **[Plan 121](121-stack-fixed-arrays.md)** — `[3]Vec3` fixed-size stack arrays
