@@ -26846,3 +26846,153 @@ Unblocks:
 - Zero-init bulk operations через unified API в std/runtime.
 - Будущий Plan 121 ([N]T stack arrays) если он добавит fixed-size
   zero-init pattern — может reuse полиморфный memset rationale.
+
+
+================================================================================
+Plan 59.1 — Generic anonymous tuple monomorphization (2026-06-01)
+================================================================================
+
+Sub-plan Plan 59 (tuple monomorphization umbrella, ✅ closed 2026-05-17
+для Result Ф.7.5; Ф.7.4 named tuple был rejected, reopened в Plan 120;
+Ф.7.6 rejected — этот sub-plan ортогонально закрывает residual gap для
+general generic anonymous tuples).
+
+Контекст: пользователь поднял вопрос «`fn Channel[T].new(capacity int)
+-> (ChanWriter[T], ChanReader[T])` — работает?» в обсуждении Channel
+refactor. Probe показал — парсится, но codegen падает CC-FAIL для
+произвольных `fn[T] f() -> (T, T)`. Channel.new работает только через
+3 ad-hoc special-case branches в emit_c.rs, эмитящих `Nova_ChannelPair`
+heap struct вместо реального tuple-мономорфа. Пользователь выбрал
+«Вариант Y — широкий» — закрыть generic anonymous tuple mono в codegen
++ удалить Channel-specific paths.
+
+Root cause investigation (Ф.0):
+Repro `fn[T] dup(v T) -> (T, T) => (v, v)` + `dup[int](42)` →
+CC-FAIL «initializing '_NovaTuple2' with incompatible type». Generated
+.c показал что body returns `void*` (heap-boxed `_NovaTuple2*`), call
+site assigns к `_NovaTuple2` value type — type mismatch.
+
+Найдены два bailout'а:
+1. emit_c.rs:20751-20776 — emit_call dispatch для mono_fn_decls с
+   комментарием «Plan 48 V1: skip monomorphization for tuple-returning
+   generics. _NovaTupleN structs use nova_int fields (type erasure
+   within tuples), so storing a nova_str field directly doesn't work.»
+   → Force erasure fallback `register_erased_instance` для всех
+   tuple-returning generics.
+2. emit_c.rs:26687-26691 — infer_expr_c_type для generic fn Call:
+   «Tuple-returning or unresolvable generics use erasure (void* return).»
+   → Return "void*" не давая mono path вычислить substituted return type.
+
+Оба bailout'а — relics Plan 48 V1, актуальны до Plan 59 Ф.7.5 (mono'd
+schema `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>_mono` landed для
+Result). Schema валидирована, работает для general tuples, но bailout'ы
+никогда не убраны.
+
+Fix (Ф.1):
+Оба bailout'а удалены. Mono pipeline теперь покрывает generic tuple
+return — type_subst применяется к `TypeRef::Tuple`, элементы
+substituted, mono'd tuple typedef registered, body emit'ит value-type
+struct, call site assigns корректный type.
+
+Edge cases coverage (Ф.2):
+- Multi-instantiation (`dup[int]` + `dup[str]`) — unique typedef'ы.
+- Multi-param (`fn[T, U] pair`) — heterogeneous element types.
+- Nested generic tuple (`(T, (T, T))`) — recursive substitution.
+- Tuple-in-Option (`Option[(T, T)]`) — outer + inner mono.
+- Non-generic baseline (`fn make() -> (int, str)`) — без regression.
+
+Edge cases НЕ covered V1:
+- `[](T, T)` array-of-mono-tuple — call site infer выдаёт
+  `NovaArray_<mono_tuple>*` typedef которого не существует; body
+  fallback на `NovaArray_nova_int*`. Mismatch → CC-FAIL. Followup
+  [M-59.1-array-of-mono-tuple].
+
+Channel.new cleanup (Ф.3 → deferred):
+3 ad-hoc branches в emit_c.rs:18435/20159/22694 эмитят
+`Nova_ChannelPair` heap struct (runtime nova_channel_new()). После
+Plan 59.1 generic mono path **способен** обработать Channel.new, но
+только если добавить Nova-side declaration `external fn[T]
+Channel[T].new(...) -> (ChanWriter[T], ChanReader[T])` (Plan 115
+Pattern B). Это требует:
+- std/runtime/channels.nv с Nova type Channel[T] phantom + external fn
+- Runtime nova_channel_new() возможно migrate к direct tuple return
+  (или адаптер emit пути)
+- Удаление Nova_ChannelPair struct из channels.h
+~3-4 dev-day; самостоятельный план/followup. D91 spec amended что
+current bootstrap impl — implementation detail.
+
+Negative tests (Ф.4):
+- arity_mismatch_neg: EXPECT_COMPILE_ERROR — `ro (a, b, c) = dup[int](42)`
+  (3 patterns на arity-2 tuple) → Nova-level «tuple destructure arity
+  mismatch».
+- turbofish_missing_neg: EXPECT_COMPILE_ERROR — `fn[T] empty_pair() ->
+  (T, T)` без turbofish → existing Plan 48/54 «cannot infer type
+  argument».
+- field_oob_neg: EXPECT_CC_ERROR — `pair.5` на arity-2 tuple leaks
+  к clang. Followup [M-59.1-tuple-field-oob-nova-diag] для Nova-level
+  diagnostic.
+
+Spec (Ф.5):
+- D216 NEW (spec/decisions/02-types.md): полное описание generic
+  anonymous tuple monomorphization. Sections: mangling schema,
+  per-instantiation deduplication, finalize emit (topo sort),
+  codegen в emit_call (call site), body emission в
+  emit_monomorphized_fn, destructure path, value semantics no heap-box,
+  edge cases (V1 covered + V1 limitations followups), backward
+  compatibility, cross-refs (D52, D123, D215, D91, D141, Plan 59,
+  Plan 59.1).
+- D91 amend (spec/decisions/06-concurrency.md): Channel.new signature
+  буквально implementable через D216; current bootstrap implementation
+  через Nova_ChannelPair — implementation detail, не противоречит
+  signature. Cleanup ad-hoc paths → [M-59.1-channel-new-cleanup].
+- D123 amend (spec/decisions/02-types.md): Plan 59 Ф.7.5 mono'd schema
+  теперь применяется не только к Result, но к любому user generic
+  anonymous tuple в return position.
+- spec/decisions/README.md: D216 entry + 02-types.md row updated.
+
+Acceptance criteria final (A1-A10):
+- A1 ✅ dup probe PASS.
+- A2 ✅ multi-instantiation (dup[int] + dup[str]) PASS.
+- A3 ✅ multi-param (pair[int, str]) PASS.
+- A4 ✅ nested tuple ((T, (T, T))) PASS.
+- A5 🟡 array-of-tuple — deferred [M-59.1-array-of-mono-tuple].
+- A6 🟡 Channel.new cleanup — deferred [M-59.1-channel-new-cleanup].
+- A7 ✅ Regression — plan90 9/0 + plan90_1 20/0 + plan91_7 5/0 +
+  syntax 53/1 (pre-existing for_in_range_iter unrelated) +
+  concurrency 70/11 (pre-existing armed-M:N flakies — verified
+  via main repo binary без Plan 59.1 changes).
+- A8 ✅ Spec D216 NEW + D91/D123 amend + README — landed.
+- A9 ✅ plan59_1 fixtures 11 (8 positive + 3 negative) ALL PASS.
+- A10 ✅ Logs landed.
+
+Closes:
+- [M-59.1-codegen-bailout-removed] — emit_c.rs:20751 + 26688
+  bailouts удалены.
+- [M-59.1-d216-spec] — D216 NEW + D91/D123 amend.
+- Plan 59 Ф.7.5 «general generic anonymous tuple» gap — replicates
+  Result mono pattern across all user fns.
+
+Unblocks:
+- User-side `fn[T] f() -> (A[T], B[T])` factories — patterns теперь
+  работают без turbofish-heavy workaround'ов или phantom-record
+  wrappers.
+- Spec D91 буквальная implementability — основа для future Channel.new
+  cleanup ([M-59.1-channel-new-cleanup]).
+- Future named tuple amends (Plan 120 D215) могут leverage mono'd
+  tuple infrastructure для consistency.
+
+Production-grade requirements (per user instruction):
+- ✅ Никаких safety hatches: bailout'ы удалены полностью, ничего не
+  unimplemented!/todo!.
+- ✅ Mangling schema полностью документирована в D216.
+- ✅ Instantiation cache deduplicates — HashSet<Vec<String>> на element
+  vectors; same instance в разных compilation paths → single typedef.
+- ✅ Mangling deterministic — length-prefix format unambiguous для
+  parsing (validated existing Plan 59 Ф.7.5 mono'd Result usage).
+- ✅ Performance — нет slower path по сравнению с Plan 59 Ф.7.5
+  Result mono (тот же infrastructure).
+
+Worktree nova-p59-1 preserved (per feedback-isolated-worktree) для
+followup'ов; branch plan-59.1-generic-anon-tuple-mono pushed на github
+(no merge — per user explicit instruction).
+

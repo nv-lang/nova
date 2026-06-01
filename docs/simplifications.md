@@ -28380,3 +28380,105 @@ T-dependent optimizations в array.h. Полиморфизм memset через b
 valid zero representation для `int`/`float`/`bool`/`ptr` (IEEE 754 +0,
 NULL pointer, false). Для compound value types (Plan 120 named tuples)
 работает при условии что все поля имеют zero-default representation.
+
+---
+
+## Plan 59.1 — Generic anonymous tuple monomorphization (2026-06-01)
+
+**Что:** закрытие codegen gap'а в Plan 59 Ф.7.5 (Result mono landed
+2026-05-17; general generic anonymous tuple оставался под V1 erasure
+fallback). Любой `fn[T] f() -> (A[T], B[T])` или
+`fn[T, U] g() -> (T, U)` теперь mono'итcя per instantiation через
+mono'd schema `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>` —
+length-prefixed mangling, value-type return, per-instance
+deduplication.
+
+**Status:** 🟢 V1 CLOSED. Branch `plan-59.1-generic-anon-tuple-mono`,
+worktree `nova-p59-1`, 5 коммитов. 11/11 plan59_1 fixtures PASS на
+release nova-cli + clang (8 positive + 3 negative).
+
+**CLOSED markers:**
+- ✅ `[M-59.1-codegen-bailout-removed]` — emit_c.rs:20751 (emit_call
+  для mono_fn_decls) + emit_c.rs:26688 (infer_expr_c_type для generic
+  fn Call) tuple-return bailouts удалены. Оба были «Plan 48 V1
+  fallback на `_NovaTupleN` erasure» — обсолетный после Plan 59
+  Ф.7.5 mono'd schema landing, но никогда не убран для general tuples.
+- ✅ `[M-59.1-d216-spec]` — D216 NEW в spec/decisions/02-types.md
+  (полное описание mangling + codegen path + edge cases + backward
+  compat). D91 amend (Channel.new signature буквально implementable).
+  D123 amend (Plan 59 Ф.7.5 extends на все user fns).
+
+**OPEN markers (followups):**
+- 🟡 `[M-59.1-array-of-mono-tuple]` — `fn[T] f() -> []((T, T))`
+  array-of-mono-tuple type mismatch (call site infer выдаёт
+  `NovaArray_<mono_tuple>*` typedef которого не существует; body
+  fallback на `NovaArray_nova_int*`). Низкий приоритет — workaround
+  через explicit `Nova_<Pair>` record type.
+- 🟡 `[M-59.1-tuple-field-oob-nova-diag]` — `pair.5` на arity-2
+  tuple leaks к clang `no member named 'f5'`. Cosmetic — error caught,
+  но не optimal UX. Fix: Nova-level arity check для positional field
+  access на mono'd tuple в type-checker.
+- 🟡 `[M-59.1-channel-new-cleanup]` — 3 ad-hoc Channel.new special-cases
+  (emit_c.rs:18435/20159/22694) + `Nova_ChannelPair` runtime struct.
+  После Plan 59.1 generic mono path способен обработать Channel.new
+  через Nova-side `external fn[T] Channel[T].new(...) -> (ChanWriter[T],
+  ChanReader[T])` (Plan 115 Pattern B) — но это runtime + std API
+  surgery. Spec D91 уже amended что current bootstrap impl — detail.
+
+**Acceptance criteria final (A1-A10):**
+- A1 ✅ `fn[T] dup(v T) -> (T, T)` + `dup[int](42)` + destructure compile
+  + run PASS.
+- A2 ✅ Multi-instantiation: `dup[int]` + `dup[str]` в одной module —
+  оба typedef'а уникальны, fixtures PASS.
+- A3 ✅ Multi-param: `fn[T, U] pair(a T, b U) -> (T, U)` PASS.
+- A4 ✅ Nested generic tuple: `fn[T] nest() -> (T, (T, T))` PASS.
+- A5 🟡 Array-of-tuple — followup.
+- A6 🟡 Channel.new cleanup — followup.
+- A7 ✅ Regression — plan90 9/0, plan90_1 20/0, plan91_7 5/0,
+  syntax 53/1 (pre-existing for_in_range_iter unrelated),
+  concurrency 70/11 (pre-existing armed-M:N flakies, verified
+  тот же failure pattern на main repo binary без Plan 59.1 changes).
+- A8 ✅ Spec D216 NEW + D91/D123 amend + README spec entry —
+  landed.
+- A9 ✅ plan59_1 fixtures 11 (8 positive + 3 negative) ALL PASS.
+- A10 ✅ Logs landed (simplifications + project-creation +
+  nova-private/discussion-log).
+
+**Subsystems:**
+1. Codegen (`compiler-codegen/src/codegen/emit_c.rs`):
+   - L20751: emit_call dispatch для mono_fn_decls — bailout удалён,
+     mono pipeline покрывает generic tuple return.
+   - L26688: infer_expr_c_type для generic fn Call — bailout удалён,
+     `apply_type_subst_to_ref(return_type, subst)` resolves к
+     substituted mono'd tuple type.
+2. Mono'd tuple infrastructure (Plan 59 Ф.7.5, preexisting):
+   - `compute_mono_tuple_c_name` (L10105) — length-prefixed mangling.
+   - `register_mono_tuple` (L10121) — HashSet dedup + sizeof warning.
+   - `register_tuples_in_typeref` (L10184) — recursive visitor для
+     nested cases.
+   - Finalize (L2749) — topo sort + per-typedef emission.
+3. Spec (`spec/decisions/02-types.md`):
+   - D216 NEW (~165 LOC).
+   - D91 amend (signature implementable).
+   - D123 amend (Plan 59 Ф.7.5 extends на все user fns).
+4. Tests (`nova_tests/plan59_1/`, 11 fixtures):
+   - Positive: repro_dup_T / multi_inst / multi_param / nested_tuple /
+     option_tuple / field_access / triple_tuple / non_generic_pair.
+   - Negative: arity_mismatch_neg (Nova-level diagnostic) /
+     turbofish_missing_neg (Plan 48/54 diagnostic) / field_oob_neg
+     (C-level diagnostic — followup для Nova-level).
+
+**Design lessons:**
+1. **Bailout comments — обязательно «still applicable» проверка**
+   при фундаментальных архитектурных изменениях. Plan 59 Ф.7.5
+   mono'd schema landed для Result; bailout reasoning «legacy schema
+   can't hold non-int» уже obsolete но никогда не убран для general
+   tuples. Cost: 6+ месяцев silent erasure path для всех generic
+   anonymous tuples.
+2. **Multi-bailout pattern.** Один и тот же reasoning может быть
+   реплицирован в двух independent code sites (emit_call dispatch +
+   infer_expr_c_type). Удалять синхронно — single bailout removal
+   привёл бы к call-site/body type mismatch.
+3. **Test corpus dual-direction.** Positive (feature works) + negative
+   (proper error caught) одинаково важны. Без negative легко пропустить
+   regression в error path при changes.
