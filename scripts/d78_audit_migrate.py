@@ -50,6 +50,16 @@ def expected_rev3_decl(file: Path, root: Path) -> list[str] | None:
         return [owner, 'internal', target]
     # single-file: target = filename, parent = parent folder.
     target = parts[-1]
+    # D29 Plan 42 правило F: `_test.nv` suffix — test peer, declares
+    # same module as the tested file (strip '_test' suffix from target),
+    # НО только если sibling file/folder с base name существует
+    # (peer-test invariant).
+    if target.endswith('_test') and target != '_test':
+        base = target[:-len('_test')]
+        sibling_nv = file.parent / f"{base}.nv"
+        sibling_dir = file.parent / base
+        if sibling_nv.exists() or sibling_dir.is_dir():
+            target = base
     parent = parts[-2] if len(parts) >= 2 else root.name
     return [parent, target]
 
@@ -88,8 +98,11 @@ def migrate(violators: list[tuple[Path, str, str]]) -> int:
     changed = 0
     for f, old_decl, new_decl in violators:
         text = f.read_text(encoding='utf-8', errors='replace')
+        # Bug fix 2026-06-01: use [ \t]* для trailing whitespace вместо \s*,
+        # т.к. \s включает \r\n и greedy match ел blank lines после module
+        # declaration.
         new_text = re.sub(
-            rf'^module\s+{re.escape(old_decl)}\s*$',
+            rf'^module[ \t]+{re.escape(old_decl)}[ \t]*$',
             f'module {new_decl}',
             text,
             count=1,
