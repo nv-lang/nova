@@ -2235,6 +2235,136 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ---
 
+## Status — progress checkpoint (2026-06-01, evening 2 — Session 2 final)
+
+### Session 2 final additions (autonomous continuation)
+
+**Ф.5 partial — Option[*T] type parses** (commit `3e4f66929e0`):
+- Option[*T] declarations work через existing generic Option lowering.
+- Fixture t5_1_option_pointer_parses_ok.nv PASS.
+- Full NPO codegen (single-pointer layout vs tagged-struct) — deferred.
+  NPO requires substantial codegen refactor: register_novaopt_decl emits
+  `typedef T* NovaOpt_<X>;` instead of struct; downstream `.tag`/`.value`
+  access sites need NULL-check abstraction. Multi-hour work — Ф.5
+  follow-on session task.
+
+**Ф.3.2 — `#unsafe` attribute on fn** (commit `3a4074423ad`):
+- FnDecl.unsafe_attr: bool field added (default false).
+- ContractAttrs.unsafe_attr: bool with is_empty() updated.
+- parse_contract_attrs: KwUnsafe arm с duplicate-detection +
+  skip_newlines() для multi-line fn declarations.
+- Fixture t3_2_unsafe_fn_attr_ok.nv PASS (2 tests).
+- Followup: type-checker E_UNSAFE_CALL_REQUIRES_WRAP enforcement (Ф.3.5).
+
+**Try Block.is_unsafe flag (reverted):**
+- Attempted to add `is_unsafe: bool` field на Block struct.
+- Blast radius: 24 Block construction sites in 5 files (emit_c.rs ×10,
+  parser/mod.rs ×6, callnorm.rs ×1, desugar.rs ×3, verify/handler_exec ×4).
+- Reverted. Better path forward для Ф.3.3-3.5: introduce ExprKind::Unsafe(Block)
+  variant + type-checker unsafe-context stack. Followup work.
+
+### Plan 118 fixture status (9/0 PASS)
+
+| Fixture | Phase | Status |
+|---|---|---|
+| t1_1_parse_pointer_types_ok | Ф.1 | ✅ |
+| t1_3_chain_multi_level_ok | Ф.1 | ✅ |
+| t1_6_record_field_pointer_ok | Ф.1 | ✅ |
+| t1_8_ptr_legacy_compat_ok | Ф.1 | ✅ |
+| t2_1_addr_of_deref_in_unsafe_ok | Ф.2/3 | ✅ |
+| t3_1_unsafe_block_parses_ok | Ф.3 | ✅ |
+| t3_2_unsafe_fn_attr_ok | Ф.3.2 | ✅ |
+| t5_1_option_pointer_parses_ok | Ф.5 partial | ✅ |
+| t6_1_fn_pointer_type_ok | Ф.6 partial | ✅ |
+
+### Session 2 commits на plan-118 branch (worktree)
+
+- `5069e76a983` — Ф.1.5 Ty::TypedPtr variant
+- `0c420b727fd` — Ф.1.9 T1 fixtures (4 PASS)
+- `f9e2a7a9a89` — Ф.2 scaffold (&/* unary)
+- `09be551b945` — Ф.3 scaffold (KwUnsafe + unsafe block)
+- `25b39646639` — Ф.3 integration test
+- `9509ba0e219` — status checkpoint (mid-session)
+- `8127e3303a1` — Ф.6 partial (*fn fixture)
+- `f9818d47537` — logs update (simplifications + project-creation)
+- `3e4f66929e0` — Ф.5 partial (Option[*T] type)
+- `3a4074423ad` — Ф.3.2 #unsafe attribute
+
+Plus nova-private separate repo:
+- `2a1c425cc4` — initial discussion-log (Session 1)
+- `fb7e169e8b` — Session 2 design + lessons
+
+### Realistic next-session pickup (Session 3+ checklist)
+
+Priority order для production-grade completion:
+
+1. **Ф.3.3-3.5 unsafe context enforcement** (~1 day):
+   - Introduce `ExprKind::Unsafe(Block)` variant (or `Block.is_unsafe`
+     flag через bulk-Edit 24 sites). ExprKind variant may have fewer
+     touchpoints due to `_` catch-all arms.
+   - Type-checker unsafe-context stack: push on entering Unsafe, pop on
+     exit.
+   - Pointer ops (UnOp::AddrOf, UnOp::Deref, Ty::TypedPtr binding patterns)
+     check stack; emit `E_UNSAFE_REQUIRED` outside unsafe.
+   - `#unsafe fn` body also pushes unsafe context.
+   - Calling `#unsafe` fn check: emit `E_UNSAFE_CALL_REQUIRES_WRAP` if
+     caller not в unsafe context.
+
+2. **Ф.4 auto-deref + binding mut rule** (~1.5 day):
+   - Type-checker resolves `p.field` / `p.method()` / `p.field = v`
+     when p: Ty::TypedPtr(modif, inner). Look up member на inner type.
+   - Binding mut rule: `mut p *T` infers `*mut T` default; explicit
+     `ro p *mut T` preserved.
+   - Chain order semantics: `*mut *ro T` mutability levels enforced
+     per layer.
+   - Cast table enforcement (D216 §12): safe vs unsafe casts.
+   - Pointer arith `*unsafe T` result type (D216 §6).
+
+3. **Ф.5 NPO codegen** (~1 day):
+   - register_novaopt_decl detects `Option[*T]` / `Option[Ty::TypedPtr]`
+     / `Option[ptr]` / `Option[Newtype-over-pointer]`.
+   - Emit `typedef T* NovaOpt_<sanitized>;` instead of `struct { tag;
+     value; }`.
+   - Pattern match codegen: `if (ptr == NULL) None_branch else Some_branch(ptr)`.
+   - Some(p) construction: emit `p`; None: emit `NULL`.
+   - Helper fns (`nova_opt_eq_*`) use NULL-check.
+   - **Closes `[M-115-null-ptr-to-option-after-npo]`** ✅.
+
+4. **Ф.6 *fn cast + callback no-throw** (~½-1 day):
+   - Cast `fn → *fn` check: captureless required (E_CLOSURE_HAS_ENV).
+   - Cast `*fn → fn` unsafe-only (E_CAST_RAW_FN_TO_CLOSURE).
+   - Effect check: Fn-with-Fail cast → *fn → E_CALLBACK_THROWS_OVER_C_ABI.
+   - external fn declaration с Fail → E_EXTERNAL_FN_FAIL_EFFECT.
+   - Codegen proper `Ret (*name)(Args)` C type emission (improves
+     debuggability + strict typing).
+   - FFI roundtrip test (Nova fn → C callback → invoke).
+
+5. **Ф.7 GC honor-system warnings** (~½ day):
+   - W_UNSAFE_GC_TRIGGER emit when alloc/yield внутри unsafe block c
+     active pointer binding в scope.
+   - `// noqa: W_UNSAFE_GC_TRIGGER` silence mechanism (existing
+     diagnostic suppression).
+   - Pointer Debug fmt: `.to_debug_str()` method (inside unsafe only).
+   - `"${p}"` interpolation → E_PTR_NO_DISPLAY_USE_DEBUG_STR.
+
+6. **Ф.8 regression + cross-platform + ABI snapshot + perf bench** (~1 day):
+   - Full nova test ≥ baseline (record exact post-Ф.7 count).
+   - Cross-platform CI: 5+ combos (Linux × clang/gcc + Win × MSVC/clang
+     + macOS × clang).
+   - ABI snapshot tests `tests/abi/typed_pointers/*.expected`.
+   - Perf benchmarks: escape promote < 5ns, NPO == sizeof(*T), auto-deref
+     zero-cost asm, arith unit-scaling.
+
+7. **Ф.9 closure** (~½-1 day):
+   - Promote D216 + D2 amend + D214 amend + D32 amend → active в spec.
+   - Update ffi-cookbook к Option[*T] / tuple newtype patterns.
+   - Add examples/typed_pointers/01-06_*.nv minimal samples.
+   - Update logs (project-creation, simplifications, discussion-log).
+   - Create memory `project-plan118-status.md`.
+   - PR review process (NOT self-merge).
+
+---
+
 ## Status — progress checkpoint (2026-06-01, evening)
 
 ### Session 2 progress (autonomous continuation)
