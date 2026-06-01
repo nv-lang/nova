@@ -187,12 +187,30 @@ impl ExternalRegistry {
         // opaque types from sync.nv) for later registration in emit_c.rs.
         // These drive sum_schemas (OnceState), generic_types (OnceCell, Lazy),
         // and generic_type_templates needed for dispatch + type inference.
+        //
+        // Plan 91.12 V2 (D126 retract — sync types migration): runtime-backed
+        // newtype declarations (`type X[T](ptr)` для OnceCell/Lazy/Condvar)
+        // тоже должны попадать в type_decls — иначе method-dispatch для
+        // `Lazy[int].new(...)` не находит receiver type и codegen падает
+        // с misrouted `Nova_int_method_new(Lazy, ...)`. Type_decls collection
+        // unifies Opaque (legacy) и Newtype (post-V2) paths.
         for item in &module.items {
             if let Item::Type(t) = item {
-                // Only collect sum types and opaque types relevant to codegen.
+                // Only collect sum types, opaque types, and runtime-backed
+                // newtypes relevant to codegen.
                 match &t.kind {
                     TypeDeclKind::Sum(_) => reg.type_decls.push(t.clone()),
                     TypeDeclKind::Opaque => reg.type_decls.push(t.clone()),
+                    // Plan 91.12 V2: newtype-over-ptr declarations с generics
+                    // или с runtime-backed именами need same dispatch path.
+                    // Без generics non-runtime-backed newtypes (e.g.
+                    // `type SqHandle(ptr)`) НЕ нуждаются — codegen ходит
+                    // через регистрацию external fn напрямую (Plan 115).
+                    TypeDeclKind::Newtype(_)
+                        if !t.generics.is_empty()
+                            || matches!(t.name.as_str(),
+                                "OnceCell" | "Lazy" | "Condvar")
+                    => reg.type_decls.push(t.clone()),
                     _ => {}
                 }
             }

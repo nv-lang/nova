@@ -1889,6 +1889,19 @@ impl CEmitter {
                             .or_insert(type_decl);
                     }
                 }
+                // Plan 91.12 V2 (D126 retract — sync types migration):
+                // runtime-backed newtype declarations (`type X[T](ptr)`) need
+                // the same dispatch registration as their predecessor Opaque
+                // form (`external type X[T]`). Without this, type-checker fails
+                // to resolve `Lazy[int].new(closure)` as a static-method call
+                // — codegen falls back на misrouted `Nova_int_method_new(Lazy, ...)`.
+                crate::ast::TypeDeclKind::Newtype(_) => {
+                    if !type_decl.generics.is_empty() {
+                        self.generic_types.insert(type_decl.name.clone());
+                        self.generic_type_templates.entry(type_decl.name.clone())
+                            .or_insert(type_decl);
+                    }
+                }
                 crate::ast::TypeDeclKind::Sum(variants) => {
                     // Register sum schema for pattern matching + is_generic_stub_c.
                     if !self.sum_schemas.contains_key(&type_decl.name) {
@@ -8388,6 +8401,26 @@ impl CEmitter {
                 self.emit_sum_type(&t.name, variants)?;
             }
             TypeDeclKind::Newtype(inner) => {
+                // Plan 91.12 V2 (D126 retract — sync types migration):
+                // runtime-backed newtype declarations skip emit. Their C struct
+                // lives either in nova_rt/*.h (non-generic: Condvar in
+                // sync_condvar.h) or is emitted per-T by emit_generic_type_instance
+                // (generic: OnceCell/Lazy via emit_oncecell_instance /
+                // emit_lazy_instance). Emitting `typedef nova_ptr Nova_X` here
+                // would conflict with the actual struct typedef.
+                //
+                // List parallels Plan 91.12 V2 §«D126 retract — sync types»:
+                // ровно те 3 типа, что мигрировали с `external type` (Opaque)
+                // на `type X(ptr)` / `type X[T](ptr)`.
+                const RUNTIME_BACKED_NEWTYPES: &[&str] =
+                    &["OnceCell", "Lazy", "Condvar"];
+                if RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
+                    // Skip typedef emit — runtime / per-T mono handles it.
+                    // Register alias так чтобы type_ref_to_c для bare `OnceCell`
+                    // (без mono context) не падал. Generic refs резолвятся
+                    // через per-T mono mangling separately.
+                    return Ok(());
+                }
                 let inner_c = self.type_ref_to_c(inner)?;
                 self.line(&format!("typedef {} Nova_{};", inner_c, t.name));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
@@ -11904,7 +11937,41 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                 }
             }
-            _ => { /* Protocol/effect/alias/newtype — not generic record/sum */ }
+            // Plan 91.12 V2 (D126 retract — sync types migration): runtime-backed
+            // generic newtypes need the same per-T struct + methods emission as
+            // their predecessor `external type` (Opaque) form. After migration:
+            //   `external type OnceCell[T]` → `type OnceCell[T](ptr)`
+            //   `external type Lazy[T]`     → `type Lazy[T](ptr)`
+            // The Newtype declaration carries no body; per-T mono path routes to
+            // the same emit_oncecell_instance / emit_lazy_instance helpers.
+            // The Nova-level typedef declaration emission is suppressed for these
+            // names (see emit_type_decl Newtype branch — RUNTIME_BACKED_NEWTYPES
+            // list); per-T mono here defines the actual C struct.
+            TypeDeclKind::Newtype(_) => {
+                let base_name = template.name.clone();
+                match base_name.as_str() {
+                    "OnceCell" => {
+                        let t_cty = type_subst.iter()
+                            .find(|(k, _)| k == "T")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "nova_int".to_string());
+                        self.emit_oncecell_instance(mangled, &t_cty);
+                    }
+                    "Lazy" => {
+                        let t_cty = type_subst.iter()
+                            .find(|(k, _)| k == "T")
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "nova_int".to_string());
+                        self.emit_lazy_instance(mangled, &t_cty);
+                    }
+                    _ => {
+                        // Regular newtype `type X(T)` — handled in emit_type_decl
+                        // (typedef T Nova_X). Generic newtype без runtime backing
+                        // currently не используется; per-T mono no-op для них.
+                    }
+                }
+            }
+            _ => { /* Protocol/effect/alias — not generic record/sum */ }
         }
 
         self.current_type_subst = saved_subst;
