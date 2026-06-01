@@ -26721,3 +26721,96 @@ Closes (planned по фазам):
 
 Unblocks: Plan 118.1/118.2/118.3 sub-plans (parallel execution после core
 merge); Plan 121 (stack-fixed-arrays — uses `*[N]T` foundations).
+
+==========================================================================
+2026-06-01 evening — Plan 118 Session 2 progress (autonomous continuation)
+==========================================================================
+
+Substantial implementation landed через Ф.3 partial. Worktree
+D:/Sources/nv-lang/nova-p118 branch plan-118 — 11 commits total,
+7 fixtures PASS, no regression introduced.
+
+Commits на branch plan-118 (Session 2 additions):
+- 5069e76a983 — feat(plan118 Ф.1.5): Ty::TypedPtr proper variant в
+  type-checker
+- 0c420b727fd — feat(plan118 Ф.1.9): T1 positive fixtures (4 PASS)
+- f9e2a7a9a89 — feat(plan118 Ф.2 scaffold): &value + *expr unary
+  prefix operators
+- 09be551b945 — feat(plan118 Ф.3 scaffold): KwUnsafe keyword + unsafe
+  block syntax
+- 25b39646639 — test(plan118 Ф.3): unsafe block in expression position
+- 9509ba0e219 — docs(plan118): status checkpoint evening
+- 8127e3303a1 — test(plan118 Ф.6 partial): *fn function pointer type
+
+Plan 118 fixtures (7/0 PASS):
+- t1_1_parse_pointer_types_ok — *T / *ro T / *mut T / *unsafe T в
+  external fn signatures
+- t1_3_chain_multi_level_ok — multi-level pointer chains
+- t1_6_record_field_pointer_ok — tuple newtype + record FFI handles
+- t1_8_ptr_legacy_compat_ok — Plan 115 ptr + Plan 118 *T coexist
+- t2_1_addr_of_deref_in_unsafe_ok — unsafe block в expression position
+- t3_1_unsafe_block_parses_ok — unsafe block syntax (3 tests)
+- t6_1_fn_pointer_type_ok — *fn(...) declaration parses
+
+Regression smoke (release test-build, libuv enabled, GC linkage via
+main repo vcpkg_installed/x64-windows-static):
+
+| Plan | PASS/FAIL |
+| plan118 | 7/0 (new) |
+| plan115 | 11/0 (D214 backward compat preserved) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| syntax | 53/1 (1 pre-existing for_in_range_iter, unrelated) |
+| TOTAL | 113/1 |
+
+Build setup (worktree-only):
+- libuv submodule copied from main + libuv/.git removed
+- env vars: NOVA_GC_INCLUDE_DIR + NOVA_GC_LIB_DIR pointing к
+  D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/
+  x64-windows-static/{include,lib}
+
+Implementation pieces landed:
+
+Lexer (compiler-codegen/src/lexer/):
+- New KwUnsafe keyword variant + "unsafe" lexeme recognition
+
+AST (compiler-codegen/src/ast/mod.rs):
+- New PointerModifier enum (Ro/Mut/Unsafe)
+- New TypeRef::Pointer(PointerModifier, Box<TypeRef>, Span) variant
+- UnOp extended (AddrOf, Deref)
+
+Parser (compiler-codegen/src/parser/mod.rs):
+- parse_type: `*T` / `*ro T` / `*mut T` / `*unsafe T` production
+  (recursive для chains `*mut *ro T`)
+- parse_unary: TokenKind::Amp / TokenKind::Star prefix ops
+- parse_primary: `unsafe { ... }` block
+
+Type-checker (compiler-codegen/src/types/mod.rs):
+- New Ty::TypedPtr(PointerModifier, Box<Ty>) variant
+- ty_of_ref maps TypeRef::Pointer → Ty::TypedPtr correctly
+- TyCat::Ptr category (consistent с D214 ptr)
+- type_key includes modifier для overload disambiguation
+
+Codegen (compiler-codegen/src/codegen/emit_c.rs + external_registry.rs):
+- TypeRef::Pointer → `const T*` (ro) / `T*` (mut/unsafe) emission
+- UnOp::AddrOf → `&(...)` C, UnOp::Deref → `*(...)` C
+- Exhaustive-match arms updated в 17 sites across 8 files
+
+Open V1 limitations (followup phases):
+- [M-118-addrof-deref-expr-inference] AddrOf/Deref proper Ty::TypedPtr
+  inference в expression position (current: best-effort string ops)
+- [M-118-typed-int-literal-ptr-context] _i64/_u32 suffix literals
+  + pointer ops triggers C generation error
+- [M-118-unsafe-context-enforcement] E_UNSAFE_REQUIRED type-checker
+  enforcement (Ф.3.3-3.5 followup)
+- [M-118-unsafe-fn-attribute] #unsafe attribute on fn (Ф.3.2 followup)
+- [M-118-fn-ptr-c-type-precise] Ret (*name)(Args) C emission (Ф.6)
+- Escape analysis с auto-promote (Ф.2.4)
+- NPO codegen Option[*T] (Ф.5)
+
+Next session pickup: Ф.4 (auto-deref + binding mut + chain order) OR
+Ф.5 (NPO codegen + null-ptr retraction closing [M-115-null-ptr-to-option-after-npo]).
+Plan file status section с detailed handoff checklist.

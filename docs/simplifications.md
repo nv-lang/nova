@@ -28317,3 +28317,96 @@ README + logs). Next: Ф.1 (parser/checker для *T family). Sub-plan markers
 **Spec foundation locked:** D216 + D2 amend + D214 amend + D32 amend в
 draft (promote к active в Ф.9 after implementation). Design freeze post-Ф.0
 — любые изменения требуют новый sub-plan или explicit user signoff.
+
+## Plan 118 — Session 2 progress (2026-06-01, evening — autonomous continuation)
+
+**Substantial implementation progress** — through Ф.3 partial:
+
+**Ф.1.5 — Ty::TypedPtr proper variant** (commit `5069e76a983`):
+- `types/mod.rs::Ty` enum extended с `TypedPtr(PointerModifier, Box<Ty>)`
+  variant. ty_of_ref maps `TypeRef::Pointer → Ty::TypedPtr(modif,
+  ty_of_ref(inner))`. No exhaustive-match fallout (existing Ty match
+  sites use `_` catch-all).
+
+**Ф.1.9 — T1 positive fixtures** (commit `0c420b727fd`):
+- 4 fixtures PASS через release test-build (clang toolchain, libuv
+  enabled, GC linkage через main repo vcpkg_installed):
+  t1_1_parse_pointer_types_ok.nv, t1_3_chain_multi_level_ok.nv,
+  t1_6_record_field_pointer_ok.nv, t1_8_ptr_legacy_compat_ok.nv.
+- Setup: libuv submodule copied из main + .git removed; env vars
+  NOVA_GC_INCLUDE_DIR/LIB_DIR pointing к vcpkg_installed.
+
+**Ф.2 scaffold — `&value` + `*expr` unary ops** (commit `f9e2a7a9a89`):
+- UnOp enum extended (AddrOf, Deref).
+- Parser parse_unary recognizes TokenKind::Amp / TokenKind::Star prefix.
+- Codegen direct `&(...)` / `*(...)` C emission (V1 без escape analysis;
+  proper Ty::TypedPtr inference в expr position — Ф.4 followup).
+
+**Ф.3 scaffold — KwUnsafe + unsafe block** (commits `09be551b945` +
+`25b39646639`):
+- Lexer KwUnsafe keyword (replaces legacy Ident path для `*unsafe T` —
+  cleaner + future-proof для D2 amend `unsafe { }` block).
+- Parser `unsafe { ... }` block в parse_primary (treated as ExprKind::Block
+  V1 scaffold; effect-handler desugar D2 amend semantic — Ф.3.4 followup).
+- T3 fixture t3_1_unsafe_block_parses_ok.nv (3 tests PASS).
+- Ф.2/Ф.3 integration test t2_1_addr_of_deref_in_unsafe_ok.nv (3 tests PASS).
+
+**Ф.6 partial — `*fn(...)` function pointer type** (commit `8127e3303a1`):
+- Already PARSES через existing parse_type recursion (`*fn(...)` →
+  `Pointer(Ro, Func{...})`).
+- Codegen wraps Func ("void*") в `const void**` через Ф.1.10 pointer
+  codegen — ABI single pointer match C fn ptr. Test t6_1_fn_pointer_type_ok
+  PASS.
+- Followup work: proper `Ret (*name)(Args)` C type emission + cast
+  captureless check + callback no-throw enforcement.
+
+**Regression smoke (release test-build):**
+
+| Plan | PASS/FAIL | Comment |
+|---|---|---|
+| plan118 | 7/0 | NEW |
+| plan115 | 11/0 | D214 backward compat preserved |
+| plan120 | 8/0 | unchanged |
+| plan114 | 10/0 | unchanged |
+| plan100_3 | 10/0 | unchanged |
+| plan108 | 6/0 | unchanged |
+| basics | 8/0 | unchanged |
+| syntax | 53/1 | 1 pre-existing FAIL (for_in_range_iter, unrelated) |
+
+**Smoke total: 113/1** (1 pre-existing). Plan 118 scaffolding integrated
+без regression.
+
+**Open markers introduced V1 limitations:**
+- 🟡 `[M-118-addrof-deref-expr-inference]` — AddrOf/Deref в expression
+  position currently best-effort string append/strip; proper
+  Ty::TypedPtr inference — Ф.4 followup.
+- 🟡 `[M-118-typed-int-literal-ptr-context]` — `_i64`/`_u32`/etc.
+  suffix literals + pointer ops triggers "use of undeclared 'i64'" C
+  error. Workaround: avoid typed suffix в pointer fixtures. Root cause
+  в infer_expr_c_type returning Nova name vs C name.
+- 🟡 `[M-118-unsafe-context-enforcement]` — type-checker enforcement
+  для E_UNSAFE_REQUIRED не active в V1 scaffold. Ф.3.3-3.5 followup.
+- 🟡 `[M-118-unsafe-fn-attribute]` — `#unsafe` attribute on fn
+  declarations — Ф.3.2 followup.
+- 🟡 `[M-118-fn-ptr-c-type-precise]` — `*fn(Args) -> Ret` emits
+  `const void**` (Func "void*" wrap); proper `Ret (*name)(Args)`
+  emission — Ф.6 followup. ABI uchanged (single pointer).
+
+**Commits на ветке plan-118 (worktree D:/Sources/nv-lang/nova-p118):**
+- `e642fc86d1e` — revision
+- `12c746202a2` — Ф.0 GATE
+- `c75d7be3791` — Ф.1.1-1.4 scaffold (8 files; 17 exhaustive-match
+  sites updated)
+- `fd1482292ba` — status checkpoint (morning)
+- `5069e76a983` — Ф.1.5 Ty::TypedPtr
+- `0c420b727fd` — Ф.1.9 T1 fixtures (4/4 PASS)
+- `f9e2a7a9a89` — Ф.2 scaffold (&/* unary)
+- `09be551b945` — Ф.3 scaffold (KwUnsafe + unsafe block)
+- `25b39646639` — Ф.3 integration test
+- `9509ba0e219` — status checkpoint (evening)
+- `8127e3303a1` — Ф.6 partial (*fn fixture)
+
+Plus nova-private separate repo: `2a1c425cc4` — discussion-log с
+4-round design discussion.
+
+**Worktree NOT merged в main** (review required first per design).
