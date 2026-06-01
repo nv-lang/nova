@@ -1,0 +1,37 @@
+// Plan 123.1 T2.6: nested if/match blocks — ro caching валиден
+// across nested control-flow.
+
+module plan123_1.nested_blocks_ok
+
+type Tally {
+    ro a int
+    ro b int
+}
+
+fn Tally @classify(threshold int) -> int {
+    // Multiple accesses распределённые across nested branches.
+    if @a > threshold {
+        if @b > threshold {
+            @a + @b
+        } else {
+            @a - @b
+        }
+    } else {
+        if @b > threshold {
+            @b - @a
+        } else {
+            -(@a + @b)
+        }
+    }
+}
+
+fn Tally.new(a int, b int) -> Tally {
+    Tally { a, b }
+}
+
+test "nested blocks ro caching" {
+    assert(Tally.new(10, 5).classify(3) == 15)   // @a>3, @b>3 → 15
+    assert(Tally.new(10, 2).classify(3) == 8)    // @a>3, @b<=3 → 8
+    assert(Tally.new(2, 10).classify(3) == 8)    // @a<=3, @b>3 → 8
+    assert(Tally.new(1, 1).classify(3) == -2)    // both<=3 → -2
+}
