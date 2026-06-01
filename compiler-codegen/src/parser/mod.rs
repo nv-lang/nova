@@ -2419,16 +2419,8 @@ impl Parser {
                     start,
                 ));
             }
-            // Generic — V1+V2.0 reject; V2.1 (Ф.4 Plan 114.4.3) расширит.
-            if !fn_generics.is_empty() {
-                return Err(Diagnostic::new(
-                    "[E_CONST_FN_GENERIC] generic params не разрешены в const fn V2.0 \
-                     (D199). Followup `[M-114.4.2-generic]` / Plan 114.4.3 Ф.4. \
-                     Используй concrete types."
-                        .to_string(),
-                    fn_generics[0].span,
-                ));
-            }
+            // Plan 114.4.3 Ф.4 V2: generic const fn allowed — T-independent
+            // body only. T reflection (sizeof[T], T.field) — V3 follow-up.
             // Fully-const fn — strict: no effect-list (comptime-only).
             // Mixed fn — runtime body может effects (V2 allows).
             if is_fully_const_fn && !effects.is_empty() {

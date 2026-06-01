@@ -329,17 +329,26 @@ impl<'a> ConstFnEvaluator<'a> {
                 eval_as_cast(&v, target, expr.span)
             }
             ExprKind::Call { func, args, trailing: None } => {
-                // Callee must be Ident (checker enforces).
-                let callee_name = if let ExprKind::Ident(n) = &func.kind {
-                    n.clone()
-                } else {
-                    return Err(Diagnostic::new(
+                // Callee: Ident OR TurboFish<Ident, ...> (generic const fn V2).
+                let callee_name = match &func.kind {
+                    ExprKind::Ident(n) => n.clone(),
+                    ExprKind::TurboFish { base, .. } => {
+                        if let ExprKind::Ident(n) = &base.kind {
+                            n.clone()
+                        } else {
+                            return Err(Diagnostic::new(
+                                "[E_CONST_FN_EVAL_PANIC] non-ident turbofish base \
+                                 (D199).".to_string(),
+                                expr.span,
+                            ));
+                        }
+                    }
+                    _ => return Err(Diagnostic::new(
                         "[E_CONST_FN_EVAL_PANIC] non-ident callee в const fn \
                          body — checker drift (D199).".to_string(),
                         expr.span,
-                    ));
+                    )),
                 };
-                // Evaluate args (positional only per checker).
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
                     if let crate::ast::CallArg::Item(e) = a {
@@ -1116,13 +1125,24 @@ impl OwnedEvaluator {
                 eval_as_cast(&v, target, expr.span)
             }
             ExprKind::Call { func, args, trailing: None } => {
-                let callee_name = if let ExprKind::Ident(n) = &func.kind {
-                    n.clone()
-                } else {
-                    return Err(Diagnostic::new(
+                // Plan 114.4.3 Ф.4 V2: turbofish callee для generic const fn.
+                let callee_name = match &func.kind {
+                    ExprKind::Ident(n) => n.clone(),
+                    ExprKind::TurboFish { base, .. } => {
+                        if let ExprKind::Ident(n) = &base.kind {
+                            n.clone()
+                        } else {
+                            return Err(Diagnostic::new(
+                                "[E_CONST_FN_EVAL_PANIC] non-ident turbofish base \
+                                 (D199).".to_string(),
+                                expr.span,
+                            ));
+                        }
+                    }
+                    _ => return Err(Diagnostic::new(
                         "[E_CONST_FN_EVAL_PANIC] non-ident callee (D199).".to_string(),
                         expr.span,
-                    ));
+                    )),
                 };
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
@@ -1306,7 +1326,18 @@ fn walk_expr(
     // Mixed fns остаются в codegen, не evaluated, но const params на call site
     // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
-        if let ExprKind::Ident(name) = &func.kind {
+        // Plan 114.4.3 Ф.4 V2: turbofish callee — unwrap base Ident.
+        let name_opt: Option<String> = match &func.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::TurboFish { base, .. } => {
+                if let ExprKind::Ident(n) = &base.kind {
+                    Some(n.clone())
+                } else { None }
+            }
+            _ => None,
+        };
+        if let Some(name) = name_opt {
+            let name = &name;
             if let Some(flags) = ev.mixed_const_params.get(name).cloned() {
                 for (idx, (a, is_const)) in args.iter().zip(flags.iter()).enumerate() {
                     if !is_const { continue; }

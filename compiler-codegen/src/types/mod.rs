@@ -772,10 +772,20 @@ fn check_const_constexpr_ex(
              const → use `ro X = …` (runtime ok) (Plan 114.4 Ф.1).".to_string(),
             expr.span,
         )),
-        // Plan 114.4.2 D199: Call к const fn — constexpr, если callee = Ident
+        // Plan 114.4.2 D199 / Plan 114.4.3 Ф.4 V2: Call к const fn — constexpr,
+        // если callee = Ident (или TurboFish<Ident, ...> для generic const fn)
         // и зарегистрирован как const fn, и каждый arg constexpr.
         E::Call { func, args, trailing: None } => {
-            if let E::Ident(name) = &func.kind {
+            // Unwrap TurboFish to get underlying Ident name (generic const fn).
+            let callee_name_opt: Option<&String> = match &func.kind {
+                E::Ident(n) => Some(n),
+                E::TurboFish { base, .. } => match &base.kind {
+                    E::Ident(n) => Some(n),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(name) = callee_name_opt {
                 if const_fn_names.contains(name) {
                     for a in args {
                         match a {
