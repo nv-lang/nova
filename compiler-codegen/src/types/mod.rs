@@ -489,6 +489,87 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let type_check_ctx = TypeCheckCtx::build(module);
     type_check_ctx.check_module(module, &mut errors);
 
+    // Plan 114.4.2 (D199) Ф.1 const fn body check pass.
+    // 1) Collect const fn names. 2) Validate each const fn body против
+    // V1 whitelist (literals/arithmetic/casts/refs to params/locals/const
+    // fn calls). 3) Build call-graph and detect cycles (mutual recursion).
+    {
+        use std::collections::{HashMap as Map, HashSet as Set};
+        let mut const_fn_names: Set<String> = Set::new();
+        let mut const_fns: Vec<&FnDecl> = Vec::new();
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                // const fn = return_is_const ИЛИ any param const.
+                let any_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+                if any_const {
+                    const_fn_names.insert(fd.name.clone());
+                    const_fns.push(fd);
+                }
+            }
+        }
+        let mut call_graph: Map<String, Set<String>> = Map::new();
+        for fd in &const_fns {
+            let mut targets: Set<String> = Set::new();
+            if let Err(d) = check_const_fn_decl(fd, &const_fn_names, &mut targets) {
+                errors.push(d);
+            }
+            call_graph.insert(fd.name.clone(), targets);
+        }
+        // Cycle detection: DFS с three-color marker (WHITE/GRAY/BLACK).
+        // GRAY → ребро в текущий путь → cycle.
+        #[derive(Clone, Copy, PartialEq)]
+        enum C { White, Gray, Black }
+        let mut color: Map<String, C> = Map::new();
+        for k in const_fn_names.iter() { color.insert(k.clone(), C::White); }
+        fn visit(
+            node: &str,
+            graph: &Map<String, Set<String>>,
+            color: &mut Map<String, C>,
+        ) -> Option<Vec<String>> {
+            color.insert(node.to_string(), C::Gray);
+            if let Some(neigh) = graph.get(node) {
+                for n in neigh {
+                    match color.get(n).copied().unwrap_or(C::White) {
+                        C::Gray => return Some(vec![node.to_string(), n.clone()]),
+                        C::White => {
+                            if let Some(mut path) = visit(n, graph, color) {
+                                path.insert(0, node.to_string());
+                                return Some(path);
+                            }
+                        }
+                        C::Black => {}
+                    }
+                }
+            }
+            color.insert(node.to_string(), C::Black);
+            None
+        }
+        let mut reported: Set<String> = Set::new();
+        for fd in &const_fns {
+            if matches!(color.get(&fd.name), Some(C::White)) {
+                if let Some(cycle) = visit(&fd.name, &call_graph, &mut color) {
+                    let key = {
+                        let mut v = cycle.clone();
+                        v.sort();
+                        v.join("→")
+                    };
+                    if reported.insert(key) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_RECURSION] mutual recursion detected \
+                                 в const fn call-graph: {} — not allowed в V1 \
+                                 (D199). Followup `[M-114.4.2-recursion]`. \
+                                 Refactor to non-cyclic call structure.",
+                                cycle.join(" → ")
+                            ),
+                            fd.span,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     // Plan 33.1 Ф.3 (D24): SMT verification.
     // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
     // Доказанные контракты записываются в env для zero-cost release.
@@ -675,6 +756,351 @@ fn check_const_constexpr(
              initialiser (control flow / closures / blocks not allowed). \
              Use `ro X = …` для runtime / lazy-init value (Plan 114.4 Ф.1).".to_string(),
             expr.span,
+        )),
+    }
+}
+
+/// Plan 114.4.2 (D199) Ф.1 body checker: validate const fn body against
+/// V1 whitelist (literals + arithmetic + as-cast + ident refs to const
+/// params/locals + local const + final expr + calls to other const fn).
+///
+/// Returns Err on first violation with appropriate error code.
+/// `param_consts` — set of const param names visible в body.
+/// `const_fn_names` — set of all const fn names (для call validation).
+/// `local_consts` — mutable set extended при встрече Stmt::Const.
+/// `current_fn` — for self-recursion detection.
+/// `call_targets` — mutable set — populated с именами callee const fn
+/// (для post-pass cycle detection).
+fn check_const_fn_expr(
+    expr: &crate::ast::Expr,
+    param_consts: &std::collections::HashSet<String>,
+    const_fn_names: &std::collections::HashSet<String>,
+    local_consts: &std::collections::HashSet<String>,
+    current_fn: &str,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::ExprKind as E;
+    match &expr.kind {
+        E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
+        | E::CharLit(_) | E::UnitLit => Ok(()),
+        E::Unary { operand, .. } => check_const_fn_expr(
+            operand, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+        ),
+        E::Binary { left, right, .. } => {
+            check_const_fn_expr(left, param_consts, const_fn_names, local_consts, current_fn, call_targets)?;
+            check_const_fn_expr(right, param_consts, const_fn_names, local_consts, current_fn, call_targets)
+        }
+        E::As(inner, _) => check_const_fn_expr(
+            inner, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+        ),
+        E::Ident(name) => {
+            if param_consts.contains(name) || local_consts.contains(name) {
+                Ok(())
+            } else if const_fn_names.contains(name) {
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_FIRST_CLASS] const fn `{}` used as first-class \
+                         value в body — not supported в V1 (D199). Followup \
+                         `[M-114.4.2-first-class]`. Direct call `{}(arg)` instead.",
+                        name, name
+                    ),
+                    expr.span,
+                ))
+            } else {
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_REF_NON_CONST] const fn body refers `{}` which \
+                         is not a const param, local const, or const fn (D199). \
+                         Only const params/locals/literals allowed в const fn V1 body.",
+                        name
+                    ),
+                    expr.span,
+                ))
+            }
+        }
+        E::Call { func, args, trailing } => {
+            if trailing.is_some() {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_CONTROL_FLOW] trailing-block calls (DSL syntax) \
+                     not allowed в const fn body (D199): require runtime closure / \
+                     control-flow. Use const-eligible call syntax."
+                        .to_string(),
+                    expr.span,
+                ));
+            }
+            // Callee должен быть Ident, и это имя должно быть const fn.
+            let callee_name = match &func.kind {
+                E::Ident(n) => n.clone(),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_EFFECT_IN_BODY] indirect / method / path calls \
+                         not allowed в const fn body (D199). Use direct const fn \
+                         call by name."
+                            .to_string(),
+                        expr.span,
+                    ));
+                }
+            };
+            if !const_fn_names.contains(&callee_name) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EFFECT_IN_BODY] call `{}(...)` from const fn \
+                         body — `{}` is not a `const fn` (D199). Only calls to other \
+                         const fn are allowed. Use runtime fn if needed.",
+                        callee_name, callee_name
+                    ),
+                    expr.span,
+                ));
+            }
+            if callee_name == current_fn {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_RECURSION] direct self-recursion: const fn `{}` \
+                         calls itself — not allowed в V1 (D199). Followup \
+                         `[M-114.4.2-recursion]`. Refactor to non-recursive form.",
+                        current_fn
+                    ),
+                    expr.span,
+                ));
+            }
+            call_targets.insert(callee_name);
+            // Args также constexpr-eligible — recurse.
+            for a in args {
+                match a {
+                    crate::ast::CallArg::Item(e) => check_const_fn_expr(
+                        e, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                    crate::ast::CallArg::Spread(_) => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EFFECT_IN_BODY] spread args `...` not allowed \
+                             в const fn body (D199): runtime collection operation."
+                                .to_string(),
+                            expr.span,
+                        ));
+                    }
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EFFECT_IN_BODY] named / non-positional args \
+                             not supported в const fn body (D199 V1)."
+                                .to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        // Block expression — recurse через statements.
+        E::Block(block) => {
+            check_const_fn_block(
+                block, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )
+        }
+        // Control flow — blacklisted.
+        E::If { .. } | E::IfLet { .. } | E::Match { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_CONTROL_FLOW] if/match/if-let не разрешены в const fn \
+             body V1 (D199). Followup `[M-114.4.2-control-flow]`. Use arithmetic \
+             expressions only."
+                .to_string(),
+            expr.span,
+        )),
+        E::For { .. } | E::ParallelFor { .. } | E::While { .. }
+        | E::WhileLet { .. } | E::Loop { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_CONTROL_FLOW] loops (for/while/loop) не разрешены в \
+             const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Try/Bang — effect propagation.
+        E::Try(_) | E::Bang(_) => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] Try / Bang (?/!!) propagate effects — \
+             const fn body должен быть pure (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Allocations / collection literals.
+        E::ArrayLit(_) | E::MapLit { .. } | E::InterpolatedStr { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_ALLOCATION] allocations (arrays/maps/string interp) \
+             not allowed в const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        E::RecordLit { .. } | E::TupleLit(_) => Err(Diagnostic::new(
+            "[E_CONST_FN_ALLOCATION] record/tuple literals не разрешены в const \
+             fn body V1 (D199). Use scalar const fn for V1."
+                .to_string(),
+            expr.span,
+        )),
+        // Member/Index/Path — runtime access.
+        E::Member { .. } | E::Index { .. } | E::Path(_) | E::TurboFish { .. }
+        | E::SelfAccess => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] member/index/path access — runtime \
+             operations, not allowed в const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Coalesce/Is — runtime checks.
+        E::Coalesce(_, _) | E::Is(_, _) => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] coalesce (??) / type-check (is) — \
+             runtime semantics, not allowed в const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Прочее (closures / lambda / spawn / supervised / handler etc.) — reject.
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] expression form not allowed в const fn \
+             body V1 (closures/spawn/handler/etc) (D199)."
+                .to_string(),
+            expr.span,
+        )),
+    }
+}
+
+fn check_const_fn_block(
+    block: &crate::ast::Block,
+    param_consts: &std::collections::HashSet<String>,
+    const_fn_names: &std::collections::HashSet<String>,
+    local_consts: &std::collections::HashSet<String>,
+    current_fn: &str,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::Stmt;
+    let mut locals = local_consts.clone();
+    let n = block.stmts.len();
+    for (idx, st) in block.stmts.iter().enumerate() {
+        let is_last = idx == n - 1;
+        match st {
+            Stmt::Const(cd) => {
+                // Validate RHS as const-fn expression (allowed const fn calls).
+                check_const_fn_expr(
+                    &cd.value, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+                locals.insert(cd.name.clone());
+            }
+            Stmt::Expr(e) => {
+                if !is_last {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_CONTROL_FLOW] only the final statement of a \
+                         const fn body may be an expression (D199 V1). Intermediate \
+                         expressions imply side-effects."
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+                check_const_fn_expr(
+                    e, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+            }
+            Stmt::Let(ld) => {
+                // mut let → mut binding error.
+                if matches!(&ld.pattern,
+                    crate::ast::Pattern::Ident { is_mut: true, .. })
+                {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_MUT_BINDING] `let mut` bindings не разрешены \
+                         в const fn body V1 (D199). Use `const NAME = expr` для \
+                         compile-time local."
+                            .to_string(),
+                        ld.span,
+                    ));
+                }
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_MUT_BINDING] runtime `let` / `ro` bindings не \
+                     разрешены в const fn body V1 (D199): const fn body должен \
+                     быть pure. Use `const NAME = expr` для compile-time local."
+                        .to_string(),
+                    ld.span,
+                ));
+            }
+            Stmt::Assign { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_MUT_BINDING] assignment statements не разрешены \
+                     в const fn body (D199)."
+                        .to_string(),
+                    *span,
+                ));
+            }
+            Stmt::Return { value, span } => {
+                if !is_last {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_CONTROL_FLOW] `return` must be terminal в \
+                         const fn body V1 (D199)."
+                            .to_string(),
+                        *span,
+                    ));
+                }
+                if let Some(v) = value {
+                    check_const_fn_expr(
+                        v, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                    )?;
+                }
+            }
+            Stmt::Throw { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] `throw` not allowed в const fn \
+                     body (D199): effect propagation."
+                        .to_string(),
+                    *span,
+                ));
+            }
+            Stmt::Defer { span, .. } | Stmt::ErrDefer { span, .. }
+            | Stmt::OkDefer { span, .. } | Stmt::DeferWithResult { span, .. }
+            | Stmt::ConsumeScope { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] defer / consume-scope не разрешены \
+                     в const fn body (D199): cleanup-семантика — runtime."
+                        .to_string(),
+                    *span,
+                ));
+            }
+            Stmt::Break(span) | Stmt::Continue(span) => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_CONTROL_FLOW] break/continue not allowed в const \
+                     fn body V1 (D199): no loops permitted."
+                        .to_string(),
+                    *span,
+                ));
+            }
+            // Ghost statements (assume/assert_static/apply/calc/reveal) — reject
+            // в const fn V1 как unsupported.
+            Stmt::AssertStatic { span, .. } | Stmt::Assume { span, .. }
+            | Stmt::Apply { span, .. } | Stmt::Calc { span, .. }
+            | Stmt::Reveal { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] ghost statements (assume/assert_static/\
+                     apply/calc/reveal) not allowed в const fn body V1 (D199)."
+                        .to_string(),
+                    *span,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Top-level entrypoint: validate const fn `fd` body.
+/// Returns Err on first violation; updates `call_targets` для cycle detection.
+fn check_const_fn_decl(
+    fd: &FnDecl,
+    const_fn_names: &std::collections::HashSet<String>,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let mut param_consts = std::collections::HashSet::new();
+    for p in &fd.params {
+        param_consts.insert(p.name.clone());
+    }
+    let local_consts = std::collections::HashSet::new();
+    match &fd.body {
+        crate::ast::FnBody::Expr(e) => check_const_fn_expr(
+            e, &param_consts, const_fn_names, &local_consts, &fd.name, call_targets,
+        ),
+        crate::ast::FnBody::Block(b) => check_const_fn_block(
+            b, &param_consts, const_fn_names, &local_consts, &fd.name, call_targets,
+        ),
+        crate::ast::FnBody::External => Err(Diagnostic::new(
+            "[E_CONST_FN_EXTERNAL] external fn не может быть const fn (D199)."
+                .to_string(),
+            fd.span,
         )),
     }
 }
