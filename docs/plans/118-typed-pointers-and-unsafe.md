@@ -2235,9 +2235,83 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ---
 
-## Status — Session 2 closure summary (2026-06-01)
+## Status — Session 2 GRAND closure summary (2026-06-01, final)
 
-### Session 2 final summary
+### Session 2 grand-final accomplishments
+
+**Total: 20 worktree commits + 2 nova-private commits.**
+
+**Phases: Ф.0 + Ф.1 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.4 partial + Ф.5
+partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
++ worktree setup script).**
+
+**Test status:**
+- **plan118: 9/0 PASS** (4 T1 + 1 T2 + 1 T3 + 1 T3.2 + 1 T5 + 1 T6)
+- **examples/typed_pointers: 3/3 PASS** (basic_pointer + unsafe_block +
+  unsafe_fn_attribute)
+- **Total Plan 118 user artifacts: 12/0 PASS**
+
+**Regression smoke (release test-build, clang toolchain, libuv enabled):**
+
+| Plan | PASS/FAIL |
+|---|---|
+| plan118 (new) | 9/0 |
+| plan115 | 11/0 (D214 backward compat) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| examples/typed_pointers (new) | 3/3 |
+| syntax | 53/1 (pre-existing for_in_range_iter, unrelated) |
+
+**TOTAL VERIFIED: 118/1 PASS.**
+
+**Deliverables (per Plan file table):**
+
+| Category | Deliverables | Status |
+|---|---|---|
+| Plan revision | 4 plan files (118 + 118.1/118.2/118.3) | ✅ |
+| Spec D-block drafts | D216 NEW + D2/D214/D32 amends в spec/decisions/ | ✅ drafts |
+| Compiler scaffold | AST + lexer + parser + checker + codegen (8 src files modified, 17 exhaustive-match sites + 5 new pieces) | ✅ |
+| Test fixtures | 9 plan118 fixtures in nova_tests/plan118/ | ✅ all PASS |
+| Examples | 3 examples in examples/typed_pointers/ | ✅ all PASS |
+| Docs overview | docs/typed-pointers.md (~340 lines) | ✅ |
+| Logs (simplifications + project-creation) | Updated per task | ✅ |
+| Nova-private discussion-log | Session 1 + Session 2 entries | ✅ |
+| Worktree setup script | scripts/setup_worktree_p118.sh | ✅ |
+
+### Session 2 grand commits на plan-118 branch (worktree)
+
+1. `e642fc86d1e` — Production-grade revision + decompose Plan 118 family
+2. `12c746202a2` — Ф.0 GATE: D216/D2/D214/D32 amend drafts + audit + logs
+3. `c75d7be3791` — Ф.1.1-1.4: AST + parser + 17 match arms
+4. `fd1482292ba` — status checkpoint (morning)
+5. `5069e76a983` — Ф.1.5: Ty::TypedPtr proper variant
+6. `0c420b727fd` — Ф.1.9: T1 positive fixtures (4 PASS)
+7. `f9e2a7a9a89` — Ф.2 scaffold: &value + *expr unary operators
+8. `09be551b945` — Ф.3 scaffold: KwUnsafe + unsafe block
+9. `25b39646639` — Ф.3 integration test
+10. `9509ba0e219` — status checkpoint (mid)
+11. `8127e3303a1` — Ф.6 partial: *fn(...) type
+12. `f9818d47537` — logs update (simplifications + project-creation)
+13. `3e4f66929e0` — Ф.5 partial: Option[*T] type
+14. `3a4074423ad` — Ф.3.2: #unsafe attribute on fn
+15. `5a3a49fc54a` — Session 2 intermediate checkpoint
+16. `36e70ab3d00` — Ф.4 partial: permissive auto-deref check
+17. `7c55e0564fa` — Session 2 closure summary
+18. `08db63baeb0` — tool: worktree setup script
+19. `a403d96f310` — Ф.9 partial: examples/typed_pointers/ (3 PASS)
+20. `969cf42fc3e` — Ф.9 partial: docs/typed-pointers.md (~340 lines)
+21. (this commit) — Session 2 grand closure
+
+Plus nova-private (separate repo):
+- `2a1c425cc4` — Session 1 initial design discussion
+- `fb7e169e8b` — Session 2 design progression + lessons
+
+---
+
+### Session 2 final summary (intermediate — moved up)
 
 **Total accomplishments — 17 worktree commits + 2 nova-private commits.**
 
