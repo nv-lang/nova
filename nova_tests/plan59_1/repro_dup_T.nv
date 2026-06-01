@@ -1,0 +1,10 @@
+// Plan 59.1 Ф.0 — repro CC-FAIL для generic anonymous tuple в return.
+module plan59_1.repro_dup_T
+
+fn[T] dup(v T) -> (T, T) => (v, v)
+
+test "dup[int] returns pair" {
+    ro (a, b) = dup[int](42)
+    assert(a == 42)
+    assert(b == 42)
+}
