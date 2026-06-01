@@ -278,6 +278,18 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     // ПОСЛЕ type-check (типы проверены), ДО интерпретации.
     // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
     // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
+    // Plan 114.4.2 (D199) Ф.3: rewrite const fn calls to literals в AST
+    // и удалить const fn declarations (codegen drop). После check_module
+    // (V1 subset enforced), до десугаринга / annotation passes — чтобы
+    // dependent expressions видели уже-литералы.
+    let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    if !cfn_errs.is_empty() {
+        let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
@@ -314,6 +326,18 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // codegen видит обычные method-call'ы (with_capacity / insert).
     // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
     // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
+    // Plan 114.4.2 (D199) Ф.3: rewrite const fn calls to literals в AST
+    // и удалить const fn declarations (codegen drop). После check_module
+    // (V1 subset enforced), до десугаринга / annotation passes — чтобы
+    // dependent expressions видели уже-литералы.
+    let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    if !cfn_errs.is_empty() {
+        let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     // D28: effect inference для private fn — добавить `Fail` если throw
@@ -362,6 +386,18 @@ fn cmd_test(path: &PathBuf) -> Result<()> {
     // Plan 52 Ф.5: десугаринг map-литералов перед интерпретацией тестов.
     // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
     // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
+    // Plan 114.4.2 (D199) Ф.3: rewrite const fn calls to literals в AST
+    // и удалить const fn declarations (codegen drop). После check_module
+    // (V1 subset enforced), до десугаринга / annotation passes — чтобы
+    // dependent expressions видели уже-литералы.
+    let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    if !cfn_errs.is_empty() {
+        let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();

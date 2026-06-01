@@ -2304,6 +2304,18 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
         }
     }
     {
+        // Plan 114.4.2 (D199) Ф.3: const fn AST rewrite + codegen drop.
+        // Runs ПЕРЕД annotate-maps/desugar чтобы они уже видели literals.
+        let _t = crate::perf_timer::PerfTimer::new("const-fn-rewrite");
+        let cfn_errs = crate::const_fn_eval::rewrite_const_fn_calls(&mut module);
+        if !cfn_errs.is_empty() {
+            return Err(cfn_errs.iter()
+                .map(|d| d.render(src, &path.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+    }
+    {
         let _t = crate::perf_timer::PerfTimer::new("annotate-maps");
         types::annotate_map_literals(&mut module);
     }

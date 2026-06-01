@@ -731,3 +731,591 @@ pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
 fn _pattern_ident_marker(_p: &Pattern) {
     // Reserved for future scope-local pattern handling (no use в V1).
 }
+
+// =========================================================================
+// AST rewriter — replaces const fn call sites с literal expressions and
+// strips const fn declarations from codegen output (Plan 114.4.2 Ф.3).
+// =========================================================================
+
+/// Walks `module` and:
+/// 1) Evaluates every `Expr::Call` где callee resolves к const fn from
+///    the registry, replacing it с literal `Expr` of the evaluated
+///    value (overflow / div-zero / etc. → Diagnostic).
+/// 2) Removes const fn `FnDecl`s из `module.items` AND each peer's
+///    `items_here` — codegen never sees them, no runtime symbol emitted.
+///
+/// Returns the collected diagnostics (any const-fn evaluation errors).
+/// Caller decides fail-fast vs. collect-all.
+///
+/// Pipeline placement: AFTER `types::check_module` (so V1 subset
+/// already enforced), BEFORE `desugar::desugar_module` (so subsequent
+/// passes see only literals и no const fn).
+pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic> {
+    use crate::ast::{Item, Module};
+    let mut errors: Vec<Diagnostic> = Vec::new();
+
+    // Two-stage borrow: clone fn registry into a self-owning structure
+    // so we can hold the immutable view while we mutate other parts of
+    // the module. Const fn count в реальных модулях невелик; clone
+    // overhead minimal.
+    let const_fn_decls: Vec<crate::ast::FnDecl> = module.items.iter()
+        .filter_map(|it| match it {
+            Item::Fn(fd) => {
+                let is_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+                if is_const { Some(fd.clone()) } else { None }
+            }
+            _ => None,
+        })
+        .collect();
+    if const_fn_decls.is_empty() {
+        return errors;
+    }
+    let mut owned = OwnedEvaluator::new(const_fn_decls);
+
+    fn walk_module(
+        m: &mut Module,
+        ev: &mut OwnedEvaluator,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        for item in &mut m.items {
+            walk_item(item, ev, errors);
+        }
+        for pf in &mut m.peer_files {
+            for item in &mut pf.items_here {
+                walk_item(item, ev, errors);
+            }
+        }
+    }
+
+    walk_module(module, &mut owned, &mut errors);
+
+    // Drop const fn declarations from module.items + peer_files.items_here.
+    let const_names = owned.names();
+    module.items.retain(|it| match it {
+        Item::Fn(fd) => !const_names.contains(&fd.name),
+        _ => true,
+    });
+    for pf in &mut module.peer_files {
+        pf.items_here.retain(|it| match it {
+            Item::Fn(fd) => !const_names.contains(&fd.name),
+            _ => true,
+        });
+    }
+    errors
+}
+
+/// Self-owning evaluator wrapper — holds `Vec<FnDecl>` cloned from the
+/// module, then exposes `&FnDecl` borrows internally. Avoids the
+/// borrow-checker conflict of holding `&FnDecl` from `module.items`
+/// while mutating other AST nodes.
+struct OwnedEvaluator {
+    fns: HashMap<String, crate::ast::FnDecl>,
+    memo: HashMap<(String, Vec<ConstValue>), ConstValue>,
+}
+
+impl OwnedEvaluator {
+    fn new(decls: Vec<crate::ast::FnDecl>) -> Self {
+        let mut fns = HashMap::new();
+        for fd in decls {
+            fns.insert(fd.name.clone(), fd);
+        }
+        Self { fns, memo: HashMap::new() }
+    }
+    fn names(&self) -> std::collections::HashSet<String> {
+        self.fns.keys().cloned().collect()
+    }
+    fn is_const_fn(&self, name: &str) -> bool {
+        self.fns.contains_key(name)
+    }
+    fn eval_call(
+        &mut self,
+        name: &str,
+        args: Vec<ConstValue>,
+        call_span: Span,
+    ) -> Result<ConstValue, Diagnostic> {
+        self.eval_call_inner(name, args, call_span, 0)
+    }
+    fn eval_call_inner(
+        &mut self,
+        name: &str,
+        args: Vec<ConstValue>,
+        call_span: Span,
+        depth: usize,
+    ) -> Result<ConstValue, Diagnostic> {
+        if depth >= MAX_EVAL_DEPTH {
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_CONST_FN_EVAL_PANIC] const fn evaluation exceeded depth \
+                     limit {} в call to `{}` (D199).",
+                    MAX_EVAL_DEPTH, name
+                ),
+                call_span,
+            ));
+        }
+        let key = (name.to_string(), args.clone());
+        if let Some(v) = self.memo.get(&key) {
+            return Ok(v.clone());
+        }
+        let fd = self.fns.get(name).cloned().ok_or_else(|| {
+            Diagnostic::new(
+                format!("[E_CONST_FN_EVAL_PANIC] const fn `{}` not found (D199).", name),
+                call_span,
+            )
+        })?;
+        if fd.params.len() != args.len() {
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_CONST_FN_NON_CONST_ARG] arity mismatch calling const fn \
+                     `{}` — expected {}, got {} (D199).",
+                    name, fd.params.len(), args.len()
+                ),
+                call_span,
+            ));
+        }
+        let mut env: HashMap<String, ConstValue> = HashMap::new();
+        for (p, v) in fd.params.iter().zip(args.iter()) {
+            check_value_matches_type(v, &p.ty, call_span)?;
+            env.insert(p.name.clone(), v.clone());
+        }
+        let result = match &fd.body {
+            FnBody::Expr(e) => self.eval_expr(e, &env, name, depth + 1)?,
+            FnBody::Block(b) => self.eval_block(b, &env, name, depth + 1)?,
+            FnBody::External => {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EXTERNAL] external const fn `{}` cannot be \
+                         comptime-evaluated (D199).", name
+                    ),
+                    fd.span,
+                ));
+            }
+        };
+        self.memo.insert(key, result.clone());
+        Ok(result)
+    }
+    fn eval_block(
+        &mut self,
+        block: &Block,
+        env: &HashMap<String, ConstValue>,
+        current_fn: &str,
+        depth: usize,
+    ) -> Result<ConstValue, Diagnostic> {
+        let mut env = env.clone();
+        for st in &block.stmts {
+            match st {
+                Stmt::Const(cd) => {
+                    let v = self.eval_expr(&cd.value, &env, current_fn, depth)?;
+                    env.insert(cd.name.clone(), v);
+                }
+                Stmt::Expr(e) => {
+                    return self.eval_expr(e, &env, current_fn, depth);
+                }
+                Stmt::Return { value: Some(e), .. } => {
+                    return self.eval_expr(e, &env, current_fn, depth);
+                }
+                Stmt::Return { value: None, span } => {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_EVAL_PANIC] bare `return` без значения (D199).".to_string(),
+                        *span,
+                    ));
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_EVAL_PANIC] unexpected stmt during eval (D199).".to_string(),
+                        block.span,
+                    ));
+                }
+            }
+        }
+        if let Some(trail) = &block.trailing {
+            return self.eval_expr(trail, &env, current_fn, depth);
+        }
+        Err(Diagnostic::new(
+            "[E_CONST_FN_EVAL_PANIC] const fn body produced no value (D199).".to_string(),
+            block.span,
+        ))
+    }
+    fn eval_expr(
+        &mut self,
+        expr: &Expr,
+        env: &HashMap<String, ConstValue>,
+        current_fn: &str,
+        depth: usize,
+    ) -> Result<ConstValue, Diagnostic> {
+        match &expr.kind {
+            ExprKind::IntLit(v) => Ok(ConstValue::Int(*v)),
+            ExprKind::FloatLit(v) => Ok(ConstValue::Float(*v)),
+            ExprKind::StrLit(v) => Ok(ConstValue::Str(v.clone())),
+            ExprKind::BoolLit(v) => Ok(ConstValue::Bool(*v)),
+            ExprKind::CharLit(v) => Ok(ConstValue::Char(*v)),
+            ExprKind::UnitLit => Ok(ConstValue::Unit),
+            ExprKind::Ident(name) => env
+                .get(name)
+                .cloned()
+                .ok_or_else(|| Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EVAL_PANIC] unbound identifier `{}` (D199).",
+                        name
+                    ),
+                    expr.span,
+                )),
+            ExprKind::Unary { op, operand } => {
+                let v = self.eval_expr(operand, env, current_fn, depth)?;
+                eval_unary(*op, &v, expr.span)
+            }
+            ExprKind::Binary { op, left, right } => {
+                let l = self.eval_expr(left, env, current_fn, depth)?;
+                let r = self.eval_expr(right, env, current_fn, depth)?;
+                eval_binary(*op, &l, &r, expr.span)
+            }
+            ExprKind::As(inner, target) => {
+                let v = self.eval_expr(inner, env, current_fn, depth)?;
+                eval_as_cast(&v, target, expr.span)
+            }
+            ExprKind::Call { func, args, trailing: None } => {
+                let callee_name = if let ExprKind::Ident(n) = &func.kind {
+                    n.clone()
+                } else {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_EVAL_PANIC] non-ident callee (D199).".to_string(),
+                        expr.span,
+                    ));
+                };
+                let mut arg_vals = Vec::with_capacity(args.len());
+                for a in args {
+                    if let crate::ast::CallArg::Item(e) = a {
+                        arg_vals.push(self.eval_expr(e, env, current_fn, depth)?);
+                    } else {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] non-positional arg (D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
+                self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
+            }
+            ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
+            _ => Err(Diagnostic::new(
+                "[E_CONST_FN_EVAL_PANIC] expression form not supported (D199).".to_string(),
+                expr.span,
+            )),
+        }
+    }
+}
+
+fn walk_item(
+    item: &mut crate::ast::Item,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::Item;
+    match item {
+        Item::Fn(fd) => {
+            // const fn body itself будет dropped — но мы всё равно посмотрим
+            // её default param expressions (D102). И callsites внутри
+            // runtime fn body для replacement.
+            for p in &mut fd.params {
+                if let Some(def) = &mut p.default {
+                    walk_expr(def, ev, errors);
+                }
+            }
+            match &mut fd.body {
+                FnBody::Expr(e) => walk_expr(e, ev, errors),
+                FnBody::Block(b) => walk_block(b, ev, errors),
+                FnBody::External => {}
+            }
+        }
+        Item::Const(c) => walk_expr(&mut c.value, ev, errors),
+        Item::Let(l) => walk_expr(&mut l.value, ev, errors),
+        Item::Test(t) => walk_block(&mut t.body, ev, errors),
+        Item::Bench(b) => {
+            for s in &mut b.setup { walk_stmt(s, ev, errors); }
+            walk_block(&mut b.measure_body, ev, errors);
+            for s in &mut b.teardown { walk_stmt(s, ev, errors); }
+        }
+        Item::Type(td) => {
+            // Plan 114.4.1 D200: assoc const RHS могут вызывать const fn.
+            for ac in &mut td.assoc_consts {
+                walk_expr(&mut ac.value, ev, errors);
+            }
+        }
+        Item::Lemma(_) => {}
+    }
+}
+
+fn walk_block(
+    b: &mut crate::ast::Block,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for s in &mut b.stmts {
+        walk_stmt(s, ev, errors);
+    }
+    if let Some(t) = &mut b.trailing {
+        walk_expr(t, ev, errors);
+    }
+}
+
+fn walk_stmt(
+    s: &mut Stmt,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match s {
+        Stmt::Let(d) => walk_expr(&mut d.value, ev, errors),
+        Stmt::Const(d) => walk_expr(&mut d.value, ev, errors),
+        Stmt::Expr(e) => walk_expr(e, ev, errors),
+        Stmt::Assign { target, value, .. } => {
+            walk_expr(target, ev, errors);
+            walk_expr(value, ev, errors);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { walk_expr(v, ev, errors); }
+        }
+        Stmt::Throw { value, .. } => walk_expr(value, ev, errors),
+        Stmt::Break(_) | Stmt::Continue(_) => {}
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            walk_expr(body, ev, errors);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            walk_expr(init, ev, errors);
+            walk_block(body, ev, errors);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            walk_expr(expr, ev, errors);
+        }
+        Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn walk_expr(
+    e: &mut Expr,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    walk_children(e, ev, errors);
+    // Try replacement at this node.
+    if let ExprKind::Call { func, args, trailing: None } = &e.kind {
+        if let ExprKind::Ident(name) = &func.kind {
+            if ev.is_const_fn(name) {
+                // Collect arg values — only literal args eligible после
+                // children walk (which already replaced nested const fn calls).
+                let mut arg_vals: Vec<ConstValue> = Vec::with_capacity(args.len());
+                let mut all_literal = true;
+                for a in args {
+                    match a {
+                        crate::ast::CallArg::Item(ae) => {
+                            if let Some(v) = try_literal_to_value(ae) {
+                                arg_vals.push(v);
+                            } else {
+                                all_literal = false;
+                                break;
+                            }
+                        }
+                        _ => {
+                            all_literal = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_literal {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_CONST_FN_NON_CONST_ARG] call to const fn `{}` \
+                             with non-constexpr argument(s) — all args must be \
+                             literals или other const fn calls с literal args \
+                             (D199).",
+                            name
+                        ),
+                        e.span,
+                    ));
+                    return;
+                }
+                let name_owned = name.clone();
+                let span = e.span;
+                match ev.eval_call(&name_owned, arg_vals, span) {
+                    Ok(v) => {
+                        let lit = v.to_literal_expr(span);
+                        *e = lit;
+                    }
+                    Err(d) => {
+                        errors.push(d);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn walk_children(
+    e: &mut Expr,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::{ArrayElem, CallArg, ElseBranch, MapElem, MatchArm};
+    match &mut e.kind {
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+        | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr(ex) = p {
+                    walk_expr(ex, ev, errors);
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(x) | ArrayElem::Spread(x) => walk_expr(x, ev, errors),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        walk_expr(k, ev, errors);
+                        walk_expr(v, ev, errors);
+                    }
+                    MapElem::Spread(s) => walk_expr(s, ev, errors),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &mut f.value {
+                    walk_expr(v, ev, errors);
+                }
+            }
+        }
+        ExprKind::TupleLit(items) => {
+            for x in items { walk_expr(x, ev, errors); }
+        }
+        ExprKind::Member { obj, .. } => walk_expr(obj, ev, errors),
+        ExprKind::Index { obj, index } => {
+            walk_expr(obj, ev, errors);
+            walk_expr(index, ev, errors);
+        }
+        ExprKind::TurboFish { base, .. } => walk_expr(base, ev, errors),
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr(func, ev, errors);
+            for a in args {
+                match a {
+                    CallArg::Item(x) | CallArg::Spread(x) => walk_expr(x, ev, errors),
+                    CallArg::Named { value, .. } => walk_expr(value, ev, errors),
+                }
+            }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => walk_block(b, ev, errors),
+                    crate::ast::Trailing::Fn(sb) => walk_fn_body(&mut sb.body, ev, errors),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => walk_block(&mut tb.body, ev, errors),
+                }
+            }
+        }
+        ExprKind::Try(x) | ExprKind::Bang(x) => walk_expr(x, ev, errors),
+        ExprKind::Coalesce(a, b) => { walk_expr(a, ev, errors); walk_expr(b, ev, errors); }
+        ExprKind::As(x, _) | ExprKind::Is(x, _) => walk_expr(x, ev, errors),
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr(left, ev, errors); walk_expr(right, ev, errors);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr(operand, ev, errors),
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr(cond, ev, errors);
+            walk_block(then, ev, errors);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_block(b, ev, errors),
+                    ElseBranch::If(ie) => walk_expr(ie, ev, errors),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr(scrutinee, ev, errors);
+            walk_block(then, ev, errors);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_block(b, ev, errors),
+                    ElseBranch::If(ie) => walk_expr(ie, ev, errors),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr(scrutinee, ev, errors);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard {
+                    walk_expr(g, ev, errors);
+                }
+                walk_match_arm_body(arm, ev, errors);
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            walk_expr(iter, ev, errors);
+            walk_block(body, ev, errors);
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr(iter, ev, errors);
+            walk_block(body, ev, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            walk_expr(cond, ev, errors);
+            walk_block(body, ev, errors);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            walk_expr(scrutinee, ev, errors);
+            walk_block(body, ev, errors);
+        }
+        ExprKind::Loop { body, .. } => walk_block(body, ev, errors),
+        ExprKind::Block(b) => walk_block(b, ev, errors),
+        ExprKind::Lambda { body, .. } => walk_expr(body, ev, errors),
+        ExprKind::ClosureLight { body, .. } => walk_closure_body(body, ev, errors),
+        ExprKind::ClosureFull(sb) => walk_fn_body(&mut sb.body, ev, errors),
+        ExprKind::Spawn(b) => walk_expr(b, ev, errors),
+        ExprKind::Supervised { body, .. } => walk_block(body, ev, errors),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block(b, ev, errors),
+        ExprKind::With { body, .. } => walk_block(body, ev, errors),
+        ExprKind::Forbid { body, .. } => walk_block(body, ev, errors),
+        ExprKind::Realtime { body, .. } => walk_block(body, ev, errors),
+        ExprKind::Interrupt(opt) => {
+            if let Some(x) = opt { walk_expr(x, ev, errors); }
+        }
+        ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => {}
+        _ => {}
+    }
+}
+
+fn walk_closure_body(
+    cb: &mut crate::ast::ClosureBody,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match cb {
+        crate::ast::ClosureBody::Expr(e) => walk_expr(e, ev, errors),
+        crate::ast::ClosureBody::Block(b) => walk_block(b, ev, errors),
+    }
+}
+
+fn walk_fn_body(
+    body: &mut FnBody,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match body {
+        FnBody::Expr(e) => walk_expr(e, ev, errors),
+        FnBody::Block(b) => walk_block(b, ev, errors),
+        FnBody::External => {}
+    }
+}
+
+fn walk_match_arm_body(
+    arm: &mut crate::ast::MatchArm,
+    ev: &mut OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match &mut arm.body {
+        crate::ast::MatchArmBody::Expr(e) => walk_expr(e, ev, errors),
+        crate::ast::MatchArmBody::Block(b) => walk_block(b, ev, errors),
+    }
+}
