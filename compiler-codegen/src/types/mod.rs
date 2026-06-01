@@ -495,21 +495,37 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // fn calls). 3) Build call-graph and detect cycles (mutual recursion).
     {
         use std::collections::{HashMap as Map, HashSet as Set};
+        // Plan 114.4.3 Ф.3 (V2 mixed-args): два set'а —
+        //  * const_fn_names: ВСЕ fn с const-surface (any const param OR const
+        //    return) — для call-site arg validation. Includes mixed fns.
+        //  * fully_const_fn_names: ВСЕ params const AND return const —
+        //    evaluator-inlined + dropped из codegen. V2 body whitelist
+        //    applied только к этим (mixed fns — runtime body, normal rules).
         let mut const_fn_names: Set<String> = Set::new();
-        let mut const_fns: Vec<&FnDecl> = Vec::new();
+        let mut fully_const_fn_names: Set<String> = Set::new();
+        let mut fully_const_fns: Vec<&FnDecl> = Vec::new();
         for item in &module.items {
             if let Item::Fn(fd) = item {
                 let any_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
                 if any_const {
                     const_fn_names.insert(fd.name.clone());
-                    const_fns.push(fd);
+                }
+                if is_fully_const {
+                    fully_const_fn_names.insert(fd.name.clone());
+                    fully_const_fns.push(fd);
                 }
             }
         }
         let mut call_graph: Map<String, Set<String>> = Map::new();
-        for fd in &const_fns {
+        for fd in &fully_const_fns {
             let mut targets: Set<String> = Set::new();
-            if let Err(d) = check_const_fn_decl(fd, &const_fn_names, &mut targets) {
+            // Body checker against fully-const fn set (для transitivity:
+            // fully-const fn calling mixed fn = forbidden, runtime escapes).
+            if let Err(d) = check_const_fn_decl(fd, &fully_const_fn_names, &mut targets) {
                 errors.push(d);
             }
             call_graph.insert(fd.name.clone(), targets);
@@ -547,7 +563,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         // Cycle detection retained but downgraded — no error fired.
         // Evaluator enforces depth-limit + memoization runtime safety.
         let mut reported: Set<String> = Set::new();
-        for fd in &const_fns {
+        for fd in &fully_const_fns {
             if matches!(color.get(&fd.name), Some(C::White)) {
                 if let Some(cycle) = visit(&fd.name, &call_graph, &mut color) {
                     let key = {

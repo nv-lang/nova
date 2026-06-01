@@ -127,8 +127,13 @@ impl<'a> ConstFnEvaluator<'a> {
         let mut fns = HashMap::new();
         for item in items {
             if let crate::ast::Item::Fn(fd) = item {
-                let is_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
-                if is_const {
+                // Plan 114.4.3 Ф.3 V2: ONLY fully-const fns evaluated and
+                // dropped from codegen. Mixed fns kept as runtime fns.
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
+                if is_fully_const {
                     fns.insert(fd.name.clone(), fd);
                 }
             }
@@ -860,19 +865,40 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // so we can hold the immutable view while we mutate other parts of
     // the module. Const fn count в реальных модулях невелик; clone
     // overhead minimal.
+    let mut mixed_fns: Vec<(String, Vec<bool>)> = Vec::new();
     let const_fn_decls: Vec<crate::ast::FnDecl> = module.items.iter()
         .filter_map(|it| match it {
             Item::Fn(fd) => {
-                let is_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
-                if is_const { Some(fd.clone()) } else { None }
+                // Plan 114.4.3 Ф.3 V2:
+                // - Fully-const fn: ALL params const + const return. Walked + dropped.
+                // - Mixed fn: any const param OR const return, NOT fully-const.
+                //   Stays в codegen; const-args validated at call sites.
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
+                let any_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+                if is_fully_const {
+                    Some(fd.clone())
+                } else if any_const {
+                    // Mixed — collect for validation registration.
+                    let flags: Vec<bool> = fd.params.iter().map(|p| p.is_const).collect();
+                    mixed_fns.push((fd.name.clone(), flags));
+                    None
+                } else {
+                    None
+                }
             }
             _ => None,
         })
         .collect();
-    if const_fn_decls.is_empty() {
+    if const_fn_decls.is_empty() && mixed_fns.is_empty() {
         return errors;
     }
     let mut owned = OwnedEvaluator::new(const_fn_decls);
+    for (name, flags) in mixed_fns {
+        owned.register_mixed(name, flags);
+    }
 
     fn walk_module(
         m: &mut Module,
@@ -911,8 +937,13 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
 /// borrow-checker conflict of holding `&FnDecl` from `module.items`
 /// while mutating other AST nodes.
 struct OwnedEvaluator {
+    /// Fully-const fn registry — evaluator inlines + drops these.
     fns: HashMap<String, crate::ast::FnDecl>,
     memo: HashMap<(String, Vec<ConstValue>), ConstValue>,
+    /// Plan 114.4.3 Ф.3 V2: mixed fn registry — name → Vec<bool> per param
+    /// indicating is_const. Used для call-site validation: const-param args
+    /// must be constexpr literals. Mixed fns remain в codegen (not dropped).
+    mixed_const_params: HashMap<String, Vec<bool>>,
 }
 
 impl OwnedEvaluator {
@@ -921,7 +952,15 @@ impl OwnedEvaluator {
         for fd in decls {
             fns.insert(fd.name.clone(), fd);
         }
-        Self { fns, memo: HashMap::new() }
+        Self {
+            fns,
+            memo: HashMap::new(),
+            mixed_const_params: HashMap::new(),
+        }
+    }
+    /// Plan 114.4.3 Ф.3: register mixed const fn — для call-site validation.
+    fn register_mixed(&mut self, name: String, const_param_flags: Vec<bool>) {
+        self.mixed_const_params.insert(name, const_param_flags);
     }
     fn names(&self) -> std::collections::HashSet<String> {
         self.fns.keys().cloned().collect()
@@ -1172,12 +1211,14 @@ fn walk_item(
     use crate::ast::Item;
     match item {
         Item::Fn(fd) => {
-            // Plan 114.4.2 D199: const fn bodies will be dropped — skip them.
-            // Их body interpreted at eval time через evaluator, не AST rewrite.
-            // Default params (D102) и runtime fn body — нужно walk'ать.
-            let is_const_fn = fd.return_is_const
-                || fd.params.iter().any(|p| p.is_const);
-            if is_const_fn {
+            // Plan 114.4.2/.4.3 V2: fully-const fn bodies will be dropped — skip.
+            // Mixed fns остаются runtime — walk их body для const-fn-call
+            // replacement и default param rewrite.
+            let all_const_params = !fd.params.is_empty()
+                && fd.params.iter().all(|p| p.is_const);
+            let is_fully_const = (all_const_params || fd.params.is_empty())
+                && fd.return_is_const;
+            if is_fully_const {
                 return;
             }
             for p in &mut fd.params {
@@ -1261,9 +1302,35 @@ fn walk_expr(
     errors: &mut Vec<Diagnostic>,
 ) {
     walk_children(e, ev, errors);
-    // Try replacement at this node.
+    // Plan 114.4.3 Ф.3 V2: mixed const fn call-site validation.
+    // Mixed fns остаются в codegen, не evaluated, но const params на call site
+    // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
         if let ExprKind::Ident(name) = &func.kind {
+            if let Some(flags) = ev.mixed_const_params.get(name).cloned() {
+                for (idx, (a, is_const)) in args.iter().zip(flags.iter()).enumerate() {
+                    if !is_const { continue; }
+                    let ok = match a {
+                        crate::ast::CallArg::Item(ae) => try_literal_to_value(ae).is_some(),
+                        _ => false,
+                    };
+                    if !ok {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_NON_CONST_ARG] call to mixed const fn `{}`: \
+                                 argument {} corresponds to `const` parameter — must be \
+                                 constexpr literal (D199 V2). Replace runtime expression \
+                                 с literal value либо помарковать parameter без `const`.",
+                                name, idx + 1
+                            ),
+                            e.span,
+                        ));
+                        break;
+                    }
+                }
+                // Mixed fns остаются в codegen — не evaluate / replace.
+                return;
+            }
             if ev.is_const_fn(name) {
                 // Collect arg values — only literal args eligible после
                 // children walk (which already replaced nested const fn calls).
