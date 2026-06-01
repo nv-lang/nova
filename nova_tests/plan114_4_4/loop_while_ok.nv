@@ -1,0 +1,19 @@
+// Plan 114.4.4 Ф.3 positive: while-loop в const fn body.
+
+module plan114_4_4.loop_while_ok
+
+fn count_doubles(const start int, const limit int) -> const int {
+    mut x = start
+    mut count = 0
+    while x < limit {
+        x = x * 2
+        count = count + 1
+    }
+    count
+}
+
+test "while-loop counts doublings" {
+    // 1 → 2 → 4 → 8 → 16: 4 doublings to reach >= 10
+    const C = count_doubles(1, 10)
+    assert(C == 4)
+}

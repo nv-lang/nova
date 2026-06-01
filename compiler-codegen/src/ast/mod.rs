@@ -424,6 +424,10 @@ pub struct FnDecl {
     /// needs clause declared (used by type-checker to emit D163-missing-cap
     /// when the function carries consume-obligations).
     pub needs_caps: Vec<String>,
+    /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` attribute —
+    /// per-fn override const fn evaluator recursion depth (default 256).
+    /// `None` = use evaluator default. Range 1..=65535 (parser-enforced).
+    pub fn_eval_max_depth: Option<u32>,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.

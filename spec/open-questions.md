@@ -188,7 +188,12 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 - ✅ **First-class alias:** `const ALIAS = const_fn` allowed; calls
   через alias map. Real first-class через runtime trampoline → V3.
 
-**Что остаётся открытым (Q7 V3+):**
+**V3 extensions (Plan 114.4.4, 2026-06-01):**
+- ✅ `#fn_eval_max_depth(N)` attribute (configurable recursion depth).
+- ✅ Friendly UX errors (runtime-let + HOF detection).
+- ✅ Loops в body (for/while/loop + mut + break/continue).
+
+**Что остаётся открытым (Q7 V4+):**
 - Comptime-функции имеют доступ к типам как первый класс?
   → V3 — `[M-114.4.3-t-reflection]`.
 - Можно ли генерировать код во время компиляции?
@@ -197,9 +202,13 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
   → Нет в V2.0 (type intrinsics).
 - Custom DSL через comptime — допускается?
   → Нет (out-of-scope).
-- Loops (`for`/`while`) в body — V2.1 followup `[M-114.4.3-loops]`.
-- Runtime first-class const fn (HOF) — V3 followup
-  `[M-114.4.3-runtime-hof]`.
+- ✅ Loops (`for`/`while`) в body — закрыто Plan 114.4.4 Ф.3 (2026-06-01).
+- Runtime first-class const fn (HOF) — V4 followup
+  Plan 114.4.4.3 (trampoline ABI design).
+- Record/sum patterns в match — V4 followup Plan 114.4.4.1.
+- True monomorphization (per-const-arg specialization) — V4 followup
+  Plan 114.4.4.5.
+- Closure-returning const fn — V4 followup Plan 114.4.4.4.
 
 См. [docs/plans/114.4.2-const-fn.md](../docs/plans/114.4.2-const-fn.md)
 (V1) и [docs/plans/114.4.3-const-fn-v2-extensions.md](../docs/plans/114.4.3-const-fn-v2-extensions.md)

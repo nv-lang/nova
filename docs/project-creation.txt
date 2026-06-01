@@ -27283,3 +27283,69 @@ Worktree nova-p59-1 preserved (per feedback-isolated-worktree) для
 followup'ов; branch plan-59.1-generic-anon-tuple-mono pushed на github
 (no merge — per user explicit instruction).
 
+================================================================================
+Plan 114.4.4 — `const fn` V3 completion (3/8 phases shipped, 5 extracted) — 2026-06-01
+================================================================================
+
+Branch: plan-114.4.4 (worktree D:/Sources/nv-lang/nova-p114-4)
+
+Closes 3 of 9 V2.1/V3 followup markers Plan 114.4.3 chain. Остальные 5
+phases (Ф.4-Ф.8) extracted в Plan 114.4.4.1-5 per safety hatch design —
+требуют отдельный focused dev-day каждый.
+
+What landed (8 commits на branch):
+1. Plan doc (f6a6946606e).
+2. Ф.1 configurable-depth (1a3b5faa4f7):
+   - #fn_eval_max_depth(N) attribute parsing.
+   - FnDecl.fn_eval_max_depth: Option<u32>.
+   - Both eval_call_inner sites override MAX_EVAL_DEPTH.
+   - Closes [M-114.4.3-configurable-depth].
+3. Ф.2 friendly UX errors (6bc4db31200):
+   - validate_const_fn_runtime_uses walker pass.
+   - Detects runtime let binding + HOF passing.
+   - E_CONST_FN_FIRST_CLASS + E_CONST_FN_FIRST_CLASS_RUNTIME_HOF
+     с actionable suggestions.
+   - Closes [M-114.4.3-runtime-let-enforcement] +
+     [M-114.4.3-friendly-hof-error].
+4. Ф.3 loops (e2fb00b972c):
+   - Body checker: for/while/loop + mut bindings + assign + break/continue.
+   - Evaluator: BlockFlow enum (Value/Break/Continue/Unit) +
+     exec_for_loop / exec_while_loop / exec_loop_loop + If-stmt
+     break/continue propagation.
+   - MAX_LOOP_ITERATIONS = 10_000 + E_CONST_FN_EVAL_ITERATIONS_EXCEEDED.
+   - Range expr support в body checker.
+   - Closes [M-114.4.3-loops].
+
+What extracted (5 plans):
+- Plan 114.4.4.1 — record/sum patterns в match (~½-1 day).
+- Plan 114.4.4.2 — t-reflection sizeof[T]/align_of[T] (~1-2 day).
+- Plan 114.4.4.3 — runtime HOF trampoline (~1-2 day).
+- Plan 114.4.4.4 — closure-returning const fn (~1-2 day).
+- Plan 114.4.4.5 — per-const-arg monomorphization (~1-2 day).
+
+Total Plan 114.4.4 family — ~5-9 dev-days V4 work granular.
+
+V1/V2 fixtures removed (V3-superseded):
+- body_mut_binding_neg.nv (V3 allows mut bindings).
+- for_in_body_neg.nv (V3 allows for-loop в body).
+- if_no_else_neg.nv (V3 allows if без else as statement).
+
+Tests (plan114_4_4/, 8 new):
+- depth_override_ok + depth_default_exceeded_neg.
+- runtime_let_to_const_fn_neg + runtime_hof_const_fn_neg.
+- loop_for_accumulator_ok + loop_while_ok + loop_break_continue_ok +
+  loop_iterations_exceeded_neg.
+
+Verification: 8/8 plan114_4_4 + 14/14 plan114_4_3 + 16/16 plan114_4_2 =
+38/38 PASS на release nova-cli.
+
+Acceptance landed: A27-A30 (4 criteria).
+Acceptance extracted: A31-A35 → Plan 114.4.4.1-5.
+
+3 markers closed (Plan 114.4.3 chain):
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅ (V2.1 closed)
+
+Remaining V4 work через extracted plans (5 plans, ship-when-triggered).

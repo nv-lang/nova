@@ -27,6 +27,10 @@ pub(crate) struct ContractAttrs {
     pub no_overflow: bool,
     /// Plan 103.6 / Plan 113: sync interaction class from #realtime/#parks/#wakes.
     pub sync_class: Option<crate::ast::SyncClass>,
+    /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` — per-fn override
+    /// const fn evaluator recursion depth (default 256). For deep recursion
+    /// (e.g. fact(500) с big-int arith). 0 < N <= 65535.
+    pub fn_eval_max_depth: Option<u32>,
 }
 
 impl ContractAttrs {
@@ -39,6 +43,7 @@ impl ContractAttrs {
             && self.fuel.is_none()
             && !self.no_overflow
             && self.sync_class.is_none()
+            && self.fn_eval_max_depth.is_none()
     }
 }
 
@@ -1917,6 +1922,46 @@ impl Parser {
                     self.bump(); // nooverflow
                     attrs.no_overflow = true;
                 }
+                "fn_eval_max_depth" => {
+                    // Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)`
+                    // — per-fn override evaluator recursion depth.
+                    // Default 256. Range 1..=65535.
+                    self.bump(); // #
+                    self.bump(); // fn_eval_max_depth
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#fn_eval_max_depth требует аргумент: `#fn_eval_max_depth(N)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let n_token = self.peek().clone();
+                    let n = if let TokenKind::Int(n) = n_token.kind {
+                        self.bump();
+                        if !(1..=65535).contains(&n) {
+                            return Err(Diagnostic::new(
+                                "#fn_eval_max_depth(N) требует 1 <= N <= 65535",
+                                n_token.span,
+                            ));
+                        }
+                        n as u32
+                    } else {
+                        return Err(Diagnostic::new(
+                            "#fn_eval_max_depth требует int literal: `#fn_eval_max_depth(512)`",
+                            n_token.span,
+                        ));
+                    };
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "ожидался `)` после #fn_eval_max_depth(N)",
+                            span,
+                        ));
+                    }
+                    self.bump(); // )
+                    attrs.fn_eval_max_depth = Some(n);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -2550,6 +2595,7 @@ impl Parser {
             sync_class: contract_attrs.sync_class,
             // Plan 100.5 (D163): capability requirements for external fn.
             needs_caps,
+            fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
         })
     }
 

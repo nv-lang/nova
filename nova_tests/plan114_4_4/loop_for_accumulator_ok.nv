@@ -1,0 +1,20 @@
+// Plan 114.4.4 Ф.3 positive: for-loop с mut accumulator в const fn body.
+
+module plan114_4_4.loop_for_accumulator_ok
+
+fn sum_to(const n int) -> const int {
+    mut acc = 0
+    for i in 0..n {
+        acc = acc + i
+    }
+    acc
+}
+
+test "for-loop accumulator" {
+    const S5 = sum_to(5)
+    const S10 = sum_to(10)
+    // 0+1+2+3+4 = 10
+    assert(S5 == 10)
+    // 0+1+...+9 = 45
+    assert(S10 == 45)
+}

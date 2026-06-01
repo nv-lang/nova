@@ -885,6 +885,16 @@ fn check_const_fn_expr(
         E::As(inner, _) => check_const_fn_expr(
             inner, param_consts, const_fn_names, local_consts, current_fn, call_targets,
         ),
+        // Plan 114.4.4 Ф.3 V3: Range expr — recurse on start/end.
+        E::Range { start, end, .. } => {
+            if let Some(s) = start {
+                check_const_fn_expr(s, param_consts, const_fn_names, local_consts, current_fn, call_targets)?;
+            }
+            if let Some(e) = end {
+                check_const_fn_expr(e, param_consts, const_fn_names, local_consts, current_fn, call_targets)?;
+            }
+            Ok(())
+        }
         E::Ident(name) => {
             if param_consts.contains(name) || local_consts.contains(name) {
                 Ok(())
@@ -1000,16 +1010,10 @@ fn check_const_fn_expr(
                         ie, param_consts, const_fn_names, local_consts, current_fn, call_targets,
                     )?,
                 }
-            } else {
-                // V2.0: `if` без `else` имеет тип unit, не constexpr-value.
-                // const fn должен produce value, поэтому требуем else.
-                return Err(Diagnostic::new(
-                    "[E_CONST_FN_CONTROL_FLOW] `if` без `else` в const fn body \
-                     не allowed (D199 V2): must produce value на каждой ветви. \
-                     Add `else` branch.".to_string(),
-                    expr.span,
-                ));
             }
+            // Plan 114.4.4 Ф.3 V3: if без else allowed как side-effect
+            // statement (для loops с conditional continue/break). Evaluator
+            // skips body если cond=false, returns Unit.
             Ok(())
         }
         // Plan 114.4.3 Ф.1 (D199 V2): `match` allowed — recurse on scrutinee +
@@ -1045,11 +1049,31 @@ fn check_const_fn_expr(
                 .to_string(),
             expr.span,
         )),
-        E::For { .. } | E::ParallelFor { .. } | E::While { .. }
-        | E::WhileLet { .. } | E::Loop { .. } => Err(Diagnostic::new(
-            "[E_CONST_FN_CONTROL_FLOW] loops (for/while/loop) не разрешены в \
-             const fn body V2.0 (D199). Followup `[M-114.4.3-loops]` для V2.1. \
-             Use recursion (V2 supports direct + mutual)."
+        // Plan 114.4.4 Ф.3 (D199 V3): for/while/loop allowed —
+        // evaluator enforces termination через MAX_LOOP_ITERATIONS.
+        E::For { pattern, iter, body, .. } => {
+            check_const_fn_expr(iter, param_consts, const_fn_names,
+                local_consts, current_fn, call_targets)?;
+            // Pattern var добавляется в locals для body validation.
+            let mut body_locals = local_consts.clone();
+            if let crate::ast::Pattern::Ident { name, .. } = pattern {
+                body_locals.insert(name.clone());
+            }
+            check_const_fn_block(body, param_consts, const_fn_names,
+                &body_locals, current_fn, call_targets)
+        }
+        E::While { cond, body, .. } => {
+            check_const_fn_expr(cond, param_consts, const_fn_names,
+                local_consts, current_fn, call_targets)?;
+            check_const_fn_block(body, param_consts, const_fn_names,
+                local_consts, current_fn, call_targets)
+        }
+        E::Loop { body, .. } => check_const_fn_block(body, param_consts,
+            const_fn_names, local_consts, current_fn, call_targets),
+        // ParallelFor + WhileLet остаются rejected.
+        E::ParallelFor { .. } | E::WhileLet { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_CONTROL_FLOW] `parallel for` / `while let` не \
+             разрешены в const fn body (D199). Use plain `for`/`while`."
                 .to_string(),
             expr.span,
         )),
@@ -1135,6 +1159,31 @@ fn check_const_fn_pattern(
     }
 }
 
+/// Plan 114.4.4 Ф.3 V3: collect bindings from `let` pattern in const fn body.
+/// V3.0 supports only single Ident patterns. Record/tuple destructuring —
+/// V3.1 followup `[M-114.4.4-let-destructure]`.
+fn collect_pattern_bindings_const_fn(
+    pat: &crate::ast::Pattern,
+    locals: &mut std::collections::HashSet<String>,
+    span: Span,
+) -> Result<(), Diagnostic> {
+    use crate::ast::Pattern;
+    match pat {
+        Pattern::Ident { name, .. } => {
+            locals.insert(name.clone());
+            Ok(())
+        }
+        Pattern::Wildcard(_) => Ok(()),
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_PATTERN_NOT_SUPPORTED] only single ident / wildcard \
+             pattern allowed в `let` binding в const fn body V3.0 (D199). \
+             Record/tuple destructure — followup `[M-114.4.4-let-destructure]`."
+                .to_string(),
+            span,
+        )),
+    }
+}
+
 fn check_const_fn_block(
     block: &crate::ast::Block,
     param_consts: &std::collections::HashSet<String>,
@@ -1160,47 +1209,35 @@ fn check_const_fn_block(
                 locals.insert(cd.name.clone());
             }
             Stmt::Expr(e) => {
-                if !is_last {
-                    return Err(Diagnostic::new(
-                        "[E_CONST_FN_CONTROL_FLOW] only the final statement of a \
-                         const fn body may be an expression (D199 V1). Intermediate \
-                         expressions imply side-effects."
-                            .to_string(),
-                        e.span,
-                    ));
-                }
+                // Plan 114.4.4 Ф.3 V3: intermediate Stmt::Expr accepted —
+                // body может содержать loops / if-without-else / etc. как
+                // statements. Value extraction handled by caller (trailing
+                // expr или final Stmt::Expr становится return value).
+                let _ = is_last;
                 check_const_fn_expr(
                     e, param_consts, const_fn_names, &locals, current_fn, call_targets,
                 )?;
             }
+            // Plan 114.4.4 Ф.3 V3: mut let bindings allowed для loops.
+            // Stmt::Let добавляет name в locals. mut OK; ro/plain let
+            // тоже OK — body checker treats them uniformly.
             Stmt::Let(ld) => {
-                // mut let → mut binding error.
-                if matches!(&ld.pattern,
-                    crate::ast::Pattern::Ident { is_mut: true, .. })
-                {
-                    return Err(Diagnostic::new(
-                        "[E_CONST_FN_MUT_BINDING] `let mut` bindings не разрешены \
-                         в const fn body V1 (D199). Use `const NAME = expr` для \
-                         compile-time local."
-                            .to_string(),
-                        ld.span,
-                    ));
-                }
-                return Err(Diagnostic::new(
-                    "[E_CONST_FN_MUT_BINDING] runtime `let` / `ro` bindings не \
-                     разрешены в const fn body V1 (D199): const fn body должен \
-                     быть pure. Use `const NAME = expr` для compile-time local."
-                        .to_string(),
-                    ld.span,
-                ));
+                check_const_fn_expr(
+                    &ld.value, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+                // Collect bindings from pattern. Только Ident patterns
+                // supported в V3.0 const fn body. Record/tuple destructure
+                // — V3.1 followup.
+                collect_pattern_bindings_const_fn(&ld.pattern, &mut locals, ld.span)?;
             }
-            Stmt::Assign { span, .. } => {
-                return Err(Diagnostic::new(
-                    "[E_CONST_FN_MUT_BINDING] assignment statements не разрешены \
-                     в const fn body (D199)."
-                        .to_string(),
-                    *span,
-                ));
+            // Plan 114.4.4 Ф.3 V3: assignment к mut local allowed.
+            Stmt::Assign { target, value, .. } => {
+                check_const_fn_expr(
+                    target, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+                check_const_fn_expr(
+                    value, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
             }
             Stmt::Return { value, span } => {
                 if !is_last {
@@ -1235,14 +1272,11 @@ fn check_const_fn_block(
                     *span,
                 ));
             }
-            Stmt::Break(span) | Stmt::Continue(span) => {
-                return Err(Diagnostic::new(
-                    "[E_CONST_FN_CONTROL_FLOW] break/continue not allowed в const \
-                     fn body V1 (D199): no loops permitted."
-                        .to_string(),
-                    *span,
-                ));
-            }
+            // Plan 114.4.4 Ф.3 V3: break/continue allowed внутри loops.
+            // Checker не отслеживает context — evaluator catches stray
+            // break/continue outside loop scope at runtime через
+            // ControlFlow propagation.
+            Stmt::Break(_) | Stmt::Continue(_) => {}
             // Ghost statements (assume/assert_static/apply/calc/reveal) — reject
             // в const fn V1 как unsupported.
             Stmt::AssertStatic { span, .. } | Stmt::Assume { span, .. }

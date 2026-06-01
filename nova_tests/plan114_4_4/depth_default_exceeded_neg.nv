@@ -1,0 +1,12 @@
+// Plan 114.4.4 Ф.1 NEG: #fn_eval_max_depth(N) override reduces limit
+// to N; exceeding it → E_CONST_FN_EVAL_DEPTH_EXCEEDED.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EVAL_DEPTH_EXCEEDED
+
+module plan114_4_4.depth_default_exceeded_neg
+
+#fn_eval_max_depth(10)
+fn sum_to(const n int) -> const int =>
+    if n <= 0 { 0 } else { n + sum_to(n - 1) }
+
+const BAD = sum_to(20)
