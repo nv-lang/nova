@@ -856,3 +856,125 @@ Open questions проверить + закрыть через D217-D219:
 3. **Commit + push** scaffold + investigation doc.
 4. **Implementation Ф.1-Ф.6** через established Plan 59.1 pattern
    (фаза → commit → next).
+
+---
+
+## 15. Execution protocol (autonomous agent)
+
+Для self-contained autonomous execution (минимальный prompt). Plan 59.1
+closure (commits `7d9f4ba2911` → `9c37cde96c9`) — reference pattern.
+
+### 15.1 Worktree setup (already done для umbrella)
+
+- Worktree: `d:/Sources/nv-lang/nova-p123` ✅ создан.
+- Ветка: `plan-123-receiver-field-cse` ✅ pushed.
+- libuv submodule: ✅ scaffolded.
+- Env vars для tests (per `project-worktree-nova-test-setup`):
+  ```
+  NOVA_GC_LIB_DIR="d:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib"
+  NOVA_GC_INCLUDE_DIR="d:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+  ```
+
+### 15.2 Sub-plan ordering (recommended)
+
+Start с **Plan 123.1 (Core CSE V1 foundational)** — gate для всех
+остальных. Если 123.1 closed успешно, дальше 123.2 / 123.3 (parallel-
+able) ИЛИ stop здесь (V1 уже shippable).
+
+### 15.3 Per sub-plan execution cycle
+
+Для каждого Plan 123.N:
+
+1. **Spawn sub-plan doc** `docs/plans/123.N-<slug>.md` с детальной
+   Ф.0-Ф.6 разбивкой. Template — копировать структуру Plan 59.1 doc
+   (`docs/plans/59.1-generic-anon-tuple-mono.md` в main repo, merged).
+   Sections: Контекст / Design / Phases / Acceptance / Risk register /
+   Production-grade / Tools / Closure status.
+2. **Commit scaffold** один commit `docs(plan 123.N): scaffold — ...`.
+3. **Ф.0 Investigation:** repro / probe / DECISION-A/B/C/D finalize.
+   Artifact: `docs/plans/123.N-artifacts/investigation.md`. Commit
+   `docs(plan 123.N Ф.0): investigation + repro`.
+4. **Ф.1-Ф.3 Implementation:** код + commits per фаза с pattern
+   `feat(plan 123.N Ф.X): <что>`. Если фаза small — можно
+   batch'нуть с Ф.X+1, но default — один commit per Ф.
+5. **Ф.4 Tests:** positive + negative + property fixtures в
+   `nova_tests/plan123_N/`. Verify через release nova-cli + clang:
+   ```
+   cd d:/Sources/nv-lang/nova-p123/nova-cli && \
+     NOVA_GC_LIB_DIR=... NOVA_GC_INCLUDE_DIR=... \
+     cargo run --release --bin nova --quiet -- \
+     test ../nova_tests/plan123_N/
+   ```
+   Commit `feat(plan 123.N Ф.4): tests — N positive + M negative`.
+6. **Ф.5 Spec:** D-block NEW в `spec/decisions/02-types.md` (или
+   `08-runtime.md` если codegen) + amend cross-refs + README spec
+   entry. Commit `docs(plan 123.N Ф.5): D2XX NEW + cross-refs`.
+7. **Ф.6 Closure:** обновить **3 лога**:
+   - `docs/simplifications.md` — closure section (CLOSED markers +
+     acceptance summary + design lessons).
+   - `docs/project-creation.txt` — chronological entry (full
+     rationale + closes/unblocks).
+   - `d:/Sources/nv-lang/nova-private/discussion-log.md` — process
+     log (motivation, DECISION reasoning, lessons).
+   - Plan doc status flip `🆕 PLANNED → ✅ CLOSED <date>`.
+   - Commit `docs(plan 123.N Ф.6): closure logs`.
+
+### 15.4 Regression verification
+
+Перед finalize каждого sub-plan:
+- **plan90/plan90_1/plan91_7/plan59_1** suites — quick (~5 min).
+- **Targeted hot-path** (whatever sub-plan touches).
+- **Full nova test** — final gate перед push (можно background — long).
+
+Compare с baseline на main `HEAD@{merge-base}`:
+- 0 NEW FAIL обязательно.
+- Existing flakies (armed-M:N в concurrency) — verify identical
+  failure pattern на main (per `feedback-isolated-worktree`).
+
+### 15.5 Push protocol
+
+- Per-phase commits — стандарт.
+- Push на github ПОСЛЕ Ф.6 closure (или раньше если хочется backup
+  — но не обязательно):
+  ```
+  cd d:/Sources/nv-lang/nova-p123 && git push 2>&1 | tail -3
+  ```
+- **NO merge в main** без явного user instruction.
+
+### 15.6 Final status (per umbrella close)
+
+После закрытия всех 7 sub-plans (V7):
+- Plan 123 umbrella status flip `🆕 PLANNED → ✅ V7 CLOSED <date>`.
+- Sub-plan status tracker в §13 — все ✅.
+- Umbrella-level closure entry в 3 логах.
+- Final commit `docs(plan 123 umbrella): V7 closure — all 7 sub-plans CLOSED`.
+
+### 15.7 Bail-out conditions
+
+Остановиться + поднять user:
+- Любая P0 регрессия (existing нерегрессионный test FAIL).
+- Architectural blocker (e.g. AST visitor infrastructure не такая
+  как ожидалось — design decision требует input).
+- D-block conflict (D217 collision с другим plan'ом — coordinate).
+- Cumulative time >2× estimate (что-то идёт не так).
+
+### 15.8 Memory + feedback refs
+
+Эти feedback memories обязательно соблюдать:
+- `feedback-isolated-worktree` — worktree per план, не переключать
+  ветки.
+- `feedback_worktree_cwd_clarity` — cd-prefix в каждой Bash команде.
+- `feedback-worktree-auto-register` — register first Bash command.
+- `feedback_git_add_specific` — никогда `git add -A`.
+- `feedback-verify-index-before-commit` — `git diff --cached --stat`
+  перед commit.
+- `feedback-no-claude-coauthor` — никогда не добавлять
+  `Co-Authored-By: Claude`.
+- `feedback-commit-per-task` — split на multiple commits.
+- `feedback-update-logs` — 3 лога после каждой big task.
+- `feedback-no-external-memory-for-project-state` — для plan/D status
+  читать docs/plans/README.md, не external memory.
+- `feedback_nova_syntax` — никогда не выдумывать syntax, проверять
+  через parser probe.
+- `feedback_nova_test_one_pass` — capture summary + FAIL details в
+  одном запуске.
