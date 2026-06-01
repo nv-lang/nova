@@ -71,7 +71,7 @@
 | D138 | 07-modules.md | Межпакетный импорт — только через объявленную `[dependencies]`-зависимость (Plan 03.1) |
 | D139 | 07-modules.md | Version-диапазоны git-зависимостей — резолв по тегам репозитория (Plan 03.2) |
 | D140 | 07-modules.md | Effect-aware зависимости — effect-surface, effect-diff, `forbid` на границе (Plan 03.4) |
-| D141 | 08-runtime.md | Примитивы доступа к памяти — `str.byte_at`, bulk slice-операции `[]T`, `compare` (Plan 90); append/insert API `append`/`insert`/`reserve` (renamed Plan 91 2026-05-30; ранее `extend_from`/`insert_from`), `copy_from` hardening + W_VIEW_EXTEND_DETACH lint (Plan 90.1 amend 2026-05-27) |
+| D141 | 08-runtime.md | Примитивы доступа к памяти — `str.byte_at`, bulk slice-операции `[]T`, `compare` (Plan 90); append/insert API `append`/`insert`/`reserve` (renamed Plan 91 2026-05-30; ранее `extend_from`/`insert_from`), `copy_from` hardening + W_VIEW_EXTEND_DETACH lint (Plan 90.1 amend 2026-05-27); `fill` memset fast-path для single-byte T + `append_zero(n)` polymorphic zero-extend (Plan 90 followup 2026-06-01) |
 | D142 | 02-types.md | Симметрия effect/protocol declaration ↔ literal — keyword `handler`→`effect`, `Handler[E,IRT]`→`Effect[E,IRT]`, анонимный protocol-литерал, capture-rules (Plan 97) |
 | D143 | 03-syntax.md | Static-method префикс `.method()` в `type X protocol { ... }` теле — симметрия с D35 instance-методом `fn T.method()` (Plan 97) |
 | D144 | 02-types.md | Sub-slice views `arr[a..b]` / `str[a..b]` — `cap == len` model, 5 форм Range (RangeBounds parity), bounds-check для raw `arr[i]` (Plan 96) |

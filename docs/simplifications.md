@@ -28305,3 +28305,78 @@ compile time, call sites replaced литералом, fn dropped из codegen.
 5. **Const fn drop'нут из codegen полностью** — symbol не emit'ится,
    call site = inline literal. Dead const fn — silently dropped из
    output (как Rust unused const fn).
+
+---
+
+## Plan 90 followup — `fill` memset fast-path + `[]T.append_zero(n)` (2026-06-01)
+
+**Что:** два runtime-уточнения для `[]T` bulk-ops (D141 amend):
+1. `fill(v)` — single-byte `T` (`u8`/`i8`) → memset fast-path. Per-instantiation
+   compile-time DCE через `sizeof(T)` constant — для wider `T` остаётся
+   scalar loop с auto-vectorization potential под `-O2`.
+2. `[]T.append_zero(n int)` — extend by `n` zero-init элементов. Полиморфно
+   по `T` через `memset(_, 0, n*sizeof(T))`. Use-case: encoders/framers
+   (reserve write-window под length-prefix или padding с последующим
+   patching через index-assignment `arr[i] = v`).
+
+**Status:** 🟢 V1 LANDED. Branch `main` direct commits `c6816e6bb28`
+(fill memset) + `8a1d82760cd` (append_zero) + closure commit (this).
+
+**CLOSED markers:**
+- ✅ `[M-90-byte-fill-memset]` — fill memset fast-path для single-byte T.
+- ✅ `[M-90-append-zero]` — `append_zero(n)` polymorphic zero-extend
+  (новый API для encoder/framer use-case).
+
+**OPEN markers (followup):**
+- 🟡 `[M-array-set-method-resolves-to-oncecell]` — `arr.set(i, v)` для
+  `[]u8` codegen dispatched в `Nova_OnceCell_method_set` (undefined
+  symbol на link). Workaround в тестах: index-assignment
+  `arr[i] = v` (canonical idiom из std/collections/priority_queue).
+  Low priority — `set` редко используется на arrays, есть workaround.
+
+**Acceptance criteria:**
+- **A1** ✅ `fill(v)` использует memset для `[]u8`/`[]i8`; scalar loop для
+  wider `T` (`[]int`, `[]f64`, etc) — verified runtime PASS.
+- **A2** ✅ `append_zero(n)` polymorphic — `[]u8`, `[]int` обе ветки
+  работают; tail инициализируется нулями.
+- **A3** ✅ Returns `@` для fluent chain — verified `a.append_zero(3)
+  .fill(7).append_zero(2)` chain.
+- **A4** ✅ `n < 0` → panic `«append_zero: n must be >= 0»` —
+  `append_zero_negative_n_neg.nv` runtime-panic verified.
+- **A5** ✅ `n == 0` → no-op (len unchanged).
+- **A6** ✅ Empty buffer extends корректно — `mut a []u8 = [];
+  a.append_zero(5)` → `[0,0,0,0,0]`.
+- **A7** ✅ `W_VIEW_EXTEND_DETACH` lint fires для `append_zero` —
+  `append_zero_view_detach_warn.nv` PASS (`warning: 1` confirmed).
+- **A8** ✅ Регрессия: plan90 9/0, plan90_1 20/0, plan91_7 5/0.
+
+**Subsystems:**
+1. Runtime (`compiler-codegen/nova_rt/array.h`): `nova_array_fill_##T`
+   обновлён (sizeof(T)==1 branch); `nova_array_append_zero_##T` новый
+   macro (170-byte block после fill).
+2. Codegen (`compiler-codegen/src/codegen/emit_c.rs`): `"append_zero"`
+   в двух match-arms (line 18944 statement dispatch + line 27233
+   return-type=receiver).
+3. Type checker (`compiler-codegen/src/types/mod.rs`): `"append_zero"`
+   в `builtin_mut_method` recognition list (lines 11754 + 11794).
+4. Lint (`compiler-codegen/src/lints.rs`): `is_grow_method` расширен
+   `"append_zero"` (line 1410) — W_VIEW_EXTEND_DETACH триггерит после
+   `let view = parent[a..b]` + `parent.append_zero(n)`.
+5. Tests (`nova_tests/plan90/`): 3 новых .nv файла — `append_zero.nv`
+   (6 positive), `append_zero_negative_n_neg.nv` (panic), 
+   `append_zero_view_detach_warn.nv` (lint warning).
+6. Spec (`spec/decisions/08-runtime.md` D141 + 
+   `spec/decisions/README.md` D141-entry): polymorphism rationale,
+   API doc, use-case example, naming rationale (append-family
+   расширен `append_zero(n)` третьим членом наряду с `push(v)` и
+   `append(src)`).
+
+**Design lesson:** `sizeof(T) == 1` через runtime `if` (не препроцессор
+`#if`) — корректный pattern в C-макросах. Препроцессор не может
+evaluate `sizeof`, но компилятор сворачивает `if (constant)` через
+DCE → output идентичен явному `#if`. Также применимо для других
+T-dependent optimizations в array.h. Полиморфизм memset через bytes
+работает для всех primitive value types — bytes = 0 is universally
+valid zero representation для `int`/`float`/`bool`/`ptr` (IEEE 754 +0,
+NULL pointer, false). Для compound value types (Plan 120 named tuples)
+работает при условии что все поля имеют zero-default representation.

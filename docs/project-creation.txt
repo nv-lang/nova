@@ -26734,3 +26734,115 @@ Unblocks:
 - Generic const fn V2 (Plan 114.4.2.1).
 - Computed [N]T sizes (D27 from-any-visible-scope amend).
 - Type-driven dispatch constants.
+
+
+================================================================================
+Plan 90 followup — fill memset fast-path + []T.append_zero(n) (2026-06-01)
+================================================================================
+
+Два уточнения runtime в D141 (08-runtime.md) — оба для []T bulk-ops:
+
+1. `fill(v)`: single-byte T (`u8`/`i8`) → memset fast-path.
+   `nova_array_fill_##T` macro обновлён в compiler-codegen/nova_rt/
+   array.h:174-183 — runtime `if (sizeof(T) == 1)` ветка с memset,
+   else scalar loop. sizeof(T) — compile-time constant per macro
+   instantiation; компилятор DCE'ит мёртвую ветку, output идентичен
+   явному `#if`. Cast `(unsigned char)v` корректно переносит битовую
+   картинку для signed i8 (`-1` → `0xFF` → читается обратно `-1`).
+   <string.h> уже подключён в array.h.
+
+   Раньше для []u8 компилятор под `-O2` скорее всего распознавал idiom
+   и векторизовал loop в memset, но это не гарантировано (под `-O0`
+   оставался цикл). Теперь — explicit fast-path, deterministic.
+
+2. `append_zero(n int)` (новый API): extend by N zero-init elements.
+   Полиморфно по T через `memset(_, 0, n*sizeof(T))` — в отличие от
+   fill (где memset только для single-byte T).
+
+   Семантика:
+   - `n < 0` → panic «append_zero: n must be >= 0»
+   - `n == 0` → noop
+   - 2x growth strategy + memcpy prefix + memset tail (параллель append/
+     reserve)
+   - Returns @ через codegen для fluent chain (Plan 91.7 D181)
+   - Zero bytes = valid zero-init для всех primitives (int/u8/f64 → 0),
+     nova_ptr (NULL), bool (false), Plan 120 named tuples с
+     zero-default representation полей.
+
+   Use-case — encoders/framers:
+     mut buf []u8 = []
+     buf.append_zero(2)              # reserve 2 байта под length-prefix
+     buf.append(payload)
+     buf[0] = (payload.len() >> 8) as u8
+     buf[1] = (payload.len() & 0xff) as u8
+
+   Раньше аналог требовал `buf.append([0, 0])` (литерал-аллокация)
+   или explicit loop — оба неэргономично.
+
+Wiring:
+- Runtime: compiler-codegen/nova_rt/array.h
+  - fill_##T: +sizeof(T)==1 fast-path (commit c6816e6bb28)
+  - append_zero_##T: новый macro (commit 8a1d82760cd, после fill)
+- Codegen: compiler-codegen/src/codegen/emit_c.rs
+  - line 18944 (statement dispatch): append_zero в match-arm для
+    bulk slice-операций → emit `nova_array_append_zero_<T>(...)`
+  - line 27233 (return-type resolution): append_zero возвращает
+    obj_ty (receiver) → fluent chain
+- Type checker: compiler-codegen/src/types/mod.rs
+  - lines 11754 + 11794 (builtin_mut_method recognition): append_zero
+    в обоих списках → E_PARAM_NOT_MUT enforcement для view-param
+    receivers
+- Lint: compiler-codegen/src/lints.rs
+  - line 1410 is_grow_method: +append_zero → W_VIEW_EXTEND_DETACH
+    fires после `let view = parent[a..b]` + `parent.append_zero(n)`
+
+Spec D141 amend (spec/decisions/08-runtime.md):
+- Header: добавлен 2026-06-01 amend block с обоими уточнениями.
+- fill description: +«Perf (Plan 90 followup): single-byte T memset
+  fast-path; wider T scalar loop» note.
+- Append/insert/reserve API: signature listing +
+  `fn []T mut @append_zero(n int)` строкой.
+- Новая подсекция «append_zero(n) (Plan 90 followup, 2026-06-01)» с
+  полным описанием семантики + use-case кодом.
+- Naming rationale: append-family строка обновлена на тройку
+  push(v) + append(src) + append_zero(n).
+- W_VIEW_EXTEND_DETACH lint trigger list: +append_zero четвёртым.
+
+Spec README (spec/decisions/README.md):
+- D141 entry обновлён: «fill memset fast-path + append_zero(n)
+  polymorphic zero-extend (Plan 90 followup 2026-06-01)».
+
+Acceptance criteria (final):
+- A1 ✅ fill(v) memset для []u8/[]i8; scalar loop для wider T — fill.nv
+  PASS (3 tests: byte memset path + empty + []int loop path).
+- A2 ✅ append_zero(n) полиморфно — []u8 / []int обе ветки PASS
+  (append_zero.nv tests 1, 2).
+- A3 ✅ Returns @ для fluent chain — append_zero.nv test 5
+  `a.append_zero(3).fill(7).append_zero(2)` PASS.
+- A4 ✅ n < 0 → panic с diagnostic — append_zero_negative_n_neg.nv
+  EXPECT_RUNTIME_PANIC «append_zero: n must be >= 0» PASS.
+- A5 ✅ n == 0 → noop — append_zero.nv test 4 PASS.
+- A6 ✅ Empty buffer extends корректно — append_zero.nv test 3 PASS.
+- A7 ✅ W_VIEW_EXTEND_DETACH lint fires —
+  append_zero_view_detach_warn.nv EXPECT_COMPILE_WARNING PASS
+  (warning: 1 confirmed).
+- A8 ✅ Регрессия: plan90 9/0 + plan90_1 20/0 + plan91_7 5/0
+  (release nova-cli + clang toolchain).
+
+Discovered followup (НЕ исправлено):
+- [M-array-set-method-resolves-to-oncecell] — arr.set(i, v) для []u8
+  codegen ушёл в Nova_OnceCell_method_set (linker undefined symbol).
+  Workaround в тестах: arr[i] = v index-assignment. Low priority,
+  есть workaround. Marker задокументирован в simplifications.md.
+
+Closes:
+- [M-90-byte-fill-memset] — fill memset fast-path для single-byte T.
+- [M-90-append-zero] — новый polymorphic append_zero API.
+- D141 amend (08-runtime.md + README.md) — оба уточнения spec'нуты.
+
+Unblocks:
+- Эффективные binary encoders/framers на Nova (length-prefix patching,
+  padding) без литерал-аллокаций.
+- Zero-init bulk operations через unified API в std/runtime.
+- Будущий Plan 121 ([N]T stack arrays) если он добавит fixed-size
+  zero-init pattern — может reuse полиморфный memset rationale.
