@@ -254,6 +254,17 @@ module parent.name                          // первая строка фай�
    `decl ↔ canonical path`); declaration — это **identity check**,
    не routing key.
 
+**Diagnostic codes (compiler enforcement):**
+
+| Код | Кogда |
+|---|---|
+| `E_D78_MODULE_PATH_MISMATCH` | declaration не matches ни rev-3, ни rev-1 — hard error |
+| `W_D78_REV1_DEPRECATED` | declaration matches rev-1 legacy form, но не rev-3 — deprecation warning с migration hint (см. `scripts/d78_audit_migrate.py`) |
+
+**Bug history:** до 2026-06-01 compiler принимал rev-1 silently. Bug
+fix добавил `W_D78_REV1_DEPRECATED` warning. Hard rejection rev-1 —
+followup `[M-D78-strict-removal]` после full corpus migration.
+
 #### rev-3.1: `internal/` extended naming (Plan 42.13)
 
 > **2026-05-14 (rev-3.1):** single-file и folder-module внутри
@@ -614,6 +625,15 @@ LLM знает фиксированный список — «известная 
   safety (move → mismatch detected), consistent между single-file и
   folder-module. **Требует миграцию существующих std/* файлов** —
   одноразовая операция (язык не в проде, breaking change приемлем).
+- **rev-3 enforcement bug fix** (2026-06-01): compiler ранее принимал
+  И rev-3 И rev-1 legacy form **silently** (no warning), что hid'ило
+  deviation от spec. Audit 2026-06-01 показал ~847 violators в
+  corpus (43% nova_tests, 100% bench). Bug fix добавил deprecation
+  warning **`W_D78_REV1_DEPRECATED`** — compiler сейчас accepts rev-1
+  но emit'ит actionable migration message с
+  `scripts/d78_audit_migrate.py --migrate` reference. Followup
+  `[M-D78-strict-removal]` — hard error для rev-1 после full corpus
+  migration в отдельном plan (massive corpus refactor).
 - **rev-4** (2026-05-22, Plan 84): добавлены **относительные импорты**
   `./` / `../` — package-scoped (резолв от директории импортирующего
   файла, строго в пределах своего пакета; `../` за корень пакета →
