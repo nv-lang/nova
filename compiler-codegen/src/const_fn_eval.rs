@@ -954,6 +954,12 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
 
     walk_module(module, &mut owned, &mut errors);
 
+    // Plan 114.4.4 Ф.2 (D199 V3): friendly UX validation — detect runtime
+    // misuse of const fn names BEFORE codegen drops them. After this pass
+    // any Ident referencing const fn в non-call-func position → error
+    // с actionable suggestion.
+    validate_const_fn_runtime_uses(module, &owned, &mut errors);
+
     // Drop const fn declarations + alias const decls (V2 Ф.5) из items.
     let const_names = owned.names();
     let alias_names: std::collections::HashSet<String> = owned.aliases.keys().cloned().collect();
@@ -1626,5 +1632,299 @@ fn walk_match_arm_body(
     match &mut arm.body {
         crate::ast::MatchArmBody::Expr(e) => walk_expr(e, ev, errors),
         crate::ast::MatchArmBody::Block(b) => walk_block(b, ev, errors),
+    }
+}
+
+// =========================================================================
+// Plan 114.4.4 Ф.2 (D199 V3): friendly UX validation — detect runtime
+// misuse of const fn name + emit actionable diagnostics.
+// =========================================================================
+
+/// Walks module after rewriter to find runtime contexts referencing
+/// const fn names (in positions where they can't be used due to
+/// codegen drop). Emits:
+/// - `E_CONST_FN_FIRST_CLASS` для runtime let-bindings (`ro f = const_fn`).
+/// - `E_CONST_FN_FIRST_CLASS_RUNTIME_HOF` для Call args referencing
+///   const fn в not-callee positions (`map(arr, const_fn)`).
+fn validate_const_fn_runtime_uses(
+    module: &crate::ast::Module,
+    ev: &OwnedEvaluator,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let cf_names: std::collections::HashSet<String> = ev.fns.keys()
+        .chain(ev.mixed_const_params.keys())
+        .chain(ev.aliases.keys())
+        .cloned()
+        .collect();
+    if cf_names.is_empty() {
+        return;
+    }
+    let mut ctx = ValidateCtx { cf_names: &cf_names, errors };
+    for item in &module.items {
+        ctx.visit_item(item);
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            ctx.visit_item(item);
+        }
+    }
+}
+
+struct ValidateCtx<'a, 'b> {
+    cf_names: &'a std::collections::HashSet<String>,
+    errors: &'b mut Vec<Diagnostic>,
+}
+
+impl<'a, 'b> ValidateCtx<'a, 'b> {
+    fn visit_item(&mut self, item: &crate::ast::Item) {
+        use crate::ast::Item;
+        match item {
+            Item::Fn(fd) => {
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
+                if is_fully_const {
+                    // body будет dropped — skip validation внутри fully-const.
+                    return;
+                }
+                match &fd.body {
+                    FnBody::Expr(e) => self.visit_expr(e),
+                    FnBody::Block(b) => self.visit_block(b),
+                    FnBody::External => {}
+                }
+            }
+            Item::Const(_) => { /* alias const RHS already validated via rewriter */ }
+            Item::Let(l) => {
+                self.check_runtime_let_to_const_fn(&l.value, l.value.span);
+                self.visit_expr(&l.value);
+            }
+            Item::Test(t) => self.visit_block(&t.body),
+            Item::Bench(b) => {
+                for s in &b.setup { self.visit_stmt(s); }
+                self.visit_block(&b.measure_body);
+                for s in &b.teardown { self.visit_stmt(s); }
+            }
+            Item::Type(_) | Item::Lemma(_) => {}
+        }
+    }
+    fn visit_block(&mut self, b: &crate::ast::Block) {
+        for s in &b.stmts { self.visit_stmt(s); }
+        if let Some(t) = &b.trailing { self.visit_expr(t); }
+    }
+    fn visit_stmt(&mut self, s: &crate::ast::Stmt) {
+        use crate::ast::Stmt;
+        match s {
+            Stmt::Let(d) => {
+                self.check_runtime_let_to_const_fn(&d.value, d.value.span);
+                self.visit_expr(&d.value);
+            }
+            Stmt::Const(d) => {
+                // const ALIAS = const_fn — handled by rewriter alias map.
+                // Don't recurse — Ident на const fn в const RHS is OK.
+            }
+            Stmt::Expr(e) => self.visit_expr(e),
+            Stmt::Assign { target, value, .. } => {
+                self.visit_expr(target);
+                self.visit_expr(value);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.visit_expr(v); }
+            }
+            Stmt::Throw { value, .. } => self.visit_expr(value),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                self.visit_expr(body);
+            }
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.visit_expr(init);
+                self.visit_block(body);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.visit_expr(expr);
+            }
+            Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        }
+    }
+    /// Check if `value` is a bare Ident referring to const fn — emit
+    /// `E_CONST_FN_FIRST_CLASS` если так.
+    fn check_runtime_let_to_const_fn(&mut self, value: &Expr, span: Span) {
+        if let ExprKind::Ident(name) = &value.kind {
+            if self.cf_names.contains(name) {
+                self.errors.push(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_FIRST_CLASS] runtime binding к const fn `{}` \
+                         не разрешено (D199 V3). const fn не имеет runtime symbol — \
+                         dropped из codegen. Workarounds:\n  \
+                         (1) `const ALIAS = {}` — compile-time alias (если используется \
+                         только в const RHS).\n  \
+                         (2) `ro f = |x, ...| {}(x, ...)` — runtime lambda wrapping \
+                         const fn call с literal args.\n  \
+                         Followup `[M-114.4.3-runtime-hof]` для real first-class \
+                         через runtime trampoline.",
+                        name, name, name
+                    ),
+                    span,
+                ));
+            }
+        }
+    }
+    fn visit_expr(&mut self, e: &Expr) {
+        use crate::ast::CallArg;
+        match &e.kind {
+            ExprKind::Call { func, args, trailing } => {
+                // func может быть Ident к const fn — это OK (call site).
+                // Аргументы — если Ident к const fn → HOF misuse.
+                self.visit_expr(func);
+                for a in args {
+                    match a {
+                        CallArg::Item(ae) | CallArg::Spread(ae) => {
+                            self.check_runtime_hof_use(ae);
+                            self.visit_expr(ae);
+                        }
+                        CallArg::Named { value, .. } => {
+                            self.check_runtime_hof_use(value);
+                            self.visit_expr(value);
+                        }
+                    }
+                }
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => self.visit_block(b),
+                        crate::ast::Trailing::Fn(sb) => self.visit_fn_body(&sb.body),
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => self.visit_block(&tb.body),
+                    }
+                }
+            }
+            _ => self.recurse_children(e),
+        }
+    }
+    /// If arg is bare Ident referring const fn → HOF misuse error.
+    fn check_runtime_hof_use(&mut self, e: &Expr) {
+        if let ExprKind::Ident(name) = &e.kind {
+            if self.cf_names.contains(name) {
+                self.errors.push(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_FIRST_CLASS_RUNTIME_HOF] passing const fn `{}` \
+                         to runtime higher-order function (D199 V3). const fn не имеет \
+                         runtime symbol — dropped из codegen. Wrap в lambda:\n  \
+                         `... |args| {}(args) ...`\n  \
+                         Followup `[M-114.4.3-runtime-hof]` для automatic trampoline.",
+                        name, name
+                    ),
+                    e.span,
+                ));
+            }
+        }
+    }
+    fn visit_fn_body(&mut self, body: &FnBody) {
+        match body {
+            FnBody::Expr(e) => self.visit_expr(e),
+            FnBody::Block(b) => self.visit_block(b),
+            FnBody::External => {}
+        }
+    }
+    fn recurse_children(&mut self, e: &Expr) {
+        use crate::ast::{ArrayElem, ElseBranch, MapElem};
+        match &e.kind {
+            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+            | ExprKind::BoolLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(ex) = p { self.visit_expr(ex); }
+                }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) => {
+                            // Array literal arg — same as HOF concern.
+                            self.check_runtime_hof_use(x);
+                            self.visit_expr(x);
+                        }
+                    }
+                }
+            }
+            ExprKind::MapLit { elems, .. } => {
+                for el in elems {
+                    match el {
+                        MapElem::Pair(k, v) => { self.visit_expr(k); self.visit_expr(v); }
+                        MapElem::Spread(s) => self.visit_expr(s),
+                    }
+                }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { self.visit_expr(v); }
+                }
+            }
+            ExprKind::TupleLit(items) => for x in items { self.visit_expr(x); },
+            ExprKind::Member { obj, .. } => self.visit_expr(obj),
+            ExprKind::Index { obj, index } => { self.visit_expr(obj); self.visit_expr(index); }
+            ExprKind::TurboFish { base, .. } => self.visit_expr(base),
+            ExprKind::Call { .. } => {} // handled в visit_expr Call arm
+            ExprKind::Try(x) | ExprKind::Bang(x) => self.visit_expr(x),
+            ExprKind::Coalesce(a, b) => { self.visit_expr(a); self.visit_expr(b); }
+            ExprKind::As(x, _) | ExprKind::Is(x, _) => self.visit_expr(x),
+            ExprKind::Binary { left, right, .. } => {
+                self.visit_expr(left); self.visit_expr(right);
+            }
+            ExprKind::Unary { operand, .. } => self.visit_expr(operand),
+            ExprKind::If { cond, then, else_ } => {
+                self.visit_expr(cond);
+                self.visit_block(then);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.visit_block(b),
+                        ElseBranch::If(ie) => self.visit_expr(ie),
+                    }
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.visit_expr(scrutinee);
+                self.visit_block(then);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.visit_block(b),
+                        ElseBranch::If(ie) => self.visit_expr(ie),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.visit_expr(scrutinee);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.visit_expr(g); }
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expr(e) => self.visit_expr(e),
+                        crate::ast::MatchArmBody::Block(b) => self.visit_block(b),
+                    }
+                }
+            }
+            ExprKind::For { iter, body, .. } => { self.visit_expr(iter); self.visit_block(body); }
+            ExprKind::ParallelFor { iter, body, .. } => { self.visit_expr(iter); self.visit_block(body); }
+            ExprKind::While { cond, body, .. } => { self.visit_expr(cond); self.visit_block(body); }
+            ExprKind::WhileLet { scrutinee, body, .. } => { self.visit_expr(scrutinee); self.visit_block(body); }
+            ExprKind::Loop { body, .. } => self.visit_block(body),
+            ExprKind::Block(b) => self.visit_block(b),
+            ExprKind::Lambda { body, .. } => self.visit_expr(body),
+            ExprKind::ClosureLight { body, .. } => {
+                match body {
+                    crate::ast::ClosureBody::Expr(e) => self.visit_expr(e),
+                    crate::ast::ClosureBody::Block(b) => self.visit_block(b),
+                }
+            }
+            ExprKind::ClosureFull(sb) => self.visit_fn_body(&sb.body),
+            ExprKind::Spawn(b) => self.visit_expr(b),
+            ExprKind::Supervised { body, .. } => self.visit_block(body),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => self.visit_block(b),
+            ExprKind::With { body, .. } => self.visit_block(body),
+            ExprKind::Forbid { body, .. } => self.visit_block(body),
+            ExprKind::Realtime { body, .. } => self.visit_block(body),
+            ExprKind::Interrupt(opt) => { if let Some(x) = opt { self.visit_expr(x); } }
+            ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => {}
+            _ => {}
+        }
     }
 }
