@@ -1354,27 +1354,72 @@ impl CEmitter {
             }
         }
 
-        // Plan 91.12 (D126 retract followup): pre-pass для module-private
-        // const mangling. Цикл по peer_files: каждый non-export `const X`
-        // получает C-name `Nova_const_<modpath>_<X>` чтобы избежать
-        // коллизий между одноимёнными private consts в разных модулях
-        // (e.g. `INITIAL_CAPACITY` в `runtime.string_builder` и
-        // `runtime.write_buffer`). Per-file ключ ((file_id, name)) разводит
-        // коллизии — Ident на use-site берёт `expr.span.file_id` чтобы
-        // выбрать правильный mangled C-symbol. Exported consts не
-        // mangle'ятся — их имя стабильно как cross-module API.
-        for pf in &module.peer_files {
-            for item in &pf.items_here {
-                if let Item::Const(c) = item {
-                    if !c.is_export && !pf.module_name.is_empty() {
-                        let mangled = format!(
-                            "Nova_const_{}_{}",
-                            pf.module_name.join("_"),
-                            c.name
-                        );
-                        self.private_const_c_names
-                            .entry((pf.file_id, c.name.clone()))
-                            .or_insert(mangled);
+        // Plan 91.12 [M-91.12-const-resolution-via-types] (closed 2026-06-01):
+        // module-private const C-name mangling, production-grade per-peer
+        // resolution (заменил span-based fallback workaround).
+        //
+        // **Алгоритм (паттерн NameResCtx Rule C):**
+        //
+        // 1. Group peer_files по `(parent_dir, module_name)` ключу — каждая
+        //    группа = module's name resolution scope (peers одной folder-
+        //    module делят declarations namespace).
+        // 2. Для каждой группы: collect её private consts с mangled C-names.
+        // 3. Для каждого peer file (file_id) populate `(peer.file_id, name)`
+        //    → mangled для ВСЕХ consts его module-group. Это обеспечивает
+        //    корректный lookup на любом Ident use-site внутри module-group
+        //    (Rule C: peers share decls namespace).
+        //
+        // Это closes followup [M-91.12-const-resolution-via-types]: lookup
+        // на use-site больше не нуждается в single-candidate fallback —
+        // (file_id, name) однозначно резолвится к module-group's const.
+        //
+        // Exported consts не mangle'ятся — их имя стабильно как cross-module
+        // API; collision между export'нутыми consts двух модулей — ambiguity
+        // error type-checker'а уровня D29.
+        {
+            // Step 1: group by (parent_dir, module_name).
+            use std::path::PathBuf;
+            let mut group_consts: HashMap<
+                (PathBuf, Vec<String>),
+                Vec<(String, String)>,  // (source_name, mangled_c_name)
+            > = HashMap::new();
+            let mut peer_group_key: HashMap<crate::diag::FileId, (PathBuf, Vec<String>)>
+                = HashMap::new();
+
+            for pf in &module.peer_files {
+                if pf.module_name.is_empty() { continue; }
+                let dir_key = pf.path.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| pf.path.clone());
+                let group_key = (dir_key, pf.module_name.clone());
+                peer_group_key.insert(pf.file_id, group_key.clone());
+
+                let group_entry = group_consts.entry(group_key).or_default();
+                for item in &pf.items_here {
+                    if let Item::Const(c) = item {
+                        if !c.is_export {
+                            let mangled = format!(
+                                "Nova_const_{}_{}",
+                                pf.module_name.join("_"),
+                                c.name
+                            );
+                            group_entry.push((c.name.clone(), mangled));
+                        }
+                    }
+                }
+            }
+
+            // Step 2: distribute group's consts к каждому peer's file_id —
+            // обеспечивает correct lookup на любом Ident use-site внутри
+            // module-group (Rule C).
+            for pf in &module.peer_files {
+                if let Some(gk) = peer_group_key.get(&pf.file_id) {
+                    if let Some(consts) = group_consts.get(gk) {
+                        for (name, mangled) in consts {
+                            self.private_const_c_names
+                                .entry((pf.file_id, name.clone()))
+                                .or_insert_with(|| mangled.clone());
+                        }
                     }
                 }
             }
@@ -15061,32 +15106,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                     return Ok(self.free_fn_c_name(name));
                 }
-                // Plan 91.12 (D126 retract followup): module-private const
-                // C-name substitution. Проверяем НЕЗАВИСИМО от is_local_var —
-                // var_types популируется и для module-level const'ов
-                // (emit_const_decl вставляет name→type для type inference),
-                // что иначе заглушает const lookup. Логика resolution:
-                //   1. Если есть mangled entry с матчингом file_id из span
-                //      декларации → возвращаем mangled.
-                //   2. Если ровно один mangled candidate для имени (no
-                //      collision) → возвращаем его.
-                //   3. Иначе fall through на raw name (C-compiler выдаст
-                //      undeclared ident если нужно).
-                // Followup [M-91.12-const-resolution-via-types] — wire
-                // Ident→ConstDecl resolution через type-checker для точной
-                // collision disambiguation независимо от span fidelity.
+                // Plan 91.12 [M-91.12-const-resolution-via-types] (closed
+                // 2026-06-01, production-grade): module-private const C-name
+                // substitution через direct (file_id, name) lookup. Pre-pass
+                // в emit_module populated map ДЛЯ ВСЕХ peers module-group
+                // (Rule C: peers share decls namespace), поэтому lookup
+                // (use-site file_id, name) однозначно резолвится к const'у
+                // в module-group без single-candidate fallback или ambiguity.
+                //
+                // is_local_var bypass нужен: var_types популируется и для
+                // module-level const'ов (emit_const_decl вставляет name→type
+                // для type inference), что иначе заглушало бы const lookup
+                // при unrelated locals. Module-group resolution дает корректный
+                // mangled name; local var shadow case покрывается тем что
+                // emit_const_decl mangle'ит C-name → local var с тем же
+                // source-level name не shadow'ит mangled symbol.
                 if let Some(mangled) = self.private_const_c_names
                     .get(&(expr.span.file_id, name.clone()))
                 {
                     return Ok(mangled.clone());
-                }
-                let matches: Vec<&String> = self.private_const_c_names
-                    .iter()
-                    .filter(|((_, n), _)| n == name)
-                    .map(|(_, m)| m)
-                    .collect();
-                if matches.len() == 1 {
-                    return Ok(matches[0].clone());
                 }
                 Ok(name.clone())
             }

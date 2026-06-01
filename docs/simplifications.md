@@ -28553,7 +28553,7 @@ closed. Branch merged into main (939db7a67d8).
 
 **OPEN markers (followups):**
 - 🟢 `[M-91.12-sync-types-migration]` → **CLOSED 2026-06-01 (Plan 91.12 V2)**. OnceCell[T], Lazy[T], Condvar мигрированы на `type X[T](ptr)` / `type X(ptr)` tuple-newtype (Plan 115 D214). C runtime backing (`nova_rt/sync_*.h` + emit_oncecell_instance/emit_lazy_instance per-T mono) сохранён — ABI unchanged. Codegen integration: `RUNTIME_BACKED_NEWTYPES` skips typedef emission, Newtype branch routes per-T mono к existing handlers, type-checker регистрирует runtime-backed newtype в `generic_types`. 5 V2 fixtures PASS (4 positive + 1 negative). Plan 91.12 V2 → full closure.
-- 🟡 `[M-91.12-const-resolution-via-types]` — Ident → ConstDecl resolution через type-checker для collision disambiguation независимо от span fidelity. V1 fix использует per-file span + single-candidate fallback — работает для текущих cases но не bulletproof (collision + missing span = fall through на raw name; C-compiler выдаст diagnosable undeclared ident error).
+- 🟢 `[M-91.12-const-resolution-via-types]` → **CLOSED 2026-06-01 (production-grade)**. Replaced span-based heuristic + single-candidate fallback на module-group-aware resolution: pre-pass в emit_module group'ает peer_files по `(parent_dir, module_name)` (паттерн NameResCtx Rule C), populates `(peer.file_id, const_name) → mangled_C_name` для ВСЕХ peers each module-group. Lookup на use-site однозначно резолвится без fallback. Collision (одноимённые consts в разных модулях) корректно разводятся per-module-group, ambiguity невозможна. Removed single-candidate fallback из emit_expr Ident-arm.
 - 🟢 `[M-91.12-append-filled]` → **CLOSED 2026-06-01 (already exists as `[]T.append_zero(n)` from Plan 90 followup)**. Primitive `nova_array_append_zero_<T>` (memset zero-extension) уже доступен — `nova_tests/plan90/append_zero.nv` + `compiler-codegen/nova_rt/array.h`. WriteBuffer.write_zero обновлён использовать `@buf.append_zero(n)` вместо push-loop. Generic `append_filled(n, v)` для arbitrary `v` не нужен для Plan 91.12 use case (write_zero хочет zero-init).
 
 **Design lessons:**
@@ -28575,7 +28575,7 @@ closed. Branch merged into main (939db7a67d8).
 - ✅ `[M-91.12-migration-guide]` — docs/migration/d126-to-tuple-newtype.md (264 lines, 3 patterns: pure Nova / tuple-newtype / D163 consume).
 
 **OPEN markers (V2 followups):**
-- 🟡 `[M-91.12-parser-body-detect-heuristic]` — parser fail'ит `external type X` если followed by `fn ...` declaration (treat'ит fn как newtype body). Workaround: trailing `external type` декларация в конце файла. Cleaner: parser должен skip newline+next-decl detect. Low priority; не блокер.
+- 🟢 `[M-91.12-parser-body-detect-heuristic]` → **CLOSED 2026-06-01**. Parser fixed: tracking `saw_newline_before_body` ДО skip_newlines(); ident-based body detect gates на `!saw_newline_before_body`. Same-line body forms (`external type Foo Bar` → newtype-body error) reject как раньше; newline-separated next-decl forms (`external type Foo consume\n\nfn dummy() -> int => 42`) parse cleanly. NEW fixture `nova_tests/plan91_12/v2_parser_external_type_consume_followed_by_fn_ok.nv` (3 test blocks для fn/test/const после `external type X consume`). Test fixtures plan62/external_type_outside_whitelist и plan91_12/v2_external_type_consume_d163_ok восстановлены к нормальной структуре (declaration в верху + trailing fn/test).
 
 **Design lessons (V2):**
 
