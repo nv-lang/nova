@@ -1,0 +1,28 @@
+// Plan 118 Ф.3 integration — `unsafe { ... }` block in expression
+// position. V1 scaffold (parser + codegen path). Direct pointer ops
+// (& / *) require proper type inference + escape analysis — Ф.4
+// follow-on phase.
+
+module plan118.t2_1_addr_of_deref_in_unsafe_ok
+
+test "unsafe block executes (basic)" {
+    ro x = 42
+    ro y = unsafe {
+        x
+    }
+    assert(y == 42)
+}
+
+test "unsafe block in expression position" {
+    ro sum = unsafe { 10 } + unsafe { 32 }
+    assert(sum == 42)
+}
+
+test "unsafe block with multi-stmt" {
+    ro v = unsafe {
+        ro a = 5
+        ro b = 7
+        a * b
+    }
+    assert(v == 35)
+}
