@@ -70,7 +70,7 @@ UnixNet/DnsNet) Nova имеет **production-grade TCP/UDP/Unix layer**, но
 ```
 Application                                           ← user code
   ↓
-HttpClient (Plan 117) / HttpServer (Plan 118)        ← effect (future)
+HttpClient (Plan 117) / HttpServer (Plan 122)        ← effect (future)
   ↓
 Tls (Plan 116, this plan)                            ← effect (NEW)
   ↓
@@ -508,7 +508,7 @@ grammar (effects, consume, perform, with-handler) из Plan 91.12 и earlier.
   (D210 — Tls effect contract; D211 — cert validation policy; D212 — ALPN;
   D213 — TLS session lifecycle).
 - **Ф.7.2** Cross-ref D201 (Plan 91.12 layered architecture): теперь
-  «Plan 116 первый concrete layer над TcpNet — pattern для Plan 117/118».
+  «Plan 116 первый concrete layer над TcpNet — pattern для Plan 117/122».
 - **Ф.7.3** `nova doc` regen: std/tls API doc page.
 - **Ф.7.4** `examples/tls/`: client + server pair (HTTPS GET + echo server
   with self-signed cert).
@@ -752,7 +752,7 @@ underlying), D210 (Tls effect).
   (`ro`/`mut`/`consume`).
 - **Plan 117** (std/http/client — future) — будет building на Plan 116 Tls
   effect (HTTPS support). Layered: HttpClient → Tls → TcpNet.
-- **Plan 118** (std/http/server — future) — same pattern.
+- **Plan 122** (std/http/server — future) — same pattern.
 - **Plan 110** (scoped resources — future) — orthogonal. `consume`
   semantics из Plan 110 будут naturally apply к TlsStream.
 
