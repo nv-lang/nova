@@ -759,8 +759,27 @@ fn check_const_constexpr_ex(
                 if const_fn_names.contains(name) {
                     for a in args {
                         match a {
-                            crate::ast::CallArg::Item(e) =>
-                                check_const_constexpr_ex(e, known_consts, const_fn_names)?,
+                            crate::ast::CallArg::Item(e) => {
+                                // Arg recursion должен пройти как constexpr;
+                                // если нет — переэмитим с E_CONST_FN_NON_CONST_ARG
+                                // (per-D199 более информативный код для caller'а).
+                                if let Err(_inner) = check_const_constexpr_ex(
+                                    e, known_consts, const_fn_names,
+                                ) {
+                                    return Err(Diagnostic::new(
+                                        format!(
+                                            "[E_CONST_FN_NON_CONST_ARG] call to \
+                                             const fn `{}` has non-constexpr \
+                                             argument — all args must be literals, \
+                                             arithmetic on literals, references to \
+                                             top-level const, or other const fn \
+                                             calls with constexpr args (D199).",
+                                            name
+                                        ),
+                                        e.span,
+                                    ));
+                                }
+                            }
                             _ => {
                                 return Err(Diagnostic::new(
                                     "[E_CONST_FN_NON_CONST_ARG] only positional \

@@ -1,0 +1,7 @@
+// Plan 114.4.2 T3-NEG.8: generic в const fn → E_CONST_FN_GENERIC.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_GENERIC
+
+module plan114_4_2.body_generic_neg
+
+fn[T] cast_id(const x int) -> const int => x
