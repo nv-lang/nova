@@ -76,10 +76,12 @@ export fn WriteBuffer mut @write_byte(v u8) -> @ { @buf.push(v); @ }
 export fn WriteBuffer mut @write_bytes(src []u8) -> @ { @buf.append(src); @ }
 
 // Append n нулевых байт. n <= 0 → no-op.
+// Plan 90 followup `[]T.append_zero(n)` — bulk memset extension; O(1)
+// growth amortized + single memset(0) для всего сегмента (vs наивный
+// push-loop с amortized realloc'ами).
 export fn WriteBuffer mut @write_zero(n int) -> @ {
     if n <= 0 { return @ }
-    @buf.reserve(n)
-    for _ in 0..n { @buf.push(0) }
+    @buf.append_zero(n)
     @
 }
 
