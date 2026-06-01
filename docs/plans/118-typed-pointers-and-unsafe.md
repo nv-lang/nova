@@ -2235,7 +2235,125 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ---
 
-## Status — progress checkpoint (2026-06-01, evening 2 — Session 2 final)
+## Status — Session 2 closure summary (2026-06-01)
+
+### Session 2 final summary
+
+**Total accomplishments — 17 worktree commits + 2 nova-private commits.**
+
+**Phases progressed:**
+- Ф.0 GATE ✅ — design freeze + D-block drafts + audit + logs
+- Ф.1 ✅ partial — parser + checker + codegen scaffold (Ту::TypedPtr proper)
+- Ф.2 ✅ scaffold — `&value` + `*expr` unary ops
+- Ф.3 ✅ scaffold — KwUnsafe + `unsafe { }` block + `#unsafe` fn attribute
+- Ф.4 ✅ partial — auto-deref permissive в f3_check_member
+- Ф.5 ✅ partial — Option[*T] type parses
+- Ф.6 ✅ partial — `*fn(...)` type parses
+
+**Test status: 9/0 plan118 fixtures PASS** through release test-build (clang
+toolchain, libuv enabled, GC linkage через main repo vcpkg_installed).
+
+**Regression smoke verified clean:**
+| Plan | PASS/FAIL |
+|---|---|
+| plan118 | 9/0 (new) |
+| plan115 | 11/0 (D214 backward compat) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| syntax | 53/1 (1 pre-existing unrelated) |
+
+**TOTAL VERIFIED: 115/1 PASS** (1 pre-existing for_in_range_iter unrelated).
+
+### Session 2 commits на plan-118 branch (worktree D:/Sources/nv-lang/nova-p118)
+
+1. `e642fc86d1e` — Production-grade revision + decompose в Plan 118 family
+   (core + 118.1/118.2/118.3 sub-plans)
+2. `12c746202a2` — Ф.0 GATE: D216/D2/D214/D32 amend drafts + audit + logs
+3. `c75d7be3791` — Ф.1.1-1.4: AST PointerModifier + TypeRef::Pointer +
+   parser *T production + 17 exhaustive-match sites updated
+4. `fd1482292ba` — status checkpoint (morning)
+5. `5069e76a983` — Ф.1.5: Ty::TypedPtr proper variant
+6. `0c420b727fd` — Ф.1.9: T1 positive fixtures (4 PASS)
+7. `f9e2a7a9a89` — Ф.2 scaffold: &value + *expr unary operators
+8. `09be551b945` — Ф.3 scaffold: KwUnsafe keyword + unsafe block syntax
+9. `25b39646639` — Ф.3 integration test
+10. `9509ba0e219` — status checkpoint (mid-session)
+11. `8127e3303a1` — Ф.6 partial: *fn(...) function pointer type
+12. `f9818d47537` — Session 2 logs update (simplifications + project-creation)
+13. `3e4f66929e0` — Ф.5 partial: Option[*T] type parses
+14. `3a4074423ad` — Ф.3.2: #unsafe attribute on fn declarations
+15. `5a3a49fc54a` — Session 2 final checkpoint (intermediate)
+16. `36e70ab3d00` — Ф.4 partial: permissive auto-deref check для *T
+17. (this commit) — Session 2 closure summary
+
+Plus nova-private separate repo:
+- `2a1c425cc4` — Session 1 initial design discussion
+- `fb7e169e8b` — Session 2 design progression + lessons
+
+### Worktree state
+
+- **Папка:** `D:/Sources/nv-lang/nova-p118` (sibling of main)
+- **Branch:** `plan-118` (от main `67625d285e6`)
+- **NOT merged в main** (review required per design)
+- **17 commits** total в worktree
+
+### Realistic remaining work (Session 3+ — ~5-7 dev-days)
+
+**High priority (closes concrete deliverables):**
+- **Ф.5 full NPO codegen** (~1 day) — closes `[M-115-null-ptr-to-option-after-npo]`.
+  register_novaopt_decl detects pointer/typedptr-wrapped Option, emits
+  `typedef T* NovaOpt_X;` instead of tagged struct; pattern match
+  NULL-check; Some(p)/None construction.
+- **Ф.4 full auto-deref** (~1 day) — codegen emit_member must use `->`
+  для pointer base types; method dispatch resolves on pointee; field
+  assignment for *mut T enforced.
+- **Ф.3.3-3.5 unsafe context enforcement** (~1 day) — introduce
+  ExprKind::Unsafe(Block) variant (or Block.is_unsafe field via
+  bulk-edit 24 construction sites); type-checker unsafe-context stack;
+  emit `E_UNSAFE_REQUIRED` для pointer ops outside unsafe;
+  `E_UNSAFE_CALL_REQUIRES_WRAP` для `#unsafe` fn calls.
+
+**Medium priority:**
+- **Ф.6 full** (~½-1 day) — *fn cast checks (E_CLOSURE_HAS_ENV),
+  callback no-throw (E_CALLBACK_THROWS_OVER_C_ABI), external fn
+  no-Fail (E_EXTERNAL_FN_FAIL_EFFECT), proper `Ret (*name)(Args)`
+  C emission, FFI roundtrip test.
+- **Ф.7** (~½ day) — W_UNSAFE_GC_TRIGGER warnings, Debug fmt
+  `.to_debug_str()`, `"${p}"` interpolation diagnostic.
+
+**Lower priority (Ф.8-Ф.9):**
+- **Ф.8** (~1 day) — cross-platform CI matrix (5+ combos), ABI snapshot
+  tests, performance benchmarks (escape promote, NPO size, auto-deref
+  zero-cost, arith unit-scaling).
+- **Ф.9** (~½-1 day) — spec promote D216/D2/D214/D32, ffi-cookbook
+  migration, examples/typed_pointers/, closure logs + memory file.
+
+**Independent post-core:**
+- Plan 118.1 (FFI intrinsics: volatile/copy/read/write + addr_of +
+  cstr"...") — ~3-4 day
+- Plan 118.2 (slice fat-pointer `*[T]` + MaybeUninit + ManuallyDrop)
+  — ~3-4 day
+- Plan 118.3 (cross-fiber pointer + AtomicPtr[T]) — ~2-3 day
+
+### Locked design decisions (preserved для future sessions)
+
+- GC pin model: honor-system + W_UNSAFE_GC_TRIGGER warning (Ф.7)
+- Decomposition: Plan 118 family staged (core gates 118.1/118.2/118.3)
+- Slice → Plan 118.2
+- `&acc` syntax (NOT `*acc` — deref ambiguity major risk)
+- Callback no-throw across C ABI (E_CALLBACK_THROWS_OVER_C_ABI)
+- External fn no-Fail (E_EXTERNAL_FN_FAIL_EFFECT)
+- Tuple newtype `type Handle(*T)` canonical для FFI handles
+- Method auto-deref `p.method()` ALLOW one-level в unsafe
+- Field assignment `p.field = v` ALLOW для `*mut T` в unsafe
+- Pointer Debug fmt `.to_debug_str()` explicit (NOT Display)
+
+---
+
+## Status — progress checkpoint (2026-06-01, evening 2 — Session 2 intermediate)
 
 ### Session 2 final additions (autonomous continuation)
 
