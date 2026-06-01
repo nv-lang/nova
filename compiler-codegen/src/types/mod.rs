@@ -2975,6 +2975,16 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         let Some(obj_tr) = self.infer_expr_type(obj, scope) else { return; };
+        // Plan 118 D216 §5: auto-deref one level для typed pointer `*T` —
+        // permissive в type-checker (skip f3 not-found error so codegen может
+        // attempt arrow `p->field`). Full proper auto-deref resolution
+        // с codegen integration (emit `p->field` C consistently для both
+        // record and primitive pointee) — Ф.4 followup work. V1: skip check
+        // для pointer types — permissive (codegen may produce CC-FAIL if
+        // arrow codegen path не handles *T properly yet).
+        if matches!(obj_tr, TypeRef::Pointer(_, _, _)) {
+            return; // permissive — defer to codegen + Ф.4 full integration
+        }
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         let Some(td) = self.types.get(tname) else { return; };
