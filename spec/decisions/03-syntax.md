@@ -7152,6 +7152,54 @@ V2 значительно расширяет const fn surface, закрывая 
   HOF pass fails at link-time с unfriendly error (followup
   `[M-114.4.3-friendly-hof-error]`).
 
+### V3 extensions (Plan 114.4.4, 2026-06-01)
+
+V3 расширяет const fn surface с usability + control flow:
+
+**Ф.1 (`#fn_eval_max_depth(N)` attribute):**
+- Per-fn override recursion depth limit (default 256, range 1..=65535).
+- Useful for deep recursion (e.g. factorial с big-int) — caveat: actual
+  call stack still bounded by Rust thread stack.
+
+**Ф.2 (friendly UX errors):**
+- `ro f = const_fn` runtime binding → `E_CONST_FN_FIRST_CLASS` с
+  actionable suggestions (alias OR lambda wrap).
+- `map(arr, const_fn)` runtime HOF → `E_CONST_FN_FIRST_CLASS_RUNTIME_HOF`
+  с suggestion `|args| const_fn(args)`.
+- Walker validate_const_fn_runtime_uses runs after rewriter.
+
+**Ф.3 (loops в body):**
+- `for x in 0..n { body }` allowed — literal Range iter only V3.0
+  (followup `[M-114.4.4-for-iter-array]` для array iter).
+- `while cond { body }` allowed.
+- `loop { body }` allowed (must `break` to exit).
+- `break`/`continue` working — propagate through nested if/blocks.
+- `mut` let bindings allowed (для accumulator pattern).
+- `assignment` allowed.
+- `MAX_LOOP_ITERATIONS = 10_000` — anti-infinite-loop guard. New error
+  `E_CONST_FN_EVAL_ITERATIONS_EXCEEDED`.
+
+**Extracted V3 followups (Plan 114.4.4.1-5):**
+- Plan 114.4.4.1 — record/sum patterns в match (V2.1; ConstValue
+  extension needed).
+- Plan 114.4.4.2 — t-reflection (sizeof[T]/align_of[T]; type layout
+  integration).
+- Plan 114.4.4.3 — runtime HOF (trampoline ABI design).
+- Plan 114.4.4.4 — closure-returning const fn.
+- Plan 114.4.4.5 — true per-const-arg monomorphization.
+
+### V3 acceptance — A27-A30 (landed)
+
+| # | Критерий | Verification |
+|---|---|---|
+| A27 | `#fn_eval_max_depth(N)` override работает | T4.4 Ф.1 fixtures |
+| A28 | Runtime-let `ro f = const_fn` → friendly error | Ф.2 negatives |
+| A29 | HOF passing → friendly error | Ф.2 negatives |
+| A30 | Loops + mut/assign/break/continue работают | Ф.3 fixtures |
+
+A31-A35 (record-pattern / t-reflection / runtime-hof / closures /
+mono-specialization) → extracted plans 114.4.4.1-5.
+
 ### V2 acceptance — A19-A26
 
 | # | Критерий | Verification |
