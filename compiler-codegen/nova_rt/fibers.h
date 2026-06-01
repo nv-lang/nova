@@ -338,6 +338,22 @@ typedef struct {
      *
      * 0 = unlocked, 1 = locked. CAS 0→1 to acquire, store 0 to release. */
     nova_atomic_int slot_lock;
+
+    /* Plan 83.11 §12.31: outstanding CANCEL_SCOPE jobs that reference this
+     * scope, held by the driver thread. NovaFiberQueue is stack-allocated by
+     * codegen (one per `supervised { ... }` block). If main returns from
+     * nova_supervised_run_impl while the driver still holds a CANCEL_SCOPE
+     * job that points here, the scope memory is reused (next stack frame)
+     * and the driver's deref reads garbage → SEGV (see §12.30 cdb / §12.31
+     * VEH localization: crash in `_nova_driver_handle_cancel_scope` at the
+     * CAS `&st->stage` where `st = scope->armed_sleeps_head` is now wild).
+     *
+     * Lifetime contract: incremented (ACQ_REL) before nova_driver_submit_job
+     * in `_nova_cancel_via_driver`; decremented (RELEASE) at the end of
+     * `_nova_driver_handle_cancel_scope`. nova_supervised_run_impl spins
+     * on this counter == 0 before returning, so the stack frame stays alive
+     * until the driver has finished dereferencing scope fields. */
+    nova_atomic_int pending_driver_jobs;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -498,6 +514,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->ctx_pins_cap    = 0;
     q->armed_sleeps_head = NULL;  /* Plan 83.11 Ф.3 */
     nova_aint_init(&q->slot_lock, 0);  /* Plan 83.11 Ф.3.B: slot alloc spinlock */
+    nova_aint_init(&q->pending_driver_jobs, 0);  /* Plan 83.11 §12.31 */
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -1784,6 +1801,19 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* qq);
         nova_runtime_set_watchdog_scope(NULL);
     }
+    /* Plan 83.11 §12.31: wait for driver to finish processing any in-flight
+     * CANCEL_SCOPE jobs that hold a pointer to this scope. NovaFiberQueue is
+     * stack-allocated by codegen; if we return now while the driver still has
+     * a job referencing q, the next stack frame reuses the memory and the
+     * driver's deref reads garbage → SEGV in `_nova_driver_handle_cancel_scope`.
+     * See §12.31 for VEH-localized crash analysis. ACQUIRE load synchronizes
+     * with the driver's RELEASE decrement at end of handle_cancel_scope. */
+    while (nova_aint_load(&q->pending_driver_jobs) > 0) {
+        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+        if (nova_aint_load(&q->pending_driver_jobs) > 0) {
+            uv_sleep(1);  /* yield ~1ms; driver thread is independent of our loop */
+        }
+    }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
     nova_sched_drop_state(q);
     /* Plan 44.5 Layer 5: prefer cross-worker first_error_atomic (set
@@ -2423,7 +2453,13 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
 }
 
 /* Plan 83.11 Ф.3: tok.cancel() submits CANCEL_SCOPE job to driver.
- * Called from nova_cancel_token_cancel_reason after legacy cancel paths. */
+ * Called from nova_cancel_token_cancel_reason after legacy cancel paths.
+ *
+ * Plan 83.11 §12.31: increment scope->pending_driver_jobs BEFORE submit so the
+ * scope's stack frame is kept alive (via nova_supervised_run_impl spin-wait)
+ * until the driver finishes dereferencing scope fields. ACQ_REL ordering on
+ * the inc makes the increment observable before any thread sees the job in
+ * the driver's queue (submit happens-after inc on this thread). */
 static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
     if (!nova_driver_is_started()) return;
     if (!scope) return;
@@ -2435,8 +2471,13 @@ static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
     }
     job->kind = NOVA_DRV_JOB_CANCEL_SCOPE;
     job->u.cancel_scope.scope = scope;
+
+    nova_aint_inc(&scope->pending_driver_jobs);
     if (nova_driver_submit_job(job) != 0) {
         free(job);
+        /* Submit failed → roll back the increment so main doesn't wait
+         * for a job that will never be processed. */
+        (void)__atomic_fetch_sub(&scope->pending_driver_jobs, 1, __ATOMIC_ACQ_REL);
     }
 }
 
