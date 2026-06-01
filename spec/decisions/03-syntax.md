@@ -7100,6 +7100,73 @@ Errors на evaluator-side:
   `annotate_map_literals` / `desugar_module`. Single pass через
   module → fail-fast на первой error.
 
+### V2 extensions (Plan 114.4.3, 2026-06-01)
+
+V2 значительно расширяет const fn surface, закрывая 5 followup markers
+из Plan 114.4.2 followup chain.
+
+**Ф.1 — control flow в body:**
+- `if`/`else`/`else if` expressions allowed; cond + branches validated.
+- `match` expressions allowed; arms with literal patterns + wildcard +
+  ident-bind + Or-alternation (V2.0 subset; record/sum patterns →
+  followup `[M-114.4.3-pattern-record-sum]`).
+- `for`/`while`/`loop`/`if let` остаются rejected V2.0 (followup
+  `[M-114.4.3-loops]`); workaround: use recursion.
+- New errors: `E_CONST_FN_MATCH_EXHAUSTIVE` (uncovered scrutinee
+  value), `E_CONST_FN_PATTERN_NOT_SUPPORTED`.
+
+**Ф.2 — recursion:**
+- Direct AND mutual recursion allowed.
+- Evaluator depth limit: 256 (V1: 64). Reaching → new error
+  `E_CONST_FN_EVAL_DEPTH_EXCEEDED`.
+- Memoization (V1) provides O(n) Fibonacci behavior.
+- V1 cycle detection retained but downgraded to informational (no error).
+
+**Ф.3 — mixed-args:**
+- Allow ANY mix const/runtime params + const/runtime return.
+- New fn classification:
+  * **Fully-const fn**: all params const + const return. V1 behavior —
+    evaluator inlines + dropped из codegen.
+  * **Mixed fn**: any const surface, не fully-const. Stays в codegen
+    как обычная runtime fn; const params validated at call-sites
+    (must receive constexpr literal).
+- Effect-list reject relaxed: fully-const only (mixed fn body может
+  effects).
+- Marker `[M-114.4.2-runtime-return]` покрыт (частный случай:
+  all-const params + runtime return).
+
+**Ф.4 — generic const fn:**
+- `fn[T] foo(const a int) -> const int { ... }` allowed для
+  T-independent body.
+- T reflection (sizeof[T], T.field) rejected V2.0 — followup
+  `[M-114.4.3-t-reflection]` для V3.
+- Per-T monomorphization happens через standard generic pipeline.
+
+**Ф.5 — first-class const fn alias:**
+- `const ALIAS = const_fn_name` allowed.
+- `ALIAS(args)` resolves через alias map в rewriter.
+- Alias-to-alias chains supported (depth-10 iterative pass).
+- Alias `const` decls dropped из codegen (no runtime storage).
+- Out-of-scope V2.0: `ro f = const_fn` runtime binding silent allow
+  (enforcement → followup `[M-114.4.3-runtime-let-enforcement]`);
+  HOF pass fails at link-time с unfriendly error (followup
+  `[M-114.4.3-friendly-hof-error]`).
+
+### V2 acceptance — A19-A26
+
+| # | Критерий | Verification |
+|---|---|---|
+| A19 | `if`/`match` в body парсятся + evaluate + inline literal | T4.1 positives (3 fixtures) |
+| A20 | Loops reject с pointer на V2.1 followup | T4.1 negatives |
+| A21 | Recursion (direct + mutual) с depth-limit + memo | T4.2 (4 fixtures) |
+| A22 | Termination — runtime depth-limit enforcement | T4.2 negative |
+| A23 | Mixed const+runtime params + monomorphization | T4.3 positives |
+| A24 | Mixed signature constraints enforced | T4.3 negative |
+| A25 | Generic const fn (T-independent) + per-T mono | T4.4 |
+| A26 | First-class alias resolution + drop из codegen | T4.5 |
+
+См. Plan 114.4.3 closure для full T4 series listing.
+
 ---
 
 ## D188. `Consumable[E]` protocol + `consume X = expr { body }` scope-block
