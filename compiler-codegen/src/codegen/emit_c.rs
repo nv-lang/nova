@@ -20748,32 +20748,17 @@ _cp++; \
 
         if let Some(ref fn_name) = mono_fn_name_opt {
             if let Some(fn_decl) = self.mono_fn_decls.get(fn_name).cloned() {
-                // Plan 48 V1: skip monomorphization for tuple-returning generics.
-                // _NovaTupleN structs use nova_int fields (type erasure within tuples),
-                // so storing a nova_str field directly doesn't work. Tuples continue
-                // to use the void* erased path in V1.
-                let has_tuple_return = matches!(fn_decl.return_type, Some(crate::ast::TypeRef::Tuple(..)));
-                if has_tuple_return {
-                    // Force erasure fallback for tuple-returning generic fns.
-                    self.register_erased_instance(&fn_decl.clone());
-                    let erased_name = self.free_fn_c_name(fn_name);
-                    let mut arg_strs = Vec::new();
-                    for a in args.iter() {
-                        let arg_ty = self.infer_expr_c_type(a.expr());
-                        let v = self.emit_expr(a.expr())?;
-                        if arg_ty == "nova_str" {
-                            let heap_tmp = self.fresh_tmp();
-                            self.line(&format!("nova_str* {} = (nova_str*)nova_alloc(sizeof(nova_str));", heap_tmp));
-                            self.line(&format!("*{} = {};", heap_tmp, v));
-                            arg_strs.push(format!("(void*)({})", heap_tmp));
-                        } else if arg_ty.ends_with('*') || arg_ty == "void*" {
-                            arg_strs.push(format!("(void*)({})", v));
-                        } else {
-                            arg_strs.push(format!("(void*)(intptr_t)({})", v));
-                        }
-                    }
-                    return Ok(format!("{}({})", erased_name, arg_strs.join(", ")));
-                }
+                // Plan 59.1 (2026-06-01): bailout «skip monomorphization for
+                // tuple-returning generics» удалён. Plan 48 V1 fallback на
+                // legacy `_NovaTupleN` (nova_int placeholders) был актуален
+                // до Plan 59 Ф.7.5, который ввёл mono'd schema
+                // `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>_mono` —
+                // real element types, no int-slot erasure. Schema validated
+                // через Result mono в Plan 59. Tuple-returning generic fns
+                // теперь mono-instantiate'ятся через единый pipeline:
+                // type_ref_to_c(TypeRef::Tuple) + register_mono_tuple
+                // (см. emit_c.rs:4562-4596, 10105, 2786-2807 finalize emit).
+                //
                 // Ф.0: resolve type args
                 match self.resolve_mono_type_args(&fn_decl, &turbofish_type_refs, args) {
                     Ok(type_subst) => {
@@ -26699,11 +26684,13 @@ _cp++; \
                     // from the first matching argument type.
                     if self.generic_fns.contains(name.as_str()) {
                         if let Some(fn_decl) = self.mono_fn_decls.get(name).cloned() {
-                            // Tuple-returning or unresolvable generics use erasure (void* return).
-                            let is_tuple_return = matches!(fn_decl.return_type, Some(crate::ast::TypeRef::Tuple(..)));
-                            if is_tuple_return {
-                                return "void*".into();
-                            }
+                            // Plan 59.1 (2026-06-01): tuple-returning bailout
+                            // (was: return "void*") удалён. Plan 59 Ф.7.5
+                            // mono'd schema валидирована — generic tuple
+                            // return resolves через apply_type_subst_to_ref +
+                            // register_mono_tuple → mangled C-name. Каскадный
+                            // путь с pair-bailout в emit_call (см. там же
+                            // Plan 59.1 comment) — теперь оба consistent.
                             if let Some(ref ret_ty_ref) = fn_decl.return_type {
                                 // Collect subst from arg types
                                 let mut subst: Vec<(String, Option<String>)> = fn_decl.generics.iter()

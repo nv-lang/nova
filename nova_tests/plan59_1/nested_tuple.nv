@@ -1,0 +1,12 @@
+// Plan 59.1 A4 — nested generic tuple: fn[T] nest() -> (T, (T, T)).
+module plan59_1.nested_tuple
+
+fn[T] nest(v T) -> (T, (T, T)) => (v, (v, v))
+
+test "nested int" {
+    ro (a, inner) = nest[int](5)
+    assert(a == 5)
+    ro (b, c) = inner
+    assert(b == 5)
+    assert(c == 5)
+}

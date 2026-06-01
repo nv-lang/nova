@@ -1,0 +1,16 @@
+// Plan 59.1 — positional field access .0 / .1 на mono'd tuple.
+module plan59_1.field_access
+
+fn[T] dup(v T) -> (T, T) => (v, v)
+
+test "field access without destructure" {
+    ro p = dup[int](100)
+    assert(p.0 == 100)
+    assert(p.1 == 100)
+}
+
+test "field access with str" {
+    ro p = dup[str]("ok")
+    assert(p.0 == "ok")
+    assert(p.1 == "ok")
+}
