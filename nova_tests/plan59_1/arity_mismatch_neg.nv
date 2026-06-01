@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR tuple destructure arity mismatch
+//
+// Plan 59.1 — negative: pattern arity != tuple arity. 3 patterns на arity-2
+// tuple. Error от arity check в emit_tuple_destructure (Plan 59 Ф.7.1):
+// «tuple destructure arity mismatch: pattern имеет 3 элементов, scrutinee
+// tuple `_NovaTuple_2_..._mono` — 2 элементов».
+module plan59_1.arity_mismatch_neg
+
+fn[T] dup(v T) -> (T, T) => (v, v)
+
+fn main() -> () {
+    ro (a, b, c) = dup[int](42)
+    ro _ = a + b + c
+}

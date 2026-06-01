@@ -3601,6 +3601,13 @@ Codegen (Plan 56 Ф.1 + Ф.2):
 > **Status:** active (spec, 2026-05-17 EOD+2 — Phase 7 production polish
 > applied). Реализация — [Plan 59](../../docs/plans/59-tuple-monomorphization.md)
 > (6 phases + Phase 7).
+>
+> **Plan 59.1 amend (2026-06-01):** general generic anonymous tuple
+> monomorphization — `fn[T] f() -> (A[T], B[T])` — закрывает gap в
+> Plan 59 Ф.7.5. Schema `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>`
+> (length-prefixed) теперь применяется не только к Result, но к любому
+> generic anonymous tuple в return position. См.
+> [D216](#d216-generic-anonymous-tuple-monomorphization) для full spec.
 
 ### Что
 
@@ -3886,6 +3893,163 @@ characteristics = different syntactic forms **justified**. Plan 120
 - [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) — tuple syntax (amended + named form)
 - [D123](#d123-tuple-monomorphization) — positional tuple codegen (named form extends)
 - [Plan 120](../../docs/plans/120-named-tuples-and-allocation-contract.md) — реализация
+
+---
+
+## D216. Generic anonymous tuple monomorphization
+
+> **Status:** active (spec, 2026-06-01). Реализация — [Plan 59.1](../../docs/plans/59.1-generic-anon-tuple-mono.md).
+> Extends [D123](#d123-tuple-monomorphization) с generic-aware substitution path.
+> Closes gap в Plan 59 Ф.7.5 (Result mono landed; general generic anonymous
+> tuple оставался под V1 erasure fallback до 2026-06-01).
+
+### Что
+
+Generic anonymous tuple в return position функции с type-параметрами —
+`fn[T] f() -> (A[T], B[T])` или `fn[T, U] g() -> (T, U)` — мономорфизируется
+per instantiation. Element types конкретизируются через
+`current_type_subst`, получают C-name через `type_ref_to_c`, регистрируются
+через `register_mono_tuple`, и emit'ятся как unique typedef'ы per element
+combination.
+
+```nova
+fn[T] dup(v T) -> (T, T) => (v, v)
+
+test {
+    ro (a, b) = dup[int](42)           // → _NovaTuple_2_8_nova_int_8_nova_int
+    ro (s, t) = dup[str]("hi")          // → _NovaTuple_2_8_nova_str_8_nova_str
+    // Два разных typedef'а в одной compilation unit, каждый с real types.
+}
+
+fn[T, U] pair(a T, b U) -> (T, U) => (a, b)
+ro (i, s) = pair[int, str](7, "x")      // → _NovaTuple_2_8_nova_int_8_nova_str
+```
+
+### Правило
+
+#### Mangling schema
+
+Length-prefixed mangling: `_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>...`
+
+- `<arity>` — количество элементов
+- `<Li>` — длина sanitized C-name i-го элемента
+- `<Ti>` — sanitized C-name (точки/звёздочки заменены на `_`,
+  pointer suffix retained как `_p`)
+
+Примеры:
+- `(int, int)` → `_NovaTuple_2_8_nova_int_8_nova_int`
+- `(str, bool)` → `_NovaTuple_2_8_nova_str_9_nova_bool`
+- `(ChanWriter[T], ChanReader[T])` после mono[T=int] →
+  `_NovaTuple_2_18_Nova_ChanWriter_p_18_Nova_ChanReader_p`
+
+**Length prefix обязателен** — без него parsing неоднозначен для nested
+tuples (tuple of tuples) и user types с underscores в имени.
+
+#### Per-instantiation deduplication
+
+`mono_tuple_instances` (HashSet) хранит set element-type vectors.
+`register_mono_tuple([elem1, elem2, ...])` идемпотентен — повторные
+вызовы с same elements не emit'ят дубликаты typedef'а.
+
+#### Finalize emit (typedef ordering)
+
+В module finalize все registered tuples emit'ятся с topological sort'ом
+(внутренний tuple раньше outer'а):
+- Tuple A depends on tuple B если B's mangled name появляется как element
+  type в A → emit B first.
+- Cycle detection: impossible для value-tuple struct'ов; если обнаружен —
+  emit anyway без depth-check (no hang).
+
+#### Codegen в emit_call
+
+1. Call-site `f[T1, T2, ...](args)` lookups `mono_fn_decls[f.name]`.
+2. `resolve_mono_type_args` строит type_subst из turbofish + arg-inference.
+3. `compute_mono_name(base, subst)` → unique mono fn name.
+4. `register_mono_instance` enqueue в worklist.
+5. Args emit без erasure boxing (concrete types).
+6. Variable type at call site = mono'd tuple via `type_ref_to_c(return_type)`
+   с активным `current_type_subst`.
+
+#### Body emission (emit_monomorphized_fn)
+
+`current_type_subst` устанавливается перед body emit; `type_ref_to_c(TypeRef::Tuple)`
+возвращает mono'd name; tuple-литералы emit'ятся как value-struct
+compound literals (no heap-box).
+
+#### Destructure
+
+`emit_tuple_destructure` использует actual mono'd return type для temp
+variable (получает через `infer_expr_c_type`). Element types парсятся
+через `parse_mono_tuple_elements` (length-prefixed inverse). Arity
+mismatch → Nova-level diagnostic с pattern/scrutinee arity (Plan 59 Ф.7.1).
+
+#### Value semantics, no heap-box
+
+Mono'd tuple — **value type** (C struct), passed by value, returned by
+value. No heap allocation для anonymous tuple wrapper'а (Result mono Ф.7.5
+parity). Element pointers (если elements — pointer types) остаются
+heap-allocated независимо.
+
+### Edge cases (covered V1)
+
+- ✅ **Multi-instantiation:** same fn → разные T → unique typedef'ы per
+  instantiation.
+- ✅ **Multi-param tuple:** `fn[T, U] pair(a T, b U) -> (T, U)`.
+- ✅ **Nested generic tuple:** `fn[T] nest() -> (T, (T, T))` — recursive
+  subst через `register_tuples_in_typeref`.
+- ✅ **Tuple-in-Option:** `fn[T] f() -> Option[(T, T)]` — Option mono +
+  inner tuple mono.
+- ✅ **Tuple-in-Result:** уже работает (Plan 59 Ф.7.5).
+- ✅ **Non-generic tuple:** `fn make() -> (int, str)` — без T,
+  substitution тривиален, мономорфизация single instance.
+- ✅ **Arity 3+:** `fn[T] triple() -> (T, T, T)` — generic mangling
+  параметризован по arity.
+- ✅ **Positional field access:** `pair.0` / `pair.1` после mono.
+
+### Edge cases (V1 limitations — followups)
+
+- 🟡 **`[M-59.1-array-of-mono-tuple]`:** `fn[T] f() -> []((T, T))` —
+  array-of-mono-tuple. Body falls back на `NovaArray_nova_int*` (boxed
+  pointer storage, как records/sums в bootstrap), call-site infer
+  выдаёт `NovaArray_<mono_tuple>*` (typedef которого не существует).
+  Mismatch → CC-FAIL. Fix: align infer с body fallback ИЛИ packed
+  `NovaArray_<mono_tuple>` typedef + element retrieval cast. Низкий
+  приоритет — workaround через explicit Nova_<Pair> record type.
+
+- 🟡 **`[M-59.1-tuple-field-oob-nova-diag]`:** `pair.5` на arity-2 tuple
+  leaks к C-level error «no member named 'f5'». Should be Nova-level
+  diagnostic в type-checker. Cosmetic — error caught, но not optimal UX.
+
+- 🟡 **`[M-59.1-channel-new-cleanup]`:** Channel.new продолжает использовать
+  3 ad-hoc special-case branches в emit_c.rs:18435/20159/22694 +
+  Nova_ChannelPair runtime struct. После Plan 59.1 generic mono path
+  **способен** обработать Channel.new если добавить Nova-side declaration
+  `fn[T] Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T])` через
+  external fn (Plan 115 Pattern B). Cleanup deferred to отдельный план
+  (runtime + std API surgery). Spec D91 signature остаётся
+  буквальной реальностью после cleanup'а; до того — implementation
+  detail, aspirational notation.
+
+### Backward compatibility
+
+- Все existing non-generic anonymous tuple usages (`(int, str)` returns,
+  destructures) — продолжают работать unchanged. Plan 59 Ф.7.5 mono'd
+  path был активен только для Result; теперь активен для всех anonymous
+  tuples.
+- Plan 59 Ф.7 legacy `_NovaTuple<arity>` schema (без underscore — nova_int
+  placeholders) технически остаётся как fallback в `type_ref_to_c` для
+  cases где type_subst не доступен (degenerate case — non-generic context
+  с unresolved tuple). На практике не наблюдается после fix.
+
+### Cross-refs
+
+- [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) — anonymous tuple type syntax.
+- [D123](#d123-tuple-monomorphization) — positional tuple codegen baseline (Plan 59 Ф.7.5).
+- [D215](#d215-named-tuple-fields--valuereference-allocation-contract) — named tuple types (Plan 120 D215, ortho к D216).
+- [D91](06-concurrency.md#d91-channel-revision--capability-split-на-chanwriter--chanreader) — Channel.new signature now буквально implementable; cleanup ad-hoc paths — [M-59.1-channel-new-cleanup].
+- [D141](08-runtime.md#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) — bulk slice-операции (orthogonal к tuple mono).
+- [Plan 59.1](../../docs/plans/59.1-generic-anon-tuple-mono.md) — implementation plan.
+- [Plan 59 Ф.7.5](../../docs/plans/59-tuple-monomorphization.md) — Result mono prior art.
 
 ---
 
