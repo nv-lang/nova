@@ -310,10 +310,13 @@ guard ensures single definition).
 
 ## Followups
 
-| Marker | What |
-|---|---|
-| `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access |
-| `[M-115-ffi-build-pipeline]` | `nova build --c-shim path/to/file.c` user-shim link CLI |
-| `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings |
-| `[M-115-d126-deprecation]` | `external type X` D126 migration audit |
-| `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns (V2) |
+| Marker | What | Status |
+|---|---|---|
+| `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
+| `[M-115-ffi-build-pipeline]` | `nova build --c-shim path/to/file.c` user-shim link CLI | 🟡 deferred (V1 shims live в `nova_rt/`) |
+| `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
+| `[M-115-d126-deprecation]` | `external type X` D126 migration audit | 🟡 deferred (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract) |
+| `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
+| `[M-115-external-fn-method]` | receiver-method external fn | 🟢 CLOSED as not needed (free fn + Nova-side wrapper sufficient) |
+| `[M-115-examples-ffi-real-build]` | real libsqlite3 link через vcpkg | 🟡 deferred (V1 ships embedded mini-sqlite-equivalent в `nova_rt/sqlite_mini_ffi.h` — proves end-to-end FFI mechanism без external dependency; real link → CI step) |
+| `[M-115-null-ptr-to-option-after-npo]` | hard-retract `null ptr` после Plan 118 Option[*T] NPO | 🔴 plan ready, gated на Plan 118 V2 |

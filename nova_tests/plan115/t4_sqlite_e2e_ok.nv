@@ -1,0 +1,118 @@
+// Plan 115 Ф.3 / A7 — end-to-end FFI sample.
+//
+// Exercises the full FFI pipeline against `nova_rt/sqlite_mini_ffi.h`
+// (embedded mini-sqlite-equivalent — in-memory key-value store с sqlite-
+// compatible API). Доказывает что Plan 115 D214 mechanism работает
+// end-to-end: typed handles + tuple-by-value returns + consume close().
+//
+// Real libsqlite3 link — followup `[M-115-examples-ffi-real-build]`:
+// CI step с vcpkg sqlite3 install + replace `sqlite_mini_ffi.h` →
+// `sqlite3_ffi.h` per docs/ffi-cookbook.md §«Example 1».
+
+module nova_tests.plan115.t4_sqlite_e2e_ok
+
+// ─── Typed handles via D52 tuple newtype (Plan 115 D214) ──────────
+type Db(ptr)
+type Stmt(ptr)
+
+// SQLite-compatible return codes (subset).
+const SQLITE_OK   int = 0
+const SQLITE_ROW  int = 100
+const SQLITE_DONE int = 101
+
+// ─── External fn declarations ────────────────────────────────────
+external fn mini_sqlite_open(path str) -> (ptr, int)
+external fn mini_sqlite_exec(db ptr, sql str) -> int
+external fn mini_sqlite_prepare(db ptr, sql str) -> (ptr, int)
+external fn mini_sqlite_step(stmt ptr) -> int
+external fn mini_sqlite_column_int(stmt ptr, col int) -> int
+external fn mini_sqlite_finalize(stmt ptr) -> int
+external fn mini_sqlite_close(db ptr) -> int
+
+// ─── Tests ────────────────────────────────────────────────────────
+
+test "open + close round-trip" {
+    ro (raw_db, rc) = mini_sqlite_open(":memory:")
+    assert(rc == SQLITE_OK)
+    ro db = Db(raw_db)
+    assert(db.0 == raw_db)
+    ro close_rc = mini_sqlite_close(db.0)
+    assert(close_rc == SQLITE_OK)
+}
+
+test "exec INSERT + COUNT via prepare/step" {
+    ro (raw_db, open_rc) = mini_sqlite_open(":memory:")
+    assert(open_rc == SQLITE_OK)
+    ro db = Db(raw_db)
+
+    // Insert 3 rows.
+    ro r1 = mini_sqlite_exec(db.0, "INSERT alpha=10")
+    assert(r1 == SQLITE_OK)
+    ro r2 = mini_sqlite_exec(db.0, "INSERT beta=20")
+    assert(r2 == SQLITE_OK)
+    ro r3 = mini_sqlite_exec(db.0, "INSERT gamma=30")
+    assert(r3 == SQLITE_OK)
+
+    // Prepare + step → count rows + accumulate values.
+    ro (raw_stmt, prep_rc) = mini_sqlite_prepare(db.0, "SELECT")
+    assert(prep_rc == SQLITE_OK)
+    ro stmt = Stmt(raw_stmt)
+
+    mut count = 0
+    mut total = 0
+    mut step_rc = mini_sqlite_step(stmt.0)
+    while step_rc == SQLITE_ROW {
+        ro v = mini_sqlite_column_int(stmt.0, 0)
+        count = count + 1
+        total = total + v
+        step_rc = mini_sqlite_step(stmt.0)
+    }
+    assert(step_rc == SQLITE_DONE)
+    assert(count == 3)
+    assert(total == 60)  // 10+20+30
+
+    mini_sqlite_finalize(stmt.0)
+    mini_sqlite_close(db.0)
+}
+
+test "DELETE removes row" {
+    ro (raw_db, open_rc) = mini_sqlite_open(":memory:")
+    assert(open_rc == SQLITE_OK)
+    ro db = Db(raw_db)
+
+    mini_sqlite_exec(db.0, "INSERT foo=42")
+    mini_sqlite_exec(db.0, "INSERT bar=99")
+    mini_sqlite_exec(db.0, "DELETE foo")
+
+    ro (raw_stmt, _) = mini_sqlite_prepare(db.0, "SELECT")
+    ro stmt = Stmt(raw_stmt)
+
+    mut count = 0
+    mut step_rc = mini_sqlite_step(stmt.0)
+    while step_rc == SQLITE_ROW {
+        count = count + 1
+        step_rc = mini_sqlite_step(stmt.0)
+    }
+    assert(count == 1)  // only bar=99 remains
+
+    mini_sqlite_finalize(stmt.0)
+    mini_sqlite_close(db.0)
+}
+
+test "distinct handle types — Db vs Stmt nominally distinct" {
+    ro (raw_db, _) = mini_sqlite_open(":memory:")
+    ro db = Db(raw_db)
+    ro (raw_stmt, _) = mini_sqlite_prepare(db.0, "SELECT")
+    ro stmt = Stmt(raw_stmt)
+
+    // db.0 and stmt.0 — both ptr at C ABI level, но Db ≠ Stmt в Nova
+    // (compile-time enforced via D52 tuple newtype). Демонстрируется
+    // через successful unwrap (`.0` extracts inner ptr) — passing
+    // wrong handle к fn(Db) или fn(Stmt) → E7301 (см.
+    // t3_handle_type_mismatch_neg.nv).
+    assert(db.0 != null ptr)
+    assert(stmt.0 != null ptr)
+
+    mini_sqlite_finalize(stmt.0)
+    mini_sqlite_close(db.0)
+}

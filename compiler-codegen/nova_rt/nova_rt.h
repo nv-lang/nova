@@ -485,4 +485,12 @@ typedef struct { char _dummy; } nova_unit;
  * `[M-115-ffi-build-pipeline]`. */
 #include "plan115_ffi_test.h"
 
+/* Plan 115 D214 Ф.3 / A7: embedded mini-sqlite-equivalent для end-to-end
+ * FFI sample. In-memory key-value store с sqlite-like API.
+ * Plan 115 V1 — без external libsqlite3 dependency (followup
+ * `[M-115-examples-ffi-real-build]` добавит real libsqlite3 link через
+ * vcpkg integration). Используется в `nova_tests/plan115/t4_sqlite_*`
+ * фикстурах + `examples/ffi/sqlite_mini.nv`. */
+#include "sqlite_mini_ffi.h"
+
 #endif /* NOVA_RT_H */
