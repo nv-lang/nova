@@ -1,0 +1,21 @@
+// Plan 114.4.4 Ф.3 positive: break + continue в const fn body.
+
+module plan114_4_4.loop_break_continue_ok
+
+fn first_multiple_of_3(const limit int) -> const int {
+    mut result = -1
+    for i in 1..limit {
+        if i % 3 != 0 {
+            continue
+        }
+        result = i
+        break
+    }
+    result
+}
+
+test "break + continue" {
+    const F = first_multiple_of_3(10)
+    // first multiple of 3 in 1..10 = 3
+    assert(F == 3)
+}

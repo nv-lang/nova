@@ -978,6 +978,20 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     errors
 }
 
+/// Plan 114.4.4 Ф.3 V3: control flow в const fn body — block execution
+/// result. Value(v) — normal completion; Break/Continue — loop control;
+/// Unit — block ended без produced value.
+enum BlockFlow {
+    Value(ConstValue),
+    Break,
+    Continue,
+    Unit,
+}
+
+/// Plan 114.4.4 Ф.3 V3: loop iteration limit (anti-infinite-loop guard).
+/// Configurable через `#fn_eval_max_iterations(N)` per fn (V4 followup).
+const MAX_LOOP_ITERATIONS: usize = 10_000;
+
 /// Self-owning evaluator wrapper — holds `Vec<FnDecl>` cloned from the
 /// module, then exposes `&FnDecl` borrows internally. Avoids the
 /// borrow-checker conflict of holding `&FnDecl` from `module.items`
@@ -1101,17 +1115,108 @@ impl OwnedEvaluator {
         depth: usize,
     ) -> Result<ConstValue, Diagnostic> {
         let mut env = env.clone();
+        match self.exec_block_seq(block, &mut env, current_fn, depth)? {
+            BlockFlow::Value(v) => Ok(v),
+            BlockFlow::Break | BlockFlow::Continue => Err(Diagnostic::new(
+                "[E_CONST_FN_CONTROL_FLOW] break/continue outside loop (D199 V3).".to_string(),
+                block.span,
+            )),
+            BlockFlow::Unit => Err(Diagnostic::new(
+                "[E_CONST_FN_EVAL_PANIC] const fn body produced no value (D199).".to_string(),
+                block.span,
+            )),
+        }
+    }
+
+    /// Plan 114.4.4 Ф.3 V3: execute block stmts с поддержкой
+    /// mut let / assign / break / continue. Returns BlockFlow.
+    fn exec_block_seq(
+        &mut self,
+        block: &Block,
+        env: &mut HashMap<String, ConstValue>,
+        current_fn: &str,
+        depth: usize,
+    ) -> Result<BlockFlow, Diagnostic> {
         for st in &block.stmts {
             match st {
                 Stmt::Const(cd) => {
-                    let v = self.eval_expr(&cd.value, &env, current_fn, depth)?;
+                    let v = self.eval_expr(&cd.value, env, current_fn, depth)?;
                     env.insert(cd.name.clone(), v);
                 }
+                Stmt::Let(ld) => {
+                    let v = self.eval_expr(&ld.value, env, current_fn, depth)?;
+                    if let crate::ast::Pattern::Ident { name, .. } = &ld.pattern {
+                        env.insert(name.clone(), v);
+                    }
+                }
+                Stmt::Assign { target, value, .. } => {
+                    let v = self.eval_expr(value, env, current_fn, depth)?;
+                    if let ExprKind::Ident(name) = &target.kind {
+                        env.insert(name.clone(), v);
+                    } else {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] non-ident assign target в const \
+                             fn body (D199 V3).".to_string(),
+                            target.span,
+                        ));
+                    }
+                }
+                Stmt::Break(_) => return Ok(BlockFlow::Break),
+                Stmt::Continue(_) => return Ok(BlockFlow::Continue),
                 Stmt::Expr(e) => {
-                    return self.eval_expr(e, &env, current_fn, depth);
+                    // Plan 114.4.4 Ф.3 V3: control-flow forms требуют
+                    // mut env propagation + break/continue propagation.
+                    match &e.kind {
+                        ExprKind::For { pattern, iter, body, .. } => {
+                            self.exec_for_loop(pattern, iter, body, env, current_fn, depth, e.span)?;
+                        }
+                        ExprKind::While { cond, body, .. } => {
+                            self.exec_while_loop(cond, body, env, current_fn, depth, e.span)?;
+                        }
+                        ExprKind::Loop { body, .. } => {
+                            self.exec_loop_loop(body, env, current_fn, depth, e.span)?;
+                        }
+                        ExprKind::If { cond, then, else_ } => {
+                            // If-stmt пропагирует break/continue из branches.
+                            let cv = self.eval_expr(cond, env, current_fn, depth)?;
+                            let go = match cv {
+                                ConstValue::Bool(b) => b,
+                                _ => return Err(Diagnostic::new(
+                                    "[E_CONST_FN_EVAL_PANIC] if-cond не bool (D199 V3).".to_string(),
+                                    cond.span,
+                                )),
+                            };
+                            if go {
+                                match self.exec_block_seq(then, env, current_fn, depth)? {
+                                    BlockFlow::Break => return Ok(BlockFlow::Break),
+                                    BlockFlow::Continue => return Ok(BlockFlow::Continue),
+                                    _ => {}
+                                }
+                            } else if let Some(eb) = else_ {
+                                match eb {
+                                    crate::ast::ElseBranch::Block(b) => {
+                                        match self.exec_block_seq(b, env, current_fn, depth)? {
+                                            BlockFlow::Break => return Ok(BlockFlow::Break),
+                                            BlockFlow::Continue => return Ok(BlockFlow::Continue),
+                                            _ => {}
+                                        }
+                                    }
+                                    crate::ast::ElseBranch::If(_ie) => {
+                                        // Else-if branch: re-process через
+                                        // synthetic if-expr.
+                                        let _ = self.eval_expr(e, env, current_fn, depth)?;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = self.eval_expr(e, env, current_fn, depth)?;
+                        }
+                    }
                 }
                 Stmt::Return { value: Some(e), .. } => {
-                    return self.eval_expr(e, &env, current_fn, depth);
+                    let v = self.eval_expr(e, env, current_fn, depth)?;
+                    return Ok(BlockFlow::Value(v));
                 }
                 Stmt::Return { value: None, span } => {
                     return Err(Diagnostic::new(
@@ -1128,13 +1233,157 @@ impl OwnedEvaluator {
             }
         }
         if let Some(trail) = &block.trailing {
-            return self.eval_expr(trail, &env, current_fn, depth);
+            let v = self.eval_expr(trail, env, current_fn, depth)?;
+            return Ok(BlockFlow::Value(v));
         }
-        Err(Diagnostic::new(
-            "[E_CONST_FN_EVAL_PANIC] const fn body produced no value (D199).".to_string(),
-            block.span,
-        ))
+        // Block без trailing value — последний Stmt::Expr может быть value.
+        // Если последний — Stmt::Expr, take его value.
+        if let Some(Stmt::Expr(e)) = block.stmts.last() {
+            let v = self.eval_expr(e, env, current_fn, depth)?;
+            return Ok(BlockFlow::Value(v));
+        }
+        Ok(BlockFlow::Unit)
     }
+
+    /// Plan 114.4.4 Ф.3 V3: for-loop с mut env propagation.
+    fn exec_for_loop(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        iter: &Expr,
+        body: &Block,
+        env: &mut HashMap<String, ConstValue>,
+        current_fn: &str,
+        depth: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let (start, end, inclusive) = match &iter.kind {
+            ExprKind::Range { start: Some(s), end: Some(e), inclusive } => {
+                let sv = self.eval_expr(s, env, current_fn, depth)?;
+                let ev_v = self.eval_expr(e, env, current_fn, depth)?;
+                let si = match sv {
+                    ConstValue::Int(n) => n,
+                    _ => return Err(Diagnostic::new(
+                        "[E_CONST_FN_EVAL_PANIC] for range start не int (D199 V3).".to_string(),
+                        s.span,
+                    )),
+                };
+                let ei = match ev_v {
+                    ConstValue::Int(n) => n,
+                    _ => return Err(Diagnostic::new(
+                        "[E_CONST_FN_EVAL_PANIC] for range end не int (D199 V3).".to_string(),
+                        e.span,
+                    )),
+                };
+                (si, ei, *inclusive)
+            }
+            _ => return Err(Diagnostic::new(
+                "[E_CONST_FN_CONTROL_FLOW] for-loop iter в const fn body V3.0 \
+                 поддерживает только literal range START..END (D199).".to_string(),
+                iter.span,
+            )),
+        };
+        let var_name = match pattern {
+            crate::ast::Pattern::Ident { name, .. } => name.clone(),
+            crate::ast::Pattern::Wildcard(_) => "_".to_string(),
+            _ => return Err(Diagnostic::new(
+                "[E_CONST_FN_PATTERN_NOT_SUPPORTED] for-loop pattern (D199 V3).".to_string(),
+                iter.span,
+            )),
+        };
+        let end_excl = if inclusive { end + 1 } else { end };
+        let mut iter_count = 0usize;
+        for i in start..end_excl {
+            if iter_count >= MAX_LOOP_ITERATIONS {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EVAL_ITERATIONS_EXCEEDED] for-loop iterations \
+                         exceeded {} (D199 V3).",
+                        MAX_LOOP_ITERATIONS
+                    ),
+                    span,
+                ));
+            }
+            iter_count += 1;
+            env.insert(var_name.clone(), ConstValue::Int(i));
+            match self.exec_block_seq(body, env, current_fn, depth)? {
+                BlockFlow::Break => { env.remove(&var_name); return Ok(()); }
+                _ => {}
+            }
+        }
+        env.remove(&var_name);
+        Ok(())
+    }
+
+    /// Plan 114.4.4 Ф.3 V3: while-loop с mut env propagation.
+    fn exec_while_loop(
+        &mut self,
+        cond: &Expr,
+        body: &Block,
+        env: &mut HashMap<String, ConstValue>,
+        current_fn: &str,
+        depth: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let mut iter_count = 0usize;
+        loop {
+            if iter_count >= MAX_LOOP_ITERATIONS {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EVAL_ITERATIONS_EXCEEDED] while-loop iterations \
+                         exceeded {} (D199 V3).",
+                        MAX_LOOP_ITERATIONS
+                    ),
+                    span,
+                ));
+            }
+            iter_count += 1;
+            let cv = self.eval_expr(cond, env, current_fn, depth)?;
+            let go = match cv {
+                ConstValue::Bool(b) => b,
+                _ => return Err(Diagnostic::new(
+                    "[E_CONST_FN_EVAL_PANIC] while-cond не bool (D199 V3).".to_string(),
+                    cond.span,
+                )),
+            };
+            if !go { break; }
+            match self.exec_block_seq(body, env, current_fn, depth)? {
+                BlockFlow::Break => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Plan 114.4.4 Ф.3 V3: loop {} с mut env propagation.
+    fn exec_loop_loop(
+        &mut self,
+        body: &Block,
+        env: &mut HashMap<String, ConstValue>,
+        current_fn: &str,
+        depth: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let mut iter_count = 0usize;
+        loop {
+            if iter_count >= MAX_LOOP_ITERATIONS {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EVAL_ITERATIONS_EXCEEDED] loop iterations exceeded \
+                         {} — likely missing break (D199 V3).",
+                        MAX_LOOP_ITERATIONS
+                    ),
+                    span,
+                ));
+            }
+            iter_count += 1;
+            match self.exec_block_seq(body, env, current_fn, depth)? {
+                BlockFlow::Break => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn eval_expr(
         &mut self,
         expr: &Expr,
@@ -1227,11 +1476,9 @@ impl OwnedEvaluator {
                             self.eval_block(blk, env, current_fn, depth),
                         Some(crate::ast::ElseBranch::If(ie)) =>
                             self.eval_expr(ie, env, current_fn, depth),
-                        None => Err(Diagnostic::new(
-                            "[E_CONST_FN_EVAL_PANIC] if без else в const fn body \
-                             (D199 V2).".to_string(),
-                            expr.span,
-                        )),
+                        // Plan 114.4.4 Ф.3 V3: if без else allowed
+                        // (side-effect statement в loops).
+                        None => Ok(ConstValue::Unit),
                     }
                 }
             }
@@ -1262,6 +1509,125 @@ impl OwnedEvaluator {
                     ),
                     expr.span,
                 ))
+            }
+            // Plan 114.4.4 Ф.3 V3: For loop — only literal Range iter в V3.0.
+            ExprKind::For { pattern, iter, body, .. } => {
+                let (start, end, inclusive) = match &iter.kind {
+                    ExprKind::Range { start: Some(s), end: Some(e), inclusive } => {
+                        let sv = self.eval_expr(s, env, current_fn, depth)?;
+                        let ev_v = self.eval_expr(e, env, current_fn, depth)?;
+                        let si = match sv {
+                            ConstValue::Int(n) => n,
+                            _ => return Err(Diagnostic::new(
+                                "[E_CONST_FN_EVAL_PANIC] for range start не int (D199 V3).".to_string(),
+                                s.span,
+                            )),
+                        };
+                        let ei = match ev_v {
+                            ConstValue::Int(n) => n,
+                            _ => return Err(Diagnostic::new(
+                                "[E_CONST_FN_EVAL_PANIC] for range end не int (D199 V3).".to_string(),
+                                e.span,
+                            )),
+                        };
+                        (si, ei, *inclusive)
+                    }
+                    _ => return Err(Diagnostic::new(
+                        "[E_CONST_FN_CONTROL_FLOW] for-loop iter в const fn body V3.0 \
+                         поддерживает только literal range `START..END` или `START..=END` \
+                         (D199). Followup `[M-114.4.4-for-iter-array]` для array iter.".to_string(),
+                        iter.span,
+                    )),
+                };
+                let var_name = match pattern {
+                    crate::ast::Pattern::Ident { name, .. } => name.clone(),
+                    crate::ast::Pattern::Wildcard(_) => "_".to_string(),
+                    _ => return Err(Diagnostic::new(
+                        "[E_CONST_FN_PATTERN_NOT_SUPPORTED] for-loop pattern должен быть \
+                         single ident или wildcard (D199 V3).".to_string(),
+                        iter.span,
+                    )),
+                };
+                let mut env_l = env.clone();
+                let end_excl = if inclusive { end + 1 } else { end };
+                let mut iter_count = 0usize;
+                for i in start..end_excl {
+                    if iter_count >= MAX_LOOP_ITERATIONS {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_EVAL_ITERATIONS_EXCEEDED] for-loop iterations \
+                                 exceeded {} (D199 V3). Use smaller range или file \
+                                 followup `[M-114.4.4-configurable-iterations]`.",
+                                MAX_LOOP_ITERATIONS
+                            ),
+                            expr.span,
+                        ));
+                    }
+                    iter_count += 1;
+                    env_l.insert(var_name.clone(), ConstValue::Int(i));
+                    match self.exec_block_seq(body, &mut env_l, current_fn, depth)? {
+                        BlockFlow::Break => break,
+                        BlockFlow::Continue | BlockFlow::Value(_) | BlockFlow::Unit => {}
+                    }
+                }
+                // For-loop само по себе returns Unit. Caller (block stmt list)
+                // должен handle.
+                Ok(ConstValue::Unit)
+            }
+            // Plan 114.4.4 Ф.3 V3: While loop.
+            ExprKind::While { cond, body, .. } => {
+                let mut env_l = env.clone();
+                let mut iter_count = 0usize;
+                loop {
+                    if iter_count >= MAX_LOOP_ITERATIONS {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_EVAL_ITERATIONS_EXCEEDED] while-loop iterations \
+                                 exceeded {} (D199 V3).",
+                                MAX_LOOP_ITERATIONS
+                            ),
+                            expr.span,
+                        ));
+                    }
+                    iter_count += 1;
+                    let cv = self.eval_expr(cond, &env_l, current_fn, depth)?;
+                    let go = match cv {
+                        ConstValue::Bool(b) => b,
+                        _ => return Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] while-cond не bool (D199 V3).".to_string(),
+                            cond.span,
+                        )),
+                    };
+                    if !go { break; }
+                    match self.exec_block_seq(body, &mut env_l, current_fn, depth)? {
+                        BlockFlow::Break => break,
+                        BlockFlow::Continue | BlockFlow::Value(_) | BlockFlow::Unit => {}
+                    }
+                }
+                Ok(ConstValue::Unit)
+            }
+            // Plan 114.4.4 Ф.3 V3: Loop — must break to exit.
+            ExprKind::Loop { body, .. } => {
+                let mut env_l = env.clone();
+                let mut iter_count = 0usize;
+                loop {
+                    if iter_count >= MAX_LOOP_ITERATIONS {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_EVAL_ITERATIONS_EXCEEDED] loop iterations \
+                                 exceeded {} — likely missing break (D199 V3).",
+                                MAX_LOOP_ITERATIONS
+                            ),
+                            expr.span,
+                        ));
+                    }
+                    iter_count += 1;
+                    match self.exec_block_seq(body, &mut env_l, current_fn, depth)? {
+                        BlockFlow::Break => break,
+                        BlockFlow::Continue | BlockFlow::Value(_) | BlockFlow::Unit => {}
+                    }
+                }
+                Ok(ConstValue::Unit)
             }
             _ => Err(Diagnostic::new(
                 "[E_CONST_FN_EVAL_PANIC] expression form not supported (D199).".to_string(),
