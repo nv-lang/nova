@@ -28540,3 +28540,56 @@ container для long-lived per-scope objects.
 
 **Status:** ✅ V1 CLOSED 2026-06-01. Marker `[M-83.11-gc-cancel-token-alias]`
 closed. Branch merged into main (939db7a67d8).
+
+---
+
+## Plan 114.4.4 — `const fn` V3 completion (3/8 phases) — partial 2026-06-01
+
+**Status:** 🟡 PARTIAL — 3 of 8 phases landed; 5 V3 phases extracted в
+Plan 114.4.4.1-5 per safety hatch design.
+
+**Closed markers (Plan 114.4.3 chain):**
+- ✅ `[M-114.4.3-configurable-depth]` — Ф.1 `#fn_eval_max_depth(N)`.
+- ✅ `[M-114.4.3-runtime-let-enforcement]` — Ф.2 friendly UX error.
+- ✅ `[M-114.4.3-friendly-hof-error]` — Ф.2 friendly UX error.
+- ✅ `[M-114.4.3-loops]` — Ф.3 for/while/loop + mut/assign + break/continue.
+
+**Extracted to V4 plans (safety hatch fire):**
+- Plan 114.4.4.1 — record/sum patterns в match (V2.1).
+- Plan 114.4.4.2 — t-reflection (V3 V4).
+- Plan 114.4.4.3 — runtime HOF trampoline (V4).
+- Plan 114.4.4.4 — closure-returning const fn (V4).
+- Plan 114.4.4.5 — per-const-arg monomorphization (V4).
+
+**V3 surface implementation:**
+1. Parser: `#fn_eval_max_depth(N)` attribute, range 1..=65535.
+2. Body checker: mut/assign accepted, for/while/loop accepted, break/
+   continue accepted, Range expr handled, if-no-else accepted.
+3. Evaluator: BlockFlow enum + exec_for_loop/exec_while_loop/exec_loop_loop
+   with mut env propagation, MAX_LOOP_ITERATIONS=10_000 guard, If-stmt
+   propagates break/continue через branches.
+4. Validation: validate_const_fn_runtime_uses detects runtime misuse
+   с actionable error suggestions.
+
+**V1/V2 fixtures удалены (V3-superseded):**
+- body_mut_binding_neg.nv (V3 allows mut).
+- for_in_body_neg.nv (V3 allows for).
+- if_no_else_neg.nv (V3 allows if без else).
+
+**38/38 PASS** на release nova-cli (Ф.1-Ф.3 fixtures + V1/V2 backward compat).
+
+**Design lessons:**
+1. **Stack overflow при deep recursion** — Rust evaluator recursion =
+   Rust call stack depth. MAX_EVAL_DEPTH 256 default is conservative.
+   Real production deep recursion → iterative evaluator
+   (`[M-114.4.4-iterative-evaluator]` V4).
+2. **Mut env propagation через loops** — eval_expr's immutable env
+   conflicts с loop body mutating outer scope (accumulator pattern).
+   Solution: dedicated exec_block_seq с &mut env, special-cased loops
+   в block-stmt processing.
+3. **If-stmt break/continue propagation** — V2's if returns ConstValue;
+   V3 needs Break/Continue propagation через if-branches inside loops.
+   Resolution: exec_block_seq special-case for If forwards BlockFlow.
+4. **Safety hatch is design tool, not failure** — Ф.4-Ф.8 extracted
+   intentionally per plan doc. Each followup ships independently when
+   triggered. NOT silent simplification.
