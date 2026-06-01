@@ -27848,7 +27848,7 @@ pre-Plan-109 API.  Документированы в их followups.
 - 🟡 `[M-120-positional-fallback]` — allow `.0`/`.1` on named tuples (V1 = Option B: forbid; low priority).
 - 🟡 `[M-120-named-positional-mix]` — mixed positional+named in single tuple decl (out of V1 scope).
 - 🟡 `[M-120-stack-arrays]` — stack-allocated fixed-size arrays `[3]Vec3` (separate plan).
-- 🟡 `[M-120-positional-construct-check]` — checker: named args on positional tuple type → E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL (A4/A5 deferred — requires `infer_expr_c_type` extension for call-result types).
+- ✅ `[M-120-positional-construct-check]` — CLOSED (2026-06-01): f5_check_tuple_construct в f1_expr; E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL + E_TUPLE_CONSTRUCT_ARITY_MISMATCH + E_TUPLE_UNKNOWN_FIELD; 3 негативных fixture PASS.
 
 **Design lesson:** Named tuple vs record distinction drives 4× different C code: `NovaTuple_X { x; y; }` (stack struct, value type) vs `Nova_X*` (heap pointer, GC-tracked). The bracket syntax (`()` vs `{}`) was already implicit in spec (D32/D123) — Plan 120 makes it explicit at the type-declaration level. `type_aliases` HashMap in emit_c.rs is the key integration point: stores `"Vec3" → "NovaTuple_Vec3"`, enabling value-type dispatch everywhere without special-casing.
 
