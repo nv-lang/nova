@@ -26707,3 +26707,100 @@ Branch: plan-91.12 (pushed для review, НЕ self-merged).
 
 Closes marker (partial): [M-115-d126-deprecation] PARTIAL RETRACT
   (2 из 5 типов мигрированы; sync types deferred).
+
+
+[Plan 91.12 V2 — D126 hard retract: Sync types tuple-newtype migration] 2026-06-01
+
+Контекст: V2 продолжение Plan 91.12 V1 (WriteBuffer/ReadBuffer pure Nova).
+V1 закрыл 2/5 D126 типов, оставшиеся 3 (Condvar, OnceCell[T], Lazy[T])
+требуют C runtime backing для atomic state + park/wake fiber primitives.
+V2 мигрирует их на tuple-newtype `type X[T](ptr)` (Plan 115 D214 pattern) —
+сохраняет C backing + переходит к стандартному Nova type-system mechanism
+вместо D126 `external type` bridge bootstrap.
+
+После V2: все 5 stdlib D126 типов мигрированы (3 различных pattern):
+- StringBuilder        → pure Nova consume record (Plan 109 D179)
+- WriteBuffer          → pure Nova record { mut buf []u8 } (V1)
+- ReadBuffer           → pure Nova cursor { ro data, mut pos } (V1)
+- OnceCell[T]          → type OnceCell[T](ptr) tuple-newtype (V2)
+- Lazy[T]              → type Lazy[T](ptr) tuple-newtype (V2)
+- Condvar              → type Condvar(ptr) tuple-newtype (V2)
+
+D126 plain form formally RETRACTED — type-checker emit'ит hard error
+[E_EXTERNAL_TYPE_RETRACTED] для `external type X` (без consume) в ЛЮБОМ
+модуле. D163 `external type X consume` (FFI resource handles) сохранён.
+
+Изменения V2:
+
+**std/runtime/sync.nv (3 declarations):**
+- `external type OnceCell[T]` → `type OnceCell[T](ptr)`
+- `external type Lazy[T]` → `type Lazy[T](ptr)`
+- `external type Condvar` → `type Condvar(ptr)`
+
+External fn methods неизменны — ABI идентичен.
+
+**compiler-codegen/src/codegen/emit_c.rs:**
+- `emit_type_decl::TypeDeclKind::Newtype` — RUNTIME_BACKED_NEWTYPES list
+  (OnceCell/Lazy/Condvar) skip'ает `typedef nova_ptr Nova_X` emission
+  (conflict с runtime struct typedef иначе).
+- `emit_generic_type_instance::TypeDeclKind::Newtype` — routes per-T
+  mono к existing emit_oncecell_instance/emit_lazy_instance (parallel
+  Opaque path).
+- `emit_module` type_decls registration — `TypeDeclKind::Newtype(_)`
+  с генериками регистрируется в `generic_types` + `generic_type_templates`.
+  БЕЗ этого type-checker fail'ил resolve `Lazy[int].new(closure)` →
+  codegen эмитил `Nova_int_method_new(Lazy, ...)` (misrouted).
+
+**compiler-codegen/src/codegen/external_registry.rs:**
+- `from_module type_decls collection` — `TypeDeclKind::Newtype(_) if
+  !generics.is_empty() || is_runtime_backed` попадает в `reg.type_decls`.
+
+**compiler-codegen/src/types/mod.rs:**
+- D126 plain external type check: unconditional (no stdlib bypass).
+  Hard error E_EXTERNAL_TYPE_RETRACTED с migration hint на `type X(ptr)`
+  + ссылку на migration guide docs/migration/d126-to-tuple-newtype.md.
+- D163 path сохранён — consume form allowed без error.
+
+**spec/decisions/03-syntax.md:**
+- D126 status → 🔴 RETRACTED 2026-06-01 (plain form).
+- Migration table 5 stdlib типов.
+- E_EXTERNAL_TYPE_RETRACTED diagnostic format documented.
+- Cross-refs к D214 + D163.
+- Legacy reference preserved.
+
+**spec/open-questions.md:**
+- Q-write-buffer + Q-read-buffer: closure notes о re-impl V1.
+
+**docs/migration/d126-to-tuple-newtype.md (NEW, 264 lines):**
+- TL;DR + background (3 reasons D126 stopped scaling).
+- 3 migration patterns: pure Nova / tuple-newtype / D163 consume.
+- 5-step user-side walkthrough.
+- 4-point compiler-side codegen integration reference.
+- E_EXTERNAL_TYPE_RETRACTED diagnostic example.
+
+**Tests:**
+- nova_tests/plan91_12/v2_oncecell_tuple_newtype_ok.nv — 5 blocks (new+set+get,
+  set-already-init, take resets, [str] non-primitive T, get_or_init exactly-once).
+- nova_tests/plan91_12/v2_lazy_tuple_newtype_ok.nv — 3 blocks (force+is_forced,
+  idempotent, [str] non-primitive T).
+- nova_tests/plan91_12/v2_condvar_tuple_newtype_ok.nv — 2 blocks (new+notify_one
+  no-op, wait_for(50ms) timeout).
+- nova_tests/plan91_12/v2_external_type_retract_neg.nv — negative
+  (E_EXTERNAL_TYPE_RETRACTED fires).
+- nova_tests/plan91_12/v2_external_type_consume_d163_ok.nv — positive
+  smoke (D163 consume form unchanged).
+- nova_tests/plan62/external_type_outside_whitelist.nv — updated EXPECT.
+
+Acceptance V2 (A1-A14, см. plan doc §«V2 — Sync types migration»):
+- A1-A13: ✅ all met.
+- A14: ⏳ Full nova test regression — running.
+
+Followups:
+- ✅ [M-91.12-sync-types-migration] — closed (V2).
+- ✅ [M-115-d126-deprecation] — FULL retract (was PARTIAL after V1).
+- 🟡 [M-91.12-const-resolution-via-types] — V1 carry-forward, не блокер.
+- 🟡 [M-91.12-append-filled] — V1 carry-forward, performance optimization.
+- 🟡 [M-91.12-parser-body-detect-heuristic] — V2 new followup, low priority.
+
+Worktree: nova-p91-12 (postoyanniy).
+Branch: plan-91.12 (V1+V2 commits, pushed для review, НЕ self-merged).

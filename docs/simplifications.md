@@ -27845,7 +27845,7 @@ pre-Plan-109 API.  Документированы в их followups.
 - 🟢 `[M-115-ptr-typed-deref]` → **CLOSED via Plan 118**. `docs/plans/118-typed-pointers-and-unsafe.md` §5 «Auto-deref» (lines 273-286) + `*p` explicit single-level deref для `*T` family покрывает. Confirmed 2026-06-01.
 - 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI deferred (major tooling, separate plan; user-accepted).
 - 🟢 `[M-115-ffi-build-pipeline]` → **CLOSED 2026-06-01.** `[ffi]` section в `nova.toml` (user suggestion) — supports `c_shims` (`.h` via `-include` / `.c` as compilation units), `include_dirs` (`-I`), `libs` (`-l<name>`). Cross-toolchain (clang/MSVC/GCC). Paths relative to manifest dir. Test fixture `nova_tests/plan115/t4_sqlite_e2e_ok.nv` proves pipeline via manifest-declared shim `../examples/ffi/sqlite_mini_ffi.h`.
-- 🟡 `[M-115-d126-deprecation]` → **PARTIAL RETRACT 2026-06-01 (Plan 91.12 V1).** **Sequence:** (1) ✅ `[M-115-newtype-constructor]` closed → `type X(ptr)` работает; (2) ✅ **Plan 91.12 V1**: 2 из 5 D126 типов мигрированы на **pure Nova** (не на tuple-newtype как планировалось initially): `WriteBuffer` + `ReadBuffer` теперь Nova records над `[]u8` (паттерн StringBuilder/Plan 109). Reason: они тонкие обёртки над `[]u8` cursor/buffer — generic-codegen работы не требуется, just pure Nova body над push/append/extend_from primitives. **Sync types (OnceCell[T]/Lazy[T]/Condvar) оставлены как D126** — требуют atomic state + park/wake fiber primitives, pure-Nova миграция = большой scope, deferred в `[M-91.12-sync-types-migration]`. (3) Formal D126 retract в spec **deferred** — нельзя пока 3 типа external type. Final D126 hard retract после sync types migration.
+- 🟢 `[M-115-d126-deprecation]` → **FULL HARD RETRACT 2026-06-01 (Plan 91.12 V1+V2).** **Sequence:** (1) ✅ `[M-115-newtype-constructor]` closed → `type X(ptr)` работает; (2) ✅ **Plan 91.12 V1**: WriteBuffer/ReadBuffer мигрированы на pure Nova records над `[]u8` (паттерн StringBuilder/Plan 109); (3) ✅ **Plan 91.12 V2**: OnceCell[T]/Lazy[T]/Condvar мигрированы на tuple-newtype `type X[T](ptr)` (Plan 115 D214). Codegen integration: `RUNTIME_BACKED_NEWTYPES` list в `emit_type_decl` Newtype branch + per-T mono routing к existing `emit_oncecell_instance`/`emit_lazy_instance` + Newtype регистрация в `generic_types` для static-method dispatch. (4) ✅ **D126 formal retract** — plain `external type X` (без consume) → hard error `[E_EXTERNAL_TYPE_RETRACTED]` в любом модуле; D163 `external type X consume` (FFI) сохранён. spec/decisions/03-syntax.md D126 → 🔴 RETRACTED; migration guide `docs/migration/d126-to-tuple-newtype.md` (264 lines, 3 patterns + 5-step walkthrough).
 - 🟢 `[M-115-tuple-gc-types]` → **CLOSED as by-design** (user 2026-06-01). Цитата: «external у нас это пользовательский С код, аналог extern "C". Там функции ничего не знают о типах nv. Это правильное ограничение». Не bug — intentional.
 - 🟢 `[M-115-external-fn-method]` → **CLOSED as not needed** (user 2026-06-01). Цитата: «не вижу пока причин для этого». Free external fn + Nova-side wrapper method = sufficient.
 - 🟢 `[M-115-examples-ffi-real-build]` → **CLOSED 2026-06-01.** sqlite shim moved из `nova_rt/` → `examples/ffi/sqlite_mini_ffi.h` (user-side location). Pipeline через `nova_tests/nova.toml [ffi]` section. Embedded mini-sqlite-equivalent — proves user-FFI mechanism end-to-end. Real libsqlite3 link → отдельный `[M-115-examples-ffi-real-libsqlite3]` follow-up (требует vcpkg sqlite3 deps).
@@ -28248,7 +28248,7 @@ finalizer LIFO needed / CleanupTimeoutError typed catch needed).
 - ✅ `[M-91.12-const-module-mangling]` — codegen bug fix: module-private `const X = ...` коллизия между одноимёнными consts в разных модулях (e.g. `INITIAL_CAPACITY` в string_builder.nv и write_buffer.nv → C global symbol redefinition). `HashMap<(FileId, name), mangled>` pre-pass + per-file Ident resolution + single-candidate fallback.
 
 **OPEN markers (followups):**
-- 🟡 `[M-91.12-sync-types-migration]` — OnceCell[T], Lazy[T], Condvar — оставшиеся 3 D126 типа. Требуют atomic state + park/wake fiber primitives, pure-Nova миграция = большой scope (Plan 103.x extension or separate sub-plan). Final D126 hard retract gate'нут на этот followup.
+- 🟢 `[M-91.12-sync-types-migration]` → **CLOSED 2026-06-01 (Plan 91.12 V2)**. OnceCell[T], Lazy[T], Condvar мигрированы на `type X[T](ptr)` / `type X(ptr)` tuple-newtype (Plan 115 D214). C runtime backing (`nova_rt/sync_*.h` + emit_oncecell_instance/emit_lazy_instance per-T mono) сохранён — ABI unchanged. Codegen integration: `RUNTIME_BACKED_NEWTYPES` skips typedef emission, Newtype branch routes per-T mono к existing handlers, type-checker регистрирует runtime-backed newtype в `generic_types`. 5 V2 fixtures PASS (4 positive + 1 negative). Plan 91.12 V2 → full closure.
 - 🟡 `[M-91.12-const-resolution-via-types]` — Ident → ConstDecl resolution через type-checker для collision disambiguation независимо от span fidelity. V1 fix использует per-file span + single-candidate fallback — работает для текущих cases но не bulletproof (collision + missing span = fall through на raw name; C-compiler выдаст diagnosable undeclared ident error).
 - 🟡 `[M-91.12-append-filled]` — `[]T.append_filled(n, v)` primitive для bulk-init (replace push-loop в `write_zero`). Сейчас O(n) push loop after `reserve(n)` (amortized OK для small n, но не SIMD-friendly bulk memset).
 
@@ -28256,3 +28256,35 @@ finalizer LIFO needed / CleanupTimeoutError typed catch needed).
 - **Drop-in replacement preserved через non-consume type + consume @into()**: WriteBuffer оставлен как non-consume record (вопреки StringBuilder consume pattern) ради backward-compat с ~30 fixtures `let mut wb = WriteBuffer.new()`. Только `@into() -> []u8` consume — type-system enforce'ит no-reuse-after-into без breaking existing call-sites. Trade-off: type-system не enforce'ит "use only if not abandoned" (как у StringBuilder); GC ловит abandoned WriteBuffer's. Accepted для migration ergonomics.
 - **Bootstrap-leak in Result[T, E]**: предыдущий C runtime хранил f64/u64 в Result.Ok как nova_int boxing (bit-cast). Один test fixture `buffers/read_floats: f64.from_bits + try_read_f64_be round-trip` использовал этот leak (вызывал `f64.from_bits(r.unwrap_or(0))` на типизированном Result[f64]). Pure-Nova миграция убрала bit-encoded boxing → test переписан под прямой f64 unwrap. **Bug fix benefit**: typed Result-mono unwrap/unwrap_or теперь корректны для всех non-int T (f32, f64, structs, etc).
 - **Module-private const C-name mangling needs span attribution**: name-only HashMap не disambiguate collisions между модулями. `(FileId, name)` ключ + Ident `expr.span.file_id` lookup работает когда AST preserves spans через type-checker / mono pass. Compiler-synthesized exprs могут иметь placeholder file_id — single-candidate fallback handles остаток safely.
+
+## Plan 91.12 V2 — D126 hard retract + sync types migration (2026-06-01)
+
+**Status:** ✅ V2 CLOSED 2026-06-01 (3 sync types migrated; plain `external type` retracted).
+
+**CLOSED markers (V2):**
+- ✅ `[M-91.12-sync-condvar-tuple-newtype]` — Condvar non-generic `type Condvar(ptr)`. C struct в `nova_rt/sync_condvar.h` unchanged; codegen suppresses Nova-level typedef conflict.
+- ✅ `[M-91.12-sync-oncecell-tuple-newtype]` — OnceCell[T] generic `type OnceCell[T](ptr)`. Per-T mono через `emit_oncecell_instance` routed из Newtype branch.
+- ✅ `[M-91.12-sync-lazy-tuple-newtype]` — Lazy[T] generic `type Lazy[T](ptr)`. Per-T mono через `emit_lazy_instance` routed из Newtype branch.
+- ✅ `[M-91.12-d126-hard-retract]` — plain `external type X` → hard error `[E_EXTERNAL_TYPE_RETRACTED]` в любом модуле; D163 consume form preserved.
+- ✅ `[M-91.12-newtype-type-decls-registry]` — type-checker / external_registry collection включает `TypeDeclKind::Newtype(_) if !generics.is_empty() || is_runtime_backed` (без этого `Lazy[int].new(closure)` fail'ил resolve → misrouted codegen).
+- ✅ `[M-91.12-spec-d126-retract]` — spec/decisions/03-syntax.md D126 status → RETRACTED; rationale + migration table; cross-refs к D214/D163; legacy preserved.
+- ✅ `[M-91.12-migration-guide]` — docs/migration/d126-to-tuple-newtype.md (264 lines, 3 patterns: pure Nova / tuple-newtype / D163 consume).
+
+**OPEN markers (V2 followups):**
+- 🟡 `[M-91.12-parser-body-detect-heuristic]` — parser fail'ит `external type X` если followed by `fn ...` declaration (treat'ит fn как newtype body). Workaround: trailing `external type` декларация в конце файла. Cleaner: parser должен skip newline+next-decl detect. Low priority; не блокер.
+
+**Design lessons (V2):**
+
+1. **Generic Newtype с external fn методами требует TWO-LEVEL registration:**
+   - **emit-level** (`emit_type_decl` Newtype branch): special-case RUNTIME_BACKED_NEWTYPES skip typedef для conflict с runtime header struct.
+   - **type-checker level** (`external_registry.from_module` + `emit_module` type_decls registration): Newtype с generics регистрируется в `generic_types`/`generic_type_templates` — без этого static-method dispatch (`Lazy[int].new()`) не работает.
+   
+   Symptom missed registration: codegen эмитит `Nova_int_method_new(Lazy, closure)` (treat'ит `Lazy[int]` как index access на int).
+
+2. **Per-T mono Newtype path параллелен Opaque path** — для backward-compat. После migration все `external type X[T]` declarations стали `type X[T](ptr)`, но pre-V2 Opaque path в `emit_generic_type_instance` сохранён (некоторые предписания могут идти ещё через Opaque если runtime helpers'у нужна интроспекция).
+
+3. **Parser body-detect heuristic излишне permissive** — после `external type X` parser считает любой следующий not-newline token (fn / ident / `[`) частью newtype body. Это блокирует declaration ordering `external type X\n\nfn foo()...`. Workaround в V2: trailing-only declaration в EXPECT-fail fixtures.
+
+4. **D126 retract — narrow.** Только plain form retracted; D163 `external type X consume` остаётся для FFI (resource handles с auto-cleanup). Это правильный design: D163 — separate use case (linearity tracking + must-consume) который tuple-newtype не покрывает.
+
+5. **Migration без ABI break.** V2 — pure declaration-syntax change. C runtime backing (`nova_rt/sync_*.h`), C method symbols (`Nova_Lazy____T_method_force`), per-T struct layout — все идентичны pre/post V2. Это позволило миграцию без touching существующих fixtures (кроме negative whitelist test для нового error code).
