@@ -28440,3 +28440,69 @@ control flow + recursion + mixed-args + generic + first-class alias.
    transitive expansion. Fixed-iteration cap избегает infinite loops.
 4. **V1 fixture removal** — V2 relaxation semantics → V1 negatives
    become invalid. Delete is correct path; documenting в plan doc.
+
+
+---
+
+## Plan 83.11 §12.31 — [M-83.11-supervised-spawn-cancel-memcpy-segv] CLOSED (2026-06-01)
+
+**Followup:** Session #13 в Plan 83.11. Bug 100% deterministic SEGV
+при `tok.cancel()` из spawn body под armed M:N на Windows.
+
+**Pivot:** cdb отсутствует (Windows SDK не установлен, winget требует
+admin); собственный in-process **Vectored Exception Handler** через
+Windows-native `dbghelp.dll` (SymInitialize + StackWalk64 + SymFromAddr).
+~165 LOC новый `compiler-codegen/nova_rt/segv_diag.c`, hook в
+`nova_gc_init`, gated by `NOVA_DIAG_SEGV=1`. Frame[1] localized на
+**ПЕРВОМ run**.
+
+**Root cause:** use-after-free stack-allocated `NovaFiberQueue`.
+Driver thread процессит `CANCEL_SCOPE` job (queued из child fiber's
+`tok.cancel()`) ПОСЛЕ того как main вышел из `nova_supervised_run_impl`
+и stack frame переиспользован → wild pointer в `.rdata` → `lock cmpxchg`
+faults.
+
+**Fix:** lifetime counter pattern (4 surgical changes):
+- new `nova_atomic_int pending_driver_jobs` field на `NovaFiberQueue`
+- `_nova_cancel_via_driver`: `nova_aint_inc(ACQ_REL)` BEFORE submit;
+  rollback on submit failure
+- `_nova_driver_handle_cancel_scope`: `__atomic_fetch_sub(RELEASE)` at end
+- `nova_supervised_run_impl`: spin-wait на counter==0 BEFORE
+  drop_state + unbind + return
+
+**Verification:** `_min.nv` стресс 1/30 → 30/30 PASS;
+`cancel_semantics_test` 0/30 → 120/120 PASS.
+
+**`stress_iso_3e` baseline check:** 0/10 PASS at HEAD без моего fix
+(Plan 110.x merge artifact, `cleanup-timeout-exceeded`). Не regressed.
+
+**Lessons learned (added к §10.4 / §12.16 — lessons #16-20):**
+1. **VEH + native SymFromAddr beats absent cdb на Windows.** dbghelp.dll
+   есть на каждой Windows install, dbghelp.lib уже линкуется. Add to
+   default diagnostic kit for future Windows races. llvm-symbolizer без
+   DIA — useless для PDB (returns ??:0:0).
+2. **One diagnostic print > eight hypothesis attempts.** 7 prior
+   attempts (~10h) iterated в wrong region (GC scanning, fiber stack
+   coverage, ABI). Frame[1] told the answer immediately в этой сессии
+   (~30 min total).
+3. **"memcpy to .rdata" symptom от §12.9 был misdirection.** Real crash
+   был `lock cmpxchg` в `nova_aint_cas` looking like memcpy через
+   llvm-symbolizer fallback. Don't trust llvm-symbolizer для PDB.
+4. **Stack-allocated scope must outlive all async references.** General
+   invariant: any job containing pointer to caller's local — caller
+   must wait for job processing before returning. **Lifetime counter
+   pattern becomes invariant для future плана с pointer-carrying jobs.**
+5. **Differentiate Heisen-tests vs point-probes.** Heisen = broad
+   instrumentation changing timing (anti-pattern). Point-probe = single
+   fprintf at function entry в cold path (valuable diagnostic).
+
+**Permanent additions:**
+- `compiler-codegen/nova_rt/segv_diag.c` — reusable Windows debugging
+  tool, opt-in via `NOVA_DIAG_SEGV=1`, zero overhead unset.
+- Lifetime counter pattern (`pending_driver_jobs`) — invariant для
+  любых future cases где driver job carries scope pointer.
+
+**Status:** ✅ V1 CLOSED 2026-06-01. Marker
+`[M-83.11-supervised-spawn-cancel-memcpy-segv]` closed. 3 commits
+на ветке (`f30998fa940` feat / `421f295c454` fix / `0bcb61636dd` docs).
+Branch merged into main по user request.

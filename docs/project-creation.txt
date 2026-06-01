@@ -26918,3 +26918,158 @@ OPEN markers carried forward (V2.1/V3):
 Closes 5 markers from Plan 114.4.2 followup chain.
 Plan 114.4 const fn family (V1 + V2) — production-grade complete для
 all "main path" features. V3 — type reflection / closures / loops only.
+
+
+================================================================================
+Plan 83.11 §12.31 — [M-83.11-supervised-spawn-cancel-memcpy-segv] CLOSED (2026-06-01)
+================================================================================
+
+Followup в Plan 83.11 (Centralized I/O driver). Session #13.
+Worktree: nova-p83-11, branch plan-83.11-centralized-driver.
+
+Background: после §12.27-29 bisect определил `dd7a4f00bc5` как culprit;
+§12.30 подготовил cdb_session.sh wrapper, но cdb.exe на машине не было
+(требуется Windows SDK + admin elevation для winget install). Прошлые
+7 attempts (§12.13-26) потратили ~10h на hypothesis-driven fixes без
+crash localization.
+
+§12.31 — root cause найден ЗА ОДИН СЕАНС (~30 min) через pivot:
+вместо cdb — собственный in-process Vectored Exception Handler через
+Windows-native `dbghelp.dll` (SymInitialize + StackWalk64 + SymFromAddr
++ SymGetLineFromAddr64). dbghelp.lib уже линкуется в test_runner.rs,
+поэтому wiring был trivial.
+
+Tool: `compiler-codegen/nova_rt/segv_diag.c` (~165 LOC).
+- Hook в `nova_gc_init` (gated by NOVA_DIAG_SEGV=1 env)
+- Zero overhead when unset; no-op TU на не-Windows
+- AddVectoredExceptionHandler с first-handler priority
+- На AV: dumps registers (RAX-R15+RIP+RSP+RBP), exception code,
+  fault address + operation (READ/WRITE), exe base + RIP-RVA,
+  до 50 frames stack с module!symbol+offset (file:line where PDB has)
+- ExitProcess(3) для prevention рекурсии
+- Reusable Windows debugging tool для любых future races
+
+Tool wire-up:
+- alloc_boehm.c — добавлен extern call к _nova_install_segv_handler()
+  первой строкой в nova_gc_init
+- test_runner.rs — добавлен rt_segv_diag во все три toolchain branches
+  (clang/msvc/gcc)
+
+Root cause (frame[1] revealed):
+- Frame[0]: nova_aint_cas+0x2F (sync.h:169 — lock cmpxchg)
+- Frame[1]: _nova_driver_handle_cancel_scope+0x61 (driver.c:312) ← KEYSTONE
+  CAS на &st->stage где st = scope->armed_sleeps_head
+- Frame[2+]: process_job → drain_jobs → job_async_cb → uv_run → driver_main
+
+CSD probe (одна fprintf at function entry — point-probe, не Heisen-test)
+показал scope fields = garbage:
+  scope=stack_addr (valid)
+  bound_token=NULL (should be tok)
+  head=0x7FF6358864C9 (.rdata — wild)
+  count=372/580/537 (garbage)
+  slot_lock=large negative (garbage)
+
+Это use-after-free stack-allocated NovaFiberQueue.
+
+Causal timeline:
+1. main: nova_scope_init(&_nova_scope_q_0) — стек инициализирован
+2. main: spawn child + bind tok + nova_supervised_run_cancel
+3. child: tok.cancel() → _nova_cancel_via_driver(bound_scope) →
+   malloc job{kind=CANCEL_SCOPE, scope=&_nova_scope_q_0} + submit_job +
+   uv_async_send(driver)
+4. child: fiber body completes, epilogue decrements pending_remote
+5. main: pending_remote == 0 → exits loop → drop_state + unbind + return
+6. main: test function returns → _nova_scope_q_0 stack frame reused
+7. driver thread: wakes на job_async_cb → process_job(stale ptr) →
+   scope->armed_sleeps_head reads garbage → wild ptr in .rdata
+8. driver: `lock cmpxchg dword [.rdata+0x579], r8d` → SEGV
+
+§12.9 «memcpy to .rdata» symptom был misdirection: x86 LOCK CMPXCHG
+faults regardless of compare result (page-writability check на
+LOCK cycle), и llvm-symbolizer без DIA resolved nova_aint_cas как
+memcpy через misclassification.
+
+Fix design — lifetime counter pattern (4 хирургических changes):
+
+1. NovaFiberQueue gets `nova_atomic_int pending_driver_jobs` field
+2. _nova_cancel_via_driver:
+     nova_aint_inc(&scope->pending_driver_jobs)  // ACQ_REL
+     if (nova_driver_submit_job(job) != 0) {
+         free(job);
+         __atomic_fetch_sub(&scope->pending_driver_jobs, 1, ACQ_REL);
+     }
+3. _nova_driver_handle_cancel_scope (end of function):
+     __atomic_fetch_sub(&scope->pending_driver_jobs, 1, RELEASE)
+4. nova_supervised_run_impl (before drop_state/unbind/return):
+     while (nova_aint_load(&q->pending_driver_jobs) > 0) {
+         uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+         if (nova_aint_load(...) > 0) uv_sleep(1);
+     }
+
+Memory ordering:
+- ACQ_REL inc / RELEASE dec / ACQUIRE load формирует proper happens-before
+- Counter > 0 → main holds stack frame alive
+- Counter == 0 → driver dereferenced all scope fields → safe to return
+
+Verification:
+- _min.nv стресс: 1/30 → 30/30 PASS ✅
+- cancel_semantics_test: 0/30 (§12.28) → 120/120 PASS ✅
+- No deadlock с driver shutdown (atexit runs after main returns;
+  main can only return after wait loop exits)
+
+Acceptance criteria:
+- A1 — root cause identified ✅ (frame[1] keystone)
+- A2 — fix that addresses root cause ✅ (counter pattern)
+- A3 — _min.nv 30/30 stress PASS ✅
+- A4 — cancel_semantics_test 30/30 PASS ✅
+- A5 — 0 new regressions (verified via stash-baseline: 481 pre-existing
+  FAILs are Plan 73.1 V3 / Plan 91.12 / Plan 99 / Plan 110.x — unrelated)
+
+stress_iso_3e baseline check: 0/10 PASS at HEAD без моего fix — already
+broken (Plan 110.x merge artifact, cleanup-timeout-exceeded from
+nv_shield_check_deadline). НЕ regressed моим fix.
+
+Lessons learned (added к §10.4 / §12.16 — lessons #16-20):
+16. «VEH + native SymFromAddr beats absent cdb on Windows». dbghelp.dll
+    есть на каждой Windows install, dbghelp.lib линкуется уже. ~165 LOC
+    + 1 hook = full symbolized stack. Намного дешевле admin elevation.
+    Add to default diagnostic kit для future Windows-only races.
+    llvm-symbolizer без DIA support бесполезен для PDB (returns ??:0:0).
+17. «One diagnostic print > eight hypothesis attempts». §12.13-26
+    потратили 7 attempts через hypothesize-fix-test (~10h). Эта сессия:
+    install VEH (10 min code), repro captured frame[1] на FIRST run
+    (1 min), one ad-hoc CSD probe revealed garbage scope (5 min),
+    targeted fix (10 min). Total ~30 min. The 7 prior attempts could
+    не sample the right hypothesis потому что iterated в the wrong
+    region (GC scanning, fiber stack coverage, cancel-box-str ABI).
+    Frame[1] told the answer immediately.
+18. «Compound-literal "memcpy to .rdata" was misdirection в §12.9».
+    The nova_cancel_box_str codegen pattern (nova_str){.ptr=...,.len=...}
+    — stack temporary, red herring. The real crash was lock cmpxchg в
+    nova_aint_cas looking like memcpy to llvm-symbolizer fallback.
+    Don't trust llvm-symbolizer for PDB; use Windows-native APIs.
+19. «Stack-allocated scope must outlive all async references». General
+    invariant any time stack pointer crosses a thread/queue boundary.
+    Plan 83.11 Ф.2 introduced driver thread + Ф.3 added CANCEL_SCOPE
+    jobs carrying scope ptr — lifetime invariant был не audited тогда.
+    Pattern для futures plans: any time a job contains a pointer to
+    caller's local, caller must wait for job processing before return.
+20. «Differentiate Heisen-tests vs point-probes». Heisen-tests = broad
+    instrumentation that changes timing (anti-pattern per §10.4 #1).
+    Point-probes = single fprintf at function entry in cold path,
+    showing correctness of heap value (used in §12.31). Latter are
+    valuable diagnostics, не anti-pattern.
+
+Status: ✅ V1 CLOSED 2026-06-01. Marker `[M-83.11-supervised-spawn-
+cancel-memcpy-segv]` closed. 3 commits на ветке plan-83.11-centralized-
+driver pushed to github (`f30998fa940` feat + `421f295c454` fix +
+`0bcb61636dd` docs §12.31). Branch merged в main по user request.
+
+segv_diag.c retained как reusable Windows debugging tool — opt-in via
+NOVA_DIAG_SEGV=1, zero overhead when unset. Reusable для любых future
+Windows runtime races.
+
+Plan 83.11 progress: Ф.0-Ф.3 уже в main (merge cf00a37fb16); §12.31
+closed. Open: Ф.4-Ф.9 (blocking migration + cleanup pending design
+decision), [M-83.11-gc-cancel-token-alias] (990+ fibers panic,
+Option A documented в §11.4).
