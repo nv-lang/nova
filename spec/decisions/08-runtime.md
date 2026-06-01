@@ -3950,3 +3950,215 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` parameter modifier.
 - [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.from_bytes_*` helpers.
 - [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md) — sub-plan Ф.2.6 sub-phase D179.
+
+## D217. Method-local receiver field caching — Plan 123.1
+
+**Source:** [Plan 123 umbrella](../../docs/plans/123-receiver-field-cse.md)
++ [Plan 123.1](../../docs/plans/123.1-core-cse.md). Implementation:
+`compiler-codegen/src/field_cache.rs`.
+
+### 1. Семантика — formal property
+
+Для каждого input AST `A` и output AST `T(A)` — observable behavior
+running `T(A)` **identical** to running `A`. «Observable» включает
+stdout / panic / exit code / file system effects / network effects /
+GC behavior. Pass — pure AST→AST трансформация без I/O и global
+state.
+
+**Пример** — типичная конверсия:
+
+```nova
+// До D217 преобразования (source AST):
+fn ReadBuffer @try_read_u32_le() -> Result[u32, BufferError] {
+    if @pos + 4 > @data.len() { return Err(...) }
+    ro b0 = @data[@pos] as u32
+    ro b1 = @data[@pos + 1] as u32
+    ro b2 = @data[@pos + 2] as u32
+    ro b3 = @data[@pos + 3] as u32
+    @pos = @pos + 4
+    Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+}
+
+// После D217 преобразования (transformed AST):
+fn ReadBuffer @try_read_u32_le() -> Result[u32, BufferError] {
+    ro _at_data = @data    // ro → unconditional cache (D175 freeze).
+    ro _at_pos = @pos      // mut → first-region cache (валидна до
+                           //   первой write/call boundary).
+    if _at_pos + 4 > _at_data.len() { return Err(...) }
+    ro b0 = _at_data[_at_pos] as u32
+    ro b1 = _at_data[_at_pos + 1] as u32
+    ro b2 = _at_data[_at_pos + 2] as u32
+    ro b3 = _at_data[_at_pos + 3] as u32
+    @pos = _at_pos + 4   // write — _at_pos undefined after this point.
+    Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+}
+```
+
+`.c` output до — `nova_self->data` × 5 + `nova_self->pos` × 5;
+после — оба cached в локалы один раз, регистр-аллокатор C-компилятора
+тривиально hoisted. **Net result:** `-O0` build стабильно быстрее на
+hot-path methods (15-30% reduction в pointer derefs).
+
+### 2. Heuristics
+
+#### 2.1 Threshold N
+
+Default `N=2`: cache emit'ится только если field accessed **≥2** раз
+в method body. `N=0` → feature OFF (escape hatch). Tunable через env
+vars (см. §5).
+
+#### 2.2 ro field — unconditional cache
+
+`RecordField.readonly == true` (D175 `ro` modifier):
+- Frozen post-construction, no mutation возможно.
+- Cache valid **across entire method body** — unaffected by calls,
+  asserts, loops, branches.
+- Single prefix `let _at_<F> = @<F>` emitted в body block start.
+- All reads of `@<F>` replaced с `_at_<F>`.
+
+#### 2.3 mut field — straight-line first-region cache
+
+`RecordField.mutable == true` (или default без `ro`/`mut` modifier):
+- Cache valid **от body start до first barrier**.
+- **Barrier** = first top-level Stmt syntactically containing:
+  - **Write to `@<F>`:** `Assign { target: Member{SelfAccess, F},
+    op: AssignOp::*, ... }`. Includes compound (`+=`, `-=`, `*=`,
+    `/=`).
+  - **Any Call expression:** `ExprKind::Call`, `Spawn`, `Supervised`,
+    `Detach`, `Blocking`, `With` (handler invoke), `Select` (channel
+    op). V1 conservative — IPA / `#nofield_mut` annotations refine
+    в Plan 123.7.
+- Cache emitted при count reads-in-prefix-region ≥ threshold.
+- Reads после boundary stay as direct `@<F>` (no re-cache в V1).
+  Full multi-region recache — `[M-123.1-mut-region-recache]` P2
+  followup.
+
+### 3. Safety constraints
+
+#### 3.1 Closure capture
+
+Если **ANY closure body** (`ClosureLight` / `ClosureFull` / `Lambda`
+/ `HandlerLit` / `ProtocolLit`) **syntactically references** `@<F>`
+в method body — caching `F` skipped полностью. Closure может outlive
+scope (stored handler, spawned fiber) и mutate `self`-pointer'ом
+field через alias.
+
+#### 3.2 Protocol / Effect / Opaque receivers
+
+`Receiver.type_name` указывающий на `TypeDeclKind::Protocol`,
+`Effect`, `Opaque`, `Alias`, `Newtype`, `Sum` → method skipped
+entirely. Protocol — vtable dispatch (concrete impl unknown). Effect
+/ Opaque — no record fields. Sum — variants accessed через pattern-
+match. `NamedTuple` (D215) receivers — fields treated как ro
+(stack value type, immutable post-construction).
+
+#### 3.3 Generic monomorphization
+
+Pass runs **после** type-check. Receiver type known + `RecordField`
+classification из TypeDecl level (generic-agnostic). Codegen mono
+pipeline downstream видит уже cached AST per instantiation.
+
+#### 3.4 Consume / embed fields skipped
+
+`RecordField.consume == true` (D131 linearity) — separate ownership
+semantics. `is_embed == true` (`use _ Type` — D39) — auto-proxy
+methods. Both skipped from registry.
+
+#### 3.5 Static-method receivers + External fn skipped
+
+`Receiver.kind == ReceiverKind::Static` — `fn Type.method(...)` без
+`@self`. `FnDecl.is_external == true` — no body. Both skipped
+explicitly.
+
+### 4. Mangling — naming convention
+
+Cache local = **`_at_<field>`** (D217 §4 baseline). При collision с
+existing user local в fn scope — numeric suffix `_<N>`, где N — fn-
+local counter (incremented only при actual collision; default case
+keeps `_at_<F>` bit-stable across builds).
+
+Examples:
+- No collision: `ro _at_pos = @pos`.
+- User has `ro _at_pos = 99` → cache renamed `ro _at_pos_1 = @pos`.
+  User local untouched.
+
+Collision detection — pre-pass scan всех `Stmt::Let` patterns +
+`Pattern::Ident` / `Pattern::Binding` bindings во всём fn body +
+params + closure-light/full params.
+
+### 5. Escape hatch + tunables
+
+Three environment variables (CLI-flag wiring через `--field-cache-*`
+запланировано Plan 123.6 telemetry):
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE` | (unset) | `0`/`off`/`false` → pass disabled. |
+| `NOVA_FIELD_CACHE_THRESHOLD` | `2` | Min reads to cache. `0` → disabled. |
+| `NOVA_FIELD_CACHE_MAX` | `8` | Cap cache locals per fn. |
+
+Disabling — bypass точно identical к baseline AST output без pass.
+**Verified differential testing** — full nova_tests/plan123_1 PASS
+identically под ON и OFF (18/18 PASS обе configurations).
+
+### 6. Debug-info preservation
+
+`Span` каждого generated `let _at_F = @F` binding клонируется от
+**first occurrence** of `@F` access в method body. DWARF / PDB emit
+reflects это — debugger показывает `_at_F` local mapped к source
+`@F` expression position.
+
+V2 (Plan 123.5) — LSP code-lens над method header «N caches inserted»
++ hover «cached as `_at_F` from line X».
+
+### 7. Edition compatibility
+
+V1 (Plan 123.1) — enable **unconditionally** (semantic equivalence
+guarantee достаточная; verified via 5 verification methods §1).
+Future versions могут require edition opt-in если выявится unexpected
+regression в production telemetry (Plan 123.6).
+
+### 8. Cross-platform determinism
+
+Pass deterministic by construction:
+- Field names alphabetically sorted в `cache_fn` (HashMap iteration
+  leak prevented).
+- Per-fn counter reset → bit-stable cache local names across runs.
+- No timestamp / random / system call в pass.
+
+Same input AST → same output AST → same `.c` file (modulo platform-
+specific runtime references).
+
+### 9. Cross-references
+
+- **D32** (semantics передачи параметров) — receiver semantics —
+  Self pointer не aliased под managed-heap rule.
+- **D52** (объявление типов) — `RecordField` declaration source.
+- **D120** (`#pure` views + axioms) — pure annotation infrastructure
+  для Plan 123.3 pure-call caching V3 future.
+- **D131** (consume types) — linearity hints; consume fields skipped
+  в V1, могут быть aggressive-cached в V2.
+- **D175** (readonly field freeze) — ro field invariant — единственный
+  unconditional-cache eligibility источник.
+- **D176** (`readonly T` modifier) — orthogonal к D217 (parameter-
+  level), но D175 + D176 вместе формируют immutability semantics.
+- **D215** (named tuple) — `NamedTuple` fields treated как ro.
+
+### 10. Implementation milestones — Plan 123 umbrella
+
+| Version | Sub-plan | D-block | Status |
+|---|---|---|---|
+| **V1** | 123.1 (Core CSE) | **D217 (this)** | ✅ V1 active |
+| V2 | 123.2 (LICM) | D218 (planned) | gate'нут на 123.1 ✅ |
+| V3 | 123.3 (`#pure` cache) | D219 (planned) | gate'нут на 123.1 ✅ + D120 |
+| V4 | 123.4 (chain) | D217 amend | gate'нут на 123.1 ✅ |
+| V5 | 123.5 (LSP/diag) | D217 §6 amend | gate'нут на 123.1 + 104.x |
+| V6 | 123.6 (telemetry) | (impl-only) | gate'нут на 123.1 ✅ |
+| V7 | 123.7 (IPA) | D217 amend | gate'нут на all above |
+
+### 11. Open Q resolution
+
+- `Q-codegen-cse-semantics` (если откроется): → D217 (этот блок).
+- `Q-debug-info-cache`: → D217 §6.
+- `Q-cache-edition-gating`: → D217 §7 (V1 — no edition gate).
+
