@@ -168,15 +168,21 @@ impl<'a> ConstFnEvaluator<'a> {
         call_span: Span,
         depth: usize,
     ) -> Result<ConstValue, Diagnostic> {
-        if depth >= MAX_EVAL_DEPTH {
+        // Plan 114.4.4 Ф.1 (D199 V3): per-fn override depth limit
+        // через `#fn_eval_max_depth(N)` attribute.
+        let depth_limit = self.fns.get(name)
+            .and_then(|fd| fd.fn_eval_max_depth)
+            .map(|n| n as usize)
+            .unwrap_or(MAX_EVAL_DEPTH);
+        if depth >= depth_limit {
             return Err(Diagnostic::new(
                 format!(
                     "[E_CONST_FN_EVAL_DEPTH_EXCEEDED] const fn evaluation exceeded \
                      depth limit {} в call to `{}` — likely runaway recursion. \
                      V2 supports recursion (Plan 114.4.3) — verify base case + \
-                     memoization работают. If legitimate deep recursion: file \
-                     followup `[M-114.4.3-configurable-depth]`. D199 V2.",
-                    MAX_EVAL_DEPTH, name
+                     memoization работают. Use `#fn_eval_max_depth(N)` attribute \
+                     для override (V3 Plan 114.4.4 Ф.1). D199 V3.",
+                    depth_limit, name
                 ),
                 call_span,
             ));
@@ -1022,14 +1028,20 @@ impl OwnedEvaluator {
         call_span: Span,
         depth: usize,
     ) -> Result<ConstValue, Diagnostic> {
-        if depth >= MAX_EVAL_DEPTH {
+        // Plan 114.4.4 Ф.1 (D199 V3): per-fn override depth limit
+        // через `#fn_eval_max_depth(N)` attribute.
+        let depth_limit = self.fns.get(name)
+            .and_then(|fd| fd.fn_eval_max_depth)
+            .map(|n| n as usize)
+            .unwrap_or(MAX_EVAL_DEPTH);
+        if depth >= depth_limit {
             return Err(Diagnostic::new(
                 format!(
                     "[E_CONST_FN_EVAL_DEPTH_EXCEEDED] const fn evaluation exceeded \
                      depth limit {} в call to `{}` — likely runaway recursion. \
-                     V2 supports recursion (Plan 114.4.3) — verify base case + \
-                     memoization работают. D199 V2.",
-                    MAX_EVAL_DEPTH, name
+                     Use `#fn_eval_max_depth(N)` attribute для override \
+                     (V3 Plan 114.4.4 Ф.1). D199 V3.",
+                    depth_limit, name
                 ),
                 call_span,
             ));
