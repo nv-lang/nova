@@ -1044,6 +1044,22 @@ pub struct BenchCase {
     pub span: Span,
 }
 
+/// Plan 118 (D216 §1-3): pointer modifier in `*T` / `*ro T` / `*mut T` /
+/// `*unsafe T` family. Default = `Ro` (omitted modifier ≡ `*ro T`).
+///
+/// Chain order: modifier applies to ITS `*`, read left-to-right.
+/// `*mut *ro T` = mut pointer на (ro pointer на T).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerModifier {
+    /// `*T` (default) или `*ro T` — readonly typed pointer
+    Ro,
+    /// `*mut T` — mutable typed pointer
+    Mut,
+    /// `*unsafe T` — pointer после arithmetic (alignment/bounds gone);
+    /// deref требует ещё один unsafe wrap
+    Unsafe,
+}
+
 /// Ссылка на тип. Для bootstrap'а — упрощённая структура.
 #[derive(Debug, Clone)]
 pub enum TypeRef {
@@ -1083,6 +1099,15 @@ pub enum TypeRef {
     /// Zero runtime overhead: only compile-time check. Forbids mut-methods
     /// and index writes. `T → readonly T` coerce allowed; reverse forbidden.
     Readonly(Box<TypeRef>, Span),
+    /// Plan 118 (D216 §1-3): typed pointer family `*T` / `*ro T` /
+    /// `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
+    ///
+    /// Examples:
+    /// - `*T` → `Pointer(Ro, T, span)` (default ro)
+    /// - `*mut T` → `Pointer(Mut, T, span)`
+    /// - `*mut *ro Acc` → `Pointer(Mut, Pointer(Ro, Acc, ...), ...)`
+    ///   (mut pointer на ro pointer на Acc)
+    Pointer(PointerModifier, Box<TypeRef>, Span),
 }
 
 impl TypeRef {
@@ -1095,7 +1120,8 @@ impl TypeRef {
             | TypeRef::Func { span, .. }
             | TypeRef::Protocol { span, .. }
             | TypeRef::Unit(span)
-            | TypeRef::Readonly(_, span) => *span,
+            | TypeRef::Readonly(_, span)
+            | TypeRef::Pointer(_, _, span) => *span,
         }
     }
 
@@ -1109,6 +1135,11 @@ impl TypeRef {
 
     pub fn is_readonly(&self) -> bool {
         matches!(self, TypeRef::Readonly(..))
+    }
+
+    /// Plan 118: returns true if this is a typed pointer `*T` (any modifier).
+    pub fn is_pointer(&self) -> bool {
+        matches!(self, TypeRef::Pointer(..))
     }
 }
 

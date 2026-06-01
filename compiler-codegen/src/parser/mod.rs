@@ -4307,6 +4307,36 @@ impl Parser {
                 let span = start.merge(inner.span());
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
             }
+            // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
+            // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
+            // Chain order: `*mut *ro T` = mut pointer на ro pointer на T
+            // (recursive PointerType production, left-to-right).
+            TokenKind::Star => {
+                self.bump(); // eat *
+                // Optional modifier (ro / mut / unsafe ident).
+                let modifier = match &self.peek().kind {
+                    TokenKind::KwRo => {
+                        self.bump();
+                        crate::ast::PointerModifier::Ro
+                    }
+                    TokenKind::KwMut => {
+                        self.bump();
+                        crate::ast::PointerModifier::Mut
+                    }
+                    // `unsafe` пока ident (KwUnsafe не введён в lexer'е до Ф.3).
+                    // Plan 118 Ф.3 добавит KwUnsafe — здесь оба branches будут
+                    // работать (Ident("unsafe") legacy + KwUnsafe canonical).
+                    TokenKind::Ident(s) if s == "unsafe" => {
+                        self.bump();
+                        crate::ast::PointerModifier::Unsafe
+                    }
+                    // Default modifier = Ro (когда `*T` без явного modifier).
+                    _ => crate::ast::PointerModifier::Ro,
+                };
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                return Ok(TypeRef::Pointer(modifier, Box::new(inner), span));
+            }
             TokenKind::LBracket => {
                 self.bump();
                 // []T или [N]T

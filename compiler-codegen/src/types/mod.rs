@@ -1819,6 +1819,8 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent, walk inner.
             TypeRef::Readonly(inner, _) => self.walk_typeref(inner, gs, errors),
+            // Plan 118 D216: typed pointer `*T` — walk inner for arity checks.
+            TypeRef::Pointer(_, inner, _) => self.walk_typeref(inner, gs, errors),
         }
     }
 
@@ -1854,6 +1856,8 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::collect_named_idents(inner, out),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner.
+            TypeRef::Pointer(_, inner, _) => Self::collect_named_idents(inner, out),
         }
     }
 
@@ -3863,6 +3867,11 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => TyCat::Unit,
             // D176 (Plan 108): readonly T — same category as inner (transparent for assignability).
             TypeRef::Readonly(inner, _) => self.cat_of_depth(inner, gs, depth + 1),
+            // Plan 118 D216: typed pointer `*T` — category Ptr (matches D214
+            // `ptr` opaque). Внутренний type categorization не нужен для
+            // assignability rules (pointer category распространяется на все
+            // `*T` family variants; mutability/safety enforced отдельно в Ф.4).
+            TypeRef::Pointer(_, _, _) => TyCat::Ptr,
         }
     }
 }
@@ -4029,6 +4038,15 @@ fn typeref_display(tr: &TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", typeref_display(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, typeref_display(inner))
+        }
     }
 }
 
@@ -7544,6 +7562,15 @@ fn render_type_ref(t: &TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", render_type_ref(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, render_type_ref(inner))
+        }
     }
 }
 
@@ -7782,6 +7809,12 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
         TypeRef::Unit(_) => Ty::Unit,
         // D176 (Plan 108): readonly T — same Ty as inner (transparent).
         TypeRef::Readonly(inner, _) => ty_of_ref(inner),
+        // Plan 118 D216 §1 (Ф.1 scaffolding): typed pointer `*T` family →
+        // Ty::Ptr (opaque ptr from D214). Modifier + inner type info
+        // tracked в TypeRef but не propagated в Ty yet. Ф.1.5-1.7 followup
+        // добавит Ty::TypedPtr proper variant + binding mut rule + chain
+        // order enforcement в type-checker.
+        TypeRef::Pointer(_, _, _) => Ty::Ptr,
     }
 }
 
@@ -8143,6 +8176,16 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                 TypeRef::Unit(_) => "()".to_string(),
                 // D176 (Plan 108): readonly T — key as "readonly_<inner>"
                 TypeRef::Readonly(inner, _) => format!("readonly_{}", type_key(inner)),
+                // Plan 118 D216 §1: typed pointer `*T` family — key includes
+                // modifier (Ro/Mut/Unsafe) для overload disambiguation.
+                TypeRef::Pointer(modif, inner, _) => {
+                    let modif_str = match modif {
+                        crate::ast::PointerModifier::Ro => "ro",
+                        crate::ast::PointerModifier::Mut => "mut",
+                        crate::ast::PointerModifier::Unsafe => "unsafe",
+                    };
+                    format!("*{}_{}", modif_str, type_key(inner))
+                }
             }
         }
         fn op_sig(m: &EffectMethod) -> String {
@@ -13862,6 +13905,15 @@ fn typeref_render(t: &TypeRef) -> String {
         TypeRef::Protocol { methods, .. } => format!("protocol {{...{} sigs}}", methods.len()),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", typeref_render(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — render with modifier.
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, typeref_render(inner))
+        }
     }
 }
 

@@ -627,6 +627,21 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
                 write_typeref_structural(w, inner);
             });
         }
+        // Plan 118 D216 §1: typed pointer `*T` family.
+        TypeRef::Pointer(modif, inner, _) => {
+            let source = super::collector::render_type_for_doc(ty);
+            let modif_str = match modif {
+                crate::ast::PointerModifier::Ro => "ro",
+                crate::ast::PointerModifier::Mut => "mut",
+                crate::ast::PointerModifier::Unsafe => "unsafe",
+            };
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "pointer");
+                w.field_str("modifier", modif_str);
+                w.field_str("source", &source);
+                write_typeref_structural(w, inner);
+            });
+        }
     }
 }
 

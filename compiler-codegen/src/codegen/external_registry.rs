@@ -467,6 +467,18 @@ impl ExternalRegistry {
             TypeRef::Protocol { .. } => Ok("void*".into()),
             // D176 (Plan 108): readonly T — transparent for codegen.
             TypeRef::Readonly(inner, _) => Self::type_ref_to_c(inner, recv),
+            // Plan 118 D216 §1: typed pointer `*T` family — emit C `T*`.
+            // §11 codegen: `*ro T` → `const T*` (helps clang/MSVC optimizer);
+            // `*mut T` / `*unsafe T` → `T*`. ABI consistent с D214 ptr.
+            TypeRef::Pointer(modif, inner, _) => {
+                let inner_c = Self::type_ref_to_c(inner, recv)?;
+                Ok(match modif {
+                    crate::ast::PointerModifier::Ro => format!("const {}*", inner_c),
+                    crate::ast::PointerModifier::Mut | crate::ast::PointerModifier::Unsafe => {
+                        format!("{}*", inner_c)
+                    }
+                })
+            }
         }
     }
 

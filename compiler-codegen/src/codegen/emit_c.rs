@@ -4616,6 +4616,18 @@ impl CEmitter {
             TypeRef::Protocol { .. } => Ok("void*".into()),
             // D176 (Plan 108): readonly T — zero overhead, transparent for codegen.
             TypeRef::Readonly(inner, _) => self.type_ref_to_c(inner),
+            // Plan 118 D216 §1: typed pointer family `*T` family — emit C pointer.
+            // §11 codegen: `*ro T` → `const T*` (helps clang/MSVC optimizer);
+            // `*mut T` / `*unsafe T` → `T*`. ABI consistent с Plan 115 ptr.
+            TypeRef::Pointer(modif, inner, _) => {
+                let inner_c = self.type_ref_to_c(inner)?;
+                Ok(match modif {
+                    crate::ast::PointerModifier::Ro => format!("const {}*", inner_c),
+                    crate::ast::PointerModifier::Mut | crate::ast::PointerModifier::Unsafe => {
+                        format!("{}*", inner_c)
+                    }
+                })
+            }
         }
     }
 
@@ -9052,6 +9064,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner для
+            // dependency collection (pointee type must be declared).
+            TypeRef::Pointer(_, inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
 
@@ -9083,6 +9098,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             TypeRef::Unit(_) => false,
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::type_ref_uses_any_type_param(inner, type_params),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner.
+            TypeRef::Pointer(_, inner, _) => Self::type_ref_uses_any_type_param(inner, type_params),
         }
     }
 
@@ -10931,6 +10948,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             TypeRef::Unit(_) => false,
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::type_ref_mentions_name(inner, names),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner.
+            TypeRef::Pointer(_, inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
 
@@ -25283,6 +25302,10 @@ _cp++; \
             TypeRef::Protocol { .. } => {} // не sum-тип
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner для
+            // NovaOpt decl pre-emit. Note: NPO codegen для Option[*T]
+            // landing в Ф.5 — здесь recurse для pointee.
+            TypeRef::Pointer(_, inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }
 
