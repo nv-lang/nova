@@ -1,0 +1,10 @@
+// Plan 114.4.2 T3-NEG.14: division by zero в evaluator
+// → E_CONST_FN_DIV_ZERO.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_DIV_ZERO
+
+module plan114_4_2.eval_div_zero_neg
+
+fn divz(const a int, const b int) -> const int => a / b
+
+const BAD = divz(10, 0)

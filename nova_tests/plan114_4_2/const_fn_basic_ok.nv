@@ -1,0 +1,14 @@
+// Plan 114.4.2 T3.1: basic const fn — block body, local const, arith.
+
+module plan114_4_2.const_fn_basic_ok
+
+fn calc(const a int, const b char) -> const int {
+    const c = b as int
+    a + c * 10
+}
+
+test "calc literal eval" {
+    const RESULT = calc(5, 'A')
+    // 'A' = 65 → c = 65 → a + c*10 = 5 + 650 = 655.
+    assert(RESULT == 655)
+}

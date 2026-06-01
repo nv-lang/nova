@@ -2308,9 +2308,24 @@ impl Parser {
         let effects = self.parse_effects_until_arrow_or_body()?;
         // Plan 77 (D132): `-> @` — fluent-return (метод возвращает receiver).
         let mut returns_receiver = false;
+        // Plan 114.4.2 (D199): `-> const T` — comptime-evaluable return.
+        // Marks fn as `const fn`. All-or-nothing verified в parse_fn после.
+        let mut return_is_const = false;
         let return_type = if self.eat(&TokenKind::Arrow).is_some() {
+            if matches!(self.peek().kind, TokenKind::KwConst) {
+                self.bump(); // const
+                return_is_const = true;
+            }
             if matches!(self.peek().kind, TokenKind::At) {
                 let at_span = self.peek().span;
+                if return_is_const {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_FLUENT_RETURN] `-> const @` not allowed (D199 + D132): \
+                         fluent-return подразумевает runtime receiver, не comptime literal."
+                            .to_string(),
+                        at_span,
+                    ));
+                }
                 self.bump(); // `@`
                 returns_receiver = true;
                 // `-> @` допустим только для instance-метода (есть `@`-receiver).
@@ -2361,6 +2376,64 @@ impl Parser {
             None
         };
 
+        // Plan 114.4.2 V1 (D199) / Plan 114.4.3 Ф.3 V2 (D199 amend):
+        // const fn classification + restrictions.
+        //
+        // V2 (mixed-args): убираем all-or-nothing reject. Allow:
+        //   - Все params const + const return = fully-const fn (V1 surface,
+        //     evaluator-inlined + dropped из codegen).
+        //   - Mixed (≥1 const param, не fully-const) = monomorphizable fn:
+        //     const params trigger constexpr-arg requirement на call-site,
+        //     body — runtime, return — runtime/const valid.
+        //   - Только const return + runtime params — невалидно: return cannot
+        //     reference runtime params если promised constexpr.
+        //   - is_external + const param/return → reject (no Nova body).
+        //   - effect-list — fully-const reject; mixed может (runtime body
+        //     allowed).
+        let any_const_param = params.iter().any(|p| p.is_const);
+        let all_const_params = !params.is_empty() && params.iter().all(|p| p.is_const);
+        let is_fully_const_fn = (all_const_params || params.is_empty()) && return_is_const;
+        let has_const_surface = any_const_param || return_is_const;
+
+        if has_const_surface {
+            // Runtime params + const return = potential E_CONST_FN_RUNTIME_REF_IN_CONST_RETURN
+            // (body verification by check_const_fn_decl); parser-level —
+            // только if нет ни одного const param: явная ошибка, return cannot
+            // produce constexpr из runtime params.
+            if return_is_const && !any_const_param && !params.is_empty() {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_PARTIAL_CONSTNESS] `-> const T` return с все-runtime \
+                     params (D199 V2). const-return requires at least один const param \
+                     или fully no params. Make params `const` или замени `-> const T` \
+                     на `-> T`."
+                        .to_string(),
+                    start,
+                ));
+            }
+            // External + const fn — reject (no Nova body to evaluate).
+            if is_external {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EXTERNAL] `external fn` не может быть `const fn` \
+                     (D199): comptime evaluation требует Nova body."
+                        .to_string(),
+                    start,
+                ));
+            }
+            // Plan 114.4.3 Ф.4 V2: generic const fn allowed — T-independent
+            // body only. T reflection (sizeof[T], T.field) — V3 follow-up.
+            // Fully-const fn — strict: no effect-list (comptime-only).
+            // Mixed fn — runtime body может effects (V2 allows).
+            if is_fully_const_fn && !effects.is_empty() {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_SIGNATURE] fully-const fn (D199) не \
+                     может иметь effect-list — comptime evaluation runtime-effects \
+                     бессмысленна. Убери effect-list или сделай mixed (хотя бы один \
+                     runtime param)."
+                        .to_string(),
+                    effects[0].span(),
+                ));
+            }
+        }
         // Plan 33.1+33.2 (D24): contracts + reads/modifies после сигнатуры,
         // до тела. `requires <expr>` / `ensures <expr>` / `reads ...` /
         // `modifies ...` на отдельных строках.
@@ -2451,6 +2524,7 @@ impl Parser {
             params,
             effects,
             return_type,
+            return_is_const,
             returns_receiver,
             body,
             span: start.merge(end_span),
@@ -2496,11 +2570,51 @@ impl Parser {
             ));
         }
         let has_readonly_prefix = self.eat(&TokenKind::KwRo).is_some();
+        // Plan 114.4.2 (D199): `const name Type` — comptime-only параметр.
+        // All-or-nothing: проверяется в parse_fn после сбора всех params.
+        // Конфликты с другими modifier'ами проверяем сейчас.
+        let is_const_param = if matches!(self.peek().kind, TokenKind::KwConst) {
+            self.bump();
+            if has_readonly_prefix {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `ro` и `const` (D199): `const` уже подразумевает immutable \
+                     comptime value. Убери `ro`.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwMut) {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `mut` (D199): `const` — comptime value, не имеет \
+                     runtime storage. Используй runtime fn если нужна mutation.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwConsume) {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `consume` (D199): `const` — comptime literal, \
+                     не имеет ownership. Убери `consume`.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            true
+        } else {
+            false
+        };
         // Plan 73 (D131): `consume name Type` — consuming параметр. После
         // передачи аргумента в такой параметр переменная-источник
         // логически инвалидируется (use-after-consume → compile error).
         // `consume` идёт перед именем (как leading `mut`).
         let is_consume = if matches!(self.peek().kind, TokenKind::KwConsume) {
+            if is_const_param {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `consume` (D199).".to_string(),
+                    self.peek().span,
+                ));
+            }
             self.bump();
             // Plan 100.1 (D131 / D133): `consume mut name Type` — parse error.
             // `consume` = ownership transfer (D131); `mut` = mutable borrow.
@@ -2529,6 +2643,13 @@ impl Parser {
         // E_PARAM_MOD_CONFLICT.
         let mut is_mut = false;
         if matches!(self.peek().kind, TokenKind::KwMut) {
+            if is_const_param {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `mut` (D199).".to_string(),
+                    self.peek().span,
+                ));
+            }
             if is_consume {
                 return Err(Diagnostic::new(
                     "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
@@ -2640,6 +2761,7 @@ impl Parser {
             default,
             consume: is_consume,
             is_mut,
+            is_const: is_const_param,
         })
     }
 

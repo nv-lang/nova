@@ -26617,6 +26617,521 @@ Closes marker: [M-D78-strict-removal].
 Unblocks: strict rev-3 enforcement в любых будущих кодогенерационных
 plans (manifest dispatch, cross-module symbol resolution).
 
+================================================================================
+Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
+================================================================================
+
+Branch: plan-114.4.2 (worktree D:/Sources/nv-lang/nova-p114-4)
+Rebased on main 10cc6b50dd4 (после Plan 115 FFI merge).
+
+Что сделано (7 коммитов):
+1. Ф.1 parser (3b7e558d63c): const param + -> const T + all-or-nothing.
+   - Param.is_const + FnDecl.return_is_const AST extensions.
+   - parse_param: const qualifier (наряду с mut/consume/ro).
+   - parse_fn return type: -> const T парсинг + -> const @ reject.
+   - All-or-nothing check после params + return:
+     * E_CONST_FN_PARTIAL_CONSTNESS (3 варианта)
+     * E_CONST_FN_EFFECT_IN_SIGNATURE
+     * E_CONST_FN_GENERIC
+     * E_CONST_FN_EXTERNAL
+     * E_CONST_FN_FLUENT_RETURN
+   - Modifier conflicts: E_CONST_PARAM_MOD_CONFLICT (const+mut/consume/ro).
+
+2. Ф.1 body checker (01264d18a6a): V1 whitelist + 7 error codes +
+   call-graph DFS cycle detection.
+   - check_const_fn_expr recursive validator:
+     literal + Unary/Binary + As + Ident (param/local) + Call (direct
+     const-fn-call с constexpr args) + Block (recurse).
+   - check_const_fn_block stmt validator:
+     Stmt::Const binds local env; final Stmt::Expr | Return; trailing
+     handled. Все остальные variants → error.
+   - 7 error codes для blacklist: CONTROL_FLOW, MUT_BINDING,
+     EFFECT_IN_BODY, ALLOCATION, RECURSION, FIRST_CLASS, REF_NON_CONST.
+   - Top-level pass в check_module: builds const_fn_names, validates
+     each fn, builds call_graph, DFS cycle detection WHITE/GRAY/BLACK.
+
+3. Ф.1 smoke fixtures + trailing-fix (9d5c7bce690):
+   8 negative fixtures + Block.trailing handled в check_const_fn_block.
+
+4. Ф.2 evaluator (09b90f5f6f0): const_fn_eval module.
+   - ConstValue enum (Int/Float/Bool/Str/Char/Unit) с manual Hash/Eq
+     (float compare via to_bits).
+   - ConstFnEvaluator: registry + memoization cache + recursion depth
+     limit.
+   - eval_call / eval_block / eval_expr: env-based interpreter.
+   - eval_binary: typed dispatch — checked_add/sub/mul/div/rem + shl/shr
+     (range [0..63]); overflow → E_CONST_FN_EVAL_OVERFLOW; div 0 →
+     E_CONST_FN_DIV_ZERO; bitwise + cmp; str concat + cmp; bool/char.
+   - eval_as_cast: identity casts + char↔int (range check) + int
+     narrowing (i32/i16/i8/u8/u16/u32/u64 range check) + float↔int +
+     bool→int — все overflow явно (NOT silent truncation).
+   - try_literal_to_value helper для AST rewriter.
+
+5. Ф.3 rewriter (6bbf33f3285): AST const-fn-call replacement + decl drop.
+   - OwnedEvaluator (owns FnDecl clones — solves borrow conflict
+     при mutation other AST while reading const fn registry).
+   - rewrite_const_fn_calls(&mut Module) -> Vec<Diagnostic>:
+     walks all items + expressions, replaces Call(const_fn) с literal.
+     После — retain filter удаляет const fn declarations из items +
+     peer_files.items_here.
+   - Полный AST coverage: control flow, closures, spawn/supervised,
+     with/forbid/realtime, handler/protocol literals, lambda, etc.
+   - Pipeline wiring: main.rs (3 sites), test_runner.rs (cmd_test).
+     После check_module, до annotate_map_literals / desugar.
+
+6. Ф.2-Ф.3 wiring + T3 positives (d3dfe070b73):
+   - check_const_constexpr_ex: extended variant принимающий const_fn_names.
+     Allowed: As + Call(const_fn) with constexpr args.
+   - TypeCheckCtx: const_fn_names + in_const_fn Cell flag.
+   - check_fn устанавливает in_const_fn flag (RAII guard).
+   - Stmt::Const skip в const fn body (body checker covers param/local).
+   - Stmt::Const в NameRes walk_stmt: binds d.name в текущий frame.
+   - 6 T3 positive fixtures: basic / expr-body / chain / no-args /
+     used-in-const / memoization.
+
+7. T3 full negatives (1452b0d60ea): 22/22 plan114_4_2 PASS.
+   - 8 NEG parser-level + 4 NEG checker-level + 1 NEG external +
+     2 NEG evaluator (overflow, div_zero) + 1 NEG call-site.
+
+8. Spec D199 promote (25260194867): draft → ACTIVE.
+   - D199 status flip + Implementation notes section.
+   - D102 amend: default-param-values могут вызывать const fn.
+   - D33 wording update.
+   - Q7 (macros / comptime) partial answer 2026-06-01.
+
+Acceptance criteria (final):
+- A14 ✅ const fn parses + comptime evaluates + inlines literal —
+  T3.1-T3.6 PASS.
+- A15 ✅ all-or-nothing const params/return — T3-NEG.2/.3 PASS.
+- A16 ✅ V1 body subset enforcement (7 error codes) — T3-NEG.4-.9 +
+  body_first_class_neg + body_allocation_neg + body_generic_neg PASS.
+- A17 ✅ first-class reject + modifier conflict + effect-sig reject —
+  T3-NEG.10/.11/.12 PASS.
+- A18 ✅ codegen NOT emitted + memoization + evaluator errors — codegen
+  drop verified (const fn removed из module.items + peer_files); evaluator
+  overflow/div-zero — T3-NEG.13/.14 PASS.
+
+Workflow safety hatches:
+- Ф.2 evaluator: НЕ extracted в Plan 114.4.2.1 — landed in this branch.
+- Generic const fn ([M-114.4.2-generic]) — V1 reject, followup.
+- First-class const fn ([M-114.4.2-first-class]) — V1 reject, followup.
+- Recursion ([M-114.4.2-recursion]) — V1 reject, followup.
+- Control flow ([M-114.4.2-control-flow]) — V1 reject, followup.
+- Mixed comptime / runtime params ([M-114.4.2-mixed-args]) — V1 reject,
+  followup.
+
+22 fixtures PASS / 0 FAIL на release nova-cli + clang toolchain
+(NOVA_GC=vcpkg_installed/x64-windows-static).
+
+Closes:
+- [M-114-const-fn] (umbrella из Plan 114).
+- D199 promote draft → ACTIVE.
+- Plan 114.4 Ф.3 safety-hatch deferred work — closed.
+
+Unblocks:
+- Plan 114.4 full closure (Ф.1 narrow + Ф.2 generalize-partial + Ф.3 fn
+  все closed).
+- Generic const fn V2 (Plan 114.4.2.1).
+- Computed [N]T sizes (D27 from-any-visible-scope amend).
+- Type-driven dispatch constants.
+
+
+================================================================================
+Plan 90 followup — fill memset fast-path + []T.append_zero(n) (2026-06-01)
+================================================================================
+
+Два уточнения runtime в D141 (08-runtime.md) — оба для []T bulk-ops:
+
+1. `fill(v)`: single-byte T (`u8`/`i8`) → memset fast-path.
+   `nova_array_fill_##T` macro обновлён в compiler-codegen/nova_rt/
+   array.h:174-183 — runtime `if (sizeof(T) == 1)` ветка с memset,
+   else scalar loop. sizeof(T) — compile-time constant per macro
+   instantiation; компилятор DCE'ит мёртвую ветку, output идентичен
+   явному `#if`. Cast `(unsigned char)v` корректно переносит битовую
+   картинку для signed i8 (`-1` → `0xFF` → читается обратно `-1`).
+   <string.h> уже подключён в array.h.
+
+   Раньше для []u8 компилятор под `-O2` скорее всего распознавал idiom
+   и векторизовал loop в memset, но это не гарантировано (под `-O0`
+   оставался цикл). Теперь — explicit fast-path, deterministic.
+
+2. `append_zero(n int)` (новый API): extend by N zero-init elements.
+   Полиморфно по T через `memset(_, 0, n*sizeof(T))` — в отличие от
+   fill (где memset только для single-byte T).
+
+   Семантика:
+   - `n < 0` → panic «append_zero: n must be >= 0»
+   - `n == 0` → noop
+   - 2x growth strategy + memcpy prefix + memset tail (параллель append/
+     reserve)
+   - Returns @ через codegen для fluent chain (Plan 91.7 D181)
+   - Zero bytes = valid zero-init для всех primitives (int/u8/f64 → 0),
+     nova_ptr (NULL), bool (false), Plan 120 named tuples с
+     zero-default representation полей.
+
+   Use-case — encoders/framers:
+     mut buf []u8 = []
+     buf.append_zero(2)              # reserve 2 байта под length-prefix
+     buf.append(payload)
+     buf[0] = (payload.len() >> 8) as u8
+     buf[1] = (payload.len() & 0xff) as u8
+
+   Раньше аналог требовал `buf.append([0, 0])` (литерал-аллокация)
+   или explicit loop — оба неэргономично.
+
+Wiring:
+- Runtime: compiler-codegen/nova_rt/array.h
+  - fill_##T: +sizeof(T)==1 fast-path (commit c6816e6bb28)
+  - append_zero_##T: новый macro (commit 8a1d82760cd, после fill)
+- Codegen: compiler-codegen/src/codegen/emit_c.rs
+  - line 18944 (statement dispatch): append_zero в match-arm для
+    bulk slice-операций → emit `nova_array_append_zero_<T>(...)`
+  - line 27233 (return-type resolution): append_zero возвращает
+    obj_ty (receiver) → fluent chain
+- Type checker: compiler-codegen/src/types/mod.rs
+  - lines 11754 + 11794 (builtin_mut_method recognition): append_zero
+    в обоих списках → E_PARAM_NOT_MUT enforcement для view-param
+    receivers
+- Lint: compiler-codegen/src/lints.rs
+  - line 1410 is_grow_method: +append_zero → W_VIEW_EXTEND_DETACH
+    fires после `let view = parent[a..b]` + `parent.append_zero(n)`
+
+Spec D141 amend (spec/decisions/08-runtime.md):
+- Header: добавлен 2026-06-01 amend block с обоими уточнениями.
+- fill description: +«Perf (Plan 90 followup): single-byte T memset
+  fast-path; wider T scalar loop» note.
+- Append/insert/reserve API: signature listing +
+  `fn []T mut @append_zero(n int)` строкой.
+- Новая подсекция «append_zero(n) (Plan 90 followup, 2026-06-01)» с
+  полным описанием семантики + use-case кодом.
+- Naming rationale: append-family строка обновлена на тройку
+  push(v) + append(src) + append_zero(n).
+- W_VIEW_EXTEND_DETACH lint trigger list: +append_zero четвёртым.
+
+Spec README (spec/decisions/README.md):
+- D141 entry обновлён: «fill memset fast-path + append_zero(n)
+  polymorphic zero-extend (Plan 90 followup 2026-06-01)».
+
+Acceptance criteria (final):
+- A1 ✅ fill(v) memset для []u8/[]i8; scalar loop для wider T — fill.nv
+  PASS (3 tests: byte memset path + empty + []int loop path).
+- A2 ✅ append_zero(n) полиморфно — []u8 / []int обе ветки PASS
+  (append_zero.nv tests 1, 2).
+- A3 ✅ Returns @ для fluent chain — append_zero.nv test 5
+  `a.append_zero(3).fill(7).append_zero(2)` PASS.
+- A4 ✅ n < 0 → panic с diagnostic — append_zero_negative_n_neg.nv
+  EXPECT_RUNTIME_PANIC «append_zero: n must be >= 0» PASS.
+- A5 ✅ n == 0 → noop — append_zero.nv test 4 PASS.
+- A6 ✅ Empty buffer extends корректно — append_zero.nv test 3 PASS.
+- A7 ✅ W_VIEW_EXTEND_DETACH lint fires —
+  append_zero_view_detach_warn.nv EXPECT_COMPILE_WARNING PASS
+  (warning: 1 confirmed).
+- A8 ✅ Регрессия: plan90 9/0 + plan90_1 20/0 + plan91_7 5/0
+  (release nova-cli + clang toolchain).
+
+Discovered followup (НЕ исправлено):
+- [M-array-set-method-resolves-to-oncecell] — arr.set(i, v) для []u8
+  codegen ушёл в Nova_OnceCell_method_set (linker undefined symbol).
+  Workaround в тестах: arr[i] = v index-assignment. Low priority,
+  есть workaround. Marker задокументирован в simplifications.md.
+
+Closes:
+- [M-90-byte-fill-memset] — fill memset fast-path для single-byte T.
+- [M-90-append-zero] — новый polymorphic append_zero API.
+- D141 amend (08-runtime.md + README.md) — оба уточнения spec'нуты.
+
+Unblocks:
+- Эффективные binary encoders/framers на Nova (length-prefix patching,
+  padding) без литерал-аллокаций.
+- Zero-init bulk operations через unified API в std/runtime.
+- Будущий Plan 121 ([N]T stack arrays) если он добавит fixed-size
+  zero-init pattern — может reuse полиморфный memset rationale.
+
+================================================================================
+Plan 114.4.3 — `const fn` V2 extensions (5 markers closed) — 2026-06-01
+================================================================================
+
+Branch: plan-114.4.3 (worktree D:/Sources/nv-lang/nova-p114-4)
+Rebased on main 7280356abd6 (after Plan 90 followup landed).
+
+V2 extensions closing 5 Plan 114.4.2 followup markers:
+- [M-114.4.2-control-flow] → Ф.1 control-flow
+- [M-114.4.2-recursion] → Ф.2 recursion
+- [M-114.4.2-mixed-args] → Ф.3 mixed-args (covers [M-114.4.2-runtime-return])
+- [M-114.4.2-generic] → Ф.4 generic
+- [M-114.4.2-first-class] → Ф.5 first-class alias
+
+Что сделано (9 commits на branch):
+1. Ф.0 plan doc (3742ae43be8): docs/plans/114.4.3-const-fn-v2-extensions.md.
+2. Ф.1 control-flow (6ff72897e27): body checker + evaluator support
+   для if/else/match с pattern V2.0 subset (literal/wildcard/ident-bind/Or).
+   IfLet/for/while/loop остаются rejected (V2.1 followup).
+3. Ф.2 recursion (9e1d53224ac): direct + mutual recursion + MAX_EVAL_DEPTH
+   raised к 256 + new error E_CONST_FN_EVAL_DEPTH_EXCEEDED.
+4. Ф.3 mixed-args (d41403b069f): all-or-nothing reject removed. Two-tier
+   classification: fully-const (V1 behavior) vs mixed (runtime body +
+   call-site const-arg validation). Covers [M-114.4.2-runtime-return].
+5. Ф.4 generic (74010a5cc52): E_CONST_FN_GENERIC reject removed для
+   T-independent body. Turbofish callee supported в check/eval/rewrite.
+6. Ф.5 first-class (1a933ba0b2a): alias-only V2.0 — const ALIAS = const_fn.
+   Iterative alias-chain resolution в check + rewriter. Alias decls dropped.
+7. Spec update (df62adb88be): D199 V2 extensions section + Q7 expanded.
+
+V1 backward-compat:
+- 4 V1 fixtures removed (V2-superseded поведение now allowed):
+  body_if_control_flow_neg, body_recursion_neg, partial_constness_mixed_neg,
+  partial_constness_runtime_ret_neg.
+- Remaining 18/18 plan114_4_2 fixtures PASS.
+
+Tests T4 series — 16 new fixtures plan114_4_3/ (10 positive + 6 negative):
+- T4.1: if_branching_ok, nested_if_ok, match_literal_ok,
+  for_in_body_neg, if_no_else_neg, match_non_exhaustive_neg.
+- T4.2: recursion_factorial_ok, recursion_fibonacci_ok, recursion_mutual_ok,
+  recursion_depth_exceeded_neg.
+- T4.3: mixed_const_runtime_ok, const_param_runtime_ret_ok,
+  mixed_runtime_arg_to_const_neg.
+- T4.4: generic_const_id_ok, generic_sizeof_neg.
+- T4.5: first_class_alias_ok.
+
+Verification: 16/16 plan114_4_3 + 18/18 plan114_4_2 = 34/34 PASS на
+release nova-cli + clang toolchain (NOVA_GC vcpkg_installed).
+
+Acceptance criteria A19-A26 — all 🟢 (T4 series).
+
+Safety hatches:
+- Ф.4 (generic) — НЕ fire'нул. Реализован minimal V2.0 (T-independent
+  body); T reflection extracted в V3 followup.
+- Ф.5 (first-class) — НЕ fire'нул. Реализован alias-only V2.0;
+  runtime HOF + runtime-let enforcement → V3 followups.
+
+OPEN markers carried forward (V2.1/V3):
+- [M-114.4.3-loops] — for/while/loop в body (V2.1).
+- [M-114.4.3-pattern-record-sum] — record/sum patterns в match (V2.1).
+- [M-114.4.3-t-reflection] — sizeof[T]/T.field в generic const fn (V3).
+- [M-114.4.3-runtime-let-enforcement] — ro f = const_fn reject (V3).
+- [M-114.4.3-friendly-hof-error] — HOF pass friendly error (V3).
+- [M-114.4.3-runtime-hof] — real first-class через runtime trampoline (V3).
+- [M-114.4.3-closure-from-const-fn] — const FN = make_counter(N) (V3).
+- [M-114.4.3-mono-specialization] — per-const-arg true monomorphization (V3).
+- [M-114.4.3-configurable-depth] — #fn_eval_max_depth attribute (V3).
+
+Closes 5 markers from Plan 114.4.2 followup chain.
+Plan 114.4 const fn family (V1 + V2) — production-grade complete для
+all "main path" features. V3 — type reflection / closures / loops only.
+
+
+================================================================================
+Plan 83.11 §12.31 — [M-83.11-supervised-spawn-cancel-memcpy-segv] CLOSED (2026-06-01)
+================================================================================
+
+Followup в Plan 83.11 (Centralized I/O driver). Session #13.
+Worktree: nova-p83-11, branch plan-83.11-centralized-driver.
+
+Background: после §12.27-29 bisect определил `dd7a4f00bc5` как culprit;
+§12.30 подготовил cdb_session.sh wrapper, но cdb.exe на машине не было
+(требуется Windows SDK + admin elevation для winget install). Прошлые
+7 attempts (§12.13-26) потратили ~10h на hypothesis-driven fixes без
+crash localization.
+
+§12.31 — root cause найден ЗА ОДИН СЕАНС (~30 min) через pivot:
+вместо cdb — собственный in-process Vectored Exception Handler через
+Windows-native `dbghelp.dll` (SymInitialize + StackWalk64 + SymFromAddr
++ SymGetLineFromAddr64). dbghelp.lib уже линкуется в test_runner.rs,
+поэтому wiring был trivial.
+
+Tool: `compiler-codegen/nova_rt/segv_diag.c` (~165 LOC).
+- Hook в `nova_gc_init` (gated by NOVA_DIAG_SEGV=1 env)
+- Zero overhead when unset; no-op TU на не-Windows
+- AddVectoredExceptionHandler с first-handler priority
+- На AV: dumps registers (RAX-R15+RIP+RSP+RBP), exception code,
+  fault address + operation (READ/WRITE), exe base + RIP-RVA,
+  до 50 frames stack с module!symbol+offset (file:line where PDB has)
+- ExitProcess(3) для prevention рекурсии
+- Reusable Windows debugging tool для любых future races
+
+Tool wire-up:
+- alloc_boehm.c — добавлен extern call к _nova_install_segv_handler()
+  первой строкой в nova_gc_init
+- test_runner.rs — добавлен rt_segv_diag во все три toolchain branches
+  (clang/msvc/gcc)
+
+Root cause (frame[1] revealed):
+- Frame[0]: nova_aint_cas+0x2F (sync.h:169 — lock cmpxchg)
+- Frame[1]: _nova_driver_handle_cancel_scope+0x61 (driver.c:312) ← KEYSTONE
+  CAS на &st->stage где st = scope->armed_sleeps_head
+- Frame[2+]: process_job → drain_jobs → job_async_cb → uv_run → driver_main
+
+CSD probe (одна fprintf at function entry — point-probe, не Heisen-test)
+показал scope fields = garbage:
+  scope=stack_addr (valid)
+  bound_token=NULL (should be tok)
+  head=0x7FF6358864C9 (.rdata — wild)
+  count=372/580/537 (garbage)
+  slot_lock=large negative (garbage)
+
+Это use-after-free stack-allocated NovaFiberQueue.
+
+Causal timeline:
+1. main: nova_scope_init(&_nova_scope_q_0) — стек инициализирован
+2. main: spawn child + bind tok + nova_supervised_run_cancel
+3. child: tok.cancel() → _nova_cancel_via_driver(bound_scope) →
+   malloc job{kind=CANCEL_SCOPE, scope=&_nova_scope_q_0} + submit_job +
+   uv_async_send(driver)
+4. child: fiber body completes, epilogue decrements pending_remote
+5. main: pending_remote == 0 → exits loop → drop_state + unbind + return
+6. main: test function returns → _nova_scope_q_0 stack frame reused
+7. driver thread: wakes на job_async_cb → process_job(stale ptr) →
+   scope->armed_sleeps_head reads garbage → wild ptr in .rdata
+8. driver: `lock cmpxchg dword [.rdata+0x579], r8d` → SEGV
+
+§12.9 «memcpy to .rdata» symptom был misdirection: x86 LOCK CMPXCHG
+faults regardless of compare result (page-writability check на
+LOCK cycle), и llvm-symbolizer без DIA resolved nova_aint_cas как
+memcpy через misclassification.
+
+Fix design — lifetime counter pattern (4 хирургических changes):
+
+1. NovaFiberQueue gets `nova_atomic_int pending_driver_jobs` field
+2. _nova_cancel_via_driver:
+     nova_aint_inc(&scope->pending_driver_jobs)  // ACQ_REL
+     if (nova_driver_submit_job(job) != 0) {
+         free(job);
+         __atomic_fetch_sub(&scope->pending_driver_jobs, 1, ACQ_REL);
+     }
+3. _nova_driver_handle_cancel_scope (end of function):
+     __atomic_fetch_sub(&scope->pending_driver_jobs, 1, RELEASE)
+4. nova_supervised_run_impl (before drop_state/unbind/return):
+     while (nova_aint_load(&q->pending_driver_jobs) > 0) {
+         uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+         if (nova_aint_load(...) > 0) uv_sleep(1);
+     }
+
+Memory ordering:
+- ACQ_REL inc / RELEASE dec / ACQUIRE load формирует proper happens-before
+- Counter > 0 → main holds stack frame alive
+- Counter == 0 → driver dereferenced all scope fields → safe to return
+
+Verification:
+- _min.nv стресс: 1/30 → 30/30 PASS ✅
+- cancel_semantics_test: 0/30 (§12.28) → 120/120 PASS ✅
+- No deadlock с driver shutdown (atexit runs after main returns;
+  main can only return after wait loop exits)
+
+Acceptance criteria:
+- A1 — root cause identified ✅ (frame[1] keystone)
+- A2 — fix that addresses root cause ✅ (counter pattern)
+- A3 — _min.nv 30/30 stress PASS ✅
+- A4 — cancel_semantics_test 30/30 PASS ✅
+- A5 — 0 new regressions (verified via stash-baseline: 481 pre-existing
+  FAILs are Plan 73.1 V3 / Plan 91.12 / Plan 99 / Plan 110.x — unrelated)
+
+stress_iso_3e baseline check: 0/10 PASS at HEAD без моего fix — already
+broken (Plan 110.x merge artifact, cleanup-timeout-exceeded from
+nv_shield_check_deadline). НЕ regressed моим fix.
+
+Lessons learned (added к §10.4 / §12.16 — lessons #16-20):
+16. «VEH + native SymFromAddr beats absent cdb on Windows». dbghelp.dll
+    есть на каждой Windows install, dbghelp.lib линкуется уже. ~165 LOC
+    + 1 hook = full symbolized stack. Намного дешевле admin elevation.
+    Add to default diagnostic kit для future Windows-only races.
+    llvm-symbolizer без DIA support бесполезен для PDB (returns ??:0:0).
+17. «One diagnostic print > eight hypothesis attempts». §12.13-26
+    потратили 7 attempts через hypothesize-fix-test (~10h). Эта сессия:
+    install VEH (10 min code), repro captured frame[1] на FIRST run
+    (1 min), one ad-hoc CSD probe revealed garbage scope (5 min),
+    targeted fix (10 min). Total ~30 min. The 7 prior attempts could
+    не sample the right hypothesis потому что iterated в the wrong
+    region (GC scanning, fiber stack coverage, cancel-box-str ABI).
+    Frame[1] told the answer immediately.
+18. «Compound-literal "memcpy to .rdata" was misdirection в §12.9».
+    The nova_cancel_box_str codegen pattern (nova_str){.ptr=...,.len=...}
+    — stack temporary, red herring. The real crash was lock cmpxchg в
+    nova_aint_cas looking like memcpy to llvm-symbolizer fallback.
+    Don't trust llvm-symbolizer for PDB; use Windows-native APIs.
+19. «Stack-allocated scope must outlive all async references». General
+    invariant any time stack pointer crosses a thread/queue boundary.
+    Plan 83.11 Ф.2 introduced driver thread + Ф.3 added CANCEL_SCOPE
+    jobs carrying scope ptr — lifetime invariant был не audited тогда.
+    Pattern для futures plans: any time a job contains a pointer to
+    caller's local, caller must wait for job processing before return.
+20. «Differentiate Heisen-tests vs point-probes». Heisen-tests = broad
+    instrumentation that changes timing (anti-pattern per §10.4 #1).
+    Point-probes = single fprintf at function entry in cold path,
+    showing correctness of heap value (used in §12.31). Latter are
+    valuable diagnostics, не anti-pattern.
+
+Status: ✅ V1 CLOSED 2026-06-01. Marker `[M-83.11-supervised-spawn-
+cancel-memcpy-segv]` closed. 3 commits на ветке plan-83.11-centralized-
+driver pushed to github (`f30998fa940` feat + `421f295c454` fix +
+`0bcb61636dd` docs §12.31). Branch merged в main по user request.
+
+segv_diag.c retained как reusable Windows debugging tool — opt-in via
+NOVA_DIAG_SEGV=1, zero overhead when unset. Reusable для любых future
+Windows runtime races.
+
+Plan 83.11 progress: Ф.0-Ф.3 уже в main (merge cf00a37fb16); §12.31
+closed. Open: Ф.4-Ф.9 (blocking migration + cleanup pending design
+decision), [M-83.11-gc-cancel-token-alias] (990+ fibers panic,
+Option A documented в §11.4).
+
+
+================================================================================
+Plan 83.11 §11.6 — [M-83.11-gc-cancel-token-alias] CLOSED (2026-06-01)
+================================================================================
+
+Followup session #13 (одновременно с §12.31). Closed second open marker.
+
+Background: §11 documented GC structural aliasing bug — NovaCancelToken
+collected from register at ~512 fibers (ctx_pins[] doubling triggers
+nova_alloc → GC sweep), freed tok addr reused by NovaSpawnCtxBase,
+structural overlap at offset +8 (bound_scope vs _nova_parent_scope)
+causes "token already bound to a live scope" panic при последующем
+nova_cancel_token_bind. Threshold: 990+ simultaneously-spawned fibers
+under armed M:N on Windows.
+
+Fix per §11.4 Option A — Single self.line() в emit_supervised codegen
+(compiler-codegen/src/codegen/emit_c.rs:6195) после declaration
+NovaCancelToken* _nova_cancel_tok_{id} = expr, до body emission:
+
+    self.line(&format!(
+        "nova_scope_pin_ctx(&{}, (void*){});", queue_var, tv));
+
+Emitted C (verified в stress_iso_large.c:1343):
+
+    NovaCancelToken* _nova_cancel_tok_0 = tok;
+    nova_scope_pin_ctx(&_nova_scope_q_0, (void*)_nova_cancel_tok_0);
+
+scope.ctx_pins[] lives on supervised's stack frame, conservative GC
+scan always sees it as root → token reachable throughout scope lifetime.
+Pattern идентичен Plan 44.5 L5 SpawnCtx pin (same protection mechanism,
+different object).
+
+New regression test: nova_tests/concurrency/stress_iso_large.nv
+(999+1 spawn + tok.cancel pattern). Stress 30/30 PASS at HEAD vs
+0/3 panic pre-fix per §11.3.
+
+§12.31 §pending_driver_jobs counter unaffected — _min.nv (1+1 cancel)
+stress still 30/30 PASS. Two fixes orthogonal, no interaction.
+
+Cost: ~10 minutes — 1-line codegen change + 25-line regression test +
+§11.6 doc closure. ROI very high — closes documented OPEN marker that
+blocked 990+ fiber tests at production scale.
+
+Acceptance:
+- A1 — Option A applied per §11.4 ✅
+- A2 — stress_iso_large.nv 30/30 PASS ✅
+- A3 — no regression to §12.31 fix (_min.nv 30/30 PASS) ✅
+- A4 — emitted C inspected ✅
+
+Status: ✅ V1 CLOSED 2026-06-01. Marker [M-83.11-gc-cancel-token-alias]
+closed. 1 commit on ветке (9ae6057d574) merged into main same session
+(merge 939db7a67d8).
+
+Plan 83.11 progress after session #13:
+  Ф.0-Ф.3 already merged (cf00a37fb16)
+  §11.6 ✅ CLOSED this session — gc-alias
+  §12.31 ✅ CLOSED this session — use-after-free
+  Ф.4-Ф.9 — pending design decision
 
 [Plan 91.12 V1 — D126 partial retract: WriteBuffer/ReadBuffer pure Nova] 2026-06-01
 

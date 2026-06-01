@@ -1177,8 +1177,11 @@ counter += 1
   record/sum-type из const-значений.
 - **Не** runtime-вызовы, эффекты, ссылки на не-const.
 
-`const fn` (compile-time функции) — отложено до Q7 (comptime).
-До этого `const NOW = Time.now()` — ошибка.
+`const fn` (compile-time функции) — ✅ реализовано в Plan 114.4.2 (D199):
+функция с `const`-params + `-> const T` return вычисляется компилятором,
+call sites заменяются литералом в AST. См. [D199](#d199-const-fn--comptime-evaluable-functions).
+`const NOW = Time.now()` остаётся ошибкой (Time.now() — runtime call,
+не const fn).
 
 `const` живёт в data-segment (zero-cost). `let`-объекты — в managed
 heap (или на стеке через escape analysis).
@@ -4827,6 +4830,12 @@ cleanup ОБЯЗАН suspend — graceful socket close с FIN+ACK, DB drain че
 
 > **Status:** active (spec). Базовая реализация — [Plan 46](../../docs/plans/46-named-parameters.md)
 > (закрыт). Ревизия «дефолт → keyword-only» (2026-05-15) — [Plan 50](../../docs/plans/50-default-keyword-only.md).
+> **2026-06-01 D199 amend:** default-value expression может вызывать
+> `const fn` (D199) — call-site replaced литералом во время компиляции,
+> default остаётся `Expr::IntLit/StrLit/...` после Plan 114.4.2 Ф.3.
+> Plan 114.4.2 fixture `const_fn_used_in_const_ok.nv` — proof-of-concept
+> с module-level `const`; default param сценарий — followup-сценарий
+> (parser + checker уже совместимы).
 
 ### Что
 
@@ -7025,8 +7034,15 @@ fn_return      ::= "->" "const"? type
 
 ## D199. `const fn` — comptime evaluable functions
 
-> **Plan 114.4 Ф.3** (extracted from Plan 114 Ф.11 safety hatch).
-> **Status:** 🆕 draft (финализируется в Ф.4).
+> **Plan 114.4.2** (extracted from Plan 114.4 Ф.3 safety hatch).
+> **Status:** ✅ **ACTIVE** (2026-06-01) — V1 implementation landed:
+> parser (const params + `-> const T` + all-or-nothing + modifier-conflicts
+> + effect-list/generic/external reject) + body checker (whitelist +
+> 7 error codes + call-graph cycle detection) + comptime evaluator
+> subsystem (env-based interp + memoization + overflow/div-zero) + AST
+> rewriter (call-site → literal replacement + codegen drop) +
+> 22 fixtures (8 NEG parser + 6 POS + 8 NEG checker/eval/external).
+> См. [Plan 114.4.2](../../docs/plans/114.4.2-const-fn.md) closure.
 
 ### Что
 
@@ -7117,7 +7133,98 @@ Errors на evaluator-side:
 
 ### Acceptance
 
-См. Plan 114.4 A14-A18 (T3 series).
+См. Plan 114.4.2 A14-A18 (T3 series), 22/22 fixtures PASS на release nova-cli.
+
+### Implementation notes (2026-06-01)
+
+- **Parser** (`compiler-codegen/src/parser/mod.rs`): `Param.is_const: bool`
+  + `FnDecl.return_is_const: bool` AST extensions. All-or-nothing check
+  + modifier-conflicts + effect-list / generic / external reject
+  выполняются в `parse_fn` после params + return parsing.
+- **Body checker** (`compiler-codegen/src/types/mod.rs::check_const_fn_decl`):
+  whitelist (literal / arith / as-cast / Ident param/local / direct
+  const-fn-call), blacklist (7 error codes). Stmt::Const внутри body
+  binds local const env. Call-graph DFS (WHITE/GRAY/BLACK) detects
+  direct + mutual recursion.
+- **Comptime evaluator** (`compiler-codegen/src/const_fn_eval.rs`):
+  `ConstValue` enum (Int/Float/Bool/Str/Char/Unit с manual Hash via
+  `to_bits` для floats) + `ConstFnEvaluator` (OwnedEvaluator variant
+  для rewrite borrow flow). Memoization `(fn_name, args) → result` per
+  compilation. Checked arithmetic — overflow / div-zero explicit errors.
+- **AST rewriter** (`rewrite_const_fn_calls`): walks все expressions
+  (включая Match arms / loops / closures / spawn / supervised / etc.),
+  заменяет Call(const_fn) на literal Expr. После walk — retain'ит
+  filter из items + peer_files.items_here removing const fn declarations.
+- **Pipeline placement**: после `types::check_module`, до
+  `annotate_map_literals` / `desugar_module`. Single pass через
+  module → fail-fast на первой error.
+
+### V2 extensions (Plan 114.4.3, 2026-06-01)
+
+V2 значительно расширяет const fn surface, закрывая 5 followup markers
+из Plan 114.4.2 followup chain.
+
+**Ф.1 — control flow в body:**
+- `if`/`else`/`else if` expressions allowed; cond + branches validated.
+- `match` expressions allowed; arms with literal patterns + wildcard +
+  ident-bind + Or-alternation (V2.0 subset; record/sum patterns →
+  followup `[M-114.4.3-pattern-record-sum]`).
+- `for`/`while`/`loop`/`if let` остаются rejected V2.0 (followup
+  `[M-114.4.3-loops]`); workaround: use recursion.
+- New errors: `E_CONST_FN_MATCH_EXHAUSTIVE` (uncovered scrutinee
+  value), `E_CONST_FN_PATTERN_NOT_SUPPORTED`.
+
+**Ф.2 — recursion:**
+- Direct AND mutual recursion allowed.
+- Evaluator depth limit: 256 (V1: 64). Reaching → new error
+  `E_CONST_FN_EVAL_DEPTH_EXCEEDED`.
+- Memoization (V1) provides O(n) Fibonacci behavior.
+- V1 cycle detection retained but downgraded to informational (no error).
+
+**Ф.3 — mixed-args:**
+- Allow ANY mix const/runtime params + const/runtime return.
+- New fn classification:
+  * **Fully-const fn**: all params const + const return. V1 behavior —
+    evaluator inlines + dropped из codegen.
+  * **Mixed fn**: any const surface, не fully-const. Stays в codegen
+    как обычная runtime fn; const params validated at call-sites
+    (must receive constexpr literal).
+- Effect-list reject relaxed: fully-const only (mixed fn body может
+  effects).
+- Marker `[M-114.4.2-runtime-return]` покрыт (частный случай:
+  all-const params + runtime return).
+
+**Ф.4 — generic const fn:**
+- `fn[T] foo(const a int) -> const int { ... }` allowed для
+  T-independent body.
+- T reflection (sizeof[T], T.field) rejected V2.0 — followup
+  `[M-114.4.3-t-reflection]` для V3.
+- Per-T monomorphization happens через standard generic pipeline.
+
+**Ф.5 — first-class const fn alias:**
+- `const ALIAS = const_fn_name` allowed.
+- `ALIAS(args)` resolves через alias map в rewriter.
+- Alias-to-alias chains supported (depth-10 iterative pass).
+- Alias `const` decls dropped из codegen (no runtime storage).
+- Out-of-scope V2.0: `ro f = const_fn` runtime binding silent allow
+  (enforcement → followup `[M-114.4.3-runtime-let-enforcement]`);
+  HOF pass fails at link-time с unfriendly error (followup
+  `[M-114.4.3-friendly-hof-error]`).
+
+### V2 acceptance — A19-A26
+
+| # | Критерий | Verification |
+|---|---|---|
+| A19 | `if`/`match` в body парсятся + evaluate + inline literal | T4.1 positives (3 fixtures) |
+| A20 | Loops reject с pointer на V2.1 followup | T4.1 negatives |
+| A21 | Recursion (direct + mutual) с depth-limit + memo | T4.2 (4 fixtures) |
+| A22 | Termination — runtime depth-limit enforcement | T4.2 negative |
+| A23 | Mixed const+runtime params + monomorphization | T4.3 positives |
+| A24 | Mixed signature constraints enforced | T4.3 negative |
+| A25 | Generic const fn (T-independent) + per-T mono | T4.4 |
+| A26 | First-class alias resolution + drop из codegen | T4.5 |
+
+См. Plan 114.4.3 closure для full T4 series listing.
 
 ---
 

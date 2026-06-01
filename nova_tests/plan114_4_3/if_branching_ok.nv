@@ -1,0 +1,13 @@
+// Plan 114.4.3 T4.1 positive: if-else в const fn body.
+
+module plan114_4_3.if_branching_ok
+
+fn pick_max(const a int, const b int) -> const int =>
+    if a > b { a } else { b }
+
+test "if branching" {
+    const R1 = pick_max(5, 3)
+    const R2 = pick_max(2, 7)
+    assert(R1 == 5)
+    assert(R2 == 7)
+}

@@ -6245,6 +6245,16 @@ impl CEmitter {
             let cval = self.emit_expr(cexpr)?;
             let tv = format!("_nova_cancel_tok_{}", id);
             self.line(&format!("NovaCancelToken* {} = {};", tv, cval));
+            // Plan 83.11 §11.4 Option A: pin cancel token in scope.ctx_pins so
+            // it survives GC sweeps triggered by ctx_pins array doubling at
+            // ~512 spawned fibers. Without this, conservative scan can miss
+            // tok-in-register at GC trigger time → reallocation aliases tok
+            // address with NovaSpawnCtxBase (structural overlap at offset +8
+            // — bound_scope vs _nova_parent_scope) → "token already bound to
+            // a live scope" panic при последующем bind. ctx_pins[] is rooted
+            // on the supervised scope's stack frame, so it tracks the token
+            // as a GC root until scope-end. Closes [M-83.11-gc-cancel-token-alias].
+            self.line(&format!("nova_scope_pin_ctx(&{}, (void*){});", queue_var, tv));
             Some(tv)
         } else {
             None
@@ -19097,7 +19107,8 @@ _cp++; \
                         // Plan 90.1 (D141 amendment): append/insert (renamed from
                         // extend_from/insert_from); copy_from/copy_within/fill/reserve/truncate.
                         // Plan 91.7 (D181): возвращают `@` для fluent chain.
-                        "copy_from" | "copy_within" | "fill" |
+                        // append_zero(n): extend by N zero-init elements (memset).
+                        "copy_from" | "copy_within" | "fill" | "append_zero" |
                         "append" | "insert" | "reserve" | "truncate" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c.clone()];
@@ -27385,7 +27396,7 @@ _cp++; \
                             // fluent), чтобы поддерживать chain: arr.push(1).push(2).
                             // Type-check: return type = receiver type (NovaArray_T*).
                             "push" |
-                            "copy_from" | "copy_within" | "fill" |
+                            "copy_from" | "copy_within" | "fill" | "append_zero" |
                             "append" | "insert" | "reserve" | "truncate"
                                 => return obj_ty.clone(),
                             // Plan 90: compare → int (-1/0/1).

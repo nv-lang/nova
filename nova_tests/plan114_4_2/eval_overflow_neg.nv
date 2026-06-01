@@ -1,0 +1,10 @@
+// Plan 114.4.2 T3-NEG.13: arithmetic overflow в evaluator
+// → E_CONST_FN_EVAL_OVERFLOW.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EVAL_OVERFLOW
+
+module plan114_4_2.eval_overflow_neg
+
+fn mul(const a int, const b int) -> const int => a * b
+
+const HUGE = mul(9223372036854775807, 2)

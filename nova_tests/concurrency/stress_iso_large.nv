@@ -1,0 +1,26 @@
+// stress_iso_large.nv — Plan 83.11 §11.5 regression guard.
+// Tests [M-83.11-gc-cancel-token-alias] — GC structural aliasing bug
+// where NovaCancelToken collected from register at ~512 fibers (ctx_pins
+// doubling triggers nova_alloc → GC sweep) causes "token already bound
+// to a live scope" panic at nova_cancel_token_bind.
+//
+// Fix: emit_c.rs supervised codegen calls nova_scope_pin_ctx(&scope, tok)
+// right after evaluating the token expression so the token is tracked as
+// a GC root via scope.ctx_pins[] (which lives on supervised's stack frame).
+//
+// Before fix: 99+1 stable; 990+1 → panic 3/3 runs (manifests on Windows
+//             due to conservative SuspendThread-based scan missing tok in
+//             register).
+// After fix:  any fiber count safe — token kept reachable via ctx_pins
+//             through the entire scope lifetime.
+module concurrency.stress_iso_large
+
+test "999+1 fibers — token alias regression guard" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        for _ in 0..999 {
+            spawn { }
+        }
+        spawn { tok.cancel() }
+    }
+}

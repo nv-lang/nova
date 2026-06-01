@@ -1,0 +1,15 @@
+// Plan 114.4.3 T4.1 NEG: match без exhaustive coverage → evaluator runtime
+// error E_CONST_FN_MATCH_EXHAUSTIVE при call site.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_MATCH_EXHAUSTIVE
+
+module plan114_4_3.match_non_exhaustive_neg
+
+fn name_for(const n int) -> const str =>
+    match n {
+        1 => "one"
+        2 => "two"
+        // no _ arm → uncovered
+    }
+
+const BAD = name_for(99)

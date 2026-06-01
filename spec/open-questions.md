@@ -165,11 +165,45 @@ type Db effect {
 В overview.md сказано: «typed compile-time функции (как Zig comptime)».
 Но конкретный синтаксис, мощь, ограничения — не описаны.
 
-**Вопросы:**
+**Большой частичный ответ (Plan 114.4.2 V1 + Plan 114.4.3 V2, 2026-06-01):**
+comptime-функции через **`const fn`** (D199) — V2 production-grade subset.
+
+**V1 baseline (Plan 114.4.2):**
+- `fn calc(const a int, ...) -> const int { ... }` — all const params + const return.
+- Whitelist: literals, arithmetic, `as`-casts, refs к const params/locals,
+  local `const` decls, final expr, calls к другим const fn.
+- Blacklist: control flow, mut/consume, effects, allocations, generic, recursion.
+- Comptime evaluator (env-based interp + memoization) inline'ит result
+  литералом на call site, const fn drop'нут из codegen.
+
+**V2 extensions (Plan 114.4.3):**
+- ✅ **Control flow:** `if`/`else`/`match` allowed; loops → V2.1 followup.
+- ✅ **Recursion:** direct + mutual с depth-limit (256) + memoization.
+  Fibonacci O(n).
+- ✅ **Mixed-args:** any combination const/runtime params + return.
+  Mixed fn stays в codegen с const-param validation at call sites.
+  Covers `[M-114.4.2-runtime-return]` (subset).
+- ✅ **Generic const fn:** `fn[T] foo(const a int) -> const int`
+  T-independent body. T reflection (sizeof[T]) → V3.
+- ✅ **First-class alias:** `const ALIAS = const_fn` allowed; calls
+  через alias map. Real first-class через runtime trampoline → V3.
+
+**Что остаётся открытым (Q7 V3+):**
 - Comptime-функции имеют доступ к типам как первый класс?
+  → V3 — `[M-114.4.3-t-reflection]`.
 - Можно ли генерировать код во время компиляции?
+  → Нет (без macro-system; future Q-блок).
 - Reflection во время компиляции — да или нет?
+  → Нет в V2.0 (type intrinsics).
 - Custom DSL через comptime — допускается?
+  → Нет (out-of-scope).
+- Loops (`for`/`while`) в body — V2.1 followup `[M-114.4.3-loops]`.
+- Runtime first-class const fn (HOF) — V3 followup
+  `[M-114.4.3-runtime-hof]`.
+
+См. [docs/plans/114.4.2-const-fn.md](../docs/plans/114.4.2-const-fn.md)
+(V1) и [docs/plans/114.4.3-const-fn-v2-extensions.md](../docs/plans/114.4.3-const-fn-v2-extensions.md)
+(V2).
 
 ---
 

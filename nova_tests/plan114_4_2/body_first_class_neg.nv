@@ -1,0 +1,12 @@
+// Plan 114.4.2 T3-NEG.10: first-class const fn → E_CONST_FN_FIRST_CLASS.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_FIRST_CLASS
+
+module plan114_4_2.body_first_class_neg
+
+fn add(const a int, const b int) -> const int => a + b
+
+fn outer(const x int) -> const int {
+    const f = add
+    x
+}
