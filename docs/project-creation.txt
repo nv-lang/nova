@@ -26616,3 +26616,121 @@ Commits на branch d78-strict-removal:
 Closes marker: [M-D78-strict-removal].
 Unblocks: strict rev-3 enforcement в любых будущих кодогенерационных
 plans (manifest dispatch, cross-module symbol resolution).
+
+================================================================================
+Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
+================================================================================
+
+Branch: plan-114.4.2 (worktree D:/Sources/nv-lang/nova-p114-4)
+Rebased on main 10cc6b50dd4 (после Plan 115 FFI merge).
+
+Что сделано (7 коммитов):
+1. Ф.1 parser (3b7e558d63c): const param + -> const T + all-or-nothing.
+   - Param.is_const + FnDecl.return_is_const AST extensions.
+   - parse_param: const qualifier (наряду с mut/consume/ro).
+   - parse_fn return type: -> const T парсинг + -> const @ reject.
+   - All-or-nothing check после params + return:
+     * E_CONST_FN_PARTIAL_CONSTNESS (3 варианта)
+     * E_CONST_FN_EFFECT_IN_SIGNATURE
+     * E_CONST_FN_GENERIC
+     * E_CONST_FN_EXTERNAL
+     * E_CONST_FN_FLUENT_RETURN
+   - Modifier conflicts: E_CONST_PARAM_MOD_CONFLICT (const+mut/consume/ro).
+
+2. Ф.1 body checker (01264d18a6a): V1 whitelist + 7 error codes +
+   call-graph DFS cycle detection.
+   - check_const_fn_expr recursive validator:
+     literal + Unary/Binary + As + Ident (param/local) + Call (direct
+     const-fn-call с constexpr args) + Block (recurse).
+   - check_const_fn_block stmt validator:
+     Stmt::Const binds local env; final Stmt::Expr | Return; trailing
+     handled. Все остальные variants → error.
+   - 7 error codes для blacklist: CONTROL_FLOW, MUT_BINDING,
+     EFFECT_IN_BODY, ALLOCATION, RECURSION, FIRST_CLASS, REF_NON_CONST.
+   - Top-level pass в check_module: builds const_fn_names, validates
+     each fn, builds call_graph, DFS cycle detection WHITE/GRAY/BLACK.
+
+3. Ф.1 smoke fixtures + trailing-fix (9d5c7bce690):
+   8 negative fixtures + Block.trailing handled в check_const_fn_block.
+
+4. Ф.2 evaluator (09b90f5f6f0): const_fn_eval module.
+   - ConstValue enum (Int/Float/Bool/Str/Char/Unit) с manual Hash/Eq
+     (float compare via to_bits).
+   - ConstFnEvaluator: registry + memoization cache + recursion depth
+     limit.
+   - eval_call / eval_block / eval_expr: env-based interpreter.
+   - eval_binary: typed dispatch — checked_add/sub/mul/div/rem + shl/shr
+     (range [0..63]); overflow → E_CONST_FN_EVAL_OVERFLOW; div 0 →
+     E_CONST_FN_DIV_ZERO; bitwise + cmp; str concat + cmp; bool/char.
+   - eval_as_cast: identity casts + char↔int (range check) + int
+     narrowing (i32/i16/i8/u8/u16/u32/u64 range check) + float↔int +
+     bool→int — все overflow явно (NOT silent truncation).
+   - try_literal_to_value helper для AST rewriter.
+
+5. Ф.3 rewriter (6bbf33f3285): AST const-fn-call replacement + decl drop.
+   - OwnedEvaluator (owns FnDecl clones — solves borrow conflict
+     при mutation other AST while reading const fn registry).
+   - rewrite_const_fn_calls(&mut Module) -> Vec<Diagnostic>:
+     walks all items + expressions, replaces Call(const_fn) с literal.
+     После — retain filter удаляет const fn declarations из items +
+     peer_files.items_here.
+   - Полный AST coverage: control flow, closures, spawn/supervised,
+     with/forbid/realtime, handler/protocol literals, lambda, etc.
+   - Pipeline wiring: main.rs (3 sites), test_runner.rs (cmd_test).
+     После check_module, до annotate_map_literals / desugar.
+
+6. Ф.2-Ф.3 wiring + T3 positives (d3dfe070b73):
+   - check_const_constexpr_ex: extended variant принимающий const_fn_names.
+     Allowed: As + Call(const_fn) with constexpr args.
+   - TypeCheckCtx: const_fn_names + in_const_fn Cell flag.
+   - check_fn устанавливает in_const_fn flag (RAII guard).
+   - Stmt::Const skip в const fn body (body checker covers param/local).
+   - Stmt::Const в NameRes walk_stmt: binds d.name в текущий frame.
+   - 6 T3 positive fixtures: basic / expr-body / chain / no-args /
+     used-in-const / memoization.
+
+7. T3 full negatives (1452b0d60ea): 22/22 plan114_4_2 PASS.
+   - 8 NEG parser-level + 4 NEG checker-level + 1 NEG external +
+     2 NEG evaluator (overflow, div_zero) + 1 NEG call-site.
+
+8. Spec D199 promote (25260194867): draft → ACTIVE.
+   - D199 status flip + Implementation notes section.
+   - D102 amend: default-param-values могут вызывать const fn.
+   - D33 wording update.
+   - Q7 (macros / comptime) partial answer 2026-06-01.
+
+Acceptance criteria (final):
+- A14 ✅ const fn parses + comptime evaluates + inlines literal —
+  T3.1-T3.6 PASS.
+- A15 ✅ all-or-nothing const params/return — T3-NEG.2/.3 PASS.
+- A16 ✅ V1 body subset enforcement (7 error codes) — T3-NEG.4-.9 +
+  body_first_class_neg + body_allocation_neg + body_generic_neg PASS.
+- A17 ✅ first-class reject + modifier conflict + effect-sig reject —
+  T3-NEG.10/.11/.12 PASS.
+- A18 ✅ codegen NOT emitted + memoization + evaluator errors — codegen
+  drop verified (const fn removed из module.items + peer_files); evaluator
+  overflow/div-zero — T3-NEG.13/.14 PASS.
+
+Workflow safety hatches:
+- Ф.2 evaluator: НЕ extracted в Plan 114.4.2.1 — landed in this branch.
+- Generic const fn ([M-114.4.2-generic]) — V1 reject, followup.
+- First-class const fn ([M-114.4.2-first-class]) — V1 reject, followup.
+- Recursion ([M-114.4.2-recursion]) — V1 reject, followup.
+- Control flow ([M-114.4.2-control-flow]) — V1 reject, followup.
+- Mixed comptime / runtime params ([M-114.4.2-mixed-args]) — V1 reject,
+  followup.
+
+22 fixtures PASS / 0 FAIL на release nova-cli + clang toolchain
+(NOVA_GC=vcpkg_installed/x64-windows-static).
+
+Closes:
+- [M-114-const-fn] (umbrella из Plan 114).
+- D199 promote draft → ACTIVE.
+- Plan 114.4 Ф.3 safety-hatch deferred work — closed.
+
+Unblocks:
+- Plan 114.4 full closure (Ф.1 narrow + Ф.2 generalize-partial + Ф.3 fn
+  все closed).
+- Generic const fn V2 (Plan 114.4.2.1).
+- Computed [N]T sizes (D27 from-any-visible-scope amend).
+- Type-driven dispatch constants.

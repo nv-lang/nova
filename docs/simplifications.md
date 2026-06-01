@@ -28235,3 +28235,73 @@ finalizer LIFO needed / CleanupTimeoutError typed catch needed).
 **Design lesson:** Named tuple vs record distinction drives 4× different C code: `NovaTuple_X { x; y; }` (stack struct, value type) vs `Nova_X*` (heap pointer, GC-tracked). The bracket syntax (`()` vs `{}`) was already implicit in spec (D32/D123) — Plan 120 makes it explicit at the type-declaration level. `type_aliases` HashMap in emit_c.rs is the key integration point: stores `"Vec3" → "NovaTuple_Vec3"`, enabling value-type dispatch everywhere without special-casing.
 
 **Scope vs original plan:** A4 (positional args on named tuple works), A5 (construction errors), A11 (full regression) deferred to Ф.5.9 (full nova test). A3/A6/A7/A8/A9/A10/A12 all verified.
+
+---
+
+## Plan 114.4.2 — `const fn` comptime evaluable (D199) — CLOSED 2026-06-01
+
+**Что:** comptime evaluator subsystem + parser/checker/rewriter trio.
+`fn calc(const a int, const b char) -> const int { … }` evaluates at
+compile time, call sites replaced литералом, fn dropped из codegen.
+
+**Status:** 🟢 V1 LANDED (no safety hatches fired). Branch
+`plan-114.4.2`, 7 commits, 22/22 plan114_4_2 fixtures PASS, 0 regressions.
+
+**CLOSED markers:**
+- ✅ `[M-114-const-fn]` — umbrella из Plan 114 D184.
+- ✅ `[M-114.4-const-fn]` — Plan 114.4 Ф.3 safety-hatch extract.
+
+**Acceptance criteria:** A14-A18 all green (T3 series).
+
+**Subsystems:**
+1. Parser (`compiler-codegen/src/parser/mod.rs`): `Param.is_const` +
+   `FnDecl.return_is_const` AST extensions; all-or-nothing check +
+   7 reject codes.
+2. Body checker (`compiler-codegen/src/types/mod.rs` —
+   `check_const_fn_decl`): V1 whitelist + 7 error codes + call-graph
+   DFS cycle detection (WHITE/GRAY/BLACK).
+3. Evaluator (`compiler-codegen/src/const_fn_eval.rs`): `ConstValue`
+   enum + `ConstFnEvaluator` + memoization + checked arithmetic
+   (overflow → `E_CONST_FN_EVAL_OVERFLOW`, div 0 →
+   `E_CONST_FN_DIV_ZERO`).
+4. AST rewriter (`rewrite_const_fn_calls`): walks all expressions,
+   replaces `Call(const_fn)` с literal Expr; retain filter удаляет
+   const fn declarations.
+5. Pipeline integration: `main.rs` (3 sites) + `test_runner.rs` —
+   после `check_module`, до `desugar_module`.
+
+**OPEN markers carried forward (followups):**
+- 🟡 `[M-114.4.2-mixed-args]` — Zig-style partial comptime params (V1
+  all-or-nothing only).
+- 🟡 `[M-114.4.2-first-class]` — first-class const fn через runtime
+  trampoline (V1 reject).
+- 🟡 `[M-114.4.2-control-flow]` — if/else/match/for/while в const fn
+  body (V1 reject).
+- 🟡 `[M-114.4.2-recursion]` — recursion с depth-limit + memoization
+  (V1 reject).
+- 🟡 `[M-114.4.2-generic]` — generic const fn (`const fn sizeof[T]()`).
+- 🟡 `[M-114.4.2-runtime-return]` — `fn make_buf(const n int) -> []u8`
+  (const param + runtime return).
+- 🟡 D27 amend (`[N]T` from any visible scope) — partial wording в Plan
+  114.4 deferred, not blocking.
+
+**Design lessons:**
+1. **OwnedEvaluator trick** для borrow conflict: AST rewriter needs to
+   read const fn registry while mutating other items. Hold cloned
+   `Vec<FnDecl>` instead of `&FnDecl` refs — solves co-borrow conflict
+   cleanly. Const fn count в реальных модулях невелик (1-10), clone
+   overhead negligible.
+2. **Block.trailing** vs Stmt::Expr at final position — два variant'а
+   final expression в AST. Body checker должен handle оба (initial
+   miss → `body_if_control_flow_neg` ranger false-passed). Lesson:
+   при ad-hoc traversal — explicit check всех produktion forms.
+3. **in_const_fn flag через RAII guard** позволяет skip scope-local
+   const constexpr check внутри const fn body (где body checker точнее
+   handles param/local awareness). Cell<bool> + Drop'эд guard — без
+   передачи bool через все методы visitor'а.
+4. **Re-emit error на nested validation failure** в check_const_constexpr_ex
+   Call branch — собственный код `E_CONST_FN_NON_CONST_ARG` информативнее
+   bubbled-up `E_CONST_REFERS_NON_CONSTEXPR` для caller'а.
+5. **Const fn drop'нут из codegen полностью** — symbol не emit'ится,
+   call site = inline literal. Dead const fn — silently dropped из
+   output (как Rust unused const fn).
