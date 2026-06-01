@@ -27073,3 +27073,62 @@ Plan 83.11 progress: Ф.0-Ф.3 уже в main (merge cf00a37fb16); §12.31
 closed. Open: Ф.4-Ф.9 (blocking migration + cleanup pending design
 decision), [M-83.11-gc-cancel-token-alias] (990+ fibers panic,
 Option A documented в §11.4).
+
+
+================================================================================
+Plan 83.11 §11.6 — [M-83.11-gc-cancel-token-alias] CLOSED (2026-06-01)
+================================================================================
+
+Followup session #13 (одновременно с §12.31). Closed second open marker.
+
+Background: §11 documented GC structural aliasing bug — NovaCancelToken
+collected from register at ~512 fibers (ctx_pins[] doubling triggers
+nova_alloc → GC sweep), freed tok addr reused by NovaSpawnCtxBase,
+structural overlap at offset +8 (bound_scope vs _nova_parent_scope)
+causes "token already bound to a live scope" panic при последующем
+nova_cancel_token_bind. Threshold: 990+ simultaneously-spawned fibers
+under armed M:N on Windows.
+
+Fix per §11.4 Option A — Single self.line() в emit_supervised codegen
+(compiler-codegen/src/codegen/emit_c.rs:6195) после declaration
+NovaCancelToken* _nova_cancel_tok_{id} = expr, до body emission:
+
+    self.line(&format!(
+        "nova_scope_pin_ctx(&{}, (void*){});", queue_var, tv));
+
+Emitted C (verified в stress_iso_large.c:1343):
+
+    NovaCancelToken* _nova_cancel_tok_0 = tok;
+    nova_scope_pin_ctx(&_nova_scope_q_0, (void*)_nova_cancel_tok_0);
+
+scope.ctx_pins[] lives on supervised's stack frame, conservative GC
+scan always sees it as root → token reachable throughout scope lifetime.
+Pattern идентичен Plan 44.5 L5 SpawnCtx pin (same protection mechanism,
+different object).
+
+New regression test: nova_tests/concurrency/stress_iso_large.nv
+(999+1 spawn + tok.cancel pattern). Stress 30/30 PASS at HEAD vs
+0/3 panic pre-fix per §11.3.
+
+§12.31 §pending_driver_jobs counter unaffected — _min.nv (1+1 cancel)
+stress still 30/30 PASS. Two fixes orthogonal, no interaction.
+
+Cost: ~10 minutes — 1-line codegen change + 25-line regression test +
+§11.6 doc closure. ROI very high — closes documented OPEN marker that
+blocked 990+ fiber tests at production scale.
+
+Acceptance:
+- A1 — Option A applied per §11.4 ✅
+- A2 — stress_iso_large.nv 30/30 PASS ✅
+- A3 — no regression to §12.31 fix (_min.nv 30/30 PASS) ✅
+- A4 — emitted C inspected ✅
+
+Status: ✅ V1 CLOSED 2026-06-01. Marker [M-83.11-gc-cancel-token-alias]
+closed. 1 commit on ветке (9ae6057d574) merged into main same session
+(merge 939db7a67d8).
+
+Plan 83.11 progress after session #13:
+  Ф.0-Ф.3 already merged (cf00a37fb16)
+  §11.6 ✅ CLOSED this session — gc-alias
+  §12.31 ✅ CLOSED this session — use-after-free
+  Ф.4-Ф.9 — pending design decision

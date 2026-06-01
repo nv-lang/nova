@@ -28506,3 +28506,37 @@ faults.
 `[M-83.11-supervised-spawn-cancel-memcpy-segv]` closed. 3 commits
 на ветке (`f30998fa940` feat / `421f295c454` fix / `0bcb61636dd` docs).
 Branch merged into main по user request.
+
+
+---
+
+## Plan 83.11 §11.6 — [M-83.11-gc-cancel-token-alias] CLOSED (2026-06-01)
+
+**Followup:** Session #13 (одновременно с §12.31). Closed second open marker.
+
+**Bug:** GC structural aliasing — NovaCancelToken collected из register at
+~512 fibers (ctx_pins[] doubling triggers nova_alloc → GC sweep), freed
+tok addr reused by NovaSpawnCtxBase, structural overlap at offset +8
+(bound_scope vs _nova_parent_scope) → "token already bound to a live
+scope" panic при последующем bind. Threshold: 990+ fibers, Windows.
+
+**Fix per §11.4 Option A:** один `self.line(...)` в `emit_c.rs`
+`emit_supervised` после declaration NovaCancelToken — calls
+`nova_scope_pin_ctx(&scope, tok)` чтобы tok был reachable via
+scope.ctx_pins[] (живёт на стеке supervised, всегда GC root).
+
+**Verification:**
+- `stress_iso_large.nv` (999+1 fibers + cancel) 30/30 PASS
+  (было 0/3 panic per §11.3)
+- `_min.nv` (§12.31 fix verify) 30/30 PASS — no interaction
+
+**Cost:** ~10 минут (1-line codegen + 25-line test + §11.6 closure).
+ROI очень высокий — закрыл documented OPEN marker, который блокировал
+990+ fiber tests at production scale.
+
+**Pattern reuse:** идентичен Plan 44.5 L5 SpawnCtx pin (same protection
+mechanism, different object). ctx_pins[] становится canonical GC-root
+container для long-lived per-scope objects.
+
+**Status:** ✅ V1 CLOSED 2026-06-01. Marker `[M-83.11-gc-cancel-token-alias]`
+closed. Branch merged into main (939db7a67d8).
