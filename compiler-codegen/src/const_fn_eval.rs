@@ -343,12 +343,107 @@ impl<'a> ConstFnEvaluator<'a> {
                 self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
             }
             ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
+            // Plan 114.4.3 Ф.1 (V2): If — evaluate cond → bool; then/else branch.
+            ExprKind::If { cond, then, else_ } => {
+                let c = self.eval_expr(cond, env, current_fn, depth)?;
+                let b = match c {
+                    ConstValue::Bool(b) => b,
+                    _ => return Err(Diagnostic::new(
+                        format!(
+                            "[E_CONST_FN_EVAL_PANIC] if-condition не bool (got {}) \
+                             (D199).", c.type_name()
+                        ),
+                        cond.span,
+                    )),
+                };
+                if b {
+                    self.eval_block(then, env, current_fn, depth)
+                } else {
+                    match else_ {
+                        Some(crate::ast::ElseBranch::Block(blk)) =>
+                            self.eval_block(blk, env, current_fn, depth),
+                        Some(crate::ast::ElseBranch::If(ie)) =>
+                            self.eval_expr(ie, env, current_fn, depth),
+                        None => Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] if-без-else в const fn body — \
+                             checker should reject (D199 V2).".to_string(),
+                            expr.span,
+                        )),
+                    }
+                }
+            }
+            // Plan 114.4.3 Ф.1 (V2): Match — evaluate scrutinee; find first
+            // matching arm; evaluate its body. Pattern V2.0 subset:
+            // literal / wildcard / ident-bind / Or-alternation.
+            ExprKind::Match { scrutinee, arms } => {
+                let sv = self.eval_expr(scrutinee, env, current_fn, depth)?;
+                for arm in arms {
+                    if let Some(bindings) = match_const_pattern(&arm.pattern, &sv) {
+                        let mut new_env = env.clone();
+                        for (k, v) in bindings { new_env.insert(k, v); }
+                        if let Some(g) = &arm.guard {
+                            let gv = self.eval_expr(g, &new_env, current_fn, depth)?;
+                            if !matches!(gv, ConstValue::Bool(true)) { continue; }
+                        }
+                        return match &arm.body {
+                            crate::ast::MatchArmBody::Expr(e) =>
+                                self.eval_expr(e, &new_env, current_fn, depth),
+                            crate::ast::MatchArmBody::Block(b) =>
+                                self.eval_block(b, &new_env, current_fn, depth),
+                        };
+                    }
+                }
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_MATCH_EXHAUSTIVE] match не covered scrutinee \
+                         value {:?} (D199 V2). Add wildcard `_` arm.",
+                        sv
+                    ),
+                    expr.span,
+                ))
+            }
             _ => Err(Diagnostic::new(
                 "[E_CONST_FN_EVAL_PANIC] expression form not supported by const \
                  fn evaluator — checker should reject (D199).".to_string(),
                 expr.span,
             )),
         }
+    }
+}
+
+/// Plan 114.4.3 Ф.1: pattern-match V2.0 subset.
+/// Returns Some(bindings) if matches, None otherwise.
+/// Bindings: Ident pattern → (name, scrutinee_value).
+fn match_const_pattern(
+    pat: &crate::ast::Pattern,
+    val: &ConstValue,
+) -> Option<Vec<(String, ConstValue)>> {
+    use crate::ast::{Pattern, Literal};
+    match pat {
+        Pattern::Wildcard(_) => Some(Vec::new()),
+        Pattern::Ident { name, is_mut: false, .. } => {
+            Some(vec![(name.clone(), val.clone())])
+        }
+        Pattern::Literal(lit, _) => {
+            let matches = match (lit, val) {
+                (Literal::Int(a), ConstValue::Int(b)) => a == b,
+                (Literal::Float(a), ConstValue::Float(b)) => a.to_bits() == b.to_bits(),
+                (Literal::Str(a), ConstValue::Str(b)) => a == b,
+                (Literal::Bool(a), ConstValue::Bool(b)) => a == b,
+                (Literal::Char(a), ConstValue::Char(b)) => a == b,
+                _ => false,
+            };
+            if matches { Some(Vec::new()) } else { None }
+        }
+        Pattern::Or { alternatives, .. } => {
+            for alt in alternatives {
+                if let Some(b) = match_const_pattern(alt, val) {
+                    return Some(b);
+                }
+            }
+            None
+        }
+        _ => None, // checker rejects unsupported patterns
     }
 }
 
@@ -995,6 +1090,63 @@ impl OwnedEvaluator {
                 self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
             }
             ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
+            // Plan 114.4.3 Ф.1 (V2): If — evaluate cond + branch.
+            ExprKind::If { cond, then, else_ } => {
+                let c = self.eval_expr(cond, env, current_fn, depth)?;
+                let b = match c {
+                    ConstValue::Bool(b) => b,
+                    _ => return Err(Diagnostic::new(
+                        format!(
+                            "[E_CONST_FN_EVAL_PANIC] if-condition не bool (got {}) (D199).",
+                            c.type_name()
+                        ),
+                        cond.span,
+                    )),
+                };
+                if b {
+                    self.eval_block(then, env, current_fn, depth)
+                } else {
+                    match else_ {
+                        Some(crate::ast::ElseBranch::Block(blk)) =>
+                            self.eval_block(blk, env, current_fn, depth),
+                        Some(crate::ast::ElseBranch::If(ie)) =>
+                            self.eval_expr(ie, env, current_fn, depth),
+                        None => Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] if без else в const fn body \
+                             (D199 V2).".to_string(),
+                            expr.span,
+                        )),
+                    }
+                }
+            }
+            // Plan 114.4.3 Ф.1 (V2): Match — find matching arm.
+            ExprKind::Match { scrutinee, arms } => {
+                let sv = self.eval_expr(scrutinee, env, current_fn, depth)?;
+                for arm in arms {
+                    if let Some(bindings) = match_const_pattern(&arm.pattern, &sv) {
+                        let mut new_env = env.clone();
+                        for (k, v) in bindings { new_env.insert(k, v); }
+                        if let Some(g) = &arm.guard {
+                            let gv = self.eval_expr(g, &new_env, current_fn, depth)?;
+                            if !matches!(gv, ConstValue::Bool(true)) { continue; }
+                        }
+                        return match &arm.body {
+                            crate::ast::MatchArmBody::Expr(e) =>
+                                self.eval_expr(e, &new_env, current_fn, depth),
+                            crate::ast::MatchArmBody::Block(b) =>
+                                self.eval_block(b, &new_env, current_fn, depth),
+                        };
+                    }
+                }
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_MATCH_EXHAUSTIVE] match не covered scrutinee \
+                         value {:?} (D199 V2). Add wildcard `_` arm.",
+                        sv
+                    ),
+                    expr.span,
+                ))
+            }
             _ => Err(Diagnostic::new(
                 "[E_CONST_FN_EVAL_PANIC] expression form not supported (D199).".to_string(),
                 expr.span,

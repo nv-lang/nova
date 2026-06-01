@@ -1,0 +1,22 @@
+// Plan 114.4.3 T4.1 positive: match с literal patterns + wildcard.
+
+module plan114_4_3.match_literal_ok
+
+fn weekday_to_int(const day str) -> const int =>
+    match day {
+        "mon" => 0
+        "tue" => 1
+        "wed" => 2
+        "thu" => 3
+        "fri" => 4
+        _ => -1
+    }
+
+test "match literal patterns" {
+    const A = weekday_to_int("wed")
+    const B = weekday_to_int("fri")
+    const C = weekday_to_int("xxx")
+    assert(A == 2)
+    assert(B == 4)
+    assert(C == -1)
+}

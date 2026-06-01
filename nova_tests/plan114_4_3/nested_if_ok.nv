@@ -1,0 +1,13 @@
+// Plan 114.4.3 T4.1 positive: nested if-else (sign function).
+
+module plan114_4_3.nested_if_ok
+
+fn sign(const x int) -> const int =>
+    if x == 0 { 0 } else if x > 0 { 1 } else { -1 }
+
+test "nested if (sign function)" {
+    const A = sign(0)
+    const B = sign(42)
+    assert(A == 0)
+    assert(B == 1)
+}

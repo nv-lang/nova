@@ -1,0 +1,9 @@
+// Plan 114.4.3 T4.1 NEG: if без else в const fn body → reject.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_CONTROL_FLOW
+
+module plan114_4_3.if_no_else_neg
+
+fn maybe(const x int) -> const int {
+    if x > 0 { x }
+}

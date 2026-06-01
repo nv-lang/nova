@@ -957,18 +957,74 @@ fn check_const_fn_expr(
                 block, param_consts, const_fn_names, local_consts, current_fn, call_targets,
             )
         }
-        // Control flow — blacklisted.
-        E::If { .. } | E::IfLet { .. } | E::Match { .. } => Err(Diagnostic::new(
-            "[E_CONST_FN_CONTROL_FLOW] if/match/if-let не разрешены в const fn \
-             body V1 (D199). Followup `[M-114.4.2-control-flow]`. Use arithmetic \
-             expressions only."
+        // Plan 114.4.3 Ф.1 (D199 V2): `if`/`else` allowed — recurse
+        // on cond + each branch. Все sub-expressions должны быть constexpr.
+        E::If { cond, then, else_ } => {
+            check_const_fn_expr(
+                cond, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )?;
+            check_const_fn_block(
+                then, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )?;
+            if let Some(eb) = else_ {
+                match eb {
+                    crate::ast::ElseBranch::Block(b) => check_const_fn_block(
+                        b, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                    crate::ast::ElseBranch::If(ie) => check_const_fn_expr(
+                        ie, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                }
+            } else {
+                // V2.0: `if` без `else` имеет тип unit, не constexpr-value.
+                // const fn должен produce value, поэтому требуем else.
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_CONTROL_FLOW] `if` без `else` в const fn body \
+                     не allowed (D199 V2): must produce value на каждой ветви. \
+                     Add `else` branch.".to_string(),
+                    expr.span,
+                ));
+            }
+            Ok(())
+        }
+        // Plan 114.4.3 Ф.1 (D199 V2): `match` allowed — recurse on scrutinee +
+        // каждый arm body. Pattern V2.0 subset: literal + wildcard + ident bind.
+        E::Match { scrutinee, arms } => {
+            check_const_fn_expr(
+                scrutinee, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )?;
+            for arm in arms {
+                // Validate pattern V2.0 subset.
+                check_const_fn_pattern(&arm.pattern, expr.span)?;
+                if let Some(g) = &arm.guard {
+                    check_const_fn_expr(
+                        g, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?;
+                }
+                match &arm.body {
+                    crate::ast::MatchArmBody::Expr(e) => check_const_fn_expr(
+                        e, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                    crate::ast::MatchArmBody::Block(b) => check_const_fn_block(
+                        b, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                }
+            }
+            Ok(())
+        }
+        // IfLet — V2.1 deferred (pattern-bind complexity).
+        E::IfLet { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_CONTROL_FLOW] `if let` pattern-bind в const fn body \
+             не allowed в V2.0 (D199). Followup `[M-114.4.3-pattern-record-sum]`. \
+             Use `if cond { ... } else { ... }` с literal comparison."
                 .to_string(),
             expr.span,
         )),
         E::For { .. } | E::ParallelFor { .. } | E::While { .. }
         | E::WhileLet { .. } | E::Loop { .. } => Err(Diagnostic::new(
             "[E_CONST_FN_CONTROL_FLOW] loops (for/while/loop) не разрешены в \
-             const fn body V1 (D199)."
+             const fn body V2.0 (D199). Followup `[M-114.4.3-loops]` для V2.1. \
+             Use recursion (V2 supports direct + mutual)."
                 .to_string(),
             expr.span,
         )),
@@ -1013,6 +1069,43 @@ fn check_const_fn_expr(
              body V1 (closures/spawn/handler/etc) (D199)."
                 .to_string(),
             expr.span,
+        )),
+    }
+}
+
+/// Plan 114.4.3 Ф.1 (D199 V2): pattern V2.0 subset для match arm validation.
+/// Allowed: literal (Int/Bool/Char/Str/Unit), wildcard (_), single Ident
+/// bind (which binds a fresh local — caller responsibility to register).
+/// Rejected V2.0: record/sum/tuple destructuring patterns.
+fn check_const_fn_pattern(
+    pat: &crate::ast::Pattern,
+    span: Span,
+) -> Result<(), Diagnostic> {
+    use crate::ast::Pattern;
+    match pat {
+        Pattern::Wildcard(_) => Ok(()),
+        Pattern::Ident { is_mut: false, .. } => Ok(()),
+        Pattern::Ident { is_mut: true, .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_PATTERN_NOT_SUPPORTED] `mut` pattern в const fn match \
+             arm not allowed (D199 V2.0). Remove `mut`."
+                .to_string(),
+            span,
+        )),
+        Pattern::Literal(_, _) => Ok(()),
+        Pattern::Or { alternatives, .. } => {
+            for alt in alternatives {
+                check_const_fn_pattern(alt, span)?;
+            }
+            Ok(())
+        }
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_PATTERN_NOT_SUPPORTED] pattern form not supported в \
+             const fn match arm V2.0 (D199). Allowed: literal patterns, \
+             wildcard `_`, single ident bind, simple `|` alternation. \
+             Record/sum/tuple destructuring — followup \
+             `[M-114.4.3-pattern-record-sum]`."
+                .to_string(),
+            span,
         )),
     }
 }
