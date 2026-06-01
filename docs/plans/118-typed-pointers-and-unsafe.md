@@ -2235,9 +2235,140 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ---
 
-## Status — closure summary
+## Status — progress checkpoint (2026-06-01)
 
-> Заполняется агентом по завершении Plan 118 (core). Поля:
+> Plan 118 в progress — incremental scaffolding landed; full implementation
+> в work. Текущий status reflected ниже. Этот раздел updated после каждой
+> большой задачи; finalize'ится в Ф.9 closure.
+
+### Done (per phase, с commit refs)
+
+**Revision (pre-Ф.0):**
+- `e642fc86d1e` — Production-grade rewrite Plan 118 (1169 → 2259 lines) +
+  decompose into Plan 118 family (core + 118.1/118.2/118.3 sub-plan stubs).
+  35 acceptance criteria (vs 15), 16 risks (vs 10), ~150 tests
+  (positive+negative), cross-platform CI matrix, perf benchmarks, ABI
+  snapshots pipeline, 25 errors + 3 warnings catalog, 15 doc deliverables.
+  README updated с 4 entries.
+
+**Ф.0 GATE — design freeze + drafts + audit + logs:**
+- `12c746202a2` (worktree) — D216 NEW drafted (~290 lines, 20 §-sections
+  + diagnostic codes + mainstream comparison + use cases + cross-refs);
+  D2 amend prepended (`unsafe { }` keyword restored as effect-handler
+  sugar); D214 amend prepended (ptr redefine + null ptr retraction);
+  D32 amend prepended (`&value` is typed ptr construction, NOT Rust borrow).
+  Audit 47 `null ptr` occurrences + 4 `external fn ptr` files + 6 compiler
+  src files. Logs: docs/simplifications.md + docs/project-creation.txt.
+- `2a1c425cc4` (nova-private separate repo) — discussion-log.md с 4-round
+  design discussion + derived decisions + lessons learned.
+
+**Ф.1 — *T family parser + AST scaffold (partial — Ф.1.1-1.4):**
+- `c75d7be3791` (worktree) — AST changes: `PointerModifier` enum (Ro/Mut/
+  Unsafe) + `TypeRef::Pointer(modifier, Box<TypeRef>, Span)` variant.
+  Parser change: `parse_type()` recognizes `*` prefix → PointerType
+  production; chain `*mut *ro T` works via recursion. 17 exhaustive-match
+  sites updated в 8 files (codegen/emit_c.rs ×5, codegen/external_registry.rs,
+  doc/collector.rs, doc/render_json.rs, lints.rs, types/mod.rs ×8). Codegen:
+  `*ro T` → `const T*`; `*mut T`/`*unsafe T` → `T*` (D216 §11). Cargo
+  check clean.
+
+### What's NOT done (incremental — pending follow-on session work)
+
+**Ф.1 remaining (Ф.1.5-1.12, ~½-1 dev-day):**
+- 🔴 **Ф.1.5-1.7** Ty::TypedPtr proper variant в `types/mod.rs::Ty`
+  (currently `TypeRef::Pointer → Ty::Ptr` scaffolding fallback).
+  Adding new variant требует update ~15 файлов с exhaustive `match ty`
+  на Ty enum (blast radius previously enumerated: emit_c.rs +
+  external_registry.rs + sum_schema_registry.rs + doc/collector.rs +
+  doc/mcp.rs + doc/render_json.rs + doc/stability.rs + interp/mod.rs +
+  parser/mod.rs + semver.rs + test_runner.rs + types/mod.rs + verify/encode.rs
+  + verify/handler_exec.rs + verify/pipeline.rs).
+- 🔴 **Ф.1.7** Binding-mut rule (`mut p *T` → `*mut T` default) в
+  type-checker — depends on Ty::TypedPtr.
+- 🔴 **Ф.1.8** Chain order semantics enforcement в checker.
+- 🔴 **Ф.1.9** T1 series fixtures (12+ positive + negative .nv files в
+  `nova_tests/plan118/t1_*.nv`).
+- 🔴 **Ф.1.10-1.11** Codegen integration tests (ABI snapshots
+  `tests/abi/typed_pointers/t1_*.expected`).
+- 🔴 **Ф.1.12** `ptr` redefine как newtype в prelude (`std/prelude/core.nv`):
+  `type ptr Option[*unsafe ()]` (D214 amend cross-ref).
+- 🔴 **Ф.1 release build verify** — `cargo build --release` + setup libuv
+  submodule в worktree (per memory project-worktree-nova-test-setup) +
+  run nova test ≥ baseline.
+
+**Ф.2-Ф.10 remaining (~7-8 dev-days):**
+- 🔴 **Ф.2** `&value` operator + escape analysis с auto-promote (~1.5 day)
+- 🔴 **Ф.3** `unsafe { }` block + `#unsafe` attribute + KwUnsafe в lexer +
+  D2 amend desugar в effect-handler (~1 day)
+- 🔴 **Ф.4** Auto-deref `p.field`/`p.method()`/`p.field = v` + pointer
+  ops (arith/casts/compare) (~1.5 day)
+- 🔴 **Ф.5** `Option[*T]` + NPO codegen + null-ptr retraction; closes
+  `[M-115-null-ptr-to-option-after-npo]` (~1 day)
+- 🔴 **Ф.6** `*fn(...)` function pointers + callback no-throw
+  (E_CALLBACK_THROWS_OVER_C_ABI + E_EXTERNAL_FN_FAIL_EFFECT) (~½-1 day)
+- 🔴 **Ф.7** GC honor-system W_UNSAFE_GC_TRIGGER warnings + pointer Debug
+  fmt (~½ day)
+- 🔴 **Ф.8** Regression + cross-platform CI (5+ combos) + ABI snapshot +
+  perf bench (~1 day)
+- 🔴 **Ф.9** Spec promote (D216/D2/D214/D32 → active) + ffi-cookbook
+  migration + nova doc + examples + closure (~½-1 day)
+- 🔴 **Ф.10** Reserved (safety hatch / post-review)
+
+**Sub-plans (independent, post-118-core):**
+- 🔴 **Plan 118.1** — FFI intrinsics + cstr"..." (~3-4 day)
+- 🔴 **Plan 118.2** — Slice fat-pointer + MaybeUninit + ManuallyDrop (~3-4 day)
+- 🔴 **Plan 118.3** — Pointer concurrency + AtomicPtr[T] (~2-3 day)
+
+### Realistic next-session checklist
+
+Session pickup от current state:
+1. Add `Ty::TypedPtr(PointerModifier, Box<Ty>)` variant в types/mod.rs
+2. `cargo check` — fix exhaustive-match arms (~15 files; treat TypedPtr
+   like Ty::Ptr or add new behaviors per location)
+3. Update `ty_of_ref` mapping: `TypeRef::Pointer → Ty::TypedPtr(modif, ty_of_ref(inner))`
+4. Apply binding-mut rule в checker (look for `let_decl.is_mut` interaction)
+5. Add prelude `type ptr Option[*unsafe ()]` (after Ф.5 lands NPO; until
+   then keep current `Ty::Ptr` opaque variant)
+6. Write `nova_tests/plan118/t1_1_*.nv` через `t1_11_*.nv` fixtures
+7. Setup release build (NOVA_GC_LIB_DIR/INCLUDE_DIR env vars; copy
+   libuv submodule; delete libuv/.git)
+8. `cargo build --release` then `./target/release/nova test plan118`
+9. Per-fixture iterate until all PASS
+10. Commit `feat(plan118 Ф.1.5-1.12): Ty::TypedPtr + binding mut + chain
+    order + ptr redefine + T1 fixtures + release build verify`
+
+### Locked design decisions (NOT change without sub-plan)
+
+- **GC pin model:** honor-system + W_UNSAFE_GC_TRIGGER warning (Ф.7)
+- **Decomposition:** Plan 118 family staged (core gates 118.1/118.2/118.3)
+- **Slice → Plan 118.2** (not core 118)
+- **&acc syntax kept** (NOT *acc — deref ambiguity)
+- **Callback no-throw** across C ABI (E_CALLBACK_THROWS_OVER_C_ABI)
+- **External fn no-Fail** (E_EXTERNAL_FN_FAIL_EFFECT)
+- **Tuple newtype `type Handle(*T)` canonical** для FFI handles (zero-overhead)
+- **Method auto-deref** `p.method()` ALLOW one-level в unsafe (Go/D pattern)
+- **Field assignment** `p.field = v` ALLOW для `*mut T` в unsafe
+- **Pointer Debug fmt** `.to_debug_str()` explicit (NOT auto via Display)
+
+### Worktree state
+
+- **Папка:** `D:/Sources/nv-lang/nova-p118` (sibling of main)
+- **Branch:** `plan-118` (от main `67625d285e6`)
+- **Commits:**
+  - `e642fc86d1e` — revision
+  - `12c746202a2` — Ф.0 GATE
+  - `c75d7be3791` — Ф.1.1-1.4 scaffold
+- **NOT merged в main** (per design — review required first)
+
+Sub-plan files committed в `e642fc86d1e`:
+- `docs/plans/118.1-ffi-intrinsics-and-cstring.md`
+- `docs/plans/118.2-slice-fat-pointer-and-uninit.md`
+- `docs/plans/118.3-pointer-concurrency-safety.md`
+
+### Closure summary
+
+> Заполняется агентом по завершении ВСЕХ фаз Plan 118 core. Поля
+> (template):
 > - Что сделано (per phase Ф.0..Ф.10 с commit refs)
 > - Что extracted в Plan 118.0.X (если safety hatches fire'нули)
 > - Final `nova test` results (before/after counts + delta)
@@ -2249,11 +2380,5 @@ issue → extract в followup (`[M-118-perf-*]`).
 > - Closed markers: `[M-115-null-ptr-to-option-after-npo]` ✅,
 >   `[M-118-handle-migration]` ✅
 > - Open `[M-118-*]` followups
-> - Ссылки на commits
 > - Memory `project-plan118-status.md` создан
-> - `docs/project-creation.txt` sprint section updated
-> - `docs/simplifications.md` updated с закрытыми/open `[M-118-*]` markers
-> - `nova-private/discussion-log.md` updated с design decisions
 > - D216 + D2 amend + D214 amend + D32 amend promoted в active spec (commit refs)
-> - Plan 118.1/118.2/118.3 stub status (committed during Ф.0, full plans drafted
->   by sub-plan execution)
