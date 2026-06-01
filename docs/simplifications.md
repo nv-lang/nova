@@ -28698,3 +28698,26 @@ Plan 114.4.4.1-5 per safety hatch design.
 4. **Safety hatch is design tool, not failure** — Ф.4-Ф.8 extracted
    intentionally per plan doc. Each followup ships independently when
    triggered. NOT silent simplification.
+
+---
+
+## Plan 114.4.4 Ф.1 followup — #fn_eval_max_depth(N) spec expansion (2026-06-01)
+
+**Status:** 🟢 spec polish closed. Branch `plan-114.4.4-fn-eval-depth-spec`,
+merge `d4b8f99ccac`.
+
+**Что:** inline subsection D199 V3 для `#fn_eval_max_depth(N)` расширена
+с syntax/range/default/semantics/use-cases/caveat/cross-ref. No code
+changes — только spec.
+
+**Design lesson:** Attribute spec entries не требуют отдельного D-блока —
+pattern для inline documentation в parent D (matches `#fuel` / `#opaque` /
+`#realtime` / `#trusted`). D-blocks reserved для semantic decisions с
+broad cross-cutting impact; per-attribute config — inline subsection в
+relevant D.
+
+**Caveat documented:** Rust thread stack ~8MB limits actual recursion
+depth независимо от `N` value. Practical limit `N ≤ 150-200`. Real
+production deep recursion → V4 followup `[M-114.4.4-iterative-evaluator]`
+(rewrite evaluator на iterative form с explicit stack — Rust stack
+больше не limit).

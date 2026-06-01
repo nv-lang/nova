@@ -27349,3 +27349,30 @@ Acceptance extracted: A31-A35 → Plan 114.4.4.1-5.
 - [M-114.4.3-loops] ✅ (V2.1 closed)
 
 Remaining V4 work через extracted plans (5 plans, ship-when-triggered).
+
+================================================================================
+Plan 114.4.4 Ф.1 followup — #fn_eval_max_depth(N) spec expansion (2026-06-01)
+================================================================================
+
+Branch: plan-114.4.4-fn-eval-depth-spec (off main d4b8f99ccac).
+
+Что: расширена inline subsection D199 V3 для attribute `#fn_eval_max_depth(N)`.
+
+Detail added:
+- Syntax form с code example.
+- Range constraint: 1..=65535 (parser-enforced; out-of-range = compile error).
+- Default value: 256 (constant MAX_EVAL_DEPTH в const_fn_eval.rs).
+- Semantics: per-call-site FnDecl.fn_eval_max_depth lookup; check ПЕРЕД
+  memoization lookup (guards runaway recursion even с warm memo cache).
+- Use cases: deep recursion + conservative limit для API safety.
+- Caveat: Rust thread stack ~8MB limits practical N ≤ 150-200. Real
+  unbounded deep recursion → [M-114.4.4-iterative-evaluator] V4 followup
+  (rewrite evaluator на iterative form с explicit stack).
+- Cross-ref: MAX_LOOP_ITERATIONS (Ф.3, default 10_000) + V4
+  `#fn_eval_max_iterations(N)` analog.
+
+No code changes — spec polish only. Acceptance A27 уже covered T4.4 Ф.1
+positive (depth_override_ok) + negative (depth_default_exceeded_neg).
+
+Commit: 4bd01f5dadd.
+Merge: d4b8f99ccac (no-ff).
