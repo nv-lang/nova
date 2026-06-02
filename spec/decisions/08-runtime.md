@@ -5292,6 +5292,61 @@ allocations — negligible vs total compilation. Profiled OK.
 - **V7.2.4** New fixtures plan123_7_2 PASS ✅
 - **V7.2.5** `NOVA_FIELD_CACHE_IPA=0` escape hatch still works ✅
 
+## D217 amend V4.2 — Chain prefix sharing (Plan 123.4.2)
+
+**Source:** [Plan 123.4.2](../../docs/plans/123.4.2-chain-prefix-sharing.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Scope
+
+V4 V4.1 emitted одну `_at_<a>_<b>_<c>_chain = @<a>.<b>.<c>` let на
+chain. Когда multiple chains share a length-2 prefix (e.g. `@a.b.c`
++ `@a.b.d`), the same `@<a>.<b>` walk is repeated for каждой. V4.2
+extracts shared prefix into a single intermediate let, then per-
+chain lets reference it.
+
+### 2. Algorithm
+
+1. After per-chain `to_cache` finalized, group entries by their
+   `path[..2]` slice (length-2 prefix).
+2. For groups с ≥ 2 chains, emit `_at_<a>_<b>_pre = @<a>.<b>` once.
+3. Emit per-chain lets — те, что покрыты prefix, формируют access
+   как `<prefix-local>.<tail-segments>` через `ExprKind::Ident +
+   ExprKind::Member`. Остальные unchanged (`@chain`).
+4. `cfg.max_per_fn` budget covers both: prefix lets count toward
+   it, so deeper sharing in `max_per_fn`-bounded methods may not
+   all materialize.
+
+### 3. Edge cases
+
+- Single chain in a prefix group (orphan) → skip; no savings.
+- Chain length < 3 (root + one segment) → ineligible (no shared
+  prefix possible).
+- Existing local collision → suffix increment `_at_a_b_pre_1`,
+  `_at_a_b_pre_2`, ...
+
+### 4. Composition
+
+V4.2 runs **inside** existing chain pass (`chain_cache_fn`). LICM /
+pure / D217 V1 unaffected. IPA per-root invalidation still applies
+к to_cache before prefix sharing — invalidated chains never reach
+the sharing pass.
+
+### 5. Acceptance
+
+- **V4.2.1** Shared prefix let emitted for ≥2 chains with shared
+  length-2 prefix ✅
+- **V4.2.2** Per-chain lets reference shared prefix via
+  `ident.tail` chain ✅
+- **V4.2.3** Single-chain prefix groups don't emit prefix let ✅
+- **V4.2.4** Existing behavior preserved for chains too short ✅
+- **V4.2.5** Runtime fixture `v42_chain_prefix_sharing_ok.nv` PASS
+
+### 6. Followups
+
+- **V4.3:** length-3+ prefix sharing (recursive — share deepest
+  common ancestor among chain groups).
+
 ## D219 amend V3.2 — Pure-call tuple/record literal args (Plan 123.3.2)
 
 **Source:** [Plan 123.3.2](../../docs/plans/123.3.2-tuple-record-literal-args.md).

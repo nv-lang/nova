@@ -6162,6 +6162,19 @@ fn chain_cache_fn_impl(
         name_map.insert(path.clone(), chosen);
     }
 
+    // Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing.
+    // Identify length-2 prefixes shared by ≥2 chains; emit a shared
+    // base let `_at_<a>_<b>_pre = @<a>.<b>` so the per-chain lets need
+    // only walk the remaining tail. Reduces `@<root>` reads from
+    // N×depth to 1 + N×(depth - shared_len).
+    //
+    // Note: prefix lets follow `cfg.max_per_fn` budget too — we count
+    // them in `to_cache.len() + prefix_count`. Eligibility happens
+    // ONLY when shared prefix of length 2; deeper sharing (≥3) =
+    // V4.3 followup. Single-chain-per-prefix gets no prefix let
+    // (would be net 0 savings).
+    let prefix_map = compute_chain_prefix_sharing(&to_cache, &mut local_names, cfg.max_per_fn);
+
     // Coerce Expr body → Block для prepend.
     match &mut f.body {
         FnBody::Block(_) => {}
@@ -6188,10 +6201,44 @@ fn chain_cache_fn_impl(
 
     // Prepend cache let statements.
     if let FnBody::Block(b) = &mut f.body {
-        let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len());
+        let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len() + prefix_map.len());
+
+        // Plan 123.4.2 (V4.2): shared-prefix lets first — sorted by
+        // prefix for deterministic ordering. Each shared prefix yields
+        // a single `_at_a_b_pre = @a.b` let; subsequent per-chain lets
+        // reference it via `<prefix-local>.c.d.e` instead of full chain.
+        let mut prefix_keys: Vec<&Vec<String>> = prefix_map.keys().collect();
+        prefix_keys.sort();
+        for pkey in &prefix_keys {
+            let (pname, pspan) = &prefix_map[*pkey];
+            let access = build_chain_expr(pkey, *pspan);
+            prefix.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident {
+                    name: pname.clone(),
+                    span: *pspan,
+                    is_mut: false,
+                },
+                ty: None,
+                value: access,
+                span: *pspan,
+                is_ghost: false,
+                consume: false,
+            }));
+        }
+
         for (path, span) in &to_cache {
             let local_name = &name_map[path];
-            let access = build_chain_expr(path, *span);
+            // V4.2: when this chain has a shared prefix, build value
+            // expression as `<prefix-local>.<tail>` instead of
+            // `@<full path>`. Otherwise fall back to full `@chain`.
+            let access = if let Some((prefix_name, tail)) =
+                find_chain_shared_prefix(&prefix_map, path)
+            {
+                build_chain_from_ident(prefix_name, tail, *span)
+            } else {
+                build_chain_expr(path, *span)
+            };
             prefix.push(Stmt::Let(LetDecl {
                 mutable: false,
                 pattern: Pattern::Ident {
@@ -6209,6 +6256,77 @@ fn chain_cache_fn_impl(
         prefix.append(&mut b.stmts);
         b.stmts = prefix;
     }
+}
+
+/// Plan 123.4.2 (V4.2, 2026-06-02): determine shared length-2 prefixes
+/// among `to_cache` paths. Returns map: prefix-path → (synthetic-local-name, span).
+///
+/// Only groups с ≥2 chains and total emit count within `max_per_fn`
+/// budget qualify. Pure additive — no chains removed from to_cache.
+fn compute_chain_prefix_sharing(
+    to_cache: &[(Vec<String>, crate::diag::Span)],
+    local_names: &mut HashSet<String>,
+    max_per_fn: usize,
+) -> HashMap<Vec<String>, (String, crate::diag::Span)> {
+    let mut groups: HashMap<Vec<String>, Vec<&(Vec<String>, crate::diag::Span)>> = HashMap::new();
+    for entry in to_cache {
+        let path = &entry.0;
+        if path.len() < 3 { continue; }
+        let prefix = path[..2].to_vec();
+        groups.entry(prefix).or_default().push(entry);
+    }
+    let mut out: HashMap<Vec<String>, (String, crate::diag::Span)> = HashMap::new();
+    let mut emitted = to_cache.len();
+    let mut keys: Vec<Vec<String>> = groups.keys().cloned().collect();
+    keys.sort();
+    for prefix in keys {
+        let entries = &groups[&prefix];
+        if entries.len() < 2 { continue; }
+        if emitted >= max_per_fn { break; }
+        // Synthesize collision-safe local name: `_at_a_b_pre[_N]`.
+        let base = format!("_at_{}_pre", prefix.join("_"));
+        let mut chosen = base.clone();
+        let mut suffix = 0usize;
+        while local_names.contains(&chosen) {
+            suffix += 1;
+            chosen = format!("{}_{}", base, suffix);
+        }
+        local_names.insert(chosen.clone());
+        let earliest_span = entries.iter().map(|e| e.1).min_by_key(|s| s.start).unwrap_or(entries[0].1);
+        out.insert(prefix, (chosen, earliest_span));
+        emitted += 1;
+    }
+    out
+}
+
+/// Plan 123.4.2 (V4.2): if `path` is covered by a length-2 prefix in
+/// `prefix_map`, return `(prefix-local-name, tail-segments)`. Else None.
+fn find_chain_shared_prefix<'a, 'p>(
+    prefix_map: &'a HashMap<Vec<String>, (String, crate::diag::Span)>,
+    path: &'p [String],
+) -> Option<(&'a str, &'p [String])> {
+    if path.len() < 3 { return None; }
+    let prefix_key = &path[..2];
+    let (pname, _) = prefix_map.get(prefix_key)?;
+    Some((pname.as_str(), &path[2..]))
+}
+
+/// Plan 123.4.2 (V4.2): build `<ident>.<seg1>.<seg2>.<...>` expression.
+fn build_chain_from_ident(ident: &str, tail: &[String], span: crate::diag::Span) -> Expr {
+    let mut current = Expr {
+        kind: ExprKind::Ident(ident.to_string()),
+        span,
+    };
+    for name in tail {
+        current = Expr {
+            kind: ExprKind::Member {
+                obj: Box::new(current),
+                name: name.clone(),
+            },
+            span,
+        };
+    }
+    current
 }
 
 /// Build chain expression `@a.b.c` from path components.
@@ -7216,6 +7334,71 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
             s,
         );
         assert!(canonical_literal_repr(&rec).is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing emits
+    // `_at_<a>_<b>_pre` and chain lets reference it instead of full @chain.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn fn_prefix_lets(f: &FnDecl) -> Vec<String> {
+        if let FnBody::Block(b) = &f.body {
+            b.stmts.iter().take_while(|s| {
+                matches!(s, Stmt::Let(d)
+                    if matches!(&d.pattern, Pattern::Ident { name, .. } if name.starts_with("_at_")))
+            }).filter_map(|s| {
+                if let Stmt::Let(d) = s {
+                    if let Pattern::Ident { name, .. } = &d.pattern { Some(name.clone()) } else { None }
+                } else { None }
+            }).collect()
+        } else { vec![] }
+    }
+
+    #[test]
+    fn v42_shared_prefix_emitted_when_two_chains_share_prefix() {
+        // Two chains @a.b.c and @a.b.d (length 3, share prefix @a.b).
+        // V4.2 should emit a single `_at_a_b_pre = @a.b` PLUS the two
+        // per-chain lets that reference it.
+        let src = r#"
+module testmod.v42_shared
+type Inner2 { ro c int, ro d int }
+type Inner1 { ro b Inner2 }
+type Outer { ro a Inner1 }
+fn Outer @use_both() -> int {
+    @a.b.c + @a.b.c + @a.b.d + @a.b.d
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_both");
+        let names = fn_prefix_lets(f);
+        // Expect: _at_a_b_pre + _at_a_b_c_chain + _at_a_b_d_chain.
+        assert!(names.iter().any(|n| n == "_at_a_b_pre"),
+            "expected shared-prefix let _at_a_b_pre; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_chain"),
+            "expected per-chain let _at_a_b_c_chain; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_d_chain"),
+            "expected per-chain let _at_a_b_d_chain; got {:?}", names);
+    }
+
+    #[test]
+    fn v42_no_shared_prefix_when_single_chain() {
+        // Only @a.b.c chain — no other chain shares prefix → no _pre let.
+        let src = r#"
+module testmod.v42_single
+type Inner2 { ro c int }
+type Inner1 { ro b Inner2 }
+type Outer { ro a Inner1 }
+fn Outer @use_single() -> int {
+    @a.b.c + @a.b.c + @a.b.c
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_single");
+        let names = fn_prefix_lets(f);
+        assert!(names.iter().all(|n| !n.ends_with("_pre")),
+            "no _pre let should emit when only single chain; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_chain"),
+            "expected per-chain let; got {:?}", names);
     }
 
     #[test]
