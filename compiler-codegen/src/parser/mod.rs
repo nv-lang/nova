@@ -3213,6 +3213,11 @@ impl Parser {
     fn is_named_tuple_decl(&self) -> bool {
         // tokens[pos] = `(` (current), tokens[pos+1] = first in parens
         let first = &self.peek_at(1).kind;
+        // Plan 124.4: `priv` / `pub` перед field name treated as named-tuple
+        // marker (no positional `priv` form — `priv` всегда modifier).
+        if matches!(first, TokenKind::KwPriv | TokenKind::KwPub) {
+            return true;
+        }
         let second = &self.peek_at(2).kind;
         // Named field: IDENT followed by a type-starting token (not `,` not `)`)
         matches!(first, TokenKind::Ident(_))
@@ -3226,6 +3231,8 @@ impl Parser {
 
     /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
     /// Called after consuming `(`. Stops before `)`.
+    /// Plan 124.4 (D222): per-field `priv` / `pub` modifier supported
+    /// перед field name.
     fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
         loop {
@@ -3234,6 +3241,38 @@ impl Parser {
                 break;
             }
             let field_start = self.peek().span;
+            // Plan 124.4 (D222): optional `priv` / `pub` modifier.
+            let mut priv_field = false;
+            let mut saw_pub = false;
+            loop {
+                match self.peek().kind {
+                    TokenKind::KwPriv => {
+                        if saw_pub {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
+                                 `pub` on the same named-tuple field (Plan 124 / D220 / D222).",
+                                sp,
+                            ));
+                        }
+                        priv_field = true;
+                        self.bump();
+                    }
+                    TokenKind::KwPub => {
+                        if priv_field {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
+                                 `pub` on the same named-tuple field (Plan 124 / D220 / D222).",
+                                sp,
+                            ));
+                        }
+                        saw_pub = true;
+                        self.bump();
+                    }
+                    _ => break,
+                }
+            }
             // Expect IDENT (field name)
             if !matches!(self.peek().kind, TokenKind::Ident(_)) {
                 let sp = self.peek().span;
@@ -3269,7 +3308,7 @@ impl Parser {
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span });
+            fields.push(NamedTupleField { name, ty, span, priv_field });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }

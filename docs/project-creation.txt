@@ -27891,3 +27891,54 @@ Plan 124 umbrella status: 3/7 sub-plans closed (124.1, 124.2, 124.3).
 Remaining: 124.4 (named tuple + protocol), 124.5 (doc + LSP),
 124.6 (test_access + visible_to), 124.7 (type-level priv flip tuples).
 
+
+Plan 124.4 — Named tuple priv + protocol impl boundary (2026-06-02)
+
+Sub-plan Plan 124. D222 NEW в spec/decisions/02-types.md.
+
+AST/parser change:
+- NamedTupleField gets priv_field: bool (default false).
+- parser/mod.rs: is_named_tuple_decl recognizes KwPriv/KwPub.
+  parse_named_tuple_fields accepts modifier с E_PRIV_PUB_CONFLICT
+  bidirectional.
+
+Checker hooks:
+- f3_check_member NamedTuple arm: E_PRIV_FIELD_READ per priv field
+  access outside type-method scope (Plan 124.1 receiver tracking).
+- f5_check_tuple_construct: NamedTuple branch INIT check on named-args.
+  E_PRIV_FIELD_INIT per priv-named-arg.
+- check_priv_pattern_recursive (Plan 124.2 helper): unified Record +
+  NamedTuple. Resolves field types через field_types vec, supports
+  recursion для nested through both forms.
+
+Protocol impl boundary (D222 §3):
+- Type-method `fn Vec3 @to_string()` — recv = "Vec3", priv access OK.
+- External free-fn `fn compute(v Vec3) => v.x + ...` — recv = None,
+  priv access → E_PRIV_FIELD_READ.
+
+D-block: D222 NEW. §1 Named tuple syntax, §2 Access rules uniform с
+D220, §3 Protocol impl boundary, §4 Diagnostic codes (reuses D220/D221),
+§5 Implementation hooks, §6 Cross-refs, Acceptance A4.1-A4.10 ✅.
+
+README spec index: D222 entry.
+
+Fixtures nova_tests/plan124_4/ — 10/10 PASS:
+Positive 5: named_tuple_priv_parse_ok, named_tuple_inside_method_ok,
+named_tuple_mixed_priv_pub_ok, named_tuple_no_priv_ok,
+named_tuple_protocol_method_inside_ok.
+Negative 5: named_tuple_priv_pub_conflict_neg, named_tuple_priv_read_outside_neg,
+named_tuple_priv_init_outside_neg, named_tuple_priv_pattern_outside_neg,
+named_tuple_protocol_external_fn_neg.
+
+Regression: Plan 120 8/8 + plan124_1 9/9 + plan124_2 14/14 unchanged.
+
+Commit:
+- feat(plan 124.4): named tuple priv + protocol impl boundary — D222
+  + 10 fixtures + spec + plan flip + 3 logs.
+
+Plan 124.4 acceptance A4.1-A4.10 — ALL ✅.
+
+Plan 124 umbrella status: 4/7 sub-plans closed (124.1, 124.2, 124.3, 124.4).
+Remaining: 124.5 (doc + LSP), 124.6 (test_access + visible_to),
+124.7 (type-level priv flip tuples).
+

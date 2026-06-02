@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.4 — negative: read priv field named tuple outside type-method
+// scope → E_PRIV_FIELD_READ (D222 — named tuple).
+module plan124_4.named_tuple_priv_read_outside_neg
+
+type Vec3(priv x f64, priv y f64, priv z f64)
+
+fn Vec3.zero() -> Vec3 =>
+    Vec3(x: 0.0, y: 0.0, z: 0.0)
+
+// External fn — reads priv x.
+fn external_get_x(v Vec3) -> f64 =>
+    v.x

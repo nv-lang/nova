@@ -808,6 +808,11 @@ pub struct NamedTupleField {
     pub name: String,
     pub ty: TypeRef,
     pub span: Span,
+    /// Plan 124.4 (D222): per-field private visibility marker для
+    /// named tuple. Same semantics as RecordField.priv_field:
+    /// accessible only из methods own type'а.
+    /// Backward-compat: default false (= public).
+    pub priv_field: bool,
 }
 
 #[derive(Debug, Clone)]

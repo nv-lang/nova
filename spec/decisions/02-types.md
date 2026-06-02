@@ -7480,6 +7480,125 @@ ALL closed 2026-06-02:
 - A3.7 ✅ plan124_3 10/10 fixtures PASS.
 - A3.8 ✅ Regression plan124_1 9/9 + plan124_2 14/14 unchanged.
 
+---
+
+## D222. Named tuple priv + protocol impl boundary (Plan 124.4)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.4 closure).
+> **Extends:** D220 (per-field priv) + D215 (named tuples, Plan 120) +
+> D221 (pattern check). Self-contained sub-decision: covers named tuple
+> form + protocol impl boundary explicitly.
+> **Plan:** [Plan 124.4](../../docs/plans/124.4-named-tuple-protocol.md).
+> **Cross-refs:** D215 (named tuple form), D220 (core priv), D221
+> (pattern), D52 §2 (record field syntax).
+
+### §1 Named tuple priv syntax
+
+```nova
+type Vec3(priv x f64, priv y f64, priv z f64)
+type Account(priv balance f64, name str)    // mixed
+type Secret(pub key str, priv salt []u8)    // explicit pub override
+```
+
+Same modifier semantic as RecordField: `priv` before field name (or
+`pub` for explicit public override; reserved для D220 type-level flip
+extension Plan 124.7). Mutual exclusion enforced —
+`priv pub x f64` / `pub priv x f64` → `E_PRIV_PUB_CONFLICT`.
+
+### §2 Access rules — uniform with D220
+
+**Read** (`v.x`):
+- Inside named tuple's own methods (instance `@field` or static
+  `T.method(...)`) — OK regardless of priv.
+- Outside → `E_PRIV_FIELD_READ` если field marked priv.
+
+**Init** via named-arg constructor (`Vec3(x: 1.0, y: 2.0, z: 3.0)`):
+- Inside type-method scope — OK (recv = T).
+- Outside → `E_PRIV_FIELD_INIT` для каждого priv-named arg.
+
+**Pattern destructure** (`Vec3 { x, y, z } = v` record-style):
+- Same as record (D221 §2-§4): outside → `E_PRIV_FIELD_PATTERN`
+  per priv field; `..` rest is non-binding; nested descent recursive.
+
+**Write** — N/A: named tuple fields are immutable by D215 design
+(no `mut` modifier на field). Все assignments к `v.x = ...` fail
+`E_READONLY_FIELD` before priv check.
+
+**Positional access `.0`/`.1`** — already blocked by Plan 120
+`E_TUPLE_POSITIONAL_ACCESS_ON_NAMED` (D215 Q120 Option B); priv
+не нужно добавлять отдельный код.
+
+### §3 Protocol implementation boundary
+
+Protocol satisfaction в Nova реализуется ДВУМЯ способами (D186 / Plan 91.9):
+
+1. **Type-method impl** — `fn Vec3 @to_string() -> str`. Receiver = T;
+   `current_recv_type = Some("Vec3")` → priv access OK канонически.
+   ✅ Allowed.
+
+2. **External free-fn** — `fn compute_sum(v Vec3) -> f64 => v.x + v.y + v.z`.
+   No receiver tracking; `current_recv_type = None` →
+   `E_PRIV_FIELD_READ` fires при touching priv. ✅ Blocked.
+
+→ Encapsulation guarantee: protocol impls cannot **bypass** priv
+boundary unless declared as type-method. Mirrors Rust trait impl
+rules; stricter than Go/Kotlin (pkg-wide-allowed).
+
+### §4 Diagnostic codes
+
+| Code | Site | Plan |
+|---|---|---|
+| `E_PRIV_FIELD_READ` | Member access на priv named-tuple field | D220 §4 (reused) |
+| `E_PRIV_FIELD_INIT` | `T(field: ...)` named-arg ctor priv field | D220 §4 (reused) |
+| `E_PRIV_FIELD_PATTERN` | `T { field, ... } = v` priv field | D221 §2 (reused) |
+| `E_PRIV_PUB_CONFLICT` | `priv pub` / `pub priv` mutual exclusion | D220 §6 (reused) |
+| `E_TUPLE_POSITIONAL_ACCESS_ON_NAMED` | `.0` access | D215 / Plan 120 (preexisting) |
+
+No new codes — D222 reuses D220/D221 codes uniformly. Spec mentions
+named-tuple context в hint text.
+
+### §5 Implementation hooks
+
+| Layer | Site | Change |
+|---|---|---|
+| AST | `NamedTupleField` struct | Added `priv_field: bool` |
+| Lexer | `KwPriv`, `KwPub` | Already declared (Plan 124.1) |
+| Parser | `is_named_tuple_decl` | Recognize `priv`/`pub` as named-marker |
+| Parser | `parse_named_tuple_fields` | Accept `priv`/`pub` modifier с conflict-check |
+| Checker | `f3_check_member` NamedTuple arm | Added priv check (mirror Record) |
+| Checker | `f5_check_tuple_construct` | INIT priv check on named-args |
+| Checker | `check_priv_pattern_recursive` | Unified для Record + NamedTuple |
+
+### §6 Cross-refs
+
+- D215 — named tuple syntax + access rules.
+- D220 — core priv semantics, error codes definition.
+- D221 — pattern destructure + spread.
+- D52 §2 — record field syntax (mirror form).
+- D186 — protocol satisfaction (Plan 91.9): type-method primary,
+  external-fn-impl secondary; D222 §3 formalizes boundary impact.
+
+### Acceptance — Plan 124.4
+
+ALL closed 2026-06-02:
+
+- A4.1 ✅ Named tuple `type Vec3(priv x f64, ...)` parser PASS.
+- A4.2 ✅ Positional `.0` access — handled by preexisting Plan 120
+  E_TUPLE_POSITIONAL_ACCESS_ON_NAMED (priv-orthogonal).
+- A4.3 ✅ Named `.x` access на priv field outside → E_PRIV_FIELD_READ.
+- A4.4 ✅ Inside type-method scope — read + init + pattern + protocol
+  method все allow.
+- A4.5 ✅ Protocol impl (type-method-based, `fn Vec3 @method()`) —
+  priv access OK.
+- A4.6 ✅ Protocol impl external-fn-based (`fn compute(v Vec3)`) —
+  priv access BLOCKED (E_PRIV_FIELD_READ).
+- A4.7 ✅ plan124_4 10/10 fixtures PASS.
+- A4.8 ✅ Regression Plan 120 (8/8) + plan124_1 (9/9) + plan124_2
+  (14/14) unchanged.
+- A4.9 ✅ D222 NEW + D215 cross-ref + D220/D221 code reuse.
+- A4.10 ✅ plan120 backward compat — все existing named-tuple
+  fixtures без `priv` modifier работают unchanged.
+
 ### Acceptance — Plan 124.2
 
 ALL closed 2026-06-02:

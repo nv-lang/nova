@@ -3601,19 +3601,32 @@ impl<'a> TypeCheckCtx<'a> {
                     });
                 let Some(tname) = tname_opt else { return };
                 let Some(td) = self.types.get(tname.as_str()) else { return };
-                let TypeDeclKind::Record(rec_fields) = &td.kind else { return };
+                // Plan 124.2 + 124.4 (D221 + D222): unified priv check works
+                // для и Record и NamedTuple. Tuple form via Vec3 { x, y, z }
+                // record-style pattern destructure (D215 syntax).
+                let (priv_fields, field_types): (Vec<(String, bool)>, Vec<(String, TypeRef)>) = match &td.kind {
+                    TypeDeclKind::Record(rec_fields) => (
+                        rec_fields.iter().map(|f| (f.name.clone(), f.priv_field)).collect(),
+                        rec_fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect(),
+                    ),
+                    TypeDeclKind::NamedTuple(nt_fields) => (
+                        nt_fields.iter().map(|f| (f.name.clone(), f.priv_field)).collect(),
+                        nt_fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect(),
+                    ),
+                    _ => return,
+                };
                 let current_recv = self.current_recv_type.borrow();
                 let allowed = current_recv.as_deref() == Some(tname.as_str());
                 if !allowed {
                     for pf in fields {
-                        if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == pf.name) {
-                            if fdecl.priv_field {
+                        if let Some((_, is_priv)) = priv_fields.iter().find(|(n, _)| n == &pf.name) {
+                            if *is_priv {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_PRIV_FIELD_PATTERN] cannot destructure \
                                          private field `{}.{}` в pattern outside type-\
                                          method scope. Field marked `priv` (Plan 124 / \
-                                         D220/D221). Hint: bind the value to a variable \
+                                         D220/D221/D222). Hint: bind the value to a variable \
                                          and access via public methods of `{}`, or move \
                                          the destructure into a method of `{}`.",
                                         tname, pf.name, tname, tname,
@@ -3628,9 +3641,9 @@ impl<'a> TypeCheckCtx<'a> {
                 let _ = span;
                 for pf in fields {
                     if let Some(sub) = &pf.pattern {
-                        let sub_ty = rec_fields.iter()
-                            .find(|fd| fd.name == pf.name)
-                            .map(|fd| fd.ty.clone());
+                        let sub_ty = field_types.iter()
+                            .find(|(n, _)| n == &pf.name)
+                            .map(|(_, ty)| ty.clone());
                         self.check_priv_pattern_recursive(sub, sub_ty.as_ref(), errors);
                     }
                 }
@@ -4016,7 +4029,25 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                     return;
                 }
-                if fields.iter().any(|f| f.name == name) {
+                if let Some(field) = fields.iter().find(|f| f.name == name) {
+                    // Plan 124.4 (D222): priv field READ access check для named tuple.
+                    if field.priv_field {
+                        let current_recv = self.current_recv_type.borrow();
+                        let allowed = current_recv.as_deref() == Some(tname.as_str());
+                        if !allowed {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Named-tuple \
+                                     field marked `priv` (Plan 124 / D220 / D222). \
+                                     Hint: add public getter method on `{}` or move \
+                                     accessing code into a method of `{}`.",
+                                    tname, name, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
+                    }
                     return;
                 }
                 let has_method = self.method_table.get(tname).map_or(false, |m| {
@@ -4093,8 +4124,14 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(td) = self.types.get(name.as_str()) else { return; };
         match &td.kind {
             TypeDeclKind::NamedTuple(fields) => {
+                // Plan 124.4 (D222): if any priv field exists AND outside
+                // type-method scope, check each named-arg для priv-field init.
+                let has_priv = fields.iter().any(|f| f.priv_field);
+                let current_recv = self.current_recv_type.borrow();
+                let allowed = current_recv.as_deref() == Some(name.as_str());
+                drop(current_recv);
                 for arg in args {
-                    if let CallArg::Named { name: field_name, .. } = arg {
+                    if let CallArg::Named { name: field_name, value: arg_value } = arg {
                         if !fields.iter().any(|f| &f.name == field_name) {
                             let avail: Vec<&str> =
                                 fields.iter().map(|f| f.name.as_str()).collect();
@@ -4114,6 +4151,24 @@ impl<'a> TypeCheckCtx<'a> {
                                 ));
                             }
                             errors.push(diag);
+                        }
+                        // Plan 124.4 (D222): priv field INIT via named-arg ctor.
+                        if has_priv && !allowed {
+                            if let Some(fd) = fields.iter().find(|f| &f.name == field_name) {
+                                if fd.priv_field {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_INIT] cannot initialize private \
+                                             field `{}.{}` via named-tuple constructor outside \
+                                             type-method scope. Field marked `priv` (Plan 124 / \
+                                             D220 / D222). Hint: use factory method like \
+                                             `{}.new(...)` which constructs the type internally.",
+                                            name, field_name, name,
+                                        ),
+                                        arg_value.span,
+                                    ));
+                                }
+                            }
                         }
                     }
                 }

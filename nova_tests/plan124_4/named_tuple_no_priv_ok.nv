@@ -1,0 +1,15 @@
+// Plan 124.4 — positive: named tuple без priv-fields — обычное поведение
+// (Plan 120 D215 backward compat). No false-positive from Plan 124.4
+// changes.
+module plan124_4.named_tuple_no_priv_ok
+
+type Point(x f64, y f64)
+
+fn make_point(a f64, b f64) -> Point =>
+    Point(x: a, y: b)
+
+test "Plan 124.4: named tuple без priv — access OK extern" {
+    ro p = make_point(3.0, 4.0)
+    assert(p.x == 3.0)
+    assert(p.y == 4.0)
+}
