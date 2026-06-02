@@ -27914,3 +27914,60 @@ Markers:
 - No new open followups для Plan 91.12.
 
 Worktree: nova-p91-12 (continued). Branch: plan-91.12.
+
+
+[Plan 91.12 V2 followup #3 — TypeRef::uses_any_type_param refactor] 2026-06-02
+
+Контекст: V2 followup #1 (generic newtype) и followup #2 (non-ptr inner)
+ввели в types/mod.rs локальный helper `typeref_uses_param`, mirror codegen
+helper `type_ref_uses_any_type_param` в emit_c.rs. Эта duplication —
+known code-smell, документированная в Session 12 discussion-log как
+«acceptable across modules».
+
+Followup #3 — production-grade refactor: extract единственное реализование
+в `ast::TypeRef::uses_any_type_param(&self, params: &HashSet<String>) -> bool`,
+оба callsite (codegen + type-checker) становятся thin #[inline] wrapper'ами.
+
+**Изменения:**
+
+compiler-codegen/src/ast/mod.rs:
+- NEW method `TypeRef::uses_any_type_param` в impl TypeRef block. Covers
+  всех 8 variants: Named (path + recurse generics), Array/FixedArray/Readonly
+  (recurse inner), Tuple (recurse all elements), Func (recurse params + return),
+  Protocol (recurse method params + return), Unit (false).
+- NEW `#[cfg(test)] mod typeref_uses_any_type_param_tests` (18 unit tests):
+  - 10 positive: named-is-param, generic-arg-is-param, nested-generics,
+    array/fixed-array/tuple/func/readonly inner, multi-param match-any.
+  - 8 negative: concrete types, multi-segment path (path.len() > 1),
+    empty param set, Unit type, concrete generic args, all-concrete func,
+    different-named param.
+
+compiler-codegen/src/codegen/emit_c.rs:
+- `type_ref_uses_any_type_param` reduced с 25-line full implementation
+  до 3-line `#[inline] fn ... { ty.uses_any_type_param(type_params) }`.
+
+compiler-codegen/src/types/mod.rs:
+- `typeref_uses_param` reduced с 22-line implementation до 3-line thin
+  wrapper to same ast method.
+
+**Test status:**
+- `cargo test --release --lib typeref_uses_any_type_param` НЕ работает
+  due to pre-existing broken tests в emit_c.rs::mem_ordering_tests
+  (Span import path bug, line 28214: `use crate::ast::Span` instead of
+  `use crate::diag::Span`). Bug NOT в моём refactor (verified via git stash
+  + same error reproduces). Fix этой stale test out of scope для refactor —
+  это отдельная code-hygiene задача.
+
+**Integration coverage** (proxy for unit tests):
+- plan48 Ф.3 generic erasure (emit_c.rs caller) — 7/7 PASS.
+- plan91_12 V2 newtype reject guard (types/mod.rs caller) — 9/9 PASS.
+- Refactor 1:1 behavior-preserving — both callsite paths exercised.
+
+**Regression:** plan91_12 9/9 + buffers 11/11 + plan115 11/11 +
+plan103_5 20/20 + plan48 7/7 = 58/58 PASS.
+
+Markers:
+- ✅ [M-91.12-typeref-uses-param-dedup] — CLOSED.
+- No new open followups.
+
+Worktree: nova-p91-12 (continued). Branch: plan-91.12.
