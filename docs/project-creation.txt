@@ -27207,6 +27207,62 @@ A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
 A19 ✅, A21 partial, A24, A25, A26, A28 partial, A29, A30, A33,
 A34, A35.
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5.7 A23 ✅ CLOSED — null ptr literal retracted
+==========================================================================
+
+User-requested closure of A23 (Ф.5.7) — `null ptr` literal hard-retraction
+post-NPO. Closes followup [M-115-null-ptr-to-option-after-npo].
+
+Implementation:
+1. Parser amend (parser/mod.rs): TokenKind::Ident("null") + Ident(ty)
+   recognition — теперь always emits E_NULL_PTR_RETRACTED_USE_OPTION
+   regardless of ty (ptr included). Diagnostic provides migration
+   suggestion: (0 as ptr) для existing code, Option[ptr] с None для new.
+2. Mechanical fixture migration (sed -i 's/null ptr/(0 as ptr)/g'):
+   - examples/ffi/ptr_basics.nv
+   - 9 plan115 fixtures (t1_null_ptr_ok, t1_ptr_arithmetic_neg,
+     t1_ptr_casts_ok, t1_ptr_lt_neg, t1_ptr_str_cast_neg,
+     t2_tuple_with_ptr_ok, t3_handle_pattern_ok,
+     t3_handle_type_mismatch_neg, t4_sqlite_e2e_ok)
+   - 3 plan118 fixtures (t1_8_ptr_legacy_compat_ok,
+     t5_5_npo_option_ptr_ok, t7_neg_ptr_interp_cast_direct)
+   - 1 plan91_12 fixture (v3_user_generic_newtype_ok)
+   Total: 14 fixtures migrated mechanically.
+3. NEG fixture t5_neg_null_ptr_retracted.nv added — verifies parser
+   emits E_NULL_PTR_RETRACTED_USE_OPTION для `null ptr` usage.
+4. plan115/t1_null_non_ptr_neg.nv — EXPECT updated к
+   E_NULL_PTR_RETRACTED_USE_OPTION (renamed from
+   E_NULL_LITERAL_REQUIRES_PTR — unified diagnostic).
+
+Why (0 as ptr) and not Option[ptr]?
+- (0 as ptr) — mechanical 1:1 replacement, preserves `ptr` type;
+  NULL=(void*)0 в C ABI = bitwise identical к former null ptr emission.
+- Option[ptr] = None — recommended для new code (type-safe nullable);
+  но требует wider refactor (type changes, unwrap sites).
+- Migration script trivial: `sed 's/null ptr/(0 as ptr)/g'`.
+
+Verified generated C для (0 as ptr):
+  ((nova_ptr)((nova_int)0LL))  // identical к former NULL emission.
+
+plan118: 35/0 PASS (17 positive + 18 NEG).
+plan115: 11/0 PASS (post-migration backward-compat preserved).
+plan91_12: 9/0 PASS.
+plan100_3: 10/0 + plan83_12: 10/0 + basics: 8/0 — all clean.
+Regression smoke 83/0 verified clean.
+
+Spec D214 amended (02-types.md): «null ptr literal retracted»
+(amend section added 2026-06-02). Migration guide inline. D216 §7
+V3 list updated (A23 marked ✅ CLOSED, removed from deferred list).
+
+Plan 118 grand-total: 19 of 35 acceptance criteria closed (54%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29, A30,
+A33, A34, A35.
+
+Plan 115 followup marker [M-115-null-ptr-to-option-after-npo] —
+**CLOSED** via A23 hard retraction landing.
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
