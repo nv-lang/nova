@@ -25617,10 +25617,13 @@ _cp++; \
         // NULL = None convention). Direct C-FFI ABI compatibility — matches
         // `malloc`/`fopen`/`dlopen` returns.
         //
-        // NPO-eligible:
+        // NPO-eligible (Plan 118 Ф.5/Ф.5.4/Ф.5.8):
         //   - V1: c_ty ends with '*' covers `*T` family (T*/const T*/void*)
         //   - V2 (A21 partial): `nova_ptr` typedef (= void*) — Plan 115 D214
-        //   - V3 deferred: `*fn(...)` function pointers, newtype-over-pointer
+        //   - V3 (A20): newtype-over-pointer — `type X(*T)` / `type X(ptr)`
+        //     transparent typedef alias. Lookup `Nova_X` в type_aliases →
+        //     underlying c_ty; recurse-check для pointer/nova_ptr.
+        //   - V4 deferred: `*fn(...)` function pointers (structural)
         //
         // NPO НЕ применяется к: nested `Option[Option[*T]]` — outer Option's
         // inner c_ty is `NovaOpt_<inner_sani>` (struct, not pointer) → falls
@@ -25628,7 +25631,11 @@ _cp++; \
         // warning — A22, type-checker level diagnostic).
         let is_pointer = c_ty.ends_with('*');
         let is_nova_ptr = c_ty == "nova_ptr";
-        let is_npo = is_pointer || is_nova_ptr;
+        // A20: newtype transparent typedef-to-pointer.
+        let is_newtype_ptr = c_ty.strip_prefix("Nova_")
+            .and_then(|user_name| self.type_aliases.get(user_name))
+            .map_or(false, |alias_c| alias_c.ends_with('*') || alias_c == "nova_ptr");
+        let is_npo = is_pointer || is_nova_ptr || is_newtype_ptr;
         let line = if is_npo {
             // NPO layout: single-pointer struct (sizeof = sizeof(c_ty) = 8).
             // No tag field — NULL = None, !NULL = Some.
@@ -25651,7 +25658,7 @@ _cp++; \
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
             | "nova_f32" | "nova_f64");
-        let cmp_body = if is_scalar || is_pointer || is_nova_ptr {
+        let cmp_body = if is_scalar || is_pointer || is_nova_ptr || is_newtype_ptr {
             "a.value == b.value".to_string()
         } else {
             format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
@@ -25690,15 +25697,34 @@ _cp++; \
     /// V2 extension (Plan 118 Ф.5.4): `nova_ptr` typedef (= void*) — Plan 115
     /// D214 opaque pointer; semantically pointer-sized, ABI-equivalent to void*.
     /// Option[ptr] now NPO-eligible (A21 partial).
-    /// V3 (deferred): `*fn(...)` function pointers (c_ty doesn't end '*' —
-    /// requires structural detection), generic newtype-over-pointer (A20).
+    /// V3 extension (Plan 118 Ф.5.8 A20): newtype-over-pointer detection —
+    /// `type X(*T)` / `type X(ptr)` typedef'd as transparent alias.
+    /// Lookup в type_aliases: "Nova_X" → underlying C type; если ends '*'
+    /// или == "nova_ptr" — NPO-eligible. Enables `Option[Sqlite3Handle]`,
+    /// `Option[FileDescriptor]` и similar canonical FFI handle patterns.
+    /// V4 (deferred): `*fn(...)` function pointers (structural detection).
     fn is_novaopt_npo(&self, sanitized: &str) -> bool {
         self.novaopt_value_types.borrow()
             .get(sanitized)
             .map_or(false, |c_ty| {
-                c_ty.ends_with('*')
-                // Plan 118 Ф.5.4 (A21 partial): nova_ptr typedef'd as void*.
-                || c_ty == "nova_ptr"
+                // V1: direct pointer C type (T* / const T* / void*).
+                if c_ty.ends_with('*') { return true; }
+                // V2 (Ф.5.4, A21 partial): nova_ptr typedef'd as void*.
+                if c_ty == "nova_ptr" { return true; }
+                // V3 (Ф.5.8, A20): newtype-over-pointer transparent typedef.
+                // c_ty form: "Nova_<UserTypeName>" — strip prefix, lookup
+                // в type_aliases (registered в emit_type_decl line 8476):
+                //   type Sqlite3Handle(*sqlite3) →
+                //     type_aliases["Sqlite3Handle"] = "sqlite3*"
+                //     c_ty при Option[Sqlite3Handle] = "Nova_Sqlite3Handle"
+                if let Some(user_name) = c_ty.strip_prefix("Nova_") {
+                    if let Some(alias_c) = self.type_aliases.get(user_name) {
+                        if alias_c.ends_with('*') || alias_c == "nova_ptr" {
+                            return true;
+                        }
+                    }
+                }
+                false
             })
     }
 
