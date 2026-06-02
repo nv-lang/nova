@@ -29171,3 +29171,45 @@ all 4 cache layers (V1 mut + V2 LICM + V3.1 pure + V4.1 chain).
   contexts к explicit IpaCtx parameter (V7.2).
 - [M-123.7.1-scc-closure] — formal SCC-based closure (vs iterative).
 - [M-123.7-cross-module] — link-time IPA (V8, indefinitely deferred).
+
+
+## Plan 123.3.1 closure (2026-06-02): D219 amend V3.1 literal args
+
+**V3.1 followup** (separate from V7.1 frame-based которая тоже V3.1
+по nomenclature). Plan 123 umbrella, ✅ ЗАКРЫТ.
+
+Pure-call cache extended к args-with-literal-arguments. V3 cached
+только `@method()`; V3.1 caches `@method(2)`, `@method(true)`, etc.
+
+**Acceptance A3.1.1-A3.1.5:**
+- A3.1.1 🟢 `@<method>(literal)` × N cached.
+- A3.1.2 🟢 Different literals → separate caches.
+- A3.1.3 🟢 Non-literal arg → skip (semantic preserved).
+- A3.1.4 🟢 plan123_3 12/0 regression-free.
+- A3.1.5 🟢 plan123_3_1 4/0 PASS.
+
+**Implementation (~700 LOC delta):**
+- PureCallKey struct (method + args_key).
+- canonical_literal_repr — literal encoding.
+- match_self_pure_call returns Option<PureCallKey>.
+- count_pure_calls_in_body keyed by PureCallKey.
+- capture_sample_args_in_body — save args для prefix let.
+- rewrite_pure_calls_in_*_v31 — match by canonical key.
+
+**Lessons:**
+1. **Canonical key approach scales к args.** Same pattern can
+   extend k arbitrary arg types in V3.2 (e.g. tuple literals,
+   record literals).
+2. **Sample args reconstruction needed.** V3 emit prefix let
+   simply `@method()`. V3.1 emit must include args — keep first
+   sample encountered in body. Subsequent occurrences identical
+   by canonical key construction.
+3. **Naming includes args_key для readability.** `_at_scaled_2i_call`
+   immediately conveys "scaled with int 2". Debugger UX better than
+   opaque hash.
+
+**Open V3.2 followups:**
+- [M-123.3.1-tuple-record-args] — extend literal canonicalization
+  к compound literals.
+- [M-123.3.1-const-fn-args] — `const fn`-evaluated args (after
+  Plan 114.4 const fn).

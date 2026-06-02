@@ -27669,3 +27669,35 @@ This commit closes ONE major V*.1 followup. Remaining V*.1:
 
 Plan 123 umbrella V7 baseline + V7.1 followup — both production
 active.
+
+
+================================================================================
+Plan 123.3.1 — D219 amend V3.1 pure-call literal args (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02.
+
+V3 cached `@method()` only. V3.1 extends к `@method(2)`,
+`@method(true)`, `@method('a')`, etc. — pure calls с literal-only
+args.
+
+Implementation (~700 LOC delta):
+- PureCallKey canonical encoding (method + args_key).
+- canonical_literal_repr (7 literal types + Unary-Neg).
+- count_pure_calls_in_body keyed by PureCallKey.
+- capture_sample_args_in_body for prefix let reconstruction.
+- rewrite_pure_calls_in_*_v31 canonical-key matching.
+
+Tests (plan123_3_1):
+- pure_literal_int_arg_ok.nv: @scaled(2) × 3 → cached.
+- pure_different_args_separate_caches_ok.nv: @scaled(2) vs
+  @scaled(5) → separate caches.
+- pure_bool_arg_ok.nv: bool literal arg.
+- neg_non_literal_arg_skip_ok.nv: variable arg → skip.
+
+D-block: D219 amend V3.1 (~100 lines).
+README: D219 amend V3.1 row.
+
+Open V3.2 followups:
+- [M-123.3.1-tuple-record-args].
+- [M-123.3.1-const-fn-args].

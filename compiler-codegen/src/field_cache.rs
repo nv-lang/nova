@@ -998,10 +998,11 @@ fn register_pure_items(items: &[Item], out: &mut HashSet<(String, String)>) {
     for item in items {
         if let Item::Fn(f) = item {
             if let Some(recv) = &f.receiver {
-                // V3: pure + instance method + no params.
+                // V3 + V3.1: pure + instance method. Args-less (V3) and
+                // any-args (V3.1 — args validation at call site через
+                // literal check).
                 if f.purity == Purity::Pure
                     && recv.kind == ReceiverKind::Instance
-                    && f.params.is_empty()
                 {
                     out.insert((recv.type_name.clone(), f.name.clone()));
                 }
@@ -4501,11 +4502,10 @@ fn pure_cache_fn(
         return;
     }
 
-    // Count `@<method>()` calls per method name where (type_name,
-    // method_name) is in pure_methods.
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut first_spans: HashMap<String, crate::diag::Span> = HashMap::new();
-    let mut captured_methods: HashSet<String> = HashSet::new();
+    // Count `@<method>(args)` calls per canonical (method, args) key.
+    let mut counts: HashMap<PureCallKey, usize> = HashMap::new();
+    let mut first_spans: HashMap<PureCallKey, crate::diag::Span> = HashMap::new();
+    let mut captured_methods: HashSet<PureCallKey> = HashSet::new();
     count_pure_calls_in_body(&f.body, pure_methods, &type_name, &mut counts, &mut first_spans, &mut captured_methods);
 
     // Collect existing local names for collision avoidance.
@@ -4516,39 +4516,37 @@ fn pure_cache_fn(
     collect_local_names_fn(f, &mut local_names);
 
     // Decide candidates: count >= threshold, not closure-captured.
-    let mut names: Vec<&String> = counts.keys().collect();
-    names.sort();
-    let mut to_cache: Vec<(String, crate::diag::Span)> = Vec::new();
+    let mut keys: Vec<&PureCallKey> = counts.keys().collect();
+    keys.sort_by(|a, b| a.method.cmp(&b.method).then(a.args_key.cmp(&b.args_key)));
+    let mut to_cache: Vec<(PureCallKey, crate::diag::Span)> = Vec::new();
     let body_span = match &f.body {
         FnBody::Block(b) => b.span,
         FnBody::Expr(e) => e.span,
         FnBody::External => return,
     };
-    for mname in names {
-        if counts[mname] < cfg.pure_threshold {
+    for k in keys {
+        if counts[k] < cfg.pure_threshold {
             continue;
         }
-        if captured_methods.contains(mname) {
+        if captured_methods.contains(k) {
             continue;
         }
-        // Plan 123.7.1 Ф.3 (V3.1) frame-based invalidation: pure
-        // method M's cache valid iff body writes don't overlap с M's
-        // field-read-set. Skip M если overlap.
+        // V3.1 frame-based invalidation: pure method's cache valid iff
+        // body writes don't overlap с method's field-read-set.
         if use_ipa_frame {
             if let Some((_, read_sets)) = &pure_ipa {
-                let key = (type_name.clone(), mname.clone());
-                if let Some(m_reads) = read_sets.get(&key) {
+                let m_key = (type_name.clone(), k.method.clone());
+                if let Some(m_reads) = read_sets.get(&m_key) {
                     if body_writes.iter().any(|w| m_reads.contains(w)) {
                         continue;
                     }
                 } else {
-                    // Read-set unknown → conservative skip if body has any write.
                     if !body_writes.is_empty() { continue; }
                 }
             }
         }
-        let span = first_spans.get(mname).copied().unwrap_or(body_span);
-        to_cache.push((mname.clone(), span));
+        let span = first_spans.get(k).copied().unwrap_or(body_span);
+        to_cache.push((k.clone(), span));
         if to_cache.len() >= cfg.max_per_fn {
             break;
         }
@@ -4558,10 +4556,15 @@ fn pure_cache_fn(
         return;
     }
 
-    // Generate collision-safe cache local names.
-    let mut name_map: HashMap<String, String> = HashMap::new();
-    for (mname, _) in &to_cache {
-        let base = format!("_at_{}_call", mname);
+    // Generate collision-safe cache local names. V3.1: include args_key
+    // в name to disambiguate same method с different args.
+    let mut name_map: HashMap<PureCallKey, String> = HashMap::new();
+    for (k, _) in &to_cache {
+        let base = if k.args_key.is_empty() {
+            format!("_at_{}_call", k.method)
+        } else {
+            format!("_at_{}{}_call", k.method, k.args_key)
+        };
         let mut chosen = base.clone();
         let mut suffix = 0usize;
         while local_names.contains(&chosen) {
@@ -4569,7 +4572,7 @@ fn pure_cache_fn(
             chosen = format!("{}_{}", base, suffix);
         }
         local_names.insert(chosen.clone());
-        name_map.insert(mname.clone(), chosen);
+        name_map.insert(k.clone(), chosen);
     }
 
     // Coerce FnBody::Expr → Block-with-trailing для prepend.
@@ -4591,21 +4594,27 @@ fn pure_cache_fn(
         FnBody::External => return,
     }
 
-    // Rewrite `@<method>()` call sites with cache idents.
+    // Capture sample args for each key (for prefix let reconstruction).
+    // We need the original ARGS Vec<CallArg> для каждого cached key.
+    // Walk body once more to find first call matching each key.
+    let mut sample_args: HashMap<PureCallKey, Vec<CallArg>> = HashMap::new();
+    capture_sample_args_in_body(&f.body, pure_methods, &type_name, &name_map, &mut sample_args);
+
+    // Rewrite call sites с cache idents (V3.1: match by canonical key).
     if let FnBody::Block(b) = &mut f.body {
-        let mut all_renames: HashMap<String, String> = HashMap::new();
-        for (mname, local) in &name_map {
-            all_renames.insert(mname.clone(), local.clone());
-        }
-        rewrite_pure_calls_in_block(b, &all_renames);
+        let renames: HashMap<PureCallKey, String> = name_map.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        rewrite_pure_calls_in_block_v31(b, pure_methods, &type_name, &renames);
     }
 
     // Prepend cache let statements at body start.
     if let FnBody::Block(b) = &mut f.body {
         let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len());
-        for (mname, span) in &to_cache {
-            let local_name = &name_map[mname];
-            // Construct `@<method>()` call expression.
+        for (k, span) in &to_cache {
+            let local_name = &name_map[k];
+            // Reconstruct `@<method>(<sample_args>)` call expression.
+            let args = sample_args.get(k).cloned().unwrap_or_default();
             let call_expr = Expr {
                 kind: ExprKind::Call {
                     func: Box::new(Expr {
@@ -4614,11 +4623,11 @@ fn pure_cache_fn(
                                 kind: ExprKind::SelfAccess,
                                 span: *span,
                             }),
-                            name: mname.clone(),
+                            name: k.method.clone(),
                         },
                         span: *span,
                     }),
-                    args: Vec::new(),
+                    args,
                     trailing: None,
                 },
                 span: *span,
@@ -4639,6 +4648,371 @@ fn pure_cache_fn(
         }
         prefix.append(&mut b.stmts);
         b.stmts = prefix;
+    }
+}
+
+/// V3.1: walk body, для each cached key save first sample args
+/// encountered. Used to reconstruct the prefix let.
+fn capture_sample_args_in_body(
+    body: &FnBody,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    name_map: &HashMap<PureCallKey, String>,
+    out: &mut HashMap<PureCallKey, Vec<CallArg>>,
+) {
+    match body {
+        FnBody::Block(b) => capture_sample_args_in_block(b, pure_methods, recv_type, name_map, out),
+        FnBody::Expr(e) => capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out),
+        FnBody::External => {}
+    }
+}
+
+fn capture_sample_args_in_block(
+    b: &Block,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    name_map: &HashMap<PureCallKey, String>,
+    out: &mut HashMap<PureCallKey, Vec<CallArg>>,
+) {
+    for s in &b.stmts {
+        capture_sample_args_in_stmt(s, pure_methods, recv_type, name_map, out);
+    }
+    if let Some(t) = &b.trailing {
+        capture_sample_args_in_expr(t, pure_methods, recv_type, name_map, out);
+    }
+}
+
+fn capture_sample_args_in_stmt(
+    s: &Stmt,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    name_map: &HashMap<PureCallKey, String>,
+    out: &mut HashMap<PureCallKey, Vec<CallArg>>,
+) {
+    match s {
+        Stmt::Let(d) => capture_sample_args_in_expr(&d.value, pure_methods, recv_type, name_map, out),
+        Stmt::Const(d) => capture_sample_args_in_expr(&d.value, pure_methods, recv_type, name_map, out),
+        Stmt::Expr(e) => capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out),
+        Stmt::Assign { target, value, .. } => {
+            capture_sample_args_in_expr(target, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_expr(value, pure_methods, recv_type, name_map, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { capture_sample_args_in_expr(v, pure_methods, recv_type, name_map, out); }
+        }
+        Stmt::Throw { value, .. } => capture_sample_args_in_expr(value, pure_methods, recv_type, name_map, out),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            capture_sample_args_in_expr(body, pure_methods, recv_type, name_map, out);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            capture_sample_args_in_expr(init, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            capture_sample_args_in_expr(expr, pure_methods, recv_type, name_map, out);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn capture_sample_args_in_expr(
+    e: &Expr,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    name_map: &HashMap<PureCallKey, String>,
+    out: &mut HashMap<PureCallKey, Vec<CallArg>>,
+) {
+    if let Some(key) = match_self_pure_call(e, pure_methods, recv_type) {
+        if name_map.contains_key(&key) && !out.contains_key(&key) {
+            if let ExprKind::Call { args, .. } = &e.kind {
+                out.insert(key, args.clone());
+            }
+        }
+        return;
+    }
+    // Recurse children (skip closures).
+    match &e.kind {
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => {}
+        ExprKind::Block(b) => capture_sample_args_in_block(b, pure_methods, recv_type, name_map, out),
+        ExprKind::If { cond, then, else_ } => {
+            capture_sample_args_in_expr(cond, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_block(then, pure_methods, recv_type, name_map, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => capture_sample_args_in_block(b, pure_methods, recv_type, name_map, out),
+                    ElseBranch::If(e) => capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            capture_sample_args_in_expr(scrutinee, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_block(then, pure_methods, recv_type, name_map, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => capture_sample_args_in_block(b, pure_methods, recv_type, name_map, out),
+                    ElseBranch::If(e) => capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            capture_sample_args_in_expr(scrutinee, pure_methods, recv_type, name_map, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard { capture_sample_args_in_expr(g, pure_methods, recv_type, name_map, out); }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out),
+                    MatchArmBody::Block(b) => capture_sample_args_in_block(b, pure_methods, recv_type, name_map, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            capture_sample_args_in_expr(iter, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            capture_sample_args_in_expr(cond, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            capture_sample_args_in_expr(scrutinee, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::Loop { body, .. } => capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { capture_sample_args_in_expr(&wb.handler, pure_methods, recv_type, name_map, out); }
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
+            if let Some(c) = cancel { capture_sample_args_in_expr(c, pure_methods, recv_type, name_map, out); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            capture_sample_args_in_expr(a, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_expr(b, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::Index { obj, index } => {
+            capture_sample_args_in_expr(obj, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_expr(index, pure_methods, recv_type, name_map, out);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            capture_sample_args_in_expr(func, pure_methods, recv_type, name_map, out);
+            for a in args { capture_sample_args_in_expr(a.expr(), pure_methods, recv_type, name_map, out); }
+            if let Some(t) = trailing {
+                if let Trailing::Block(b) = t { capture_sample_args_in_block(b, pure_methods, recv_type, name_map, out); }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { capture_sample_args_in_expr(el, pure_methods, recv_type, name_map, out); }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value { capture_sample_args_in_expr(v, pure_methods, recv_type, name_map, out); }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { capture_sample_args_in_expr(s, pure_methods, recv_type, name_map, out); }
+            if let Some(e) = end { capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            capture_sample_args_in_expr(range, pure_methods, recv_type, name_map, out);
+            capture_sample_args_in_expr(body, pure_methods, recv_type, name_map, out);
+        }
+        _ => {}
+    }
+}
+
+/// V3.1: rewrite pure-call sites c canonical key matching.
+fn rewrite_pure_calls_in_block_v31(
+    b: &mut Block,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    renames: &HashMap<PureCallKey, String>,
+) {
+    for s in &mut b.stmts {
+        rewrite_pure_calls_in_stmt_v31(s, pure_methods, recv_type, renames);
+    }
+    if let Some(t) = &mut b.trailing {
+        rewrite_pure_calls_in_expr_v31(t, pure_methods, recv_type, renames);
+    }
+}
+
+fn rewrite_pure_calls_in_stmt_v31(
+    s: &mut Stmt,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    renames: &HashMap<PureCallKey, String>,
+) {
+    match s {
+        Stmt::Let(d) => rewrite_pure_calls_in_expr_v31(&mut d.value, pure_methods, recv_type, renames),
+        Stmt::Const(d) => rewrite_pure_calls_in_expr_v31(&mut d.value, pure_methods, recv_type, renames),
+        Stmt::Expr(e) => rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames),
+        Stmt::Assign { target, value, .. } => {
+            rewrite_pure_calls_in_expr_v31(target, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_expr_v31(value, pure_methods, recv_type, renames);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { rewrite_pure_calls_in_expr_v31(v, pure_methods, recv_type, renames); }
+        }
+        Stmt::Throw { value, .. } => rewrite_pure_calls_in_expr_v31(value, pure_methods, recv_type, renames),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            rewrite_pure_calls_in_expr_v31(body, pure_methods, recv_type, renames);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            rewrite_pure_calls_in_expr_v31(init, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            rewrite_pure_calls_in_expr_v31(expr, pure_methods, recv_type, renames);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn rewrite_pure_calls_in_expr_v31(
+    e: &mut Expr,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    renames: &HashMap<PureCallKey, String>,
+) {
+    if let Some(key) = match_self_pure_call(e, pure_methods, recv_type) {
+        if let Some(local) = renames.get(&key) {
+            e.kind = ExprKind::Ident(local.clone());
+            return;
+        }
+    }
+    match &mut e.kind {
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => return,
+        _ => {}
+    }
+    match &mut e.kind {
+        ExprKind::Block(b) => rewrite_pure_calls_in_block_v31(b, pure_methods, recv_type, renames),
+        ExprKind::If { cond, then, else_ } => {
+            rewrite_pure_calls_in_expr_v31(cond, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_block_v31(then, pure_methods, recv_type, renames);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rewrite_pure_calls_in_block_v31(b, pure_methods, recv_type, renames),
+                    ElseBranch::If(e) => rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            rewrite_pure_calls_in_expr_v31(scrutinee, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_block_v31(then, pure_methods, recv_type, renames);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rewrite_pure_calls_in_block_v31(b, pure_methods, recv_type, renames),
+                    ElseBranch::If(e) => rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            rewrite_pure_calls_in_expr_v31(scrutinee, pure_methods, recv_type, renames);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard { rewrite_pure_calls_in_expr_v31(g, pure_methods, recv_type, renames); }
+                match &mut arm.body {
+                    MatchArmBody::Expr(e) => rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames),
+                    MatchArmBody::Block(b) => rewrite_pure_calls_in_block_v31(b, pure_methods, recv_type, renames),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            rewrite_pure_calls_in_expr_v31(iter, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+        }
+        ExprKind::While { cond, body, .. } => {
+            rewrite_pure_calls_in_expr_v31(cond, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            rewrite_pure_calls_in_expr_v31(scrutinee, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+        }
+        ExprKind::Loop { body, .. } => rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { rewrite_pure_calls_in_expr_v31(&mut wb.handler, pure_methods, recv_type, renames); }
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
+            if let Some(c) = cancel { rewrite_pure_calls_in_expr_v31(c, pure_methods, recv_type, renames); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            rewrite_pure_calls_in_expr_v31(a, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_expr_v31(b, pure_methods, recv_type, renames);
+        }
+        ExprKind::Index { obj, index } => {
+            rewrite_pure_calls_in_expr_v31(obj, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_expr_v31(index, pure_methods, recv_type, renames);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            rewrite_pure_calls_in_expr_v31(func, pure_methods, recv_type, renames);
+            for a in args {
+                match a {
+                    CallArg::Item(e) | CallArg::Spread(e) => rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames),
+                    CallArg::Named { value, .. } => rewrite_pure_calls_in_expr_v31(value, pure_methods, recv_type, renames),
+                }
+            }
+            if let Some(t) = trailing {
+                if let Trailing::Block(b) = t { rewrite_pure_calls_in_block_v31(b, pure_methods, recv_type, renames); }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { rewrite_pure_calls_in_expr_v31(el, pure_methods, recv_type, renames); }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &mut rf.value { rewrite_pure_calls_in_expr_v31(v, pure_methods, recv_type, renames); }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { rewrite_pure_calls_in_expr_v31(s, pure_methods, recv_type, renames); }
+            if let Some(e) = end { rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            rewrite_pure_calls_in_expr_v31(range, pure_methods, recv_type, renames);
+            rewrite_pure_calls_in_expr_v31(body, pure_methods, recv_type, renames);
+        }
+        _ => {}
     }
 }
 
@@ -4949,9 +5323,9 @@ fn count_pure_calls_in_body(
     body: &FnBody,
     pure_methods: &HashSet<(String, String)>,
     recv_type: &str,
-    counts: &mut HashMap<String, usize>,
-    first_spans: &mut HashMap<String, crate::diag::Span>,
-    captured: &mut HashSet<String>,
+    counts: &mut HashMap<PureCallKey, usize>,
+    first_spans: &mut HashMap<PureCallKey, crate::diag::Span>,
+    captured: &mut HashSet<PureCallKey>,
 ) {
     match body {
         FnBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, false),
@@ -4964,9 +5338,9 @@ fn count_pure_in_block(
     b: &Block,
     pure_methods: &HashSet<(String, String)>,
     recv_type: &str,
-    counts: &mut HashMap<String, usize>,
-    first_spans: &mut HashMap<String, crate::diag::Span>,
-    captured: &mut HashSet<String>,
+    counts: &mut HashMap<PureCallKey, usize>,
+    first_spans: &mut HashMap<PureCallKey, crate::diag::Span>,
+    captured: &mut HashSet<PureCallKey>,
     in_closure: bool,
 ) {
     for s in &b.stmts {
@@ -4981,9 +5355,9 @@ fn count_pure_in_stmt(
     s: &Stmt,
     pure_methods: &HashSet<(String, String)>,
     recv_type: &str,
-    counts: &mut HashMap<String, usize>,
-    first_spans: &mut HashMap<String, crate::diag::Span>,
-    captured: &mut HashSet<String>,
+    counts: &mut HashMap<PureCallKey, usize>,
+    first_spans: &mut HashMap<PureCallKey, crate::diag::Span>,
+    captured: &mut HashSet<PureCallKey>,
     in_closure: bool,
 ) {
     match s {
@@ -5020,20 +5394,20 @@ fn count_pure_in_expr(
     e: &Expr,
     pure_methods: &HashSet<(String, String)>,
     recv_type: &str,
-    counts: &mut HashMap<String, usize>,
-    first_spans: &mut HashMap<String, crate::diag::Span>,
-    captured: &mut HashSet<String>,
+    counts: &mut HashMap<PureCallKey, usize>,
+    first_spans: &mut HashMap<PureCallKey, crate::diag::Span>,
+    captured: &mut HashSet<PureCallKey>,
     in_closure: bool,
 ) {
-    // Detect `@<method>()` pattern.
-    if let Some(mname) = match_self_pure_call(e, pure_methods, recv_type) {
+    // Detect `@<method>(literal-args)` pattern (V3.1).
+    if let Some(key) = match_self_pure_call(e, pure_methods, recv_type) {
         if in_closure {
-            captured.insert(mname.to_string());
+            captured.insert(key);
         } else {
-            *counts.entry(mname.to_string()).or_insert(0) += 1;
-            first_spans.entry(mname.to_string()).or_insert(e.span);
+            *counts.entry(key.clone()).or_insert(0) += 1;
+            first_spans.entry(key).or_insert(e.span);
         }
-        // Don't recurse into args (we already verified args.len() == 0).
+        // Don't recurse into args (literal — no further interesting subexprs).
         return;
     }
     // Recurse, switching in_closure flag when entering closure bodies.
@@ -5225,26 +5599,81 @@ fn count_pure_in_expr(
     }
 }
 
-/// Match `Call { func: Member{SelfAccess, name: M}, args: [] }` pattern
-/// where (recv_type, M) is в pure_methods registry.
-fn match_self_pure_call<'a>(
-    e: &'a Expr,
+/// Plan 123.3.1 V3.1: canonical key for pure-call cache lookup.
+/// V3 (args-less): args_key = "".
+/// V3.1 (literal args): args_key = canonical repr like "_0i_42i" for
+/// IntLit(0) и IntLit(42).
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub(crate) struct PureCallKey {
+    pub method: String,
+    pub args_key: String,
+}
+
+/// Match `Call { func: Member{SelfAccess, name: M}, args }` where
+/// (recv_type, M) ∈ pure_methods AND all args are simple literals
+/// (V3 args-less или V3.1 literal-args). Returns canonical key.
+fn match_self_pure_call(
+    e: &Expr,
     pure_methods: &HashSet<(String, String)>,
     recv_type: &str,
-) -> Option<&'a str> {
+) -> Option<PureCallKey> {
     if let ExprKind::Call { func, args, trailing } = &e.kind {
-        if !args.is_empty() || trailing.is_some() {
+        if trailing.is_some() {
             return None;
         }
         if let ExprKind::Member { obj, name } = &func.kind {
             if matches!(obj.kind, ExprKind::SelfAccess) {
                 if pure_methods.contains(&(recv_type.to_string(), name.clone())) {
-                    return Some(name.as_str());
+                    // V3.1: check ALL args are literals.
+                    let mut args_key = String::new();
+                    for arg in args {
+                        let arg_expr = match arg {
+                            CallArg::Item(e) => e,
+                            CallArg::Spread(_) | CallArg::Named { .. } => return None, // V3.1 simple.
+                        };
+                        match canonical_literal_repr(arg_expr) {
+                            Some(repr) => {
+                                args_key.push('_');
+                                args_key.push_str(&repr);
+                            }
+                            None => return None, // Non-literal arg → not eligible.
+                        }
+                    }
+                    return Some(PureCallKey {
+                        method: name.clone(),
+                        args_key,
+                    });
                 }
             }
         }
     }
     None
+}
+
+/// V3.1: returns canonical String repr if expr is a simple literal,
+/// `None` otherwise.
+fn canonical_literal_repr(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::IntLit(n) => Some(format!("{}i", n)),
+        ExprKind::FloatLit(f) => Some(format!("{}f", f.to_bits())),
+        ExprKind::BoolLit(b) => Some(if *b { "T".into() } else { "F".into() }),
+        ExprKind::CharLit(c) => Some(format!("{}c", c)),
+        ExprKind::UnitLit => Some("U".into()),
+        ExprKind::NullPtrLit => Some("N".into()),
+        ExprKind::StrLit(s) => {
+            // Hash для strings to keep names short.
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            Some(format!("s{:x}", h.finish() & 0xFFFFFF))
+        }
+        // Unary negation на literal: `-5` parses as Unary{Neg, IntLit(5)}.
+        ExprKind::Unary { op: UnOp::Neg, operand } => {
+            canonical_literal_repr(operand).map(|r| format!("m{}", r))
+        }
+        _ => None,
+    }
 }
 
 fn rewrite_pure_calls_in_block(b: &mut Block, renames: &HashMap<String, String>) {

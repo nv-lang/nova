@@ -4927,3 +4927,72 @@ entry for breakdown.
 - **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
   indefinitely.
 
+## D219 amend V3.1 — Pure-call literal args extension (Plan 123.3.1)
+
+**Source:** [Plan 123.3.1](../../docs/plans/123.3.1-pure-literal-args.md).
+
+### 1. V3.1 scope extension
+
+V3 cached only args-less `@<method>()`. V3.1 extends to args-with-
+literal-arguments: `@<method>(literal1, literal2, ...)`.
+
+Eligible literal types:
+- `IntLit` / `FloatLit` / `StrLit` / `BoolLit` / `CharLit` / `UnitLit`
+  / `NullPtrLit`.
+- `Unary{Neg, literal}` (negated literals like `-5`).
+
+Non-literal args (variables, expressions) → V3 fallback (not cached).
+
+### 2. Canonical key
+
+`PureCallKey { method: String, args_key: String }` where `args_key`
+encodes literal values:
+- `IntLit(5)` → `_5i`
+- `BoolLit(true)` → `_T`
+- `StrLit(...)` → `_s<hash>` (24-bit truncated SipHash).
+- `Unary{Neg, IntLit(3)}` → `_m3i`.
+
+Two pure calls share cache iff canonical keys match (same method
+name AND same args sequence).
+
+### 3. Naming
+
+Cache local = `_at_<method><args_key>_call`:
+- `@scaled(2)` × N → `_at_scaled_2i_call`.
+- `@value(true)` → `_at_value_T_call`.
+
+Collision avoidance via numeric suffix.
+
+### 4. Implementation
+
+- `match_self_pure_call` returns `Option<PureCallKey>` (V3 returned
+  `Option<&str>`).
+- `canonical_literal_repr(expr)` returns compact String для literal
+  expressions.
+- `count_pure_calls_in_body` uses `HashMap<PureCallKey, usize>`.
+- `capture_sample_args_in_body` saves first sample args per key для
+  prefix-let reconstruction.
+- `rewrite_pure_calls_in_*_v31` matches by canonical key, replaces
+  call sites с cache Ident.
+
+### 5. Composition с V3.1 frame-based (V7.1)
+
+V3.1 literal-args extension orthogonal к V3.1 frame-based
+invalidation (delivered as part of V7.1). Both apply independently:
+- Frame-based: cache survives writes к fields outside method's
+  read-set.
+- Literal-args: cache emit'ится для (method, literal_args) keys.
+
+### 6. Acceptance
+
+A3.1.1-A3.1.5 met:
+- A3.1.1 ✅ `@<method>(literal)` × N → cached.
+- A3.1.2 ✅ Different literals → separate caches.
+- A3.1.3 ✅ Non-literal arg → not cached (semantic preserved).
+- A3.1.4 ✅ Regression: plan123_3 12/0 PASS.
+- A3.1.5 ✅ plan123_3_1: 4/4 PASS.
+
+### 7. Escape hatch
+
+`NOVA_FIELD_CACHE_PURE=0` → entire V3 + V3.1 disabled.
+

@@ -1,0 +1,28 @@
+// Plan 123.3.1 T1.3: pure method с bool literal arg cached.
+
+module plan123_3_1.pure_bool_arg_ok
+
+type Setting {
+    ro on int
+    ro off int
+}
+
+#pure
+fn Setting @value(active bool) -> int {
+    if active { @on } else { @off }
+}
+
+fn Setting @double_check() -> int {
+    @value(true) + @value(true) + @value(false) + @value(false)
+}
+
+fn Setting.new(on int, off int) -> Setting {
+    Setting { on, off }
+}
+
+test "V3.1 bool literal arg" {
+    ro s = Setting.new(100, 5)
+    ro r = s.double_check()
+    // 2*100 + 2*5 = 210.
+    assert(r == 210)
+}
