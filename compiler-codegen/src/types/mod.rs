@@ -3131,6 +3131,43 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Let(d) => {
                 self.f1_expr(&d.value, gs, scope, errors);
                 self.f4_check_value(&d.value, scope, errors);
+                // Plan 124 (D220): priv field PATTERN check — record destructure
+                // outside type-method scope cannot bind priv fields.
+                if let Pattern::Record { fields, .. } = &d.pattern {
+                    if let Some(scrutinee_ty) = self.infer_expr_type(&d.value, scope) {
+                        if let TypeRef::Named { path, .. } = &scrutinee_ty {
+                            if let Some(tname) = path.last() {
+                                if let Some(td) = self.types.get(tname.as_str()) {
+                                    if let TypeDeclKind::Record(rec_fields) = &td.kind {
+                                        let current_recv = self.current_recv_type.borrow();
+                                        let allowed = current_recv.as_deref() == Some(tname.as_str());
+                                        if !allowed {
+                                            for pf in fields {
+                                                if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == pf.name) {
+                                                    if fdecl.priv_field {
+                                                        errors.push(Diagnostic::new(
+                                                            format!(
+                                                                "[E_PRIV_FIELD_PATTERN] cannot \
+                                                                 destructure private field `{}.{}` \
+                                                                 в pattern outside type-method scope. \
+                                                                 Field marked `priv` (Plan 124 / D220). \
+                                                                 Hint: bind value to a variable then \
+                                                                 access via public methods of `{}`, or \
+                                                                 move destructure into a method of `{}`.",
+                                                                tname, pf.name, tname, tname,
+                                                            ),
+                                                            d.value.span,
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Ф.1: annotation ↔ RHS.
                 if let (Some(ann), Some(name)) =
                     (&d.ty, pattern_simple_name(&d.pattern))

@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.1 — negative: priv field pattern destructure outside type-method
+// scope → E_PRIV_FIELD_PATTERN (Plan 124 / D220 §4).
+module plan124_1.priv_pattern_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External code tries to destructure priv field — blocked.
+fn external_destructure(acc Account) -> f64 {
+    ro { money, name: _ } = acc
+    money
+}
