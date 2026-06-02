@@ -28483,11 +28483,26 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   scope-stack (locals bound к pointer expression). Full type-aware
   detection (returned-from-fn pointers) — Session 4+ через
   infer_expr_type. **Closes acceptance A28** ✅ (V1 partial).
-- plan118 fixtures: **27/0** (12 positive + 15 NEG)
+- `601af30fc30` — **E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE** (V1 syntactic).
+  Pointer-pointer order comparison (`<`/`<=`/`>`/`>=`) outside unsafe
+  rejected (D216 §6: addresses не stable ordinals — GC-relocation
+  invariant + ASLR randomization). Equality `==`/`!=` safe anywhere
+  (identity check). V1 scope: same syntactic detection как A28; extended
+  expr_is_typed_pointer чтобы peek в Block.trailing (`let p = unsafe { &x }`
+  pattern). **Closes acceptance A17** ✅ (V1 partial).
+- plan118 fixtures: **30/0** (13 positive + 17 NEG)
 
-**Session 3 grand-total Plan 118 acceptance closed: 15 of 35 (43%):**
-A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25, A26,
-A28 partial, A29, A30, A33, A34, A35.
+**Session 3 + sync grand-total Plan 118 acceptance closed: 16 of 35 (46%):**
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+
+**Main sync 2026-06-02 (commit 8fc3473e22b):** merged 66 commits from
+main (Plan 114.4.4.5 V4.1 mono-specialization + V4.2 runtime trampoline +
+V4.3 closure-from-const-fn + Plan 123 V7 + Plan 91.12 V2#3 + baseline
+fixes). 3 conflicts resolved keep-both (ast/mod.rs is_pointer +
+uses_any_type_param Pointer arm; emit_c.rs delegate to upstream;
+spec D214 both amends). field_cache.rs Block { is_unsafe: false } fix
+4 sites. Regression smoke 92/0 verified clean.
 
 ---
 

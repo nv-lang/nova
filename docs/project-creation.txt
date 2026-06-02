@@ -27030,6 +27030,73 @@ Session 4+ remaining work (~5-7 dev-days):
 - Ф.8 cross-platform CI matrix + ABI snapshot + perf bench (A31, A32)
 - Plan 118.1/118.2/118.3 sub-plans
 
+==========================================================================
+2026-06-02 Plan 118 + main sync — A17 closed via order-compare enforcement
+==========================================================================
+
+После Session 3 epilogue (A28), user requested:
+- продолжай (continue closing acceptance criteria)
+- синканись с main D:/Sources/nv-lang/nova
+- update spec/D/Q/docs + commit разбитый по задачам
+
+Main sync (commit 8fc3473e22b):
+- Fetched 66 commits from main (Plan 114.4.4.5 V4.1 + V4.2 + V4.3 +
+  Plan 123 V7 + Plan 91.12 V2#3 + baseline fixes).
+- 3 conflicts resolved keep-both:
+  - ast/mod.rs: is_pointer (Plan 118) + uses_any_type_param (Plan 91.12)
+    — added Pointer arm to combined helper
+  - emit_c.rs type_ref_uses_any_type_param: delegated к
+    TypeRef::uses_any_type_param (upstream)
+  - spec/02-types.md D214: both amends kept (Plan 118 D216 redefine +
+    Plan 91.12 V2 generic newtype)
+- field_cache.rs Block { is_unsafe: false } fix (4 sites)
+- Regression smoke 92/0 verified clean after merge.
+
+A17 partial ✅ (601af30fc30) — E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE.
+D216 §6 cast/compare table: pointer-pointer order comparison
+(`<`/`<=`/`>`/`>=`) outside unsafe rejected. Equality `==`/`!=`
+remains safe everywhere (identity check).
+
+Rationale:
+1. Pointer addresses не stable ordinals — GC-relocation invalidates
+   ordering invariant (Boehm conservative GC не relocates сейчас,
+   но V1 rule sets future-compat для moving GC).
+2. OS ASLR randomizes layout per process — order-compare results
+   не deterministic across runs.
+3. Order-compare ergonomically usually wrong; explicit unsafe makes
+   intent clear (Rust pattern — pointer ordering — unsafe op).
+
+Walker extension (types/mod.rs Binary arm):
+- is_order_cmp matches BinOp::Lt|Le|Gt|Ge
+- depth == 0 (outside unsafe) AND both operands match
+  expr_is_typed_pointer → emit E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE
+- Extended expr_is_typed_pointer to peek в Block.trailing — covers
+  `let p = unsafe { &x }` pattern (idiomatic Nova usage form).
+
+Test fixtures added:
+- t4_3_ptr_order_compare_in_unsafe_ok.nv — positive: order-compare
+  inside unsafe + equality outside unsafe both pass.
+- t4_neg_ptr_order_compare.nv — `p < q` outside unsafe fires
+  E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE.
+
+plan118 total: 30/0 PASS (13 positive + 17 NEG).
+Regression smoke 92/0 verified clean (plan115 11 + plan120 8 +
+plan114 10 + plan100_3 10 + plan108 6 + plan124_1 9 + basics 8 +
+plan118 30 = 92).
+
+Spec D216 §6 (pointer arithmetic + order comparison) ACTIVE 2026-06-02
+с E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE enforcement note + equality
+explicit safety guarantee. Plan 118 plan-doc A17 flagged partial ✅.
+
+Plan 118 grand-total: 16 of 35 acceptance criteria closed (46%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+
+Worktree state:
+- 56 commits ahead of main (merge + A17 impl + A17 tests + docs)
+- 8 nova-private discussion-log entries
+- Branch plan-118, NOT merged в main (review required).
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
