@@ -1,0 +1,8 @@
+// Plan 114.4.2 T3-NEG.12: effect-list в const fn signature
+// → E_CONST_FN_EFFECT_IN_SIGNATURE.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EFFECT_IN_SIGNATURE
+
+module plan114_4_2.effect_in_signature_neg
+
+fn bad(const a int) Log -> const int => a

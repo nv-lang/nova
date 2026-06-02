@@ -1,0 +1,14 @@
+// EXPECT_CC_ERROR no member named 'f5'
+//
+// Plan 59.1 — negative: positional field access за пределами arity.
+// V1 leaks к C-level diagnostic; followup [M-59.1-tuple-field-oob-nova-diag]
+// — Nova-level arity check в type-checker для .N field access на mono'd
+// tuple.
+module plan59_1.field_oob_neg
+
+fn[T] dup(v T) -> (T, T) => (v, v)
+
+fn main() -> () {
+    ro p = dup[int](7)
+    ro _ = p.5
+}

@@ -1,0 +1,10 @@
+// Plan 114.4.2 T3.2: expression-body const fn.
+
+module plan114_4_2.const_fn_expr_body_ok
+
+fn add(const a int, const b int) -> const int => a + b
+
+test "expression body const fn" {
+    const R = add(2, 3)
+    assert(R == 5)
+}

@@ -1,0 +1,15 @@
+// Plan 59.1 — tuple-in-Option: fn[T] maybe(v T) -> Option[(T, T)].
+module plan59_1.option_tuple
+
+fn[T] maybe(v T) -> Option[(T, T)] => Some((v, v))
+
+test "Option[(int, int)]" {
+    ro p_opt = maybe[int](7)
+    match p_opt {
+        Some(p) => {
+            assert(p.0 == 7)
+            assert(p.1 == 7)
+        }
+        None => assert(false)
+    }
+}

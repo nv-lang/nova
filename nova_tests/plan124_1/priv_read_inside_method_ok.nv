@@ -1,0 +1,23 @@
+// Plan 124.1 — positive: priv field read внутри instance method body — OK.
+module plan124_1.priv_read_inside_method_ok
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// Instance method: priv access PASS.
+export fn Account @balance() -> f64 => @money
+
+// Static method: priv access PASS.
+export fn Account.zero_balance() -> f64 =>
+    Account { money: 0.0, name: "" }.money    // Inside static method scope
+
+test "priv field читается изнутри instance method" {
+    ro acc = Account.new("alice")
+    ro b = acc.balance()
+    assert(b == 0.0)
+}

@@ -150,41 +150,13 @@ export type Iterable[T] protocol {
 // Plan 109 (D179): StringBuilder — Nova-defined consume type in std/runtime/string_builder.nv.
 export import std.runtime.string_builder.{StringBuilder}
 
-/// Binary write buffer. Append-only через `@write_*` методы
-/// (byte, bytes, char, str, и 18 числовых × LE/BE). Финализация
-/// через `@into() -> []u8`.
-///
-/// Полный API — в `std/runtime/write_buffer.nv` через `external fn`.
-/// Backing — `nova_rt/write_buffer.h`/`.c`.
-///
-/// **Use-case:** binary serialization (network protocol, file format).
-///
-/// # Examples
-///
-/// ```nova
-/// let mut wb = WriteBuffer.new()
-/// wb.write_u32_be(0xDEADBEEF)
-/// let bs = wb.into()
-/// ```
-#stable(since = "0.1")
-export external type WriteBuffer
-
-/// Cursor-style binary reader. View над `[]u8`, advancing position.
-/// Pair `@read_*` (Fail[ReadBufferError]) / `@try_read_*`
-/// (Result[T, ReadBufferError]).
-///
-/// Полный API — в `std/runtime/read_buffer.nv` через `external fn`.
-/// Backing — `nova_rt/read_buffer.h`/`.c`. `ReadBufferError` declared
-/// в `std/prelude/errors.nv` (Plan 62.C).
-///
-/// **Use-case:** binary parsing с cursor advancement.
-///
-/// # Examples
-///
-/// ```nova
-/// let bs []u8 = [0x12, 0x34, 0x56, 0x78]
-/// let mut rb = ReadBuffer.from(bs)
-/// let v = rb.try_read_u32_be()  // Result[u32, ReadBufferError]
-/// ```
-#stable(since = "0.1")
-export external type ReadBuffer
+// Plan 91.12 (D126 retract, 2026-06-01): WriteBuffer и ReadBuffer теперь
+// тоже Nova-defined types (по паттерну StringBuilder/Plan 109).
+//   - WriteBuffer (consume record `{ mut buf []u8 }`) — std/runtime/write_buffer.nv
+//   - ReadBuffer  (cursor record `{ ro data []u8, mut pos int }`) — std/runtime/read_buffer.nv
+// Старые `external type WriteBuffer` / `external type ReadBuffer` declarations
+// удалены вместе с C runtime headers (`nova_rt/{write,read}_buffer.h`).
+// API surface неизменён: те же `@write_*`/`@read_*`/`@try_read_*` методы,
+// та же семантика. См. Plan 91.12 для migration details.
+export import std.runtime.write_buffer.{WriteBuffer}
+export import std.runtime.read_buffer.{ReadBuffer}

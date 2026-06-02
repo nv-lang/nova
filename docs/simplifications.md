@@ -27845,7 +27845,7 @@ pre-Plan-109 API.  Документированы в их followups.
 - 🟢 `[M-115-ptr-typed-deref]` → **CLOSED via Plan 118**. `docs/plans/118-typed-pointers-and-unsafe.md` §5 «Auto-deref» (lines 273-286) + `*p` explicit single-level deref для `*T` family покрывает. Confirmed 2026-06-01.
 - 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI deferred (major tooling, separate plan; user-accepted).
 - 🟢 `[M-115-ffi-build-pipeline]` → **CLOSED 2026-06-01.** `[ffi]` section в `nova.toml` (user suggestion) — supports `c_shims` (`.h` via `-include` / `.c` as compilation units), `include_dirs` (`-I`), `libs` (`-l<name>`). Cross-toolchain (clang/MSVC/GCC). Paths relative to manifest dir. Test fixture `nova_tests/plan115/t4_sqlite_e2e_ok.nv` proves pipeline via manifest-declared shim `../examples/ffi/sqlite_mini_ffi.h`.
-- 🔴 `[M-115-d126-deprecation]` → **ACTIVE RETRACT** (user decision 2026-06-01: «external type X — признаю устаревшим, надо избавиться»). **Plan 91.12 расширен на все D126 stdlib типы** (не только std/net): WriteBuffer/ReadBuffer (std/prelude/collections.nv), OnceCell[T]/Lazy[T]/Condvar (std/runtime/sync.nv). Sequence: (1) ✅ `[M-115-newtype-constructor]` closed → `type X(ptr)` работает; (2) Plan 91.12 migrates ВСЕ 5 D126 типов на tuple-newtype handles; (3) formal D126 retract в spec + parser ban с migration hint. После Plan 91.12 закрытия `external type X` — compile error.
+- 🟢 `[M-115-d126-deprecation]` → **FULL HARD RETRACT 2026-06-01 (Plan 91.12 V1+V2).** **Sequence:** (1) ✅ `[M-115-newtype-constructor]` closed → `type X(ptr)` работает; (2) ✅ **Plan 91.12 V1**: WriteBuffer/ReadBuffer мигрированы на pure Nova records над `[]u8` (паттерн StringBuilder/Plan 109); (3) ✅ **Plan 91.12 V2**: OnceCell[T]/Lazy[T]/Condvar мигрированы на tuple-newtype `type X[T](ptr)` (Plan 115 D214). Codegen integration: `RUNTIME_BACKED_NEWTYPES` list в `emit_type_decl` Newtype branch + per-T mono routing к existing `emit_oncecell_instance`/`emit_lazy_instance` + Newtype регистрация в `generic_types` для static-method dispatch. (4) ✅ **D126 formal retract** — plain `external type X` (без consume) → hard error `[E_EXTERNAL_TYPE_RETRACTED]` в любом модуле; D163 `external type X consume` (FFI) сохранён. spec/decisions/03-syntax.md D126 → 🔴 RETRACTED; migration guide `docs/migration/d126-to-tuple-newtype.md` (264 lines, 3 patterns + 5-step walkthrough).
 - 🟢 `[M-115-tuple-gc-types]` → **CLOSED as by-design** (user 2026-06-01). Цитата: «external у нас это пользовательский С код, аналог extern "C". Там функции ничего не знают о типах nv. Это правильное ограничение». Не bug — intentional.
 - 🟢 `[M-115-external-fn-method]` → **CLOSED as not needed** (user 2026-06-01). Цитата: «не вижу пока причин для этого». Free external fn + Nova-side wrapper method = sufficient.
 - 🟢 `[M-115-examples-ffi-real-build]` → **CLOSED 2026-06-01.** sqlite shim moved из `nova_rt/` → `examples/ffi/sqlite_mini_ffi.h` (user-side location). Pipeline через `nova_tests/nova.toml [ffi]` section. Embedded mini-sqlite-equivalent — proves user-FFI mechanism end-to-end. Real libsqlite3 link → отдельный `[M-115-examples-ffi-real-libsqlite3]` follow-up (требует vcpkg sqlite3 deps).
@@ -27873,7 +27873,9 @@ pre-Plan-109 API.  Документированы в их followups.
 - D82 amended (Plan 115 D214) — drop "external fn only allowed in std.runtime.*" restriction. User-level external fn enabled для user FFI к third-party C libraries.
 
 Дополнительно: Plan 115 v1 это **оригинальный D214 (НЕ Plan 118 D214 amend)**. Plan 118 future planned — добавляет `*T` family + `unsafe {}` block + D2 keyword restore + Option[*T] NPO. Plan 115 v1 = baseline foundation на котором Plan 118 строит V2.
-=======
+
+---
+
 ## Plan 114.4.1 — Associated constants (partial, 2026-06-01)
 
 **Status:** 🟢 PARTIAL CLOSURE. Plan 114.4.1 Ф.1 (record-field assoc const) closed. Ф.2 sum-type + Ф.3 generic per-mono → Plan 114.4.1.1 / Plan 114.4.1.2 per safety hatch.
@@ -28447,3 +28449,775 @@ just use `Acc` (already reference per D32) — `*Acc` is FFI-specific.
 - A34, A35 (FFI handle docs + examples 3/0 PASS)
 
 **Worktree total: 30 commits на plan-118 + 2 в nova-private.**
+
+---
+
+## Plan 114.4.2 — `const fn` comptime evaluable (D199) — CLOSED 2026-06-01
+
+**Что:** comptime evaluator subsystem + parser/checker/rewriter trio.
+`fn calc(const a int, const b char) -> const int { … }` evaluates at
+compile time, call sites replaced литералом, fn dropped из codegen.
+
+**Status:** 🟢 V1 LANDED (no safety hatches fired). Branch
+`plan-114.4.2`, 7 commits, 22/22 plan114_4_2 fixtures PASS, 0 regressions.
+
+**CLOSED markers:**
+- ✅ `[M-114-const-fn]` — umbrella из Plan 114 D184.
+- ✅ `[M-114.4-const-fn]` — Plan 114.4 Ф.3 safety-hatch extract.
+
+**Acceptance criteria:** A14-A18 all green (T3 series).
+
+**Subsystems:**
+1. Parser (`compiler-codegen/src/parser/mod.rs`): `Param.is_const` +
+   `FnDecl.return_is_const` AST extensions; all-or-nothing check +
+   7 reject codes.
+2. Body checker (`compiler-codegen/src/types/mod.rs` —
+   `check_const_fn_decl`): V1 whitelist + 7 error codes + call-graph
+   DFS cycle detection (WHITE/GRAY/BLACK).
+3. Evaluator (`compiler-codegen/src/const_fn_eval.rs`): `ConstValue`
+   enum + `ConstFnEvaluator` + memoization + checked arithmetic
+   (overflow → `E_CONST_FN_EVAL_OVERFLOW`, div 0 →
+   `E_CONST_FN_DIV_ZERO`).
+4. AST rewriter (`rewrite_const_fn_calls`): walks all expressions,
+   replaces `Call(const_fn)` с literal Expr; retain filter удаляет
+   const fn declarations.
+5. Pipeline integration: `main.rs` (3 sites) + `test_runner.rs` —
+   после `check_module`, до `desugar_module`.
+
+**OPEN markers carried forward (followups):**
+- 🟡 `[M-114.4.2-mixed-args]` — Zig-style partial comptime params (V1
+  all-or-nothing only).
+- 🟡 `[M-114.4.2-first-class]` — first-class const fn через runtime
+  trampoline (V1 reject).
+- 🟡 `[M-114.4.2-control-flow]` — if/else/match/for/while в const fn
+  body (V1 reject).
+- 🟡 `[M-114.4.2-recursion]` — recursion с depth-limit + memoization
+  (V1 reject).
+- 🟡 `[M-114.4.2-generic]` — generic const fn (`const fn sizeof[T]()`).
+- 🟡 `[M-114.4.2-runtime-return]` — `fn make_buf(const n int) -> []u8`
+  (const param + runtime return).
+- 🟡 D27 amend (`[N]T` from any visible scope) — partial wording в Plan
+  114.4 deferred, not blocking.
+
+**Design lessons:**
+1. **OwnedEvaluator trick** для borrow conflict: AST rewriter needs to
+   read const fn registry while mutating other items. Hold cloned
+   `Vec<FnDecl>` instead of `&FnDecl` refs — solves co-borrow conflict
+   cleanly. Const fn count в реальных модулях невелик (1-10), clone
+   overhead negligible.
+2. **Block.trailing** vs Stmt::Expr at final position — два variant'а
+   final expression в AST. Body checker должен handle оба (initial
+   miss → `body_if_control_flow_neg` ranger false-passed). Lesson:
+   при ad-hoc traversal — explicit check всех produktion forms.
+3. **in_const_fn flag через RAII guard** позволяет skip scope-local
+   const constexpr check внутри const fn body (где body checker точнее
+   handles param/local awareness). Cell<bool> + Drop'эд guard — без
+   передачи bool через все методы visitor'а.
+4. **Re-emit error на nested validation failure** в check_const_constexpr_ex
+   Call branch — собственный код `E_CONST_FN_NON_CONST_ARG` информативнее
+   bubbled-up `E_CONST_REFERS_NON_CONSTEXPR` для caller'а.
+5. **Const fn drop'нут из codegen полностью** — symbol не emit'ится,
+   call site = inline literal. Dead const fn — silently dropped из
+   output (как Rust unused const fn).
+
+---
+
+## Plan 90 followup — `fill` memset fast-path + `[]T.append_zero(n)` (2026-06-01)
+
+**Что:** два runtime-уточнения для `[]T` bulk-ops (D141 amend):
+1. `fill(v)` — single-byte `T` (`u8`/`i8`) → memset fast-path. Per-instantiation
+   compile-time DCE через `sizeof(T)` constant — для wider `T` остаётся
+   scalar loop с auto-vectorization potential под `-O2`.
+2. `[]T.append_zero(n int)` — extend by `n` zero-init элементов. Полиморфно
+   по `T` через `memset(_, 0, n*sizeof(T))`. Use-case: encoders/framers
+   (reserve write-window под length-prefix или padding с последующим
+   patching через index-assignment `arr[i] = v`).
+
+**Status:** 🟢 V1 LANDED. Branch `main` direct commits `c6816e6bb28`
+(fill memset) + `8a1d82760cd` (append_zero) + closure commit (this).
+
+**CLOSED markers:**
+- ✅ `[M-90-byte-fill-memset]` — fill memset fast-path для single-byte T.
+- ✅ `[M-90-append-zero]` — `append_zero(n)` polymorphic zero-extend
+  (новый API для encoder/framer use-case).
+
+**OPEN markers (followup):**
+- 🟡 `[M-array-set-method-resolves-to-oncecell]` — `arr.set(i, v)` для
+  `[]u8` codegen dispatched в `Nova_OnceCell_method_set` (undefined
+  symbol на link). Workaround в тестах: index-assignment
+  `arr[i] = v` (canonical idiom из std/collections/priority_queue).
+  Low priority — `set` редко используется на arrays, есть workaround.
+
+**Acceptance criteria:**
+- **A1** ✅ `fill(v)` использует memset для `[]u8`/`[]i8`; scalar loop для
+  wider `T` (`[]int`, `[]f64`, etc) — verified runtime PASS.
+- **A2** ✅ `append_zero(n)` polymorphic — `[]u8`, `[]int` обе ветки
+  работают; tail инициализируется нулями.
+- **A3** ✅ Returns `@` для fluent chain — verified `a.append_zero(3)
+  .fill(7).append_zero(2)` chain.
+- **A4** ✅ `n < 0` → panic `«append_zero: n must be >= 0»` —
+  `append_zero_negative_n_neg.nv` runtime-panic verified.
+- **A5** ✅ `n == 0` → no-op (len unchanged).
+- **A6** ✅ Empty buffer extends корректно — `mut a []u8 = [];
+  a.append_zero(5)` → `[0,0,0,0,0]`.
+- **A7** ✅ `W_VIEW_EXTEND_DETACH` lint fires для `append_zero` —
+  `append_zero_view_detach_warn.nv` PASS (`warning: 1` confirmed).
+- **A8** ✅ Регрессия: plan90 9/0, plan90_1 20/0, plan91_7 5/0.
+
+**Subsystems:**
+1. Runtime (`compiler-codegen/nova_rt/array.h`): `nova_array_fill_##T`
+   обновлён (sizeof(T)==1 branch); `nova_array_append_zero_##T` новый
+   macro (170-byte block после fill).
+2. Codegen (`compiler-codegen/src/codegen/emit_c.rs`): `"append_zero"`
+   в двух match-arms (line 18944 statement dispatch + line 27233
+   return-type=receiver).
+3. Type checker (`compiler-codegen/src/types/mod.rs`): `"append_zero"`
+   в `builtin_mut_method` recognition list (lines 11754 + 11794).
+4. Lint (`compiler-codegen/src/lints.rs`): `is_grow_method` расширен
+   `"append_zero"` (line 1410) — W_VIEW_EXTEND_DETACH триггерит после
+   `let view = parent[a..b]` + `parent.append_zero(n)`.
+5. Tests (`nova_tests/plan90/`): 3 новых .nv файла — `append_zero.nv`
+   (6 positive), `append_zero_negative_n_neg.nv` (panic), 
+   `append_zero_view_detach_warn.nv` (lint warning).
+6. Spec (`spec/decisions/08-runtime.md` D141 + 
+   `spec/decisions/README.md` D141-entry): polymorphism rationale,
+   API doc, use-case example, naming rationale (append-family
+   расширен `append_zero(n)` третьим членом наряду с `push(v)` и
+   `append(src)`).
+
+**Design lesson:** `sizeof(T) == 1` через runtime `if` (не препроцессор
+`#if`) — корректный pattern в C-макросах. Препроцессор не может
+evaluate `sizeof`, но компилятор сворачивает `if (constant)` через
+DCE → output идентичен явному `#if`. Также применимо для других
+T-dependent optimizations в array.h. Полиморфизм memset через bytes
+работает для всех primitive value types — bytes = 0 is universally
+valid zero representation для `int`/`float`/`bool`/`ptr` (IEEE 754 +0,
+NULL pointer, false). Для compound value types (Plan 120 named tuples)
+работает при условии что все поля имеют zero-default representation.
+
+---
+
+
+## Plan 114.4.3 — `const fn` V2 extensions (5 followups) — CLOSED 2026-06-01
+
+**Что:** расширение V1 const fn surface до production-grade comptime:
+control flow + recursion + mixed-args + generic + first-class alias.
+
+**Status:** 🟢 V2 LANDED (без safety hatch fire). Branch `plan-114.4.3`,
+9 commits, 16/16 plan114_4_3 + 18/18 plan114_4_2 PASS, 0 regressions.
+
+**CLOSED markers (Plan 114.4.2 followup chain):**
+- ✅ `[M-114.4.2-control-flow]` — Ф.1 if/match V2.0.
+- ✅ `[M-114.4.2-recursion]` — Ф.2 direct+mutual + depth 256 + memo.
+- ✅ `[M-114.4.2-mixed-args]` — Ф.3 any const/runtime combination.
+- ✅ `[M-114.4.2-runtime-return]` — covered by mixed-args (subset).
+- ✅ `[M-114.4.2-generic]` — Ф.4 T-independent body V2.0.
+- ✅ `[M-114.4.2-first-class]` — Ф.5 alias-only V2.0.
+
+**Acceptance:** A19-A26 all green (T4 series, 16 fixtures).
+
+**Subsystems extended:**
+1. Parser: removed E_CONST_FN_PARTIAL_CONSTNESS (all-or-nothing) +
+   E_CONST_FN_GENERIC rejects.
+2. Body checker: if/match handling + V2.0 pattern subset + relaxed
+   recursion (V1 reject removed; depth-limit enforces at eval).
+3. Evaluator: If/Match arms в eval_expr; match_const_pattern helper;
+   MAX_EVAL_DEPTH 64 → 256.
+4. AST rewriter: fully-const vs mixed classification; mixed fn
+   call-site validation; turbofish callee unwrap; alias resolution.
+5. Type-checker: const_fn_names включает aliases (iterative depth-10).
+
+**Backward-compat:**
+- 4 V1 fixtures удалены (V2-superseded поведение now allowed):
+  body_if_control_flow_neg, body_recursion_neg,
+  partial_constness_mixed_neg, partial_constness_runtime_ret_neg.
+
+**OPEN markers carried forward (V2.1/V3):**
+- 🟡 `[M-114.4.3-loops]` — for/while/loop в body.
+- 🟡 `[M-114.4.3-pattern-record-sum]` — record/sum patterns в match.
+- 🟡 `[M-114.4.3-t-reflection]` — sizeof[T]/T.field intrinsics.
+- 🟡 `[M-114.4.3-runtime-let-enforcement]` — ro f = const_fn reject.
+- 🟡 `[M-114.4.3-friendly-hof-error]` — friendly HOF reject.
+- 🟡 `[M-114.4.3-runtime-hof]` — real first-class через runtime trampoline.
+- 🟡 `[M-114.4.3-closure-from-const-fn]` — closure-returning const fn.
+- 🟡 `[M-114.4.3-mono-specialization]` — per-const-arg monomorphization.
+- 🟡 `[M-114.4.3-configurable-depth]` — #fn_eval_max_depth attribute.
+
+**Design lessons:**
+1. **Two-tier fn classification** (fully-const vs mixed) ключ для V2 —
+   different surface (evaluator inlining vs runtime stay).
+2. **Turbofish callee unwrap** — generic const fn вызывается как
+   `name[T](args)`, callee.kind = TurboFish, не Ident. Все 3 visitor'а
+   (check / eval / rewrite) должны это handle (initial miss → false
+   reject).
+3. **Iterative alias-chain resolution** (depth 10) — позволяет
+   `const A = fn1; const B = A; const C = B; C(x)` работать через
+   transitive expansion. Fixed-iteration cap избегает infinite loops.
+4. **V1 fixture removal** — V2 relaxation semantics → V1 negatives
+   become invalid. Delete is correct path; documenting в plan doc.
+
+
+---
+
+## Plan 83.11 §12.31 — [M-83.11-supervised-spawn-cancel-memcpy-segv] CLOSED (2026-06-01)
+
+**Followup:** Session #13 в Plan 83.11. Bug 100% deterministic SEGV
+при `tok.cancel()` из spawn body под armed M:N на Windows.
+
+**Pivot:** cdb отсутствует (Windows SDK не установлен, winget требует
+admin); собственный in-process **Vectored Exception Handler** через
+Windows-native `dbghelp.dll` (SymInitialize + StackWalk64 + SymFromAddr).
+~165 LOC новый `compiler-codegen/nova_rt/segv_diag.c`, hook в
+`nova_gc_init`, gated by `NOVA_DIAG_SEGV=1`. Frame[1] localized на
+**ПЕРВОМ run**.
+
+**Root cause:** use-after-free stack-allocated `NovaFiberQueue`.
+Driver thread процессит `CANCEL_SCOPE` job (queued из child fiber's
+`tok.cancel()`) ПОСЛЕ того как main вышел из `nova_supervised_run_impl`
+и stack frame переиспользован → wild pointer в `.rdata` → `lock cmpxchg`
+faults.
+
+**Fix:** lifetime counter pattern (4 surgical changes):
+- new `nova_atomic_int pending_driver_jobs` field на `NovaFiberQueue`
+- `_nova_cancel_via_driver`: `nova_aint_inc(ACQ_REL)` BEFORE submit;
+  rollback on submit failure
+- `_nova_driver_handle_cancel_scope`: `__atomic_fetch_sub(RELEASE)` at end
+- `nova_supervised_run_impl`: spin-wait на counter==0 BEFORE
+  drop_state + unbind + return
+
+**Verification:** `_min.nv` стресс 1/30 → 30/30 PASS;
+`cancel_semantics_test` 0/30 → 120/120 PASS.
+
+**`stress_iso_3e` baseline check:** 0/10 PASS at HEAD без моего fix
+(Plan 110.x merge artifact, `cleanup-timeout-exceeded`). Не regressed.
+
+**Lessons learned (added к §10.4 / §12.16 — lessons #16-20):**
+1. **VEH + native SymFromAddr beats absent cdb на Windows.** dbghelp.dll
+   есть на каждой Windows install, dbghelp.lib уже линкуется. Add to
+   default diagnostic kit for future Windows races. llvm-symbolizer без
+   DIA — useless для PDB (returns ??:0:0).
+2. **One diagnostic print > eight hypothesis attempts.** 7 prior
+   attempts (~10h) iterated в wrong region (GC scanning, fiber stack
+   coverage, ABI). Frame[1] told the answer immediately в этой сессии
+   (~30 min total).
+3. **"memcpy to .rdata" symptom от §12.9 был misdirection.** Real crash
+   был `lock cmpxchg` в `nova_aint_cas` looking like memcpy через
+   llvm-symbolizer fallback. Don't trust llvm-symbolizer для PDB.
+4. **Stack-allocated scope must outlive all async references.** General
+   invariant: any job containing pointer to caller's local — caller
+   must wait for job processing before returning. **Lifetime counter
+   pattern becomes invariant для future плана с pointer-carrying jobs.**
+5. **Differentiate Heisen-tests vs point-probes.** Heisen = broad
+   instrumentation changing timing (anti-pattern). Point-probe = single
+   fprintf at function entry в cold path (valuable diagnostic).
+
+**Permanent additions:**
+- `compiler-codegen/nova_rt/segv_diag.c` — reusable Windows debugging
+  tool, opt-in via `NOVA_DIAG_SEGV=1`, zero overhead unset.
+- Lifetime counter pattern (`pending_driver_jobs`) — invariant для
+  любых future cases где driver job carries scope pointer.
+
+**Status:** ✅ V1 CLOSED 2026-06-01. Marker
+`[M-83.11-supervised-spawn-cancel-memcpy-segv]` closed. 3 commits
+на ветке (`f30998fa940` feat / `421f295c454` fix / `0bcb61636dd` docs).
+Branch merged into main по user request.
+
+
+---
+
+## Plan 83.11 §11.6 — [M-83.11-gc-cancel-token-alias] CLOSED (2026-06-01)
+
+**Followup:** Session #13 (одновременно с §12.31). Closed second open marker.
+
+**Bug:** GC structural aliasing — NovaCancelToken collected из register at
+~512 fibers (ctx_pins[] doubling triggers nova_alloc → GC sweep), freed
+tok addr reused by NovaSpawnCtxBase, structural overlap at offset +8
+(bound_scope vs _nova_parent_scope) → "token already bound to a live
+scope" panic при последующем bind. Threshold: 990+ fibers, Windows.
+
+**Fix per §11.4 Option A:** один `self.line(...)` в `emit_c.rs`
+`emit_supervised` после declaration NovaCancelToken — calls
+`nova_scope_pin_ctx(&scope, tok)` чтобы tok был reachable via
+scope.ctx_pins[] (живёт на стеке supervised, всегда GC root).
+
+**Verification:**
+- `stress_iso_large.nv` (999+1 fibers + cancel) 30/30 PASS
+  (было 0/3 panic per §11.3)
+- `_min.nv` (§12.31 fix verify) 30/30 PASS — no interaction
+
+**Cost:** ~10 минут (1-line codegen + 25-line test + §11.6 closure).
+ROI очень высокий — закрыл documented OPEN marker, который блокировал
+990+ fiber tests at production scale.
+
+**Pattern reuse:** идентичен Plan 44.5 L5 SpawnCtx pin (same protection
+mechanism, different object). ctx_pins[] становится canonical GC-root
+container для long-lived per-scope objects.
+
+**Status:** ✅ V1 CLOSED 2026-06-01. Marker `[M-83.11-gc-cancel-token-alias]`
+closed. Branch merged into main (939db7a67d8).
+
+---
+
+## Plan 59.1 — Generic anonymous tuple monomorphization (2026-06-01)
+
+**Что:** закрытие codegen gap'а в Plan 59 Ф.7.5 (Result mono landed
+2026-05-17; general generic anonymous tuple оставался под V1 erasure
+fallback). Любой `fn[T] f() -> (A[T], B[T])` или
+`fn[T, U] g() -> (T, U)` теперь mono'итcя per instantiation через
+mono'd schema `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>` —
+length-prefixed mangling, value-type return, per-instance
+deduplication.
+
+**Status:** 🟢 V1 CLOSED. Branch `plan-59.1-generic-anon-tuple-mono`,
+worktree `nova-p59-1`, 5 коммитов. 11/11 plan59_1 fixtures PASS на
+release nova-cli + clang (8 positive + 3 negative).
+
+**CLOSED markers:**
+- ✅ `[M-59.1-codegen-bailout-removed]` — emit_c.rs:20751 (emit_call
+  для mono_fn_decls) + emit_c.rs:26688 (infer_expr_c_type для generic
+  fn Call) tuple-return bailouts удалены. Оба были «Plan 48 V1
+  fallback на `_NovaTupleN` erasure» — обсолетный после Plan 59
+  Ф.7.5 mono'd schema landing, но никогда не убран для general tuples.
+- ✅ `[M-59.1-d216-spec]` — D216 NEW в spec/decisions/02-types.md
+  (полное описание mangling + codegen path + edge cases + backward
+  compat). D91 amend (Channel.new signature буквально implementable).
+  D123 amend (Plan 59 Ф.7.5 extends на все user fns).
+
+**OPEN markers (followups):**
+- 🟡 `[M-59.1-array-of-mono-tuple]` — `fn[T] f() -> []((T, T))`
+  array-of-mono-tuple type mismatch (call site infer выдаёт
+  `NovaArray_<mono_tuple>*` typedef которого не существует; body
+  fallback на `NovaArray_nova_int*`). Низкий приоритет — workaround
+  через explicit `Nova_<Pair>` record type.
+- 🟡 `[M-59.1-tuple-field-oob-nova-diag]` — `pair.5` на arity-2
+  tuple leaks к clang `no member named 'f5'`. Cosmetic — error caught,
+  но не optimal UX. Fix: Nova-level arity check для positional field
+  access на mono'd tuple в type-checker.
+- 🟡 `[M-59.1-channel-new-cleanup]` — 3 ad-hoc Channel.new special-cases
+  (emit_c.rs:18435/20159/22694) + `Nova_ChannelPair` runtime struct.
+  После Plan 59.1 generic mono path способен обработать Channel.new
+  через Nova-side `external fn[T] Channel[T].new(...) -> (ChanWriter[T],
+  ChanReader[T])` (Plan 115 Pattern B) — но это runtime + std API
+  surgery. Spec D91 уже amended что current bootstrap impl — detail.
+
+**Acceptance criteria final (A1-A10):**
+- A1 ✅ `fn[T] dup(v T) -> (T, T)` + `dup[int](42)` + destructure compile
+  + run PASS.
+- A2 ✅ Multi-instantiation: `dup[int]` + `dup[str]` в одной module —
+  оба typedef'а уникальны, fixtures PASS.
+- A3 ✅ Multi-param: `fn[T, U] pair(a T, b U) -> (T, U)` PASS.
+- A4 ✅ Nested generic tuple: `fn[T] nest() -> (T, (T, T))` PASS.
+- A5 🟡 Array-of-tuple — followup.
+- A6 🟡 Channel.new cleanup — followup.
+- A7 ✅ Regression — plan90 9/0, plan90_1 20/0, plan91_7 5/0,
+  syntax 53/1 (pre-existing for_in_range_iter unrelated),
+  concurrency 70/11 (pre-existing armed-M:N flakies, verified
+  тот же failure pattern на main repo binary без Plan 59.1 changes).
+- A8 ✅ Spec D216 NEW + D91/D123 amend + README spec entry —
+  landed.
+- A9 ✅ plan59_1 fixtures 11 (8 positive + 3 negative) ALL PASS.
+- A10 ✅ Logs landed (simplifications + project-creation +
+  nova-private/discussion-log).
+
+**Subsystems:**
+1. Codegen (`compiler-codegen/src/codegen/emit_c.rs`):
+   - L20751: emit_call dispatch для mono_fn_decls — bailout удалён,
+     mono pipeline покрывает generic tuple return.
+   - L26688: infer_expr_c_type для generic fn Call — bailout удалён,
+     `apply_type_subst_to_ref(return_type, subst)` resolves к
+     substituted mono'd tuple type.
+2. Mono'd tuple infrastructure (Plan 59 Ф.7.5, preexisting):
+   - `compute_mono_tuple_c_name` (L10105) — length-prefixed mangling.
+   - `register_mono_tuple` (L10121) — HashSet dedup + sizeof warning.
+   - `register_tuples_in_typeref` (L10184) — recursive visitor для
+     nested cases.
+   - Finalize (L2749) — topo sort + per-typedef emission.
+3. Spec (`spec/decisions/02-types.md`):
+   - D216 NEW (~165 LOC).
+   - D91 amend (signature implementable).
+   - D123 amend (Plan 59 Ф.7.5 extends на все user fns).
+4. Tests (`nova_tests/plan59_1/`, 11 fixtures):
+   - Positive: repro_dup_T / multi_inst / multi_param / nested_tuple /
+     option_tuple / field_access / triple_tuple / non_generic_pair.
+   - Negative: arity_mismatch_neg (Nova-level diagnostic) /
+     turbofish_missing_neg (Plan 48/54 diagnostic) / field_oob_neg
+     (C-level diagnostic — followup для Nova-level).
+
+**Design lessons:**
+1. **Bailout comments — обязательно «still applicable» проверка**
+   при фундаментальных архитектурных изменениях. Plan 59 Ф.7.5
+   mono'd schema landed для Result; bailout reasoning «legacy schema
+   can't hold non-int» уже obsolete но никогда не убран для general
+   tuples. Cost: 6+ месяцев silent erasure path для всех generic
+   anonymous tuples.
+2. **Multi-bailout pattern.** Один и тот же reasoning может быть
+   реплицирован в двух independent code sites (emit_call dispatch +
+   infer_expr_c_type). Удалять синхронно — single bailout removal
+   привёл бы к call-site/body type mismatch.
+3. **Test corpus dual-direction.** Positive (feature works) + negative
+   (proper error caught) одинаково важны. Без negative легко пропустить
+   regression в error path при changes.
+
+---
+
+## Plan 114.4.4 — `const fn` V3 completion (3/8 phases) — partial 2026-06-01
+
+**Status:** 🟡 PARTIAL — 3 of 8 phases landed; 5 V3 phases extracted в
+Plan 114.4.4.1-5 per safety hatch design.
+
+**Closed markers (Plan 114.4.3 chain):**
+- ✅ `[M-114.4.3-configurable-depth]` — Ф.1 `#fn_eval_max_depth(N)`.
+- ✅ `[M-114.4.3-runtime-let-enforcement]` — Ф.2 friendly UX error.
+- ✅ `[M-114.4.3-friendly-hof-error]` — Ф.2 friendly UX error.
+- ✅ `[M-114.4.3-loops]` — Ф.3 for/while/loop + mut/assign + break/continue.
+
+**Extracted to V4 plans (safety hatch fire):**
+- Plan 114.4.4.1 — record/sum patterns в match (V2.1).
+- Plan 114.4.4.2 — t-reflection (V3 V4).
+- Plan 114.4.4.3 — runtime HOF trampoline (V4).
+- Plan 114.4.4.4 — closure-returning const fn (V4).
+- Plan 114.4.4.5 — per-const-arg monomorphization (V4).
+
+**V3 surface implementation:**
+1. Parser: `#fn_eval_max_depth(N)` attribute, range 1..=65535.
+2. Body checker: mut/assign accepted, for/while/loop accepted, break/
+   continue accepted, Range expr handled, if-no-else accepted.
+3. Evaluator: BlockFlow enum + exec_for_loop/exec_while_loop/exec_loop_loop
+   with mut env propagation, MAX_LOOP_ITERATIONS=10_000 guard, If-stmt
+   propagates break/continue через branches.
+4. Validation: validate_const_fn_runtime_uses detects runtime misuse
+   с actionable error suggestions.
+
+**V1/V2 fixtures удалены (V3-superseded):**
+- body_mut_binding_neg.nv (V3 allows mut).
+- for_in_body_neg.nv (V3 allows for).
+- if_no_else_neg.nv (V3 allows if без else).
+
+**38/38 PASS** на release nova-cli (Ф.1-Ф.3 fixtures + V1/V2 backward compat).
+
+**Design lessons:**
+1. **Stack overflow при deep recursion** — Rust evaluator recursion =
+   Rust call stack depth. MAX_EVAL_DEPTH 256 default is conservative.
+   Real production deep recursion → iterative evaluator
+   (`[M-114.4.4-iterative-evaluator]` V4).
+2. **Mut env propagation через loops** — eval_expr's immutable env
+   conflicts с loop body mutating outer scope (accumulator pattern).
+   Solution: dedicated exec_block_seq с &mut env, special-cased loops
+   в block-stmt processing.
+3. **If-stmt break/continue propagation** — V2's if returns ConstValue;
+   V3 needs Break/Continue propagation через if-branches inside loops.
+   Resolution: exec_block_seq special-case for If forwards BlockFlow.
+4. **Safety hatch is design tool, not failure** — Ф.4-Ф.8 extracted
+   intentionally per plan doc. Each followup ships independently when
+   triggered. NOT silent simplification.
+
+---
+
+
+## Plan 114.4.4 Ф.1 followup — #fn_eval_max_depth(N) spec expansion (2026-06-01)
+
+**Status:** 🟢 spec polish closed. Branch `plan-114.4.4-fn-eval-depth-spec`,
+merge `d4b8f99ccac`.
+
+**Что:** inline subsection D199 V3 для `#fn_eval_max_depth(N)` расширена
+с syntax/range/default/semantics/use-cases/caveat/cross-ref. No code
+changes — только spec.
+
+**Design lesson:** Attribute spec entries не требуют отдельного D-блока —
+pattern для inline documentation в parent D (matches `#fuel` / `#opaque` /
+`#realtime` / `#trusted`). D-blocks reserved для semantic decisions с
+broad cross-cutting impact; per-attribute config — inline subsection в
+relevant D.
+
+**Caveat documented:** Rust thread stack ~8MB limits actual recursion
+depth независимо от `N` value. Practical limit `N ≤ 150-200`. Real
+production deep recursion → V4 followup `[M-114.4.4-iterative-evaluator]`
+(rewrite evaluator на iterative form с explicit stack — Rust stack
+больше не limit).
+## Plan 91.12 V1 — D126 partial retract (WriteBuffer/ReadBuffer pure Nova, 2026-06-01)
+
+**Status:** ✅ V1 CLOSED 2026-06-01 (2 из 5 D126 типов мигрированы; sync types deferred).
+
+**CLOSED markers:**
+- ✅ `[M-91.12-write-buffer-pure-nova]` — WriteBuffer Nova record `{ mut buf []u8 }` + 30 методов на Nova-body над push/append/reserve. C runtime `nova_rt/write_buffer.h` deleted.
+- ✅ `[M-91.12-read-buffer-pure-nova]` — ReadBuffer cursor record `{ ro data []u8, mut pos int }` + 22 try_read_X/read_X pair (UTF-8 decode helper + sign-extension paths). C runtime `nova_rt/read_buffer.h` deleted.
+- ✅ `[M-91.12-collections-reimport]` — `external type WriteBuffer/ReadBuffer` удалены из `std/prelude/collections.nv`; re-import из `std/runtime/{write,read}_buffer.nv` (паттерн StringBuilder).
+- ✅ `[M-91.12-result-unwrap-typed-mono]` — codegen bug fix: `Result[T, E].unwrap` / `.unwrap_or` для non-int T в typed mono (`NovaRes_<T>_<E>*`) шёл через union bit-pun nova_int↔T (compensated bootstrap u64-bits boxing). Detected typed mono prefix → direct payload access без cast_from_nova_int. Surfaced by buffers/read_floats fixture.
+- ✅ `[M-91.12-const-module-mangling]` — codegen bug fix: module-private `const X = ...` коллизия между одноимёнными consts в разных модулях (e.g. `INITIAL_CAPACITY` в string_builder.nv и write_buffer.nv → C global symbol redefinition). `HashMap<(FileId, name), mangled>` pre-pass + per-file Ident resolution + single-candidate fallback.
+
+**OPEN markers (followups):**
+- 🟢 `[M-91.12-sync-types-migration]` → **CLOSED 2026-06-01 (Plan 91.12 V2)**. OnceCell[T], Lazy[T], Condvar мигрированы на `type X[T](ptr)` / `type X(ptr)` tuple-newtype (Plan 115 D214). C runtime backing (`nova_rt/sync_*.h` + emit_oncecell_instance/emit_lazy_instance per-T mono) сохранён — ABI unchanged. Codegen integration: `RUNTIME_BACKED_NEWTYPES` skips typedef emission, Newtype branch routes per-T mono к existing handlers, type-checker регистрирует runtime-backed newtype в `generic_types`. 5 V2 fixtures PASS (4 positive + 1 negative). Plan 91.12 V2 → full closure.
+- 🟢 `[M-91.12-const-resolution-via-types]` → **CLOSED 2026-06-01 (production-grade)**. Replaced span-based heuristic + single-candidate fallback на module-group-aware resolution: pre-pass в emit_module group'ает peer_files по `(parent_dir, module_name)` (паттерн NameResCtx Rule C), populates `(peer.file_id, const_name) → mangled_C_name` для ВСЕХ peers each module-group. Lookup на use-site однозначно резолвится без fallback. Collision (одноимённые consts в разных модулях) корректно разводятся per-module-group, ambiguity невозможна. Removed single-candidate fallback из emit_expr Ident-arm.
+- 🟢 `[M-91.12-append-filled]` → **CLOSED 2026-06-01 (already exists as `[]T.append_zero(n)` from Plan 90 followup)**. Primitive `nova_array_append_zero_<T>` (memset zero-extension) уже доступен — `nova_tests/plan90/append_zero.nv` + `compiler-codegen/nova_rt/array.h`. WriteBuffer.write_zero обновлён использовать `@buf.append_zero(n)` вместо push-loop. Generic `append_filled(n, v)` для arbitrary `v` не нужен для Plan 91.12 use case (write_zero хочет zero-init).
+
+**Design lessons:**
+- **Drop-in replacement preserved через non-consume type + consume @into()**: WriteBuffer оставлен как non-consume record (вопреки StringBuilder consume pattern) ради backward-compat с ~30 fixtures `let mut wb = WriteBuffer.new()`. Только `@into() -> []u8` consume — type-system enforce'ит no-reuse-after-into без breaking existing call-sites. Trade-off: type-system не enforce'ит "use only if not abandoned" (как у StringBuilder); GC ловит abandoned WriteBuffer's. Accepted для migration ergonomics.
+- **Bootstrap-leak in Result[T, E]**: предыдущий C runtime хранил f64/u64 в Result.Ok как nova_int boxing (bit-cast). Один test fixture `buffers/read_floats: f64.from_bits + try_read_f64_be round-trip` использовал этот leak (вызывал `f64.from_bits(r.unwrap_or(0))` на типизированном Result[f64]). Pure-Nova миграция убрала bit-encoded boxing → test переписан под прямой f64 unwrap. **Bug fix benefit**: typed Result-mono unwrap/unwrap_or теперь корректны для всех non-int T (f32, f64, structs, etc).
+- **Module-private const C-name mangling needs span attribution**: name-only HashMap не disambiguate collisions между модулями. `(FileId, name)` ключ + Ident `expr.span.file_id` lookup работает когда AST preserves spans через type-checker / mono pass. Compiler-synthesized exprs могут иметь placeholder file_id — single-candidate fallback handles остаток safely.
+
+## Plan 91.12 V2 — D126 hard retract + sync types migration (2026-06-01)
+
+**Status:** ✅ V2 CLOSED 2026-06-01 (3 sync types migrated; plain `external type` retracted).
+
+**CLOSED markers (V2):**
+- ✅ `[M-91.12-sync-condvar-tuple-newtype]` — Condvar non-generic `type Condvar(ptr)`. C struct в `nova_rt/sync_condvar.h` unchanged; codegen suppresses Nova-level typedef conflict.
+- ✅ `[M-91.12-sync-oncecell-tuple-newtype]` — OnceCell[T] generic `type OnceCell[T](ptr)`. Per-T mono через `emit_oncecell_instance` routed из Newtype branch.
+- ✅ `[M-91.12-sync-lazy-tuple-newtype]` — Lazy[T] generic `type Lazy[T](ptr)`. Per-T mono через `emit_lazy_instance` routed из Newtype branch.
+- ✅ `[M-91.12-d126-hard-retract]` — plain `external type X` → hard error `[E_EXTERNAL_TYPE_RETRACTED]` в любом модуле; D163 consume form preserved.
+- ✅ `[M-91.12-newtype-type-decls-registry]` — type-checker / external_registry collection включает `TypeDeclKind::Newtype(_) if !generics.is_empty() || is_runtime_backed` (без этого `Lazy[int].new(closure)` fail'ил resolve → misrouted codegen).
+- ✅ `[M-91.12-spec-d126-retract]` — spec/decisions/03-syntax.md D126 status → RETRACTED; rationale + migration table; cross-refs к D214/D163; legacy preserved.
+- ✅ `[M-91.12-migration-guide]` — docs/migration/d126-to-tuple-newtype.md (264 lines, 3 patterns: pure Nova / tuple-newtype / D163 consume).
+
+**OPEN markers (V2 followups):**
+- 🟢 `[M-91.12-parser-body-detect-heuristic]` → **CLOSED 2026-06-01**. Parser fixed: tracking `saw_newline_before_body` ДО skip_newlines(); ident-based body detect gates на `!saw_newline_before_body`. Same-line body forms (`external type Foo Bar` → newtype-body error) reject как раньше; newline-separated next-decl forms (`external type Foo consume\n\nfn dummy() -> int => 42`) parse cleanly. NEW fixture `nova_tests/plan91_12/v2_parser_external_type_consume_followed_by_fn_ok.nv` (3 test blocks для fn/test/const после `external type X consume`). Test fixtures plan62/external_type_outside_whitelist и plan91_12/v2_external_type_consume_d163_ok восстановлены к нормальной структуре (declaration в верху + trailing fn/test).
+
+**Design lessons (V2):**
+
+1. **Generic Newtype с external fn методами требует TWO-LEVEL registration:**
+   - **emit-level** (`emit_type_decl` Newtype branch): special-case RUNTIME_BACKED_NEWTYPES skip typedef для conflict с runtime header struct.
+   - **type-checker level** (`external_registry.from_module` + `emit_module` type_decls registration): Newtype с generics регистрируется в `generic_types`/`generic_type_templates` — без этого static-method dispatch (`Lazy[int].new()`) не работает.
+   
+   Symptom missed registration: codegen эмитит `Nova_int_method_new(Lazy, closure)` (treat'ит `Lazy[int]` как index access на int).
+
+2. **Per-T mono Newtype path параллелен Opaque path** — для backward-compat. После migration все `external type X[T]` declarations стали `type X[T](ptr)`, но pre-V2 Opaque path в `emit_generic_type_instance` сохранён (некоторые предписания могут идти ещё через Opaque если runtime helpers'у нужна интроспекция).
+
+3. **Parser body-detect heuristic излишне permissive** — после `external type X` parser считает любой следующий not-newline token (fn / ident / `[`) частью newtype body. Это блокирует declaration ordering `external type X\n\nfn foo()...`. Workaround в V2: trailing-only declaration в EXPECT-fail fixtures.
+
+4. **D126 retract — narrow.** Только plain form retracted; D163 `external type X consume` остаётся для FFI (resource handles с auto-cleanup). Это правильный design: D163 — separate use case (linearity tracking + must-consume) который tuple-newtype не покрывает.
+
+5. **Migration без ABI break.** V2 — pure declaration-syntax change. C runtime backing (`nova_rt/sync_*.h`), C method symbols (`Nova_Lazy____T_method_force`), per-T struct layout — все идентичны pre/post V2. Это позволило миграцию без touching существующих fixtures (кроме negative whitelist test для нового error code).
+
+---
+
+## Plan 124 / D47 amend — per-field visibility `priv` modifier (planning + spec amend, 2026-06-02)
+
+**Что:** umbrella roadmap + spec D47 amend для compile-time per-field
+visibility. Closes major OOP-grade gap (Nova fields сейчас all-public-
+by-default; no API boundary control; `_prefix` convention был hint-only,
+не enforced).
+
+**Status:** 🟢 PLANNING + spec amend LANDED. Implementation в Plan
+124.1-124.7 sub-plans (umbrella roadmap, ~10-14 dev-day total, не
+начато).
+
+**CLOSED markers:**
+- ✅ `[M-D47-prefix-convention-deprecated]` — `_prefix` convention
+  removed from spec (D47 amend 2026-06-02), replaced by compile-time
+  `priv` keyword (forthcoming Plan 124.1 / D220).
+- ✅ `[M-Plan-124-scaffold]` — umbrella plan doc + 7 sub-plans defined,
+  comparative analysis vs Go/Rust/TS/Kotlin/Java/Swift/C# (14
+  capabilities + 3 Nova-only), acceptance A1.1-AU.6 (57 criteria),
+  production-grade requirements, risk register (10 risks), execution
+  protocol (§14 autonomous agent self-contained spec).
+- ✅ `[M-Plan-124-kubernetes-audit]` — empirical validation: 8700 .go
+  files, 11099 structs, 35239 fields; 59.4% public / 40.6% private
+  aggregate; 92.4% public в core/v1 API surface. Validates D47
+  public-default decision. Full audit:
+  [docs/research/06-field-visibility-go-kubernetes.md](research/06-field-visibility-go-kubernetes.md).
+- ✅ `[M-Plan-124-V2-revision]` — Plan 124.7 rewritten 2026-06-02
+  на `type X priv { ... }` type-level default flip syntax (replaces
+  rejected edition flip approach — kubernetes data showed global flip
+  не оправдан; per-type granular лучше fits bimodal distribution).
+
+**OPEN markers (carried forward to implementation):**
+- 🟡 `[M-124.1-core-record]` — Plan 124.1 foundational (parser +
+  AST + checker + 4 error codes E_PRIV_FIELD_*).
+- 🟡 `[M-124.2-pattern-literal]` — pattern destructure + record literal
+  init rules outside type.
+- 🟡 `[M-124.3-generics]` — generic type uniform handling (Plan 59+59.1
+  mono compat).
+- 🟡 `[M-124.4-tuple-protocol]` — named tuple priv (Plan 120 D215 ext)
+  + protocol impl interaction.
+- 🟡 `[M-124.5-doc-lsp]` — nova doc + LSP integration.
+- 🟡 `[M-124.6-escape-hatches]` — `#[test_access]` + `#[visible_to]`
+  friend types.
+- 🟡 `[M-124.7-type-level-priv]` — `type X priv { ... }` syntax.
+
+**Acceptance criteria:** 57 шт total (A1.1-A1.10 + A2.1-A2.8 + A3.1-A3.8
++ A4.1-A4.10 + A5.1-A5.8 + A6.1-A6.8 + A7.1-A7.8 + AU.1-AU.6). Per
+sub-plan + umbrella-level. Documented в
+[docs/plans/124-priv-field-visibility.md](plans/124-priv-field-visibility.md)
+§6.
+
+**Spec changes (committed):**
+- `spec/decisions/07-modules.md` D47 — amend notice 2026-06-02;
+  «Видимость полей record/tuple» section rewritten с `priv` keyword +
+  type-level flip; «Почему» bullet 3 rewrite; «Отвергнуто» bullet
+  added; comparison table Nova row updated; «Связь» — Plan 124 / D220
+  cross-ref.
+- `spec/decisions/03-syntax.md` naming rules — `_prefix` → `priv` cross-
+  ref.
+- `spec/decisions/history/rejected.md` — «Per-field export для record»
+  amended с 2026-06-02 пересмотром.
+- `spec/open-questions.md` — JSON skip-семантика updated (priv fields
+  auto-skip).
+
+**Design lessons:**
+1. **Empirical data beats intuition.** Я первоначально recommended
+   private-default (Rust-style). User pushed back. Kubernetes audit
+   (35239 fields, 59% public aggregate, 92% public в API surface)
+   подтвердил current D47 public-default — minimum boilerplate
+   maximum coverage.
+2. **Bimodal distribution → bimodal syntax.** pkg/ 47% public vs
+   core/v1 92% public — два разных use cases. Решение: public-default
+   field-level + `type X priv {}` type-level flip per type. Covers
+   both clusters без edition migration cost.
+3. **`priv` keyword symmetric position** — same в field-level
+   (`priv mut money`) AND type-level (`type X priv { ... }`). Parser
+   distinguishes by context (after type name vs before field name).
+4. **`_prefix` convention obsolete** — hint-only privacy (non-enforced)
+   provides false sense of encapsulation. Compile-time `priv` reveals
+   real API boundary при refactoring.
+
+
+---
+
+## Plan 124.1 V1 — Per-field visibility priv keyword (parser/AST/lexer infrastructure, 2026-06-02)
+
+**Что:** V1 infrastructure для per-field `priv` modifier — lexer
+tokens, AST extensions, parser, basic tests, spec D220 NEW. Type-checker
+enforcement deferred → followup `[M-124.1-checker-enforcement]`.
+
+**Status:** 🟢 V1 INFRASTRUCTURE LANDED. Branch `plan-124-priv-fields`,
+3 commits на ветке для V1 (68a7a77eabc + 2 followup + ba79256d409 spec).
+
+**CLOSED markers:**
+- ✅ `[M-124.1-lexer]` — KwPriv + KwPub tokens.
+- ✅ `[M-124.1-ast]` — RecordField.priv_field + TypeDecl.default_field_priv.
+- ✅ `[M-124.1-parser-field-mod]` — per-field priv/pub parsing с
+  bidirectional E_PRIV_PUB_CONFLICT detection.
+- ✅ `[M-124.1-parser-type-flip]` — type-level `type X priv {}` syntax.
+- ✅ `[M-124.1-spec-d220]` — D220 NEW в 02-types.md + README index.
+- ✅ `[M-D47-amend-2026-06-02]` — _prefix convention deprecated.
+
+**OPEN markers (V1 enforcement gap — followup):**
+- 🟡 `[M-124.1-checker-enforcement]` — type-checker emit 4 error
+  codes E_PRIV_FIELD_{READ,WRITE,INIT,PATTERN}. Parser/AST infrastructure
+  ready (priv_field bit на RecordField + default_field_priv на TypeDecl);
+  enforcement requires hook в Member access resolution + literal init
+  + pattern destructure paths. Priority: P1 (without enforcement priv
+  is parser-only, no runtime guarantee). Estimate: ~1 dev-day.
+
+**OPEN markers (Plan 124 future sub-plans, carried forward):**
+- 🟡 `[M-124.2-pattern-literal]` — pattern destructure + literal init rules.
+- 🟡 `[M-124.2-priv-embed]` — `priv use NAME Type` private embed.
+- 🟡 `[M-124.3-generics]` — generic type uniform handling.
+- 🟡 `[M-124.4-tuple-priv]` — named tuple priv (Plan 120 D215 ext).
+- 🟡 `[M-124.4-protocol-impl-boundary]` — protocol impl rules.
+- 🟡 `[M-124.5-doc-lsp]` — nova doc hide + LSP filter.
+- 🟡 `[M-124.6-test-access]` — `#[test_access]` + `#[visible_to]`.
+- 🟡 `[M-124.7-type-level-priv-tuple]` — type-level priv flip for
+  named tuples.
+
+**Acceptance criteria (Plan 124.1 V1 — A1.1-A1.10):**
+- A1.1 ✅ Parser принимает `priv` modifier — `type X { priv mut f T }` parses.
+- A1.2 ✅ Modifier composition `priv mut / priv ro / priv consume` —
+  все three combinations PASS на parser.
+- A1.3 ✅ AST `RecordField.priv_field` корректно set по explicit
+  modifier или type-level inherit.
+- A1.4 🟡 Type-checker E_PRIV_FIELD_READ — DEFERRED.
+- A1.5 🟡 Type-checker E_PRIV_FIELD_WRITE — DEFERRED.
+- A1.6 ✅ Inside type instance method `@priv_field` access PASS
+  (semantic accepted; checker doesn't enforce пока).
+- A1.7 ✅ Inside type static method priv field access PASS (semantic
+  accepted).
+- A1.8 ✅ Regression — plan90 9/0, syntax 53/1 pre-existing (0 new
+  FAIL).
+- A1.9 ✅ plan124_1 fixtures 4/4 PASS (3 positive + 1 negative on
+  release nova-cli + clang).
+- A1.10 ✅ Spec D220 NEW + README spec entry + D47 amend.
+
+**Subsystems landed:**
+1. Lexer (`compiler-codegen/src/lexer/{token.rs, mod.rs}`) — 2 new
+   keyword tokens.
+2. AST (`compiler-codegen/src/ast/mod.rs`) — 2 new fields с inline
+   documentation.
+3. Parser (`compiler-codegen/src/parser/mod.rs`) — type-level priv
+   detection + per-field priv/pub modifier с bidirectional conflict
+   detection + parse_record_fields_with_default(default_priv) thread-through.
+4. Tests (`nova_tests/plan124_1/`) — 4 fixtures (smoke_parse +
+   priv_field_basic + type_level_priv + priv_pub_conflict_neg).
+5. Spec (`spec/decisions/02-types.md`) — D220 NEW section ~190 lines
+   с 7 sub-sections + acceptance + followups.
+6. Spec README index (`spec/decisions/README.md`) — D220 entry.
+
+**Honest scope assessment:**
+
+Plan 124.1 originally estimated ~2-3 dev-day. V1 infrastructure landed
+in this autonomous session (~2 hours actual work). Type-checker
+enforcement (A1.4-A1.7) — substantial separate phase, requires
+deep integration с Member access resolution в types/mod.rs (multiple
+codepaths, 15+ sites identified в Ф.0 investigation). Deferred к
+next session as `[M-124.1-checker-enforcement]` — same pattern as
+Plan 73.1 partial closures, Plan 100.4 sub-sub-plan extractions,
+Plan 110 phase extractions. Production-grade decision: ship clean
+infrastructure (no half-done enforcement), enforcement in dedicated
+follow-up.
+
+**Design lessons:**
+1. **Bidirectional conflict detection.** `priv pub` и `pub priv` оба
+   detected explicitly — без double-check, generic parse error fires
+   на следующем unexpected keyword token (poor UX). Cost: ~5 LOC.
+2. **Type-level + field-level symmetric.** `priv` keyword usable в
+   обоих positions — parse_type_decl + parse_record_fields. AST
+   threading через parse_record_fields_with_default(default_priv).
+3. **Parser refactor backward-compat.** parse_record_fields() остаётся
+   wrapper shim к parse_record_fields_with_default(false) — все
+   existing callers unchanged (sum-variant fields default public).
+4. **Plan 50 D102 diagnostic format adherence.** E_PRIV_PUB_CONFLICT
+   message включает hint («Choose one: priv OR pub») + context
+   reference («redundant без type-level priv {} flip») + spec link
+   (D220).
+
+
+
+---
+
+## Plan 124.1 V1 FULLY CLOSED — checker enforcement landed (2026-06-02)
+
+Type-checker enforcement landed для all 4 E_PRIV_FIELD_* error codes
+via centralized TypeCheckCtx hooks. Plan 124 / D220 §3-§4 acceptance
+A1.4-A1.7 закрыты.
+
+CLOSED markers:
+- [M-124.1-checker-enforcement] — all 4 codes via current_recv_type
+  RAII tracking (PrivRecvGuard pattern matches ConstFnFlagGuard).
+
+Implementation hooks:
+1. E_PRIV_FIELD_READ — f3_check_member (line 3712), field-resolution
+   after fields.iter().find. priv_field + recv mismatch → emit.
+2. E_PRIV_FIELD_WRITE — check_target_readonly (line 4528), after
+   readonly check. Same priv + recv check.
+3. E_PRIV_FIELD_INIT — walk_expr ExprKind::RecordLit (line 2852),
+   after assoc-const check. Per-field iteration emits на priv outside.
+4. E_PRIV_FIELD_PATTERN — f1_block Stmt::Let Pattern::Record. Pattern
+   field iteration + RecordField lookup + outside check.
+
+current_recv_type tracking:
+- TypeCheckCtx.current_recv_type: RefCell<Option<String>>
+- check_fn (line 2235) + f1_check_fn (line 3028) — оба set recv
+- PrivRecvGuard RAII restore on exit (Plan 114.4.2 D199 precedent)
+
+Tests (nova_tests/plan124_1/) — 9/9 PASS на release nova-cli + clang:
+- 4 positive: smoke_parse, priv_field_basic, type_level_priv,
+  priv_read_inside_method_ok
+- 5 negative: priv_pub_conflict_neg, priv_read_outside_neg,
+  priv_write_outside_neg, priv_init_outside_neg, priv_pattern_outside_neg
+
+Regression: plan90 9/0, plan90_1 20/0, syntax 53/1 pre-existing.
+
+Acceptance Plan 124.1 V1 A1.1-A1.10 — ALL closed 2026-06-02.
+
+Design lessons:
+1. Multi-Ctx architecture — types/mod.rs has TypeCheckCtx + BoundCtx
+   + others. Initial PATTERN hook misplaced в BoundCtx (no `types`
+   field) → compile error → relocated to TypeCheckCtx.
+2. Two-pass f1_check_fn + check_fn — both must set recv_type via
+   PrivRecvGuard. Single-set leaks tracking.
+3. Each error message Plan 50 D102 format с Hint + spec link.
+4. Test fixture nuance: Account { ... } redundant when return type
+   already specifies → use array context [Account { ... }] для
+   negative INIT test.
+
+Plan 124.1 V1 ✅ FULLY CLOSED. Plan 124 umbrella partial — 6
+sub-plans (124.2-124.7) remaining.

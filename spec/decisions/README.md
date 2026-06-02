@@ -14,7 +14,7 @@
 | # | Файл | Что внутри | D-решения |
 |---|---|---|---|
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
-| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds, ghost state, hybrid dispatch, tuple mono, symmetry decl↔literal | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72, D110, D119, D122, D123, D142 |
+| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds, ghost state, hybrid dispatch, tuple mono, named tuples, symmetry decl↔literal | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72, D110, D119, D122, D123, D142, D215, D216 |
 | 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal, doc-comments, size accessors, static-dot в protocol | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D104, D108, D117, D143 |
 | 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, effect-литерал, with-блоки, interrupt, forbid, realtime, ?, `Effect[E, IRT]`, contracts (#pure/axiom/trusted), axiom binder, Fail payload | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87, D115, D118, D120 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
@@ -71,7 +71,7 @@
 | D138 | 07-modules.md | Межпакетный импорт — только через объявленную `[dependencies]`-зависимость (Plan 03.1) |
 | D139 | 07-modules.md | Version-диапазоны git-зависимостей — резолв по тегам репозитория (Plan 03.2) |
 | D140 | 07-modules.md | Effect-aware зависимости — effect-surface, effect-diff, `forbid` на границе (Plan 03.4) |
-| D141 | 08-runtime.md | Примитивы доступа к памяти — `str.byte_at`, bulk slice-операции `[]T`, `compare` (Plan 90); append/insert API `append`/`insert`/`reserve` (renamed Plan 91 2026-05-30; ранее `extend_from`/`insert_from`), `copy_from` hardening + W_VIEW_EXTEND_DETACH lint (Plan 90.1 amend 2026-05-27) |
+| D141 | 08-runtime.md | Примитивы доступа к памяти — `str.byte_at`, bulk slice-операции `[]T`, `compare` (Plan 90); append/insert API `append`/`insert`/`reserve` (renamed Plan 91 2026-05-30; ранее `extend_from`/`insert_from`), `copy_from` hardening + W_VIEW_EXTEND_DETACH lint (Plan 90.1 amend 2026-05-27); `fill` memset fast-path для single-byte T + `append_zero(n)` polymorphic zero-extend (Plan 90 followup 2026-06-01) |
 | D142 | 02-types.md | Симметрия effect/protocol declaration ↔ literal — keyword `handler`→`effect`, `Handler[E,IRT]`→`Effect[E,IRT]`, анонимный protocol-литерал, capture-rules (Plan 97) |
 | D143 | 03-syntax.md | Static-method префикс `.method()` в `type X protocol { ... }` теле — симметрия с D35 instance-методом `fn T.method()` (Plan 97) |
 | D144 | 02-types.md | Sub-slice views `arr[a..b]` / `str[a..b]` — `cap == len` model, 5 форм Range (RangeBounds parity), bounds-check для raw `arr[i]` (Plan 96) |
@@ -89,6 +89,8 @@
 | D166 | 09-tooling.md | Consume-types developer experience — perf budget <5%, LSP quick fixes (12 error codes), hover info, `nova doc` integration, structured diagnostic format (Plan 100.8, proposed) |
 | D174 | 07-modules.md | Prelude control attributes (Plan 107, 2026-05-27) — `#no_prelude` / `#prelude(names)` / `#allow(shadow)` перед `module`; amends D78 §«Prelude opt-out» (Plan 62.F/62.F.bis inline-клаузы удалены); extends D100 `_module.nv` prelude inheritance + pre-scan fix |
 | D180 | 05-memory.md | `consume` binding syntax (Plan 73.1, 2026-05-28) — V2 extension D131 на let-binding site. 3 правила: Rule 1 `consume X = expr` обязателен на consume-RHS (E_CONSUME_KEYWORD_MISSING); Rule 2 `let Y = consume_var` запрещён в теле (E_VIEW_BINDING_FORBIDDEN; views только как function-params); Rule 3 `consume Y = consume_var` = MOVE. Restriction-based safety без lifetime annotations |
+| D216 | 02-types.md | Generic anonymous tuple monomorphization (Plan 59.1, 2026-06-01) — `fn[T] f() -> (A[T], B[T])` мономорфизируется per instantiation через mono'd schema `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>` (length-prefixed mangling). Closes gap в Plan 59 Ф.7.5 (Result mono landed; general anonymous tuple оставался под V1 erasure fallback). Edge cases: multi-instantiation / multi-param / nested tuple / tuple-in-Option ✅; `[]MonoTuple` / `pair.OOB` / Channel.new ad-hoc cleanup — followups. D91 signature now буквально implementable |
+| D220 | 02-types.md | Per-field visibility `priv` keyword + type-level default flip (Plan 124.1, 2026-06-02) — per-field `priv mut money f64` modifier + type-level `type X priv {}` flip syntax с `pub` field override. Default public (D47 unchanged, validated kubernetes 92% public в API surface). 4 error codes E_PRIV_FIELD_{READ,WRITE,INIT,PATTERN} (V1 parser/AST landed; enforcement = followup `[M-124.1-checker-enforcement]`). E_PRIV_PUB_CONFLICT bidirectional. Replaces deprecated `_prefix` convention (D47 amend 2026-06-02). No reflection backdoor — compile-time hard guarantee |
 
 ## История
 

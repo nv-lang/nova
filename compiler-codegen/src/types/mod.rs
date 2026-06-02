@@ -161,18 +161,28 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     }
                 }
             }
-            // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with
-            // `consume` is allowed in any module (D163 FFI opaque consume-types).
-            // `external type X` without `consume` (plain opaque) remains stdlib-only
-            // (per D82 — opaque types backed by `nova_rt/*.h` are internal).
+            // Plan 62.D.bis (D126) + Plan 100.5 (D163) + Plan 91.12 V2 retract
+            // (2026-06-01):
+            //   - `external type X` без `consume` (plain opaque) — RETRACTED.
+            //     Hard error [E_EXTERNAL_TYPE_RETRACTED]. Все 5 stdlib типов
+            //     мигрированы (WriteBuffer/ReadBuffer → pure Nova, V1;
+            //     OnceCell[T]/Lazy[T]/Condvar → `type X[T](ptr)`, V2). Любая
+            //     попытка объявить новый plain external type — error с
+            //     migration hint на tuple-newtype паттерн (Plan 115 D214).
+            //   - `external type X consume` (D163 FFI opaque consume-types) —
+            //     by-design allowed (FFI resource handles типа `File consume`).
             if let Item::Type(td) = item {
                 if matches!(td.kind, TypeDeclKind::Opaque) && !td.consume {
                     errors.push(Diagnostic::new(
                         format!(
-                            "`external type` is only allowed in `std.runtime.*` / `std.prelude.*` modules \
-                             (this module is `{}`); for FFI opaque resource handles use \
-                             `external type X consume` (D163/D126), e.g. `external type File consume`.",
-                            module.name.join(".")
+                            "[E_EXTERNAL_TYPE_RETRACTED] `external type` (D126) retracted by Plan 91.12 V2 \
+                             (2026-06-01). Replace `external type {name}` with `type {name}(ptr)` \
+                             (tuple-newtype opaque-handle pattern, Plan 115 D214). C runtime backing \
+                             preserved через `external fn` методы — ABI unchanged. \
+                             Migration guide: docs/migration/d126-to-tuple-newtype.md. \
+                             For FFI opaque consume-types оставайся на `external type {name} consume` \
+                             (D163, supported).",
+                            name = td.name
                         ),
                         td.span,
                     ));
@@ -526,6 +536,106 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let type_check_ctx = TypeCheckCtx::build(module);
     type_check_ctx.check_module(module, &mut errors);
 
+    // Plan 114.4.2 (D199) Ф.1 const fn body check pass.
+    // 1) Collect const fn names. 2) Validate each const fn body против
+    // V1 whitelist (literals/arithmetic/casts/refs to params/locals/const
+    // fn calls). 3) Build call-graph and detect cycles (mutual recursion).
+    {
+        use std::collections::{HashMap as Map, HashSet as Set};
+        // Plan 114.4.3 Ф.3 (V2 mixed-args): два set'а —
+        //  * const_fn_names: ВСЕ fn с const-surface (any const param OR const
+        //    return) — для call-site arg validation. Includes mixed fns.
+        //  * fully_const_fn_names: ВСЕ params const AND return const —
+        //    evaluator-inlined + dropped из codegen. V2 body whitelist
+        //    applied только к этим (mixed fns — runtime body, normal rules).
+        let mut const_fn_names: Set<String> = Set::new();
+        let mut fully_const_fn_names: Set<String> = Set::new();
+        let mut fully_const_fns: Vec<&FnDecl> = Vec::new();
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                let any_const = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+                let all_const_params = !fd.params.is_empty()
+                    && fd.params.iter().all(|p| p.is_const);
+                let is_fully_const = (all_const_params || fd.params.is_empty())
+                    && fd.return_is_const;
+                if any_const {
+                    const_fn_names.insert(fd.name.clone());
+                }
+                if is_fully_const {
+                    fully_const_fn_names.insert(fd.name.clone());
+                    fully_const_fns.push(fd);
+                }
+            }
+        }
+        let mut call_graph: Map<String, Set<String>> = Map::new();
+        for fd in &fully_const_fns {
+            let mut targets: Set<String> = Set::new();
+            // Body checker against fully-const fn set (для transitivity:
+            // fully-const fn calling mixed fn = forbidden, runtime escapes).
+            if let Err(d) = check_const_fn_decl(fd, &fully_const_fn_names, &mut targets) {
+                errors.push(d);
+            }
+            call_graph.insert(fd.name.clone(), targets);
+        }
+        // Cycle detection: DFS с three-color marker (WHITE/GRAY/BLACK).
+        // GRAY → ребро в текущий путь → cycle.
+        #[derive(Clone, Copy, PartialEq)]
+        enum C { White, Gray, Black }
+        let mut color: Map<String, C> = Map::new();
+        for k in const_fn_names.iter() { color.insert(k.clone(), C::White); }
+        fn visit(
+            node: &str,
+            graph: &Map<String, Set<String>>,
+            color: &mut Map<String, C>,
+        ) -> Option<Vec<String>> {
+            color.insert(node.to_string(), C::Gray);
+            if let Some(neigh) = graph.get(node) {
+                for n in neigh {
+                    match color.get(n).copied().unwrap_or(C::White) {
+                        C::Gray => return Some(vec![node.to_string(), n.clone()]),
+                        C::White => {
+                            if let Some(mut path) = visit(n, graph, color) {
+                                path.insert(0, node.to_string());
+                                return Some(path);
+                            }
+                        }
+                        C::Black => {}
+                    }
+                }
+            }
+            color.insert(node.to_string(), C::Black);
+            None
+        }
+        // Plan 114.4.3 Ф.2 (V2): recursion (direct + mutual) allowed.
+        // Cycle detection retained but downgraded — no error fired.
+        // Evaluator enforces depth-limit + memoization runtime safety.
+        let mut reported: Set<String> = Set::new();
+        for fd in &fully_const_fns {
+            if matches!(color.get(&fd.name), Some(C::White)) {
+                if let Some(cycle) = visit(&fd.name, &call_graph, &mut color) {
+                    let key = {
+                        let mut v = cycle.clone();
+                        v.sort();
+                        v.join("→")
+                    };
+                    // V2: cycle reported only once per cycle (dedup),
+                    // no error emitted — evaluator depth-limit enforces.
+                    let _ = reported.insert(key);
+                    let _ = cycle;
+                    if false {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_RECURSION] cycle detection: {}",
+                                fd.name
+                            ),
+                            fd.span,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     // Plan 33.1 Ф.3 (D24): SMT verification.
     // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
     // Доказанные контракты записываются в env для zero-cost release.
@@ -594,22 +704,38 @@ fn check_const_constexpr(
     expr: &crate::ast::Expr,
     known_consts: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    let empty: HashSet<String> = HashSet::new();
+    check_const_constexpr_ex(expr, known_consts, &empty)
+}
+
+/// Plan 114.4.2 (D199): extended constexpr validator с awareness of
+/// const fn names. Used by check_module's scope-local const validation
+/// + module-level const validation when const fn registry уже built.
+/// `const_fn_names` — set of all const fn names в module (если empty —
+/// backward-compatible с original check_const_constexpr behavior).
+fn check_const_constexpr_ex(
+    expr: &crate::ast::Expr,
+    known_consts: &HashSet<String>,
+    const_fn_names: &HashSet<String>,
+) -> Result<(), Diagnostic> {
     use crate::ast::ExprKind as E;
     match &expr.kind {
         // Literals — всегда constexpr.
         E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
         | E::CharLit(_) | E::UnitLit => Ok(()),
         // Unary над constexpr operand.
-        E::Unary { operand, .. } => check_const_constexpr(operand, known_consts),
+        E::Unary { operand, .. } => check_const_constexpr_ex(operand, known_consts, const_fn_names),
         // Binary над constexpr operands.
         E::Binary { left, right, .. } => {
-            check_const_constexpr(left, known_consts)?;
-            check_const_constexpr(right, known_consts)
+            check_const_constexpr_ex(left, known_consts, const_fn_names)?;
+            check_const_constexpr_ex(right, known_consts, const_fn_names)
         }
+        // Plan 114.4.2 D199: `as`-cast — constexpr if inner is constexpr.
+        E::As(inner, _) => check_const_constexpr_ex(inner, known_consts, const_fn_names),
         // Tuple-литерал — каждый элемент constexpr.
         E::TupleLit(elems) => {
             for e in elems {
-                check_const_constexpr(e, known_consts)?;
+                check_const_constexpr_ex(e, known_consts, const_fn_names)?;
             }
             Ok(())
         }
@@ -617,7 +743,7 @@ fn check_const_constexpr(
         E::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    crate::ast::ArrayElem::Item(e) => check_const_constexpr(e, known_consts)?,
+                    crate::ast::ArrayElem::Item(e) => check_const_constexpr_ex(e, known_consts, const_fn_names)?,
                     crate::ast::ArrayElem::Spread(_) => {
                         return Err(Diagnostic::new(
                             "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed \
@@ -642,7 +768,7 @@ fn check_const_constexpr(
                     ));
                 }
                 match &f.value {
-                    Some(v) => check_const_constexpr(v, known_consts)?,
+                    Some(v) => check_const_constexpr_ex(v, known_consts, const_fn_names)?,
                     None => {
                         // Shorthand `{ name }` — refers binding called `name`.
                         if !known_consts.contains(&f.name) {
@@ -662,19 +788,20 @@ fn check_const_constexpr(
             }
             Ok(())
         }
-        // Ident — должен ссылаться на другой known top-level `const`.
+        // Ident — должен ссылаться на другой known top-level `const`
+        // ИЛИ const fn (Plan 114.4.3 Ф.5 V2: first-class alias).
         E::Ident(name) => {
-            if known_consts.contains(name) {
+            if known_consts.contains(name) || const_fn_names.contains(name) {
                 Ok(())
             } else {
                 Err(Diagnostic::new(
                     format!(
                         "[E_CONST_REFERS_NON_CONSTEXPR] `const` initialiser \
-                         refers `{}` which is not a top-level `const`. Only \
-                         literals + arithmetic on literals + record/tuple/array \
+                         refers `{}` which is not a top-level `const` or `const fn`. \
+                         Only literals + arithmetic on literals + record/tuple/array \
                          literals из constexpr fields + references to other \
-                         `const` are allowed. For runtime / lazy-init use \
-                         `ro {} = …` (Plan 114.4 Ф.1 / D199).",
+                         `const` / `const fn` are allowed. For runtime / lazy-init \
+                         use `ro {} = …` (Plan 114.4 Ф.1 / D199).",
                         name, name
                     ),
                     expr.span,
@@ -693,17 +820,73 @@ fn check_const_constexpr(
              const → use `ro X = …` (runtime ok) (Plan 114.4 Ф.1).".to_string(),
             expr.span,
         )),
-        // Function calls / method calls / member access / index / etc. —
-        // runtime по дефолту. const fn (Plan 114.4 Ф.3) добавит исключение.
+        // Plan 114.4.2 D199 / Plan 114.4.3 Ф.4 V2: Call к const fn — constexpr,
+        // если callee = Ident (или TurboFish<Ident, ...> для generic const fn)
+        // и зарегистрирован как const fn, и каждый arg constexpr.
+        E::Call { func, args, trailing: None } => {
+            // Unwrap TurboFish to get underlying Ident name (generic const fn).
+            let callee_name_opt: Option<&String> = match &func.kind {
+                E::Ident(n) => Some(n),
+                E::TurboFish { base, .. } => match &base.kind {
+                    E::Ident(n) => Some(n),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(name) = callee_name_opt {
+                if const_fn_names.contains(name) {
+                    for a in args {
+                        match a {
+                            crate::ast::CallArg::Item(e) => {
+                                // Arg recursion должен пройти как constexpr;
+                                // если нет — переэмитим с E_CONST_FN_NON_CONST_ARG
+                                // (per-D199 более информативный код для caller'а).
+                                if let Err(_inner) = check_const_constexpr_ex(
+                                    e, known_consts, const_fn_names,
+                                ) {
+                                    return Err(Diagnostic::new(
+                                        format!(
+                                            "[E_CONST_FN_NON_CONST_ARG] call to \
+                                             const fn `{}` has non-constexpr \
+                                             argument — all args must be literals, \
+                                             arithmetic on literals, references to \
+                                             top-level const, or other const fn \
+                                             calls with constexpr args (D199).",
+                                            name
+                                        ),
+                                        e.span,
+                                    ));
+                                }
+                            }
+                            _ => {
+                                return Err(Diagnostic::new(
+                                    "[E_CONST_FN_NON_CONST_ARG] only positional \
+                                     constexpr args allowed when calling const fn \
+                                     в const initialiser (D199).".to_string(),
+                                    expr.span,
+                                ));
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+            Err(Diagnostic::new(
+                "[E_CONST_NOT_CONSTEXPR] non-const-fn call в `const` initialiser \
+                 — only literals, arithmetic, `as`-casts, record/tuple/array \
+                 literals, references to top-level consts, и calls to other \
+                 `const fn` are allowed. Use `ro X = …` для runtime / lazy-init, \
+                 либо declare `fn ... const param ... -> const T` (D199).".to_string(),
+                expr.span,
+            ))
+        }
+        // Member access / Index / InterpolatedStr / MapLit / call с trailing —
+        // runtime.
         E::Call { .. } | E::Member { .. } | E::Index { .. }
         | E::InterpolatedStr { .. } | E::MapLit { .. } => Err(Diagnostic::new(
             "[E_CONST_NOT_CONSTEXPR] non-constexpr expression в `const` \
-             initialiser — only literals, arithmetic over literals, \
-             record/tuple/array literals из constexpr fields, и references \
-             на другие top-level `const` are allowed. Runtime calls / member \
-             access / interpolation / map literals — not constexpr. Use \
-             `ro X = …` for runtime / lazy-init value, либо `const fn` для \
-             comptime function (Plan 114.4 Ф.1 / D199).".to_string(),
+             initialiser (member/index/interpolation/map/call-with-trailing). \
+             Use `ro X = …` для runtime / lazy-init value (D199).".to_string(),
             expr.span,
         )),
         // Любые другие конструкции (if, match, blocks, closures, etc.) — runtime.
@@ -712,6 +895,481 @@ fn check_const_constexpr(
              initialiser (control flow / closures / blocks not allowed). \
              Use `ro X = …` для runtime / lazy-init value (Plan 114.4 Ф.1).".to_string(),
             expr.span,
+        )),
+    }
+}
+
+/// Plan 114.4.2 (D199) Ф.1 body checker: validate const fn body against
+/// V1 whitelist (literals + arithmetic + as-cast + ident refs to const
+/// params/locals + local const + final expr + calls to other const fn).
+///
+/// Returns Err on first violation with appropriate error code.
+/// `param_consts` — set of const param names visible в body.
+/// `const_fn_names` — set of all const fn names (для call validation).
+/// `local_consts` — mutable set extended при встрече Stmt::Const.
+/// `current_fn` — for self-recursion detection.
+/// `call_targets` — mutable set — populated с именами callee const fn
+/// (для post-pass cycle detection).
+fn check_const_fn_expr(
+    expr: &crate::ast::Expr,
+    param_consts: &std::collections::HashSet<String>,
+    const_fn_names: &std::collections::HashSet<String>,
+    local_consts: &std::collections::HashSet<String>,
+    current_fn: &str,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::ExprKind as E;
+    match &expr.kind {
+        E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
+        | E::CharLit(_) | E::UnitLit => Ok(()),
+        E::Unary { operand, .. } => check_const_fn_expr(
+            operand, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+        ),
+        E::Binary { left, right, .. } => {
+            check_const_fn_expr(left, param_consts, const_fn_names, local_consts, current_fn, call_targets)?;
+            check_const_fn_expr(right, param_consts, const_fn_names, local_consts, current_fn, call_targets)
+        }
+        E::As(inner, _) => check_const_fn_expr(
+            inner, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+        ),
+        // Plan 114.4.4 Ф.3 V3: Range expr — recurse on start/end.
+        E::Range { start, end, .. } => {
+            if let Some(s) = start {
+                check_const_fn_expr(s, param_consts, const_fn_names, local_consts, current_fn, call_targets)?;
+            }
+            if let Some(e) = end {
+                check_const_fn_expr(e, param_consts, const_fn_names, local_consts, current_fn, call_targets)?;
+            }
+            Ok(())
+        }
+        E::Ident(name) => {
+            if param_consts.contains(name) || local_consts.contains(name) {
+                Ok(())
+            } else if const_fn_names.contains(name) {
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_FIRST_CLASS] const fn `{}` used as first-class \
+                         value в body — not supported в V1 (D199). Followup \
+                         `[M-114.4.2-first-class]`. Direct call `{}(arg)` instead.",
+                        name, name
+                    ),
+                    expr.span,
+                ))
+            } else {
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_REF_NON_CONST] const fn body refers `{}` which \
+                         is not a const param, local const, or const fn (D199). \
+                         Only const params/locals/literals allowed в const fn V1 body.",
+                        name
+                    ),
+                    expr.span,
+                ))
+            }
+        }
+        E::Call { func, args, trailing } => {
+            if trailing.is_some() {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_CONTROL_FLOW] trailing-block calls (DSL syntax) \
+                     not allowed в const fn body (D199): require runtime closure / \
+                     control-flow. Use const-eligible call syntax."
+                        .to_string(),
+                    expr.span,
+                ));
+            }
+            // Callee должен быть Ident, и это имя должно быть const fn.
+            let callee_name = match &func.kind {
+                E::Ident(n) => n.clone(),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_EFFECT_IN_BODY] indirect / method / path calls \
+                         not allowed в const fn body (D199). Use direct const fn \
+                         call by name."
+                            .to_string(),
+                        expr.span,
+                    ));
+                }
+            };
+            if !const_fn_names.contains(&callee_name) {
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_CONST_FN_EFFECT_IN_BODY] call `{}(...)` from const fn \
+                         body — `{}` is not a `const fn` (D199). Only calls to other \
+                         const fn are allowed. Use runtime fn if needed.",
+                        callee_name, callee_name
+                    ),
+                    expr.span,
+                ));
+            }
+            // Plan 114.4.3 Ф.2 (V2): direct self-recursion allowed.
+            // Evaluator enforces depth limit + memoization.
+            // V1 reject removed; cycle detection (mutual) downgraded
+            // to informational — handled at module-pass level.
+            let _self_call = callee_name == current_fn;
+            call_targets.insert(callee_name);
+            // Args также constexpr-eligible — recurse.
+            for a in args {
+                match a {
+                    crate::ast::CallArg::Item(e) => check_const_fn_expr(
+                        e, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                    crate::ast::CallArg::Spread(_) => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EFFECT_IN_BODY] spread args `...` not allowed \
+                             в const fn body (D199): runtime collection operation."
+                                .to_string(),
+                            expr.span,
+                        ));
+                    }
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EFFECT_IN_BODY] named / non-positional args \
+                             not supported в const fn body (D199 V1)."
+                                .to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        // Block expression — recurse через statements.
+        E::Block(block) => {
+            check_const_fn_block(
+                block, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )
+        }
+        // Plan 114.4.3 Ф.1 (D199 V2): `if`/`else` allowed — recurse
+        // on cond + each branch. Все sub-expressions должны быть constexpr.
+        E::If { cond, then, else_ } => {
+            check_const_fn_expr(
+                cond, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )?;
+            check_const_fn_block(
+                then, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )?;
+            if let Some(eb) = else_ {
+                match eb {
+                    crate::ast::ElseBranch::Block(b) => check_const_fn_block(
+                        b, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                    crate::ast::ElseBranch::If(ie) => check_const_fn_expr(
+                        ie, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                }
+            }
+            // Plan 114.4.4 Ф.3 V3: if без else allowed как side-effect
+            // statement (для loops с conditional continue/break). Evaluator
+            // skips body если cond=false, returns Unit.
+            Ok(())
+        }
+        // Plan 114.4.3 Ф.1 (D199 V2): `match` allowed — recurse on scrutinee +
+        // каждый arm body. Pattern V2.0 subset: literal + wildcard + ident bind.
+        E::Match { scrutinee, arms } => {
+            check_const_fn_expr(
+                scrutinee, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+            )?;
+            for arm in arms {
+                // Validate pattern V2.0 subset.
+                check_const_fn_pattern(&arm.pattern, expr.span)?;
+                if let Some(g) = &arm.guard {
+                    check_const_fn_expr(
+                        g, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?;
+                }
+                match &arm.body {
+                    crate::ast::MatchArmBody::Expr(e) => check_const_fn_expr(
+                        e, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                    crate::ast::MatchArmBody::Block(b) => check_const_fn_block(
+                        b, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?,
+                }
+            }
+            Ok(())
+        }
+        // IfLet — V2.1 deferred (pattern-bind complexity).
+        E::IfLet { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_CONTROL_FLOW] `if let` pattern-bind в const fn body \
+             не allowed в V2.0 (D199). Followup `[M-114.4.3-pattern-record-sum]`. \
+             Use `if cond { ... } else { ... }` с literal comparison."
+                .to_string(),
+            expr.span,
+        )),
+        // Plan 114.4.4 Ф.3 (D199 V3): for/while/loop allowed —
+        // evaluator enforces termination через MAX_LOOP_ITERATIONS.
+        E::For { pattern, iter, body, .. } => {
+            check_const_fn_expr(iter, param_consts, const_fn_names,
+                local_consts, current_fn, call_targets)?;
+            // Pattern var добавляется в locals для body validation.
+            let mut body_locals = local_consts.clone();
+            if let crate::ast::Pattern::Ident { name, .. } = pattern {
+                body_locals.insert(name.clone());
+            }
+            check_const_fn_block(body, param_consts, const_fn_names,
+                &body_locals, current_fn, call_targets)
+        }
+        E::While { cond, body, .. } => {
+            check_const_fn_expr(cond, param_consts, const_fn_names,
+                local_consts, current_fn, call_targets)?;
+            check_const_fn_block(body, param_consts, const_fn_names,
+                local_consts, current_fn, call_targets)
+        }
+        E::Loop { body, .. } => check_const_fn_block(body, param_consts,
+            const_fn_names, local_consts, current_fn, call_targets),
+        // ParallelFor + WhileLet остаются rejected.
+        E::ParallelFor { .. } | E::WhileLet { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_CONTROL_FLOW] `parallel for` / `while let` не \
+             разрешены в const fn body (D199). Use plain `for`/`while`."
+                .to_string(),
+            expr.span,
+        )),
+        // Try/Bang — effect propagation.
+        E::Try(_) | E::Bang(_) => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] Try / Bang (?/!!) propagate effects — \
+             const fn body должен быть pure (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Allocations / collection literals.
+        E::ArrayLit(_) | E::MapLit { .. } | E::InterpolatedStr { .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_ALLOCATION] allocations (arrays/maps/string interp) \
+             not allowed в const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        E::RecordLit { .. } | E::TupleLit(_) => Err(Diagnostic::new(
+            "[E_CONST_FN_ALLOCATION] record/tuple literals не разрешены в const \
+             fn body V1 (D199). Use scalar const fn for V1."
+                .to_string(),
+            expr.span,
+        )),
+        // Member/Index/Path — runtime access.
+        E::Member { .. } | E::Index { .. } | E::Path(_) | E::TurboFish { .. }
+        | E::SelfAccess => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] member/index/path access — runtime \
+             operations, not allowed в const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Coalesce/Is — runtime checks.
+        E::Coalesce(_, _) | E::Is(_, _) => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] coalesce (??) / type-check (is) — \
+             runtime semantics, not allowed в const fn body V1 (D199)."
+                .to_string(),
+            expr.span,
+        )),
+        // Прочее (closures / lambda / spawn / supervised / handler etc.) — reject.
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_EFFECT_IN_BODY] expression form not allowed в const fn \
+             body V1 (closures/spawn/handler/etc) (D199)."
+                .to_string(),
+            expr.span,
+        )),
+    }
+}
+
+/// Plan 114.4.3 Ф.1 (D199 V2): pattern V2.0 subset для match arm validation.
+/// Allowed: literal (Int/Bool/Char/Str/Unit), wildcard (_), single Ident
+/// bind (which binds a fresh local — caller responsibility to register).
+/// Rejected V2.0: record/sum/tuple destructuring patterns.
+fn check_const_fn_pattern(
+    pat: &crate::ast::Pattern,
+    span: Span,
+) -> Result<(), Diagnostic> {
+    use crate::ast::Pattern;
+    match pat {
+        Pattern::Wildcard(_) => Ok(()),
+        Pattern::Ident { is_mut: false, .. } => Ok(()),
+        Pattern::Ident { is_mut: true, .. } => Err(Diagnostic::new(
+            "[E_CONST_FN_PATTERN_NOT_SUPPORTED] `mut` pattern в const fn match \
+             arm not allowed (D199 V2.0). Remove `mut`."
+                .to_string(),
+            span,
+        )),
+        Pattern::Literal(_, _) => Ok(()),
+        Pattern::Or { alternatives, .. } => {
+            for alt in alternatives {
+                check_const_fn_pattern(alt, span)?;
+            }
+            Ok(())
+        }
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_PATTERN_NOT_SUPPORTED] pattern form not supported в \
+             const fn match arm V2.0 (D199). Allowed: literal patterns, \
+             wildcard `_`, single ident bind, simple `|` alternation. \
+             Record/sum/tuple destructuring — followup \
+             `[M-114.4.3-pattern-record-sum]`."
+                .to_string(),
+            span,
+        )),
+    }
+}
+
+/// Plan 114.4.4 Ф.3 V3: collect bindings from `let` pattern in const fn body.
+/// V3.0 supports only single Ident patterns. Record/tuple destructuring —
+/// V3.1 followup `[M-114.4.4-let-destructure]`.
+fn collect_pattern_bindings_const_fn(
+    pat: &crate::ast::Pattern,
+    locals: &mut std::collections::HashSet<String>,
+    span: Span,
+) -> Result<(), Diagnostic> {
+    use crate::ast::Pattern;
+    match pat {
+        Pattern::Ident { name, .. } => {
+            locals.insert(name.clone());
+            Ok(())
+        }
+        Pattern::Wildcard(_) => Ok(()),
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_PATTERN_NOT_SUPPORTED] only single ident / wildcard \
+             pattern allowed в `let` binding в const fn body V3.0 (D199). \
+             Record/tuple destructure — followup `[M-114.4.4-let-destructure]`."
+                .to_string(),
+            span,
+        )),
+    }
+}
+
+fn check_const_fn_block(
+    block: &crate::ast::Block,
+    param_consts: &std::collections::HashSet<String>,
+    const_fn_names: &std::collections::HashSet<String>,
+    local_consts: &std::collections::HashSet<String>,
+    current_fn: &str,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::Stmt;
+    let mut locals = local_consts.clone();
+    // Block has stmts (non-final) + optional trailing expr (final value).
+    // Если trailing нет — последний stmt из stmts становится final.
+    let n = block.stmts.len();
+    let has_trailing = block.trailing.is_some();
+    for (idx, st) in block.stmts.iter().enumerate() {
+        let is_last = !has_trailing && idx == n - 1;
+        match st {
+            Stmt::Const(cd) => {
+                // Validate RHS as const-fn expression (allowed const fn calls).
+                check_const_fn_expr(
+                    &cd.value, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+                locals.insert(cd.name.clone());
+            }
+            Stmt::Expr(e) => {
+                // Plan 114.4.4 Ф.3 V3: intermediate Stmt::Expr accepted —
+                // body может содержать loops / if-without-else / etc. как
+                // statements. Value extraction handled by caller (trailing
+                // expr или final Stmt::Expr становится return value).
+                let _ = is_last;
+                check_const_fn_expr(
+                    e, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+            }
+            // Plan 114.4.4 Ф.3 V3: mut let bindings allowed для loops.
+            // Stmt::Let добавляет name в locals. mut OK; ro/plain let
+            // тоже OK — body checker treats them uniformly.
+            Stmt::Let(ld) => {
+                check_const_fn_expr(
+                    &ld.value, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+                // Collect bindings from pattern. Только Ident patterns
+                // supported в V3.0 const fn body. Record/tuple destructure
+                // — V3.1 followup.
+                collect_pattern_bindings_const_fn(&ld.pattern, &mut locals, ld.span)?;
+            }
+            // Plan 114.4.4 Ф.3 V3: assignment к mut local allowed.
+            Stmt::Assign { target, value, .. } => {
+                check_const_fn_expr(
+                    target, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+                check_const_fn_expr(
+                    value, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                )?;
+            }
+            Stmt::Return { value, span } => {
+                if !is_last {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_CONTROL_FLOW] `return` must be terminal в \
+                         const fn body V1 (D199)."
+                            .to_string(),
+                        *span,
+                    ));
+                }
+                if let Some(v) = value {
+                    check_const_fn_expr(
+                        v, param_consts, const_fn_names, &locals, current_fn, call_targets,
+                    )?;
+                }
+            }
+            Stmt::Throw { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] `throw` not allowed в const fn \
+                     body (D199): effect propagation."
+                        .to_string(),
+                    *span,
+                ));
+            }
+            Stmt::Defer { span, .. } | Stmt::ErrDefer { span, .. }
+            | Stmt::OkDefer { span, .. } | Stmt::DeferWithResult { span, .. }
+            | Stmt::ConsumeScope { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] defer / consume-scope не разрешены \
+                     в const fn body (D199): cleanup-семантика — runtime."
+                        .to_string(),
+                    *span,
+                ));
+            }
+            // Plan 114.4.4 Ф.3 V3: break/continue allowed внутри loops.
+            // Checker не отслеживает context — evaluator catches stray
+            // break/continue outside loop scope at runtime через
+            // ControlFlow propagation.
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            // Ghost statements (assume/assert_static/apply/calc/reveal) — reject
+            // в const fn V1 как unsupported.
+            Stmt::AssertStatic { span, .. } | Stmt::Assume { span, .. }
+            | Stmt::Apply { span, .. } | Stmt::Calc { span, .. }
+            | Stmt::Reveal { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] ghost statements (assume/assert_static/\
+                     apply/calc/reveal) not allowed в const fn body V1 (D199)."
+                        .to_string(),
+                    *span,
+                ));
+            }
+        }
+    }
+    // Trailing expression — финальное значение блока.
+    if let Some(trail) = &block.trailing {
+        check_const_fn_expr(
+            trail, param_consts, const_fn_names, &locals, current_fn, call_targets,
+        )?;
+    }
+    Ok(())
+}
+
+/// Top-level entrypoint: validate const fn `fd` body.
+/// Returns Err on first violation; updates `call_targets` для cycle detection.
+fn check_const_fn_decl(
+    fd: &FnDecl,
+    const_fn_names: &std::collections::HashSet<String>,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let mut param_consts = std::collections::HashSet::new();
+    for p in &fd.params {
+        param_consts.insert(p.name.clone());
+    }
+    let local_consts = std::collections::HashSet::new();
+    match &fd.body {
+        crate::ast::FnBody::Expr(e) => check_const_fn_expr(
+            e, &param_consts, const_fn_names, &local_consts, &fd.name, call_targets,
+        ),
+        crate::ast::FnBody::Block(b) => check_const_fn_block(
+            b, &param_consts, const_fn_names, &local_consts, &fd.name, call_targets,
+        ),
+        crate::ast::FnBody::External => Err(Diagnostic::new(
+            "[E_CONST_FN_EXTERNAL] external fn не может быть const fn (D199)."
+                .to_string(),
+            fd.span,
         )),
     }
 }
@@ -731,6 +1389,43 @@ struct TypeCheckCtx<'a> {
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
     imported_modules: HashSet<String>,
+    /// Plan 114.4.2 (D199): const fn names в текущем модуле — для
+    /// scope-local Stmt::Const RHS validation (calls к const fn разрешены).
+    const_fn_names: HashSet<String>,
+    /// Plan 114.4.2 (D199): flag — we are inside const fn body. Scope-local
+    /// const validation skipped (body checker `check_const_fn_decl` covers
+    /// param/local awareness more precisely).
+    in_const_fn: std::cell::Cell<bool>,
+    /// Plan 124 (D220): current receiver type — set перед walking method body
+    /// в check_fn; cleared on exit. `None` если мы НЕ внутри type-method
+    /// (free fn, top-level expr). f3_check_member использует для priv field
+    /// access check: если field.priv_field И current_recv_type != obj's type
+    /// → emit E_PRIV_FIELD_READ.
+    current_recv_type: std::cell::RefCell<Option<String>>,
+}
+
+/// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
+/// Restoring previous value on drop — works regardless of error path.
+struct ConstFnFlagGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: bool,
+}
+impl<'a, 'b> Drop for ConstFnFlagGuard<'a, 'b> {
+    fn drop(&mut self) {
+        self.ctx.in_const_fn.set(self.prev);
+    }
+}
+
+/// Plan 124 (D220): RAII guard для current_recv_type field в TypeCheckCtx.
+/// Restoring previous value on drop — works regardless of error path.
+struct PrivRecvGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Option<String>,
+}
+impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_recv_type.borrow_mut() = self.prev.take();
+    }
 }
 
 /// `true` для имён, у которых arity **не** проверяется: referential-типы
@@ -841,7 +1536,40 @@ impl<'a> TypeCheckCtx<'a> {
             collect(&pf.imports);
         }
         drop(collect);
-        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules }
+        // Plan 114.4.2 D199 + Plan 114.4.3 Ф.5 V2: precompute const fn names
+        // для scope-local const validation. Includes const fn declarations
+        // AND const fn aliases (`const ALIAS = const_fn_name` form).
+        let mut const_fn_names: HashSet<String> = module.items.iter()
+            .filter_map(|it| match it {
+                Item::Fn(fd) => {
+                    let is_const = fd.return_is_const
+                        || fd.params.iter().any(|p| p.is_const);
+                    if is_const { Some(fd.name.clone()) } else { None }
+                }
+                _ => None,
+            })
+            .collect();
+        // Pass 2: include aliases (Ident RHS resolving to const fn name).
+        // Iterative — alias-to-alias chains supported up to depth=10.
+        for _ in 0..10 {
+            let mut added = false;
+            for item in &module.items {
+                if let Item::Const(c) = item {
+                    if let crate::ast::ExprKind::Ident(target) = &c.value.kind {
+                        if const_fn_names.contains(target)
+                            && !const_fn_names.contains(&c.name)
+                        {
+                            const_fn_names.insert(c.name.clone());
+                            added = true;
+                        }
+                    }
+                }
+            }
+            if !added { break; }
+        }
+        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
+            in_const_fn: std::cell::Cell::new(false),
+            current_recv_type: std::cell::RefCell::new(None) }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -923,7 +1651,39 @@ impl<'a> TypeCheckCtx<'a> {
                             _ => None,
                         })
                         .collect();
-                    if let Err(d) = check_const_constexpr(&cd.value, &known_consts) {
+                    // Plan 114.4.2 D199 + 114.4.3 Ф.5 V2: const fn names
+                    // (including aliases — `const ALIAS = const_fn`).
+                    let mut const_fn_names: HashSet<String> = module
+                        .items
+                        .iter()
+                        .filter_map(|it| match it {
+                            Item::Fn(fd) => {
+                                let is_const = fd.return_is_const
+                                    || fd.params.iter().any(|p| p.is_const);
+                                if is_const { Some(fd.name.clone()) } else { None }
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    for _ in 0..10 {
+                        let mut added = false;
+                        for it in &module.items {
+                            if let Item::Const(c) = it {
+                                if let crate::ast::ExprKind::Ident(target) = &c.value.kind {
+                                    if const_fn_names.contains(target)
+                                        && !const_fn_names.contains(&c.name)
+                                    {
+                                        const_fn_names.insert(c.name.clone());
+                                        added = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !added { break; }
+                    }
+                    if let Err(d) = check_const_constexpr_ex(
+                        &cd.value, &known_consts, &const_fn_names,
+                    ) {
                         errors.push(d);
                     }
                 }
@@ -1510,6 +2270,21 @@ impl<'a> TypeCheckCtx<'a> {
     // --- Ф.2: walk сигнатур ---------------------------------------------
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 114.4.2 (D199): set flag для scope-local const skip
+        // когда мы внутри const fn body. Body checker
+        // (check_const_fn_decl) точнее покрывает validation.
+        let is_const_fn = fd.return_is_const || fd.params.iter().any(|p| p.is_const);
+        let prev_in_const_fn = self.in_const_fn.get();
+        self.in_const_fn.set(is_const_fn);
+        let _guard = ConstFnFlagGuard { ctx: self, prev: prev_in_const_fn };
+
+        // Plan 124 (D220): set current_recv_type для priv field access scope
+        // tracking. Instance + Static methods обa get receiver's type_name;
+        // priv field access разрешён в both contexts.
+        let prev_recv = self.current_recv_type.borrow().clone();
+        let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
+        *self.current_recv_type.borrow_mut() = new_recv;
+        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
         // Generic-scope функции: её собственные generic-параметры +
         // generic-параметры receiver-типа (`fn Box[T] @get() -> T`).
         let mut gs: HashSet<String> = HashSet::new();
@@ -1937,9 +2712,18 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(t, gs, errors);
                 }
                 self.walk_expr(&d.value, gs, errors);
-                let empty_consts: HashSet<String> = HashSet::new();
-                if let Err(diag) = check_const_constexpr(&d.value, &empty_consts) {
-                    errors.push(diag);
+                // Plan 114.4.2 D199: внутри const fn body — scope-local
+                // const validated by check_const_fn_decl (param/local
+                // awareness). Здесь skip избегаем false-positives на
+                // const param refs (e.g. `const c = b as int` где
+                // `b` — const param).
+                if !self.in_const_fn.get() {
+                    let empty_consts: HashSet<String> = HashSet::new();
+                    if let Err(diag) = check_const_constexpr_ex(
+                        &d.value, &empty_consts, &self.const_fn_names,
+                    ) {
+                        errors.push(diag);
+                    }
                 }
             }
             Stmt::Assign { target, value, .. } => {
@@ -2130,6 +2914,34 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                             }
+                            // Plan 124 (D220): priv field INIT check — record literal
+                            // outside type-method scope cannot init priv fields.
+                            if let TypeDeclKind::Record(rec_fields) = &td.kind {
+                                let current_recv = self.current_recv_type.borrow();
+                                let allowed = current_recv.as_deref() == Some(last.as_str());
+                                if !allowed {
+                                    for f in fields {
+                                        if f.is_spread { continue; }
+                                        if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == f.name) {
+                                            if fdecl.priv_field {
+                                                errors.push(Diagnostic::new(
+                                                    format!(
+                                                        "[E_PRIV_FIELD_INIT] cannot \
+                                                         initialize private field `{}.{}` \
+                                                         via record literal outside type-\
+                                                         method scope. Field marked `priv` \
+                                                         (Plan 124 / D220). Hint: use \
+                                                         factory method like `{}.new(...)` \
+                                                         which constructs the type internally.",
+                                                        last, f.name, last,
+                                                    ),
+                                                    f.span,
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2283,6 +3095,13 @@ impl<'a> TypeCheckCtx<'a> {
     // ================================================================
 
     fn f1_check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 124 (D220): set current_recv_type для priv field access scope
+        // tracking. Instance + Static methods обa get receiver's type_name.
+        let prev_recv = self.current_recv_type.borrow().clone();
+        let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
+        *self.current_recv_type.borrow_mut() = new_recv;
+        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+
         let gs = fn_generic_scope(fd);
         let mut scope: HashMap<String, TypeRef> = HashMap::new();
         for p in &fd.params {
@@ -2353,6 +3172,43 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Let(d) => {
                 self.f1_expr(&d.value, gs, scope, errors);
                 self.f4_check_value(&d.value, scope, errors);
+                // Plan 124 (D220): priv field PATTERN check — record destructure
+                // outside type-method scope cannot bind priv fields.
+                if let Pattern::Record { fields, .. } = &d.pattern {
+                    if let Some(scrutinee_ty) = self.infer_expr_type(&d.value, scope) {
+                        if let TypeRef::Named { path, .. } = &scrutinee_ty {
+                            if let Some(tname) = path.last() {
+                                if let Some(td) = self.types.get(tname.as_str()) {
+                                    if let TypeDeclKind::Record(rec_fields) = &td.kind {
+                                        let current_recv = self.current_recv_type.borrow();
+                                        let allowed = current_recv.as_deref() == Some(tname.as_str());
+                                        if !allowed {
+                                            for pf in fields {
+                                                if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == pf.name) {
+                                                    if fdecl.priv_field {
+                                                        errors.push(Diagnostic::new(
+                                                            format!(
+                                                                "[E_PRIV_FIELD_PATTERN] cannot \
+                                                                 destructure private field `{}.{}` \
+                                                                 в pattern outside type-method scope. \
+                                                                 Field marked `priv` (Plan 124 / D220). \
+                                                                 Hint: bind value to a variable then \
+                                                                 access via public methods of `{}`, or \
+                                                                 move destructure into a method of `{}`.",
+                                                                tname, pf.name, tname, tname,
+                                                            ),
+                                                            d.value.span,
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Ф.1: annotation ↔ RHS.
                 if let (Some(ann), Some(name)) =
                     (&d.ty, pattern_simple_name(&d.pattern))
@@ -3022,7 +3878,26 @@ impl<'a> TypeCheckCtx<'a> {
                 if fields.iter().any(|f| f.is_embed) {
                     return;
                 }
-                if fields.iter().any(|f| f.name == name) {
+                if let Some(field) = fields.iter().find(|f| f.name == name) {
+                    // Plan 124 (D220): priv field READ access check.
+                    // Field accessible только из methods own type'а.
+                    if field.priv_field {
+                        let current_recv = self.current_recv_type.borrow();
+                        let allowed = current_recv.as_deref() == Some(tname.as_str());
+                        if !allowed {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Field marked \
+                                     `priv` (Plan 124 / D220). Hint: add public \
+                                     getter method on `{}` or move accessing code \
+                                     into a method of `{}`.",
+                                    tname, name, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
+                    }
                     return;
                 }
                 // Метод? Имена операторных методов могут храниться с ведущим `@`.
@@ -3803,6 +4678,25 @@ impl<'a> TypeCheckCtx<'a> {
                                         ),
                                         target.span,
                                     ));
+                                }
+                                // Plan 124 (D220): priv field WRITE access check.
+                                if f.priv_field {
+                                    let current_recv = self.current_recv_type.borrow();
+                                    let allowed = current_recv.as_deref() == Some(tname);
+                                    if !allowed {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
+                                                 field `{}.{}` outside type-method scope. \
+                                                 Field marked `priv` (Plan 124 / D220). \
+                                                 Hint: add public mutator method on `{}` \
+                                                 (e.g. `export fn {} mut @set_{}(v T)`) \
+                                                 or move accessing code into a method of `{}`.",
+                                                tname, field_name, tname, tname, field_name, tname,
+                                            ),
+                                            target.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -6920,8 +7814,15 @@ impl NameResCtx {
                     for n in bindings { top.insert(n); }
                 }
             }
-            // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
-            Stmt::Const(_) => {}
+            // Plan 114.4 Ф.2 / Plan 114.4.2 (D199): scope-local const — walk
+            // RHS (may reference const fn calls) + bind name в текущий frame
+            // так чтобы subsequent expressions могли его использовать.
+            Stmt::Const(d) => {
+                self.walk_expr(&d.value, file_id, scope, errors);
+                if let Some(top) = scope.last_mut() {
+                    top.insert(d.name.clone());
+                }
+            }
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, file_id, scope, errors);
                 self.walk_expr(value, file_id, scope, errors);
@@ -11273,7 +12174,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     .unwrap_or(false);
                                 let builtin_mut_method = matches!(
                                     method.as_str(),
-                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
                                     | "clear" | "truncate" | "reserve" | "swap"
                                     | "sort" | "sort_by" | "set" | "extend" | "extend_from"
                                     | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
@@ -11313,7 +12214,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     .unwrap_or(false);
                                 let builtin_mut_method = matches!(
                                     method.as_str(),
-                                    "push" | "pop" | "append" | "insert" | "remove"
+                                    "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
                                     | "clear" | "truncate" | "reserve" | "swap"
                                     | "sort" | "sort_by" | "set" | "extend" | "extend_from"
                                     | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"

@@ -622,6 +622,14 @@ impl<'a> Lexer<'a> {
             //   - `unsafe { ... }` block (Ф.3),
             //   - `#unsafe` attribute on fn declarations (Ф.3).
             "unsafe" => TokenKind::KwUnsafe,
+            // Plan 124 (D220): per-field private visibility modifier +
+            // type-level default flip (`type X priv { ... }`). Compile-time
+            // enforcement of `priv` field access — выбрасывает
+            // E_PRIV_FIELD_{READ,WRITE,INIT,PATTERN} вне type-methods scope.
+            "priv" => TokenKind::KwPriv,
+            // Plan 124 (D220): explicit public override marker. Required для
+            // override type-level priv default; redundant без него.
+            "pub" => TokenKind::KwPub,
             "if" => TokenKind::KwIf,
             "else" => TokenKind::KwElse,
             "match" => TokenKind::KwMatch,

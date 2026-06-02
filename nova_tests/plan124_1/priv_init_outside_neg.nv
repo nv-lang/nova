@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_INIT
+//
+// Plan 124.1 — negative: priv field init via record literal outside
+// type-method scope → E_PRIV_FIELD_INIT (Plan 124 / D220 §4).
+module plan124_1.priv_init_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+// External code tries to init Account via record literal в array context —
+// where type prefix is necessary. money priv → init blocked.
+fn external_constructor(n str) -> []Account =>
+    [Account { money: 0.0, name: n }]

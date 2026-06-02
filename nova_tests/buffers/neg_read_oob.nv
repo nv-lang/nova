@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC unhandled Fail: ReadBuffer.UnexpectedEnd
+// EXPECT_RUNTIME_PANIC unhandled typed Fail
 //
 // Plan 85.2 Ф.3 — негатив: Fail-form чтение за границей буфера.
 //

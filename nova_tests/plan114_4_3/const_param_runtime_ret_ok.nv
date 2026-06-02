@@ -1,0 +1,13 @@
+// Plan 114.4.3 Ф.3 T4.3 positive: all-const params + runtime return.
+// `[M-114.4.2-runtime-return]` покрывается mixed-args automatically.
+
+module plan114_4_3.const_param_runtime_ret_ok
+
+fn label(const tag int) -> int => tag * 1000
+
+test "all-const params, runtime return" {
+    ro a = label(42)
+    ro b = label(7)
+    assert(a == 42000)
+    assert(b == 7000)
+}

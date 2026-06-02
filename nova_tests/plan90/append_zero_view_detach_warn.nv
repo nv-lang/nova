@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_WARNING W_VIEW_EXTEND_DETACH
+//
+// Plan 90 followup (2026-06-01) — W_VIEW_EXTEND_DETACH lint:
+// append_zero — grow-method, тот же realloc-path что append/insert/reserve.
+// Spec D141 (08-runtime.md): «Lint срабатывает если ... вызывается
+// grow-метод на parent (append / insert / reserve / append_zero)».
+
+module plan90.append_zero_view_detach_warn
+
+fn main() -> () {
+    mut parent []int = [1, 2, 3, 4, 5]
+    ro view = parent[1..4]
+    parent.append_zero(3)  // W_VIEW_EXTEND_DETACH: view may dangle after realloc
+    ro _ = view.len()
+}

@@ -1,0 +1,12 @@
+// Plan 114.4.2 T3-NEG.1: runtime arg в call к const fn → E_CONST_FN_NON_CONST_ARG.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_NON_CONST_ARG
+
+module plan114_4_2.non_const_arg_neg
+
+fn add(const a int, const b int) -> const int => a + b
+
+fn main_runtime() {
+    ro x = 5
+    const R = add(x, 3)
+}

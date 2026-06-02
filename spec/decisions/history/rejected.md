@@ -462,9 +462,12 @@ public API, отдельное D-решение.
 Default — приватный, явный — `export`. См. [D47](../07-modules.md#d47).
 
 ### Per-field `export` для record
-**Отвергнуто в MVP.** Все поля публичны, convention `_prefix` для
-приватных. Может быть пересмотрено в будущем. См.
-[D47](../07-modules.md#d47).
+**Отвергнуто в MVP, пересмотрено 2026-06-02.** Изначально MVP: все
+поля публичны + convention `_prefix` для приватных-по-договору.
+**2026-06-02 amend** (Plan 124 / D220): `priv` keyword вводит
+compile-time per-field visibility; convention `_prefix` отменена.
+Default остаётся public (kubernetes data: 92% public в API surface).
+См. [D47 amend](../07-modules.md#d47).
 
 ### Wildcard import `import x.*`
 **Отвергнуто.** Скрывает источник, ломает локальность контекста.

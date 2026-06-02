@@ -1,0 +1,10 @@
+// Plan 114.4.3 Ф.4 NEG: T reflection в generic const fn body — V3 deferred.
+// `sizeof[T]()` — type reflection, не allowed в V2.0.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN
+
+module plan114_4_3.generic_sizeof_neg
+
+fn[T] big(const x int) -> const int => sizeof[T]() + x
+
+const BAD = big[int](1)

@@ -32,6 +32,10 @@ pub(crate) struct ContractAttrs {
     /// V1 Ф.3.2: parsed + stored в FnDecl.unsafe_attr; checker enforcement
     /// E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
     pub unsafe_attr: bool,
+    /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` — per-fn override
+    /// const fn evaluator recursion depth (default 256). For deep recursion
+    /// (e.g. fact(500) с big-int arith). 0 < N <= 65535.
+    pub fn_eval_max_depth: Option<u32>,
 }
 
 impl ContractAttrs {
@@ -45,6 +49,7 @@ impl ContractAttrs {
             && !self.no_overflow
             && self.sync_class.is_none()
             && !self.unsafe_attr
+            && self.fn_eval_max_depth.is_none()
     }
 }
 
@@ -1940,6 +1945,46 @@ impl Parser {
                     self.bump(); // nooverflow
                     attrs.no_overflow = true;
                 }
+                "fn_eval_max_depth" => {
+                    // Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)`
+                    // — per-fn override evaluator recursion depth.
+                    // Default 256. Range 1..=65535.
+                    self.bump(); // #
+                    self.bump(); // fn_eval_max_depth
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#fn_eval_max_depth требует аргумент: `#fn_eval_max_depth(N)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let n_token = self.peek().clone();
+                    let n = if let TokenKind::Int(n) = n_token.kind {
+                        self.bump();
+                        if !(1..=65535).contains(&n) {
+                            return Err(Diagnostic::new(
+                                "#fn_eval_max_depth(N) требует 1 <= N <= 65535",
+                                n_token.span,
+                            ));
+                        }
+                        n as u32
+                    } else {
+                        return Err(Diagnostic::new(
+                            "#fn_eval_max_depth требует int literal: `#fn_eval_max_depth(512)`",
+                            n_token.span,
+                        ));
+                    };
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "ожидался `)` после #fn_eval_max_depth(N)",
+                            span,
+                        ));
+                    }
+                    self.bump(); // )
+                    attrs.fn_eval_max_depth = Some(n);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -2331,9 +2376,24 @@ impl Parser {
         let effects = self.parse_effects_until_arrow_or_body()?;
         // Plan 77 (D132): `-> @` — fluent-return (метод возвращает receiver).
         let mut returns_receiver = false;
+        // Plan 114.4.2 (D199): `-> const T` — comptime-evaluable return.
+        // Marks fn as `const fn`. All-or-nothing verified в parse_fn после.
+        let mut return_is_const = false;
         let return_type = if self.eat(&TokenKind::Arrow).is_some() {
+            if matches!(self.peek().kind, TokenKind::KwConst) {
+                self.bump(); // const
+                return_is_const = true;
+            }
             if matches!(self.peek().kind, TokenKind::At) {
                 let at_span = self.peek().span;
+                if return_is_const {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_FLUENT_RETURN] `-> const @` not allowed (D199 + D132): \
+                         fluent-return подразумевает runtime receiver, не comptime literal."
+                            .to_string(),
+                        at_span,
+                    ));
+                }
                 self.bump(); // `@`
                 returns_receiver = true;
                 // `-> @` допустим только для instance-метода (есть `@`-receiver).
@@ -2384,6 +2444,64 @@ impl Parser {
             None
         };
 
+        // Plan 114.4.2 V1 (D199) / Plan 114.4.3 Ф.3 V2 (D199 amend):
+        // const fn classification + restrictions.
+        //
+        // V2 (mixed-args): убираем all-or-nothing reject. Allow:
+        //   - Все params const + const return = fully-const fn (V1 surface,
+        //     evaluator-inlined + dropped из codegen).
+        //   - Mixed (≥1 const param, не fully-const) = monomorphizable fn:
+        //     const params trigger constexpr-arg requirement на call-site,
+        //     body — runtime, return — runtime/const valid.
+        //   - Только const return + runtime params — невалидно: return cannot
+        //     reference runtime params если promised constexpr.
+        //   - is_external + const param/return → reject (no Nova body).
+        //   - effect-list — fully-const reject; mixed может (runtime body
+        //     allowed).
+        let any_const_param = params.iter().any(|p| p.is_const);
+        let all_const_params = !params.is_empty() && params.iter().all(|p| p.is_const);
+        let is_fully_const_fn = (all_const_params || params.is_empty()) && return_is_const;
+        let has_const_surface = any_const_param || return_is_const;
+
+        if has_const_surface {
+            // Runtime params + const return = potential E_CONST_FN_RUNTIME_REF_IN_CONST_RETURN
+            // (body verification by check_const_fn_decl); parser-level —
+            // только if нет ни одного const param: явная ошибка, return cannot
+            // produce constexpr из runtime params.
+            if return_is_const && !any_const_param && !params.is_empty() {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_PARTIAL_CONSTNESS] `-> const T` return с все-runtime \
+                     params (D199 V2). const-return requires at least один const param \
+                     или fully no params. Make params `const` или замени `-> const T` \
+                     на `-> T`."
+                        .to_string(),
+                    start,
+                ));
+            }
+            // External + const fn — reject (no Nova body to evaluate).
+            if is_external {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EXTERNAL] `external fn` не может быть `const fn` \
+                     (D199): comptime evaluation требует Nova body."
+                        .to_string(),
+                    start,
+                ));
+            }
+            // Plan 114.4.3 Ф.4 V2: generic const fn allowed — T-independent
+            // body only. T reflection (sizeof[T], T.field) — V3 follow-up.
+            // Fully-const fn — strict: no effect-list (comptime-only).
+            // Mixed fn — runtime body может effects (V2 allows).
+            if is_fully_const_fn && !effects.is_empty() {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_SIGNATURE] fully-const fn (D199) не \
+                     может иметь effect-list — comptime evaluation runtime-effects \
+                     бессмысленна. Убери effect-list или сделай mixed (хотя бы один \
+                     runtime param)."
+                        .to_string(),
+                    effects[0].span(),
+                ));
+            }
+        }
         // Plan 33.1+33.2 (D24): contracts + reads/modifies после сигнатуры,
         // до тела. `requires <expr>` / `ensures <expr>` / `reads ...` /
         // `modifies ...` на отдельных строках.
@@ -2474,6 +2592,7 @@ impl Parser {
             params,
             effects,
             return_type,
+            return_is_const,
             returns_receiver,
             body,
             span: start.merge(end_span),
@@ -2503,6 +2622,7 @@ impl Parser {
             // parse_contract_attrs (handles KwUnsafe inline). Type-checker
             // enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
             unsafe_attr: contract_attrs.unsafe_attr,
+            fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
         })
     }
 
@@ -2523,11 +2643,51 @@ impl Parser {
             ));
         }
         let has_readonly_prefix = self.eat(&TokenKind::KwRo).is_some();
+        // Plan 114.4.2 (D199): `const name Type` — comptime-only параметр.
+        // All-or-nothing: проверяется в parse_fn после сбора всех params.
+        // Конфликты с другими modifier'ами проверяем сейчас.
+        let is_const_param = if matches!(self.peek().kind, TokenKind::KwConst) {
+            self.bump();
+            if has_readonly_prefix {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `ro` и `const` (D199): `const` уже подразумевает immutable \
+                     comptime value. Убери `ro`.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwMut) {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `mut` (D199): `const` — comptime value, не имеет \
+                     runtime storage. Используй runtime fn если нужна mutation.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            if matches!(self.peek().kind, TokenKind::KwConsume) {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `consume` (D199): `const` — comptime literal, \
+                     не имеет ownership. Убери `consume`.".to_string(),
+                    self.peek().span,
+                ));
+            }
+            true
+        } else {
+            false
+        };
         // Plan 73 (D131): `consume name Type` — consuming параметр. После
         // передачи аргумента в такой параметр переменная-источник
         // логически инвалидируется (use-after-consume → compile error).
         // `consume` идёт перед именем (как leading `mut`).
         let is_consume = if matches!(self.peek().kind, TokenKind::KwConsume) {
+            if is_const_param {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `consume` (D199).".to_string(),
+                    self.peek().span,
+                ));
+            }
             self.bump();
             // Plan 100.1 (D131 / D133): `consume mut name Type` — parse error.
             // `consume` = ownership transfer (D131); `mut` = mutable borrow.
@@ -2556,6 +2716,13 @@ impl Parser {
         // E_PARAM_MOD_CONFLICT.
         let mut is_mut = false;
         if matches!(self.peek().kind, TokenKind::KwMut) {
+            if is_const_param {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `mut` (D199).".to_string(),
+                    self.peek().span,
+                ));
+            }
             if is_consume {
                 return Err(Diagnostic::new(
                     "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
@@ -2667,6 +2834,7 @@ impl Parser {
             default,
             consume: is_consume,
             is_mut,
+            is_const: is_const_param,
         })
     }
 
@@ -2774,14 +2942,39 @@ impl Parser {
         // caller must consume instances (via consume-method wrapper). No body
         // needed — consume enforcement is field-independent for opaque types
         // (the entire opaque value is the resource).
-        let consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        //
+        // Plan 124 (D220): `type X priv { ... }` — type-level default visibility
+        // flip; fields default = priv для этого type'а, explicit `pub` modifier
+        // на field override priv default. Markers `consume` и `priv` могут идти
+        // в любом порядке (взаимно независимые).
+        let mut consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        let default_field_priv = self.eat(&TokenKind::KwPriv).is_some();
+        if !consume_marker {
+            consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        }
 
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
         // реализация в runtime. Body отсутствует — никакого `{ ... }`, `|`,
         // `effect`, `protocol`, `alias TYPE`, newtype `TYPE`. Если parser
         // встречает что-то похожее на body — это compile error.
         if is_external {
-            // Skip newlines чтобы консистентно отвергать «external type X\n{...}».
+            // Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic]
+            // (closed 2026-06-01): зафиксировать наличие newline ДО skip,
+            // чтобы distinguish:
+            //   1. `external type X\n\nfn dummy()` — `fn` это next decl, не body.
+            //   2. `external type X\n{...}` — `{` это body (на любом расстоянии).
+            //   3. `external type X Foo` — `Foo` (на той же линии) это newtype body.
+            // Старая логика skip_newlines() → check is_body_start ловила (1)
+            // как ложный newtype body (fn after `external type X` treat'ился
+            // как body, не next decl). Новая: только same-line check (no newline)
+            // ловит newtype body case, иначе newlines = end of decl.
+            let saw_newline_before_body = matches!(
+                self.peek().kind,
+                TokenKind::Newline | TokenKind::Semicolon
+            );
+            // Always check brace/pipe/effect/protocol/alias на любом расстоянии —
+            // эти однозначные body markers даже при newline нарушают opaque-type
+            // контракт (`external type X\n{ ... }` — попытка body, error).
             self.skip_newlines();
             match self.peek().kind {
                 TokenKind::LBrace
@@ -2803,13 +2996,10 @@ impl Parser {
                 }
                 _ => {}
             }
-            // Дополнительно: если на line следует **ident, начинающийся с
-            // uppercase или примитива** — это похоже на newtype-тело
-            // (`external type Foo Bar`). Отвергаем для cleaner diagnostic.
-            // Heuristic: если следующий токен начинает type expression
-            // (ident начинающийся с letter, LBracket для array-type, или
-            // примитив-keyword), но НЕ newline/EOF — это newtype body.
-            let is_body_start = match &self.peek().kind {
+            // Ident/LBracket/KwFn/Amp body detect — ONLY на той же линии
+            // (no newline separator). Если был newline до пика — это next
+            // module-level declaration (fn / type / const / etc), не body.
+            let is_body_start = !saw_newline_before_body && match &self.peek().kind {
                 TokenKind::Ident(s) if !s.is_empty()
                     && s.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) => true,
                 TokenKind::LBracket => true, // []byte etc.
@@ -2850,6 +3040,7 @@ impl Parser {
                 invariants: Vec::new(),
                 axioms: Vec::new(),
                 consume: consume_marker,
+                default_field_priv,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -2920,6 +3111,7 @@ impl Parser {
                     invariants: Vec::new(),
                     axioms: Vec::new(),
                     consume: false,
+                    default_field_priv: false,
                     impl_protocols: impl_protocols.clone(),
                 });
             }
@@ -2962,7 +3154,8 @@ impl Parser {
             }
             TokenKind::LBrace => {
                 self.bump();
-                let (fields, acs) = self.parse_record_fields()?;
+                // Plan 124 (D220): pass type-level default visibility to field parser.
+                let (fields, acs) = self.parse_record_fields_with_default(default_field_priv)?;
                 assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
@@ -3035,6 +3228,7 @@ impl Parser {
             invariants,
             axioms: effect_axioms,
             consume: consume_marker,
+            default_field_priv,
             impl_protocols,
         })
     }
@@ -3123,6 +3317,16 @@ impl Parser {
     /// внутри `type X { ... }` collected отдельно как associated constants —
     /// НЕ в instance layout, accessible через namespace `Type.NAME`.
     fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
+        // Backward-compat shim: existing call sites still call без default_priv;
+        // default_priv = false (public default — D47 unchanged).
+        self.parse_record_fields_with_default(false)
+    }
+
+    /// Plan 124 (D220): parse record fields с type-level default visibility.
+    /// `default_priv` приходит из `type X priv { ... }` syntax (parse_type_decl
+    /// after type-level marker parsing); если `false` — fields default = public
+    /// (D47 unchanged). Field-level explicit `priv`/`pub` override default.
+    fn parse_record_fields_with_default(&mut self, default_priv: bool) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
@@ -3154,6 +3358,54 @@ impl Parser {
                 }
                 continue;
             }
+            // Plan 124 (D220): per-field visibility modifier. `priv` или `pub`
+            // (mutually exclusive); idёт ДО mutability modifiers (ro/mut/consume)
+            // — symmetric с module-level `export` keyword position.
+            //
+            // Effective priv_field resolution:
+            //   - Explicit `pub` → priv_field = false (overrides type-level default)
+            //   - Explicit `priv` → priv_field = true (overrides type-level default)
+            //   - Neither → priv_field = default_priv (type-level inherit; D47 default = public)
+            //
+            // Conflict detection: both orders `priv pub` и `pub priv` — explicit
+            // E_PRIV_PUB_CONFLICT error.
+            let mut explicit_priv = self.eat(&TokenKind::KwPriv).is_some();
+            let mut explicit_pub = self.eat(&TokenKind::KwPub).is_some();
+            if explicit_priv && explicit_pub {
+                return Err(Diagnostic::new(
+                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
+                     modifiers — these are mutually exclusive (Plan 124 / D220). \
+                     Choose one: `priv` (private to type-methods) OR `pub` (explicit \
+                     public; redundant без type-level `priv {}` flip).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Также handle reverse order: `pub priv` — pub matched first,
+            // then priv. Re-check.
+            if explicit_pub && !explicit_priv {
+                if self.eat(&TokenKind::KwPriv).is_some() {
+                    return Err(Diagnostic::new(
+                        "[E_PRIV_PUB_CONFLICT] field cannot have both `pub` and `priv` \
+                         modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            // Also `priv pub` — priv matched first then pub on next iteration
+            // (already handled by the second eat above). Sanity:
+            if explicit_priv && self.eat(&TokenKind::KwPub).is_some() {
+                return Err(Diagnostic::new(
+                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
+                     modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
+            let _ = (&mut explicit_priv, &mut explicit_pub);
+            let field_priv = if explicit_priv { true }
+                             else if explicit_pub { false }
+                             else { default_priv };
+
             let mut readonly = false;
             let mut mutable = false;
             // Plan 114 (D184) Ф.1.5: `readonly` retracted; `ro` — canonical
@@ -3250,6 +3502,7 @@ impl Parser {
                 embed_anonymous: anonymous,
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
+                priv_field: field_priv,
             });
             // запятая или newline
             if self.eat(&TokenKind::Comma).is_some() {

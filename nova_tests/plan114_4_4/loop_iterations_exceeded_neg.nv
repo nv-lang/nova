@@ -1,0 +1,15 @@
+// Plan 114.4.4 Ф.3 NEG: infinite loop → MAX_LOOP_ITERATIONS exceeded.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_EVAL_ITERATIONS_EXCEEDED
+
+module plan114_4_4.loop_iterations_exceeded_neg
+
+fn forever() -> const int {
+    mut i = 0
+    loop {
+        i = i + 1
+    }
+    i
+}
+
+const BAD = forever()

@@ -1408,8 +1408,10 @@ fn walk_view_extend_stmt(
 }
 
 /// Grow-methods that may cause realloc, invalidating existing slice views.
+/// Plan 90 followup (2026-06-01): `append_zero` добавлен — extends by N
+/// zero-init elements, тот же realloc-path.
 fn is_grow_method(name: &str) -> bool {
-    matches!(name, "append" | "insert" | "reserve")
+    matches!(name, "append" | "insert" | "reserve" | "append_zero")
 }
 
 fn walk_view_extend_expr(

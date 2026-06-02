@@ -1,0 +1,12 @@
+// Plan 114.4.3 Ф.3 T4.3 positive: mixed const + runtime params.
+// `multiply(const a int, b int) -> int` — a const-required, b runtime.
+
+module plan114_4_3.mixed_const_runtime_ok
+
+fn multiply(const a int, b int) -> int => a * b
+
+test "mixed const+runtime params" {
+    ro x = 7
+    ro r = multiply(3, x)
+    assert(r == 21)
+}

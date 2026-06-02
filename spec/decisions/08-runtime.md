@@ -3227,6 +3227,18 @@ const PRELUDE_VERSION int = 42  // → silent
 > `copy_from_slice`, теперь isolated имя). Migration: replace_all для всех
 > call-sites. Lint `W_VIEW_EXTEND_DETACH` сохранён (детектит grow-методы
 > `append`/`insert`/`reserve`).
+> **Plan 90 followup amend (2026-06-01).** Два уточнения runtime:
+> (1) `fill(v)` — memset fast-path для single-byte `T` (`u8`/`i8`):
+> `sizeof(T) == 1` ветка → `memset(data, v, len)`. Per-instantiation
+> compile-time DCE: для wider T (`int`/`f64`/`ptr`) остаётся scalar loop
+> с auto-vectorization potential под `-O2`.
+> (2) `append_zero(n int)` — extend by `n` zero-initialized elements.
+> Полиморфно по `T` через `memset(_, 0, n*sizeof(T))` — zero bytes =
+> valid zero-init для всех primitives + `nova_ptr` (NULL) + `bool`
+> (false). Use-case: encoders/framers (reserve write-window под
+> length-prefix или padding с последующим патчингом через
+> index-assignment `arr[i] = v`). `W_VIEW_EXTEND_DETACH` lint срабатывает
+> на `append_zero` (grow-метод).
 
 ### Что
 
@@ -3266,7 +3278,11 @@ fn []T mut @fill(v T)                                        // заполнен
 - `copy_within` — копирование внутри одного среза, **корректно при
   перекрытии** диапазонов (семантика `memmove`); диапазон вне границ →
   `panic`.
-- `fill` — записывает `v` во все элементы.
+- `fill` — записывает `v` во все элементы. **Perf (Plan 90 followup
+  2026-06-01):** single-byte `T` (`u8`/`i8`) → memset fast-path; wider
+  `T` → scalar loop (auto-vectorizable). Compile-time selection через
+  `sizeof(T)` constant per macro instantiation, DCE убирает мёртвую
+  ветку из output.
 - Определены для **любого** `T` (копирование element-storage корректно
   при non-moving GC, [D6](05-memory.md#d6)).
 
@@ -3276,6 +3292,7 @@ fn []T mut @fill(v T)                                        // заполнен
 fn []T mut @append(src []T)                  // bulk add to end, grows
 fn []T mut @insert(i int, src []T)           // bulk insert at position, grows
 fn []T mut @reserve(extra int)               // preallocate hint
+fn []T mut @append_zero(n int)               // extend by n zero-init elements, grows (Plan 90 followup 2026-06-01)
 ```
 
 **`append(src)`** — bulk append элементов `src` в конец `dst`, с ростом:
@@ -3302,11 +3319,41 @@ fn []T mut @reserve(extra int)               // preallocate hint
 - `dst.len` не изменяется.
 - View detach: при realloc — тот же lint.
 
+**`append_zero(n)` (Plan 90 followup, 2026-06-01)** — extend by `n`
+zero-init элементов:
+- `n < 0` → panic `«append_zero: n must be >= 0»`. `n == 0` → no-op.
+- Рост: та же 2x стратегия что у `append`/`insert`/`reserve`
+  (`new_cap = max(2 × cap, new_len)`).
+- Tail новой памяти инициализируется через `memset(data+old_len, 0,
+  n*sizeof(T))` — полиморфно по `T`, в отличие от `fill` (где memset
+  только для single-byte `T`).
+- Zero bytes — **valid zero-init** для primitives (`int`/`u8`/`f64` → 0),
+  `nova_ptr` (NULL), `bool` (false). Для compound value types
+  (Plan 120 named tuples) zero-init соответствует семантике "все поля
+  zero" — допустимое начальное состояние при условии что все поля
+  имеют zero-default representation (IEEE 754 +0.0 для floats, NULL
+  для optional). За пределами этого набора (например, type с
+  invariant'ом «non-null» полем) — UB: zero-init нарушит invariant.
+- `dst.len += n`. View detach: при realloc — `W_VIEW_EXTEND_DETACH`.
+- **Use-case** — encoders/framers: reserve write-window для
+  length-prefix или padding, затем patch через index-assignment:
+  ```nova
+  mut buf []u8 = []
+  buf.append_zero(2)              // reserve 2 байта под length-prefix
+  buf.append(payload)
+  buf[0] = (payload.len() >> 8) as u8
+  buf[1] = (payload.len() & 0xff) as u8
+  ```
+  До followup'а аналог был `buf.append([0, 0])` (литерал-аллокация)
+  или explicit loop — оба неэргономично.
+
 ### Naming rationale (Plan 91 rename, 2026-05-30)
 
 Старые имена `extend_from`/`insert_from` уродовали family-pattern: глагол не
 обнажал semantic class. После rename:
-- **append-family:** `push(v)` + `append(src)` — единая семантика "add to end"
+- **append-family:** `push(v)` + `append(src)` + `append_zero(n)` —
+  единая семантика "add to end" (`v` единичный, `src` срез, `n`
+  zero-init слотов)
 - **insert-family:** `insert(i, src)` — overload с будущим `insert(i, v T)`
 - **overwrite-family:** `copy_from(src)` + `fill(v)` — equal-len mutation
 - **move-family:** `copy_within(...)` — internal copy
@@ -3350,7 +3397,8 @@ parent.append([5, 6, 7])  // W_VIEW_EXTEND_DETACH: view may dangle after realloc
 ```
 
 Lint срабатывает если в той же функции после `let view = parent[a..b]`
-вызывается grow-метод на `parent` (`append` / `insert` / `reserve`).
+вызывается grow-метод на `parent` (`append` / `insert` / `reserve` /
+`append_zero`).
 После realloc `view.data` указывает на стёртую память (Boehm GC удерживает
 до сборки, но lifetime семантически опасен).
 

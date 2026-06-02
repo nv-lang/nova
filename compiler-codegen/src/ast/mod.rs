@@ -347,6 +347,10 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub effects: Vec<TypeRef>, // эффекты между `)` и `->`
     pub return_type: Option<TypeRef>,
+    /// Plan 114.4.2 (D199): `-> const T` — return type marked `const`,
+    /// fn evaluates at compile time. Together with all-`const` params
+    /// makes the fn a `const fn`. All-or-nothing rule (см. is_const на Param).
+    pub return_is_const: bool,
     /// Plan 77 (D132): `-> @` — метод возвращает сам receiver (fluent).
     /// `return_type` при этом = `Self` (тип результата — receiver-тип);
     /// флаг добавляет гарантию «возвращается именно receiver». Валидно
@@ -428,6 +432,10 @@ pub struct FnDecl {
     /// type-checker enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5
     /// followup. Default `false`.
     pub unsafe_attr: bool,
+    /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` attribute —
+    /// per-fn override const fn evaluator recursion depth (default 256).
+    /// `None` = use evaluator default. Range 1..=65535 (parser-enforced).
+    pub fn_eval_max_depth: Option<u32>,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
@@ -598,6 +606,11 @@ pub struct Param {
     /// (read-only param).  Конфликтует с `consume` и `readonly` —
     /// parser-level error.
     pub is_mut: bool,
+    /// Plan 114.4.2 (D199): `const name Type` — comptime-only параметр.
+    /// All-or-nothing: если хоть один param `const`, ВСЕ должны быть
+    /// `const` И return должен быть `const`. Конфликтует с `mut`/
+    /// `consume` (E_CONST_PARAM_MOD_CONFLICT).
+    pub is_const: bool,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.
@@ -717,6 +730,12 @@ pub struct TypeDecl {
     /// consume-param, record-field-move, или defer).
     /// Backward-compat: default false.
     pub consume: bool,
+    /// Plan 124 (D220): type-level default visibility flip.
+    /// `type X priv { ... }` syntax — fields default = priv для этого type'а;
+    /// explicit `pub` field modifier override priv default.
+    /// Без `priv` после имени type'а — fields default = pub (D47 unchanged).
+    /// Backward-compat: default false.
+    pub default_field_priv: bool,
     /// Plan 91.9 (D186): `#impl(P1 + P2 + ...)` annotation list.
     /// Names of protocols the type explicitly opts into. Verification:
     /// compiler checks T provides every method of each P (via explicit
@@ -823,6 +842,21 @@ pub struct RecordField {
     /// D133-marker-on-non-consume иначе).
     /// Backward-compat: default false.
     pub consume: bool,
+    /// Plan 124 (D220): per-field private visibility marker.
+    /// Если `true` — field accessible только из методов own type'а
+    /// (instance + static). Cross-type access outside scope даёт:
+    /// - Read: E_PRIV_FIELD_READ
+    /// - Write: E_PRIV_FIELD_WRITE
+    /// - Record literal init: E_PRIV_FIELD_INIT
+    /// - Pattern destructure: E_PRIV_FIELD_PATTERN
+    ///
+    /// Effective visibility = explicit `priv` modifier
+    ///                       OR inherited from `TypeDecl::default_field_priv`
+    ///                       OR (default) public.
+    /// Explicit `pub` modifier overrides type-level priv default
+    /// (priv_field stays false).
+    /// Backward-compat: default false (= public; D47 MVP unchanged).
+    pub priv_field: bool,
 }
 
 #[derive(Debug, Clone)]

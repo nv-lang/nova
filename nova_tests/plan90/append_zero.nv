@@ -1,0 +1,57 @@
+// Plan 90 followup — []T.append_zero(n): extend by N zero-init elements.
+// Полиморфно по T (memset на любом T, не только single-byte как fill fast-path).
+
+module plan90.append_zero
+
+
+test "append_zero — []u8 расширение" {
+    mut a []u8 = [1, 2, 3]
+    a.append_zero(4)
+    ro expect []u8 = [1, 2, 3, 0, 0, 0, 0]
+    assert(a.len() == 7)
+    assert(a.compare(expect) == 0)
+}
+
+test "append_zero — []int полиморфно" {
+    mut a []int = [10, 20]
+    a.append_zero(3)
+    ro expect []int = [10, 20, 0, 0, 0]
+    assert(a.len() == 5)
+    assert(a == expect)
+}
+
+test "append_zero — пустой буфер" {
+    mut a []u8 = []
+    a.append_zero(5)
+    assert(a.len() == 5)
+    ro expect []u8 = [0, 0, 0, 0, 0]
+    assert(a.compare(expect) == 0)
+}
+
+test "append_zero — n=0 noop" {
+    mut a []int = [1, 2, 3]
+    a.append_zero(0)
+    assert(a.len() == 3)
+    ro expect []int = [1, 2, 3]
+    assert(a == expect)
+}
+
+test "append_zero — fluent chain" {
+    mut a []u8 = []
+    a.append_zero(3).fill(7).append_zero(2)
+    // [0,0,0] → fill(7) → [7,7,7] → append_zero(2) → [7,7,7,0,0]
+    ro expect []u8 = [7, 7, 7, 0, 0]
+    assert(a.compare(expect) == 0)
+}
+
+test "append_zero — реалистичный use-case (length-prefix patching)" {
+    mut buf []u8 = []
+    buf.append_zero(2)              // reserve 2 bytes для length-prefix
+    ro payload []u8 = [0x48, 0x69]  // "Hi" bytes
+    buf.append(payload)
+    // patch length-prefix: 2 bytes payload → buf[0..2]
+    buf[0] = 0
+    buf[1] = 2
+    ro expect []u8 = [0, 2, 0x48, 0x69]
+    assert(buf.compare(expect) == 0)
+}

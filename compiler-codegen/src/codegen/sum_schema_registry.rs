@@ -1410,6 +1410,7 @@ mod tests {
             params: vec![],
             effects: vec![],
             return_type: None,
+            return_is_const: false,
             returns_receiver: false,
             body: FnBody::External,
             span: Span::default(),
@@ -1423,7 +1424,7 @@ mod tests {
             purity: Purity::Unknown,
             is_trusted: false,
             fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![],
+            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
         };
         let items = vec![Item::Fn(opt_is_some)];
 
@@ -1493,6 +1494,7 @@ mod tests {
             params: vec![],
             effects: vec![],
             return_type: None,
+            return_is_const: false,
             returns_receiver: false,
             body: FnBody::External,
             span: Span::default(),
@@ -1506,7 +1508,7 @@ mod tests {
             purity: Purity::Unknown,
             is_trusted: false,
             fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![],
+            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
         };
         let items = vec![Item::Fn(res_is_ok)];
 
@@ -1552,7 +1554,7 @@ mod tests {
                 span: Span::default(),
             }),
             generics: vec![], params: vec![], effects: vec![],
-            return_type: None, returns_receiver: false,
+            return_type: None, return_is_const: false, returns_receiver: false,
             // Stub Nova-body для теста — `=> false` (контент не важен,
             // важно только `is_external == false` и `body != External`).
             body: if external { FnBody::External } else {
@@ -1566,7 +1568,7 @@ mod tests {
             decreases: None, verify_mode: VerifyMode::Default,
             verify_timeout_ms: None, purity: Purity::Unknown,
             is_trusted: false, fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![],
+            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
         };
 
         let mut reg = SumSchemaRegistry::new();
@@ -1633,7 +1635,7 @@ mod tests {
                 span: Span::default(),
             }),
             generics: vec![], params: vec![], effects: vec![],
-            return_type: None, returns_receiver: false,
+            return_type: None, return_is_const: false, returns_receiver: false,
             body: FnBody::Expr(Expr::new(
                 ExprKind::BoolLit(false), Span::default()
             )),
@@ -1643,7 +1645,7 @@ mod tests {
             decreases: None, verify_mode: VerifyMode::Default,
             verify_timeout_ms: None, purity: Purity::Unknown,
             is_trusted: false, fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![],
+            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
         };
 
         let mut reg = SumSchemaRegistry::new();
@@ -1920,13 +1922,14 @@ mod tests {
                 mutable: false, consume: false, span: Span::default(),
             }),
             generics: vec![], params: vec![], effects: vec![], return_type: None,
+            return_is_const: false,
             returns_receiver: false,
             body: FnBody::External, span: Span::default(),
             realtime_attr: RealtimeAttr::None, blocking_attr: false, contracts: vec![],
             reads: vec![], modifies: vec![], decreases: None,
             verify_mode: VerifyMode::Default, verify_timeout_ms: None,
             purity: Purity::Unknown, is_trusted: false,
-            fuel: None, is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![],
+            fuel: None, is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
         };
         let items = vec![Item::Fn(error_method)];
 

@@ -1,0 +1,10 @@
+// Plan 59.1 — non-generic baseline: existing case must continue работать.
+module plan59_1.non_generic_pair
+
+fn make_pair() -> (int, str) => (42, "x")
+
+test "non-generic tuple still works" {
+    ro (i, s) = make_pair()
+    assert(i == 42)
+    assert(s == "x")
+}

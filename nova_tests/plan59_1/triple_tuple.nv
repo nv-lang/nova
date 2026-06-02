@@ -1,0 +1,11 @@
+// Plan 59.1 — arity 3 mono'd tuple.
+module plan59_1.triple_tuple
+
+fn[T] triple(v T) -> (T, T, T) => (v, v, v)
+
+test "triple int" {
+    ro (a, b, c) = triple[int](5)
+    assert(a == 5)
+    assert(b == 5)
+    assert(c == 5)
+}

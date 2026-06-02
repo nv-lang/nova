@@ -172,7 +172,37 @@
         memmove(a->data + dst_from, a->data + src_from, (size_t)len * sizeof(T)); \
     } \
     static void nova_array_fill_##T(NovaArray_##T* a, T v) { \
-        for (int64_t _i = 0; _i < a->len; _i++) { a->data[_i] = v; } \
+        /* Plan 90 Ф.4.5 + perf: single-byte T → memset path (compile-time DCE'd \
+         * через sizeof(T) constant per-instantiation). nova_byte/i8 → memset; \
+         * остальные T → scalar loop с auto-vectorization potential. */ \
+        if (sizeof(T) == 1) { \
+            memset(a->data, (unsigned char)v, (size_t)a->len); \
+        } else { \
+            for (int64_t _i = 0; _i < a->len; _i++) { a->data[_i] = v; } \
+        } \
+    } \
+    /* []T @append_zero(n): extend by N zero-initialized elements. 2x growth + \
+     * memset для tail новой памяти. Zero bytes = valid zero-init для primitives \
+     * (int/u8/f64 → 0; nova_ptr → NULL; bool → false). Полиморфно по T в отличие \
+     * от fill (memset на любом T, не только single-byte). Use-case: reserve \
+     * write-window в encoders, padding, length-prefix patching. Returns @ \
+     * через codegen для fluent chain (Plan 91.7 D181). */ \
+    static void nova_array_append_zero_##T(NovaArray_##T* a, int64_t n) { \
+        if (n < 0) { nv_panic((nova_str){ \
+            .ptr = "append_zero: n must be >= 0", \
+            .len = sizeof("append_zero: n must be >= 0") - 1 }); } \
+        if (n == 0) return; \
+        int64_t new_len = a->len + n; \
+        if (new_len > a->cap) { \
+            int64_t new_cap = a->cap * 2; \
+            if (new_cap < new_len) new_cap = new_len; \
+            T* new_data = (T*)nova_alloc((size_t)new_cap * sizeof(T)); \
+            memcpy(new_data, a->data, (size_t)(a->len) * sizeof(T)); \
+            a->data = new_data; \
+            a->cap = new_cap; \
+        } \
+        memset(a->data + a->len, 0, (size_t)n * sizeof(T)); \
+        a->len = new_len; \
     } \
     /* StringBuilder @truncate / []T @truncate: reduce len to new_len if shorter. */ \
     static void nova_array_truncate_##T(NovaArray_##T* a, int64_t new_len) { \

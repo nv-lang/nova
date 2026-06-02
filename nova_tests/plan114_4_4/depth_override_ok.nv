@@ -1,0 +1,14 @@
+// Plan 114.4.4 Ф.1 positive: #fn_eval_max_depth(N) override works —
+// here we increase limit above modest depth to verify override is read.
+
+module plan114_4_4.depth_override_ok
+
+#fn_eval_max_depth(50)
+fn sum_to(const n int) -> const int =>
+    if n <= 0 { 0 } else { n + sum_to(n - 1) }
+
+test "depth override allows recursion under custom limit" {
+    const A = sum_to(30)
+    // 30 * 31 / 2 = 465
+    assert(A == 465)
+}

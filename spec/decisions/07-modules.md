@@ -99,7 +99,7 @@ static, метод), `const`, `let`, `protocol` ([D42](02-types.md#d42)).
 
 - [D29](#d29-модули-и-импорты) — полный синтаксис `import`/`export`.
 - [D47](#d47-видимость-деклараций) — детали по полям, методам, type-level.
-- [03-syntax.md → D30](03-syntax.md#d30) — convention `_prefix` для полей.
+- [03-syntax.md → D30](03-syntax.md#d30) — naming правила; `priv` field modifier для visibility (D220).
 
 ### Эволюция
 
@@ -661,9 +661,18 @@ LLM знает фиксированный список — «известная 
 ### Что
 **`export`** перед декларацией = публичная. **Без `export`** =
 приватная для модуля. Применяется единообразно к типам, функциям,
-методам, константам и протоколам. Поля record публичны (MVP),
-convention `_prefix` для приватных-по-договору. `_prefix`
-применяется **только к полям**, не к функциям/методам.
+методам, константам и протоколам. Поля record/tuple — публичны
+по умолчанию (см. ниже); per-field visibility через `priv` keyword
+(Plan 124, D220).
+
+> **2026-06-02 amend.** Convention `_prefix` для conventionally-private
+> полей **отменена**. Заменена на compile-time `priv` field modifier
+> (Plan 124 / D220). Empirical validation: kubernetes production code
+> 59% public / 41% private fields (см.
+> [docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md)).
+> Public-default подтверждён данными для API surface (92% public);
+> `priv` keyword добавляет compile-time enforcement для ~10% полей
+> требующих encapsulation.
 
 ### Правило
 
@@ -672,22 +681,22 @@ module account
 
 // ── Типы ──────────────────────────────────────────────────────────
 export type Account {                    // публичный тип
-    ro owner str
-    balance money
-    _internal_id u64                     // convention: _prefix = приватное-по-договору
+    ro owner str                         // публичное (default)
+    balance money                        // публичное (default)
+    priv id u64                          // приватное — compile-time enforced
 }
 
 type InternalState {                     // приватный тип
-    pending_ops []Op
+    pending_ops []Op                     // публичное в module scope, type сам приватный
 }
 
 // ── Константы ─────────────────────────────────────────────────────
 export const ACCOUNT_MIN_BALANCE money = 0
-const _INTERNAL_TIMEOUT_MS int = 5_000
+const INTERNAL_TIMEOUT_MS int = 5_000    // приватная по umolчанию (без export)
 
 // ── Static-функции и конструкторы ─────────────────────────────────
 export fn Account.new(owner str) -> Account =>
-    Account { owner, balance: money.zero, _internal_id: gen_id() }
+    Account { owner, balance: money.zero, id: gen_id() }   // priv id доступен в type-method
 
 fn Account.from_db_row(row DbRow) Fail -> Account => ...   // приватная
 
@@ -707,36 +716,53 @@ export type Hashable protocol {
     eq(other Self) -> bool
 }
 
-type _InternalIter[T] protocol {           // приватный protocol
+type InternalIter[T] protocol {            // приватный protocol (без export)
     next() -> Option[T]
 }
 ```
 
-#### Видимость полей record
+#### Видимость полей record/tuple
 
-**MVP:** все поля **`export`-типа публичны** для упрощения. Convention
-**`_prefix`** для приватных:
+**Default = public** для всех полей `export`-типа. Per-field
+override через `priv` keyword (Plan 124 / D220):
 
 ```nova
 export type Account {
-    ro owner str       // публичное
-    balance money            // публичное
-    _internal_id u64         // приватное-по-конвенции (НЕ enforced)
+    ro owner str             // публичное (default)
+    balance money            // публичное (default)
+    priv id u64              // приватное — compile-time enforced
+    priv mut cache Cache     // приватное mutable
 }
 ```
 
-Convention `_prefix` — **не enforced** компилятором. Программист может
-обратиться к `acc._internal_id` извне, компилятор не остановит. Это
-**сознательный компромисс MVP**.
+`priv` field — accessible **только из методов own type'а** (instance
+`fn Account @method()` + static `fn Account.factory(...)`). Read/write/
+init via record literal/pattern destructure outside type → compile-time
+error (E_PRIV_FIELD_*).
 
-**`_prefix` применяется только к полям**, не к функциям и методам.
-Для функций/методов видимость **двухуровневая** через `export`/без —
+**Tuple form** (D215): `priv` per-field в named tuples:
+```nova
+export type Secret(priv key str, priv mut salt []u8)
+```
+
+**Type-level default flip** (Plan 124 V2): `type X priv { ... }` —
+fields default = priv, opt-in `pub` для public override. Для invariant-
+heavy types где majority of fields should be private:
+
+```nova
+export type Account priv {
+    pub ro name str          // explicit pub override
+    mut money f64            // default = priv
+    cache Cache              // default = priv
+}
+```
+
+**Для функций/методов видимость двухуровневая** через `export`/без —
 третьего «совсем-приватного» уровня нет:
 
 ```nova
 export fn public_op(...) => ...       ✅ публичная
 fn private_helper(...) => ...         ✅ приватная для модуля
-fn _internal_helper(...) => ...       ❌ не нужно — нет третьего уровня
 ```
 
 #### Метод приватного типа
@@ -771,21 +797,29 @@ import std.internal_helpers             // только внутри my_lib
    fn, const, protocol, метод. Учить нечего.
 2. **Default приватный** соответствует трендам современных языков
    (Rust, Swift, Java/C# для классов). Безопасно по умолчанию.
-3. **Convention `_prefix`** для полей — Python/Ruby-стиль, знакомо
-   LLM, не требует языковых средств.
-4. **Постепенная эволюция:** если понадобится enforcement полей —
-   расширим без breaking changes (новый keyword добавит strictness,
-   старый код останется валидным).
+3. **`priv` field modifier** (Plan 124 / D220, 2026-06-02) для
+   per-field encapsulation — compile-time enforced. Default field
+   visibility = public (validated empirically — kubernetes 92% public
+   в API surface). Заменяет ранее использовавшуюся convention `_prefix`
+   (deprecated).
+4. **Постепенная эволюция:** type-level default flip через
+   `type X priv { ... }` syntax (Plan 124 V2) для invariant-heavy
+   types где majority of fields private; opt-in без breaking changes.
 
 ### Что отвергнуто
 
-- **Per-field `export`** — многословно, преждевременная оптимизация
-  для MVP.
+- **Per-field `export`** keyword — многословно для polymorphic
+  position; Plan 124 использует `priv` keyword для field-level
+  privacy.
 - **`private` keyword** — Java-стиль, конфликтует с философией Nova
-  «явно публичное».
+  «явно публичное». Plan 124 использует короткое `priv` —
+  symmetric с `pub`.
 - **Видимость по регистру** (Go-стиль `Capital = public`) — Nova
   использует разные conventions для разных уровней
   ([03-syntax.md → D30](03-syntax.md#d30)).
+- **`_prefix` для полей как «приватные-по-договору»** — *отменено
+  2026-06-02* (Plan 124 / D220). Replaced by compile-time `priv`
+  keyword.
 - **`_prefix` для функций как «третий уровень»** — нет, видимость
   двухуровневая.
 
@@ -793,7 +827,7 @@ import std.internal_helpers             // только внутри my_lib
 
 | Язык | Default | Public marker | Field-level visibility |
 |---|---|---|---|
-| **Nova** | private (модуль) | `export` | все public, `_prefix` convention |
+| **Nova** | private (модуль) | `export` | public-default; `priv` per-field (Plan 124 D220) |
 | **Rust** | private | `pub` | per-field `pub` |
 | **Go** | regex-based | Capital letter | то же |
 | **Swift** | internal | `public`/`private`/`fileprivate` | per-field |
@@ -802,18 +836,21 @@ import std.internal_helpers             // только внутри my_lib
 | **Python** | public | — | `_prefix` convention |
 | **OCaml** | через signature | в `.mli` файле | через signature |
 
-Nova ближе всего к **Python** для полей и к **Rust** для top-level.
+Nova для top-level ближе всего к **Rust** (private-default, opt-in
+public). Для field-level — публичные default + `priv` opt-in
+(industry data-driven choice, см.
+[docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md)).
 
 ### Связь
 
 - [D5](#d5-видимость-только-export-или-приватно) — базовое решение.
 - [D29](#d29-модули-и-импорты) — модули, re-export.
-- [03-syntax.md → D30](03-syntax.md#d30) — `_prefix` в правилах
-  именования.
+- [03-syntax.md → D30](03-syntax.md#d30) — naming правила.
 - [03-syntax.md → D35](03-syntax.md#d35) — методы получают тот же
   `export`-механизм.
 - [02-types.md → D42](02-types.md#d42) — `export protocol X` делает
   контракт публичным.
+- **Plan 124 / D220** — `priv` field modifier (per-field visibility).
 
 ### Цена
 
