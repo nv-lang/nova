@@ -3829,15 +3829,12 @@ fn collect_loop_eligible_fields(
         return Vec::new();
     }
     // Detect fields captured by closure bodies WITHIN the loop body.
-    // NB: scan_block treats ALL @F references as captures (designed
-    // for use on closure bodies). For loop body, we need a different
-    // helper: walk into nested closures only, and within them apply
-    // capture detection. See `collect_closures_captures_in_block`.
     let mut closure_captured: HashSet<String> = HashSet::new();
     collect_closures_captures_in_block(body, fields, &mut closure_captured);
 
-    // Detect if loop body has any Call (mut fields invalidated).
-    let body_has_call = block_contains_call(body);
+    // Plan 123.7.1 Ф.2: IPA-aware mut barrier per-field. Snapshot
+    // thread-local LICM context (set by licm_fn_with_ipa wrapper).
+    let licm_ipa = LICM_WRITE_SETS.with(|ws| ws.borrow().clone());
 
     let mut result: Vec<(String, crate::diag::Span)> = Vec::new();
     let mut keys: Vec<&String> = fields.keys().collect();
@@ -3857,10 +3854,24 @@ fn collect_loop_eligible_fields(
             Some(k) => *k,
             None => continue,
         };
-        if matches!(kind, FieldKind::Mut) && body_has_call {
-            continue;
+        // Mut field — check call barrier per IPA (если context set'нут).
+        if matches!(kind, FieldKind::Mut) {
+            let body_invalidates_field = match &licm_ipa {
+                Some((recv_type, write_sets)) => {
+                    let read_sets_empty = HashMap::new();
+                    let ipa = IpaCtx {
+                        write_sets,
+                        recv_type: recv_type.as_str(),
+                        read_sets: &read_sets_empty,
+                    };
+                    block_contains_invalidating_call_for(body, fname, Some(ipa))
+                }
+                None => block_contains_call(body), // V1 conservative.
+            };
+            if body_invalidates_field {
+                continue;
+            }
         }
-        // First-span lookup — find first `@F` access in body.
         let span = first_field_span_in_block(body, fname).unwrap_or(body.span);
         result.push((fname.clone(), span));
     }
