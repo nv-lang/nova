@@ -7507,6 +7507,11 @@ shipped (Nova не имеет внешних пользователей yet). Al
 **Implementation:** Single-token rename в parser/types/eval/trampoline
 recognition tables. Fixture files renamed `sizeof_*.nv` → `size_of_*.nv`.
 
+**User-facing docs:** см. [docs/size-of-align-of.md](../../docs/size-of-align-of.md) —
+concept doc с детальным explanation: что возвращает, зачем нужно
+(CPU memory alignment), layout semantics composite types, padding
+edge cases, Rust comparison, V4.4 limitations.
+
 ### V4.4 extensions (Plan 114.4.4 V4.4 session, 2026-06-02)
 
 **Ф.1 — size_of/align_of для composite types (closes [M-114.4.4-trampoline-record-reflection]):**
@@ -7575,6 +7580,7 @@ infrastructure as Ф.3. Will be unblocked together. Tracked:
 | ... A27-A35 ... | (см. выше) | (см. выше) |
 | A36 | size_of/align_of для tuples/arrays/Unit/Readonly | size_of_tuple_ok / size_of_fixed_array_ok / size_of_nested_composite_ok (V4.4 Ф.1) |
 | A37 | Closure-returning const fn с outer const captures | closure_outer_const_ok / closure_outer_chained_ok (V4.4 Ф.2) |
+| A38 | Padding/alignment edge cases для tuples (layout semantics) | size_of_padding_ok (V4.4 Ф.1 docs) — 7 edge cases: inner/tail-pad, big gaps, no-pad uniform, multi-step alignment, unit, mixed sizes |
 
 🎯 **Plan 114.4.4 family extended status:**
 - ✅ V3/V4/V4.1/V4.2/V4.3 phases (А1-А35) — landed earlier sessions.

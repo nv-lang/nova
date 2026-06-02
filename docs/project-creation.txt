@@ -29770,3 +29770,34 @@ plan123_7_2: 2/2.
 Plan 123 V*.2 family полностью закрыта в main:
 - 10 commits from branch + 1 post-merge fix = 11 commits.
 - Branch plan-123-v2-followups remains pushed to github (история).
+
+
+================================================================================
+== 2026-06-02 — User-facing docs для size_of/align_of + padding edge-case fixture
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-size-of-docs (off main 403d890e5b8)
+
+Замысел:
+После rename sizeof→size_of user попросил simple explanation align_of.
+Verbal explanation chat'е не остаётся в коде/доке — добавил concept doc
+docs/size-of-align-of.md + padding edge-case fixture.
+
+Содержимое:
+- docs/size-of-align-of.md: что возвращают, зачем нужно (CPU memory
+  alignment), layout semantics composite types, 4 padding examples,
+  Rust comparison table, V4.4 limitations.
+- nova_tests/plan114_4_4/size_of_padding_ok.nv: 7 padding/alignment
+  edge cases — (i8, i32) inner-pad / (i32, i8) tail-pad / (bool, int)
+  big-gap / (i8, i8, i8) no-pad / () unit / (f32, f64) align-8-driven
+  / (i8, i16, i32) multi-step alignment.
+- Spec D199 V4.4 — A38 acceptance criterion + reference на concept doc.
+- 114.4.4.6 plan-doc Ф.1 status updated.
+
+Тесты (release nova-cli): 31/31 plan114_4_4 PASS (был 30/30 + 1 new fixture).
+
+Lesson:
+- Verbal Q&A в chat теряется. Когда user задаёт concept question
+  (e.g. "что такое align_of"), ответ нужно перенести в proper user-doc.
+- Edge-case fixtures документируют semantics — readable test = doc.
