@@ -2239,7 +2239,33 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ### Session 2 grand-final accomplishments
 
-**Total: 27 worktree commits + 2 nova-private commits.**
+**Total: 34 worktree commits + 3 nova-private commits.**
+
+### Session 2 evening-3 extensions (post-grand-closure)
+
+- `7ff3007f3af` — Ф.6 partial #2: **E_EXTERNAL_FN_FAIL_EFFECT** enforcement (A26 ✅)
+- `9ece8bfdaea` — Ф.4 codegen: **(*p)->field для *Record** double-pointer auto-deref (A12 partial)
+- `986fdb04c0d` — NEG **E_AMP_RECORD_LITERAL** — Session 2 user signoff Option A для *Record
+- `2bd6eb542b4` — docs(simplifications + project-creation) Session evening-2 log
+- `7d61617bcf8` — NEG-T4.19 **E_ARRAY_INDEX_PTR_BANNED** для `&arr[i]`
+- `d9d3084ed69` — NEG-T2.11 **E_AMP_LITERAL** для `&<literal>`
+- `bd9d1a49d15` — doc fixture `t2_neg_amp_const_binding` (future Ф.3.5 enforcement)
+
+Plus nova-private `9e5aa5d6cf` — Session 2 evening-2 design discussion log
+(Option A для *Record + E_AMP_RECORD_LITERAL rationale + lessons).
+
+**plan118 fixtures: 19/0 PASS** (10 positive + 9 NEG):
+- Positive: t1_1, t1_3, t1_6, t1_8, t2_1, t3_1, t3_2, t4_1, t5_1, t6_1
+- NEG: t1_neg_const_modifier, t1_neg_pointer_incomplete,
+  t1_neg_ro_in_expression_pos, t1_neg_duplicate_modifier,
+  t2_neg_amp_literal, t2_neg_amp_record_literal,
+  t2_neg_amp_const_binding (documentation), t4_neg_amp_array_index,
+  t6_neg_external_fn_fail_effect
+
+**Closed acceptance:** A1, A3, A4, A9, A10, A12 partial, A18 partial
+(forbidden ops: `&arr[i]`, `&<literal>`, `&Record{}`), A26 ✅, A29, A34, A35.
+
+---
 
 **Latest additions (post-grand-closure):**
 - `6d6a18a2ab7` — NEG-T1.13: E_INVALID_POINTER_MODIFIER для `*const T`
