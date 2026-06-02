@@ -1,0 +1,15 @@
+// Plan 114.4.4 Ф.5 V4.4 Ф.1 NEGATIVE: Named user-defined record types
+// still require TypeDecl lookup integration → V2 followup
+// [M-114.4.4-trampoline-named-types]. Until then — friendly error.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_GENERIC_NEEDS_T_REFLECTION
+
+module plan114_4_4.sizeof_named_record_neg
+
+type Point { x int, y int }
+
+const SIZE_POINT = sizeof[Point]()
+
+test "sizeof named record still unsupported" {
+    assert(SIZE_POINT == 16)
+}

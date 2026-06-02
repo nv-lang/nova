@@ -7488,8 +7488,80 @@ closure ConstValue).
 | A34 | Const fn first-class use через runtime trampoline | runtime_hof_*_ok fixtures (5 шт.) |
 | A35 | Closure-returning const fn — comptime specialization | closure_from_const_fn_*_ok fixtures (4 шт.) |
 
-🎯 **Plan 114.4.4 family COMPLETE** — все V3/V4/V4.1/V4.2/V4.3 phases landed.
-Open V2/V3 generic extensions tracked через `[M-114.4.4-*]` markers.
+### V4.4 extensions (Plan 114.4.4 V4.4 session, 2026-06-02)
+
+**Ф.1 — sizeof/align_of для composite types (closes [M-114.4.4-trampoline-record-reflection]):**
+
+`type_size_or_align` расширен от primitives-only до композитных типов
+БЕЗ TypeDecl lookup:
+- Tuples `(T1, T2, ..)` — C struct-style layout с natural alignment + tail-pad.
+- FixedArray `[N]T` — `N * sizeof(T)`, element alignment.
+- Array `[]T` — slice ABI = 16 bytes (pointer + length), align 8.
+- Unit `()` — size 0, align 1.
+- Readonly `readonly T` — same layout as T.
+- Primitive table теперь (size, align) tuples — `str = (16, 8)` для slice ABI.
+
+Still V2 (требует TypeDecl access):
+- Named user-defined records/sum-types → followup `[M-114.4.4-trampoline-named-types]`.
+- Generic instantiations (`Option[int]` etc) — same followup.
+
+**Ф.2 — closure-returning const fn captures outer const locals (closes [M-114.4.4-closure-captures-outer]):**
+
+Расширяет V4.3 closure-from-const-fn для body форма
+`FnBody::Block { stmts: all Stmt::Const, trailing: closure_literal }`:
+
+```nova
+fn make_thing(const base int) -> const fn(int) -> int {
+    const offset = base + 10
+    fn(x int) -> int => x + offset
+}
+ro t5 = make_thing(5)   // spec body: x + 15 (offset evaluated)
+```
+
+При специализации: каждый outer const eval'ится в порядке declaration
+с running subst map (host params + prior outer consts); результаты
+добавляются в map, потом specialize closure body с full subst.
+
+**Parser note:** `|x| body` после `const x = ...` Stmt парсится как
+binary OR. V4.4 Ф.2 workaround — explicit `fn(x T) -> R => body`
+syntax (ClosureFull). Followup `[M-114.4.4-closure-light-after-const-stmt-parser]`.
+
+**Ф.3 — generic const fn first-class use (DEFERRED, design pending):**
+
+Goal: `apply_i(id, 7)` где `fn id[T](const x T) -> const T => x` —
+should generate `id__trampoline_int` per generic instantiation.
+
+Blocker: requires one of:
+1. Parser support for TurboFish-as-fn-value (`id[int]` без postfix continuation —
+   currently parsed как Index expression).
+2. HOF context type inference — look up callee's expected fn-type and
+   infer generic type args. Requires fn signature registry access
+   at trampoline pass time (cross-cutting design).
+3. Explicit type annotation: `ro f fn(int) -> int = id` — requires
+   type-checker integration to read annotation at trampoline pass time.
+
+V4.4 Ф.3 не shipped — design question (1/2/3) ждёт user input.
+Tracked: `[M-114.4.4-trampoline-generics]`.
+
+**Ф.4 — generic closure-returning const fn (DEFERRED, same blocker as Ф.3):**
+
+Same design challenge — generic instantiation requires same parser/type-inference
+infrastructure as Ф.3. Will be unblocked together. Tracked:
+`[M-114.4.4-closure-generic]`.
+
+### V3+V4+V4.1+V4.2+V4.3+V4.4 acceptance — A36-A37 added
+
+| # | Критерий | Verification |
+|---|---|---|
+| ... A27-A35 ... | (см. выше) | (см. выше) |
+| A36 | sizeof/align_of для tuples/arrays/Unit/Readonly | sizeof_tuple_ok / sizeof_fixed_array_ok / sizeof_nested_composite_ok (V4.4 Ф.1) |
+| A37 | Closure-returning const fn с outer const captures | closure_outer_const_ok / closure_outer_chained_ok (V4.4 Ф.2) |
+
+🎯 **Plan 114.4.4 family extended status:**
+- ✅ V3/V4/V4.1/V4.2/V4.3 phases (А1-А35) — landed earlier sessions.
+- ✅ V4.4 Ф.1 + Ф.2 (А36-А37) — этот session.
+- 🟡 V4.4 Ф.3/Ф.4 generics — design-blocked, tracked в `[M-114.4.4-trampoline-generics]` +
+  `[M-114.4.4-closure-generic]`.
 
 ### V2 acceptance — A19-A26
 

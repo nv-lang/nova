@@ -1,0 +1,18 @@
+// Plan 114.4.4 V4.4 Ф.2 POSITIVE: closure-returning const fn captures
+// outer const locals. Closes [M-114.4.4-closure-captures-outer].
+
+module plan114_4_4.closure_outer_const_ok
+
+fn make_thing(const base int) -> const fn(int) -> int {
+    const offset = base + 10
+    fn(x int) -> int => x + offset
+}
+
+test "closure captures outer const local" {
+    ro t5 = make_thing(5)
+    ro t100 = make_thing(100)
+
+    assert(t5(3) == 18)
+    assert(t5(7) == 22)
+    assert(t100(0) == 110)
+}

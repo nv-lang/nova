@@ -29990,3 +29990,47 @@ again в test inits.
 synchronized test fixture updates. Recurring issue (see prior
 baseline fix 2d7115c9334). Long-term fix: builder pattern for test
 fixtures OR `..Default::default()` spread syntax.
+
+
+---
+
+## Plan 114.4.4 V4.4 followups bundle (2026-06-02)
+
+**Status:** 🟡 PARTIAL — Ф.1+Ф.2 LANDED, Ф.3+Ф.4 design-deferred.
+Branch `plan-114.4.4-v4-4-followups` off main `23fe1479e89`.
+
+**Closed markers:**
+- ✅ `[M-114.4.4-trampoline-record-reflection]` → Ф.1.
+- ✅ `[M-114.4.4-closure-captures-outer]` → Ф.2.
+
+**Deferred markers (design pending):**
+- 🟡 `[M-114.4.4-trampoline-generics]` → Ф.3.
+- 🟡 `[M-114.4.4-closure-generic]` → Ф.4.
+
+**Ф.1 (sizeof composite types):** Extended `type_size_or_align` от
+primitives к Tuples / FixedArray / Array (slice ABI) / Unit / Readonly.
+БЕЗ TypeDecl lookup — recursive over element types. Primitive table
+теперь (size, align) tuples (str = (16, 8) slice ABI). 4 POS + 1 NEG.
+A36 acceptance. Named records/sums still V2 (требуют TypeDecl).
+
+**Ф.2 (closure outer captures):** Closure-from-const-fn V4.3 extended
+для body форма Block { stmts: Stmt::Const decls, trailing: closure }.
+Outer consts evaluated в порядке с running subst map, results добавляются
+в map для closure body specialization. 2 POS + 1 NEG. A37 acceptance.
+Parser note (followup): ClosureLight `|x|` после Stmt::Const парсится
+как binary OR; workaround = ClosureFull `fn(x T) -> R => body`.
+
+**Ф.3+Ф.4 (DEFERRED, design):** Generic trampoline + generic closure-spec
+требуют generic instantiation infrastructure. Three viable paths
+(parser turbofish-as-value / HOF type inference / explicit annotation);
+choice needs user input. **NOT silent simplification** — documented
+в docs/plans/114.4.4.6-v4-followups.md с detailed analysis.
+Recommended path: HOF type inference (~300 LOC extension к trampoline pass).
+
+**Tests:** 30/30 plan114_4_4 PASS (release nova-cli) + 29/29 plan114_4_2/3 PASS = 59/59.
+
+**Design lesson:** Pragmatic V1 boundaries — sizeof для composite types
+without TypeDecl lookup possible через recursive element walk. Generic
+instantiation genuinely cross-cutting (parser OR type-inference OR
+annotation) — design questions surface при scope expansion; не shipped
+half-baked, deferred с clear rationale.
