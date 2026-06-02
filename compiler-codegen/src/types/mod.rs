@@ -4563,6 +4563,25 @@ impl<'a> TypeCheckCtx<'a> {
                                         target.span,
                                     ));
                                 }
+                                // Plan 124 (D220): priv field WRITE access check.
+                                if f.priv_field {
+                                    let current_recv = self.current_recv_type.borrow();
+                                    let allowed = current_recv.as_deref() == Some(tname);
+                                    if !allowed {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
+                                                 field `{}.{}` outside type-method scope. \
+                                                 Field marked `priv` (Plan 124 / D220). \
+                                                 Hint: add public mutator method on `{}` \
+                                                 (e.g. `export fn {} mut @set_{}(v T)`) \
+                                                 or move accessing code into a method of `{}`.",
+                                                tname, field_name, tname, tname, field_name, tname,
+                                            ),
+                                            target.span,
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
