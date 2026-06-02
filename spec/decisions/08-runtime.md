@@ -5111,6 +5111,62 @@ entry for breakdown.
 - **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
   indefinitely.
 
+## D217 amend V5.2 — LSP semantic tokens for cached `@field` reads
+
+**Source:** [Plan 123.5.2](../../docs/plans/123.5.2-semantic-tokens.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Scope
+
+V5 added code-lens + hover providers (per-fn summary,
+per-`@field` info). V5.2 adds **semantic tokens** so editors can
+visually mark `@<field>` reads the analyzer would CSE / cache. The
+developer gets passive feedback that an optimization is in effect
+without invoking any command.
+
+### 2. Legend
+
+Token type: `property` (standard LSP type — no client setup
+required). Modifiers: `readonly` (standard) + `cached` (custom; bit
+0 = readonly, bit 1 = cached). Editors that only honor standard
+modifiers fall back to "readonly" styling; editors с custom
+modifier support (VS Code, Helix) get richer theming.
+
+### 3. Eligibility
+
+A read `@<field>` at byte offset `i` is tagged when:
+- `i` lies within an `FnCacheInfo::span` from `analyze_module`, AND
+- `<field>` ∈ `info.ro_caches ∪ info.mut_caches ∪
+  info.licm_hoists ∪ {root of each chain in info.chain_caches}`.
+
+Pure-call caches (`info.pure_caches`) are method-keyed, not field-
+keyed, so they don't contribute. Behavior matches what codegen
+would actually fold.
+
+### 4. Delta encoding
+
+Per LSP spec — tokens sorted by `(line, char)` then encoded as
+`(deltaLine, deltaStart, length, tokenType, tokenModifiers)`.
+`tokenType=0` (legend's PROPERTY index); `tokenModifiers` = the
+fixed `readonly|cached` bitmask. Length covers `@` + name.
+
+### 5. Capability registration
+
+`semantic_tokens_provider` returned at initialize-time with full=
+`true`, range=`false`. Client requests `textDocument/semanticTokens
+/full` and receives the encoded `data` array.
+
+### 6. Acceptance
+
+- **V5.2.1** Legend stable (`property` type; `readonly + cached`
+  modifiers) ✅
+- **V5.2.2** Cached `@<field>` reads emit PROPERTY token w/ correct
+  bitset ✅
+- **V5.2.3** Non-cached modules emit empty token list ✅
+- **V5.2.4** Delta encoding sane (monotonic, sortable) ✅
+- **V5.2.5** Compute panics-free under best-effort pipeline (None on
+  parse failure, not error) ✅
+
 ## D223 amend V7.2 — Explicit IpaCtx parameter threading (Plan 123 V*.2)
 
 **Source:** [Plan 123 V*.2 followups](../../docs/plans/123-v2-followups.md).

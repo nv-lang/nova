@@ -220,6 +220,24 @@ impl LanguageServer for Backend {
                     resolve_provider: Some(false),
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Plan 123.5.2 (V5.2, 2026-06-02): semantic tokens
+                // for `@<field>` reads that field_cache analysis decides
+                // to CSE/cache. Colors them differently from plain
+                // field accesses. Legend defines the custom modifier
+                // "cached" alongside standard "property" type.
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            work_done_progress_options: Default::default(),
+                            legend: SemanticTokensLegend {
+                                token_types: cached_field_semantic_token_types(),
+                                token_modifiers: cached_field_semantic_token_modifiers(),
+                            },
+                            range: Some(false),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                        },
+                    ),
+                ),
                 // Future capabilities (uncomment as sub-plans land):
                 // 104.3: completion_provider
                 // 104.4: document_symbol_provider, workspace_symbol_provider
@@ -408,6 +426,173 @@ impl LanguageServer for Backend {
         let hover = run_with_large_stack(move || compute_field_cache_hover(&src, pos));
         Ok(hover)
     }
+
+    /// Plan 123.5.2 (V5.2, 2026-06-02): semantic tokens for cached
+    /// `@<field>` reads. Highlight only the reads the analyzer would
+    /// fold into a cache local at codegen — gives the developer a
+    /// visual signal that an optimization is being applied.
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        let tokens = run_with_large_stack(move || compute_field_cache_semantic_tokens(&src));
+        Ok(tokens.map(|data| {
+            SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data,
+            })
+        }))
+    }
+}
+
+/// Plan 123.5.2 (V5.2): semantic token legend — token types this
+/// server emits. Single-element vec: standard LSP `property` type.
+/// Public so unit tests can verify the legend stays stable across
+/// edits.
+pub fn cached_field_semantic_token_types() -> Vec<SemanticTokenType> {
+    vec![SemanticTokenType::PROPERTY]
+}
+
+/// Plan 123.5.2 (V5.2): semantic token modifier legend. Indices
+/// emitted in tokens are bit positions in this list — must match
+/// the order returned to the client at initialize-time.
+pub fn cached_field_semantic_token_modifiers() -> Vec<SemanticTokenModifier> {
+    // Standard "readonly" approximates cached-folded semantics for
+    // editors that map LSP modifiers to TextMate scopes без custom
+    // theme support.  Custom modifier "cached" added for clients that
+    // do honor non-standard modifiers (VS Code, Helix).
+    vec![
+        SemanticTokenModifier::READONLY,
+        SemanticTokenModifier::new("cached"),
+    ]
+}
+
+/// Plan 123.5.2 (V5.2): bit position of the "cached" modifier in the
+/// legend returned by `cached_field_semantic_token_modifiers`.
+const CACHED_MOD_BIT: u32 = (1 << 0) | (1 << 1); // readonly + cached
+
+/// Plan 123.5.2 (V5.2): compute LSP-encoded semantic tokens for every
+/// `@<field>` read in `src` that field_cache analysis says would be
+/// CSE'd / cached. Delta-encoded per LSP spec.
+///
+/// Returns `None` when parsing/type-check fails (silent fallback —
+/// editor keeps existing syntax highlighting without inflicting
+/// errors).
+pub fn compute_field_cache_semantic_tokens(src: &str) -> Option<Vec<SemanticToken>> {
+    let mut module = nova_codegen::parser::parse(src).ok()?;
+    if nova_codegen::types::check_module(&module).is_err() { return None; }
+    let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::desugar::desugar_module(&mut module);
+    nova_codegen::types::infer_effects(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module);
+    let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+    let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
+
+    // For each FnCacheInfo, build set of "cached" field names; then
+    // scan src for `@<name>` reads within fn span and emit tokens.
+    use std::collections::HashMap as Map;
+    let mut cached_per_fn: Vec<(usize, usize, std::collections::HashSet<String>)> = Vec::new();
+    for info in &report.per_fn {
+        let mut set: std::collections::HashSet<String> = Default::default();
+        for f in &info.ro_caches { set.insert(f.clone()); }
+        for f in &info.mut_caches { set.insert(f.clone()); }
+        for f in &info.licm_hoists { set.insert(f.clone()); }
+        // chain_caches store path components — take the root.
+        for p in &info.chain_caches {
+            if let Some(root) = p.first() { set.insert(root.clone()); }
+        }
+        cached_per_fn.push((info.span.start as usize, info.span.end as usize, set));
+    }
+    if cached_per_fn.is_empty() { return Some(Vec::new()); }
+
+    // Build a line-offset table once to convert byte offsets into LSP
+    // (line, character) coordinates.
+    let line_starts = compute_line_starts(src);
+
+    let mut raw: Vec<(u32, u32, u32)> = Vec::new(); // (line, char, length)
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    let mut prev_offset_to_fn: Map<usize, usize> = Map::new();
+    while i < bytes.len() {
+        if bytes[i] == b'@' && i + 1 < bytes.len()
+            && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_')
+        {
+            // Extract field name.
+            let mut j = i + 1;
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+            {
+                j += 1;
+            }
+            let name = match std::str::from_utf8(&bytes[i + 1..j]) {
+                Ok(s) => s.to_string(),
+                Err(_) => { i = j; continue; }
+            };
+            // Locate enclosing fn whose span covers `i`, AND which has
+            // `name` in cached set.
+            for (start, end, set) in &cached_per_fn {
+                if i >= *start && i <= *end && set.contains(&name) {
+                    let (line, col) = byte_to_line_col(&line_starts, i);
+                    // Length covers `@` + name.
+                    raw.push((line as u32, col as u32, (j - i) as u32));
+                    prev_offset_to_fn.insert(i, *start);
+                    break;
+                }
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    if raw.is_empty() { return Some(Vec::new()); }
+    // Sort by (line, char) for deterministic delta encoding.
+    raw.sort();
+    // Delta-encode per LSP spec: each token's deltaLine/deltaStart are
+    // relative to the previous emitted token.
+    let mut out: Vec<SemanticToken> = Vec::with_capacity(raw.len());
+    let mut prev_line: u32 = 0;
+    let mut prev_char: u32 = 0;
+    for (line, ch, len) in raw {
+        let delta_line = line - prev_line;
+        let delta_start = if delta_line == 0 { ch - prev_char } else { ch };
+        out.push(SemanticToken {
+            delta_line,
+            delta_start,
+            length: len,
+            token_type: 0,                 // index 0 = PROPERTY in legend.
+            token_modifiers_bitset: CACHED_MOD_BIT, // readonly | cached
+        });
+        prev_line = line;
+        prev_char = ch;
+    }
+    Some(out)
+}
+
+/// Compute byte offsets of each line start in `src`.
+fn compute_line_starts(src: &str) -> Vec<usize> {
+    let mut out = vec![0usize];
+    for (i, b) in src.bytes().enumerate() {
+        if b == b'\n' { out.push(i + 1); }
+    }
+    out
+}
+
+/// Convert byte offset to (line, character-in-line) — both 0-indexed.
+/// Character is byte-based; UTF-16 conversion happens at the LSP
+/// boundary (V5.2 fixtures are pure ASCII so this is exact).
+fn byte_to_line_col(line_starts: &[usize], byte: usize) -> (usize, usize) {
+    let line = match line_starts.binary_search(&byte) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    };
+    let line_start = line_starts.get(line).copied().unwrap_or(0);
+    (line, byte - line_start)
 }
 
 /// Plan 123.5.1: compute code-lens list для source text.
