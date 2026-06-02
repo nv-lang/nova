@@ -1,0 +1,35 @@
+// Plan 123.7.1 T3.1: pure-call cache survives writes to fields
+// OUTSIDE the pure method's read-set (V3.1 frame-based).
+
+module plan123_7_1.ipa_pure_frame_based_invalidation_ok
+
+type Shape {
+    mut radius int
+    mut color int
+}
+
+// Pure method — reads only @radius.
+#pure
+fn Shape @area_approx() -> int => @radius * @radius * 3
+
+fn Shape mut @draw_twice() -> int {
+    // 2 calls to @area_approx, then write to @color (NOT @radius),
+    // then 2 more calls.
+    // V3 conservative would skip ALL pure caching due to @color = ...
+    // V3.1 IPA: @area_approx reads only @radius; write to @color
+    // doesn't invalidate.
+    ro a = @area_approx() + @area_approx()
+    @color = @color + 1
+    a + @area_approx() + @area_approx()
+}
+
+fn Shape.new(r int, c int) -> Shape {
+    Shape { radius: r, color: c }
+}
+
+test "V3.1 frame-based: pure cache survives unrelated write" {
+    mut s = Shape.new(2, 0)
+    ro r = s.draw_twice()
+    // area_approx = 2*2*3 = 12. a = 12+12 = 24. + 12+12 = 48.
+    assert(r == 48)
+}

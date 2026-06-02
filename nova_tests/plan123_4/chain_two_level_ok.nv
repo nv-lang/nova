@@ -1,0 +1,28 @@
+// Plan 123.4 T1.1: @parent.inner accessed 2+ times → chain cached.
+
+module plan123_4.chain_two_level_ok
+
+type Inner {
+    ro value int
+}
+
+type Outer {
+    ro inner Inner
+    ro mark int
+}
+
+fn Outer @sum_with_chain() -> int {
+    // 3 reads of @inner.value (= chain length 2 = "inner.value").
+    @inner.value + @inner.value + @inner.value + @mark
+}
+
+fn Outer.new(v int, m int) -> Outer {
+    Outer { inner: Inner { value: v }, mark: m }
+}
+
+test "chain @inner.value cached" {
+    ro o = Outer.new(7, 5)
+    ro r = o.sum_with_chain()
+    // 3*7 + 5 = 26.
+    assert(r == 26)
+}

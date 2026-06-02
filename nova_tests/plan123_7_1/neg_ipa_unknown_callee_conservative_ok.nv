@@ -1,0 +1,29 @@
+// Plan 123.7.1 T-NEG.1: unknown callee (free fn) — conservative
+// invalidate (IPA can't analyze).
+
+module plan123_7_1.neg_ipa_unknown_callee_conservative_ok
+
+type Bag {
+    mut value int
+}
+
+// Free function — IPA doesn't track its effects on @value.
+fn helper_external(x int) -> int { x + 1 }
+
+fn Bag mut @use_external() -> int {
+    // V7.1 conservative: helper_external is non-self → invalidate.
+    ro a = @value + @value
+    ro b = helper_external(3)
+    a + b + @value + @value
+}
+
+fn Bag.new(v int) -> Bag {
+    Bag { value: v }
+}
+
+test "Unknown callee — conservative cache invalidation" {
+    mut b = Bag.new(5)
+    ro r = b.use_external()
+    // a=10, b=4. After call @value=5 still. 10+4+10 = 24.
+    assert(r == 24)
+}

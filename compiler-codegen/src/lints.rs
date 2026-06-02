@@ -2179,6 +2179,8 @@ mod tests {
                 axioms: Vec::new(),
                 consume: false,
                 impl_protocols: Vec::new(),
+                assoc_consts: Vec::new(),
+                default_field_priv: false,
             })).collect();
             PeerFile {
                 path: PathBuf::from("/synthetic/std/prelude/core.nv"),

@@ -1,0 +1,29 @@
+// Plan 123.4 T1.3: multiple distinct chains, each independently cached.
+
+module plan123_4.chain_multiple_paths_ok
+
+type Bottom {
+    ro x int
+}
+
+type Mid {
+    ro left Bottom
+    ro right Bottom
+}
+
+fn Mid @sum_both() -> int {
+    // 2 reads of @left.x and 2 reads of @right.x — каждая chain
+    // emit'ит свой cache.
+    @left.x + @right.x + @left.x + @right.x
+}
+
+fn Mid.new(l int, r int) -> Mid {
+    Mid { left: Bottom { x: l }, right: Bottom { x: r } }
+}
+
+test "multiple chains independently cached" {
+    ro m = Mid.new(3, 7)
+    ro r = m.sum_both()
+    // 3+7+3+7 = 20.
+    assert(r == 20)
+}

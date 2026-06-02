@@ -1,0 +1,27 @@
+// Plan 123.3.1 T-NEG.1: non-literal arg (variable) → V3.1 skips
+// caching (would require runtime equality check).
+
+module plan123_3_1.neg_non_literal_arg_skip_ok
+
+type Calc {
+    ro factor int
+}
+
+#pure
+fn Calc @times(n int) -> int => @factor * n
+
+fn Calc @sum_with_var(n int) -> int {
+    // arg is the parameter `n`, not a literal → V3.1 skips.
+    @times(n) + @times(n) + @times(n)
+}
+
+fn Calc.new(f int) -> Calc {
+    Calc { factor: f }
+}
+
+test "non-literal arg — V3.1 skips, semantics preserved" {
+    ro c = Calc.new(3)
+    ro r = c.sum_with_var(4)
+    // 3*4=12, ×3 = 36.
+    assert(r == 36)
+}

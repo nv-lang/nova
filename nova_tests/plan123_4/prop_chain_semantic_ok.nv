@@ -1,0 +1,34 @@
+// Plan 123.4 T-PROP.1: property — chain caching invariant across
+// configurations + various inputs.
+
+module plan123_4.prop_chain_semantic_ok
+
+type RegA {
+    ro field RegA_Sub
+}
+
+type RegA_Sub {
+    ro x int
+    ro y int
+}
+
+fn RegA @sum_all() -> int {
+    @field.x + @field.x + @field.y + @field.y
+}
+
+fn RegA @diff() -> int {
+    @field.x - @field.y + @field.x - @field.y
+}
+
+fn RegA.new(x int, y int) -> RegA {
+    RegA { field: RegA_Sub { x, y } }
+}
+
+test "chain semantics across inputs" {
+    ro a1 = RegA.new(3, 5)
+    assert(a1.sum_all() == 16)
+    assert(a1.diff() == -4)
+    ro a2 = RegA.new(10, 1)
+    assert(a2.sum_all() == 22)
+    assert(a2.diff() == 18)
+}

@@ -1,0 +1,60 @@
+// Plan 123.1 T-PROP.1: property test — semantic equivalence
+// (umbrella §8.1 verification method #4). Runs same logic через
+// 4 different access patterns; results must match.
+
+module plan123_1.prop_semantic_equivalence_ok
+
+type V {
+    ro a int
+    ro b int
+    ro c int
+}
+
+// Pattern 1: maximum direct accesses (all reads of same field).
+fn V @sum_p1() -> int {
+    @a + @a + @b + @b + @c + @c
+}
+
+// Pattern 2: mixed positions (binary expressions).
+fn V @sum_p2() -> int {
+    (@a + @b) + (@a + @c) + (@b + @c)
+}
+
+// Pattern 3: through local intermediate.
+fn V @sum_p3() -> int {
+    ro x = @a + @b + @c
+    x + @a + @b + @c
+}
+
+// Pattern 4: nested if branches (cache spans branches).
+fn V @sum_p4() -> int {
+    if @a > 0 {
+        @a + @b + @c + @a + @b + @c
+    } else {
+        @a - @b - @c + @a - @b - @c
+    }
+}
+
+fn V.new(a int, b int, c int) -> V {
+    V { a, b, c }
+}
+
+test "property: all 4 patterns equivalent (positive)" {
+    ro v = V.new(2, 3, 5)
+    ro p1 = v.sum_p1()
+    ro p2 = v.sum_p2()
+    ro p3 = v.sum_p3()
+    ro p4 = v.sum_p4()
+    // All compute 2*(a+b+c) = 2*10 = 20.
+    assert(p1 == 20)
+    assert(p2 == 20)
+    assert(p3 == 20)
+    assert(p4 == 20)
+}
+
+test "property: works for various inputs" {
+    assert(V.new(7, 11, 13).sum_p1() == 62)
+    assert(V.new(7, 11, 13).sum_p2() == 62)
+    assert(V.new(7, 11, 13).sum_p3() == 62)
+    assert(V.new(7, 11, 13).sum_p4() == 62)
+}

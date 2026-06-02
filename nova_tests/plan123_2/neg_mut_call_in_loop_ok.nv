@@ -1,0 +1,32 @@
+// Plan 123.2 T-NEG.2: Call inside loop body — for mut fields, V2
+// conservative skip hoisting (call could mutate @F via alias).
+
+module plan123_2.neg_mut_call_in_loop_ok
+
+type Acc {
+    mut total int
+}
+
+fn Acc.adjust(x int) -> int { x + 1 }
+
+fn Acc mut @sum_n(n int) -> int {
+    mut i = 0
+    mut s = 0
+    while i < n {
+        // call inside loop body → no LICM hoist для mut @total.
+        s = s + @total + @total + Acc.adjust(i)
+        i = i + 1
+    }
+    s
+}
+
+fn Acc.new(t int) -> Acc {
+    Acc { total: t }
+}
+
+test "call in loop blocks mut hoist — correctness" {
+    mut a = Acc.new(10)
+    ro r = a.sum_n(3)
+    // 3 iterations × (10+10) + (1+2+3) = 60 + 6 = 66.
+    assert(r == 66)
+}

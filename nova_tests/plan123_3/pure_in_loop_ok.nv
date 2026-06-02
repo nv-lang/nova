@@ -1,0 +1,33 @@
+// Plan 123.3 T1.2: pure method called inside loop — cached at body
+// prefix (since no @F write).
+
+module plan123_3.pure_in_loop_ok
+
+type Buf {
+    ro data int
+}
+
+#pure
+fn Buf @size() -> int => @data
+
+fn Buf @scan_for(target int) -> int {
+    mut count = 0
+    mut i = 0
+    while i < @size() {
+        if i == target { count = count + 1 }
+        if i < @size() / 2 { count = count + 0 }
+        i = i + 1
+    }
+    count + @size()
+}
+
+fn Buf.new(d int) -> Buf {
+    Buf { data: d }
+}
+
+test "pure method in loop cached at body prefix" {
+    ro b = Buf.new(4)
+    ro r = b.scan_for(2)
+    // size=4, loop iterates 0..4. count=1 (only i==2). + size=4 → 5.
+    assert(r == 5)
+}

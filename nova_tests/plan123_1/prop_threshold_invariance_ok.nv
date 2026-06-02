@@ -1,0 +1,39 @@
+// Plan 123.1 T-PROP.2: property test — threshold invariance.
+// Same method evaluated repeatedly через различные dispatches must
+// give same answer regardless of caching.
+
+module plan123_1.prop_threshold_invariance_ok
+
+type Counter {
+    ro init int
+}
+
+fn Counter @factorial_like(n int) -> int {
+    // @init accessed n times через recursion-like loop.
+    mut total = @init
+    mut i = 0
+    while i < n {
+        total = total * @init
+        i += 1
+    }
+    total
+}
+
+fn Counter.new(x int) -> Counter {
+    Counter { init: x }
+}
+
+test "property: caching never changes result" {
+    ro c = Counter.new(2)
+    assert(c.factorial_like(0) == 2)        // just init
+    assert(c.factorial_like(1) == 4)        // 2 * 2
+    assert(c.factorial_like(3) == 16)       // 2 * 2*2*2 = 16
+    assert(c.factorial_like(5) == 64)       // 2 * 2^5 = 64
+}
+
+test "property: zero/positive args invariant" {
+    ro c = Counter.new(5)
+    // 5 * 5^n
+    assert(c.factorial_like(0) == 5)
+    assert(c.factorial_like(2) == 125)
+}

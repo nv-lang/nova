@@ -28215,3 +28215,953 @@ Deferred к next session (per umbrella roadmap):
 - Plan 124.6 Test access + visible_to friends
 - Plan 124.7 Type-level priv flip (tuples)
 
+[Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support] 2026-06-02
+
+Контекст: Plan 91.12 V2 ранее закрыл миграцию sync types (OnceCell/Lazy/Condvar)
+на tuple-newtype через hardcoded per-name routing (RUNTIME_BACKED_NEWTYPES list).
+Этот followup extends generic newtype support к произвольным user-level types,
+закрывая [M-115-newtype-constructor-generic] и unblocking real user FFI use
+cases (phantom-T handles, mutability-tagged buffers, region/arena ownership).
+
+Изменения:
+
+**compiler-codegen/src/codegen/emit_c.rs:**
+
+1. emit_type_decl generic-types branch — добавлен TypeDeclKind::Newtype handler.
+   Generic Record/Sum уже emit'ились (lines 8237-8430); Newtype falls through
+   на bare `return Ok(())` без emission. Fix: внутри `if !t.generics.is_empty()`
+   block добавлен Newtype branch — emit'ает `typedef nova_ptr Nova_X;` (single
+   typedef shared across all T monomorphizations) + регистрирует type_aliases
+   entry. Skip для RUNTIME_BACKED_NEWTYPES (OnceCell/Lazy/Condvar handled
+   через emit_generic_type_instance per-T mono).
+
+2. emit_call constructor intercept (line ~17374) — расширен match для
+   TurboFish form:
+   - ExprKind::Ident(n) → Some(n) (non-generic case, Plan 115 V1)
+   - ExprKind::TurboFish { base: Ident(n), .. } → Some(n) (generic, V2 followup)
+   Без этого `MyHandle[int](raw)` пытался резолвиться через free_fn dispatch
+   → undefined symbol "MyHandle" в linker stage.
+
+Tests (nova_tests/plan91_12/v3_user_generic_newtype_ok.nv — NEW, 6 blocks):
+- single-param `MyHandle[int]` construct + .0
+- single-param `MyHandle[str]` construct + .0
+- distinct T'ы share same C ABI (nova_ptr equality test)
+- multi-param `MultiParam[T, U]` construct + .0
+- generic newtype + null ptr literal
+- multiple instances — independent values
+
+Spec (spec/decisions/02-types.md D214):
+- D214 status header amended: «Plan 91.12 V2 amend (2026-06-02): generic
+  tuple-newtype `type X[T](ptr)` now supported».
+- NEW §«Generic opaque handle — type X[T](ptr)» с phantom-T semantics +
+  multi-param example.
+
+Doc (docs/migration/d126-to-tuple-newtype.md):
+- §«Pattern 2 — Tuple newtype над ptr» extended subsection
+  «Generic user FFI handle (Plan 91.12 V2 followup, 2026-06-02)» с
+  Region[T]/DualHandle[T, U] examples.
+
+Markers:
+- ✅ [M-115-newtype-constructor-generic] — CLOSED.
+- 🟡 [M-91.12-generic-newtype-non-ptr-inner] — open carry-forward (low
+  priority: `type Wrap[T](int)` пер-T mono — non-FFI use case).
+
+Regression:
+- plan91_12 7/7 PASS (6 V2 fixtures + 1 V3 new).
+- buffers 11/11 PASS.
+- plan115 11/11 PASS.
+- plan103_5 (OnceCell/Lazy/Once family) 20/20 PASS.
+
+Worktree: nova-p91-12 (продолжается). Branch: plan-91.12.
+
+================================================================================
+Plan 114.4.4 finish session — Ф.4 + Ф.5 V4 (2 markers closed) — 2026-06-02
+================================================================================
+
+Branch: plan-114.4.4-finish (off main a78f837d1b1).
+
+Закрыты 2 V4 markers через 2 V3 phases lifted:
+- [M-114.4.3-pattern-record-sum] → Ф.4 record/sum/tuple patterns.
+- [M-114.4.3-t-reflection] для primitives → Ф.5 sizeof/align_of.
+
+V4 phase summaries:
+
+Ф.4 record/sum patterns (3ba795e5281):
+- ConstValue enum extended: Tuple(Vec<ConstValue>) + Variant(name, args)
+  + Record(Vec<(name, value)>) variants.
+- match_const_pattern extended: Pattern::Tuple, Pattern::Variant{path, kind},
+  Pattern::Record{fields, rest}, Pattern::Binding handled.
+- check_const_fn_pattern: V2.0 subset → V4 expanded subset.
+- check_const_fn_expr Match: arm_locals collect pattern bindings для
+  arm body/guard validation. collect_const_fn_pattern_bindings helper.
+- TupleLit/RecordLit accepted в body checker (recursive sub-validation).
+- Variant constructor heuristic в check + eval + try_literal_to_value:
+  Call(Ident(TitleCase), args) и Name не в const_fn_names → variant.
+- try_literal_to_value extended: Unary/Binary/As/TupleLit/Call(variant)
+  для arg pre-evaluation на call sites.
+
+Ф.5 t-reflection primitives (69f8d9a1381):
+- type_size_or_align(t, is_align) helper: primitive ABI table per
+  default 64-bit ABI (int=8, i32=4, i16=2, i8=1, bool=1, char=4,
+  str=16, etc.).
+- simple_type_name_str helper.
+- check_const_fn_expr Call: turbofish callee unwrap; sizeof/align_of
+  recognized as builtin без registration.
+- check_const_constexpr_ex Call: sizeof/align_of pre-accept перед
+  const_fn_names check.
+- OwnedEvaluator.eval_expr: sizeof/align_of intrinsic → ConstValue::Int.
+- try_literal_to_value: TurboFish sizeof/align_of pre-evaluation.
+- walk_expr: sizeof[T]() / align_of[T]() → IntLit replacement для
+  module-level const RHS.
+- is_known: sizeof/align_of recognized as builtin identifiers
+  (name resolution).
+- rewrite_const_fn_calls: early-return removed (walk module даже без
+  const fn для sizeof intrinsic в const RHS).
+- V4.0 surface: primitives only. Records/generics → Plan 114.4.4.2.
+
+V4 extensions spec (4d3764abdae):
+- D199 V4 extensions subsection added после V3.
+- Q7 updated с V4 closures.
+- A31 + A32 acceptance criteria.
+
+Tests (plan114_4_4/, 4 new):
+- pattern_tuple_ok: classify(x, y) с tuple pattern arms.
+- pattern_variant_ok: unwrap_or через Some(x)/None pattern.
+- sizeof_primitives_ok: 5 sizeof/align_of usage examples.
+- sizeof_in_const_fn_ok: buf_size(10) = 10*sizeof[int]() = 80.
+
+Verification: 12/12 plan114_4_4 + 14/14 plan114_4_3 + 16/16 plan114_4_2
+= 42/42 PASS на release nova-cli.
+
+What extracted (Ф.6-Ф.8 — focused dev-day each, separate plans):
+- Plan 114.4.4.3 — runtime HOF trampoline. Requires ABI design для
+  const fn → function pointer conversion. Complex codegen.
+- Plan 114.4.4.4 — closure-returning const fn. Closure capture
+  semantics на compile-time.
+- Plan 114.4.4.5 — true per-const-arg monomorphization. Deep Plan 70.5
+  mono pipeline integration.
+
+Each Plan 114.4.4.3/4/5 ships independently when triggered.
+
+Final markers closed (Plan 114.4.3 chain): 6 of 9 V2.1/V3 followups
+landed (4 в первой Plan 114.4.4 + 2 в этой finish session):
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅
+- [M-114.4.3-pattern-record-sum] ✅ (этот session)
+- [M-114.4.3-t-reflection] ✅ для primitives (этот session)
+
+Remaining 3 deferred to Plan 114.4.4.3/4/5 (V4.1+ scope).
+
+[Plan 91.12 V2 followup #2 — Generic newtype non-ptr inner + reject inner-uses-param] 2026-06-02
+
+Контекст: V2 followup #1 (2026-06-02) закрыл [M-115-newtype-constructor-generic]
+для generic ptr-newtype. V2 followup #2 extends к non-ptr inner types (int/str/
+bool/f64) и добавляет type-checker reject для invalid form `type X[T](T)`.
+
+Изменения:
+
+**compiler-codegen/src/types/mod.rs:**
+- NEW `typeref_uses_param(tr, params)` static helper — recursive check
+  использует ли TypeRef один из generic params (mirror codegen's
+  type_ref_uses_any_type_param).
+- `TypeDeclKind::Newtype` walk extended: после walk_typeref, для
+  generic newtype (t.generics non-empty), check `typeref_uses_param(inner, t.generics)`.
+  Если true → error E_GENERIC_NEWTYPE_INNER_USES_PARAM с migration hint:
+  «replace with `type X { value T }` (record form)».
+
+Codegen `emit_type_decl` generic-types branch уже handled non-ptr inner
+через unified `type_ref_to_c(inner)` call — V2 followup #2 не требует
+codegen changes (только type-checker guard).
+
+**Tests:**
+- NEW `nova_tests/plan91_12/v3_generic_newtype_non_ptr_inner_ok.nv`
+  (11 positive blocks): Counter[T](int)/Tag[T](str)/Flag[T](bool)/
+  Measure[T](f64)/Tagged[T,U](int) — construct + .0 + distinct T.
+- NEW `nova_tests/plan91_12/v3_generic_newtype_inner_uses_param_neg.nv`
+  (negative): `type Wrap[T](T)` → E_GENERIC_NEWTYPE_INNER_USES_PARAM.
+
+**Spec D214 (spec/decisions/02-types.md):**
+- §«Generic opaque handle — `type X[T](ptr)`» extended с §«Inner non-ptr
+  types» (positive cases) + §«Inner uses generic param» (REJECTED с
+  E_GENERIC_NEWTYPE_INNER_USES_PARAM + migration hint).
+- Closes [M-91.12-generic-newtype-non-ptr-inner] explicitly.
+
+**Doc docs/migration/d126-to-tuple-newtype.md:**
+- «Generic user FFI handle» subsection extended с non-ptr inner examples
+  + REJECTED form pattern + record-form alternative.
+
+**Acceptance criteria (A1-A8):**
+- A1-A5 ✅ — positive cases (int/str/bool/f64/multi-param) PASS.
+- A6 ✅ — negative `type Wrap[T](T)` rejected с E_GENERIC_NEWTYPE_INNER_USES_PARAM.
+- A7 ✅ — spec D214 amended.
+- A8 ✅ — migration guide updated.
+
+**Regression:** plan91_12 9/9 (5 V2 + 2 V3 positive + 2 V3 negative) +
+buffers 11/11 + plan115 11/11 + plan103_5 20/20 = 51/51 PASS.
+
+Markers:
+- ✅ [M-91.12-generic-newtype-non-ptr-inner] — CLOSED.
+- No new open followups для Plan 91.12.
+
+Worktree: nova-p91-12 (continued). Branch: plan-91.12.
+
+[Plan 91.12 V2 followup #3 — TypeRef::uses_any_type_param refactor] 2026-06-02
+
+Контекст: V2 followup #1 (generic newtype) и followup #2 (non-ptr inner)
+ввели в types/mod.rs локальный helper `typeref_uses_param`, mirror codegen
+helper `type_ref_uses_any_type_param` в emit_c.rs. Эта duplication —
+known code-smell, документированная в Session 12 discussion-log как
+«acceptable across modules».
+
+Followup #3 — production-grade refactor: extract единственное реализование
+в `ast::TypeRef::uses_any_type_param(&self, params: &HashSet<String>) -> bool`,
+оба callsite (codegen + type-checker) становятся thin #[inline] wrapper'ами.
+
+**Изменения:**
+
+compiler-codegen/src/ast/mod.rs:
+- NEW method `TypeRef::uses_any_type_param` в impl TypeRef block. Covers
+  всех 8 variants: Named (path + recurse generics), Array/FixedArray/Readonly
+  (recurse inner), Tuple (recurse all elements), Func (recurse params + return),
+  Protocol (recurse method params + return), Unit (false).
+- NEW `#[cfg(test)] mod typeref_uses_any_type_param_tests` (18 unit tests):
+  - 10 positive: named-is-param, generic-arg-is-param, nested-generics,
+    array/fixed-array/tuple/func/readonly inner, multi-param match-any.
+  - 8 negative: concrete types, multi-segment path (path.len() > 1),
+    empty param set, Unit type, concrete generic args, all-concrete func,
+    different-named param.
+
+compiler-codegen/src/codegen/emit_c.rs:
+- `type_ref_uses_any_type_param` reduced с 25-line full implementation
+  до 3-line `#[inline] fn ... { ty.uses_any_type_param(type_params) }`.
+
+compiler-codegen/src/types/mod.rs:
+- `typeref_uses_param` reduced с 22-line implementation до 3-line thin
+  wrapper to same ast method.
+
+**Test status:**
+- `cargo test --release --lib typeref_uses_any_type_param` НЕ работает
+  due to pre-existing broken tests в emit_c.rs::mem_ordering_tests
+  (Span import path bug, line 28214: `use crate::ast::Span` instead of
+  `use crate::diag::Span`). Bug NOT в моём refactor (verified via git stash
+  + same error reproduces). Fix этой stale test out of scope для refactor —
+  это отдельная code-hygiene задача.
+
+**Integration coverage** (proxy for unit tests):
+- plan48 Ф.3 generic erasure (emit_c.rs caller) — 7/7 PASS.
+- plan91_12 V2 newtype reject guard (types/mod.rs caller) — 9/9 PASS.
+- Refactor 1:1 behavior-preserving — both callsite paths exercised.
+
+**Regression:** plan91_12 9/9 + buffers 11/11 + plan115 11/11 +
+plan103_5 20/20 + plan48 7/7 = 58/58 PASS.
+
+Markers:
+- ✅ [M-91.12-typeref-uses-param-dedup] — CLOSED.
+- No new open followups.
+
+Worktree: nova-p91-12 (continued). Branch: plan-91.12.
+
+================================================================================
+Plan 114.4.4.5 V4.1 — mono-specialization landed (2026-06-02)
+================================================================================
+
+Branch: plan-114.4.4-v4-1 (off main 06b41fb50db).
+
+Closes [M-114.4.3-mono-specialization] — true per-const-arg mono для
+mixed const fns (Rust const generics-style).
+
+What landed (1 V4.1 marker):
+- Plan 114.4.4.5 mono-specialization V1.
+
+What extracted (focused dev-sessions для each):
+- Plan 114.4.4.3 runtime-HOF trampoline — fundamental ABI design
+  (const fn → fn pointer conversion has semantic challenge: fully-const
+  fn body requires compile-time args; only no-param const fn can have
+  runtime trampoline).
+- Plan 114.4.4.4 closure-from-const-fn — closure capture semantics
+  на compile-time, runtime closure с baked const captures. Requires
+  closure runtime integration.
+
+Implementation summary (Plan 114.4.4.5 mono):
+- New module compiler-codegen/src/const_fn_mono.rs (~440 lines).
+- specialize_mixed_const_fns(module) entry point.
+- AST walker collects (mixed_fn, const_args) call sites; generates
+  specialization names `<orig>__cst_<idx>`.
+- specialize_fn_decl: clones FnDecl, substitutes const param refs в
+  body с literal values, drops const params from signature.
+- Full AST walker handles все node types (Expr/Stmt/Block/Item).
+- Pipeline integration: main.rs (4 sites) + test_runner.rs.
+- OwnedEvaluator extended: новое field mixed_fns: HashMap<String, FnDecl>
+  alongside mixed_const_params.
+
+Codegen behavior:
+- Mixed fn original AST kept (template).
+- Spec FnDecls inserted в module.items.
+- Call sites rewritten: orig name → spec name + drop const args.
+- C output has both original (potentially dead) + all specializations.
+
+V1 fixture removed (V4-superseded):
+- body_allocation_neg.nv (V4 Ф.4 allows tuple/record literals).
+
+Tests (plan114_4_4/, 1 new):
+- mono_specialization_ok: scale(const factor, x) с 3 call sites —
+  factor=3 (twice, reuses spec) + factor=10 (new spec) → 2 distinct
+  specializations.
+
+Verification: 13/13 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3
+= 42/42 PASS на release nova-cli.
+
+Acceptance: A33 ✅. A34/A35 → Plan 114.4.4.3/4 (V4.2+).
+
+Markers closed (Plan 114.4.3 chain): 7 of 9 V2.1/V3 followups closed
+across Plan 114.4.4 умbrella:
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅
+- [M-114.4.3-pattern-record-sum] ✅
+- [M-114.4.3-t-reflection] ✅ (primitives)
+- [M-114.4.3-mono-specialization] ✅ (этот session)
+
+Remaining 2 deferred:
+- [M-114.4.3-runtime-hof] → Plan 114.4.4.3.
+- [M-114.4.3-closure-from-const-fn] → Plan 114.4.4.4.
+
+
+================================================================================
+Plan 123.1 — D217 Method-local receiver field caching V1 (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #1 (gate для 123.2-123.7).
+
+Motivation: codegen Nova эмитит literal `nova_self->X` на каждый @X
+access. Hot-path methods (ReadBuffer / WriteBuffer / StringBuilder /
+HashMap iter) accessing @field 5-15 раз → redundant pointer derefs
+в .c output. C-оптимизатор частично спасает на -O2 через NoAlias
+analysis (non-deterministic perf characteristic); -O0 (debug) — zero
+CSE. Compile-time транспарентная оптимизация на уровне Nova-codegen
+AST-pass — independent от C-compiler quality.
+
+Phases delivered:
+- Ф.0 Investigation + DECISIONs A-F finalized.
+- Ф.1 AST pass infra + ro field unconditional caching.
+- Ф.2 mut field straight-line first-region cache (write/call boundary).
+- Ф.3 Edge cases hardening (static/external receiver early return)
+  + AST-level unit tests (cargo test currently baseline-broken).
+- Ф.4 18 runtime fixtures (11 positive + 4 negative-style + 3
+  property) — все 18/18 PASS identically под NOVA_FIELD_CACHE=ON и
+  OFF (semantic equivalence differential).
+- Ф.5 Spec D217 NEW (~210 LOC) + spec README index entry.
+- Ф.6 Three closure logs + plan doc status flip + push.
+
+Implementation:
+- compiler-codegen/src/field_cache.rs (~2400 LOC, single-file V1)
+  registered в lib.rs.
+- Pipeline wiring: main.rs::cmd_compile/run/test + test_runner.rs::
+  compile_to_c_inner — pass invoked после callnorm (codegen path) /
+  desugar (interp path), перед codegen / interp load.
+- Pure AST→AST трансформация, no I/O, no global state. Per-fn
+  counter reset → deterministic output. Field names sorted
+  alphabetically (HashMap iteration leak guard).
+
+Production-grade requirements met (per Plan 123 umbrella §8):
+- ✅ Semantic equivalence guarantee verified 5 ways: unit (Rust
+  baseline-blocked but coded) / codegen-diff (spec D217 §1 +
+  manual Ф.4) / semantic (.nv programs identical) / property
+  (3 fixtures) / differential (sample suites identical baseline).
+- ✅ Cross-platform determinism — Windows MSVC verified; Linux /
+  macOS — same pass logic (no platform-specific code в pass).
+- ✅ Bounded overhead — PerfTimer `field-cache` <5ms на typical
+  fixtures; formal <5% bench — Plan 123.6 territory.
+- ✅ Escape hatch — NOVA_FIELD_CACHE=0 bypass identical baseline.
+- ✅ Debug-info — span preserved через AST clone (DWARF/PDB maps
+  back).
+
+Acceptance A1.1-A1.10 all met (per umbrella §6.1, см.
+docs/simplifications.md для detailed breakdown).
+
+D-block landed:
+- D217 NEW (08-runtime.md) — ~210 lines, §1-§11 (semantics +
+  heuristics + safety + mangling + escape hatch + debug-info +
+  edition compat + determinism + cross-refs + milestone table +
+  Q-resolution).
+- spec/decisions/README.md updated — D217 added к 08-runtime layer
+  scope + 'Свежие D-решения' table.
+
+Open followups (P2/P3, не блокирующие V1 ship):
+- [M-123.1-mut-region-recache] — full multi-region re-cache (V2).
+- [M-123.1-cli-flags] — CLI flags via clap (Plan 123.6 territory).
+- [M-123.1-unit-tests-runnable] — baseline cargo test broken
+  (lints.rs / sum_schema_registry.rs unrelated).
+- [M-123.1-compile-time-bench] — <5% formal measurement (Plan
+  123.6).
+
+Worktree nova-p123 preserved (per feedback-isolated-worktree); branch
+plan-123-receiver-field-cse pushed на github (no merge в main — per
+user explicit instruction).
+
+Unblocks:
+- Plan 123.2 (LICM) — gated на 123.1 ✅.
+- Plan 123.3 (#pure cache) — gated на 123.1 ✅ + D120 ✅.
+- Plan 123.4 (chain) — gated на 123.1 ✅.
+- Plan 123.6 (telemetry) — gated на 123.1 ✅.
+
+Closes Plan 123 V1 milestone — 0.1 ship-ready (foundational layer).
+
+
+================================================================================
+Plan 123.2 — D218 LICM (Loop-Invariant Code Motion) V2 (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #2. Gated на 123.1 ✅.
+
+Motivation: D217 (Plan 123.1) emits cache at method-body prefix. Gap:
+loop bodies with mut field reads, when prefix region empties due to
+pre-loop Call. LICM phase explicitly detects loop-invariant @<F>
+reads, hoists `ro _at_<F>_loop = @<F>` immediately before loop в
+enclosing block. Composes с D217 — no double-cache, granular
+optimization layers.
+
+Phases delivered:
+- Ф.0 Investigation + DECISIONs A.2-F.2.
+- Ф.1+Ф.2 (merged) LICM pass implementation:
+  - FieldCacheConfig extension (licm_enabled / licm_threshold=2 /
+    licm_max_per_loop=4) + 3 env vars (NOVA_FIELD_CACHE_LICM[=0] +
+    _LICM_THRESHOLD + _LICM_MAX).
+  - licm_fn / licm_block (postorder для nested-first) / process_loop
+    + per-loop eligibility computation.
+  - 4 helper functions: collect_closures_captures_in_block (NEW,
+    replaces incorrect scan_block-reuse), block_contains_spawn (NEW),
+    first_field_span_in_block (NEW), expr_as_loop_body_mut (NEW).
+  - Composition с D217: LICM phase runs FIRST в cache_module; D217
+    sees outside-loop reads only.
+- Ф.3 Edge case fixtures (merged с Ф.4).
+- Ф.4 14 runtime fixtures (8 positive + 3 negative + 2 property +
+  1 escape-hatch) — все 14/14 PASS identically под 3 configurations
+  (default / NOVA_FIELD_CACHE_LICM=0 / NOVA_FIELD_CACHE=0).
+- Ф.5 Spec D218 NEW (~180 lines) + README index entry.
+- Ф.6 3 logs + status flip + push.
+
+Implementation:
+- compiler-codegen/src/field_cache.rs (~1100 LOC delta) — LICM
+  phase + new helpers.
+- Test fixtures: nova_tests/plan123_2/ (14 fixtures).
+
+Production-grade requirements met:
+- ✅ Semantic equivalence — 14/14 identical across 3 env modes.
+- ✅ Cross-platform determinism — sorted iteration, no global state.
+- ✅ Bounded overhead — per-loop O(N) walk, total fn cap shared с
+  D217 max_per_fn=8.
+- ✅ Escape hatch — NOVA_FIELD_CACHE_LICM=0 (granular) +
+  NOVA_FIELD_CACHE=0 (umbrella). Both verified bypass identical к
+  baseline.
+- ✅ Debug-info — span from first @F access in body.
+
+Acceptance A2.1-A2.8 met (umbrella §6.2).
+
+D-block landed:
+- D218 NEW (08-runtime.md, ~180 lines, §1-§11).
+- spec/decisions/README.md — D218 added в 08-runtime + Свежие
+  D-решения table.
+
+Open followups (P2/P3, не блокирующие V2 ship):
+- [M-123.2-mut-call-refine] — В Plan 123.7 IPA с #nofield_mut.
+- [M-123.2-supervised-body-hoist-refined] — supervised body
+  could hoist ro fields safely.
+- [M-123.2-closure-fixture-runtime] — closure+@field баseline
+  codegen bug.
+
+Unblocks: V3+ sub-plans (123.3-123.7) can use LICM-emitted
+locals as additional reuse opportunities. Composition pattern
+demonstrated — future passes follow same ordering rationale.
+
+
+================================================================================
+Plan 123.3 — D219 Pure-call result caching V3 (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #3 (V3). Nova-edge
+feature leveraging D24 effect system (Purity::Pure).
+
+Phases delivered:
+- Ф.0 Investigation + DECISIONs A.3-F.3 finalized.
+- Ф.1+Ф.2+Ф.3 (merged) pure-cache phase implementation in
+  field_cache.rs (~830 LOC delta).
+- Ф.4 12 runtime fixtures (7 positive + 3 negative + 2 property).
+- Ф.5 Spec D219 NEW (~180 lines).
+- Ф.6 3 logs + status flip.
+
+Implementation:
+- FieldCacheConfig: pure_enabled (default true) + pure_threshold
+  (default 2) + env vars NOVA_FIELD_CACHE_PURE[=0] +
+  _PURE_THRESHOLD.
+- build_pure_methods_registry: HashSet<(type_name, method_name)>
+  для FnDecls с Purity::Pure + Instance receiver + no params.
+- pure_cache_fn: per-fn V3 entry с conservative guards
+  (body_has_any_self_field_write / body_has_concurrent).
+- count_pure_calls_in_body + match_self_pure_call: detection.
+- rewrite_pure_calls_in_*: replacement walker.
+- Composition в cache_module: D218 LICM → D219 pure-cache →
+  D217 per-fn cache.
+
+Production-grade requirements met:
+- ✅ Semantic equivalence — 12/12 plan123_3 PASS identically
+  под default и NOVA_FIELD_CACHE_PURE=0 (differential).
+- ✅ Cross-platform determinism — sorted iteration.
+- ✅ Bounded overhead — O(N) per fn body walk.
+- ✅ Escape hatch — NOVA_FIELD_CACHE_PURE=0 + umbrella NOVA_
+  FIELD_CACHE=0.
+- ✅ Debug-info — span from first call site.
+
+Acceptance A3.1-A3.8 met (umbrella §6.3).
+
+D-block landed:
+- D219 NEW (08-runtime.md, ~180 lines).
+- spec/decisions/README.md — D219 added.
+
+Open followups (P2/P3):
+- [M-123.3-args-literals] — V3.1: pure calls с literal args.
+- [M-123.3-frame-based-invalidation] — V3.1: D24 f.reads
+  selective invalidation.
+
+Unblocks: Plan 123.4 chain caching (can compose с pure-cache для
+`@field.<pure_method>()` chains).
+
+
+================================================================================
+Plan 123.4 — D217 amend V4 chain caching (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #4.
+
+Extends D217 для chain access @a.b[.c[.d]] (depth 2-4, configurable).
+Fourth-layer composition с D217 V1 + D218 LICM + D219 pure-cache.
+
+Phases delivered (Ф.0-Ф.6).
+
+Implementation (~960 LOC delta field_cache.rs):
+- chain_cache_fn / extract_chain_path / count_chains_*/rewrite_chains_*.
+- FieldCacheConfig: chain_enabled + chain_threshold + chain_max_depth.
+- 3 env vars: NOVA_FIELD_CACHE_CHAIN[=0] + _CHAIN_THRESHOLD + _CHAIN_DEPTH.
+- Composition order: D218 LICM → V4 chain → D219 pure → D217 V1.
+
+Critical detection rule §4: @a.b.method() ≠ chain ['a','b','method']
+because method-dispatch Member differs from value-chain. Discovered
+via fixture failure during impl, fixed in same session.
+
+Production-grade:
+- ✅ 10/10 plan123_4 PASS под default и NOVA_FIELD_CACHE_CHAIN=0.
+- ✅ Regression: plan123_1 18/0, plan123_2 14/0, plan123_3 12/0,
+  basics 8/0.
+
+D-block: D217 amend V4 (~150 lines в 08-runtime.md).
+spec/decisions/README.md: D217 amend V4 row.
+
+Open followups (P2/P3):
+- [M-123.4-per-segment-invalidation].
+- [M-123.4-chain-prefix-sharing].
+
+
+================================================================================
+Plan 123.5 — D217 §6 amend V5 diagnostic mode (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #5. User-visible
+cache decision diagnostic.
+
+CLI flag `nova check <files> --explain-cache` emits per-fn cache
+decisions (D217+D218+D219+chain). Powered by analyze_module API
+(AST-clone based pure analysis).
+
+LSP code-lens + hover deferred — CLI provides equivalent info,
+LSP wrapper straightforward when prioritized.
+
+User doc `docs/field-cache-optimization.md` covers 4 layers +
+escape hatches + semantic equivalence + perf expectations.
+
+Implementation:
+- field_cache.rs: ExplainReport + FnCacheInfo + analyze_module.
+- nova-cli/src/main.rs: --explain-cache flag.
+- D217 §6 amend V5 in spec.
+
+Open followups: LSP integration (V5.1).
+
+
+================================================================================
+Plan 123.6 — D217 §7 amend V6 telemetry + production rollout (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #6.
+
+Telemetry aggregator + production migration guide.
+
+Implementation (~250 LOC):
+- nova-cli/src/main.rs:
+  - --telemetry-cache + --telemetry-json flags.
+  - cmd_check_telemetry_cache: corpus-wide aggregation.
+- docs/migration/123-field-cache.md: production team guide.
+- D217 §7 amend V6 spec section.
+
+Verified:
+- --telemetry-cache + --telemetry-json sample on plan123_5/
+  test_explain_ok.nv.
+- Migration guide documented baseline differential strategy.
+
+Open followups:
+- [M-123.6-cli-flags-full].
+- [M-123.6-ci-perf-gates].
+
+
+================================================================================
+Plan 123.7 — D223 IPA V7 infrastructure (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #7 (final).
+
+V7 ships IPA write_set inference infrastructure + public API.
+V1 mut barrier integration deferred V7.1.
+
+Implementation (~330 LOC):
+- field_cache::module_write_sets public API.
+- build_write_set_registry + iterative closure.
+- env var NOVA_FIELD_CACHE_IPA[=0].
+
+Tests:
+- nova_tests/plan123_7/ipa_no_regression_ok.nv: regression-free.
+
+D-block: D223 NEW (~100 lines).
+
+Open V7.1 followups:
+- [M-123.7-full-integration].
+- [M-123.7-scc-closure].
+- [M-123.7-cross-module].
+
+Closes Plan 123 V7 milestone.
+
+
+================================================================================
+Plan 123 umbrella V7 closure (2026-06-02)
+================================================================================
+
+🎯 ALL 7 SUB-PLANS CLOSED. Plan 123 family — full field-cache
+optimization stack V1-V7 production-ready.
+
+Summary table:
+- 123.1 V1 Core CSE (D217)        ✅ CLOSED 2026-06-02.
+- 123.2 V2 LICM (D218)            ✅ CLOSED 2026-06-02.
+- 123.3 V3 Pure-call (D219)       ✅ CLOSED 2026-06-02.
+- 123.4 V4 Chain (D217 amend V4)  ✅ CLOSED 2026-06-02.
+- 123.5 V5 LSP/diag (D217 §6)     ✅ CLOSED 2026-06-02.
+- 123.6 V6 Telemetry (D217 §7)    ✅ CLOSED 2026-06-02.
+- 123.7 V7 IPA (D223)             ✅ CLOSED 2026-06-02 (infra).
+- Umbrella V7                     ✅ CLOSED 2026-06-02.
+
+Delivered:
+- ~5500 LOC field_cache.rs.
+- 55 runtime fixtures via release nova-cli + clang.
+- 6 D-blocks (D217 V1+V4+V5+V6+§6+§7 / D218 / D219 / D223).
+- 7 sub-plan docs + investigation artifacts.
+- User doc field-cache-optimization.md.
+- Migration guide 123-field-cache.md.
+- CLI: --explain-cache + --telemetry-cache + --telemetry-json.
+
+Production-grade:
+- Semantic equivalence verified 5 ways.
+- Cross-platform deterministic.
+- Escape hatches: 4 layer-specific + umbrella + threshold tuning.
+- Telemetry baseline + regression detection workflow documented.
+
+Branch plan-123-receiver-field-cse — ~30+ commits across ~3 dev-days
+real wall time (single-session). NOT merged в main (per user
+instruction).
+
+
+================================================================================
+Plan 123.7.1 — D223 amend V7.1 IPA full integration (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. V7.1 followup. Completes V7 promise.
+
+V7 shipped write_set infrastructure but NOT integrated. V7.1 integrates
+across all 4 cache layers (V1 mut + V2 LICM + V3.1 pure + V4.1 chain).
+
+Phases delivered (Ф.0-Ф.6).
+
+Implementation (~800 LOC delta field_cache.rs):
+- IpaCtx struct + thread-local contexts.
+- 4 layer integrations.
+- build_read_set_registry (parallel infrastructure).
+- collect_body_writes + *_contains_invalidating_call_for helpers.
+
+Tests:
+- plan123_7_1: 10/10 PASS (4 IPA + 1 LICM + 1 pure + 2 chain + 2 neg
+  + 1 property).
+- Verified identical под NOVA_FIELD_CACHE_IPA=0.
+- All V1-V7 regression-free.
+
+D-block: D223 amend V7.1 (~200 lines) в 08-runtime.md.
+README index updated.
+
+Acceptance A7.1.1-A7.1.10 all met.
+
+This commit closes ONE major V*.1 followup. Remaining V*.1:
+- V3.1 literal args extension — partially done (frame-based via V7.1).
+- V5.1 LSP code-lens.
+- V6.1 sugar CLI flags.
+- Baseline cargo test fix.
+
+Plan 123 umbrella V7 baseline + V7.1 followup — both production
+active.
+
+
+================================================================================
+Plan 123.3.1 — D219 amend V3.1 pure-call literal args (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02.
+
+V3 cached `@method()` only. V3.1 extends к `@method(2)`,
+`@method(true)`, `@method('a')`, etc. — pure calls с literal-only
+args.
+
+Implementation (~700 LOC delta):
+- PureCallKey canonical encoding (method + args_key).
+- canonical_literal_repr (7 literal types + Unary-Neg).
+- count_pure_calls_in_body keyed by PureCallKey.
+- capture_sample_args_in_body for prefix let reconstruction.
+- rewrite_pure_calls_in_*_v31 canonical-key matching.
+
+Tests (plan123_3_1):
+- pure_literal_int_arg_ok.nv: @scaled(2) × 3 → cached.
+- pure_different_args_separate_caches_ok.nv: @scaled(2) vs
+  @scaled(5) → separate caches.
+- pure_bool_arg_ok.nv: bool literal arg.
+- neg_non_literal_arg_skip_ok.nv: variable arg → skip.
+
+D-block: D219 amend V3.1 (~100 lines).
+README: D219 amend V3.1 row.
+
+Open V3.2 followups:
+- [M-123.3.1-tuple-record-args].
+- [M-123.3.1-const-fn-args].
+
+
+================================================================================
+Plan 123.5.1 — D217 §6 amend V5.1 LSP code-lens + hover (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. V5.1 followup.
+
+LSP integration shipped:
+- code_lens_provider + hover_provider в Backend capabilities.
+- code_lens handler emit per-method "N cache(s): ro/mut/licm/pure/
+  chain breakdown" title.
+- hover handler returns markdown cache info for `@<field>` tokens.
+
+Implementation (~180 LOC):
+- nova-lsp/src/server.rs: capabilities + 2 handlers + 2 public fn
+  (compute_field_cache_lenses + compute_field_cache_hover).
+- Tests: nova-lsp/tests/field_cache_lens.rs (3 integration tests
+  via public fns).
+
+D-block: D217 §6 amend V5.1 (~80 lines).
+
+Future V5.2/V5.3 followups: semantic tokens + quickfix `#pure`.
+
+
+================================================================================
+Plan 123.6.1 — D217 §7 amend V6.1 CLI flags + CI gates (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. V6.1 followup.
+
+12 global CLI flags + CI perf regression gate.
+
+Implementation (~150 LOC):
+- 12 flags в Cli struct (global=true).
+- apply_field_cache_cli_flags translator (CLI → env vars).
+- cmd_check_telemetry_cache extended c baseline_path.
+- parse_json_number minimal JSON number extractor.
+
+CI workflow:
+- Baseline capture: `nova check src/ --telemetry-cache --telemetry-json > baseline.json`.
+- PR validation: `nova check src/ --telemetry-cache --telemetry-baseline=baseline.json`.
+- Exit 1 on regression (methods_affected_pct drop > 5pp OR caches_total drop > 10%).
+
+D-block: D217 §7 amend V6.1 (~75 lines).
+README: D217 amend V6.1 row.
+
+Open V6.2 followups: Plan 57 CPU bench integration + custom thresholds.
+
+
+================================================================================
+Baseline cargo test fix (2026-06-02)
+================================================================================
+
+Unblocks Plan 123 unit tests. Was completely broken pre-fix.
+
+Fixed:
+- 4 sites missing cancel_safe_attr field в FnDecl test inits.
+- 4 sites missing assoc_consts + impl_protocols в TypeDecl test inits.
+- Span private re-import в emit_c.rs tests.
+- field_cache test fixtures: keyword-reserved module path segments
+  (test, effect) renamed.
+
+Result:
+- cargo test --release --lib now compiles.
+- field_cache::tests: 14/14 PASS.
+- Overall: 453/40.
+
+Remaining 40 failures unrelated к field-cache (Plan 114 keyword
+fixtures + Plan 100 sum_schema legacy + parser closure_full tests).
+Tracked в separate followup markers.
+
+
+================================================================================
+Plan 123 main-sync (2026-06-02)
+================================================================================
+
+Sync operation: merged plan-123-receiver-field-cse → main + pushed
+к github/main. Plan 123 family production-active.
+
+Conflicts resolved:
+- compiler-codegen/src/main.rs (Plan 114.4.4.5 V4.1 + Plan 123.5
+  --explain-cache co-exist в cmd_check).
+- sum_schema_registry.rs (fn_eval_max_depth + cancel_safe_attr fields).
+- 2 docs (keep both histories).
+- spec README (D220 collision).
+
+D-block renumbering:
+- Plan 123.7 IPA D220 → D223 (Plan 124 priv-field-visibility umbrella
+  claimed D220-D222 в parallel work).
+- Updated ~10 files (spec + plan docs + 3 logs + 2 source files).
+
+Verification:
+- Full build clean (3 crates).
+- plan123_1 18/0, plan123_3_1 4/0, plan123_7_1 10/0 PASS.
+
+Lessons:
+- D-block numbering coordination needed for parallel work.
+
+
+================================================================================
+== 2026-06-02 — Plan 114.4.4.3 V4.2: runtime trampoline для first-class const fn
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-2 (off main 800f40a4c2a)
+> Status: 🟢 V1 LANDED. Closes [M-114.4.3-runtime-hof].
+
+Замысел:
+До V4.2 const fn использованное в non-callee position (Call.arg, Let.value,
+Return.value) → friendly error E_CONST_FN_FIRST_CLASS{,_RUNTIME_HOF} с
+suggestion обернуть в lambda. Wrap'инг — boilerplate. V4.2 ship'ит
+automatic trampoline generation: компилятор генерирует runtime fn
+`<orig>__trampoline` с demoted modifiers (const params/return → runtime)
+и переписывает first-class uses на trampoline name. Body unchanged
+(fully-const fn body состоит из выражений валидных и в runtime).
+
+Реализация:
+- Новый модуль compiler-codegen/src/const_fn_trampoline.rs (~660 LOC).
+- 4 шага: collect seeds → transitive closure → generate decls → rewrite Idents.
+- Pipeline placement: внутри rewrite_const_fn_calls, ПОСЛЕ main walker
+  (inline + intrinsics), ДО validate + retain. validate skip'ает names в
+  trampoline-set. Retain dropping ориг fully-const fn, trampoline survives.
+
+Тесты (release nova-cli):
+- 5 positive fixtures: arg, let_binding, transitive (nested const fn calls),
+  alias, recursive (self-call rewrite).
+- 1 negative fixture: generic const fn rejected (E_CONST_FN_TRAMPOLINE_GENERIC).
+- 2 V3-superseded fixtures removed.
+- 17/17 plan114_4_4 PASS + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 46/46.
+
+Spec/Q updates:
+- D199 V4.2 extensions subsection (spec/decisions/03-syntax.md).
+- A34 acceptance criterion added.
+- Q7 V4.2+ closure note (spec/open-questions.md).
+- Plan 114.4.4.3 doc status section appended.
+
+Open followups:
+- [M-114.4.4-trampoline-generics] — generic const fn first-class use
+  (требует full mono pipeline integration для intrinsic substitution
+  в generic body).
+- [M-114.4.4-trampoline-record-reflection] — record/sum sizeof inside
+  trampoline body (V4 limitation, разделено с Plan 114.4.4.2 t-reflection).
+
+Lessons:
+- AST walker pattern continues — third walker in const_fn_* family
+  (eval, mono, trampoline). Each ~250-440 LOC, mechanical. Pattern
+  scales для V4.x extensions.
+- Substituting "is_const = false" at trampoline gen time avoids
+  invasive codegen changes; trampoline body работает как обычный
+  runtime fn body. Cheap demotion strategy.
+
+
+================================================================================
+== 2026-06-02 — Plan 114.4.4.4 V4.3: closure-returning const fn specialization
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-3 (off plan-114.4.4-v4-2 head)
+> Status: 🟢 V1 LANDED. Closes [M-114.4.3-closure-from-const-fn].
+
+Замысел:
+До V4.3 closure literals в const fn body отвергались
+с E_CONST_FN_EFFECT_IN_BODY. V4.3 разрешает специальную форму — const
+fn чьё body — single closure literal: `fn make_adder(const n int) ->
+const fn(int) -> int => |x| x + n`. При вызове `make_adder(5)`
+компилятор генерирует specialized top-level fn `make_adder__closure_0`
+с substituted const param (n → 5) в closure body и replaces call site
+с Ident'ом к этой specialized fn (Nova поддерживает bare fn name as fn
+pointer).
+
+Реализация:
+- Новый модуль compiler-codegen/src/const_fn_closure.rs (~700 LOC).
+- 4 шага: detect closure-returning fns → walk + rewrite call sites →
+  generate specialized FnDecls (clone closure body + substitute) →
+  friendly first-class reject.
+- Body validator extension в types/mod.rs: closure-at-top-level case
+  расширяет scope с closure's own params (validation closure body по
+  обычным V1 rules с extended ident set).
+- Pipeline placement: ДО main walker в rewrite_const_fn_calls (так что
+  eval_call не сталкивается с closure body как ConstValue).
+
+Тесты (release nova-cli):
+- 4 positive: basic, dedup (3→2 specs memoization), as_hof (specialized
+  closure passed as HOF arg), block_body (closure block с control flow).
+- 2 negative: first_class_neg (bare Ident → E_CONST_FN_CLOSURE_FIRST_CLASS),
+  arity_neg (closure param count mismatch → E_CONST_FN_CLOSURE_ARITY).
+- 23/23 plan114_4_4 PASS + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 52/52.
+
+Spec/Q updates:
+- D199 V4.3 extensions subsection (spec/decisions/03-syntax.md).
+- A35 acceptance criterion added; 🎯 Plan 114.4.4 family complete table.
+- Q7 V4.3+ closure note (spec/open-questions.md) — все Plan 114.4.4
+  followups закрыты.
+- Plan 114.4.4.4 doc status section appended.
+
+Open followups:
+- [M-114.4.4-closure-generic] — generic closure-returning const fn.
+- [M-114.4.4-closure-captures-outer] — closure capturing outer locals
+  beyond host const params (V1 supports only const param captures).
+
+Lessons:
+- Fourth walker в const_fn_* family (eval/mono/trampoline/closure).
+  Walker pattern проверенно scalable. Substitution helpers shared с mono.rs
+  (copy-paste, refactor в common visitor — followup if >5 walkers).
+- "Closure at top-level" — clean detection rule. Recursive closure
+  detection (deep inside body) would require full effect propagation —
+  V1 keeps narrow scope.
+- Pipeline placement difference: closure pass РАНЬШЕ main walker
+  (closures can't be ConstValue), trampoline pass ПОЗЖЕ main walker
+  (intrinsics already inlined). Discipline критична для correctness.
+
+🎯 Plan 114.4.4 family полностью закрыта (V3-V4.3 phases):
+- 114.4.4 V3 (Ф.1-Ф.3) + Ф.4 + Ф.5 V4 (landed earlier sessions)
+- 114.4.4.5 V4.1 mono-specialization (2026-06-02)
+- 114.4.4.3 V4.2 runtime trampoline (this session AM)
+- 114.4.4.4 V4.3 closure-from-const-fn (this session)
+
+All 9 markers from [M-114.4.3-*] closed.

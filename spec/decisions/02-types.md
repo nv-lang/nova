@@ -6879,6 +6879,10 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 > redefine» и [D216 §11](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo).
 > Existing usages (handle pattern, tuple FFI returns) — **no migration
 > required** (semantically equivalent post-amend).
+>
+> **Plan 91.12 V2 amend (2026-06-02):** generic tuple-newtype `type X[T](ptr)`
+> now supported (was V1-limited to non-generic `type X(ptr)`). См. §«Generic
+> opaque handle» ниже. Closes `[M-115-newtype-constructor-generic]`.
 
 ### Что
 
@@ -7100,6 +7104,57 @@ close_sqlite(png)                             // ✗ E_TYPE_MISMATCH — PngHand
   ptr` — нельзя передать без явного wrap/unwrap.
 - **Construct:** `Sqlite3Handle(ptr_value)` — standard tuple constructor.
 - **Destructure:** `handle.0` — D52 tuple field access.
+
+#### Generic opaque handle — `type X[T](ptr)` (Plan 91.12 V2, 2026-06-02)
+
+Generic newtype над `ptr` поддерживается для type-parameterized FFI
+handles (phantom T для compile-time discrimination):
+
+```nova
+type Region[T](ptr)             // generic phantom T
+type RegionKind = Persistent
+type RegionKind = Transient
+
+// Distinct types at compile-time, identical ABI at runtime
+ro p = Region[Persistent](some_ptr)
+ro t = Region[Transient](other_ptr)
+// fn drop_persistent(r Region[Persistent]) — нельзя передать Region[Transient]
+
+// Multi-param OK
+type DualHandle[T, U](ptr)
+ro h = DualHandle[int, str](raw)
+```
+
+**Семантика.** `T` параметр — type-system fiction; C-level ABI identical
+(`Nova_Region` ≡ `nova_ptr`). All monomorphizations share typedef.
+Codegen emit'ает single `typedef nova_ptr Nova_X;` (не per-T), `.0` access
++ constructor — identity cast same как non-generic case.
+
+**Use case:** phantom type discrimination для same-runtime-shape handles
+(prepared statement kinds, region/arena ownership classes, FFI buffer
+mutability flags, и т.д.).
+
+**Inner non-ptr types** (Plan 91.12 V2 followup, 2026-06-02) — generic
+newtype над любым primitive типом supported: `type Counter[T](int)`,
+`type Tag[T](str)`, `type Flag[T](bool)`, `type Measure[T](f64)`.
+Семантика идентична ptr-case: phantom T для compile-time discrimination,
+single shared typedef над inner C type, zero runtime overhead. Use cases:
+typed int counters, tagged strings (Email/UserId), tagged booleans
+(Visible/Hidden), tagged floats (measurement units).
+
+**Inner uses generic param** (`type Wrap[T](T)`) — **REJECTED** type-checker'ом
+с `[E_GENERIC_NEWTYPE_INNER_USES_PARAM]`. Tuple newtype = transparent
+typedef (shared C ABI across T's); per-T storage variance — record-semantics:
+
+```nova
+// ✗ E_GENERIC_NEWTYPE_INNER_USES_PARAM
+type Wrap[T](T)                  // inner depends on T → not newtype
+
+// ✓ Correct migration to record form (per-T mono)
+type Wrap[T] { value T }         // properly mono'd по T
+```
+
+Closes `[M-91.12-generic-newtype-non-ptr-inner]`.
 
 #### `consume close()` cleanup convention
 

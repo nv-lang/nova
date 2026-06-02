@@ -1,0 +1,30 @@
+// Plan 123.4 T1.5: chain caching works even when method body has
+// method calls (V4 conservative just blocks on @F write, not call).
+
+module plan123_4.chain_with_calls_ok
+
+type Deep_Cfg {
+    ro value int
+}
+
+type Deep_Container {
+    ro cfg Deep_Cfg
+}
+
+fn Deep_Container.helper(x int) -> int { x * 2 }
+
+fn Deep_Container @combined() -> int {
+    ro x = Deep_Container.helper(2)
+    @cfg.value + @cfg.value + x
+}
+
+fn Deep_Container.new(v int) -> Deep_Container {
+    Deep_Container { cfg: Deep_Cfg { value: v } }
+}
+
+test "chain cached despite call" {
+    ro d = Deep_Container.new(10)
+    ro r = d.combined()
+    // helper(2)=4, 10+10+4 = 24.
+    assert(r == 24)
+}

@@ -1,0 +1,40 @@
+// Plan 123.7 T1.1: V7 IPA infrastructure shipped без regression.
+// All V1-V6 layers continue to work; V7 adds write-set inference
+// public API (used by future V7.1 full integration).
+
+module plan123_7.ipa_no_regression_ok
+
+type WS {
+    ro x int
+    mut count int
+}
+
+fn WS.helper(x int) -> int { x * 2 }
+
+fn WS mut @increment() -> () {
+    @count = @count + 1
+}
+
+fn WS @double_x() -> int {
+    @x + @x   // ro cached.
+}
+
+fn WS @sum_uses_helper() -> int {
+    @x + WS.helper(3)
+}
+
+fn WS.new(x int, c int) -> WS {
+    WS { x, count: c }
+}
+
+test "V7 ships без semantic changes для V1-V6 layers" {
+    ro w = WS.new(5, 0)
+    assert(w.double_x() == 10)
+    assert(w.sum_uses_helper() == 5 + 6)
+}
+
+test "mut path still works (V1)" {
+    mut w = WS.new(7, 10)
+    w.increment()
+    assert(w.count == 11)
+}

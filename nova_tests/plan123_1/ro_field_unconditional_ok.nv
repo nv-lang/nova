@@ -1,0 +1,24 @@
+// Plan 123.1 T1.1: ro field accessed 2+ times → cache emitted.
+// Expected: `let _at_x = @x` + `let _at_y = @y` prefix lets injected.
+
+module plan123_1.ro_field_unconditional_ok
+
+type Point {
+    ro x int
+    ro y int
+}
+
+fn Point @sum_squared() -> int {
+    @x * @x + @y * @y
+}
+
+fn Point.new(x int, y int) -> Point {
+    Point { x, y }
+}
+
+test "ro field caching preserves semantics" {
+    ro p = Point.new(3, 4)
+    ro r = p.sum_squared()
+    // 3*3 + 4*4 = 9 + 16 = 25
+    assert(r == 25)
+}

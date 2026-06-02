@@ -193,22 +193,51 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 - ✅ Friendly UX errors (runtime-let + HOF detection).
 - ✅ Loops в body (for/while/loop + mut + break/continue).
 
-**Что остаётся открытым (Q7 V4+):**
+**V4 extensions (Plan 114.4.4 finish, 2026-06-02):**
+- ✅ Record/sum/tuple patterns в match (closes [M-114.4.3-pattern-record-sum]).
+- ✅ Type reflection sizeof[T]/align_of[T] для primitives (closes
+  [M-114.4.3-t-reflection] для primitive surface).
+
+**V4.1 extensions (Plan 114.4.4 V4.1 session, 2026-06-02):**
+- ✅ Per-const-arg mono-specialization для mixed const fns (closes
+  [M-114.4.3-mono-specialization]).
+
+**V4.2 extensions (Plan 114.4.4.3 V4.2 session, 2026-06-02):**
+- ✅ Runtime trampoline для first-class const fn use (closes
+  [M-114.4.3-runtime-hof]). `apply(double, 5)` / `ro f = double` теперь
+  работают через автоматическую генерацию `<f>__trampoline`.
+
+**V4.3 extensions (Plan 114.4.4.4 V4.3 session, 2026-06-02):**
+- ✅ Closure-returning const fn — comptime closure specialization
+  (closes [M-114.4.3-closure-from-const-fn]). `fn make_adder(const n) ->
+  const fn(int) -> int => |x| x + n` теперь работает: каждый вызов
+  `make_adder(LITERAL)` генерирует specialized fn `<host>__closure_<idx>`
+  с substituted const param + closure body, replaced в call site как fn pointer.
+
+**Что остаётся открытым (Q7 V4.3+):**
 - Comptime-функции имеют доступ к типам как первый класс?
-  → V3 — `[M-114.4.3-t-reflection]`.
+  → V4.0 sizeof/align для primitives ✅; records/generics → Plan 114.4.4.2.
 - Можно ли генерировать код во время компиляции?
   → Нет (без macro-system; future Q-блок).
 - Reflection во время компиляции — да или нет?
-  → Нет в V2.0 (type intrinsics).
+  → V4 primitives sizeof/align_of ✅; records/generics → V4.1.
 - Custom DSL через comptime — допускается?
   → Нет (out-of-scope).
 - ✅ Loops (`for`/`while`) в body — закрыто Plan 114.4.4 Ф.3 (2026-06-01).
-- Runtime first-class const fn (HOF) — V4 followup
-  Plan 114.4.4.3 (trampoline ABI design).
+- ✅ Runtime first-class const fn (HOF) — закрыто Plan 114.4.4.3 V4.2
+  (2026-06-02) автоматическим trampoline'ингом.
+- ✅ Closure-returning const fn — закрыто Plan 114.4.4.4 V4.3
+  (2026-06-02) comptime closure specialization.
 - Record/sum patterns в match — V4 followup Plan 114.4.4.1.
 - True monomorphization (per-const-arg specialization) — V4 followup
   Plan 114.4.4.5.
-- Closure-returning const fn — V4 followup Plan 114.4.4.4.
+- Generic const fn first-class use — V4.2 followup
+  `[M-114.4.4-trampoline-generics]` (trampoline body нужны concrete types
+  для intrinsic substitution).
+- Generic closure-returning const fn — V4.3 followup
+  `[M-114.4.4-closure-generic]`.
+
+🎯 **Plan 114.4.4 family complete** — все V3-V4.3 phases landed.
 
 См. [docs/plans/114.4.2-const-fn.md](../docs/plans/114.4.2-const-fn.md)
 (V1) и [docs/plans/114.4.3-const-fn-v2-extensions.md](../docs/plans/114.4.3-const-fn-v2-extensions.md)

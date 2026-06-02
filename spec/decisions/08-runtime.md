@@ -3950,3 +3950,1163 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` parameter modifier.
 - [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.from_bytes_*` helpers.
 - [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md) — sub-plan Ф.2.6 sub-phase D179.
+
+## D217. Method-local receiver field caching — Plan 123.1
+
+**Source:** [Plan 123 umbrella](../../docs/plans/123-receiver-field-cse.md)
++ [Plan 123.1](../../docs/plans/123.1-core-cse.md). Implementation:
+`compiler-codegen/src/field_cache.rs`.
+
+### 1. Семантика — formal property
+
+Для каждого input AST `A` и output AST `T(A)` — observable behavior
+running `T(A)` **identical** to running `A`. «Observable» включает
+stdout / panic / exit code / file system effects / network effects /
+GC behavior. Pass — pure AST→AST трансформация без I/O и global
+state.
+
+**Пример** — типичная конверсия:
+
+```nova
+// До D217 преобразования (source AST):
+fn ReadBuffer @try_read_u32_le() -> Result[u32, BufferError] {
+    if @pos + 4 > @data.len() { return Err(...) }
+    ro b0 = @data[@pos] as u32
+    ro b1 = @data[@pos + 1] as u32
+    ro b2 = @data[@pos + 2] as u32
+    ro b3 = @data[@pos + 3] as u32
+    @pos = @pos + 4
+    Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+}
+
+// После D217 преобразования (transformed AST):
+fn ReadBuffer @try_read_u32_le() -> Result[u32, BufferError] {
+    ro _at_data = @data    // ro → unconditional cache (D175 freeze).
+    ro _at_pos = @pos      // mut → first-region cache (валидна до
+                           //   первой write/call boundary).
+    if _at_pos + 4 > _at_data.len() { return Err(...) }
+    ro b0 = _at_data[_at_pos] as u32
+    ro b1 = _at_data[_at_pos + 1] as u32
+    ro b2 = _at_data[_at_pos + 2] as u32
+    ro b3 = _at_data[_at_pos + 3] as u32
+    @pos = _at_pos + 4   // write — _at_pos undefined after this point.
+    Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+}
+```
+
+`.c` output до — `nova_self->data` × 5 + `nova_self->pos` × 5;
+после — оба cached в локалы один раз, регистр-аллокатор C-компилятора
+тривиально hoisted. **Net result:** `-O0` build стабильно быстрее на
+hot-path methods (15-30% reduction в pointer derefs).
+
+### 2. Heuristics
+
+#### 2.1 Threshold N
+
+Default `N=2`: cache emit'ится только если field accessed **≥2** раз
+в method body. `N=0` → feature OFF (escape hatch). Tunable через env
+vars (см. §5).
+
+#### 2.2 ro field — unconditional cache
+
+`RecordField.readonly == true` (D175 `ro` modifier):
+- Frozen post-construction, no mutation возможно.
+- Cache valid **across entire method body** — unaffected by calls,
+  asserts, loops, branches.
+- Single prefix `let _at_<F> = @<F>` emitted в body block start.
+- All reads of `@<F>` replaced с `_at_<F>`.
+
+#### 2.3 mut field — straight-line first-region cache
+
+`RecordField.mutable == true` (или default без `ro`/`mut` modifier):
+- Cache valid **от body start до first barrier**.
+- **Barrier** = first top-level Stmt syntactically containing:
+  - **Write to `@<F>`:** `Assign { target: Member{SelfAccess, F},
+    op: AssignOp::*, ... }`. Includes compound (`+=`, `-=`, `*=`,
+    `/=`).
+  - **Any Call expression:** `ExprKind::Call`, `Spawn`, `Supervised`,
+    `Detach`, `Blocking`, `With` (handler invoke), `Select` (channel
+    op). V1 conservative — IPA / `#nofield_mut` annotations refine
+    в Plan 123.7.
+- Cache emitted при count reads-in-prefix-region ≥ threshold.
+- Reads после boundary stay as direct `@<F>` (no re-cache в V1).
+  Full multi-region recache — `[M-123.1-mut-region-recache]` P2
+  followup.
+
+### 3. Safety constraints
+
+#### 3.1 Closure capture
+
+Если **ANY closure body** (`ClosureLight` / `ClosureFull` / `Lambda`
+/ `HandlerLit` / `ProtocolLit`) **syntactically references** `@<F>`
+в method body — caching `F` skipped полностью. Closure может outlive
+scope (stored handler, spawned fiber) и mutate `self`-pointer'ом
+field через alias.
+
+#### 3.2 Protocol / Effect / Opaque receivers
+
+`Receiver.type_name` указывающий на `TypeDeclKind::Protocol`,
+`Effect`, `Opaque`, `Alias`, `Newtype`, `Sum` → method skipped
+entirely. Protocol — vtable dispatch (concrete impl unknown). Effect
+/ Opaque — no record fields. Sum — variants accessed через pattern-
+match. `NamedTuple` (D215) receivers — fields treated как ro
+(stack value type, immutable post-construction).
+
+#### 3.3 Generic monomorphization
+
+Pass runs **после** type-check. Receiver type known + `RecordField`
+classification из TypeDecl level (generic-agnostic). Codegen mono
+pipeline downstream видит уже cached AST per instantiation.
+
+#### 3.4 Consume / embed fields skipped
+
+`RecordField.consume == true` (D131 linearity) — separate ownership
+semantics. `is_embed == true` (`use _ Type` — D39) — auto-proxy
+methods. Both skipped from registry.
+
+#### 3.5 Static-method receivers + External fn skipped
+
+`Receiver.kind == ReceiverKind::Static` — `fn Type.method(...)` без
+`@self`. `FnDecl.is_external == true` — no body. Both skipped
+explicitly.
+
+### 4. Mangling — naming convention
+
+Cache local = **`_at_<field>`** (D217 §4 baseline). При collision с
+existing user local в fn scope — numeric suffix `_<N>`, где N — fn-
+local counter (incremented only при actual collision; default case
+keeps `_at_<F>` bit-stable across builds).
+
+Examples:
+- No collision: `ro _at_pos = @pos`.
+- User has `ro _at_pos = 99` → cache renamed `ro _at_pos_1 = @pos`.
+  User local untouched.
+
+Collision detection — pre-pass scan всех `Stmt::Let` patterns +
+`Pattern::Ident` / `Pattern::Binding` bindings во всём fn body +
+params + closure-light/full params.
+
+### 5. Escape hatch + tunables
+
+Three environment variables (CLI-flag wiring через `--field-cache-*`
+запланировано Plan 123.6 telemetry):
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE` | (unset) | `0`/`off`/`false` → pass disabled. |
+| `NOVA_FIELD_CACHE_THRESHOLD` | `2` | Min reads to cache. `0` → disabled. |
+| `NOVA_FIELD_CACHE_MAX` | `8` | Cap cache locals per fn. |
+
+Disabling — bypass точно identical к baseline AST output без pass.
+**Verified differential testing** — full nova_tests/plan123_1 PASS
+identically под ON и OFF (18/18 PASS обе configurations).
+
+### 6. Debug-info preservation
+
+`Span` каждого generated `let _at_F = @F` binding клонируется от
+**first occurrence** of `@F` access в method body. DWARF / PDB emit
+reflects это — debugger показывает `_at_F` local mapped к source
+`@F` expression position.
+
+V2 (Plan 123.5) — LSP code-lens над method header «N caches inserted»
++ hover «cached as `_at_F` from line X».
+
+### 7. Edition compatibility
+
+V1 (Plan 123.1) — enable **unconditionally** (semantic equivalence
+guarantee достаточная; verified via 5 verification methods §1).
+Future versions могут require edition opt-in если выявится unexpected
+regression в production telemetry (Plan 123.6).
+
+### 8. Cross-platform determinism
+
+Pass deterministic by construction:
+- Field names alphabetically sorted в `cache_fn` (HashMap iteration
+  leak prevented).
+- Per-fn counter reset → bit-stable cache local names across runs.
+- No timestamp / random / system call в pass.
+
+Same input AST → same output AST → same `.c` file (modulo platform-
+specific runtime references).
+
+### 9. Cross-references
+
+- **D32** (semantics передачи параметров) — receiver semantics —
+  Self pointer не aliased под managed-heap rule.
+- **D52** (объявление типов) — `RecordField` declaration source.
+- **D120** (`#pure` views + axioms) — pure annotation infrastructure
+  для Plan 123.3 pure-call caching V3 future.
+- **D131** (consume types) — linearity hints; consume fields skipped
+  в V1, могут быть aggressive-cached в V2.
+- **D175** (readonly field freeze) — ro field invariant — единственный
+  unconditional-cache eligibility источник.
+- **D176** (`readonly T` modifier) — orthogonal к D217 (parameter-
+  level), но D175 + D176 вместе формируют immutability semantics.
+- **D215** (named tuple) — `NamedTuple` fields treated как ro.
+
+### 10. Implementation milestones — Plan 123 umbrella
+
+| Version | Sub-plan | D-block | Status |
+|---|---|---|---|
+| **V1** | 123.1 (Core CSE) | **D217 (this)** | ✅ V1 active |
+| V2 | 123.2 (LICM) | D218 (planned) | gate'нут на 123.1 ✅ |
+| V3 | 123.3 (`#pure` cache) | D219 (planned) | gate'нут на 123.1 ✅ + D120 |
+| V4 | 123.4 (chain) | D217 amend | gate'нут на 123.1 ✅ |
+| V5 | 123.5 (LSP/diag) | D217 §6 amend | gate'нут на 123.1 + 104.x |
+| V6 | 123.6 (telemetry) | (impl-only) | gate'нут на 123.1 ✅ |
+| V7 | 123.7 (IPA) | D217 amend | gate'нут на all above |
+
+### 11. Open Q resolution
+
+- `Q-codegen-cse-semantics` (если откроется): → D217 (этот блок).
+- `Q-debug-info-cache`: → D217 §6.
+- `Q-cache-edition-gating`: → D217 §7 (V1 — no edition gate).
+
+## D218. LICM — Loop-Invariant Code Motion для receiver fields — Plan 123.2
+
+**Source:** [Plan 123.2](../../docs/plans/123.2-licm.md) sub-plan #2
+Plan 123 umbrella. Implementation: `compiler-codegen/src/field_cache.rs`
+LICM phase. Composes с D217 (Plan 123.1 V1 baseline).
+
+### 1. Семантика — formal property
+
+Для каждого input AST `A` содержащего loops L₁, L₂, ..., output
+`T(A)` — observable behavior identical to `A`. Loop-invariant
+`@<F>` reads inside loop body перемещены **immediately before**
+the loop в enclosing Block.scope, с replacement reads inside body
+на cache local ident `_at_<F>_loop` (or `_at_<F>_loop_<N>` при
+collision).
+
+**Пример:**
+
+```nova
+// До D218 (source):
+fn Image @sum_pixels_for(n int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < n {
+        total = total + @pixels + @pixels    // 2 reads of mut @pixels
+        i = i + 1
+    }
+    total
+}
+
+// После D218 (LICM-hoisted):
+fn Image @sum_pixels_for(n int) -> int {
+    mut total = 0
+    mut i = 0
+    ro _at_pixels_loop = @pixels             // hoist immediately before loop
+    while i < n {
+        total = total + _at_pixels_loop + _at_pixels_loop
+        i = i + 1
+    }
+    total
+}
+```
+
+LICM benefit visible when D217 (Plan 123.1) **cannot** cache the
+field at method-body prefix:
+- Mut field accessed only inside loop; method body has Call before
+  loop → D217 mut-prefix region empty → no cache. D218 LICM hoists
+  immediately before loop scope.
+- Method body has mixed access patterns where D217's first-region
+  bailout leaves loop body uncached.
+
+### 2. Composition с D217 (Plan 123.1)
+
+**Order:** D218 LICM phase runs **BEFORE** D217 per-fn ro/mut caching
+(см. `cache_module` в field_cache.rs).
+
+Rationale:
+- LICM hoists invariant reads из loops; replaces reads inside loop
+  с `_at_<F>_loop` ident.
+- D217 then walks the body; `@<F>` reads inside loop are already
+  replaced — counted only reads OUTSIDE loops для method-body prefix
+  cache decision.
+- No double-cache: if D217 also caches `@<F>` at method-body prefix,
+  the loop body reads are already `_at_<F>_loop` ident (don't match
+  `@F` pattern). Both cache locals coexist.
+
+**Result:** для ro fields с reads only inside loop, the hoisted
+`_at_<F>_loop` typically suffices (D217 sees zero `@<F>` accesses
+outside loop — below threshold). Для ro fields с reads inside AND
+outside loop, two separate caches emitted — one at method-body
+prefix (D217) and one immediately before loop (D218). Stack-frame
+growth bounded by `max_per_fn=8` total cap.
+
+### 3. Eligibility rules per loop body
+
+For each field `F` and each loop body Block:
+
+1. **Read count:** `count_field_reads_in_block(body, F) ≥
+   licm_threshold` (default 2).
+2. **No mutation:** `!block_contains_write_to(body, F)` —
+   no `Assign { target: Member{SelfAccess, F}, ... }` anywhere in
+   body. Includes compound assigns (`+=`, etc.) и nested control flow.
+3. **No closure capture:** `!collect_closures_captures_in_block(body, F)`
+   — no closure body inside loop body references `@F`. (Closure body
+   syntactic detection; conservative.)
+4. **No spawn / supervised / detach / blocking / parallel-for:**
+   loop body must not contain concurrent constructs (aliasing
+   safety with concurrent fibers).
+5. **For mut fields:** loop body must NOT contain any Call (V2
+   conservative — IPA refines в Plan 123.7).
+6. **For ro fields:** Call в body OK (frozen — no aliasing).
+
+### 4. Loop forms supported
+
+- `for pattern in iter { body }` — D-foreach standard for.
+- `while cond { body }`.
+- `loop { body }` — D-loop infinite + break.
+- `while let pat = expr { body }` — D34.
+
+**Excluded:**
+- `parallel for pat in iter { body }` — D14, concurrent body.
+- Loops nested внутри `Spawn` / `Supervised` / `Detach` / `Blocking`
+  / `Select` channel-op contexts.
+
+### 5. Hoisting placement
+
+Hoisted `ro _at_<F>_loop = @<F>` Stmt::Let inserted **immediately
+before** the loop expression в enclosing Block.stmts. Placement
+rules:
+
+- **Loop as `Stmt::Expr` в Block.stmts:** hoist inserted at same
+  index, loop stmt pushed after.
+- **Loop as Block.trailing:** hoist appended к Block.stmts (loop
+  remains trailing).
+- **Loop as FnBody::Expr (whole-body loop):** body coerced к
+  Block-with-trailing, hoist inserted at start.
+- **Loop nested внутри expression** (e.g. `if cond { for ... }`):
+  hoist inserted into innermost enclosing Block.
+
+### 6. Naming convention
+
+Cache local = **`_at_<field>_loop`** (D218 §6 baseline). Distinct
+от D217 `_at_<field>` для clarity в debug-info — каждое имя
+объясняет cache origin: `_at_X` = method-body cache; `_at_X_loop`
+= LICM hoist.
+
+Collision avoidance: numeric suffix `_<N>` если имя уже occupied
+user-local OR другим LICM hoist в same fn scope.
+
+### 7. Escape hatch + tunables
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE_LICM` | (unset) | `0`/`off`/`false` → LICM disabled. D217 unaffected. |
+| `NOVA_FIELD_CACHE_LICM_THRESHOLD` | `2` | Min reads inside loop body. `0` → LICM disabled. |
+| `NOVA_FIELD_CACHE_LICM_MAX` | `4` | Cap hoists per loop. |
+| `NOVA_FIELD_CACHE` (D217) | (unset) | `0` → disables BOTH D217 and D218 (umbrella escape hatch). |
+
+Verified differential testing: 14/14 plan123_2 PASS identically под
+`NOVA_FIELD_CACHE_LICM=0` и default ON. Semantic equivalence
+guaranteed.
+
+### 8. Debug-info preservation
+
+`Span` каждого hoisted let клонируется от **first occurrence** of
+`@F` access в loop body. DWARF/PDB emit reflects это — debugger
+показывает `_at_<F>_loop` local mapped к source `@<F>` expression
+position inside loop body.
+
+### 9. Cross-references
+
+- **D217** (Plan 123.1, V1) — baseline CSE pass; composition
+  partner.
+- **D14** (ParallelFor) — concurrent body, LICM skip.
+- **D50** (structured concurrency — Spawn/Supervised) — LICM skip
+  bodies that contain these.
+- **D131** (consume types) — consume fields skipped (D217 §3.4
+  inherits).
+- **D175** (readonly field freeze) — ro semantics; aliasing-safe
+  invariance.
+
+### 10. Implementation milestones
+
+- **V2** Plan 123.2 ✅ (this block).
+- **V3-V7** — Plan 123.3 (pure-call cache) / 123.4 (chain) / 123.5
+  (LSP) / 123.6 (telemetry) / 123.7 (IPA) — orthogonal extensions.
+
+### 11. Open Q resolution
+
+- `Q-licm-correctness`: → D218 §1 + §3 (formal property + eligibility
+  rules ensure correctness).
+- `Q-licm-composition-with-D217`: → D218 §2 (order LICM → D217).
+
+## D219. Pure-call result caching (effect-aware, Nova edge) — Plan 123.3
+
+**Source:** [Plan 123.3](../../docs/plans/123.3-pure-call-cache.md)
+sub-plan #3 Plan 123 umbrella. Implementation: `field_cache.rs`
+pure-cache phase. Composes с D217 (V1) + D218 (V2).
+
+### 1. Семантика — formal property
+
+Для каждого input AST `A` содержащего multiple invocations of
+`@<pure_method>()` (where method has `Purity::Pure` per D24
+infrastructure), output `T(A)` — observable behavior identical
+to `A`. Pure-call result evaluated once per method body, cached в
+local `_at_<method>_call`, replaced на cache ident в subsequent
+call sites.
+
+Nova-edge — leverages effect system: `#pure` annotation guarantees
+no effects, no side effects, deterministic result (depends only
+on self's state).
+
+**Пример:**
+
+```nova
+// До D219 (source):
+#pure
+fn Vec3 @magnitude_sq() -> int => @x * @x + @y * @y + @z * @z
+
+fn Vec3 @double_test() -> int {
+    @magnitude_sq() + @magnitude_sq()   // 2 pure-method calls
+}
+
+// После D219 (cached):
+fn Vec3 @double_test() -> int {
+    ro _at_magnitude_sq_call = @magnitude_sq()  // single eval
+    _at_magnitude_sq_call + _at_magnitude_sq_call
+}
+```
+
+`.c` output до — `Nova_Vec3_method_magnitude_sq(nova_self)` × 2;
+после — single call, register-reuse через cache local.
+
+### 2. Composition с D217 + D218
+
+**Order:** D218 LICM → **D219 pure-cache** → D217 per-fn cache.
+
+Rationale:
+- D218 LICM hoists loop-invariant @F reads. Pure-call args (V3
+  args-less) — none, so LICM unaffected.
+- D219 caches @<pure_method>() result; replaces calls с Ident.
+- D217 sees pure-cache locals as Idents (not @F pattern). Continues
+  to cache @F reads outside pure-call args.
+
+No double-cache risk — three layers operate on distinct AST
+patterns (LICM: @F in loop; D219: @M() pure call; D217: @F method-
+body prefix).
+
+### 3. Eligibility rules per fn body
+
+For each fn body (instance method with non-protocol receiver):
+
+1. **Body must NOT have any `@F = ...` write** (conservative
+   invalidation). Refined V3.1 с D24 `f.reads` frame info.
+2. **Body must NOT contain concurrent constructs:** Spawn,
+   Supervised, Detach, Blocking, ParallelFor — skip whole pure-
+   cache for safety.
+3. **Method registry lookup:** `(receiver_type, method_name)` must
+   be в pure_methods registry. Registry includes only methods с
+   `purity == Purity::Pure` (D24 — annotated `#pure` OR inferred
+   через SCC) AND `Instance` receiver AND `params.is_empty()` (V3
+   scope; V3.1 — args-with-literals).
+4. **Count occurrences:** call count ≥ `pure_threshold` (default 2).
+5. **Closure capture exclusion:** if `@<method>()` appears inside
+   nested closure body, that call counts toward closure_captured
+   set, excluded from caching.
+
+### 4. V3 scope (DECISION-A.3 / E.3)
+
+**Included:**
+- `Call { func: Member{SelfAccess, name: M}, args: [] }` — args-less
+  self-method calls.
+
+**Excluded (Plan 123.4/V3.1/Plan 123.7 territory):**
+- Pure calls с arguments (V3.1).
+- Pure calls на `@field.method()` chains (Plan 123.4 chain cache).
+- Pure calls на parameters / locals.
+- Effectful methods (`Purity::Effectful` / `Purity::Unknown`).
+- Consume-returning pure methods (D131 linearity — skip).
+
+### 5. Naming convention
+
+Cache local = **`_at_<method>_call`** baseline. Distinct от:
+- D217: `_at_<field>` (per-fn field cache).
+- D218: `_at_<field>_loop` (LICM hoist).
+
+Collision avoidance: numeric suffix `_<N>`.
+
+### 6. Escape hatch + tunables
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE_PURE` | (unset) | `0`/`off`/`false` → V3 disabled. D217/D218 unaffected. |
+| `NOVA_FIELD_CACHE_PURE_THRESHOLD` | `2` | Min pure-call count. `0` → disabled. |
+| `NOVA_FIELD_CACHE` (D217) | (unset) | `0` → disables all 3 layers. |
+
+Verified differential testing: 12/12 plan123_3 PASS identically
+под `NOVA_FIELD_CACHE_PURE=0` и default ON.
+
+### 7. Conservative invalidation rationale
+
+V3 simple rule: ANY `@F = ...` write anywhere в method body skips
+all pure-cache. Rationale: without frame info, mutation may affect
+pure method's result transitively. Pure method reads `@F` (typical
+pure method depends on fields); mutating any field may change
+result.
+
+**V3.1 refinement (followup `[M-123.3-frame-based-invalidation]`):**
+Use D24 `f.reads` frame information to determine which fields
+each pure method reads. Cache valid until any of those fields
+written. Allows mut field's write to NOT invalidate unrelated
+pure methods. Marked P2 followup.
+
+### 8. Debug-info preservation
+
+Span каждого generated `let _at_<method>_call = @<method>()`
+binding клонируется от **first occurrence** of `@<method>()` call.
+Debugger показывает cache origin maps к source position.
+
+### 9. Cross-references
+
+- **D24** (Plan 33.1 + 33.2) — Purity infrastructure (`#pure`
+  annotation + SCC inference). V3 leverages `FnDecl.purity` field.
+- **D217** (Plan 123.1, V1) — per-fn ro/mut field cache. Composition
+  partner; D219 runs between D218 LICM и D217.
+- **D218** (Plan 123.2, V2) — LICM hoisting. Composition partner.
+- **D120** (`#pure` views + axioms) — semantic foundation; pure
+  methods have no effects, no mutation, deterministic.
+- **D131** (consume types) — consume-returning pure methods skipped.
+
+### 10. Implementation milestones
+
+- **V3** Plan 123.3 ✅ (this block) — args-less self-pure-call.
+- **V3.1** followups: `[M-123.3-args-literals]` (cache calls с
+  literal args), `[M-123.3-frame-based-invalidation]` (D24 reads
+  frame).
+- **V4** Plan 123.4 chain cache — orthogonal extension.
+
+### 11. Open Q resolution
+
+- `Q-pure-call-cache`: → D219 (this block).
+- `Q-pure-call-mutation-invalidation`: → D219 §3 + §7 (V3
+  conservative; V3.1 refined).
+
+## D217 amend V4 — Chain caching `@a.b.c` (Plan 123.4)
+
+**Source:** [Plan 123.4](../../docs/plans/123.4-chain-cache.md)
+sub-plan #4 Plan 123 umbrella. Extends D217 caching infrastructure
+to nested chain access patterns. Implementation: `field_cache.rs`
+chain-cache phase (D217 amend rather than NEW D-block because
+chain extension preserves D217 semantic foundation, just extends
+to multi-segment paths).
+
+### 1. Семантика — V4 extension
+
+For chain access pattern `Member { ... Member { obj: SelfAccess,
+name: A }, name: B }` (= `@a.b`) with chain length 2..=
+`chain_max_depth` (default 4), cache emitted при ≥
+`chain_threshold` (default 2) occurrences. Replaces all matching
+chain expressions с cache local Ident.
+
+**Пример:**
+```nova
+// До D217 V4 (source):
+fn Outer @sum_with_chain() -> int {
+    @inner.value + @inner.value + @inner.value + @mark
+}
+
+// После D217 V4:
+fn Outer @sum_with_chain() -> int {
+    ro _at_inner_value_chain = @inner.value
+    _at_inner_value_chain + _at_inner_value_chain + _at_inner_value_chain + @mark
+}
+```
+
+### 2. Composition order — three-layer + V4
+
+Order в `cache_module`:
+1. D218 LICM phase.
+2. **D217 V4 chain phase** (NEW).
+3. D219 pure-call phase.
+4. D217 V1 per-fn cache phase.
+
+Rationale:
+- LICM hoists single-field @F reads из loops first.
+- Chain caching emits multi-segment chain locals; replaces chain
+  expressions с Idents.
+- D219 pure-cache then handles `@<pure_method>()` calls (chains
+  inside pure-method receivers already cached).
+- D217 V1 final fills in remaining @F single-field caches.
+
+All four layers emit distinct cache local naming, no shadowing risk:
+- D217 V1: `_at_<F>`
+- D218 LICM: `_at_<F>_loop`
+- D219 pure: `_at_<M>_call`
+- **D217 V4 chain: `_at_<a>_<b>[_<c>[_<d>]]_chain`** (NEW)
+
+### 3. Eligibility (V4)
+
+1. **Chain length:** 2 ≤ depth ≤ `chain_max_depth` (default 4).
+   Single-field (depth 1) handled by D217 V1 baseline; deeper than
+   4 → skip (stack-frame bloat protection).
+2. **Occurrence count:** identical canonical path ≥ `chain_threshold`.
+3. **No top-level @F write anywhere в body** (V4 conservative;
+   future V4.1 may refine per-segment).
+4. **No concurrent body:** Spawn/Supervised/Detach/Blocking/
+   ParallelFor → skip.
+5. **No closure capture:** chain in closure body → excluded from
+   caching.
+6. **Receiver type known:** not Protocol/Effect/Opaque/etc.
+
+### 4. Critical detection rule — method dispatch ≠ chain
+
+`@a.b.method()` — Member{obj: @a.b, name: "method"} is NOT a chain
+of length 3 (`method` is method-dispatch name, not field).
+
+Implementation detail: when traversing `ExprKind::Call`, recurse
+into `func.obj` (the receiver) not into `func` itself. Same fix
+applied in both `count_chains_in_expr` и `rewrite_chains_in_expr`.
+
+Verified through fixture failure during V4 implementation —
+StringBuilder.append__nova_char attempted to chain-cache
+`@buf.push` (push is array method); fix corrected immediately.
+
+### 5. Naming
+
+Cache local = **`_at_<a>_<b>[_<c>[_<d>]]_chain`** для path components
+`[a, b, c?, d?]`. Joined with underscores. Suffix `_<N>` при
+collision.
+
+Examples:
+- `@inner.value` → `_at_inner_value_chain`.
+- `@parent.inner.cfg.limit` → `_at_parent_inner_cfg_limit_chain`.
+
+### 6. Escape hatch + tunables
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE_CHAIN` | (unset) | `0`/`off`/`false` → V4 disabled. |
+| `NOVA_FIELD_CACHE_CHAIN_THRESHOLD` | `2` | Min chain occurrences. |
+| `NOVA_FIELD_CACHE_CHAIN_DEPTH` | `4` | Max chain depth (≥2 enforced). |
+| `NOVA_FIELD_CACHE` | (unset) | `0` → disables all 4 layers. |
+
+Verified: 10/10 plan123_4 PASS identically под default и
+`NOVA_FIELD_CACHE_CHAIN=0`.
+
+### 7. Risk register (V4-specific)
+
+- **R-4.1:** stack-frame bloat (many chain caches per fn).
+  Mitigation: `max_per_fn=8` cap shared across all 4 layers.
+- **R-4.2:** chain через mut intermediate field could theoretically
+  invalidate. Mitigation: V4 conservative — any @F write in body
+  skips all chain caching.
+- **R-4.3:** method-dispatch confusion. Mitigation: detection rule
+  §4.
+
+### 8. Future extensions
+
+- **V4.1 followups:**
+  - `[M-123.4-per-segment-invalidation]` — refine invalidation
+    via D24 `f.reads` frame info.
+  - `[M-123.4-chain-prefix-sharing]` — cache shared prefixes
+    (e.g. `@a.b` + `@a.b.c` share `@a.b` intermediate).
+- **V7 IPA (Plan 123.7)** — enables cross-method analysis для
+  chain invalidation precision.
+
+### 9. Cross-references
+
+- **D217 V1** (Plan 123.1) — baseline single-field cache.
+- **D218** (Plan 123.2) — LICM. Chain caching composes after LICM.
+- **D219** (Plan 123.3) — pure-call. Chain caching composes before
+  pure-call (chain ID resolution must complete before pure-call's
+  self.method() detection).
+- **D52** (record types) — chain fields must be record-typed at
+  each level.
+
+## D217 §6 amend V5 — diagnostic mode + LSP code-lens (Plan 123.5)
+
+**Source:** [Plan 123.5](../../docs/plans/123.5-lsp-diag.md).
+
+### 1. analyze_module API
+
+`field_cache::analyze_module(&Module, &Config) -> ExplainReport`
+provides per-fn cache decision report без mutation. Returns:
+
+```rust
+pub struct ExplainReport {
+    pub per_fn: Vec<FnCacheInfo>,
+}
+
+pub struct FnCacheInfo {
+    pub type_name: String,
+    pub fn_name: String,
+    pub span: Span,
+    pub ro_caches: Vec<String>,
+    pub mut_caches: Vec<String>,
+    pub licm_hoists: Vec<String>,
+    pub pure_caches: Vec<String>,
+    pub chain_caches: Vec<Vec<String>>,
+}
+```
+
+Implementation: clones AST, runs `cache_module`, walks injected
+prefix-let statements, classifies by name suffix (`_chain` /
+`_loop` / `_call` / plain).
+
+### 2. CLI flag `--explain-cache`
+
+`nova check <files> --explain-cache` — per-file per-fn report on
+stdout:
+
+```
+=== src/buffer.nv ===
+  fn ReadBuffer @try_read_u32_le — 4 cache(s):
+    D217 field cache: data, pos
+    D219 pure-call cache: len
+    D217 V4 chain cache: @header.signature
+
+field-cache total: 1 method(s) affected, 4 cache(s) inserted
+```
+
+Use cases:
+- Audit hot paths для caching effectiveness.
+- Diagnose unexpected caching behavior.
+- Document optimization decisions during code review.
+
+### 3. LSP code-lens (deferred V5.1)
+
+V5 ships CLI flag; LSP code-lens + hover provider deferred:
+- [M-123.5-lsp-codelens] — `textDocument/codeLens` handler emit
+  "N caches" lens per fn header.
+- [M-123.5-lsp-hover] — `textDocument/hover` enhancement showing
+  cache info при hovering `@field`.
+
+Infrastructure (`analyze_module` API) ready; LSP integration
+straightforward when prioritized.
+
+### 4. User-facing doc
+
+`docs/field-cache-optimization.md` — user guide explaining 4 layers,
+escape hatches, semantic equivalence, performance expectations.
+
+### 5. Cross-references
+
+- D217 V1 + V4 / D218 / D219 — analyzed layers.
+- D104+D105 (doc-attrs) — future direction for `#cache_info`
+  attribute on methods.
+
+## D217 §6 amend V5.1 — LSP code-lens + hover (Plan 123.5.1)
+
+**Source:** [Plan 123.5.1](../../docs/plans/123.5.1-lsp-integration.md).
+
+### 1. LSP capabilities
+
+V5.1 extends `nova-lsp::server::Backend` (Plan 104.x infrastructure)
+с двумя capabilities:
+- `code_lens_provider: Some(CodeLensOptions { resolve_provider: false })`.
+- `hover_provider: Some(HoverProviderCapability::Simple(true))`.
+
+### 2. code_lens handler
+
+`textDocument/codeLens` request invokes
+`compute_field_cache_lenses(src)`:
+1. Parse module → run pipeline (skip if type-check fails).
+2. Call `analyze_module` (V5 API).
+3. For each `FnCacheInfo` в report, emit `CodeLens` с title:
+   ```
+   N cache(s): ro=X mut=Y licm=Z pure=W chain=V
+   ```
+   Range = first character of fn span. Command =
+   `nova-lsp.fieldCache.show` (no-op stub; IDE extension can
+   handle).
+
+### 3. hover handler
+
+`textDocument/hover` invokes `compute_field_cache_hover(src, pos)`:
+1. Find `@<name>` token at hover position (look backward для `@`,
+   forward для name chars).
+2. Run pipeline + analyze_module.
+3. Locate fn whose span covers position.
+4. If `name ∈ info.ro_caches` → "D217 ro cache: `_at_<name>`".
+5. If `name ∈ info.licm_hoists` → "D218 LICM loop hoist:
+   `_at_<name>_loop`".
+6. Chain root → "D217 V4 chain cache (root)".
+7. Otherwise → "not cached".
+
+### 4. Public API (test surface)
+
+`nova-lsp::server::compute_field_cache_lenses(&str) -> Option<Vec<CodeLens>>`
+и `compute_field_cache_hover(&str, Position) -> Option<Hover>` —
+public для integration testing without LSP RPC stack.
+
+### 5. Acceptance
+
+A5.1.1-A5.1.4 met:
+- A5.1.1 ✅ code_lens emitted per affected method.
+- A5.1.2 ✅ hover returns cache info if cached.
+- A5.1.3 ✅ nova-lsp/tests/field_cache_lens.rs 3/3 PASS.
+- A5.1.4 ✅ D217 §6 amend V5.1 landed (this section).
+
+### 6. Future LSP integrations
+
+- **V5.2:** semantic tokens — paint cache locals в IDE с distinct
+  color.
+- **V5.3:** quickfix `add #pure` attribute when pure-method would
+  enable caching but missing annotation.
+
+## D217 §7 amend V6 — Telemetry + production rollout (Plan 123.6)
+
+**Source:** [Plan 123.6](../../docs/plans/123.6-telemetry.md).
+
+### 1. Telemetry aggregator
+
+`nova check <files> --telemetry-cache` — walks files, runs
+`analyze_module` per file, aggregates statistics:
+
+- `files_total` / `files_skipped` — file processing tally.
+- `methods_total` — instance methods scanned across corpus.
+- `methods_affected` — methods with ≥1 cache decision.
+- `methods_affected_pct` — ratio.
+- `caches_total` — sum of caches inserted.
+- `caches_per_method_median` / `_p99` — distribution.
+- Per-layer breakdown: `layer_d217_field` / `layer_d218_licm` /
+  `layer_d219_pure` / `layer_d217_chain`.
+
+Two output formats:
+- Default: human-readable text.
+- `--telemetry-json`: structured JSON (CI integration).
+
+### 2. Production rollout strategy
+
+`docs/migration/123-field-cache.md` provides production team
+guide:
+
+1. **Baseline differential:** run tests under both `NOVA_FIELD_CACHE=0`
+   и default ON; confirm identical results.
+2. **Telemetry baseline:** capture `--telemetry-cache` metrics before
+   deploying.
+3. **Gradual rollout (optional):** enable layers one at a time —
+   V1 only → +V2 → +V3 → +V4.
+4. **Regression detection:** if tests fail with default, diagnostic
+   workflow disables layers individually to identify culprit, then
+   `--explain-cache` shows specific decisions.
+
+### 3. CLI flag reference (V6 partial)
+
+V6 ships env vars covering all config. Full `--field-cache-*` CLI
+flag set deferred к V6.1 ([M-123.6-cli-flags-full]) — env vars
+provide complete coverage:
+
+| Function | Env Var |
+|---|---|
+| Disable all | `NOVA_FIELD_CACHE=0` |
+| Disable LICM | `NOVA_FIELD_CACHE_LICM=0` |
+| Disable pure | `NOVA_FIELD_CACHE_PURE=0` |
+| Disable chain | `NOVA_FIELD_CACHE_CHAIN=0` |
+| Threshold | `NOVA_FIELD_CACHE[_LICM/_PURE/_CHAIN]_THRESHOLD=N` |
+| Per-fn cap | `NOVA_FIELD_CACHE_MAX=N` |
+| Per-loop cap | `NOVA_FIELD_CACHE_LICM_MAX=N` |
+| Chain depth | `NOVA_FIELD_CACHE_CHAIN_DEPTH=N` |
+
+### 4. CI perf regression gates
+
+V6 ships infrastructure; concrete CI integration with Plan 57 bench
+harness is followup `[M-123.6-ci-perf-gates]`. Aggregator output
+matches Plan 57 metric format; wiring straightforward.
+
+### 5. Cross-references
+
+- All previous D217 amends + D218 + D219.
+- Plan 57 (bench infrastructure) — future CI gate integration.
+
+## D217 §7 amend V6.1 — Sugar CLI flags + CI perf gate (Plan 123.6.1)
+
+**Source:** [Plan 123.6.1](../../docs/plans/123.6.1-cli-flags-ci-gates.md).
+
+### 1. Global CLI flags
+
+12 flags added к `nova-cli::Cli` struct (global=true), translated к
+env vars before subcommand dispatch:
+
+| Flag | Env var (set on use) |
+|---|---|
+| `--no-field-cache` | `NOVA_FIELD_CACHE=0` |
+| `--no-field-cache-licm` | `NOVA_FIELD_CACHE_LICM=0` |
+| `--no-field-cache-pure` | `NOVA_FIELD_CACHE_PURE=0` |
+| `--no-field-cache-chain` | `NOVA_FIELD_CACHE_CHAIN=0` |
+| `--no-field-cache-ipa` | `NOVA_FIELD_CACHE_IPA=0` |
+| `--field-cache-threshold=N` | `NOVA_FIELD_CACHE_THRESHOLD=N` |
+| `--field-cache-licm-threshold=N` | `NOVA_FIELD_CACHE_LICM_THRESHOLD=N` |
+| `--field-cache-pure-threshold=N` | `NOVA_FIELD_CACHE_PURE_THRESHOLD=N` |
+| `--field-cache-chain-threshold=N` | `NOVA_FIELD_CACHE_CHAIN_THRESHOLD=N` |
+| `--field-cache-max=N` | `NOVA_FIELD_CACHE_MAX=N` |
+| `--field-cache-licm-max=N` | `NOVA_FIELD_CACHE_LICM_MAX=N` |
+| `--field-cache-chain-depth=N` | `NOVA_FIELD_CACHE_CHAIN_DEPTH=N` |
+
+CLI flag overrides env var when both present.
+
+### 2. CI perf regression gate
+
+`nova check --telemetry-cache --telemetry-baseline=baseline.json`:
+
+1. Computes current telemetry (V6 flow).
+2. Parses baseline JSON (minimal hand-rolled extractor, no
+   serde_json dep).
+3. Compares metrics:
+   - `methods_affected_pct`: absolute drop > **5 percentage points**
+     → regression.
+   - `caches_total`: relative drop > **10%** → regression.
+4. Exit code **1** on regression; **0** otherwise.
+
+### 3. Acceptance
+
+A6.1.1-A6.1.5 ✅. Verified: `--no-field-cache` triggers regression
+gate (100% drop); `--field-cache-threshold=3` reduces affected
+count.
+
+### 4. V6.2+ followups
+
+- **V6.2:** integration с Plan 57 `nova bench` для CPU time
+  regression.
+- **V6.3:** custom thresholds via flags.
+
+## D223. IPA — Inter-Procedural Analysis для field caching — Plan 123.7
+
+> **Note 2026-06-02:** Originally assigned D220, renumbered к D223
+> after merge into main (D220-D222 claimed by Plan 124 priv-field-
+> visibility umbrella в parallel work).
+
+**Source:** [Plan 123.7](../../docs/plans/123.7-ipa.md). Implementation:
+`field_cache::module_write_sets` public API. Composition partner с
+D217 V1 mut barrier check (full integration V7.1 followup).
+
+### 1. Field-write-set inference
+
+Per FnDecl с Instance receiver, compute `field_write_set:
+HashSet<String>` — set of field names that the method's body writes
+via `@F = ...` (top-level Assign with target = Member{SelfAccess, F}).
+
+Inference includes:
+- **Direct writes:** Assign statements anywhere в body.
+- **Transitive via method calls:** if body calls `@<callee>(args)`,
+  union с callee's write_set.
+- **Iterative closure:** ≤10 iterations (sufficient для most call
+  graphs; V7.1 may add SCC analysis для exact closure).
+
+### 2. Public API
+
+```rust
+pub fn module_write_sets(
+    module: &Module,
+) -> HashMap<(String, String), HashSet<String>>;
+```
+
+Returns map `(type_name, method_name) → set of field names mutated`.
+Used by:
+- V7 internal cache_fn_ipa wrapper.
+- V7.1 future integration с V1 mut barrier.
+- Tooling (Plan 123.5 `--explain-cache` future extension to show
+  callee write-sets).
+
+### 3. V7 integration scope
+
+V7 ships:
+- ✅ write_set inference infrastructure.
+- ✅ public API.
+- 🟡 V1 mut barrier refinement deferred V7.1
+  ([M-123.7-full-integration]).
+- 🟡 V2 LICM, V3 pure, V4 chain — IPA refinements deferred V7.1+.
+
+Conservative fallback: methods without computed write_set treated
+как writing all fields (V1 current behavior). No regression.
+
+### 4. Cross-module IPA
+
+True cross-module (link-time) IPA — substantial infrastructure
+beyond field-cache scope. Deferred indefinitely; current
+per-module write_sets cover practical hot paths.
+
+### 5. Cross-references
+
+- **D24** (Plan 33.2) — Purity SCC analysis pattern reused.
+- **D03.4** (Plan 03.4) — effect-surface inference; complementary
+  signal.
+- **All D217 amends + D218 + D219** — IPA refinement candidates.
+
+### 6. Open Q resolution
+
+- `Q-ipa-correctness`: → D223 §1 (formal definition + iterative
+  closure semantics).
+- `Q-ipa-cross-module`: → D223 §4 (deferred indefinitely).
+
+## D223 amend V7.1 — Full integration с V1/LICM/pure/chain (Plan 123.7.1)
+
+**Source:** [Plan 123.7.1](../../docs/plans/123.7.1-ipa-full-integration.md).
+Implementation extends D223 V7 infrastructure across all 4 cache
+layers + adds field-read-set inference for V3.1 frame-based pure-
+cache invalidation.
+
+### 1. IpaCtx struct
+
+Threading mechanism для write_sets + receiver type через barrier-
+checking helpers across all 4 layers:
+
+```rust
+pub(crate) struct IpaCtx<'a> {
+    pub write_sets: &'a HashMap<(String, String), HashSet<String>>,
+    pub recv_type: &'a str,
+    pub read_sets: &'a HashMap<(String, String), HashSet<String>>,
+}
+```
+
+`call_invalidates_field(method, field)` helper returns `true` iff
+calling `(recv_type, method)` invalidates cache for `field` (per
+write_set lookup; unknown callee → `true` conservative).
+
+### 2. Layer integrations (Ф.1-Ф.4)
+
+**Ф.1 V1 mut path:**
+- `cache_fn_with_ipa` + `count_mut_prefix_reads_with_ipa`.
+- `stmt_is_barrier_for_with_ipa` / `expr_is_barrier_for_with_ipa`.
+- New helpers `*_contains_invalidating_call_for(_, fname, ipa)`:
+  Self-method call to method M where `fname ∉ write_set[(T,M)]` →
+  NOT a barrier. Unknown → conservative.
+- `rewrite_fn_body_split_with_ipa` — barrier consistency.
+
+**Ф.2 V2 LICM:**
+- `collect_loop_eligible_fields`: snapshots `LICM_WRITE_SETS`
+  thread-local. Mut field eligibility uses IPA-aware
+  `block_contains_invalidating_call_for` instead of V2
+  `body_has_call` (any call → barrier).
+
+**Ф.3 V3.1 pure-cache frame-based invalidation:**
+- New `build_read_set_registry` — parallel infrastructure к
+  write_sets. Computes per-method field-read-set (direct `@F` reads
+  + transitive via method calls, iterative closure ≤10 iterations).
+- `pure_cache_fn`: snapshots `PURE_IPA_CTX` thread-local. Instead
+  of V3 conservative "any @F write skips ALL pure caching", per-
+  method check:
+  - For each pure method M candidate: skip только if
+    `body_writes ∩ M.read_set` non-empty.
+  - Methods with `read_set ∩ writes = ∅` cache survives.
+- `collect_body_writes` helper: walks body, collects fields
+  directly written via top-level `Assign{Member{SelfAccess, F}}`.
+
+**Ф.4 V4.1 chain per-segment invalidation:**
+- `chain_cache_fn`: snapshots `CHAIN_IPA_CTX`. Replaces V4
+  conservative "any @F write skips all chains" с per-chain
+  per-segment check:
+  - Chain path `[a, b, c]` invalidated iff ANY of `{a, b, c}` ∈
+    body_writes. Writes к unrelated roots don't invalidate.
+
+### 3. Composition stability
+
+All 4 layer integrations preserve V1-V6 composition order (D218
+LICM → V4 chain → D219 pure → D217 V1). IPA refinements are
+**eligibility refinements only** — no AST pattern changes, no
+cache local naming changes. Disabling IPA (`NOVA_FIELD_CACHE_IPA=0`)
+returns to V1-V6 conservative behavior identically.
+
+### 4. Thread-local IPA context plumbing
+
+Instead of refactoring all pass functions to accept `Option<IpaCtx>`
+parameter (which would require changing ~20 function signatures),
+V7.1 uses thread-local `RefCell`s set by `*_with_ipa` wrapper
+functions. Each layer's eligibility checker snapshots the relevant
+context at entry. Clean revert (set to `None`) after pass.
+
+Trade-off: thread-local plumbing simpler change but obscures data
+flow vs explicit parameter. V7.2 may refactor к explicit ctx
+threading if multi-threaded compilation lands.
+
+### 5. Eligibility examples
+
+| Scenario | V7 | V7.1 |
+|---|---|---|
+| `@F` cache survives `@helper()` where helper writes only `@G` | ❌ barrier | ✅ no barrier |
+| LICM hoist `@F` despite loop calling `@helper()` (not writing F) | ❌ no hoist | ✅ hoist |
+| Pure `@M()` cache survives `@G = ...` where M reads {F} | ❌ skip all | ✅ cache |
+| Chain `@inner.v` survives `@tag = ...` | ❌ skip all | ✅ cache |
+| `@helper()` where helper unknown (external) | ❌ barrier | ❌ barrier (unchanged) |
+
+### 6. Escape hatch
+
+`NOVA_FIELD_CACHE_IPA=0` → all 4 IPA integrations disabled; V1-V6
+conservative behavior preserved. Verified 10/10 plan123_7_1 fixtures
+PASS identically под default и IPA=0.
+
+### 7. Acceptance verification
+
+A7.1.1-A7.1.10 all met. See plan doc + simplifications.md closure
+entry for breakdown.
+
+### 8. Followups
+
+- **V7.2:** explicit IpaCtx parameter threading (vs thread-local).
+- **V7.3:** SCC-based exact closure (vs iterative ≤10 iter).
+- **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
+  indefinitely.
+
+## D219 amend V3.1 — Pure-call literal args extension (Plan 123.3.1)
+
+**Source:** [Plan 123.3.1](../../docs/plans/123.3.1-pure-literal-args.md).
+
+### 1. V3.1 scope extension
+
+V3 cached only args-less `@<method>()`. V3.1 extends to args-with-
+literal-arguments: `@<method>(literal1, literal2, ...)`.
+
+Eligible literal types:
+- `IntLit` / `FloatLit` / `StrLit` / `BoolLit` / `CharLit` / `UnitLit`
+  / `NullPtrLit`.
+- `Unary{Neg, literal}` (negated literals like `-5`).
+
+Non-literal args (variables, expressions) → V3 fallback (not cached).
+
+### 2. Canonical key
+
+`PureCallKey { method: String, args_key: String }` where `args_key`
+encodes literal values:
+- `IntLit(5)` → `_5i`
+- `BoolLit(true)` → `_T`
+- `StrLit(...)` → `_s<hash>` (24-bit truncated SipHash).
+- `Unary{Neg, IntLit(3)}` → `_m3i`.
+
+Two pure calls share cache iff canonical keys match (same method
+name AND same args sequence).
+
+### 3. Naming
+
+Cache local = `_at_<method><args_key>_call`:
+- `@scaled(2)` × N → `_at_scaled_2i_call`.
+- `@value(true)` → `_at_value_T_call`.
+
+Collision avoidance via numeric suffix.
+
+### 4. Implementation
+
+- `match_self_pure_call` returns `Option<PureCallKey>` (V3 returned
+  `Option<&str>`).
+- `canonical_literal_repr(expr)` returns compact String для literal
+  expressions.
+- `count_pure_calls_in_body` uses `HashMap<PureCallKey, usize>`.
+- `capture_sample_args_in_body` saves first sample args per key для
+  prefix-let reconstruction.
+- `rewrite_pure_calls_in_*_v31` matches by canonical key, replaces
+  call sites с cache Ident.
+
+### 5. Composition с V3.1 frame-based (V7.1)
+
+V3.1 literal-args extension orthogonal к V3.1 frame-based
+invalidation (delivered as part of V7.1). Both apply independently:
+- Frame-based: cache survives writes к fields outside method's
+  read-set.
+- Literal-args: cache emit'ится для (method, literal_args) keys.
+
+### 6. Acceptance
+
+A3.1.1-A3.1.5 met:
+- A3.1.1 ✅ `@<method>(literal)` × N → cached.
+- A3.1.2 ✅ Different literals → separate caches.
+- A3.1.3 ✅ Non-literal arg → not cached (semantic preserved).
+- A3.1.4 ✅ Regression: plan123_3 12/0 PASS.
+- A3.1.5 ✅ plan123_3_1: 4/4 PASS.
+
+### 7. Escape hatch
+
+`NOVA_FIELD_CACHE_PURE=0` → entire V3 + V3.1 disabled.
+

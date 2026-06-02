@@ -1,0 +1,38 @@
+// Plan 123.2 T1.2: mut field inside loop where Plan 123.1 mut path
+// bailed (call before loop invalidates mut prefix region). LICM
+// emits hoisted cache immediately before loop.
+
+module plan123_2.licm_mut_after_call_ok
+
+type Counter {
+    mut threshold int
+}
+
+fn Counter.helper(x int) -> int {
+    x + 1
+}
+
+fn Counter mut @sum_above() -> int {
+    // 123.1 mut path: prefix region ends at the helper Call.
+    // Loop body has 2 reads of @threshold, no writes, no calls.
+    // LICM should hoist @threshold immediately before loop.
+    mut bias = Counter.helper(5)
+    mut total = 0
+    mut i = 0
+    while i < 4 {
+        total += @threshold + @threshold
+        i += 1
+    }
+    total + bias
+}
+
+fn Counter.new(x int) -> Counter {
+    Counter { threshold: x }
+}
+
+test "LICM hoists mut field after-call inside loop" {
+    mut c = Counter.new(3)
+    ro r = c.sum_above()
+    // bias = helper(5) = 6; loop 4 iterations × (3+3) = 24; + 6 = 30.
+    assert(r == 30)
+}

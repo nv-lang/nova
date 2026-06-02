@@ -1,0 +1,32 @@
+// Plan 123.7.1 T4.2 (V4.1 negative): writing to chain ROOT field
+// DOES invalidate chain cache.
+
+module plan123_7_1.ipa_chain_root_write_invalidates_ok
+
+type Layer {
+    ro v int
+}
+
+type Container {
+    mut layer Layer
+}
+
+fn Container mut @swap_layer() -> int {
+    // 2 reads of @layer.v, then write to @layer itself,
+    // then 2 more reads.
+    // V4.1: @layer write invalidates chain @layer.v (root in write-set).
+    ro a = @layer.v + @layer.v
+    @layer = Layer { v: 99 }
+    a + @layer.v + @layer.v
+}
+
+fn Container.new(v int) -> Container {
+    Container { layer: Layer { v } }
+}
+
+test "V4.1: root write invalidates chain" {
+    mut c = Container.new(7)
+    ro r = c.swap_layer()
+    // a = 7+7 = 14. layer swapped to {v:99}. Then 99+99=198. Total = 212.
+    assert(r == 212)
+}

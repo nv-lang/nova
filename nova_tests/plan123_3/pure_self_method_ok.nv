@@ -1,0 +1,28 @@
+// Plan 123.3 T1.1: @<pure_method>() called 2+ times → cached.
+
+module plan123_3.pure_self_method_ok
+
+type Vec3 {
+    ro x int
+    ro y int
+    ro z int
+}
+
+#pure
+fn Vec3 @magnitude_sq() -> int => @x * @x + @y * @y + @z * @z
+
+fn Vec3 @double_test() -> int {
+    // Two @magnitude_sq() calls → cache (no @F write in body).
+    @magnitude_sq() + @magnitude_sq()
+}
+
+fn Vec3.new(x int, y int, z int) -> Vec3 {
+    Vec3 { x, y, z }
+}
+
+test "pure method @magnitude_sq cached" {
+    ro v = Vec3.new(3, 4, 12)
+    ro r = v.double_test()
+    // mag_sq = 9+16+144 = 169. Twice = 338.
+    assert(r == 338)
+}

@@ -1,0 +1,42 @@
+// Plan 123.7.1 T5.1: IPA transitive closure through method calls.
+// If A calls B, A's effective write-set includes B's.
+
+module plan123_7_1.ipa_transitive_closure_ok
+
+type Stack {
+    mut top int
+    mut sum int
+}
+
+// Indirectly writes @top through @raw_inc.
+fn Stack mut @raw_inc() -> () {
+    @top = @top + 1
+}
+
+// Calls @raw_inc → transitively writes @top.
+fn Stack mut @push_one() -> () {
+    @raw_inc()
+}
+
+fn Stack mut @count_with_indirect() -> int {
+    // 2 reads of @sum, then call @push_one (transitively writes @top,
+    // NOT @sum), then 2 more reads.
+    // V7.1 IPA: @push_one's transitive write-set = {top}; doesn't
+    // include @sum → cache survives.
+    ro a = @sum + @sum
+    @push_one()
+    a + @sum + @sum
+}
+
+fn Stack.new(t int, s int) -> Stack {
+    Stack { top: t, sum: s }
+}
+
+test "IPA transitive closure preserves cache" {
+    mut st = Stack.new(0, 10)
+    ro r = st.count_with_indirect()
+    // @sum=10 throughout. a=20. + 20 = 40.
+    assert(r == 40)
+    // @top was bumped by push_one→raw_inc.
+    assert(st.top == 1)
+}

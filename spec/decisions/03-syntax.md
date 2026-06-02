@@ -7287,17 +7287,209 @@ attribute `#fn_eval_max_iterations(N)` — V4 followup.
 - Plan 114.4.4.4 — closure-returning const fn.
 - Plan 114.4.4.5 — true per-const-arg monomorphization.
 
-### V3 acceptance — A27-A30 (landed)
+### V4 extensions (Plan 114.4.4 finish session, 2026-06-02)
+
+**Ф.4 — Record/sum/tuple patterns в match:**
+
+Pattern V2.0 subset → V4 расширен с structured destructuring:
+- `(a, b)` — tuple pattern.
+- `Variant`, `Variant(p1, p2)`, `Cons(h, ..)` — sum-type destructuring.
+- `{ field: pat }` или `{ field }` (shorthand) — record destructuring.
+- `pat as name` — binding pattern.
+
+ConstValue extended с `Tuple(Vec<ConstValue>)`, `Variant(String,
+Vec<ConstValue>)`, `Record(Vec<(String, ConstValue)>)` variants.
+
+Variant constructor recognition heuristic: `Call(Ident(Name), args)` где
+`Name` starts с uppercase letter и НЕ const fn → constructed as
+`ConstValue::Variant`. Lowercase Idents trigger const fn lookup.
+
+**Ф.5 — Type reflection (sizeof/align_of):**
+
+Built-in intrinsics evaluating at compile time:
+```nova
+const SIZE_INT = sizeof[int]()        // 8
+const SIZE_BOOL = sizeof[bool]()       // 1
+const ALIGN_F64 = align_of[f64]()      // 8
+
+fn buf_size(const count int) -> const int =>
+    count * sizeof[int]()              // works в const fn body
+```
+
+V4.0 surface (primitive types only — hardcoded per default 64-bit ABI):
+- `int` / `i64` / `u64` / `f64` → 8 bytes.
+- `i32` / `u32` / `f32` → 4 bytes.
+- `i16` / `u16` → 2 bytes.
+- `i8` / `u8` / `bool` → 1 byte.
+- `char` → 4 bytes (u32 codepoint per Plan Q-char-literals).
+- `str` → 16 bytes (pointer + length per Plan 26 prelude).
+
+Records / sum-types / generic types → V4 followup
+`[M-114.4.4-record-reflection]` (Plan 114.4.4.2 covers it).
+
+`sizeof`/`align_of` recognized as built-in identifiers в name resolution
+(special-cased в `is_known`); replaced литералом в rewriter pass до
+codegen.
+
+### V4.1 extensions (Plan 114.4.4 V4.1 session, 2026-06-02)
+
+**Mono-specialization — per-const-arg true monomorphization (Plan 114.4.4.5):**
+
+V3 baseline (Plan 114.4.3 Ф.3): mixed const fn (e.g. `fn scale(const
+factor int, x int) -> int`) compiled as regular runtime fn — const
+param `factor` purely informational. V4.1 lands true monomorphization:
+
+```nova
+fn scale(const factor int, x int) -> int => x * factor
+
+ro a = scale(3, x)    // generates fn `scale__cst_0(x) => x * 3`
+ro b = scale(3, y)    // reuses `scale__cst_0` (same const arg)
+ro c = scale(10, z)   // generates fn `scale__cst_1(x) => x * 10`
+```
+
+*Semantics:*
+- Each unique (mixed_fn_name, const_args_tuple) tuple → отдельная
+  specialized C fn `<orig>__cst_<idx>` где const params substituted
+  с literal values в body, dropped из signature.
+- Per-compilation cache deduplicates: identical (fn, const_args)
+  reuses spec name.
+- Mixed fn original AST kept as template (used для cloning); codegen
+  emits both original (mostly dead) + all specializations.
+
+*Implementation:* New module `compiler-codegen/src/const_fn_mono.rs`.
+Pipeline placement: AFTER `rewrite_const_fn_calls` (fully-const fns
+already dropped + sizeof replaced). Mono pass walks all call sites,
+generates spec FnDecls с literal substitution в body, rewrites Call
+sites с new spec names + drops const args.
+
+*Use cases:* Performance optimization для hot loops с known const
+parameters (loop unrolling, branch elimination, SSE-like vectorization).
+Const generics-style API design (Rust analog).
+
+### V4.2 extensions (Plan 114.4.4.3 V4.2 session, 2026-06-02)
+
+**Runtime trampoline для first-class const fn use (Plan 114.4.4.3):**
+
+V3 baseline (Plan 114.4.4 Ф.2): const fn name использованное в non-callee
+position (`ro f = const_fn`, `apply(const_fn, x)`) → friendly errors
+`E_CONST_FN_FIRST_CLASS` / `E_CONST_FN_FIRST_CLASS_RUNTIME_HOF` с
+suggestion обернуть в lambda. V4.2 supersedes этот ограничивающий
+поведение автоматической генерацией runtime trampoline:
+
+```nova
+fn double(const x int) -> const int => x * 2
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+test "HOF use" {
+    ro r = apply(double, 5)   // V3: error. V4.2: compiler emits
+                              // `double__trampoline(int x) -> int { x * 2 }`
+                              // и переписывает `double` → `double__trampoline`.
+    assert(r == 10)
+}
+```
+
+*Semantics:*
+- Для каждого fully-const fn `f`, используемого в non-callee position
+  (Call.args, Let.value, Assign.value, Return.value), компилятор
+  генерирует runtime trampoline fn с именем `<f>__trampoline`.
+- Trampoline — клон оригинала с demoted modifiers: `const` параметры
+  становятся обычными runtime, `-> const T` → `-> T`. Body unchanged
+  (т.к. body fully-const fn состоит из выражений валидных и в runtime).
+- Транзитивный вызов: если body trampoline вызывает другой fully-const
+  fn, тот fn тоже добавляется в trampoline-set, и call внутри body
+  переписывается на `<other>__trampoline`. Fixed-point reachability.
+- `sizeof[T]()` / `align_of[T]()` intrinsics в trampoline body
+  substituted с literal Int при генерации body (V4.0 primitive limit).
+- Alias resolution: `const ALIAS = const_fn; apply(ALIAS, x)` →
+  alias resolved к `const_fn`, который trampolines.
+- Original fully-const fn декларация всё ещё dropped из codegen pass
+  (call sites уже inlined литералами); trampoline имеет распознаваемый
+  суффикс и переживает retain step.
+
+*Implementation:* New module `compiler-codegen/src/const_fn_trampoline.rs`.
+Pipeline placement: внутри `rewrite_const_fn_calls`, ПОСЛЕ main walker
+(inlining + intrinsic eval), ДО validate + retain.
+
+*V4.2 limitations:*
+- Generic const fn rejected (`E_CONST_FN_TRAMPOLINE_GENERIC`) — trampoline
+  body нужны concrete types для intrinsic substitution. Followup
+  `[M-114.4.4-trampoline-generics]`.
+- Closure literals в body — Plan 114.4.4.4 territory.
+
+### V4.3 extensions (Plan 114.4.4.4 V4.3 session, 2026-06-02)
+
+**Closure-returning const fn — comptime closure specialization (Plan 114.4.4.4):**
+
+V3 baseline (Plan 114.4.4 Ф.1): closure literals в const fn body отвергались
+с `E_CONST_FN_EFFECT_IN_BODY`. V4.3 разрешает специальную форму — const
+fn чьё body — single closure literal:
+
+```nova
+fn make_adder(const n int) -> const fn(int) -> int =>
+    |x| x + n   // captures const param n
+
+test {
+    ro adder5 = make_adder(5)   // ⇒ Ident("make_adder__closure_0")
+    assert(adder5(3) == 8)      // calls specialized fn (x int) -> int { x + 5 }
+
+    ro m3 = make_mul(3)         // distinct spec __closure_1
+    ro m3_again = make_mul(3)   // reuses __closure_1 (memoized)
+}
+```
+
+*Semantics:*
+- Detect: const fn whose body is `FnBody::Expr(Lambda | ClosureLight | ClosureFull)`.
+- At each Call site `host_fn(LITERAL_ARGS)`:
+  - Memoize per (host_fn_name, const_args_tuple); identical args reuse spec.
+  - Generate specialized top-level fn `<host>__closure_<idx>` where:
+    - Params = closure params (типы выведены: Lambda/ClosureFull explicit
+      annotations OR host fn's `-> const fn(T1, ..) -> R` declaration для
+      ClosureLight untyped).
+    - Body = closure body с host's const params substituted с literal values.
+    - Return type = closure's explicit annotation OR host's declared `R`.
+  - Replace Call expression с `Ident(spec_name)` — Nova принимает bare
+    fn name как fn pointer.
+
+*Body validation extension:* `check_const_fn_decl` детектирует closure-at-top-level
+case и расширяет scope (host const params + closure params) при validation
+closure body — body validated по обычным V1 rules (literals/arithmetic/control
+flow/calls к другим const fn) с extended ident scope.
+
+*Implementation:* New module `compiler-codegen/src/const_fn_closure.rs`.
+Pipeline placement: внутри `rewrite_const_fn_calls` **ДО** main walker
+(чтобы calls к closure-returning fns были already rewritten к Idents и
+walker не пытался eval_call их через interpreter, который не умеет
+closure ConstValue).
+
+*V4.3 limitations:*
+- First-class use of closure-returning fn name (`ro f = make_adder` без
+  immediate call) rejected: each call produces distinct specialized
+  closure → no single trampoline. Friendly error
+  `E_CONST_FN_CLOSURE_FIRST_CLASS`.
+- Untyped closure `|x| body` requires host's `-> const fn(T) -> R`
+  declaration для type inference (Lambda/ClosureFull с explicit types
+  работают независимо).
+- Closure param arity must match host's `fn(..)` declaration arity
+  (`E_CONST_FN_CLOSURE_ARITY`).
+- Generic closure-returning const fn — V2 followup
+  `[M-114.4.4-closure-generic]`.
+
+### V3+V4+V4.1+V4.2+V4.3 acceptance — A27-A35 (landed)
 
 | # | Критерий | Verification |
 |---|---|---|
-| A27 | `#fn_eval_max_depth(N)` override работает | T4.4 Ф.1 fixtures |
-| A28 | Runtime-let `ro f = const_fn` → friendly error | Ф.2 negatives |
-| A29 | HOF passing → friendly error | Ф.2 negatives |
+| A27 | `#fn_eval_max_depth(N)` override работает | Ф.1 fixtures |
+| A28 | Runtime-let `ro f = const_fn` через trampoline | runtime_hof_let_binding_ok (V4.2) |
+| A29 | HOF passing через trampoline | runtime_hof_arg_ok (V4.2) |
 | A30 | Loops + mut/assign/break/continue работают | Ф.3 fixtures |
+| A31 | Record/sum/tuple patterns в match destructure | Ф.4 fixtures |
+| A32 | `sizeof[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
+| A33 | Mixed const fn per-arg monomorphization | mono_specialization_ok fixture |
+| A34 | Const fn first-class use через runtime trampoline | runtime_hof_*_ok fixtures (5 шт.) |
+| A35 | Closure-returning const fn — comptime specialization | closure_from_const_fn_*_ok fixtures (4 шт.) |
 
-A31-A35 (record-pattern / t-reflection / runtime-hof / closures /
-mono-specialization) → extracted plans 114.4.4.1-5.
+🎯 **Plan 114.4.4 family COMPLETE** — все V3/V4/V4.1/V4.2/V4.3 phases landed.
+Open V2/V3 generic extensions tracked через `[M-114.4.4-*]` markers.
 
 ### V2 acceptance — A19-A26
 

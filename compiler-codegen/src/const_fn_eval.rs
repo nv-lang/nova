@@ -42,6 +42,16 @@ pub enum ConstValue {
     /// Char codepoint (Plan Q-char-literals: u32).
     Char(u32),
     Unit,
+    /// Plan 114.4.4 Ф.4 V4 (D199 V4 amend): tuple structured value.
+    /// Positional access via .0/.1/... evaluation. Match patterns:
+    /// `(a, b)` destructuring.
+    Tuple(Vec<ConstValue>),
+    /// Plan 114.4.4 Ф.4 V4: variant value `VariantName(args)`.
+    /// Match patterns: `Some(x)`, `None`, `Ok(v)`, `Err(e)`, etc.
+    Variant(String, Vec<ConstValue>),
+    /// Plan 114.4.4 Ф.4 V4: record value `Type { field: val, ... }`.
+    /// Match patterns: `{ field: pat }`.
+    Record(Vec<(String, ConstValue)>),
 }
 
 // Manual Eq/Hash: f64 not Hash, comparing by bit-pattern (NaN-NaN
@@ -56,6 +66,9 @@ impl PartialEq for ConstValue {
             (ConstValue::Str(a), ConstValue::Str(b)) => a == b,
             (ConstValue::Char(a), ConstValue::Char(b)) => a == b,
             (ConstValue::Unit, ConstValue::Unit) => true,
+            (ConstValue::Tuple(a), ConstValue::Tuple(b)) => a == b,
+            (ConstValue::Variant(na, va), ConstValue::Variant(nb, vb)) => na == nb && va == vb,
+            (ConstValue::Record(a), ConstValue::Record(b)) => a == b,
             _ => false,
         }
     }
@@ -70,6 +83,22 @@ impl std::hash::Hash for ConstValue {
             ConstValue::Str(v) => { 3u8.hash(state); v.hash(state); }
             ConstValue::Char(v) => { 4u8.hash(state); v.hash(state); }
             ConstValue::Unit => { 5u8.hash(state); }
+            ConstValue::Tuple(items) => {
+                6u8.hash(state);
+                items.len().hash(state);
+                for v in items { v.hash(state); }
+            }
+            ConstValue::Variant(name, args) => {
+                7u8.hash(state);
+                name.hash(state);
+                args.len().hash(state);
+                for v in args { v.hash(state); }
+            }
+            ConstValue::Record(fields) => {
+                8u8.hash(state);
+                fields.len().hash(state);
+                for (k, v) in fields { k.hash(state); v.hash(state); }
+            }
         }
     }
 }
@@ -85,6 +114,38 @@ impl ConstValue {
             ConstValue::Str(v) => ExprKind::StrLit(v.clone()),
             ConstValue::Char(v) => ExprKind::CharLit(*v),
             ConstValue::Unit => ExprKind::UnitLit,
+            // Plan 114.4.4 Ф.4: tuple → TupleLit с converted children.
+            ConstValue::Tuple(items) => {
+                let elems = items.iter().map(|v| v.to_literal_expr(span)).collect();
+                ExprKind::TupleLit(elems)
+            }
+            // Plan 114.4.4 Ф.4: variant → Call expression `Name(args)`.
+            ConstValue::Variant(name, args) => {
+                let func = Box::new(Expr {
+                    kind: ExprKind::Ident(name.clone()), span,
+                });
+                let call_args = args.iter().map(|v|
+                    crate::ast::CallArg::Item(v.to_literal_expr(span))
+                ).collect();
+                ExprKind::Call { func, args: call_args, trailing: None }
+            }
+            // Plan 114.4.4 Ф.4: record → RecordLit с fields.
+            ConstValue::Record(fields) => {
+                let lit_fields = fields.iter().map(|(k, v)| {
+                    crate::ast::RecordLitField {
+                        name: k.clone(),
+                        value: Some(v.to_literal_expr(span)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span,
+                    }
+                }).collect();
+                ExprKind::RecordLit {
+                    type_name: None,
+                    fields: lit_fields,
+                    inferred_map_v: None,
+                }
+            }
         };
         Expr { kind, span }
     }
@@ -97,6 +158,9 @@ impl ConstValue {
             ConstValue::Str(_) => "str",
             ConstValue::Char(_) => "char",
             ConstValue::Unit => "Unit",
+            ConstValue::Tuple(_) => "tuple",
+            ConstValue::Variant(_, _) => "variant",
+            ConstValue::Record(_) => "record",
         }
     }
 }
@@ -445,10 +509,18 @@ fn match_const_pattern(
     pat: &crate::ast::Pattern,
     val: &ConstValue,
 ) -> Option<Vec<(String, ConstValue)>> {
-    use crate::ast::{Pattern, Literal};
+    use crate::ast::{Pattern, Literal, VariantPatternKind};
     match pat {
         Pattern::Wildcard(_) => Some(Vec::new()),
         Pattern::Ident { name, is_mut: false, .. } => {
+            // Bare Ident pattern может быть:
+            // (1) unit variant matcher (e.g. `None` matches Variant("None", []))
+            // (2) plain binding (fallback)
+            if let ConstValue::Variant(vname, args) = val {
+                if args.is_empty() && vname == name {
+                    return Some(Vec::new());
+                }
+            }
             Some(vec![(name.clone(), val.clone())])
         }
         Pattern::Literal(lit, _) => {
@@ -470,7 +542,77 @@ fn match_const_pattern(
             }
             None
         }
-        _ => None, // checker rejects unsupported patterns
+        // Plan 114.4.4 Ф.4 V4: tuple destructuring pattern.
+        Pattern::Tuple(pats, _) => {
+            if let ConstValue::Tuple(items) = val {
+                if pats.len() != items.len() { return None; }
+                let mut bindings = Vec::new();
+                for (p, v) in pats.iter().zip(items.iter()) {
+                    let sub = match_const_pattern(p, v)?;
+                    bindings.extend(sub);
+                }
+                Some(bindings)
+            } else {
+                None
+            }
+        }
+        // Plan 114.4.4 Ф.4 V4: variant destructuring pattern.
+        // `Some(x)`, `Ok(v)`, `Err(e)`, `Cons(h, ..)`, etc.
+        Pattern::Variant { path, kind, .. } => {
+            if let ConstValue::Variant(vname, args) = val {
+                // Path's last segment matches variant name; bare variant
+                // name (path.len()==1) covers common case Some/None/Ok/Err.
+                let name = path.last().map(String::as_str).unwrap_or("");
+                if name != vname { return None; }
+                match kind {
+                    VariantPatternKind::Unit => {
+                        if args.is_empty() { Some(Vec::new()) } else { None }
+                    }
+                    VariantPatternKind::Tuple { patterns, rest } => {
+                        if !rest && patterns.len() != args.len() { return None; }
+                        if *rest && patterns.len() > args.len() { return None; }
+                        let mut bindings = Vec::new();
+                        for (p, v) in patterns.iter().zip(args.iter()) {
+                            let sub = match_const_pattern(p, v)?;
+                            bindings.extend(sub);
+                        }
+                        Some(bindings)
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        // Plan 114.4.4 Ф.4 V4: record destructuring pattern.
+        Pattern::Record { fields, rest, .. } => {
+            if let ConstValue::Record(rec_fields) = val {
+                if !rest && fields.len() != rec_fields.len() { return None; }
+                let mut bindings = Vec::new();
+                for f in fields {
+                    let v = rec_fields.iter().find(|(k, _)| k == &f.name).map(|(_, v)| v);
+                    let v = match v { Some(v) => v, None => return None };
+                    match &f.pattern {
+                        Some(p) => {
+                            let sub = match_const_pattern(p, v)?;
+                            bindings.extend(sub);
+                        }
+                        None => {
+                            // Shorthand `{ name }` — bind field value к field name.
+                            bindings.push((f.name.clone(), v.clone()));
+                        }
+                    }
+                }
+                Some(bindings)
+            } else {
+                None
+            }
+        }
+        Pattern::Binding { name, inner, .. } => {
+            let mut sub = match_const_pattern(inner, val)?;
+            sub.push((name.clone(), val.clone()));
+            Some(sub)
+        }
+        _ => None,
     }
 }
 
@@ -832,6 +974,39 @@ fn check_value_matches_type(
 /// Extract `ConstValue` из literal Expr (used by AST rewriter to check
 /// if an arg is constexpr-eligible without invoking full evaluator).
 /// Returns `None` если expr — не литерал.
+/// Plan 114.4.4 Ф.5 V4: extract simple type name from TypeRef (для intrinsics).
+pub fn simple_type_name_str(t: &crate::ast::TypeRef) -> Option<String> {
+    match t {
+        crate::ast::TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 =>
+        {
+            Some(path[0].clone())
+        }
+        _ => None,
+    }
+}
+
+/// Plan 114.4.4 Ф.5 V4: sizeof[T]()/align_of[T]() — type layout lookup.
+/// V4.0 supports primitive types only (hardcoded sizes per default 64-bit ABI).
+/// Records/generics/sum-types → followup `[M-114.4.4-record-reflection]`.
+/// `is_align`: true для align_of, false для sizeof.
+pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64> {
+    let name = simple_type_name_str(t)?;
+    // Primitive type table (default 64-bit ABI, matches nova_rt).
+    // align == size для primitives (natural alignment).
+    let size = match name.as_str() {
+        "int" | "i64" | "u64" | "f64" => 8,
+        "i32" | "u32" | "f32" => 4,
+        "i16" | "u16" => 2,
+        "i8" | "u8" | "bool" => 1,
+        "char" => 4, // Plan Q-char-literals: u32 codepoint.
+        "str" => 16, // pointer + length (Plan 26 prelude).
+        _ => return None,
+    };
+    let _ = is_align;
+    Some(size)
+}
+
 pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
     match &expr.kind {
         ExprKind::IntLit(v) => Some(ConstValue::Int(*v)),
@@ -840,9 +1015,50 @@ pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
         ExprKind::BoolLit(v) => Some(ConstValue::Bool(*v)),
         ExprKind::CharLit(v) => Some(ConstValue::Char(*v)),
         ExprKind::UnitLit => Some(ConstValue::Unit),
-        ExprKind::Unary { .. } | ExprKind::Binary { .. } | ExprKind::As(..) => {
-            // Higher-level constexpr eval handled by caller via full evaluator;
-            // try_literal_to_value handles only direct literals.
+        // Plan 114.4.4 Ф.4 V4: pre-eval constexpr Unary/Binary/As для args.
+        ExprKind::Unary { op, operand } => {
+            let v = try_literal_to_value(operand)?;
+            eval_unary(*op, &v, expr.span).ok()
+        }
+        ExprKind::Binary { op, left, right } => {
+            let l = try_literal_to_value(left)?;
+            let r = try_literal_to_value(right)?;
+            eval_binary(*op, &l, &r, expr.span).ok()
+        }
+        ExprKind::As(inner, target) => {
+            let v = try_literal_to_value(inner)?;
+            eval_as_cast(&v, target, expr.span).ok()
+        }
+        // Plan 114.4.4 Ф.4 V4: tuple/variant constructor literals.
+        ExprKind::TupleLit(elems) => {
+            let mut vs = Vec::with_capacity(elems.len());
+            for e in elems { vs.push(try_literal_to_value(e)?); }
+            Some(ConstValue::Tuple(vs))
+        }
+        ExprKind::Call { func, args, trailing: None } => {
+            // Plan 114.4.4 Ф.5 V4: sizeof/align_of intrinsics — TurboFish callee.
+            if let ExprKind::TurboFish { base, type_args } = &func.kind {
+                if let ExprKind::Ident(n) = &base.kind {
+                    if (n == "sizeof" || n == "align_of") && type_args.len() == 1 && args.is_empty() {
+                        return type_size_or_align(&type_args[0], n == "align_of")
+                            .map(ConstValue::Int);
+                    }
+                }
+            }
+            // Variant constructor `Name(args)` где Name uppercase.
+            if let ExprKind::Ident(n) = &func.kind {
+                if n.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    let mut vs = Vec::with_capacity(args.len());
+                    for a in args {
+                        if let crate::ast::CallArg::Item(e) = a {
+                            vs.push(try_literal_to_value(e)?);
+                        } else {
+                            return None;
+                        }
+                    }
+                    return Some(ConstValue::Variant(n.clone(), vs));
+                }
+            }
             None
         }
         _ => None,
@@ -880,7 +1096,7 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // so we can hold the immutable view while we mutate other parts of
     // the module. Const fn count в реальных модулях невелик; clone
     // overhead minimal.
-    let mut mixed_fns: Vec<(String, Vec<bool>)> = Vec::new();
+    let mut mixed_fns: Vec<(String, Vec<bool>, crate::ast::FnDecl)> = Vec::new();
     let const_fn_decls: Vec<crate::ast::FnDecl> = module.items.iter()
         .filter_map(|it| match it {
             Item::Fn(fd) => {
@@ -896,9 +1112,9 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
                 if is_fully_const {
                     Some(fd.clone())
                 } else if any_const {
-                    // Mixed — collect for validation registration.
+                    // Mixed — collect for validation registration + V4.1 mono.
                     let flags: Vec<bool> = fd.params.iter().map(|p| p.is_const).collect();
-                    mixed_fns.push((fd.name.clone(), flags));
+                    mixed_fns.push((fd.name.clone(), flags, fd.clone()));
                     None
                 } else {
                     None
@@ -907,12 +1123,12 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
             _ => None,
         })
         .collect();
-    if const_fn_decls.is_empty() && mixed_fns.is_empty() {
-        return errors;
-    }
+    // Plan 114.4.4 Ф.5: walk module even без const fns — sizeof/align_of
+    // intrinsics могут use'аться в module-level const RHS без const fn
+    // decls (e.g. `const SIZE = sizeof[int]()`).
     let mut owned = OwnedEvaluator::new(const_fn_decls);
-    for (name, flags) in mixed_fns {
-        owned.register_mixed(name, flags);
+    for (name, flags, fd) in mixed_fns {
+        owned.register_mixed(name, flags, fd);
     }
     // Plan 114.4.3 Ф.5 V2: first-class alias resolution.
     // Detect `const ALIAS = const_fn_name` pattern. Build alias map:
@@ -952,13 +1168,38 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
         }
     }
 
+    // Plan 114.4.4.4 V4.3: closure-returning const fn specialization.
+    // Detect fully-const fns whose body is closure literal; walk module,
+    // rewrite Call sites к specialized `<host>__closure_<idx>` Idents;
+    // append specialized FnDecls. Runs BEFORE main walker so its Call
+    // sites are not subjected to eval_call (which cannot handle closure
+    // ConstValue). Closure-returning fn names remain в owned.fns —
+    // dropped by retain. Their bodies (template closures) won't be
+    // re-walked since rewriter sees fully-const fn body inside walk_item
+    // and skips.
+    let c_errors = crate::const_fn_closure::specialize_closure_returning_const_fns(module);
+    errors.extend(c_errors);
+
     walk_module(module, &mut owned, &mut errors);
+
+    // Plan 114.4.4.3 V4.2: generate runtime trampolines для fully-const fn
+    // used as first-class values. Inserted в module.items BEFORE validate +
+    // retain. Trampoline names (`<orig>__trampoline`) survive retain since
+    // const_names filter matches только original names.
+    let (trampoline_set, t_errors) = crate::const_fn_trampoline::generate_const_fn_trampolines(
+        module,
+        &owned.fns,
+        &owned.aliases,
+    );
+    errors.extend(t_errors);
 
     // Plan 114.4.4 Ф.2 (D199 V3): friendly UX validation — detect runtime
     // misuse of const fn names BEFORE codegen drops them. After this pass
     // any Ident referencing const fn в non-call-func position → error
     // с actionable suggestion.
-    validate_const_fn_runtime_uses(module, &owned, &mut errors);
+    // Plan 114.4.4.3 V4.2: skip validation для names в trampoline_set —
+    // those usages already rewritten к trampoline по step 4.
+    validate_const_fn_runtime_uses(module, &owned, &trampoline_set, &mut errors);
 
     // Drop const fn declarations + alias const decls (V2 Ф.5) из items.
     let const_names = owned.names();
@@ -1004,6 +1245,9 @@ struct OwnedEvaluator {
     /// indicating is_const. Used для call-site validation: const-param args
     /// must be constexpr literals. Mixed fns remain в codegen (not dropped).
     mixed_const_params: HashMap<String, Vec<bool>>,
+    /// Plan 114.4.4.5 V4.1: mixed fn FnDecl cache — для true monomorphization
+    /// (per-const-arg specialization). Populated together с mixed_const_params.
+    mixed_fns: HashMap<String, crate::ast::FnDecl>,
     /// Plan 114.4.3 Ф.5 V2: const fn aliases — `const ALIAS = const_fn`.
     /// Walker substitutes Ident("ALIAS") → Ident("ORIGINAL") at call sites.
     /// Alias decls removed из items в retain phase.
@@ -1020,12 +1264,15 @@ impl OwnedEvaluator {
             fns,
             memo: HashMap::new(),
             mixed_const_params: HashMap::new(),
+            mixed_fns: HashMap::new(),
             aliases: HashMap::new(),
         }
     }
     /// Plan 114.4.3 Ф.3: register mixed const fn — для call-site validation.
-    fn register_mixed(&mut self, name: String, const_param_flags: Vec<bool>) {
-        self.mixed_const_params.insert(name, const_param_flags);
+    /// Plan 114.4.4.5 V4.1: also stores FnDecl for monomorphization.
+    fn register_mixed(&mut self, name: String, const_param_flags: Vec<bool>, fd: crate::ast::FnDecl) {
+        self.mixed_const_params.insert(name.clone(), const_param_flags);
+        self.mixed_fns.insert(name, fd);
     }
     fn names(&self) -> std::collections::HashSet<String> {
         self.fns.keys().cloned().collect()
@@ -1423,11 +1670,12 @@ impl OwnedEvaluator {
             }
             ExprKind::Call { func, args, trailing: None } => {
                 // Plan 114.4.3 Ф.4 V2: turbofish callee для generic const fn.
-                let callee_name = match &func.kind {
-                    ExprKind::Ident(n) => n.clone(),
-                    ExprKind::TurboFish { base, .. } => {
+                // Plan 114.4.4 Ф.5 V4: extract type_args (для sizeof[T]).
+                let (callee_name, type_args) = match &func.kind {
+                    ExprKind::Ident(n) => (n.clone(), Vec::new()),
+                    ExprKind::TurboFish { base, type_args } => {
                         if let ExprKind::Ident(n) = &base.kind {
-                            n.clone()
+                            (n.clone(), type_args.clone())
                         } else {
                             return Err(Diagnostic::new(
                                 "[E_CONST_FN_EVAL_PANIC] non-ident turbofish base \
@@ -1441,6 +1689,32 @@ impl OwnedEvaluator {
                         expr.span,
                     )),
                 };
+                // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics.
+                if callee_name == "sizeof" || callee_name == "align_of" {
+                    if type_args.len() != 1 {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_EVAL_PANIC] `{}[T]()` requires exactly 1 type \
+                                 argument (D199 V4).",
+                                callee_name
+                            ),
+                            expr.span,
+                        ));
+                    }
+                    let size = type_size_or_align(&type_args[0], callee_name == "align_of")
+                        .ok_or_else(|| Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_GENERIC_NEEDS_T_REFLECTION] `{}[T]()` для \
+                                 type {} not supported в V4.0 — only primitives \
+                                 (int/i*/u*/f*/bool/char) supported. Record/generic \
+                                 type reflection — followup `[M-114.4.4-record-reflection]`.",
+                                callee_name, simple_type_name_str(&type_args[0])
+                                    .unwrap_or_else(|| "<complex>".to_string())
+                            ),
+                            expr.span,
+                        ))?;
+                    return Ok(ConstValue::Int(size));
+                }
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
                     if let crate::ast::CallArg::Item(e) = a {
@@ -1452,7 +1726,45 @@ impl OwnedEvaluator {
                         ));
                     }
                 }
-                self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
+                // Plan 114.4.4 Ф.4 V4: distinguish const fn vs variant constructor.
+                let resolved_name = self.aliases.get(&callee_name).cloned().unwrap_or(callee_name.clone());
+                if !self.fns.contains_key(&resolved_name)
+                    && callee_name.chars().next().map_or(false, |c| c.is_uppercase())
+                {
+                    return Ok(ConstValue::Variant(callee_name, arg_vals));
+                }
+                self.eval_call_inner(&resolved_name, arg_vals, expr.span, depth)
+            }
+            // Plan 114.4.4 Ф.4 V4: tuple literal → ConstValue::Tuple.
+            ExprKind::TupleLit(elems) => {
+                let mut vs = Vec::with_capacity(elems.len());
+                for e in elems {
+                    vs.push(self.eval_expr(e, env, current_fn, depth)?);
+                }
+                Ok(ConstValue::Tuple(vs))
+            }
+            // Plan 114.4.4 Ф.4 V4: record literal → ConstValue::Record.
+            ExprKind::RecordLit { fields, .. } => {
+                let mut vs = Vec::with_capacity(fields.len());
+                for f in fields {
+                    if f.is_spread {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] spread в record literal (D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                    let v = if let Some(val) = &f.value {
+                        self.eval_expr(val, env, current_fn, depth)?
+                    } else {
+                        // Shorthand `{ name }` — resolve via env lookup.
+                        env.get(&f.name).cloned().ok_or_else(|| Diagnostic::new(
+                            format!("[E_CONST_FN_EVAL_PANIC] record shorthand `{}` not bound (D199).", f.name),
+                            f.span,
+                        ))?
+                    };
+                    vs.push((f.name.clone(), v));
+                }
+                Ok(ConstValue::Record(vs))
             }
             ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
             // Plan 114.4.3 Ф.1 (V2): If — evaluate cond + branch.
@@ -1740,6 +2052,35 @@ fn walk_expr(
     // Mixed fns остаются в codegen, не evaluated, но const params на call site
     // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
+        // Plan 114.4.4 Ф.5 V4: sizeof[T]() / align_of[T]() intrinsics —
+        // replace call с literal Int.
+        if let ExprKind::TurboFish { base, type_args } = &func.kind {
+            if let ExprKind::Ident(n) = &base.kind {
+                if (n == "sizeof" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
+                    match type_size_or_align(&type_args[0], n == "align_of") {
+                        Some(size) => {
+                            let span = e.span;
+                            *e = Expr { kind: ExprKind::IntLit(size), span };
+                            return;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_CONST_FN_GENERIC_NEEDS_T_REFLECTION] `{}[T]()` для \
+                                     type {} not supported в V4.0 (D199). Only primitives. \
+                                     Followup `[M-114.4.4-record-reflection]`.",
+                                    n,
+                                    simple_type_name_str(&type_args[0])
+                                        .unwrap_or_else(|| "<complex>".to_string())
+                                ),
+                                e.span,
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         // Plan 114.4.3 Ф.4 V2: turbofish callee — unwrap base Ident.
         let raw_name_opt: Option<String> = match &func.kind {
             ExprKind::Ident(n) => Some(n.clone()),
@@ -2015,11 +2356,24 @@ fn walk_match_arm_body(
 fn validate_const_fn_runtime_uses(
     module: &crate::ast::Module,
     ev: &OwnedEvaluator,
+    trampoline_set: &std::collections::HashSet<String>,
     errors: &mut Vec<Diagnostic>,
 ) {
+    // Plan 114.4.4.3 V4.2: names в trampoline_set теперь имеют runtime
+    // symbol `<name>__trampoline` и first-class uses переписаны на него
+    // step'ом 4 trampoline pass. Не флагаем как ошибку.
+    // Aliases для names в trampoline_set тоже skip — они resolve'ятся.
     let cf_names: std::collections::HashSet<String> = ev.fns.keys()
         .chain(ev.mixed_const_params.keys())
         .chain(ev.aliases.keys())
+        .filter(|name| {
+            if trampoline_set.contains(name.as_str()) { return false; }
+            // Check alias target.
+            if let Some(target) = ev.aliases.get(name.as_str()) {
+                if trampoline_set.contains(target.as_str()) { return false; }
+            }
+            true
+        })
         .cloned()
         .collect();
     if cf_names.is_empty() {

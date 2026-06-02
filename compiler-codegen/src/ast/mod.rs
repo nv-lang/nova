@@ -1183,6 +1183,53 @@ impl TypeRef {
     pub fn is_pointer(&self) -> bool {
         matches!(self, TypeRef::Pointer(..))
     }
+
+    /// Plan 91.12 V2 followup #3 (2026-06-02): рекурсивная проверка
+    /// использует ли TypeRef один из generic type-параметров из set'а.
+    ///
+    /// Universal helper для type-checker'а и codegen'а — оба нуждаются в
+    /// detection «type-param-in-position» для validation (e.g. reject
+    /// `type X[T](T)` newtype в `walk_typedecl`) и erasure decisions
+    /// (e.g. emit `void*` placeholder для generic record field в
+    /// `emit_type_decl`).
+    ///
+    /// До этого refactor каждый caller имел свою копию (emit_c.rs
+    /// `type_ref_uses_any_type_param`, types/mod.rs `typeref_uses_param`).
+    /// Single source of truth теперь живёт здесь.
+    ///
+    /// Walks все TypeRef variants:
+    ///   - Named { path, generics }: hit на single-segment path matching
+    ///     param name; recurse на generics.
+    ///   - Array / FixedArray / Readonly: recurse на inner.
+    ///   - Tuple: recurse на all elements.
+    ///   - Func: recurse на params + return type.
+    ///   - Protocol: recurse на methods' params + return types.
+    ///   - Unit: false.
+    ///   - Pointer (Plan 118): recurse на inner.
+    pub fn uses_any_type_param(&self, params: &std::collections::HashSet<String>) -> bool {
+        match self {
+            TypeRef::Named { path, generics, .. } => {
+                if path.len() == 1 && params.contains(&path[0]) { return true; }
+                generics.iter().any(|g| g.uses_any_type_param(params))
+            }
+            TypeRef::Array(inner, _)
+            | TypeRef::FixedArray(_, inner, _)
+            | TypeRef::Readonly(inner, _) => inner.uses_any_type_param(params),
+            TypeRef::Tuple(ts, _) => ts.iter().any(|t| t.uses_any_type_param(params)),
+            TypeRef::Func { params: p, return_type, .. } => {
+                p.iter().any(|t| t.uses_any_type_param(params))
+                    || return_type.as_ref()
+                        .map_or(false, |t| t.uses_any_type_param(params))
+            }
+            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
+                m.params.iter().any(|p| p.ty.uses_any_type_param(params))
+                    || m.return_type.as_ref()
+                        .map_or(false, |t| t.uses_any_type_param(params))
+            }),
+            TypeRef::Pointer(_, inner, _) => inner.uses_any_type_param(params),
+            TypeRef::Unit(_) => false,
+        }
+    }
 }
 
 /// Блок: список statement'ов + опциональное финальное выражение.
@@ -2217,5 +2264,191 @@ impl Pattern {
             | Pattern::Binding { span: s, .. }
             | Pattern::Or { span: s, .. } => *s,
         }
+    }
+}
+
+#[cfg(test)]
+mod typeref_uses_any_type_param_tests {
+    use super::*;
+    use crate::diag::Span;
+    use std::collections::HashSet;
+
+    fn sp() -> Span { Span::dummy() }
+
+    fn type_params(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn named(path: &[&str]) -> TypeRef {
+        TypeRef::Named {
+            path: path.iter().map(|s| (*s).to_string()).collect(),
+            generics: vec![],
+            span: sp(),
+        }
+    }
+
+    fn named_with_generics(path: &[&str], generics: Vec<TypeRef>) -> TypeRef {
+        TypeRef::Named {
+            path: path.iter().map(|s| (*s).to_string()).collect(),
+            generics,
+            span: sp(),
+        }
+    }
+
+    // ─── Positive cases — should return true ─────────────────────────
+
+    #[test]
+    fn named_is_type_param() {
+        let params = type_params(&["T"]);
+        assert!(named(&["T"]).uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn named_generic_arg_is_type_param() {
+        // Vec[T] — generic arg is T
+        let params = type_params(&["T"]);
+        let ty = named_with_generics(&["Vec"], vec![named(&["T"])]);
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn nested_named_uses_param() {
+        // HashMap[K, Vec[V]] — nested Vec[V] uses V
+        let params = type_params(&["V"]);
+        let inner_vec = named_with_generics(&["Vec"], vec![named(&["V"])]);
+        let ty = named_with_generics(&["HashMap"], vec![named(&["K"]), inner_vec]);
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn array_inner_is_param() {
+        let params = type_params(&["T"]);
+        let ty = TypeRef::Array(Box::new(named(&["T"])), sp());
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn fixed_array_inner_is_param() {
+        let params = type_params(&["T"]);
+        let ty = TypeRef::FixedArray(8, Box::new(named(&["T"])), sp());
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn tuple_element_is_param() {
+        // (int, T, str) — second element is T
+        let params = type_params(&["T"]);
+        let ty = TypeRef::Tuple(
+            vec![named(&["int"]), named(&["T"]), named(&["str"])],
+            sp(),
+        );
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn func_param_uses_type_param() {
+        let params = type_params(&["T"]);
+        let ty = TypeRef::Func {
+            params: vec![named(&["int"]), named(&["T"])],
+            return_type: Some(Box::new(named(&["bool"]))),
+            effects: vec![],
+            span: sp(),
+        };
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn func_return_uses_type_param() {
+        let params = type_params(&["U"]);
+        let ty = TypeRef::Func {
+            params: vec![named(&["int"])],
+            return_type: Some(Box::new(named(&["U"]))),
+            effects: vec![],
+            span: sp(),
+        };
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn readonly_inner_is_param() {
+        let params = type_params(&["T"]);
+        let ty = TypeRef::Readonly(Box::new(named(&["T"])), sp());
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn multi_param_match_any() {
+        // Set {T, U}; TypeRef references U.
+        let params = type_params(&["T", "U", "V"]);
+        let ty = named(&["U"]);
+        assert!(ty.uses_any_type_param(&params));
+    }
+
+    // ─── Negative cases — should return false ────────────────────────
+
+    #[test]
+    fn concrete_named_no_param() {
+        let params = type_params(&["T"]);
+        assert!(!named(&["int"]).uses_any_type_param(&params));
+        assert!(!named(&["str"]).uses_any_type_param(&params));
+        assert!(!named(&["ptr"]).uses_any_type_param(&params));
+        assert!(!named(&["MyType"]).uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn multi_segment_path_not_param() {
+        // `std.Foo` — multi-segment path; only single-segment matches param
+        let params = type_params(&["T"]);
+        let ty = named(&["std", "T"]); // path has 2 segments; T is final but path.len() > 1
+        assert!(!ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn empty_params_set_never_matches() {
+        let params = type_params(&[]);
+        assert!(!named(&["T"]).uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn unit_never_matches() {
+        let params = type_params(&["T"]);
+        assert!(!TypeRef::Unit(sp()).uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn concrete_generic_no_param() {
+        // Vec[int] — generic arg is concrete
+        let params = type_params(&["T"]);
+        let ty = named_with_generics(&["Vec"], vec![named(&["int"])]);
+        assert!(!ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn tuple_all_concrete_no_param() {
+        let params = type_params(&["T"]);
+        let ty = TypeRef::Tuple(
+            vec![named(&["int"]), named(&["str"]), named(&["bool"])],
+            sp(),
+        );
+        assert!(!ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn func_all_concrete_no_param() {
+        let params = type_params(&["T"]);
+        let ty = TypeRef::Func {
+            params: vec![named(&["int"]), named(&["str"])],
+            return_type: Some(Box::new(named(&["bool"]))),
+            effects: vec![],
+            span: sp(),
+        };
+        assert!(!ty.uses_any_type_param(&params));
+    }
+
+    #[test]
+    fn different_param_name_no_match() {
+        let params = type_params(&["T"]);
+        let ty = named(&["U"]); // U not in params set
+        assert!(!ty.uses_any_type_param(&params));
     }
 }

@@ -1,0 +1,16 @@
+// Plan 123.1 T2.14 positive: D215 named tuple receiver — fields
+// treated as ro (stack value immutable) → cached.
+
+module plan123_1.named_tuple_ok
+
+type Vec3(x int, y int, z int)
+
+fn Vec3 @magnitude_sq() -> int {
+    @x * @x + @y * @y + @z * @z
+}
+
+test "named tuple ro caching" {
+    ro v = Vec3(3, 4, 12)
+    // 9 + 16 + 144 = 169
+    assert(v.magnitude_sq() == 169)
+}

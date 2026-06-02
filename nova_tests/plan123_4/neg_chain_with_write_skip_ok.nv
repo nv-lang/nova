@@ -1,0 +1,30 @@
+// Plan 123.4 T-NEG.1: @F = ... in body → V4 conservative skips
+// all chain caching. Correctness preserved.
+
+module plan123_4.neg_chain_with_write_skip_ok
+
+type Box_C {
+    ro inner Box_C_Inner
+    mut count int
+}
+
+type Box_C_Inner {
+    ro x int
+}
+
+fn Box_C mut @bump_and_read() -> int {
+    @count = @count + 1
+    // Body has @count = ... → chain cache for @inner.x skipped.
+    @inner.x + @inner.x
+}
+
+fn Box_C.new(x int, c int) -> Box_C {
+    Box_C { inner: Box_C_Inner { x }, count: c }
+}
+
+test "@F write skips chain cache" {
+    mut b = Box_C.new(5, 0)
+    ro r = b.bump_and_read()
+    // 5+5 = 10.
+    assert(r == 10)
+}

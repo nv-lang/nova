@@ -15,7 +15,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Type-check файл, без запуска.
-    Check { file: PathBuf },
+    Check {
+        file: PathBuf,
+        /// Plan 123.5 (D217 §6 amend): emit field-cache analysis
+        /// report — per-fn decisions of D217+D218+D219+chain каches.
+        /// Human-readable text on stdout.
+        #[arg(long = "explain-cache")]
+        explain_cache: bool,
+    },
     /// Type-check + интерпретировать (вызывается main).
     Run { file: PathBuf },
     /// Запустить тесты в файле через интерпретатор (без C-codegen).
@@ -195,7 +202,7 @@ fn check_module_path(file: &PathBuf, module: &nova_codegen::ast::Module) -> Resu
 fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Check { file } => cmd_check(&file),
+        Cmd::Check { file, explain_cache } => cmd_check(&file, explain_cache),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::TestInterp { file } => cmd_test(&file),
         Cmd::Compile { file, output, no_annotate_source, no_lint } =>
@@ -238,7 +245,7 @@ fn read_file(path: &PathBuf) -> Result<String> {
     std::fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {}", path.display(), e))
 }
 
-fn cmd_check(path: &PathBuf) -> Result<()> {
+fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
     let src = read_file(path)?;
     let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!(
@@ -265,8 +272,64 @@ fn cmd_check(path: &PathBuf) -> Result<()> {
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
-    println!("ok: {} parsed and checked", path.display());
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
+
+    // Plan 123.5 (D217 §6 amend): emit field-cache analysis report.
+    if explain_cache {
+        nova_codegen::types::annotate_map_literals(&mut module);
+        nova_codegen::desugar::desugar_module(&mut module);
+        nova_codegen::types::infer_effects(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module);
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
+        emit_explain_report(&report);
+    } else {
+        println!("ok: {} parsed and checked", path.display());
+    }
     Ok(())
+}
+
+/// Plan 123.5: human-readable per-fn cache decision report.
+fn emit_explain_report(report: &nova_codegen::field_cache::ExplainReport) {
+    if report.per_fn.is_empty() {
+        println!("field-cache: no methods triggered caching under current config");
+        return;
+    }
+    let total_caches: usize = report.per_fn.iter().map(|f| f.total()).sum();
+    println!("field-cache report: {} method(s) affected, {} total cache(s) inserted",
+        report.per_fn.len(), total_caches);
+    println!();
+    for info in &report.per_fn {
+        println!("fn {} @{} — {} cache(s):",
+            info.type_name, info.fn_name, info.total());
+        if !info.ro_caches.is_empty() {
+            println!("  D217 ro/mut field cache: {}", info.ro_caches.join(", "));
+        }
+        if !info.mut_caches.is_empty() {
+            println!("  D217 mut field first-region cache: {}", info.mut_caches.join(", "));
+        }
+        if !info.licm_hoists.is_empty() {
+            println!("  D218 LICM loop hoist: {}", info.licm_hoists.join(", "));
+        }
+        if !info.pure_caches.is_empty() {
+            println!("  D219 pure call cache: {}", info.pure_caches.join(", "));
+        }
+        if !info.chain_caches.is_empty() {
+            let paths: Vec<String> = info.chain_caches.iter()
+                .map(|p| format!("@{}", p.join(".")))
+                .collect();
+            println!("  D217 V4 chain cache: {}", paths.join(", "));
+        }
+    }
 }
 
 fn cmd_run(path: &PathBuf) -> Result<()> {
@@ -301,8 +364,23 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
+    // Plan 123.1 (D217): field caching (interp-path).
+    {
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        nova_codegen::field_cache::cache_module(&mut module, &cfg);
+    }
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(
@@ -349,6 +427,16 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     // D28: effect inference для private fn — добавить `Fail` если throw
@@ -356,6 +444,12 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     nova_codegen::types::infer_effects(&mut module);
     if lint {
         run_lints(&module, &src, &path.to_string_lossy());
+    }
+    // Plan 123.1 (D217): method-local receiver field caching. Pass —
+    // pure AST→AST трансформация, semantic equivalence guaranteed.
+    {
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        nova_codegen::field_cache::cache_module(&mut module, &cfg);
     }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
@@ -409,8 +503,23 @@ fn cmd_test(path: &PathBuf) -> Result<()> {
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
+    // Plan 123.1 (D217): field caching (test-interp-path).
+    {
+        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+        nova_codegen::field_cache::cache_module(&mut module, &cfg);
+    }
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(

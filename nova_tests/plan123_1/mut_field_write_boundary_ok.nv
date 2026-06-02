@@ -1,0 +1,28 @@
+// Plan 123.1 T2.2: write boundary — after `@F = ...`, cache invalidated.
+// V1 first-region: reads BEFORE write — eligible for cache;
+// reads AFTER write — stay as direct @F access.
+
+module plan123_1.mut_field_write_boundary_ok
+
+type Counter {
+    mut value int
+}
+
+fn Counter mut @bump_and_check() -> int {
+    // Two reads BEFORE write → cache eligible (count=2 ≥ threshold).
+    ro doubled = @value + @value
+    @value = doubled
+    // Read AFTER write — stays as direct @value (no re-cache в V1).
+    @value
+}
+
+fn Counter.new(v int) -> Counter {
+    Counter { value: v }
+}
+
+test "mut field write invalidates cache" {
+    mut c = Counter.new(5)
+    ro r = c.bump_and_check()
+    // initial=5, doubled = 5+5=10, @value=10, return @value=10.
+    assert(r == 10)
+}
