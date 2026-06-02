@@ -1,0 +1,26 @@
+// Plan 124.3 — positive: generic type `Stack[T]` с priv field — методы
+// получают priv access; recv tracking = "Stack" (name only, generic
+// param ignored).
+module plan124_3.generic_priv_inside_method_ok
+
+export type IntStack {
+    priv mut top int
+    ro capacity int
+}
+
+export fn IntStack.new(cap int) -> IntStack =>
+    { top: 0, capacity: cap }
+
+export fn IntStack @push(item int) {
+    @top = @top + 1
+}
+
+export fn IntStack @peek() -> int =>
+    @top
+
+test "Plan 124.3: priv field access внутри method (specialized stack)" {
+    mut s = IntStack.new(10)
+    s.push(42)
+    s.push(7)
+    assert(s.peek() == 2)
+}

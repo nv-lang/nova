@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.3 — negative: read priv field generic type instance outside
+// any type-method scope → E_PRIV_FIELD_READ (D220 §G1 — uniform для
+// generic types).
+module plan124_3.generic_priv_read_outside_neg
+
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+
+export fn Stack[T].new(cap int) -> Stack[T] =>
+    { len: 0, capacity: cap }
+
+// External fn — reads priv `len` на специализированной Stack[int].
+fn external_count(s Stack[int]) -> int =>
+    s.len

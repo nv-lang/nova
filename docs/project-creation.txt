@@ -27853,3 +27853,41 @@ Remaining: 124.3 (generics), 124.4 (named tuple + protocol),
 124.5 (nova doc + LSP), 124.6 (test_access + visible_to),
 124.7 (type-level priv flip for tuples).
 
+
+Plan 124.3 — Generics uniform handling (2026-06-02)
+
+Sub-plan Plan 124 — verifies priv enforcement applies uniformly к
+generic record types. Zero implementation code change (architecture
+already AST-level), purely fixture + spec amend + logs.
+
+D-block: D220 §G1 NEW amend в spec/decisions/02-types.md.
+- Articulates AST-level enforcement architecture.
+- Receiver tracking name-based (generic params ignored).
+- Documents bootstrap parser limitation: explicit `Stack[int] { ... }`
+  in expression position not supported → anonymous form `{ ... }` с
+  return-type inference является canonical.
+- Acceptance A3.1-A3.8 ✅.
+
+Fixtures nova_tests/plan124_3/ (10/10 PASS):
+Positive 6: generic_priv_inside_method_ok, generic_stack_inside_ok
+(Stack[int] + Stack[str] both), generic_public_field_outside_ok,
+option_priv_field_pass, generic_static_constructor_ok (anonymous
+literal), generic_pub_only_no_false_positive_ok.
+Negative 4: generic_priv_read_outside_neg, generic_priv_write_outside_neg,
+generic_priv_pattern_outside_neg (`Stack { fields }` без generic args),
+generic_priv_write_after_new_neg.
+
+Verified release nova-cli + clang.
+
+Regression: plan124_1 9/9, plan124_2 14/14 unchanged.
+
+Commit:
+- feat(plan 124.3): generics uniform — 10 fixtures + spec D220 §G1
+  + plan flip + 3 logs.
+
+Plan 124.3 acceptance A3.1-A3.8 — ALL ✅.
+
+Plan 124 umbrella status: 3/7 sub-plans closed (124.1, 124.2, 124.3).
+Remaining: 124.4 (named tuple + protocol), 124.5 (doc + LSP),
+124.6 (test_access + visible_to), 124.7 (type-level priv flip tuples).
+

@@ -1021,7 +1021,7 @@ Check open-questions.md для существующих Q'ов:
 |---|---|
 | 124.1 Core record | 🟢 **V1 FULLY CLOSED 2026-06-02** — parser/AST/lexer + 4 error codes enforcement + 9/9 fixtures (4 positive + 5 negative) + D220 spec + acceptance A1.1-A1.10 all ✅ |
 | 124.2 Pattern + literal init | 🟢 **CLOSED 2026-06-02** — Match/IfLet/WhileLet/For/ParallelFor sites + nested + spread (D221 NEW); 14/14 plan124_2 PASS |
-| 124.3 Generics | 🆕 PLANNED |
+| 124.3 Generics | 🟢 **CLOSED 2026-06-02** — uniform enforcement on Generic[T] types verified (10/10 plan124_3); D220 §G1 amend |
 | 124.4 Tuple + protocol | 🆕 PLANNED |
 | 124.5 nova doc + LSP | 🆕 PLANNED |
 | 124.6 Test access + visible_to | 🆕 PLANNED |

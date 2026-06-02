@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_WRITE
+//
+// Plan 124.3 — negative: write priv field generic mono'd instance
+// after factory creation → E_PRIV_FIELD_WRITE (D220 §G1).
+//
+// Note re INIT: generic explicit-type record literal `Stack[int] { ... }`
+// в general expression position не парсится в bootstrap (limitation
+// предшествует Plan 124). INIT path covered non-generic в plan124_1;
+// uniformity rule formally enshrined в D220 §G1 — check site (walk_expr
+// RecordLit) reads field.priv_field из AST, не зависит от generic args.
+module plan124_3.generic_priv_write_after_new_neg
+
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+
+export fn Stack[T].new(cap int) -> Stack[T] =>
+    { len: 0, capacity: cap }
+
+// External fn — direct write priv after legit creation.
+fn external_reset(s Stack[int]) {
+    s.len = 0
+}

@@ -29077,3 +29077,62 @@ check сжат до 2 lines (calls helper now).
 
 Plan 124.2 ✅ FULLY CLOSED. Plan 124 umbrella partial — 5 sub-plans
 (124.3-124.7) remaining.
+
+---
+
+## Plan 124.3 — Generics uniform handling (2026-06-02)
+
+**Что:** D220 §G1 amend. **Zero implementation code change**. Plan 124.1
+enforcement сидит на AST level (`RecordField.priv_field`), check site
+TypeCheckCtx.current_recv_type tracks type-name only. Generic types
+работают «бесплатно».
+
+**Verification approach:** написать 6 positive + 4 negative fixtures
+для generic Stack[T] / Holder[T] / Pair[A,B] / Account-in-Option.
+Все 10/10 PASS — uniformity подтверждена пост-фактум.
+
+**Generic enforcement semantic (формализовано в §G1):**
+- Field's `priv_field` определяется AST level.
+- Mono'd instances (Stack[int], Stack[str]) inherit identical
+  enforcement; T-substitution не меняет metadata.
+- Receiver tracking name-based: `fn Stack[T] @push(...)` recv = "Stack".
+- Multiple T instantiations того же type'а внутри одного method —
+  access OK (canonical recv match).
+- Cross-type generic access (Queue[T].method touches Stack[T2].priv) —
+  blocked.
+
+**Bootstrap parser limitation documented (§G1):** explicit generic
+prefix в record literal expression `Stack[int] { len: 5 }` не парсится
+(parser ambiguity with array literal). Canonical:
+- Anonymous literal `{ len: ..., capacity: ... }` с return-type
+  inference.
+- Pattern `Stack { fields } = expr` без generic args, resolved through
+  scrutinee type.
+
+**Fixtures:** plan124_3/ 10/10 PASS:
+- Positive 6: generic_priv_inside_method (specialized), generic_stack_inside
+  (Stack[T] both int+str instantiations), generic_public_field_outside,
+  option_priv_field_pass (Account.balance() public method),
+  generic_static_constructor (anonymous literal), generic_pub_only_no_false_positive
+  (Holder[T] all-public).
+- Negative 4: generic_priv_read_outside, generic_priv_write_outside,
+  generic_priv_pattern_outside (Stack без generic args в pattern),
+  generic_priv_write_after_new (после factory creation).
+
+**Fixture lessons:**
+1. `Stack[int] { ... }` в expression position parser-ambiguity → use
+   anonymous form `{ ... }` с return-type inference.
+2. `Stack[int] { fields } = s` в pattern same issue → use `Stack { fields }`
+   без generic args (Pattern::Record.type_path = vec!["Stack"]).
+3. Multi-param generic `Pair[A, B]` в multi-instantiation contexts
+   has codegen mono-type confusion; use single-param + concrete type
+   wrappers для test.
+4. Module-path / file-name match (D78 strict) — rename fixture файл
+   когда переименовали module declaration.
+
+**Implementation:** zero LOC change. Just fixtures + spec amend + logs.
+
+**Acceptance Plan 124.3 (A3.1-A3.8) — ALL ✅.**
+
+Plan 124.3 ✅ FULLY CLOSED. Plan 124 umbrella partial — 4 sub-plans
+(124.4-124.7) remaining.

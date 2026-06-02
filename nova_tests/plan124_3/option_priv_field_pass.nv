@@ -1,0 +1,36 @@
+// Plan 124.3 — positive: Option[Account] where Account имеет priv
+// field. Verifies priv enforcement не false-positive'ит на типе
+// внутри `Option[T]` wrapper.
+//
+// Coverage: Account access через public method `balance()` после
+// извлечения из Option — priv `money` остаётся защищён, no false-
+// positive из generic wrapper context.
+module plan124_3.option_priv_field_pass
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+export fn Account @balance() -> f64 =>
+    @money
+
+// External fn — passes Account через Option, accesses public balance().
+fn check_account(a Account) -> f64 =>
+    a.balance()
+
+test "Plan 124.3: Account.balance() через public method — OK" {
+    ro acc = Account.new("greg")
+    ro got = check_account(acc)
+    assert(got == 0.0)
+}
+
+test "Plan 124.3: повторный вызов на разных Account" {
+    ro a1 = Account.new("alice")
+    ro a2 = Account.new("bob")
+    assert(check_account(a1) == 0.0)
+    assert(check_account(a2) == 0.0)
+}

@@ -7418,6 +7418,68 @@ factory method `T.new(...)` or list each public field explicitly.
 - D215 — named tuples; D221 covers ONLY record form, tuple-pattern
   priv в D222 (Plan 124.4).
 
+### §G1 Generic types — uniform enforcement (Plan 124.3 amend)
+
+> **Added 2026-06-02.** Plan 124.3 closure.
+
+Per-field `priv` modifier applies uniformly к generic record types:
+
+```nova
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+```
+
+**Enforcement architecture:** check site reads `RecordField.priv_field`
+из AST (pre-monomorphization). Mono'd instances (`Stack[int]`,
+`Stack[str]`) inherit identical enforcement — T-substitution не
+изменяет field metadata.
+
+**Receiver-type tracking** (TypeCheckCtx.current_recv_type) uses
+**type-name only**:
+- `fn Stack[T] @push(...)` body sees recv = `Some("Stack")`.
+- Generic parameters не factor в name comparison.
+- Inside generic methods, accessing priv fields на ЛЮБОЙ T
+  instantiation OWN type'а — allowed.
+- Cross-type access (`Stack[int].@field` из `Queue[T].method`) —
+  blocked (recv = "Queue", не "Stack").
+
+**Bootstrap parser limitation:** explicit generic prefix в record
+literal expression position (`Stack[int] { len: 5, capacity: 10 }`)
+не парсится в bootstrap (parser-ambiguity с array-literal opening
+`[`). Canonical form — **anonymous literal** `{ len: ..., capacity: ... }`
+с return-type inference:
+
+```nova
+export fn Stack[T].with_len(initial int, cap int) -> Stack[T] =>
+    { len: initial, capacity: cap }      // ✅ anonymous, inferred
+```
+
+Pattern destructure аналогично: `Stack { fields } = expr` (без
+generic args) — resolved through scrutinee type.
+
+INIT path (E_PRIV_FIELD_INIT) testing для generic types использует
+non-generic specialized variant ИЛИ relies на anonymous literal
+form's type inference (target type known via expected return type
+of enclosing method).
+
+### Acceptance — Plan 124.3
+
+ALL closed 2026-06-02:
+
+- A3.1 ✅ Generic type `Stack[T] { priv ... }` parser PASS.
+- A3.2 ✅ Mono'd instance external access: write → E_PRIV_FIELD_WRITE,
+  read → E_PRIV_FIELD_READ.
+- A3.3 ✅ Inside `Stack[T].method` — @field access OK.
+- A3.4 ✅ Generic method calling another OK.
+- A3.5 ✅ Multiple instantiations (Stack[int] + Stack[str]) — same
+  enforcement.
+- A3.6 ✅ `Option[Account]` — outer Option public, inner Account rules
+  unchanged.
+- A3.7 ✅ plan124_3 10/10 fixtures PASS.
+- A3.8 ✅ Regression plan124_1 9/9 + plan124_2 14/14 unchanged.
+
 ### Acceptance — Plan 124.2
 
 ALL closed 2026-06-02:
