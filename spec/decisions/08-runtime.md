@@ -4334,3 +4334,154 @@ position inside loop body.
   rules ensure correctness).
 - `Q-licm-composition-with-D217`: → D218 §2 (order LICM → D217).
 
+## D219. Pure-call result caching (effect-aware, Nova edge) — Plan 123.3
+
+**Source:** [Plan 123.3](../../docs/plans/123.3-pure-call-cache.md)
+sub-plan #3 Plan 123 umbrella. Implementation: `field_cache.rs`
+pure-cache phase. Composes с D217 (V1) + D218 (V2).
+
+### 1. Семантика — formal property
+
+Для каждого input AST `A` содержащего multiple invocations of
+`@<pure_method>()` (where method has `Purity::Pure` per D24
+infrastructure), output `T(A)` — observable behavior identical
+to `A`. Pure-call result evaluated once per method body, cached в
+local `_at_<method>_call`, replaced на cache ident в subsequent
+call sites.
+
+Nova-edge — leverages effect system: `#pure` annotation guarantees
+no effects, no side effects, deterministic result (depends only
+on self's state).
+
+**Пример:**
+
+```nova
+// До D219 (source):
+#pure
+fn Vec3 @magnitude_sq() -> int => @x * @x + @y * @y + @z * @z
+
+fn Vec3 @double_test() -> int {
+    @magnitude_sq() + @magnitude_sq()   // 2 pure-method calls
+}
+
+// После D219 (cached):
+fn Vec3 @double_test() -> int {
+    ro _at_magnitude_sq_call = @magnitude_sq()  // single eval
+    _at_magnitude_sq_call + _at_magnitude_sq_call
+}
+```
+
+`.c` output до — `Nova_Vec3_method_magnitude_sq(nova_self)` × 2;
+после — single call, register-reuse через cache local.
+
+### 2. Composition с D217 + D218
+
+**Order:** D218 LICM → **D219 pure-cache** → D217 per-fn cache.
+
+Rationale:
+- D218 LICM hoists loop-invariant @F reads. Pure-call args (V3
+  args-less) — none, so LICM unaffected.
+- D219 caches @<pure_method>() result; replaces calls с Ident.
+- D217 sees pure-cache locals as Idents (not @F pattern). Continues
+  to cache @F reads outside pure-call args.
+
+No double-cache risk — three layers operate on distinct AST
+patterns (LICM: @F in loop; D219: @M() pure call; D217: @F method-
+body prefix).
+
+### 3. Eligibility rules per fn body
+
+For each fn body (instance method with non-protocol receiver):
+
+1. **Body must NOT have any `@F = ...` write** (conservative
+   invalidation). Refined V3.1 с D24 `f.reads` frame info.
+2. **Body must NOT contain concurrent constructs:** Spawn,
+   Supervised, Detach, Blocking, ParallelFor — skip whole pure-
+   cache for safety.
+3. **Method registry lookup:** `(receiver_type, method_name)` must
+   be в pure_methods registry. Registry includes only methods с
+   `purity == Purity::Pure` (D24 — annotated `#pure` OR inferred
+   через SCC) AND `Instance` receiver AND `params.is_empty()` (V3
+   scope; V3.1 — args-with-literals).
+4. **Count occurrences:** call count ≥ `pure_threshold` (default 2).
+5. **Closure capture exclusion:** if `@<method>()` appears inside
+   nested closure body, that call counts toward closure_captured
+   set, excluded from caching.
+
+### 4. V3 scope (DECISION-A.3 / E.3)
+
+**Included:**
+- `Call { func: Member{SelfAccess, name: M}, args: [] }` — args-less
+  self-method calls.
+
+**Excluded (Plan 123.4/V3.1/Plan 123.7 territory):**
+- Pure calls с arguments (V3.1).
+- Pure calls на `@field.method()` chains (Plan 123.4 chain cache).
+- Pure calls на parameters / locals.
+- Effectful methods (`Purity::Effectful` / `Purity::Unknown`).
+- Consume-returning pure methods (D131 linearity — skip).
+
+### 5. Naming convention
+
+Cache local = **`_at_<method>_call`** baseline. Distinct от:
+- D217: `_at_<field>` (per-fn field cache).
+- D218: `_at_<field>_loop` (LICM hoist).
+
+Collision avoidance: numeric suffix `_<N>`.
+
+### 6. Escape hatch + tunables
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE_PURE` | (unset) | `0`/`off`/`false` → V3 disabled. D217/D218 unaffected. |
+| `NOVA_FIELD_CACHE_PURE_THRESHOLD` | `2` | Min pure-call count. `0` → disabled. |
+| `NOVA_FIELD_CACHE` (D217) | (unset) | `0` → disables all 3 layers. |
+
+Verified differential testing: 12/12 plan123_3 PASS identically
+под `NOVA_FIELD_CACHE_PURE=0` и default ON.
+
+### 7. Conservative invalidation rationale
+
+V3 simple rule: ANY `@F = ...` write anywhere в method body skips
+all pure-cache. Rationale: without frame info, mutation may affect
+pure method's result transitively. Pure method reads `@F` (typical
+pure method depends on fields); mutating any field may change
+result.
+
+**V3.1 refinement (followup `[M-123.3-frame-based-invalidation]`):**
+Use D24 `f.reads` frame information to determine which fields
+each pure method reads. Cache valid until any of those fields
+written. Allows mut field's write to NOT invalidate unrelated
+pure methods. Marked P2 followup.
+
+### 8. Debug-info preservation
+
+Span каждого generated `let _at_<method>_call = @<method>()`
+binding клонируется от **first occurrence** of `@<method>()` call.
+Debugger показывает cache origin maps к source position.
+
+### 9. Cross-references
+
+- **D24** (Plan 33.1 + 33.2) — Purity infrastructure (`#pure`
+  annotation + SCC inference). V3 leverages `FnDecl.purity` field.
+- **D217** (Plan 123.1, V1) — per-fn ro/mut field cache. Composition
+  partner; D219 runs between D218 LICM и D217.
+- **D218** (Plan 123.2, V2) — LICM hoisting. Composition partner.
+- **D120** (`#pure` views + axioms) — semantic foundation; pure
+  methods have no effects, no mutation, deterministic.
+- **D131** (consume types) — consume-returning pure methods skipped.
+
+### 10. Implementation milestones
+
+- **V3** Plan 123.3 ✅ (this block) — args-less self-pure-call.
+- **V3.1** followups: `[M-123.3-args-literals]` (cache calls с
+  literal args), `[M-123.3-frame-based-invalidation]` (D24 reads
+  frame).
+- **V4** Plan 123.4 chain cache — orthogonal extension.
+
+### 11. Open Q resolution
+
+- `Q-pure-call-cache`: → D219 (this block).
+- `Q-pure-call-mutation-invalidation`: → D219 §3 + §7 (V3
+  conservative; V3.1 refined).
+
