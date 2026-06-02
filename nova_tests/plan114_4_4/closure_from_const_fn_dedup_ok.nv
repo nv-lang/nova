@@ -1,0 +1,17 @@
+// Plan 114.4.4.4 V4.3 POSITIVE: dedup — same const args reuse same
+// specialization. 3 call sites с 2 unique args → 2 specs.
+
+module plan114_4_4.closure_from_const_fn_dedup_ok
+
+fn make_mul(const factor int) -> const fn(int) -> int =>
+    |x| x * factor
+
+test "closure spec dedup" {
+    ro m2 = make_mul(2)
+    ro m2_again = make_mul(2)  // reuses make_mul__closure_0
+    ro m3 = make_mul(3)        // distinct: make_mul__closure_1
+
+    assert(m2(5) == 10)
+    assert(m2_again(7) == 14)
+    assert(m3(5) == 15)
+}

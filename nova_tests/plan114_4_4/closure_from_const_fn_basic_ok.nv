@@ -1,0 +1,15 @@
+// Plan 114.4.4.4 V4.3 POSITIVE: closure-returning const fn — single call.
+//
+// `make_adder(5)` → specialized `make_adder__closure_0(x int) -> int { x + 5 }`.
+// Call site rewritten к `Ident("make_adder__closure_0")` (fn pointer).
+
+module plan114_4_4.closure_from_const_fn_basic_ok
+
+fn make_adder(const n int) -> const fn(int) -> int =>
+    |x| x + n
+
+test "closure-from-const-fn basic" {
+    ro adder5 = make_adder(5)
+    assert(adder5(3) == 8)
+    assert(adder5(10) == 15)
+}
