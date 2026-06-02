@@ -1894,8 +1894,8 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A18 | Forbidden ops: `&arr[i]`, `null`, `undefined` | NEG-T4.19, NEG-T4.20, NEG-T4.21 |
 | A19 ✅ 2026-06-02 | `Option[*T]` + NPO codegen (single-pointer layout, NULL pattern match) | T5.1-T5.4 + manual ABI verification |
 | A20 V2 deferred | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` | T5.8 |
-| A21 V2 deferred | NPO applies к `Option[*fn(...)]` и `Option[ptr]` | T5.9, T5.10 |
-| A22 V2 deferred | NPO excluded для `Option[Option[*T]]` — tagged fallback + W_OPTION_DOUBLE_NESTED | NEG-T5.11 |
+| A21 partial ✅ 2026-06-02 (Option[ptr]) | NPO applies к `Option[*fn(...)]` и `Option[ptr]`. Option[ptr] V1 NPO; *fn V3 deferred. | T5.5 + V3 T5.9 |
+| A22 V2 deferred (detection documented) | NPO excluded для `Option[Option[*T]]` — tagged fallback + W_OPTION_DOUBLE_NESTED. Logic documented в walk_typeref; emission V2 (requires lint framework). | NEG-T5.11 V2 |
 | A23 V2 deferred | `null ptr` literal retracted; migration script works; closes [M-115-null-ptr-to-option-after-npo] | NEG-T5.12 + T5.14-T5.15 |
 | A24 | `*fn(...)` function pointers для FFI roundtrip — verified end-to-end | T6.1-T6.4 |
 | A25 | Callback no-throw enforced: Fn-with-Fail cast → *fn — error | NEG-T6.8 |
@@ -2277,7 +2277,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **33/0** (16 positive + 17 NEG, post-Ф.5 NPO V1) |
+| plan118 | **34/0** (17 positive + 17 NEG, post-Ф.5.4 NPO для Option[ptr]) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |

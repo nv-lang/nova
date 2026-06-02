@@ -7452,16 +7452,19 @@ Closes acceptance **A19 ✅** (sizeof verification + struct layout).
 `const T*`, `void*`), pre-existing stdlib pointer types (UdpSocket,
 TcpStream, SocketAddr, TcpListener, File, etc — все benefit automatically).
 
-**V2 follow-on** (deferred Session 4+):
-- `Option[ptr]` — `nova_ptr` typedef (`= void*`) — requires type-aware
-  detection (not just c_ty string suffix); covered via tagged-form V1.
+**V2 detection** (Plan 118 Ф.5.4 ACTIVE 2026-06-02, commit cd168a4d53b):
+- `Option[ptr]` — `nova_ptr` typedef (`= void*`) — now NPO-eligible
+  (A21 partial closes). Plan 115 backward-compat preserved.
+
+**V3 follow-on** (deferred Session 4+):
 - `Option[*fn(...)]` — function pointer c_ty ends with `)` not `*` —
-  same V2 type-aware detection.
-- `Option[X]` где `type X(*T)` — newtype-over-pointer detection.
+  requires structural detection. A21 remainder.
+- `Option[X]` где `type X(*T)` — newtype-over-pointer detection (A20).
 - `Option[Option[*T]]` nested — currently NPO inner (correct since inner
   c_ty pointer), outer Option uses tagged (inner c_ty = struct).
-  W_OPTION_DOUBLE_NESTED warning — V2 user-friendly diagnostic.
-- `null ptr` literal retraction (D214 amend) — V2 follow-on; existing
+  W_OPTION_DOUBLE_NESTED warning — A22, требует lint framework
+  integration (detection logic documented в walk_typeref).
+- `null ptr` literal retraction (D214 amend) — V2 A23; existing
   `null ptr` continues to work для Plan 115 backward compat.
 
 ```nova
