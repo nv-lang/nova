@@ -132,7 +132,9 @@ export fn HashMap[K, V].new() -> HashMap[K, V] =>
 /// assert(m.len() == 100)
 /// ```
 #stable(since = "0.1")
-export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
+export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V]
+    requires min_capacity >= 0
+{
     // ceil(4 * min_capacity / 3) — entry-count → требуемый минимум бакетов.
     ro needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
     ro cap = next_pow2(needed)

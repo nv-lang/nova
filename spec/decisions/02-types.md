@@ -8482,3 +8482,158 @@ ALL closed 2026-06-02:
 - A2.8 ✅ `..` rest pattern — no false-positive.
 - A2.9 ✅ plan124_2 fixtures 14/14 PASS (8+ positive, 6 negative).
 - A2.10 ✅ Regression plan124_1 9/9 unchanged.
+
+---
+
+## D226. Signed indexing convention — `int` для `len` / `capacity` / index
+
+> **Принято 2026-06-03.** Формализует существующую практику: extracts из
+> [D130](#d130) Q3 (2026-05-19, «Indexing → Keep `int`, no change»),
+> поднимает в самостоятельный D-блок.
+
+### Что
+
+Все API длины, ёмкости и позиции в коллекциях Nova принимают и
+возвращают **signed `int`** ([D129](#d129) alias `i64`), а не unsigned
+`uint`/`u64`. Это касается `@len()`, `@capacity()`, `with_capacity(n)`,
+`reserve(n)`, `truncate(n)`, индексных параметров (`arr[i]`,
+`s.byte_at(i)`), позиций (`indexOf`/`find` возвращают `int` с `-1` или
+`Option[int]`), и slice-границ (`arr[a..b]` где `a`, `b` — `int`).
+
+### Правило
+
+1. **Stdlib invariant.** Любая публичная функция в `std/`, принимающая
+   или возвращающая «количество элементов» / «размер в байтах» /
+   «индекс позиции», использует `int`.
+
+2. **Защита от негатива через контракты.** Capacity-API
+   (`with_capacity`/`reserve` и аналоги) добавляют
+   `requires n >= 0` ([D24](../09-tooling.md#d24)). Это compile-time
+   проверка при Z3 backend / runtime debug-assert при TrivialBackend.
+   Compile-error на `with_capacity(-1)` без attempted конверсии типа.
+
+3. **Negative-as-sentinel разрешён.** Поиск/позиция могут возвращать
+   `-1` как «не найдено» (Java/Go convention) ИЛИ `Option[int]` —
+   stdlib-конвенция в пользу `Option[int]` для type-safety, но `-1`
+   sentinel допустим в low-level API (`str.find_byte`).
+
+4. **Разности — естественно signed.** `a.len() - b.len()`,
+   `xs.len() - 1`, обратные циклы `for i in (0..n).reverse()` работают
+   без явных кастов или underflow-паник. На пустой коллекции
+   `xs.len() - 1` даёт `-1`, что валидно как loop-guard вход
+   (`for j in 0..-1` — пустой range).
+
+5. **`uint`/`u64` — только для bit-twiddling и FFI.** Hash-значения,
+   битовые маски, raw memory addresses, sized-integer аргументы C-API
+   — это `u64`/`uint`. Cross в `int` через `as` (saturation, D54).
+
+6. **Future-arch path.** При миграции Nova на multi-arch (32-bit / WASM)
+   `int` становится platform-pointer-width signed (= Rust `isize`),
+   `i64` остаётся fixed-64. Index API не меняется — auto-scale без
+   breaking change. См. [D129](#d129) migration note.
+
+### Почему
+
+**Industry baseline (2026-06).**
+
+| Язык | Index/len тип | Знак | Hindsight |
+|---|---|---|---|
+| Go | `int` (platform-word) | **signed** | Сознательный выбор после C |
+| Swift | `Int` (platform-word) | **signed** | Apple: «harder to make off-by-one errors» |
+| Java | `int` (i32) | **signed** | Историческое; принято |
+| Kotlin | `Int` (i32) | **signed** | Mirror Java |
+| C# | `int` (i32) | **signed** | `LongLength` для >2B |
+| Python | `int` (arbitrary) | **signed** | Negative-index slicing |
+| TypeScript | `number` (f64) | signed (de facto) | Один тип |
+| Rust | `usize` (platform) | unsigned | Community regrets vocal |
+| C++ STL | `size_t` (platform) | unsigned | **Stroustrup: «I regret using unsigned for size in STL»** |
+| Zig | `usize` (platform) | unsigned | Embedded-first рационал |
+
+Счёт 7:3 в пользу signed. Двое из трёх unsigned-языков (C++ и Rust)
+имеют публичные authorial regrets.
+
+**Конкретные выгоды signed `int` для Nova:**
+
+1. **Нет underflow-trap.** `xs.len() - 1` на пустом vec не паникует
+   (даёт `-1`), в отличие от Rust `0_usize - 1` → overflow panic.
+   Это — самая частая newbie-trap в Rust.
+
+2. **Sentinel `-1`.** Эргономика find/indexOf без обязательной
+   `Option`-аллокации.
+
+3. **Разности и diff-логика.** `a.len() - b.len()` валидно signed;
+   sorting comparators, position deltas, scroll offsets — все естественны.
+
+4. **Mixed arithmetic без ceremony.** Никакого `(x as usize) + i`,
+   `(len as isize) - 1`. AI-first killer-use ([D10](../01-philosophy.md#d10)):
+   LLM пишет signed-индексацию правильно чаще, чем балансирует
+   `usize`/`i64` касты.
+
+5. **Bit-width аргумент мёртв на 64-bit.** Signed-`int` (= `i64`) даёт
+   `2⁶³ − 1` ≈ 9.2 × 10¹⁸ элементов — никакая коллекция в адресном
+   пространстве этого не достигнет.
+
+6. **Совместимость с overflow-семантикой.** [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md)
+   Ф.1: `int` overflow → `nv_panic` (`__builtin_*_overflow`). Если
+   ввести `uint` для len, мы заменим один trap (overflow on
+   saturation) на другой (underflow on `0 - 1`) — без выигрыша.
+
+7. **Effect/protocol симметрия.** Все примитивные методы
+   (`hash`/`eq`/`lt`/etc., [D109](../08-runtime.md#d109)) уже работают
+   с `int`. Введение второго numeric vocabulary для размеров
+   удвоит type-checker complexity без semantic gain.
+
+**Type-encoded invariant («n ≥ 0»)** — частично покрывается контрактами
+(`requires n >= 0`), которые при Z3 backend ([D24](../09-tooling.md#d24))
+дают **compile-time** гарантию того же уровня, что unsigned type.
+
+### Что отвергнуто
+
+1. **`uint`/`u64` для index/len** (как Rust `usize`, C++ `size_t`).
+   Отвергнут [D130](#d130) Q3 (2026-05-19): breaking change для 100+
+   APIs; underflow-trap хуже missing type-invariant; runtime
+   contract-based check покрывает основной use-case.
+
+2. **Mixed convention** (`uint` для capacity, `int` для index).
+   Отвергнут: создаёт постоянные касты на границе API, удваивает
+   protocol-method matrix.
+
+3. **Refinement type `nat = {x int | x >= 0}` как параметр капасити.**
+   Отвергнут на bootstrap: refinement-types — long-term Plan 33.x
+   (после full SMT integration); сейчас `requires n >= 0` даёт ту же
+   проверяемость без grammar-changes.
+
+### Связь
+
+- [D129](#d129) — `int = i64` alias decision (foundation).
+- [D130](#d130) — `uint` symmetric pair + Q3 indexing decision (historical origin).
+- [D24](../09-tooling.md#d24) — `requires`/`ensures` контракты для compile-time проверки.
+- [D54](../03-syntax.md#d54) — `int as uint` saturation (cross-type bridge).
+- [D109](../08-runtime.md#d109) — встроенные методы примитивов (включая `int`).
+- [D141](../08-runtime.md#d141) — `byte_at`/bulk slice API использует `int` индексы.
+- [D144](#d144) — sub-slice views `arr[a..b]` — границы `int`.
+- [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) — `int` overflow → panic (soundness).
+
+### Эволюция
+
+- **2026-05-19** ([D130](#d130) Q3): Решение «keep `int` for indexing,
+  no change» принято внутри `uint` plan'а — внутри одного из четырёх
+  Q-вопросов, не findable отдельно.
+- **2026-06-03** (D226, этот блок): формализация в самостоятельное
+  D-решение + правило `requires n >= 0` на capacity-API +
+  cross-language baseline + future-arch migration path.
+
+### Acceptance criteria
+
+- [x] `std/collections/hashmap.nv` `with_capacity(min_capacity int) requires min_capacity >= 0`
+- [x] `std/collections/set.nv` `with_capacity(cap int) requires cap >= 0`
+- [x] `std/runtime/string_builder.nv` `with_capacity(n int) requires n >= 0`
+- [x] `std/runtime/write_buffer.nv` `with_capacity(n int) requires n >= 0`
+- [x] D226 spec block с industry baseline + rationale + rejected alternatives
+- [ ] `[]T.with_capacity` / `[]T.reserve` built-in: requires-clause в
+  `compiler-codegen` external_registry — followup `[M-D226-builtin-capacity-requires]`
+- [ ] `nova check` lint W_D226_NEGATIVE_LITERAL — warn на `with_capacity(-N)`
+  при literal-args (без Z3) — followup `[M-D226-negative-literal-lint]`
+- [ ] `_experimental/` capacity APIs (`Queue.with_capacity`) — sweep после
+  promotion в stable.
+
