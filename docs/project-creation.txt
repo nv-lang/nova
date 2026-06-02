@@ -27352,6 +27352,220 @@ Remaining V4 work через extracted plans (5 plans, ship-when-triggered).
 
 
 ================================================================================
+Plan 114.4.4 Ф.1 followup — #fn_eval_max_depth(N) spec expansion (2026-06-01)
+================================================================================
+
+Branch: plan-114.4.4-fn-eval-depth-spec (off main d4b8f99ccac).
+
+Что: расширена inline subsection D199 V3 для attribute `#fn_eval_max_depth(N)`.
+
+Detail added:
+- Syntax form с code example.
+- Range constraint: 1..=65535 (parser-enforced; out-of-range = compile error).
+- Default value: 256 (constant MAX_EVAL_DEPTH в const_fn_eval.rs).
+- Semantics: per-call-site FnDecl.fn_eval_max_depth lookup; check ПЕРЕД
+  memoization lookup (guards runaway recursion even с warm memo cache).
+- Use cases: deep recursion + conservative limit для API safety.
+- Caveat: Rust thread stack ~8MB limits practical N ≤ 150-200. Real
+  unbounded deep recursion → [M-114.4.4-iterative-evaluator] V4 followup
+  (rewrite evaluator на iterative form с explicit stack).
+- Cross-ref: MAX_LOOP_ITERATIONS (Ф.3, default 10_000) + V4
+  `#fn_eval_max_iterations(N)` analog.
+
+No code changes — spec polish only. Acceptance A27 уже covered T4.4 Ф.1
+positive (depth_override_ok) + negative (depth_default_exceeded_neg).
+
+Commit: 4bd01f5dadd.
+Merge: d4b8f99ccac (no-ff).
+[Plan 91.12 V1 — D126 partial retract: WriteBuffer/ReadBuffer pure Nova] 2026-06-01
+
+Контекст: D126 (`external type X`) — bridge bootstrap для opaque runtime
+types. 5 stdlib типов изначально через D126:
+- WriteBuffer, ReadBuffer (std/prelude/collections.nv)
+- OnceCell[T], Lazy[T], Condvar (std/runtime/sync.nv)
+
+После Plan 109 (D179) StringBuilder ушёл на pure Nova consume record
+над `[]u8`. Тот же паттерн применим к WriteBuffer/ReadBuffer — они
+просто обёртки над `[]u8` с cursor/append semantics. Старый C runtime
+nova_rt/{write,read}_buffer.h — ~30+60 inline функций с per-width LE/BE
+macros — заменены на Nova bodies с bit-shifts + push/extend.
+
+V1 scope (user decision, narrowed mid-session 2026-06-01):
+✅ WriteBuffer (std/runtime/write_buffer.nv) — pure Nova, 226 lines.
+   Non-consume record + consume @into; 30 методов
+   (constructors, query, mutating writes, 18 numeric × LE/BE, into).
+✅ ReadBuffer (std/runtime/read_buffer.nv) — pure Nova, 364 lines.
+   Cursor record { ro data, mut pos } + 22 try_read_X/read_X pair.
+   UTF-8 decode helper (_decode_utf8_at).
+🟡 Sync types (OnceCell/Lazy/Condvar) — DEFERRED. Требуют atomic
+   state + park/wake primitives, отдельный followup
+   [M-91.12-sync-types-migration].
+
+Изменения:
+- std/runtime/write_buffer.nv — rewritten as pure Nova
+- std/runtime/read_buffer.nv — rewritten as pure Nova
+- std/prelude/collections.nv — `external type` → re-import (паттерн StringBuilder)
+- compiler-codegen/src/codegen/runtime_registry.rs — write/read_buffer_runtime() → vec![]
+- compiler-codegen/src/codegen/emit_c.rs — WriteBuffer/ReadBuffer удалены
+  из RUNTIME_DEFINED_TYPES + BUILTIN_RUNTIME_TYPES
+- compiler-codegen/nova_rt/nova_rt.h — includes updated
+- compiler-codegen/nova_rt/write_buffer.h — DELETED
+- compiler-codegen/nova_rt/read_buffer.h — DELETED
+
+Codegen bug fixes incidental к миграции:
+
+1. **Result[T, E].unwrap / .unwrap_or для non-int T (typed mono)**
+   Старый C runtime хранил Result Ok payload как nova_int slot
+   (boxing для non-int T). При unwrap, codegen делал union bit-pun
+   nova_int → target type. Для typed mono `NovaRes_<T>_<E>*` storage
+   уже typed (`struct { nova_f64 _0; } Ok`); bit-pun становится wrong
+   (interpret nova_f64 value as nova_int, then back as f64 → garbage).
+   Fix: detect `NovaRes_*` prefix → direct payload access без cast.
+   Affected functions:
+   - compiler-codegen/src/codegen/emit_c.rs unwrap_or inline (~line 18020)
+   - compiler-codegen/src/codegen/emit_c.rs unwrap inline (~line 18210)
+
+2. **Module-private `const` C-name collision**
+   `const X = ...` в разных модулях с одинаковым именем коллидит
+   в global symbol table (codegen эмитит `static const TYPE X = ...`
+   без module-path mangling). Symptom: `INITIAL_CAPACITY = 16`
+   в string_builder.nv и write_buffer.nv → redefinition error.
+   Fix: `private_const_c_names: HashMap<(FileId, name), mangled>` —
+   pre-pass по module.peer_files. Decl emission mangles. Ident
+   resolution: per-file lookup + single-candidate fallback.
+   Followup [M-91.12-const-resolution-via-types] для production-grade
+   collision disambiguation независимо от span fidelity.
+
+Acceptance:
+- A1-A5: ✅ pure Nova implementation; C headers removed; registry empty;
+         RUNTIME_DEFINED/BUILTIN_RUNTIME cleaned; collections.nv updated.
+- A6: ✅ 11/11 buffers/ fixtures PASS (Windows clang).
+- A7: ⏳ full nova test regression — see baseline diff in commit notes.
+- A8: ✅ codegen bug fix #1 (typed Result unwrap).
+- A9: ✅ codegen bug fix #2 (module const mangling).
+- A10: ✅ Plan 91.12 doc + simplifications.md + project-creation.txt.
+
+Fixtures updated:
+- nova_tests/buffers/read_floats.nv — test `f64.from_bits + try_read_f64_be
+  round-trip` переписан: предыдущий C runtime stored f64 в Result.Ok
+  как u64-bits через nova_int slot; тесту приходилось декодировать
+  через `f64.from_bits(r.unwrap_or(0))`. Pure-Nova try_read_f64_be
+  возвращает декодированный f64 напрямую → тест упрощён до `r.unwrap_or(0.0)`.
+- nova_tests/buffers/neg_read_oob.nv — EXPECT_RUNTIME_PANIC обновлён
+  на новый формат "unhandled typed Fail" (typed throw'ит variant
+  через type#N вместо stringly-typed message).
+
+Followups open:
+- [M-91.12-sync-types-migration] — OnceCell/Lazy/Condvar миграция.
+- [M-91.12-const-resolution-via-types] — type-checker-aware const lookup.
+- [M-91.12-append-filled] — `[]T.append_filled(n, v)` primitive для
+  bulk zero-init (replace write_zero push-loop).
+
+Worktree: nova-p91-12 (postoyanniy).
+Branch: plan-91.12 (pushed для review, НЕ self-merged).
+
+Closes marker (partial): [M-115-d126-deprecation] PARTIAL RETRACT
+  (2 из 5 типов мигрированы; sync types deferred).
+
+
+[Plan 91.12 V2 — D126 hard retract: Sync types tuple-newtype migration] 2026-06-01
+
+Контекст: V2 продолжение Plan 91.12 V1 (WriteBuffer/ReadBuffer pure Nova).
+V1 закрыл 2/5 D126 типов, оставшиеся 3 (Condvar, OnceCell[T], Lazy[T])
+требуют C runtime backing для atomic state + park/wake fiber primitives.
+V2 мигрирует их на tuple-newtype `type X[T](ptr)` (Plan 115 D214 pattern) —
+сохраняет C backing + переходит к стандартному Nova type-system mechanism
+вместо D126 `external type` bridge bootstrap.
+
+После V2: все 5 stdlib D126 типов мигрированы (3 различных pattern):
+- StringBuilder        → pure Nova consume record (Plan 109 D179)
+- WriteBuffer          → pure Nova record { mut buf []u8 } (V1)
+- ReadBuffer           → pure Nova cursor { ro data, mut pos } (V1)
+- OnceCell[T]          → type OnceCell[T](ptr) tuple-newtype (V2)
+- Lazy[T]              → type Lazy[T](ptr) tuple-newtype (V2)
+- Condvar              → type Condvar(ptr) tuple-newtype (V2)
+
+D126 plain form formally RETRACTED — type-checker emit'ит hard error
+[E_EXTERNAL_TYPE_RETRACTED] для `external type X` (без consume) в ЛЮБОМ
+модуле. D163 `external type X consume` (FFI resource handles) сохранён.
+
+Изменения V2:
+
+**std/runtime/sync.nv (3 declarations):**
+- `external type OnceCell[T]` → `type OnceCell[T](ptr)`
+- `external type Lazy[T]` → `type Lazy[T](ptr)`
+- `external type Condvar` → `type Condvar(ptr)`
+
+External fn methods неизменны — ABI идентичен.
+
+**compiler-codegen/src/codegen/emit_c.rs:**
+- `emit_type_decl::TypeDeclKind::Newtype` — RUNTIME_BACKED_NEWTYPES list
+  (OnceCell/Lazy/Condvar) skip'ает `typedef nova_ptr Nova_X` emission
+  (conflict с runtime struct typedef иначе).
+- `emit_generic_type_instance::TypeDeclKind::Newtype` — routes per-T
+  mono к existing emit_oncecell_instance/emit_lazy_instance (parallel
+  Opaque path).
+- `emit_module` type_decls registration — `TypeDeclKind::Newtype(_)`
+  с генериками регистрируется в `generic_types` + `generic_type_templates`.
+  БЕЗ этого type-checker fail'ил resolve `Lazy[int].new(closure)` →
+  codegen эмитил `Nova_int_method_new(Lazy, ...)` (misrouted).
+
+**compiler-codegen/src/codegen/external_registry.rs:**
+- `from_module type_decls collection` — `TypeDeclKind::Newtype(_) if
+  !generics.is_empty() || is_runtime_backed` попадает в `reg.type_decls`.
+
+**compiler-codegen/src/types/mod.rs:**
+- D126 plain external type check: unconditional (no stdlib bypass).
+  Hard error E_EXTERNAL_TYPE_RETRACTED с migration hint на `type X(ptr)`
+  + ссылку на migration guide docs/migration/d126-to-tuple-newtype.md.
+- D163 path сохранён — consume form allowed без error.
+
+**spec/decisions/03-syntax.md:**
+- D126 status → 🔴 RETRACTED 2026-06-01 (plain form).
+- Migration table 5 stdlib типов.
+- E_EXTERNAL_TYPE_RETRACTED diagnostic format documented.
+- Cross-refs к D214 + D163.
+- Legacy reference preserved.
+
+**spec/open-questions.md:**
+- Q-write-buffer + Q-read-buffer: closure notes о re-impl V1.
+
+**docs/migration/d126-to-tuple-newtype.md (NEW, 264 lines):**
+- TL;DR + background (3 reasons D126 stopped scaling).
+- 3 migration patterns: pure Nova / tuple-newtype / D163 consume.
+- 5-step user-side walkthrough.
+- 4-point compiler-side codegen integration reference.
+- E_EXTERNAL_TYPE_RETRACTED diagnostic example.
+
+**Tests:**
+- nova_tests/plan91_12/v2_oncecell_tuple_newtype_ok.nv — 5 blocks (new+set+get,
+  set-already-init, take resets, [str] non-primitive T, get_or_init exactly-once).
+- nova_tests/plan91_12/v2_lazy_tuple_newtype_ok.nv — 3 blocks (force+is_forced,
+  idempotent, [str] non-primitive T).
+- nova_tests/plan91_12/v2_condvar_tuple_newtype_ok.nv — 2 blocks (new+notify_one
+  no-op, wait_for(50ms) timeout).
+- nova_tests/plan91_12/v2_external_type_retract_neg.nv — negative
+  (E_EXTERNAL_TYPE_RETRACTED fires).
+- nova_tests/plan91_12/v2_external_type_consume_d163_ok.nv — positive
+  smoke (D163 consume form unchanged).
+- nova_tests/plan62/external_type_outside_whitelist.nv — updated EXPECT.
+
+Acceptance V2 (A1-A14, см. plan doc §«V2 — Sync types migration»):
+- A1-A13: ✅ all met.
+- A14: ⏳ Full nova test regression — running.
+
+Followups:
+- ✅ [M-91.12-sync-types-migration] — closed (V2).
+- ✅ [M-115-d126-deprecation] — FULL retract (was PARTIAL after V1).
+- 🟡 [M-91.12-const-resolution-via-types] — V1 carry-forward, не блокер.
+- 🟡 [M-91.12-append-filled] — V1 carry-forward, performance optimization.
+- 🟡 [M-91.12-parser-body-detect-heuristic] — V2 new followup, low priority.
+
+Worktree: nova-p91-12 (postoyanniy).
+Branch: plan-91.12 (V1+V2 commits, pushed для review, НЕ self-merged).
+
+
+================================================================================
 Plan 124 / D47 amend — per-field visibility `priv` modifier (2026-06-02)
 ================================================================================
 

@@ -124,18 +124,28 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     let _ = fd.needs_caps; // backward-compat field, всегда empty.
                 }
             }
-            // Plan 62.D.bis (D126) + Plan 100.5 (D163): `external type X` with
-            // `consume` is allowed in any module (D163 FFI opaque consume-types).
-            // `external type X` without `consume` (plain opaque) remains stdlib-only
-            // (per D82 — opaque types backed by `nova_rt/*.h` are internal).
+            // Plan 62.D.bis (D126) + Plan 100.5 (D163) + Plan 91.12 V2 retract
+            // (2026-06-01):
+            //   - `external type X` без `consume` (plain opaque) — RETRACTED.
+            //     Hard error [E_EXTERNAL_TYPE_RETRACTED]. Все 5 stdlib типов
+            //     мигрированы (WriteBuffer/ReadBuffer → pure Nova, V1;
+            //     OnceCell[T]/Lazy[T]/Condvar → `type X[T](ptr)`, V2). Любая
+            //     попытка объявить новый plain external type — error с
+            //     migration hint на tuple-newtype паттерн (Plan 115 D214).
+            //   - `external type X consume` (D163 FFI opaque consume-types) —
+            //     by-design allowed (FFI resource handles типа `File consume`).
             if let Item::Type(td) = item {
                 if matches!(td.kind, TypeDeclKind::Opaque) && !td.consume {
                     errors.push(Diagnostic::new(
                         format!(
-                            "`external type` is only allowed in `std.runtime.*` / `std.prelude.*` modules \
-                             (this module is `{}`); for FFI opaque resource handles use \
-                             `external type X consume` (D163/D126), e.g. `external type File consume`.",
-                            module.name.join(".")
+                            "[E_EXTERNAL_TYPE_RETRACTED] `external type` (D126) retracted by Plan 91.12 V2 \
+                             (2026-06-01). Replace `external type {name}` with `type {name}(ptr)` \
+                             (tuple-newtype opaque-handle pattern, Plan 115 D214). C runtime backing \
+                             preserved через `external fn` методы — ABI unchanged. \
+                             Migration guide: docs/migration/d126-to-tuple-newtype.md. \
+                             For FFI opaque consume-types оставайся на `external type {name} consume` \
+                             (D163, supported).",
+                            name = td.name
                         ),
                         td.span,
                     ));
