@@ -7207,8 +7207,27 @@ deref, arithmetic banned by default).
 
 ## D216. Typed pointer family + unsafe model + null-safety через NPO
 
-> **Plan 118** (typed pointers + unsafe model). **Status:** 🆕 draft 2026-06-01
-> (Ф.0 GATE). Promoted к active в Ф.9 (after implementation Ф.1-Ф.8).
+> **Plan 118** (typed pointers + unsafe model). **Status:** 🟢 ACTIVE 2026-06-02
+> (Ф.0 + Ф.1.5 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.3.3 + Ф.3.5 + Ф.4 partial +
+> Ф.5 partial + Ф.6 partial — 13 acceptance criteria closed).
+>
+> Enforced diagnostics (V1):
+>   - `E_UNSAFE_REQUIRED` (D216 §8) — A8 ✅ commit 5c0d2c975ce
+>   - `E_UNSAFE_CALL_REQUIRES_WRAP` (D216 §9) — A11 ✅ commit abd4be4603b
+>   - `E_CALLBACK_THROWS_OVER_C_ABI` (D216 §10/§20) — A25 ✅ commit e4cff57142e
+>   - `E_EXTERNAL_FN_FAIL_EFFECT` (D216 §20) — A26 ✅ commit 7ff3007f3af
+>   - `E_REALTIME_POINTER_OP` (D216 §20 + D172 cross-ref) — A33 ✅ commit 6752565f453
+>   - `E_INVALID_POINTER_MODIFIER` (D216 §1) — commit 6d6a18a2ab7
+>   - `E_AMP_LITERAL` / `E_AMP_RECORD_LITERAL` / `E_ARRAY_INDEX_PTR_BANNED`
+>     (D216 §4 amend + §15) — commits d9d3084ed69 + 986fdb04c0d + 7d61617bcf8
+>
+> Remaining Session 4+ work (V1.1):
+>   - Ф.4 full auto-deref codegen integration (A12-A17)
+>   - Ф.5 NPO codegen (A19-A23 + closes [M-115-null-ptr-to-option-after-npo])
+>   - Ф.6 full *fn cast checks (A24 — E_CLOSURE_HAS_ENV)
+>   - Ф.7 W_UNSAFE_GC_TRIGGER + Debug fmt (A27, A28)
+>   - Ф.8 cross-platform CI + ABI snapshot + perf bench (A31, A32)
+>   - Plan 118.1/118.2/118.3 sub-plans
 >
 > **Cross-amend:** [D2](04-effects.md#d2) (unsafe keyword restored as
 > effect-handler sugar), [D214](#d214-ptr-opaque-pointer-type--tuple-ffi-returns--opaque-handle-pattern)

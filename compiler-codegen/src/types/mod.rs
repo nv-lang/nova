@@ -15877,13 +15877,50 @@ impl UnsafeCtx {
                 }
             }
             ExprKind::As(inner, ty) => {
-                // Plan 118 A25: cast fn → *fn — check source fn doesn't have
-                // Fail effect (E_CALLBACK_THROWS_OVER_C_ABI). C ABI не
-                // propagates Nova exceptions; callback throwing across boundary
-                // = undefined behavior.
+                // Plan 118 A24+A25: cast `expr as *fn(...)` checks:
+                //   A24 — closure-with-env cast banned (E_CLOSURE_HAS_ENV)
+                //   A25 — fn-with-Fail cast banned (E_CALLBACK_THROWS_OVER_C_ABI)
                 if let crate::ast::TypeRef::Pointer(_, inner_ty, _) = ty {
                     if matches!(inner_ty.as_ref(), crate::ast::TypeRef::Func { .. }) {
-                        // Target is *fn(...) — check source.
+                        // A24: closure literal с env captures — banned.
+                        // V1 conservative: any ClosureLight/ClosureFull → reject.
+                        // Free fn identifiers (Ident) — permissive (no env at
+                        // top-level fns). Method values (Member с @ prefix) —
+                        // also rejected (bound self captures receiver).
+                        match &inner.kind {
+                            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                                errors.push(Diagnostic::new(
+                                    "[E_CLOSURE_HAS_ENV] cast `<closure> as \
+                                     *fn(...)` forbidden — closure literals \
+                                     может capture environment (Plan 118 \
+                                     D216 §10). C ABI requires captureless \
+                                     fn pointer. Workaround: extract closure \
+                                     к top-level free fn, тогда cast \
+                                     `free_fn as *fn(...)` valid.".to_string(),
+                                    e.span,
+                                ));
+                            }
+                            // Method value `obj.@method` — bound self capture
+                            // (D11 Ф.4). For V1 conservative reject; bare
+                            // type-level `Type.@method` (unbound method) — OK
+                            // когда detected through parent expr context.
+                            ExprKind::Member { name, .. } if name.starts_with('@') => {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_CLOSURE_HAS_ENV] cast method value \
+                                         `{}` as *fn(...) forbidden — bound \
+                                         method captures receiver (self) \
+                                         (Plan 118 D216 §10). Use static \
+                                         fn (free function) для FFI callback \
+                                         registration.",
+                                        name,
+                                    ),
+                                    e.span,
+                                ));
+                            }
+                            _ => {}
+                        }
+                        // A25: source fn has Fail effect — banned.
                         if let ExprKind::Ident(fname) = &inner.kind {
                             if self.fail_fns.contains(fname) {
                                 errors.push(Diagnostic::new(

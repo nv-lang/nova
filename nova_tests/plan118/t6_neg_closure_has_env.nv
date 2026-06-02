@@ -1,0 +1,15 @@
+// Plan 118 Ф.6 NEG-T6.7 / A24 — closure-with-env cast к *fn rejected.
+// D216 §10: C ABI requires captureless fn pointer. Closure literals
+// (|x| ...) могут capture environment — banned для `as *fn(...)`.
+//
+// Workaround: extract closure body к top-level free fn, тогда cast
+// `free_fn as *fn(...)` valid (no env captures at top-level).
+//
+// EXPECT_COMPILE_ERROR E_CLOSURE_HAS_ENV
+
+module plan118.t6_neg_closure_has_env
+
+test "rejects cast closure literal к *fn" {
+    ro cb = (fn(x i64) -> i64 => x * 2) as *fn(i64) -> i64
+    assert(1 == 1)
+}
