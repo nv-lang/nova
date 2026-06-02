@@ -840,7 +840,7 @@ Open questions проверить + закрыть через D217-D219:
 | 123.3 Pure caching | ✅ CLOSED 2026-06-02 (V3 active, D219 landed) |
 | 123.4 Chain | ✅ CLOSED 2026-06-02 (V4 active, D217 amend landed) |
 | 123.5 LSP/diag | ✅ CLOSED 2026-06-02 (V5 CLI delivered; LSP V5.1 deferred) |
-| 123.6 Telemetry | 🆕 PLANNED |
+| 123.6 Telemetry | ✅ CLOSED 2026-06-02 (V6 active, D217 §7 amend) |
 | 123.7 IPA | 🆕 PLANNED |
 | **Umbrella** | 🆕 PLANNED |
 

@@ -28986,3 +28986,40 @@ diagnostic mode для cache decisions.
 
 **Open followups:**
 - [M-123.5-lsp-codelens] / [M-123.5-lsp-hover] — LSP V5.1.
+
+
+## Plan 123.6 closure (2026-06-02): D217 §7 amend V6 telemetry+rollout
+
+**Sub-plan #6** Plan 123 umbrella, ✅ ЗАКРЫТ 2026-06-02. Production
+rollout layer.
+
+**Acceptance A6.1-A6.5:**
+- A6.1 ✅ Telemetry emitted (% affected, median, p99, per-layer).
+- A6.2 ✅ Aggregator CLI `nova check --telemetry-cache` +
+  `--telemetry-json` works.
+- A6.3 🟡 CI perf gates — followup [M-123.6-ci-perf-gates] (Plan
+  57 wiring).
+- A6.4 ✅ Migration guide `docs/migration/123-field-cache.md`.
+- A6.5 ✅ Production deployment ready (env vars + diagnostic
+  workflow + migration guide).
+
+**Implementation (~250 LOC):**
+- nova-cli/src/main.rs: --telemetry-cache + --telemetry-json
+  flags + cmd_check_telemetry_cache + count_instance_methods.
+- docs/migration/123-field-cache.md: production team guide.
+
+**Lessons:**
+1. **Telemetry baseline before rollout best practice.** Migration
+   guide encourages baseline metric capture before/after enabling
+   each layer — catches unexpected regressions in % affected /
+   p99 caches.
+2. **JSON output for CI critical.** Human-readable convenient for
+   one-off inspection; JSON enables automated regression detection
+   in CI pipelines.
+3. **Env vars vs CLI flags — env wins for V6 ship.** Env vars
+   cover all config; CLI flag set adds nothing functional, just
+   sugar. V6.1 followup if user demand.
+
+**Open followups:**
+- [M-123.6-cli-flags-full] — sugar CLI flags для convenience.
+- [M-123.6-ci-perf-gates] — Plan 57 bench harness wiring.

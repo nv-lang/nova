@@ -27542,3 +27542,28 @@ Implementation:
 - D217 §6 amend V5 in spec.
 
 Open followups: LSP integration (V5.1).
+
+
+================================================================================
+Plan 123.6 — D217 §7 amend V6 telemetry + production rollout (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #6.
+
+Telemetry aggregator + production migration guide.
+
+Implementation (~250 LOC):
+- nova-cli/src/main.rs:
+  - --telemetry-cache + --telemetry-json flags.
+  - cmd_check_telemetry_cache: corpus-wide aggregation.
+- docs/migration/123-field-cache.md: production team guide.
+- D217 §7 amend V6 spec section.
+
+Verified:
+- --telemetry-cache + --telemetry-json sample on plan123_5/
+  test_explain_ok.nv.
+- Migration guide documented baseline differential strategy.
+
+Open followups:
+- [M-123.6-cli-flags-full].
+- [M-123.6-ci-perf-gates].

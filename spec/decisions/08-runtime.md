@@ -4689,3 +4689,68 @@ escape hatches, semantic equivalence, performance expectations.
 - D104+D105 (doc-attrs) — future direction for `#cache_info`
   attribute on methods.
 
+## D217 §7 amend V6 — Telemetry + production rollout (Plan 123.6)
+
+**Source:** [Plan 123.6](../../docs/plans/123.6-telemetry.md).
+
+### 1. Telemetry aggregator
+
+`nova check <files> --telemetry-cache` — walks files, runs
+`analyze_module` per file, aggregates statistics:
+
+- `files_total` / `files_skipped` — file processing tally.
+- `methods_total` — instance methods scanned across corpus.
+- `methods_affected` — methods with ≥1 cache decision.
+- `methods_affected_pct` — ratio.
+- `caches_total` — sum of caches inserted.
+- `caches_per_method_median` / `_p99` — distribution.
+- Per-layer breakdown: `layer_d217_field` / `layer_d218_licm` /
+  `layer_d219_pure` / `layer_d217_chain`.
+
+Two output formats:
+- Default: human-readable text.
+- `--telemetry-json`: structured JSON (CI integration).
+
+### 2. Production rollout strategy
+
+`docs/migration/123-field-cache.md` provides production team
+guide:
+
+1. **Baseline differential:** run tests under both `NOVA_FIELD_CACHE=0`
+   и default ON; confirm identical results.
+2. **Telemetry baseline:** capture `--telemetry-cache` metrics before
+   deploying.
+3. **Gradual rollout (optional):** enable layers one at a time —
+   V1 only → +V2 → +V3 → +V4.
+4. **Regression detection:** if tests fail with default, diagnostic
+   workflow disables layers individually to identify culprit, then
+   `--explain-cache` shows specific decisions.
+
+### 3. CLI flag reference (V6 partial)
+
+V6 ships env vars covering all config. Full `--field-cache-*` CLI
+flag set deferred к V6.1 ([M-123.6-cli-flags-full]) — env vars
+provide complete coverage:
+
+| Function | Env Var |
+|---|---|
+| Disable all | `NOVA_FIELD_CACHE=0` |
+| Disable LICM | `NOVA_FIELD_CACHE_LICM=0` |
+| Disable pure | `NOVA_FIELD_CACHE_PURE=0` |
+| Disable chain | `NOVA_FIELD_CACHE_CHAIN=0` |
+| Threshold | `NOVA_FIELD_CACHE[_LICM/_PURE/_CHAIN]_THRESHOLD=N` |
+| Per-fn cap | `NOVA_FIELD_CACHE_MAX=N` |
+| Per-loop cap | `NOVA_FIELD_CACHE_LICM_MAX=N` |
+| Chain depth | `NOVA_FIELD_CACHE_CHAIN_DEPTH=N` |
+
+### 4. CI perf regression gates
+
+V6 ships infrastructure; concrete CI integration with Plan 57 bench
+harness is followup `[M-123.6-ci-perf-gates]`. Aggregator output
+matches Plan 57 metric format; wiring straightforward.
+
+### 5. Cross-references
+
+- All previous D217 amends + D218 + D219.
+- Plan 57 (bench infrastructure) — future CI gate integration.
+
