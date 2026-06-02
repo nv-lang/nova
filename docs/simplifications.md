@@ -29112,3 +29112,62 @@ field-cache optimization V1-V7 active.
   cross-module IPA (long-term).
 
 Plan 123 umbrella — **V7 milestone production-ready**.
+
+
+## Plan 123.7.1 closure (2026-06-02): D220 amend V7.1 IPA full integration
+
+**V7.1 followup** Plan 123 umbrella, ✅ ЗАКРЫТ 2026-06-02.
+
+Completes the V7 promise: write_sets infrastructure now USED across
+all 4 cache layers (V1 mut + V2 LICM + V3.1 pure + V4.1 chain).
+
+**Acceptance A7.1.1-A7.1.10:**
+- A7.1.1 🟢 mut survives non-writing self call (Ф.1).
+- A7.1.2 🟢 mut invalidated by writing call (Ф.1).
+- A7.1.3 🟢 non-self call → conservative invalidate.
+- A7.1.4 🟢 LICM mut hoist с non-writing calls (Ф.2).
+- A7.1.5 🟢 pure cache survives writes outside read-set (Ф.3 = V3.1).
+- A7.1.6 🟢 chain survives writes к unrelated root (Ф.4 = V4.1).
+- A7.1.7 🟢 plan123_1..7 regression-free.
+- A7.1.8 🟢 plan123_7_1 fixtures 10/0 (4 IPA pos + 1 LICM pos +
+  1 pure pos + 2 chain pos + 2 neg + 1 prop).
+- A7.1.9 🟢 IPA=0 fallback identical 10/0.
+- A7.1.10 🟢 D220 amend V7.1 landed.
+
+**Implementation (~800 LOC delta):**
+- IpaCtx struct + call_invalidates_field helper.
+- Thread-local LICM_WRITE_SETS / PURE_IPA_CTX / CHAIN_IPA_CTX.
+- 4 layer integrations (mut/LICM/pure/chain).
+- build_read_set_registry + collect_body_writes helpers.
+- *_contains_invalidating_call_for family of helpers (~200 LOC).
+- rewrite_fn_body_split_with_ipa consistency.
+
+**Design lessons:**
+1. **Thread-local IPA contexts pragmatic.** Refactoring ~20 function
+   signatures к explicit `Option<IpaCtx>` would have been invasive.
+   Thread-local RefCells set by *_with_ipa wrappers + snapshotted
+   by eligibility checkers — minimal API surface impact. Trade-off
+   documented: V7.2 may refactor к explicit threading if multi-
+   threaded compilation lands.
+2. **Per-method check > body-level check.** V3 conservative was
+   "any @F write → skip ALL pure cache". V3.1 per-method check
+   (body_writes ∩ M.read_set) typical preserves caching for
+   methods reading disjoint field sets.
+3. **Pure functions enable simple frame analysis.** Pure methods
+   (D24 Purity::Pure) have no side effects → result depends only
+   on inputs (self state). Computing field-read-set straightforward
+   recursive walk. No need for fancy effects analysis.
+4. **Iterative closure ≤10 iterations suffices.** For typical
+   call graphs, 2-3 iterations converge. Cap prevents infinite
+   loops в pathological recursive cases (mutual recursion handled).
+5. **rewrite_fn_body_split must use SAME barrier as analysis.**
+   Initial Ф.1 bug: count_mut_prefix_reads used IPA-aware barrier
+   correctly (extending prefix region), but rewrite_fn_body_split
+   still used V1 conservative barrier (truncating rewrite at first
+   call). Fixed via rewrite_fn_body_split_with_ipa consistency.
+
+**Open V7.2+ followups:**
+- [M-123.7.1-explicit-ctx-threading] — refactor thread-local
+  contexts к explicit IpaCtx parameter (V7.2).
+- [M-123.7.1-scc-closure] — formal SCC-based closure (vs iterative).
+- [M-123.7-cross-module] — link-time IPA (V8, indefinitely deferred).

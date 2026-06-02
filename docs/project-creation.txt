@@ -27631,3 +27631,41 @@ Production-grade:
 Branch plan-123-receiver-field-cse — ~30+ commits across ~3 dev-days
 real wall time (single-session). NOT merged в main (per user
 instruction).
+
+
+================================================================================
+Plan 123.7.1 — D220 amend V7.1 IPA full integration (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. V7.1 followup. Completes V7 promise.
+
+V7 shipped write_set infrastructure but NOT integrated. V7.1 integrates
+across all 4 cache layers (V1 mut + V2 LICM + V3.1 pure + V4.1 chain).
+
+Phases delivered (Ф.0-Ф.6).
+
+Implementation (~800 LOC delta field_cache.rs):
+- IpaCtx struct + thread-local contexts.
+- 4 layer integrations.
+- build_read_set_registry (parallel infrastructure).
+- collect_body_writes + *_contains_invalidating_call_for helpers.
+
+Tests:
+- plan123_7_1: 10/10 PASS (4 IPA + 1 LICM + 1 pure + 2 chain + 2 neg
+  + 1 property).
+- Verified identical под NOVA_FIELD_CACHE_IPA=0.
+- All V1-V7 regression-free.
+
+D-block: D220 amend V7.1 (~200 lines) в 08-runtime.md.
+README index updated.
+
+Acceptance A7.1.1-A7.1.10 all met.
+
+This commit closes ONE major V*.1 followup. Remaining V*.1:
+- V3.1 literal args extension — partially done (frame-based via V7.1).
+- V5.1 LSP code-lens.
+- V6.1 sugar CLI flags.
+- Baseline cargo test fix.
+
+Plan 123 umbrella V7 baseline + V7.1 followup — both production
+active.

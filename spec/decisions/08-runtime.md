@@ -4819,3 +4819,111 @@ per-module write_sets cover practical hot paths.
   closure semantics).
 - `Q-ipa-cross-module`: → D220 §4 (deferred indefinitely).
 
+## D220 amend V7.1 — Full integration с V1/LICM/pure/chain (Plan 123.7.1)
+
+**Source:** [Plan 123.7.1](../../docs/plans/123.7.1-ipa-full-integration.md).
+Implementation extends D220 V7 infrastructure across all 4 cache
+layers + adds field-read-set inference for V3.1 frame-based pure-
+cache invalidation.
+
+### 1. IpaCtx struct
+
+Threading mechanism для write_sets + receiver type через barrier-
+checking helpers across all 4 layers:
+
+```rust
+pub(crate) struct IpaCtx<'a> {
+    pub write_sets: &'a HashMap<(String, String), HashSet<String>>,
+    pub recv_type: &'a str,
+    pub read_sets: &'a HashMap<(String, String), HashSet<String>>,
+}
+```
+
+`call_invalidates_field(method, field)` helper returns `true` iff
+calling `(recv_type, method)` invalidates cache for `field` (per
+write_set lookup; unknown callee → `true` conservative).
+
+### 2. Layer integrations (Ф.1-Ф.4)
+
+**Ф.1 V1 mut path:**
+- `cache_fn_with_ipa` + `count_mut_prefix_reads_with_ipa`.
+- `stmt_is_barrier_for_with_ipa` / `expr_is_barrier_for_with_ipa`.
+- New helpers `*_contains_invalidating_call_for(_, fname, ipa)`:
+  Self-method call to method M where `fname ∉ write_set[(T,M)]` →
+  NOT a barrier. Unknown → conservative.
+- `rewrite_fn_body_split_with_ipa` — barrier consistency.
+
+**Ф.2 V2 LICM:**
+- `collect_loop_eligible_fields`: snapshots `LICM_WRITE_SETS`
+  thread-local. Mut field eligibility uses IPA-aware
+  `block_contains_invalidating_call_for` instead of V2
+  `body_has_call` (any call → barrier).
+
+**Ф.3 V3.1 pure-cache frame-based invalidation:**
+- New `build_read_set_registry` — parallel infrastructure к
+  write_sets. Computes per-method field-read-set (direct `@F` reads
+  + transitive via method calls, iterative closure ≤10 iterations).
+- `pure_cache_fn`: snapshots `PURE_IPA_CTX` thread-local. Instead
+  of V3 conservative "any @F write skips ALL pure caching", per-
+  method check:
+  - For each pure method M candidate: skip только if
+    `body_writes ∩ M.read_set` non-empty.
+  - Methods with `read_set ∩ writes = ∅` cache survives.
+- `collect_body_writes` helper: walks body, collects fields
+  directly written via top-level `Assign{Member{SelfAccess, F}}`.
+
+**Ф.4 V4.1 chain per-segment invalidation:**
+- `chain_cache_fn`: snapshots `CHAIN_IPA_CTX`. Replaces V4
+  conservative "any @F write skips all chains" с per-chain
+  per-segment check:
+  - Chain path `[a, b, c]` invalidated iff ANY of `{a, b, c}` ∈
+    body_writes. Writes к unrelated roots don't invalidate.
+
+### 3. Composition stability
+
+All 4 layer integrations preserve V1-V6 composition order (D218
+LICM → V4 chain → D219 pure → D217 V1). IPA refinements are
+**eligibility refinements only** — no AST pattern changes, no
+cache local naming changes. Disabling IPA (`NOVA_FIELD_CACHE_IPA=0`)
+returns to V1-V6 conservative behavior identically.
+
+### 4. Thread-local IPA context plumbing
+
+Instead of refactoring all pass functions to accept `Option<IpaCtx>`
+parameter (which would require changing ~20 function signatures),
+V7.1 uses thread-local `RefCell`s set by `*_with_ipa` wrapper
+functions. Each layer's eligibility checker snapshots the relevant
+context at entry. Clean revert (set to `None`) after pass.
+
+Trade-off: thread-local plumbing simpler change but obscures data
+flow vs explicit parameter. V7.2 may refactor к explicit ctx
+threading if multi-threaded compilation lands.
+
+### 5. Eligibility examples
+
+| Scenario | V7 | V7.1 |
+|---|---|---|
+| `@F` cache survives `@helper()` where helper writes only `@G` | ❌ barrier | ✅ no barrier |
+| LICM hoist `@F` despite loop calling `@helper()` (not writing F) | ❌ no hoist | ✅ hoist |
+| Pure `@M()` cache survives `@G = ...` where M reads {F} | ❌ skip all | ✅ cache |
+| Chain `@inner.v` survives `@tag = ...` | ❌ skip all | ✅ cache |
+| `@helper()` where helper unknown (external) | ❌ barrier | ❌ barrier (unchanged) |
+
+### 6. Escape hatch
+
+`NOVA_FIELD_CACHE_IPA=0` → all 4 IPA integrations disabled; V1-V6
+conservative behavior preserved. Verified 10/10 plan123_7_1 fixtures
+PASS identically под default и IPA=0.
+
+### 7. Acceptance verification
+
+A7.1.1-A7.1.10 all met. See plan doc + simplifications.md closure
+entry for breakdown.
+
+### 8. Followups
+
+- **V7.2:** explicit IpaCtx parameter threading (vs thread-local).
+- **V7.3:** SCC-based exact closure (vs iterative ≤10 iter).
+- **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
+  indefinitely.
+
