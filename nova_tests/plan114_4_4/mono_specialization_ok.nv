@@ -1,0 +1,19 @@
+// Plan 114.4.4.5 V4.1: per-const-arg monomorphization для mixed const fns.
+
+module plan114_4_4.mono_specialization_ok
+
+fn scale(const factor int, x int) -> int => x * factor
+
+test "mono per-const-arg" {
+    ro a = 5
+    ro b = 10
+    // factor=3 → spec __cst_0 generated.
+    ro r1 = scale(3, a)
+    // factor=3 again → reuse same spec.
+    ro r2 = scale(3, b)
+    // factor=10 → spec __cst_1 generated.
+    ro r3 = scale(10, a)
+    assert(r1 == 15)
+    assert(r2 == 30)
+    assert(r3 == 50)
+}

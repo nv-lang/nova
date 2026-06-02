@@ -8426,6 +8426,38 @@ impl CEmitter {
                 );
                 self.sum_schemas.insert(t.name.clone(), sum_schema);
             }
+            // Plan 91.12 V2 followup (2026-06-02) — generic Newtype:
+            // `type X[T](ptr)` за исключением runtime-backed sync types
+            // (OnceCell/Lazy/Condvar — обрабатываются в emit_generic_type_instance
+            // через emit_oncecell_instance/emit_lazy_instance).
+            //
+            // Для произвольного generic newtype над ptr (user FFI handle):
+            // - T параметр — type-system fiction, C-level value identical
+            // - Emit single typedef `typedef nova_ptr Nova_X;` — все
+            //   monomorphizations X[int]/X[str]/etc. share C representation
+            // - Register в type_aliases для constructor `MyHandle[T](v)`
+            //   identity-cast intercept (emit_call)
+            // Inner non-ptr types (e.g. `type Wrap[T](int)`) — followup
+            // [M-91.12-generic-newtype-non-ptr-inner].
+            if let TypeDeclKind::Newtype(inner) = &t.kind {
+                const RUNTIME_BACKED_NEWTYPES: &[&str] =
+                    &["OnceCell", "Lazy", "Condvar"];
+                if !RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
+                    // Use type_ref_to_c с unwrap_or — для inner = ptr это
+                    // даст "nova_ptr"; для других primitives тоже work'нёт.
+                    // Generic type params (T) in inner — fail; гард: emit
+                    // только если inner_c не пустой.
+                    if let Ok(inner_c) = self.type_ref_to_c(inner) {
+                        if !inner_c.is_empty() {
+                            self.line(&format!(
+                                "typedef {} Nova_{};",
+                                inner_c, t.name
+                            ));
+                            self.type_aliases.insert(t.name.clone(), inner_c);
+                        }
+                    }
+                }
+            }
             return Ok(());
         }
         // Plan 114.4.1 (D200): emit associated constants как top-level
@@ -9190,33 +9222,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
 
     /// Plan 48 Ф.3: check if TypeRef contains any of the given type params (directly or in generics).
     /// Used to detect when erased struct fields should be void* rather than a mangled generic name.
+    ///
+    /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над
+    /// `TypeRef::uses_any_type_param` (ast::mod.rs) — extracted common
+    /// helper, removed duplication с types/mod.rs's parallel impl.
+    #[inline]
     fn type_ref_uses_any_type_param(ty: &crate::ast::TypeRef, type_params: &HashSet<String>) -> bool {
-        use crate::ast::TypeRef;
-        match ty {
-            TypeRef::Named { path, generics, .. } => {
-                if path.len() == 1 && type_params.contains(&path[0]) { return true; }
-                generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, type_params))
-            }
-            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
-                Self::type_ref_uses_any_type_param(inner, type_params)
-            }
-            TypeRef::Tuple(ts, _) => ts.iter().any(|t| Self::type_ref_uses_any_type_param(t, type_params)),
-            TypeRef::Func { params, return_type, .. } => {
-                params.iter().any(|t| Self::type_ref_uses_any_type_param(t, type_params))
-                    || return_type.as_ref().map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
-            }
-            // Plan 97 Ф.2: anon-protocol сам по себе не type-param;
-            // его методы могут ссылаться на type-param'ы окружения —
-            // рекурсивно проверяем.
-            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
-                m.params.iter().any(|p| Self::type_ref_uses_any_type_param(&p.ty, type_params))
-                    || m.return_type.as_ref()
-                        .map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
-            }),
-            TypeRef::Unit(_) => false,
-            // D176 (Plan 108): readonly T — transparent.
-            TypeRef::Readonly(inner, _) => Self::type_ref_uses_any_type_param(inner, type_params),
-        }
+        ty.uses_any_type_param(type_params)
     }
 
     /// Collect type names referenced in a type declaration's fields/variants.
@@ -17371,7 +17383,20 @@ _cp++; \
         // Tuple-newtype (single-element with parens) treated identically:
         // `(Y)` collapses to `Y` в parse_type, и TypeDeclKind::Newtype(Y) =
         // identity wrapping.
-        if let ExprKind::Ident(name) = &func.kind {
+        //
+        // Plan 91.12 V2 followup (2026-06-02): support generic newtype
+        // constructor `MyHandle[int](raw)` (TurboFish form). Parses как
+        // Call { func: TurboFish { base: Ident("MyHandle"), .. }, .. };
+        // identity cast same as non-generic case — `T` parameter — это
+        // type-system fiction, C-level value identical.
+        let name_opt: Option<&String> = match &func.kind {
+            ExprKind::Ident(n) => Some(n),
+            ExprKind::TurboFish { base, .. } => {
+                if let ExprKind::Ident(n) = &base.kind { Some(n) } else { None }
+            }
+            _ => None,
+        };
+        if let Some(name) = name_opt {
             if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
                 if args.len() == 1 {
                     let v = self.emit_expr(args[0].expr())?;

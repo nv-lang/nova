@@ -28114,3 +28114,317 @@ Backward compat: 0 regression FAIL в plan120 + plan124_1-7.
 Plan 124 umbrella ✅ FULLY CLOSED.
 Plan doc status table updated.
 
+
+[Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support] 2026-06-02
+
+Контекст: Plan 91.12 V2 ранее закрыл миграцию sync types (OnceCell/Lazy/Condvar)
+на tuple-newtype через hardcoded per-name routing (RUNTIME_BACKED_NEWTYPES list).
+Этот followup extends generic newtype support к произвольным user-level types,
+закрывая [M-115-newtype-constructor-generic] и unblocking real user FFI use
+cases (phantom-T handles, mutability-tagged buffers, region/arena ownership).
+
+Изменения:
+
+**compiler-codegen/src/codegen/emit_c.rs:**
+
+1. emit_type_decl generic-types branch — добавлен TypeDeclKind::Newtype handler.
+   Generic Record/Sum уже emit'ились (lines 8237-8430); Newtype falls through
+   на bare `return Ok(())` без emission. Fix: внутри `if !t.generics.is_empty()`
+   block добавлен Newtype branch — emit'ает `typedef nova_ptr Nova_X;` (single
+   typedef shared across all T monomorphizations) + регистрирует type_aliases
+   entry. Skip для RUNTIME_BACKED_NEWTYPES (OnceCell/Lazy/Condvar handled
+   через emit_generic_type_instance per-T mono).
+
+2. emit_call constructor intercept (line ~17374) — расширен match для
+   TurboFish form:
+   - ExprKind::Ident(n) → Some(n) (non-generic case, Plan 115 V1)
+   - ExprKind::TurboFish { base: Ident(n), .. } → Some(n) (generic, V2 followup)
+   Без этого `MyHandle[int](raw)` пытался резолвиться через free_fn dispatch
+   → undefined symbol "MyHandle" в linker stage.
+
+Tests (nova_tests/plan91_12/v3_user_generic_newtype_ok.nv — NEW, 6 blocks):
+- single-param `MyHandle[int]` construct + .0
+- single-param `MyHandle[str]` construct + .0
+- distinct T'ы share same C ABI (nova_ptr equality test)
+- multi-param `MultiParam[T, U]` construct + .0
+- generic newtype + null ptr literal
+- multiple instances — independent values
+
+Spec (spec/decisions/02-types.md D214):
+- D214 status header amended: «Plan 91.12 V2 amend (2026-06-02): generic
+  tuple-newtype `type X[T](ptr)` now supported».
+- NEW §«Generic opaque handle — type X[T](ptr)» с phantom-T semantics +
+  multi-param example.
+
+Doc (docs/migration/d126-to-tuple-newtype.md):
+- §«Pattern 2 — Tuple newtype над ptr» extended subsection
+  «Generic user FFI handle (Plan 91.12 V2 followup, 2026-06-02)» с
+  Region[T]/DualHandle[T, U] examples.
+
+Markers:
+- ✅ [M-115-newtype-constructor-generic] — CLOSED.
+- 🟡 [M-91.12-generic-newtype-non-ptr-inner] — open carry-forward (low
+  priority: `type Wrap[T](int)` пер-T mono — non-FFI use case).
+
+Regression:
+- plan91_12 7/7 PASS (6 V2 fixtures + 1 V3 new).
+- buffers 11/11 PASS.
+- plan115 11/11 PASS.
+- plan103_5 (OnceCell/Lazy/Once family) 20/20 PASS.
+
+Worktree: nova-p91-12 (продолжается). Branch: plan-91.12.
+
+================================================================================
+Plan 114.4.4 finish session — Ф.4 + Ф.5 V4 (2 markers closed) — 2026-06-02
+================================================================================
+
+Branch: plan-114.4.4-finish (off main a78f837d1b1).
+
+Закрыты 2 V4 markers через 2 V3 phases lifted:
+- [M-114.4.3-pattern-record-sum] → Ф.4 record/sum/tuple patterns.
+- [M-114.4.3-t-reflection] для primitives → Ф.5 sizeof/align_of.
+
+V4 phase summaries:
+
+Ф.4 record/sum patterns (3ba795e5281):
+- ConstValue enum extended: Tuple(Vec<ConstValue>) + Variant(name, args)
+  + Record(Vec<(name, value)>) variants.
+- match_const_pattern extended: Pattern::Tuple, Pattern::Variant{path, kind},
+  Pattern::Record{fields, rest}, Pattern::Binding handled.
+- check_const_fn_pattern: V2.0 subset → V4 expanded subset.
+- check_const_fn_expr Match: arm_locals collect pattern bindings для
+  arm body/guard validation. collect_const_fn_pattern_bindings helper.
+- TupleLit/RecordLit accepted в body checker (recursive sub-validation).
+- Variant constructor heuristic в check + eval + try_literal_to_value:
+  Call(Ident(TitleCase), args) и Name не в const_fn_names → variant.
+- try_literal_to_value extended: Unary/Binary/As/TupleLit/Call(variant)
+  для arg pre-evaluation на call sites.
+
+Ф.5 t-reflection primitives (69f8d9a1381):
+- type_size_or_align(t, is_align) helper: primitive ABI table per
+  default 64-bit ABI (int=8, i32=4, i16=2, i8=1, bool=1, char=4,
+  str=16, etc.).
+- simple_type_name_str helper.
+- check_const_fn_expr Call: turbofish callee unwrap; sizeof/align_of
+  recognized as builtin без registration.
+- check_const_constexpr_ex Call: sizeof/align_of pre-accept перед
+  const_fn_names check.
+- OwnedEvaluator.eval_expr: sizeof/align_of intrinsic → ConstValue::Int.
+- try_literal_to_value: TurboFish sizeof/align_of pre-evaluation.
+- walk_expr: sizeof[T]() / align_of[T]() → IntLit replacement для
+  module-level const RHS.
+- is_known: sizeof/align_of recognized as builtin identifiers
+  (name resolution).
+- rewrite_const_fn_calls: early-return removed (walk module даже без
+  const fn для sizeof intrinsic в const RHS).
+- V4.0 surface: primitives only. Records/generics → Plan 114.4.4.2.
+
+V4 extensions spec (4d3764abdae):
+- D199 V4 extensions subsection added после V3.
+- Q7 updated с V4 closures.
+- A31 + A32 acceptance criteria.
+
+Tests (plan114_4_4/, 4 new):
+- pattern_tuple_ok: classify(x, y) с tuple pattern arms.
+- pattern_variant_ok: unwrap_or через Some(x)/None pattern.
+- sizeof_primitives_ok: 5 sizeof/align_of usage examples.
+- sizeof_in_const_fn_ok: buf_size(10) = 10*sizeof[int]() = 80.
+
+Verification: 12/12 plan114_4_4 + 14/14 plan114_4_3 + 16/16 plan114_4_2
+= 42/42 PASS на release nova-cli.
+
+What extracted (Ф.6-Ф.8 — focused dev-day each, separate plans):
+- Plan 114.4.4.3 — runtime HOF trampoline. Requires ABI design для
+  const fn → function pointer conversion. Complex codegen.
+- Plan 114.4.4.4 — closure-returning const fn. Closure capture
+  semantics на compile-time.
+- Plan 114.4.4.5 — true per-const-arg monomorphization. Deep Plan 70.5
+  mono pipeline integration.
+
+Each Plan 114.4.4.3/4/5 ships independently when triggered.
+
+Final markers closed (Plan 114.4.3 chain): 6 of 9 V2.1/V3 followups
+landed (4 в первой Plan 114.4.4 + 2 в этой finish session):
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅
+- [M-114.4.3-pattern-record-sum] ✅ (этот session)
+- [M-114.4.3-t-reflection] ✅ для primitives (этот session)
+
+Remaining 3 deferred to Plan 114.4.4.3/4/5 (V4.1+ scope).
+
+[Plan 91.12 V2 followup #2 — Generic newtype non-ptr inner + reject inner-uses-param] 2026-06-02
+
+Контекст: V2 followup #1 (2026-06-02) закрыл [M-115-newtype-constructor-generic]
+для generic ptr-newtype. V2 followup #2 extends к non-ptr inner types (int/str/
+bool/f64) и добавляет type-checker reject для invalid form `type X[T](T)`.
+
+Изменения:
+
+**compiler-codegen/src/types/mod.rs:**
+- NEW `typeref_uses_param(tr, params)` static helper — recursive check
+  использует ли TypeRef один из generic params (mirror codegen's
+  type_ref_uses_any_type_param).
+- `TypeDeclKind::Newtype` walk extended: после walk_typeref, для
+  generic newtype (t.generics non-empty), check `typeref_uses_param(inner, t.generics)`.
+  Если true → error E_GENERIC_NEWTYPE_INNER_USES_PARAM с migration hint:
+  «replace with `type X { value T }` (record form)».
+
+Codegen `emit_type_decl` generic-types branch уже handled non-ptr inner
+через unified `type_ref_to_c(inner)` call — V2 followup #2 не требует
+codegen changes (только type-checker guard).
+
+**Tests:**
+- NEW `nova_tests/plan91_12/v3_generic_newtype_non_ptr_inner_ok.nv`
+  (11 positive blocks): Counter[T](int)/Tag[T](str)/Flag[T](bool)/
+  Measure[T](f64)/Tagged[T,U](int) — construct + .0 + distinct T.
+- NEW `nova_tests/plan91_12/v3_generic_newtype_inner_uses_param_neg.nv`
+  (negative): `type Wrap[T](T)` → E_GENERIC_NEWTYPE_INNER_USES_PARAM.
+
+**Spec D214 (spec/decisions/02-types.md):**
+- §«Generic opaque handle — `type X[T](ptr)`» extended с §«Inner non-ptr
+  types» (positive cases) + §«Inner uses generic param» (REJECTED с
+  E_GENERIC_NEWTYPE_INNER_USES_PARAM + migration hint).
+- Closes [M-91.12-generic-newtype-non-ptr-inner] explicitly.
+
+**Doc docs/migration/d126-to-tuple-newtype.md:**
+- «Generic user FFI handle» subsection extended с non-ptr inner examples
+  + REJECTED form pattern + record-form alternative.
+
+**Acceptance criteria (A1-A8):**
+- A1-A5 ✅ — positive cases (int/str/bool/f64/multi-param) PASS.
+- A6 ✅ — negative `type Wrap[T](T)` rejected с E_GENERIC_NEWTYPE_INNER_USES_PARAM.
+- A7 ✅ — spec D214 amended.
+- A8 ✅ — migration guide updated.
+
+**Regression:** plan91_12 9/9 (5 V2 + 2 V3 positive + 2 V3 negative) +
+buffers 11/11 + plan115 11/11 + plan103_5 20/20 = 51/51 PASS.
+
+Markers:
+- ✅ [M-91.12-generic-newtype-non-ptr-inner] — CLOSED.
+- No new open followups для Plan 91.12.
+
+Worktree: nova-p91-12 (continued). Branch: plan-91.12.
+
+[Plan 91.12 V2 followup #3 — TypeRef::uses_any_type_param refactor] 2026-06-02
+
+Контекст: V2 followup #1 (generic newtype) и followup #2 (non-ptr inner)
+ввели в types/mod.rs локальный helper `typeref_uses_param`, mirror codegen
+helper `type_ref_uses_any_type_param` в emit_c.rs. Эта duplication —
+known code-smell, документированная в Session 12 discussion-log как
+«acceptable across modules».
+
+Followup #3 — production-grade refactor: extract единственное реализование
+в `ast::TypeRef::uses_any_type_param(&self, params: &HashSet<String>) -> bool`,
+оба callsite (codegen + type-checker) становятся thin #[inline] wrapper'ами.
+
+**Изменения:**
+
+compiler-codegen/src/ast/mod.rs:
+- NEW method `TypeRef::uses_any_type_param` в impl TypeRef block. Covers
+  всех 8 variants: Named (path + recurse generics), Array/FixedArray/Readonly
+  (recurse inner), Tuple (recurse all elements), Func (recurse params + return),
+  Protocol (recurse method params + return), Unit (false).
+- NEW `#[cfg(test)] mod typeref_uses_any_type_param_tests` (18 unit tests):
+  - 10 positive: named-is-param, generic-arg-is-param, nested-generics,
+    array/fixed-array/tuple/func/readonly inner, multi-param match-any.
+  - 8 negative: concrete types, multi-segment path (path.len() > 1),
+    empty param set, Unit type, concrete generic args, all-concrete func,
+    different-named param.
+
+compiler-codegen/src/codegen/emit_c.rs:
+- `type_ref_uses_any_type_param` reduced с 25-line full implementation
+  до 3-line `#[inline] fn ... { ty.uses_any_type_param(type_params) }`.
+
+compiler-codegen/src/types/mod.rs:
+- `typeref_uses_param` reduced с 22-line implementation до 3-line thin
+  wrapper to same ast method.
+
+**Test status:**
+- `cargo test --release --lib typeref_uses_any_type_param` НЕ работает
+  due to pre-existing broken tests в emit_c.rs::mem_ordering_tests
+  (Span import path bug, line 28214: `use crate::ast::Span` instead of
+  `use crate::diag::Span`). Bug NOT в моём refactor (verified via git stash
+  + same error reproduces). Fix этой stale test out of scope для refactor —
+  это отдельная code-hygiene задача.
+
+**Integration coverage** (proxy for unit tests):
+- plan48 Ф.3 generic erasure (emit_c.rs caller) — 7/7 PASS.
+- plan91_12 V2 newtype reject guard (types/mod.rs caller) — 9/9 PASS.
+- Refactor 1:1 behavior-preserving — both callsite paths exercised.
+
+**Regression:** plan91_12 9/9 + buffers 11/11 + plan115 11/11 +
+plan103_5 20/20 + plan48 7/7 = 58/58 PASS.
+
+Markers:
+- ✅ [M-91.12-typeref-uses-param-dedup] — CLOSED.
+- No new open followups.
+
+Worktree: nova-p91-12 (continued). Branch: plan-91.12.
+
+================================================================================
+Plan 114.4.4.5 V4.1 — mono-specialization landed (2026-06-02)
+================================================================================
+
+Branch: plan-114.4.4-v4-1 (off main 06b41fb50db).
+
+Closes [M-114.4.3-mono-specialization] — true per-const-arg mono для
+mixed const fns (Rust const generics-style).
+
+What landed (1 V4.1 marker):
+- Plan 114.4.4.5 mono-specialization V1.
+
+What extracted (focused dev-sessions для each):
+- Plan 114.4.4.3 runtime-HOF trampoline — fundamental ABI design
+  (const fn → fn pointer conversion has semantic challenge: fully-const
+  fn body requires compile-time args; only no-param const fn can have
+  runtime trampoline).
+- Plan 114.4.4.4 closure-from-const-fn — closure capture semantics
+  на compile-time, runtime closure с baked const captures. Requires
+  closure runtime integration.
+
+Implementation summary (Plan 114.4.4.5 mono):
+- New module compiler-codegen/src/const_fn_mono.rs (~440 lines).
+- specialize_mixed_const_fns(module) entry point.
+- AST walker collects (mixed_fn, const_args) call sites; generates
+  specialization names `<orig>__cst_<idx>`.
+- specialize_fn_decl: clones FnDecl, substitutes const param refs в
+  body с literal values, drops const params from signature.
+- Full AST walker handles все node types (Expr/Stmt/Block/Item).
+- Pipeline integration: main.rs (4 sites) + test_runner.rs.
+- OwnedEvaluator extended: новое field mixed_fns: HashMap<String, FnDecl>
+  alongside mixed_const_params.
+
+Codegen behavior:
+- Mixed fn original AST kept (template).
+- Spec FnDecls inserted в module.items.
+- Call sites rewritten: orig name → spec name + drop const args.
+- C output has both original (potentially dead) + all specializations.
+
+V1 fixture removed (V4-superseded):
+- body_allocation_neg.nv (V4 Ф.4 allows tuple/record literals).
+
+Tests (plan114_4_4/, 1 new):
+- mono_specialization_ok: scale(const factor, x) с 3 call sites —
+  factor=3 (twice, reuses spec) + factor=10 (new spec) → 2 distinct
+  specializations.
+
+Verification: 13/13 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3
+= 42/42 PASS на release nova-cli.
+
+Acceptance: A33 ✅. A34/A35 → Plan 114.4.4.3/4 (V4.2+).
+
+Markers closed (Plan 114.4.3 chain): 7 of 9 V2.1/V3 followups closed
+across Plan 114.4.4 умbrella:
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅
+- [M-114.4.3-pattern-record-sum] ✅
+- [M-114.4.3-t-reflection] ✅ (primitives)
+- [M-114.4.3-mono-specialization] ✅ (этот session)
+
+Remaining 2 deferred:
+- [M-114.4.3-runtime-hof] → Plan 114.4.4.3.
+- [M-114.4.3-closure-from-const-fn] → Plan 114.4.4.4.

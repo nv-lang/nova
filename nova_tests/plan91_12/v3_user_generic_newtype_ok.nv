@@ -1,0 +1,68 @@
+// Plan 91.12 V2 followup — positive test: user-level generic newtype
+// `type X[T](ptr)` works end-to-end.
+//
+// Tests:
+//  1. Generic newtype constructor `MyHandle[int](v)` / `MyHandle[str](v)`
+//  2. `.0` access to extract inner ptr value
+//  3. Distinct T-parameterized instances share same C ABI (nova_ptr)
+//  4. Multi-param generic newtype `type X[T, U](ptr)`
+//
+// Plan 115 V1 поддерживал только non-generic `type SqHandle(ptr)`. Plan
+// 91.12 V2 followup extends к generic case — `type X[T](ptr)` per-T mono
+// shares typedef nova_ptr (T is type-system fiction, identical C ABI).
+//
+// Codegen integration:
+//   - emit_type_decl generic branch для Newtype: emit'ает
+//     `typedef nova_ptr Nova_X;` + регистрирует type_aliases entry.
+//   - emit_call constructor intercept расширен для TurboFish form
+//     `MyHandle[int](raw)` → identity cast `((nova_ptr)(raw))`.
+//
+// **Acceptance:** Same как Plan 115 T3.1-T3.2 (non-generic `type SqHandle(ptr)`),
+// но с generic параметром T.
+
+module plan91_12.v3_user_generic_newtype_ok
+
+type MyHandle[T](ptr)
+type MultiParam[T, U](ptr)
+
+external fn p115_int_to_ptr(value int) -> ptr
+
+test "generic newtype — construct + .0 для int" {
+    ro raw = p115_int_to_ptr(42)
+    ro h = MyHandle[int](raw)
+    ro back = h.0
+    assert(back == raw)
+}
+
+test "generic newtype — construct + .0 для str" {
+    ro raw = p115_int_to_ptr(100)
+    ro h = MyHandle[str](raw)
+    ro back = h.0
+    assert(back == raw)
+}
+
+test "generic newtype — distinct T'ы share same C ABI (nova_ptr)" {
+    ro raw = p115_int_to_ptr(1)
+    ro hi = MyHandle[int](raw)
+    ro hs = MyHandle[str](raw)
+    assert(hi.0 == hs.0)  // same underlying ptr value
+}
+
+test "multi-param generic newtype — `type X[T, U](ptr)`" {
+    ro raw = p115_int_to_ptr(7)
+    ro h = MultiParam[int, str](raw)
+    assert(h.0 == raw)
+}
+
+test "generic newtype + null ptr" {
+    ro h = MyHandle[int](null ptr)
+    assert(h.0 == null ptr)
+}
+
+test "multiple instances — independent values" {
+    ro h1 = MyHandle[int](p115_int_to_ptr(1))
+    ro h2 = MyHandle[int](p115_int_to_ptr(2))
+    ro h3 = MyHandle[str](p115_int_to_ptr(3))
+    assert(h1.0 != h2.0)
+    assert(h2.0 != h3.0)
+}

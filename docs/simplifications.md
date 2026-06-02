@@ -29419,3 +29419,158 @@ Nova match-or-exceeds на 14/14 capabilities + 3 Nova-only superior:
 wall-time).
 
 Plan 124 umbrella ✅ FULLY CLOSED.
+
+---
+
+## Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support (2026-06-02)
+
+**Status:** ✅ CLOSED 2026-06-02. Extends Plan 91.12 V2 sync types migration к user-level case.
+
+**CLOSED markers:**
+- ✅ `[M-115-newtype-constructor-generic]` — generic newtype `type X[T](ptr)` constructor + `.0` access. V1 (Plan 115) supported только non-generic `type X(ptr)`. V2 followup extends к generic forms — `type Region[T](ptr)`, `type DualHandle[T, U](ptr)` (multi-param). All monomorphizations share C ABI (single `typedef nova_ptr Nova_X;` без per-T emission); T parameter — type-system fiction (compile-time phantom discrimination, zero runtime overhead).
+
+**Codegen integration (compiler-codegen/src/codegen/emit_c.rs):**
+
+1. **emit_type_decl generic-types branch** — добавлен `TypeDeclKind::Newtype` handler:
+   ```rust
+   if let TypeDeclKind::Newtype(inner) = &t.kind {
+       // skip RUNTIME_BACKED_NEWTYPES (OnceCell/Lazy/Condvar — handled by per-T mono)
+       // else: emit `typedef nova_ptr Nova_X;` + register type_aliases
+   }
+   ```
+   Generic newtypes (Record/Sum) уже handled; Newtype был пропущен — fall through на `return Ok(())` без emission.
+
+2. **emit_call constructor intercept** — расширен для TurboFish form:
+   ```rust
+   let name_opt = match &func.kind {
+       ExprKind::Ident(n) => Some(n),
+       ExprKind::TurboFish { base, .. } => {
+           if let ExprKind::Ident(n) = &base.kind { Some(n) } else { None }
+       }
+       _ => None,
+   };
+   ```
+   Без этого `MyHandle[int](raw)` parses как `Call { func: TurboFish { base: Ident, .. }, .. }` и не матчит на старый `if let Ident(name) = &func.kind`.
+
+**Spec:** D214 amended с new §«Generic opaque handle» — `type X[T](ptr)` use case (phantom T для compile-time discrimination + identical C ABI).
+
+**Doc:** docs/migration/d126-to-tuple-newtype.md — added «Generic user FFI handle» section.
+
+**Tests:**
+- NEW `nova_tests/plan91_12/v3_user_generic_newtype_ok.nv` — 6 test blocks (single-param, str-param, multi-param `[T, U]`, null ptr, multiple instances).
+- Regression: plan91_12 7/7 + buffers 11/11 + plan115 11/11 + plan103_5 20/20 PASS.
+
+**CLOSED markers (V2 followup #2, 2026-06-02):**
+- 🟢 `[M-91.12-generic-newtype-non-ptr-inner]` → **CLOSED 2026-06-02**. Generic newtype над любым primitive типом supported: `type Counter[T](int)`, `type Tag[T](str)`, `type Flag[T](bool)`, `type Measure[T](f64)`, `type Tagged[T, U](int)` — all positive cases verified (11 test blocks в `v3_generic_newtype_non_ptr_inner_ok.nv`). Edge case `type Wrap[T](T)` (inner uses generic param) — REJECTED type-checker'ом с NEW `[E_GENERIC_NEWTYPE_INNER_USES_PARAM]` + migration hint к record form `type Wrap[T] { value T }`. Implementation: `typeref_uses_param` helper в types/mod.rs + validation в `TypeDeclKind::Newtype` walk. Spec D214 amended (`§«Inner non-ptr types»` + reject section); migration guide updated с non-ptr examples + record-form alternative.
+
+**Design lesson:**
+- **Generic newtype над ptr ≠ generic newtype над other primitives.** Ptr-newtypes share single typedef (T is phantom). Inner non-ptr types (`type Wrap[T](int)`) might want per-T monomorphization для proper phantom-type ABI distinction. Текущая impl unified single typedef для both — works for current use cases (FFI handles).
+- **TurboFish form для type-constructor** — generic instantiation в Nova проходит через TurboFish AST node. Constructor intercepts должны handle оба формы: `Ident` (non-generic) и `TurboFish{base:Ident}` (generic).
+
+---
+
+## Plan 114.4.4 finish — Ф.4 + Ф.5 V4 landed (2 markers closed) — 2026-06-02
+
+**Status:** 🟢 partial close (2 of 5 remaining V4 phases). Branch
+`plan-114.4.4-finish` off main `a78f837d1b1`.
+
+**Closed markers:**
+- ✅ `[M-114.4.3-pattern-record-sum]` — Ф.4 record/sum/tuple patterns.
+- ✅ `[M-114.4.3-t-reflection]` для primitives — Ф.5 sizeof/align_of.
+
+**Implementation:**
+
+1. **ConstValue extension:** Tuple/Variant/Record variants added для
+   structured comptime data. Manual PartialEq/Hash extended.
+
+2. **Variant constructor heuristic:** `Call(Ident(Name), args)` где
+   `Name` начинается с uppercase letter и НЕ const fn → constructs
+   `ConstValue::Variant`. Distinguishes от const fn calls (lowercase
+   convention).
+
+3. **Type reflection primitives:** sizeof/align_of intrinsics возвращают
+   hardcoded sizes per default 64-bit ABI (int=8, char=4, bool=1, etc.).
+   Recognized as builtin identifiers в name resolution (special-case
+   в `is_known`). Replaced literal в rewriter pass до codegen.
+
+4. **try_literal_to_value extended:** Unary/Binary/As/TupleLit/Call
+   (variant or sizeof) pre-evaluation. Позволяет args на const fn
+   call sites быть non-trivial constexpr expressions.
+
+**Tests: 4 new fixtures.** 12/12 plan114_4_4 + 14/14 plan114_4_3 +
+16/16 plan114_4_2 = 42/42 PASS на release nova-cli.
+
+**Remaining V4.1+ (extracted plans, ship-when-triggered):**
+- Plan 114.4.4.3 — runtime HOF trampoline.
+- Plan 114.4.4.4 — closure-returning const fn.
+- Plan 114.4.4.5 — true per-const-arg monomorphization.
+
+**Design lessons:**
+
+1. **Variant constructor heuristic** — case-sensitivity convention
+   (TitleCase = variant, lowercase = fn) — clean без explicit type
+   system integration. Works for Option/Result/User-defined sum types.
+
+2. **Primitive sizeof hardcode** — V4.0 conservative. Real type
+   reflection (records / generics / sum-type layout) требует deep
+   type system integration через TypeInfo trait или sizeof attribute
+   for records. Followup Plan 114.4.4.2.
+
+3. **Walk module даже без const fn** — early-return removed чтобы
+   sizeof intrinsics на module-level `const SIZE = sizeof[int]()`
+   были replaced литералом без const fn declarations в module.
+
+4. **Pattern bindings в arm body** — match arm pattern bindings
+   collected via collect_const_fn_pattern_bindings и добавлены в
+   arm-local scope для body/guard validation. Без этого `Some(x)`
+   pattern в arm body refers `x` failed name resolution.
+
+5. **Safety hatches design pattern** — Ф.6/Ф.7/Ф.8 require deep codegen
+   integration (trampoline ABI, closure capture, mono pipeline).
+   Extracted as Plan 114.4.4.3/4/5 для focused dev-day каждый. NOT
+   silent simplification.
+## Plan 91.12 V2 followup #3 — TypeRef::uses_any_type_param refactor (2026-06-02)
+
+**Status:** ✅ CLOSED 2026-06-02. Code-smell cleanup из V2 followup #2 design lesson «Helper duplication acceptable across modules» (reverted — extracted production-grade common helper).
+
+**CLOSED markers:**
+- ✅ `[M-91.12-typeref-uses-param-dedup]` — refactor: removed duplicate `type_ref_uses_any_type_param` (emit_c.rs:9225) and `typeref_uses_param` (types/mod.rs) implementations. Single source of truth теперь `TypeRef::uses_any_type_param(&self, params: &HashSet<String>) -> bool` method в `ast::mod.rs`. Both callers (Plan 48 Ф.3 erasure detection + Plan 91.12 V2 newtype reject guard) теперь thin `#[inline]` wrappers (3 lines vs 25 lines each). 18 unit tests added (10 positive + 8 negative cases) covering all TypeRef variants — Named (single-segment + multi-segment), nested generics, Array, FixedArray, Tuple, Func (params + return), Protocol (methods), Readonly, Unit. Note: unit tests cannot run via `cargo test` currently due to pre-existing broken tests in emit_c.rs::mem_ordering_tests (Span import path bug), unrelated к refactor. Integration coverage через nova test (plan91_12 + plan48 + buffers + plan115 + plan103_5 = 58/58 PASS) verifies behavior preservation 1:1.
+
+**Design lesson:**
+- **"Acceptable duplication" — temporary state, not destination.** Plan 91.12 V2 followup #1 added duplicated helper в types/mod.rs (mirror emit_c.rs version) с rationale «avoid cross-module dependency». V2 followup #2 added similar reasoning. By V2 followup #3 (third occurrence), the «temporary» pattern hardened into code smell — extracted к ast module method (`TypeRef` already cross-module shared type, no new dependency introduced). **Rule:** Two parallel impls of same helper = audit для possible extraction; three impls = mandatory extraction.
+
+---
+
+## Plan 114.4.4.5 V4.1 — mono-specialization landed (2026-06-02)
+
+**Status:** 🟢 V1 LANDED. Branch `plan-114.4.4-v4-1` off main `06b41fb50db`.
+
+**Closed marker:** ✅ `[M-114.4.3-mono-specialization]`.
+
+**What:** True per-const-arg monomorphization для mixed const fns
+(Rust const generics-style). Each unique (mixed_fn, const_args) tuple
+→ separate specialized C fn с const params substituted as literals в
+body, dropped из signature.
+
+**Implementation:** New module `compiler-codegen/src/const_fn_mono.rs`
+(~440 LOC). Pipeline placement: AFTER `rewrite_const_fn_calls`.
+Full AST walker covers all expression/statement node types.
+
+**Test:** `mono_specialization_ok` — scale(const factor, x) с 3 call
+sites → 2 unique specializations + reuse case.
+
+**Backward-compat:** 1 V4-superseded fixture removed (body_allocation_neg —
+V4 Ф.4 allows tuple/record literals).
+
+**V4.1+ deferred (focused dev sessions required):**
+- Plan 114.4.4.3 runtime-HOF — fundamental challenge: fully-const fn
+  has all-const params, can't accept runtime args. Only no-param const
+  fn can become runtime fn pointer. Mixed const fn could via per-call
+  trampoline но that's specialization-equivalent.
+- Plan 114.4.4.4 closure-from-const-fn — closure capture compile-time
+  semantics + runtime closure с baked-in const captures.
+
+**Design lesson:** AST walker pattern для specialization rewrite —
+recursive descent through all ExprKind / StmtKind variants. Big code
+volume (~250 LOC walker boilerplate) but mechanical. Better to put в
+separate module чем burden const_fn_eval.rs further.

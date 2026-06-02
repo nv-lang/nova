@@ -193,13 +193,22 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 - ✅ Friendly UX errors (runtime-let + HOF detection).
 - ✅ Loops в body (for/while/loop + mut + break/continue).
 
-**Что остаётся открытым (Q7 V4+):**
+**V4 extensions (Plan 114.4.4 finish, 2026-06-02):**
+- ✅ Record/sum/tuple patterns в match (closes [M-114.4.3-pattern-record-sum]).
+- ✅ Type reflection sizeof[T]/align_of[T] для primitives (closes
+  [M-114.4.3-t-reflection] для primitive surface).
+
+**V4.1 extensions (Plan 114.4.4 V4.1 session, 2026-06-02):**
+- ✅ Per-const-arg mono-specialization для mixed const fns (closes
+  [M-114.4.3-mono-specialization]).
+
+**Что остаётся открытым (Q7 V4.1+):**
 - Comptime-функции имеют доступ к типам как первый класс?
-  → V3 — `[M-114.4.3-t-reflection]`.
+  → V4.0 sizeof/align для primitives ✅; records/generics → Plan 114.4.4.2.
 - Можно ли генерировать код во время компиляции?
   → Нет (без macro-system; future Q-блок).
 - Reflection во время компиляции — да или нет?
-  → Нет в V2.0 (type intrinsics).
+  → V4 primitives sizeof/align_of ✅; records/generics → V4.1.
 - Custom DSL через comptime — допускается?
   → Нет (out-of-scope).
 - ✅ Loops (`for`/`while`) в body — закрыто Plan 114.4.4 Ф.3 (2026-06-01).

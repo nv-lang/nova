@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_GENERIC_NEWTYPE_INNER_USES_PARAM
+//
+// Plan 91.12 V2 followup [M-91.12-generic-newtype-non-ptr-inner] —
+// negative: generic newtype с inner использующим generic param T
+// (не concrete type).
+//
+// Use case: `type Wrap[T](T)` — wrap a T value.
+//
+// Tuple newtype = transparent typedef (Plan 115 D214); same C ABI shared
+// across mono'd instances. Per-T storage variance (sizeof(T) differs) —
+// это record-semantics, не newtype. User должен migrate к record form:
+//   type Wrap[T] { value T }   ← properly mono'd per T
+//
+// Type-checker rejects на `inner uses generic param` чтобы:
+//  1. Предотвратить C compile error (Nova_T placeholder unresolved)
+//  2. Direct user к корректному решению (record form)
+//
+// Phantom T case (concrete inner) — handled by V2 (✓):
+//   type Tag[T](str)      ← works
+//   type Counter[T](int)  ← works
+
+module plan91_12.v3_generic_newtype_inner_uses_param_neg
+
+type Wrap[T](T)

@@ -145,6 +145,51 @@ body; per-T mono path emits the actual C struct + methods.
 - [Lazy[T]] (Plan 91.12 V2) — `type Lazy[T](ptr)`
 - [Condvar] (Plan 91.12 V2) — `type Condvar(ptr)` (non-generic)
 
+#### Generic user FFI handle (Plan 91.12 V2 followup, 2026-06-02)
+
+Generic newtype над `ptr` поддерживается для user-level FFI:
+
+```nova
+type Region[T](ptr)                   // phantom T
+type DualHandle[T, U](ptr)
+
+ro r = Region[int](some_ptr)
+ro d = DualHandle[int, str](raw)
+ro inner = r.0                        // .0 access OK
+```
+
+Все monomorphizations (`Region[int]`, `Region[str]`) share C ABI
+(`Nova_Region ≡ nova_ptr`); T — type-system fiction (compile-time
+phantom discrimination, zero runtime overhead). См. spec D214
+§«Generic opaque handle».
+
+**Inner non-ptr types** (2026-06-02 followup, CLOSED):
+
+```nova
+type Counter[T](int)              // tagged int counter
+type Tag[T](str)                  // typed string wrapper
+type Flag[T](bool)                // typed bool flag
+type Measure[T](f64)              // tagged f64 (e.g. seconds vs meters)
+type Tagged[T, U](int)            // multi-param phantom
+```
+
+Все mono'd instances share single typedef over inner C type (phantom T
+discrimination, identical runtime ABI). Use cases: typed counters,
+Email/UserId strings, Visible/Hidden flags, measurement units.
+
+**Inner uses generic param** (`type Wrap[T](T)`) — **REJECTED**:
+
+```nova
+// ✗ E_GENERIC_NEWTYPE_INNER_USES_PARAM
+type Wrap[T](T)
+
+// ✓ Use record form для per-T mono
+type Wrap[T] { value T }
+```
+
+Tuple newtype = transparent typedef; per-T storage variance — это
+record-semantics, не newtype.
+
 ### Pattern 3 — `external type X consume` (D163 FFI resource handle)
 
 **When:** FFI resource handle (File, Socket, custom DB connection)

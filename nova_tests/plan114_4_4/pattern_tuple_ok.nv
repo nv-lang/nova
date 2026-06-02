@@ -1,0 +1,22 @@
+// Plan 114.4.4 Ф.4 positive: tuple destructuring pattern в const fn match.
+
+module plan114_4_4.pattern_tuple_ok
+
+fn classify(const x int, const y int) -> const int =>
+    match (x, y) {
+        (0, 0) => 0
+        (0, _) => 1
+        (_, 0) => 2
+        _ => 3
+    }
+
+test "tuple pattern" {
+    const A = classify(0, 0)
+    const B = classify(0, 5)
+    const C = classify(7, 0)
+    const D = classify(3, 4)
+    assert(A == 0)
+    assert(B == 1)
+    assert(C == 2)
+    assert(D == 3)
+}
