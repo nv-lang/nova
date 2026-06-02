@@ -25562,18 +25562,41 @@ _cp++; \
         // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
         self.novaopt_value_types.borrow_mut()
             .insert(sanitized.to_string(), c_ty.to_string());
-        let line = format!(
-            "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
-            sanitized, c_ty, sanitized);
+        // Plan 118 Ф.5 (D216 §7): NPO codegen — для pointer-typed inner
+        // emit single-pointer layout (no tag field, sizeof == 8 на 64-bit;
+        // NULL = None convention). Direct C-FFI ABI compatibility — matches
+        // `malloc`/`fopen`/`dlopen` returns.
+        //
+        // NPO-eligible: c_ty ends with '*' covers
+        //   - `*T` family (Plan 118 — emit `T*` / `const T*` / `void*`)
+        //   - `ptr` (Plan 115 — emit `nova_ptr` typedef'd as `void*`)
+        //   - `*fn(...)` function pointers
+        //   - Newtype-over-pointer (через type_ref_to_c lowering)
+        //
+        // NPO НЕ применяется к: nested `Option[Option[*T]]` — outer Option's
+        // inner c_ty is `NovaOpt_<inner_sani>` (struct, not pointer) → falls
+        // через в tagged branch automatically (W_OPTION_DOUBLE_NESTED
+        // warning planned A22 followup).
+        let is_pointer = c_ty.ends_with('*');
+        let is_npo = is_pointer; // V1: pointer-only detection
+        let line = if is_npo {
+            // NPO layout: single-pointer struct (sizeof = sizeof(c_ty) = 8).
+            // No tag field — NULL = None, !NULL = Some.
+            format!(
+                "typedef struct NovaOpt_{} {{ {} value; }} NovaOpt_{};\n",
+                sanitized, c_ty, sanitized)
+        } else {
+            // Standard tagged layout (sizeof = 8 + sizeof(c_ty) padded).
+            format!(
+                "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
+                sanitized, c_ty, sanitized)
+        };
         self.novaopt_typedefs_buf.borrow_mut().push_str(&line);
 
         // Plan 39 Issue A: auto-generate `nova_opt_eq_<sanitized>` helper.
         // Без него `r == None` где `r: NovaOpt_<T>` падает с undefined symbol.
-        // Сравнение: по tag. Если tag одинаковый — None: всегда equal; Some:
-        // сравниваем value. Для pointer-types — pointer equality (как Rust для
-        // `&T`). Для value-структур — memcmp (как для tuples). Для scalar —
-        // плоское `==`.
-        let is_pointer = c_ty.ends_with('*');
+        // Сравнение: по tag (или value==NULL для NPO). Если tag одинаковый —
+        // None: всегда equal; Some: сравниваем value.
         let is_scalar = matches!(c_ty, "nova_int" | "nova_bool" | "nova_byte"
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
@@ -25583,13 +25606,23 @@ _cp++; \
         } else {
             format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
         };
-        let eq_fn = format!(
-            "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
-             \x20   if (a.tag != b.tag) return 0;\n\
-             \x20   if (a.tag == NOVA_TAG_Option_None) return 1;\n\
-             \x20   return {body};\n\
-             }}\n",
-            sani = sanitized, body = cmp_body);
+        let eq_fn = if is_npo {
+            // NPO eq: value-based identity (NULL == NULL = None equal;
+            // p1 == p2 for Some). No tag field.
+            format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   return a.value == b.value;\n\
+                 }}\n",
+                sani = sanitized)
+        } else {
+            format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if (a.tag != b.tag) return 0;\n\
+                 \x20   if (a.tag == NOVA_TAG_Option_None) return 1;\n\
+                 \x20   return {body};\n\
+                 }}\n",
+                sani = sanitized, body = cmp_body)
+        };
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
 
         // Plan 95.bis Ф.2: lazy-emit `unwrap_or` для не-runtime типов —
@@ -25599,6 +25632,57 @@ _cp++; \
         // C-redefinition collision при оставлении lazy-emit.
         //
         // (Раньше тут также генерились is_some/is_none — Plan 95 Ф.4.2.)
+    }
+
+    /// Plan 118 Ф.5 (D216 §7): determine whether sanitized NovaOpt name is
+    /// NPO-eligible (pointer-typed inner — single-pointer layout без tag).
+    /// V1 detection: c_ty ends_with('*') covers `*T` family + `ptr` typedef +
+    /// `*fn(...)` + newtype-over-pointer (after type_ref_to_c lowering).
+    fn is_novaopt_npo(&self, sanitized: &str) -> bool {
+        self.novaopt_value_types.borrow()
+            .get(sanitized)
+            .map_or(false, |c_ty| c_ty.ends_with('*'))
+    }
+
+    /// Plan 118 Ф.5: emit `Some(value)` constructor для NovaOpt — NPO form
+    /// (just `{.value = v}`) или tagged form (`{.tag = SOME, .value = v}`).
+    fn option_some_expr(&self, sanitized: &str, value_expr: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("((NovaOpt_{}){{.value = ({})}})", sanitized, value_expr)
+        } else {
+            format!("((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                sanitized, value_expr)
+        }
+    }
+
+    /// Plan 118 Ф.5: emit `None` constructor для NovaOpt — NPO form
+    /// (`{.value = NULL}`) или tagged form (`{.tag = NONE}`).
+    fn option_none_expr(&self, sanitized: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("((NovaOpt_{}){{.value = NULL}})", sanitized)
+        } else {
+            format!("((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})", sanitized)
+        }
+    }
+
+    /// Plan 118 Ф.5: emit `is None` check для NovaOpt — NPO form
+    /// (`v.value == NULL`) или tagged form (`v.tag == NONE`).
+    fn option_is_none_check(&self, opt_var: &str, sanitized: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("{}.value == NULL", opt_var)
+        } else {
+            format!("{}.tag == NOVA_TAG_Option_None", opt_var)
+        }
+    }
+
+    /// Plan 118 Ф.5: emit `is Some` check для NovaOpt — NPO form
+    /// (`v.value != NULL`) или tagged form (`v.tag == SOME`).
+    fn option_is_some_check(&self, opt_var: &str, sanitized: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("{}.value != NULL", opt_var)
+        } else {
+            format!("{}.tag == NOVA_TAG_Option_Some", opt_var)
+        }
     }
 
     /// Plan 59 Ф.7.5: резолвит (T, E) generics `Result[T,E]` в concrete
