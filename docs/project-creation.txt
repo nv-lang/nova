@@ -27296,6 +27296,39 @@ A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
 A19 ✅, A20 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29,
 A30, A33, A34, A35.
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5.9 A22 ✅ CLOSED — W_OPTION_DOUBLE_NESTED lint
+==========================================================================
+
+User-requested closure A22 — W_OPTION_DOUBLE_NESTED warning emission.
+
+Implementation (2 commits):
+1. 3725af23fcd — feat(Ф.5.9 A22): lints.rs lint_option_double_nested
+   pass:
+   - typeref_is_nested_option_ptr: recursive matcher
+     Option[Option[<pointer-like>]]
+   - is_pointer_like: TypeRef::Pointer (Plan 118) + Named["ptr"] (Plan 115)
+   - walk_typeref_for_a22: recurses через все TypeRef children
+   - lint_option_double_nested: top-level pass — Fn signatures
+     (params/return/effects), TypeDecl bodies (Record/Sum/Newtype/Alias),
+     Const/Let ascriptions
+2. a1c8e9b0617 — test(A22): t5_warn_option_double_nested.nv
+   verifies warning fires для Option[Option[ptr]] external fn signature.
+
+False-positive prevention verified:
+- plan95 option_predicates_migrated (Option[Option[int]]) — unchanged
+- plan98 nested_option_inference (same) — unchanged
+- Non-pointer innermost не triggers warning.
+
+plan118: 37/0 PASS (18 positive + 18 NEG + 1 WARN).
+Spec D216 §7 updated: V4 ACTIVE 2026-06-02 + V5 deferred list
+(only A21 remainder left).
+
+Plan 118 grand-total: 21 of 35 acceptance criteria closed (60%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A20 ✅, A21 partial, A22 ✅, A23 ✅, A24, A25, A26, A28 partial,
+A29, A30, A33, A34, A35.
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
