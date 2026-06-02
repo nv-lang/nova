@@ -6883,6 +6883,15 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 > **Plan 91.12 V2 amend (2026-06-02):** generic tuple-newtype `type X[T](ptr)`
 > now supported (was V1-limited to non-generic `type X(ptr)`). См. §«Generic
 > opaque handle» ниже. Closes `[M-115-newtype-constructor-generic]`.
+>
+> ⚠️ **AMENDED by Plan 118 Ф.5.7 (A23) 2026-06-02** — `null ptr` literal
+> **hard-retracted** (E_NULL_PTR_RETRACTED_USE_OPTION). After Ф.5 NPO
+> codegen (A19/A21), `Option[ptr]`/`Option[*T]` provide null-safety
+> через type-system (single-pointer NPO layout, NULL=None convention).
+> `null ptr` literal становится redundant и ambiguous (Some(null ptr)
+> indistinguishable от None под NPO). Migration: `null ptr` →
+> `(0 as ptr)` (mechanical, NULL=(void*)0 в C ABI) либо `Option[ptr]
+> = None` для new code. Closes followup `[M-115-null-ptr-to-option-after-npo]`.
 
 ### Что
 
@@ -7464,8 +7473,9 @@ TcpStream, SocketAddr, TcpListener, File, etc — все benefit automatically).
   c_ty pointer), outer Option uses tagged (inner c_ty = struct).
   W_OPTION_DOUBLE_NESTED warning — A22, требует lint framework
   integration (detection logic documented в walk_typeref).
-- `null ptr` literal retraction (D214 amend) — V2 A23; existing
-  `null ptr` continues to work для Plan 115 backward compat.
+- ~~`null ptr` literal retraction~~ — **A23 ✅ CLOSED 2026-06-02**
+  (commit). D214 amended; parser emits `E_NULL_PTR_RETRACTED_USE_OPTION`;
+  14 fixtures migrated к `(0 as ptr)`. Closes `[M-115-null-ptr-to-option-after-npo]`.
 
 ```nova
 external fn malloc(sz usize) -> Option[*u8]
