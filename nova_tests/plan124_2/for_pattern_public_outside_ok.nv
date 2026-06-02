@@ -1,0 +1,22 @@
+// Plan 124.2 — positive: for-loop с простым binding'ом + public field
+// access — outside any type scope, OK. Demonstrates that for-loop on
+// public-only types passes priv checks (no false-positive).
+module plan124_2.for_pattern_public_outside_ok
+
+export type Point {
+    ro x f64
+    ro y f64
+}
+
+fn sum_x(points []Point) -> f64 {
+    mut total = 0.0
+    for p in points {
+        total = total + p.x
+    }
+    total
+}
+
+test "Plan 124.2: for-loop public-field access — OK" {
+    ro pts = [Point { x: 1.0, y: 2.0 }, Point { x: 3.0, y: 4.0 }]
+    assert(sum_x(pts) == 4.0)
+}

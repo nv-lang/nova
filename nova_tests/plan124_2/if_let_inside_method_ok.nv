@@ -1,0 +1,25 @@
+// Plan 124.2 — positive: if-let pattern на priv field внутри
+// static method body — OK (recv = Account).
+module plan124_2.if_let_inside_method_ok
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// Static method scope — priv pattern access allowed.
+export fn Account.amount_of(acc Account) -> f64 {
+    mut got = 0.0
+    if Account { money, .. } = acc {
+        got = money
+    }
+    got
+}
+
+test "Plan 124.2: if-let на priv внутри static метода" {
+    ro acc = Account.new("bob")
+    assert(Account.amount_of(acc) == 0.0)
+}

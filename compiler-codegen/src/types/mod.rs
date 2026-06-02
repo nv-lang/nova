@@ -2873,14 +2873,37 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                             }
-                            // Plan 124 (D220): priv field INIT check — record literal
+                            // Plan 124 (D220/D221): priv field INIT check — record literal
                             // outside type-method scope cannot init priv fields.
                             if let TypeDeclKind::Record(rec_fields) = &td.kind {
                                 let current_recv = self.current_recv_type.borrow();
                                 let allowed = current_recv.as_deref() == Some(last.as_str());
                                 if !allowed {
+                                    let has_priv = rec_fields.iter().any(|fd| fd.priv_field);
                                     for f in fields {
-                                        if f.is_spread { continue; }
+                                        // Plan 124.2 (D221 §5): spread `...other` outside
+                                        // type-method scope on a type WITH priv fields
+                                        // — implicitly initializes priv via copy → emit
+                                        // E_PRIV_FIELD_INIT_SPREAD.
+                                        if f.is_spread {
+                                            if has_priv {
+                                                errors.push(Diagnostic::new(
+                                                    format!(
+                                                        "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
+                                                         spread `...` in record literal of `{}` \
+                                                         outside type-method scope: type has \
+                                                         private fields which would be \
+                                                         implicitly initialized via copy \
+                                                         (Plan 124 / D221 §5). Hint: use \
+                                                         factory method `{}.new(...)` or list \
+                                                         each public field explicitly.",
+                                                        last, last,
+                                                    ),
+                                                    f.span,
+                                                ));
+                                            }
+                                            continue;
+                                        }
                                         if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == f.name) {
                                             if fdecl.priv_field {
                                                 errors.push(Diagnostic::new(
@@ -3131,43 +3154,10 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Let(d) => {
                 self.f1_expr(&d.value, gs, scope, errors);
                 self.f4_check_value(&d.value, scope, errors);
-                // Plan 124 (D220): priv field PATTERN check — record destructure
-                // outside type-method scope cannot bind priv fields.
-                if let Pattern::Record { fields, .. } = &d.pattern {
-                    if let Some(scrutinee_ty) = self.infer_expr_type(&d.value, scope) {
-                        if let TypeRef::Named { path, .. } = &scrutinee_ty {
-                            if let Some(tname) = path.last() {
-                                if let Some(td) = self.types.get(tname.as_str()) {
-                                    if let TypeDeclKind::Record(rec_fields) = &td.kind {
-                                        let current_recv = self.current_recv_type.borrow();
-                                        let allowed = current_recv.as_deref() == Some(tname.as_str());
-                                        if !allowed {
-                                            for pf in fields {
-                                                if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == pf.name) {
-                                                    if fdecl.priv_field {
-                                                        errors.push(Diagnostic::new(
-                                                            format!(
-                                                                "[E_PRIV_FIELD_PATTERN] cannot \
-                                                                 destructure private field `{}.{}` \
-                                                                 в pattern outside type-method scope. \
-                                                                 Field marked `priv` (Plan 124 / D220). \
-                                                                 Hint: bind value to a variable then \
-                                                                 access via public methods of `{}`, or \
-                                                                 move destructure into a method of `{}`.",
-                                                                tname, pf.name, tname, tname,
-                                                            ),
-                                                            d.value.span,
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // Plan 124 (D220/D221): priv field PATTERN check — recursive,
+                // covers nested destructure через sub-field types.
+                let scrut_ty = self.infer_expr_type(&d.value, scope);
+                self.check_priv_pattern_recursive(&d.pattern, scrut_ty.as_ref(), errors);
                 // Ф.1: annotation ↔ RHS.
                 if let (Some(ann), Some(name)) =
                     (&d.ty, pattern_simple_name(&d.pattern))
@@ -3307,8 +3297,11 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_else(eb, gs, scope, errors);
                 }
             }
-            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            ExprKind::IfLet { pattern, scrutinee, then, else_, .. } => {
                 self.f1_expr(scrutinee, gs, scope, errors);
+                // Plan 124.2 (D221): pattern destructure priv-field check.
+                let scrut_ty = self.infer_expr_type(scrutinee, scope);
+                self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
                 self.f1_block(then, gs, scope, errors);
                 if let Some(eb) = else_ {
                     self.f1_else(eb, gs, scope, errors);
@@ -3316,7 +3309,10 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.f1_expr(scrutinee, gs, scope, errors);
+                // Plan 124.2 (D221): each arm's pattern checked vs scrutinee type.
+                let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 for arm in arms {
+                    self.check_priv_pattern_recursive(&arm.pattern, scrut_ty.as_ref(), errors);
                     if let Some(g) = &arm.guard {
                         self.f1_expr(g, gs, scope, errors);
                     }
@@ -3400,6 +3396,10 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(ann) = elem_type {
                     self.f1_check_for_elem(iter, ann, gs, scope, errors);
                 }
+                // Plan 124.2 (D221): destructure pattern in parallel-for.
+                let elem_ty = elem_type.clone()
+                    .or_else(|| self.infer_iter_elem_type(iter, scope));
+                self.check_priv_pattern_recursive(pattern, elem_ty.as_ref(), errors);
                 self.f1_for_body(elem_type, pattern, body, gs, scope, errors);
             }
             ExprKind::For { pattern, iter, body, elem_type, .. } => {
@@ -3409,14 +3409,21 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(ann) = elem_type {
                     self.f1_check_for_elem(iter, ann, gs, scope, errors);
                 }
+                // Plan 124.2 (D221): destructure pattern in for-in loop.
+                let elem_ty = elem_type.clone()
+                    .or_else(|| self.infer_iter_elem_type(iter, scope));
+                self.check_priv_pattern_recursive(pattern, elem_ty.as_ref(), errors);
                 self.f1_for_body(elem_type, pattern, body, gs, scope, errors);
             }
             ExprKind::While { cond, body, .. } => {
                 self.f1_expr(cond, gs, scope, errors);
                 self.f1_block(body, gs, scope, errors);
             }
-            ExprKind::WhileLet { scrutinee, body, .. } => {
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 self.f1_expr(scrutinee, gs, scope, errors);
+                // Plan 124.2 (D221): destructure pattern in while-let.
+                let scrut_ty = self.infer_expr_type(scrutinee, scope);
+                self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
                 self.f1_block(body, gs, scope, errors);
             }
             ExprKind::Loop { body, .. } => {
@@ -3554,6 +3561,91 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
             }
+        }
+    }
+
+    // ── Plan 124.2 (D221): pattern destructure priv-field check ───────────
+    //
+    // Helper recursively walks a Pattern; when it encounters Pattern::Record
+    // on a type with priv fields AND outside type-method scope, emits
+    // E_PRIV_FIELD_PATTERN per priv field. Recurses into sub-patterns
+    // (nested destructure) using the corresponding RecordField type.
+    //
+    // Pattern::Or → recurses into all alternatives (same scrutinee_ty).
+    // Pattern::Binding → recurses into inner.
+    // Pattern::Tuple — Plan 124.4 covers tuple priv; here no-op (no type
+    // info per-position without a concrete TupleType for ad-hoc tuples).
+    // Pattern::Variant — sum-variant pattern; field privacy is encoded
+    // inside variant ctor (out of scope V1).
+    //
+    // The `rest: bool` flag on Pattern::Record marks `..` syntactic
+    // presence; it does NOT bind anything, so does NOT leak priv (D221 §3).
+    fn check_priv_pattern_recursive(
+        &self,
+        pattern: &Pattern,
+        scrutinee_ty: Option<&TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match pattern {
+            Pattern::Record { type_path, fields, span, .. } => {
+                let tname_opt: Option<String> = type_path
+                    .as_ref()
+                    .and_then(|p| p.last().cloned())
+                    .or_else(|| match scrutinee_ty {
+                        Some(TypeRef::Named { path, .. }) => path.last().cloned(),
+                        Some(TypeRef::Readonly(inner, _)) => match inner.as_ref() {
+                            TypeRef::Named { path, .. } => path.last().cloned(),
+                            _ => None,
+                        },
+                        _ => None,
+                    });
+                let Some(tname) = tname_opt else { return };
+                let Some(td) = self.types.get(tname.as_str()) else { return };
+                let TypeDeclKind::Record(rec_fields) = &td.kind else { return };
+                let current_recv = self.current_recv_type.borrow();
+                let allowed = current_recv.as_deref() == Some(tname.as_str());
+                if !allowed {
+                    for pf in fields {
+                        if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == pf.name) {
+                            if fdecl.priv_field {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_PRIV_FIELD_PATTERN] cannot destructure \
+                                         private field `{}.{}` в pattern outside type-\
+                                         method scope. Field marked `priv` (Plan 124 / \
+                                         D220/D221). Hint: bind the value to a variable \
+                                         and access via public methods of `{}`, or move \
+                                         the destructure into a method of `{}`.",
+                                        tname, pf.name, tname, tname,
+                                    ),
+                                    pf.span,
+                                ));
+                            }
+                        }
+                    }
+                }
+                // Recurse into sub-patterns with resolved sub-field type.
+                let _ = span;
+                for pf in fields {
+                    if let Some(sub) = &pf.pattern {
+                        let sub_ty = rec_fields.iter()
+                            .find(|fd| fd.name == pf.name)
+                            .map(|fd| fd.ty.clone());
+                        self.check_priv_pattern_recursive(sub, sub_ty.as_ref(), errors);
+                    }
+                }
+            }
+            Pattern::Or { alternatives, .. } => {
+                for alt in alternatives {
+                    self.check_priv_pattern_recursive(alt, scrutinee_ty, errors);
+                }
+            }
+            Pattern::Binding { inner, .. } => {
+                self.check_priv_pattern_recursive(inner, scrutinee_ty, errors);
+            }
+            // Variant/Tuple/Array/Wildcard/Ident/Literal — no priv-record
+            // semantics at this level (handled in Plan 124.4 для tuple form).
+            _ => {}
         }
     }
 

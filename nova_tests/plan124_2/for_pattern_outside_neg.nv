@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.2 — negative: for-loop pattern на priv field outside
+// type-method scope → E_PRIV_FIELD_PATTERN (D221 §2 — for-loop site).
+module plan124_2.for_pattern_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External fn — for-loop destructures priv `money`.
+fn sum_balances(accs []Account) -> f64 {
+    mut total = 0.0
+    for Account { money, .. } in accs {
+        total = total + money
+    }
+    total
+}
