@@ -6635,7 +6635,7 @@ mod tests {
     #[test]
     fn ro_two_reads_cached() {
         let src = r#"
-module test.ro_cached
+module testmod.ro_cached
 type Point { ro x int, ro y int }
 fn Point @sum_squared() -> int { @x * @x + @y * @y }
 "#;
@@ -6648,7 +6648,7 @@ fn Point @sum_squared() -> int { @x * @x + @y * @y }
     #[test]
     fn ro_single_read_not_cached() {
         let src = r#"
-module test.single
+module testmod.single
 type Point { ro x int }
 fn Point @just_x() -> int { @x }
 "#;
@@ -6661,7 +6661,7 @@ fn Point @just_x() -> int { @x }
     #[test]
     fn escape_hatch_threshold_zero() {
         let src = r#"
-module test.escape
+module testmod.escape
 type P { ro x int }
 fn P @three() -> int { @x + @x + @x }
 "#;
@@ -6675,7 +6675,7 @@ fn P @three() -> int { @x + @x + @x }
     #[test]
     fn closure_capture_skips_cache() {
         let src = r#"
-module test.closure
+module testmod.closure
 type Box { ro v int }
 fn Box @sum() -> int {
     ro f = || @v + 1
@@ -6694,7 +6694,7 @@ fn Box @sum() -> int {
     #[test]
     fn mut_call_boundary_no_cache_after() {
         let src = r#"
-module test.mut_call
+module testmod.mut_call
 type C { mut v int }
 fn C.foo(x int) -> int { x + 1 }
 fn C @work() -> int {
@@ -6715,7 +6715,7 @@ fn C @work() -> int {
     #[test]
     fn mut_write_boundary_truncates() {
         let src = r#"
-module test.mut_write
+module testmod.mut_write
 type C { mut v int }
 fn C mut @work() -> int {
     ro a = @v + @v
@@ -6733,7 +6733,7 @@ fn C mut @work() -> int {
     #[test]
     fn protocol_receiver_skipped() {
         let src = r#"
-module test.proto
+module testmod.proto
 type Counted protocol { count() -> int }
 fn Counted @double_count() -> int { @count() + @count() }
 "#;
@@ -6755,7 +6755,7 @@ fn Counted @double_count() -> int { @count() + @count() }
     #[test]
     fn effect_receiver_skipped() {
         let src = r#"
-module test.effect
+module testmod.eff
 type Log effect { write(s str) -> () }
 "#;
         // Just verify no panic — effect types have no record fields,
@@ -6768,7 +6768,7 @@ type Log effect { write(s str) -> () }
     #[test]
     fn name_collision_suffix() {
         let src = r#"
-module test.collision
+module testmod.collision
 type Box { ro x int }
 fn Box @collide() -> int {
     ro _at_x = 99
@@ -6807,7 +6807,7 @@ fn Box @collide() -> int {
     #[test]
     fn max_per_fn_cap() {
         let src = r#"
-module test.cap
+module testmod.cap
 type Many { ro a int, ro b int, ro c int, ro d int }
 fn Many @sum() -> int {
     @a + @a + @b + @b + @c + @c + @d + @d
@@ -6817,6 +6817,7 @@ fn Many @sum() -> int {
             enabled: true,
             threshold: 2,
             max_per_fn: 2,
+            ..FieldCacheConfig::default()
         };
         let m = run_pass(src, cfg);
         let f = find_fn(&m, "sum");
@@ -6828,7 +6829,7 @@ fn Many @sum() -> int {
     #[test]
     fn static_receiver_skipped() {
         let src = r#"
-module test.static_recv
+module testmod.static_recv
 type P { ro x int }
 fn P.constant() -> int { 42 }
 "#;
@@ -6843,7 +6844,7 @@ fn P.constant() -> int { 42 }
     #[test]
     fn free_fn_skipped() {
         let src = r#"
-module test.free
+module testmod.free
 type P { ro x int }
 fn helper(p int) -> int { p + 1 }
 "#;
@@ -6856,7 +6857,7 @@ fn helper(p int) -> int { p + 1 }
     #[test]
     fn sum_type_receiver_skipped() {
         let src = r#"
-module test.sum
+module testmod.sum
 type Maybe | None | Some(int)
 fn Maybe @is_some() -> bool {
     match @ {
@@ -6876,7 +6877,7 @@ fn Maybe @is_some() -> bool {
     #[test]
     fn deterministic_ordering() {
         let src = r#"
-module test.deterministic
+module testmod.deterministic
 type P { ro b int, ro a int, ro c int }
 fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
 "#;

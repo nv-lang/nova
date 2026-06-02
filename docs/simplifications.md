@@ -29273,3 +29273,47 @@ Pure-call cache extended к args-with-literal-arguments. V3 cached
 **V6.2+ followups:**
 - [M-123.6.1-bench-cpu] — Plan 57 CPU time regression.
 - [M-123.6.1-custom-thresholds] — `--telemetry-baseline-pct-drop=N`.
+
+
+## Plan 123 baseline cargo test fix (2026-06-02)
+
+**Followup** к V*.1 — fix baseline cargo test compilation issues.
+
+**Problem:** `cargo test --release --lib` failed to compile due to
+pre-existing missing-field initializers в test code (added в other
+plans):
+- `ast::FnDecl` missing `cancel_safe_attr` field in 8 sites.
+- `ast::TypeDecl` missing `assoc_consts` + `impl_protocols` в 4 sites.
+- `Span` private re-import от ast module.
+- field_cache::tests::* missing FieldCacheConfig fields.
+
+**Fix:**
+- compiler-codegen/src/codegen/sum_schema_registry.rs: added
+  cancel_safe_attr: false + assoc_consts: vec![] + impl_protocols:
+  vec![] to all FnDecl/TypeDecl test inits.
+- compiler-codegen/src/codegen/emit_c.rs:27995: import Span from
+  `crate::diag::Span` (was `crate::ast::Span` — Span is exposed
+  через diag, not ast).
+- compiler-codegen/src/lints.rs:2167: added assoc_consts.
+- field_cache test fixtures: changed `module test.*` → `module
+  testmod.*` (test is reserved keyword).
+- field_cache test fixtures: changed `module testmod.effect` →
+  `module testmod.eff` (effect is reserved).
+- field_cache::FieldCacheConfig in max_per_fn_cap test: use
+  `..FieldCacheConfig::default()` spread syntax.
+
+**Result:**
+- Baseline cargo test now COMPILES (was completely broken).
+- field_cache::tests: 14/14 PASS.
+- Overall: 453 passed, 40 failed.
+- Remaining 40 failures: pre-existing Plan 114 keyword removal
+  fixtures (`let` keyword) + sum_schema_registry legacy tests +
+  parser tests. All unrelated к field-cache.
+
+**Open followups (separate plans):**
+- [M-baseline-test-let-keyword-fixtures] — migrate ~30 tests
+  using deprecated `let` keyword.
+- [M-baseline-sum-schema-tests] — repair sum_schema_registry
+  routing tests after Plan 100 changes.
+- [M-baseline-parser-closure-full-generics] — closure_full_generics_
+  rejected test syntax change.

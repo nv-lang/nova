@@ -27749,3 +27749,26 @@ D-block: D217 §7 amend V6.1 (~75 lines).
 README: D217 amend V6.1 row.
 
 Open V6.2 followups: Plan 57 CPU bench integration + custom thresholds.
+
+
+================================================================================
+Baseline cargo test fix (2026-06-02)
+================================================================================
+
+Unblocks Plan 123 unit tests. Was completely broken pre-fix.
+
+Fixed:
+- 4 sites missing cancel_safe_attr field в FnDecl test inits.
+- 4 sites missing assoc_consts + impl_protocols в TypeDecl test inits.
+- Span private re-import в emit_c.rs tests.
+- field_cache test fixtures: keyword-reserved module path segments
+  (test, effect) renamed.
+
+Result:
+- cargo test --release --lib now compiles.
+- field_cache::tests: 14/14 PASS.
+- Overall: 453/40.
+
+Remaining 40 failures unrelated к field-cache (Plan 114 keyword
+fixtures + Plan 100 sum_schema legacy + parser closure_full tests).
+Tracked в separate followup markers.
