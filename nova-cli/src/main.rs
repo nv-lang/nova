@@ -99,6 +99,11 @@ struct Cli {
     /// Chain max depth (default 4, min 2).
     #[arg(long = "field-cache-chain-depth", global = true, value_name = "N")]
     field_cache_chain_depth: Option<usize>,
+    /// Plan 123.6.3 (V6.3, 2026-06-02): IPA iterative-closure cap
+    /// (default 10, range 1..=1024). Forensic-only — converges in ≤3
+    /// for typical call graphs; Plan 123.7.3 SCC will supersede.
+    #[arg(long = "field-cache-ipa-iter", global = true, value_name = "N")]
+    field_cache_ipa_iter: Option<usize>,
 
     #[command(subcommand)]
     cmd: Cmd,
@@ -158,6 +163,16 @@ enum Cmd {
         /// gate). Requires --telemetry-cache.
         #[arg(long = "telemetry-baseline", value_name = "FILE")]
         telemetry_baseline: Option<PathBuf>,
+        /// Plan 123.6.3 (V6.3): override the V6.1 affected-percentage
+        /// drop gate. Default 5.0 (percentage points). Negative drops
+        /// larger than this magnitude fail. Requires --telemetry-baseline.
+        #[arg(long = "telemetry-gate-affected-drop", value_name = "F")]
+        telemetry_gate_affected_drop: Option<f64>,
+        /// Plan 123.6.3 (V6.3): override the V6.1 caches-total drop
+        /// gate. Default 10.0 (percent of baseline). Requires
+        /// --telemetry-baseline.
+        #[arg(long = "telemetry-gate-caches-drop", value_name = "F")]
+        telemetry_gate_caches_drop: Option<f64>,
     },
     /// Run a Nova source file via the interpreter.
     Run {
@@ -1323,6 +1338,10 @@ fn cmd_check_telemetry_cache(
     skip: &[String],
     json: bool,
     baseline_path: Option<&Path>,
+    // Plan 123.6.3 (V6.3): overrides for V6.1 hardcoded gate thresholds.
+    // None = use V6.1 defaults (5.0 pp / 10.0 %).
+    gate_affected_drop_override: Option<f64>,
+    gate_caches_drop_override: Option<f64>,
 ) -> Result<()> {
     let owned_root;
     let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
@@ -1460,11 +1479,23 @@ fn cmd_check_telemetry_cache(
         println!("  D217 V4 chain cache:   {}", layer_chain);
     }
 
-    // Plan 123.6.1 (V6.1): CI perf regression gate. If baseline
-    // path provided, compare current metrics. Regression thresholds:
-    // - methods_affected_pct drops > 5 percentage points → fail.
-    // - caches_total drops > 10% relative → fail.
+    // Plan 123.6.1 (V6.1) + V6.3 (2026-06-02): CI perf regression gate.
+    // Default thresholds:
+    //  - methods_affected_pct drops > 5 percentage points → fail
+    //  - caches_total drops > 10% relative → fail
+    // V6.3 allows CLI override via --telemetry-gate-affected-drop / -caches-drop.
     if let Some(baseline) = baseline_path {
+        let affected_drop_threshold = gate_affected_drop_override.unwrap_or(5.0);
+        let caches_drop_threshold_pct = gate_caches_drop_override.unwrap_or(10.0);
+        // Validate ranges (non-negative; > 100 for relative is nonsensical).
+        if affected_drop_threshold < 0.0 {
+            return Err(usage_err(
+                "--telemetry-gate-affected-drop must be ≥ 0 (percentage-points drop magnitude)"));
+        }
+        if caches_drop_threshold_pct < 0.0 {
+            return Err(usage_err(
+                "--telemetry-gate-caches-drop must be ≥ 0 (percent drop magnitude)"));
+        }
         let baseline_text = std::fs::read_to_string(baseline)
             .map_err(|e| anyhow!("read baseline {}: {}", baseline.display(), e))?;
         let bl_pct = parse_json_number(&baseline_text, "methods_affected_pct").unwrap_or(0.0);
@@ -1472,18 +1503,20 @@ fn cmd_check_telemetry_cache(
 
         let mut messages: Vec<String> = Vec::new();
         let pct_delta = pct_affected - bl_pct;
-        if pct_delta < -5.0 {
+        // Drop magnitude — pct_delta is negative on regression; compare |.|.
+        if pct_delta < -affected_drop_threshold {
             messages.push(format!(
-                "PERF REGRESSION: methods_affected_pct dropped from {:.2}% (baseline) to {:.2}% (Δ {:+.2}pp)",
-                bl_pct, pct_affected, pct_delta
+                "PERF REGRESSION: methods_affected_pct dropped from {:.2}% (baseline) to {:.2}% (Δ {:+.2}pp; gate -{:.2}pp)",
+                bl_pct, pct_affected, pct_delta, affected_drop_threshold
             ));
         }
         if bl_caches > 0 {
             let rel = (total_caches as f64 - bl_caches as f64) / bl_caches as f64;
-            if rel < -0.10 {
+            // caches_drop_threshold_pct expressed as percent (10.0 → 0.10).
+            if rel < -(caches_drop_threshold_pct / 100.0) {
                 messages.push(format!(
-                    "PERF REGRESSION: caches_total dropped from {} (baseline) to {} (Δ {:.1}%)",
-                    bl_caches, total_caches, rel * 100.0
+                    "PERF REGRESSION: caches_total dropped from {} (baseline) to {} (Δ {:.1}%; gate -{:.1}%)",
+                    bl_caches, total_caches, rel * 100.0, caches_drop_threshold_pct
                 ));
             }
         }
@@ -1495,7 +1528,10 @@ fn cmd_check_telemetry_cache(
             return Err(usage_err("V6.1 CI perf regression gate failed"));
         } else {
             eprintln!();
-            eprintln!("V6.1 perf gate: OK (vs baseline {})", baseline.display());
+            eprintln!(
+                "V6.1 perf gate: OK (vs baseline {}; gates -{:.2}pp affected / -{:.1}% caches)",
+                baseline.display(), affected_drop_threshold, caches_drop_threshold_pct
+            );
         }
     }
 
@@ -1582,6 +1618,8 @@ fn cmd_check(
     telemetry_cache: bool,
     telemetry_json: bool,
     telemetry_baseline: Option<&Path>,
+    telemetry_gate_affected_drop: Option<f64>,
+    telemetry_gate_caches_drop: Option<f64>,
 ) -> Result<()> {
     // Plan 123.5 (D217 §6 amend V5): --explain-cache mode — per-file
     // analyze module без mutation, emit report to stdout. Skips
@@ -1591,7 +1629,12 @@ fn cmd_check(
     }
     // Plan 123.6 (D217 §7 amend V6) + V6.1 baseline comparison.
     if telemetry_cache {
-        return cmd_check_telemetry_cache(paths, include_runtime, skip, telemetry_json, telemetry_baseline);
+        return cmd_check_telemetry_cache(
+            paths, include_runtime, skip, telemetry_json,
+            telemetry_baseline,
+            telemetry_gate_affected_drop,
+            telemetry_gate_caches_drop,
+        );
     }
     // Если пути не указаны — используем workspace root.
     let owned_root;
@@ -4953,6 +4996,8 @@ fn run() -> ExitCode {
         if let Some(n) = cli.field_cache_max { std::env::set_var("NOVA_FIELD_CACHE_MAX", n.to_string()); }
         if let Some(n) = cli.field_cache_licm_max { std::env::set_var("NOVA_FIELD_CACHE_LICM_MAX", n.to_string()); }
         if let Some(n) = cli.field_cache_chain_depth { std::env::set_var("NOVA_FIELD_CACHE_CHAIN_DEPTH", n.to_string()); }
+        // V6.3 (2026-06-02): IPA closure iteration cap.
+        if let Some(n) = cli.field_cache_ipa_iter { std::env::set_var("NOVA_FIELD_CACHE_IPA_ITER", n.to_string()); }
     }
 
     let cli = Cli::parse();
@@ -4972,7 +5017,7 @@ fn run() -> ExitCode {
     apply_field_cache_cli_flags(&cli);
 
     let result = match cli.cmd {
-        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json, telemetry_baseline } => cmd_check(
+        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json, telemetry_baseline, telemetry_gate_affected_drop, telemetry_gate_caches_drop } => cmd_check(
             &paths,
             jobs,
             quiet,
@@ -4985,6 +5030,8 @@ fn run() -> ExitCode {
             telemetry_cache,
             telemetry_json,
             telemetry_baseline.as_deref(),
+            telemetry_gate_affected_drop,
+            telemetry_gate_caches_drop,
         ),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(

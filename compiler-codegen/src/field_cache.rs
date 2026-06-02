@@ -72,6 +72,13 @@ pub struct FieldCacheConfig {
     /// mut field cache invalidation. Computes per-method field_write_set
     /// и allows caller mut-cache survive calls to non-mutating methods.
     pub ipa_enabled: bool,
+    /// Plan 123.6.3 (V6.3, 2026-06-02): IPA iterative-closure iteration
+    /// cap. Default 10 — covers all realistic call graphs (mutual
+    /// recursion depth ≪ 10 for typical Nova modules). Configurable
+    /// via `NOVA_FIELD_CACHE_IPA_ITER` env / `--field-cache-ipa-iter`
+    /// CLI flag. Plan 123.7.3 SCC will supersede this with O(V+E)
+    /// exact closure, but env override remains for forensics.
+    pub ipa_iter_limit: usize,
 }
 
 impl Default for FieldCacheConfig {
@@ -89,6 +96,7 @@ impl Default for FieldCacheConfig {
             chain_threshold: 2,
             chain_max_depth: 4,
             ipa_enabled: true,
+            ipa_iter_limit: 10,
         }
     }
 }
@@ -198,6 +206,16 @@ impl FieldCacheConfig {
         if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_IPA") {
             if v == "0" || v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("false") {
                 cfg.ipa_enabled = false;
+            }
+        }
+        // Plan 123.6.3 (V6.3) — IPA iterative-closure iteration cap.
+        // Clamped to [1, 1024]. `0` is rejected (would skip closure
+        // entirely and silently degrade transitive write propagation).
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_IPA_ITER") {
+            if let Ok(n) = v.parse::<usize>() {
+                if (1..=1024).contains(&n) {
+                    cfg.ipa_iter_limit = n;
+                }
             }
         }
         cfg
@@ -372,7 +390,7 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     // IPA refinement. Maps (type_name, method_name) → set of field
     // names that method's body writes (top-level @F = ... assignments).
     let write_sets: HashMap<(String, String), HashSet<String>> = if cfg.ipa_enabled {
-        build_write_set_registry(module)
+        build_write_set_registry(module, cfg.ipa_iter_limit)
     } else {
         HashMap::new()
     };
@@ -380,7 +398,7 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     // V3.1+ frame-based pure-cache invalidation. Parallel infrastructure
     // к write_sets — direct reads + transitive closure через method calls.
     let read_sets: HashMap<(String, String), HashSet<String>> = if cfg.ipa_enabled {
-        build_read_set_registry(module)
+        build_read_set_registry(module, cfg.ipa_iter_limit)
     } else {
         HashMap::new()
     };
@@ -432,7 +450,8 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
 /// - `nova check --explain-cache` extended in V5.1 to show callee
 ///   write-sets.
 pub fn module_write_sets(module: &Module) -> HashMap<(String, String), HashSet<String>> {
-    build_write_set_registry(module)
+    let cfg = FieldCacheConfig::default();
+    build_write_set_registry(module, cfg.ipa_iter_limit)
 }
 
 /// Plan 123.7 (D223): build per-method field-write-set.
@@ -441,8 +460,13 @@ pub fn module_write_sets(module: &Module) -> HashMap<(String, String), HashSet<S
 /// target). Recursive transitive closure через method calls — V7
 /// conservative: if body contains a Call to another method,
 /// we union with the target's write set (single-pass approximation —
-/// for fully precise SCC closure see V7.1 followup).
-fn build_write_set_registry(module: &Module) -> HashMap<(String, String), HashSet<String>> {
+/// for fully precise SCC closure see V7.3 followup).
+///
+/// Plan 123.6.3 (V6.3, 2026-06-02): `iter_limit` now configurable
+/// (default 10) — caps the fixed-point iterations. For most modules
+/// the closure converges in ≤3 iterations; larger limits are
+/// forensic-only.
+fn build_write_set_registry(module: &Module, iter_limit: usize) -> HashMap<(String, String), HashSet<String>> {
     let mut direct: HashMap<(String, String), HashSet<String>> = HashMap::new();
     // Track callees per method for second pass.
     let mut callees: HashMap<(String, String), HashSet<(String, String)>> = HashMap::new();
@@ -452,9 +476,9 @@ fn build_write_set_registry(module: &Module) -> HashMap<(String, String), HashSe
         collect_direct_writes(&pf.items_here, &mut direct, &mut callees);
     }
 
-    // Iterative closure (≤ 10 iterations bound; converges for typical
-    // call graphs).
-    for _ in 0..10 {
+    // Iterative closure (≤ iter_limit iterations bound; converges for
+    // typical call graphs in ≤3).
+    for _ in 0..iter_limit {
         let mut changed = false;
         for (key, callees_set) in &callees {
             for callee in callees_set {
@@ -659,15 +683,16 @@ fn collect_writes_expr(
 /// Plan 123.7.1: build read-set registry — fields each method reads.
 /// Parallel infrastructure к write_sets для V3.1 frame-based
 /// pure-cache invalidation.
-fn build_read_set_registry(module: &Module) -> HashMap<(String, String), HashSet<String>> {
+fn build_read_set_registry(module: &Module, iter_limit: usize) -> HashMap<(String, String), HashSet<String>> {
     let mut direct: HashMap<(String, String), HashSet<String>> = HashMap::new();
     let mut callees: HashMap<(String, String), HashSet<(String, String)>> = HashMap::new();
     collect_direct_reads(&module.items, &mut direct, &mut callees);
     for pf in &module.peer_files {
         collect_direct_reads(&pf.items_here, &mut direct, &mut callees);
     }
-    // Iterative transitive closure (same pattern as write_sets).
-    for _ in 0..10 {
+    // Plan 123.6.3 (V6.3): iter_limit configurable (default 10).
+    // Same pattern as write_sets.
+    for _ in 0..iter_limit {
         let mut changed = false;
         for (key, callees_set) in &callees {
             for callee in callees_set {

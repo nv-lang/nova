@@ -4862,7 +4862,71 @@ count.
 
 - **V6.2:** integration с Plan 57 `nova bench` для CPU time
   regression.
-- **V6.3:** custom thresholds via flags.
+- **V6.3:** custom thresholds via flags — ✅ LANDED 2026-06-02
+  (см. D217 amend V6.3 ниже).
+
+## D217 amend V6.3 — Configurable gate thresholds (Plan 123 V6.3)
+
+**Source:** [Plan 123.6.3](../../docs/plans/123.6.3-configurable-thresholds.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Scope
+
+V6.1 hardcoded two CI regression gates (5 pp drop в affected %, 10 %
+drop в caches total) и V7 hardcoded the IPA iterative-closure cap at
+10. V6.3 promotes all three to user-configurable parameters:
+
+| Knob | Env var | CLI flag | Default | Range |
+|---|---|---|---|---|
+| IPA closure iteration cap | `NOVA_FIELD_CACHE_IPA_ITER` | `--field-cache-ipa-iter=N` | 10 | 1..=1024 |
+| affected-% drop gate | (n/a) | `--telemetry-gate-affected-drop=F` | 5.0 | ≥0.0 |
+| caches-total drop gate | (n/a) | `--telemetry-gate-caches-drop=F` | 10.0 | ≥0.0 |
+
+### 2. IPA iter limit rationale
+
+The transitive-closure loop in `build_{write,read}_set_registry`
+typically converges in ≤3 iterations for production-sized modules
+(50–500 methods, ≤2 levels of mutual recursion). The hardcoded cap
+10 was a safe approximation. Configurable cap enables:
+- Forensic deep-dive on adversarial test cases (e.g. synthetic
+  modules с mutual recursion 8+ deep).
+- Stress-testing future SCC implementation (V7.3) by comparing
+  iterative ≤N to SCC O(V+E) results.
+- Disabling closure entirely is rejected (n=0) — silent degradation
+  trap.
+
+### 3. Telemetry gate rationale
+
+V6.1 thresholds were tuned for nova_tests baseline (~1500 fixtures).
+Real workloads vary: a stdlib-heavy project may legitimately drop
+10pp в affected % during a large refactor; a perf-critical inner
+loop change may cap regression at 2pp. Hardcoding 5/10 forces all
+CI configurations to that one tradeoff. Overrides let teams tune
+strictness per-pipeline (PR check vs nightly trend gate, e.g.).
+
+Both overrides validated for non-negative input (negative threshold
+would invert the comparison semantically). Upper bound is
+unconstrained — operators may set `--telemetry-gate-caches-drop=100`
+to disable the gate without removing the flag from CI config.
+
+### 4. Backward compatibility
+
+All defaults preserve V6.1 behavior exactly. Existing CI scripts
+keep passing — V6.3 is purely additive. Output messaging updated to
+echo active gate values для transparency:
+
+```
+V6.1 perf gate: OK (vs baseline foo.json; gates -5.00pp affected / -10.0% caches)
+```
+
+### 5. Acceptance
+
+- **V6.3.1** `FieldCacheConfig.ipa_iter_limit` field + env/CLI
+  binding (1..=1024 clamp) ✅
+- **V6.3.2** `--telemetry-gate-affected-drop` / `-caches-drop`
+  CLI flags ✅ + non-negative validation
+- **V6.3.3** All defaults match V6.1 behavior (no regression) ✅
+- **V6.3.4** Lib tests 14/14 PASS unchanged ✅
 
 ## D223. IPA — Inter-Procedural Analysis для field caching — Plan 123.7
 
