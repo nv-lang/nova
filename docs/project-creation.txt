@@ -27802,3 +27802,54 @@ Deferred к next session (per umbrella roadmap):
 - Plan 124.6 Test access + visible_to friends
 - Plan 124.7 Type-level priv flip (tuples)
 
+
+Plan 124.2 — pattern destructure + literal init edge cases (2026-06-02)
+
+Sub-plan Plan 124 — расширяет 124.1 enforcement на доп. pattern sites
++ recursive nested + record-literal spread. Closed в той же autonomous
+session что и 124.1.
+
+Изменения compiler-codegen/src/types/mod.rs:
+- NEW: helper check_priv_pattern_recursive(pattern, scrutinee_ty,
+  errors) — обходит Pattern::Record + Or + Binding; для Record
+  делает top-level check + recurses в sub-patterns с resolved
+  sub-field type через outer RecordField.ty.
+- Stmt::Let inline 40-line check заменён на 2-line call.
+- Hooks added: ExprKind::Match (per arm.pattern), IfLet (pattern),
+  WhileLet (pattern), For (pattern + elem_type via infer_iter_elem_type),
+  ParallelFor (same).
+- Spread check в walk_expr RecordLit: для типа с priv fields outside
+  type-method scope, `...other` emits E_PRIV_FIELD_INIT_SPREAD (NEW).
+
+D-block: D221 NEW в spec/decisions/02-types.md (после D220).
+Includes §1 Scope, §2 Pattern sites enumeration table, §3 Rest
+pattern semantics, §4 Nested Pattern::Record recursion, §5 Spread,
+§6 Diagnostic codes, §7 Cross-refs, Acceptance A2.1-A2.10 ✅.
+
+README.md spec index: D221 entry добавлен.
+
+Fixtures nova_tests/plan124_2/ (14/14 PASS):
+Positive (8): match_arm_inside_method_ok, if_let_inside_method_ok
+(static method scope), rest_pattern_ignores_priv_ok, public_field_match_outside_ok
+(no false-positive), spread_inside_method_ok, spread_no_priv_outside_ok,
+nested_destructure_inside_method_ok, for_pattern_public_outside_ok.
+Negative (6): match_arm_outside_neg, if_let_outside_neg,
+while_let_outside_neg, for_pattern_outside_neg,
+nested_destructure_outside_neg, spread_outside_neg.
+
+Verified через release nova-cli + clang (toolchain Dev).
+
+Regression: plan124_1 9/9 PASS unchanged.
+
+Commit:
+- feat(plan 124.2): pattern destructure + literal spread edge cases (D221)
+  — implementation + 14 fixtures.
+- Spec D221 + plan status flip + 3 logs — separate closure commit.
+
+Plan 124.2 acceptance A2.1-A2.10 — ALL ✅.
+
+Plan 124 umbrella status: 2/7 sub-plans closed (124.1, 124.2).
+Remaining: 124.3 (generics), 124.4 (named tuple + protocol),
+124.5 (nova doc + LSP), 124.6 (test_access + visible_to),
+124.7 (type-level priv flip for tuples).
+

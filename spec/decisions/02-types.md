@@ -7298,8 +7298,138 @@ V1 (Plan 124.1) — ALL closed 2026-06-02:
 ### Followup markers
 
 - ✅ [M-124.1-checker-enforcement] CLOSED 2026-06-02 — all 4 codes via TypeCheckCtx current_recv_type RAII tracking.
+- ✅ [M-124.2-pattern-sites-extension] CLOSED 2026-06-02 — Match/IfLet/WhileLet/For/ParallelFor + nested + spread (D221).
 - [M-124.2-priv-embed] — priv use NAME Type.
 - [M-124.4-tuple-priv] — named tuple priv (D215 ext).
 - [M-124.4-protocol-impl-boundary].
 - [M-124.5-doc-lsp].
 - [M-124.6-test-access].
+
+---
+
+## D221. Pattern destructure + literal init edge cases (Plan 124.2)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.2 closure).
+> **Extends:** D220 §3-§4. Self-contained sub-decision: covers
+> pattern-site и literal-spread edges not addressed в D220 §4.
+> **Plan:** [Plan 124.2](../../docs/plans/124.2-pattern-literal-edges.md).
+> **Cross-refs:** D220 (core priv semantics), D52 §1-§2 (record
+> declaration / `@field` shorthand), D17 (pattern syntax).
+
+### §1 Scope
+
+D220 §4 описывает priv-access rules для базовых форм (Member access
++ Stmt::Let pattern + RecordLit named fields). D221 расширяет
+coverage на:
+
+1. Дополнительные pattern sites: match, if-let, while-let, for-in,
+   parallel-for.
+2. Nested Pattern::Record — recursive descent через sub-field types.
+3. Record literal spread `Type { ...other }`.
+4. Rest pattern `{ field, .. }` — non-binding semantics.
+
+### §2 Pattern sites — complete enumeration
+
+Following pattern-bearing forms ALL apply priv-pattern enforcement
+(Plan 124.2 implementation hook each site):
+
+| Site | AST node | Scrutinee source |
+|---|---|---|
+| `let PAT = EXPR` | `Stmt::Let { pattern, value }` | type of `value` |
+| `if PAT = EXPR { ... }` | `ExprKind::IfLet { pattern, scrutinee }` | type of `scrutinee` |
+| `while PAT = EXPR { ... }` | `ExprKind::WhileLet { pattern, scrutinee }` | type of `scrutinee` |
+| `match EXPR { PAT => ... }` | `ExprKind::Match { scrutinee, arms[].pattern }` | type of `scrutinee` |
+| `for PAT in EXPR { ... }` | `ExprKind::For { pattern, iter, elem_type }` | `elem_type` ∥ inferred element type |
+| `parallel for PAT in EXPR { ... }` | `ExprKind::ParallelFor { pattern, iter, elem_type }` | same |
+
+В каждой точке: for each Pattern::Record outside type-method scope,
+each explicitly-named RecordPatternField corresponding к priv-field
+→ `E_PRIV_FIELD_PATTERN`.
+
+### §3 Rest pattern `..` — non-binding
+
+```nova
+ro Account { name, .. } = acc    // outside-of-Account ok if `name` public.
+                                  // `..` does NOT bind priv `money`.
+```
+
+Pattern::Record.rest = true маркирует syntactic `..`. Семантика:
+**игнорировать остальные поля, no bindings produced**. Priv-fields
+не leak'аются через `..` потому что нет binding'а.
+
+NB: explicit field names ARE checked даже если `..` присутствует —
+`{ money, .. }` outside Account → E_PRIV_FIELD_PATTERN на `money`.
+
+### §4 Nested Pattern::Record
+
+```nova
+type Address { priv mut zip str, ro city str }
+type User { ro name str, ro addr Address }
+
+// Outside any method scope:
+ro User { addr: Address { zip }, name } = u   // ❌ E_PRIV_FIELD_PATTERN
+                                               //   on `zip` (Address-internal)
+```
+
+Recursive descent: для каждой `RecordPatternField { name, pattern: Some(sub), .. }`
+sub-pattern проверяется against sub-field's declared type (via outer
+type's RecordField.ty). Outer field accessibility (User.addr public)
+не освобождает inner check (Address.zip priv).
+
+### §5 Record literal spread — `E_PRIV_FIELD_INIT_SPREAD`
+
+```nova
+type Account { priv mut money f64, ro name str }
+
+// Outside Account-method scope:
+Account { ...orig, name: "new" }   // ❌ E_PRIV_FIELD_INIT_SPREAD
+```
+
+Spread `...src` implicitly копирует все fields (включая priv).
+Outside type-method scope, это нарушает encapsulation. Эмитим
+**E_PRIV_FIELD_INIT_SPREAD** на spread field span с hint'ом
+использовать factory method.
+
+Inside type-method scope — allowed (recv = T → каноническая ситуация).
+
+Note: type без priv fields → spread OK везде (нет encapsulation
+boundary).
+
+### §6 Diagnostic codes
+
+| Code | Where | Plan |
+|---|---|---|
+| `E_PRIV_FIELD_PATTERN` | Pattern sites §2 + nested §4 | D220 §4 (reused) |
+| `E_PRIV_FIELD_INIT_SPREAD` | RecordLit spread §5 | **D221 NEW** |
+
+Format (Plan 50 D102):
+```
+[E_PRIV_FIELD_INIT_SPREAD] cannot use spread `...` in record literal
+of `T` outside type-method scope: type has private fields which would
+be implicitly initialized via copy (Plan 124 / D221 §5). Hint: use
+factory method `T.new(...)` or list each public field explicitly.
+```
+
+### §7 Cross-refs
+
+- D17 — pattern syntax.
+- D52 §2 — record literal + field shorthand.
+- D220 — core priv semantics (default vis, scope, access rules).
+- D215 — named tuples; D221 covers ONLY record form, tuple-pattern
+  priv в D222 (Plan 124.4).
+
+### Acceptance — Plan 124.2
+
+ALL closed 2026-06-02:
+
+- A2.1 ✅ Match arm pattern outside → E_PRIV_FIELD_PATTERN.
+- A2.2 ✅ IfLet pattern outside → error.
+- A2.3 ✅ WhileLet pattern outside → error.
+- A2.4 ✅ For-loop pattern outside → error (positive case verifies
+  no false-positive on public-only types).
+- A2.5 ✅ Nested Pattern::Record с priv inner → error.
+- A2.6 ✅ Spread outside → E_PRIV_FIELD_INIT_SPREAD.
+- A2.7 ✅ Inside type-method scope — все hooks allow.
+- A2.8 ✅ `..` rest pattern — no false-positive.
+- A2.9 ✅ plan124_2 fixtures 14/14 PASS (8+ positive, 6 negative).
+- A2.10 ✅ Regression plan124_1 9/9 unchanged.

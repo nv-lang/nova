@@ -29009,3 +29009,71 @@ Design lessons:
 
 Plan 124.1 V1 ✅ FULLY CLOSED. Plan 124 umbrella partial — 6
 sub-plans (124.2-124.7) remaining.
+
+---
+
+## Plan 124.2 — pattern destructure + literal init edge cases (2026-06-02)
+
+**Что:** D221 NEW (extends D220). Helper `check_priv_pattern_recursive`
++ hooks для дополнительных pattern sites + E_PRIV_FIELD_INIT_SPREAD.
+
+**Pattern sites расширены:** Stmt::Let (already in 124.1) + Match
+(per-arm) + IfLet + WhileLet + For + ParallelFor. Each site берёт
+scrutinee type (через `infer_expr_type` или `infer_iter_elem_type`
+для for-loops) и применяет recursive helper.
+
+**Helper recursion:**
+- Pattern::Record — top-level check + recurse в sub-patterns с
+  resolved sub-field type (через outer RecordField.ty).
+- Pattern::Or → recurses каждый alternative с тем же scrutinee_ty.
+- Pattern::Binding → recurses inner.
+- Variant/Tuple/Array/Wildcard/Ident/Literal — no priv-record
+  semantics в этом sub-plan'е (Tuple form → 124.4).
+
+**Nested destructure (D221 §4):** `User { addr: Address { zip } } = u`
+outside Address scope — outer `addr` public ok, inner `zip` priv
+checked recursively → E_PRIV_FIELD_PATTERN с pf.span (точная position).
+
+**Rest pattern (D221 §3):** `{ field, .. }` — `..` non-binding, не
+leak'ит priv через silent expansion. Только explicitly-named fields
+проверяются.
+
+**Spread в RecordLit (D221 §5):** `Type { ...other }` outside
+type-method scope для типа с priv fields → E_PRIV_FIELD_INIT_SPREAD
+(NEW code). Rationale: spread implicitly копирует все fields включая
+priv — violates encapsulation. Inside type-method scope allowed
+(recv = T, canonical). Type без priv → spread OK везде.
+
+**Fixtures:** 14/14 plan124_2 PASS (8 positive + 6 negative):
+- Positive: match_arm_inside_method, if_let_inside_method (static),
+  rest_pattern_ignores_priv (`..` no leak), public_field_match_outside,
+  spread_inside_method, spread_no_priv_outside (Point public-only),
+  nested_destructure_inside_method, for_pattern_public_outside.
+- Negative: match/if-let/while-let/for-pattern outside (4 sites all
+  fire E_PRIV_FIELD_PATTERN), nested_destructure_outside
+  (recursive descent catches inner priv), spread_outside
+  (E_PRIV_FIELD_INIT_SPREAD).
+
+**Implementation:** ~90 lines compiler-codegen/src/types/mod.rs (helper
++ 4 new hooks + extended RecordLit spread check). Stmt::Let inline
+check сжат до 2 lines (calls helper now).
+
+**Acceptance Plan 124.2 (A2.1-A2.10) — ALL closed:**
+- A2.1 ✅ Match arm pattern outside → error.
+- A2.2 ✅ IfLet pattern outside → error.
+- A2.3 ✅ WhileLet pattern outside → error.
+- A2.4 ✅ For-loop pattern outside → error (positive verifies no
+  false-positive на public-only types).
+- A2.5 ✅ Nested Pattern::Record с inner priv → error через recursion.
+- A2.6 ✅ Spread outside → E_PRIV_FIELD_INIT_SPREAD.
+- A2.7 ✅ Inside type-method scope — все hooks allow.
+- A2.8 ✅ Rest pattern `..` — no false-positive.
+- A2.9 ✅ plan124_2 14/14 PASS.
+- A2.10 ✅ Regression plan124_1 9/9 unchanged.
+
+**Followups:** ✅ [M-124.2-pattern-sites-extension] CLOSED. Остаётся
+[M-124.2-priv-embed] (priv use NAME Type for embedded field syntax — V2
+если/когда embedding landed).
+
+Plan 124.2 ✅ FULLY CLOSED. Plan 124 umbrella partial — 5 sub-plans
+(124.3-124.7) remaining.
