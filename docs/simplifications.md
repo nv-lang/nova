@@ -31067,3 +31067,52 @@ M4 (`c205a7a1589`): `GenericInst.concrete` extended Vec<String> → Vec<TypeRef>
 4. **Composite type mangling** (M4) — stable serialization through structural
    recursion. Removes simple-Named restriction. mangle_type_ref returns
    C-identifier-safe strings; symmetric с trampoline + closure paths.
+
+---
+
+## Plan 123.4.3 — Deep chain prefix sharing (V4.3)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v4-3-deep-prefix. ~280 LOC delta.
+Closes `[M-123.4-deep-prefix-sharing]`.
+
+**Что cделано:** V4.2 length-2 prefix sharing расширено к length 3+
+через iterative deepening + parent prefix chaining. Deeper prefix
+references shallower parent (`_at_a_b_c_pre = _at_a_b_pre.c`), per-
+chain lets picks longest covering prefix. Поддерживает arbitrary
+depth до `chain_max_depth - 1`.
+
+**Принципы:**
+
+- **Iterative deepening** вместо recursive LCA computation: проще
+  understand + debug, same algorithmic depth. for L=2..max_depth →
+  group by path[..L] → emit qualifying groups.
+- **Parent chaining** через struct `PrefixInfo { name, span, parent
+  Option<Vec<String>> }` — `parent: None` = V4.2 case (=root @<prefix>),
+  `parent: Some` = build value `<parent_local>.<remaining_segs>`.
+- **Sort key `(len, lex)`** для deterministic emission order. Critical:
+  deeper prefix references shallower parent, поэтому shallower MUST
+  быть emitted first.
+- **Per-chain longest cover rule:** `find_chain_shared_prefix` walks
+  `(2..path.len()).rev()` — picks deepest matching prefix, гарантирует
+  minimum-hop access.
+- **Budget shared с per-chain lets:** prefix count toward
+  `cfg.max_per_fn`. Deeper depths skip когда budget exhausted —
+  graceful degradation к V4.2 behavior.
+
+**Acceptance (V4.3.1-V4.3.8 все ✅):** length-3 emission, parent-ref
+value-expr, longest cover per-chain, length-4 chained parents, no
+spurious singleton prefixes, shorter-first emission order, runtime
+semantic preservation, zero regressions.
+
+**Verification:** 8 unit tests + 3 runtime fixtures PASS via release
+nova-cli + clang. plan123_4 10/10 + plan123_4_2 1/1 + field_cache lib
+37/37 PASS — zero regressions.
+
+**Followup markers:**
+
+- `[M-123.4.3-cross-fn-prefix-sharing]` — V4.4 module-level CSE same-type
+  methods.
+- `[M-123.4.3-mut-prefix]` — V4.5 mut-root prefix (currently inherits
+  V4 V4.1 skip-when-body-writes constraint).
+

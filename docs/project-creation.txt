@@ -30265,3 +30265,57 @@ Lessons:
   rewriter с extra logic. Existing handler picks up rewritten form.
 - Composite type mangling via stable serialization: removes simple-Named
   restriction enabling rich generic instantiation.
+
+=== Plan 123.4.3 — Deep chain prefix sharing (V4.3, 2026-06-03) ===
+
+Followup `[M-123.4-deep-prefix-sharing]` closure. Расширяет V4.2 length-2
+prefix sharing к length-3+ через iterative deepening + parent prefix
+chaining.
+
+Algorithm: для prefix-длины L = 2..max_path_len, группируем chains по
+path[..L]. Для ≥2-element groups alloc'им `_at_<segs>_pre` с reference
+на longest existing shallower parent. Emission shorter-first так что
+deeper prefix строится из shallower через `<parent>.<remaining>` chain.
+Per-chain lets picks LONGEST covering prefix (не just length-2).
+
+Implementation (~280 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - struct PrefixInfo { name, span, parent } (NEW)
+  - fn compute_chain_prefix_sharing — replaced V4.2 length-2-only с
+    iterative deepening (~60 LOC)
+  - fn find_longest_existing_parent (NEW, 10 LOC)
+  - fn find_chain_shared_prefix — now picks longest, walks rev (15 LOC)
+  - emission loop — sort key `(len, lex)`, parent-aware value (~20 LOC)
+  - 6 unit tests v43_* (length-3, parent ref, longest cover, no
+    spurious, length-4 chain, emission order)
+- nova_tests/plan123_4_3/ — 3 runtime fixtures:
+  - v43_deep_prefix_three_level_ok.nv (positive length-3 sharing)
+  - v43_no_deep_prefix_three_distinct_chains_ok.nv (negative — only L2)
+  - v43_mixed_length_chains_ok.nv (mixed length-3 + length-5 chains)
+
+Verification (release nova-cli + clang):
+- 8 V4.3 unit tests PASS (including length-4 + emission order).
+- 3 runtime fixtures PASS via `nova test nova_tests/plan123_4_3`.
+- Zero regressions:
+  - plan123_4 (V4 baseline) 10/10 PASS
+  - plan123_4_2 (V4.2 baseline) 1/1 PASS
+  - field_cache lib tests 37/37 PASS (8 v43 + 2 v42 + 27 baseline)
+
+Spec: D217 amend V4.3 (~110 lines) — algorithm, emission order,
+composition, V4.3.1-V4.3.8 acceptance criteria.
+
+Plan doc: docs/plans/123.4.3-deep-prefix-sharing.md.
+
+Pattern lesson:
+- Iterative deepening + parent chaining clean way support O(depth)
+  sharing — alternative recursive LCA computation сложнее без
+  benefit (same algorithmic depth).
+- Sort key `(len, lex)` для deterministic emission order critical
+  когда deeper prefix references shallower — wrong order breaks codegen.
+- Per-chain "longest cover first" rule via walking
+  `(2..path.len()).rev()` дёт правильное hop minimization без
+  global optimization.
+
+Followup markers:
+- [M-123.4.3-cross-fn-prefix-sharing] — V4.4 module-level CSE.
+- [M-123.4.3-mut-prefix] — V4.5 mut-root prefix.

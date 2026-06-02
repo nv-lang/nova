@@ -5627,8 +5627,119 @@ the sharing pass.
 
 ### 6. Followups
 
-- **V4.3:** length-3+ prefix sharing (recursive — share deepest
-  common ancestor among chain groups).
+- **V4.3:** ✅ DELIVERED 2026-06-03 — см. D217 amend V4.3 ниже.
+
+## D217 amend V4.3 — Deep chain prefix sharing (Plan 123.4.3)
+
+**Source:** [Plan 123.4.3](../../docs/plans/123.4.3-deep-prefix-sharing.md).
+**Status:** ✅ ACTIVE 2026-06-03.
+
+### 1. Scope
+
+V4.2 эмитит ОДИН length-2 prefix let на группу ≥2 chains. Однако в
+реалистичном Nova-коде с deep record-вложенностью (`@a.b.c.x` +
+`@a.b.c.y` + `@a.b.c.z`) length-3 prefix `@a.b.c` также shared, но
+V4.2 пропускает эту глубину — per-chain lets выписывают `.c` повторно.
+
+V4.3 распространяет sharing на length 3+ через **iterative deepening**:
+последовательно проверяет prefix-длины 2, 3, …, max_chain_depth − 1,
+и для каждой группы ≥2 chains alloc'ит cache local с reference на
+shallower parent prefix если такой существует.
+
+### 2. Algorithm (iterative deepening + parent chaining)
+
+```
+out: HashMap<Vec<String>, PrefixInfo { name, span, parent }>
+for prefix_len in 2..max_path_len:
+    if emitted >= max_per_fn: break
+    groups: HashMap<Vec<String>, Vec<entry>> = group_by(path[..prefix_len])
+    for prefix in sorted(groups.keys()):
+        entries = groups[prefix]
+        if entries.len() < 2: continue           # no sharing
+        if emitted >= max_per_fn: break          # budget
+        parent = find_longest_existing_parent(out, prefix)  # walks (2..L).rev()
+        name = alloc_collision_safe("_at_<segs>_pre")
+        out[prefix] = PrefixInfo { name, span: earliest, parent }
+        emitted += 1
+```
+
+Eligibility per prefix length L:
+- `path.len() > L` (нужен ≥1 tail segment beyond prefix).
+- Группа должна иметь ≥2 distinct chains.
+
+### 3. Emission order
+
+Prefix lets emit'ятся в **shorter-first** order — sort key `(len, lex)`
+— так что deeper prefix может ссылаться на shallower parent через
+`<parent_local>.<remaining_segments>` chain. Per-chain lets всегда
+ссылаются на **longest covering prefix** через `find_chain_shared_prefix`
+(walks `(2..path.len()).rev()`).
+
+Example для chains `@a.b.c.x`, `@a.b.c.y`, `@a.b.c.x`, `@a.b.c.y`:
+
+```nova
+let _at_a_b_pre   = @a.b              # length-2 prefix
+let _at_a_b_c_pre = _at_a_b_pre.c     # length-3 prefix — refs parent
+let _at_a_b_c_x_chain = _at_a_b_c_pre.x   # per-chain — longest cover
+let _at_a_b_c_y_chain = _at_a_b_c_pre.y
+```
+
+vs V4.2 baseline:
+
+```nova
+let _at_a_b_pre   = @a.b
+let _at_a_b_c_x_chain = _at_a_b_pre.c.x   # пишет .c повторно для каждого
+let _at_a_b_c_y_chain = _at_a_b_pre.c.y
+```
+
+V4.3 economy: one `.c` field read хhoisted в length-3 prefix, two `.c`
+reads устранены из per-chain lets. Linear extension к O(depth)
+maximum sharing depth.
+
+### 4. Edge cases
+
+- **Path length ≤ prefix_len:** chain skipped (нужен tail).
+- **Single chain в группе:** prefix не allocated (no net savings).
+- **Budget exhaust:** iterative deepening stops at current length,
+  не пытается deeper.
+- **Local-name collision:** suffix increment `_at_X_pre_1`, `_at_X_pre_2`,
+  …, как V4.2.
+- **No length-N+1 sharing когда N has sharing:** V4.3 не выдумывает
+  fake length-3 prefix только потому что length-2 был emitted.
+  Иллюстрация — три chains через различные middle segments
+  `@a.b.c.x`, `@a.b.d.y`, `@a.b.e.z` дают только length-2 prefix
+  `_at_a_b_pre`; length-3 группы singleton, skipped.
+
+### 5. Composition
+
+Pure additive в `chain_cache_fn_impl` — никаких изменений в LICM,
+pure-call, ro/mut, IPA passes. Reuses V4 chain-extraction, V4.2
+collision-safe naming. V4.2 case = V4.3 с parent=None для length-2.
+
+### 6. Acceptance
+
+- **V4.3.1** Length-3 prefix let emitted ≥2 chains sharing `path[..3]` ✅
+- **V4.3.2** Length-3 prefix references length-2 parent через
+  `_at_a_b_pre.c` (NOT `@a.b.c`) ✅
+- **V4.3.3** Per-chain let picks LONGEST covering prefix (
+  `_at_a_b_c_pre.x` instead of `_at_a_b_pre.c.x`) ✅
+- **V4.3.4** Length-4+ prefixes chain transitively через intermediate
+  parent prefixes (`_at_a_b_c_d_pre = _at_a_b_c_pre.d`) ✅
+- **V4.3.5** No spurious deep prefix когда group singleton ✅
+- **V4.3.6** Emission order shorter-first (length-2 BEFORE length-3
+  BEFORE length-4) ✅
+- **V4.3.7** Runtime semantic preservation 3/3 fixtures PASS via
+  release nova test + clang ✅
+- **V4.3.8** Zero regressions — plan123_4 10/10 + plan123_4_2 1/1 +
+  field_cache::tests 37/37 PASS ✅
+
+### 7. Followups
+
+- **V4.4 (future):** cross-fn prefix sharing — module-level CSE of
+  `@a.b.c` если N методов в same type используют — out of scope V4
+  family, see Plan 123.8 territory.
+- **V4.5 (future):** mut-prefix sharing — current V4.3 inherits
+  V4 V4.1 constraint (skip when root in body_writes).
 
 ## D219 amend V3.2 — Pure-call tuple/record literal args (Plan 123.3.2)
 
