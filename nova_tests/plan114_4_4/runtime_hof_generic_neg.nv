@@ -1,6 +1,6 @@
 // Plan 114.4.4.3 V4.2 NEGATIVE: generic const fn cannot be used as
 // first-class value в V1 — trampoline gen requires concrete types
-// (transitive sizeof[T]/align_of[T] dispatch from generic body).
+// (transitive size_of[T]/align_of[T] dispatch from generic body).
 
 // EXPECT_COMPILE_ERROR E_CONST_FN_TRAMPOLINE_GENERIC
 

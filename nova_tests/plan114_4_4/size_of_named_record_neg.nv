@@ -4,12 +4,12 @@
 
 // EXPECT_COMPILE_ERROR E_CONST_FN_GENERIC_NEEDS_T_REFLECTION
 
-module plan114_4_4.sizeof_named_record_neg
+module plan114_4_4.size_of_named_record_neg
 
 type Point { x int, y int }
 
-const SIZE_POINT = sizeof[Point]()
+const SIZE_POINT = size_of[Point]()
 
-test "sizeof named record still unsupported" {
+test "size_of named record still unsupported" {
     assert(SIZE_POINT == 16)
 }

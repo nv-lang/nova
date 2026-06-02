@@ -7199,7 +7199,7 @@ V2 значительно расширяет const fn surface, закрывая 
 **Ф.4 — generic const fn:**
 - `fn[T] foo(const a int) -> const int { ... }` allowed для
   T-independent body.
-- T reflection (sizeof[T], T.field) rejected V2.0 — followup
+- T reflection (size_of[T], T.field) rejected V2.0 — followup
   `[M-114.4.3-t-reflection]` для V3.
 - Per-T monomorphization happens через standard generic pipeline.
 
@@ -7281,7 +7281,7 @@ attribute `#fn_eval_max_iterations(N)` — V4 followup.
 **Extracted V3 followups (Plan 114.4.4.1-5):**
 - Plan 114.4.4.1 — record/sum patterns в match (V2.1; ConstValue
   extension needed).
-- Plan 114.4.4.2 — t-reflection (sizeof[T]/align_of[T]; type layout
+- Plan 114.4.4.2 — t-reflection (size_of[T]/align_of[T]; type layout
   integration).
 - Plan 114.4.4.3 — runtime HOF (trampoline ABI design).
 - Plan 114.4.4.4 — closure-returning const fn.
@@ -7304,16 +7304,16 @@ Variant constructor recognition heuristic: `Call(Ident(Name), args)` где
 `Name` starts с uppercase letter и НЕ const fn → constructed as
 `ConstValue::Variant`. Lowercase Idents trigger const fn lookup.
 
-**Ф.5 — Type reflection (sizeof/align_of):**
+**Ф.5 — Type reflection (size_of/align_of):**
 
 Built-in intrinsics evaluating at compile time:
 ```nova
-const SIZE_INT = sizeof[int]()        // 8
-const SIZE_BOOL = sizeof[bool]()       // 1
+const SIZE_INT = size_of[int]()        // 8
+const SIZE_BOOL = size_of[bool]()       // 1
 const ALIGN_F64 = align_of[f64]()      // 8
 
 fn buf_size(const count int) -> const int =>
-    count * sizeof[int]()              // works в const fn body
+    count * size_of[int]()              // works в const fn body
 ```
 
 V4.0 surface (primitive types only — hardcoded per default 64-bit ABI):
@@ -7327,7 +7327,7 @@ V4.0 surface (primitive types only — hardcoded per default 64-bit ABI):
 Records / sum-types / generic types → V4 followup
 `[M-114.4.4-record-reflection]` (Plan 114.4.4.2 covers it).
 
-`sizeof`/`align_of` recognized as built-in identifiers в name resolution
+`size_of`/`align_of` recognized as built-in identifiers в name resolution
 (special-cased в `is_known`); replaced литералом в rewriter pass до
 codegen.
 
@@ -7358,7 +7358,7 @@ ro c = scale(10, z)   // generates fn `scale__cst_1(x) => x * 10`
 
 *Implementation:* New module `compiler-codegen/src/const_fn_mono.rs`.
 Pipeline placement: AFTER `rewrite_const_fn_calls` (fully-const fns
-already dropped + sizeof replaced). Mono pass walks all call sites,
+already dropped + size_of replaced). Mono pass walks all call sites,
 generates spec FnDecls с literal substitution в body, rewrites Call
 sites с new spec names + drops const args.
 
@@ -7398,7 +7398,7 @@ test "HOF use" {
 - Транзитивный вызов: если body trampoline вызывает другой fully-const
   fn, тот fn тоже добавляется в trampoline-set, и call внутри body
   переписывается на `<other>__trampoline`. Fixed-point reachability.
-- `sizeof[T]()` / `align_of[T]()` intrinsics в trampoline body
+- `size_of[T]()` / `align_of[T]()` intrinsics в trampoline body
   substituted с literal Int при генерации body (V4.0 primitive limit).
 - Alias resolution: `const ALIAS = const_fn; apply(ALIAS, x)` →
   alias resolved к `const_fn`, который trampolines.
@@ -7483,19 +7483,38 @@ closure ConstValue).
 | A29 | HOF passing через trampoline | runtime_hof_arg_ok (V4.2) |
 | A30 | Loops + mut/assign/break/continue работают | Ф.3 fixtures |
 | A31 | Record/sum/tuple patterns в match destructure | Ф.4 fixtures |
-| A32 | `sizeof[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
+| A32 | `size_of[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
 | A33 | Mixed const fn per-arg monomorphization | mono_specialization_ok fixture |
 | A34 | Const fn first-class use через runtime trampoline | runtime_hof_*_ok fixtures (5 шт.) |
 | A35 | Closure-returning const fn — comptime specialization | closure_from_const_fn_*_ok fixtures (4 шт.) |
 
+### V4.4 — rename `sizeof` → `size_of` для Rust-style consistency (2026-06-02)
+
+**Status:** ✅ LANDED.
+
+Plan 114.4.4 Ф.5 V4 originally shipped `sizeof[T]()` (без подчёркивания) +
+`align_of[T]()` (с подчёркиванием) — inconsistent. Following Rust's
+`std::mem::size_of::<T>()` / `align_of::<T>()` naming, оба intrinsic
+теперь имеют consistent `<verb>_of` form:
+- ❌ `sizeof[T]()` (V4.0/V4.4 Ф.1) → ✅ `size_of[T]()` (V4.4 rename).
+- ✅ `align_of[T]()` (unchanged).
+
+**Migration:** Bootstrap-stage breaking change — no deprecation shim
+shipped (Nova не имеет внешних пользователей yet). All fixtures
++ spec/docs updated atomically с rename. Future code must use
+`size_of[T]()`.
+
+**Implementation:** Single-token rename в parser/types/eval/trampoline
+recognition tables. Fixture files renamed `sizeof_*.nv` → `size_of_*.nv`.
+
 ### V4.4 extensions (Plan 114.4.4 V4.4 session, 2026-06-02)
 
-**Ф.1 — sizeof/align_of для composite types (closes [M-114.4.4-trampoline-record-reflection]):**
+**Ф.1 — size_of/align_of для composite types (closes [M-114.4.4-trampoline-record-reflection]):**
 
 `type_size_or_align` расширен от primitives-only до композитных типов
 БЕЗ TypeDecl lookup:
 - Tuples `(T1, T2, ..)` — C struct-style layout с natural alignment + tail-pad.
-- FixedArray `[N]T` — `N * sizeof(T)`, element alignment.
+- FixedArray `[N]T` — `N * size_of(T)`, element alignment.
 - Array `[]T` — slice ABI = 16 bytes (pointer + length), align 8.
 - Unit `()` — size 0, align 1.
 - Readonly `readonly T` — same layout as T.
@@ -7554,7 +7573,7 @@ infrastructure as Ф.3. Will be unblocked together. Tracked:
 | # | Критерий | Verification |
 |---|---|---|
 | ... A27-A35 ... | (см. выше) | (см. выше) |
-| A36 | sizeof/align_of для tuples/arrays/Unit/Readonly | sizeof_tuple_ok / sizeof_fixed_array_ok / sizeof_nested_composite_ok (V4.4 Ф.1) |
+| A36 | size_of/align_of для tuples/arrays/Unit/Readonly | size_of_tuple_ok / size_of_fixed_array_ok / size_of_nested_composite_ok (V4.4 Ф.1) |
 | A37 | Closure-returning const fn с outer const captures | closure_outer_const_ok / closure_outer_chained_ok (V4.4 Ф.2) |
 
 🎯 **Plan 114.4.4 family extended status:**

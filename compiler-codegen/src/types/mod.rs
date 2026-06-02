@@ -797,9 +797,9 @@ fn check_const_constexpr_ex(
                 _ => None,
             };
             if let Some(name) = callee_name_opt {
-                // Plan 114.4.4 Ф.5 V4: sizeof/align_of intrinsics accepted
-                // на module-level const RHS (`const SIZE = sizeof[int]()`).
-                if name == "sizeof" || name == "align_of" {
+                // Plan 114.4.4 Ф.5 V4: size_of/align_of intrinsics accepted
+                // на module-level const RHS (`const SIZE = size_of[int]()`).
+                if name == "size_of" || name == "align_of" {
                     return Ok(());
                 }
                 if const_fn_names.contains(name) {
@@ -946,7 +946,7 @@ fn check_const_fn_expr(
                 ));
             }
             // Callee должен быть Ident (или TurboFish<Ident> для generic
-            // const fn / sizeof/align_of intrinsics).
+            // const fn / size_of/align_of intrinsics).
             let callee_name = match &func.kind {
                 E::Ident(n) => n.clone(),
                 E::TurboFish { base, .. } => match &base.kind {
@@ -977,7 +977,7 @@ fn check_const_fn_expr(
                 && callee_name.chars().next().map_or(false, |c| c.is_uppercase());
             // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics — sizeof / align_of.
             // Recognized как built-in const fn без registration.
-            let is_t_reflection = callee_name == "sizeof" || callee_name == "align_of";
+            let is_t_reflection = callee_name == "size_of" || callee_name == "align_of";
             if !const_fn_names.contains(&callee_name) && !is_variant_constructor && !is_t_reflection {
                 return Err(Diagnostic::new(
                     format!(
@@ -8565,7 +8565,7 @@ impl NameResCtx {
         // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics — built-in
         // const fn names recognized без registration. Replaced литералом
         // в rewriter pass (const_fn_eval.rs).
-        if name == "sizeof" || name == "align_of" { return true; }
+        if name == "size_of" || name == "align_of" { return true; }
         if self.builtins.contains(name) { return true; }
         // Plan 42.15 Rule C: declarations module-group СЌС‚РѕРіРѕ peer'Р°
         // (peers РѕРґРЅРѕРіРѕ folder-module РґРµР»СЏС‚ declarations namespace).
