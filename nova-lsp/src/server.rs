@@ -213,8 +213,14 @@ impl LanguageServer for Backend {
                         work_done_progress_options: Default::default(),
                     },
                 )),
+                // Plan 123.5.1 (V5.1): field-cache code-lens над method
+                // headers ("N caches inserted") + hover provider over
+                // `@field` showing cache info.
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Future capabilities (uncomment as sub-plans land):
-                // 104.2: hover_provider, definition_provider, signature_help_provider
                 // 104.3: completion_provider
                 // 104.4: document_symbol_provider, workspace_symbol_provider
                 // 104.6: rename_provider, document_formatting_provider
@@ -378,6 +384,174 @@ impl LanguageServer for Backend {
         }
         Ok(if actions.is_empty() { None } else { Some(actions) })
     }
+
+    /// Plan 123.5.1 (V5.1): code-lens над method headers showing
+    /// "N caches inserted" — uses field_cache::analyze_module API.
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        let lenses = run_with_large_stack(move || compute_field_cache_lenses(&src));
+        Ok(lenses)
+    }
+
+    /// Plan 123.5.1 (V5.1): hover на `@field` показывает cache info.
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let pos = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        let hover = run_with_large_stack(move || compute_field_cache_hover(&src, pos));
+        Ok(hover)
+    }
+}
+
+/// Plan 123.5.1: compute code-lens list для source text.
+pub fn compute_field_cache_lenses(src: &str) -> Option<Vec<CodeLens>> {
+    let mut module = nova_codegen::parser::parse(src).ok()?;
+    // Best-effort pipeline (skip if type-check fails).
+    if nova_codegen::types::check_module(&module).is_err() { return None; }
+    let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::desugar::desugar_module(&mut module);
+    nova_codegen::types::infer_effects(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module);
+    let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+    let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
+
+    let mut lenses: Vec<CodeLens> = Vec::new();
+    for info in &report.per_fn {
+        // Map Span to LSP Range (line/col).
+        let span = info.span;
+        let (line, col) = span_to_line_col(src, span.start as usize);
+        let range = Range {
+            start: Position { line: line as u32, character: col as u32 },
+            end: Position { line: line as u32, character: (col + 1) as u32 },
+        };
+        let total = info.total();
+        let title = format!(
+            "{} cache(s): ro={} mut={} licm={} pure={} chain={}",
+            total,
+            info.ro_caches.len(),
+            info.mut_caches.len(),
+            info.licm_hoists.len(),
+            info.pure_caches.len(),
+            info.chain_caches.len(),
+        );
+        lenses.push(CodeLens {
+            range,
+            command: Some(Command {
+                title,
+                command: "nova-lsp.fieldCache.show".to_string(),
+                arguments: None,
+            }),
+            data: None,
+        });
+    }
+    Some(lenses)
+}
+
+/// Plan 123.5.1: hover info над `@field` access.
+pub fn compute_field_cache_hover(src: &str, pos: Position) -> Option<Hover> {
+    // Compute byte-offset at pos.
+    let byte_off = position_to_byte_offset(src, pos)?;
+    // Find `@<name>` token at pos: look backward for `@`.
+    let bytes = src.as_bytes();
+    let mut at_start = byte_off;
+    while at_start > 0 && bytes[at_start - 1].is_ascii_alphanumeric() {
+        at_start -= 1;
+    }
+    if at_start == 0 || bytes[at_start - 1] != b'@' {
+        return None;
+    }
+    let at_marker = at_start - 1;
+    let mut name_end = byte_off;
+    while name_end < bytes.len() && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_') {
+        name_end += 1;
+    }
+    let field_name = std::str::from_utf8(&bytes[at_start..name_end]).ok()?.to_string();
+    if field_name.is_empty() { return None; }
+
+    // Parse module + analyze.
+    let mut module = nova_codegen::parser::parse(src).ok()?;
+    if nova_codegen::types::check_module(&module).is_err() { return None; }
+    let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::desugar::desugar_module(&mut module);
+    nova_codegen::types::infer_effects(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module);
+    let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+    let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
+
+    // Find any fn whose ro_caches OR mut_caches OR licm_hoists OR
+    // chain_caches contain field_name AND whose span covers the hover
+    // position.
+    for info in &report.per_fn {
+        let fn_start = info.span.start as usize;
+        let fn_end = info.span.end as usize;
+        if at_marker < fn_start || at_marker > fn_end { continue; }
+        let cached_as = if info.ro_caches.iter().any(|f| f == &field_name) {
+            Some(format!("D217 ro cache: `_at_{}`", field_name))
+        } else if info.mut_caches.iter().any(|f| f == &field_name) {
+            Some(format!("D217 mut first-region cache: `_at_{}`", field_name))
+        } else if info.licm_hoists.iter().any(|f| f == &field_name) {
+            Some(format!("D218 LICM loop hoist: `_at_{}_loop`", field_name))
+        } else if info.chain_caches.iter().any(|p| p.first() == Some(&field_name)) {
+            Some(format!("D217 V4 chain cache (root)"))
+        } else {
+            None
+        };
+        if let Some(info_str) = cached_as {
+            return Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(format!(
+                    "**Plan 123 field-cache (V1-V7):**\n\n@{} — {}",
+                    field_name, info_str
+                ))),
+                range: None,
+            });
+        }
+    }
+    Some(Hover {
+        contents: HoverContents::Scalar(MarkedString::String(format!(
+            "**Plan 123 field-cache:**\n\n@{} — not cached (below threshold or excluded)",
+            field_name
+        ))),
+        range: None,
+    })
+}
+
+fn span_to_line_col(src: &str, byte_offset: usize) -> (usize, usize) {
+    let mut line = 0usize;
+    let mut col = 0usize;
+    for (i, c) in src.char_indices() {
+        if i >= byte_offset { break; }
+        if c == '\n' { line += 1; col = 0; } else { col += 1; }
+    }
+    (line, col)
+}
+
+fn position_to_byte_offset(src: &str, pos: Position) -> Option<usize> {
+    let mut current_line = 0u32;
+    let mut current_col = 0u32;
+    for (i, c) in src.char_indices() {
+        if current_line == pos.line && current_col == pos.character {
+            return Some(i);
+        }
+        if c == '\n' {
+            current_line += 1;
+            current_col = 0;
+        } else {
+            current_col += 1;
+        }
+    }
+    if current_line == pos.line && current_col == pos.character {
+        return Some(src.len());
+    }
+    None
 }
 
 /// Plan 114 Ф.7.2 helper: read the `let`-keyword span (range от LSP-диагностики

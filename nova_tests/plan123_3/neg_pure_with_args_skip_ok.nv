@@ -1,0 +1,26 @@
+// Plan 123.3 T-NEG.3: pure methods with args → V3 skip (V3.1 enhance).
+
+module plan123_3.neg_pure_with_args_skip_ok
+
+type Calc {
+    ro base int
+}
+
+#pure
+fn Calc @add(x int) -> int => @base + x
+
+fn Calc @sum() -> int {
+    // @add(1) + @add(1) — same args, but V3 doesn't recognize identity.
+    @add(1) + @add(1) + @add(2)
+}
+
+fn Calc.new(b int) -> Calc {
+    Calc { base: b }
+}
+
+test "pure method with args — semantic preserved (V3 skip)" {
+    ro c = Calc.new(10)
+    ro r = c.sum()
+    // 11 + 11 + 12 = 34.
+    assert(r == 34)
+}

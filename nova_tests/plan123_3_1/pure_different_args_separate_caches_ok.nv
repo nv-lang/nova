@@ -1,0 +1,27 @@
+// Plan 123.3.1 T1.2: same method с different literal args → separate
+// caches (different keys).
+
+module plan123_3_1.pure_different_args_separate_caches_ok
+
+type Coef {
+    ro base int
+}
+
+#pure
+fn Coef @scaled(factor int) -> int => @base * factor
+
+fn Coef @combined() -> int {
+    // @scaled(2) × 2 + @scaled(5) × 2 → 2 separate caches.
+    @scaled(2) + @scaled(2) + @scaled(5) + @scaled(5)
+}
+
+fn Coef.new(b int) -> Coef {
+    Coef { base: b }
+}
+
+test "different literal args use separate caches" {
+    ro c = Coef.new(10)
+    ro r = c.combined()
+    // scaled(2) = 20, scaled(5) = 50. 2*20 + 2*50 = 40 + 100 = 140.
+    assert(r == 140)
+}

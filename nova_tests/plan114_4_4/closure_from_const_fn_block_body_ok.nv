@@ -1,0 +1,18 @@
+// Plan 114.4.4.4 V4.3 POSITIVE: closure body может быть block формой
+// `|x| { stmts; expr }` с control flow.
+
+module plan114_4_4.closure_from_const_fn_block_body_ok
+
+fn make_clamp(const lo int, const hi int) -> const fn(int) -> int =>
+    |x| {
+        if x < lo { return lo }
+        if x > hi { return hi }
+        x
+    }
+
+test "closure block body" {
+    ro clamp_0_10 = make_clamp(0, 10)
+    assert(clamp_0_10(-5) == 0)
+    assert(clamp_0_10(5) == 5)
+    assert(clamp_0_10(15) == 10)
+}

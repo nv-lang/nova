@@ -1,0 +1,24 @@
+// Plan 123.5 T1.1: --explain-cache output verification.
+
+module plan123_5.test_explain_ok
+
+type Calc {
+    ro a int
+    ro b int
+}
+
+#pure
+fn Calc @sum() -> int => @a + @b
+
+fn Calc @demo() -> int {
+    @a + @a + @b + @b + @sum() + @sum()
+}
+
+fn Calc.new(a int, b int) -> Calc {
+    Calc { a, b }
+}
+
+test "demo runs" {
+    ro c = Calc.new(3, 5)
+    assert(c.demo() == 32)  // 3+3+5+5 + 8+8 = 16 + 16 = 32
+}

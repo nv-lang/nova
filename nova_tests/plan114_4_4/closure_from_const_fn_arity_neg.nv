@@ -1,0 +1,15 @@
+// Plan 114.4.4.4 V4.3 NEGATIVE: closure param arity mismatch — closure
+// `|x| ...` (1 param) против host return-type `-> const fn(int, int) -> int`
+// (2 params). Trampoline gen rejects с E_CONST_FN_CLOSURE_ARITY.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_CLOSURE_ARITY
+
+module plan114_4_4.closure_from_const_fn_arity_neg
+
+fn make_thing(const n int) -> const fn(int, int) -> int =>
+    |x| x + n
+
+test "closure arity mismatch rejected" {
+    ro t = make_thing(5)
+    assert(t(3, 4) == 8)
+}

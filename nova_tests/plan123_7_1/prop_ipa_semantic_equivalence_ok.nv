@@ -1,0 +1,42 @@
+// Plan 123.7.1 T-PROP.1: semantic equivalence — V7.1 caching
+// behavior identical to baseline across various input data.
+
+module plan123_7_1.prop_ipa_semantic_equivalence_ok
+
+type Acc {
+    mut count int
+    ro factor int
+}
+
+fn Acc mut @inc_count() -> () {
+    @count = @count + 1
+}
+
+fn Acc mut @compute(n int) -> int {
+    // Multiple reads/writes pattern.
+    mut total = @factor + @factor
+    mut i = 0
+    while i < n {
+        // ro @factor — D217 cache.
+        // mut @count — V7.1 IPA-aware (inc_count writes @count → barrier).
+        total = total + @factor + @factor
+        @inc_count()
+        i = i + 1
+    }
+    total
+}
+
+fn Acc.new(c int, f int) -> Acc {
+    Acc { count: c, factor: f }
+}
+
+test "various inputs produce correct results" {
+    mut a1 = Acc.new(0, 3)
+    assert(a1.compute(2) == (3+3) + 2*(3+3))   // 6 + 12 = 18.
+
+    mut a2 = Acc.new(0, 5)
+    assert(a2.compute(3) == (5+5) + 3*(5+5))   // 10 + 30 = 40.
+
+    mut a3 = Acc.new(0, 2)
+    assert(a3.compute(0) == 2+2)               // 4 (no loop iterations).
+}

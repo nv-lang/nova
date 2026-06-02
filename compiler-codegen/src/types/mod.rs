@@ -1439,6 +1439,22 @@ fn check_const_fn_decl(
         param_consts.insert(p.name.clone());
     }
     let local_consts = std::collections::HashSet::new();
+    // Plan 114.4.4.4 V4.3: closure-returning const fn — body is single
+    // closure literal at top level. Allow it и validate closure body
+    // с extended scope (const params + closure params).
+    if let crate::ast::FnBody::Expr(e) = &fd.body {
+        if let Some(extra) = closure_param_names(e) {
+            // Closure params добавляем в const-param scope чтобы closure
+            // body мог reference closure's own params as "constexpr-like"
+            // от точки зрения validator'а (они runtime, но validator
+            // допускает Ident refs к param_consts).
+            let mut extended = param_consts.clone();
+            for n in &extra { extended.insert(n.clone()); }
+            return validate_const_fn_closure_body(
+                e, &extended, const_fn_names, &local_consts, &fd.name, call_targets,
+            );
+        }
+    }
     match &fd.body {
         crate::ast::FnBody::Expr(e) => check_const_fn_expr(
             e, &param_consts, const_fn_names, &local_consts, &fd.name, call_targets,
@@ -1450,6 +1466,70 @@ fn check_const_fn_decl(
             "[E_CONST_FN_EXTERNAL] external fn не может быть const fn (D199)."
                 .to_string(),
             fd.span,
+        )),
+    }
+}
+
+/// Plan 114.4.4.4 V4.3: if `e` is closure literal at top level — return
+/// its parameter names. Otherwise None.
+fn closure_param_names(e: &crate::ast::Expr) -> Option<Vec<String>> {
+    use crate::ast::ExprKind as E;
+    match &e.kind {
+        E::Lambda { params, .. } => {
+            Some(params.iter().map(|p| p.name.clone()).collect())
+        }
+        E::ClosureLight { params, .. } => {
+            Some(params.iter().map(|p| p.name.clone()).collect())
+        }
+        E::ClosureFull(sb) => {
+            Some(sb.params.iter().map(|p| p.name.clone()).collect())
+        }
+        _ => None,
+    }
+}
+
+/// Plan 114.4.4.4 V4.3: validate closure body of closure-returning const
+/// fn. Closure body может использовать host fn's const params + closure's
+/// own params как identifier sources. Other constructs validated по
+/// regular V1 const fn body rules.
+fn validate_const_fn_closure_body(
+    closure_expr: &crate::ast::Expr,
+    extended_params: &std::collections::HashSet<String>,
+    const_fn_names: &std::collections::HashSet<String>,
+    local_consts: &std::collections::HashSet<String>,
+    current_fn: &str,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::{ExprKind as E, FnBody, ClosureBody};
+    match &closure_expr.kind {
+        E::Lambda { body, .. } => check_const_fn_expr(
+            body, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+        ),
+        E::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => check_const_fn_expr(
+                e, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+            ClosureBody::Block(b) => check_const_fn_block(
+                b, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+        },
+        E::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => check_const_fn_expr(
+                e, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+            FnBody::Block(b) => check_const_fn_block(
+                b, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+            FnBody::External => Err(Diagnostic::new(
+                "[E_CONST_FN_CLOSURE_EXTERNAL] closure-returning const fn body \
+                 cannot be external (D199 V4.3).".to_string(),
+                closure_expr.span,
+            )),
+        },
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_CLOSURE_BODY] expected closure literal в \
+             closure-returning const fn body (D199 V4.3).".to_string(),
+            closure_expr.span,
         )),
     }
 }
@@ -1482,7 +1562,7 @@ struct TypeCheckCtx<'a> {
     /// access check: если field.priv_field И current_recv_type != obj's type
     /// → emit E_PRIV_FIELD_READ.
     current_recv_type: std::cell::RefCell<Option<String>>,
-    /// Plan 124.6 (D223): current fn's `#test_access(TypeA, TypeB, ...)` list.
+    /// Plan 124.6 (D225): current fn's `#test_access(TypeA, TypeB, ...)` list.
     /// Если non-empty, current fn body получает priv-field access ко всем
     /// перечисленным types (escape hatch для unit tests + sibling helper
     /// fns). Cleared on fn exit. Combines с current_recv_type для allow-list.
@@ -1513,7 +1593,7 @@ impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
     }
 }
 
-/// Plan 124.6 (D223): RAII guard для current_fn_test_access vec в TypeCheckCtx.
+/// Plan 124.6 (D225): RAII guard для current_fn_test_access vec в TypeCheckCtx.
 struct PrivTestAccessGuard<'a, 'b> {
     ctx: &'b TypeCheckCtx<'a>,
     prev: Vec<String>,
@@ -2382,7 +2462,7 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
-        // Plan 124.6 (D223): set current_fn_test_access — fn body gets priv
+        // Plan 124.6 (D225): set current_fn_test_access — fn body gets priv
         // access к listed types (escape hatch для tests + helper fns).
         let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
         *self.current_fn_test_access.borrow_mut() = fd.test_access_for.clone();
@@ -3065,7 +3145,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                             }
-                            // Plan 124 (D220/D221) + 124.6 (D223): priv field INIT
+                            // Plan 124 (D220/D221) + 124.6 (D225): priv field INIT
                             // check — record literal outside type-method scope cannot
                             // init priv fields (unless #test_access).
                             if let TypeDeclKind::Record(rec_fields) = &td.kind {
@@ -3277,7 +3357,7 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
-        // Plan 124.6 (D223): set current_fn_test_access — fn body gets priv
+        // Plan 124.6 (D225): set current_fn_test_access — fn body gets priv
         // access к listed types.
         let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
         *self.current_fn_test_access.borrow_mut() = fd.test_access_for.clone();
@@ -3770,7 +3850,7 @@ impl<'a> TypeCheckCtx<'a> {
     // E_PRIV_FIELD_PATTERN per priv field. Recurses into sub-patterns
     // (nested destructure) using the corresponding RecordField type.
     //
-    /// Plan 124.6 (D223): unified priv access predicate. Returns true if
+    /// Plan 124.6 (D225): unified priv access predicate. Returns true if
     /// current fn body has priv access ко `tname` (т.е. может читать/писать/
     /// init/destructure priv-помеченные fields этого type'а).
     ///
@@ -3840,7 +3920,7 @@ impl<'a> TypeCheckCtx<'a> {
                     });
                 let Some(tname) = tname_opt else { return };
                 let Some(td) = self.types.get(tname.as_str()) else { return };
-                // Plan 124.2 + 124.4 + 124.6 (D221+D222+D223): unified priv
+                // Plan 124.2 + 124.4 + 124.6 (D221+D222+D224): unified priv
                 // check (Record + NamedTuple). Per-field visible_to taken into
                 // account (Plan 124.6).
                 struct FieldMeta { name: String, priv_field: bool, visible_to: Vec<String>, ty: TypeRef }
@@ -3874,7 +3954,7 @@ impl<'a> TypeCheckCtx<'a> {
                                          D220/D221/D222). Hint: bind the value to a variable \
                                          and access via public methods of `{}`, move \
                                          destructure into a method of `{}`, or use \
-                                         `#test_access({})` (D223).",
+                                         `#test_access({})` (D225).",
                                         tname, pf.name, tname, tname, tname,
                                     ),
                                     pf.span,
@@ -4179,7 +4259,7 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
-                    // Plan 124 (D220) + 124.6 (D223): priv field READ access check.
+                    // Plan 124 (D220) + 124.6 (D225): priv field READ access check.
                     // Allowed: own type-method, или fn с #test_access(tname),
                     // или current_recv ∈ field.visible_to (friend).
                     if field.priv_field
@@ -4192,7 +4272,7 @@ impl<'a> TypeCheckCtx<'a> {
                                  `priv` (Plan 124 / D220). Hint: add public \
                                  getter method on `{}`, or move accessing code \
                                  into a method of `{}`, or use `#test_access({})` \
-                                 на test fn (escape hatch — D223).",
+                                 на test fn (escape hatch — D224).",
                                 tname, name, tname, tname, tname,
                             ),
                             span,
@@ -4276,7 +4356,7 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
-                    // Plan 124.4 (D222) + 124.6 (D223): priv field READ check
+                    // Plan 124.4 (D222) + 124.6 (D225): priv field READ check
                     // для named tuple — uniform allowance с Record.
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
@@ -4288,7 +4368,7 @@ impl<'a> TypeCheckCtx<'a> {
                                  field marked `priv` (Plan 124 / D220 / D222). \
                                  Hint: add public getter method on `{}`, move \
                                  accessing code into a method of `{}`, или use \
-                                 `#test_access({})` на test fn (D223).",
+                                 `#test_access({})` на test fn (D225).",
                                 tname, name, tname, tname, tname,
                             ),
                             span,
@@ -4370,7 +4450,7 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(td) = self.types.get(name.as_str()) else { return; };
         match &td.kind {
             TypeDeclKind::NamedTuple(fields) => {
-                // Plan 124.4 (D222) + 124.6 (D223): if any priv field exists,
+                // Plan 124.4 (D222) + 124.6 (D225): if any priv field exists,
                 // for each named-arg targeting priv field check access allowance.
                 let has_priv = fields.iter().any(|f| f.priv_field);
                 let base_allowed = self.priv_access_allowed_base(name.as_str());
@@ -5020,7 +5100,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         target.span,
                                     ));
                                 }
-                                // Plan 124 (D220) + 124.6 (D223): priv field WRITE check.
+                                // Plan 124 (D220) + 124.6 (D225): priv field WRITE check.
                                 if f.priv_field
                                     && !self.priv_field_access_allowed(tname, &f.visible_to)
                                 {
@@ -5032,7 +5112,7 @@ impl<'a> TypeCheckCtx<'a> {
                                              Hint: add public mutator method on `{}` \
                                              (e.g. `export fn {} mut @set_{}(v T)`), \
                                              move accessing code into a method of `{}`, \
-                                             or use `#test_access({})` (D223).",
+                                             or use `#test_access({})` (D225).",
                                             tname, field_name, tname, tname, field_name, tname, tname,
                                         ),
                                         target.span,

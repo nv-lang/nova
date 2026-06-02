@@ -1,0 +1,17 @@
+// Plan 114.4.4.4 V4.3 POSITIVE: specialized closure used as HOF arg —
+// passed to apply directly без intermediate let binding.
+
+module plan114_4_4.closure_from_const_fn_as_hof_ok
+
+fn make_scaler(const factor int) -> const fn(int) -> int =>
+    |x| x * factor
+
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+test "specialized closure passed as HOF arg" {
+    ro r1 = apply(make_scaler(4), 5)
+    assert(r1 == 20)
+
+    ro r2 = apply(make_scaler(10), 7)
+    assert(r2 == 70)
+}

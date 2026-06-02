@@ -1,0 +1,28 @@
+// Plan 123.3.1 T1.1: pure method с literal int arg cached.
+
+module plan123_3_1.pure_literal_int_arg_ok
+
+type Vec {
+    ro x int
+    ro y int
+}
+
+// Pure method с int arg.
+#pure
+fn Vec @scaled(factor int) -> int => @x * factor + @y * factor
+
+fn Vec @triple_scaled() -> int {
+    // 3 calls с same arg (2) → cached single call.
+    @scaled(2) + @scaled(2) + @scaled(2)
+}
+
+fn Vec.new(x int, y int) -> Vec {
+    Vec { x, y }
+}
+
+test "V3.1 literal-int-arg pure cached" {
+    ro v = Vec.new(3, 4)
+    ro r = v.triple_scaled()
+    // scaled(2) = 6 + 8 = 14. ×3 = 42.
+    assert(r == 42)
+}

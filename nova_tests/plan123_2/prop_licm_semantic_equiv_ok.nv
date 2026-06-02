@@ -1,0 +1,58 @@
+// Plan 123.2 T-PROP.1: semantic equivalence — same algorithm
+// expressed across loop forms with various inputs must yield
+// identical results regardless of LICM caching.
+
+module plan123_2.prop_licm_semantic_equiv_ok
+
+type Calc {
+    ro base int
+    ro step int
+}
+
+fn Calc @while_form(n int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < n {
+        total = total + @base + @step
+        i = i + 1
+    }
+    total
+}
+
+fn Calc @for_form(n int) -> int {
+    mut total = 0
+    for i in 0..n {
+        total = total + @base + @step
+    }
+    total
+}
+
+fn Calc @loop_form(n int) -> int {
+    mut total = 0
+    mut i = 0
+    loop {
+        if i >= n { break }
+        total = total + @base + @step
+        i = i + 1
+    }
+    total
+}
+
+fn Calc.new(b int, s int) -> Calc {
+    Calc { base: b, step: s }
+}
+
+test "property: while/for/loop equivalence" {
+    ro c = Calc.new(10, 3)
+    assert(c.while_form(5) == c.for_form(5))
+    assert(c.for_form(5) == c.loop_form(5))
+    // 5 × (10+3) = 65.
+    assert(c.while_form(5) == 65)
+}
+
+test "property: zero iter preserves" {
+    ro c = Calc.new(99, 1)
+    assert(c.while_form(0) == 0)
+    assert(c.for_form(0) == 0)
+    assert(c.loop_form(0) == 0)
+}

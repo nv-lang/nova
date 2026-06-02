@@ -1,0 +1,33 @@
+// Plan 123.2 T1.6: break/continue preserve correctness with hoisted
+// cache. Hoisted load is side-effect-free.
+
+module plan123_2.licm_break_continue_ok
+
+type UpperBound {
+    ro hi int
+}
+
+fn UpperBound @sum_partial(skip int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < @hi {
+        if i == skip {
+            i = i + 1
+            continue
+        }
+        total = total + @hi + i
+        i = i + 1
+    }
+    total
+}
+
+fn UpperBound.new(h int) -> UpperBound {
+    UpperBound { hi: h }
+}
+
+test "break/continue safe with LICM" {
+    ro r = UpperBound.new(5).sum_partial(2)
+    // i=0..5; skip i=2. Pairs: (0,5+0=5), (1,6), skip(2), (3,8), (4,9).
+    // total = 5+6+8+9 = 28.
+    assert(r == 28)
+}

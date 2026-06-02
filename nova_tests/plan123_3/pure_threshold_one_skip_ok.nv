@@ -1,0 +1,23 @@
+// Plan 123.3 T1.4: single call → no cache (below threshold).
+
+module plan123_3.pure_threshold_one_skip_ok
+
+type X {
+    ro v int
+}
+
+#pure
+fn X @get() -> int => @v
+
+fn X @single() -> int {
+    @get()
+}
+
+fn X.new(v int) -> X {
+    X { v }
+}
+
+test "single pure call not cached (semantic preserved)" {
+    ro x = X.new(42)
+    assert(x.single() == 42)
+}

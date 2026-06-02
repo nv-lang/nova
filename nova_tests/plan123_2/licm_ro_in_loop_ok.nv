@@ -1,0 +1,31 @@
+// Plan 123.2 T1.1: ro field invariant внутри loop → hoist
+// `ro _at_<F>_loop = @<F>` immediately before the loop.
+
+module plan123_2.licm_ro_in_loop_ok
+
+type Image {
+    ro pixels int
+    ro width int
+}
+
+fn Image @sum_pixels_for(times int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < times {
+        // 2 reads of ro @pixels внутри loop body → LICM hoists.
+        total += @pixels + @pixels
+        i += 1
+    }
+    total + @width
+}
+
+fn Image.new(p int, w int) -> Image {
+    Image { pixels: p, width: w }
+}
+
+test "ro field hoisted из while loop" {
+    ro img = Image.new(7, 100)
+    ro r = img.sum_pixels_for(3)
+    // total: 3*(7+7) = 42; + width 100 = 142.
+    assert(r == 142)
+}

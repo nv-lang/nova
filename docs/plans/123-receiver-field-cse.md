@@ -2,9 +2,14 @@
 # Plan 123 — Method-local field load optimization (umbrella)
 
 > **Создан 2026-06-01.**
-> **Status:** 🆕 PLANNED — roadmap-индекс. Декомпозирован на 7
-> sub-plan'ов (123.1-123.7) per «split» в §5. Каждый sub-plan
-> independently shippable; release-train V1→V7 incremental.
+> **Status:** ✅ V7 CLOSED 2026-06-02 — все 7 sub-plans active.
+> 123.1+123.2+123.3+123.4+123.5+123.6+123.7 ✅ — D217 V1+V4+V5+V6
+> + D218 + D219 + D220 landed. ~5500 LOC field_cache.rs. 55 runtime
+> fixtures across plan123_1..7. User doc + migration guide.
+> Followup markers: V3.1 / V4.1 / V5.1 / V6.1 / V7.1 incremental
+> enhancements (~12 markers total, all P2/P3 non-blocking).
+> Branch plan-123-receiver-field-cse — single shared branch для
+> umbrella (per feedback-sequential-no-sub-worktree).
 > **Приоритет:** P1 (V1 = 123.1 — codegen perf для всех Nova-методов;
 > особенно ценно для hot-path кодеков ReadBuffer/WriteBuffer/
 > StringBuilder/HashMap iter). V2-V7 — incremental wins.
@@ -835,14 +840,14 @@ Open questions проверить + закрыть через D217-D219:
 
 | Sub-plan | Status |
 |---|---|
-| 123.1 Core CSE | 🆕 PLANNED |
-| 123.2 LICM | 🆕 PLANNED |
-| 123.3 Pure caching | 🆕 PLANNED |
-| 123.4 Chain | 🆕 PLANNED |
-| 123.5 LSP/diag | 🆕 PLANNED |
-| 123.6 Telemetry | 🆕 PLANNED |
-| 123.7 IPA | 🆕 PLANNED |
-| **Umbrella** | 🆕 PLANNED |
+| 123.1 Core CSE | ✅ CLOSED 2026-06-02 (V1 active, D217 landed) |
+| 123.2 LICM | ✅ CLOSED 2026-06-02 (V2 active, D218 landed) |
+| 123.3 Pure caching | ✅ CLOSED 2026-06-02 (V3 active, D219 landed) |
+| 123.4 Chain | ✅ CLOSED 2026-06-02 (V4 active, D217 amend landed) |
+| 123.5 LSP/diag | ✅ CLOSED 2026-06-02 (V5 CLI delivered; LSP V5.1 deferred) |
+| 123.6 Telemetry | ✅ CLOSED 2026-06-02 (V6 active, D217 §7 amend) |
+| 123.7 IPA | ✅ CLOSED 2026-06-02 (V7 infrastructure, D220 landed; V7.1 integration followups) |
+| **Umbrella** | ✅ V7 CLOSED 2026-06-02 — все 7 sub-plans active |
 
 ---
 

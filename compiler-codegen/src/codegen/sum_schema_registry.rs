@@ -1425,6 +1425,7 @@ mod tests {
             is_trusted: false,
             fuel: None,
             is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
+            cancel_safe_attr: false,
         };
         let items = vec![Item::Fn(opt_is_some)];
 
@@ -1509,6 +1510,7 @@ mod tests {
             is_trusted: false,
             fuel: None,
             is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
+            cancel_safe_attr: false,
         };
         let items = vec![Item::Fn(res_is_ok)];
 
@@ -1569,6 +1571,7 @@ mod tests {
             verify_timeout_ms: None, purity: Purity::Unknown,
             is_trusted: false, fuel: None,
             is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
+            cancel_safe_attr: false,
         };
 
         let mut reg = SumSchemaRegistry::new();
@@ -1646,6 +1649,7 @@ mod tests {
             verify_timeout_ms: None, purity: Purity::Unknown,
             is_trusted: false, fuel: None,
             is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
+            cancel_safe_attr: false,
         };
 
         let mut reg = SumSchemaRegistry::new();
@@ -1729,6 +1733,8 @@ mod tests {
             invariants: vec![],
             axioms: vec![],
             consume: false,
+            assoc_consts: vec![],
+            impl_protocols: vec![],
         };
         let items = vec![Item::Type(runtime_error_decl)];
 
@@ -1809,6 +1815,8 @@ mod tests {
             span: Span::default(), attrs: vec![],
             invariants: vec![], axioms: vec![],
             consume: false,
+            assoc_consts: vec![],
+            impl_protocols: vec![],
         };
 
         reg.init_prelude_decls_from_items(&[Item::Type(drifted_decl)]);
@@ -1872,6 +1880,8 @@ mod tests {
             span: Span::default(), attrs: vec![],
             invariants: vec![], axioms: vec![],
             consume: false,
+            assoc_consts: vec![],
+            impl_protocols: vec![],
         };
 
         reg.init_prelude_decls_from_items(&[Item::Type(rbe_decl)]);
@@ -1930,6 +1940,7 @@ mod tests {
             verify_mode: VerifyMode::Default, verify_timeout_ms: None,
             purity: Purity::Unknown, is_trusted: false,
             fuel: None, is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
+            cancel_safe_attr: false,
         };
         let items = vec![Item::Fn(error_method)];
 

@@ -28211,7 +28211,8 @@ mod mem_ordering_tests {
     //! Plan 103.1 Ф.3: unit-тесты nova_mem_ordering_to_atomic helper.
     //! Acceptance: ≥5 cases (one per variant), plus None for unknown/runtime.
     use super::CEmitter;
-    use crate::ast::{Expr, ExprKind, Span};
+    use crate::ast::{Expr, ExprKind};
+    use crate::diag::Span;
 
     fn path_expr(parts: &[&str]) -> Expr {
         Expr {

@@ -1,0 +1,35 @@
+// Plan 123.1 T-PROP.3: property test — name collision avoidance.
+// User-local `_at_x` exists; pass должен emit `_at_x_1` (or similar
+// suffix) — user-local untouched, semantics preserved.
+
+module plan123_1.prop_collision_avoidance_ok
+
+type Bag {
+    ro x int
+    ro y int
+}
+
+fn Bag @combine_with_existing() -> int {
+    // User has _at_x as local — pass must rename cache to avoid
+    // collision.
+    ro _at_x = 100
+    // @x accessed 3 times, @y accessed 2 times → both cached.
+    // user's _at_x = 100 — preserved.
+    (@x + @x + @x) + (@y + @y) + _at_x
+}
+
+fn Bag.new(x int, y int) -> Bag {
+    Bag { x, y }
+}
+
+test "property: user local _at_x not clobbered" {
+    ro r = Bag.new(2, 3).combine_with_existing()
+    // 3*2 + 2*3 + 100 = 6+6+100 = 112
+    assert(r == 112)
+}
+
+test "property: multiple user collisions" {
+    ro r = Bag.new(7, 11).combine_with_existing()
+    // 3*7 + 2*11 + 100 = 21+22+100 = 143
+    assert(r == 143)
+}

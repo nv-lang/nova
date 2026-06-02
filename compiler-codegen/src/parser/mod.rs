@@ -31,7 +31,7 @@ pub(crate) struct ContractAttrs {
     /// const fn evaluator recursion depth (default 256). For deep recursion
     /// (e.g. fact(500) с big-int arith). 0 < N <= 65535.
     pub fn_eval_max_depth: Option<u32>,
-    /// Plan 124.6 (D223): `#test_access(TypeX, TypeY, ...)` — fn body
+    /// Plan 124.6 (D225): `#test_access(TypeX, TypeY, ...)` — fn body
     /// gets priv-field access to listed types (escape hatch для unit
     /// tests). Default empty Vec = no extra access.
     pub test_access_for: Vec<String>,
@@ -1968,7 +1968,7 @@ impl Parser {
                     attrs.fn_eval_max_depth = Some(n);
                 }
                 "test_access" => {
-                    // Plan 124.6 (D223): `#test_access(TypeX[, TypeY...])`
+                    // Plan 124.6 (D225): `#test_access(TypeX[, TypeY...])`
                     // — fn body получает priv-field access к указанным types.
                     // Escape hatch для unit tests + sibling helper fns.
                     self.bump(); // #
@@ -3195,7 +3195,7 @@ impl Parser {
             // Lookahead: after `(`, if IDENT followed by type-starting token
             // → named tuple. Otherwise delegate to parse_type() as before.
             //
-            // Plan 124.7 (D224): `type Vec3 priv (x f64, y f64, z f64)` —
+            // Plan 124.7 (D225): `type Vec3 priv (x f64, y f64, z f64)` —
             // type-level priv default flip для tuple form (extends D220
             // record form). default_field_priv pass'ится в field parser.
             TokenKind::LParen if self.is_named_tuple_decl() => {
@@ -3293,10 +3293,10 @@ impl Parser {
         self.parse_named_tuple_fields_with_default(false)
     }
 
-    /// Plan 120 (D215) + Plan 124.4 (D222) + Plan 124.7 (D224): parse named
+    /// Plan 120 (D215) + Plan 124.4 (D222) + Plan 124.7 (D225): parse named
     /// tuple fields с per-field `priv`/`pub` modifier + type-level default
     /// `priv` propagation. `default_priv = true` пришёл из
-    /// `type X priv (...)` syntax (D224).
+    /// `type X priv (...)` syntax (D225).
     /// Called after consuming `(`. Stops before `)`.
     fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
@@ -3307,7 +3307,7 @@ impl Parser {
             }
             let field_start = self.peek().span;
             // Plan 124.4 (D222): optional `priv` / `pub` modifier.
-            // Plan 124.7 (D224): type-level `priv` default flip — when
+            // Plan 124.7 (D225): type-level `priv` default flip — when
             // default_priv = true (`type X priv (...)`), field's effective
             // priv_field = default_priv unless explicit `pub` overrides.
             let mut explicit_priv = false;
@@ -3341,7 +3341,7 @@ impl Parser {
                     _ => break,
                 }
             }
-            // Effective priv_field resolution (Plan 124.7 / D224):
+            // Effective priv_field resolution (Plan 124.7 / D225):
             //   - explicit `pub` → priv_field = false (overrides type-level)
             //   - explicit `priv` → priv_field = true
             //   - neither → priv_field = default_priv (type-level inherit)
@@ -3445,7 +3445,7 @@ impl Parser {
                 }
                 continue;
             }
-            // Plan 124.6 (D223): `#visible_to(OtherType[, ...])` field-level
+            // Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
             // attribute — explicit friend declaration. Methods of listed
             // types get priv access. Parsed BEFORE priv/pub modifier.
             let mut visible_to: Vec<String> = Vec::new();

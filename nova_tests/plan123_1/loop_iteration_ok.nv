@@ -1,0 +1,39 @@
+// Plan 123.1 T2.7: while/for loops с ro @field reads — cache valid
+// поскольку ro fields immutable.
+
+module plan123_1.loop_iteration_ok
+
+type Iter {
+    ro start int
+    ro count int
+}
+
+fn Iter @sum_arithmetic() -> int {
+    // @start used 2 times (in loop), @count used 2 times (1 in cond,
+    // 1 in body via @count check). Both ro → cache emitted.
+    mut total = 0
+    mut i = 0
+    while i < @count {
+        total += @start + i
+        i += 1
+    }
+    // After loop — last accesses of @start, @count for verification.
+    if @count == 0 {
+        @start
+    } else {
+        total
+    }
+}
+
+fn Iter.new(s int, c int) -> Iter {
+    Iter { start: s, count: c }
+}
+
+test "ro caching across loops" {
+    ro r = Iter.new(10, 3).sum_arithmetic()
+    // i=0: total=10, i=1: total=21, i=2: total=33. Return 33.
+    assert(r == 33)
+    ro r2 = Iter.new(7, 0).sum_arithmetic()
+    // count=0, loop skipped, return @start=7.
+    assert(r2 == 7)
+}

@@ -7698,7 +7698,7 @@ ALL closed 2026-06-02:
 
 ---
 
-## D223. Escape hatches — `#test_access` + `#visible_to` (Plan 124.6)
+## D224. Escape hatches — `#test_access` + `#visible_to` (Plan 124.6)
 
 > **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.6 closure).
 > **Extends:** D220 §3 (scope rules) + D222 §3 (protocol boundary).
@@ -7717,7 +7717,7 @@ production scenarios нужна controlled relaxation:
 2. **Sibling helper types** (`Account` + `Bank` audit utilities) —
    coordinated access без friend boilerplate.
 
-D223 вводит **two explicit opt-in escape hatches** — каждый
+D224 вводит **two explicit opt-in escape hatches** — каждый
 syntactically marked, никаких неявных relaxation.
 
 ### §2 `#test_access(TypeX[, TypeY...])` — fn-level access grant
@@ -7791,14 +7791,14 @@ combines all three checks. `priv_access_allowed_base(tname)` covers
 
 ### §5 Diagnostic codes
 
-D223 reuses Plan 124.1-124.4 codes (no new codes), but hints
+D224 reuses Plan 124.1-124.4 codes (no new codes), but hints
 now mention escape hatches:
 
 ```
 [E_PRIV_FIELD_READ] cannot read private field `Account.balance` ...
 Hint: add public getter method on `Account`, move accessing code
 into a method of `Account`, or use `#test_access(Account)` on test
-fn (escape hatch — D223).
+fn (escape hatch — D224).
 ```
 
 Parser-level errors:
@@ -7840,11 +7840,11 @@ ALL closed 2026-06-02:
 - A6.6 ✅ plan124_6 fixtures 7/7 PASS (4 positive + 3 negative).
 - A6.7 ✅ Regression plan124_1 9/9 + plan124_2 14/14 + plan124_4 10/10
   unchanged.
-- A6.8 ✅ D223 NEW + cross-refs к D220-D222.
+- A6.8 ✅ D224 NEW + cross-refs к D220-D222.
 
 ---
 
-## D224. Type-level priv flip для named tuples (Plan 124.7)
+## D225. Type-level priv flip для named tuples (Plan 124.7)
 
 > **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.7 closure).
 > **Extends:** D220 §3.3.1 (record-form type-level flip) + D222
@@ -7863,7 +7863,7 @@ type Account priv {
     mut balance f64          // default = priv (inherits type-level)
 }
 
-// Named tuple form (Plan 124.7 / D224 — this section)
+// Named tuple form (Plan 124.7 / D225 — this section)
 type Secret priv (key str, salt str)
 //             ^^^^ priv ПОСЛЕ имени type'а, ДО `(`
 
@@ -7900,7 +7900,7 @@ Bidirectional `priv pub` / `pub priv` → `E_PRIV_PUB_CONFLICT` (D220 §6).
   `parse_record_fields_with_default` precedent).
 - Backward-compat shim `parse_named_tuple_fields()` calls _with_default(false).
 
-### §4 Access rules — unchanged (D220 §4 / D221 / D222 / D223)
+### §4 Access rules — unchanged (D220 §4 / D221 / D222 / D224)
 
 Effective priv_field после resolution applied identically к explicit
 per-field priv. All Plan 124.1-124.6 enforcement sites (READ /
@@ -7928,8 +7928,8 @@ Bimodal coverage matches kubernetes empirical: `core/v1` API surface
 ### §6 Cross-refs
 
 - D215 — named tuple base syntax.
-- D220 §3.3.1 — record-form type-level flip (D224 symmetric).
-- D222 — named tuple per-field priv (D224 builds on this).
+- D220 §3.3.1 — record-form type-level flip (D225 symmetric).
+- D222 — named tuple per-field priv (D225 builds on this).
 - D102 — diagnostic format.
 
 ### Acceptance — Plan 124.7
@@ -7939,7 +7939,7 @@ ALL closed 2026-06-02:
 - A7.1 ✅ Parser принимает `type X priv { ... }` syntax (record form —
   Plan 124.1 preserved).
 - A7.2 ✅ Parser принимает `type X priv (...)` syntax (named tuple
-  form — D224 NEW).
+  form — D225 NEW).
 - A7.3 ✅ `pub` modifier на field overrides type-level priv default.
 - A7.4 ✅ Field без modifier inherits type-level default (priv).
 - A7.5 ✅ Type-level + field-level combinations 4 cases verified:
@@ -7947,7 +7947,7 @@ ALL closed 2026-06-02:
 - A7.6 ✅ plan124_7 fixtures 8/8 PASS (5 positive + 3 negative).
 - A7.7 ✅ Regression Plan 120 8/8 + plan124_1 9/9 + plan124_4 10/10
   unchanged.
-- A7.8 ✅ D224 NEW + cross-refs.
+- A7.8 ✅ D225 NEW + cross-refs.
 
 ### Acceptance — Plan 124.2
 

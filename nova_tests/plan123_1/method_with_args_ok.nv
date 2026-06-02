@@ -1,0 +1,39 @@
+// Plan 123.1 T2.11 positive: ro caching combined с method arguments.
+// @field reads cached, args не affected.
+
+module plan123_1.method_with_args_ok
+
+type Bounded {
+    ro lo int
+    ro hi int
+}
+
+fn Bounded @clamp(x int) -> int {
+    // 4 reads ro fields (2 each) — cache emitted.
+    if x < @lo { @lo } else { if x > @hi { @hi } else { x } }
+}
+
+fn Bounded @sum_clamped(a int, b int) -> int {
+    // @lo + @hi accessed twice each here too.
+    ro mid = (@lo + @hi) / 2
+    @clamp(a) + @clamp(b) + mid + (@lo - @hi)
+}
+
+fn Bounded.new(lo int, hi int) -> Bounded {
+    Bounded { lo, hi }
+}
+
+test "method with args + ro caching" {
+    ro r = Bounded.new(0, 10)
+    assert(r.clamp(5) == 5)
+    assert(r.clamp(-3) == 0)
+    assert(r.clamp(99) == 10)
+}
+
+test "ro caching across self-method-calls" {
+    ro r = Bounded.new(0, 10)
+    // Each clamp call independently triggers ro caching.
+    ro s = r.sum_clamped(5, 7)
+    // 5+7 + 5 (mid=(0+10)/2) + (0-10) = 12+5-10 = 7
+    assert(s == 7)
+}

@@ -1,0 +1,27 @@
+// Plan 123.2 T1.4: `loop { ... break ... }` form.
+
+module plan123_2.licm_loop_keyword_ok
+
+type Wrap {
+    ro limit int
+}
+
+fn Wrap @find_first() -> int {
+    mut x = 0
+    loop {
+        if x >= @limit + @limit { break }
+        x = x + 1
+    }
+    x
+}
+
+fn Wrap.new(l int) -> Wrap {
+    Wrap { limit: l }
+}
+
+test "loop keyword form — @limit hoisted" {
+    ro w = Wrap.new(5)
+    ro r = w.find_first()
+    // limit*2 = 10, x increments from 0 to 10.
+    assert(r == 10)
+}

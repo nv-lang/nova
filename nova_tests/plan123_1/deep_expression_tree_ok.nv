@@ -1,0 +1,39 @@
+// Plan 123.1 T2.12 positive: deeply nested arithmetic — cache spans
+// across binary/ternary tree shapes.
+
+module plan123_1.deep_expression_tree_ok
+
+type Mat {
+    ro m11 int
+    ro m12 int
+    ro m21 int
+    ro m22 int
+}
+
+fn Mat @det() -> int {
+    // 2x2 determinant: m11*m22 - m12*m21. Each field 1 read только →
+    // не cache. Use a method that does 2+ reads each.
+    @m11 * @m22 - @m12 * @m21
+}
+
+fn Mat @trace_sq() -> int {
+    // (m11 + m22)^2 — m11 used 2 times if expanded, m22 2 times.
+    ro tr = @m11 + @m22
+    tr * tr + @m11 - @m22 + @m11 + @m22
+}
+
+fn Mat.new(a int, b int, c int, d int) -> Mat {
+    Mat { m11: a, m12: b, m21: c, m22: d }
+}
+
+test "deep expr tree — det 2x2" {
+    ro m = Mat.new(1, 2, 3, 4)
+    // 1*4 - 2*3 = 4 - 6 = -2
+    assert(m.det() == -2)
+}
+
+test "deep expr tree — trace squared" {
+    ro m = Mat.new(2, 0, 0, 3)
+    // tr = 5, return 25 + 2 - 3 + 2 + 3 = 29
+    assert(m.trace_sq() == 29)
+}
