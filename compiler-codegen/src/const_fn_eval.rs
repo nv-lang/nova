@@ -42,6 +42,16 @@ pub enum ConstValue {
     /// Char codepoint (Plan Q-char-literals: u32).
     Char(u32),
     Unit,
+    /// Plan 114.4.4 Ф.4 V4 (D199 V4 amend): tuple structured value.
+    /// Positional access via .0/.1/... evaluation. Match patterns:
+    /// `(a, b)` destructuring.
+    Tuple(Vec<ConstValue>),
+    /// Plan 114.4.4 Ф.4 V4: variant value `VariantName(args)`.
+    /// Match patterns: `Some(x)`, `None`, `Ok(v)`, `Err(e)`, etc.
+    Variant(String, Vec<ConstValue>),
+    /// Plan 114.4.4 Ф.4 V4: record value `Type { field: val, ... }`.
+    /// Match patterns: `{ field: pat }`.
+    Record(Vec<(String, ConstValue)>),
 }
 
 // Manual Eq/Hash: f64 not Hash, comparing by bit-pattern (NaN-NaN
@@ -56,6 +66,9 @@ impl PartialEq for ConstValue {
             (ConstValue::Str(a), ConstValue::Str(b)) => a == b,
             (ConstValue::Char(a), ConstValue::Char(b)) => a == b,
             (ConstValue::Unit, ConstValue::Unit) => true,
+            (ConstValue::Tuple(a), ConstValue::Tuple(b)) => a == b,
+            (ConstValue::Variant(na, va), ConstValue::Variant(nb, vb)) => na == nb && va == vb,
+            (ConstValue::Record(a), ConstValue::Record(b)) => a == b,
             _ => false,
         }
     }
@@ -70,6 +83,22 @@ impl std::hash::Hash for ConstValue {
             ConstValue::Str(v) => { 3u8.hash(state); v.hash(state); }
             ConstValue::Char(v) => { 4u8.hash(state); v.hash(state); }
             ConstValue::Unit => { 5u8.hash(state); }
+            ConstValue::Tuple(items) => {
+                6u8.hash(state);
+                items.len().hash(state);
+                for v in items { v.hash(state); }
+            }
+            ConstValue::Variant(name, args) => {
+                7u8.hash(state);
+                name.hash(state);
+                args.len().hash(state);
+                for v in args { v.hash(state); }
+            }
+            ConstValue::Record(fields) => {
+                8u8.hash(state);
+                fields.len().hash(state);
+                for (k, v) in fields { k.hash(state); v.hash(state); }
+            }
         }
     }
 }
@@ -85,6 +114,38 @@ impl ConstValue {
             ConstValue::Str(v) => ExprKind::StrLit(v.clone()),
             ConstValue::Char(v) => ExprKind::CharLit(*v),
             ConstValue::Unit => ExprKind::UnitLit,
+            // Plan 114.4.4 Ф.4: tuple → TupleLit с converted children.
+            ConstValue::Tuple(items) => {
+                let elems = items.iter().map(|v| v.to_literal_expr(span)).collect();
+                ExprKind::TupleLit(elems)
+            }
+            // Plan 114.4.4 Ф.4: variant → Call expression `Name(args)`.
+            ConstValue::Variant(name, args) => {
+                let func = Box::new(Expr {
+                    kind: ExprKind::Ident(name.clone()), span,
+                });
+                let call_args = args.iter().map(|v|
+                    crate::ast::CallArg::Item(v.to_literal_expr(span))
+                ).collect();
+                ExprKind::Call { func, args: call_args, trailing: None }
+            }
+            // Plan 114.4.4 Ф.4: record → RecordLit с fields.
+            ConstValue::Record(fields) => {
+                let lit_fields = fields.iter().map(|(k, v)| {
+                    crate::ast::RecordLitField {
+                        name: k.clone(),
+                        value: Some(v.to_literal_expr(span)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span,
+                    }
+                }).collect();
+                ExprKind::RecordLit {
+                    type_name: None,
+                    fields: lit_fields,
+                    inferred_map_v: None,
+                }
+            }
         };
         Expr { kind, span }
     }
@@ -97,6 +158,9 @@ impl ConstValue {
             ConstValue::Str(_) => "str",
             ConstValue::Char(_) => "char",
             ConstValue::Unit => "Unit",
+            ConstValue::Tuple(_) => "tuple",
+            ConstValue::Variant(_, _) => "variant",
+            ConstValue::Record(_) => "record",
         }
     }
 }
@@ -445,10 +509,18 @@ fn match_const_pattern(
     pat: &crate::ast::Pattern,
     val: &ConstValue,
 ) -> Option<Vec<(String, ConstValue)>> {
-    use crate::ast::{Pattern, Literal};
+    use crate::ast::{Pattern, Literal, VariantPatternKind};
     match pat {
         Pattern::Wildcard(_) => Some(Vec::new()),
         Pattern::Ident { name, is_mut: false, .. } => {
+            // Bare Ident pattern может быть:
+            // (1) unit variant matcher (e.g. `None` matches Variant("None", []))
+            // (2) plain binding (fallback)
+            if let ConstValue::Variant(vname, args) = val {
+                if args.is_empty() && vname == name {
+                    return Some(Vec::new());
+                }
+            }
             Some(vec![(name.clone(), val.clone())])
         }
         Pattern::Literal(lit, _) => {
@@ -470,7 +542,77 @@ fn match_const_pattern(
             }
             None
         }
-        _ => None, // checker rejects unsupported patterns
+        // Plan 114.4.4 Ф.4 V4: tuple destructuring pattern.
+        Pattern::Tuple(pats, _) => {
+            if let ConstValue::Tuple(items) = val {
+                if pats.len() != items.len() { return None; }
+                let mut bindings = Vec::new();
+                for (p, v) in pats.iter().zip(items.iter()) {
+                    let sub = match_const_pattern(p, v)?;
+                    bindings.extend(sub);
+                }
+                Some(bindings)
+            } else {
+                None
+            }
+        }
+        // Plan 114.4.4 Ф.4 V4: variant destructuring pattern.
+        // `Some(x)`, `Ok(v)`, `Err(e)`, `Cons(h, ..)`, etc.
+        Pattern::Variant { path, kind, .. } => {
+            if let ConstValue::Variant(vname, args) = val {
+                // Path's last segment matches variant name; bare variant
+                // name (path.len()==1) covers common case Some/None/Ok/Err.
+                let name = path.last().map(String::as_str).unwrap_or("");
+                if name != vname { return None; }
+                match kind {
+                    VariantPatternKind::Unit => {
+                        if args.is_empty() { Some(Vec::new()) } else { None }
+                    }
+                    VariantPatternKind::Tuple { patterns, rest } => {
+                        if !rest && patterns.len() != args.len() { return None; }
+                        if *rest && patterns.len() > args.len() { return None; }
+                        let mut bindings = Vec::new();
+                        for (p, v) in patterns.iter().zip(args.iter()) {
+                            let sub = match_const_pattern(p, v)?;
+                            bindings.extend(sub);
+                        }
+                        Some(bindings)
+                    }
+                }
+            } else {
+                None
+            }
+        }
+        // Plan 114.4.4 Ф.4 V4: record destructuring pattern.
+        Pattern::Record { fields, rest, .. } => {
+            if let ConstValue::Record(rec_fields) = val {
+                if !rest && fields.len() != rec_fields.len() { return None; }
+                let mut bindings = Vec::new();
+                for f in fields {
+                    let v = rec_fields.iter().find(|(k, _)| k == &f.name).map(|(_, v)| v);
+                    let v = match v { Some(v) => v, None => return None };
+                    match &f.pattern {
+                        Some(p) => {
+                            let sub = match_const_pattern(p, v)?;
+                            bindings.extend(sub);
+                        }
+                        None => {
+                            // Shorthand `{ name }` — bind field value к field name.
+                            bindings.push((f.name.clone(), v.clone()));
+                        }
+                    }
+                }
+                Some(bindings)
+            } else {
+                None
+            }
+        }
+        Pattern::Binding { name, inner, .. } => {
+            let mut sub = match_const_pattern(inner, val)?;
+            sub.push((name.clone(), val.clone()));
+            Some(sub)
+        }
+        _ => None,
     }
 }
 
@@ -840,9 +982,41 @@ pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
         ExprKind::BoolLit(v) => Some(ConstValue::Bool(*v)),
         ExprKind::CharLit(v) => Some(ConstValue::Char(*v)),
         ExprKind::UnitLit => Some(ConstValue::Unit),
-        ExprKind::Unary { .. } | ExprKind::Binary { .. } | ExprKind::As(..) => {
-            // Higher-level constexpr eval handled by caller via full evaluator;
-            // try_literal_to_value handles only direct literals.
+        // Plan 114.4.4 Ф.4 V4: pre-eval constexpr Unary/Binary/As для args.
+        ExprKind::Unary { op, operand } => {
+            let v = try_literal_to_value(operand)?;
+            eval_unary(*op, &v, expr.span).ok()
+        }
+        ExprKind::Binary { op, left, right } => {
+            let l = try_literal_to_value(left)?;
+            let r = try_literal_to_value(right)?;
+            eval_binary(*op, &l, &r, expr.span).ok()
+        }
+        ExprKind::As(inner, target) => {
+            let v = try_literal_to_value(inner)?;
+            eval_as_cast(&v, target, expr.span).ok()
+        }
+        // Plan 114.4.4 Ф.4 V4: tuple/variant constructor literals.
+        ExprKind::TupleLit(elems) => {
+            let mut vs = Vec::with_capacity(elems.len());
+            for e in elems { vs.push(try_literal_to_value(e)?); }
+            Some(ConstValue::Tuple(vs))
+        }
+        ExprKind::Call { func, args, trailing: None } => {
+            // Variant constructor `Name(args)` где Name uppercase.
+            if let ExprKind::Ident(n) = &func.kind {
+                if n.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    let mut vs = Vec::with_capacity(args.len());
+                    for a in args {
+                        if let crate::ast::CallArg::Item(e) = a {
+                            vs.push(try_literal_to_value(e)?);
+                        } else {
+                            return None;
+                        }
+                    }
+                    return Some(ConstValue::Variant(n.clone(), vs));
+                }
+            }
             None
         }
         _ => None,
@@ -1452,7 +1626,47 @@ impl OwnedEvaluator {
                         ));
                     }
                 }
-                self.eval_call_inner(&callee_name, arg_vals, expr.span, depth)
+                // Plan 114.4.4 Ф.4 V4: distinguish const fn vs variant constructor.
+                // If callee not registered as const fn AND name starts с uppercase,
+                // treat as Variant constructor (`Some(5)`, `Ok(v)`, etc).
+                let resolved_name = self.aliases.get(&callee_name).cloned().unwrap_or(callee_name.clone());
+                if !self.fns.contains_key(&resolved_name)
+                    && callee_name.chars().next().map_or(false, |c| c.is_uppercase())
+                {
+                    return Ok(ConstValue::Variant(callee_name, arg_vals));
+                }
+                self.eval_call_inner(&resolved_name, arg_vals, expr.span, depth)
+            }
+            // Plan 114.4.4 Ф.4 V4: tuple literal → ConstValue::Tuple.
+            ExprKind::TupleLit(elems) => {
+                let mut vs = Vec::with_capacity(elems.len());
+                for e in elems {
+                    vs.push(self.eval_expr(e, env, current_fn, depth)?);
+                }
+                Ok(ConstValue::Tuple(vs))
+            }
+            // Plan 114.4.4 Ф.4 V4: record literal → ConstValue::Record.
+            ExprKind::RecordLit { fields, .. } => {
+                let mut vs = Vec::with_capacity(fields.len());
+                for f in fields {
+                    if f.is_spread {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EVAL_PANIC] spread в record literal (D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                    let v = if let Some(val) = &f.value {
+                        self.eval_expr(val, env, current_fn, depth)?
+                    } else {
+                        // Shorthand `{ name }` — resolve via env lookup.
+                        env.get(&f.name).cloned().ok_or_else(|| Diagnostic::new(
+                            format!("[E_CONST_FN_EVAL_PANIC] record shorthand `{}` not bound (D199).", f.name),
+                            f.span,
+                        ))?
+                    };
+                    vs.push((f.name.clone(), v));
+                }
+                Ok(ConstValue::Record(vs))
             }
             ExprKind::Block(b) => self.eval_block(b, env, current_fn, depth),
             // Plan 114.4.3 Ф.1 (V2): If — evaluate cond + branch.
