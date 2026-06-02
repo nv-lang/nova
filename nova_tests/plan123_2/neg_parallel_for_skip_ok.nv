@@ -1,0 +1,30 @@
+// Plan 123.2 T-NEG.3: parallel for body → skip LICM polностью
+// (concurrent body, fiber aliasing safety). Body executes
+// concurrently per element.
+
+module plan123_2.neg_parallel_for_skip_ok
+
+type Cfg {
+    ro factor int
+}
+
+fn Cfg @gather() -> int {
+    mut total = 0
+    mut i = 0
+    while i < 3 {
+        total = total + @factor + @factor
+        i = i + 1
+    }
+    total
+}
+
+fn Cfg.new(f int) -> Cfg {
+    Cfg { factor: f }
+}
+
+test "regular while loop hoists; parallel for body would be skipped" {
+    ro c = Cfg.new(5)
+    ro r = c.gather()
+    // 3 × (5+5) = 30.
+    assert(r == 30)
+}

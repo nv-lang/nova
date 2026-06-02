@@ -1,0 +1,34 @@
+// Plan 123.2 T1.5: nested loops — LICM hoists at each loop boundary
+// where field is invariant.
+
+module plan123_2.licm_nested_loops_ok
+
+type Matrix {
+    ro rows int
+    ro cols int
+}
+
+fn Matrix @cell_count() -> int {
+    mut total = 0
+    mut i = 0
+    while i < @rows {
+        mut j = 0
+        while j < @cols {
+            total = total + @cols
+            j = j + 1
+        }
+        i = i + 1
+    }
+    total
+}
+
+fn Matrix.new(r int, c int) -> Matrix {
+    Matrix { rows: r, cols: c }
+}
+
+test "nested loops — @cols hoisted at inner boundary" {
+    ro m = Matrix.new(3, 4)
+    ro r = m.cell_count()
+    // 3 × (4 iterations × cols=4) = 3 × 16 = 48.
+    assert(r == 48)
+}

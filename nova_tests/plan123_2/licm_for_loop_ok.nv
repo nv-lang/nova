@@ -1,0 +1,30 @@
+// Plan 123.2 T1.3: for loop hoisting.
+
+module plan123_2.licm_for_loop_ok
+
+type Box {
+    ro factor int
+}
+
+fn Box.helper() -> int { 7 }
+
+fn Box @apply(n int) -> int {
+    // Call before loop → Plan 123.1 ro path may still cache since ro
+    // unaffected by call. But test verifies for-loop hoist works.
+    mut sum = Box.helper()
+    for i in 0..n {
+        sum = sum + @factor + @factor
+    }
+    sum
+}
+
+fn Box.new(f int) -> Box {
+    Box { factor: f }
+}
+
+test "for loop @factor hoisted" {
+    ro b = Box.new(3)
+    ro r = b.apply(4)
+    // sum = 7, 4 iterations × (3+3) = 24. Total = 31.
+    assert(r == 31)
+}
