@@ -8,6 +8,7 @@ use nova_lsp::server::{
     compute_field_cache_semantic_tokens,
     cached_field_semantic_token_types,
     cached_field_semantic_token_modifiers,
+    compute_pure_annotation_actions,
 };
 use tower_lsp::lsp_types::*;
 
@@ -100,6 +101,76 @@ fn v52_semantic_tokens_empty_for_non_cached_module() {
         .expect("Some(tokens)");
     assert!(tokens.is_empty(),
         "expected zero tokens when no cached @field reads; got {:?}", tokens);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Plan 123.5.3 (V5.3): quickfix — add `#pure` annotation на analytically
+// pure but unannotated methods.
+// ─────────────────────────────────────────────────────────────────────
+
+const V53_SAMPLE: &str = "module v5_3.sample
+
+type Box {
+    ro x int
+    ro y int
+}
+
+fn Box @sum() -> int {
+    @x + @y
+}
+
+#pure
+fn Box @already_pure() -> int {
+    @x * @y
+}
+";
+
+#[test]
+fn v53_pure_annotation_suggested_for_analytic_pure_fn() {
+    // Range over the `@sum` body (line 7, character 4) — overlaps fn span.
+    let range = Range {
+        start: Position { line: 7, character: 4 },
+        end: Position { line: 7, character: 4 },
+    };
+    let actions = compute_pure_annotation_actions(V53_SAMPLE, range)
+        .expect("Some(actions)");
+    assert!(actions.iter().any(|(_, label)| label.contains("Box.sum")),
+        "expected suggestion for Box.sum; got {:?}",
+        actions.iter().map(|(_, l)| l).collect::<Vec<_>>());
+    // Must NOT suggest for already-pure method.
+    assert!(!actions.iter().any(|(_, label)| label.contains("already_pure")),
+        "should not re-suggest #pure for already-annotated method");
+}
+
+#[test]
+fn v53_pure_annotation_skipped_outside_fn_span() {
+    // Range over the `type Box` line (line 2) — no fn span overlaps.
+    let range = Range {
+        start: Position { line: 2, character: 0 },
+        end: Position { line: 2, character: 0 },
+    };
+    let actions = compute_pure_annotation_actions(V53_SAMPLE, range)
+        .expect("Some(actions)");
+    assert!(actions.is_empty(),
+        "expected no suggestions outside fn body; got {:?}",
+        actions.iter().map(|(_, l)| l).collect::<Vec<_>>());
+}
+
+#[test]
+fn v53_pure_annotation_insertion_at_fn_line_start() {
+    let range = Range {
+        start: Position { line: 7, character: 4 },
+        end: Position { line: 7, character: 4 },
+    };
+    let actions = compute_pure_annotation_actions(V53_SAMPLE, range)
+        .expect("Some(actions)");
+    let (insert_range, _) = actions.iter()
+        .find(|(_, l)| l.contains("Box.sum"))
+        .expect("Box.sum suggestion present");
+    // Insertion must be at column 0 of the `fn Box @sum` line (line 7).
+    assert_eq!(insert_range.start.character, 0,
+        "insertion должна быть в column 0 для new prefix line");
+    assert_eq!(insert_range.start.line, insert_range.end.line);
 }
 
 #[test]

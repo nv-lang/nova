@@ -454,6 +454,56 @@ pub fn module_write_sets(module: &Module) -> HashMap<(String, String), HashSet<S
     build_write_set_registry(module, cfg.ipa_iter_limit)
 }
 
+/// Plan 123.5.3 (V5.3, 2026-06-02): list instance-method candidates
+/// that would benefit from a `#pure` annotation — used by the LSP
+/// quickfix code action.
+///
+/// A method qualifies when:
+///   - It has a receiver и `ReceiverKind::Instance`.
+///   - It is NOT already `#pure` (`purity != Pure`).
+///   - Its body has no effects in signature и no synthesizable
+///     non-pure dependency: closed-form write set per IPA closure is
+///     empty.
+///
+/// Returns `(type_name, fn_name, span)` for each candidate. Span is
+/// the FnDecl span (entire decl). The LSP layer narrows к the
+/// header insertion point.
+pub fn pure_annotation_candidates(module: &Module) -> Vec<(String, String, crate::diag::Span)> {
+    let cfg = FieldCacheConfig::default();
+    let write_sets = build_write_set_registry(module, cfg.ipa_iter_limit);
+    let mut out = Vec::new();
+    for item in &module.items {
+        collect_pure_candidates_in_item(item, &write_sets, &mut out);
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            collect_pure_candidates_in_item(item, &write_sets, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_pure_candidates_in_item(
+    item: &Item,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+    out: &mut Vec<(String, String, crate::diag::Span)>,
+) {
+    if let Item::Fn(f) = item {
+        if f.purity == Purity::Pure { return; }
+        let Some(recv) = &f.receiver else { return; };
+        if recv.kind != ReceiverKind::Instance { return; }
+        if !f.effects.is_empty() { return; }
+        if f.is_external { return; }
+        // No FieldKind::Mut writes per closure.
+        let key = (recv.type_name.clone(), f.name.clone());
+        let writes_empty = write_sets.get(&key).map(|s| s.is_empty()).unwrap_or(true);
+        if !writes_empty { return; }
+        // Filter out concurrent constructs (treated impure).
+        if body_has_concurrent(&f.body) { return; }
+        out.push((recv.type_name.clone(), f.name.clone(), f.span));
+    }
+}
+
 /// Plan 123.7 (D223): build per-method field-write-set.
 /// Walks each FnDecl with receiver; collects fields that body assigns
 /// to via `@F = ...` (top-level Assign with Member{SelfAccess, F}

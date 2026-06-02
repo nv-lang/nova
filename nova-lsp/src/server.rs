@@ -365,6 +365,45 @@ impl LanguageServer for Backend {
     ) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri.clone();
         let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+
+        // Plan 123.5.3 (V5.3, 2026-06-02): suggest "Add #pure
+        // annotation" when invocation range overlaps an
+        // analytically-pure method. Diagnostic-independent.
+        if let Some(doc) = self.state.docs.get(&uri) {
+            let src = doc.text.to_string();
+            drop(doc);
+            let range = params.range;
+            let pure_actions = run_with_large_stack(move ||
+                compute_pure_annotation_actions(&src, range)
+            );
+            if let Some(edits) = pure_actions {
+                for (insert_range, label) in edits {
+                    let mut changes = std::collections::HashMap::new();
+                    changes.insert(
+                        uri.clone(),
+                        vec![TextEdit {
+                            range: insert_range,
+                            new_text: "#pure\n".to_string(),
+                        }],
+                    );
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: label,
+                        kind: Some(CodeActionKind::QUICKFIX),
+                        diagnostics: None,
+                        edit: Some(WorkspaceEdit {
+                            changes: Some(changes),
+                            document_changes: None,
+                            change_annotations: None,
+                        }),
+                        command: None,
+                        is_preferred: Some(false),
+                        disabled: None,
+                        data: None,
+                    }));
+                }
+            }
+        }
+
         for diag in params.context.diagnostics.iter() {
             if let Some(NumberOrString::String(code)) = &diag.code {
                 let (label, replacement) = match code.as_str() {
@@ -572,6 +611,70 @@ pub fn compute_field_cache_semantic_tokens(src: &str) -> Option<Vec<SemanticToke
         prev_char = ch;
     }
     Some(out)
+}
+
+/// Plan 123.5.3 (V5.3): for every analytically-pure-but-unannotated
+/// method whose decl span intersects `range`, return the insertion
+/// site (zero-length Range at the line of `fn` keyword) and a human
+/// label. Used by LSP code_action handler.
+pub fn compute_pure_annotation_actions(
+    src: &str,
+    range: Range,
+) -> Option<Vec<(Range, String)>> {
+    let mut module = nova_codegen::parser::parse(src).ok()?;
+    if nova_codegen::types::check_module(&module).is_err() { return None; }
+    let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::desugar::desugar_module(&mut module);
+    nova_codegen::types::infer_effects(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module);
+    let candidates = nova_codegen::field_cache::pure_annotation_candidates(&module);
+    if candidates.is_empty() { return Some(Vec::new()); }
+
+    let line_starts = compute_line_starts(src);
+    // Convert request range (LSP positions) → byte range.
+    let req_start_byte = position_to_byte_offset_via_starts(src, &line_starts, range.start)?;
+    let req_end_byte = position_to_byte_offset_via_starts(src, &line_starts, range.end)
+        .unwrap_or(req_start_byte);
+
+    let mut actions: Vec<(Range, String)> = Vec::new();
+    let bytes = src.as_bytes();
+    for (type_name, fn_name, span) in candidates {
+        let s = span.start as usize;
+        let e = span.end as usize;
+        // Skip when invocation range outside this fn decl.
+        if req_end_byte < s || req_start_byte > e { continue; }
+        // Insertion point = line start of `fn` keyword. Walk back from
+        // span.start to start of containing line. We insert `#pure\n`
+        // at column 0 of that line; the editor preserves following
+        // indent.
+        let (line, _) = byte_to_line_col(&line_starts, s);
+        let insert = Range {
+            start: Position { line: line as u32, character: 0 },
+            end: Position { line: line as u32, character: 0 },
+        };
+        let _ = bytes; // suppress unused; reserved for indent detection в V5.4.
+        actions.push((
+            insert,
+            format!("Plan 123 V5.3: add `#pure` to {}.{}", type_name, fn_name),
+        ));
+    }
+    Some(actions)
+}
+
+/// Convert an LSP position to byte offset given precomputed line-starts.
+/// Treats character as byte-offset (V5.3 fixtures are pure ASCII).
+fn position_to_byte_offset_via_starts(
+    src: &str,
+    line_starts: &[usize],
+    pos: Position,
+) -> Option<usize> {
+    let line_idx = pos.line as usize;
+    let line_start = *line_starts.get(line_idx)?;
+    let next_line_start = line_starts.get(line_idx + 1).copied().unwrap_or(src.len());
+    let target = line_start + pos.character as usize;
+    if target > next_line_start { return Some(next_line_start); }
+    Some(target.min(src.len()))
 }
 
 /// Compute byte offsets of each line start in `src`.

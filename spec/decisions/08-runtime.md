@@ -5111,6 +5111,54 @@ entry for breakdown.
 - **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
   indefinitely.
 
+## D217 amend V5.3 — LSP quickfix: add `#pure` annotation
+
+**Source:** [Plan 123.5.3](../../docs/plans/123.5.3-pure-quickfix.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Scope
+
+V5.3 adds a non-diagnostic-driven code action that suggests adding
+`#pure` to instance methods which the field_cache IPA analyzer
+considers analytically pure but the developer hasn't annotated.
+
+### 2. Eligibility
+
+`pure_annotation_candidates(module)` returns `(type_name, fn_name,
+span)` for each `Item::Fn` satisfying ALL of:
+- `f.receiver` is `Some(ReceiverKind::Instance)`.
+- `f.purity != Purity::Pure` (not already annotated).
+- `f.effects.is_empty()` (no effects в signature).
+- `!f.is_external` (external fns don't get `#pure` either way).
+- IPA write-set closure for `(type_name, fn_name)` is empty (no `@F = …`
+  reachable through callees).
+- Body doesn't contain Spawn / Supervised / Detach / Blocking
+  (concurrent constructs treated impure).
+
+The check is conservative — false negatives (missing suggestion) OK;
+false positives (suggesting `#pure` on a fn that the verifier would
+later reject) avoided via the empty-write-set + no-effects gate.
+
+### 3. Code action shape
+
+Title: `"Plan 123 V5.3: add \`#pure\` to <Type>.<fn>"`. Edit is a
+single zero-length insertion at column 0 of the line containing the
+`fn` keyword. New text = `"#pure\n"`. `is_preferred: false` —
+suggestion, not a corrective fix.
+
+LSP request: `textDocument/codeAction` with `params.range` overlap
+detection against candidate fn spans. Diagnostic context not
+required (works on cursor-only invocation).
+
+### 4. Acceptance
+
+- **V5.3.1** Suggestion fires когда invocation range overlaps
+  analytically-pure fn span ✅
+- **V5.3.2** Suggestion НЕ fires для already-`#pure` fns ✅
+- **V5.3.3** Suggestion НЕ fires вне fn span ✅
+- **V5.3.4** Insertion is at column 0 of fn-line ✅
+- **V5.3.5** LSP tests 10/10 PASS
+
 ## D217 amend V5.2 — LSP semantic tokens for cached `@field` reads
 
 **Source:** [Plan 123.5.2](../../docs/plans/123.5.2-semantic-tokens.md).
