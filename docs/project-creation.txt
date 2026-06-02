@@ -28604,3 +28604,30 @@ Result:
 Remaining 40 failures unrelated к field-cache (Plan 114 keyword
 fixtures + Plan 100 sum_schema legacy + parser closure_full tests).
 Tracked в separate followup markers.
+
+
+================================================================================
+Plan 123 main-sync (2026-06-02)
+================================================================================
+
+Sync operation: merged plan-123-receiver-field-cse → main + pushed
+к github/main. Plan 123 family production-active.
+
+Conflicts resolved:
+- compiler-codegen/src/main.rs (Plan 114.4.4.5 V4.1 + Plan 123.5
+  --explain-cache co-exist в cmd_check).
+- sum_schema_registry.rs (fn_eval_max_depth + cancel_safe_attr fields).
+- 2 docs (keep both histories).
+- spec README (D220 collision).
+
+D-block renumbering:
+- Plan 123.7 IPA D220 → D223 (Plan 124 priv-field-visibility umbrella
+  claimed D220-D222 в parallel work).
+- Updated ~10 files (spec + plan docs + 3 logs + 2 source files).
+
+Verification:
+- Full build clean (3 crates).
+- plan123_1 18/0, plan123_3_1 4/0, plan123_7_1 10/0 PASS.
+
+Lessons:
+- D-block numbering coordination needed for parallel work.

@@ -29833,3 +29833,51 @@ plans):
   routing tests after Plan 100 changes.
 - [M-baseline-parser-closure-full-generics] — closure_full_generics_
   rejected test syntax change.
+
+
+## Plan 123 main-sync (2026-06-02): merge plan-123 → main + D220→D223 renumbering
+
+**Sync operation:** merged `plan-123-receiver-field-cse` branch into
+main + pushed к github/main.
+
+**Conflicts resolved (4 files):**
+- compiler-codegen/src/main.rs: integrated Plan 114.4.4.5 V4.1
+  const_fn_mono::specialize_mixed_const_fns + Plan 123.5 --explain-
+  cache logic в cmd_check.
+- compiler-codegen/src/codegen/sum_schema_registry.rs: both
+  fn_eval_max_depth (main) + cancel_safe_attr (mine) + TypeDecl
+  assoc_consts + impl_protocols в test inits.
+- docs/project-creation.txt + docs/simplifications.md: keep BOTH
+  histories — Plan 114.4.4 (main) + Plan 123 family + V*.1 followups
+  (mine).
+- spec/decisions/README.md: D220 collision — Plan 124 priv-field-
+  visibility umbrella claimed D220-D222 в parallel work.
+
+**D-block renumbering (D220 → D223):**
+- Plan 123.7 IPA was assigned D220, Plan 124.1 also assigned D220
+  in parallel work (priv field visibility). Plan 124 merged first.
+- Renumbered my D220 → D223 (next free after Plan 124's D220-D222).
+- Files updated:
+  - spec/decisions/08-runtime.md (D220 → D223 в IPA section +
+    amend V7.1 + Q-resolution refs).
+  - spec/decisions/README.md (08-runtime layer scope + 2 D-block rows).
+  - docs/plans/123.7-ipa.md + 123.7.1-ipa-full-integration.md.
+  - docs/simplifications.md + docs/project-creation.txt (Plan 123
+    sections only; Plan 124 D220 refs preserved).
+  - nova-private/discussion-log.md.
+  - compiler-codegen/src/field_cache.rs comments.
+  - nova-cli/src/main.rs comments.
+
+**Verification:**
+- Full build clean (compiler-codegen + nova-cli + nova-lsp).
+- Sample regression on main: plan123_1 18/0, plan123_3_1 4/0,
+  plan123_7_1 10/0 PASS.
+
+**Result:** Plan 123 family (V1-V7 + V*.1 followups) now production-
+active on main. github/main updated.
+
+**Lesson learned:**
+- **D-block numbering coordination critical в parallel work.** Plan
+  123.7 and Plan 124.1 both designated D220. Plan 124 merged first
+  (alphabetical commit order). Lesson: reserve D-blocks atomically
+  с plan doc creation OR coordinate via lockfile в spec/decisions/.
