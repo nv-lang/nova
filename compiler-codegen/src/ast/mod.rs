@@ -722,6 +722,12 @@ pub struct TypeDecl {
     /// consume-param, record-field-move, или defer).
     /// Backward-compat: default false.
     pub consume: bool,
+    /// Plan 124 (D220): type-level default visibility flip.
+    /// `type X priv { ... }` syntax — fields default = priv для этого type'а;
+    /// explicit `pub` field modifier override priv default.
+    /// Без `priv` после имени type'а — fields default = pub (D47 unchanged).
+    /// Backward-compat: default false.
+    pub default_field_priv: bool,
     /// Plan 91.9 (D186): `#impl(P1 + P2 + ...)` annotation list.
     /// Names of protocols the type explicitly opts into. Verification:
     /// compiler checks T provides every method of each P (via explicit
@@ -828,6 +834,21 @@ pub struct RecordField {
     /// D133-marker-on-non-consume иначе).
     /// Backward-compat: default false.
     pub consume: bool,
+    /// Plan 124 (D220): per-field private visibility marker.
+    /// Если `true` — field accessible только из методов own type'а
+    /// (instance + static). Cross-type access outside scope даёт:
+    /// - Read: E_PRIV_FIELD_READ
+    /// - Write: E_PRIV_FIELD_WRITE
+    /// - Record literal init: E_PRIV_FIELD_INIT
+    /// - Pattern destructure: E_PRIV_FIELD_PATTERN
+    ///
+    /// Effective visibility = explicit `priv` modifier
+    ///                       OR inherited from `TypeDecl::default_field_priv`
+    ///                       OR (default) public.
+    /// Explicit `pub` modifier overrides type-level priv default
+    /// (priv_field stays false).
+    /// Backward-compat: default false (= public; D47 MVP unchanged).
+    pub priv_field: bool,
 }
 
 #[derive(Debug, Clone)]

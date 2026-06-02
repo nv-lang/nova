@@ -1,0 +1,20 @@
+// Plan 124.1 Ф.1 — smoke test: priv modifier parses без ошибок.
+// Type-level priv flip + per-field priv/pub markers.
+module plan124_1.smoke_parse
+
+// Per-field priv modifier (D220).
+export type Account {
+    priv mut money f64
+    ro name str
+    priv id u64
+}
+
+// Type-level priv {} flip (D220 §3.3.1).
+export type Secret priv {
+    pub ro tag str
+    mut salt u64
+}
+
+fn main() -> () {
+    ro _ = "smoke"
+}

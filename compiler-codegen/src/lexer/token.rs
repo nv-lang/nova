@@ -81,6 +81,17 @@ pub enum TokenKind {
     /// Plan 114 (D184): retracted in favour of `ro`. Lexer still recognizes
     /// the lexeme `readonly` so parser can emit `E_KW_REMOVED_READONLY`.
     KwReadonly,
+    /// Plan 124 (D220): per-field private visibility modifier.
+    /// `priv mut money f64` — field accessible только из методов own type'а.
+    /// Также позиционирован после `type X` для type-level default flip:
+    /// `type X priv { ... }` — default visibility = priv для fields.
+    KwPriv,
+    /// Plan 124 (D220): explicit public field marker.
+    /// Используется для override type-level priv default:
+    /// `type X priv { pub name str, ... }` — name field forced public.
+    /// На field-level без type-level priv flip — redundant но не ошибка
+    /// (default уже public).
+    KwPub,
     KwIf,
     KwElse,
     KwMatch,
@@ -226,6 +237,8 @@ impl TokenKind {
             TokenKind::KwConsume => "`consume`",
             TokenKind::KwRo => "`ro`",
             TokenKind::KwReadonly => "`readonly`",
+            TokenKind::KwPriv => "`priv`",
+            TokenKind::KwPub => "`pub`",
             TokenKind::KwIf => "`if`",
             TokenKind::KwElse => "`else`",
             TokenKind::KwMatch => "`match`",
