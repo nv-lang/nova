@@ -28698,3 +28698,85 @@ Plan 114.4.4.1-5 per safety hatch design.
 4. **Safety hatch is design tool, not failure** — Ф.4-Ф.8 extracted
    intentionally per plan doc. Each followup ships independently when
    triggered. NOT silent simplification.
+
+---
+
+## Plan 124 / D47 amend — per-field visibility `priv` modifier (planning + spec amend, 2026-06-02)
+
+**Что:** umbrella roadmap + spec D47 amend для compile-time per-field
+visibility. Closes major OOP-grade gap (Nova fields сейчас all-public-
+by-default; no API boundary control; `_prefix` convention был hint-only,
+не enforced).
+
+**Status:** 🟢 PLANNING + spec amend LANDED. Implementation в Plan
+124.1-124.7 sub-plans (umbrella roadmap, ~10-14 dev-day total, не
+начато).
+
+**CLOSED markers:**
+- ✅ `[M-D47-prefix-convention-deprecated]` — `_prefix` convention
+  removed from spec (D47 amend 2026-06-02), replaced by compile-time
+  `priv` keyword (forthcoming Plan 124.1 / D220).
+- ✅ `[M-Plan-124-scaffold]` — umbrella plan doc + 7 sub-plans defined,
+  comparative analysis vs Go/Rust/TS/Kotlin/Java/Swift/C# (14
+  capabilities + 3 Nova-only), acceptance A1.1-AU.6 (57 criteria),
+  production-grade requirements, risk register (10 risks), execution
+  protocol (§14 autonomous agent self-contained spec).
+- ✅ `[M-Plan-124-kubernetes-audit]` — empirical validation: 8700 .go
+  files, 11099 structs, 35239 fields; 59.4% public / 40.6% private
+  aggregate; 92.4% public в core/v1 API surface. Validates D47
+  public-default decision. Full audit:
+  [docs/research/06-field-visibility-go-kubernetes.md](research/06-field-visibility-go-kubernetes.md).
+- ✅ `[M-Plan-124-V2-revision]` — Plan 124.7 rewritten 2026-06-02
+  на `type X priv { ... }` type-level default flip syntax (replaces
+  rejected edition flip approach — kubernetes data showed global flip
+  не оправдан; per-type granular лучше fits bimodal distribution).
+
+**OPEN markers (carried forward to implementation):**
+- 🟡 `[M-124.1-core-record]` — Plan 124.1 foundational (parser +
+  AST + checker + 4 error codes E_PRIV_FIELD_*).
+- 🟡 `[M-124.2-pattern-literal]` — pattern destructure + record literal
+  init rules outside type.
+- 🟡 `[M-124.3-generics]` — generic type uniform handling (Plan 59+59.1
+  mono compat).
+- 🟡 `[M-124.4-tuple-protocol]` — named tuple priv (Plan 120 D215 ext)
+  + protocol impl interaction.
+- 🟡 `[M-124.5-doc-lsp]` — nova doc + LSP integration.
+- 🟡 `[M-124.6-escape-hatches]` — `#[test_access]` + `#[visible_to]`
+  friend types.
+- 🟡 `[M-124.7-type-level-priv]` — `type X priv { ... }` syntax.
+
+**Acceptance criteria:** 57 шт total (A1.1-A1.10 + A2.1-A2.8 + A3.1-A3.8
++ A4.1-A4.10 + A5.1-A5.8 + A6.1-A6.8 + A7.1-A7.8 + AU.1-AU.6). Per
+sub-plan + umbrella-level. Documented в
+[docs/plans/124-priv-field-visibility.md](plans/124-priv-field-visibility.md)
+§6.
+
+**Spec changes (committed):**
+- `spec/decisions/07-modules.md` D47 — amend notice 2026-06-02;
+  «Видимость полей record/tuple» section rewritten с `priv` keyword +
+  type-level flip; «Почему» bullet 3 rewrite; «Отвергнуто» bullet
+  added; comparison table Nova row updated; «Связь» — Plan 124 / D220
+  cross-ref.
+- `spec/decisions/03-syntax.md` naming rules — `_prefix` → `priv` cross-
+  ref.
+- `spec/decisions/history/rejected.md` — «Per-field export для record»
+  amended с 2026-06-02 пересмотром.
+- `spec/open-questions.md` — JSON skip-семантика updated (priv fields
+  auto-skip).
+
+**Design lessons:**
+1. **Empirical data beats intuition.** Я первоначально recommended
+   private-default (Rust-style). User pushed back. Kubernetes audit
+   (35239 fields, 59% public aggregate, 92% public в API surface)
+   подтвердил current D47 public-default — minimum boilerplate
+   maximum coverage.
+2. **Bimodal distribution → bimodal syntax.** pkg/ 47% public vs
+   core/v1 92% public — два разных use cases. Решение: public-default
+   field-level + `type X priv {}` type-level flip per type. Covers
+   both clusters без edition migration cost.
+3. **`priv` keyword symmetric position** — same в field-level
+   (`priv mut money`) AND type-level (`type X priv { ... }`). Parser
+   distinguishes by context (after type name vs before field name).
+4. **`_prefix` convention obsolete** — hint-only privacy (non-enforced)
+   provides false sense of encapsulation. Compile-time `priv` reveals
+   real API boundary при refactoring.
