@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.2 — negative: match arm pattern на priv field outside
+// type-method scope → E_PRIV_FIELD_PATTERN (D221 §2 — match site).
+module plan124_2.match_arm_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External fn — match arm destructures priv `money`.
+fn external_match(acc Account) -> f64 {
+    match acc {
+        Account { money, .. } => money
+    }
+}

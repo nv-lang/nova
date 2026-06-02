@@ -1,0 +1,28 @@
+// Plan 124.6 — positive: #visible_to(TypeY) field-level attribute —
+// methods TypeY get priv access к marked field.
+module plan124_6.visible_to_friend_ok
+
+export type Account {
+    ro name str
+    #visible_to(Bank) priv mut balance f64
+}
+
+export type Bank {
+    ro id str
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+export fn Bank.new(id str) -> Bank =>
+    { id }
+
+// Bank's method has access to Account.balance через #visible_to(Bank).
+export fn Bank @audit_account(a Account) -> f64 =>
+    a.balance
+
+test "Plan 124.6: #visible_to grants friend access" {
+    ro a = Account.new("carol")
+    ro b = Bank.new("bnk1")
+    assert(b.audit_account(a) == 0.0)
+}

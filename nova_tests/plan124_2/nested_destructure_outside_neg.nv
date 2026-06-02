@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.2 — negative: nested destructure через outer's public field
+// `addr` (тип Address), но inner pattern binds Address's priv field
+// `zip` outside Address's method scope → E_PRIV_FIELD_PATTERN
+// (D221 §4 — recursive descent).
+module plan124_2.nested_destructure_outside_neg
+
+export type Address {
+    priv mut zip str
+    ro city str
+}
+
+export fn Address.new(z str, c str) -> Address =>
+    { zip: z, city: c }
+
+export type User {
+    ro name str
+    ro addr Address
+}
+
+export fn User.new(n str, a Address) -> User =>
+    { name: n, addr: a }
+
+// External fn — outer `addr` public, но inner `zip` private.
+fn external_nested(u User) -> str {
+    ro User { addr: Address { zip, city: _ }, .. } = u
+    zip
+}

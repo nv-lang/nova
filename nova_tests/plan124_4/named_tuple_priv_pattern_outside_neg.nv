@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.4 — negative: pattern destructure через priv field named tuple
+// outside type-method scope → E_PRIV_FIELD_PATTERN (D222 — applies к
+// named tuple через AST RecordField → check_priv_pattern_recursive).
+//
+// Note: pattern destructure для named tuple на bootstrap uses
+// Vec3 { x, y, z } record-style form; D215 spec § «pattern access».
+module plan124_4.named_tuple_priv_pattern_outside_neg
+
+type Vec3(priv x f64, priv y f64, priv z f64)
+
+fn Vec3.zero() -> Vec3 =>
+    Vec3(x: 0.0, y: 0.0, z: 0.0)
+
+// External fn — record-style pattern с priv field x.
+fn external_unpack(v Vec3) -> f64 {
+    ro Vec3 { x, y: _, z: _ } = v
+    x
+}

@@ -1,0 +1,26 @@
+// Plan 124.6 — positive: #test_access(TypeX) attribute grants priv-field
+// access fn body для test purposes.
+module plan124_6.test_access_grants_priv_ok
+
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+export fn Account mut @deposit(amount f64) {
+    @balance = @balance + amount
+}
+
+// External test fn with #test_access — может читать priv balance.
+#test_access(Account)
+fn assert_balance_eq(acc Account, expected f64) -> bool =>
+    acc.balance == expected
+
+test "Plan 124.6: #test_access fn reads priv field" {
+    mut a = Account.new("alice")
+    a.deposit(100.0)
+    assert(assert_balance_eq(a, 100.0))
+}

@@ -31,6 +31,10 @@ pub(crate) struct ContractAttrs {
     /// const fn evaluator recursion depth (default 256). For deep recursion
     /// (e.g. fact(500) с big-int arith). 0 < N <= 65535.
     pub fn_eval_max_depth: Option<u32>,
+    /// Plan 124.6 (D225): `#test_access(TypeX, TypeY, ...)` — fn body
+    /// gets priv-field access to listed types (escape hatch для unit
+    /// tests). Default empty Vec = no extra access.
+    pub test_access_for: Vec<String>,
 }
 
 impl ContractAttrs {
@@ -44,6 +48,7 @@ impl ContractAttrs {
             && !self.no_overflow
             && self.sync_class.is_none()
             && self.fn_eval_max_depth.is_none()
+            && self.test_access_for.is_empty()
     }
 }
 
@@ -1962,6 +1967,53 @@ impl Parser {
                     self.bump(); // )
                     attrs.fn_eval_max_depth = Some(n);
                 }
+                "test_access" => {
+                    // Plan 124.6 (D225): `#test_access(TypeX[, TypeY...])`
+                    // — fn body получает priv-field access к указанным types.
+                    // Escape hatch для unit tests + sibling helper fns.
+                    self.bump(); // #
+                    self.bump(); // test_access
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#test_access требует list: `#test_access(TypeX, TypeY, ...)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let mut names = Vec::new();
+                    loop {
+                        match self.peek().kind.clone() {
+                            TokenKind::Ident(n) => {
+                                names.push(n);
+                                self.bump();
+                            }
+                            TokenKind::RParen => break,
+                            _ => {
+                                let sp = self.peek().span;
+                                return Err(Diagnostic::new(
+                                    "ожидался Type-identifier или `)` в #test_access(...)",
+                                    sp,
+                                ));
+                            }
+                        }
+                        if matches!(self.peek().kind, TokenKind::Comma) {
+                            self.bump();
+                            self.skip_newlines();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    if names.is_empty() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#test_access требует хотя бы один Type: `#test_access(TypeX, ...)`",
+                            sp,
+                        ));
+                    }
+                    attrs.test_access_for.extend(names);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -2596,6 +2648,7 @@ impl Parser {
             // Plan 100.5 (D163): capability requirements for external fn.
             needs_caps,
             fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
+            test_access_for: contract_attrs.test_access_for.clone(),
         })
     }
 
@@ -3141,9 +3194,13 @@ impl Parser {
             // positional tuple `type Point(f64, f64)` — disambiguate here.
             // Lookahead: after `(`, if IDENT followed by type-starting token
             // → named tuple. Otherwise delegate to parse_type() as before.
+            //
+            // Plan 124.7 (D225): `type Vec3 priv (x f64, y f64, z f64)` —
+            // type-level priv default flip для tuple form (extends D220
+            // record form). default_field_priv pass'ится в field parser.
             TokenKind::LParen if self.is_named_tuple_decl() => {
                 self.bump(); // consume `(`
-                let fields = self.parse_named_tuple_fields()?;
+                let fields = self.parse_named_tuple_fields_with_default(default_field_priv)?;
                 self.expect(&TokenKind::RParen)?;
                 TypeDeclKind::NamedTuple(fields)
             }
@@ -3213,6 +3270,11 @@ impl Parser {
     fn is_named_tuple_decl(&self) -> bool {
         // tokens[pos] = `(` (current), tokens[pos+1] = first in parens
         let first = &self.peek_at(1).kind;
+        // Plan 124.4: `priv` / `pub` перед field name treated as named-tuple
+        // marker (no positional `priv` form — `priv` всегда modifier).
+        if matches!(first, TokenKind::KwPriv | TokenKind::KwPub) {
+            return true;
+        }
         let second = &self.peek_at(2).kind;
         // Named field: IDENT followed by a type-starting token (not `,` not `)`)
         matches!(first, TokenKind::Ident(_))
@@ -3225,8 +3287,18 @@ impl Parser {
     }
 
     /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
-    /// Called after consuming `(`. Stops before `)`.
+    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(false).
+    #[allow(dead_code)]
     fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
+        self.parse_named_tuple_fields_with_default(false)
+    }
+
+    /// Plan 120 (D215) + Plan 124.4 (D222) + Plan 124.7 (D225): parse named
+    /// tuple fields с per-field `priv`/`pub` modifier + type-level default
+    /// `priv` propagation. `default_priv = true` пришёл из
+    /// `type X priv (...)` syntax (D225).
+    /// Called after consuming `(`. Stops before `)`.
+    fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
         loop {
             self.skip_newlines();
@@ -3234,6 +3306,48 @@ impl Parser {
                 break;
             }
             let field_start = self.peek().span;
+            // Plan 124.4 (D222): optional `priv` / `pub` modifier.
+            // Plan 124.7 (D225): type-level `priv` default flip — when
+            // default_priv = true (`type X priv (...)`), field's effective
+            // priv_field = default_priv unless explicit `pub` overrides.
+            let mut explicit_priv = false;
+            let mut explicit_pub = false;
+            loop {
+                match self.peek().kind {
+                    TokenKind::KwPriv => {
+                        if explicit_pub {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
+                                 `pub` on the same named-tuple field (Plan 124 / D220 / D222).",
+                                sp,
+                            ));
+                        }
+                        explicit_priv = true;
+                        self.bump();
+                    }
+                    TokenKind::KwPub => {
+                        if explicit_priv {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
+                                 `pub` on the same named-tuple field (Plan 124 / D220 / D222).",
+                                sp,
+                            ));
+                        }
+                        explicit_pub = true;
+                        self.bump();
+                    }
+                    _ => break,
+                }
+            }
+            // Effective priv_field resolution (Plan 124.7 / D225):
+            //   - explicit `pub` → priv_field = false (overrides type-level)
+            //   - explicit `priv` → priv_field = true
+            //   - neither → priv_field = default_priv (type-level inherit)
+            let priv_field = if explicit_priv { true }
+                             else if explicit_pub { false }
+                             else { default_priv };
             // Expect IDENT (field name)
             if !matches!(self.peek().kind, TokenKind::Ident(_)) {
                 let sp = self.peek().span;
@@ -3269,7 +3383,7 @@ impl Parser {
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span });
+            fields.push(NamedTupleField { name, ty, span, priv_field, visible_to: Vec::new() });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -3330,6 +3444,59 @@ impl Parser {
                     self.skip_newlines();
                 }
                 continue;
+            }
+            // Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
+            // attribute — explicit friend declaration. Methods of listed
+            // types get priv access. Parsed BEFORE priv/pub modifier.
+            let mut visible_to: Vec<String> = Vec::new();
+            while matches!(self.peek().kind, TokenKind::Hash) {
+                if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+                    if n == "visible_to" {
+                        self.bump(); // #
+                        self.bump(); // visible_to
+                        if !matches!(self.peek().kind, TokenKind::LParen) {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "#visible_to требует list: `#visible_to(TypeX, TypeY, ...)`",
+                                sp,
+                            ));
+                        }
+                        self.bump(); // (
+                        loop {
+                            match self.peek().kind.clone() {
+                                TokenKind::Ident(t) => {
+                                    visible_to.push(t);
+                                    self.bump();
+                                }
+                                TokenKind::RParen => break,
+                                _ => {
+                                    let sp = self.peek().span;
+                                    return Err(Diagnostic::new(
+                                        "ожидался Type-identifier или `)` в #visible_to(...)",
+                                        sp,
+                                    ));
+                                }
+                            }
+                            if matches!(self.peek().kind, TokenKind::Comma) {
+                                self.bump();
+                                self.skip_newlines();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                        if visible_to.is_empty() {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "#visible_to требует хотя бы один Type",
+                                sp,
+                            ));
+                        }
+                        self.skip_newlines();
+                        continue;
+                    }
+                }
+                break;
             }
             // Plan 124 (D220): per-field visibility modifier. `priv` или `pub`
             // (mutually exclusive); idёт ДО mutability modifiers (ro/mut/consume)
@@ -3476,6 +3643,7 @@ impl Parser {
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
                 priv_field: field_priv,
+                visible_to,
             });
             // запятая или newline
             if self.eat(&TokenKind::Comma).is_some() {

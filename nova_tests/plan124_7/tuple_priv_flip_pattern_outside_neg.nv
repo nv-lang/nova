@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.7 — negative: type-level priv flip — pattern destructure
+// of type-default-priv field blocked outside type-method scope.
+module plan124_7.tuple_priv_flip_pattern_outside_neg
+
+type Secret priv (key str, salt str)
+
+fn Secret.new(k str, s str) -> Secret =>
+    Secret(key: k, salt: s)
+
+// External fn — pattern destructures priv (default) field key.
+fn external_unpack(s Secret) -> str {
+    ro Secret { key, salt: _ } = s
+    key
+}

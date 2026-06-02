@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_WRITE
+//
+// Plan 124.3 — negative: write priv field generic type instance outside
+// any type-method scope → E_PRIV_FIELD_WRITE (D220 §G1).
+module plan124_3.generic_priv_write_outside_neg
+
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+
+export fn Stack[T].new(cap int) -> Stack[T] =>
+    { len: 0, capacity: cap }
+
+// External fn — direct write priv `len`.
+fn external_reset(s Stack[int]) {
+    s.len = 0
+}

@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.6 — negative: #visible_to(Bank) — другие types (НЕ Bank)
+// не имеют access к marked field.
+module plan124_6.visible_to_non_friend_neg
+
+export type Account {
+    ro name str
+    #visible_to(Bank) priv mut balance f64
+}
+
+export type Bank {
+    ro id str
+}
+
+export type Auditor {
+    ro level str
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+export fn Bank.new(id str) -> Bank =>
+    { id: id }
+
+export fn Auditor.new(l str) -> Auditor =>
+    { level: l }
+
+// Auditor — НЕ friend, no access.
+export fn Auditor @check(a Account) -> f64 =>
+    a.balance

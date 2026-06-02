@@ -1,0 +1,26 @@
+// Plan 124.3 — positive: generic type's static method (constructor)
+// — recv = "Stack", priv field init via anonymous record literal
+// allowed внутри статического метода (inferred from return type).
+//
+// Note: explicit-type generic record literal `Stack[T] { ... }`
+// has parser limit; anonymous `{ ... }` form (inferred from
+// `-> Stack[T]` return) — supported и canonical.
+module plan124_3.generic_static_constructor_ok
+
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+
+export fn Stack[T].empty(cap int) -> Stack[T] =>
+    { len: 0, capacity: cap }
+
+// Static method = type scope; record literal с priv field OK
+// (anonymous form, return type inference).
+export fn Stack[T].with_len(initial int, cap int) -> Stack[T] =>
+    { len: initial, capacity: cap }
+
+test "Plan 124.3: static constructor with priv field init (anonymous)" {
+    ro s = Stack[int].with_len(0, 10)
+    assert(s.capacity == 10)
+}

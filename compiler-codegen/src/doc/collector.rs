@@ -470,6 +470,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                     name: f.name.clone(),
                     ty: render_type(&f.ty),
                     mutable: f.mutable,
+                    priv_field: f.priv_field,
                 })
                 .collect();
             ItemKind::Type(TypeDefinition::Record(record_fields))
@@ -491,6 +492,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                                         name: f.name.clone(),
                                         ty: render_type(&f.ty),
                                         mutable: f.mutable,
+                                        priv_field: f.priv_field,
                                     })
                                     .collect(),
                             )
@@ -570,6 +572,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                     name: f.name.clone(),
                     ty: render_type(&f.ty),
                     mutable: false,
+                    priv_field: f.priv_field,
                 })
                 .collect();
             ItemKind::Type(TypeDefinition::Record(record_fields))

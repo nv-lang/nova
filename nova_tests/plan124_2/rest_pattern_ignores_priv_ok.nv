@@ -1,0 +1,25 @@
+// Plan 124.2 — positive: rest-pattern `..` outside type-method scope —
+// `..` НЕ produces bindings → не leak'ит priv field (D221 §3).
+//
+// Pattern { name, .. } outside Account methods — binds public `name`,
+// игнорирует priv `money` через `..`.
+module plan124_2.rest_pattern_ignores_priv_ok
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External fn — `..` НЕ binds priv field. OK.
+fn show_name(acc Account) -> str {
+    ro Account { name, .. } = acc
+    name
+}
+
+test "Plan 124.2: `..` не bind'ит priv field" {
+    ro acc = Account.new("carol")
+    assert(show_name(acc) == "carol")
+}

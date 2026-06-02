@@ -1,0 +1,21 @@
+// Plan 124.3 — positive: outside scope access к public field generic
+// type'а — OK. Verifies no false-positive на public fields в generic
+// контексте.
+module plan124_3.generic_public_field_outside_ok
+
+export type Buffer[T] {
+    priv mut size int
+    ro capacity int
+}
+
+export fn Buffer[T].new(cap int) -> Buffer[T] =>
+    { size: 0, capacity: cap }
+
+// External fn — accesses only public `capacity`.
+fn show_cap(b Buffer[int]) -> int =>
+    b.capacity
+
+test "Plan 124.3: public field generic — OK outside" {
+    ro b = Buffer[int].new(100)
+    assert(show_cap(b) == 100)
+}

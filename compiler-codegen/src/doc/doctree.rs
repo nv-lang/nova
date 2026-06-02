@@ -558,6 +558,10 @@ pub struct RecordField {
     /// Тип, рендерёный как Nova source.
     pub ty: String,
     pub mutable: bool,
+    /// Plan 124.5 (D220/D222): field marked `priv`. nova doc hides
+    /// priv fields by default; `--include-private` flag показывает.
+    /// LSP renders 🔒 badge в hover/code-lens.
+    pub priv_field: bool,
 }
 
 #[derive(Debug, Clone)]

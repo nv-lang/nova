@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR E_PRIV_PUB_CONFLICT
+//
+// Plan 124.4 — negative: `priv pub` modifier conflict на named tuple
+// field — E_PRIV_PUB_CONFLICT (D220/D222 mutual exclusion).
+module plan124_4.named_tuple_priv_pub_conflict_neg
+
+type Bad(priv pub x f64)
