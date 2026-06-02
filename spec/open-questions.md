@@ -198,6 +198,10 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 - ✅ Type reflection sizeof[T]/align_of[T] для primitives (closes
   [M-114.4.3-t-reflection] для primitive surface).
 
+**V4.1 extensions (Plan 114.4.4 V4.1 session, 2026-06-02):**
+- ✅ Per-const-arg mono-specialization для mixed const fns (closes
+  [M-114.4.3-mono-specialization]).
+
 **Что остаётся открытым (Q7 V4.1+):**
 - Comptime-функции имеют доступ к типам как первый класс?
   → V4.0 sizeof/align для primitives ✅; records/generics → Plan 114.4.4.2.

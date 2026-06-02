@@ -2322,6 +2322,17 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
         }
     }
     {
+        // Plan 114.4.4.5 V4.1: monomorphize mixed const fns.
+        let _t = crate::perf_timer::PerfTimer::new("const-fn-mono");
+        let mono_errs = crate::const_fn_mono::specialize_mixed_const_fns(&mut module);
+        if !mono_errs.is_empty() {
+            return Err(mono_errs.iter()
+                .map(|d| d.render(src, &path.to_string_lossy()))
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+    }
+    {
         let _t = crate::perf_timer::PerfTimer::new("annotate-maps");
         types::annotate_map_literals(&mut module);
     }

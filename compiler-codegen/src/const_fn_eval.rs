@@ -1096,7 +1096,7 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // so we can hold the immutable view while we mutate other parts of
     // the module. Const fn count в реальных модулях невелик; clone
     // overhead minimal.
-    let mut mixed_fns: Vec<(String, Vec<bool>)> = Vec::new();
+    let mut mixed_fns: Vec<(String, Vec<bool>, crate::ast::FnDecl)> = Vec::new();
     let const_fn_decls: Vec<crate::ast::FnDecl> = module.items.iter()
         .filter_map(|it| match it {
             Item::Fn(fd) => {
@@ -1112,9 +1112,9 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
                 if is_fully_const {
                     Some(fd.clone())
                 } else if any_const {
-                    // Mixed — collect for validation registration.
+                    // Mixed — collect for validation registration + V4.1 mono.
                     let flags: Vec<bool> = fd.params.iter().map(|p| p.is_const).collect();
-                    mixed_fns.push((fd.name.clone(), flags));
+                    mixed_fns.push((fd.name.clone(), flags, fd.clone()));
                     None
                 } else {
                     None
@@ -1127,8 +1127,8 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // intrinsics могут use'аться в module-level const RHS без const fn
     // decls (e.g. `const SIZE = sizeof[int]()`).
     let mut owned = OwnedEvaluator::new(const_fn_decls);
-    for (name, flags) in mixed_fns {
-        owned.register_mixed(name, flags);
+    for (name, flags, fd) in mixed_fns {
+        owned.register_mixed(name, flags, fd);
     }
     // Plan 114.4.3 Ф.5 V2: first-class alias resolution.
     // Detect `const ALIAS = const_fn_name` pattern. Build alias map:
@@ -1220,6 +1220,9 @@ struct OwnedEvaluator {
     /// indicating is_const. Used для call-site validation: const-param args
     /// must be constexpr literals. Mixed fns remain в codegen (not dropped).
     mixed_const_params: HashMap<String, Vec<bool>>,
+    /// Plan 114.4.4.5 V4.1: mixed fn FnDecl cache — для true monomorphization
+    /// (per-const-arg specialization). Populated together с mixed_const_params.
+    mixed_fns: HashMap<String, crate::ast::FnDecl>,
     /// Plan 114.4.3 Ф.5 V2: const fn aliases — `const ALIAS = const_fn`.
     /// Walker substitutes Ident("ALIAS") → Ident("ORIGINAL") at call sites.
     /// Alias decls removed из items в retain phase.
@@ -1236,12 +1239,15 @@ impl OwnedEvaluator {
             fns,
             memo: HashMap::new(),
             mixed_const_params: HashMap::new(),
+            mixed_fns: HashMap::new(),
             aliases: HashMap::new(),
         }
     }
     /// Plan 114.4.3 Ф.3: register mixed const fn — для call-site validation.
-    fn register_mixed(&mut self, name: String, const_param_flags: Vec<bool>) {
-        self.mixed_const_params.insert(name, const_param_flags);
+    /// Plan 114.4.4.5 V4.1: also stores FnDecl for monomorphization.
+    fn register_mixed(&mut self, name: String, const_param_flags: Vec<bool>, fd: crate::ast::FnDecl) {
+        self.mixed_const_params.insert(name.clone(), const_param_flags);
+        self.mixed_fns.insert(name, fd);
     }
     fn names(&self) -> std::collections::HashSet<String> {
         self.fns.keys().cloned().collect()
