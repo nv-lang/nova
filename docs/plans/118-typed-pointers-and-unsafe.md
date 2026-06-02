@@ -1890,7 +1890,7 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A14 | Pointer arithmetic only в unsafe; result `*unsafe T` (ptr+int) / `isize` (ptr-ptr) | T4.7-T4.9 |
 | A15 | Pointer arith unit scaling (sizeof(T)-multiplied) — verified | T4.12 + ABI snapshot |
 | A16 | Cast table enforced (safe vs unsafe casts; invalid targets rejected) | T4.10, T4.16, NEG-T4.22-T4.23 |
-| A17 | Comparison: `==`/`!=` safe; `<`/`>` unsafe | T4.11 + NEG-T4.17 |
+| A17 partial ✅ 2026-06-02 | Comparison: `==`/`!=` safe; `<`/`>` unsafe (E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE) | T4.11 + NEG-T4.17 |
 | A18 | Forbidden ops: `&arr[i]`, `null`, `undefined` | NEG-T4.19, NEG-T4.20, NEG-T4.21 |
 | A19 | `Option[*T]` + NPO codegen (single-pointer layout, NULL pattern match) | T5.1-T5.6 + ABI snapshot |
 | A20 | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` | T5.8 |
@@ -2105,6 +2105,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 - `E_AMP_CONST_BINDING` — `&const_value` (const binding не addressable)
 - `E_AMP_LITERAL` — `&42` (literals не addressable)
 - `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"` interpolation; use `.to_debug_str()`
+- `E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE` — pointer-pointer order `<`/`<=`/`>`/`>=` outside unsafe (A17)
 - `E_VARARG_NOT_SUPPORTED` — vararg FFI call attempted
 - `E_CAST_RAW_FN_TO_CLOSURE` — `*fn → fn` cast outside unsafe
 
@@ -2276,7 +2277,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **27/0** (12 positive + 15 NEG, post-A28 V1 syntactic) |
+| plan118 | **30/0** (13 positive + 17 NEG, post-A17 V1 + main sync) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |

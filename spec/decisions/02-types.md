@@ -7401,7 +7401,7 @@ unsafe {
 `(*p).field` chain. **Только в unsafe context** — все pointer ops gated.
 Pattern match `Option[*T]` — safe outside unsafe (inspection, не deref).
 
-### §6. Pointer arithmetic
+### §6. Pointer arithmetic + order comparison
 
 ```nova
 unsafe {
@@ -7409,13 +7409,26 @@ unsafe {
     ro p2 = some_ptr + offset
     ro diff = p2 - p1               // isize (element count)
     unsafe { *p1 }                   // *unsafe T deref требует ещё unsafe layer
+    ro lt = p1 < p2                  // order-compare allowed inside unsafe
 }
+
+// Equality `==`/`!=` — safe anywhere (identity check, no ordering):
+ro p = unsafe { &x }
+ro q = unsafe { &x }
+ro same = p == q                     // OK outside unsafe — identity check
 ```
 
 - `+`/`-`/`+=`/`-=` only в `unsafe { }` block
 - Result `*unsafe T` для `ptr ± int`; `isize` для `ptr - ptr`
 - Units: sizeof(T)-scaled (C/Rust convention)
 - `*`/`/`/etc. — `E_PTR_ARITHMETIC_INVALID` (не математически осмыслено)
+- **Order compare** `<`, `<=`, `>`, `>=` — require unsafe context —
+  **`E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE` ACTIVE 2026-06-02 (V1 syntactic,
+  commit 601af30fc30)** — closes acceptance A17 partial. Rationale: pointer
+  addresses не stable ordinals (GC-relocation invariant + OS ASLR random
+  layout). V2 (Session 4+): full type-aware enforcement через
+  `infer_expr_type`.
+- **Equality** `==`/`!=` — safe everywhere (identity check; OK outside unsafe).
 
 ### §7. Null safety: `Option[*T]` + NPO codegen
 
