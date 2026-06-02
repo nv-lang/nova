@@ -7331,7 +7331,42 @@ Records / sum-types / generic types → V4 followup
 (special-cased в `is_known`); replaced литералом в rewriter pass до
 codegen.
 
-### V3+V4 acceptance — A27-A32 (landed)
+### V4.1 extensions (Plan 114.4.4 V4.1 session, 2026-06-02)
+
+**Mono-specialization — per-const-arg true monomorphization (Plan 114.4.4.5):**
+
+V3 baseline (Plan 114.4.3 Ф.3): mixed const fn (e.g. `fn scale(const
+factor int, x int) -> int`) compiled as regular runtime fn — const
+param `factor` purely informational. V4.1 lands true monomorphization:
+
+```nova
+fn scale(const factor int, x int) -> int => x * factor
+
+ro a = scale(3, x)    // generates fn `scale__cst_0(x) => x * 3`
+ro b = scale(3, y)    // reuses `scale__cst_0` (same const arg)
+ro c = scale(10, z)   // generates fn `scale__cst_1(x) => x * 10`
+```
+
+*Semantics:*
+- Each unique (mixed_fn_name, const_args_tuple) tuple → отдельная
+  specialized C fn `<orig>__cst_<idx>` где const params substituted
+  с literal values в body, dropped из signature.
+- Per-compilation cache deduplicates: identical (fn, const_args)
+  reuses spec name.
+- Mixed fn original AST kept as template (used для cloning); codegen
+  emits both original (mostly dead) + all specializations.
+
+*Implementation:* New module `compiler-codegen/src/const_fn_mono.rs`.
+Pipeline placement: AFTER `rewrite_const_fn_calls` (fully-const fns
+already dropped + sizeof replaced). Mono pass walks all call sites,
+generates spec FnDecls с literal substitution в body, rewrites Call
+sites с new spec names + drops const args.
+
+*Use cases:* Performance optimization для hot loops с known const
+parameters (loop unrolling, branch elimination, SSE-like vectorization).
+Const generics-style API design (Rust analog).
+
+### V3+V4+V4.1 acceptance — A27-A33 (landed)
 
 | # | Критерий | Verification |
 |---|---|---|
@@ -7341,9 +7376,10 @@ codegen.
 | A30 | Loops + mut/assign/break/continue работают | Ф.3 fixtures |
 | A31 | Record/sum/tuple patterns в match destructure | Ф.4 fixtures |
 | A32 | `sizeof[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
+| A33 | Mixed const fn per-arg monomorphization | mono_specialization_ok fixture |
 
-A33-A35 (runtime-hof / closures / mono-specialization) → extracted
-plans 114.4.4.3-5 (V4.1+).
+A34-A35 (runtime-hof / closures-from-const-fn) → Plan 114.4.4.3/4
+(V4.2+ scope).
 
 ### V2 acceptance — A19-A26
 
