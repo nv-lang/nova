@@ -30064,3 +30064,71 @@ Lessons:
   через TypeRef variants.
 - Pub re-export через wrapper fn (subst_type_ref_pub) — clean way share
   helpers cross-module без exposing all internals.
+
+
+================================================================================
+== 2026-06-03 — Plan 114.4.4 V4.6 M1+M2+M3+M4 final-followups LANDED
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-6-final-followups (off main aa1622ed515)
+> Plan-doc: docs/plans/114.4.4.7-v4-6-final-followups.md
+
+🎯🎯 Cumulative: Plan 114.4.4 family ПОЛНОСТЬЮ ЗАКРЫТА V3-V4.6.
+
+Замысел:
+V4.5 оставил 4 followup markers с design rationale. V4.6 session closes
+all 4 без silent simplifications.
+
+M1 sizeof для user records + sums (commit 1932099ed31):
+- type_size_or_align_resolved: accepts TypeDecl registry.
+- TypeDeclRegistryGuard (RAII): install/clear thread-local registry.
+- Records → C struct layout. Sums → tag (i32) + max payload.
+- Variants: Unit (0), Tuple (sum + pad), Record (struct).
+- Newtype/Alias transparent. Opaque/Effect/Protocol → None.
+- 2 POS fixtures (record + sum). 1 V4.4-superseded NEG removed.
+
+M2 parser ClosureLight after Stmt::Const (commit f5ba1cc18b4):
+- looks_like_closure_light_params: lookahead peek `|ident<,ident>*|`.
+- В parse_bit_or: if detected → break bit-or continuation.
+- ClosureLight `|x|` после const Stmt теперь works (V4.4 workaround
+  через fn(x T) -> R => body больше не нужен).
+
+M3 closure-generic HOF inference (commit 722120e11ef):
+- GenericClosureHofCtx pre-pass: walks module, at Call sites checks args.
+- For bare Call(generic_closure_fn, [], None), matches host's return Func
+  vs expected param Func via unify_simple. Wraps Ident в TurboFish.
+- Pub re-exports: build_fn_signature_registry_pub + infer_generic_subst_pub.
+
+M4 composite concrete types (commit c205a7a1589):
+- GenericInst.concrete: Vec<String> → Vec<TypeRef>.
+- Hash/Eq via mangled_args() stable serialization.
+- mangle_type_ref pub helper: Tuple/Array/FixedArray/Named-with-generics/
+  Unit/Readonly/Func.
+- Closure spec value: (spec_name, Vec<TypeRef>) — TypeRefs retained для
+  substitution.
+
+Тесты (release nova-cli): 41/41 plan114_4_4 + 15/15 plan114_4_2 + 14/14
+plan114_4_3 = 70/70 PASS на release nova-cli. 6 new POS fixtures + 1
+V4.4-superseded NEG removed.
+
+Spec D199 V4.6 extensions subsection + A41-A44 acceptance criteria.
+Q7 V4.6 closure notes + 🎯🎯 Plan 114.4.4 family complete marker (V3-V4.6).
+
+Cumulative Plan 114.4.4 family:
+- 15 markers [M-114.4.4-*] all closed.
+- A1-A44 acceptance criteria.
+- 70 fixtures (plan114_4_2/3/4) all PASS.
+- 7 walkers/passes в const_fn_* family.
+- ~7 sessions wall-time.
+
+Lessons:
+- Thread-local registry pattern (TypeDeclRegistryGuard RAII) — clean
+  way avoid invasive parameter threading через many call sites.
+  Trade-off: implicit context. OK для single-threaded compile pass.
+- Parser lookahead disambiguation: peek_at(i) с newlines skip — generic
+  pattern для resolving ambiguity at expression-start positions.
+- Pre-pass + TurboFish injection (M3): cleaner than extending main
+  rewriter с extra logic. Existing handler picks up rewritten form.
+- Composite type mangling via stable serialization: removes simple-Named
+  restriction enabling rich generic instantiation.

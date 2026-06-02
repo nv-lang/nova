@@ -30958,3 +30958,57 @@ Solution: in-place Ident rewrite at detection site (GenericMutateCtx).
 Each Call.args site gets correct mangled name based on its specific
 context. This pattern applies whenever specialization depends on
 context, not name alone.
+
+
+---
+
+## Plan 114.4.4 V4.6 M1+M2+M3+M4 final-followups LANDED (2026-06-03)
+
+**Status:** ✅ LANDED. Branch `plan-114.4.4-v4-6-final-followups`.
+
+**Closed markers (4):**
+- ✅ M1 [M-114.4.4-trampoline-named-types] — size_of/align_of для records + sums.
+- ✅ M2 [M-114.4.4-closure-light-after-const-stmt-parser] — parser lookahead.
+- ✅ M3 [M-114.4.4-closure-generic-hof-inference] — TurboFish optional для
+  generic closure в HOF context.
+- ✅ M4 [M-114.4.4-trampoline-complex-concrete] — composite TypeRef concrete
+  types (Tuple/Array/Option/etc).
+
+**🎯🎯 Plan 114.4.4 family ПОЛНОСТЬЮ ЗАКРЫТА V3-V4.6** — 15 markers всех
+закрыты, A1-A44 acceptance criteria, 70/70 fixtures PASS.
+
+**Implementations:**
+
+M1 (`1932099ed31`): TypeDecl registry via thread-local RAII guard
+(TypeDeclRegistryGuard). Records → C struct layout; Sums → tag (i32) +
+max-payload; Newtype/Alias transparent; Opaque/Effect/Protocol → None.
+
+M2 (`f5ba1cc18b4`): `looks_like_closure_light_params` lookahead в
+parse_bit_or — peek pattern `|ident<,ident>*|`, breaks bit-or continuation
+если detected.
+
+M3 (`722120e11ef`): `GenericClosureHofCtx` pre-pass auto-adds TurboFish к
+bare Calls в HOF context via unification против expected param Func type.
+
+M4 (`c205a7a1589`): `GenericInst.concrete` extended Vec<String> → Vec<TypeRef>.
+`mangle_type_ref` pub helper stable serialization для composite types.
+
+**Tests:** 41/41 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 70/70 PASS.
+
+**Design lessons:**
+
+1. **Thread-local RAII registry** (M1) — clean alternative invasive parameter
+   threading. Trade-off: implicit context (must establish guard at pass start).
+   OK для single-threaded compile pass; не годится для multi-threaded.
+
+2. **Parser lookahead disambiguation** (M2) — peek_at(i) с newlines skip.
+   Generic pattern для ambiguity resolution at expression-start positions.
+   Applies к other future tokens that could be both operator and prefix.
+
+3. **Pre-pass + AST injection** (M3) — cleaner than extending main rewriter.
+   Add TurboFish to bare Calls в HOF context; existing handler picks up
+   normalized form. Composes well с existing logic.
+
+4. **Composite type mangling** (M4) — stable serialization through structural
+   recursion. Removes simple-Named restriction. mangle_type_ref returns
+   C-identifier-safe strings; symmetric с trampoline + closure paths.
