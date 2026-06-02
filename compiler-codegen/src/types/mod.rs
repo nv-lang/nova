@@ -2873,6 +2873,34 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                             }
+                            // Plan 124 (D220): priv field INIT check — record literal
+                            // outside type-method scope cannot init priv fields.
+                            if let TypeDeclKind::Record(rec_fields) = &td.kind {
+                                let current_recv = self.current_recv_type.borrow();
+                                let allowed = current_recv.as_deref() == Some(last.as_str());
+                                if !allowed {
+                                    for f in fields {
+                                        if f.is_spread { continue; }
+                                        if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == f.name) {
+                                            if fdecl.priv_field {
+                                                errors.push(Diagnostic::new(
+                                                    format!(
+                                                        "[E_PRIV_FIELD_INIT] cannot \
+                                                         initialize private field `{}.{}` \
+                                                         via record literal outside type-\
+                                                         method scope. Field marked `priv` \
+                                                         (Plan 124 / D220). Hint: use \
+                                                         factory method like `{}.new(...)` \
+                                                         which constructs the type internally.",
+                                                        last, f.name, last,
+                                                    ),
+                                                    f.span,
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
