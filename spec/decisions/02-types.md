@@ -7181,3 +7181,122 @@ deref, arithmetic banned by default).
 ### Acceptance
 
 См. Plan 115 A1-A10 (T1, T2, T3 series).
+
+---
+
+## D220. Per-field visibility — `priv` keyword + type-level default flip
+
+> **Status:** V1 ACTIVE (spec + parser/AST infrastructure landed, 2026-06-02). Реализация — [Plan 124](../../docs/plans/124-priv-field-visibility.md). Empirical validation — [docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md). Amends [D47](07-modules.md#d47) (replaces deprecated `_prefix` convention с compile-time enforcement).
+
+### Что
+
+Per-field visibility modifier `priv` для records + named tuples (D215). По умолчанию все поля **публичны** (D47 unchanged, validated: kubernetes 92% public в API surface). Explicit `priv` — field accessible **только из методов own type'а** (instance + static).
+
+Type-level default flip syntax `type X priv { ... }` — для invariant-heavy types где majority of fields private; explicit `pub` modifier overrides priv default.
+
+### Правило
+
+#### §1 Syntax
+
+```nova
+// Per-field priv modifier (field-level).
+export type Account {
+    priv mut money f64
+    ro name str
+    priv id u64
+}
+
+// Type-level default flip — fields default = priv.
+export type Secret priv {
+    pub ro tag str
+    mut salt u64
+    key u64
+}
+```
+
+Modifier ordering в field decl: priv/pub → ro/mut/consume → name TYPE. priv и pub mutually exclusive (E_PRIV_PUB_CONFLICT).
+
+#### §2 Effective visibility
+
+Field's effective priv_field = first matching:
+1. Explicit `pub` field modifier → priv_field = false (public).
+2. Explicit `priv` field modifier → priv_field = true (private).
+3. Type-level default (`type X priv {...}` → priv_field = true).
+4. Otherwise (D47 default) → priv_field = false (public).
+
+#### §3 Access rules
+
+priv field access РАЗРЕШЁН только из:
+- Instance methods own type'а: `fn TypeX @method() { @priv_field }`
+- Static methods own type'а: `fn TypeX.factory(...) { ... }`
+
+priv field access ЗАПРЕЩЁН во всех других контекстах:
+- Read: `outside.priv_field` → E_PRIV_FIELD_READ
+- Write: `outside.priv_field = X` → E_PRIV_FIELD_WRITE
+- Init via record literal: `Foo { priv_f: X }` → E_PRIV_FIELD_INIT
+- Pattern destructure: `Foo { priv_f }` → E_PRIV_FIELD_PATTERN
+
+#### §4 Diagnostic codes
+
+- E_PRIV_FIELD_READ — read priv field outside type-method scope.
+- E_PRIV_FIELD_WRITE — write priv field outside type-method scope.
+- E_PRIV_FIELD_INIT — init priv field via literal outside.
+- E_PRIV_FIELD_PATTERN — destructure priv field в pattern outside.
+- E_PRIV_PUB_CONFLICT — both priv и pub modifiers на одном field.
+- E_PRIV_FIELD_PROTOCOL (V4 deferred).
+- E_PRIV_TUPLE_POSITIONAL_ACCESS (V4 deferred).
+
+#### §5 No reflection backdoor
+
+Nova не имеет reflection API → priv enforcement compile-time hard guarantee. Vs Java/Kotlin/C#/Swift которые имеют reflection bypass.
+
+#### §6 Composition
+
+priv composes orthogonally с:
+- ro/mut/consume mutability modifiers
+- use NAME Type (D39 embed) — V2 deferred [M-124.2-priv-embed]
+- const NAME T = expr — reserved future use
+
+#### §7 Backward compatibility
+
+Existing Nova code = all-public fields → migration purely additive. priv opt-in keyword — старый код не ломается. _prefix convention deprecated 2026-06-02.
+
+### Почему
+
+Empirical validation: kubernetes audit 35239 fields — 92.4% public в API surface. Public-default minimum boilerplate. Bimodal distribution → bimodal syntax (field-level priv + type-level priv {} flip).
+
+Compile-time enforcement vs convention: prior _prefix hint-only privacy — false safety. priv keyword вводит compile-time guarantee → refactoring safety + invariant enforcement + API clarity.
+
+### Что отвергнуто
+
+- Private-by-default — отклонено после kubernetes data.
+- Edition default flip — отклонено (per-type granular лучше).
+- #strict_visibility per-module attribute — отклонено (fragmentation).
+
+### Cross-refs
+
+- D5 (07-modules.md) — module-level visibility.
+- D29 (07-modules.md) — modules.
+- D35 (03-syntax.md) — method declaration.
+- D47 (07-modules.md) — export keyword; _prefix deprecated.
+- D52 (this file) — record/sum/alias syntax.
+- D131 (05-memory.md) — consume types.
+- D215 (this file) — named tuples.
+
+### Acceptance
+
+V1 (Plan 124.1):
+- A1.1-A1.3 ✅ Parser/AST infrastructure (Ф.1 + Ф.4 commits).
+- A1.4-A1.7 🟡 Type-checker enforcement — [M-124.1-checker-enforcement].
+- A1.8 ✅ Regression 0 new FAIL.
+- A1.9 ✅ plan124_1 fixtures 4/4 PASS.
+- A1.10 ✅ Spec D220 NEW (this section).
+
+### Followup markers
+
+- [M-124.1-checker-enforcement] — type-checker 4 error codes.
+- [M-124.2-priv-embed] — priv use NAME Type.
+- [M-124.4-tuple-priv] — named tuple priv (D215 ext).
+- [M-124.4-protocol-impl-boundary].
+- [M-124.5-doc-lsp].
+- [M-124.6-test-access].
