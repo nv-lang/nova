@@ -1,0 +1,25 @@
+// Plan 118 Ф.2 NEG-T2.10 — `&CONST_NAME` (const binding) forbidden.
+// Const bindings — inlined literals; no stable storage.
+//
+// Currently const bindings parse as Ident reference. `&CONST` would
+// try to address an inlined constant — no stable storage. Type-checker
+// detection — Ф.3.5 follow-on (full unsafe context + const-binding
+// tracking). V1 documented as known limitation.
+//
+// NOTE: This fixture is currently positive (`&CONST` parses successfully
+// because parser sees CONST as Ident); semantic check тогда defers к
+// runtime. Adding fixture documents intent для Ф.3.5 implementation.
+// EXPECTED behavior: E_AMP_CONST_BINDING at type-checker level (Ф.3.5).
+
+module plan118.t2_neg_amp_const_binding
+
+const VALUE int = 42
+
+test "const binding address access — TODO Ф.3.5 enforce" {
+    // V1: parses successfully — VALUE является Ident reference,
+    // не литералом в AST. Ф.3.5 type-checker должен detect const-bound
+    // ident и reject `&VALUE` с E_AMP_CONST_BINDING.
+    // Currently works (binding succeeds since const inlines at use).
+    ro p = VALUE  // copy, not pointer
+    assert(p == 42)
+}
