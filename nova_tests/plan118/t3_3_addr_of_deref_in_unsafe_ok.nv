@@ -1,0 +1,29 @@
+// Plan 118 Ф.3.5 T3.3 — `&x` + `*p` inside unsafe block — works.
+// Verifies E_UNSAFE_REQUIRED enforcement passes for valid usage.
+//
+// V1 scope: parse + checker (unsafe context tracking). Actual runtime
+// codegen для `let p = &x; *p` chain пока ограничено type inference
+// limitation (Ф.4 follow-on — `infer_expr_c_type` returns Nova type name
+// not C type name для AddrOf). Inline `*&x` works.
+
+module plan118.t3_3_addr_of_deref_in_unsafe_ok
+
+test "& and * inline inside unsafe block — passes checker" {
+    ro x = 100
+    ro y = unsafe {
+        // Inline form: `*&x` — checker accepts (depth > 0 inside unsafe).
+        // Codegen emits &(x) then *(&(x)) → x value at runtime.
+        *&x
+    }
+    assert(y == 100)
+}
+
+test "nested unsafe blocks — depth tracking still works" {
+    ro q = 42
+    ro v = unsafe {
+        unsafe {
+            *&q
+        }
+    }
+    assert(v == 42)
+}
