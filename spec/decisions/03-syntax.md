@@ -7366,20 +7366,70 @@ sites с new spec names + drops const args.
 parameters (loop unrolling, branch elimination, SSE-like vectorization).
 Const generics-style API design (Rust analog).
 
-### V3+V4+V4.1 acceptance — A27-A33 (landed)
+### V4.2 extensions (Plan 114.4.4.3 V4.2 session, 2026-06-02)
+
+**Runtime trampoline для first-class const fn use (Plan 114.4.4.3):**
+
+V3 baseline (Plan 114.4.4 Ф.2): const fn name использованное в non-callee
+position (`ro f = const_fn`, `apply(const_fn, x)`) → friendly errors
+`E_CONST_FN_FIRST_CLASS` / `E_CONST_FN_FIRST_CLASS_RUNTIME_HOF` с
+suggestion обернуть в lambda. V4.2 supersedes этот ограничивающий
+поведение автоматической генерацией runtime trampoline:
+
+```nova
+fn double(const x int) -> const int => x * 2
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+test "HOF use" {
+    ro r = apply(double, 5)   // V3: error. V4.2: compiler emits
+                              // `double__trampoline(int x) -> int { x * 2 }`
+                              // и переписывает `double` → `double__trampoline`.
+    assert(r == 10)
+}
+```
+
+*Semantics:*
+- Для каждого fully-const fn `f`, используемого в non-callee position
+  (Call.args, Let.value, Assign.value, Return.value), компилятор
+  генерирует runtime trampoline fn с именем `<f>__trampoline`.
+- Trampoline — клон оригинала с demoted modifiers: `const` параметры
+  становятся обычными runtime, `-> const T` → `-> T`. Body unchanged
+  (т.к. body fully-const fn состоит из выражений валидных и в runtime).
+- Транзитивный вызов: если body trampoline вызывает другой fully-const
+  fn, тот fn тоже добавляется в trampoline-set, и call внутри body
+  переписывается на `<other>__trampoline`. Fixed-point reachability.
+- `sizeof[T]()` / `align_of[T]()` intrinsics в trampoline body
+  substituted с literal Int при генерации body (V4.0 primitive limit).
+- Alias resolution: `const ALIAS = const_fn; apply(ALIAS, x)` →
+  alias resolved к `const_fn`, который trampolines.
+- Original fully-const fn декларация всё ещё dropped из codegen pass
+  (call sites уже inlined литералами); trampoline имеет распознаваемый
+  суффикс и переживает retain step.
+
+*Implementation:* New module `compiler-codegen/src/const_fn_trampoline.rs`.
+Pipeline placement: внутри `rewrite_const_fn_calls`, ПОСЛЕ main walker
+(inlining + intrinsic eval), ДО validate + retain.
+
+*V4.2 limitations:*
+- Generic const fn rejected (`E_CONST_FN_TRAMPOLINE_GENERIC`) — trampoline
+  body нужны concrete types для intrinsic substitution. Followup
+  `[M-114.4.4-trampoline-generics]`.
+- Closure literals в body — Plan 114.4.4.4 territory.
+
+### V3+V4+V4.1+V4.2 acceptance — A27-A34 (landed)
 
 | # | Критерий | Verification |
 |---|---|---|
 | A27 | `#fn_eval_max_depth(N)` override работает | Ф.1 fixtures |
-| A28 | Runtime-let `ro f = const_fn` → friendly error | Ф.2 negatives |
-| A29 | HOF passing → friendly error | Ф.2 negatives |
+| A28 | Runtime-let `ro f = const_fn` через trampoline | runtime_hof_let_binding_ok (V4.2) |
+| A29 | HOF passing через trampoline | runtime_hof_arg_ok (V4.2) |
 | A30 | Loops + mut/assign/break/continue работают | Ф.3 fixtures |
 | A31 | Record/sum/tuple patterns в match destructure | Ф.4 fixtures |
 | A32 | `sizeof[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
 | A33 | Mixed const fn per-arg monomorphization | mono_specialization_ok fixture |
+| A34 | Const fn first-class use через runtime trampoline | runtime_hof_*_ok fixtures (5 шт.) |
 
-A34-A35 (runtime-hof / closures-from-const-fn) → Plan 114.4.4.3/4
-(V4.2+ scope).
+A35 (closures-from-const-fn) → Plan 114.4.4.4 (V4.3 scope).
 
 ### V2 acceptance — A19-A26
 
