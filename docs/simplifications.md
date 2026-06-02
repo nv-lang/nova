@@ -31048,3 +31048,48 @@ V1 heap-backed execution path works.
 Plan 124.8 ✅ FULLY CLOSED V1.
 
 V2 followup: Plan 126 (auto-derive) + [M-124.8-value-codegen-stack].
+
+---
+
+## Plan 123.6.2.1 — Real wall-clock bench (V6.2.1)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch plan-123-v3-followups.
+~470 LOC delta. Closes `[M-123.6-real-wallclock-bench]`.
+
+**Что cделано:** subcommand `nova bench field-cache <PATH>` для
+cross-validation V6.2 static cycle-savings estimate реальным wallclock
+measurement'ом. Builds каждый input twice (NOVA_FIELD_CACHE=1 vs =0),
+runs N interleaved samples (default 11) с warmup (default 2), reports
+median wallclock + speedup + V6.2 static estimate side-by-side.
+Optional JSON v1 emit + baseline regression gate (`--baseline` +
+`--gate-regression-pp`).
+
+**Принципы:**
+- Subprocess-based dual-build вместо in-process — clean, no pipeline
+  rewiring, env override = single source of truth.
+- Interleaved sampling off-on-off-on — меньше systematic drift bias
+  чем sequential-by-variant; cheap mitigation на CPU thermal /
+  scheduler jitter.
+- Geometric mean of (1 + speedup_i/100) factors per file — unbiased
+  composite ratio (Hennessy & Patterson §1.10); arithmetic mean
+  переоценивает large speedups disproportionately.
+- Static estimate reused в-процессе (no extra subprocess) — same
+  `analyze_module + cpu_savings_estimate` pipeline что V6.2 telemetry,
+  гарантирует consistency.
+- Median + warmup discard для noise robustness; default samples=11
+  (odd → exact median без averaging) и warmup=2 (drop JIT-cache miss
+  + cold-page faults).
+
+**Acceptance (V6.2.1.1-V6.2.1.6 все ✅):** subcommand registered,
+JSON v1 schema with documented fields, dir mode + skip semantics,
+baseline gate exit codes, static estimate consistency, 12/12 unit tests.
+
+**Cross-validation первого fixture:** `01_ro_hot_loop.nv` —
+static=200 cyc (50 cached reads × 4), measured=+29.3% (off=77ms,
+on=54ms). Sign consistency confirmed; calibration of cycle weights —
+V6.2.3 followup (least-squares fit across full corpus).
+
+**Followup markers:** `[M-123.6.2.1-history-branch]` (V6.2.2 —
+orphan-branch history a la Plan 57 `nova bench history-add`);
+`[M-123.6.2.1-weight-calibration]` (V6.2.3 — empirical recalibration
+of LOAD/CALL/LOOP_ITERS cycle weights via least-squares fit).
