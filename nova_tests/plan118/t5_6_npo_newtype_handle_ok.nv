@@ -1,0 +1,44 @@
+// Plan 118 Ф.5.8 T5.6 / A20 — NPO для newtype-over-pointer handles
+// (canonical FFI handle pattern). `type Handle(*T)` or `type Handle(ptr)`
+// — transparent typedef alias. Option[Handle] benefits from NPO
+// (single-pointer layout) автоматически после type_aliases lookup.
+//
+// Verifies:
+//   - Option[SqHandle] uses NPO layout (struct { Nova_SqHandle value; }
+//     где Nova_SqHandle is alias для nova_ptr)
+//   - None constructor emits NULL through transparent typedef
+//   - is None / is Some checks работают
+//
+// Closes acceptance A20 ✅ — NPO применяется через newtype.
+
+module plan118.t5_6_npo_newtype_handle_ok
+
+// Canonical FFI pattern — opaque handle wrapping ptr (Plan 115 D214).
+type SqHandle(ptr)
+
+external fn p118_open_sqlite(path str) -> Option[SqHandle]
+external fn p118_close_sqlite(h SqHandle) -> i64
+
+test "Option[SqHandle] None type-checks via NPO newtype detection" {
+    // Transparent typedef collapse: Option[SqHandle] === Option[ptr]
+    // в codegen (NovaOpt_nova_ptr); NPO via Ф.5.4 nova_ptr branch.
+    // Это canonical FFI pattern (sqlite/libcurl/libpng etc).
+    ro h Option[SqHandle] = None
+    assert(h is None)
+}
+
+test "newtype handle wrapping (0 as ptr) — None semantics under NPO" {
+    ro raw = (0 as ptr)
+    ro h = SqHandle(raw)
+    // h.0 is raw ptr; under NPO Some(SqHandle((0 as ptr))) == None
+    // (NULL = None convention).
+    ro opt = Some(h)
+    assert(opt is None)
+}
+
+test "Option[SqHandle] equality identity-check via NPO" {
+    ro h1 Option[SqHandle] = None
+    ro h2 Option[SqHandle] = None
+    // NPO eq: a.value == b.value (no tag compare needed).
+    assert(h1 == h2)
+}

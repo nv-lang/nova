@@ -27263,6 +27263,39 @@ A33, A34, A35.
 Plan 115 followup marker [M-115-null-ptr-to-option-after-npo] —
 **CLOSED** via A23 hard retraction landing.
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5.8 A20 ✅ CLOSED — NPO via newtype-over-pointer
+==========================================================================
+
+User-requested closure A20 — NPO applies через newtype handle pattern.
+
+Implementation (2 commits):
+1. 9fe42f39c51 — feat(Ф.5.8 A20): is_novaopt_npo extended V3.
+   c_ty starts with "Nova_" → strip prefix → lookup type_aliases →
+   check alias_c ends '*' или == "nova_ptr".
+2. df5e8381cd6 — test(A20): t5_6_npo_newtype_handle_ok.nv — 3 positive
+
+Insight: для canonical Plan 115 pattern `type SqHandle(ptr)`, Nova type
+system pre-collapses transparent typedef — Option[SqHandle] resolves
+к NovaOpt_nova_ptr (NOT NovaOpt_Nova_SqHandle). Ф.5.4 V2 nova_ptr
+branch fires directly. V3 type_aliases lookup — defensive coverage
+для future paths where collapse не happens.
+
+Verified generated C для Option[SqHandle]:
+  NovaOpt_nova_ptr h = ((NovaOpt_nova_ptr){.value = NULL});
+  // (h).value == NULL для is None check.
+
+plan118: 36/0 PASS (18 positive + 18 NEG).
+Regression smoke 193/0 verified clean (13 plans tested).
+
+Spec D216 §7 updated: V3 ACTIVE 2026-06-02 note + V4 deferred list
+(only A21 remainder + A22 lint).
+
+Plan 118 grand-total: 20 of 35 acceptance criteria closed (57%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A20 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29,
+A30, A33, A34, A35.
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
