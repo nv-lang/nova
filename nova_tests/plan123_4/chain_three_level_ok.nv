@@ -1,0 +1,31 @@
+// Plan 123.4 T1.2: depth-3 chain `@parent.inner.cfg`.
+
+module plan123_4.chain_three_level_ok
+
+type Cfg {
+    ro limit int
+}
+
+type Inner {
+    ro cfg Cfg
+}
+
+type Parent {
+    ro inner Inner
+}
+
+fn Parent @check_limits() -> int {
+    // 3 reads of chain @inner.cfg.limit (depth 3).
+    @inner.cfg.limit + @inner.cfg.limit * 2 + @inner.cfg.limit
+}
+
+fn Parent.new(lim int) -> Parent {
+    Parent { inner: Inner { cfg: Cfg { limit: lim } } }
+}
+
+test "3-level chain cached" {
+    ro p = Parent.new(7)
+    ro r = p.check_limits()
+    // 7 + 14 + 7 = 28.
+    assert(r == 28)
+}

@@ -1,0 +1,26 @@
+// Plan 123.4 T-NEG.2: chain accessed only once → not cached
+// (threshold not met). Multi single-occurrence chains coexist.
+
+module plan123_4.neg_chain_below_threshold_skip_ok
+
+type Pair_C {
+    ro a Pair_C_Sub
+    ro b Pair_C_Sub
+}
+
+type Pair_C_Sub {
+    ro v int
+}
+
+fn Pair_C @first_each() -> int {
+    @a.v + @b.v
+}
+
+fn Pair_C.new(av int, bv int) -> Pair_C {
+    Pair_C { a: Pair_C_Sub { v: av }, b: Pair_C_Sub { v: bv } }
+}
+
+test "single-access chains skipped" {
+    ro p = Pair_C.new(3, 7)
+    assert(p.first_each() == 10)
+}

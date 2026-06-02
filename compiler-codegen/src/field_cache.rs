@@ -62,6 +62,12 @@ pub struct FieldCacheConfig {
     pub pure_enabled: bool,
     /// Plan 123.3 threshold: min pure-call occurrences. Default 2.
     pub pure_threshold: usize,
+    /// Plan 123.4 (D217 amend): enable chain caching `@a.b.c`.
+    pub chain_enabled: bool,
+    /// Plan 123.4 threshold: min chain occurrences. Default 2.
+    pub chain_threshold: usize,
+    /// Plan 123.4 max chain depth (avoid stack bloat). Default 4.
+    pub chain_max_depth: usize,
 }
 
 impl Default for FieldCacheConfig {
@@ -75,6 +81,9 @@ impl Default for FieldCacheConfig {
             licm_max_per_loop: 4,
             pure_enabled: true,
             pure_threshold: 2,
+            chain_enabled: true,
+            chain_threshold: 2,
+            chain_max_depth: 4,
         }
     }
 }
@@ -158,6 +167,28 @@ impl FieldCacheConfig {
                 }
             }
         }
+        // Plan 123.4 chain env vars.
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_CHAIN") {
+            if v == "0" || v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("false") {
+                cfg.chain_enabled = false;
+            }
+        }
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_CHAIN_THRESHOLD") {
+            if let Ok(n) = v.parse::<usize>() {
+                if n == 0 {
+                    cfg.chain_enabled = false;
+                } else {
+                    cfg.chain_threshold = n;
+                }
+            }
+        }
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_CHAIN_DEPTH") {
+            if let Ok(n) = v.parse::<usize>() {
+                if n >= 2 {
+                    cfg.chain_max_depth = n;
+                }
+            }
+        }
         cfg
     }
 }
@@ -200,12 +231,13 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
 
     for item in &mut module.items {
         if let Item::Fn(f) = item {
-            // Plan 123.2 (D218): LICM phase FIRST — hoist invariant
-            // loop reads. Plan 123.3 (D219) pure-call SECOND. Plan
-            // 123.1 (D217) per-fn caching THIRD — sees both as already
-            // cached.
+            // Order (composition rationale в D217 §10 + D218 §2 +
+            // D219 §2): D218 LICM → V4 chain → D219 pure → D217.
             if cfg.licm_enabled {
                 licm_fn(f, &registry, cfg);
+            }
+            if cfg.chain_enabled {
+                chain_cache_fn(f, &registry, cfg);
             }
             if cfg.pure_enabled {
                 pure_cache_fn(f, &registry, &pure_methods, cfg);
@@ -218,6 +250,9 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
             if let Item::Fn(f) = item {
                 if cfg.licm_enabled {
                     licm_fn(f, &registry, cfg);
+                }
+                if cfg.chain_enabled {
+                    chain_cache_fn(f, &registry, cfg);
                 }
                 if cfg.pure_enabled {
                     pure_cache_fn(f, &registry, &pure_methods, cfg);
@@ -4236,6 +4271,692 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
         ExprKind::TaggedTemplate { tag, args, .. } => {
             rewrite_pure_calls_in_expr(tag, renames);
             for a in args { rewrite_pure_calls_in_expr(a, renames); }
+        }
+        _ => {}
+    }
+}
+
+// ===== Plan 123.4 (D217 amend): Chain caching `@a.b.c` =====
+//
+// V4 phase. Caches nested chain access patterns `@a.b.c` when
+// accessed ≥ threshold times. Chain length 2-4 (cfg.chain_max_depth).
+//
+// Composition: cache_module runs D218 LICM → V4 chain → D219 pure
+// → D217 per-fn. V4 emits `ro _at_<a>_<b>_<c>_chain = @<a>.<b>.<c>`
+// at body prefix.
+//
+// Eligibility:
+// - Chain length 2..=cfg.chain_max_depth.
+// - Occurrence count ≥ cfg.chain_threshold.
+// - No top-level @F write для chain root field anywhere in body
+//   (V4 conservative; V4.1 refines via per-segment tracking).
+// - No closure capture of any chain occurrence.
+// - No concurrent body (Spawn/Supervised/etc).
+// - Receiver type не protocol/effect/opaque/sum/newtype/alias.
+
+fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    let Some(recv) = &f.receiver else { return };
+    if recv.kind == ReceiverKind::Static {
+        return;
+    }
+    let type_name = &recv.type_name;
+    if reg.skip_types.contains(type_name) {
+        return;
+    }
+    // Skip if receiver type unknown.
+    if reg.by_type.get(type_name).is_none() {
+        return;
+    }
+    if f.is_external {
+        return;
+    }
+    if body_has_concurrent(&f.body) {
+        return;
+    }
+    // V4 conservative: any @F write anywhere → skip.
+    if body_has_any_self_field_write(&f.body) {
+        return;
+    }
+
+    // Collect chains with counts.
+    let mut counts: HashMap<Vec<String>, usize> = HashMap::new();
+    let mut first_spans: HashMap<Vec<String>, crate::diag::Span> = HashMap::new();
+    let mut closure_captured: HashSet<Vec<String>> = HashSet::new();
+    let max_depth = cfg.chain_max_depth.max(2);
+    count_chains_in_body(&f.body, &mut counts, &mut first_spans, &mut closure_captured, max_depth, false);
+
+    // Collect existing locals for collision avoidance.
+    let mut local_names: HashSet<String> = HashSet::new();
+    for p in &f.params {
+        local_names.insert(p.name.clone());
+    }
+    collect_local_names_fn(f, &mut local_names);
+
+    // Decide eligible chains: count ≥ threshold AND not captured.
+    let mut keys: Vec<&Vec<String>> = counts.keys().collect();
+    keys.sort();
+    let mut to_cache: Vec<(Vec<String>, crate::diag::Span)> = Vec::new();
+    let body_span = match &f.body {
+        FnBody::Block(b) => b.span,
+        FnBody::Expr(e) => e.span,
+        FnBody::External => return,
+    };
+    for path in keys {
+        if path.len() < 2 {
+            continue; // Single-field handled by D217.
+        }
+        if counts[path] < cfg.chain_threshold {
+            continue;
+        }
+        if closure_captured.contains(path) {
+            continue;
+        }
+        let span = first_spans.get(path).copied().unwrap_or(body_span);
+        to_cache.push((path.clone(), span));
+        if to_cache.len() >= cfg.max_per_fn {
+            break;
+        }
+    }
+
+    if to_cache.is_empty() {
+        return;
+    }
+
+    // Generate collision-safe names.
+    let mut name_map: HashMap<Vec<String>, String> = HashMap::new();
+    for (path, _) in &to_cache {
+        let base = format!("_at_{}_chain", path.join("_"));
+        let mut chosen = base.clone();
+        let mut suffix = 0usize;
+        while local_names.contains(&chosen) {
+            suffix += 1;
+            chosen = format!("{}_{}", base, suffix);
+        }
+        local_names.insert(chosen.clone());
+        name_map.insert(path.clone(), chosen);
+    }
+
+    // Coerce Expr body → Block для prepend.
+    match &mut f.body {
+        FnBody::Block(_) => {}
+        FnBody::Expr(_) => {
+            let body_expr = match std::mem::replace(&mut f.body, FnBody::External) {
+                FnBody::Expr(e) => e,
+                _ => unreachable!(),
+            };
+            let span = body_expr.span;
+            let new_block = Block {
+                stmts: Vec::new(),
+                trailing: Some(Box::new(body_expr)),
+                span,
+            };
+            f.body = FnBody::Block(new_block);
+        }
+        FnBody::External => return,
+    }
+
+    // Rewrite chain access sites с cache idents.
+    if let FnBody::Block(b) = &mut f.body {
+        rewrite_chains_in_block(b, &name_map);
+    }
+
+    // Prepend cache let statements.
+    if let FnBody::Block(b) = &mut f.body {
+        let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len());
+        for (path, span) in &to_cache {
+            let local_name = &name_map[path];
+            let access = build_chain_expr(path, *span);
+            prefix.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident {
+                    name: local_name.clone(),
+                    span: *span,
+                    is_mut: false,
+                },
+                ty: None,
+                value: access,
+                span: *span,
+                is_ghost: false,
+                consume: false,
+            }));
+        }
+        prefix.append(&mut b.stmts);
+        b.stmts = prefix;
+    }
+}
+
+/// Build chain expression `@a.b.c` from path components.
+fn build_chain_expr(path: &[String], span: crate::diag::Span) -> Expr {
+    let mut current = Expr {
+        kind: ExprKind::SelfAccess,
+        span,
+    };
+    for name in path {
+        current = Expr {
+            kind: ExprKind::Member {
+                obj: Box::new(current),
+                name: name.clone(),
+            },
+            span,
+        };
+    }
+    current
+}
+
+/// Extract canonical path components от Member chain rooted at
+/// SelfAccess. Returns `Some(path)` для `@a.b.c` (path = ["a","b","c"]),
+/// `None` otherwise.
+fn extract_chain_path(e: &Expr) -> Option<Vec<String>> {
+    let mut path: Vec<String> = Vec::new();
+    let mut cur = e;
+    loop {
+        match &cur.kind {
+            ExprKind::Member { obj, name } => {
+                path.push(name.clone());
+                cur = obj;
+            }
+            ExprKind::SelfAccess => {
+                path.reverse();
+                return Some(path);
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn count_chains_in_body(
+    body: &FnBody,
+    counts: &mut HashMap<Vec<String>, usize>,
+    first_spans: &mut HashMap<Vec<String>, crate::diag::Span>,
+    captured: &mut HashSet<Vec<String>>,
+    max_depth: usize,
+    in_closure: bool,
+) {
+    match body {
+        FnBody::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, in_closure),
+        FnBody::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+        FnBody::External => {}
+    }
+}
+
+fn count_chains_in_block(
+    b: &Block,
+    counts: &mut HashMap<Vec<String>, usize>,
+    first_spans: &mut HashMap<Vec<String>, crate::diag::Span>,
+    captured: &mut HashSet<Vec<String>>,
+    max_depth: usize,
+    in_closure: bool,
+) {
+    for s in &b.stmts {
+        count_chains_in_stmt(s, counts, first_spans, captured, max_depth, in_closure);
+    }
+    if let Some(t) = &b.trailing {
+        count_chains_in_expr(t, counts, first_spans, captured, max_depth, in_closure);
+    }
+}
+
+fn count_chains_in_stmt(
+    s: &Stmt,
+    counts: &mut HashMap<Vec<String>, usize>,
+    first_spans: &mut HashMap<Vec<String>, crate::diag::Span>,
+    captured: &mut HashSet<Vec<String>>,
+    max_depth: usize,
+    in_closure: bool,
+) {
+    match s {
+        Stmt::Let(d) => count_chains_in_expr(&d.value, counts, first_spans, captured, max_depth, in_closure),
+        Stmt::Const(d) => count_chains_in_expr(&d.value, counts, first_spans, captured, max_depth, in_closure),
+        Stmt::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+        Stmt::Assign { target, value, .. } => {
+            count_chains_in_expr(target, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_expr(value, counts, first_spans, captured, max_depth, in_closure);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                count_chains_in_expr(v, counts, first_spans, captured, max_depth, in_closure);
+            }
+        }
+        Stmt::Throw { value, .. } => count_chains_in_expr(value, counts, first_spans, captured, max_depth, in_closure),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            count_chains_in_expr(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            count_chains_in_expr(init, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            count_chains_in_expr(expr, counts, first_spans, captured, max_depth, in_closure);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn count_chains_in_expr(
+    e: &Expr,
+    counts: &mut HashMap<Vec<String>, usize>,
+    first_spans: &mut HashMap<Vec<String>, crate::diag::Span>,
+    captured: &mut HashSet<Vec<String>>,
+    max_depth: usize,
+    in_closure: bool,
+) {
+    // Check if this expr is a chain rooted at SelfAccess.
+    if let Some(path) = extract_chain_path(e) {
+        if path.len() >= 2 && path.len() <= max_depth {
+            if in_closure {
+                captured.insert(path.clone());
+            } else {
+                *counts.entry(path.clone()).or_insert(0) += 1;
+                first_spans.entry(path).or_insert(e.span);
+            }
+            // Don't recurse into this chain — fully consumed.
+            return;
+        }
+    }
+    // Recurse children, switching in_closure flag on closure entry.
+    match &e.kind {
+        ExprKind::Lambda { body, .. } => count_chains_in_expr(body, counts, first_spans, captured, max_depth, true),
+        ExprKind::ClosureLight { body, .. } => {
+            match body {
+                ClosureBody::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, true),
+                ClosureBody::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, true),
+            }
+        }
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, true),
+            FnBody::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, true),
+            FnBody::External => {}
+        },
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, true),
+                    HandlerMethodBody::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, true),
+                }
+            }
+        }
+        ExprKind::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, in_closure),
+        ExprKind::If { cond, then, else_ } => {
+            count_chains_in_expr(cond, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_block(then, counts, first_spans, captured, max_depth, in_closure);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, in_closure),
+                    ElseBranch::If(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            count_chains_in_expr(scrutinee, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_block(then, counts, first_spans, captured, max_depth, in_closure);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, in_closure),
+                    ElseBranch::If(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            count_chains_in_expr(scrutinee, counts, first_spans, captured, max_depth, in_closure);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    count_chains_in_expr(g, counts, first_spans, captured, max_depth, in_closure);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+                    MatchArmBody::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, in_closure),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            count_chains_in_expr(iter, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::While { cond, body, .. } => {
+            count_chains_in_expr(cond, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            count_chains_in_expr(scrutinee, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Loop { body, .. } => count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings {
+                count_chains_in_expr(&wb.handler, counts, first_spans, captured, max_depth, in_closure);
+            }
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
+            if let Some(c) = cancel {
+                count_chains_in_expr(c, counts, first_spans, captured, max_depth, in_closure);
+            }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            count_chains_in_expr(a, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_expr(b, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Index { obj, index } => {
+            count_chains_in_expr(obj, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_expr(index, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            // V4 — chain detection should NOT include method-dispatch
+            // names. For `@a.b.method()`, recurse only into the
+            // receiver `@a.b` (obj of func Member), не into func
+            // itself (which would count `@a.b.method` as 3-chain).
+            match &func.kind {
+                ExprKind::Member { obj, .. } => {
+                    count_chains_in_expr(obj, counts, first_spans, captured, max_depth, in_closure);
+                }
+                _ => {
+                    count_chains_in_expr(func, counts, first_spans, captured, max_depth, in_closure);
+                }
+            }
+            for a in args {
+                count_chains_in_expr(a.expr(), counts, first_spans, captured, max_depth, in_closure);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, in_closure),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => count_chains_in_block(b, counts, first_spans, captured, max_depth, true),
+                        FnBody::Expr(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, true),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => count_chains_in_block(&tb.body, counts, first_spans, captured, max_depth, true),
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure);
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) =>
+                        count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        count_chains_in_expr(k, counts, first_spans, captured, max_depth, in_closure);
+                        count_chains_in_expr(v, counts, first_spans, captured, max_depth, in_closure);
+                    }
+                    MapElem::Spread(e) => count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value {
+                    count_chains_in_expr(v, counts, first_spans, captured, max_depth, in_closure);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                count_chains_in_expr(el, counts, first_spans, captured, max_depth, in_closure);
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    count_chains_in_expr(g, counts, first_spans, captured, max_depth, in_closure);
+                }
+                count_chains_in_block(&arm.body, counts, first_spans, captured, max_depth, in_closure);
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => count_chains_in_expr(chan, counts, first_spans, captured, max_depth, in_closure),
+                    SelectOp::Send { chan, value } => {
+                        count_chains_in_expr(chan, counts, first_spans, captured, max_depth, in_closure);
+                        count_chains_in_expr(value, counts, first_spans, captured, max_depth, in_closure);
+                    }
+                    SelectOp::Default => {}
+                }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { count_chains_in_expr(s, counts, first_spans, captured, max_depth, in_closure); }
+            if let Some(e) = end { count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            count_chains_in_expr(range, counts, first_spans, captured, max_depth, in_closure);
+            count_chains_in_expr(body, counts, first_spans, captured, max_depth, in_closure);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            count_chains_in_expr(tag, counts, first_spans, captured, max_depth, in_closure);
+            for a in args { count_chains_in_expr(a, counts, first_spans, captured, max_depth, in_closure); }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_chains_in_block(b: &mut Block, name_map: &HashMap<Vec<String>, String>) {
+    for s in &mut b.stmts {
+        rewrite_chains_in_stmt(s, name_map);
+    }
+    if let Some(t) = &mut b.trailing {
+        rewrite_chains_in_expr(t, name_map);
+    }
+}
+
+fn rewrite_chains_in_stmt(s: &mut Stmt, name_map: &HashMap<Vec<String>, String>) {
+    match s {
+        Stmt::Let(d) => rewrite_chains_in_expr(&mut d.value, name_map),
+        Stmt::Const(d) => rewrite_chains_in_expr(&mut d.value, name_map),
+        Stmt::Expr(e) => rewrite_chains_in_expr(e, name_map),
+        Stmt::Assign { target, value, .. } => {
+            rewrite_chains_in_expr(target, name_map);
+            rewrite_chains_in_expr(value, name_map);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { rewrite_chains_in_expr(v, name_map); }
+        }
+        Stmt::Throw { value, .. } => rewrite_chains_in_expr(value, name_map),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            rewrite_chains_in_expr(body, name_map);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            rewrite_chains_in_expr(init, name_map);
+            rewrite_chains_in_block(body, name_map);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            rewrite_chains_in_expr(expr, name_map);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn rewrite_chains_in_expr(e: &mut Expr, name_map: &HashMap<Vec<String>, String>) {
+    // Check if this expr is a known chain.
+    if let Some(path) = extract_chain_path(e) {
+        if let Some(local) = name_map.get(&path) {
+            e.kind = ExprKind::Ident(local.clone());
+            return;
+        }
+    }
+    // Don't recurse into closure bodies.
+    match &e.kind {
+        ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+        | ExprKind::Lambda { .. } | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => return,
+        _ => {}
+    }
+    // Recurse children.
+    match &mut e.kind {
+        ExprKind::Block(b) => rewrite_chains_in_block(b, name_map),
+        ExprKind::If { cond, then, else_ } => {
+            rewrite_chains_in_expr(cond, name_map);
+            rewrite_chains_in_block(then, name_map);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rewrite_chains_in_block(b, name_map),
+                    ElseBranch::If(e) => rewrite_chains_in_expr(e, name_map),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            rewrite_chains_in_expr(scrutinee, name_map);
+            rewrite_chains_in_block(then, name_map);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rewrite_chains_in_block(b, name_map),
+                    ElseBranch::If(e) => rewrite_chains_in_expr(e, name_map),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            rewrite_chains_in_expr(scrutinee, name_map);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard { rewrite_chains_in_expr(g, name_map); }
+                match &mut arm.body {
+                    MatchArmBody::Expr(e) => rewrite_chains_in_expr(e, name_map),
+                    MatchArmBody::Block(b) => rewrite_chains_in_block(b, name_map),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            rewrite_chains_in_expr(iter, name_map);
+            rewrite_chains_in_block(body, name_map);
+        }
+        ExprKind::While { cond, body, .. } => {
+            rewrite_chains_in_expr(cond, name_map);
+            rewrite_chains_in_block(body, name_map);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            rewrite_chains_in_expr(scrutinee, name_map);
+            rewrite_chains_in_block(body, name_map);
+        }
+        ExprKind::Loop { body, .. } => rewrite_chains_in_block(body, name_map),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { rewrite_chains_in_expr(&mut wb.handler, name_map); }
+            rewrite_chains_in_block(body, name_map);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            rewrite_chains_in_block(body, name_map);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            rewrite_chains_in_block(body, name_map);
+            if let Some(c) = cancel { rewrite_chains_in_expr(c, name_map); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            rewrite_chains_in_expr(e, name_map);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            rewrite_chains_in_expr(a, name_map);
+            rewrite_chains_in_expr(b, name_map);
+        }
+        ExprKind::Index { obj, index } => {
+            rewrite_chains_in_expr(obj, name_map);
+            rewrite_chains_in_expr(index, name_map);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            // For `@a.b.method()` calls — recurse only into the
+            // receiver (obj of func Member), не into func itself
+            // (method dispatch, not chain).
+            if let ExprKind::Member { obj, .. } = &mut func.kind {
+                rewrite_chains_in_expr(obj, name_map);
+            } else {
+                rewrite_chains_in_expr(func, name_map);
+            }
+            for a in args {
+                match a {
+                    CallArg::Item(e) | CallArg::Spread(e) => rewrite_chains_in_expr(e, name_map),
+                    CallArg::Named { value, .. } => rewrite_chains_in_expr(value, name_map),
+                }
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => rewrite_chains_in_block(b, name_map),
+                    Trailing::Fn(_) | Trailing::LegacyBlockWithParams(_) => {}
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { rewrite_chains_in_expr(e, name_map); }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => rewrite_chains_in_expr(e, name_map),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        rewrite_chains_in_expr(k, name_map);
+                        rewrite_chains_in_expr(v, name_map);
+                    }
+                    MapElem::Spread(e) => rewrite_chains_in_expr(e, name_map),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &mut rf.value { rewrite_chains_in_expr(v, name_map); }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { rewrite_chains_in_expr(el, name_map); }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &mut arm.guard { rewrite_chains_in_expr(g, name_map); }
+                rewrite_chains_in_block(&mut arm.body, name_map);
+                match &mut arm.op {
+                    SelectOp::Recv { chan, .. } => rewrite_chains_in_expr(chan, name_map),
+                    SelectOp::Send { chan, value } => {
+                        rewrite_chains_in_expr(chan, name_map);
+                        rewrite_chains_in_expr(value, name_map);
+                    }
+                    SelectOp::Default => {}
+                }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { rewrite_chains_in_expr(s, name_map); }
+            if let Some(e) = end { rewrite_chains_in_expr(e, name_map); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            rewrite_chains_in_expr(range, name_map);
+            rewrite_chains_in_expr(body, name_map);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { rewrite_chains_in_expr(e, name_map); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            rewrite_chains_in_expr(tag, name_map);
+            for a in args { rewrite_chains_in_expr(a, name_map); }
         }
         _ => {}
     }
