@@ -29205,3 +29205,48 @@ Q7 V4.2+ closure note.
 оригинал, сбрасываем `is_const`/`return_is_const` в false, body остаётся
 работоспособен в runtime (т.к. fully-const fn body состоит из выражений
 валидных и в runtime). Cheap pattern, избегает invasive codegen изменений.
+
+
+---
+
+## Plan 114.4.4.4 V4.3 — closure-from-const-fn landed (2026-06-02)
+
+**Status:** 🟢 V1 LANDED. Branch `plan-114.4.4-v4-3` off `plan-114.4.4-v4-2` head.
+
+**Closed marker:** ✅ `[M-114.4.3-closure-from-const-fn]`.
+
+**What:** Comptime closure specialization — const fn whose body is single
+closure literal (`fn make_adder(const n int) -> const fn(int) -> int =>
+|x| x + n`) теперь allowed. Each call site `make_adder(LITERAL)` generates
+specialized top-level fn `<host>__closure_<idx>` с substituted const
+param + closure body, и call rewritten к `Ident(spec_name)`.
+
+**Implementation:** New module `compiler-codegen/src/const_fn_closure.rs`
+(~700 LOC). 4 steps: detect closure-returning fns → walk + rewrite call
+sites → generate specialized FnDecls → friendly first-class reject. Body
+validator extension в types/mod.rs accepts closure-at-top-level case
+с extended ident scope (host const params + closure params).
+
+**Tests (release nova-cli):**
+- 4 POS: basic, dedup (memoization), as_hof, block_body.
+- 2 NEG: first_class_neg (E_CONST_FN_CLOSURE_FIRST_CLASS),
+  arity_neg (E_CONST_FN_CLOSURE_ARITY).
+- 23/23 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 52/52 PASS.
+
+**Spec:** D199 V4.3 extensions subsection + A35 acceptance criterion.
+🎯 Plan 114.4.4 family complete (all 9 markers closed).
+
+**V4.3 limitations:**
+- First-class use `ro f = make_adder` rejected (each call distinct spec).
+- Untyped closure `|x| body` requires host's `-> const fn(T) -> R` для
+  type inference.
+- Generic closure-returning const fn → followup
+  `[M-114.4.4-closure-generic]`.
+- Closure capturing outer locals (beyond host const params) → followup
+  `[M-114.4.4-closure-captures-outer]`.
+
+**Design lesson:** Pipeline placement matters — closure-spec pass
+runs BEFORE main walker (closures can't be ConstValue), while trampoline
+pass runs AFTER (intrinsics already inlined). Order-dependent invariants
+must be documented carefully. Fourth walker pattern proven scalable;
+refactor в common visitor trait — followup if walker count >5.
