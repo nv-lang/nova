@@ -1444,15 +1444,46 @@ fn check_const_fn_decl(
     // с extended scope (const params + closure params).
     if let crate::ast::FnBody::Expr(e) = &fd.body {
         if let Some(extra) = closure_param_names(e) {
-            // Closure params добавляем в const-param scope чтобы closure
-            // body мог reference closure's own params as "constexpr-like"
-            // от точки зрения validator'а (они runtime, но validator
-            // допускает Ident refs к param_consts).
             let mut extended = param_consts.clone();
             for n in &extra { extended.insert(n.clone()); }
             return validate_const_fn_closure_body(
                 e, &extended, const_fn_names, &local_consts, &fd.name, call_targets,
             );
+        }
+    }
+    // Plan 114.4.4 V4.4 Ф.2 [M-114.4.4-closure-captures-outer]: Block body
+    // where stmts = all Stmt::Const + trailing = closure literal. Each
+    // const RHS validated с regular const fn rules (scope = host const
+    // params + prior outer consts); closure body validated с extended
+    // scope (host params + outer consts + closure params).
+    if let crate::ast::FnBody::Block(b) = &fd.body {
+        let stmts_all_const = !b.stmts.is_empty()
+            && b.stmts.iter().all(|s| matches!(s, crate::ast::Stmt::Const(_)));
+        let trailing_closure = b.trailing.as_ref()
+            .and_then(|t| closure_param_names(t).map(|p| (t.as_ref(), p)));
+        if stmts_all_const {
+            if let Some((closure_expr, closure_params)) = trailing_closure {
+                let mut outer_consts: std::collections::HashSet<String> = local_consts.clone();
+                for s in &b.stmts {
+                    if let crate::ast::Stmt::Const(cd) = s {
+                        // Each outer const RHS uses host const params + prior
+                        // outer consts. Validator treats them all uniformly через
+                        // param_consts + accumulated local_consts.
+                        check_const_fn_expr(
+                            &cd.value, &param_consts, const_fn_names,
+                            &outer_consts, &fd.name, call_targets,
+                        )?;
+                        outer_consts.insert(cd.name.clone());
+                    }
+                }
+                let mut extended = param_consts.clone();
+                for n in &outer_consts { extended.insert(n.clone()); }
+                for n in &closure_params { extended.insert(n.clone()); }
+                return validate_const_fn_closure_body(
+                    closure_expr, &extended, const_fn_names, &local_consts,
+                    &fd.name, call_targets,
+                );
+            }
         }
     }
     match &fd.body {

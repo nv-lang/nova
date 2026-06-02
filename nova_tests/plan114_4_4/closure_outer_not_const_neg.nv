@@ -1,0 +1,16 @@
+// Plan 114.4.4 V4.4 Ф.2 NEGATIVE: outer let (mut runtime) — not const.
+// Cannot capture; checker rejects при validation const fn body.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN
+
+module plan114_4_4.closure_outer_not_const_neg
+
+fn make_thing(const base int) -> const fn(int) -> int {
+    ro offset = base + 10
+    fn(x int) -> int => x + offset
+}
+
+test "outer ro (non-const) rejected" {
+    ro t = make_thing(5)
+    assert(t(3) == 18)
+}

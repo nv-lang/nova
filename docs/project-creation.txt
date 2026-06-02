@@ -29065,3 +29065,76 @@ Lessons:
 - 114.4.4.4 V4.3 closure-from-const-fn (this session)
 
 All 9 markers from [M-114.4.3-*] closed.
+
+
+================================================================================
+== 2026-06-02 — Plan 114.4.4 V4.4 followups bundle (Ф.1+Ф.2 LANDED, Ф.3+Ф.4 DEFERRED)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-4-followups (off main 23fe1479e89)
+> Sub-plan doc: docs/plans/114.4.4.6-v4-followups.md
+> Status: 🟡 PARTIAL — 2/4 markers closed.
+
+Замысел:
+Закрыть 4 открытых markers из Plan 114.4.4 V4.2/V4.3:
+- [M-114.4.4-trampoline-record-reflection] — sizeof для composite types.
+- [M-114.4.4-closure-captures-outer] — closure body captures outer consts.
+- [M-114.4.4-trampoline-generics] — generic const fn first-class use.
+- [M-114.4.4-closure-generic] — generic closure-returning const fn.
+
+Реализовано (Ф.1+Ф.2 — LANDED):
+
+Ф.1 sizeof для composite types (commit 2d552ea2742):
+- Extend type_size_or_align от primitives-only до:
+  * Tuples — C struct layout с natural alignment + tail-pad.
+  * FixedArray [N]T — N * sizeof(elem).
+  * Array []T — slice ABI 16 bytes, align 8.
+  * Unit () — 0/1.
+  * Readonly T — transparent wrapper.
+- Primitive table теперь (size, align) tuples — str = (16, 8).
+- 4 POS + 1 NEG fixtures. A36 acceptance.
+- Still V2: Named user records/sums — followup [M-114.4.4-trampoline-named-types].
+
+Ф.2 closure outer captures (commit 879ebc11ba6):
+- has_closure_returning_body допускает Block body с
+  stmts=all_Stmt::Const + trailing=closure literal.
+- generate_closure_spec eval'ит outer consts в порядке (с host params
+  substituted), результат добавляется в subst map для closure body.
+- check_const_fn_decl расширен для Block-body validation.
+- 2 POS + 1 NEG fixtures. A37 acceptance.
+- Parser note: |x| после const Stmt парсится как binary OR; workaround =
+  explicit ClosureFull `fn(x T) -> R => body`. Followup
+  [M-114.4.4-closure-light-after-const-stmt-parser].
+
+Deferred (Ф.3+Ф.4):
+
+Ф.3 generic trampoline + Ф.4 generic closure-spec — DEFERRED design pending.
+Blocker: generic instantiation requires one из:
+1. Parser TurboFish-as-fn-value (`id[int]` в expression position).
+2. HOF context type inference (callee's expected fn-type → generic T).
+3. Explicit type annotation (`ro f fn(int) -> int = id`).
+Recommended path #2; ~300 LOC trampoline pass extension.
+
+Documented в docs/plans/114.4.4.6-v4-followups.md с детальным design analysis.
+НЕ silent simplification — design decision needs user input.
+
+Tests (release nova-cli): 30/30 plan114_4_4 PASS — 5 новых (Ф.1) + 3 новых (Ф.2).
+No regression на plan114_4_2/3 (15+14 = 29/29).
+Total: 59/59 PASS on Plan 114.4 family.
+
+Spec/Q updates:
+- D199 V4.4 extensions subsection (spec/decisions/03-syntax.md).
+- A36+A37 acceptance criteria.
+- Q7 V4.4 closure note (spec/open-questions.md).
+- docs/plans/114.4.4.6-v4-followups.md — sub-plan-doc с status, blocker analysis.
+
+Lessons:
+- Pragmatic V1 boundaries — extending type_size_or_align к composite types
+  WITHOUT TypeDecl lookup possible (tuples/arrays computed from element types
+  recursively). Named records/sums genuinely require TypeDecl pass integration.
+- Parser ambiguity surfaces — ClosureLight `|x|` после Stmt::Const tokenized
+  как binary OR. Documented как followup, не блокирует Ф.2 thanks к ClosureFull
+  fallback.
+- Design-pending followups (Ф.3+Ф.4) deferred с clear blocker docs, не
+  half-baked impl. Production-ready scope requires user input on syntax/inference choice.

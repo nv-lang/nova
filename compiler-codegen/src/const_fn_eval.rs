@@ -986,25 +986,82 @@ pub fn simple_type_name_str(t: &crate::ast::TypeRef) -> Option<String> {
     }
 }
 
-/// Plan 114.4.4 Ф.5 V4: sizeof[T]()/align_of[T]() — type layout lookup.
-/// V4.0 supports primitive types only (hardcoded sizes per default 64-bit ABI).
-/// Records/generics/sum-types → followup `[M-114.4.4-record-reflection]`.
-/// `is_align`: true для align_of, false для sizeof.
+/// Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1: sizeof[T]()/align_of[T]() — type layout.
+///
+/// V4.0 supported только primitives (hardcoded 64-bit ABI).
+/// V4.4 Ф.1 (Plan 114.4.4.6 followup) расширил поддержку до composite
+/// types БЕЗ TypeDecl lookup:
+/// - **Tuples** `(T1, T2, ..)` — C struct layout: fields в порядке,
+///   natural alignment, tail-pad up to max field alignment.
+/// - **FixedArray** `[N]T` — `N * sizeof(T)` с element alignment.
+/// - **Array** `[]T` — slice ABI = pointer + length = 16 bytes.
+/// - **Unit** `()` — size=0, align=1 (no storage).
+/// - **Readonly** `readonly T` — same layout as T.
+///
+/// `is_align`: true → return alignment, false → return size.
+///
+/// **Still V2** (требует TypeDecl access):
+/// - Named records `Type { f1, f2, .. }` → followup
+///   `[M-114.4.4-trampoline-named-types]`.
+/// - Named sum-types (tagged unions) → same followup.
+/// - Generic instantiations `Option[int]` etc — same followup.
 pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64> {
-    let name = simple_type_name_str(t)?;
-    // Primitive type table (default 64-bit ABI, matches nova_rt).
-    // align == size для primitives (natural alignment).
-    let size = match name.as_str() {
-        "int" | "i64" | "u64" | "f64" => 8,
-        "i32" | "u32" | "f32" => 4,
-        "i16" | "u16" => 2,
-        "i8" | "u8" | "bool" => 1,
-        "char" => 4, // Plan Q-char-literals: u32 codepoint.
-        "str" => 16, // pointer + length (Plan 26 prelude).
-        _ => return None,
-    };
-    let _ = is_align;
-    Some(size)
+    use crate::ast::TypeRef;
+    match t {
+        TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 =>
+        {
+            let name = &path[0];
+            // Primitive type table (default 64-bit ABI, matches nova_rt).
+            // (size, align) tuples — для str align != size (slice ABI).
+            let (size, align) = match name.as_str() {
+                "int" | "i64" | "u64" | "f64" => (8, 8),
+                "i32" | "u32" | "f32" => (4, 4),
+                "i16" | "u16" => (2, 2),
+                "i8" | "u8" | "bool" => (1, 1),
+                "char" => (4, 4), // Plan Q-char-literals: u32 codepoint.
+                "str" => (16, 8), // pointer + length (slice-style ABI).
+                _ => return None, // user-defined named types — V2
+            };
+            Some(if is_align { align } else { size })
+        }
+        TypeRef::Tuple(elems, _) => {
+            // C struct-style layout: elements в порядке с natural alignment,
+            // tail-pad to max element alignment.
+            let mut max_align: i64 = 1;
+            let mut size: i64 = 0;
+            for e in elems {
+                let elem_size = type_size_or_align(e, false)?;
+                let elem_align = type_size_or_align(e, true)?;
+                if elem_align < 1 { return None; }
+                if elem_align > max_align { max_align = elem_align; }
+                // Pad current size up to elem alignment.
+                let rem = size % elem_align;
+                if rem != 0 { size += elem_align - rem; }
+                size += elem_size;
+            }
+            // Tail-pad to max alignment.
+            if max_align > 1 {
+                let rem = size % max_align;
+                if rem != 0 { size += max_align - rem; }
+            }
+            Some(if is_align { max_align } else { size })
+        }
+        TypeRef::FixedArray(n, elem, _) => {
+            let elem_size = type_size_or_align(elem, false)?;
+            let elem_align = type_size_or_align(elem, true)?;
+            if is_align { Some(elem_align) } else { Some((*n as i64) * elem_size) }
+        }
+        TypeRef::Array(_, _) => {
+            // []T ≡ slice = pointer (8) + length (8) — same ABI как str.
+            Some(if is_align { 8 } else { 16 })
+        }
+        TypeRef::Unit(_) => {
+            Some(if is_align { 1 } else { 0 })
+        }
+        TypeRef::Readonly(inner, _) => type_size_or_align(inner, is_align),
+        _ => None,
+    }
 }
 
 pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
