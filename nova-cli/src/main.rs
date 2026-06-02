@@ -100,6 +100,15 @@ enum Cmd {
         /// decisions that would be inserted at codegen.
         #[arg(long = "explain-cache")]
         explain_cache: bool,
+        /// Plan 123.6 (V6): emit aggregated telemetry — % methods
+        /// affected, median/p99 caches/method, per-layer breakdown.
+        /// Human-readable summary on stdout.
+        #[arg(long = "telemetry-cache")]
+        telemetry_cache: bool,
+        /// Plan 123.6 (V6): emit telemetry в JSON format (machine-
+        /// readable). Requires --telemetry-cache.
+        #[arg(long = "telemetry-json")]
+        telemetry_json: bool,
     },
     /// Run a Nova source file via the interpreter.
     Run {
@@ -1257,6 +1266,177 @@ fn cmd_check_explain_cache(
     Ok(())
 }
 
+/// Plan 123.6 (V6): aggregated telemetry — walk files, run analysis
+/// per file, aggregate statistics across whole corpus.
+fn cmd_check_telemetry_cache(
+    paths: &[PathBuf],
+    include_runtime: bool,
+    skip: &[String],
+    json: bool,
+) -> Result<()> {
+    let owned_root;
+    let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
+        owned_root = find_repo_root()?;
+        vec![owned_root.clone()]
+    } else {
+        paths.iter().cloned().collect()
+    };
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    for p in &resolved_paths {
+        if !p.exists() {
+            return Err(usage_err(format!("path not found: {}", p.display())));
+        }
+        if p.is_file() {
+            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                return Err(usage_err(format!("not a Nova source: {}", p.display())));
+            }
+            files.push(p.clone());
+        } else if p.is_dir() {
+            let mut found = Vec::new();
+            nova_codegen::test_runner::walk_nv(p, &mut found)
+                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+            for f in found {
+                if !should_skip_path_full(&f, include_runtime, skip) {
+                    files.push(f);
+                }
+            }
+        }
+    }
+
+    let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+
+    // Aggregator state.
+    let mut total_files = 0usize;
+    let mut skipped_files = 0usize;
+    let mut total_methods = 0usize;   // Total instance methods scanned (with receiver).
+    let mut affected_methods = 0usize;
+    let mut total_caches = 0usize;
+    let mut layer_ro: usize = 0;
+    let mut layer_mut: usize = 0;
+    let mut layer_licm: usize = 0;
+    let mut layer_pure: usize = 0;
+    let mut layer_chain: usize = 0;
+    let mut per_method_counts: Vec<usize> = Vec::new();
+
+    for file in &files {
+        total_files += 1;
+        let src = match std::fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(_) => { skipped_files += 1; continue; }
+        };
+        let mut module = match nova_codegen::parser::parse(&src) {
+            Ok(m) => m,
+            Err(_) => { skipped_files += 1; continue; }
+        };
+        if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(file) {
+            let stdlib_dir = repo.join("std");
+            if nova_codegen::imports::resolve_imports_inline_ex(file, &mut module, &repo, &stdlib_dir, true).is_err() {
+                skipped_files += 1;
+                continue;
+            }
+        }
+        if nova_codegen::types::check_module(&module).is_err() {
+            skipped_files += 1;
+            continue;
+        }
+        let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+        nova_codegen::types::annotate_map_literals(&mut module);
+        nova_codegen::desugar::desugar_module(&mut module);
+        nova_codegen::types::infer_effects(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module);
+        let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
+        // Count total instance methods in module for ratio.
+        let module_methods_count: usize = count_instance_methods(&module);
+        total_methods += module_methods_count;
+        affected_methods += report.per_fn.len();
+        for info in &report.per_fn {
+            total_caches += info.total();
+            per_method_counts.push(info.total());
+            layer_ro += info.ro_caches.len();
+            layer_mut += info.mut_caches.len();
+            layer_licm += info.licm_hoists.len();
+            layer_pure += info.pure_caches.len();
+            layer_chain += info.chain_caches.len();
+        }
+    }
+
+    per_method_counts.sort_unstable();
+    let median = if per_method_counts.is_empty() {
+        0.0
+    } else {
+        per_method_counts[per_method_counts.len() / 2] as f64
+    };
+    let p99 = if per_method_counts.is_empty() {
+        0
+    } else {
+        let idx = ((per_method_counts.len() as f64) * 0.99) as usize;
+        per_method_counts[idx.min(per_method_counts.len() - 1)]
+    };
+    let pct_affected = if total_methods > 0 {
+        (affected_methods as f64) / (total_methods as f64) * 100.0
+    } else { 0.0 };
+
+    if json {
+        // Manual JSON formatting (no serde_json dep added here).
+        println!("{{");
+        println!("  \"files_total\": {},", total_files);
+        println!("  \"files_skipped\": {},", skipped_files);
+        println!("  \"methods_total\": {},", total_methods);
+        println!("  \"methods_affected\": {},", affected_methods);
+        println!("  \"methods_affected_pct\": {:.2},", pct_affected);
+        println!("  \"caches_total\": {},", total_caches);
+        println!("  \"caches_per_method_median\": {:.1},", median);
+        println!("  \"caches_per_method_p99\": {},", p99);
+        println!("  \"layer_d217_field\": {},", layer_ro + layer_mut);
+        println!("  \"layer_d218_licm\": {},", layer_licm);
+        println!("  \"layer_d219_pure\": {},", layer_pure);
+        println!("  \"layer_d217_chain\": {}", layer_chain);
+        println!("}}");
+    } else {
+        println!("=== Plan 123 field-cache telemetry ===");
+        println!("Files scanned:           {}", total_files);
+        println!("Files skipped (errors):  {}", skipped_files);
+        println!("Methods scanned:         {}", total_methods);
+        println!("Methods affected:        {} ({:.2}%)", affected_methods, pct_affected);
+        println!("Total caches inserted:   {}", total_caches);
+        println!("Caches/method median:    {:.1}", median);
+        println!("Caches/method p99:       {}", p99);
+        println!();
+        println!("Per-layer breakdown:");
+        println!("  D217 V1 field cache:   {}", layer_ro + layer_mut);
+        println!("  D218 LICM hoist:       {}", layer_licm);
+        println!("  D219 pure-call cache:  {}", layer_pure);
+        println!("  D217 V4 chain cache:   {}", layer_chain);
+    }
+    Ok(())
+}
+
+fn count_instance_methods(module: &nova_codegen::ast::Module) -> usize {
+    let mut n = 0;
+    for item in &module.items {
+        if let nova_codegen::ast::Item::Fn(f) = item {
+            if let Some(r) = &f.receiver {
+                if r.kind == nova_codegen::ast::ReceiverKind::Instance {
+                    n += 1;
+                }
+            }
+        }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let nova_codegen::ast::Item::Fn(f) = item {
+                if let Some(r) = &f.receiver {
+                    if r.kind == nova_codegen::ast::ReceiverKind::Instance {
+                        n += 1;
+                    }
+                }
+            }
+        }
+    }
+    n
+}
+
 fn emit_explain_report_for_file(report: &nova_codegen::field_cache::ExplainReport) {
     for info in &report.per_fn {
         println!("  fn {} @{} — {} cache(s):",
@@ -1293,12 +1473,18 @@ fn cmd_check(
     include_runtime: bool,
     skip: &[String],
     explain_cache: bool,
+    telemetry_cache: bool,
+    telemetry_json: bool,
 ) -> Result<()> {
     // Plan 123.5 (D217 §6 amend V5): --explain-cache mode — per-file
     // analyze module без mutation, emit report to stdout. Skips
     // standard error rendering — just emit cache decisions.
     if explain_cache {
         return cmd_check_explain_cache(paths, include_runtime, skip);
+    }
+    // Plan 123.6 (D217 §7 amend V6): aggregated telemetry mode.
+    if telemetry_cache {
+        return cmd_check_telemetry_cache(paths, include_runtime, skip, telemetry_json);
     }
     // Если пути не указаны — используем workspace root.
     let owned_root;
@@ -4657,7 +4843,7 @@ fn run() -> ExitCode {
     }
 
     let result = match cli.cmd {
-        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache } => cmd_check(
+        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json } => cmd_check(
             &paths,
             jobs,
             quiet,
@@ -4667,6 +4853,8 @@ fn run() -> ExitCode {
             include_runtime,
             &skip,
             explain_cache,
+            telemetry_cache,
+            telemetry_json,
         ),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(
