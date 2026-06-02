@@ -4481,14 +4481,23 @@ fn pure_cache_fn(
     if f.is_external {
         return;
     }
-    // Conservative V3: if any `@F = ...` write anywhere в body, skip
-    // pure-cache. Rationale — without frame info, mutation may affect
-    // pure method's result.
-    if body_has_any_self_field_write(&f.body) {
-        return;
-    }
     // V3 skip if concurrent constructs.
     if body_has_concurrent(&f.body) {
+        return;
+    }
+
+    // Plan 123.7.1 Ф.3 (V3.1): snapshot IPA pure context (set by
+    // pure_cache_fn_with_ipa wrapper). When present, enables frame-
+    // based invalidation refinement.
+    let pure_ipa = PURE_IPA_CTX.with(|p| p.borrow().clone());
+
+    // Collect body's write-set (which fields are mutated в body).
+    let body_writes: HashSet<String> = collect_body_writes(&f.body);
+
+    // Conservative V3 fallback (no IPA): if ANY write → skip all
+    // pure caching.
+    let use_ipa_frame = pure_ipa.is_some();
+    if !use_ipa_frame && !body_writes.is_empty() {
         return;
     }
 
@@ -4521,6 +4530,22 @@ fn pure_cache_fn(
         }
         if captured_methods.contains(mname) {
             continue;
+        }
+        // Plan 123.7.1 Ф.3 (V3.1) frame-based invalidation: pure
+        // method M's cache valid iff body writes don't overlap с M's
+        // field-read-set. Skip M если overlap.
+        if use_ipa_frame {
+            if let Some((_, read_sets)) = &pure_ipa {
+                let key = (type_name.clone(), mname.clone());
+                if let Some(m_reads) = read_sets.get(&key) {
+                    if body_writes.iter().any(|w| m_reads.contains(w)) {
+                        continue;
+                    }
+                } else {
+                    // Read-set unknown → conservative skip if body has any write.
+                    if !body_writes.is_empty() { continue; }
+                }
+            }
         }
         let span = first_spans.get(mname).copied().unwrap_or(body_span);
         to_cache.push((mname.clone(), span));
@@ -4614,6 +4639,191 @@ fn pure_cache_fn(
         }
         prefix.append(&mut b.stmts);
         b.stmts = prefix;
+    }
+}
+
+/// Plan 123.7.1 Ф.3: collect set of @F written в body. Direct writes
+/// only (top-level Assign with target Member{SelfAccess, F}).
+fn collect_body_writes(body: &FnBody) -> HashSet<String> {
+    let mut out: HashSet<String> = HashSet::new();
+    match body {
+        FnBody::Block(b) => collect_body_writes_block(b, &mut out),
+        FnBody::Expr(e) => collect_body_writes_expr(e, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+fn collect_body_writes_block(b: &Block, out: &mut HashSet<String>) {
+    for s in &b.stmts { collect_body_writes_stmt(s, out); }
+    if let Some(t) = &b.trailing { collect_body_writes_expr(t, out); }
+}
+
+fn collect_body_writes_stmt(s: &Stmt, out: &mut HashSet<String>) {
+    match s {
+        Stmt::Assign { target, value, .. } => {
+            if let Some(fname) = match_self_field(target) {
+                out.insert(fname.to_string());
+            } else {
+                collect_body_writes_expr(target, out);
+            }
+            collect_body_writes_expr(value, out);
+        }
+        Stmt::Let(d) => collect_body_writes_expr(&d.value, out),
+        Stmt::Const(d) => collect_body_writes_expr(&d.value, out),
+        Stmt::Expr(e) => collect_body_writes_expr(e, out),
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { collect_body_writes_expr(v, out); }
+        }
+        Stmt::Throw { value, .. } => collect_body_writes_expr(value, out),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            collect_body_writes_expr(body, out);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_body_writes_expr(init, out);
+            collect_body_writes_block(body, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_body_writes_expr(expr, out);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn collect_body_writes_expr(e: &Expr, out: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Block(b) => collect_body_writes_block(b, out),
+        ExprKind::If { cond, then, else_ } => {
+            collect_body_writes_expr(cond, out);
+            collect_body_writes_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_body_writes_block(b, out),
+                    ElseBranch::If(e) => collect_body_writes_expr(e, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            collect_body_writes_expr(scrutinee, out);
+            collect_body_writes_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_body_writes_block(b, out),
+                    ElseBranch::If(e) => collect_body_writes_expr(e, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_body_writes_expr(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard { collect_body_writes_expr(g, out); }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => collect_body_writes_expr(e, out),
+                    MatchArmBody::Block(b) => collect_body_writes_block(b, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            collect_body_writes_expr(iter, out);
+            collect_body_writes_block(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_body_writes_expr(cond, out);
+            collect_body_writes_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            collect_body_writes_expr(scrutinee, out);
+            collect_body_writes_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => collect_body_writes_block(body, out),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { collect_body_writes_expr(&wb.handler, out); }
+            collect_body_writes_block(body, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            collect_body_writes_block(body, out);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            collect_body_writes_block(body, out);
+            if let Some(c) = cancel { collect_body_writes_expr(c, out); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            collect_body_writes_expr(e, out);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            collect_body_writes_expr(a, out);
+            collect_body_writes_expr(b, out);
+        }
+        ExprKind::Index { obj, index } => {
+            collect_body_writes_expr(obj, out);
+            collect_body_writes_expr(index, out);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            collect_body_writes_expr(func, out);
+            for a in args { collect_body_writes_expr(a.expr(), out); }
+            if let Some(t) = trailing {
+                if let Trailing::Block(b) = t { collect_body_writes_block(b, out); }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => collect_body_writes_expr(e, out),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { collect_body_writes_expr(el, out); }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value { collect_body_writes_expr(v, out); }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        collect_body_writes_expr(k, out);
+                        collect_body_writes_expr(v, out);
+                    }
+                    MapElem::Spread(e) => collect_body_writes_expr(e, out),
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { collect_body_writes_expr(e, out); }
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard { collect_body_writes_expr(g, out); }
+                collect_body_writes_block(&arm.body, out);
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { collect_body_writes_expr(s, out); }
+            if let Some(e) = end { collect_body_writes_expr(e, out); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            collect_body_writes_expr(range, out);
+            collect_body_writes_expr(body, out);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { collect_body_writes_expr(e, out); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            collect_body_writes_expr(tag, out);
+            for a in args { collect_body_writes_expr(a, out); }
+        }
+        // Closures (separate scope) + literals.
+        _ => {}
     }
 }
 
