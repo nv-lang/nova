@@ -29801,3 +29801,67 @@ Lesson:
 - Verbal Q&A в chat теряется. Когда user задаёт concept question
   (e.g. "что такое align_of"), ответ нужно перенести в proper user-doc.
 - Edge-case fixtures документируют semantics — readable test = doc.
+
+
+================================================================================
+== 2026-06-02 (late session) — Plan 114.4.4 V4.5 Ф.3 + Ф.4 generics LANDED
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-followups-Ф3 (off main 3d14c6ab5fa)
+
+🎯 Cumulative: Plan 114.4.4 family полностью закрыта (V3-V4.5).
+
+Замысел:
+V4.4 followups bundle оставил Ф.3 (generic-trampoline) + Ф.4 (generic-closure)
+DEFERRED для design pending. В этой sub-сессии implemented обоих через
+HOF type inference (Ф.3) + explicit TurboFish (Ф.4) — оба approach
+без parser changes.
+
+Ф.3 implementation (commit 599a78c75f4):
+- ~600 LOC в const_fn_trampoline.rs.
+- GenericInst (name, concrete_types) — instance key с mangled name.
+- build_fn_signature_registry: map non-const fn name → params types.
+- infer_generic_subst: structural unification против expected Func type.
+- unify_type: recursive по Named/Tuple/Array/FixedArray/Func/Unit/Readonly.
+- GenericMutateCtx: mutating walker — на каждом Call.args site inferences
+  type args + rewrite Ident в-place к mangled name (multiple instantiations
+  same name нельзя disambiguate в later rewriter pass).
+- generate_generic_trampoline_decl: clone FnDecl + substitute generic params
+  в TypeRef positions + drop generics list + demote modifiers.
+- subst_type_refs_in_body: walk body, substitute T в As/Is/TurboFish positions.
+- 3 fixtures: trampoline_generic_inferred_ok / _two_types_ok / _no_context_neg.
+- 1 V4.2-superseded fixture removed.
+
+Ф.4 implementation (commit 21d3cfbb110):
+- ~150 LOC delta в const_fn_closure.rs.
+- Spec key extended: HashMap<(name, const_args, type_mangle), spec_name>.
+- Call rewriter принимает BOTH Ident(name) AND TurboFish(Ident(name), type_args).
+- generate_closure_spec substitutes generic types в:
+  * host return signature (для extract_func_signature)
+  * closure params types
+  * closure body types (As/Is/TurboFish positions)
+- Uses const_fn_trampoline::subst_type_ref_pub (cross-module re-export).
+- 3 fixtures: closure_generic_ok / closure_generic_const_arg_ok / _no_turbofish_neg.
+
+Pattern:
+- Ф.3 chose HOF inference (no TurboFish needed at HOF use site — natural UX).
+- Ф.4 chose explicit TurboFish (closure-returning fn called directly, no
+  HOF context для inference).
+- Different solutions для different problems — не contradicting.
+
+Тесты (release nova-cli): 36/36 plan114_4_4 + 15/15 plan114_4_2 + 14/14
+plan114_4_3 = 65/65 PASS на release nova-cli.
+
+Spec D199 V4.5 extensions subsection + A39 (trampoline-generic) +
+A40 (closure-generic) acceptance criteria.
+
+Cumulative: 11 markers closed (Plan 114.4.4 family), A1-A40, 65 fixtures.
+
+Lessons:
+- Multiple instantiations same name require in-place rewrite at
+  detection site (separate maps name→mangled don't disambiguate).
+- Structural unification simpler than expected — recursive descent
+  через TypeRef variants.
+- Pub re-export через wrapper fn (subst_type_ref_pub) — clean way share
+  helpers cross-module без exposing all internals.
