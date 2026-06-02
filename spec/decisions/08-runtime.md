@@ -4689,6 +4689,65 @@ escape hatches, semantic equivalence, performance expectations.
 - D104+D105 (doc-attrs) — future direction for `#cache_info`
   attribute on methods.
 
+## D217 §6 amend V5.1 — LSP code-lens + hover (Plan 123.5.1)
+
+**Source:** [Plan 123.5.1](../../docs/plans/123.5.1-lsp-integration.md).
+
+### 1. LSP capabilities
+
+V5.1 extends `nova-lsp::server::Backend` (Plan 104.x infrastructure)
+с двумя capabilities:
+- `code_lens_provider: Some(CodeLensOptions { resolve_provider: false })`.
+- `hover_provider: Some(HoverProviderCapability::Simple(true))`.
+
+### 2. code_lens handler
+
+`textDocument/codeLens` request invokes
+`compute_field_cache_lenses(src)`:
+1. Parse module → run pipeline (skip if type-check fails).
+2. Call `analyze_module` (V5 API).
+3. For each `FnCacheInfo` в report, emit `CodeLens` с title:
+   ```
+   N cache(s): ro=X mut=Y licm=Z pure=W chain=V
+   ```
+   Range = first character of fn span. Command =
+   `nova-lsp.fieldCache.show` (no-op stub; IDE extension can
+   handle).
+
+### 3. hover handler
+
+`textDocument/hover` invokes `compute_field_cache_hover(src, pos)`:
+1. Find `@<name>` token at hover position (look backward для `@`,
+   forward для name chars).
+2. Run pipeline + analyze_module.
+3. Locate fn whose span covers position.
+4. If `name ∈ info.ro_caches` → "D217 ro cache: `_at_<name>`".
+5. If `name ∈ info.licm_hoists` → "D218 LICM loop hoist:
+   `_at_<name>_loop`".
+6. Chain root → "D217 V4 chain cache (root)".
+7. Otherwise → "not cached".
+
+### 4. Public API (test surface)
+
+`nova-lsp::server::compute_field_cache_lenses(&str) -> Option<Vec<CodeLens>>`
+и `compute_field_cache_hover(&str, Position) -> Option<Hover>` —
+public для integration testing without LSP RPC stack.
+
+### 5. Acceptance
+
+A5.1.1-A5.1.4 met:
+- A5.1.1 ✅ code_lens emitted per affected method.
+- A5.1.2 ✅ hover returns cache info if cached.
+- A5.1.3 ✅ nova-lsp/tests/field_cache_lens.rs 3/3 PASS.
+- A5.1.4 ✅ D217 §6 amend V5.1 landed (this section).
+
+### 6. Future LSP integrations
+
+- **V5.2:** semantic tokens — paint cache locals в IDE с distinct
+  color.
+- **V5.3:** quickfix `add #pure` attribute when pure-method would
+  enable caching but missing annotation.
+
 ## D217 §7 amend V6 — Telemetry + production rollout (Plan 123.6)
 
 **Source:** [Plan 123.6](../../docs/plans/123.6-telemetry.md).

@@ -29213,3 +29213,31 @@ Pure-call cache extended к args-with-literal-arguments. V3 cached
   к compound literals.
 - [M-123.3.1-const-fn-args] — `const fn`-evaluated args (after
   Plan 114.4 const fn).
+
+
+## Plan 123.5.1 closure (2026-06-02): D217 §6 amend V5.1 LSP
+
+**V5.1 followup**, ✅ ЗАКРЫТ. LSP code-lens + hover providers
+для field-cache decisions.
+
+**Acceptance A5.1.1-A5.1.4:**
+- A5.1.1 🟢 code_lens emitted с per-layer breakdown.
+- A5.1.2 🟢 hover returns markdown cache info.
+- A5.1.3 🟢 3/3 integration tests PASS.
+- A5.1.4 🟢 D217 §6 amend V5.1 landed.
+
+**Implementation (~180 LOC):**
+- nova-lsp/src/server.rs: code_lens + hover capability declarations.
+- code_lens handler + compute_field_cache_lenses public fn.
+- hover handler + compute_field_cache_hover public fn.
+- span_to_line_col + position_to_byte_offset helpers.
+
+**Tests:** nova-lsp/tests/field_cache_lens.rs (3 tests).
+
+**Lessons:**
+1. **V5 API foundation pays off in V5.1.** analyze_module API
+   designed для CLI also works для LSP. Single source of truth.
+2. **Best-effort pipeline acceptable для LSP.** Type-check failure
+   → empty result, no exception. IDE responsiveness > precision.
+3. **Public fn exports enable integration testing.** Avoid full
+   LSP RPC test harness when unit-level testing suffices.

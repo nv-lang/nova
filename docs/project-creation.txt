@@ -27701,3 +27701,26 @@ README: D219 amend V3.1 row.
 Open V3.2 followups:
 - [M-123.3.1-tuple-record-args].
 - [M-123.3.1-const-fn-args].
+
+
+================================================================================
+Plan 123.5.1 — D217 §6 amend V5.1 LSP code-lens + hover (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. V5.1 followup.
+
+LSP integration shipped:
+- code_lens_provider + hover_provider в Backend capabilities.
+- code_lens handler emit per-method "N cache(s): ro/mut/licm/pure/
+  chain breakdown" title.
+- hover handler returns markdown cache info for `@<field>` tokens.
+
+Implementation (~180 LOC):
+- nova-lsp/src/server.rs: capabilities + 2 handlers + 2 public fn
+  (compute_field_cache_lenses + compute_field_cache_hover).
+- Tests: nova-lsp/tests/field_cache_lens.rs (3 integration tests
+  via public fns).
+
+D-block: D217 §6 amend V5.1 (~80 lines).
+
+Future V5.2/V5.3 followups: semantic tokens + quickfix `#pure`.
