@@ -3326,19 +3326,42 @@ impl Parser {
             //   - Explicit `pub` → priv_field = false (overrides type-level default)
             //   - Explicit `priv` → priv_field = true (overrides type-level default)
             //   - Neither → priv_field = default_priv (type-level inherit; D47 default = public)
-            let explicit_priv = self.eat(&TokenKind::KwPriv).is_some();
-            let explicit_pub = if !explicit_priv {
-                self.eat(&TokenKind::KwPub).is_some()
-            } else { false };
+            //
+            // Conflict detection: both orders `priv pub` и `pub priv` — explicit
+            // E_PRIV_PUB_CONFLICT error.
+            let mut explicit_priv = self.eat(&TokenKind::KwPriv).is_some();
+            let mut explicit_pub = self.eat(&TokenKind::KwPub).is_some();
             if explicit_priv && explicit_pub {
-                // Defensive: shouldn't reach here due to ordering above, but
-                // keep error path обvious.
+                return Err(Diagnostic::new(
+                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
+                     modifiers — these are mutually exclusive (Plan 124 / D220). \
+                     Choose one: `priv` (private to type-methods) OR `pub` (explicit \
+                     public; redundant без type-level `priv {}` flip).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Также handle reverse order: `pub priv` — pub matched first,
+            // then priv. Re-check.
+            if explicit_pub && !explicit_priv {
+                if self.eat(&TokenKind::KwPriv).is_some() {
+                    return Err(Diagnostic::new(
+                        "[E_PRIV_PUB_CONFLICT] field cannot have both `pub` and `priv` \
+                         modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            // Also `priv pub` — priv matched first then pub on next iteration
+            // (already handled by the second eat above). Sanity:
+            if explicit_priv && self.eat(&TokenKind::KwPub).is_some() {
                 return Err(Diagnostic::new(
                     "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
                      modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
                     self.peek().span,
                 ));
             }
+            // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
+            let _ = (&mut explicit_priv, &mut explicit_pub);
             let field_priv = if explicit_priv { true }
                              else if explicit_pub { false }
                              else { default_priv };

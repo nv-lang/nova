@@ -1,0 +1,23 @@
+// Plan 124.1 Ф.1 — positive: per-field priv modifier parses + compiles.
+// V1: parser/AST infrastructure (enforcement = followup marker
+// [M-124.1-checker-enforcement]).
+module plan124_1.priv_field_basic
+
+export type Account {
+    priv mut money f64
+    ro name str
+    priv id u64
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n, id: 0 }
+
+export fn Account mut @deposit(amount f64) {
+    @money = @money + amount
+}
+
+test "priv field accessible inside type method" {
+    mut acc = Account.new("alice")
+    acc.deposit(100.0)
+    assert(acc.name == "alice")
+}

@@ -1,0 +1,18 @@
+// Plan 124.1 Ф.1 — positive: type-level `priv {}` default flip.
+// `type X priv { ... }` — fields default = priv; `pub` overrides.
+module plan124_1.type_level_priv
+
+// Все три поля default priv; tag — explicit pub override.
+export type Secret priv {
+    pub ro tag str
+    mut salt u64
+    key u64
+}
+
+export fn Secret.new(t str, s u64, k u64) -> Secret =>
+    { tag: t, salt: s, key: k }
+
+test "type-level priv flip parses + tag accessible (pub override)" {
+    ro s = Secret.new("auth", 12345, 67890)
+    assert(s.tag == "auth")
+}
