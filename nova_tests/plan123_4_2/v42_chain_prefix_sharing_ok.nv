@@ -1,0 +1,42 @@
+// Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing.
+// Two chains @inner.middle.c and @inner.middle.d share the
+// @inner.middle prefix. V4.2 emits `_at_inner_middle_pre` once и
+// references it from both chain lets, reducing total `@<root>` reads.
+// Behavior must remain identical to V4.1.
+
+module plan123_4_2.v42_chain_prefix_sharing_ok
+
+type Leaf {
+    ro c int
+    ro d int
+}
+
+type Mid {
+    ro x int
+    ro y Leaf
+}
+
+type Root {
+    ro inner Inner
+}
+
+type Inner {
+    ro middle Mid
+}
+
+fn Root @sum_both() -> int {
+    // Each chain @inner.middle.y.c, etc — exceeds threshold (≥2 reads)
+    // and shares the @inner.middle prefix.
+    @inner.middle.y.c + @inner.middle.y.c + @inner.middle.y.d + @inner.middle.y.d
+}
+
+fn Root.new() -> Root {
+    Root { inner: Inner { middle: Mid { x: 99, y: Leaf { c: 3, d: 4 } } } }
+}
+
+test "V4.2: shared chain prefix preserves semantics" {
+    ro r = Root.new()
+    ro got = r.sum_both()
+    // 3 + 3 + 4 + 4 = 14.
+    assert(got == 14)
+}

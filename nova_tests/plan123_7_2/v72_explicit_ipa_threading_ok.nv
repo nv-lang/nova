@@ -1,0 +1,88 @@
+// Plan 123 V7.2 (2026-06-02): explicit IpaCtx threading regression test.
+// Replaces V7.1 thread-local LICM_WRITE_SETS / PURE_IPA_CTX / CHAIN_IPA_CTX
+// with parameter-passed IpaCtx. Behavior must remain identical.
+//
+// This fixture exercises ALL three optimization passes in one method:
+//   - LICM (loop with mut field read across non-writing call)
+//   - pure-call cache (repeated @pure-method invocation)
+//   - chain cache (repeated @root.path)
+// If any thread-local removal broke ctx propagation, one of the three
+// would either silently degrade (still PASS by coincidence) or
+// regression-trip the IpaCtx::call_invalidates_field path.
+
+module plan123_7_2.v72_explicit_ipa_threading_ok
+
+type Box {
+    mut counter int
+    mut other   int
+    inner Inner
+}
+
+type Inner {
+    mut value int
+}
+
+// IPA: write_set = {"other"} → does NOT invalidate @counter.
+fn Box mut @bump_other() -> () {
+    @other = @other + 1
+}
+
+// pure method — no side effects, can be cached.
+#pure
+fn Box @double() -> int {
+    @counter + @counter
+}
+
+// LICM-eligible loop: read @counter across calls to @bump_other.
+fn Box mut @loop_use() -> int {
+    mut total = 0
+    mut i = 0
+    while i < 3 {
+        total = total + @counter
+        @bump_other()
+        total = total + @counter
+        i = i + 1
+    }
+    total
+}
+
+// pure-call cache: invoke @double twice → second uses cached value.
+fn Box mut @call_pure_twice() -> int {
+    ro a = @double()
+    @bump_other()
+    ro b = @double()
+    a + b
+}
+
+// chain cache: @inner.value read twice → second from cached chain.
+fn Box mut @chain_use() -> int {
+    ro x = @inner.value + @inner.value
+    @bump_other()
+    ro y = @inner.value + @inner.value
+    x + y
+}
+
+fn Box.new() -> Box {
+    Box { counter: 7, other: 0, inner: Inner { value: 11 } }
+}
+
+test "V7.2: LICM survives non-writing call (explicit IPA)" {
+    mut b = Box.new()
+    ro r = b.loop_use()
+    // 3 iterations × (7 + 7) = 42 (counter never written by bump_other).
+    assert(r == 42)
+}
+
+test "V7.2: pure-call cache + IPA frame survives non-writing call" {
+    mut b = Box.new()
+    ro r = b.call_pure_twice()
+    // 14 + 14 = 28 (counter unchanged across @bump_other).
+    assert(r == 28)
+}
+
+test "V7.2: chain cache survives non-writing call (per-root IPA)" {
+    mut b = Box.new()
+    ro r = b.chain_use()
+    // (11 + 11) + (11 + 11) = 44 (inner.value unchanged).
+    assert(r == 44)
+}

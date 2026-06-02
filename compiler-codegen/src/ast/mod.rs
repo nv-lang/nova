@@ -327,7 +327,12 @@ pub enum DocAttr {
 }
 
 /// Функция: и свободная, и метод (через `receiver`).
-#[derive(Debug, Clone)]
+///
+/// Plan 123 baseline-fix (2026-06-02): `Default` derive — enables test
+/// fixtures to use `..Default::default()` spread when constructing fake
+/// FnDecls (sum_schema_registry tests). Robust to future field additions:
+/// callers may opt to set only the fields they actually need.
+#[derive(Debug, Clone, Default)]
 pub struct FnDecl {
     /// Plan 45 / D104: doc-comment, прикреплённый парсером (один или
     /// несколько подряд идущих `///` непосредственно перед `fn`).
@@ -535,9 +540,10 @@ pub enum Purity {
 }
 
 /// Plan 16: вид `@realtime` атрибута на функции (D64 §3697).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RealtimeAttr {
     /// Без атрибута.
+    #[default]
     None,
     /// `@realtime` — body обёрнут в `realtime { ... }` контекст.
     Realtime,
@@ -677,6 +683,13 @@ pub enum FnBody {
     External,
 }
 
+// Plan 123 baseline-fix (2026-06-02): minimal Default impl for AST nodes
+// used by test fixtures. Default body = External (no Block/Expr to construct).
+// Production code never relies on Default for FnBody.
+impl Default for FnBody {
+    fn default() -> Self { FnBody::External }
+}
+
 /// Plan 52 Ф.1: атрибут-маркер на декларации типа (`#from_fields`).
 ///
 /// Маркер `#from_fields` помечает str-keyed map-тип, в который анонимный
@@ -699,7 +712,8 @@ pub enum TypeAttr {
     FromPairs,
 }
 
-#[derive(Debug, Clone)]
+/// Plan 123 baseline-fix (2026-06-02): `Default` derive — see FnDecl.
+#[derive(Debug, Clone, Default)]
 pub struct TypeDecl {
     /// Plan 45 / D104: doc-comment перед `type`.
     pub doc: Option<DocBlock>,
@@ -801,6 +815,13 @@ pub enum TypeDeclKind {
     Opaque,
 }
 
+// Plan 123 baseline-fix (2026-06-02): Default for TypeDeclKind used by
+// test fixtures (`..Default::default()` spread in TypeDecl literals).
+// Empty record is the most universally inert default.
+impl Default for TypeDeclKind {
+    fn default() -> Self { TypeDeclKind::Record(Vec::new()) }
+}
+
 /// Plan 114.4.1 (D200): associated constant — `const NAME T = expr` inside
 /// `type X { ... }` body. НЕ в instance layout (zero storage); accessible
 /// через namespace `Type.NAME`. Codegen emit'ит как top-level
@@ -832,7 +853,8 @@ pub struct NamedTupleField {
     pub visible_to: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+/// Plan 123 baseline-fix (2026-06-02): `Default` derive — see FnDecl.
+#[derive(Debug, Clone, Default)]
 pub struct RecordField {
     pub name: String,
     pub ty: TypeRef,
@@ -1170,6 +1192,13 @@ pub enum TypeRef {
     /// - `*mut *ro Acc` → `Pointer(Mut, Pointer(Ro, Acc, ...), ...)`
     ///   (mut pointer на ro pointer на Acc)
     Pointer(PointerModifier, Box<TypeRef>, Span),
+}
+
+// Plan 123 baseline-fix (2026-06-02): Default for TypeRef used by test
+// fixtures. `Unit(dummy span)` is the most inert choice — no fields, no
+// nested references. Production code uses TypeRef::Named / etc explicitly.
+impl Default for TypeRef {
+    fn default() -> Self { TypeRef::Unit(Span::default()) }
 }
 
 impl TypeRef {

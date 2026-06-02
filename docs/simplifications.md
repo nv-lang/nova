@@ -30743,3 +30743,69 @@ No deprecation shim — clean rename. Future code uses `size_of[T]()`.
 inconsistency после V4.4 Ф.1/Ф.2 ship. Rule: at intrinsic naming
 decisions, audit ВСЁ family (size_of + align_of + future offset_of /
 type_name etc) для одного pattern. Rust convention = `<verb>_of` form.
+
+
+═══════════════════════════════════════════════════════════════════════════
+2026-06-02 (PM): Plan 123 V*.2+ umbrella simplifications landed.
+
+Pattern (baseline test fixture fix — long-term resolution): 
+After 2 prior incidents (Plan 114 + Plan 124 added FnDecl/TypeDecl/
+RecordField fields and broke test fixtures), V*.2 finally implements
+`..Default::default()` spread by:
+- Adding Default impl for FnBody (External), TypeDeclKind (Record),
+  TypeRef (Unit), RealtimeAttr (#[default] None)
+- Deriving Default on FnDecl/TypeDecl/RecordField
+- Refactoring sum_schema_registry.rs 7 fixture blocks + lints.rs
+  fake_prelude_peer to use `..Default::default()` spread
+
+Outcome: future AST struct additions never again break test fixtures.
+
+Simplification (V7.2 explicit IpaCtx threading):
+V7.1 used thread_local!{} RefCell<Option<...>> slots set by
+*_with_ipa wrappers and snapshotted by inner barrier helpers.
+Simpler patch (~5 changes per layer) but opaque data flow,
+incompatible с multi-threaded compilation, harder to reason about.
+
+V7.2 ships explicit Option<IpaCtx<'_>> parameter through:
+- licm_fn_impl / licm_block / licm_stmt / licm_expr / process_loop /
+  collect_loop_eligible_fields
+- pure_cache_fn_impl
+- chain_cache_fn_impl
+
+Wrappers (*_with_ipa) клонируют recv_type в local String (avoids
+&f / &mut f aliasing), construct IpaCtx<'_>, pass it down. Net delta
+~150 LOC but data flow now type-checked end-to-end.
+
+Lesson: when you write a temporary "we'll thread it explicitly
+later" plumbing, do measure: how many sites would explicit threading
+touch? If <=20 (V7.2 = ~68 sites in licm chain), explicit beats
+thread_local up-front. V7.1's "20+ signature change risk" estimate
+was the right call for that PR's scope, but V7.2 closure was equally
+right once IPA mature.
+
+Simplification (V7.3 SCC closure):
+V7's iterative `for _ in 0..iter_limit` was conservative — picked
+default cap=10 to "cover all realistic call graphs". Replaced with
+exact O(V+E) Tarjan + reverse-topological propagation. Smaller
+code (~180 LOC) AND faster для large modules. Iterative path
+preserved behind NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1 for forensics.
+
+Lesson: "iterate to fixed-point with safety cap" is a smell when
+the underlying problem has a O(V+E) algorithm (SCC, dominator tree,
+SSA construction). Reach for the algorithm when N gets large or
+when correctness on edge cases matters.
+
+Simplification (V6.3 configurable thresholds):
+V6.1 / V7 hardcoded gate values (5.0 pp, 10.0 %, iter=10). V6.3
+promotes к env+CLI WITHOUT changing defaults — pure additive
+config surface. Demonstrates: config knobs added late are still
+valuable when ranges + clamps are sane (1..=1024 для iter; >=0 для
+percent drops). Cost: ~80 LOC.
+
+Simplification (V4.2 chain prefix sharing):
+Pure additive optimization layer. Existing chain cache emits
+`_at_a_b_c_chain = @a.b.c`. V4.2 detects when ≥2 chains share
+length-2 prefix and inserts a shared base: `_at_a_b_pre = @a.b`
+ahead of per-chain lets. Subsequent per-chain lets reference
+ident.tail (via Member expressions on Ident, not SelfAccess).
+Composition unchanged: prefix lets count toward max_per_fn budget.

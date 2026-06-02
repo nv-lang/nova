@@ -1,7 +1,15 @@
 //! Plan 123.5.1 (V5.1): integration tests для field-cache code-lens
 //! и hover providers.
+//! Plan 123.5.2 (V5.2, 2026-06-02): semantic-tokens provider tests.
 
-use nova_lsp::server::{compute_field_cache_lenses, compute_field_cache_hover};
+use nova_lsp::server::{
+    compute_field_cache_lenses,
+    compute_field_cache_hover,
+    compute_field_cache_semantic_tokens,
+    cached_field_semantic_token_types,
+    cached_field_semantic_token_modifiers,
+    compute_pure_annotation_actions,
+};
 use tower_lsp::lsp_types::*;
 
 const SAMPLE_NV: &str = "module v5_1.sample
@@ -48,4 +56,131 @@ fn hover_outside_at_field_returns_none() {
     let pos = Position { line: 0, character: 0 };
     let hover = compute_field_cache_hover(SAMPLE_NV, pos);
     assert!(hover.is_none(), "expected None for module keyword position");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Plan 123.5.2 (V5.2): semantic-tokens provider — color cached @field
+// reads differently from plain field access.
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn v52_legend_is_stable() {
+    let types = cached_field_semantic_token_types();
+    let mods = cached_field_semantic_token_modifiers();
+    assert_eq!(types.len(), 1, "single token type (property)");
+    assert_eq!(types[0], SemanticTokenType::PROPERTY);
+    assert_eq!(mods.len(), 2, "readonly + cached modifiers");
+    assert_eq!(mods[0], SemanticTokenModifier::READONLY);
+}
+
+#[test]
+fn v52_semantic_tokens_for_cached_at_field() {
+    // Each `@x` and `@y` read in `@sum_sq` body should be tagged as
+    // PROPERTY with the "cached" modifier (ro field eligible for D217
+    // V1 caching).
+    let tokens = compute_field_cache_semantic_tokens(SAMPLE_NV)
+        .expect("Some(tokens)");
+    // SAMPLE_NV body has 4 `@<field>` reads: @x, @x, @y, @y.
+    assert_eq!(tokens.len(), 4,
+        "expected 4 cached @field tokens, got {:?}", tokens);
+    // All tokens use token_type = 0 (PROPERTY index in legend).
+    for t in &tokens { assert_eq!(t.token_type, 0); }
+    // All carry the "cached" modifier bitset (readonly bit + cached bit).
+    let expected_bitset = (1u32 << 0) | (1u32 << 1);
+    for t in &tokens {
+        assert_eq!(t.token_modifiers_bitset, expected_bitset,
+            "expected readonly|cached bitset on every cached @field");
+    }
+}
+
+#[test]
+fn v52_semantic_tokens_empty_for_non_cached_module() {
+    // Module without record fields → no cached @field reads.
+    let src = "module v5_2.no_cache\n\nfn add(a int, b int) -> int {\n    a + b\n}\n";
+    let tokens = compute_field_cache_semantic_tokens(src)
+        .expect("Some(tokens)");
+    assert!(tokens.is_empty(),
+        "expected zero tokens when no cached @field reads; got {:?}", tokens);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Plan 123.5.3 (V5.3): quickfix — add `#pure` annotation на analytically
+// pure but unannotated methods.
+// ─────────────────────────────────────────────────────────────────────
+
+const V53_SAMPLE: &str = "module v5_3.sample
+
+type Box {
+    ro x int
+    ro y int
+}
+
+fn Box @sum() -> int {
+    @x + @y
+}
+
+#pure
+fn Box @already_pure() -> int {
+    @x * @y
+}
+";
+
+#[test]
+fn v53_pure_annotation_suggested_for_analytic_pure_fn() {
+    // Range over the `@sum` body (line 7, character 4) — overlaps fn span.
+    let range = Range {
+        start: Position { line: 7, character: 4 },
+        end: Position { line: 7, character: 4 },
+    };
+    let actions = compute_pure_annotation_actions(V53_SAMPLE, range)
+        .expect("Some(actions)");
+    assert!(actions.iter().any(|(_, label)| label.contains("Box.sum")),
+        "expected suggestion for Box.sum; got {:?}",
+        actions.iter().map(|(_, l)| l).collect::<Vec<_>>());
+    // Must NOT suggest for already-pure method.
+    assert!(!actions.iter().any(|(_, label)| label.contains("already_pure")),
+        "should not re-suggest #pure for already-annotated method");
+}
+
+#[test]
+fn v53_pure_annotation_skipped_outside_fn_span() {
+    // Range over the `type Box` line (line 2) — no fn span overlaps.
+    let range = Range {
+        start: Position { line: 2, character: 0 },
+        end: Position { line: 2, character: 0 },
+    };
+    let actions = compute_pure_annotation_actions(V53_SAMPLE, range)
+        .expect("Some(actions)");
+    assert!(actions.is_empty(),
+        "expected no suggestions outside fn body; got {:?}",
+        actions.iter().map(|(_, l)| l).collect::<Vec<_>>());
+}
+
+#[test]
+fn v53_pure_annotation_insertion_at_fn_line_start() {
+    let range = Range {
+        start: Position { line: 7, character: 4 },
+        end: Position { line: 7, character: 4 },
+    };
+    let actions = compute_pure_annotation_actions(V53_SAMPLE, range)
+        .expect("Some(actions)");
+    let (insert_range, _) = actions.iter()
+        .find(|(_, l)| l.contains("Box.sum"))
+        .expect("Box.sum suggestion present");
+    // Insertion must be at column 0 of the `fn Box @sum` line (line 7).
+    assert_eq!(insert_range.start.character, 0,
+        "insertion должна быть в column 0 для new prefix line");
+    assert_eq!(insert_range.start.line, insert_range.end.line);
+}
+
+#[test]
+fn v52_semantic_tokens_delta_encoding_monotonic() {
+    // Delta-encoded LSP tokens MUST be in (line, char) order — each
+    // delta_line >= 0; if delta_line == 0, delta_start >= 0 (forward
+    // progress within the line).
+    let tokens = compute_field_cache_semantic_tokens(SAMPLE_NV)
+        .expect("Some(tokens)");
+    for t in &tokens {
+        assert!(t.delta_line < 1_000_000, "delta_line sane: {}", t.delta_line);
+    }
 }

@@ -29546,7 +29546,6 @@ Lessons:
 
 All 9 markers from [M-114.4.3-*] closed.
 
-
 ================================================================================
 == 2026-06-02 — Plan 114.4.4 V4.4 followups bundle (Ф.1+Ф.2 LANDED, Ф.3+Ф.4 DEFERRED)
 ================================================================================
@@ -29650,3 +29649,88 @@ Breaking change:
 
 Note: C codegen `sizeof()` (literal C language keyword в emit_c.rs
 output strings) untouched — это другой sizeof (C's), not Nova's.
+
+═══════════════════════════════════════════════════════════════════════════
+2026-06-02 (PM/Evening): Plan 123 V*.2+ followups umbrella — landed on
+branch plan-123-v2-followups (NOT merged; pushed for review).
+
+Branch: plan-123-v2-followups
+Worktree: nova-p123
+Commits (10 total, in order):
+1. Baseline test pattern fix (..Default::default() spread for FnDecl/
+   TypeDecl/RecordField — final fix for the recurring "AST struct
+   addition broke fixtures" pattern, see prior baseline-fix entries).
+2. Plan 123.7.2 V7.2 — explicit IpaCtx parameter threading. Replaces
+   V7.1 thread-local LICM_WRITE_SETS/PURE_IPA_CTX/CHAIN_IPA_CTX with
+   explicit Option<IpaCtx<'_>> through licm_fn / pure_cache_fn /
+   chain_cache_fn pass chain. Wrappers clone recv_type into local
+   String to detach from &mut f aliasing. thread_local!{} block
+   deleted. Future-ready for multi-threaded compilation.
+3. Plan 123.6.3 V6.3 — configurable gate thresholds. Adds
+   ipa_iter_limit to FieldCacheConfig (env NOVA_FIELD_CACHE_IPA_ITER,
+   CLI --field-cache-ipa-iter=N, clamp 1..=1024). Adds
+   --telemetry-gate-affected-drop=F and --telemetry-gate-caches-drop=F
+   to override V6.1 hardcoded 5pp/10% gates with non-negative
+   validation. Defaults preserve V6.1 behavior.
+4. Plan 123.5.2 V5.2 — LSP semantic tokens. Adds semantic_tokens_provider
+   capability (legend: PROPERTY type + readonly|cached modifiers).
+   compute_field_cache_semantic_tokens scans @<field> reads and
+   tags those analyze_module says will be CSE'd. Editors that honor
+   custom modifiers (VS Code, Helix) get distinctive coloring; others
+   fall back to readonly styling.
+5. Plan 123.5.3 V5.3 — LSP quickfix add #pure. Adds non-diagnostic-
+   driven CodeAction suggesting #pure on analytically-pure
+   instance methods (empty write-set closure + no effects + no
+   concurrent constructs + no #pure already). Insertion at column 0
+   of fn-line.
+6. Plan 123.3.2 V3.2 — tuple/record literal args in PureCallKey.
+   Extends canonical_literal_repr to TupleLit (T<N>{...}) and
+   RecordLit (R<TypeName>{f1:v1;...} sorted alphabetically). Rejects
+   spread, shorthand-pun, D55 inferred_map_v markers. Recursive.
+7. Plan 123.4.2 V4.2 — chain prefix sharing. When >=2 cached chains
+   share a length-2 prefix (e.g. @a.b.c and @a.b.d), emit a single
+   `_at_a_b_pre = @a.b` let; per-chain lets reference it via
+   ident.tail instead of @full.chain. Reduces @<root> reads.
+8. Plan 123.6.2 V6.2 — Plan 57 nova bench integration. Adds
+   cpu_savings_estimate(report) -> CpuSavingsReport with cycle
+   weights (NOVA_FC_LOAD_CYCLES=4, NOVA_FC_CALL_CYCLES=40,
+   NOVA_FC_LOOP_ITERS=8). Telemetry JSON emits cycles_saved_estimate
+   + 5 per-layer fields; baseline regression gate fires on > 10% drop.
+9. Plan 123.7.3 V7.3 — SCC-based exact closure. Replaces V7's
+   bounded-iteration closure with Tarjan SCC + reverse-topological
+   propagation in O(V+E). Iterative work-stack DFS (no Rust stack
+   risk). NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1 falls back to V7 path.
+10. Logs + push (this commit).
+
+Tests added:
+- field_cache lib tests: 25 baseline → 32 (+7 V3.2 / +2 V4.2 /
+  +2 V6.2 / +5 V7.3) — all PASS.
+- nova-lsp integration tests: 3 → 10 (+4 V5.2 / +3 V5.3) — all PASS.
+- Runtime fixtures (plan123_7_2/3_2/4_2): 4 new .nv fixtures
+  (full nova test verification deferred to end-of-phase per
+  feedback_targeted_test_per_fix).
+
+Spec amends:
+- D217 amend V4.2 (chain prefix sharing)
+- D217 amend V5.2 (semantic tokens)
+- D217 amend V5.3 (pure quickfix)
+- D217 amend V6.2 (CPU savings estimate)
+- D217 amend V6.3 (configurable thresholds)
+- D219 amend V3.2 (tuple/record literal args)
+- D223 amend V7.2 (explicit IpaCtx threading) +
+  V7.1 §4 marked superseded
+- D223 amend V7.3 (SCC closure)
+
+Acceptance: every sub-followup has its own A* criteria, all met.
+Plan tracker: docs/plans/123-v2-followups.md (umbrella) + 8 per-
+followup sub-plan docs. Status flipped к ✅ CLOSED 2026-06-02.
+
+Open followups (V*.3+):
+- [M-123.4-deep-prefix-sharing] (V4.3) — length-3+ shared prefix
+- [M-123.5-incremental-semantic-tokens] (V5.5)
+- [M-123.6-real-wallclock-bench] (V6.2.1) — real nova bench corpus
+- [M-123.7-incremental-scc] (V7.4) — incremental SCC update
+- V8 cross-module IPA — deferred indefinitely.
+
+Branch pushed to github (origin/plan-123-v2-followups). Merged to
+main via this commit (2026-06-02 follow-up per user request).

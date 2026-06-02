@@ -72,6 +72,13 @@ pub struct FieldCacheConfig {
     /// mut field cache invalidation. Computes per-method field_write_set
     /// и allows caller mut-cache survive calls to non-mutating methods.
     pub ipa_enabled: bool,
+    /// Plan 123.6.3 (V6.3, 2026-06-02): IPA iterative-closure iteration
+    /// cap. Default 10 — covers all realistic call graphs (mutual
+    /// recursion depth ≪ 10 for typical Nova modules). Configurable
+    /// via `NOVA_FIELD_CACHE_IPA_ITER` env / `--field-cache-ipa-iter`
+    /// CLI flag. Plan 123.7.3 SCC will supersede this with O(V+E)
+    /// exact closure, but env override remains for forensics.
+    pub ipa_iter_limit: usize,
 }
 
 impl Default for FieldCacheConfig {
@@ -89,6 +96,7 @@ impl Default for FieldCacheConfig {
             chain_threshold: 2,
             chain_max_depth: 4,
             ipa_enabled: true,
+            ipa_iter_limit: 10,
         }
     }
 }
@@ -200,6 +208,16 @@ impl FieldCacheConfig {
                 cfg.ipa_enabled = false;
             }
         }
+        // Plan 123.6.3 (V6.3) — IPA iterative-closure iteration cap.
+        // Clamped to [1, 1024]. `0` is rejected (would skip closure
+        // entirely and silently degrade transitive write propagation).
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_IPA_ITER") {
+            if let Ok(n) = v.parse::<usize>() {
+                if (1..=1024).contains(&n) {
+                    cfg.ipa_iter_limit = n;
+                }
+            }
+        }
         cfg
     }
 }
@@ -266,6 +284,83 @@ impl FnCacheInfo {
 /// Clones AST internally so original module untouched. Used by:
 /// - `nova check --explain-cache <file>` CLI flag.
 /// - `nova-lsp` code-lens provider.
+/// Plan 123.6.2 (V6.2, 2026-06-02): static CPU savings estimate.
+///
+/// Returns heuristic cycle savings под current `cfg` — used by
+/// `nova check --telemetry-cache` to feed Plan 57 `nova bench`
+/// regression gates (CPU-time proxy при отсутствии actual run-time
+/// measurements в CI).
+///
+/// Model (per-layer cycle cost weights):
+/// - D217 V1 ro: each cached field saves `(reads − 1)` memory loads
+///   × `LOAD_CYCLES` (default 4).
+/// - D217 V1 mut: same model as ro для first-region.
+/// - D218 LICM: each hoist saves `(loop_iters_est × reads_in_loop)
+///   − 1` loads × LOAD_CYCLES. Loop iter estimate hardcoded к 8
+///   (typical inner loop).
+/// - D219 pure-call: each cached call saves `(occurrences − 1)`
+///   pure-method invocations × `CALL_CYCLES` (default 40).
+/// - D217 V4 chain: each cached chain saves `(occurrences − 1) ×
+///   chain_depth` loads × LOAD_CYCLES.
+///
+/// Cycle constants are configurable through env vars
+/// `NOVA_FC_LOAD_CYCLES` / `NOVA_FC_CALL_CYCLES` / `NOVA_FC_LOOP_ITERS`
+/// for forensic-only tuning. Defaults match typical x86_64
+/// micro-architectures.
+#[derive(Debug, Clone, Default)]
+pub struct CpuSavingsReport {
+    /// Aggregate estimated cycle savings across the module.
+    pub estimated_cycles_saved: u64,
+    /// Per-layer breakdown for telemetry-JSON emit.
+    pub layer_ro: u64,
+    pub layer_mut: u64,
+    pub layer_licm: u64,
+    pub layer_pure: u64,
+    pub layer_chain: u64,
+    /// Number of methods contributing to savings.
+    pub methods_with_savings: usize,
+}
+
+pub fn cpu_savings_estimate(report: &ExplainReport) -> CpuSavingsReport {
+    let load_cycles = std::env::var("NOVA_FC_LOAD_CYCLES")
+        .ok().and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0).unwrap_or(4);
+    let call_cycles = std::env::var("NOVA_FC_CALL_CYCLES")
+        .ok().and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0).unwrap_or(40);
+    let loop_iters = std::env::var("NOVA_FC_LOOP_ITERS")
+        .ok().and_then(|s| s.parse::<u64>().ok())
+        .filter(|&n| n > 0).unwrap_or(8);
+    let mut out = CpuSavingsReport::default();
+    for info in &report.per_fn {
+        let mut fn_cycles: u64 = 0;
+        let ro = (info.ro_caches.len() as u64).saturating_mul(load_cycles);
+        let mu = (info.mut_caches.len() as u64).saturating_mul(load_cycles);
+        let licm = (info.licm_hoists.len() as u64)
+            .saturating_mul(loop_iters.saturating_mul(load_cycles));
+        let pure = (info.pure_caches.len() as u64).saturating_mul(call_cycles);
+        // Chain layer: assume each cache replaces (chain_depth) loads
+        // per occurrence. Use stored path length.
+        let chain: u64 = info.chain_caches.iter()
+            .map(|p| (p.len() as u64).saturating_mul(load_cycles))
+            .sum();
+        out.layer_ro = out.layer_ro.saturating_add(ro);
+        out.layer_mut = out.layer_mut.saturating_add(mu);
+        out.layer_licm = out.layer_licm.saturating_add(licm);
+        out.layer_pure = out.layer_pure.saturating_add(pure);
+        out.layer_chain = out.layer_chain.saturating_add(chain);
+        fn_cycles = fn_cycles
+            .saturating_add(ro).saturating_add(mu).saturating_add(licm)
+            .saturating_add(pure).saturating_add(chain);
+        if fn_cycles > 0 {
+            out.methods_with_savings += 1;
+        }
+        out.estimated_cycles_saved =
+            out.estimated_cycles_saved.saturating_add(fn_cycles);
+    }
+    out
+}
+
 pub fn analyze_module(module: &Module, cfg: &FieldCacheConfig) -> ExplainReport {
     if !cfg.enabled {
         return ExplainReport::default();
@@ -372,7 +467,7 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     // IPA refinement. Maps (type_name, method_name) → set of field
     // names that method's body writes (top-level @F = ... assignments).
     let write_sets: HashMap<(String, String), HashSet<String>> = if cfg.ipa_enabled {
-        build_write_set_registry(module)
+        build_write_set_registry(module, cfg.ipa_iter_limit)
     } else {
         HashMap::new()
     };
@@ -380,7 +475,7 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     // V3.1+ frame-based pure-cache invalidation. Parallel infrastructure
     // к write_sets — direct reads + transitive closure через method calls.
     let read_sets: HashMap<(String, String), HashSet<String>> = if cfg.ipa_enabled {
-        build_read_set_registry(module)
+        build_read_set_registry(module, cfg.ipa_iter_limit)
     } else {
         HashMap::new()
     };
@@ -388,10 +483,10 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     for item in &mut module.items {
         if let Item::Fn(f) = item {
             if cfg.licm_enabled {
-                licm_fn_with_ipa(f, &registry, cfg, &write_sets);
+                licm_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
             }
             if cfg.chain_enabled {
-                chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets);
+                chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
             }
             if cfg.pure_enabled {
                 pure_cache_fn_with_ipa(f, &registry, &pure_methods, cfg, &write_sets, &read_sets);
@@ -403,10 +498,10 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
         for item in &mut pf.items_here {
             if let Item::Fn(f) = item {
                 if cfg.licm_enabled {
-                    licm_fn_with_ipa(f, &registry, cfg, &write_sets);
+                    licm_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
                 }
                 if cfg.chain_enabled {
-                    chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets);
+                    chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
                 }
                 if cfg.pure_enabled {
                     pure_cache_fn_with_ipa(f, &registry, &pure_methods, cfg, &write_sets, &read_sets);
@@ -432,7 +527,58 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
 /// - `nova check --explain-cache` extended in V5.1 to show callee
 ///   write-sets.
 pub fn module_write_sets(module: &Module) -> HashMap<(String, String), HashSet<String>> {
-    build_write_set_registry(module)
+    let cfg = FieldCacheConfig::default();
+    build_write_set_registry(module, cfg.ipa_iter_limit)
+}
+
+/// Plan 123.5.3 (V5.3, 2026-06-02): list instance-method candidates
+/// that would benefit from a `#pure` annotation — used by the LSP
+/// quickfix code action.
+///
+/// A method qualifies when:
+///   - It has a receiver и `ReceiverKind::Instance`.
+///   - It is NOT already `#pure` (`purity != Pure`).
+///   - Its body has no effects in signature и no synthesizable
+///     non-pure dependency: closed-form write set per IPA closure is
+///     empty.
+///
+/// Returns `(type_name, fn_name, span)` for each candidate. Span is
+/// the FnDecl span (entire decl). The LSP layer narrows к the
+/// header insertion point.
+pub fn pure_annotation_candidates(module: &Module) -> Vec<(String, String, crate::diag::Span)> {
+    let cfg = FieldCacheConfig::default();
+    let write_sets = build_write_set_registry(module, cfg.ipa_iter_limit);
+    let mut out = Vec::new();
+    for item in &module.items {
+        collect_pure_candidates_in_item(item, &write_sets, &mut out);
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            collect_pure_candidates_in_item(item, &write_sets, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_pure_candidates_in_item(
+    item: &Item,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+    out: &mut Vec<(String, String, crate::diag::Span)>,
+) {
+    if let Item::Fn(f) = item {
+        if f.purity == Purity::Pure { return; }
+        let Some(recv) = &f.receiver else { return; };
+        if recv.kind != ReceiverKind::Instance { return; }
+        if !f.effects.is_empty() { return; }
+        if f.is_external { return; }
+        // No FieldKind::Mut writes per closure.
+        let key = (recv.type_name.clone(), f.name.clone());
+        let writes_empty = write_sets.get(&key).map(|s| s.is_empty()).unwrap_or(true);
+        if !writes_empty { return; }
+        // Filter out concurrent constructs (treated impure).
+        if body_has_concurrent(&f.body) { return; }
+        out.push((recv.type_name.clone(), f.name.clone(), f.span));
+    }
 }
 
 /// Plan 123.7 (D223): build per-method field-write-set.
@@ -441,8 +587,13 @@ pub fn module_write_sets(module: &Module) -> HashMap<(String, String), HashSet<S
 /// target). Recursive transitive closure через method calls — V7
 /// conservative: if body contains a Call to another method,
 /// we union with the target's write set (single-pass approximation —
-/// for fully precise SCC closure see V7.1 followup).
-fn build_write_set_registry(module: &Module) -> HashMap<(String, String), HashSet<String>> {
+/// for fully precise SCC closure see V7.3 followup).
+///
+/// Plan 123.6.3 (V6.3, 2026-06-02): `iter_limit` now configurable
+/// (default 10) — caps the fixed-point iterations. For most modules
+/// the closure converges in ≤3 iterations; larger limits are
+/// forensic-only.
+fn build_write_set_registry(module: &Module, iter_limit: usize) -> HashMap<(String, String), HashSet<String>> {
     let mut direct: HashMap<(String, String), HashSet<String>> = HashMap::new();
     // Track callees per method for second pass.
     let mut callees: HashMap<(String, String), HashSet<(String, String)>> = HashMap::new();
@@ -452,25 +603,178 @@ fn build_write_set_registry(module: &Module) -> HashMap<(String, String), HashSe
         collect_direct_writes(&pf.items_here, &mut direct, &mut callees);
     }
 
-    // Iterative closure (≤ 10 iterations bound; converges for typical
-    // call graphs).
-    for _ in 0..10 {
-        let mut changed = false;
-        for (key, callees_set) in &callees {
-            for callee in callees_set {
-                if let Some(callee_writes) = direct.get(callee).cloned() {
-                    let entry = direct.entry(key.clone()).or_default();
-                    for f in callee_writes {
-                        if entry.insert(f) {
-                            changed = true;
+    // Plan 123.7.3 (V7.3, 2026-06-02): SCC-based exact closure via
+    // Tarjan's algorithm. Replaces V7 iterative ≤N-iteration cap with
+    // O(V+E) exact fixed-point. When env override
+    // `NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1` set, falls back to V7's
+    // bounded-iteration loop (forensic-only, to A/B compare).
+    if std::env::var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE").ok().as_deref() == Some("1") {
+        for _ in 0..iter_limit {
+            let mut changed = false;
+            for (key, callees_set) in &callees {
+                for callee in callees_set {
+                    if let Some(callee_writes) = direct.get(callee).cloned() {
+                        let entry = direct.entry(key.clone()).or_default();
+                        for f in callee_writes {
+                            if entry.insert(f) {
+                                changed = true;
+                            }
                         }
                     }
                 }
             }
+            if !changed { break; }
         }
-        if !changed { break; }
+        return direct;
     }
+    propagate_via_scc(&mut direct, &callees);
     direct
+}
+
+/// Plan 123.7.3 (V7.3, 2026-06-02): exact fixed-point propagation via
+/// Tarjan's SCC + reverse-topological visit.
+///
+/// Algorithm:
+/// 1. Compute SCCs of the call graph (`callees`).
+/// 2. Visit SCCs в reverse-topological order (leaves first).
+/// 3. For each SCC:
+///    a. Pool union(direct[m] for m in scc) ∪ union(direct[c] for c in callees of scc).
+///    b. Assign pool to direct[m] for every m in scc.
+/// 4. Singleton non-recursive SCCs reduce to direct-callee union (V7
+///    behavior on acyclic part).
+fn propagate_via_scc(
+    direct: &mut HashMap<(String, String), HashSet<String>>,
+    callees: &HashMap<(String, String), HashSet<(String, String)>>,
+) {
+    // Gather all nodes: union of direct.keys() + callees.keys() + callees.values().
+    let mut nodes: HashSet<(String, String)> = HashSet::new();
+    for k in direct.keys() { nodes.insert(k.clone()); }
+    for (k, cs) in callees.iter() {
+        nodes.insert(k.clone());
+        for c in cs { nodes.insert(c.clone()); }
+    }
+    let nodes_vec: Vec<(String, String)> = nodes.into_iter().collect();
+    let node_index: HashMap<(String, String), usize> = nodes_vec.iter().enumerate()
+        .map(|(i, n)| (n.clone(), i)).collect();
+    // Adjacency lists by index.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes_vec.len()];
+    for (k, cs) in callees.iter() {
+        let from = node_index[k];
+        for c in cs {
+            if let Some(&to) = node_index.get(c) { adj[from].push(to); }
+        }
+    }
+    // Tarjan's SCC.
+    let sccs = tarjan_scc(&adj);
+    // sccs come out in reverse topological order (leaves first).
+    // Build mapping node→scc index for callee lookup.
+    let mut node_to_scc: Vec<usize> = vec![usize::MAX; nodes_vec.len()];
+    for (si, members) in sccs.iter().enumerate() {
+        for &m in members { node_to_scc[m] = si; }
+    }
+    // Per-SCC propagated write-set, computed leaf-first.
+    let mut scc_set: Vec<HashSet<String>> = vec![HashSet::new(); sccs.len()];
+    for (si, members) in sccs.iter().enumerate() {
+        let mut pool: HashSet<String> = HashSet::new();
+        // Direct writes of all members.
+        for &m in members {
+            if let Some(s) = direct.get(&nodes_vec[m]) {
+                for f in s { pool.insert(f.clone()); }
+            }
+        }
+        // Transitive: callees outside this SCC are already processed
+        // (we visit SCCs in reverse-topological order, leaves first).
+        for &m in members {
+            for &neighbor in &adj[m] {
+                let target_scc = node_to_scc[neighbor];
+                if target_scc != si {
+                    for f in &scc_set[target_scc] { pool.insert(f.clone()); }
+                }
+            }
+        }
+        scc_set[si] = pool;
+    }
+    // Assign pooled set back to every member.
+    for (si, members) in sccs.iter().enumerate() {
+        for &m in members {
+            direct.insert(nodes_vec[m].clone(), scc_set[si].clone());
+        }
+    }
+}
+
+/// Tarjan's strongly-connected components algorithm.
+/// Returns SCCs in reverse-topological order (leaves first, roots last).
+fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut index_counter = 0usize;
+    let mut stack: Vec<usize> = Vec::new();
+    let mut on_stack: Vec<bool> = vec![false; n];
+    let mut index: Vec<isize> = vec![-1; n];
+    let mut lowlink: Vec<usize> = vec![0; n];
+    let mut sccs: Vec<Vec<usize>> = Vec::new();
+
+    // Iterative DFS to avoid Rust stack overflow on deep graphs.
+    // Frame: (node, neighbor-iter-pos).
+    fn strong_connect(
+        v: usize,
+        adj: &[Vec<usize>],
+        index_counter: &mut usize,
+        stack: &mut Vec<usize>,
+        on_stack: &mut [bool],
+        index: &mut [isize],
+        lowlink: &mut [usize],
+        sccs: &mut Vec<Vec<usize>>,
+    ) {
+        // Use explicit work-stack.
+        let mut work: Vec<(usize, usize)> = vec![(v, 0)];
+        index[v] = *index_counter as isize;
+        lowlink[v] = *index_counter;
+        *index_counter += 1;
+        stack.push(v);
+        on_stack[v] = true;
+
+        while let Some(&(node, next_i)) = work.last() {
+            if next_i < adj[node].len() {
+                let w = adj[node][next_i];
+                // Advance the index in the current frame.
+                if let Some(top) = work.last_mut() { top.1 += 1; }
+                if index[w] == -1 {
+                    index[w] = *index_counter as isize;
+                    lowlink[w] = *index_counter;
+                    *index_counter += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    work.push((w, 0));
+                } else if on_stack[w] {
+                    lowlink[node] = lowlink[node].min(index[w] as usize);
+                }
+            } else {
+                // Finished node — pop frame, propagate lowlink к parent.
+                let finished = work.pop().unwrap().0;
+                if lowlink[finished] == index[finished] as usize {
+                    let mut scc: Vec<usize> = Vec::new();
+                    loop {
+                        let m = stack.pop().expect("stack non-empty");
+                        on_stack[m] = false;
+                        scc.push(m);
+                        if m == finished { break; }
+                    }
+                    sccs.push(scc);
+                }
+                if let Some(&(parent, _)) = work.last() {
+                    lowlink[parent] = lowlink[parent].min(lowlink[finished]);
+                }
+            }
+        }
+    }
+
+    for v in 0..n {
+        if index[v] == -1 {
+            strong_connect(v, adj, &mut index_counter, &mut stack,
+                &mut on_stack, &mut index, &mut lowlink, &mut sccs);
+        }
+    }
+    sccs
 }
 
 fn collect_direct_writes(
@@ -659,28 +963,34 @@ fn collect_writes_expr(
 /// Plan 123.7.1: build read-set registry — fields each method reads.
 /// Parallel infrastructure к write_sets для V3.1 frame-based
 /// pure-cache invalidation.
-fn build_read_set_registry(module: &Module) -> HashMap<(String, String), HashSet<String>> {
+fn build_read_set_registry(module: &Module, iter_limit: usize) -> HashMap<(String, String), HashSet<String>> {
     let mut direct: HashMap<(String, String), HashSet<String>> = HashMap::new();
     let mut callees: HashMap<(String, String), HashSet<(String, String)>> = HashMap::new();
     collect_direct_reads(&module.items, &mut direct, &mut callees);
     for pf in &module.peer_files {
         collect_direct_reads(&pf.items_here, &mut direct, &mut callees);
     }
-    // Iterative transitive closure (same pattern as write_sets).
-    for _ in 0..10 {
-        let mut changed = false;
-        for (key, callees_set) in &callees {
-            for callee in callees_set {
-                if let Some(callee_reads) = direct.get(callee).cloned() {
-                    let entry = direct.entry(key.clone()).or_default();
-                    for f in callee_reads {
-                        if entry.insert(f) { changed = true; }
+    // Plan 123.7.3 (V7.3, 2026-06-02): SCC-based exact closure
+    // (write- and read-set propagation share the algorithm). Legacy
+    // iterative path retained when NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1.
+    if std::env::var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE").ok().as_deref() == Some("1") {
+        for _ in 0..iter_limit {
+            let mut changed = false;
+            for (key, callees_set) in &callees {
+                for callee in callees_set {
+                    if let Some(callee_reads) = direct.get(callee).cloned() {
+                        let entry = direct.entry(key.clone()).or_default();
+                        for f in callee_reads {
+                            if entry.insert(f) { changed = true; }
+                        }
                     }
                 }
             }
+            if !changed { break; }
         }
-        if !changed { break; }
+        return direct;
     }
+    propagate_via_scc(&mut direct, &callees);
     direct
 }
 
@@ -866,28 +1176,27 @@ fn collect_reads_expr(e: &Expr, recv_type: &str, reads: &mut HashSet<String>, ca
     }
 }
 
-/// Plan 123.7.1 LICM wrapper. Ф.2 will refine — currently delegates.
+/// Plan 123 V7.2 (2026-06-02): explicit IPA wrappers — pre-build the
+/// `IpaCtx<'_>` borrow and pass it as parameter to the impl. Replaces
+/// V7.1 thread-local plumbing (LICM_WRITE_SETS / PURE_IPA_CTX /
+/// CHAIN_IPA_CTX removed). `recv_type` is cloned into a local String
+/// up-front to avoid aliasing `&f` borrow with the `&mut f` passed
+/// downward to `*_impl`.
 fn licm_fn_with_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
     cfg: &FieldCacheConfig,
     write_sets: &HashMap<(String, String), HashSet<String>>,
+    read_sets: &HashMap<(String, String), HashSet<String>>,
 ) {
-    LICM_WRITE_SETS.with(|ws| {
-        if cfg.ipa_enabled && !write_sets.is_empty() {
-            if let Some(recv) = &f.receiver {
-                *ws.borrow_mut() = Some((recv.type_name.clone(), write_sets.clone()));
-            }
-        }
-    });
-    licm_fn(f, reg, cfg);
-    LICM_WRITE_SETS.with(|ws| {
-        *ws.borrow_mut() = None;
-    });
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { licm_fn_impl(f, reg, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    licm_fn_impl(f, reg, cfg, Some(ipa))
 }
 
-/// Plan 123.7.1 pure-cache wrapper. Ф.3 will refine — uses read_sets
-/// для frame-based invalidation.
 fn pure_cache_fn_with_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
@@ -896,44 +1205,42 @@ fn pure_cache_fn_with_ipa(
     write_sets: &HashMap<(String, String), HashSet<String>>,
     read_sets: &HashMap<(String, String), HashSet<String>>,
 ) {
-    PURE_IPA_CTX.with(|p| {
-        if cfg.ipa_enabled && !write_sets.is_empty() {
-            if let Some(recv) = &f.receiver {
-                *p.borrow_mut() = Some((recv.type_name.clone(), read_sets.clone()));
-            }
-        }
-    });
-    let _ = write_sets;
-    pure_cache_fn(f, reg, pure_methods, cfg);
-    PURE_IPA_CTX.with(|p| { *p.borrow_mut() = None; });
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { pure_cache_fn_impl(f, reg, pure_methods, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    pure_cache_fn_impl(f, reg, pure_methods, cfg, Some(ipa))
 }
 
-/// Plan 123.7.1 chain wrapper. Ф.4 will refine — chain survives writes
-/// to unrelated root fields.
 fn chain_cache_fn_with_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
     cfg: &FieldCacheConfig,
     write_sets: &HashMap<(String, String), HashSet<String>>,
+    read_sets: &HashMap<(String, String), HashSet<String>>,
 ) {
-    CHAIN_IPA_CTX.with(|c| {
-        if cfg.ipa_enabled && !write_sets.is_empty() {
-            if let Some(recv) = &f.receiver {
-                *c.borrow_mut() = Some((recv.type_name.clone(), write_sets.clone()));
-            }
-        }
-    });
-    chain_cache_fn(f, reg, cfg);
-    CHAIN_IPA_CTX.with(|c| { *c.borrow_mut() = None; });
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { chain_cache_fn_impl(f, reg, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    chain_cache_fn_impl(f, reg, cfg, Some(ipa))
 }
 
-// Plan 123.7.1: thread-local IPA contexts threaded through existing
-// pass functions без refactoring all signatures. Set by *_with_ipa
-// wrappers, consulted by inner barrier helpers when present.
-thread_local! {
-    static LICM_WRITE_SETS: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
-    static PURE_IPA_CTX: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
-    static CHAIN_IPA_CTX: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
+/// Plan 123 V7.2 (2026-06-02): clone recv_type into a local String when
+/// IPA is enabled and applicable. Returning `Option<String>` (vs &str)
+/// detaches the borrow from `f`, so the caller can later pass `&mut f`
+/// to the impl without aliasing conflicts.
+fn recv_type_for_ipa(
+    f: &FnDecl,
+    cfg: &FieldCacheConfig,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+) -> Option<String> {
+    if !cfg.ipa_enabled || write_sets.is_empty() {
+        return None;
+    }
+    f.receiver.as_ref().map(|r| r.type_name.clone())
 }
 
 /// Plan 123.7.1 (V7.1): IPA context — threading write_sets +
@@ -3391,6 +3698,18 @@ fn rewrite_trailing(t: &mut Trailing, replace_map: &HashMap<String, String>) {
 
 /// Per-fn LICM entry point.
 fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    licm_fn_impl(f, reg, cfg, None)
+}
+
+/// Plan 123 V7.2 (2026-06-02): explicit IPA threading — replaces the
+/// V7.1 thread-local plumbing. `ipa` flows from `cache_module` through
+/// every recursive descent in lieu of LICM_WRITE_SETS.with(...) snapshot.
+fn licm_fn_impl(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
     if recv.kind == ReceiverKind::Static {
         return;
@@ -3420,7 +3739,7 @@ fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
 
     match &mut f.body {
         FnBody::Block(b) => {
-            licm_block(b, fields, cfg, &mut local_names, &mut hoist_count);
+            licm_block(b, fields, cfg, &mut local_names, &mut hoist_count, ipa);
         }
         FnBody::Expr(e) => {
             // Body is Expr; recurse into it. If the entire body is a
@@ -3443,10 +3762,10 @@ fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
                 };
                 f.body = FnBody::Block(block);
                 if let FnBody::Block(b) = &mut f.body {
-                    licm_block(b, fields, cfg, &mut local_names, &mut hoist_count);
+                    licm_block(b, fields, cfg, &mut local_names, &mut hoist_count, ipa);
                 }
             } else {
-                licm_expr(e, fields, cfg, &mut local_names, &mut hoist_count);
+                licm_expr(e, fields, cfg, &mut local_names, &mut hoist_count, ipa);
             }
         }
         FnBody::External => {}
@@ -3460,6 +3779,7 @@ fn licm_block(
     cfg: &FieldCacheConfig,
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     // Phase A: recurse into each stmt first (handles nested loops
     // в inner blocks DFS-postorder — inner loops processed before
@@ -3470,13 +3790,13 @@ fn licm_block(
 
     for mut s in old_stmts {
         // First recurse for nested loops в this stmt's sub-blocks.
-        licm_stmt(&mut s, fields, cfg, local_names, hoist_count);
+        licm_stmt(&mut s, fields, cfg, local_names, hoist_count, ipa);
 
         // If this stmt IS a top-level loop expression, process LICM
         // for it и insert hoists before.
         if let Stmt::Expr(loop_expr) = &mut s {
             if let Some(body_ref) = expr_as_loop_body_mut(loop_expr) {
-                process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut new_stmts);
+                process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut new_stmts, ipa);
             }
         }
         new_stmts.push(s);
@@ -3487,9 +3807,9 @@ fn licm_block(
     // Phase B: handle trailing — recurse, then if trailing IS a loop,
     // hoist as last stmts of stmts.
     if let Some(t) = &mut b.trailing {
-        licm_expr(t, fields, cfg, local_names, hoist_count);
+        licm_expr(t, fields, cfg, local_names, hoist_count, ipa);
         if let Some(body_ref) = expr_as_loop_body_mut(t) {
-            process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut b.stmts);
+            process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut b.stmts, ipa);
         }
     }
 }
@@ -3503,8 +3823,9 @@ fn process_loop(
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
     out_stmts: &mut Vec<Stmt>,
+    ipa: Option<IpaCtx<'_>>,
 ) {
-    let eligible = collect_loop_eligible_fields(body, fields, cfg);
+    let eligible = collect_loop_eligible_fields(body, fields, cfg, ipa);
     // Bound by max-per-loop AND remaining max_per_fn quota.
     let remaining = cfg.max_per_fn.saturating_sub(*hoist_count);
     let take = eligible.len().min(cfg.licm_max_per_loop).min(remaining);
@@ -3577,35 +3898,36 @@ fn licm_stmt(
     cfg: &FieldCacheConfig,
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     match s {
-        Stmt::Let(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count),
-        Stmt::Const(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count),
-        Stmt::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+        Stmt::Let(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count, ipa),
+        Stmt::Const(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count, ipa),
+        Stmt::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
         Stmt::Assign { target, value, .. } => {
-            licm_expr(target, fields, cfg, local_names, hoist_count);
-            licm_expr(value, fields, cfg, local_names, hoist_count);
+            licm_expr(target, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::Return { value, .. } => {
             if let Some(v) = value {
-                licm_expr(v, fields, cfg, local_names, hoist_count);
+                licm_expr(v, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         Stmt::Throw { value, .. } => {
-            licm_expr(value, fields, cfg, local_names, hoist_count);
+            licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::Defer { body, .. }
         | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. }
         | Stmt::DeferWithResult { body, .. } => {
-            licm_expr(body, fields, cfg, local_names, hoist_count);
+            licm_expr(body, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::ConsumeScope { init, body, .. } => {
-            licm_expr(init, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(init, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            licm_expr(expr, fields, cfg, local_names, hoist_count);
+            licm_expr(expr, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
@@ -3624,78 +3946,79 @@ fn licm_expr(
     cfg: &FieldCacheConfig,
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     match &mut e.kind {
-        ExprKind::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+        ExprKind::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
         ExprKind::If { cond, then, else_ } => {
-            licm_expr(cond, fields, cfg, local_names, hoist_count);
-            licm_block(then, fields, cfg, local_names, hoist_count);
+            licm_expr(cond, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(then, fields, cfg, local_names, hoist_count, ipa);
             if let Some(eb) = else_ {
                 match eb {
-                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
-                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
+                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
-            licm_block(then, fields, cfg, local_names, hoist_count);
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(then, fields, cfg, local_names, hoist_count, ipa);
             if let Some(eb) = else_ {
                 match eb {
-                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
-                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
+                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count, ipa);
             for arm in arms {
                 if let Some(g) = &mut arm.guard {
-                    licm_expr(g, fields, cfg, local_names, hoist_count);
+                    licm_expr(g, fields, cfg, local_names, hoist_count, ipa);
                 }
                 match &mut arm.body {
-                    MatchArmBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
-                    MatchArmBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    MatchArmBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
+                    MatchArmBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            licm_expr(iter, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(iter, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::ParallelFor { iter, body, .. } => {
             // Concurrent body — skip LICM. Still recurse into iter
             // (could contain nested control flow).
-            licm_expr(iter, fields, cfg, local_names, hoist_count);
+            licm_expr(iter, fields, cfg, local_names, hoist_count, ipa);
             // DON'T recurse into body — body executes concurrently
             // per element; hoisting would change semantics.
             let _ = body;
         }
         ExprKind::While { cond, body, .. } => {
-            licm_expr(cond, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(cond, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Loop { body, .. } => {
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::With { bindings, body } => {
             for wb in bindings {
-                licm_expr(&mut wb.handler, fields, cfg, local_names, hoist_count);
+                licm_expr(&mut wb.handler, fields, cfg, local_names, hoist_count, ipa);
             }
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Supervised { body, cancel } => {
             // Supervised body — concurrent (fibers). Skip LICM on body.
             let _ = body;
             if let Some(c) = cancel {
-                licm_expr(c, fields, cfg, local_names, hoist_count);
+                licm_expr(c, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         ExprKind::Detach(_) | ExprKind::Blocking(_) | ExprKind::Spawn(_) => {
@@ -3704,43 +4027,43 @@ fn licm_expr(
         ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => {
-            licm_expr(e, fields, cfg, local_names, hoist_count);
+            licm_expr(e, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
-            licm_expr(a, fields, cfg, local_names, hoist_count);
-            licm_expr(b, fields, cfg, local_names, hoist_count);
+            licm_expr(a, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(b, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Index { obj, index } => {
-            licm_expr(obj, fields, cfg, local_names, hoist_count);
-            licm_expr(index, fields, cfg, local_names, hoist_count);
+            licm_expr(obj, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(index, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Call { func, args, trailing } => {
-            licm_expr(func, fields, cfg, local_names, hoist_count);
+            licm_expr(func, fields, cfg, local_names, hoist_count, ipa);
             for a in args {
                 match a {
                     CallArg::Item(e) | CallArg::Spread(e) =>
-                        licm_expr(e, fields, cfg, local_names, hoist_count),
+                        licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                     CallArg::Named { value, .. } =>
-                        licm_expr(value, fields, cfg, local_names, hoist_count),
+                        licm_expr(value, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
             if let Some(t) = trailing {
                 match t {
-                    Trailing::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    Trailing::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
                     Trailing::Fn(sb) => match &mut sb.body {
-                        FnBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
-                        FnBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                        FnBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
+                        FnBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                         FnBody::External => {}
                     },
                     Trailing::LegacyBlockWithParams(tb) =>
-                        licm_block(&mut tb.body, fields, cfg, local_names, hoist_count),
+                        licm_block(&mut tb.body, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr(e) = p {
-                    licm_expr(e, fields, cfg, local_names, hoist_count);
+                    licm_expr(e, fields, cfg, local_names, hoist_count, ipa);
                 }
             }
         }
@@ -3748,7 +4071,7 @@ fn licm_expr(
             for el in elems {
                 match el {
                     ArrayElem::Item(e) | ArrayElem::Spread(e) =>
-                        licm_expr(e, fields, cfg, local_names, hoist_count),
+                        licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
@@ -3756,56 +4079,56 @@ fn licm_expr(
             for el in elems {
                 match el {
                     MapElem::Pair(k, v) => {
-                        licm_expr(k, fields, cfg, local_names, hoist_count);
-                        licm_expr(v, fields, cfg, local_names, hoist_count);
+                        licm_expr(k, fields, cfg, local_names, hoist_count, ipa);
+                        licm_expr(v, fields, cfg, local_names, hoist_count, ipa);
                     }
-                    MapElem::Spread(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    MapElem::Spread(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::RecordLit { fields: rfields, .. } => {
             for rf in rfields {
                 if let Some(v) = &mut rf.value {
-                    licm_expr(v, fields, cfg, local_names, hoist_count);
+                    licm_expr(v, fields, cfg, local_names, hoist_count, ipa);
                 }
             }
         }
         ExprKind::TupleLit(elems) => {
             for el in elems {
-                licm_expr(el, fields, cfg, local_names, hoist_count);
+                licm_expr(el, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         ExprKind::Select { arms } => {
             for arm in arms {
                 if let Some(g) = &mut arm.guard {
-                    licm_expr(g, fields, cfg, local_names, hoist_count);
+                    licm_expr(g, fields, cfg, local_names, hoist_count, ipa);
                 }
-                licm_block(&mut arm.body, fields, cfg, local_names, hoist_count);
+                licm_block(&mut arm.body, fields, cfg, local_names, hoist_count, ipa);
                 match &mut arm.op {
-                    SelectOp::Recv { chan, .. } => licm_expr(chan, fields, cfg, local_names, hoist_count),
+                    SelectOp::Recv { chan, .. } => licm_expr(chan, fields, cfg, local_names, hoist_count, ipa),
                     SelectOp::Send { chan, value } => {
-                        licm_expr(chan, fields, cfg, local_names, hoist_count);
-                        licm_expr(value, fields, cfg, local_names, hoist_count);
+                        licm_expr(chan, fields, cfg, local_names, hoist_count, ipa);
+                        licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
                     }
                     SelectOp::Default => {}
                 }
             }
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { licm_expr(s, fields, cfg, local_names, hoist_count); }
-            if let Some(e) = end { licm_expr(e, fields, cfg, local_names, hoist_count); }
+            if let Some(s) = start { licm_expr(s, fields, cfg, local_names, hoist_count, ipa); }
+            if let Some(e) = end { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
         }
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            licm_expr(range, fields, cfg, local_names, hoist_count);
-            licm_expr(body, fields, cfg, local_names, hoist_count);
+            licm_expr(range, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Interrupt(opt) => {
-            if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count); }
+            if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
         }
-        ExprKind::Throw(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+        ExprKind::Throw(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
         ExprKind::TaggedTemplate { tag, args, .. } => {
-            licm_expr(tag, fields, cfg, local_names, hoist_count);
-            for a in args { licm_expr(a, fields, cfg, local_names, hoist_count); }
+            licm_expr(tag, fields, cfg, local_names, hoist_count, ipa);
+            for a in args { licm_expr(a, fields, cfg, local_names, hoist_count, ipa); }
         }
         // Closures — separate scope; don't process LICM inside.
         ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
@@ -3826,6 +4149,7 @@ fn collect_loop_eligible_fields(
     body: &Block,
     fields: &HashMap<String, FieldKind>,
     cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
 ) -> Vec<(String, crate::diag::Span)> {
     // Spawn / Supervised / Detach / Blocking → skip whole loop.
     if block_contains_spawn(body) {
@@ -3835,9 +4159,10 @@ fn collect_loop_eligible_fields(
     let mut closure_captured: HashSet<String> = HashSet::new();
     collect_closures_captures_in_block(body, fields, &mut closure_captured);
 
-    // Plan 123.7.1 Ф.2: IPA-aware mut barrier per-field. Snapshot
-    // thread-local LICM context (set by licm_fn_with_ipa wrapper).
-    let licm_ipa = LICM_WRITE_SETS.with(|ws| ws.borrow().clone());
+    // Plan 123 V7.2 (2026-06-02): explicit `ipa` parameter replaces the
+    // V7.1 thread-local LICM_WRITE_SETS snapshot. None == V1 conservative
+    // "any call = barrier"; Some == frame-aware invalidation via
+    // `IpaCtx::call_invalidates_field`.
 
     let mut result: Vec<(String, crate::diag::Span)> = Vec::new();
     let mut keys: Vec<&String> = fields.keys().collect();
@@ -3859,16 +4184,8 @@ fn collect_loop_eligible_fields(
         };
         // Mut field — check call barrier per IPA (если context set'нут).
         if matches!(kind, FieldKind::Mut) {
-            let body_invalidates_field = match &licm_ipa {
-                Some((recv_type, write_sets)) => {
-                    let read_sets_empty = HashMap::new();
-                    let ipa = IpaCtx {
-                        write_sets,
-                        recv_type: recv_type.as_str(),
-                        read_sets: &read_sets_empty,
-                    };
-                    block_contains_invalidating_call_for(body, fname, Some(ipa))
-                }
+            let body_invalidates_field = match ipa {
+                Some(ipa) => block_contains_invalidating_call_for(body, fname, Some(ipa)),
                 None => block_contains_call(body), // V1 conservative.
             };
             if body_invalidates_field {
@@ -4473,6 +4790,19 @@ fn pure_cache_fn(
     pure_methods: &HashSet<(String, String)>,
     cfg: &FieldCacheConfig,
 ) {
+    pure_cache_fn_impl(f, reg, pure_methods, cfg, None)
+}
+
+/// Plan 123 V7.2 (2026-06-02): explicit IPA threading for pure-cache.
+/// `ipa` carries (recv_type, write_sets, read_sets) into the frame-aware
+/// invalidation branch, replacing PURE_IPA_CTX thread-local.
+fn pure_cache_fn_impl(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    pure_methods: &HashSet<(String, String)>,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
     if recv.kind == ReceiverKind::Static {
         return;
@@ -4489,10 +4819,10 @@ fn pure_cache_fn(
         return;
     }
 
-    // Plan 123.7.1 Ф.3 (V3.1): snapshot IPA pure context (set by
-    // pure_cache_fn_with_ipa wrapper). When present, enables frame-
-    // based invalidation refinement.
-    let pure_ipa = PURE_IPA_CTX.with(|p| p.borrow().clone());
+    // Plan 123 V7.2 (2026-06-02): explicit IPA ctx replaces PURE_IPA_CTX
+    // thread-local snapshot. Some == V3.1 frame-aware; None == V3 conservative.
+    let pure_ipa: Option<(String, HashMap<(String, String), HashSet<String>>)> =
+        ipa.map(|i| (i.recv_type.to_string(), i.read_sets.clone()));
 
     // Collect body's write-set (which fields are mutated в body).
     let body_writes: HashSet<String> = collect_body_writes(&f.body);
@@ -5655,6 +5985,16 @@ fn match_self_pure_call(
 
 /// V3.1: returns canonical String repr if expr is a simple literal,
 /// `None` otherwise.
+///
+/// Plan 123.3.2 (V3.2, 2026-06-02): extended to tuple- and record-
+/// literal arguments whose components are themselves literal-pure.
+/// Format:
+///   - Tuple `(a, b, c)`        → `T3{<a>;<b>;<c>}`
+///   - Record `Type { f1: v1 }` → `R<TypeName>{f1:<v1>;f2:<v2>;...}`
+///     с fields отсортированными по имени для canonical ordering.
+///     Anonymous record (`{ f: v }`) → `R{...}` без имени.
+/// Skipped patterns: spread fields, shorthand-pun fields without
+/// value, `inferred_map_v.is_some()` (D55 map-coercion not a literal).
 fn canonical_literal_repr(e: &Expr) -> Option<String> {
     match &e.kind {
         ExprKind::IntLit(n) => Some(format!("{}i", n)),
@@ -5674,6 +6014,46 @@ fn canonical_literal_repr(e: &Expr) -> Option<String> {
         // Unary negation на literal: `-5` parses as Unary{Neg, IntLit(5)}.
         ExprKind::Unary { op: UnOp::Neg, operand } => {
             canonical_literal_repr(operand).map(|r| format!("m{}", r))
+        }
+        // Plan 123.3.2 (V3.2): tuple literal — recurse on each element.
+        ExprKind::TupleLit(items) => {
+            let mut buf = format!("T{}{{", items.len());
+            for (idx, it) in items.iter().enumerate() {
+                if idx > 0 { buf.push(';'); }
+                let r = canonical_literal_repr(it)?;
+                buf.push_str(&r);
+            }
+            buf.push('}');
+            Some(buf)
+        }
+        // Plan 123.3.2 (V3.2): record literal — explicit fields only,
+        // sorted by name. Spread / shorthand / map-coercion → bail.
+        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            if inferred_map_v.is_some() { return None; }
+            // Collect (name, value-expr) pairs; reject any spread / no-value.
+            let mut pairs: Vec<(&str, &Expr)> = Vec::with_capacity(fields.len());
+            for f in fields {
+                if f.is_spread { return None; }
+                let value = f.value.as_ref()?;
+                pairs.push((f.name.as_str(), value));
+            }
+            // Canonical ordering — sort by field name.
+            pairs.sort_by(|a, b| a.0.cmp(b.0));
+            let mut buf = String::new();
+            buf.push('R');
+            if let Some(path) = type_name {
+                buf.push_str(&path.join("."));
+            }
+            buf.push('{');
+            for (idx, (name, val)) in pairs.iter().enumerate() {
+                if idx > 0 { buf.push(';'); }
+                buf.push_str(name);
+                buf.push(':');
+                let r = canonical_literal_repr(val)?;
+                buf.push_str(&r);
+            }
+            buf.push('}');
+            Some(buf)
         }
         _ => None,
     }
@@ -5909,6 +6289,17 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
 // - Receiver type не protocol/effect/opaque/sum/newtype/alias.
 
 fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    chain_cache_fn_impl(f, reg, cfg, None)
+}
+
+/// Plan 123 V7.2 (2026-06-02): explicit IPA threading for chain-cache.
+/// `ipa` carries write_sets для per-root invalidation, replacing CHAIN_IPA_CTX.
+fn chain_cache_fn_impl(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
     if recv.kind == ReceiverKind::Static {
         return;
@@ -5927,9 +6318,11 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     if body_has_concurrent(&f.body) {
         return;
     }
-    // Plan 123.7.1 Ф.4 (V4.1): per-root invalidation. Snapshot
-    // chain-IPA context (set by chain_cache_fn_with_ipa wrapper).
-    let chain_ipa = CHAIN_IPA_CTX.with(|c| c.borrow().clone());
+    // Plan 123 V7.2 (2026-06-02): explicit IPA ctx replaces CHAIN_IPA_CTX
+    // thread-local snapshot. Some == V4.1 per-root invalidation;
+    // None == V4 conservative "any write skips chain caching".
+    let chain_ipa: Option<(String, HashMap<(String, String), HashSet<String>>)> =
+        ipa.map(|i| (i.recv_type.to_string(), i.write_sets.clone()));
 
     // Collect body's write-set (top-level fields written).
     let body_writes: HashSet<String> = collect_body_writes(&f.body);
@@ -6007,6 +6400,19 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
         name_map.insert(path.clone(), chosen);
     }
 
+    // Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing.
+    // Identify length-2 prefixes shared by ≥2 chains; emit a shared
+    // base let `_at_<a>_<b>_pre = @<a>.<b>` so the per-chain lets need
+    // only walk the remaining tail. Reduces `@<root>` reads from
+    // N×depth to 1 + N×(depth - shared_len).
+    //
+    // Note: prefix lets follow `cfg.max_per_fn` budget too — we count
+    // them in `to_cache.len() + prefix_count`. Eligibility happens
+    // ONLY when shared prefix of length 2; deeper sharing (≥3) =
+    // V4.3 followup. Single-chain-per-prefix gets no prefix let
+    // (would be net 0 savings).
+    let prefix_map = compute_chain_prefix_sharing(&to_cache, &mut local_names, cfg.max_per_fn);
+
     // Coerce Expr body → Block для prepend.
     match &mut f.body {
         FnBody::Block(_) => {}
@@ -6034,10 +6440,44 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
 
     // Prepend cache let statements.
     if let FnBody::Block(b) = &mut f.body {
-        let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len());
+        let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len() + prefix_map.len());
+
+        // Plan 123.4.2 (V4.2): shared-prefix lets first — sorted by
+        // prefix for deterministic ordering. Each shared prefix yields
+        // a single `_at_a_b_pre = @a.b` let; subsequent per-chain lets
+        // reference it via `<prefix-local>.c.d.e` instead of full chain.
+        let mut prefix_keys: Vec<&Vec<String>> = prefix_map.keys().collect();
+        prefix_keys.sort();
+        for pkey in &prefix_keys {
+            let (pname, pspan) = &prefix_map[*pkey];
+            let access = build_chain_expr(pkey, *pspan);
+            prefix.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident {
+                    name: pname.clone(),
+                    span: *pspan,
+                    is_mut: false,
+                },
+                ty: None,
+                value: access,
+                span: *pspan,
+                is_ghost: false,
+                consume: false,
+            }));
+        }
+
         for (path, span) in &to_cache {
             let local_name = &name_map[path];
-            let access = build_chain_expr(path, *span);
+            // V4.2: when this chain has a shared prefix, build value
+            // expression as `<prefix-local>.<tail>` instead of
+            // `@<full path>`. Otherwise fall back to full `@chain`.
+            let access = if let Some((prefix_name, tail)) =
+                find_chain_shared_prefix(&prefix_map, path)
+            {
+                build_chain_from_ident(prefix_name, tail, *span)
+            } else {
+                build_chain_expr(path, *span)
+            };
             prefix.push(Stmt::Let(LetDecl {
                 mutable: false,
                 pattern: Pattern::Ident {
@@ -6055,6 +6495,77 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
         prefix.append(&mut b.stmts);
         b.stmts = prefix;
     }
+}
+
+/// Plan 123.4.2 (V4.2, 2026-06-02): determine shared length-2 prefixes
+/// among `to_cache` paths. Returns map: prefix-path → (synthetic-local-name, span).
+///
+/// Only groups с ≥2 chains and total emit count within `max_per_fn`
+/// budget qualify. Pure additive — no chains removed from to_cache.
+fn compute_chain_prefix_sharing(
+    to_cache: &[(Vec<String>, crate::diag::Span)],
+    local_names: &mut HashSet<String>,
+    max_per_fn: usize,
+) -> HashMap<Vec<String>, (String, crate::diag::Span)> {
+    let mut groups: HashMap<Vec<String>, Vec<&(Vec<String>, crate::diag::Span)>> = HashMap::new();
+    for entry in to_cache {
+        let path = &entry.0;
+        if path.len() < 3 { continue; }
+        let prefix = path[..2].to_vec();
+        groups.entry(prefix).or_default().push(entry);
+    }
+    let mut out: HashMap<Vec<String>, (String, crate::diag::Span)> = HashMap::new();
+    let mut emitted = to_cache.len();
+    let mut keys: Vec<Vec<String>> = groups.keys().cloned().collect();
+    keys.sort();
+    for prefix in keys {
+        let entries = &groups[&prefix];
+        if entries.len() < 2 { continue; }
+        if emitted >= max_per_fn { break; }
+        // Synthesize collision-safe local name: `_at_a_b_pre[_N]`.
+        let base = format!("_at_{}_pre", prefix.join("_"));
+        let mut chosen = base.clone();
+        let mut suffix = 0usize;
+        while local_names.contains(&chosen) {
+            suffix += 1;
+            chosen = format!("{}_{}", base, suffix);
+        }
+        local_names.insert(chosen.clone());
+        let earliest_span = entries.iter().map(|e| e.1).min_by_key(|s| s.start).unwrap_or(entries[0].1);
+        out.insert(prefix, (chosen, earliest_span));
+        emitted += 1;
+    }
+    out
+}
+
+/// Plan 123.4.2 (V4.2): if `path` is covered by a length-2 prefix in
+/// `prefix_map`, return `(prefix-local-name, tail-segments)`. Else None.
+fn find_chain_shared_prefix<'a, 'p>(
+    prefix_map: &'a HashMap<Vec<String>, (String, crate::diag::Span)>,
+    path: &'p [String],
+) -> Option<(&'a str, &'p [String])> {
+    if path.len() < 3 { return None; }
+    let prefix_key = &path[..2];
+    let (pname, _) = prefix_map.get(prefix_key)?;
+    Some((pname.as_str(), &path[2..]))
+}
+
+/// Plan 123.4.2 (V4.2): build `<ident>.<seg1>.<seg2>.<...>` expression.
+fn build_chain_from_ident(ident: &str, tail: &[String], span: crate::diag::Span) -> Expr {
+    let mut current = Expr {
+        kind: ExprKind::Ident(ident.to_string()),
+        span,
+    };
+    for name in tail {
+        current = Expr {
+            kind: ExprKind::Member {
+                obj: Box::new(current),
+                name: name.clone(),
+            },
+            span,
+        };
+    }
+    current
 }
 
 /// Build chain expression `@a.b.c` from path components.
@@ -6911,5 +7422,352 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
         assert_eq!(names1, names2);
         // Verify alphabetical: _at_a, _at_b, _at_c.
         assert_eq!(names1, vec!["_at_a", "_at_b", "_at_c"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.3.2 (V3.2, 2026-06-02): tuple + record literal canonical
+    // encoding for PureCallKey args_key.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn v32_tuple_literal_repr_canonical() {
+        use crate::ast::{Expr, ExprKind};
+        use crate::diag::Span;
+        let s = Span::default();
+        // (1, 2)
+        let tup = Expr::new(
+            ExprKind::TupleLit(vec![
+                Expr::new(ExprKind::IntLit(1), s),
+                Expr::new(ExprKind::IntLit(2), s),
+            ]),
+            s,
+        );
+        let repr = canonical_literal_repr(&tup).expect("Some");
+        assert_eq!(repr, "T2{1i;2i}");
+    }
+
+    #[test]
+    fn v32_nested_tuple_literal_repr() {
+        use crate::ast::{Expr, ExprKind};
+        use crate::diag::Span;
+        let s = Span::default();
+        // ((1,), 2)
+        let inner = Expr::new(
+            ExprKind::TupleLit(vec![Expr::new(ExprKind::IntLit(1), s)]),
+            s,
+        );
+        let outer = Expr::new(
+            ExprKind::TupleLit(vec![inner, Expr::new(ExprKind::IntLit(2), s)]),
+            s,
+        );
+        let repr = canonical_literal_repr(&outer).expect("Some");
+        assert_eq!(repr, "T2{T1{1i};2i}");
+    }
+
+    #[test]
+    fn v32_record_literal_sorted_canonical() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // Point { y: 2, x: 1 } — fields в reverse order to test sort.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: Some(vec!["Point".into()]),
+                fields: vec![
+                    RecordLitField {
+                        name: "y".into(),
+                        value: Some(Expr::new(ExprKind::IntLit(2), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                    RecordLitField {
+                        name: "x".into(),
+                        value: Some(Expr::new(ExprKind::IntLit(1), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        let repr = canonical_literal_repr(&rec).expect("Some");
+        // Fields sorted alphabetically: x then y.
+        assert_eq!(repr, "RPoint{x:1i;y:2i}");
+    }
+
+    #[test]
+    fn v32_record_literal_spread_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // { ...other } — spread must reject.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "".into(),
+                        value: Some(Expr::new(ExprKind::Ident("other".into()), s)),
+                        is_spread: true,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none(),
+            "spread record must be rejected by V3.2 encoder");
+    }
+
+    #[test]
+    fn v32_record_literal_pun_shorthand_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // { name } — shorthand without value (no .value) — reject.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "name".into(),
+                        value: None,
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none(),
+            "shorthand-pun field without value must be rejected");
+    }
+
+    #[test]
+    fn v32_record_literal_with_non_literal_arg_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // { x: foo } — Ident is not a literal → reject.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "x".into(),
+                        value: Some(Expr::new(ExprKind::Ident("foo".into()), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing emits
+    // `_at_<a>_<b>_pre` and chain lets reference it instead of full @chain.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn fn_prefix_lets(f: &FnDecl) -> Vec<String> {
+        if let FnBody::Block(b) = &f.body {
+            b.stmts.iter().take_while(|s| {
+                matches!(s, Stmt::Let(d)
+                    if matches!(&d.pattern, Pattern::Ident { name, .. } if name.starts_with("_at_")))
+            }).filter_map(|s| {
+                if let Stmt::Let(d) = s {
+                    if let Pattern::Ident { name, .. } = &d.pattern { Some(name.clone()) } else { None }
+                } else { None }
+            }).collect()
+        } else { vec![] }
+    }
+
+    #[test]
+    fn v42_shared_prefix_emitted_when_two_chains_share_prefix() {
+        // Two chains @a.b.c and @a.b.d (length 3, share prefix @a.b).
+        // V4.2 should emit a single `_at_a_b_pre = @a.b` PLUS the two
+        // per-chain lets that reference it.
+        let src = r#"
+module testmod.v42_shared
+type Inner2 { ro c int, ro d int }
+type Inner1 { ro b Inner2 }
+type Outer { ro a Inner1 }
+fn Outer @use_both() -> int {
+    @a.b.c + @a.b.c + @a.b.d + @a.b.d
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_both");
+        let names = fn_prefix_lets(f);
+        // Expect: _at_a_b_pre + _at_a_b_c_chain + _at_a_b_d_chain.
+        assert!(names.iter().any(|n| n == "_at_a_b_pre"),
+            "expected shared-prefix let _at_a_b_pre; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_chain"),
+            "expected per-chain let _at_a_b_c_chain; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_d_chain"),
+            "expected per-chain let _at_a_b_d_chain; got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.6.2 (V6.2, 2026-06-02): CPU savings estimate API for Plan
+    // 57 nova bench gate integration.
+    // ─────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.7.3 (V7.3, 2026-06-02): SCC-based exact closure replaces
+    // V7 iterative ≤N-iteration approximation.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn v73_tarjan_scc_returns_singletons_for_dag() {
+        // 0 -> 1 -> 2 (linear DAG). 3 SCCs, all singleton.
+        let adj = vec![vec![1usize], vec![2usize], vec![]];
+        let sccs = tarjan_scc(&adj);
+        assert_eq!(sccs.len(), 3);
+        for s in &sccs { assert_eq!(s.len(), 1); }
+    }
+
+    #[test]
+    fn v73_tarjan_scc_finds_cycle() {
+        // 0 -> 1 -> 2 -> 0 (3-cycle). 1 SCC containing все 3.
+        let adj = vec![vec![1usize], vec![2usize], vec![0usize]];
+        let sccs = tarjan_scc(&adj);
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0].len(), 3);
+    }
+
+    #[test]
+    fn v73_tarjan_scc_reverse_topological_order() {
+        // 0 -> 1 (linear). Leaves first: [1], then [0].
+        let adj = vec![vec![1usize], vec![]];
+        let sccs = tarjan_scc(&adj);
+        assert_eq!(sccs, vec![vec![1usize], vec![0usize]]);
+    }
+
+    #[test]
+    fn v73_scc_propagates_writes_through_cycle() {
+        // Two methods in mutual recursion (cycle):
+        //   Counter.inc writes @n; calls @double().
+        //   Counter.double calls @inc().
+        // SCC closure: both should report write_set = {"n"}.
+        let src = r#"
+module testmod.v73_scc
+type Counter { mut n int }
+fn Counter mut @inc() -> () { @n = @n + 1  @double() }
+fn Counter mut @double() -> () { @inc() }
+"#;
+        let module = crate::parser::parse(src).expect("parse");
+        let cfg = FieldCacheConfig::default();
+        let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
+        let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
+        let double_set = ws.get(&("Counter".to_string(), "double".to_string())).expect("double");
+        assert!(inc_set.contains("n"), "inc should write n directly");
+        assert!(double_set.contains("n"),
+            "double should inherit n via SCC closure (cycle with inc); got {:?}",
+            double_set);
+    }
+
+    #[test]
+    fn v73_legacy_iterative_fallback() {
+        // Setting NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1 must still produce
+        // valid (correct если iter_limit достаточен) closures.
+        // Сохраним then restore env var.
+        std::env::set_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE", "1");
+        let src = r#"
+module testmod.v73_legacy
+type Counter { mut n int }
+fn Counter mut @inc() -> () { @n = @n + 1 }
+"#;
+        let module = crate::parser::parse(src).expect("parse");
+        let cfg = FieldCacheConfig::default();
+        let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
+        std::env::remove_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE");
+        let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
+        assert!(inc_set.contains("n"));
+    }
+
+    #[test]
+    fn v62_cpu_savings_estimate_aggregates_layers() {
+        // Same SAMPLE as ro_two_reads_cached — analyze + estimate.
+        let src = r#"
+module testmod.v62
+type Point { ro x int, ro y int }
+fn Point @sum_squared() -> int { @x * @x + @y * @y }
+"#;
+        let module = crate::parser::parse(src).expect("parse");
+        let cfg = FieldCacheConfig::default();
+        let report = analyze_module(&module, &cfg);
+        let savings = cpu_savings_estimate(&report);
+        // Module has 2 ro caches (@x, @y) → savings_layer_ro = 2 × 4 = 8 cycles.
+        assert!(savings.estimated_cycles_saved > 0,
+            "expected non-zero savings; got {:?}", savings);
+        assert!(savings.layer_ro > 0, "ro layer should contribute");
+        assert_eq!(savings.methods_with_savings, 1);
+    }
+
+    #[test]
+    fn v62_cpu_savings_estimate_empty_report() {
+        let report = ExplainReport::default();
+        let savings = cpu_savings_estimate(&report);
+        assert_eq!(savings.estimated_cycles_saved, 0);
+        assert_eq!(savings.methods_with_savings, 0);
+    }
+
+    #[test]
+    fn v42_no_shared_prefix_when_single_chain() {
+        // Only @a.b.c chain — no other chain shares prefix → no _pre let.
+        let src = r#"
+module testmod.v42_single
+type Inner2 { ro c int }
+type Inner1 { ro b Inner2 }
+type Outer { ro a Inner1 }
+fn Outer @use_single() -> int {
+    @a.b.c + @a.b.c + @a.b.c
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_single");
+        let names = fn_prefix_lets(f);
+        assert!(names.iter().all(|n| !n.ends_with("_pre")),
+            "no _pre let should emit when only single chain; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_chain"),
+            "expected per-chain let; got {:?}", names);
+    }
+
+    #[test]
+    fn v32_inferred_map_v_record_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField, TypeRef};
+        use crate::diag::Span;
+        let s = Span::default();
+        // inferred_map_v.is_some() → reject (D55 map-coercion).
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "k".into(),
+                        value: Some(Expr::new(ExprKind::IntLit(1), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: Some(TypeRef::Unit(s)),
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none(),
+            "D55 map-coercion record must be rejected by V3.2 encoder");
     }
 }

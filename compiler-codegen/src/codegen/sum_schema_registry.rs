@@ -1383,19 +1383,15 @@ mod tests {
     /// entry для Option, inheriting method_routing от HardcodedBaseline.
     #[test]
     fn test_init_prelude_decls_from_items_option_inherits_routing() {
-        use crate::ast::{
-            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
-            VerifyMode, Purity,
-        };
+        use crate::ast::{FnDecl, Item, Receiver, ReceiverKind};
         use crate::diag::Span;
 
         let mut reg = SumSchemaRegistry::new();
         reg.init_hardcoded_baseline();
 
+        // Plan 123 baseline-fix (2026-06-02): Default::default() spread.
+        // Robust to future AST field additions — set only what matters.
         let opt_is_some = FnDecl {
-            doc: None,
-            doc_attrs: vec![],
-            is_export: false,
             is_external: true,
             name: "is_some".to_string(),
             receiver: Some(Receiver {
@@ -1406,26 +1402,7 @@ mod tests {
                 consume: false,
                 span: Span::default(),
             }),
-            generics: vec![],
-            params: vec![],
-            effects: vec![],
-            return_type: None,
-            return_is_const: false,
-            returns_receiver: false,
-            body: FnBody::External,
-            span: Span::default(),
-            realtime_attr: RealtimeAttr::None, blocking_attr: false,
-            contracts: vec![],
-            reads: vec![],
-            modifies: vec![],
-            decreases: None,
-            verify_mode: VerifyMode::Default,
-            verify_timeout_ms: None,
-            purity: Purity::Unknown,
-            is_trusted: false,
-            fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
-            cancel_safe_attr: false,
+            ..Default::default()
         };
         let items = vec![Item::Fn(opt_is_some)];
 
@@ -1468,19 +1445,13 @@ mod tests {
     /// entry. Verifies routing inherited (non-per-T for Result).
     #[test]
     fn test_init_prelude_decls_from_items_result_inherits_routing() {
-        use crate::ast::{
-            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
-            VerifyMode, Purity,
-        };
+        use crate::ast::{FnDecl, Item, Receiver, ReceiverKind};
         use crate::diag::Span;
 
         let mut reg = SumSchemaRegistry::new();
         reg.init_hardcoded_baseline();
 
         let res_is_ok = FnDecl {
-            doc: None,
-            doc_attrs: vec![],
-            is_export: false,
             is_external: true,
             name: "is_ok".to_string(),
             receiver: Some(Receiver {
@@ -1491,26 +1462,7 @@ mod tests {
                 consume: false,
                 span: Span::default(),
             }),
-            generics: vec![],
-            params: vec![],
-            effects: vec![],
-            return_type: None,
-            return_is_const: false,
-            returns_receiver: false,
-            body: FnBody::External,
-            span: Span::default(),
-            realtime_attr: RealtimeAttr::None, blocking_attr: false,
-            contracts: vec![],
-            reads: vec![],
-            modifies: vec![],
-            decreases: None,
-            verify_mode: VerifyMode::Default,
-            verify_timeout_ms: None,
-            purity: Purity::Unknown,
-            is_trusted: false,
-            fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
-            cancel_safe_attr: false,
+            ..Default::default()
         };
         let items = vec![Item::Fn(res_is_ok)];
 
@@ -1538,14 +1490,10 @@ mod tests {
     /// `HardcodedRuntimeFn` (behavior-preserving).
     #[test]
     fn test_init_prelude_decls_from_items_nova_body_overrides_to_declared_body() {
-        use crate::ast::{
-            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
-            VerifyMode, Purity, Expr, ExprKind,
-        };
+        use crate::ast::{FnDecl, FnBody, Item, Receiver, ReceiverKind, Expr, ExprKind};
         use crate::diag::Span;
 
         let mk_fn = |name: &str, recv_type: &str, external: bool| FnDecl {
-            doc: None, doc_attrs: vec![], is_export: false,
             is_external: external,
             name: name.to_string(),
             receiver: Some(Receiver {
@@ -1555,8 +1503,6 @@ mod tests {
                 mutable: false, consume: false,
                 span: Span::default(),
             }),
-            generics: vec![], params: vec![], effects: vec![],
-            return_type: None, return_is_const: false, returns_receiver: false,
             // Stub Nova-body для теста — `=> false` (контент не важен,
             // важно только `is_external == false` и `body != External`).
             body: if external { FnBody::External } else {
@@ -1564,14 +1510,7 @@ mod tests {
                     ExprKind::BoolLit(false), Span::default()
                 ))
             },
-            span: Span::default(),
-            realtime_attr: RealtimeAttr::None, blocking_attr: false,
-            contracts: vec![], reads: vec![], modifies: vec![],
-            decreases: None, verify_mode: VerifyMode::Default,
-            verify_timeout_ms: None, purity: Purity::Unknown,
-            is_trusted: false, fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
-            cancel_safe_attr: false,
+            ..Default::default()
         };
 
         let mut reg = SumSchemaRegistry::new();
@@ -1620,15 +1559,10 @@ mod tests {
     /// **Plan 95 Ф.1.2 (Result)**: Nova-body `is_ok` на `Result` → `DeclaredBody`.
     #[test]
     fn test_init_prelude_decls_from_items_result_nova_body_overrides() {
-        use crate::ast::{
-            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
-            VerifyMode, Purity, Expr, ExprKind,
-        };
+        use crate::ast::{FnDecl, FnBody, Item, Receiver, ReceiverKind, Expr, ExprKind};
         use crate::diag::Span;
 
         let res_is_ok = FnDecl {
-            doc: None, doc_attrs: vec![], is_export: false,
-            is_external: false,
             name: "is_ok".to_string(),
             receiver: Some(Receiver {
                 type_name: "Result".to_string(),
@@ -1637,19 +1571,10 @@ mod tests {
                 mutable: false, consume: false,
                 span: Span::default(),
             }),
-            generics: vec![], params: vec![], effects: vec![],
-            return_type: None, return_is_const: false, returns_receiver: false,
             body: FnBody::Expr(Expr::new(
                 ExprKind::BoolLit(false), Span::default()
             )),
-            span: Span::default(),
-            realtime_attr: RealtimeAttr::None, blocking_attr: false,
-            contracts: vec![], reads: vec![], modifies: vec![],
-            decreases: None, verify_mode: VerifyMode::Default,
-            verify_timeout_ms: None, purity: Purity::Unknown,
-            is_trusted: false, fuel: None,
-            is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
-            cancel_safe_attr: false,
+            ..Default::default()
         };
 
         let mut reg = SumSchemaRegistry::new();
@@ -1695,13 +1620,7 @@ mod tests {
         let mk_field = |name: &str, ty_name: &str| RecordField {
             name: name.to_string(),
             ty: mk_named(ty_name),
-            readonly: false,
-            mutable: false,
-            is_embed: false,
-            embed_anonymous: false,
-            span: Span::default(),
-            consume: false,
-            priv_field: false,
+            ..Default::default()
         };
         let mk_variant = |name: &str, kind: SumVariantKind| SumVariant {
             name: name.to_string(),
@@ -1713,11 +1632,8 @@ mod tests {
         // Конструируем prelude-declaration RuntimeError — все 6 variants,
         // matching std/prelude/errors.nv.
         let runtime_error_decl = TypeDecl {
-            doc: None,
-            doc_attrs: vec![],
             is_export: true,
             name: "RuntimeError".to_string(),
-            generics: vec![],
             kind: TypeDeclKind::Sum(vec![
                 mk_variant("DivByZero", SumVariantKind::Unit),
                 mk_variant("Overflow", SumVariantKind::Unit),
@@ -1729,14 +1645,7 @@ mod tests {
                 mk_variant("AssertFailed", SumVariantKind::Tuple(vec![mk_named("str")])),
                 mk_variant("NoHandler", SumVariantKind::Tuple(vec![mk_named("str")])),
             ]),
-            span: Span::default(),
-            attrs: vec![],
-            invariants: vec![],
-            axioms: vec![],
-            consume: false,
-            assoc_consts: vec![],
-            impl_protocols: vec![],
-            default_field_priv: false,
+            ..Default::default()
         };
         let items = vec![Item::Type(runtime_error_decl)];
 
@@ -1807,19 +1716,13 @@ mod tests {
 
         // Drift: declaration с extra variant "MyExtra" + missing 5 baseline'ных.
         let drifted_decl = TypeDecl {
-            doc: None, doc_attrs: vec![], is_export: true,
+            is_export: true,
             name: "RuntimeError".to_string(),
-            generics: vec![],
             kind: TypeDeclKind::Sum(vec![
                 mk_variant("DivByZero"),  // matches baseline
                 mk_variant("MyExtra"),    // extra — not in baseline
             ]),
-            span: Span::default(), attrs: vec![],
-            invariants: vec![], axioms: vec![],
-            consume: false,
-            assoc_consts: vec![],
-            impl_protocols: vec![],
-            default_field_priv: false,
+            ..Default::default()
         };
 
         reg.init_prelude_decls_from_items(&[Item::Type(drifted_decl)]);
@@ -1859,17 +1762,12 @@ mod tests {
         let mk_field = |name: &str, ty_name: &str| RecordField {
             name: name.to_string(),
             ty: mk_named(ty_name),
-            readonly: false, mutable: false,
-            is_embed: false, embed_anonymous: false,
-            span: Span::default(),
-            consume: false,
-            priv_field: false,
+            ..Default::default()
         };
 
         let rbe_decl = TypeDecl {
-            doc: None, doc_attrs: vec![], is_export: true,
+            is_export: true,
             name: "ReadBufferError".to_string(),
-            generics: vec![],
             kind: TypeDeclKind::Sum(vec![
                 SumVariant {
                     name: "UnexpectedEnd".to_string(),
@@ -1881,12 +1779,7 @@ mod tests {
                     span: Span::default(),
                 },
             ]),
-            span: Span::default(), attrs: vec![],
-            invariants: vec![], axioms: vec![],
-            consume: false,
-            assoc_consts: vec![],
-            impl_protocols: vec![],
-            default_field_priv: false,
+            ..Default::default()
         };
 
         reg.init_prelude_decls_from_items(&[Item::Type(rbe_decl)]);
@@ -1917,10 +1810,7 @@ mod tests {
     /// (не создаёт Prelude entry).
     #[test]
     fn test_init_prelude_decls_from_items_ignores_other_types() {
-        use crate::ast::{
-            FnDecl, FnBody, Item, Receiver, ReceiverKind, RealtimeAttr,
-            VerifyMode, Purity,
-        };
+        use crate::ast::{FnDecl, Item, Receiver, ReceiverKind};
         use crate::diag::Span;
 
         let mut reg = SumSchemaRegistry::new();
@@ -1929,23 +1819,14 @@ mod tests {
 
         // Method on Error (record, не sum в registry) — должен игнорироваться.
         let error_method = FnDecl {
-            doc: None, doc_attrs: vec![], is_export: false, is_external: true,
+            is_external: true,
             name: "render".to_string(),
             receiver: Some(Receiver {
                 type_name: "Error".to_string(),
                 generics: vec![], kind: ReceiverKind::Instance,
                 mutable: false, consume: false, span: Span::default(),
             }),
-            generics: vec![], params: vec![], effects: vec![], return_type: None,
-            return_is_const: false,
-            returns_receiver: false,
-            body: FnBody::External, span: Span::default(),
-            realtime_attr: RealtimeAttr::None, blocking_attr: false, contracts: vec![],
-            reads: vec![], modifies: vec![], decreases: None,
-            verify_mode: VerifyMode::Default, verify_timeout_ms: None,
-            purity: Purity::Unknown, is_trusted: false,
-            fuel: None, is_opaque: false, no_overflow: false, sync_class: None, needs_caps: vec![], fn_eval_max_depth: None,
-            cancel_safe_attr: false,
+            ..Default::default()
         };
         let items = vec![Item::Fn(error_method)];
 

@@ -1,0 +1,33 @@
+// Plan 123.3.2 (V3.2, 2026-06-02): pure-call cache survives tuple
+// literal args. Method `@pair(t, n)` called twice с identical tuple
+// literal `(1, 2)` and identical int литералом → only ONE evaluation
+// after codegen; cached local reused.
+
+module plan123_3_2.v32_tuple_literal_args_ok
+
+type Box {
+    ro base int
+}
+
+#pure
+fn Box @sum_pair_with(t (int, int), n int) -> int {
+    @base + t.0 + t.1 + n
+}
+
+fn Box @use_twice() -> int {
+    ro a = @sum_pair_with((1, 2), 100)
+    ro b = @sum_pair_with((1, 2), 100)
+    a + b
+}
+
+fn Box.new(b int) -> Box {
+    Box { base: b }
+}
+
+test "V3.2: tuple-literal arg pure-call is cached" {
+    ro x = Box.new(10)
+    ro r = x.use_twice()
+    // sum_pair_with((1,2), 100) = 10 + 1 + 2 + 100 = 113.
+    // a + b = 226.
+    assert(r == 226)
+}

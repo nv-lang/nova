@@ -1,0 +1,30 @@
+// Plan 123 V7.2 negative-path test: free fn (no receiver) — the
+// V7.2 `recv_type_for_ipa` helper returns None for receiver-less
+// fns, so IPA is correctly skipped (no panic, falls back to V1
+// conservative). Must compile + run identically to V7.1 behavior.
+
+module plan123_7_2.v72_no_recv_skips_ipa_ok
+
+type Counter {
+    mut n int
+}
+
+// Method exists so write_sets is non-empty in the module.
+fn Counter mut @inc() -> () {
+    @n = @n + 1
+}
+
+// Free fn — `f.receiver == None` → build_ipa returns None → V1 fallback.
+fn compute(c Counter) -> int {
+    c.n + c.n
+}
+
+fn Counter.new() -> Counter {
+    Counter { n: 9 }
+}
+
+test "V7.2: free fn (no receiver) skips IPA gracefully" {
+    ro c = Counter.new()
+    ro r = compute(c)
+    assert(r == 18)
+}
