@@ -1359,6 +1359,12 @@ struct TypeCheckCtx<'a> {
     /// const validation skipped (body checker `check_const_fn_decl` covers
     /// param/local awareness more precisely).
     in_const_fn: std::cell::Cell<bool>,
+    /// Plan 124 (D220): current receiver type — set перед walking method body
+    /// в check_fn; cleared on exit. `None` если мы НЕ внутри type-method
+    /// (free fn, top-level expr). f3_check_member использует для priv field
+    /// access check: если field.priv_field И current_recv_type != obj's type
+    /// → emit E_PRIV_FIELD_READ.
+    current_recv_type: std::cell::RefCell<Option<String>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -1370,6 +1376,18 @@ struct ConstFnFlagGuard<'a, 'b> {
 impl<'a, 'b> Drop for ConstFnFlagGuard<'a, 'b> {
     fn drop(&mut self) {
         self.ctx.in_const_fn.set(self.prev);
+    }
+}
+
+/// Plan 124 (D220): RAII guard для current_recv_type field в TypeCheckCtx.
+/// Restoring previous value on drop — works regardless of error path.
+struct PrivRecvGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Option<String>,
+}
+impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_recv_type.borrow_mut() = self.prev.take();
     }
 }
 
@@ -1513,7 +1531,8 @@ impl<'a> TypeCheckCtx<'a> {
             if !added { break; }
         }
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
-            in_const_fn: std::cell::Cell::new(false) }
+            in_const_fn: std::cell::Cell::new(false),
+            current_recv_type: std::cell::RefCell::new(None) }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -2221,6 +2240,14 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_in_const_fn = self.in_const_fn.get();
         self.in_const_fn.set(is_const_fn);
         let _guard = ConstFnFlagGuard { ctx: self, prev: prev_in_const_fn };
+
+        // Plan 124 (D220): set current_recv_type для priv field access scope
+        // tracking. Instance + Static methods обa get receiver's type_name;
+        // priv field access разрешён в both contexts.
+        let prev_recv = self.current_recv_type.borrow().clone();
+        let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
+        *self.current_recv_type.borrow_mut() = new_recv;
+        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
         // Generic-scope функции: её собственные generic-параметры +
         // generic-параметры receiver-типа (`fn Box[T] @get() -> T`).
         let mut gs: HashSet<String> = HashSet::new();
@@ -2999,6 +3026,13 @@ impl<'a> TypeCheckCtx<'a> {
     // ================================================================
 
     fn f1_check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 124 (D220): set current_recv_type для priv field access scope
+        // tracking. Instance + Static methods обa get receiver's type_name.
+        let prev_recv = self.current_recv_type.borrow().clone();
+        let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
+        *self.current_recv_type.borrow_mut() = new_recv;
+        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+
         let gs = fn_generic_scope(fd);
         let mut scope: HashMap<String, TypeRef> = HashMap::new();
         for p in &fd.params {
@@ -3728,7 +3762,26 @@ impl<'a> TypeCheckCtx<'a> {
                 if fields.iter().any(|f| f.is_embed) {
                     return;
                 }
-                if fields.iter().any(|f| f.name == name) {
+                if let Some(field) = fields.iter().find(|f| f.name == name) {
+                    // Plan 124 (D220): priv field READ access check.
+                    // Field accessible только из methods own type'а.
+                    if field.priv_field {
+                        let current_recv = self.current_recv_type.borrow();
+                        let allowed = current_recv.as_deref() == Some(tname.as_str());
+                        if !allowed {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Field marked \
+                                     `priv` (Plan 124 / D220). Hint: add public \
+                                     getter method on `{}` or move accessing code \
+                                     into a method of `{}`.",
+                                    tname, name, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
+                    }
                     return;
                 }
                 // Метод? Имена операторных методов могут храниться с ведущим `@`.
