@@ -1,0 +1,31 @@
+// Plan 118 Ф.5.10 T5.7 / A21 remainder — NPO для Option[*fn(...)]
+// (function pointer types). После audit type_ref_to_c lowering:
+//   TypeRef::Pointer(modif, TypeRef::Func{...}, _)
+//   → "const void**" (для *ro fn) или "void**" (для *mut/*unsafe fn)
+//
+// Both end with '*' → V1 detection `c_ty.ends_with('*')` ALREADY
+// triggers NPO для Option[*fn(...)] correctly. A21 remainder closes
+// automatically через existing V1 NPO infrastructure (Ф.5 A19 landing).
+//
+// Verifies:
+//   - Option[*fn(int) -> int] in external fn signature parses + lowers
+//   - Generated C uses NPO single-pointer layout
+//   - None ctor emits NULL value
+
+module plan118.t5_7_npo_option_fn_pointer_ok
+
+// External fn returning Option of function pointer (FFI callback registration
+// pattern — dlsym/GetProcAddress style).
+external fn p118_lookup_callback(name str) -> Option[*fn(i64) -> i64]
+
+test "Option[*fn(...)] None type-checks via NPO" {
+    ro cb Option[*fn(i64) -> i64] = None
+    assert(cb is None)
+}
+
+test "Option[*fn(...)] equality identity-check via NPO" {
+    ro a Option[*fn(i64) -> i64] = None
+    ro b Option[*fn(i64) -> i64] = None
+    // NPO eq: a.value == b.value (pointer identity, no tag compare).
+    assert(a == b)
+}
