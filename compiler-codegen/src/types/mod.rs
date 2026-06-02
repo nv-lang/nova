@@ -1439,6 +1439,22 @@ fn check_const_fn_decl(
         param_consts.insert(p.name.clone());
     }
     let local_consts = std::collections::HashSet::new();
+    // Plan 114.4.4.4 V4.3: closure-returning const fn — body is single
+    // closure literal at top level. Allow it и validate closure body
+    // с extended scope (const params + closure params).
+    if let crate::ast::FnBody::Expr(e) = &fd.body {
+        if let Some(extra) = closure_param_names(e) {
+            // Closure params добавляем в const-param scope чтобы closure
+            // body мог reference closure's own params as "constexpr-like"
+            // от точки зрения validator'а (они runtime, но validator
+            // допускает Ident refs к param_consts).
+            let mut extended = param_consts.clone();
+            for n in &extra { extended.insert(n.clone()); }
+            return validate_const_fn_closure_body(
+                e, &extended, const_fn_names, &local_consts, &fd.name, call_targets,
+            );
+        }
+    }
     match &fd.body {
         crate::ast::FnBody::Expr(e) => check_const_fn_expr(
             e, &param_consts, const_fn_names, &local_consts, &fd.name, call_targets,
@@ -1450,6 +1466,70 @@ fn check_const_fn_decl(
             "[E_CONST_FN_EXTERNAL] external fn не может быть const fn (D199)."
                 .to_string(),
             fd.span,
+        )),
+    }
+}
+
+/// Plan 114.4.4.4 V4.3: if `e` is closure literal at top level — return
+/// its parameter names. Otherwise None.
+fn closure_param_names(e: &crate::ast::Expr) -> Option<Vec<String>> {
+    use crate::ast::ExprKind as E;
+    match &e.kind {
+        E::Lambda { params, .. } => {
+            Some(params.iter().map(|p| p.name.clone()).collect())
+        }
+        E::ClosureLight { params, .. } => {
+            Some(params.iter().map(|p| p.name.clone()).collect())
+        }
+        E::ClosureFull(sb) => {
+            Some(sb.params.iter().map(|p| p.name.clone()).collect())
+        }
+        _ => None,
+    }
+}
+
+/// Plan 114.4.4.4 V4.3: validate closure body of closure-returning const
+/// fn. Closure body может использовать host fn's const params + closure's
+/// own params как identifier sources. Other constructs validated по
+/// regular V1 const fn body rules.
+fn validate_const_fn_closure_body(
+    closure_expr: &crate::ast::Expr,
+    extended_params: &std::collections::HashSet<String>,
+    const_fn_names: &std::collections::HashSet<String>,
+    local_consts: &std::collections::HashSet<String>,
+    current_fn: &str,
+    call_targets: &mut std::collections::HashSet<String>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::{ExprKind as E, FnBody, ClosureBody};
+    match &closure_expr.kind {
+        E::Lambda { body, .. } => check_const_fn_expr(
+            body, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+        ),
+        E::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => check_const_fn_expr(
+                e, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+            ClosureBody::Block(b) => check_const_fn_block(
+                b, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+        },
+        E::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => check_const_fn_expr(
+                e, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+            FnBody::Block(b) => check_const_fn_block(
+                b, extended_params, const_fn_names, local_consts, current_fn, call_targets,
+            ),
+            FnBody::External => Err(Diagnostic::new(
+                "[E_CONST_FN_CLOSURE_EXTERNAL] closure-returning const fn body \
+                 cannot be external (D199 V4.3).".to_string(),
+                closure_expr.span,
+            )),
+        },
+        _ => Err(Diagnostic::new(
+            "[E_CONST_FN_CLOSURE_BODY] expected closure literal в \
+             closure-returning const fn body (D199 V4.3).".to_string(),
+            closure_expr.span,
         )),
     }
 }

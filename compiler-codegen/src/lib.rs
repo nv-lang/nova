@@ -6,6 +6,7 @@ pub mod argbind;
 pub mod ast;
 pub mod callnorm;
 pub mod codegen;
+pub mod const_fn_closure;
 pub mod const_fn_eval;
 pub mod const_fn_mono;
 pub mod const_fn_trampoline;

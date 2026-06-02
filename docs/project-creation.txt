@@ -28684,3 +28684,71 @@ Lessons:
 - Substituting "is_const = false" at trampoline gen time avoids
   invasive codegen changes; trampoline body работает как обычный
   runtime fn body. Cheap demotion strategy.
+
+
+================================================================================
+== 2026-06-02 — Plan 114.4.4.4 V4.3: closure-returning const fn specialization
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-3 (off plan-114.4.4-v4-2 head)
+> Status: 🟢 V1 LANDED. Closes [M-114.4.3-closure-from-const-fn].
+
+Замысел:
+До V4.3 closure literals в const fn body отвергались
+с E_CONST_FN_EFFECT_IN_BODY. V4.3 разрешает специальную форму — const
+fn чьё body — single closure literal: `fn make_adder(const n int) ->
+const fn(int) -> int => |x| x + n`. При вызове `make_adder(5)`
+компилятор генерирует specialized top-level fn `make_adder__closure_0`
+с substituted const param (n → 5) в closure body и replaces call site
+с Ident'ом к этой specialized fn (Nova поддерживает bare fn name as fn
+pointer).
+
+Реализация:
+- Новый модуль compiler-codegen/src/const_fn_closure.rs (~700 LOC).
+- 4 шага: detect closure-returning fns → walk + rewrite call sites →
+  generate specialized FnDecls (clone closure body + substitute) →
+  friendly first-class reject.
+- Body validator extension в types/mod.rs: closure-at-top-level case
+  расширяет scope с closure's own params (validation closure body по
+  обычным V1 rules с extended ident set).
+- Pipeline placement: ДО main walker в rewrite_const_fn_calls (так что
+  eval_call не сталкивается с closure body как ConstValue).
+
+Тесты (release nova-cli):
+- 4 positive: basic, dedup (3→2 specs memoization), as_hof (specialized
+  closure passed as HOF arg), block_body (closure block с control flow).
+- 2 negative: first_class_neg (bare Ident → E_CONST_FN_CLOSURE_FIRST_CLASS),
+  arity_neg (closure param count mismatch → E_CONST_FN_CLOSURE_ARITY).
+- 23/23 plan114_4_4 PASS + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 52/52.
+
+Spec/Q updates:
+- D199 V4.3 extensions subsection (spec/decisions/03-syntax.md).
+- A35 acceptance criterion added; 🎯 Plan 114.4.4 family complete table.
+- Q7 V4.3+ closure note (spec/open-questions.md) — все Plan 114.4.4
+  followups закрыты.
+- Plan 114.4.4.4 doc status section appended.
+
+Open followups:
+- [M-114.4.4-closure-generic] — generic closure-returning const fn.
+- [M-114.4.4-closure-captures-outer] — closure capturing outer locals
+  beyond host const params (V1 supports only const param captures).
+
+Lessons:
+- Fourth walker в const_fn_* family (eval/mono/trampoline/closure).
+  Walker pattern проверенно scalable. Substitution helpers shared с mono.rs
+  (copy-paste, refactor в common visitor — followup if >5 walkers).
+- "Closure at top-level" — clean detection rule. Recursive closure
+  detection (deep inside body) would require full effect propagation —
+  V1 keeps narrow scope.
+- Pipeline placement difference: closure pass РАНЬШЕ main walker
+  (closures can't be ConstValue), trampoline pass ПОЗЖЕ main walker
+  (intrinsics already inlined). Discipline критична для correctness.
+
+🎯 Plan 114.4.4 family полностью закрыта (V3-V4.3 phases):
+- 114.4.4 V3 (Ф.1-Ф.3) + Ф.4 + Ф.5 V4 (landed earlier sessions)
+- 114.4.4.5 V4.1 mono-specialization (2026-06-02)
+- 114.4.4.3 V4.2 runtime trampoline (this session AM)
+- 114.4.4.4 V4.3 closure-from-const-fn (this session)
+
+All 9 markers from [M-114.4.3-*] closed.

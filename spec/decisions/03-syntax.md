@@ -7416,7 +7416,65 @@ Pipeline placement: внутри `rewrite_const_fn_calls`, ПОСЛЕ main walke
   `[M-114.4.4-trampoline-generics]`.
 - Closure literals в body — Plan 114.4.4.4 territory.
 
-### V3+V4+V4.1+V4.2 acceptance — A27-A34 (landed)
+### V4.3 extensions (Plan 114.4.4.4 V4.3 session, 2026-06-02)
+
+**Closure-returning const fn — comptime closure specialization (Plan 114.4.4.4):**
+
+V3 baseline (Plan 114.4.4 Ф.1): closure literals в const fn body отвергались
+с `E_CONST_FN_EFFECT_IN_BODY`. V4.3 разрешает специальную форму — const
+fn чьё body — single closure literal:
+
+```nova
+fn make_adder(const n int) -> const fn(int) -> int =>
+    |x| x + n   // captures const param n
+
+test {
+    ro adder5 = make_adder(5)   // ⇒ Ident("make_adder__closure_0")
+    assert(adder5(3) == 8)      // calls specialized fn (x int) -> int { x + 5 }
+
+    ro m3 = make_mul(3)         // distinct spec __closure_1
+    ro m3_again = make_mul(3)   // reuses __closure_1 (memoized)
+}
+```
+
+*Semantics:*
+- Detect: const fn whose body is `FnBody::Expr(Lambda | ClosureLight | ClosureFull)`.
+- At each Call site `host_fn(LITERAL_ARGS)`:
+  - Memoize per (host_fn_name, const_args_tuple); identical args reuse spec.
+  - Generate specialized top-level fn `<host>__closure_<idx>` where:
+    - Params = closure params (типы выведены: Lambda/ClosureFull explicit
+      annotations OR host fn's `-> const fn(T1, ..) -> R` declaration для
+      ClosureLight untyped).
+    - Body = closure body с host's const params substituted с literal values.
+    - Return type = closure's explicit annotation OR host's declared `R`.
+  - Replace Call expression с `Ident(spec_name)` — Nova принимает bare
+    fn name как fn pointer.
+
+*Body validation extension:* `check_const_fn_decl` детектирует closure-at-top-level
+case и расширяет scope (host const params + closure params) при validation
+closure body — body validated по обычным V1 rules (literals/arithmetic/control
+flow/calls к другим const fn) с extended ident scope.
+
+*Implementation:* New module `compiler-codegen/src/const_fn_closure.rs`.
+Pipeline placement: внутри `rewrite_const_fn_calls` **ДО** main walker
+(чтобы calls к closure-returning fns были already rewritten к Idents и
+walker не пытался eval_call их через interpreter, который не умеет
+closure ConstValue).
+
+*V4.3 limitations:*
+- First-class use of closure-returning fn name (`ro f = make_adder` без
+  immediate call) rejected: each call produces distinct specialized
+  closure → no single trampoline. Friendly error
+  `E_CONST_FN_CLOSURE_FIRST_CLASS`.
+- Untyped closure `|x| body` requires host's `-> const fn(T) -> R`
+  declaration для type inference (Lambda/ClosureFull с explicit types
+  работают независимо).
+- Closure param arity must match host's `fn(..)` declaration arity
+  (`E_CONST_FN_CLOSURE_ARITY`).
+- Generic closure-returning const fn — V2 followup
+  `[M-114.4.4-closure-generic]`.
+
+### V3+V4+V4.1+V4.2+V4.3 acceptance — A27-A35 (landed)
 
 | # | Критерий | Verification |
 |---|---|---|
@@ -7428,8 +7486,10 @@ Pipeline placement: внутри `rewrite_const_fn_calls`, ПОСЛЕ main walke
 | A32 | `sizeof[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
 | A33 | Mixed const fn per-arg monomorphization | mono_specialization_ok fixture |
 | A34 | Const fn first-class use через runtime trampoline | runtime_hof_*_ok fixtures (5 шт.) |
+| A35 | Closure-returning const fn — comptime specialization | closure_from_const_fn_*_ok fixtures (4 шт.) |
 
-A35 (closures-from-const-fn) → Plan 114.4.4.4 (V4.3 scope).
+🎯 **Plan 114.4.4 family COMPLETE** — все V3/V4/V4.1/V4.2/V4.3 phases landed.
+Open V2/V3 generic extensions tracked через `[M-114.4.4-*]` markers.
 
 ### V2 acceptance — A19-A26
 

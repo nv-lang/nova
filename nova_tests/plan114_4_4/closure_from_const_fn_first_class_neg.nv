@@ -1,0 +1,17 @@
+// Plan 114.4.4.4 V4.3 NEGATIVE: closure-returning const fn cannot be
+// used as first-class value (`ro f = make_adder`) — each call produces
+// distinct specialized closure, no single trampoline. Friendly error
+// E_CONST_FN_CLOSURE_FIRST_CLASS.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_CLOSURE_FIRST_CLASS
+
+module plan114_4_4.closure_from_const_fn_first_class_neg
+
+fn make_adder(const n int) -> const fn(int) -> int =>
+    |x| x + n
+
+test "first-class use of closure-returning fn rejected" {
+    ro factory = make_adder
+    ro adder5 = factory(5)
+    assert(adder5(3) == 8)
+}

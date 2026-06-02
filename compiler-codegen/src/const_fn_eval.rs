@@ -1168,6 +1168,18 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
         }
     }
 
+    // Plan 114.4.4.4 V4.3: closure-returning const fn specialization.
+    // Detect fully-const fns whose body is closure literal; walk module,
+    // rewrite Call sites к specialized `<host>__closure_<idx>` Idents;
+    // append specialized FnDecls. Runs BEFORE main walker so its Call
+    // sites are not subjected to eval_call (which cannot handle closure
+    // ConstValue). Closure-returning fn names remain в owned.fns —
+    // dropped by retain. Their bodies (template closures) won't be
+    // re-walked since rewriter sees fully-const fn body inside walk_item
+    // and skips.
+    let c_errors = crate::const_fn_closure::specialize_closure_returning_const_fns(module);
+    errors.extend(c_errors);
+
     walk_module(module, &mut owned, &mut errors);
 
     // Plan 114.4.4.3 V4.2: generate runtime trampolines для fully-const fn
