@@ -15632,7 +15632,30 @@ pub(crate) fn check_unsafe_context_in_module(
     errors: &mut Vec<Diagnostic>,
 ) {
     use crate::ast::{Item, FnBody};
-    let mut state = UnsafeCtx::default();
+    // Pre-collect names of #unsafe fns для A11 enforcement
+    // (E_UNSAFE_CALL_REQUIRES_WRAP — calling #unsafe fn без `unsafe { }` wrap).
+    let mut unsafe_fns: HashSet<String> = HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if fd.unsafe_attr {
+                unsafe_fns.insert(fd.name.clone());
+            }
+        }
+    }
+    // Also from peer_files
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item {
+                if fd.unsafe_attr {
+                    unsafe_fns.insert(fd.name.clone());
+                }
+            }
+        }
+    }
+    let mut state = UnsafeCtx {
+        depth: 0,
+        unsafe_fns,
+    };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
         module.items.iter().collect()
@@ -15660,9 +15683,11 @@ pub(crate) fn check_unsafe_context_in_module(
     }
 }
 
-#[derive(Default)]
 struct UnsafeCtx {
     depth: usize,
+    /// Plan 118 A11 enforcement: names of #unsafe fns в текущем module.
+    /// Call с этим именем outside unsafe context → E_UNSAFE_CALL_REQUIRES_WRAP.
+    unsafe_fns: HashSet<String>,
 }
 
 impl UnsafeCtx {
@@ -15737,6 +15762,29 @@ impl UnsafeCtx {
                 self.walk_expr(right, errors);
             }
             ExprKind::Call { func, args, .. } => {
+                // Plan 118 A11 enforcement: detect call к #unsafe fn outside
+                // unsafe context. Callee identification: Ident (free fn) — look
+                // up в unsafe_fns. Method calls (Member receiver) — Ф.3.5
+                // followup (method-level #unsafe attribute).
+                if self.depth == 0 {
+                    if let ExprKind::Ident(fname) = &func.kind {
+                        if self.unsafe_fns.contains(fname) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_CALL_REQUIRES_WRAP] calling \
+                                     `#unsafe fn {}` requires `unsafe {{ ... }}` \
+                                     block wrap (Plan 118 D216 §9). #unsafe fn \
+                                     body содержит pointer ops без unsafe-block \
+                                     gating; callers must explicitly opt-in \
+                                     к unsafe context (Rust pattern — no \
+                                     effect propagation up the call stack).",
+                                    fname,
+                                ),
+                                func.span,
+                            ));
+                        }
+                    }
+                }
                 self.walk_expr(func, errors);
                 for a in args {
                     self.walk_expr(a.expr(), errors);
