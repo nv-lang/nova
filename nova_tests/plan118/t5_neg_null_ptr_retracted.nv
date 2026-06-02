@@ -1,0 +1,17 @@
+// Plan 118 Ф.5.7 NEG-T5.12 / A23 — `null ptr` literal hard-retracted
+// (D214 amend 2026-06-02). После NPO codegen (Ф.5 A19/A21),
+// Option[ptr] с None provides type-safe null-handling — `null ptr`
+// literal становится redundant и ambiguous (Some(null ptr) == None
+// под NPO).
+//
+// Migration: `null ptr` → `(0 as ptr)` mechanical replacement
+// (NULL=(void*)0 в C ABI), либо `Option[ptr] = None` для new code.
+//
+// EXPECT_COMPILE_ERROR E_NULL_PTR_RETRACTED_USE_OPTION
+
+module plan118.t5_neg_null_ptr_retracted
+
+test "null ptr literal hard-retracted (Plan 118 D214 amend)" {
+    ro p ptr = null ptr
+    assert(1 == 1)
+}

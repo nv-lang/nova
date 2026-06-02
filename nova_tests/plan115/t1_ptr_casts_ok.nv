@@ -23,8 +23,8 @@ test "int to ptr round-trip" {
     assert(back == 42)
 }
 
-test "null ptr cast to u64 equals zero" {
-    ro p ptr = null ptr
+test "(0 as ptr) cast to u64 equals zero" {
+    ro p ptr = (0 as ptr)
     ro n u64 = p as u64
     assert(n == 0)
 }

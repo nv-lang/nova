@@ -1,10 +1,12 @@
-// Plan 115 Ф.1 — V1: `null TYPE` для не-ptr типа → E_NULL_LITERAL_REQUIRES_PTR.
+// Plan 115 Ф.1 / Plan 118 Ф.5.7 A23 — `null TYPE` literal hard-retracted
+// (D214 amend 2026-06-02). Migration: `Option[ptr]` с `None` для new code,
+// или `(0 as ptr)` mechanical replacement для existing.
 
-// EXPECT_COMPILE_ERROR E_NULL_LITERAL_REQUIRES_PTR
+// EXPECT_COMPILE_ERROR E_NULL_PTR_RETRACTED_USE_OPTION
 
 module plan115.t1_null_non_ptr_neg
 
-test "null int is rejected" {
+test "null int is rejected (post-retraction)" {
     ro bad = null int
     assert(bad == 0)
 }

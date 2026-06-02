@@ -54,9 +54,9 @@ test "multi-param generic newtype — `type X[T, U](ptr)`" {
     assert(h.0 == raw)
 }
 
-test "generic newtype + null ptr" {
-    ro h = MyHandle[int](null ptr)
-    assert(h.0 == null ptr)
+test "generic newtype + (0 as ptr)" {
+    ro h = MyHandle[int]((0 as ptr))
+    assert(h.0 == (0 as ptr))
 }
 
 test "multiple instances — independent values" {

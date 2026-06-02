@@ -3,7 +3,7 @@
 // Plan 115 D214 — `ptr` opaque pointer primitive: basics.
 //
 // Demonstrates:
-//   - `null ptr` literal
+//   - `(0 as ptr)` literal
 //   - ptr ↔ integer casts (round-trip)
 //   - equality / null check
 //   - Distinct typed handle via record wrapper
@@ -17,7 +17,7 @@ type SocketHandle { ro value ptr }
 
 fn ptr_basics_demo() -> int {
     // 1. NULL literal — bitwise zero opaque pointer.
-    ro nothing ptr = null ptr
+    ro nothing ptr = (0 as ptr)
 
     // 2. Construct ptr from integer (would normally come from C library).
     ro raw ptr = 0x1000 as ptr

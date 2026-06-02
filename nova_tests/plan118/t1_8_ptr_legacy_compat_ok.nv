@@ -5,7 +5,7 @@
 // nullable unsafe void pointer. ABI preserved (single `void*`). Legacy
 // usages of `ptr` opaque continue работать transparent'но.
 //
-// NOTE: full `null ptr` literal retraction landing в Ф.5 (NPO codegen
+// NOTE: full `(0 as ptr)` literal retraction landing в Ф.5 (NPO codegen
 // + `[M-115-null-ptr-to-option-after-npo]` closure). Until then, `ptr`
 // (Plan 115 V1) и `*T` (Plan 118) coexist.
 

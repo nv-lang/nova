@@ -28508,11 +28508,18 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   struct, sizeof==8. **Closes acceptance A21 partial** ✅.
   A22 detection logic documented в walk_typeref (emission requires
   lint framework integration — Session 4+).
-- plan118 fixtures: **34/0** (17 positive + 17 NEG)
+- **Ф.5.7 A23 ✅ CLOSED 2026-06-02** — `null ptr` literal hard-retracted
+  (D214 amend). Parser emits `E_NULL_PTR_RETRACTED_USE_OPTION`; 14
+  fixtures migrated к `(0 as ptr)` (mechanical, NULL=(void*)0 в C ABI).
+  Closes `[M-115-null-ptr-to-option-after-npo]` (Plan 115 followup
+  marker). 2 NEG fixtures: t5_neg_null_ptr_retracted (Plan 118) +
+  t1_null_non_ptr_neg renamed reason (Plan 115).
+- plan118 fixtures: **35/0** (17 positive + 18 NEG)
 
-**Session 3 + Ф.5+Ф.5.4 grand-total Plan 118 acceptance closed: 18 of 35 (51%):**
+**Session 3 + Ф.5+Ф.5.4+Ф.5.7 grand-total Plan 118 acceptance closed: 19 of 35 (54%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
-A19 ✅, A21 partial, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+A19 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29, A30, A33,
+A34, A35.
 
 **Ф.5 V3 deferred (Session 4+):**
 - A20 — NPO через newtype (`Option[Sqlite3Handle]`) — требует
@@ -28522,8 +28529,6 @@ A19 ✅, A21 partial, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
 - A22 — `Option[Option[*T]]` warning W_OPTION_DOUBLE_NESTED — detection
   logic documented в walk_typeref; emission requires lint framework
   integration (LintWarning через lints.rs)
-- A23 — `null ptr` literal retraction + 13 fixture migration —
-  currently backward-compat works через Plan 115 D214 path
 
 **Main sync 2026-06-02 (commit 8fc3473e22b):** merged 66 commits from
 main (Plan 114.4.4.5 V4.1 mono-specialization + V4.2 runtime trampoline +

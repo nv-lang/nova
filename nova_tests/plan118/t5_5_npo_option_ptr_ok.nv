@@ -18,11 +18,11 @@ test "Option[ptr] None type-checks via NPO" {
     assert(p is None)
 }
 
-test "Option[ptr] Some(null ptr) via NPO — backward compat" {
-    // null ptr literal still works (Plan 115 D214); NPO layout
-    // means Some(null ptr).value == NULL → is None semantically.
-    // Edge case: Some(null ptr) is ambiguous под NPO (V2 retraction
+test "Option[ptr] Some((0 as ptr)) via NPO — backward compat" {
+    // (0 as ptr) literal still works (Plan 115 D214); NPO layout
+    // means Some((0 as ptr)).value == NULL → is None semantically.
+    // Edge case: Some((0 as ptr)) is ambiguous под NPO (V2 retraction
     // closes this — A23 follow-on).
-    ro p = Some(null ptr)
+    ro p = Some((0 as ptr))
     assert(p is None) // под NPO: NULL = None convention
 }
