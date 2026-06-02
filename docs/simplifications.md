@@ -30809,3 +30809,41 @@ length-2 prefix and inserts a shared base: `_at_a_b_pre = @a.b`
 ahead of per-chain lets. Subsequent per-chain lets reference
 ident.tail (via Member expressions on Ident, not SelfAccess).
 Composition unchanged: prefix lets count toward max_per_fn budget.
+
+
+═══════════════════════════════════════════════════════════════════════════
+2026-06-02 (post-merge): V3.2 codegen sanitizer — hash key vs identifier
+discipline.
+
+V3.2 PureCallKey.args_key uses canonical encoding `T2{1i;2i}` and
+`RPoint{x:1i;y:2i}` which are perfect as a HashMap key (stable,
+collision-resistant, sorted records). But they were also concatenated
+into a C identifier suffix `_at_<method><args_key>_call` — which
+contains `{`, `}`, `;`, `:`, illegal in C identifiers. Bug only
+surfaced при release nova-cli + clang verification (lib + LSP tests
+don't exercise codegen output).
+
+Fix: separate the encoding layers. Hash key keeps the canonical
+form; identifier builder runs the key through
+`sanitize_args_key_for_ident` which maps punctuation 1:1 к safe
+`_x_` sequences. Distinct keys still produce distinct identifiers.
+
+Lesson — "one string, two purposes" is a smell. When the same data
+flows into both a content-addressable key AND a target-language
+identifier, encode them separately:
+1. The CAS form lives in the type-system (HashMap key).
+2. The identifier form lives at the codegen boundary.
+Both derive from the same source-of-truth (the AST), but transit
+through different encoders. Conflating them leaves bugs latent
+until the target language's lexer rejects them.
+
+Test coverage gap: field_cache lib tests verified that
+canonical_literal_repr produces the expected encoded string — but
+не verified the encoded string used downstream as a C identifier
+ends up valid. Per-fixture release nova test would have caught it
+earlier (per feedback_targeted_test_per_fix); deferring all-fixture
+nova test к end-of-phase saved time on common case but masked this
+codegen leakage. New rule: when a new encoder lands in field_cache
+that produces strings used as identifiers, add at least one runtime
+fixture exercising the full pipeline (parse → encode → codegen →
+clang → run) BEFORE end-of-phase verification.

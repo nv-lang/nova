@@ -29734,3 +29734,39 @@ Open followups (V*.3+):
 
 Branch pushed to github (origin/plan-123-v2-followups). Merged to
 main via this commit (2026-06-02 follow-up per user request).
+
+═══════════════════════════════════════════════════════════════════════════
+2026-06-02 (late evening): Plan 123 V*.2+ merged to main + post-merge fix.
+
+Merge: plan-123-v2-followups → main (commit 3627d09a). Conflict
+resolution: log files only (project-creation.txt + simplifications.md
+appended on both sides → kept both sections в chronological order).
+
+Post-merge runtime verification (release nova-cli + clang):
+- plan123 family: 35 PASS total across plan123_{1-7, 7_1, 3_2, 4_2, 7_2}.
+- Discovered: V3.2 codegen bug — canonical_literal_repr emits
+  `T2{1i;2i}` and `RPoint{x:1i;y:2i}` containing `{}/;:` which
+  are illegal in C identifiers; v32_tuple_literal_args_ok failed
+  с clang "expected ;" error.
+
+Fix (commit 14c8ac64 separately):
+- New sanitize_args_key_for_ident helper in field_cache.rs maps
+  punctuation к safe sequences (`{`→`_o_`, `}`→`_c_`, `;`→`_s_`,
+  `:`→`_k_`, `.`→`_d_`).
+- pure_cache_fn_impl runs args_key through it before forming local.
+- Collision-resistance preserved (distinct keys map к distinct
+  sanitized strings).
+
+Tests added in post-merge fix:
+- v32_sanitize_args_key_for_c_ident unit test.
+- v32_record_literal_args_ok.nv (positive — Color literal arg).
+- v32_neg_non_literal_arg_not_cached_ok.nv (negative — non-literal
+  tuple element bypasses cache, program still correct).
+
+Acceptance (V3.2.7-V3.2.8): added к D219 amend V3.2 spec.
+Release-verified PASS count: plan123_3_2: 3/3, plan123_4_2: 1/1,
+plan123_7_2: 2/2.
+
+Plan 123 V*.2 family полностью закрыта в main:
+- 10 commits from branch + 1 post-merge fix = 11 commits.
+- Branch plan-123-v2-followups remains pushed to github (история).
