@@ -163,8 +163,32 @@ ro inner = r.0                        // .0 access OK
 phantom discrimination, zero runtime overhead). См. spec D214
 §«Generic opaque handle».
 
-Inner non-ptr types (`type Wrap[T](int)`) — followup
-`[M-91.12-generic-newtype-non-ptr-inner]` (low priority).
+**Inner non-ptr types** (2026-06-02 followup, CLOSED):
+
+```nova
+type Counter[T](int)              // tagged int counter
+type Tag[T](str)                  // typed string wrapper
+type Flag[T](bool)                // typed bool flag
+type Measure[T](f64)              // tagged f64 (e.g. seconds vs meters)
+type Tagged[T, U](int)            // multi-param phantom
+```
+
+Все mono'd instances share single typedef over inner C type (phantom T
+discrimination, identical runtime ABI). Use cases: typed counters,
+Email/UserId strings, Visible/Hidden flags, measurement units.
+
+**Inner uses generic param** (`type Wrap[T](T)`) — **REJECTED**:
+
+```nova
+// ✗ E_GENERIC_NEWTYPE_INNER_USES_PARAM
+type Wrap[T](T)
+
+// ✓ Use record form для per-T mono
+type Wrap[T] { value T }
+```
+
+Tuple newtype = transparent typedef; per-T storage variance — это
+record-semantics, не newtype.
 
 ### Pattern 3 — `external type X consume` (D163 FFI resource handle)
 
