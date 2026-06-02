@@ -2687,30 +2687,12 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 91.12 V2 followup: рекурсивная проверка, использует ли TypeRef
-    /// один из generic params из set'а. Mirror codegen `type_ref_uses_any_type_param`
-    /// (emit_c.rs:9225); duplicated здесь чтобы избежать cross-module dependency.
+    /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над
+    /// `TypeRef::uses_any_type_param` (ast::mod.rs) — extracted common
+    /// helper, removed duplication с codegen's parallel impl (emit_c.rs).
+    #[inline]
     fn typeref_uses_param(tr: &TypeRef, params: &HashSet<String>) -> bool {
-        match tr {
-            TypeRef::Named { path, generics, .. } => {
-                if path.len() == 1 && params.contains(&path[0]) { return true; }
-                generics.iter().any(|g| Self::typeref_uses_param(g, params))
-            }
-            TypeRef::Array(inner, _)
-            | TypeRef::FixedArray(_, inner, _) => Self::typeref_uses_param(inner, params),
-            TypeRef::Tuple(ts, _) => ts.iter().any(|t| Self::typeref_uses_param(t, params)),
-            TypeRef::Func { params: p, return_type, .. } => {
-                p.iter().any(|t| Self::typeref_uses_param(t, params))
-                    || return_type.as_ref().map_or(false, |t| Self::typeref_uses_param(t, params))
-            }
-            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
-                m.params.iter().any(|p| Self::typeref_uses_param(&p.ty, params))
-                    || m.return_type.as_ref()
-                        .map_or(false, |t| Self::typeref_uses_param(t, params))
-            }),
-            TypeRef::Readonly(inner, _) => Self::typeref_uses_param(inner, params),
-            TypeRef::Unit(_) => false,
-        }
+        tr.uses_any_type_param(params)
     }
 
     /// Ф.2: рекурсивная проверка арности одного TypeRef-дерева.

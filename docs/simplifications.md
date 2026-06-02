@@ -29117,3 +29117,12 @@ sub-plans (124.2-124.7) remaining.
    integration (trampoline ABI, closure capture, mono pipeline).
    Extracted as Plan 114.4.4.3/4/5 для focused dev-day каждый. NOT
    silent simplification.
+## Plan 91.12 V2 followup #3 — TypeRef::uses_any_type_param refactor (2026-06-02)
+
+**Status:** ✅ CLOSED 2026-06-02. Code-smell cleanup из V2 followup #2 design lesson «Helper duplication acceptable across modules» (reverted — extracted production-grade common helper).
+
+**CLOSED markers:**
+- ✅ `[M-91.12-typeref-uses-param-dedup]` — refactor: removed duplicate `type_ref_uses_any_type_param` (emit_c.rs:9225) and `typeref_uses_param` (types/mod.rs) implementations. Single source of truth теперь `TypeRef::uses_any_type_param(&self, params: &HashSet<String>) -> bool` method в `ast::mod.rs`. Both callers (Plan 48 Ф.3 erasure detection + Plan 91.12 V2 newtype reject guard) теперь thin `#[inline]` wrappers (3 lines vs 25 lines each). 18 unit tests added (10 positive + 8 negative cases) covering all TypeRef variants — Named (single-segment + multi-segment), nested generics, Array, FixedArray, Tuple, Func (params + return), Protocol (methods), Readonly, Unit. Note: unit tests cannot run via `cargo test` currently due to pre-existing broken tests in emit_c.rs::mem_ordering_tests (Span import path bug), unrelated к refactor. Integration coverage через nova test (plan91_12 + plan48 + buffers + plan115 + plan103_5 = 58/58 PASS) verifies behavior preservation 1:1.
+
+**Design lesson:**
+- **"Acceptable duplication" — temporary state, not destination.** Plan 91.12 V2 followup #1 added duplicated helper в types/mod.rs (mirror emit_c.rs version) с rationale «avoid cross-module dependency». V2 followup #2 added similar reasoning. By V2 followup #3 (third occurrence), the «temporary» pattern hardened into code smell — extracted к ast module method (`TypeRef` already cross-module shared type, no new dependency introduced). **Rule:** Two parallel impls of same helper = audit для possible extraction; three impls = mandatory extraction.

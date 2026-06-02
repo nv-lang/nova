@@ -9222,33 +9222,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
 
     /// Plan 48 Ф.3: check if TypeRef contains any of the given type params (directly or in generics).
     /// Used to detect when erased struct fields should be void* rather than a mangled generic name.
+    ///
+    /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над
+    /// `TypeRef::uses_any_type_param` (ast::mod.rs) — extracted common
+    /// helper, removed duplication с types/mod.rs's parallel impl.
+    #[inline]
     fn type_ref_uses_any_type_param(ty: &crate::ast::TypeRef, type_params: &HashSet<String>) -> bool {
-        use crate::ast::TypeRef;
-        match ty {
-            TypeRef::Named { path, generics, .. } => {
-                if path.len() == 1 && type_params.contains(&path[0]) { return true; }
-                generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, type_params))
-            }
-            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
-                Self::type_ref_uses_any_type_param(inner, type_params)
-            }
-            TypeRef::Tuple(ts, _) => ts.iter().any(|t| Self::type_ref_uses_any_type_param(t, type_params)),
-            TypeRef::Func { params, return_type, .. } => {
-                params.iter().any(|t| Self::type_ref_uses_any_type_param(t, type_params))
-                    || return_type.as_ref().map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
-            }
-            // Plan 97 Ф.2: anon-protocol сам по себе не type-param;
-            // его методы могут ссылаться на type-param'ы окружения —
-            // рекурсивно проверяем.
-            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
-                m.params.iter().any(|p| Self::type_ref_uses_any_type_param(&p.ty, type_params))
-                    || m.return_type.as_ref()
-                        .map_or(false, |t| Self::type_ref_uses_any_type_param(t, type_params))
-            }),
-            TypeRef::Unit(_) => false,
-            // D176 (Plan 108): readonly T — transparent.
-            TypeRef::Readonly(inner, _) => Self::type_ref_uses_any_type_param(inner, type_params),
-        }
+        ty.uses_any_type_param(type_params)
     }
 
     /// Collect type names referenced in a type declaration's fields/variants.
