@@ -28502,18 +28502,26 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   - Все pre-existing stdlib pointer types (UdpSocket, TcpStream,
     SocketAddr, TcpListener, File) benefit automatically.
   - 3 new fixtures: T5.2 (Some/None) + T5.3 (match) + T5.4 (ABI)
-- plan118 fixtures: **33/0** (16 positive + 17 NEG)
+- `cd168a4d53b` + `317c4612333` — **Ф.5.4 V2 NPO ext for Option[ptr]**.
+  is_novaopt_npo extended: `c_ty == "nova_ptr"` triggers NPO layout
+  (Plan 115 D214 opaque pointer typedef'd as void*). Single-pointer
+  struct, sizeof==8. **Closes acceptance A21 partial** ✅.
+  A22 detection logic documented в walk_typeref (emission requires
+  lint framework integration — Session 4+).
+- plan118 fixtures: **34/0** (17 positive + 17 NEG)
 
-**Session 3 + Ф.5 grand-total Plan 118 acceptance closed: 17 of 35 (49%):**
+**Session 3 + Ф.5+Ф.5.4 grand-total Plan 118 acceptance closed: 18 of 35 (51%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
-A19 ✅, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+A19 ✅, A21 partial, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
 
-**Ф.5 V2 deferred (Session 4+):**
+**Ф.5 V3 deferred (Session 4+):**
 - A20 — NPO через newtype (`Option[Sqlite3Handle]`) — требует
   type_ref_to_c-aware detection вместо c_ty string suffix
-- A21 — NPO для `Option[*fn(...)]` (c_ty ends with `)`) и
-  `Option[ptr]` (nova_ptr typedef) — V2 type-aware detection
-- A22 — `Option[Option[*T]]` warning W_OPTION_DOUBLE_NESTED
+- A21 remainder — NPO для `Option[*fn(...)]` (c_ty ends with `)`) —
+  V3 structural detection
+- A22 — `Option[Option[*T]]` warning W_OPTION_DOUBLE_NESTED — detection
+  logic documented в walk_typeref; emission requires lint framework
+  integration (LintWarning через lints.rs)
 - A23 — `null ptr` literal retraction + 13 fixture migration —
   currently backward-compat works через Plan 115 D214 path
 

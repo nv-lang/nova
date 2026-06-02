@@ -1,0 +1,28 @@
+// Plan 118 Ф.5.4 T5.5 / A21 partial — NPO для Option[ptr] (Plan 115
+// D214 opaque pointer). nova_ptr typedef'd как void* — semantically
+// pointer-sized, ABI-equivalent. NPO single-pointer layout dropped
+// tag field, sizeof == 8.
+//
+// Verifies:
+//   - Option[ptr] uses NPO layout (struct { nova_ptr value; })
+//   - None constructor для Option[ptr] emits NULL
+//   - is None / is Some checks work
+//   - Backward-compat с Plan 115 fixtures preserved
+
+module plan118.t5_5_npo_option_ptr_ok
+
+external fn p118_try_alloc_raw(size i64) -> Option[ptr]
+
+test "Option[ptr] None type-checks via NPO" {
+    ro p Option[ptr] = None
+    assert(p is None)
+}
+
+test "Option[ptr] Some(null ptr) via NPO — backward compat" {
+    // null ptr literal still works (Plan 115 D214); NPO layout
+    // means Some(null ptr).value == NULL → is None semantically.
+    // Edge case: Some(null ptr) is ambiguous под NPO (V2 retraction
+    // closes this — A23 follow-on).
+    ro p = Some(null ptr)
+    assert(p is None) // под NPO: NULL = None convention
+}

@@ -2884,6 +2884,17 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(g, gs, errors);
                 }
                 let Some(name) = path.last() else { return; };
+                // Plan 118 Ф.5 A22 (D216 §7): W_OPTION_DOUBLE_NESTED warning
+                // для `Option[Option[*T]]` — V2 follow-on. Requires lint
+                // framework integration (LintWarning через lints.rs), so что
+                // diagnostic emits as warning not hard error. V1 detection
+                // path documented здесь для future implementation:
+                //   if name == "Option" && generics.len() == 1 &&
+                //      inner is Named["Option"] with pointer-typed payload
+                //   → emit W_OPTION_DOUBLE_NESTED via lint framework.
+                // Currently не fires — nested Option[Option[*T]] codegen
+                // falls back в tagged form automatically (inner c_ty =
+                // NovaOpt_X struct, не pointer).
                 // generic-параметр в scope — абстрактное имя, не тип.
                 if gs.contains(name) {
                     return;

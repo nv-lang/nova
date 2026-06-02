@@ -25617,18 +25617,18 @@ _cp++; \
         // NULL = None convention). Direct C-FFI ABI compatibility — matches
         // `malloc`/`fopen`/`dlopen` returns.
         //
-        // NPO-eligible: c_ty ends with '*' covers
-        //   - `*T` family (Plan 118 — emit `T*` / `const T*` / `void*`)
-        //   - `ptr` (Plan 115 — emit `nova_ptr` typedef'd as `void*`)
-        //   - `*fn(...)` function pointers
-        //   - Newtype-over-pointer (через type_ref_to_c lowering)
+        // NPO-eligible:
+        //   - V1: c_ty ends with '*' covers `*T` family (T*/const T*/void*)
+        //   - V2 (A21 partial): `nova_ptr` typedef (= void*) — Plan 115 D214
+        //   - V3 deferred: `*fn(...)` function pointers, newtype-over-pointer
         //
         // NPO НЕ применяется к: nested `Option[Option[*T]]` — outer Option's
         // inner c_ty is `NovaOpt_<inner_sani>` (struct, not pointer) → falls
         // через в tagged branch automatically (W_OPTION_DOUBLE_NESTED
-        // warning planned A22 followup).
+        // warning — A22, type-checker level diagnostic).
         let is_pointer = c_ty.ends_with('*');
-        let is_npo = is_pointer; // V1: pointer-only detection
+        let is_nova_ptr = c_ty == "nova_ptr";
+        let is_npo = is_pointer || is_nova_ptr;
         let line = if is_npo {
             // NPO layout: single-pointer struct (sizeof = sizeof(c_ty) = 8).
             // No tag field — NULL = None, !NULL = Some.
@@ -25651,7 +25651,7 @@ _cp++; \
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
             | "nova_f32" | "nova_f64");
-        let cmp_body = if is_scalar || is_pointer {
+        let cmp_body = if is_scalar || is_pointer || is_nova_ptr {
             "a.value == b.value".to_string()
         } else {
             format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
@@ -25686,12 +25686,20 @@ _cp++; \
 
     /// Plan 118 Ф.5 (D216 §7): determine whether sanitized NovaOpt name is
     /// NPO-eligible (pointer-typed inner — single-pointer layout без tag).
-    /// V1 detection: c_ty ends_with('*') covers `*T` family + `ptr` typedef +
-    /// `*fn(...)` + newtype-over-pointer (after type_ref_to_c lowering).
+    /// V1 detection: c_ty ends_with('*') — covers `*T` family (T*/const T*/void*).
+    /// V2 extension (Plan 118 Ф.5.4): `nova_ptr` typedef (= void*) — Plan 115
+    /// D214 opaque pointer; semantically pointer-sized, ABI-equivalent to void*.
+    /// Option[ptr] now NPO-eligible (A21 partial).
+    /// V3 (deferred): `*fn(...)` function pointers (c_ty doesn't end '*' —
+    /// requires structural detection), generic newtype-over-pointer (A20).
     fn is_novaopt_npo(&self, sanitized: &str) -> bool {
         self.novaopt_value_types.borrow()
             .get(sanitized)
-            .map_or(false, |c_ty| c_ty.ends_with('*'))
+            .map_or(false, |c_ty| {
+                c_ty.ends_with('*')
+                // Plan 118 Ф.5.4 (A21 partial): nova_ptr typedef'd as void*.
+                || c_ty == "nova_ptr"
+            })
     }
 
     /// Plan 118 Ф.5: emit `Some(value)` constructor для NovaOpt — NPO form
