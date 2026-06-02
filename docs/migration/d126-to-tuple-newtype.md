@@ -145,6 +145,27 @@ body; per-T mono path emits the actual C struct + methods.
 - [Lazy[T]] (Plan 91.12 V2) — `type Lazy[T](ptr)`
 - [Condvar] (Plan 91.12 V2) — `type Condvar(ptr)` (non-generic)
 
+#### Generic user FFI handle (Plan 91.12 V2 followup, 2026-06-02)
+
+Generic newtype над `ptr` поддерживается для user-level FFI:
+
+```nova
+type Region[T](ptr)                   // phantom T
+type DualHandle[T, U](ptr)
+
+ro r = Region[int](some_ptr)
+ro d = DualHandle[int, str](raw)
+ro inner = r.0                        // .0 access OK
+```
+
+Все monomorphizations (`Region[int]`, `Region[str]`) share C ABI
+(`Nova_Region ≡ nova_ptr`); T — type-system fiction (compile-time
+phantom discrimination, zero runtime overhead). См. spec D214
+§«Generic opaque handle».
+
+Inner non-ptr types (`type Wrap[T](int)`) — followup
+`[M-91.12-generic-newtype-non-ptr-inner]` (low priority).
+
 ### Pattern 3 — `external type X consume` (D163 FFI resource handle)
 
 **When:** FFI resource handle (File, Socket, custom DB connection)
