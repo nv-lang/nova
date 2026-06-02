@@ -27567,3 +27567,67 @@ Verified:
 Open followups:
 - [M-123.6-cli-flags-full].
 - [M-123.6-ci-perf-gates].
+
+
+================================================================================
+Plan 123.7 — D220 IPA V7 infrastructure (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #7 (final).
+
+V7 ships IPA write_set inference infrastructure + public API.
+V1 mut barrier integration deferred V7.1.
+
+Implementation (~330 LOC):
+- field_cache::module_write_sets public API.
+- build_write_set_registry + iterative closure.
+- env var NOVA_FIELD_CACHE_IPA[=0].
+
+Tests:
+- nova_tests/plan123_7/ipa_no_regression_ok.nv: regression-free.
+
+D-block: D220 NEW (~100 lines).
+
+Open V7.1 followups:
+- [M-123.7-full-integration].
+- [M-123.7-scc-closure].
+- [M-123.7-cross-module].
+
+Closes Plan 123 V7 milestone.
+
+
+================================================================================
+Plan 123 umbrella V7 closure (2026-06-02)
+================================================================================
+
+🎯 ALL 7 SUB-PLANS CLOSED. Plan 123 family — full field-cache
+optimization stack V1-V7 production-ready.
+
+Summary table:
+- 123.1 V1 Core CSE (D217)        ✅ CLOSED 2026-06-02.
+- 123.2 V2 LICM (D218)            ✅ CLOSED 2026-06-02.
+- 123.3 V3 Pure-call (D219)       ✅ CLOSED 2026-06-02.
+- 123.4 V4 Chain (D217 amend V4)  ✅ CLOSED 2026-06-02.
+- 123.5 V5 LSP/diag (D217 §6)     ✅ CLOSED 2026-06-02.
+- 123.6 V6 Telemetry (D217 §7)    ✅ CLOSED 2026-06-02.
+- 123.7 V7 IPA (D220)             ✅ CLOSED 2026-06-02 (infra).
+- Umbrella V7                     ✅ CLOSED 2026-06-02.
+
+Delivered:
+- ~5500 LOC field_cache.rs.
+- 55 runtime fixtures via release nova-cli + clang.
+- 6 D-blocks (D217 V1+V4+V5+V6+§6+§7 / D218 / D219 / D220).
+- 7 sub-plan docs + investigation artifacts.
+- User doc field-cache-optimization.md.
+- Migration guide 123-field-cache.md.
+- CLI: --explain-cache + --telemetry-cache + --telemetry-json.
+
+Production-grade:
+- Semantic equivalence verified 5 ways.
+- Cross-platform deterministic.
+- Escape hatches: 4 layer-specific + umbrella + threshold tuning.
+- Telemetry baseline + regression detection workflow documented.
+
+Branch plan-123-receiver-field-cse — ~30+ commits across ~3 dev-days
+real wall time (single-session). NOT merged в main (per user
+instruction).

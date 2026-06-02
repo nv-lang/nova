@@ -4754,3 +4754,68 @@ matches Plan 57 metric format; wiring straightforward.
 - All previous D217 amends + D218 + D219.
 - Plan 57 (bench infrastructure) — future CI gate integration.
 
+## D220. IPA — Inter-Procedural Analysis для field caching — Plan 123.7
+
+**Source:** [Plan 123.7](../../docs/plans/123.7-ipa.md). Implementation:
+`field_cache::module_write_sets` public API. Composition partner с
+D217 V1 mut barrier check (full integration V7.1 followup).
+
+### 1. Field-write-set inference
+
+Per FnDecl с Instance receiver, compute `field_write_set:
+HashSet<String>` — set of field names that the method's body writes
+via `@F = ...` (top-level Assign with target = Member{SelfAccess, F}).
+
+Inference includes:
+- **Direct writes:** Assign statements anywhere в body.
+- **Transitive via method calls:** if body calls `@<callee>(args)`,
+  union с callee's write_set.
+- **Iterative closure:** ≤10 iterations (sufficient для most call
+  graphs; V7.1 may add SCC analysis для exact closure).
+
+### 2. Public API
+
+```rust
+pub fn module_write_sets(
+    module: &Module,
+) -> HashMap<(String, String), HashSet<String>>;
+```
+
+Returns map `(type_name, method_name) → set of field names mutated`.
+Used by:
+- V7 internal cache_fn_ipa wrapper.
+- V7.1 future integration с V1 mut barrier.
+- Tooling (Plan 123.5 `--explain-cache` future extension to show
+  callee write-sets).
+
+### 3. V7 integration scope
+
+V7 ships:
+- ✅ write_set inference infrastructure.
+- ✅ public API.
+- 🟡 V1 mut barrier refinement deferred V7.1
+  ([M-123.7-full-integration]).
+- 🟡 V2 LICM, V3 pure, V4 chain — IPA refinements deferred V7.1+.
+
+Conservative fallback: methods without computed write_set treated
+как writing all fields (V1 current behavior). No regression.
+
+### 4. Cross-module IPA
+
+True cross-module (link-time) IPA — substantial infrastructure
+beyond field-cache scope. Deferred indefinitely; current
+per-module write_sets cover practical hot paths.
+
+### 5. Cross-references
+
+- **D24** (Plan 33.2) — Purity SCC analysis pattern reused.
+- **D03.4** (Plan 03.4) — effect-surface inference; complementary
+  signal.
+- **All D217 amends + D218 + D219** — IPA refinement candidates.
+
+### 6. Open Q resolution
+
+- `Q-ipa-correctness`: → D220 §1 (formal definition + iterative
+  closure semantics).
+- `Q-ipa-cross-module`: → D220 §4 (deferred indefinitely).
+
