@@ -4162,3 +4162,175 @@ specific runtime references).
 - `Q-debug-info-cache`: → D217 §6.
 - `Q-cache-edition-gating`: → D217 §7 (V1 — no edition gate).
 
+## D218. LICM — Loop-Invariant Code Motion для receiver fields — Plan 123.2
+
+**Source:** [Plan 123.2](../../docs/plans/123.2-licm.md) sub-plan #2
+Plan 123 umbrella. Implementation: `compiler-codegen/src/field_cache.rs`
+LICM phase. Composes с D217 (Plan 123.1 V1 baseline).
+
+### 1. Семантика — formal property
+
+Для каждого input AST `A` содержащего loops L₁, L₂, ..., output
+`T(A)` — observable behavior identical to `A`. Loop-invariant
+`@<F>` reads inside loop body перемещены **immediately before**
+the loop в enclosing Block.scope, с replacement reads inside body
+на cache local ident `_at_<F>_loop` (or `_at_<F>_loop_<N>` при
+collision).
+
+**Пример:**
+
+```nova
+// До D218 (source):
+fn Image @sum_pixels_for(n int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < n {
+        total = total + @pixels + @pixels    // 2 reads of mut @pixels
+        i = i + 1
+    }
+    total
+}
+
+// После D218 (LICM-hoisted):
+fn Image @sum_pixels_for(n int) -> int {
+    mut total = 0
+    mut i = 0
+    ro _at_pixels_loop = @pixels             // hoist immediately before loop
+    while i < n {
+        total = total + _at_pixels_loop + _at_pixels_loop
+        i = i + 1
+    }
+    total
+}
+```
+
+LICM benefit visible when D217 (Plan 123.1) **cannot** cache the
+field at method-body prefix:
+- Mut field accessed only inside loop; method body has Call before
+  loop → D217 mut-prefix region empty → no cache. D218 LICM hoists
+  immediately before loop scope.
+- Method body has mixed access patterns where D217's first-region
+  bailout leaves loop body uncached.
+
+### 2. Composition с D217 (Plan 123.1)
+
+**Order:** D218 LICM phase runs **BEFORE** D217 per-fn ro/mut caching
+(см. `cache_module` в field_cache.rs).
+
+Rationale:
+- LICM hoists invariant reads из loops; replaces reads inside loop
+  с `_at_<F>_loop` ident.
+- D217 then walks the body; `@<F>` reads inside loop are already
+  replaced — counted only reads OUTSIDE loops для method-body prefix
+  cache decision.
+- No double-cache: if D217 also caches `@<F>` at method-body prefix,
+  the loop body reads are already `_at_<F>_loop` ident (don't match
+  `@F` pattern). Both cache locals coexist.
+
+**Result:** для ro fields с reads only inside loop, the hoisted
+`_at_<F>_loop` typically suffices (D217 sees zero `@<F>` accesses
+outside loop — below threshold). Для ro fields с reads inside AND
+outside loop, two separate caches emitted — one at method-body
+prefix (D217) and one immediately before loop (D218). Stack-frame
+growth bounded by `max_per_fn=8` total cap.
+
+### 3. Eligibility rules per loop body
+
+For each field `F` and each loop body Block:
+
+1. **Read count:** `count_field_reads_in_block(body, F) ≥
+   licm_threshold` (default 2).
+2. **No mutation:** `!block_contains_write_to(body, F)` —
+   no `Assign { target: Member{SelfAccess, F}, ... }` anywhere in
+   body. Includes compound assigns (`+=`, etc.) и nested control flow.
+3. **No closure capture:** `!collect_closures_captures_in_block(body, F)`
+   — no closure body inside loop body references `@F`. (Closure body
+   syntactic detection; conservative.)
+4. **No spawn / supervised / detach / blocking / parallel-for:**
+   loop body must not contain concurrent constructs (aliasing
+   safety with concurrent fibers).
+5. **For mut fields:** loop body must NOT contain any Call (V2
+   conservative — IPA refines в Plan 123.7).
+6. **For ro fields:** Call в body OK (frozen — no aliasing).
+
+### 4. Loop forms supported
+
+- `for pattern in iter { body }` — D-foreach standard for.
+- `while cond { body }`.
+- `loop { body }` — D-loop infinite + break.
+- `while let pat = expr { body }` — D34.
+
+**Excluded:**
+- `parallel for pat in iter { body }` — D14, concurrent body.
+- Loops nested внутри `Spawn` / `Supervised` / `Detach` / `Blocking`
+  / `Select` channel-op contexts.
+
+### 5. Hoisting placement
+
+Hoisted `ro _at_<F>_loop = @<F>` Stmt::Let inserted **immediately
+before** the loop expression в enclosing Block.stmts. Placement
+rules:
+
+- **Loop as `Stmt::Expr` в Block.stmts:** hoist inserted at same
+  index, loop stmt pushed after.
+- **Loop as Block.trailing:** hoist appended к Block.stmts (loop
+  remains trailing).
+- **Loop as FnBody::Expr (whole-body loop):** body coerced к
+  Block-with-trailing, hoist inserted at start.
+- **Loop nested внутри expression** (e.g. `if cond { for ... }`):
+  hoist inserted into innermost enclosing Block.
+
+### 6. Naming convention
+
+Cache local = **`_at_<field>_loop`** (D218 §6 baseline). Distinct
+от D217 `_at_<field>` для clarity в debug-info — каждое имя
+объясняет cache origin: `_at_X` = method-body cache; `_at_X_loop`
+= LICM hoist.
+
+Collision avoidance: numeric suffix `_<N>` если имя уже occupied
+user-local OR другим LICM hoist в same fn scope.
+
+### 7. Escape hatch + tunables
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE_LICM` | (unset) | `0`/`off`/`false` → LICM disabled. D217 unaffected. |
+| `NOVA_FIELD_CACHE_LICM_THRESHOLD` | `2` | Min reads inside loop body. `0` → LICM disabled. |
+| `NOVA_FIELD_CACHE_LICM_MAX` | `4` | Cap hoists per loop. |
+| `NOVA_FIELD_CACHE` (D217) | (unset) | `0` → disables BOTH D217 and D218 (umbrella escape hatch). |
+
+Verified differential testing: 14/14 plan123_2 PASS identically под
+`NOVA_FIELD_CACHE_LICM=0` и default ON. Semantic equivalence
+guaranteed.
+
+### 8. Debug-info preservation
+
+`Span` каждого hoisted let клонируется от **first occurrence** of
+`@F` access в loop body. DWARF/PDB emit reflects это — debugger
+показывает `_at_<F>_loop` local mapped к source `@<F>` expression
+position inside loop body.
+
+### 9. Cross-references
+
+- **D217** (Plan 123.1, V1) — baseline CSE pass; composition
+  partner.
+- **D14** (ParallelFor) — concurrent body, LICM skip.
+- **D50** (structured concurrency — Spawn/Supervised) — LICM skip
+  bodies that contain these.
+- **D131** (consume types) — consume fields skipped (D217 §3.4
+  inherits).
+- **D175** (readonly field freeze) — ro semantics; aliasing-safe
+  invariance.
+
+### 10. Implementation milestones
+
+- **V2** Plan 123.2 ✅ (this block).
+- **V3-V7** — Plan 123.3 (pure-call cache) / 123.4 (chain) / 123.5
+  (LSP) / 123.6 (telemetry) / 123.7 (IPA) — orthogonal extensions.
+
+### 11. Open Q resolution
+
+- `Q-licm-correctness`: → D218 §1 + §3 (formal property + eligibility
+  rules ensure correctness).
+- `Q-licm-composition-with-D217`: → D218 §2 (order LICM → D217).
+
