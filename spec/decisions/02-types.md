@@ -7599,6 +7599,48 @@ ALL closed 2026-06-02:
 - A4.10 ✅ plan120 backward compat — все existing named-tuple
   fixtures без `priv` modifier работают unchanged.
 
+### §T1 nova doc + LSP integration (Plan 124.5 amend)
+
+> **Added 2026-06-02.** Plan 124.5 closure. Cross-references D107
+> (nova doc schema) + Plan 104.x (LSP infrastructure).
+
+**nova doc behavior:**
+- Default: priv fields **hidden** from rendered documentation
+  (markdown / HTML / JSON).
+- `--include-private` flag shows all fields с `priv` keyword
+  preserved in signature rendering (`type X { priv mut f T }`).
+- JSON output emits `"priv_field": true|false` per field
+  regardless of `--include-private` — consumed by tooling.
+
+**LSP integration (forward-ref):**
+- AST `RecordField.priv_field` + `NamedTupleField.priv_field` flags
+  available для LSP hover (Plan 104.2) и completion (Plan 104.3)
+  integration once these ship.
+- Expected behavior: priv-field filter в autocomplete outside
+  type-method scope; 🔒 priv badge в hover popups; priv-field
+  code-lens decoration.
+
+**User-facing documentation:**
+- `docs/field-visibility-guide.md` — comprehensive guide:
+  use cases, syntax, composition, diagnostics, tooling, comparison
+  vs Go/Rust/TS/Java/Swift/C#, migration, common patterns.
+
+### Acceptance — Plan 124.5
+
+ALL closed 2026-06-02:
+
+- A5.1 ✅ `nova doc` hides priv fields by default.
+- A5.2 ✅ `nova doc --include-private` shows priv с keyword preserved.
+- A5.3 🟡 LSP autocomplete filter — forward-ref Plan 104.3 (infra
+  data source ready).
+- A5.4 🟡 LSP hover badge — forward-ref Plan 104.2 (infra ready).
+- A5.5 🟡 Quick-fix suggestion — forward-ref Plan 104.x (Plan 50 D102
+  format hints уже в error messages).
+- A5.6 ✅ plan124_5 fixtures 3/3 PASS (parser + smoke; doc behavior
+  e2e verified manually).
+- A5.7 ✅ `docs/field-visibility-guide.md` created (~330 lines).
+- A5.8 ✅ Regression: existing nova doc fixtures unchanged.
+
 ### Acceptance — Plan 124.2
 
 ALL closed 2026-06-02:

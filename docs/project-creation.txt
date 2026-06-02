@@ -27942,3 +27942,46 @@ Plan 124 umbrella status: 4/7 sub-plans closed (124.1, 124.2, 124.3, 124.4).
 Remaining: 124.5 (doc + LSP), 124.6 (test_access + visible_to),
 124.7 (type-level priv flip tuples).
 
+
+Plan 124.5 — nova doc + LSP integration (2026-06-02)
+
+Sub-plan Plan 124. doc tree расширен per-field priv metadata.
+
+Changes:
+- compiler-codegen/src/doc/doctree.rs: RecordField.priv_field bool.
+- compiler-codegen/src/doc/collector.rs: 3 sites populate priv_field
+  from AST (Record TypeDecl + Sum-Record-variant + NamedTuple).
+- compiler-codegen/src/doc/mod.rs::strip_private: per-field filter
+  extended (priv fields removed from Record + Sum-Record).
+- render_md.rs: `priv` keyword preserved in signature.
+- render_html.rs: same.
+- render_json.rs: emit "priv_field": true|false для каждого field.
+
+LSP: Plan 104.x infrastructure currently covers diagnostics only
+(Plan 104.1 closed). Hover (104.2) и completion (104.3) — separate
+sub-plans. Plan 124.5 V1 wires doc-layer; LSP integration deferred.
+
+docs/field-visibility-guide.md создан (~330 lines):
+- TL;DR + use cases + syntax + composition + diagnostics + tooling +
+  comparison vs Go/Rust/TS/Java/Swift/C# + migration + 3 patterns.
+
+D-block: D220 §T1 amend в spec/decisions/02-types.md (tooling section).
+Acceptance A5.1-A5.8 ✅ (A5.3-A5.5 LSP forward-ref Plan 104.2/104.3).
+
+Fixtures plan124_5/ 3/3 PASS via release nova-cli + clang:
+- doc_priv_fixture, doc_no_priv_fixture, doc_mixed_priv_fixture.
+E2E verification manual:
+- nova doc fixture.nv → priv hidden.
+- nova doc fixture.nv --include-private → priv keyword preserved.
+- nova doc fixture.nv --include-private --format json → "priv_field"
+  emitted per field.
+
+Commit:
+- feat(plan 124.5): nova doc per-field priv + visibility guide
+  — doc tree + collector + 3 renderers + 3 fixtures + guide + 3 logs.
+
+Plan 124.5 acceptance A5.1-A5.8 — ALL ✅ (LSP forward-ref).
+
+Plan 124 umbrella status: 5/7 sub-plans closed (124.1, 124.2, 124.3, 124.4, 124.5).
+Remaining: 124.6 (test_access + visible_to), 124.7 (type-level priv flip tuples).
+

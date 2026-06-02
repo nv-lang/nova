@@ -1,0 +1,21 @@
+// Plan 124.5 — doc fixture: priv field hidden by default, shown with
+// --include-private. Verified through `nova doc` invocations (manual
+// e2e check during Plan 124.5 closure).
+module plan124_5.doc_priv_fixture
+
+/// Account holds user balance.
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+export fn Account @get_name() -> str =>
+    @name
+
+test "Plan 124.5: fixture parses + balance accessible from method" {
+    ro acc = Account.new("alice")
+    assert(acc.get_name() == "alice")
+}

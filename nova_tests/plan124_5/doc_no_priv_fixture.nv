@@ -1,0 +1,18 @@
+// Plan 124.5 — doc fixture: type without any priv fields — all
+// fields shown by default (backward compat sanity).
+module plan124_5.doc_no_priv_fixture
+
+/// Simple Point type, all fields public.
+export type Point {
+    ro x f64
+    ro y f64
+}
+
+export fn Point.new(a f64, b f64) -> Point =>
+    { x: a, y: b }
+
+test "Plan 124.5: no-priv type works backward compat" {
+    ro p = Point.new(1.0, 2.0)
+    assert(p.x == 1.0)
+    assert(p.y == 2.0)
+}

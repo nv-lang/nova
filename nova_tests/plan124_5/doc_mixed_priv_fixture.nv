@@ -1,0 +1,24 @@
+// Plan 124.5 — doc fixture: mixed priv + public field type — default
+// shows только public, --include-private shows all (verified via
+// manual nova doc invocations during 124.5 closure).
+module plan124_5.doc_mixed_priv_fixture
+
+/// Bank account aggregating balance and metadata.
+export type BankAccount {
+    ro account_id str
+    ro owner str
+    priv mut balance f64
+    priv ro session_token str
+}
+
+export fn BankAccount.create(id str, o str) -> BankAccount =>
+    { account_id: id, owner: o, balance: 0.0, session_token: "" }
+
+export fn BankAccount @public_id() -> str =>
+    @account_id
+
+test "Plan 124.5: mixed type method access" {
+    ro b = BankAccount.create("acct-123", "alice")
+    assert(b.public_id() == "acct-123")
+    assert(b.owner == "alice")
+}

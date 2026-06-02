@@ -88,9 +88,31 @@ pub fn build_workspace(modules: &[Module]) -> DocTree {
 
 /// Plan 45 Ф.12: pass `strip_private` — отбрасывает items с
 /// `visibility = Private`. Применять, если `--include-private` НЕ задан.
+///
+/// Plan 124.5 (D220/D222 amend): дополнительно отбрасывает priv field'ы
+/// inside Record-type items (per-field visibility, не только module-level).
 pub fn strip_private(tree: &mut DocTree) {
+    use doctree::{ItemKind, TypeDefinition, VariantPayload};
     for m in &mut tree.modules {
         m.items.retain(|it| it.visibility == doctree::Visibility::Export);
+        // Plan 124.5: per-field priv filter.
+        for it in m.items.iter_mut() {
+            if let ItemKind::Type(td) = &mut it.kind {
+                match td {
+                    TypeDefinition::Record(fs) => {
+                        fs.retain(|f| !f.priv_field);
+                    }
+                    TypeDefinition::Sum(variants) => {
+                        for v in variants.iter_mut() {
+                            if let VariantPayload::Record(fs) = &mut v.payload {
+                                fs.retain(|f| !f.priv_field);
+                            }
+                        }
+                    }
+                    TypeDefinition::Alias(_) | TypeDefinition::Newtype { .. } => {}
+                }
+            }
+        }
     }
 }
 

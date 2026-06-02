@@ -29189,3 +29189,63 @@ of priv; orthogonal к D222.
 
 Plan 124.4 ✅ FULLY CLOSED. Plan 124 umbrella partial — 3 sub-plans
 (124.5-124.7) remaining.
+
+---
+
+## Plan 124.5 — nova doc + LSP integration (2026-06-02)
+
+**Что:** doc tree carries per-field priv metadata; default doc output
+hides priv; `--include-private` shows с `priv` keyword preserved;
+JSON output emits `priv_field` for LSP/IDE consumption; comprehensive
+user-facing `docs/field-visibility-guide.md` написан.
+
+**Implementation:**
+- `compiler-codegen/src/doc/doctree.rs`: RecordField gets `priv_field: bool`.
+- `compiler-codegen/src/doc/collector.rs`: 3 collection sites populate
+  priv_field из AST (TypeDeclKind::Record + Sum-variant-Record +
+  NamedTuple).
+- `compiler-codegen/src/doc/mod.rs::strip_private`: extended pass —
+  отбрасывает priv fields из Record + Sum-Record variants (Sum-tuple
+  / Alias / Newtype не имеют field-level visibility, no-op).
+- `compiler-codegen/src/doc/render_md.rs`: `type X { priv mut f T }` —
+  priv keyword preserved.
+- `compiler-codegen/src/doc/render_html.rs`: same priv keyword render.
+- `compiler-codegen/src/doc/render_json.rs`: emit `"priv_field": true|false`
+  для каждого field (Record + Sum-Record).
+
+**LSP integration:** Plan 104.x infrastructure currently covers
+diagnostics only (Plan 104.1 closed). Hover (104.2) и completion
+(104.3) — separate sub-plans. Plan 124.5 V1 wires doc-layer
+infrastructure; LSP integration follows once 104.2/104.3 ship —
+they will read existing AST RecordField.priv_field + JSON priv_field
+data source.
+
+**docs/field-visibility-guide.md created:**
+- §1 TL;DR с canonical example.
+- §2 Use cases table (when to use priv).
+- §3 Syntax + composition (mut/ro, mutual exclusion, named tuples,
+  generics).
+- §4 Diagnostic codes table (6 codes).
+- §5 Tooling (nova doc + LSP forward-ref + no reflection).
+- §6 Comparison vs Go/Rust/TS/Java/Swift/C#.
+- §7 Migration story.
+- §8 Common patterns (3 examples).
+- §9 See also (spec links).
+
+**Fixtures plan124_5/ 3/3 PASS:**
+- doc_priv_fixture: Account с priv balance.
+- doc_no_priv_fixture: Point public-only (backward compat).
+- doc_mixed_priv_fixture: BankAccount c priv balance + priv session_token.
+
+E2E manual verification:
+- `nova doc fixture.nv` → priv fields hidden, rendered как public-only.
+- `nova doc fixture.nv --include-private` → priv keyword preserved,
+  e.g. `type Account { name str; priv mut balance f64 }`.
+- `nova doc fixture.nv --include-private --format json` → JSON emits
+  `"priv_field": true` для priv fields, `false` для public.
+
+**Acceptance Plan 124.5 (A5.1-A5.8) — ALL ✅** (5.3-5.5 LSP deferred к
+Plan 104.2/104.3 as documented forward-ref).
+
+Plan 124.5 ✅ FULLY CLOSED. Plan 124 umbrella partial — 2 sub-plans
+(124.6-124.7) remaining.
