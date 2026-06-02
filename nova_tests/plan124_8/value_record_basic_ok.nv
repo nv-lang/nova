@@ -1,0 +1,20 @@
+// Plan 124.8 — positive: value-record (D226 NEW).
+// V1 codegen treats as heap-backed (transparent fallback) — see
+// [M-124.8-value-codegen-stack] для V2 proper stack allocation.
+module plan124_8.value_record_basic_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn Vec3.new(a f64, b f64, c f64) -> Vec3 =>
+    { x: a, y: b, z: c }
+
+test "value-record construct + field access" {
+    ro v = Vec3.new(1.0, 2.0, 3.0)
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}

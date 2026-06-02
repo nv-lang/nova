@@ -1,0 +1,13 @@
+// Plan 124.8 — positive: multi-line tuple + trailing comma.
+module plan124_8.tuple_multiline_trailing_ok
+
+type Vec3(
+    x f64,
+    y f64,
+    z f64,
+)
+
+test "multi-line + trailing comma" {
+    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.y == 2.0)
+}

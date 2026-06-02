@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_NO_PRIV
+//
+// Plan 124.8 — negative: `pub` modifier также запрещён (всё уже public).
+module plan124_8.tuple_pub_field_neg
+
+type Pair(pub a int, b int)

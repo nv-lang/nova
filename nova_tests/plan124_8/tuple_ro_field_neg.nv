@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_NO_PER_FIELD_MOD
+//
+// Plan 124.8 — negative: `ro` per-field modifier на tuple — запрещён.
+module plan124_8.tuple_ro_field_neg
+
+type Vec3(ro x f64, y f64, z f64)

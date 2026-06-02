@@ -1,0 +1,27 @@
+// Plan 124.8 — positive: 6 permutations of {value, consume, priv}
+// modifiers все parse + recognize identically (parser order-independent).
+//
+// Note: simpler test — verifies value+priv composition в 2 orders.
+// Full consume composition tests require consume-method declarations;
+// см. отдельный fixture.
+module plan124_8.modifier_order_independence_ok
+
+type A value priv {
+    pub ro id u64
+    secret int
+}
+
+type B priv value {
+    pub ro id u64
+    secret int
+}
+
+fn A.new(i u64, s int) -> A => { id: i, secret: s }
+fn B.new(i u64, s int) -> B => { id: i, secret: s }
+
+test "value priv vs priv value — equivalent" {
+    ro a = A.new(1, 100)
+    ro b = B.new(2, 200)
+    assert(a.id == 1)
+    assert(b.id == 2)
+}

@@ -1,0 +1,11 @@
+// Plan 124.8 — positive: single-line tuple (baseline, Plan 120 preserved).
+module plan124_8.tuple_singleline_ok
+
+type Vec3(x f64, y f64, z f64)
+
+test "single-line tuple parses + constructs" {
+    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}

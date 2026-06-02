@@ -1,0 +1,10 @@
+// Plan 124.8 — positive: positional tuple newtype (Plan 115 FFI pattern)
+// preserved unchanged. Demonstrates type X(T) form parses без изменений.
+module plan124_8.plan115_positional_tuple_preserved_ok
+
+type Wrap(int)
+
+test "positional tuple parses (Plan 115 backward compat)" {
+    ro w = Wrap(42)
+    assert(w.0 == 42)
+}

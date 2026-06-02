@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+//
+// Plan 124.8 — negative: `ro x ro T` — redundant.
+// D33/D176 amend: binding ro автоматически propagates ro на тип.
+module plan124_8.binding_ro_ro_redundant_neg
+
+fn main() {
+    ro arr []int = [1, 2, 3]
+    ro view ro []int = arr
+}
