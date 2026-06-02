@@ -2241,7 +2241,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 **Total: 36 worktree commits + 3 nova-private commits.**
 
-### Post-grand-closure additions
+### Post-grand-closure additions (Session 3 — Ф.3.3-3.5 enforcement)
 
 - `044881ee993` — **Merge main into plan-118** sync — Plan 124.1 V1 (priv
   field per-field visibility, D220, 4 error codes) + Plan 114.4.2 (const
@@ -2250,12 +2250,20 @@ issue → extract в followup (`[M-118-perf-*]`).
   creation + simplifications) — keep both Plan 118 (unsafe_attr,
   KwUnsafe, D216) + Plan 124 (priv/pub, KwPriv/KwPub, D220) + Plan 114.4.2
   (fn_eval_max_depth) additions; semantically не конфликтуют.
+- `b0ef06c1f27` — docs(plan118) post-merge log update
+- `86ec057122e` — **Ф.3.3 scaffold:** Block.is_unsafe field + KwUnsafe
+  sets true (24 Block construction sites updated)
+- `5c0d2c975ce` — **Ф.3.5 enforcement:** E_UNSAFE_REQUIRED для AddrOf /
+  Deref outside unsafe context. `check_unsafe_context_in_module` walker
+  с depth counter (incremented в unsafe blocks + #unsafe fn body).
+  **Closes acceptance A8** ✅.
+- `b2d9cf46c3f` — Ф.3.5 positive fixture (`*&q` inline + nested unsafe)
 
 **Regression smoke post-merge (release test-build):**
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | 19/0 (10 positive + 9 NEG) |
+| plan118 | **21/0** (11 positive + 10 NEG, post-Ф.3.5) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |

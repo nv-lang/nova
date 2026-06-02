@@ -28456,6 +28456,14 @@ both Plan 118 + main additions. Regression release-build smoke 81/0
 verified (plan118 19/0 + plan115 11/0 + plan120 8/0 + plan114 10/0 +
 plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
 
+**Ф.3.3 + Ф.3.5 enforcement landed (2026-06-02):**
+- `86ec057122e` — Block.is_unsafe field + KwUnsafe sets true (24 sites)
+- `5c0d2c975ce` — E_UNSAFE_REQUIRED enforcement: walker pass с depth
+  counter detects `&value` / `*expr` outside unsafe block / `#unsafe fn`
+  body. **Closes acceptance A8** ✅
+- `b2d9cf46c3f` — positive fixture confirming valid usage passes
+- plan118 fixtures: **21/0** (11 positive + 10 NEG)
+
 ---
 
 ## Plan 114.4.2 — `const fn` comptime evaluable (D199) — CLOSED 2026-06-01

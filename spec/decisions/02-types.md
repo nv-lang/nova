@@ -7525,7 +7525,10 @@ V2 — research `extern "C-unwind"` (Rust 2024 model);
 ### Diagnostic codes (new)
 
 **Errors:**
-- `E_UNSAFE_REQUIRED` — pointer op outside unsafe context
+- `E_UNSAFE_REQUIRED` — pointer op (`&value` AddrOf / `*expr` Deref) outside
+  unsafe context (block.is_unsafe = false AND not в `#unsafe fn` body).
+  Active enforcement через `check_unsafe_context_in_module` walker pass с
+  depth counter — D216 §8 V1 ENFORCED 2026-06-02
 - `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn без wrap
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — `null` literal (general)

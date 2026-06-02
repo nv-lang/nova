@@ -26885,6 +26885,46 @@ Regression smoke (release build, clang toolchain, libuv enabled):
 Worktree total: 36 commits на plan-118 + 3 в nova-private.
 Branch plan-118 fully synced с main (0 commits ahead в main).
 
+==========================================================================
+2026-06-02 Plan 118 Ф.3.3 + Ф.3.5 — Block.is_unsafe + E_UNSAFE_REQUIRED
+enforcement (A8 closed)
+==========================================================================
+
+Substantial Ф.3 enforcement work landed:
+
+Ф.3.3 scaffold (commit 86ec057122e):
+- AST Block struct: new is_unsafe: bool field. Default false; parser
+  KwUnsafe arm sets true. 24 Block construction sites updated across 5
+  files (callnorm + emit_c + desugar + parser + verify/handler_exec) с
+  is_unsafe: false. Foundation для Ф.3.5 enforcement.
+
+Ф.3.5 enforcement (commit 5c0d2c975ce):
+- New free fn check_unsafe_context_in_module() в types/mod.rs.
+- UnsafeCtx struct с depth: usize counter.
+- walk_block: if b.is_unsafe → depth++, recurse, depth--.
+- walk_expr: AddrOf / Deref check depth == 0 → emit E_UNSAFE_REQUIRED.
+- #unsafe fn body имплицитно unsafe (depth++ при fn entry).
+- Recursive walker covers Block/Binary/Call/Member/Index/If/While/Loop/
+  For/Match/As/Is/Try/Bang/Detach/Blocking.
+- Hook в check_module — после existing checks; errors accumulated в
+  same Vec → all diagnostics в single compile.
+
+Test coverage (commits 5c0d2c975ce + b2d9cf46c3f):
+- t3_neg_deref_outside_unsafe.nv — NEG (EXPECT_COMPILE_ERROR
+  E_UNSAFE_REQUIRED). PASS (negative).
+- t3_3_addr_of_deref_in_unsafe_ok.nv — POSITIVE (& + * inline inside
+  unsafe + nested unsafe). PASS.
+
+Closes acceptance A8 (& operator outside unsafe → E_UNSAFE_REQUIRED).
+
+Regression smoke (release build): plan118 21/0 (11 positive + 10 NEG),
+plan115 11/0 (D214 backward compat preserved), plan120 8/0, plan114
+10/0 — all unchanged. No existing code uses AddrOf/Deref outside unsafe
+blocks, so enforcement не сломала existing tests.
+
+Worktree D:/Sources/nv-lang/nova-p118 branch plan-118.
+40 commits ahead в plan-118 branch (40 = 36 base + 4 new).
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
