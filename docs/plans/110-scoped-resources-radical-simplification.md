@@ -25,7 +25,13 @@
 > - **Q-structural-extension stub** (F1 future direction)
 > **v3.3**: D195-D198, hot-path opt, OTel format, cleanup-cookbook
 > **v3.2**: `exit_timeout` в опциональный `WithExitTimeout`; Application = effect
-> **Статус:** 🆕 PLANNED.
+> **Статус:** ✅ ЗАКРЫТ (2026-06-01) — merge `874f5766ca5` в main
+> ("Plan 110 (consume-scope cleanup family radical simplification) closed"),
+> закрытие summary `1c09f315f02` (Plan 110.8.5/8.8 perf baseline + umbrella
+> close). Все Ф.0-Ф.14 phases shipped через sub-plans 110.1-110.8.
+> Plan 110.9 (V1.1 production-grade closure) остаётся PLANNED — deferred
+> until trigger condition. **64 fixtures в nova_tests/plan110/** PASS на
+> release nova-cli (status update меmadata-only commit 2026-06-03).
 >
 > **Цель:** 100% production-grade cleanup-семантика для 0.1 release. Один
 > keyword `consume` + один protocol `Consumable[E]` + `defer` escape hatch.
