@@ -5747,6 +5747,16 @@ fn match_self_pure_call(
 
 /// V3.1: returns canonical String repr if expr is a simple literal,
 /// `None` otherwise.
+///
+/// Plan 123.3.2 (V3.2, 2026-06-02): extended to tuple- and record-
+/// literal arguments whose components are themselves literal-pure.
+/// Format:
+///   - Tuple `(a, b, c)`        → `T3{<a>;<b>;<c>}`
+///   - Record `Type { f1: v1 }` → `R<TypeName>{f1:<v1>;f2:<v2>;...}`
+///     с fields отсортированными по имени для canonical ordering.
+///     Anonymous record (`{ f: v }`) → `R{...}` без имени.
+/// Skipped patterns: spread fields, shorthand-pun fields without
+/// value, `inferred_map_v.is_some()` (D55 map-coercion not a literal).
 fn canonical_literal_repr(e: &Expr) -> Option<String> {
     match &e.kind {
         ExprKind::IntLit(n) => Some(format!("{}i", n)),
@@ -5766,6 +5776,46 @@ fn canonical_literal_repr(e: &Expr) -> Option<String> {
         // Unary negation на literal: `-5` parses as Unary{Neg, IntLit(5)}.
         ExprKind::Unary { op: UnOp::Neg, operand } => {
             canonical_literal_repr(operand).map(|r| format!("m{}", r))
+        }
+        // Plan 123.3.2 (V3.2): tuple literal — recurse on each element.
+        ExprKind::TupleLit(items) => {
+            let mut buf = format!("T{}{{", items.len());
+            for (idx, it) in items.iter().enumerate() {
+                if idx > 0 { buf.push(';'); }
+                let r = canonical_literal_repr(it)?;
+                buf.push_str(&r);
+            }
+            buf.push('}');
+            Some(buf)
+        }
+        // Plan 123.3.2 (V3.2): record literal — explicit fields only,
+        // sorted by name. Spread / shorthand / map-coercion → bail.
+        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            if inferred_map_v.is_some() { return None; }
+            // Collect (name, value-expr) pairs; reject any spread / no-value.
+            let mut pairs: Vec<(&str, &Expr)> = Vec::with_capacity(fields.len());
+            for f in fields {
+                if f.is_spread { return None; }
+                let value = f.value.as_ref()?;
+                pairs.push((f.name.as_str(), value));
+            }
+            // Canonical ordering — sort by field name.
+            pairs.sort_by(|a, b| a.0.cmp(b.0));
+            let mut buf = String::new();
+            buf.push('R');
+            if let Some(path) = type_name {
+                buf.push_str(&path.join("."));
+            }
+            buf.push('{');
+            for (idx, (name, val)) in pairs.iter().enumerate() {
+                if idx > 0 { buf.push(';'); }
+                buf.push_str(name);
+                buf.push(':');
+                let r = canonical_literal_repr(val)?;
+                buf.push_str(&r);
+            }
+            buf.push('}');
+            Some(buf)
         }
         _ => None,
     }
@@ -7015,5 +7065,182 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
         assert_eq!(names1, names2);
         // Verify alphabetical: _at_a, _at_b, _at_c.
         assert_eq!(names1, vec!["_at_a", "_at_b", "_at_c"]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.3.2 (V3.2, 2026-06-02): tuple + record literal canonical
+    // encoding for PureCallKey args_key.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn v32_tuple_literal_repr_canonical() {
+        use crate::ast::{Expr, ExprKind};
+        use crate::diag::Span;
+        let s = Span::default();
+        // (1, 2)
+        let tup = Expr::new(
+            ExprKind::TupleLit(vec![
+                Expr::new(ExprKind::IntLit(1), s),
+                Expr::new(ExprKind::IntLit(2), s),
+            ]),
+            s,
+        );
+        let repr = canonical_literal_repr(&tup).expect("Some");
+        assert_eq!(repr, "T2{1i;2i}");
+    }
+
+    #[test]
+    fn v32_nested_tuple_literal_repr() {
+        use crate::ast::{Expr, ExprKind};
+        use crate::diag::Span;
+        let s = Span::default();
+        // ((1,), 2)
+        let inner = Expr::new(
+            ExprKind::TupleLit(vec![Expr::new(ExprKind::IntLit(1), s)]),
+            s,
+        );
+        let outer = Expr::new(
+            ExprKind::TupleLit(vec![inner, Expr::new(ExprKind::IntLit(2), s)]),
+            s,
+        );
+        let repr = canonical_literal_repr(&outer).expect("Some");
+        assert_eq!(repr, "T2{T1{1i};2i}");
+    }
+
+    #[test]
+    fn v32_record_literal_sorted_canonical() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // Point { y: 2, x: 1 } — fields в reverse order to test sort.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: Some(vec!["Point".into()]),
+                fields: vec![
+                    RecordLitField {
+                        name: "y".into(),
+                        value: Some(Expr::new(ExprKind::IntLit(2), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                    RecordLitField {
+                        name: "x".into(),
+                        value: Some(Expr::new(ExprKind::IntLit(1), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        let repr = canonical_literal_repr(&rec).expect("Some");
+        // Fields sorted alphabetically: x then y.
+        assert_eq!(repr, "RPoint{x:1i;y:2i}");
+    }
+
+    #[test]
+    fn v32_record_literal_spread_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // { ...other } — spread must reject.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "".into(),
+                        value: Some(Expr::new(ExprKind::Ident("other".into()), s)),
+                        is_spread: true,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none(),
+            "spread record must be rejected by V3.2 encoder");
+    }
+
+    #[test]
+    fn v32_record_literal_pun_shorthand_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // { name } — shorthand without value (no .value) — reject.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "name".into(),
+                        value: None,
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none(),
+            "shorthand-pun field without value must be rejected");
+    }
+
+    #[test]
+    fn v32_record_literal_with_non_literal_arg_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField};
+        use crate::diag::Span;
+        let s = Span::default();
+        // { x: foo } — Ident is not a literal → reject.
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "x".into(),
+                        value: Some(Expr::new(ExprKind::Ident("foo".into()), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: None,
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none());
+    }
+
+    #[test]
+    fn v32_inferred_map_v_record_rejected() {
+        use crate::ast::{Expr, ExprKind, RecordLitField, TypeRef};
+        use crate::diag::Span;
+        let s = Span::default();
+        // inferred_map_v.is_some() → reject (D55 map-coercion).
+        let rec = Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields: vec![
+                    RecordLitField {
+                        name: "k".into(),
+                        value: Some(Expr::new(ExprKind::IntLit(1), s)),
+                        is_spread: false,
+                        at_shorthand: false,
+                        span: s,
+                    },
+                ],
+                inferred_map_v: Some(TypeRef::Unit(s)),
+            },
+            s,
+        );
+        assert!(canonical_literal_repr(&rec).is_none(),
+            "D55 map-coercion record must be rejected by V3.2 encoder");
     }
 }

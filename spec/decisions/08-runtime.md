@@ -5292,6 +5292,63 @@ allocations — negligible vs total compilation. Profiled OK.
 - **V7.2.4** New fixtures plan123_7_2 PASS ✅
 - **V7.2.5** `NOVA_FIELD_CACHE_IPA=0` escape hatch still works ✅
 
+## D219 amend V3.2 — Pure-call tuple/record literal args (Plan 123.3.2)
+
+**Source:** [Plan 123.3.2](../../docs/plans/123.3.2-tuple-record-literal-args.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Scope extension
+
+V3.1 limited literal-args caching to scalar literals (Int / Float /
+Str / Bool / Char / Unit / NullPtr / Unary-neg-of-literal). V3.2
+extends к tuple- and record-literal arguments whose components are
+themselves recursively literal-pure.
+
+### 2. Canonical encoding
+
+| Expr | repr |
+|---|---|
+| `(a, b, c)` | `T<N>{<a>;<b>;<c>}` (N = arity) |
+| `Type { f1: v1, f2: v2 }` | `R<Type>{f1:<v1>;f2:<v2>;...}` (fields sorted by name) |
+| `{ f1: v1 }` (anonymous) | `R{...}` (no type prefix) |
+
+Format rules:
+- Tuple: positional — encoded in source order.
+- Record: fields **sorted alphabetically by name** для canonical
+  ordering across syntactic reorderings.
+- Type prefix for record uses `path.join(".")` (`std.foo.Bar` → `Rstd.foo.Bar{...}`).
+- Recursion: each component runs through `canonical_literal_repr`
+  recursively; first failure short-circuits к `None`.
+
+### 3. Rejected patterns
+
+- Spread fields (`{ ...other }`) → reject. Spread points to a
+  runtime value; folded literal would mis-represent semantics.
+- Shorthand-pun without explicit value (`{ name }`) → reject.
+  Equivalent to `Ident(name)` which is not a literal.
+- D55 `inferred_map_v.is_some()` → reject. Map-coercion-marked
+  record literal is semantically a HashMap insert sequence, not a
+  literal record.
+- Any non-literal arg anywhere in the tree → bubbles up к None.
+
+### 4. Eligibility — interaction с PureCallKey
+
+Args_key is the concatenation `_<repr1>_<repr2>...` exactly as in
+V3.1. Tuples and records inflate args_key length but remain stable
+across reorderings (sorted) и nesting (recursion).
+
+### 5. Acceptance
+
+- **V3.2.1** `canonical_literal_repr(TupleLit)` returns canonical
+  string когда all elements literal ✅
+- **V3.2.2** Nested tuples (e.g. `((1,), 2)`) encoded as
+  `T2{T1{1i};2i}` ✅
+- **V3.2.3** RecordLit fields sorted alphabetically before encoding ✅
+- **V3.2.4** Spread / shorthand / D55-marker rejected (None) ✅
+- **V3.2.5** Non-literal nested arg → None ✅
+- **V3.2.6** Field-cache unit tests 14/14 PASS + 7 new V3.2 tests
+  ✅
+
 ## D219 amend V3.1 — Pure-call literal args extension (Plan 123.3.1)
 
 **Source:** [Plan 123.3.1](../../docs/plans/123.3.1-pure-literal-args.md).
