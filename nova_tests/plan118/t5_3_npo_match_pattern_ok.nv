@@ -1,0 +1,26 @@
+// Plan 118 Ф.5 T5.3 / A19 — NPO match-pattern: Some(p) => / None =>
+// dispatches correctly с NPO layout (value == NULL → None).
+//
+// Verifies match emission site (emit_match → pattern_cond) уважает
+// NPO layout for NovaOpt[*T] — no tag field access.
+
+module plan118.t5_3_npo_match_pattern_ok
+
+type Item {
+    ro tag i64
+}
+
+// Returns Option[*Item] — None to test match None arm dispatch.
+#unsafe
+fn maybe_item() -> Option[*u8] {
+    None
+}
+
+test "match Option[*u8] dispatches None branch via NPO check" {
+    ro opt = unsafe { maybe_item() }
+    ro result = match opt {
+        Some(p) => 1
+        None => 0
+    }
+    assert(result == 0)
+}
