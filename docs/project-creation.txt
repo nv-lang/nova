@@ -29975,3 +29975,51 @@ Lessons:
   через TypeRef variants.
 - Pub re-export через wrapper fn (subst_type_ref_pub) — clean way share
   helpers cross-module без exposing all internals.
+
+
+===========================================================
+Plan 124.8 — Tuple+Value-Record refinement (2026-06-02)
+===========================================================
+
+V2 refinement Plan 124. 9 phases (Ф.0-Ф.8) closed in autonomous session.
+
+Tuples: all-public, multi-line + trailing comma, binding-level mutability
+(Rust-style). Records: heap by default, NEW `type X value { ... }` form
+for stack allocation (Kotlin/Java Valhalla pattern).
+
+D-block changes:
+- D33 amend: binding propagation rules (ro/mut propagate by default).
+- D52 amend: 7-я форма value record + `value` contextual keyword.
+- D175 amend: binding dominates (ro acc blocks all writes, even mut field).
+- D176 amend: mut T в binding type annotation (closes pre-existing gap).
+- D215 amend: multi-line tuple + binding-level mutability.
+- D222 amend: tuple priv portion retract; protocol impl boundary preserved.
+- D225 retract: type-level priv flip для tuples removed.
+- D226 NEW: value-record core allocation contract.
+
+Plan 124.4/124.7 fixtures cleaned up:
+- Deleted 17 fixtures (priv-on-tuple no longer valid).
+- Kept 1 fixture (named_tuple_no_priv_ok backward compat).
+
+New fixtures: plan124_8/ 23/23 PASS (16 pos + 7 neg).
+
+Regression: 0 new FAIL across plan120 + plan124_1/2/3/6 + plan108_3 +
+plan115 + plan118.
+
+Codegen V1: value-record treated as heap-record (transparent fallback).
+V2 proper stack allocation = [M-124.8-value-codegen-stack] followup.
+
+Followups:
+- Plan 126 (auto-derive) — DRAFT scaffold created.
+- [M-124.8-value-codegen-stack].
+- [M-124.8-tuple-mut-field-write-codegen].
+- [M-124.8-ro-binding-scope].
+- [M-124.8-zero-on-move].
+
+Worktree: nova-p124-8.
+Branch: plan-124.8-tuple-value-refine.
+
+Plan 124.8 acceptance A8.1-A8.20 — 17 ✅ + 3 ⚠ V1 partial (codegen
+ones deferred к V2 followup).
+
+Plan 124.8 ✅ FULLY CLOSED V1.

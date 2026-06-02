@@ -30948,3 +30948,93 @@ Solution: in-place Ident rewrite at detection site (GenericMutateCtx).
 Each Call.args site gets correct mangled name based on its specific
 context. This pattern applies whenever specialization depends on
 context, not name alone.
+
+---
+
+## Plan 124.8 — Tuple+Value-Record design refinement (2026-06-02)
+
+**Что:** V2 refinement Plan 124 V1 (124.1-124.7). Tuples становятся
+all-public (D222 amend + D225 retract), records получают `value`
+modifier для stack allocation (D226 NEW), binding propagation rules
+formalized (D33/D176 amend), `ro acc` binding dominates (D175 amend).
+
+### Phases (Ф.0-Ф.8) — все ✅
+
+- **Ф.0 — Investigation:** value keyword audit (contextual, не breaking
+  backward compat), () form usage corpus-wide (только Plan 115/118 FFI
+  positional preserved), delete list (17 fixtures).
+- **Ф.1 — Parser tuple:** multi-line + trailing comma support; ban
+  priv/pub/mut/ro per-field modifiers с clean error codes
+  (E_TUPLE_NO_PRIV / E_TUPLE_NO_PER_FIELD_MOD).
+- **Ф.2 — Parser value-record:** `value` contextual keyword + AST
+  AllocKind { Heap, Value } enum; 6 modifier permutations parse;
+  binding propagation rules (`ro x mut T` works, `ro x ro T` /
+  `mut x mut T` redundant errors).
+- **Ф.3 — D175 amend:** `ro_binding_names` tracking в TypeCheckCtx;
+  `is_through_ro_binding` helper; `ro acc` blocks `acc.mut_field = X`
+  even though field is `mut` (Rust-style binding dominates).
+- **Ф.4 — Codegen V1:** value-record treated AS heap-record (transparent
+  fallback). [M-124.8-value-codegen-stack] для V2 proper stack allocation.
+- **Ф.5 — Tests:** plan124_8/ 23/23 PASS (16 positive + 7 negative).
+- **Ф.6 — Spec:** D33/D52/D175/D176/D215/D222/D225 amends + D226 NEW
+  appended в 02-types.md (~160 lines), README.md spec index updated.
+- **Ф.7 — Cleanup:** 17 obsolete fixtures deleted (9 plan124_4 priv-tests
+  + 8 plan124_7), 1 kept (named_tuple_no_priv_ok — Plan 120 backward
+  compat sanity).
+- **Ф.8 — Closure:** 3 logs + plan status + push.
+
+### Design highlights
+
+1. **Tuples = pure data carriers** (Rust/C# precedent): all-public
+   always, no encapsulation, binding-level mutability.
+2. **Value-record** = new orthogonal axis: allocation contract отдельный
+   от type form syntax. Single `{}` declaration syntax + `value`
+   modifier для stack-allocated. Industry-aligned (Kotlin `value class`,
+   Java Valhalla incoming).
+3. **Binding propagation** (D33/D176 amend): `ro x T` ≡ `ro x ro T`,
+   `mut x T` ≡ `mut x mut T` — explicit duplication redundant.
+   Useful smuglements `ro x mut T` (binding ro, content mut) parses
+   first-class.
+4. **D175 binding-dominates** (Rust-style): `ro acc` blocks ALL writes,
+   even к `mut field`. Was a pre-existing spec gap; now consistent.
+
+### V1 limitations (documented):
+
+- Value-record codegen V1 = heap-backed transparent fallback. V2
+  proper stack allocation в [M-124.8-value-codegen-stack] (~3 dev-day).
+- Auto-derive Equatable/Hashable/Cloneable/Comparable/Printable
+  — separate Plan 126 (draft scaffold included).
+- `&value` heap-promote — coordinate с Plan 118 (typed pointers).
+- `#zero_on_move` opt-in — followup attribute.
+
+### Fixtures (plan124_8/ 23/23 PASS):
+
+Positive 16 / Negative 7. Covers parser/AST/checker layers end-to-end.
+Codegen smoke (value_record_basic_ok + value_record_method_ok) verifies
+V1 heap-backed execution path works.
+
+### Regression — все compatible:
+
+- Plan 120 8/8 unchanged.
+- Plan 124.1 9/9 unchanged.
+- Plan 124.2 14/14 unchanged.
+- Plan 124.3 10/10 unchanged.
+- Plan 124.4 1/1 (after cleanup — 1 kept).
+- Plan 124.6 7/7 unchanged.
+- Plan 124.7 — fully retracted (8 fixtures deleted).
+- Plan 108.3 14/14 unchanged.
+- Plan 115 11/11 unchanged.
+- Plan 118 34/34 unchanged.
+
+### Acceptance Plan 124.8 (A8.1-A8.20) — 17 ✅ + 3 ⚠ V1 partial:
+
+- A8.1-A8.8: tuple syntax ✅ (multi-line, trailing comma, priv/pub/mut/ro bans, binding mut).
+- A8.9 ✅, A8.10-A8.13 ⚠ V1 heap-backed transparent fallback (followup).
+- A8.14-A8.15 ✅ composition (value+consume, value+priv).
+- A8.16-A8.18 ✅ binding rules (redundancy errors, ro x mut T).
+- A8.19 ✅ D175 amend (binding dominates).
+- A8.20 ✅ regression 0 new FAIL.
+
+Plan 124.8 ✅ FULLY CLOSED V1.
+
+V2 followup: Plan 126 (auto-derive) + [M-124.8-value-codegen-stack].
