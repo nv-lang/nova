@@ -27329,6 +27329,49 @@ A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
 A19 ✅, A20 ✅, A21 partial, A22 ✅, A23 ✅, A24, A25, A26, A28 partial,
 A29, A30, A33, A34, A35.
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5.10 A21 ✅ FULLY CLOSED — Option[*fn(...)] NPO
+==========================================================================
+
+User-requested closure A21 remainder — последний акцепт Ф.5 NPO family.
+
+Audit-only discovery: `TypeRef::Pointer(_, TypeRef::Func{...}, _)`
+lowers через type_ref_to_c в C-string `void**`:
+  1. Inner Func → "void*" (codegen line 4710 — opaque function pointer)
+  2. Outer Pointer wraps inner_c: format!("{}*", inner_c) или
+     format!("const {}*", inner_c) → "void**" / "const void**"
+  3. Both end с '*' → V1 detection (is_novaopt_npo branch 1) ALREADY
+     triggers NPO для Option[*fn(...)] без code changes!
+
+A21 remainder ✅ CLOSED через existing V1 infrastructure (Ф.5 A19
+landing did it implicitly). Test fixture verifies generated C:
+
+  typedef struct NovaOpt_const_void_p_p { const void** value; }
+  static inline nova_bool nova_opt_eq_const_void_p_p(...) {
+      return a.value == b.value;
+  }
+  NovaOpt_const_void_p_p cb = ((NovaOpt_const_void_p_p){.value = NULL});
+
+Implementation (1 commit):
+1. test(A21): t5_7_npo_option_fn_pointer_ok.nv — 2 positive tests
+   verifying Option[*fn(i64) -> i64] None ctor + equality check.
+
+plan118: 38/0 PASS (19 positive + 18 NEG + 1 WARN).
+
+🎯 ВСЕ Ф.5 NPO acceptance criteria CLOSED: A19, A20, A21, A22, A23.
+
+Plan 118 grand-total: 22 of 35 acceptance criteria closed (63%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A20 ✅, A21 ✅, A22 ✅, A23 ✅, A24, A25, A26, A28 partial, A29,
+A30, A33, A34, A35.
+
+Ф.5 NPO infrastructure готова для production FFI patterns:
+- malloc/calloc/realloc-style: Option[*u8] / Option[*T]
+- fopen/dlopen/sqlite3_open-style: Option[*FILE] / Option[*sqlite3]
+- dlsym-style callback registration: Option[*fn(...)]
+- libpng/libcurl handle pattern: Option[Sqlite3Handle] (newtype)
+- Plan 115 opaque pointer: Option[ptr]
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================

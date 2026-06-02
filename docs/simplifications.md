@@ -28527,16 +28527,23 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   `Option[Option[*T|ptr]]` nested pattern в Fn signatures, Type decls,
   Const/Let ascriptions. Existing `Option[Option[int]]` fixtures (plan95,
   plan98) verified clean — non-pointer inner doesn't trigger.
-- plan118 fixtures: **37/0** (18 positive + 18 NEG + 1 WARN)
+- **Ф.5.10 A21 ✅ CLOSED 2026-06-02** — NPO для `Option[*fn(...)]`.
+  Post-audit: `TypeRef::Pointer(_, TypeRef::Func{...}, _)` lowers к
+  `void**` (Func → `void*`, outer Pointer adds another `*`). c_ty
+  ends with `*` → V1 detection (Ф.5 A19) ALREADY triggers NPO без
+  code changes. Test fixture t5_7_npo_option_fn_pointer_ok verifies.
+- plan118 fixtures: **38/0** (19 positive + 18 NEG + 1 WARN)
 
-**Session 3 + Ф.5.x grand-total Plan 118 acceptance closed: 21 of 35 (60%):**
+**🎯 ALL Ф.5 NPO acceptance criteria CLOSED:** A19, A20, A21, A22, A23.
+
+**Session 3 + Ф.5.x grand-total Plan 118 acceptance closed: 22 of 35 (63%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
-A19 ✅, A20 ✅, A21 partial, A22 ✅, A23 ✅, A24, A25, A26, A28 partial,
-A29, A30, A33, A34, A35.
+A19 ✅, A20 ✅, A21 ✅, A22 ✅, A23 ✅, A24, A25, A26, A28 partial, A29,
+A30, A33, A34, A35.
 
-**Ф.5 V5 deferred (Session 4+):**
-- A21 remainder — NPO для `Option[*fn(...)]` (c_ty ends with `)`) —
-  V5 structural detection (function pointer C-type recognition)
+**Ф.5 NPO codegen — fully complete:** все A19-A23 закрыты, NPO
+infrastructure готова для production FFI patterns (malloc-style,
+dlsym-style, sqlite-handle-style — все get sizeof=8).
 
 **Main sync 2026-06-02 (commit 8fc3473e22b):** merged 66 commits from
 main (Plan 114.4.4.5 V4.1 mono-specialization + V4.2 runtime trampoline +
