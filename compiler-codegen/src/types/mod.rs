@@ -15996,10 +15996,11 @@ impl UnsafeCtx {
         if b.is_unsafe { self.depth -= 1; }
     }
 
-    /// Plan 118 A28: syntactic check для "expression value is a typed pointer".
+    /// Plan 118 A28/A17: syntactic check для "expression value is a typed pointer".
     /// Conservative — fires only when can be detected without full type-inference:
     ///   - `&value` / `*expr` unary
     ///   - `expr as *T` (cast к pointer type)
+    ///   - Block expression — peek в trailing (handles `unsafe { &x }` form)
     ///   - Ident binding к локалу, RHS которого был один из above
     /// Полная type-aware enforcement — Session 4+ через infer_expr_type.
     fn expr_is_typed_pointer(&self, e: &Expr) -> bool {
@@ -16009,6 +16010,10 @@ impl UnsafeCtx {
             ExprKind::Unary { op: UnOp::Deref, .. } => true,
             ExprKind::As(_, ty) => matches!(ty, crate::ast::TypeRef::Pointer(_, _, _)),
             ExprKind::Ident(name) => self.ptr_vars.iter().rev().any(|f| f.contains(name)),
+            // Block-trailing inheritance: `unsafe { &x }` / nested block.
+            // Empty trailing => not a pointer (unit-typed).
+            ExprKind::Block(b) => b.trailing.as_ref()
+                .map_or(false, |t| self.expr_is_typed_pointer(t)),
             _ => false,
         }
     }
@@ -16105,7 +16110,38 @@ impl UnsafeCtx {
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, errors),
             // Recurse в children.
             ExprKind::Block(b) => self.walk_block(b, errors),
-            ExprKind::Binary { left, right, .. } => {
+            ExprKind::Binary { left, right, op } => {
+                // Plan 118 A17 enforcement (D216 §6 cast/compare table):
+                // pointer-pointer order comparison (`<`, `<=`, `>`, `>=`)
+                // requires unsafe context. Pointer addresses are not stable
+                // ordinals across allocations (GC-relocation invariance broken;
+                // OS ASLR randomizes layout). Equality (`==`/`!=`) — safe.
+                // V1 syntactic detection: both operands match expr_is_typed_pointer
+                // (Unary AddrOf/Deref / As(*T) / Ident in ptr_vars). Full
+                // type-aware enforcement — Session 4+ via infer_expr_type.
+                let is_order_cmp = matches!(
+                    op,
+                    crate::ast::BinOp::Lt | crate::ast::BinOp::Le
+                    | crate::ast::BinOp::Gt | crate::ast::BinOp::Ge
+                );
+                if is_order_cmp
+                    && self.depth == 0
+                    && self.expr_is_typed_pointer(left)
+                    && self.expr_is_typed_pointer(right)
+                {
+                    errors.push(Diagnostic::new(
+                        "[E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE] pointer-pointer \
+                         order comparison (`<`, `<=`, `>`, `>=`) requires unsafe \
+                         context (Plan 118 D216 §6). Pointer addresses не stable \
+                         ordinals: (1) GC-relocation invalidates ordering invariant; \
+                         (2) OS ASLR randomizes address layout per process — \
+                         comparison results не deterministic across runs. \
+                         Equality `==`/`!=` — safe (identity check). \
+                         Fix: wrap в `unsafe {{ ... }}` block если действительно \
+                         нужно order-compare; rethink если это normal control flow.".to_string(),
+                        e.span,
+                    ));
+                }
                 self.walk_expr(left, errors);
                 self.walk_expr(right, errors);
             }
