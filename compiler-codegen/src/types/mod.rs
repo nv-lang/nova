@@ -15634,27 +15634,40 @@ pub(crate) fn check_unsafe_context_in_module(
     use crate::ast::{Item, FnBody};
     // Pre-collect names of #unsafe fns для A11 enforcement
     // (E_UNSAFE_CALL_REQUIRES_WRAP — calling #unsafe fn без `unsafe { }` wrap).
+    // Plan 118 A25: pre-collect fn names that have Fail effect — cast к
+    // *fn → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     let mut unsafe_fns: HashSet<String> = HashSet::new();
-    for item in &module.items {
+    let mut fail_fns: HashSet<String> = HashSet::new();
+    let collect_from = |item: &Item, unsafe_fns: &mut HashSet<String>, fail_fns: &mut HashSet<String>| {
         if let Item::Fn(fd) = item {
             if fd.unsafe_attr {
                 unsafe_fns.insert(fd.name.clone());
             }
-        }
-    }
-    // Also from peer_files
-    for pf in &module.peer_files {
-        for item in &pf.items_here {
-            if let Item::Fn(fd) = item {
-                if fd.unsafe_attr {
-                    unsafe_fns.insert(fd.name.clone());
+            // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
+            // где last segment == "Fail". Fn с Fail effect = throwable —
+            // cast к *fn forbidden.
+            for eff in &fd.effects {
+                if let crate::ast::TypeRef::Named { path, .. } = eff {
+                    if path.last().map_or(false, |n| n == "Fail") {
+                        fail_fns.insert(fd.name.clone());
+                        break;
+                    }
                 }
             }
+        }
+    };
+    for item in &module.items {
+        collect_from(item, &mut unsafe_fns, &mut fail_fns);
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            collect_from(item, &mut unsafe_fns, &mut fail_fns);
         }
     }
     let mut state = UnsafeCtx {
         depth: 0,
         unsafe_fns,
+        fail_fns,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -15688,6 +15701,9 @@ struct UnsafeCtx {
     /// Plan 118 A11 enforcement: names of #unsafe fns в текущем module.
     /// Call с этим именем outside unsafe context → E_UNSAFE_CALL_REQUIRES_WRAP.
     unsafe_fns: HashSet<String>,
+    /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
+    /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
+    fail_fns: HashSet<String>,
 }
 
 impl UnsafeCtx {
@@ -15824,8 +15840,37 @@ impl UnsafeCtx {
                     }
                 }
             }
-            ExprKind::As(inner, _) | ExprKind::Is(inner, _)
-                | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::As(inner, ty) => {
+                // Plan 118 A25: cast fn → *fn — check source fn doesn't have
+                // Fail effect (E_CALLBACK_THROWS_OVER_C_ABI). C ABI не
+                // propagates Nova exceptions; callback throwing across boundary
+                // = undefined behavior.
+                if let crate::ast::TypeRef::Pointer(_, inner_ty, _) = ty {
+                    if matches!(inner_ty.as_ref(), crate::ast::TypeRef::Func { .. }) {
+                        // Target is *fn(...) — check source.
+                        if let ExprKind::Ident(fname) = &inner.kind {
+                            if self.fail_fns.contains(fname) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_CALLBACK_THROWS_OVER_C_ABI] cast \
+                                         `{} as *fn(...)` forbidden — source \
+                                         fn declares Fail effect (Plan 118 \
+                                         D216 §10, §20). C ABI не propagates \
+                                         Nova exception machinery; callback \
+                                         throwing across boundary = UB. \
+                                         Workaround: wrap fn body в `catch` \
+                                         expression, return sentinel value.",
+                                        fname,
+                                    ),
+                                    e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
+                self.walk_expr(inner, errors);
+            }
+            ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 self.walk_expr(inner, errors);
             }
             // Plan 83 fiber-runtime constructs — body is Block.

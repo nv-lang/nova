@@ -1,0 +1,18 @@
+// Plan 118 Ф.6 NEG-T6.8 / A25 — `fn-with-Fail as *fn(...)` cast rejected.
+// D216 §10, §20: C ABI не propagates Nova exception machinery — callback
+// throwing across boundary = undefined behavior.
+//
+// Workaround: wrap fn body в `catch` expression, return sentinel value.
+//
+// EXPECT_COMPILE_ERROR E_CALLBACK_THROWS_OVER_C_ABI
+
+module plan118.t6_neg_callback_throws_over_c_abi
+
+fn throwing_fn(x i64) Fail -> i64 {
+    x
+}
+
+test "rejects cast Fn-with-Fail к *fn" {
+    ro cb = throwing_fn as *fn(i64) -> i64
+    assert(1 == 1)
+}
