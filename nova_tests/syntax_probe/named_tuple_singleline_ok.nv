@@ -1,0 +1,17 @@
+// Probe: single-line named tuple — known baseline (Plan 120 D215).
+module syntax_probe.named_tuple_singleline_ok
+
+type Point(x f64, y f64)
+
+type Vec3(x f64, y f64, z f64)
+
+test "single-line named tuple parses + constructs" {
+    ro p = Point(x: 1.0, y: 2.0)
+    assert(p.x == 1.0)
+    assert(p.y == 2.0)
+
+    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
