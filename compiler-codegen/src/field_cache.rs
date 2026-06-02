@@ -376,34 +376,42 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     } else {
         HashMap::new()
     };
+    // Plan 123.7.1: build per-method field-read-set registry для
+    // V3.1+ frame-based pure-cache invalidation. Parallel infrastructure
+    // к write_sets — direct reads + transitive closure через method calls.
+    let read_sets: HashMap<(String, String), HashSet<String>> = if cfg.ipa_enabled {
+        build_read_set_registry(module)
+    } else {
+        HashMap::new()
+    };
 
     for item in &mut module.items {
         if let Item::Fn(f) = item {
             if cfg.licm_enabled {
-                licm_fn(f, &registry, cfg);
+                licm_fn_with_ipa(f, &registry, cfg, &write_sets);
             }
             if cfg.chain_enabled {
-                chain_cache_fn(f, &registry, cfg);
+                chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets);
             }
             if cfg.pure_enabled {
-                pure_cache_fn(f, &registry, &pure_methods, cfg);
+                pure_cache_fn_with_ipa(f, &registry, &pure_methods, cfg, &write_sets, &read_sets);
             }
-            cache_fn_ipa(f, &registry, &write_sets, cfg);
+            cache_fn_ipa(f, &registry, &write_sets, &read_sets, cfg);
         }
     }
     for pf in &mut module.peer_files {
         for item in &mut pf.items_here {
             if let Item::Fn(f) = item {
                 if cfg.licm_enabled {
-                    licm_fn(f, &registry, cfg);
+                    licm_fn_with_ipa(f, &registry, cfg, &write_sets);
                 }
                 if cfg.chain_enabled {
-                    chain_cache_fn(f, &registry, cfg);
+                    chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets);
                 }
                 if cfg.pure_enabled {
-                    pure_cache_fn(f, &registry, &pure_methods, cfg);
+                    pure_cache_fn_with_ipa(f, &registry, &pure_methods, cfg, &write_sets, &read_sets);
                 }
-                cache_fn_ipa(f, &registry, &write_sets, cfg);
+                cache_fn_ipa(f, &registry, &write_sets, &read_sets, cfg);
             }
         }
     }
@@ -648,34 +656,331 @@ fn collect_writes_expr(
     }
 }
 
+/// Plan 123.7.1: build read-set registry — fields each method reads.
+/// Parallel infrastructure к write_sets для V3.1 frame-based
+/// pure-cache invalidation.
+fn build_read_set_registry(module: &Module) -> HashMap<(String, String), HashSet<String>> {
+    let mut direct: HashMap<(String, String), HashSet<String>> = HashMap::new();
+    let mut callees: HashMap<(String, String), HashSet<(String, String)>> = HashMap::new();
+    collect_direct_reads(&module.items, &mut direct, &mut callees);
+    for pf in &module.peer_files {
+        collect_direct_reads(&pf.items_here, &mut direct, &mut callees);
+    }
+    // Iterative transitive closure (same pattern as write_sets).
+    for _ in 0..10 {
+        let mut changed = false;
+        for (key, callees_set) in &callees {
+            for callee in callees_set {
+                if let Some(callee_reads) = direct.get(callee).cloned() {
+                    let entry = direct.entry(key.clone()).or_default();
+                    for f in callee_reads {
+                        if entry.insert(f) { changed = true; }
+                    }
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    direct
+}
+
+fn collect_direct_reads(
+    items: &[Item],
+    direct: &mut HashMap<(String, String), HashSet<String>>,
+    callees: &mut HashMap<(String, String), HashSet<(String, String)>>,
+) {
+    for item in items {
+        if let Item::Fn(f) = item {
+            if let Some(recv) = &f.receiver {
+                if recv.kind != ReceiverKind::Instance { continue; }
+                let key = (recv.type_name.clone(), f.name.clone());
+                let mut reads = HashSet::new();
+                let mut method_callees = HashSet::new();
+                match &f.body {
+                    FnBody::Block(b) => collect_reads_block(b, &recv.type_name, &mut reads, &mut method_callees),
+                    FnBody::Expr(e) => collect_reads_expr(e, &recv.type_name, &mut reads, &mut method_callees),
+                    FnBody::External => {}
+                }
+                direct.insert(key.clone(), reads);
+                callees.insert(key, method_callees);
+            }
+        }
+    }
+}
+
+fn collect_reads_block(b: &Block, recv_type: &str, reads: &mut HashSet<String>, callees: &mut HashSet<(String, String)>) {
+    for s in &b.stmts { collect_reads_stmt(s, recv_type, reads, callees); }
+    if let Some(t) = &b.trailing { collect_reads_expr(t, recv_type, reads, callees); }
+}
+
+fn collect_reads_stmt(s: &Stmt, recv_type: &str, reads: &mut HashSet<String>, callees: &mut HashSet<(String, String)>) {
+    match s {
+        Stmt::Assign { target, value, .. } => {
+            // The target's @F = ... is a WRITE, not a read; skip target.
+            // But target could be e.g. `@a[i] = ...` — `@a` and `i` ARE reads.
+            // For V3.1 simplicity: skip plain `@F = ...` targets, recurse otherwise.
+            if match_self_field(target).is_none() {
+                collect_reads_expr(target, recv_type, reads, callees);
+            }
+            collect_reads_expr(value, recv_type, reads, callees);
+        }
+        Stmt::Let(d) => collect_reads_expr(&d.value, recv_type, reads, callees),
+        Stmt::Const(d) => collect_reads_expr(&d.value, recv_type, reads, callees),
+        Stmt::Expr(e) => collect_reads_expr(e, recv_type, reads, callees),
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { collect_reads_expr(v, recv_type, reads, callees); }
+        }
+        Stmt::Throw { value, .. } => collect_reads_expr(value, recv_type, reads, callees),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            collect_reads_expr(body, recv_type, reads, callees);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_reads_expr(init, recv_type, reads, callees);
+            collect_reads_block(body, recv_type, reads, callees);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_reads_expr(expr, recv_type, reads, callees);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn collect_reads_expr(e: &Expr, recv_type: &str, reads: &mut HashSet<String>, callees: &mut HashSet<(String, String)>) {
+    // Detect `@F` read.
+    if let Some(fname) = match_self_field(e) {
+        reads.insert(fname.to_string());
+        return;
+    }
+    // Detect `@<method>(args)` call → callee tracking.
+    if let ExprKind::Call { func, args, trailing } = &e.kind {
+        if let ExprKind::Member { obj, name } = &func.kind {
+            if matches!(obj.kind, ExprKind::SelfAccess) {
+                callees.insert((recv_type.to_string(), name.clone()));
+            }
+            collect_reads_expr(obj, recv_type, reads, callees);
+        } else {
+            collect_reads_expr(func, recv_type, reads, callees);
+        }
+        for a in args { collect_reads_expr(a.expr(), recv_type, reads, callees); }
+        if let Some(t) = trailing {
+            if let Trailing::Block(b) = t { collect_reads_block(b, recv_type, reads, callees); }
+        }
+        return;
+    }
+    match &e.kind {
+        ExprKind::Block(b) => collect_reads_block(b, recv_type, reads, callees),
+        ExprKind::If { cond, then, else_ } => {
+            collect_reads_expr(cond, recv_type, reads, callees);
+            collect_reads_block(then, recv_type, reads, callees);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_reads_block(b, recv_type, reads, callees),
+                    ElseBranch::If(e) => collect_reads_expr(e, recv_type, reads, callees),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            collect_reads_expr(scrutinee, recv_type, reads, callees);
+            collect_reads_block(then, recv_type, reads, callees);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_reads_block(b, recv_type, reads, callees),
+                    ElseBranch::If(e) => collect_reads_expr(e, recv_type, reads, callees),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_reads_expr(scrutinee, recv_type, reads, callees);
+            for arm in arms {
+                if let Some(g) = &arm.guard { collect_reads_expr(g, recv_type, reads, callees); }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => collect_reads_expr(e, recv_type, reads, callees),
+                    MatchArmBody::Block(b) => collect_reads_block(b, recv_type, reads, callees),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            collect_reads_expr(iter, recv_type, reads, callees);
+            collect_reads_block(body, recv_type, reads, callees);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_reads_expr(cond, recv_type, reads, callees);
+            collect_reads_block(body, recv_type, reads, callees);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            collect_reads_expr(scrutinee, recv_type, reads, callees);
+            collect_reads_block(body, recv_type, reads, callees);
+        }
+        ExprKind::Loop { body, .. } => collect_reads_block(body, recv_type, reads, callees),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { collect_reads_expr(&wb.handler, recv_type, reads, callees); }
+            collect_reads_block(body, recv_type, reads, callees);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            collect_reads_block(body, recv_type, reads, callees);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            collect_reads_block(body, recv_type, reads, callees);
+            if let Some(c) = cancel { collect_reads_expr(c, recv_type, reads, callees); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            collect_reads_expr(e, recv_type, reads, callees);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            collect_reads_expr(a, recv_type, reads, callees);
+            collect_reads_expr(b, recv_type, reads, callees);
+        }
+        ExprKind::Index { obj, index } => {
+            collect_reads_expr(obj, recv_type, reads, callees);
+            collect_reads_expr(index, recv_type, reads, callees);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { collect_reads_expr(s, recv_type, reads, callees); }
+            if let Some(e) = end { collect_reads_expr(e, recv_type, reads, callees); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            collect_reads_expr(range, recv_type, reads, callees);
+            collect_reads_expr(body, recv_type, reads, callees);
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => collect_reads_expr(e, recv_type, reads, callees),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { collect_reads_expr(el, recv_type, reads, callees); }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value { collect_reads_expr(v, recv_type, reads, callees); }
+            }
+        }
+        _ => {} // Closures + literals.
+    }
+}
+
+/// Plan 123.7.1 LICM wrapper. Ф.2 will refine — currently delegates.
+fn licm_fn_with_ipa(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+) {
+    LICM_WRITE_SETS.with(|ws| {
+        if cfg.ipa_enabled && !write_sets.is_empty() {
+            if let Some(recv) = &f.receiver {
+                *ws.borrow_mut() = Some((recv.type_name.clone(), write_sets.clone()));
+            }
+        }
+    });
+    licm_fn(f, reg, cfg);
+    LICM_WRITE_SETS.with(|ws| {
+        *ws.borrow_mut() = None;
+    });
+}
+
+/// Plan 123.7.1 pure-cache wrapper. Ф.3 will refine — uses read_sets
+/// для frame-based invalidation.
+fn pure_cache_fn_with_ipa(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    pure_methods: &HashSet<(String, String)>,
+    cfg: &FieldCacheConfig,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+    read_sets: &HashMap<(String, String), HashSet<String>>,
+) {
+    PURE_IPA_CTX.with(|p| {
+        if cfg.ipa_enabled && !write_sets.is_empty() {
+            if let Some(recv) = &f.receiver {
+                *p.borrow_mut() = Some((recv.type_name.clone(), read_sets.clone()));
+            }
+        }
+    });
+    let _ = write_sets;
+    pure_cache_fn(f, reg, pure_methods, cfg);
+    PURE_IPA_CTX.with(|p| { *p.borrow_mut() = None; });
+}
+
+/// Plan 123.7.1 chain wrapper. Ф.4 will refine — chain survives writes
+/// to unrelated root fields.
+fn chain_cache_fn_with_ipa(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+) {
+    CHAIN_IPA_CTX.with(|c| {
+        if cfg.ipa_enabled && !write_sets.is_empty() {
+            if let Some(recv) = &f.receiver {
+                *c.borrow_mut() = Some((recv.type_name.clone(), write_sets.clone()));
+            }
+        }
+    });
+    chain_cache_fn(f, reg, cfg);
+    CHAIN_IPA_CTX.with(|c| { *c.borrow_mut() = None; });
+}
+
+// Plan 123.7.1: thread-local IPA contexts threaded through existing
+// pass functions без refactoring all signatures. Set by *_with_ipa
+// wrappers, consulted by inner barrier helpers when present.
+thread_local! {
+    static LICM_WRITE_SETS: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
+    static PURE_IPA_CTX: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
+    static CHAIN_IPA_CTX: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Plan 123.7.1 (V7.1): IPA context — threading write_sets +
+/// receiver type through barrier-checking helpers. Optional via
+/// `Option<IpaCtx<'a>>` parameter — `None` = legacy V1-V6
+/// conservative "any call = barrier" behavior.
+#[derive(Clone, Copy)]
+pub(crate) struct IpaCtx<'a> {
+    pub write_sets: &'a HashMap<(String, String), HashSet<String>>,
+    pub recv_type: &'a str,
+    /// V7.1 Ф.3: pure-method field-read-set lookup.
+    /// (recv_type, method_name) → set of fields method reads.
+    pub read_sets: &'a HashMap<(String, String), HashSet<String>>,
+}
+
+impl<'a> IpaCtx<'a> {
+    /// True if calling `(recv_type, method_name)` invalidates cache
+    /// для field `fname` per IPA write_set lookup.
+    /// Returns true if method unknown (conservative).
+    pub(crate) fn call_invalidates_field(&self, method_name: &str, fname: &str) -> bool {
+        match self.write_sets.get(&(self.recv_type.to_string(), method_name.to_string())) {
+            Some(ws) => ws.contains(fname),
+            None => true, // unknown callee — conservative.
+        }
+    }
+}
+
 /// Plan 123.7: cache_fn extended с IPA-aware mut barrier.
-/// Reuses existing cache_fn logic but for mut fields, use IPA write-set
-/// to refine barrier check: a Call boundary invalidates a mut cache
-/// для field F only if callee's write_set contains F (or callee unknown).
+/// V7.1: full integration — passes IpaCtx through to barrier helpers.
 fn cache_fn_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
     write_sets: &HashMap<(String, String), HashSet<String>>,
+    read_sets: &HashMap<(String, String), HashSet<String>>,
     cfg: &FieldCacheConfig,
 ) {
-    // For V7: if IPA disabled OR no receiver type info, fall back to V1 cache_fn.
     if !cfg.ipa_enabled || write_sets.is_empty() {
         cache_fn(f, reg, cfg);
         return;
     }
-    // Otherwise call cache_fn — for V7 ship, IPA refinement applies
-    // via patched count_mut_prefix_reads_ipa replacing the V1 version
-    // when ipa_enabled. To keep ABI stable for V1-V6, we wrap V1
-    // logic and refine post-hoc.
-    //
-    // V7 ship strategy: V1 cache_fn runs as is, then we re-attempt
-    // mut field caching pass that V1 would have skipped due to call.
-    // Implementation: call cache_fn first, then call ipa_extend_mut.
-    cache_fn(f, reg, cfg);
-    // V7 follow-up extension — currently a no-op stub; IPA gains
-    // emerge through future direct integration. Foundation laid в
-    // write_sets registry above.
-    let _ = write_sets;
+    let Some(recv) = &f.receiver else {
+        cache_fn(f, reg, cfg);
+        return;
+    };
+    let recv_type = recv.type_name.clone();
+    let ipa = IpaCtx { write_sets, recv_type: &recv_type, read_sets };
+    cache_fn_with_ipa(f, reg, cfg, Some(ipa));
 }
 
 /// Plan 123.3: build pure-method registry. Includes only methods с
@@ -757,10 +1062,20 @@ fn register_items(items: &[Item], reg: &mut FieldRegistry) {
 }
 
 fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    cache_fn_with_ipa(f, reg, cfg, None);
+}
+
+/// Plan 123.7.1: cache_fn variant that accepts optional IpaCtx.
+/// When `ipa = Some(ctx)`, mut field prefix region is computed с
+/// IPA-aware barrier check — self-method calls don't count as
+/// barriers if callee doesn't write the field.
+fn cache_fn_with_ipa(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
-    // Static-method receiver (`fn Type.method(...)`) — no `@self`,
-    // hence no `@field` access in body. Skip explicitly (analysis
-    // would return empty regardless, но это сэкономит walks).
     if recv.kind == ReceiverKind::Static {
         return;
     }
@@ -774,8 +1089,6 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     if fields.is_empty() {
         return;
     }
-    // External fn — no body. cache_fn returns в body match'е, но
-    // лишний контекст setup'а лучше пропустить заранее.
     if f.is_external {
         return;
     }
@@ -793,15 +1106,12 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
         FnBody::External => return,
     };
 
-    // Collect in-scope local names for collision avoidance.
     let mut local_names: HashSet<String> = HashSet::new();
     for p in &f.params {
         local_names.insert(p.name.clone());
     }
     collect_local_names_fn(f, &mut local_names);
 
-    // Split candidates по kind: ro (full-body cache) vs mut (first-
-    // region cache). Both filtered by threshold + closure-capture.
     let mut field_names: Vec<&String> = analysis.read_counts.keys().collect();
     field_names.sort();
     let mut ro_candidates: Vec<(String, crate::diag::Span)> = Vec::new();
@@ -828,10 +1138,8 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
                 }
             }
             FieldKind::Mut => {
-                // For mut: count reads only in first-region prefix (до
-                // first write OR first call boundary). If prefix count
-                // < threshold — skip.
-                if let Some(prefix_count) = count_mut_prefix_reads(&f.body, fname) {
+                // Plan 123.7.1: pass ipa context для refined barrier check.
+                if let Some(prefix_count) = count_mut_prefix_reads_with_ipa(&f.body, fname, ipa) {
                     if prefix_count >= cfg.threshold {
                         mut_candidates.push((fname.clone(), span));
                         total_caches += 1;
@@ -859,7 +1167,7 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
         name_map.insert(fname.clone(), chosen);
     }
 
-    rewrite_fn_body_split(f, &ro_candidates, &mut_candidates, &name_map);
+    rewrite_fn_body_split_with_ipa(f, &ro_candidates, &mut_candidates, &name_map, ipa);
 }
 
 /// Count `@<fname>` reads в первой straight-line prefix region body'а.
@@ -872,19 +1180,30 @@ fn cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
 ///
 /// Возвращает `None` если field receiver-typed body не applicable
 /// (External / unhandled). Возвращает `Some(count)` иначе.
+#[allow(dead_code)]
 fn count_mut_prefix_reads(body: &FnBody, fname: &str) -> Option<usize> {
+    count_mut_prefix_reads_with_ipa(body, fname, None)
+}
+
+/// Plan 123.7.1: IPA-aware mut prefix region scanner. When `ipa =
+/// Some(ctx)`, self-method calls don't count as barrier if callee's
+/// write_set excludes `fname`.
+fn count_mut_prefix_reads_with_ipa(
+    body: &FnBody,
+    fname: &str,
+    ipa: Option<IpaCtx<'_>>,
+) -> Option<usize> {
     match body {
         FnBody::Block(b) => {
             let mut count = 0usize;
             for s in &b.stmts {
-                if stmt_is_barrier_for(s, fname) {
+                if stmt_is_barrier_for_with_ipa(s, fname, ipa) {
                     return Some(count);
                 }
                 count += count_field_reads_in_stmt(s, fname);
             }
-            // No barrier in stmts → trailing also part of prefix.
             if let Some(t) = &b.trailing {
-                if expr_is_barrier_for(t, fname) {
+                if expr_is_barrier_for_with_ipa(t, fname, ipa) {
                     return Some(count);
                 }
                 count += count_field_reads_in_expr(t, fname);
@@ -892,7 +1211,7 @@ fn count_mut_prefix_reads(body: &FnBody, fname: &str) -> Option<usize> {
             Some(count)
         }
         FnBody::Expr(e) => {
-            if expr_is_barrier_for(e, fname) {
+            if expr_is_barrier_for_with_ipa(e, fname, ipa) {
                 Some(0)
             } else {
                 Some(count_field_reads_in_expr(e, fname))
@@ -902,18 +1221,234 @@ fn count_mut_prefix_reads(body: &FnBody, fname: &str) -> Option<usize> {
     }
 }
 
-/// True если stmt содержит write to `@<fname>` (top-level Assign on
-/// `Member{SelfAccess, fname}`) OR содержит любой Call expression
-/// anywhere (V1 conservative barrier).
+#[allow(dead_code)]
 fn stmt_is_barrier_for(s: &Stmt, fname: &str) -> bool {
+    stmt_is_barrier_for_with_ipa(s, fname, None)
+}
+
+#[allow(dead_code)]
+fn expr_is_barrier_for(e: &Expr, fname: &str) -> bool {
+    expr_is_barrier_for_with_ipa(e, fname, None)
+}
+
+/// Plan 123.7.1: IPA-aware barrier check для Stmt.
+fn stmt_is_barrier_for_with_ipa(s: &Stmt, fname: &str, ipa: Option<IpaCtx<'_>>) -> bool {
     if stmt_has_write_to(s, fname) {
         return true;
     }
-    stmt_contains_call(s)
+    stmt_contains_invalidating_call_for(s, fname, ipa)
 }
 
-fn expr_is_barrier_for(e: &Expr, fname: &str) -> bool {
-    expr_contains_write_to(e, fname) || expr_contains_call(e)
+fn expr_is_barrier_for_with_ipa(e: &Expr, fname: &str, ipa: Option<IpaCtx<'_>>) -> bool {
+    expr_contains_write_to(e, fname) || expr_contains_invalidating_call_for(e, fname, ipa)
+}
+
+/// Plan 123.7.1: returns true if stmt contains a Call that
+/// invalidates cache for field `fname`. Without IPA: any Call
+/// invalidates. With IPA: self-method calls check write_set.
+fn stmt_contains_invalidating_call_for(
+    s: &Stmt,
+    fname: &str,
+    ipa: Option<IpaCtx<'_>>,
+) -> bool {
+    match s {
+        Stmt::Let(d) => expr_contains_invalidating_call_for(&d.value, fname, ipa),
+        Stmt::Const(d) => expr_contains_invalidating_call_for(&d.value, fname, ipa),
+        Stmt::Expr(e) => expr_contains_invalidating_call_for(e, fname, ipa),
+        Stmt::Assign { target, value, .. } => {
+            expr_contains_invalidating_call_for(target, fname, ipa)
+                || expr_contains_invalidating_call_for(value, fname, ipa)
+        }
+        Stmt::Return { value, .. } => {
+            value.as_ref().map_or(false, |v| expr_contains_invalidating_call_for(v, fname, ipa))
+        }
+        Stmt::Throw { value, .. } => expr_contains_invalidating_call_for(value, fname, ipa),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            expr_contains_invalidating_call_for(body, fname, ipa)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_contains_invalidating_call_for(init, fname, ipa)
+                || block_contains_invalidating_call_for(body, fname, ipa)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            expr_contains_invalidating_call_for(expr, fname, ipa)
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn block_contains_invalidating_call_for(b: &Block, fname: &str, ipa: Option<IpaCtx<'_>>) -> bool {
+    b.stmts.iter().any(|s| stmt_contains_invalidating_call_for(s, fname, ipa))
+        || b.trailing.as_ref().map_or(false, |t| expr_contains_invalidating_call_for(t, fname, ipa))
+}
+
+/// Plan 123.7.1: IPA-aware call detection. For Call expressions:
+/// - Self-method call `@<M>(args)` where (recv_type, M) ∈ write_sets:
+///   invalidates only if fname ∈ write_set.
+/// - Unknown self-methods → conservative invalidate.
+/// - Non-self calls → invalidate (caller doesn't know callee).
+/// - Spawn/Supervised/etc → invalidate.
+fn expr_contains_invalidating_call_for(
+    e: &Expr,
+    fname: &str,
+    ipa: Option<IpaCtx<'_>>,
+) -> bool {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            // Check if THIS call invalidates.
+            let this_call_invalidates = if let Some(ctx) = ipa {
+                if let ExprKind::Member { obj, name: m } = &func.kind {
+                    if matches!(obj.kind, ExprKind::SelfAccess) {
+                        ctx.call_invalidates_field(m, fname)
+                    } else {
+                        // Non-self method dispatch (e.g. var.method())
+                        // — conservative invalidate.
+                        true
+                    }
+                } else {
+                    // Free fn / static / etc — conservative.
+                    true
+                }
+            } else {
+                // No IPA context — conservative (V1 behavior).
+                true
+            };
+            if this_call_invalidates {
+                return true;
+            }
+            // Even if this call doesn't invalidate, nested calls in
+            // args might. Recurse.
+            for a in args {
+                if expr_contains_invalidating_call_for(a.expr(), fname, ipa) {
+                    return true;
+                }
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => {
+                        if block_contains_invalidating_call_for(b, fname, ipa) { return true; }
+                    }
+                    Trailing::Fn(sb) => {
+                        // Trailing closure — bodies are values, evaluation
+                        // by callee. Conservative — but не more invalidating
+                        // than the Call itself already evaluated.
+                        let _ = sb;
+                    }
+                    Trailing::LegacyBlockWithParams(_) => {}
+                }
+            }
+            // Also obj of Member func may contain calls (e.g.
+            // `expr.method()` where expr is itself a Call).
+            if let ExprKind::Member { obj, .. } = &func.kind {
+                if expr_contains_invalidating_call_for(obj, fname, ipa) {
+                    return true;
+                }
+            } else {
+                if expr_contains_invalidating_call_for(func, fname, ipa) {
+                    return true;
+                }
+            }
+            false
+        }
+        // Concurrency/effects always invalidate.
+        ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Detach(_)
+        | ExprKind::Blocking(_) | ExprKind::With { .. } => true,
+        // Compound walks below.
+        ExprKind::Block(b) => block_contains_invalidating_call_for(b, fname, ipa),
+        ExprKind::If { cond, then, else_ } => {
+            expr_contains_invalidating_call_for(cond, fname, ipa)
+                || block_contains_invalidating_call_for(then, fname, ipa)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => block_contains_invalidating_call_for(b, fname, ipa),
+                    ElseBranch::If(e) => expr_contains_invalidating_call_for(e, fname, ipa),
+                })
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            expr_contains_invalidating_call_for(scrutinee, fname, ipa)
+                || block_contains_invalidating_call_for(then, fname, ipa)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => block_contains_invalidating_call_for(b, fname, ipa),
+                    ElseBranch::If(e) => expr_contains_invalidating_call_for(e, fname, ipa),
+                })
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_contains_invalidating_call_for(scrutinee, fname, ipa)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().map_or(false, |g| expr_contains_invalidating_call_for(g, fname, ipa))
+                        || match &arm.body {
+                            MatchArmBody::Expr(e) => expr_contains_invalidating_call_for(e, fname, ipa),
+                            MatchArmBody::Block(b) => block_contains_invalidating_call_for(b, fname, ipa),
+                        }
+                })
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            expr_contains_invalidating_call_for(iter, fname, ipa)
+                || block_contains_invalidating_call_for(body, fname, ipa)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_contains_invalidating_call_for(cond, fname, ipa)
+                || block_contains_invalidating_call_for(body, fname, ipa)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            expr_contains_invalidating_call_for(scrutinee, fname, ipa)
+                || block_contains_invalidating_call_for(body, fname, ipa)
+        }
+        ExprKind::Loop { body, .. } => block_contains_invalidating_call_for(body, fname, ipa),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            block_contains_invalidating_call_for(body, fname, ipa)
+        }
+        ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            expr_contains_invalidating_call_for(e, fname, ipa)
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            expr_contains_invalidating_call_for(a, fname, ipa)
+                || expr_contains_invalidating_call_for(b, fname, ipa)
+        }
+        ExprKind::Index { obj, index } => {
+            expr_contains_invalidating_call_for(obj, fname, ipa)
+                || expr_contains_invalidating_call_for(index, fname, ipa)
+        }
+        ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
+            ArrayElem::Item(e) | ArrayElem::Spread(e) => expr_contains_invalidating_call_for(e, fname, ipa),
+        }),
+        ExprKind::MapLit { elems, .. } => elems.iter().any(|el| match el {
+            MapElem::Pair(k, v) => expr_contains_invalidating_call_for(k, fname, ipa) || expr_contains_invalidating_call_for(v, fname, ipa),
+            MapElem::Spread(e) => expr_contains_invalidating_call_for(e, fname, ipa),
+        }),
+        ExprKind::RecordLit { fields: rfields, .. } => rfields.iter().any(|rf| {
+            rf.value.as_ref().map_or(false, |v| expr_contains_invalidating_call_for(v, fname, ipa))
+        }),
+        ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_invalidating_call_for(el, fname, ipa)),
+        ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
+            if let InterpStrPart::Expr(e) = p { expr_contains_invalidating_call_for(e, fname, ipa) } else { false }
+        }),
+        ExprKind::Select { .. } => true,
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().map_or(false, |s| expr_contains_invalidating_call_for(s, fname, ipa))
+                || end.as_ref().map_or(false, |e| expr_contains_invalidating_call_for(e, fname, ipa))
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            expr_contains_invalidating_call_for(range, fname, ipa)
+                || expr_contains_invalidating_call_for(body, fname, ipa)
+        }
+        ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_invalidating_call_for(e, fname, ipa)),
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            expr_contains_invalidating_call_for(tag, fname, ipa)
+                || args.iter().any(|a| expr_contains_invalidating_call_for(a, fname, ipa))
+        }
+        // Closures: values not executed synchronously; not barriers.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => false,
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::SelfAccess => false,
+    }
 }
 
 fn stmt_has_write_to(s: &Stmt, fname: &str) -> bool {
@@ -2411,11 +2946,22 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
 
 /// Объединённый rewrite: ro-fields → full-body replace; mut-fields →
 /// first-region replace (до first write OR first call boundary).
+/// V7.1 adds optional `ipa` param — IPA-aware barrier detection.
 fn rewrite_fn_body_split(
     f: &mut FnDecl,
     ro_cache: &[(String, crate::diag::Span)],
     mut_cache: &[(String, crate::diag::Span)],
     name_map: &HashMap<String, String>,
+) {
+    rewrite_fn_body_split_with_ipa(f, ro_cache, mut_cache, name_map, None)
+}
+
+fn rewrite_fn_body_split_with_ipa(
+    f: &mut FnDecl,
+    ro_cache: &[(String, crate::diag::Span)],
+    mut_cache: &[(String, crate::diag::Span)],
+    name_map: &HashMap<String, String>,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     // Build replace maps.
     let ro_map: HashMap<String, String> = ro_cache.iter()
@@ -2457,7 +3003,7 @@ fn rewrite_fn_body_split(
             // Find first-barrier index в TOP-LEVEL stmts (not nested).
             let mut barrier_idx = b.stmts.len();
             for (i, s) in b.stmts.iter().enumerate() {
-                if stmt_is_barrier_for(s, fname) {
+                if stmt_is_barrier_for_with_ipa(s, fname, ipa) {
                     barrier_idx = i;
                     break;
                 }
@@ -2473,7 +3019,7 @@ fn rewrite_fn_body_split(
                 // Trailing еще не обработан barrier — но мог сам быть
                 // barrier'ом. Проверим.
                 if let Some(t) = &mut b.trailing {
-                    let trailing_barrier = expr_is_barrier_for(t, fname);
+                    let trailing_barrier = expr_is_barrier_for_with_ipa(t, fname, ipa);
                     if !trailing_barrier {
                         rewrite_expr(t, &single);
                     }
