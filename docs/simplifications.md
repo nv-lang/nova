@@ -28490,11 +28490,32 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   (identity check). V1 scope: same syntactic detection как A28; extended
   expr_is_typed_pointer чтобы peek в Block.trailing (`let p = unsafe { &x }`
   pattern). **Closes acceptance A17** ✅ (V1 partial).
-- plan118 fixtures: **30/0** (13 positive + 17 NEG)
+- `3e781ca5929` + `6b90e698437` + `62ade292588` — **Ф.5 NPO codegen V1**.
+  Option[*T] single-pointer layout (`{T* value;}` без tag field, sizeof
+  == 8 vs tagged 16). Closes acceptance **A19** ✅ (NPO codegen +
+  pattern match + sizeof verification).
+  - register_novaopt_decl: emit NPO struct когда c_ty pointer-typed
+  - 11+ tag-reference sites migrated через 4 helper methods
+    (option_some_expr / option_none_expr / option_is_none_check /
+    option_is_some_check)
+  - Match-pattern emission (line 23534): NPO-aware Variant check
+  - Все pre-existing stdlib pointer types (UdpSocket, TcpStream,
+    SocketAddr, TcpListener, File) benefit automatically.
+  - 3 new fixtures: T5.2 (Some/None) + T5.3 (match) + T5.4 (ABI)
+- plan118 fixtures: **33/0** (16 positive + 17 NEG)
 
-**Session 3 + sync grand-total Plan 118 acceptance closed: 16 of 35 (46%):**
+**Session 3 + Ф.5 grand-total Plan 118 acceptance closed: 17 of 35 (49%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
-A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+A19 ✅, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+
+**Ф.5 V2 deferred (Session 4+):**
+- A20 — NPO через newtype (`Option[Sqlite3Handle]`) — требует
+  type_ref_to_c-aware detection вместо c_ty string suffix
+- A21 — NPO для `Option[*fn(...)]` (c_ty ends with `)`) и
+  `Option[ptr]` (nova_ptr typedef) — V2 type-aware detection
+- A22 — `Option[Option[*T]]` warning W_OPTION_DOUBLE_NESTED
+- A23 — `null ptr` literal retraction + 13 fixture migration —
+  currently backward-compat works через Plan 115 D214 path
 
 **Main sync 2026-06-02 (commit 8fc3473e22b):** merged 66 commits from
 main (Plan 114.4.4.5 V4.1 mono-specialization + V4.2 runtime trampoline +
