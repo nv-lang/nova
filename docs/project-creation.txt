@@ -27364,3 +27364,70 @@ Unblocks:
 - Plan 123.6 (telemetry) — gated на 123.1 ✅.
 
 Closes Plan 123 V1 milestone — 0.1 ship-ready (foundational layer).
+
+
+================================================================================
+Plan 123.2 — D218 LICM (Loop-Invariant Code Motion) V2 (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #2. Gated на 123.1 ✅.
+
+Motivation: D217 (Plan 123.1) emits cache at method-body prefix. Gap:
+loop bodies with mut field reads, when prefix region empties due to
+pre-loop Call. LICM phase explicitly detects loop-invariant @<F>
+reads, hoists `ro _at_<F>_loop = @<F>` immediately before loop в
+enclosing block. Composes с D217 — no double-cache, granular
+optimization layers.
+
+Phases delivered:
+- Ф.0 Investigation + DECISIONs A.2-F.2.
+- Ф.1+Ф.2 (merged) LICM pass implementation:
+  - FieldCacheConfig extension (licm_enabled / licm_threshold=2 /
+    licm_max_per_loop=4) + 3 env vars (NOVA_FIELD_CACHE_LICM[=0] +
+    _LICM_THRESHOLD + _LICM_MAX).
+  - licm_fn / licm_block (postorder для nested-first) / process_loop
+    + per-loop eligibility computation.
+  - 4 helper functions: collect_closures_captures_in_block (NEW,
+    replaces incorrect scan_block-reuse), block_contains_spawn (NEW),
+    first_field_span_in_block (NEW), expr_as_loop_body_mut (NEW).
+  - Composition с D217: LICM phase runs FIRST в cache_module; D217
+    sees outside-loop reads only.
+- Ф.3 Edge case fixtures (merged с Ф.4).
+- Ф.4 14 runtime fixtures (8 positive + 3 negative + 2 property +
+  1 escape-hatch) — все 14/14 PASS identically под 3 configurations
+  (default / NOVA_FIELD_CACHE_LICM=0 / NOVA_FIELD_CACHE=0).
+- Ф.5 Spec D218 NEW (~180 lines) + README index entry.
+- Ф.6 3 logs + status flip + push.
+
+Implementation:
+- compiler-codegen/src/field_cache.rs (~1100 LOC delta) — LICM
+  phase + new helpers.
+- Test fixtures: nova_tests/plan123_2/ (14 fixtures).
+
+Production-grade requirements met:
+- ✅ Semantic equivalence — 14/14 identical across 3 env modes.
+- ✅ Cross-platform determinism — sorted iteration, no global state.
+- ✅ Bounded overhead — per-loop O(N) walk, total fn cap shared с
+  D217 max_per_fn=8.
+- ✅ Escape hatch — NOVA_FIELD_CACHE_LICM=0 (granular) +
+  NOVA_FIELD_CACHE=0 (umbrella). Both verified bypass identical к
+  baseline.
+- ✅ Debug-info — span from first @F access in body.
+
+Acceptance A2.1-A2.8 met (umbrella §6.2).
+
+D-block landed:
+- D218 NEW (08-runtime.md, ~180 lines, §1-§11).
+- spec/decisions/README.md — D218 added в 08-runtime + Свежие
+  D-решения table.
+
+Open followups (P2/P3, не блокирующие V2 ship):
+- [M-123.2-mut-call-refine] — В Plan 123.7 IPA с #nofield_mut.
+- [M-123.2-supervised-body-hoist-refined] — supervised body
+  could hoist ro fields safely.
+- [M-123.2-closure-fixture-runtime] — closure+@field баseline
+  codegen bug.
+
+Unblocks: V3+ sub-plans (123.3-123.7) can use LICM-emitted
+locals as additional reuse opportunities. Composition pattern
+demonstrated — future passes follow same ordering rationale.

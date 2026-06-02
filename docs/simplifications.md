@@ -28751,3 +28751,85 @@ chain / LSP / telemetry / IPA).
   valid, future-runnable after baseline fix.
 - `[M-123.1-compile-time-bench]` — formal <5% measurement через
   Plan 57 bench harness. Plan 123.6 territory.
+
+
+## Plan 123.2 closure (2026-06-02): D218 LICM для receiver fields V2
+
+**Sub-plan #2** Plan 123 umbrella (Method-local field load optimization),
+✅ ЗАКРЫТ 2026-06-02. Loop-Invariant Code Motion phase для receiver
+fields — composes с Plan 123.1 D217 baseline.
+
+**Acceptance A2.1-A2.8 (umbrella §6.2):**
+- A2.1 ✅ `@field` invariant в loop body NOT modified → hoisted
+  pre-loop. Verified в licm_ro_in_loop / licm_for_loop / etc.
+- A2.2 ✅ `@field = X` внутри body → no hoist (correctness).
+  Verified в neg_mut_write_in_loop.
+- A2.3 ✅ Nested loops — hoist на ближайший boundary без mutation.
+  Verified в licm_nested_loops (inner loop hoist for @cols).
+- A2.4 ✅ break/continue/early return — correctness preserved.
+  Verified в licm_break_continue.
+- A2.5 ✅ Hot iteration loops — manual .c inspection показывает
+  `nova_self->X` → cached `_at_X_loop` cache replaced. Formal
+  bench measurement → Plan 123.6 territory.
+- A2.6 ✅ Regression — plan123_1 18/0, basics 8/0, plan114_4_2 17/0.
+- A2.7 ✅ D218 NEW landed.
+- A2.8 ✅ plan123_2 fixtures 14/0 (8 positive + 3 negative + 2
+  property + 1 escape-hatch) exceeds ≥10/≥7/≥3 minimums.
+
+**Implementation summary:**
+- field_cache.rs LICM phase (~1100 LOC delta):
+  - FieldCacheConfig extension: licm_enabled / licm_threshold=2 /
+    licm_max_per_loop=4 + env vars.
+  - licm_fn / licm_block / licm_stmt / licm_expr — recursive
+    walker. licm_block uses postorder для nested-first processing.
+  - process_loop: per-loop eligibility + hoist emission.
+  - expr_as_loop_body_mut: matches For/While/Loop/WhileLet (4 forms).
+  - collect_loop_eligible_fields: ≥ threshold reads + no write +
+    no closure-capture + no spawn; mut: no call.
+  - collect_closures_captures_in_block/stmt/expr (NEW): walk
+    block, enter only closure bodies, scan them с scan_block для
+    capture detection. Replaces incorrect direct `scan_block(body)`
+    call (which treated ALL @F refs as captures — bug discovered
+    via debug session, fixed before commit).
+  - block_contains_spawn / stmt_contains_spawn / expr_contains_spawn
+    (NEW): detect Spawn/Supervised/Detach/Blocking/ParallelFor.
+  - first_field_span_in_block/stmt/expr (NEW): find first @F access
+    span для DWARF/PDB debug-info.
+  - Composition с D217: cache_module wires LICM phase first, D217
+    second.
+
+**Design lessons:**
+1. **scan_block semantics not generally applicable.** Initially I
+   reused `scan_block` (closure capture scanner) for loop body
+   capture detection. Bug: scan_block treats ALL `@F` references
+   as captures (designed для inside-closure use). Loop body needed
+   different walker: enter only closure bodies. Lesson — when
+   reusing helpers across phases, verify semantic match. Fixed
+   с дedicated `collect_closures_captures_in_block` helper before
+   commit.
+2. **Composition ordering matters.** D218 LICM first, D217 second
+   → no double-cache; reads inside loops already replaced when
+   D217 phase runs, so D217 only sees outside-loop reads. Inverted
+   order would cause D217 to method-prefix cache @F, then LICM
+   sees `_at_<F>` ident (not `@F`) inside loop — nothing to hoist.
+   Lesson — passes with shared transformation domain need explicit
+   ordering rationale.
+3. **Env-var hierarchy needed.** NOVA_FIELD_CACHE=0 (umbrella
+   escape hatch) disables both D217 и D218. NOVA_FIELD_CACHE_LICM=0
+   disables only D218 (granular). User может test individual
+   optimization layers via separate flags. Verified differential
+   testing — 14/14 PASS identical под all 3 modes.
+4. **Closure-in-loop fixture blocked by codegen baseline bug.**
+   Same closure+@field codegen issue from Plan 123.1 closure
+   fixtures. Documented как known limitation; AST-level capture
+   detection still verified through helper unit-testability when
+   baseline cargo test unblocked.
+
+**Open followups (P2/P3, не блокирующие V2 ship):**
+- `[M-123.2-mut-call-refine]` — В Plan 123.7 IPA, мут field could
+  hoist even с calls if callee annotated `#nofield_mut(<F>)`.
+- `[M-123.2-supervised-body-hoist-refined]` — Supervised body
+  currently skipped; future could hoist ro fields (frozen — safe
+  even across fibers).
+- `[M-123.2-closure-fixture-runtime]` — closure-in-loop runtime
+  fixture blocked by baseline codegen bug.

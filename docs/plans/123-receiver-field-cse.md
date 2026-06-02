@@ -836,7 +836,7 @@ Open questions проверить + закрыть через D217-D219:
 | Sub-plan | Status |
 |---|---|
 | 123.1 Core CSE | ✅ CLOSED 2026-06-02 (V1 active, D217 landed) |
-| 123.2 LICM | 🆕 PLANNED |
+| 123.2 LICM | ✅ CLOSED 2026-06-02 (V2 active, D218 landed) |
 | 123.3 Pure caching | 🆕 PLANNED |
 | 123.4 Chain | 🆕 PLANNED |
 | 123.5 LSP/diag | 🆕 PLANNED |
