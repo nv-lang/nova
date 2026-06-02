@@ -3000,10 +3000,36 @@ impl Parser {
         // flip; fields default = priv для этого type'а, explicit `pub` modifier
         // на field override priv default. Markers `consume` и `priv` могут идти
         // в любом порядке (взаимно независимые).
-        let mut consume_marker = self.eat(&TokenKind::KwConsume).is_some();
-        let default_field_priv = self.eat(&TokenKind::KwPriv).is_some();
-        if !consume_marker {
-            consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        //
+        // Plan 124.8 (D226 NEW): `type X value { ... }` — stack-allocated record
+        // (value type, copy semantics на pass). `value` — contextual keyword
+        // (Ident("value") в этой позиции; backward compat для variables/fields
+        // named `value`). Composable с consume/priv в любом порядке.
+        //
+        // Canonical order: type X value consume priv { ... } (allocation →
+        // ownership → visibility). Parser order-independent (parse loop).
+        let mut consume_marker = false;
+        let mut default_field_priv = false;
+        let mut allocation = crate::ast::AllocKind::Heap;
+        loop {
+            if !consume_marker && self.eat(&TokenKind::KwConsume).is_some() {
+                consume_marker = true;
+                continue;
+            }
+            if !default_field_priv && self.eat(&TokenKind::KwPriv).is_some() {
+                default_field_priv = true;
+                continue;
+            }
+            // Plan 124.8: `value` — contextual keyword (Ident match,
+            // не KwValue, для backward compat).
+            if matches!(allocation, crate::ast::AllocKind::Heap)
+                && matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "value")
+            {
+                self.bump();
+                allocation = crate::ast::AllocKind::Value;
+                continue;
+            }
+            break;
         }
 
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
@@ -3094,6 +3120,7 @@ impl Parser {
                 axioms: Vec::new(),
                 consume: consume_marker,
                 default_field_priv,
+                allocation,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3165,6 +3192,7 @@ impl Parser {
                     axioms: Vec::new(),
                     consume: false,
                     default_field_priv: false,
+                    allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                 });
             }
@@ -3286,6 +3314,7 @@ impl Parser {
             axioms: effect_axioms,
             consume: consume_marker,
             default_field_priv,
+            allocation,
             impl_protocols,
         })
     }
@@ -4323,6 +4352,52 @@ impl Parser {
             self.expect(&TokenKind::KwRo)?;
         }
         let pattern = self.parse_pattern()?;
+        // Plan 124.8 (D33/D176 amend) — binding propagation rules:
+        //
+        // `ro`/`mut` binding propagates по default на тип справа. Explicit
+        // повторение модификатора — redundant error.
+        //
+        // | Декларация       | Парсится | Семантика |
+        // |---|---|---|
+        // | `ro x T`         | ✅ default | binding ro → type ro |
+        // | `mut x T`        | ✅ default | binding mut → type mut |
+        // | `ro x ro T`      | ❌ E_REDUNDANT_TYPE_MODIFIER | то же что `ro x T` |
+        // | `mut x mut T`    | ❌ E_REDUNDANT_TYPE_MODIFIER | то же что `mut x T` |
+        // | `ro x mut T`     | ✅ NEW | binding ro, content mut |
+        // | `mut x ro T`     | ✅ existing | binding mut, content ro |
+        //
+        // Implementation:
+        // - `ro` после name: redundant if !is_mut; otherwise let parse_type
+        //   handle (TypeRef::Readonly wrapper).
+        // - `mut` после name: redundant if is_mut; otherwise consume + ignore
+        //   (mut T ≡ T в Nova type system; default mutability).
+        if matches!(self.peek().kind, TokenKind::KwRo) && !is_mut {
+            return Err(Diagnostic::new(
+                "[E_REDUNDANT_TYPE_MODIFIER] `ro` после `ro` binding — \
+                 redundant. `ro` binding автоматически распространяет \
+                 readonly на тип (D33/D176 amend, Plan 124.8). Напиши \
+                 `ro x T` вместо `ro x ro T`.".to_string(),
+                self.peek().span,
+            ));
+        }
+        if matches!(self.peek().kind, TokenKind::KwMut) && is_mut {
+            return Err(Diagnostic::new(
+                "[E_REDUNDANT_TYPE_MODIFIER] `mut` после `mut` binding — \
+                 redundant. `mut` binding автоматически распространяет \
+                 mutability на тип (D33/D176 amend, Plan 124.8). Напиши \
+                 `mut x T` вместо `mut x mut T`.".to_string(),
+                self.peek().span,
+            ));
+        }
+        // Plan 124.8 — `ro x mut T` form: binding ro, type explicit mut
+        // (content mutable through readonly binding-name). Consume `mut`
+        // и игнорируй (mut T ≡ T в Nova default-mut type system).
+        // Это закрывает D176 §«type-modifier в любой позиции» partial
+        // implementation gap (parser ранее не принимал `mut T` в binding
+        // type annotation; теперь принимает).
+        if matches!(self.peek().kind, TokenKind::KwMut) && !is_mut {
+            self.bump(); // consume `mut`, no AST effect (default-mut)
+        }
         let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
             Some(self.parse_type()?)
         } else {
