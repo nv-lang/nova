@@ -28476,11 +28476,18 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   Cast closure literal к *fn(...) rejected (ClosureLight, ClosureFull,
   bound method `obj.@method`). **Closes acceptance A24** ✅ + **A30** ✅
   (D216 marked ACTIVE 2026-06-02 в spec; 13 acceptance criteria listed).
-- plan118 fixtures: **25/0** (12 positive + 13 NEG)
+- `a9327c65d3f` — **E_PTR_NO_DISPLAY_USE_DEBUG_STR** (V1 syntactic).
+  `"${p}"` interpolation на typed-pointer-typed expression rejected
+  (D216 §15: address disclosure + GC mover stale-value hazard). V1
+  scope: AddrOf/Deref direct + As(*T) cast + Ident lookup в ptr_vars
+  scope-stack (locals bound к pointer expression). Full type-aware
+  detection (returned-from-fn pointers) — Session 4+ через
+  infer_expr_type. **Closes acceptance A28** ✅ (V1 partial).
+- plan118 fixtures: **27/0** (12 positive + 15 NEG)
 
-**Session 3 grand-total Plan 118 acceptance closed: 14 of 35 (40%):**
+**Session 3 grand-total Plan 118 acceptance closed: 15 of 35 (43%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25, A26,
-A29, A30, A33, A34, A35.
+A28 partial, A29, A30, A33, A34, A35.
 
 ---
 

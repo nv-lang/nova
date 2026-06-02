@@ -7503,7 +7503,14 @@ yield-point (await/spawn/supervised{}), string formatting which allocates,
 - Emits hex address + type name (`"0x7f... -> Account"`)
 - НЕ implements Display — forces explicit decision (pointer debugging =
   deliberate; addresses non-deterministic, leak ASLR info)
-- `"${p}"` interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR`
+- `"${p}"` interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR` —
+  **ACTIVE 2026-06-02 (V1 syntactic, commit a9327c65d3f)** —
+  closes acceptance A28 partial. V1 detects:
+    - direct `${&x}` / `${*p}` (Unary AddrOf/Deref)
+    - `${expr as *T}` (cast к pointer type)
+    - `${var}` где var bound через `let var = AddrOf/Deref/As(*T)`
+  V2 (Session 4+): full type-aware enforcement через `infer_expr_type` —
+  fires на returned pointer values, field access, generic-bound `*T`.
 
 ### §18. FFI handle allocation contract
 

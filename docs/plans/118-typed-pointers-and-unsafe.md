@@ -1901,7 +1901,7 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A25 | Callback no-throw enforced: Fn-with-Fail cast → *fn — error | NEG-T6.8 |
 | A26 | `external fn ... Fail -> ...` — error (Fail effect не allowed on FFI boundary) | NEG-T6.9 |
 | A27 | GC honor-system warnings: W_UNSAFE_GC_TRIGGER emitted на violations | T7.2-T7.3 |
-| A28 | Pointer Debug fmt: `.to_debug_str()` works; `"${p}"` interpolation errors | T7.5 + NEG-T7.6 |
+| A28 partial ✅ 2026-06-02 | Pointer Debug fmt: `.to_debug_str()` works; `"${p}"` interpolation errors | T7.5 + NEG-T7.6 |
 | A29 | `ptr` redefine (D214 amend) backward-compatible; existing Plan 115 fixtures work | T1.8, T8.1, R5 |
 | A30 | D216 + D2 amend + D214 amend + D32 amend promoted в active spec | spec diff verification |
 | A31 | Cross-platform PASS (Linux/Win/macOS × clang/MSVC/gcc — 5+ combos); full nova test ≥ baseline | R1-R3 |
@@ -2276,7 +2276,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **25/0** (12 positive + 13 NEG, post-A24 + D216 ACTIVE) |
+| plan118 | **27/0** (12 positive + 15 NEG, post-A28 V1 syntactic) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |

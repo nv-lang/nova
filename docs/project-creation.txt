@@ -26980,11 +26980,53 @@ status + 14 acceptance criteria list + 50 commit count.
 Worktree D:/Sources/nv-lang/nova-p118 branch plan-118.
 50 worktree commits + 6 nova-private. Fully synced с main. NOT merged.
 
+==========================================================================
+2026-06-02 Plan 118 Session 3 epilogue — A28 V1 syntactic enforcement
+==========================================================================
+
+Continuation work — добавили A28 V1 (E_PTR_NO_DISPLAY_USE_DEBUG_STR).
+
+- A28 partial ✅ (a9327c65d3f) — V1 syntactic enforcement: `"${p}"`
+  interpolation на typed-pointer-typed Expr rejected (D216 §15).
+  Rationale: (1) address disclosure — security leak vector (ASLR
+  bypass); (2) GC mover invalidates raw address — interpolated str
+  становится stale silent correctness bug; (3) pointer Debug fmt =
+  explicit opt-in only через `.to_debug_str()` inside unsafe (A27).
+
+Walker extension (UnsafeCtx):
+- ptr_vars: Vec<HashSet<String>> — scope-stack frames (push/pop block).
+- register_ptr_var в walk_stmt Let arm: RHS = AddrOf/Deref/As(*T)
+  marks local pointer-typed.
+- expr_is_typed_pointer: syntactic detect:
+  - Unary{AddrOf|Deref}
+  - As(_, TypeRef::Pointer(_, _, _))
+  - Ident lookup в ptr_vars frames (рев. порядок — shadow safe).
+- InterpolatedStr arm walks parts; pointer-typed → emit diagnostic.
+
+V1 limitations (deferred Session 4+):
+- Returned pointer values from fn calls (whose Display would be
+  type-aware) — не fires.
+- Member access на ptr field — не tracked в ptr_vars (V2 — full
+  type-aware enforcement через infer_expr_type).
+
+Test fixtures added:
+- t7_neg_ptr_interpolation.nv — direct `${&x}` AddrOf.
+- t7_neg_ptr_interp_local_var.nv — Ident bound к pointer var.
+
+plan118 total: 27/0 PASS (12 positive + 15 NEG).
+Regression smoke: 89/0 verified clean (plan115 11 + plan120 8 +
+plan114 10 + plan100_3 10 + plan108 6 + plan124_1 9 + basics 8 +
+plan118 27 = 89).
+
+Session 3 grand-total Plan 118 acceptance closed: 15 of 35 (43%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25,
+A26, A28 partial, A29, A30, A33, A34, A35.
+
 Session 4+ remaining work (~5-7 dev-days):
 - Ф.4 full auto-deref codegen integration (A12-A17 partial → full)
 - Ф.5 full NPO codegen (A19-A23 + closes [M-115-null-ptr-to-option-after-npo])
   — 117 sites refactor
-- Ф.7 W_UNSAFE_GC_TRIGGER warning + (*T).to_debug_str() (A27, A28)
+- Ф.7 W_UNSAFE_GC_TRIGGER warning + (*T).to_debug_str() (A27 + A28 full)
 - Ф.8 cross-platform CI matrix + ABI snapshot + perf bench (A31, A32)
 - Plan 118.1/118.2/118.3 sub-plans
 
