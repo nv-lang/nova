@@ -15615,9 +15615,22 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         }
                     }
                 }
-                // nova_str and other value types use `.`, pointer types use `->`
+                // nova_str and other value types use `.`, pointer types use `->`.
+                // Plan 118 D216 §5: typed pointer `*T` для record T (Nova_T*) →
+                // C double-pointer (Nova_T**). Member access `p.field` requires
+                // ONE extra deref before arrow: `(*p)->field`. Detect `**`
+                // suffix и prepend `*` к obj C expression. Multi-level `***`
+                // not yet supported (D216 §5: «one-level only»).
+                let trimmed = obj_ty.trim_start_matches("const ").trim();
+                let is_double_ptr = trimmed.ends_with("**");
                 let accessor = if Self::is_value_type(&obj_ty) { "." } else { "->" };
-                Ok(format!("({}{}{})", o, accessor, field_name))
+                if is_double_ptr {
+                    // *T где T = record (уже Nova_T*) → emit (*p)->field
+                    // per D216 §5 auto-deref one level.
+                    Ok(format!("((*{}){}{})", o, accessor, field_name))
+                } else {
+                    Ok(format!("({}{}{})", o, accessor, field_name))
+                }
             }
 
             ExprKind::For { pattern, iter, body, .. } => {
