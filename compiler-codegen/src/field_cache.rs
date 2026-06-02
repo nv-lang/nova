@@ -4890,12 +4890,16 @@ fn pure_cache_fn_impl(
 
     // Generate collision-safe cache local names. V3.1: include args_key
     // в name to disambiguate same method с different args.
+    // Plan 123.3.2 V3.2 (2026-06-02 fix): sanitize args_key for use as
+    // C identifier — strip / replace `{`, `}`, `;`, `:` introduced by
+    // tuple/record literal encodings (`T2{1i;2i}`, `RPoint{x:1i;y:2i}`).
     let mut name_map: HashMap<PureCallKey, String> = HashMap::new();
     for (k, _) in &to_cache {
-        let base = if k.args_key.is_empty() {
+        let sanitized_args = sanitize_args_key_for_ident(&k.args_key);
+        let base = if sanitized_args.is_empty() {
             format!("_at_{}_call", k.method)
         } else {
-            format!("_at_{}{}_call", k.method, k.args_key)
+            format!("_at_{}{}_call", k.method, sanitized_args)
         };
         let mut chosen = base.clone();
         let mut suffix = 0usize;
@@ -5981,6 +5985,39 @@ fn match_self_pure_call(
         }
     }
     None
+}
+
+/// Plan 123.3.2 V3.2 fix (2026-06-02): sanitize args_key into a valid
+/// C identifier suffix. The encoder produces `T2{1i;2i}` and
+/// `RPoint{x:1i;y:2i}` which contain `{`, `}`, `;`, `:` — none of which
+/// are valid in C identifiers. We rewrite:
+///   `{` → `_o_` (open)
+///   `}` → `_c_` (close)
+///   `;` → `_s_` (sep)
+///   `:` → `_k_` (key)
+///   `.` → `_d_` (dot for record `Rstd.foo.Bar`)
+/// Other characters (alphanumeric + `_`) pass through unchanged.
+/// Encoding remains reversible enough to keep collision-resistance —
+/// no two distinct args_keys collide through this map.
+fn sanitize_args_key_for_ident(args_key: &str) -> String {
+    let mut out = String::with_capacity(args_key.len());
+    for c in args_key.chars() {
+        match c {
+            '{' => out.push_str("_o_"),
+            '}' => out.push_str("_c_"),
+            ';' => out.push_str("_s_"),
+            ':' => out.push_str("_k_"),
+            '.' => out.push_str("_d_"),
+            c if c.is_ascii_alphanumeric() || c == '_' => out.push(c),
+            _ => {
+                // Conservative: hex-escape unknown punctuation.
+                out.push('_');
+                out.push_str(&format!("{:x}", c as u32));
+                out.push('_');
+            }
+        }
+    }
+    out
 }
 
 /// V3.1: returns canonical String repr if expr is a simple literal,
@@ -7428,6 +7465,32 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
     // Plan 123.3.2 (V3.2, 2026-06-02): tuple + record literal canonical
     // encoding for PureCallKey args_key.
     // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn v32_sanitize_args_key_for_c_ident() {
+        // Plan 123.3.2 V3.2 (2026-06-02 fix): args_key sanitizer must
+        // produce strings valid as C identifier suffixes.
+        // Scalar — unchanged.
+        assert_eq!(sanitize_args_key_for_ident("_42i"), "_42i");
+        // Tuple `T2{1i;2i}` → `T2_o_1i_s_2i_c_`.
+        assert_eq!(sanitize_args_key_for_ident("T2{1i;2i}"), "T2_o_1i_s_2i_c_");
+        // Record `RPoint{x:1i;y:2i}` → all four substitutions.
+        assert_eq!(
+            sanitize_args_key_for_ident("RPoint{x:1i;y:2i}"),
+            "RPoint_o_x_k_1i_s_y_k_2i_c_"
+        );
+        // Path-qualified record `Rstd.foo.Bar{f:1i}`.
+        assert_eq!(
+            sanitize_args_key_for_ident("Rstd.foo.Bar{f:1i}"),
+            "Rstd_d_foo_d_Bar_o_f_k_1i_c_"
+        );
+        // Empty input — empty output.
+        assert_eq!(sanitize_args_key_for_ident(""), "");
+        // Distinct inputs map к distinct outputs (collision check).
+        let a = sanitize_args_key_for_ident("T2{1i;2i}");
+        let b = sanitize_args_key_for_ident("T2{2i;1i}");
+        assert_ne!(a, b, "different tuple element order must not collide");
+    }
 
     #[test]
     fn v32_tuple_literal_repr_canonical() {

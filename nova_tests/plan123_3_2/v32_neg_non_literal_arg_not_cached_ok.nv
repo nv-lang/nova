@@ -1,0 +1,37 @@
+// Plan 123.3.2 V3.2 (2026-06-02) NEGATIVE: non-literal tuple arg
+// (variable component) is NOT eligible for cache key — call site
+// is preserved as-is (no cache local). Verifies V3.2 encoder
+// short-circuits on non-literal nested arg. This is positive
+// behavior — программа компилится и работает идентично без cache.
+
+module plan123_3_2.v32_neg_non_literal_arg_not_cached_ok
+
+type Box {
+    ro base int
+}
+
+#pure
+fn Box @sum_pair_with(t (int, int), n int) -> int {
+    @base + t.0 + t.1 + n
+}
+
+fn Box @uses_var() -> int {
+    ro v = 7
+    // First arg is (v, 2) — `v` is не literal → V3.2 reject → no cache.
+    // Both calls still execute correctly (no eligibility = no cache,
+    // not = wrong result).
+    ro a = @sum_pair_with((v, 2), 100)
+    ro b = @sum_pair_with((v, 2), 100)
+    a + b
+}
+
+fn Box.new(b int) -> Box {
+    Box { base: b }
+}
+
+test "V3.2 NEG: non-literal tuple element bypasses cache" {
+    ro x = Box.new(10)
+    ro got = x.uses_var()
+    // 10 + 7 + 2 + 100 = 119; doubled = 238.
+    assert(got == 238)
+}

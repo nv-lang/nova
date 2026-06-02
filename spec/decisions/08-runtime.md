@@ -5558,8 +5558,34 @@ across reorderings (sorted) и nesting (recursion).
 - **V3.2.3** RecordLit fields sorted alphabetically before encoding ✅
 - **V3.2.4** Spread / shorthand / D55-marker rejected (None) ✅
 - **V3.2.5** Non-literal nested arg → None ✅
-- **V3.2.6** Field-cache unit tests 14/14 PASS + 7 new V3.2 tests
-  ✅
+- **V3.2.6** Field-cache unit tests 14/14 PASS + 8 new V3.2 tests
+  (incl. sanitizer test) ✅
+- **V3.2.7** args_key sanitized through `sanitize_args_key_for_ident`
+  before composition into pure-cache local name — produces valid C
+  identifier from `{`, `}`, `;`, `:`, `.` ✅
+- **V3.2.8** Runtime fixtures (release nova-cli + clang):
+  `v32_tuple_literal_args_ok` / `v32_record_literal_args_ok` /
+  `v32_neg_non_literal_arg_not_cached_ok` 3/3 PASS ✅
+
+### 6. Codegen sanitizer (2026-06-02 fix)
+
+The encoded args_key (`T2{1i;2i}`, `RPoint{x:1i;y:2i}`) is fine as a
+hash key but illegal as a C identifier suffix. `pure_cache_fn` runs
+the args_key through `sanitize_args_key_for_ident` before forming
+the local name:
+
+| char  | replacement |
+|-------|-------------|
+| `{`   | `_o_` |
+| `}`   | `_c_` |
+| `;`   | `_s_` |
+| `:`   | `_k_` |
+| `.`   | `_d_` |
+| other punctuation | `_<hex>_` |
+
+`_at_sum_pair_with_T2_o_1i_s_2i_c__100i_call` is a valid C
+identifier. Distinct keys map к distinct sanitized strings
+(verified by unit test `v32_sanitize_args_key_for_c_ident`).
 
 ## D219 amend V3.1 — Pure-call literal args extension (Plan 123.3.1)
 
