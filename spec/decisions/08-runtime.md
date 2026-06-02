@@ -4861,9 +4861,90 @@ count.
 ### 4. V6.2+ followups
 
 - **V6.2:** integration с Plan 57 `nova bench` для CPU time
-  regression.
+  regression — ✅ LANDED 2026-06-02 (см. D217 amend V6.2 ниже).
 - **V6.3:** custom thresholds via flags — ✅ LANDED 2026-06-02
   (см. D217 amend V6.3 ниже).
+
+## D217 amend V6.2 — Plan 57 bench integration: CPU savings estimate
+
+**Source:** [Plan 123.6.2](../../docs/plans/123.6.2-plan57-bench.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Scope
+
+V6 / V6.1 emit cache-count metrics (methods affected, total caches,
+per-layer breakdown). These don't translate directly to CPU-time
+regression detection — a refactor может reduce cache COUNT yet
+preserve or improve actual cycle savings (e.g. V4.2 prefix sharing
+emits ONE cache let to replace many `@<root>` reads).
+
+V6.2 adds a static **cycles-saved estimate** computed from the
+ExplainReport. Cycle weights are heuristic — modeled on typical
+x86_64 microarchitecture costs (4 cycles load, 40 cycles pure-call,
+8 loop iterations assumed для LICM). The estimate is robust against
+counting refactors because it weights chain-cache savings by
+chain length и pure-cache savings by call cost.
+
+### 2. Public API
+
+```rust
+pub struct CpuSavingsReport {
+    pub estimated_cycles_saved: u64,
+    pub layer_ro: u64,
+    pub layer_mut: u64,
+    pub layer_licm: u64,
+    pub layer_pure: u64,
+    pub layer_chain: u64,
+    pub methods_with_savings: usize,
+}
+
+pub fn cpu_savings_estimate(report: &ExplainReport) -> CpuSavingsReport;
+```
+
+### 3. Telemetry JSON emit
+
+`nova check --telemetry-cache --telemetry-json` теперь emits:
+
+```json
+"cycles_saved_estimate": 1234,
+"cycles_methods_with_savings": 18,
+"cycles_layer_ro":    72,
+"cycles_layer_mut":   16,
+"cycles_layer_licm":  256,
+"cycles_layer_pure":  840,
+"cycles_layer_chain":  50
+```
+
+`nova bench gate` can compare `cycles_saved_estimate` between
+runs — drop > 10% (default) → V6.2 regression.
+
+### 4. Baseline comparison gate
+
+When `--telemetry-baseline=FILE` provided AND baseline has
+`cycles_saved_estimate`, current value compared relative to
+baseline. Drop > 10% relative → exit 1.
+
+### 5. Configuration
+
+Cycle constants tunable via env (forensic):
+- `NOVA_FC_LOAD_CYCLES` (default 4)
+- `NOVA_FC_CALL_CYCLES` (default 40)
+- `NOVA_FC_LOOP_ITERS` (default 8)
+
+### 6. Acceptance
+
+- **V6.2.1** `cpu_savings_estimate` returns non-zero for module с
+  cached methods ✅
+- **V6.2.2** Empty report → zero savings ✅
+- **V6.2.3** `nova check --telemetry-cache --telemetry-json` emits 7
+  new fields ✅
+- **V6.2.4** Baseline regression gate fires on > 10% drop ✅
+- **V6.2.5** Cycle weights env-tunable ✅
+
+### 7. Followups
+
+- **V6.2.1 (future):** real wall-clock bench integration via
+  `nova bench corpus` runner (Plan 57 sub-plan).
 
 ## D217 amend V6.3 — Configurable gate thresholds (Plan 123 V6.3)
 

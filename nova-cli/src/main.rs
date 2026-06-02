@@ -1387,6 +1387,15 @@ fn cmd_check_telemetry_cache(
     let mut layer_pure: usize = 0;
     let mut layer_chain: usize = 0;
     let mut per_method_counts: Vec<usize> = Vec::new();
+    // Plan 123.6.2 (V6.2, 2026-06-02): aggregate CPU savings estimate
+    // across all scanned files for nova bench gate integration.
+    let mut total_cycles_saved: u64 = 0;
+    let mut savings_layer_ro_cycles: u64 = 0;
+    let mut savings_layer_mut_cycles: u64 = 0;
+    let mut savings_layer_licm_cycles: u64 = 0;
+    let mut savings_layer_pure_cycles: u64 = 0;
+    let mut savings_layer_chain_cycles: u64 = 0;
+    let mut methods_with_savings: usize = 0;
 
     for file in &files {
         total_files += 1;
@@ -1428,6 +1437,15 @@ fn cmd_check_telemetry_cache(
             layer_pure += info.pure_caches.len();
             layer_chain += info.chain_caches.len();
         }
+        // Plan 123.6.2 (V6.2): per-file CPU savings estimate.
+        let savings = nova_codegen::field_cache::cpu_savings_estimate(&report);
+        total_cycles_saved = total_cycles_saved.saturating_add(savings.estimated_cycles_saved);
+        savings_layer_ro_cycles = savings_layer_ro_cycles.saturating_add(savings.layer_ro);
+        savings_layer_mut_cycles = savings_layer_mut_cycles.saturating_add(savings.layer_mut);
+        savings_layer_licm_cycles = savings_layer_licm_cycles.saturating_add(savings.layer_licm);
+        savings_layer_pure_cycles = savings_layer_pure_cycles.saturating_add(savings.layer_pure);
+        savings_layer_chain_cycles = savings_layer_chain_cycles.saturating_add(savings.layer_chain);
+        methods_with_savings += savings.methods_with_savings;
     }
 
     per_method_counts.sort_unstable();
@@ -1460,7 +1478,15 @@ fn cmd_check_telemetry_cache(
         println!("  \"layer_d217_field\": {},", layer_ro + layer_mut);
         println!("  \"layer_d218_licm\": {},", layer_licm);
         println!("  \"layer_d219_pure\": {},", layer_pure);
-        println!("  \"layer_d217_chain\": {}", layer_chain);
+        println!("  \"layer_d217_chain\": {},", layer_chain);
+        // Plan 123.6.2 (V6.2, 2026-06-02): CPU savings estimate.
+        println!("  \"cycles_saved_estimate\": {},", total_cycles_saved);
+        println!("  \"cycles_methods_with_savings\": {},", methods_with_savings);
+        println!("  \"cycles_layer_ro\": {},", savings_layer_ro_cycles);
+        println!("  \"cycles_layer_mut\": {},", savings_layer_mut_cycles);
+        println!("  \"cycles_layer_licm\": {},", savings_layer_licm_cycles);
+        println!("  \"cycles_layer_pure\": {},", savings_layer_pure_cycles);
+        println!("  \"cycles_layer_chain\": {}", savings_layer_chain_cycles);
         println!("}}");
     } else {
         println!("=== Plan 123 field-cache telemetry ===");
@@ -1477,6 +1503,39 @@ fn cmd_check_telemetry_cache(
         println!("  D218 LICM hoist:       {}", layer_licm);
         println!("  D219 pure-call cache:  {}", layer_pure);
         println!("  D217 V4 chain cache:   {}", layer_chain);
+        println!();
+        // Plan 123.6.2 (V6.2, 2026-06-02): CPU savings estimate.
+        println!("Plan 57 CPU bench integration (V6.2):");
+        println!("  Estimated cycles saved:   {}", total_cycles_saved);
+        println!("  Methods with savings:     {}", methods_with_savings);
+        println!("    ro layer cycles:        {}", savings_layer_ro_cycles);
+        println!("    mut layer cycles:       {}", savings_layer_mut_cycles);
+        println!("    LICM layer cycles:      {}", savings_layer_licm_cycles);
+        println!("    pure layer cycles:      {}", savings_layer_pure_cycles);
+        println!("    chain layer cycles:     {}", savings_layer_chain_cycles);
+    }
+
+    // Plan 123.6.2 (V6.2, 2026-06-02): cycles-saved regression gate.
+    // When --telemetry-baseline provides a previous JSON with
+    // `cycles_saved_estimate`, compare current value. Drop > 10% relative
+    // → fail (defaults; future could expose as CLI flag).
+    if let Some(baseline) = baseline_path {
+        let baseline_text = std::fs::read_to_string(baseline)
+            .map_err(|e| anyhow!("read baseline {}: {}", baseline.display(), e))?;
+        if let Some(bl_cycles) = parse_json_number(&baseline_text, "cycles_saved_estimate") {
+            let bl_cycles = bl_cycles as u64;
+            if bl_cycles > 0 {
+                let rel = (total_cycles_saved as f64 - bl_cycles as f64) / bl_cycles as f64;
+                if rel < -0.10 {
+                    eprintln!();
+                    eprintln!(
+                        "error: PERF REGRESSION: cycles_saved_estimate dropped from {} (baseline) to {} (Δ {:.1}%)",
+                        bl_cycles, total_cycles_saved, rel * 100.0
+                    );
+                    return Err(usage_err("V6.2 cycles-saved regression gate failed"));
+                }
+            }
+        }
     }
 
     // Plan 123.6.1 (V6.1) + V6.3 (2026-06-02): CI perf regression gate.
