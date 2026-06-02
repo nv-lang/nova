@@ -974,6 +974,39 @@ fn check_value_matches_type(
 /// Extract `ConstValue` из literal Expr (used by AST rewriter to check
 /// if an arg is constexpr-eligible without invoking full evaluator).
 /// Returns `None` если expr — не литерал.
+/// Plan 114.4.4 Ф.5 V4: extract simple type name from TypeRef (для intrinsics).
+pub fn simple_type_name_str(t: &crate::ast::TypeRef) -> Option<String> {
+    match t {
+        crate::ast::TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 =>
+        {
+            Some(path[0].clone())
+        }
+        _ => None,
+    }
+}
+
+/// Plan 114.4.4 Ф.5 V4: sizeof[T]()/align_of[T]() — type layout lookup.
+/// V4.0 supports primitive types only (hardcoded sizes per default 64-bit ABI).
+/// Records/generics/sum-types → followup `[M-114.4.4-record-reflection]`.
+/// `is_align`: true для align_of, false для sizeof.
+pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64> {
+    let name = simple_type_name_str(t)?;
+    // Primitive type table (default 64-bit ABI, matches nova_rt).
+    // align == size для primitives (natural alignment).
+    let size = match name.as_str() {
+        "int" | "i64" | "u64" | "f64" => 8,
+        "i32" | "u32" | "f32" => 4,
+        "i16" | "u16" => 2,
+        "i8" | "u8" | "bool" => 1,
+        "char" => 4, // Plan Q-char-literals: u32 codepoint.
+        "str" => 16, // pointer + length (Plan 26 prelude).
+        _ => return None,
+    };
+    let _ = is_align;
+    Some(size)
+}
+
 pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
     match &expr.kind {
         ExprKind::IntLit(v) => Some(ConstValue::Int(*v)),
@@ -1003,6 +1036,15 @@ pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
             Some(ConstValue::Tuple(vs))
         }
         ExprKind::Call { func, args, trailing: None } => {
+            // Plan 114.4.4 Ф.5 V4: sizeof/align_of intrinsics — TurboFish callee.
+            if let ExprKind::TurboFish { base, type_args } = &func.kind {
+                if let ExprKind::Ident(n) = &base.kind {
+                    if (n == "sizeof" || n == "align_of") && type_args.len() == 1 && args.is_empty() {
+                        return type_size_or_align(&type_args[0], n == "align_of")
+                            .map(ConstValue::Int);
+                    }
+                }
+            }
             // Variant constructor `Name(args)` где Name uppercase.
             if let ExprKind::Ident(n) = &func.kind {
                 if n.chars().next().map_or(false, |c| c.is_uppercase()) {
@@ -1081,9 +1123,9 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
             _ => None,
         })
         .collect();
-    if const_fn_decls.is_empty() && mixed_fns.is_empty() {
-        return errors;
-    }
+    // Plan 114.4.4 Ф.5: walk module even без const fns — sizeof/align_of
+    // intrinsics могут use'аться в module-level const RHS без const fn
+    // decls (e.g. `const SIZE = sizeof[int]()`).
     let mut owned = OwnedEvaluator::new(const_fn_decls);
     for (name, flags) in mixed_fns {
         owned.register_mixed(name, flags);
@@ -1597,11 +1639,12 @@ impl OwnedEvaluator {
             }
             ExprKind::Call { func, args, trailing: None } => {
                 // Plan 114.4.3 Ф.4 V2: turbofish callee для generic const fn.
-                let callee_name = match &func.kind {
-                    ExprKind::Ident(n) => n.clone(),
-                    ExprKind::TurboFish { base, .. } => {
+                // Plan 114.4.4 Ф.5 V4: extract type_args (для sizeof[T]).
+                let (callee_name, type_args) = match &func.kind {
+                    ExprKind::Ident(n) => (n.clone(), Vec::new()),
+                    ExprKind::TurboFish { base, type_args } => {
                         if let ExprKind::Ident(n) = &base.kind {
-                            n.clone()
+                            (n.clone(), type_args.clone())
                         } else {
                             return Err(Diagnostic::new(
                                 "[E_CONST_FN_EVAL_PANIC] non-ident turbofish base \
@@ -1615,6 +1658,32 @@ impl OwnedEvaluator {
                         expr.span,
                     )),
                 };
+                // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics.
+                if callee_name == "sizeof" || callee_name == "align_of" {
+                    if type_args.len() != 1 {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_EVAL_PANIC] `{}[T]()` requires exactly 1 type \
+                                 argument (D199 V4).",
+                                callee_name
+                            ),
+                            expr.span,
+                        ));
+                    }
+                    let size = type_size_or_align(&type_args[0], callee_name == "align_of")
+                        .ok_or_else(|| Diagnostic::new(
+                            format!(
+                                "[E_CONST_FN_GENERIC_NEEDS_T_REFLECTION] `{}[T]()` для \
+                                 type {} not supported в V4.0 — only primitives \
+                                 (int/i*/u*/f*/bool/char) supported. Record/generic \
+                                 type reflection — followup `[M-114.4.4-record-reflection]`.",
+                                callee_name, simple_type_name_str(&type_args[0])
+                                    .unwrap_or_else(|| "<complex>".to_string())
+                            ),
+                            expr.span,
+                        ))?;
+                    return Ok(ConstValue::Int(size));
+                }
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for a in args {
                     if let crate::ast::CallArg::Item(e) = a {
@@ -1627,8 +1696,6 @@ impl OwnedEvaluator {
                     }
                 }
                 // Plan 114.4.4 Ф.4 V4: distinguish const fn vs variant constructor.
-                // If callee not registered as const fn AND name starts с uppercase,
-                // treat as Variant constructor (`Some(5)`, `Ok(v)`, etc).
                 let resolved_name = self.aliases.get(&callee_name).cloned().unwrap_or(callee_name.clone());
                 if !self.fns.contains_key(&resolved_name)
                     && callee_name.chars().next().map_or(false, |c| c.is_uppercase())
@@ -1954,6 +2021,35 @@ fn walk_expr(
     // Mixed fns остаются в codegen, не evaluated, но const params на call site
     // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
+        // Plan 114.4.4 Ф.5 V4: sizeof[T]() / align_of[T]() intrinsics —
+        // replace call с literal Int.
+        if let ExprKind::TurboFish { base, type_args } = &func.kind {
+            if let ExprKind::Ident(n) = &base.kind {
+                if (n == "sizeof" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
+                    match type_size_or_align(&type_args[0], n == "align_of") {
+                        Some(size) => {
+                            let span = e.span;
+                            *e = Expr { kind: ExprKind::IntLit(size), span };
+                            return;
+                        }
+                        None => {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_CONST_FN_GENERIC_NEEDS_T_REFLECTION] `{}[T]()` для \
+                                     type {} not supported в V4.0 (D199). Only primitives. \
+                                     Followup `[M-114.4.4-record-reflection]`.",
+                                    n,
+                                    simple_type_name_str(&type_args[0])
+                                        .unwrap_or_else(|| "<complex>".to_string())
+                                ),
+                                e.span,
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         // Plan 114.4.3 Ф.4 V2: turbofish callee — unwrap base Ident.
         let raw_name_opt: Option<String> = match &func.kind {
             ExprKind::Ident(n) => Some(n.clone()),

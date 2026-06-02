@@ -797,6 +797,11 @@ fn check_const_constexpr_ex(
                 _ => None,
             };
             if let Some(name) = callee_name_opt {
+                // Plan 114.4.4 Ф.5 V4: sizeof/align_of intrinsics accepted
+                // на module-level const RHS (`const SIZE = sizeof[int]()`).
+                if name == "sizeof" || name == "align_of" {
+                    return Ok(());
+                }
                 if const_fn_names.contains(name) {
                     for a in args {
                         match a {
@@ -940,9 +945,20 @@ fn check_const_fn_expr(
                     expr.span,
                 ));
             }
-            // Callee должен быть Ident, и это имя должно быть const fn.
+            // Callee должен быть Ident (или TurboFish<Ident> для generic
+            // const fn / sizeof/align_of intrinsics).
             let callee_name = match &func.kind {
                 E::Ident(n) => n.clone(),
+                E::TurboFish { base, .. } => match &base.kind {
+                    E::Ident(n) => n.clone(),
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EFFECT_IN_BODY] non-ident turbofish base \
+                             (D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
                 _ => {
                     return Err(Diagnostic::new(
                         "[E_CONST_FN_EFFECT_IN_BODY] indirect / method / path calls \
@@ -957,10 +973,12 @@ fn check_const_fn_expr(
             // Call(Ident(Name), args) где Name начинается с uppercase
             // letter и НЕ const fn — treat as variant constructor
             // (e.g. `Some(5)`, `Ok(v)`, `Err(e)`, `Cons(h, t)`).
-            // Evaluator produces ConstValue::Variant.
             let is_variant_constructor = !const_fn_names.contains(&callee_name)
                 && callee_name.chars().next().map_or(false, |c| c.is_uppercase());
-            if !const_fn_names.contains(&callee_name) && !is_variant_constructor {
+            // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics — sizeof / align_of.
+            // Recognized как built-in const fn без registration.
+            let is_t_reflection = callee_name == "sizeof" || callee_name == "align_of";
+            if !const_fn_names.contains(&callee_name) && !is_variant_constructor && !is_t_reflection {
                 return Err(Diagnostic::new(
                     format!(
                         "[E_CONST_FN_EFFECT_IN_BODY] call `{}(...)` from const fn \
@@ -8380,6 +8398,10 @@ impl NameResCtx {
     }
 
     fn is_known(&self, name: &str, file_id: FileId, scope: &[HashSet<String>]) -> bool {
+        // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics — built-in
+        // const fn names recognized без registration. Replaced литералом
+        // в rewriter pass (const_fn_eval.rs).
+        if name == "sizeof" || name == "align_of" { return true; }
         if self.builtins.contains(name) { return true; }
         // Plan 42.15 Rule C: declarations module-group СЌС‚РѕРіРѕ peer'Р°
         // (peers РѕРґРЅРѕРіРѕ folder-module РґРµР»СЏС‚ declarations namespace).
