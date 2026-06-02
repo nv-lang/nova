@@ -1,0 +1,13 @@
+// Plan 118 Ф.3.5 NEG-T3.9 — `*p` deref outside unsafe context rejected.
+// D216 §8 enforcement.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
+
+module plan118.t3_neg_deref_outside_unsafe
+
+test "rejects *p outside unsafe block" {
+    ro x = 42
+    // *x — deref outside unsafe → E_UNSAFE_REQUIRED
+    ro y = *x
+    assert(y == 42)
+}

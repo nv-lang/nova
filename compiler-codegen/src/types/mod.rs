@@ -654,6 +654,12 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         let _ = report.warnings; // intentionally silent
     }
 
+    // Plan 118 D216 §8 (Ф.3.5): enforce E_UNSAFE_REQUIRED — `&value` /
+    // `*expr` pointer ops require unsafe context (block.is_unsafe = true
+    // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
+    // depth counter, emits diagnostic при depth == 0.
+    check_unsafe_context_in_module(module, &mut errors);
+
     if errors.is_empty() {
         Ok(env)
     } else {
@@ -15607,3 +15613,181 @@ pub fn check_atomic_store_ordering(
         _ => Ok(()),
     }
 }
+
+// =============================================================================
+// Plan 118 Ф.3.5 — E_UNSAFE_REQUIRED enforcement
+// =============================================================================
+
+/// Plan 118 D216 §8 (D2 amend): Walk fn bodies, emit E_UNSAFE_REQUIRED
+/// для AddrOf (`&value`) / Deref (`*expr`) used вне `unsafe { ... }` block
+/// или `#unsafe fn` body context.
+///
+/// Маркер unsafe context'а — Block.is_unsafe field (set parser в KwUnsafe
+/// arm of parse_primary) OR fn.unsafe_attr (Plan 118 Ф.3.2 #unsafe attr).
+///
+/// Depth counter incremented при entry в unsafe block / fn; pointer ops
+/// allowed iff depth > 0.
+pub(crate) fn check_unsafe_context_in_module(
+    module: &crate::ast::Module,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::{Item, FnBody};
+    let mut state = UnsafeCtx::default();
+    // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
+    let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
+        module.items.iter().collect()
+    } else {
+        module.peer_files.iter()
+            .filter(|pf| pf.is_entry_module)
+            .flat_map(|pf| pf.items_here.iter())
+            .collect()
+    };
+    for item in entry_items {
+        if let Item::Fn(fd) = item {
+            // #unsafe fn body — implicit unsafe context per D216 §9.
+            let entered_unsafe_fn = fd.unsafe_attr;
+            if entered_unsafe_fn { state.depth += 1; }
+            if let FnBody::Block(b) = &fd.body {
+                state.walk_block(b, errors);
+            } else if let FnBody::Expr(e) = &fd.body {
+                state.walk_expr(e, errors);
+            }
+            if entered_unsafe_fn { state.depth -= 1; }
+        }
+        if let Item::Test(t) = item {
+            state.walk_block(&t.body, errors);
+        }
+    }
+}
+
+#[derive(Default)]
+struct UnsafeCtx {
+    depth: usize,
+}
+
+impl UnsafeCtx {
+    fn walk_block(&mut self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
+        // Plan 118 D216 §8: track unsafe context entry/exit.
+        if b.is_unsafe { self.depth += 1; }
+        for stmt in &b.stmts {
+            self.walk_stmt(stmt, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, errors);
+        }
+        if b.is_unsafe { self.depth -= 1; }
+    }
+
+    fn walk_stmt(&mut self, s: &crate::ast::Stmt, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::Stmt;
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, errors),
+            Stmt::Let(d) => {
+                self.walk_expr(&d.value, errors);
+            }
+            Stmt::Const(c) => {
+                self.walk_expr(&c.value, errors);
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, errors);
+                self.walk_expr(value, errors);
+            }
+            Stmt::Return { value: Some(e), .. } => self.walk_expr(e, errors),
+            // Plan 118 Ф.3.5: остальные stmt-варианты не имеют sub-expressions
+            // или covered downstream walks (`for`/`while`/`loop` body — Expr).
+            _ => {}
+        }
+    }
+
+    fn walk_expr(&mut self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::{ExprKind, UnOp};
+        match &e.kind {
+            // Plan 118 D216 §8 ENFORCEMENT POINT: AddrOf / Deref require
+            // unsafe context (block с is_unsafe = true OR enclosing #unsafe fn).
+            ExprKind::Unary { op: UnOp::AddrOf, operand } => {
+                if self.depth == 0 {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_REQUIRED] `&value` pointer creation \
+                         requires unsafe context (Plan 118 D216 §8). Wrap \
+                         expression в `unsafe { ... }` block, или mark \
+                         enclosing fn `#unsafe`. D2 amend: unsafe is \
+                         syntactic sugar над built-in effect handler.".to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_expr(operand, errors);
+            }
+            ExprKind::Unary { op: UnOp::Deref, operand } => {
+                if self.depth == 0 {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_REQUIRED] `*expr` pointer dereference \
+                         requires unsafe context (Plan 118 D216 §8). Wrap \
+                         expression в `unsafe { ... }` block, или mark \
+                         enclosing fn `#unsafe`.".to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_expr(operand, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, errors),
+            // Recurse в children.
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, errors);
+                self.walk_expr(right, errors);
+            }
+            ExprKind::Call { func, args, .. } => {
+                self.walk_expr(func, errors);
+                for a in args {
+                    self.walk_expr(a.expr(), errors);
+                }
+            }
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, errors);
+                self.walk_expr(index, errors);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, errors);
+                self.walk_block(then, errors);
+                if let Some(eb) = else_ {
+                    // ElseBranch has either block или another If — handle both
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.walk_block(b, errors),
+                        crate::ast::ElseBranch::If(e) => self.walk_expr(e, errors),
+                    }
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.walk_expr(cond, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::Loop { body, .. } => self.walk_block(body, errors),
+            ExprKind::For { iter, body, .. } => {
+                self.walk_expr(iter, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::Match { scrutinee, arms, .. } => {
+                self.walk_expr(scrutinee, errors);
+                for arm in arms {
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expr(e) => self.walk_expr(e, errors),
+                        crate::ast::MatchArmBody::Block(b) => self.walk_block(b, errors),
+                    }
+                }
+            }
+            ExprKind::As(inner, _) | ExprKind::Is(inner, _)
+                | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                self.walk_expr(inner, errors);
+            }
+            // Plan 83 fiber-runtime constructs — body is Block.
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, errors),
+            // Plan 118 Ф.3.5 leaf nodes (literals, idents, paths) — no children.
+            // Other variants covered through their child expressions (handler
+            // bodies, closure lits etc.) — V1 scaffold не deep-walks все edge
+            // cases. Closures + handler bodies — Ф.3.5 follow-on extension.
+            _ => {}
+        }
+    }
+}
+
