@@ -1019,14 +1019,14 @@ Check open-questions.md для существующих Q'ов:
 
 | Sub-plan | Status |
 |---|---|
-| 124.1 Core record | 🆕 PLANNED |
+| 124.1 Core record | 🟡 **V1 INFRASTRUCTURE LANDED 2026-06-02** (parser/AST/lexer + 4 fixtures + D220 spec); enforcement deferred → `[M-124.1-checker-enforcement]` |
 | 124.2 Pattern + literal init | 🆕 PLANNED |
 | 124.3 Generics | 🆕 PLANNED |
 | 124.4 Tuple + protocol | 🆕 PLANNED |
 | 124.5 nova doc + LSP | 🆕 PLANNED |
 | 124.6 Test access + visible_to | 🆕 PLANNED |
-| 124.7 Edition flip eval | 🆕 PLANNED |
-| **Umbrella** | 🆕 PLANNED |
+| 124.7 Type-level priv flip (named tuples) | 🆕 PLANNED |
+| **Umbrella** | 🟡 PARTIAL — Plan 124.1 V1 infrastructure landed; 6 sub-plans + 1 enforcement followup remaining |
 
 ---
 
