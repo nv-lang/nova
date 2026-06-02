@@ -1,0 +1,44 @@
+// Plan 123.6.2.1 (V6.2.1): real-wallclock field-cache fixture #2.
+// Multiple chain accesses @inner.middle.x от common prefix —
+// V4 chain caching + V4.2 prefix sharing должен заменить N reads
+// одним shared let.
+
+type Leaf { ro v int }
+type Mid  { ro x Leaf, ro y Leaf, ro z Leaf }
+type Inner { ro m Mid }
+type Outer { ro inner Inner }
+
+fn Outer @cross_sum(n int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        // Three chains share `@inner.m` prefix; each leaf-`v` доступ
+        // также chain-cached.
+        acc = acc + @inner.m.x.v * i + @inner.m.y.v * i + @inner.m.z.v * i
+        i = i + 1
+    }
+    acc
+}
+
+fn Outer.new() -> Outer {
+    Outer {
+        inner: Inner {
+            m: Mid {
+                x: Leaf { v: 2 },
+                y: Leaf { v: 5 },
+                z: Leaf { v: 7 },
+            }
+        }
+    }
+}
+
+fn main() Io -> () {
+    ro o = Outer.new()
+    mut total int = 0
+    mut k = 0
+    while k < 200 {
+        total = total + o.cross_sum(2000)
+        k = k + 1
+    }
+    println(str.from(total))
+}

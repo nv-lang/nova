@@ -30062,5 +30062,62 @@ Lessons:
   detection site (separate maps name→mangled don't disambiguate).
 - Structural unification simpler than expected — recursive descent
   через TypeRef variants.
+
+=== Plan 123.6.2.1 — Real wall-clock bench (V6.2.1, 2026-06-03) ===
+
+Followup `[M-123.6-real-wallclock-bench]` closure. Расширяет V6.2
+static cycle-savings estimate реальным wallclock измерением full-program
+runtime impact.
+
+Subcommand: `nova bench field-cache <PATH>` builds каждый input twice
+(NOVA_FIELD_CACHE=1 vs =0), runs N interleaved samples (default 11) с
+warmup (default 2), reports median wallclock + speedup + V6.2 static
+estimate side-by-side.
+
+Implementation (~470 LOC):
+- nova-cli/src/bench/field_cache_wallclock.rs (NEW, 410 LOC) — runner,
+  median, geomean (log-domain), static-estimate reuse, JSON v1 emit,
+  baseline gate.
+- nova-cli/src/bench/mod.rs +1 line.
+- nova-cli/src/main.rs +75 LOC — BenchCmd::FieldCache variant + dispatch.
+- bench/field_cache/01_ro_hot_loop.nv (40 LOC) — three @ro reads inner
+  loop × 400k iterations.
+- bench/field_cache/02_chain_heavy.nv (40 LOC) — @inner.m.{x,y,z}.v
+  chain accesses share prefix.
+
+Verification (release nova-cli + clang):
+- 12/12 unit tests PASS (median odd/even/empty, geomean three-files/
+  empty/skip-exclusion, JSON shape, has_fn_main pos/neg, truncate,
+  fmt_ns scales).
+- Live integration: 01_ro_hot_loop.nv off=77.08ms, on=54.50ms,
+  speedup=+29.30%, static=200 cyc (5 samples, 1 warmup, --gc malloc).
+- Baseline gate fires correctly (fake high baseline → drop=54.7pp >
+  2.0pp threshold → exit 1) + passes when drop < threshold.
+- Dir mode discovers both fixtures; non-main files (test-only) skip
+  cleanly with status "skip: no fn main".
+
+Spec: D217 amend V6.2.1 (~120 lines) — CLI surface, JSON v1 schema,
+baseline gate semantics, V6.2.1.1-V6.2.1.6 acceptance criteria.
+
+Plan doc: docs/plans/123.6.2.1-real-wallclock-bench.md.
+
+Cross-validation result (informal): static estimate (200 cyc) and
+measured speedup (+29.30%) both positive on the same fixture — V6.2
+weights pass first sanity check. V6.2.3 (future) will run least-squares
+fit across a larger corpus.
+
+Lessons:
+- subprocess-based dual-build (env override) cleaner than in-process
+  variant — no need to thread FieldCacheConfig через test_runner pipeline.
+- interleaved sampling (off-on-off-on...) меньше systematic drift bias
+  чем sequential-by-variant.
+- geomean(1+speedup_i/100) лучше arithmetic mean of speedups для
+  composite ratio reports (Hennessy & Patterson §1.10).
+- short-runtime subprocesses на Windows показывают high sample variance
+  (OS scheduler noise) — median handles outliers, но рекомендуется
+  samples >= 11 для stable signal в CI.
+
+=== Plan 114.4.4 lesson (continued) ===
+
 - Pub re-export через wrapper fn (subst_type_ref_pub) — clean way share
   helpers cross-module без exposing all internals.

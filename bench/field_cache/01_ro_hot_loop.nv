@@ -1,0 +1,37 @@
+// Plan 123.6.2.1 (V6.2.1): real-wallclock field-cache fixture.
+// Tight inner loop reads three @ro fields на каждой итерации.
+// V1 ro caching должен hoist все три в pre-loop let'ы (D217 §1)
+// → ожидается positive speedup vs NOVA_FIELD_CACHE=0 baseline.
+
+type Coeffs {
+    ro a int
+    ro b int
+    ro c int
+}
+
+fn Coeffs @poly_sum(n int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        // Три @ro read'а на iter — V1 ro caching должен
+        // hoist все три в pre-loop let'ы.
+        acc = acc + @a * i * i + @b * i + @c
+        i = i + 1
+    }
+    acc
+}
+
+fn Coeffs.new() -> Coeffs {
+    Coeffs { a: 3, b: 7, c: 11 }
+}
+
+fn main() Io -> () {
+    ro coef = Coeffs.new()
+    mut total int = 0
+    mut k = 0
+    while k < 200 {
+        total = total + coef.poly_sum(2000)
+        k = k + 1
+    }
+    println(str.from(total))
+}

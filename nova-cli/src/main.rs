@@ -782,6 +782,56 @@ enum BenchCmd {
         #[arg(long, default_value = "boehm")]
         gc: String,
     },
+    /// Plan 123.6.2.1 (V6.2.1): Real wall-clock measurement of field-cache
+    /// runtime impact. Builds each file twice (NOVA_FIELD_CACHE=1 vs =0),
+    /// runs N samples per variant, reports median, speedup, and the V6.2
+    /// static cycle estimate side-by-side для cross-validation.
+    ///
+    /// Example:
+    ///   nova bench field-cache nova_tests/plan123_6_2_1/ \
+    ///     --samples 11 --warmup 2 --out fc-wallclock.json
+    ///   nova bench field-cache prog.nv \
+    ///     --baseline base.json --gate-regression-pp 2.5
+    #[command(name = "field-cache")]
+    FieldCache {
+        /// Single .nv file or directory of .nv files (recursive).
+        path: PathBuf,
+        /// Samples per variant after warmup. Default 11.
+        #[arg(long, default_value_t = 11)]
+        samples: u32,
+        /// Warmup runs per variant (discarded). Default 2.
+        #[arg(long, default_value_t = 2)]
+        warmup: u32,
+        /// Build mode (release|dev). Default release.
+        #[arg(long, default_value = "release")]
+        mode: String,
+        /// Toolchain (auto|clang|msvc|gcc).
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// GC backend (malloc|boehm). Reserved для future `nova build --gc`.
+        #[arg(long, default_value = "boehm")]
+        gc: String,
+        /// Build timeout in seconds (per variant).
+        #[arg(long = "build-timeout", default_value_t = 120)]
+        build_timeout: u64,
+        /// Per-run timeout in seconds.
+        #[arg(long = "run-timeout", default_value_t = 60)]
+        run_timeout: u64,
+        /// JSON output path.
+        #[arg(long = "out")]
+        out_json: Option<PathBuf>,
+        /// Baseline JSON for regression gate (compares geomean_speedup_pct).
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Regression threshold в percentage points. If
+        /// `baseline_geomean − new_geomean > threshold`, exit 1.
+        /// Default 2.0 pp.
+        #[arg(long = "gate-regression-pp")]
+        gate_regression_pp: Option<f64>,
+        /// Skip files that fail to build / lack fn main (warn only).
+        #[arg(long = "skip-failed")]
+        skip_failed: bool,
+    },
     /// Plan 57.A.1: Append result JSON to an orphan history branch.
     #[command(name = "history-add")]
     HistoryAdd {
@@ -4441,6 +4491,32 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         }
         BenchCmd::RunnerBranch => {
             println!("{}", bench::history::default_branch());
+            Ok(())
+        }
+        BenchCmd::FieldCache {
+            path, samples, warmup, mode, toolchain, gc,
+            build_timeout, run_timeout, out_json, baseline,
+            gate_regression_pp, skip_failed,
+        } => {
+            let self_exe = std::env::current_exe()
+                .map_err(|e| anyhow!("locate self: {}", e))?;
+            let opts = bench::field_cache_wallclock::FieldCacheWallclockOpts {
+                path: &path,
+                self_exe: &self_exe,
+                mode,
+                toolchain,
+                gc,
+                samples,
+                warmup,
+                build_timeout_secs: build_timeout,
+                run_timeout_secs: run_timeout,
+                out_json,
+                baseline,
+                gate_regression_pp,
+                skip_failed,
+            };
+            let exit = bench::field_cache_wallclock::run(opts)?;
+            if exit != 0 { std::process::exit(exit); }
             Ok(())
         }
         BenchCmd::Remote(sub) => cmd_bench_remote(sub),
