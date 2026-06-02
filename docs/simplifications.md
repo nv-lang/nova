@@ -28893,3 +28893,53 @@ feature leveraging D24 effect-system (Purity::Pure). Caches
   args (e.g. `@get(0)` × N).
 - `[M-123.3-frame-based-invalidation]` — V3.1: use D24 f.reads
   frame info to enable selective invalidation.
+
+
+## Plan 123.4 closure (2026-06-02): D217 amend V4 chain caching
+
+**Sub-plan #4** Plan 123 umbrella, ✅ ЗАКРЫТ 2026-06-02. Extends
+D217 для nested chain access `@a.b[.c[.d]]`.
+
+**Acceptance A4.1-A4.6 met:**
+- A4.1 ✅ Chain accessed 2+ → cached.
+- A4.2 ✅ Depth limit ≤4 (configurable via CHAIN_DEPTH env).
+- A4.3 ✅ Mutation invalidates (conservative V4 skip whole).
+- A4.4 ✅ Regression: plan123_1 18/0, plan123_2 14/0, plan123_3 12/0.
+- A4.5 ✅ D217 amended V4 section.
+- A4.6 ✅ plan123_4 fixtures 10/0 (7 positive + 2 negative +
+  1 property).
+
+**Implementation (~960 LOC delta):**
+- FieldCacheConfig: chain_enabled + chain_threshold=2 +
+  chain_max_depth=4 + 3 env vars.
+- chain_cache_fn / extract_chain_path / count_chains_in_* /
+  rewrite_chains_in_* / build_chain_expr.
+- Composition order LICM → V4 chain → V3 pure → V1 per-fn.
+
+**Critical bug found + fixed:**
+- Initial implementation treated `@buf.push()` as chain
+  ["buf","push"] (because Member{obj: @buf, name: "push"} matches
+  extract_chain_path). But `push` is array method, not field. Fix:
+  in Call expression, when func is Member, recurse only into
+  func.obj (receiver chain), не into func itself.
+- Discovered immediately via first fixture test failure (CC-FAIL
+  in StringBuilder method); fix applied; all tests pass.
+- Lesson: chain extraction must consider parent context — Member
+  vs Call.func distinguishes value-chain vs method-dispatch.
+
+**Design lessons:**
+1. **Detection rule precision matters.** Initial chain detection
+   naively walked all Member nodes. Realized: Member-as-Call-func
+   has different semantic from Member-as-value-access. Fix:
+   conditional recursion in Call branch.
+2. **Four-layer composition viable.** D218 → V4 chain → D219 → D217 V1
+   — each layer emits distinct cache pattern, no interference.
+3. **D217 amend (vs new D-block) appropriate.** Chain extension
+   preserves D217 semantic foundation (just longer paths). D-block
+   numbering manageable.
+
+**Open followups:**
+- [M-123.4-per-segment-invalidation] — V4.1 frame-tracking via
+  D24 f.reads.
+- [M-123.4-chain-prefix-sharing] — V4.1 share intermediate
+  prefixes between @a.b and @a.b.c chains.

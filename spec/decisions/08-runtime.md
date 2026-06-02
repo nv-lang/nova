@@ -4485,3 +4485,135 @@ Debugger показывает cache origin maps к source position.
 - `Q-pure-call-mutation-invalidation`: → D219 §3 + §7 (V3
   conservative; V3.1 refined).
 
+## D217 amend V4 — Chain caching `@a.b.c` (Plan 123.4)
+
+**Source:** [Plan 123.4](../../docs/plans/123.4-chain-cache.md)
+sub-plan #4 Plan 123 umbrella. Extends D217 caching infrastructure
+to nested chain access patterns. Implementation: `field_cache.rs`
+chain-cache phase (D217 amend rather than NEW D-block because
+chain extension preserves D217 semantic foundation, just extends
+to multi-segment paths).
+
+### 1. Семантика — V4 extension
+
+For chain access pattern `Member { ... Member { obj: SelfAccess,
+name: A }, name: B }` (= `@a.b`) with chain length 2..=
+`chain_max_depth` (default 4), cache emitted при ≥
+`chain_threshold` (default 2) occurrences. Replaces all matching
+chain expressions с cache local Ident.
+
+**Пример:**
+```nova
+// До D217 V4 (source):
+fn Outer @sum_with_chain() -> int {
+    @inner.value + @inner.value + @inner.value + @mark
+}
+
+// После D217 V4:
+fn Outer @sum_with_chain() -> int {
+    ro _at_inner_value_chain = @inner.value
+    _at_inner_value_chain + _at_inner_value_chain + _at_inner_value_chain + @mark
+}
+```
+
+### 2. Composition order — three-layer + V4
+
+Order в `cache_module`:
+1. D218 LICM phase.
+2. **D217 V4 chain phase** (NEW).
+3. D219 pure-call phase.
+4. D217 V1 per-fn cache phase.
+
+Rationale:
+- LICM hoists single-field @F reads из loops first.
+- Chain caching emits multi-segment chain locals; replaces chain
+  expressions с Idents.
+- D219 pure-cache then handles `@<pure_method>()` calls (chains
+  inside pure-method receivers already cached).
+- D217 V1 final fills in remaining @F single-field caches.
+
+All four layers emit distinct cache local naming, no shadowing risk:
+- D217 V1: `_at_<F>`
+- D218 LICM: `_at_<F>_loop`
+- D219 pure: `_at_<M>_call`
+- **D217 V4 chain: `_at_<a>_<b>[_<c>[_<d>]]_chain`** (NEW)
+
+### 3. Eligibility (V4)
+
+1. **Chain length:** 2 ≤ depth ≤ `chain_max_depth` (default 4).
+   Single-field (depth 1) handled by D217 V1 baseline; deeper than
+   4 → skip (stack-frame bloat protection).
+2. **Occurrence count:** identical canonical path ≥ `chain_threshold`.
+3. **No top-level @F write anywhere в body** (V4 conservative;
+   future V4.1 may refine per-segment).
+4. **No concurrent body:** Spawn/Supervised/Detach/Blocking/
+   ParallelFor → skip.
+5. **No closure capture:** chain in closure body → excluded from
+   caching.
+6. **Receiver type known:** not Protocol/Effect/Opaque/etc.
+
+### 4. Critical detection rule — method dispatch ≠ chain
+
+`@a.b.method()` — Member{obj: @a.b, name: "method"} is NOT a chain
+of length 3 (`method` is method-dispatch name, not field).
+
+Implementation detail: when traversing `ExprKind::Call`, recurse
+into `func.obj` (the receiver) not into `func` itself. Same fix
+applied in both `count_chains_in_expr` и `rewrite_chains_in_expr`.
+
+Verified through fixture failure during V4 implementation —
+StringBuilder.append__nova_char attempted to chain-cache
+`@buf.push` (push is array method); fix corrected immediately.
+
+### 5. Naming
+
+Cache local = **`_at_<a>_<b>[_<c>[_<d>]]_chain`** для path components
+`[a, b, c?, d?]`. Joined with underscores. Suffix `_<N>` при
+collision.
+
+Examples:
+- `@inner.value` → `_at_inner_value_chain`.
+- `@parent.inner.cfg.limit` → `_at_parent_inner_cfg_limit_chain`.
+
+### 6. Escape hatch + tunables
+
+| Var | Default | Semantics |
+|---|---|---|
+| `NOVA_FIELD_CACHE_CHAIN` | (unset) | `0`/`off`/`false` → V4 disabled. |
+| `NOVA_FIELD_CACHE_CHAIN_THRESHOLD` | `2` | Min chain occurrences. |
+| `NOVA_FIELD_CACHE_CHAIN_DEPTH` | `4` | Max chain depth (≥2 enforced). |
+| `NOVA_FIELD_CACHE` | (unset) | `0` → disables all 4 layers. |
+
+Verified: 10/10 plan123_4 PASS identically под default и
+`NOVA_FIELD_CACHE_CHAIN=0`.
+
+### 7. Risk register (V4-specific)
+
+- **R-4.1:** stack-frame bloat (many chain caches per fn).
+  Mitigation: `max_per_fn=8` cap shared across all 4 layers.
+- **R-4.2:** chain через mut intermediate field could theoretically
+  invalidate. Mitigation: V4 conservative — any @F write in body
+  skips all chain caching.
+- **R-4.3:** method-dispatch confusion. Mitigation: detection rule
+  §4.
+
+### 8. Future extensions
+
+- **V4.1 followups:**
+  - `[M-123.4-per-segment-invalidation]` — refine invalidation
+    via D24 `f.reads` frame info.
+  - `[M-123.4-chain-prefix-sharing]` — cache shared prefixes
+    (e.g. `@a.b` + `@a.b.c` share `@a.b` intermediate).
+- **V7 IPA (Plan 123.7)** — enables cross-method analysis для
+  chain invalidation precision.
+
+### 9. Cross-references
+
+- **D217 V1** (Plan 123.1) — baseline single-field cache.
+- **D218** (Plan 123.2) — LICM. Chain caching composes after LICM.
+- **D219** (Plan 123.3) — pure-call. Chain caching composes before
+  pure-call (chain ID resolution must complete before pure-call's
+  self.method() detection).
+- **D52** (record types) — chain fields must be record-typed at
+  each level.
+

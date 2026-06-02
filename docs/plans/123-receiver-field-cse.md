@@ -838,7 +838,7 @@ Open questions проверить + закрыть через D217-D219:
 | 123.1 Core CSE | ✅ CLOSED 2026-06-02 (V1 active, D217 landed) |
 | 123.2 LICM | ✅ CLOSED 2026-06-02 (V2 active, D218 landed) |
 | 123.3 Pure caching | ✅ CLOSED 2026-06-02 (V3 active, D219 landed) |
-| 123.4 Chain | 🆕 PLANNED |
+| 123.4 Chain | ✅ CLOSED 2026-06-02 (V4 active, D217 amend landed) |
 | 123.5 LSP/diag | 🆕 PLANNED |
 | 123.6 Telemetry | 🆕 PLANNED |
 | 123.7 IPA | 🆕 PLANNED |

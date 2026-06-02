@@ -27483,3 +27483,37 @@ Open followups (P2/P3):
 
 Unblocks: Plan 123.4 chain caching (can compose с pure-cache для
 `@field.<pure_method>()` chains).
+
+
+================================================================================
+Plan 123.4 — D217 amend V4 chain caching (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #4.
+
+Extends D217 для chain access @a.b[.c[.d]] (depth 2-4, configurable).
+Fourth-layer composition с D217 V1 + D218 LICM + D219 pure-cache.
+
+Phases delivered (Ф.0-Ф.6).
+
+Implementation (~960 LOC delta field_cache.rs):
+- chain_cache_fn / extract_chain_path / count_chains_*/rewrite_chains_*.
+- FieldCacheConfig: chain_enabled + chain_threshold + chain_max_depth.
+- 3 env vars: NOVA_FIELD_CACHE_CHAIN[=0] + _CHAIN_THRESHOLD + _CHAIN_DEPTH.
+- Composition order: D218 LICM → V4 chain → D219 pure → D217 V1.
+
+Critical detection rule §4: @a.b.method() ≠ chain ['a','b','method']
+because method-dispatch Member differs from value-chain. Discovered
+via fixture failure during impl, fixed in same session.
+
+Production-grade:
+- ✅ 10/10 plan123_4 PASS под default и NOVA_FIELD_CACHE_CHAIN=0.
+- ✅ Regression: plan123_1 18/0, plan123_2 14/0, plan123_3 12/0,
+  basics 8/0.
+
+D-block: D217 amend V4 (~150 lines в 08-runtime.md).
+spec/decisions/README.md: D217 amend V4 row.
+
+Open followups (P2/P3):
+- [M-123.4-per-segment-invalidation].
+- [M-123.4-chain-prefix-sharing].
