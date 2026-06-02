@@ -28833,3 +28833,63 @@ fields — composes с Plan 123.1 D217 baseline.
   even across fibers).
 - `[M-123.2-closure-fixture-runtime]` — closure-in-loop runtime
   fixture blocked by baseline codegen bug.
+
+
+## Plan 123.3 closure (2026-06-02): D219 Pure-call result caching V3
+
+**Sub-plan #3** Plan 123 umbrella, ✅ ЗАКРЫТ 2026-06-02. Nova-edge
+feature leveraging D24 effect-system (Purity::Pure). Caches
+`@<pure_method>()` results in method-body prefix.
+
+**Acceptance A3.1-A3.8 met (umbrella §6.3):**
+- A3.1 ✅ `@<pure_method>()` × 2+ → cached.
+- A3.2 ✅ #pure annotation respected; non-pure skip.
+- A3.3 ✅ Any `@F = ...` write in body → conservative skip всех
+  pure-cache. V3.1 refinement followup.
+- A3.4 ✅ Concurrent body (Spawn/Supervised/etc) → skip.
+- A3.5 ✅ Pure call с args → V3 skip (V3.1 enhances).
+- A3.6 ✅ Regression: plan123_1 18/0, plan123_2 14/0, basics 8/0.
+- A3.7 ✅ D219 NEW landed.
+- A3.8 ✅ plan123_3 fixtures 12/0 (7 positive + 3 negative + 2
+  property) exceeds ≥10/≥7/≥3.
+
+**Implementation:**
+- field_cache.rs pure-cache phase (~830 LOC delta):
+  - FieldCacheConfig extension: pure_enabled + pure_threshold +
+    2 env vars.
+  - build_pure_methods_registry: HashSet<(type, method)> через
+    walk module FnDecls filter purity==Pure + Instance + no params.
+  - pure_cache_fn: per-fn entry; body_has_any_self_field_write +
+    body_has_concurrent guards; count_pure_calls_in_body
+    recursive walker tracks count + first_span +
+    closure_captured (in_closure flag).
+  - match_self_pure_call: detection helper.
+  - rewrite_pure_calls_in_*: replacement walker.
+  - Naming _at_<method>_call.
+- Composition в cache_module: D218 → D219 → D217 order.
+
+**Design lessons:**
+1. **D24 Purity infrastructure free for V3.** `FnDecl.purity ==
+   Purity::Pure` direct check — no new infrastructure needed.
+   V3.1 refinement (frame-tracking) uses existing D24 `f.reads`.
+2. **Conservative invalidation acceptable для V3 ship.** "Any @F
+   write → skip all" — overly conservative, but correct. Real-world
+   pure-rich methods (e.g. `.len()`/.`.is_empty()`/`.capacity()`)
+   typically called in read-only contexts; conservative rule
+   catches most wins. V3.1 frame-based refinement is enhancement,
+   not blocker.
+3. **Composition rigor через explicit distinct naming.** Three
+   cache patterns (`_at_<F>`, `_at_<F>_loop`, `_at_<M>_call`)
+   each unique — no risk of one phase's output matching another
+   phase's input pattern.
+4. **Closure capture detection through in_closure flag.** Simple
+   recursive walker с bool flag — switches when entering closure
+   body. Pure call inside closure → marked captured → excluded
+   from caching. Same fix lesson as Plan 123.2 (scan_block reuse
+   bug).
+
+**Open followups (P2/P3):**
+- `[M-123.3-args-literals]` — V3.1: cache pure calls с literal
+  args (e.g. `@get(0)` × N).
+- `[M-123.3-frame-based-invalidation]` — V3.1: use D24 f.reads
+  frame info to enable selective invalidation.

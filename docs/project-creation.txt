@@ -27431,3 +27431,55 @@ Open followups (P2/P3, не блокирующие V2 ship):
 Unblocks: V3+ sub-plans (123.3-123.7) can use LICM-emitted
 locals as additional reuse opportunities. Composition pattern
 demonstrated — future passes follow same ordering rationale.
+
+
+================================================================================
+Plan 123.3 — D219 Pure-call result caching V3 (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #3 (V3). Nova-edge
+feature leveraging D24 effect system (Purity::Pure).
+
+Phases delivered:
+- Ф.0 Investigation + DECISIONs A.3-F.3 finalized.
+- Ф.1+Ф.2+Ф.3 (merged) pure-cache phase implementation in
+  field_cache.rs (~830 LOC delta).
+- Ф.4 12 runtime fixtures (7 positive + 3 negative + 2 property).
+- Ф.5 Spec D219 NEW (~180 lines).
+- Ф.6 3 logs + status flip.
+
+Implementation:
+- FieldCacheConfig: pure_enabled (default true) + pure_threshold
+  (default 2) + env vars NOVA_FIELD_CACHE_PURE[=0] +
+  _PURE_THRESHOLD.
+- build_pure_methods_registry: HashSet<(type_name, method_name)>
+  для FnDecls с Purity::Pure + Instance receiver + no params.
+- pure_cache_fn: per-fn V3 entry с conservative guards
+  (body_has_any_self_field_write / body_has_concurrent).
+- count_pure_calls_in_body + match_self_pure_call: detection.
+- rewrite_pure_calls_in_*: replacement walker.
+- Composition в cache_module: D218 LICM → D219 pure-cache →
+  D217 per-fn cache.
+
+Production-grade requirements met:
+- ✅ Semantic equivalence — 12/12 plan123_3 PASS identically
+  под default и NOVA_FIELD_CACHE_PURE=0 (differential).
+- ✅ Cross-platform determinism — sorted iteration.
+- ✅ Bounded overhead — O(N) per fn body walk.
+- ✅ Escape hatch — NOVA_FIELD_CACHE_PURE=0 + umbrella NOVA_
+  FIELD_CACHE=0.
+- ✅ Debug-info — span from first call site.
+
+Acceptance A3.1-A3.8 met (umbrella §6.3).
+
+D-block landed:
+- D219 NEW (08-runtime.md, ~180 lines).
+- spec/decisions/README.md — D219 added.
+
+Open followups (P2/P3):
+- [M-123.3-args-literals] — V3.1: pure calls с literal args.
+- [M-123.3-frame-based-invalidation] — V3.1: D24 f.reads
+  selective invalidation.
+
+Unblocks: Plan 123.4 chain caching (can compose с pure-cache для
+`@field.<pure_method>()` chains).
