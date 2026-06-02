@@ -4617,3 +4617,75 @@ Verified: 10/10 plan123_4 PASS identically под default и
 - **D52** (record types) — chain fields must be record-typed at
   each level.
 
+## D217 §6 amend V5 — diagnostic mode + LSP code-lens (Plan 123.5)
+
+**Source:** [Plan 123.5](../../docs/plans/123.5-lsp-diag.md).
+
+### 1. analyze_module API
+
+`field_cache::analyze_module(&Module, &Config) -> ExplainReport`
+provides per-fn cache decision report без mutation. Returns:
+
+```rust
+pub struct ExplainReport {
+    pub per_fn: Vec<FnCacheInfo>,
+}
+
+pub struct FnCacheInfo {
+    pub type_name: String,
+    pub fn_name: String,
+    pub span: Span,
+    pub ro_caches: Vec<String>,
+    pub mut_caches: Vec<String>,
+    pub licm_hoists: Vec<String>,
+    pub pure_caches: Vec<String>,
+    pub chain_caches: Vec<Vec<String>>,
+}
+```
+
+Implementation: clones AST, runs `cache_module`, walks injected
+prefix-let statements, classifies by name suffix (`_chain` /
+`_loop` / `_call` / plain).
+
+### 2. CLI flag `--explain-cache`
+
+`nova check <files> --explain-cache` — per-file per-fn report on
+stdout:
+
+```
+=== src/buffer.nv ===
+  fn ReadBuffer @try_read_u32_le — 4 cache(s):
+    D217 field cache: data, pos
+    D219 pure-call cache: len
+    D217 V4 chain cache: @header.signature
+
+field-cache total: 1 method(s) affected, 4 cache(s) inserted
+```
+
+Use cases:
+- Audit hot paths для caching effectiveness.
+- Diagnose unexpected caching behavior.
+- Document optimization decisions during code review.
+
+### 3. LSP code-lens (deferred V5.1)
+
+V5 ships CLI flag; LSP code-lens + hover provider deferred:
+- [M-123.5-lsp-codelens] — `textDocument/codeLens` handler emit
+  "N caches" lens per fn header.
+- [M-123.5-lsp-hover] — `textDocument/hover` enhancement showing
+  cache info при hovering `@field`.
+
+Infrastructure (`analyze_module` API) ready; LSP integration
+straightforward when prioritized.
+
+### 4. User-facing doc
+
+`docs/field-cache-optimization.md` — user guide explaining 4 layers,
+escape hatches, semantic equivalence, performance expectations.
+
+### 5. Cross-references
+
+- D217 V1 + V4 / D218 / D219 — analyzed layers.
+- D104+D105 (doc-attrs) — future direction for `#cache_info`
+  attribute on methods.
+

@@ -27517,3 +27517,28 @@ spec/decisions/README.md: D217 amend V4 row.
 Open followups (P2/P3):
 - [M-123.4-per-segment-invalidation].
 - [M-123.4-chain-prefix-sharing].
+
+
+================================================================================
+Plan 123.5 — D217 §6 amend V5 diagnostic mode (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. Plan 123 umbrella sub-plan #5. User-visible
+cache decision diagnostic.
+
+CLI flag `nova check <files> --explain-cache` emits per-fn cache
+decisions (D217+D218+D219+chain). Powered by analyze_module API
+(AST-clone based pure analysis).
+
+LSP code-lens + hover deferred — CLI provides equivalent info,
+LSP wrapper straightforward when prioritized.
+
+User doc `docs/field-cache-optimization.md` covers 4 layers +
+escape hatches + semantic equivalence + perf expectations.
+
+Implementation:
+- field_cache.rs: ExplainReport + FnCacheInfo + analyze_module.
+- nova-cli/src/main.rs: --explain-cache flag.
+- D217 §6 amend V5 in spec.
+
+Open followups: LSP integration (V5.1).

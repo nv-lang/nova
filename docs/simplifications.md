@@ -28943,3 +28943,46 @@ D217 для nested chain access `@a.b[.c[.d]]`.
   D24 f.reads.
 - [M-123.4-chain-prefix-sharing] — V4.1 share intermediate
   prefixes between @a.b and @a.b.c chains.
+
+
+## Plan 123.5 closure (2026-06-02): D217 §6 amend V5 diagnostic mode
+
+**Sub-plan #5** Plan 123 umbrella, ✅ ЗАКРЫТ 2026-06-02. User-visible
+diagnostic mode для cache decisions.
+
+**Acceptance A5.1-A5.6:**
+- A5.1 🟡 LSP code-lens — deferred ([M-123.5-lsp-codelens]).
+- A5.2 🟡 LSP hover — deferred ([M-123.5-lsp-hover]).
+- A5.3 ✅ CLI `--explain-cache` emit's diagnostic per method.
+- A5.4 ✅ Regression — analyze_module is pure analysis, не
+  affects codegen.
+- A5.5 🟡 LSP integration — deferred (infrastructure ready).
+- A5.6 ✅ User-facing doc written (`docs/field-cache-optimization.md`).
+
+**Implementation (~270 LOC):**
+- field_cache.rs: ExplainReport + FnCacheInfo + analyze_module
+  (clones AST, runs cache_module on copy, extracts prefix-lets
+  by name suffix classification).
+- nova-cli/src/main.rs: --explain-cache flag + cmd_check_explain_cache
+  с full pipeline integration (resolve_imports + type-check +
+  pipeline passes до analyze_module).
+- compiler-codegen/src/main.rs: parallel --explain-cache на check
+  command.
+- docs/field-cache-optimization.md: user guide (~150 lines).
+
+**Design lessons:**
+1. **analyze_module via AST clone simple + correct.** Cloning the
+   module is O(N) but trivial; running real cache_module on copy
+   gives ground-truth decisions. No risk of analysis-vs-actual
+   divergence.
+2. **Suffix-based classification fragile but works.** Cache local
+   names `_at_<X>` / `_at_<X>_loop` / `_at_<X>_call` /
+   `_at_<X>_<Y>_chain` distinguish layer via suffix. Vulnerable
+   to user collision (handled — collision logic adds `_N`). For
+   robust V5.1: tag locals with explicit metadata.
+3. **CLI flag > LSP integration for V5 ship.** CLI provides
+   equivalent power-user information; LSP can be added later as
+   thin wrapper around analyze_module.
+
+**Open followups:**
+- [M-123.5-lsp-codelens] / [M-123.5-lsp-hover] — LSP V5.1.
