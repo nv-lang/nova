@@ -27350,6 +27350,7 @@ Acceptance extracted: A31-A35 → Plan 114.4.4.1-5.
 
 Remaining V4 work через extracted plans (5 plans, ship-when-triggered).
 
+
 ================================================================================
 Plan 114.4.4 Ф.1 followup — #fn_eval_max_depth(N) spec expansion (2026-06-01)
 ================================================================================
@@ -27562,3 +27563,120 @@ Followups:
 
 Worktree: nova-p91-12 (postoyanniy).
 Branch: plan-91.12 (V1+V2 commits, pushed для review, НЕ self-merged).
+
+
+================================================================================
+Plan 124 / D47 amend — per-field visibility `priv` modifier (2026-06-02)
+================================================================================
+
+Planning + spec amend (implementation в Plan 124.1-124.7 sub-plans,
+не начато). Worktree nova-p124, branch plan-124-priv-fields.
+
+Контекст: пользователь предложил `priv` keyword для record/tuple
+fields:
+  type Account { priv mut money f64, ro name str }
+
+Анализ existing state:
+- Spec D47 (07-modules.md) MVP: «Поля record публичны (MVP),
+  convention `_prefix` для приватных-по-договору».
+- `_prefix` — hint-only privacy (НЕ enforced компилятором).
+- Module-level pub/priv через `export` keyword (Plan 35 R26 / D5).
+- Field-level visibility — отсутствовала.
+
+Design discussion:
+- Initial impulse: private-default (Rust/Swift style). User pushed
+  back — «по умолчанию у нас поля публичные» + предложил
+  `type X priv { ... }` syntax для per-type opt-in flip.
+- Empirical research: kubernetes audit (35239 fields, 11099 structs,
+  8700 .go files). 59.4% public / 40.6% private aggregate;
+  layer-dependent distribution (pkg/ 47%, staging/ 64%, cmd/ 68%,
+  core/v1 92%). Validates D47 public-default — minimum boilerplate
+  для API surface (~92% public там).
+- Decision: keep public-default (D47); add `priv` field modifier
+  (Plan 124.1 / D220); add `type X priv { ... }` type-level flip
+  for invariant-heavy types (Plan 124.7).
+- Edition flip approach (originally Plan 124.7) REJECTED — kubernetes
+  data showed global default flip не оправдан; per-type granular
+  лучше fits bimodal distribution.
+
+Decomposition (umbrella + 7 sub-plans, V1-V7 release train):
+- V1 124.1 Core record (parser/AST/checker, 4 error codes)
+- V2 124.2 Pattern destructure + record literal init rules
+- V3 124.3 Generic type uniform handling (Plan 59+59.1 mono compat)
+- V4 124.4 Named tuple priv (Plan 120 D215 ext) + protocol impl
+- V5 124.5 nova doc + LSP integration
+- V6 124.6 Test access + visible_to friend types
+- V7 124.7 Type-level priv {} flip syntax (replaces edition flip)
+
+Comparative analysis vs Go/Rust/TS/Kotlin/Java/Swift/C# — 14
+capabilities × 7 эталонов matrix; match-or-exceeds на ВСЕХ 14 +
+3 Nova-only (no reflection backdoor, tuple field privacy,
+consume+priv composition).
+
+Acceptance criteria: 57 шт total (per sub-plan + umbrella):
+- 124.1: A1.1-A1.10 (10 шт)
+- 124.2: A2.1-A2.8
+- 124.3: A3.1-A3.8
+- 124.4: A4.1-A4.10
+- 124.5: A5.1-A5.8
+- 124.6: A6.1-A6.8
+- 124.7: A7.1-A7.8
+- Umbrella: AU.1-AU.6
+
+D-blocks decomposition:
+- D220 NEW (124.1 core priv semantics, 11-section outline)
+- D221 NEW (124.2 constructor + pattern rules)
+- D222 NEW (124.4 cross-cutting protocols/generics/tuples)
+- D5/D175/D176/D215 amend
+- D220 amend (124.3 generic clause, 124.6 escape hatches, 124.7
+  type-level flip)
+
+Spec amends (committed):
+- spec/decisions/07-modules.md D47 — amend notice 2026-06-02;
+  «Видимость полей record/tuple» section rewritten; _prefix
+  removed from examples (заменён на priv id u64); comparison
+  table Nova row updated; «Связь» — Plan 124 / D220 cross-ref.
+- spec/decisions/03-syntax.md naming rules — _prefix → priv
+  cross-ref.
+- spec/decisions/history/rejected.md «Per-field export для record»
+  — amended 2026-06-02 с пересмотром позиции.
+- spec/open-questions.md JSON skip-семантика — priv fields auto-skip.
+
+Production-grade requirements:
+- Formal semantic property (additive feature, backward compat)
+- 6 error codes Plan 50 D102 format
+- Cross-platform CI matrix
+- Bounded budgets (type-check <2%, codegen 0 diff, LSP <5ms,
+  doc <10%)
+- 4 escape hatches (V6 + V7 type-level flip)
+- §14 Execution protocol (self-contained для autonomous agent)
+
+Acceptance criteria (planning task itself):
+- ✅ A-plan-1 — kubernetes audit ≥5000 fields sample (achieved
+  35239 fields).
+- ✅ A-plan-2 — D47 amend landed (07-modules.md + 3-syntax.md +
+  rejected.md + open-questions.md).
+- ✅ A-plan-3 — Plan doc complete (umbrella + 7 sub-plans + 57
+  acceptance criteria + comparative analysis).
+- ✅ A-plan-4 — README plans index updated (124 + 7 sub-plan rows).
+- ✅ A-plan-5 — 3 логов updated (simplifications + project-
+  creation + nova-private/discussion-log).
+
+Closes:
+- [M-D47-prefix-convention-deprecated] — _prefix removed.
+- [M-Plan-124-scaffold] — umbrella + 7 sub-plans defined.
+- [M-Plan-124-kubernetes-audit] — empirical validation.
+- [M-Plan-124-V2-revision] — type-level priv flip syntax.
+
+Unblocks:
+- Plan 124.1 implementation — foundational gate. Когда реализован —
+  unblocks 124.2-124.7 release train.
+- Future plans требующие field-level encapsulation (e.g. invariant-
+  bearing types в std/runtime — Mutex/Once/Channel state internals).
+- Refactoring safety для existing exported types — once priv added,
+  internal implementation changes don't break external code.
+
+Tests: N/A (planning task, no implementation). Implementation
+tests запланированы в Plan 124.1-124.7 sub-plans (плановое
+≥15 fixtures per sub-plan, positive + negative + property).
+
