@@ -27166,6 +27166,47 @@ Plan 118 grand-total: 17 of 35 acceptance criteria closed (49%):
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
 A19 ✅, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5.4 NPO ext for Option[ptr] — A21 partial closed
+==========================================================================
+
+User-requested продолжение Ф.5 V2 extensions. Closed A21 partial
+(Option[ptr] now NPO) + documented A22 detection logic.
+
+Implementation (2 commits):
+1. cd168a4d53b — feat(Ф.5.4 A21 partial): NPO for Option[ptr]
+   - is_novaopt_npo extended: `c_ty == "nova_ptr"` triggers NPO
+   - register_novaopt_decl: is_nova_ptr branch для NPO layout + eq
+   - cmp_body: nova_ptr treated like pointer (direct ==)
+   - Plan 115 D214 opaque pointer (nova_ptr typedef'd as void*) теперь
+     uses single-pointer struct sizeof==8 vs tagged 16
+   - Test fixture: t5_5_npo_option_ptr_ok.nv (verifies NovaOpt_nova_ptr
+     layout: `{nova_ptr value;}` + None ctor `{.value = NULL}`)
+2. 317c4612333 — doc(A22): W_OPTION_DOUBLE_NESTED detection logic
+   documented в walk_typeref (V2 deferred — requires lint framework
+   integration через lints.rs LintWarning collector).
+
+Verified generated C для Option[ptr]:
+  typedef struct NovaOpt_nova_ptr { nova_ptr value; } NovaOpt_nova_ptr;
+  static inline nova_bool nova_opt_eq_nova_ptr(...) {
+      return a.value == b.value;
+  }
+  NovaOpt_nova_ptr p = ((NovaOpt_nova_ptr){.value = NULL});
+
+plan118: 34/0 PASS (17 positive + 17 NEG).
+Regression smoke 195/0 verified clean (13 plans tested:
+plan118 34 + plan115 11 + plan120 8 + plan100_3 10 + plan83_12 10 +
+plan108 6 + plan124_1 9 + plan114 10 + basics 8 + plan100_1 23 +
+plan103_5 20 + plan103_6 26 + plan103_9 20 = 195).
+
+Spec D216 §7 updated: A21 partial ACTIVE 2026-06-02 + V3 deferred
+list (Option[*fn] structural detection, A20 newtype, A22 lint).
+
+Plan 118 grand-total: 18 of 35 acceptance criteria closed (51%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A21 partial, A24, A25, A26, A28 partial, A29, A30, A33,
+A34, A35.
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
