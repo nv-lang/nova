@@ -1,0 +1,18 @@
+// Plan 118 Ф.5 A22 T5.11 — W_OPTION_DOUBLE_NESTED warning для
+// `Option[Option[*T|ptr]]` ambiguous nested pattern (D216 §7).
+//
+// Под NPO codegen inner Option benefits from single-pointer layout;
+// outer Option falls в tagged repr — `None` vs `Some(None)` distinct
+// legal states но difficult к distinguish.
+//
+// EXPECT_COMPILE_WARNING W_OPTION_DOUBLE_NESTED
+
+module plan118.t5_warn_option_double_nested
+
+// External fn signature — return-type carries the nested Option pattern.
+external fn p118_nested_opt() -> Option[Option[ptr]]
+
+test "Option[Option[ptr]] triggers W_OPTION_DOUBLE_NESTED" {
+    // Type-check-only — actual call deferred.
+    assert(1 == 1)
+}

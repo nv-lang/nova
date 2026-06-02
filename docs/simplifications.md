@@ -28521,19 +28521,22 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   для canonical Plan 115 pattern Nova type system pre-collapses к
   underlying nova_ptr (V2 branch fires directly); V3 defensive
   coverage для future paths. 3 positive tests в t5_6_npo_newtype_handle_ok.
-- plan118 fixtures: **36/0** (18 positive + 18 NEG)
+- **Ф.5.9 A22 ✅ CLOSED 2026-06-02** (commit 3725af23fcd) —
+  W_OPTION_DOUBLE_NESTED warning emission через lint framework
+  (lints.rs lint_option_double_nested pass). Detects
+  `Option[Option[*T|ptr]]` nested pattern в Fn signatures, Type decls,
+  Const/Let ascriptions. Existing `Option[Option[int]]` fixtures (plan95,
+  plan98) verified clean — non-pointer inner doesn't trigger.
+- plan118 fixtures: **37/0** (18 positive + 18 NEG + 1 WARN)
 
-**Session 3 + Ф.5/Ф.5.4/Ф.5.7/Ф.5.8 grand-total Plan 118 acceptance closed: 20 of 35 (57%):**
+**Session 3 + Ф.5.x grand-total Plan 118 acceptance closed: 21 of 35 (60%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
-A19 ✅, A20 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29,
-A30, A33, A34, A35.
+A19 ✅, A20 ✅, A21 partial, A22 ✅, A23 ✅, A24, A25, A26, A28 partial,
+A29, A30, A33, A34, A35.
 
-**Ф.5 V4 deferred (Session 4+):**
+**Ф.5 V5 deferred (Session 4+):**
 - A21 remainder — NPO для `Option[*fn(...)]` (c_ty ends with `)`) —
-  V4 structural detection
-- A22 — `Option[Option[*T]]` warning W_OPTION_DOUBLE_NESTED — detection
-  logic documented в walk_typeref; emission requires lint framework
-  integration (LintWarning через lints.rs)
+  V5 structural detection (function pointer C-type recognition)
 
 **Main sync 2026-06-02 (commit 8fc3473e22b):** merged 66 commits from
 main (Plan 114.4.4.5 V4.1 mono-specialization + V4.2 runtime trampoline +
