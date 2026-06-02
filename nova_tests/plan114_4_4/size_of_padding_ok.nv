@@ -1,0 +1,62 @@
+// Plan 114.4.4 V4.4 Ф.1 POSITIVE: padding/alignment edge cases для tuples.
+// Документирует layout semantics — see docs/size-of-align-of.md.
+
+module plan114_4_4.size_of_padding_ok
+
+// Order matters: i8 first → padding before i32
+const A_SIZE  = size_of[(i8, i32)]()    // 1 + pad(3) + 4 = 8
+const A_ALIGN = align_of[(i8, i32)]()   // max(1, 4) = 4
+
+// i32 first → no inner padding, only tail-pad to align 4
+const B_SIZE  = size_of[(i32, i8)]()    // 4 + 1 + tail-pad(3) = 8
+const B_ALIGN = align_of[(i32, i8)]()   // 4
+
+// bool first, int (8) second → big padding gap
+const C_SIZE  = size_of[(bool, int)]()  // 1 + pad(7) + 8 = 16
+const C_ALIGN = align_of[(bool, int)]() // 8
+
+// All i8 — no padding
+const D_SIZE  = size_of[(i8, i8, i8)]()  // 3
+const D_ALIGN = align_of[(i8, i8, i8)]() // 1
+
+// Empty tuple ~ unit
+const F_SIZE  = size_of[()]()  // 0
+const F_ALIGN = align_of[()]() // 1
+
+// f32 followed by f64 — f64 needs align 8
+const G_SIZE  = size_of[(f32, f64)]()  // 4 + pad(4) + 8 = 16
+const G_ALIGN = align_of[(f32, f64)]() // 8
+
+// Three different sizes
+const H_SIZE  = size_of[(i8, i16, i32)]()  // 1 + pad(1) + 2 + 4 = 8
+const H_ALIGN = align_of[(i8, i16, i32)]() // 4
+
+test "padding edge cases" {
+    // (i8, i32) — inner padding
+    assert(A_SIZE == 8)
+    assert(A_ALIGN == 4)
+
+    // (i32, i8) — tail padding
+    assert(B_SIZE == 8)
+    assert(B_ALIGN == 4)
+
+    // (bool, int) — big padding gap
+    assert(C_SIZE == 16)
+    assert(C_ALIGN == 8)
+
+    // (i8, i8, i8) — no padding
+    assert(D_SIZE == 3)
+    assert(D_ALIGN == 1)
+
+    // () unit — zero size
+    assert(F_SIZE == 0)
+    assert(F_ALIGN == 1)
+
+    // (f32, f64)
+    assert(G_SIZE == 16)
+    assert(G_ALIGN == 8)
+
+    // (i8, i16, i32) — multi-step padding
+    assert(H_SIZE == 8)
+    assert(H_ALIGN == 4)
+}

@@ -30743,3 +30743,32 @@ No deprecation shim — clean rename. Future code uses `size_of[T]()`.
 inconsistency после V4.4 Ф.1/Ф.2 ship. Rule: at intrinsic naming
 decisions, audit ВСЁ family (size_of + align_of + future offset_of /
 type_name etc) для одного pattern. Rust convention = `<verb>_of` form.
+
+
+---
+
+## size_of/align_of user-facing concept doc + A38 (2026-06-02)
+
+**Status:** ✅ LANDED. Branch `plan-114.4.4-size-of-docs`.
+
+**Замысел:** Post-rename `sizeof` → `size_of`, user asked simple
+explanation of `align_of`. Verbal chat answer doesn't persist —
+created proper user-facing concept doc + edge-case fixture.
+
+**Что добавлено:**
+- `docs/size-of-align-of.md`: explanation что возвращают, зачем
+  нужно (CPU memory alignment), layout semantics composite types,
+  4 detailed padding examples с visual byte-by-byte layout,
+  Rust comparison table, V4.4 limitations table.
+- `nova_tests/plan114_4_4/size_of_padding_ok.nv`: 7 padding/alignment
+  edge cases — documents semantics через executable assertions.
+- D199 V4.4 — A38 acceptance criterion + reference на concept doc.
+
+**Tests:** 31/31 plan114_4_4 PASS.
+
+**Design lesson:** Verbal Q&A в chat теряется. Когда user задаёт
+concept question (e.g. "что такое align_of") — answer должен быть
+ported в proper user-facing doc + test fixture. Two artifacts:
+**explanation** (doc) для human reader + **assertions** (fixture)
+для compile-time verification. Это «documentation as test»: layout
+semantics проверяется на каждом build.
