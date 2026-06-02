@@ -6150,14 +6150,19 @@ impl Parser {
                 let is_forall = kw == "forall";
                 self.parse_quantifier(is_forall)
             }
-            // Plan 115 D214: `null ptr` two-token opaque pointer literal.
-            // Контекстуальный keyword — recognized только при
-            // Ident("null") + Ident("ptr") combo в expression position. Это
-            // сохраняет существующие method names типа `JsonValue.null()` и
-            // `AtomicPtr.null()` без breaking change.
+            // Plan 115 D214 / Plan 118 Ф.5.7 A23 (D214 amend 2026-06-02):
+            // `null ptr` literal RETRACTED. После Ф.5 NPO codegen (A19/A21),
+            // `Option[*T]` + `Option[ptr]` provide null-safety через
+            // type-system (sizeof=8 single-pointer layout, NULL=None
+            // convention). `null ptr` literal становится redundant и
+            // ambiguous (Some(null ptr) == None под NPO — confusing).
             //
-            // Other `null T` (где T — known primitive ident) → diagnostic
-            // `E_NULL_LITERAL_REQUIRES_PTR` (V1; Plan 118 future расширит).
+            // Migration: `null ptr` → `(0 as ptr)` mechanical replacement,
+            // semantically equivalent (NULL = (void*)0 в C ABI).
+            // Recommended: use `Option[ptr]` с `None` для new code.
+            //
+            // `null <other_prim>` — by-product от Plan 115 V1 diagnostic;
+            // retained as `E_NULL_PTR_RETRACTED_USE_OPTION`.
             TokenKind::Ident(ref n)
                 if n == "null"
                     && matches!(&self.peek_at(1).kind, TokenKind::Ident(ty)
@@ -6172,19 +6177,22 @@ impl Parser {
                 };
                 let ty_span = self.bump().span;
                 let full_span = null_span.merge(ty_span);
-                if ty_name == "ptr" {
-                    Ok(Expr::new(ExprKind::NullPtrLit, full_span))
-                } else {
-                    Err(Diagnostic::new(
-                        format!(
-                            "[E_NULL_LITERAL_REQUIRES_PTR] `null {}` invalid: V1 \
-                             поддерживает только `null ptr` (Plan 115 D214). Для не-pointer \
-                             типов используйте Option[T] (`None`) или приведение к ptr.",
-                            ty_name
-                        ),
-                        full_span,
-                    ))
-                }
+                // Plan 118 Ф.5.7 (A23): hard retraction.
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_NULL_PTR_RETRACTED_USE_OPTION] `null {ty}` literal \
+                         retracted (Plan 118 D214 amend 2026-06-02). После \
+                         NPO codegen (Plan 118 Ф.5 A19/A21), `Option[*T]` и \
+                         `Option[ptr]` provide null-safety через type-system \
+                         (single-pointer layout NULL=None convention). \
+                         Migration: \
+                         (1) для existing `ptr` code: replace `null ptr` → \
+                             `(0 as ptr)` (mechanical, NULL=(void*)0); \
+                         (2) для new code: use `Option[ptr]` с `None` (type-safe).",
+                        ty = ty_name
+                    ),
+                    full_span,
+                ))
             }
             // Plan 97 Ф.3 (D142): hint при `handler IDENT {` —
             // legacy literal-форма, снята clean-break'ом. Подсказка

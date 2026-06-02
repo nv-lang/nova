@@ -11,7 +11,7 @@ type PngHandle(ptr)
 fn close_sqlite(h SqHandle) -> int => 0
 
 test "passing PngHandle to fn expecting SqHandle is a type error" {
-    ro png = PngHandle(null ptr)
+    ro png = PngHandle((0 as ptr))
     ro result = close_sqlite(png)
     assert(result == 0)
 }

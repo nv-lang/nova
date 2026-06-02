@@ -5,8 +5,8 @@
 module plan115.t1_ptr_lt_neg
 
 test "ptr < ptr is banned" {
-    ro p ptr = null ptr
-    ro q ptr = null ptr
+    ro p ptr = (0 as ptr)
+    ro q ptr = (0 as ptr)
     ro result = p < q
     assert(!result)
 }

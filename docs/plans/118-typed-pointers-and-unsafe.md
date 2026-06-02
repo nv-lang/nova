@@ -1893,10 +1893,10 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A17 partial ✅ 2026-06-02 | Comparison: `==`/`!=` safe; `<`/`>` unsafe (E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE) | T4.11 + NEG-T4.17 |
 | A18 | Forbidden ops: `&arr[i]`, `null`, `undefined` | NEG-T4.19, NEG-T4.20, NEG-T4.21 |
 | A19 ✅ 2026-06-02 | `Option[*T]` + NPO codegen (single-pointer layout, NULL pattern match) | T5.1-T5.4 + manual ABI verification |
-| A20 V2 deferred | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` | T5.8 |
+| A20 ✅ 2026-06-02 | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` / `(ptr)`. Transparent typedef collapse OR type_aliases V3 lookup. | T5.6 |
 | A21 partial ✅ 2026-06-02 (Option[ptr]) | NPO applies к `Option[*fn(...)]` и `Option[ptr]`. Option[ptr] V1 NPO; *fn V3 deferred. | T5.5 + V3 T5.9 |
 | A22 V2 deferred (detection documented) | NPO excluded для `Option[Option[*T]]` — tagged fallback + W_OPTION_DOUBLE_NESTED. Logic documented в walk_typeref; emission V2 (requires lint framework). | NEG-T5.11 V2 |
-| A23 V2 deferred | `null ptr` literal retracted; migration script works; closes [M-115-null-ptr-to-option-after-npo] | NEG-T5.12 + T5.14-T5.15 |
+| A23 ✅ 2026-06-02 | `null ptr` literal retracted; 14 fixtures migrated к `(0 as ptr)`; closes [M-115-null-ptr-to-option-after-npo] | NEG-T5.12 t5_neg_null_ptr_retracted + T5.14 t1_null_non_ptr_neg |
 | A24 | `*fn(...)` function pointers для FFI roundtrip — verified end-to-end | T6.1-T6.4 |
 | A25 | Callback no-throw enforced: Fn-with-Fail cast → *fn — error | NEG-T6.8 |
 | A26 | `external fn ... Fail -> ...` — error (Fail effect не allowed on FFI boundary) | NEG-T6.9 |
@@ -2277,7 +2277,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **34/0** (17 positive + 17 NEG, post-Ф.5.4 NPO для Option[ptr]) |
+| plan118 | **36/0** (18 positive + 18 NEG, post-A20 newtype-NPO) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |
