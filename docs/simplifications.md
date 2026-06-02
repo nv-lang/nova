@@ -29117,3 +29117,39 @@ sub-plans (124.2-124.7) remaining.
    integration (trampoline ABI, closure capture, mono pipeline).
    Extracted as Plan 114.4.4.3/4/5 для focused dev-day каждый. NOT
    silent simplification.
+
+---
+
+## Plan 114.4.4.5 V4.1 — mono-specialization landed (2026-06-02)
+
+**Status:** 🟢 V1 LANDED. Branch `plan-114.4.4-v4-1` off main `06b41fb50db`.
+
+**Closed marker:** ✅ `[M-114.4.3-mono-specialization]`.
+
+**What:** True per-const-arg monomorphization для mixed const fns
+(Rust const generics-style). Each unique (mixed_fn, const_args) tuple
+→ separate specialized C fn с const params substituted as literals в
+body, dropped из signature.
+
+**Implementation:** New module `compiler-codegen/src/const_fn_mono.rs`
+(~440 LOC). Pipeline placement: AFTER `rewrite_const_fn_calls`.
+Full AST walker covers all expression/statement node types.
+
+**Test:** `mono_specialization_ok` — scale(const factor, x) с 3 call
+sites → 2 unique specializations + reuse case.
+
+**Backward-compat:** 1 V4-superseded fixture removed (body_allocation_neg —
+V4 Ф.4 allows tuple/record literals).
+
+**V4.1+ deferred (focused dev sessions required):**
+- Plan 114.4.4.3 runtime-HOF — fundamental challenge: fully-const fn
+  has all-const params, can't accept runtime args. Only no-param const
+  fn can become runtime fn pointer. Mixed const fn could via per-call
+  trampoline но that's specialization-equivalent.
+- Plan 114.4.4.4 closure-from-const-fn — closure capture compile-time
+  semantics + runtime closure с baked-in const captures.
+
+**Design lesson:** AST walker pattern для specialization rewrite —
+recursive descent through all ExprKind / StmtKind variants. Big code
+volume (~250 LOC walker boilerplate) but mechanical. Better to put в
+separate module чем burden const_fn_eval.rs further.

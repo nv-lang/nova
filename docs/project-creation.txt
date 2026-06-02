@@ -27993,3 +27993,69 @@ Markers:
 - No new open followups для Plan 91.12.
 
 Worktree: nova-p91-12 (continued). Branch: plan-91.12.
+
+================================================================================
+Plan 114.4.4.5 V4.1 — mono-specialization landed (2026-06-02)
+================================================================================
+
+Branch: plan-114.4.4-v4-1 (off main 06b41fb50db).
+
+Closes [M-114.4.3-mono-specialization] — true per-const-arg mono для
+mixed const fns (Rust const generics-style).
+
+What landed (1 V4.1 marker):
+- Plan 114.4.4.5 mono-specialization V1.
+
+What extracted (focused dev-sessions для each):
+- Plan 114.4.4.3 runtime-HOF trampoline — fundamental ABI design
+  (const fn → fn pointer conversion has semantic challenge: fully-const
+  fn body requires compile-time args; only no-param const fn can have
+  runtime trampoline).
+- Plan 114.4.4.4 closure-from-const-fn — closure capture semantics
+  на compile-time, runtime closure с baked const captures. Requires
+  closure runtime integration.
+
+Implementation summary (Plan 114.4.4.5 mono):
+- New module compiler-codegen/src/const_fn_mono.rs (~440 lines).
+- specialize_mixed_const_fns(module) entry point.
+- AST walker collects (mixed_fn, const_args) call sites; generates
+  specialization names `<orig>__cst_<idx>`.
+- specialize_fn_decl: clones FnDecl, substitutes const param refs в
+  body с literal values, drops const params from signature.
+- Full AST walker handles все node types (Expr/Stmt/Block/Item).
+- Pipeline integration: main.rs (4 sites) + test_runner.rs.
+- OwnedEvaluator extended: новое field mixed_fns: HashMap<String, FnDecl>
+  alongside mixed_const_params.
+
+Codegen behavior:
+- Mixed fn original AST kept (template).
+- Spec FnDecls inserted в module.items.
+- Call sites rewritten: orig name → spec name + drop const args.
+- C output has both original (potentially dead) + all specializations.
+
+V1 fixture removed (V4-superseded):
+- body_allocation_neg.nv (V4 Ф.4 allows tuple/record literals).
+
+Tests (plan114_4_4/, 1 new):
+- mono_specialization_ok: scale(const factor, x) с 3 call sites —
+  factor=3 (twice, reuses spec) + factor=10 (new spec) → 2 distinct
+  specializations.
+
+Verification: 13/13 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3
+= 42/42 PASS на release nova-cli.
+
+Acceptance: A33 ✅. A34/A35 → Plan 114.4.4.3/4 (V4.2+).
+
+Markers closed (Plan 114.4.3 chain): 7 of 9 V2.1/V3 followups closed
+across Plan 114.4.4 умbrella:
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅
+- [M-114.4.3-pattern-record-sum] ✅
+- [M-114.4.3-t-reflection] ✅ (primitives)
+- [M-114.4.3-mono-specialization] ✅ (этот session)
+
+Remaining 2 deferred:
+- [M-114.4.3-runtime-hof] → Plan 114.4.4.3.
+- [M-114.4.3-closure-from-const-fn] → Plan 114.4.4.4.
