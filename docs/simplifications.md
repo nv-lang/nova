@@ -29968,3 +29968,25 @@ runs BEFORE main walker (closures can't be ConstValue), while trampoline
 pass runs AFTER (intrinsics already inlined). Order-dependent invariants
 must be documented carefully. Fourth walker pattern proven scalable;
 refactor в common visitor trait — followup if walker count >5.
+
+
+## Baseline cargo test re-fix (2026-06-02): Plan 124 AST extensions
+
+**Sync followup:** после Plan 123 merge в main, Plan 124 priv-field-
+visibility umbrella added 2 new AST fields (RecordField.priv_field +
+TypeDecl.default_field_priv) which broke cargo test compilation
+again в test inits.
+
+**Fix:**
+- compiler-codegen/src/codegen/sum_schema_registry.rs:
+  - 2 RecordField test inits + priv_field: false.
+  - 4 TypeDecl test inits + default_field_priv: false.
+- compiler-codegen/src/lints.rs:
+  - 1 TypeDecl test init + default_field_priv: false.
+
+**Verified:** field_cache::tests 14/14 PASS.
+
+**Pattern lesson:** AST struct extensions в parallel work require
+synchronized test fixture updates. Recurring issue (see prior
+baseline fix 2d7115c9334). Long-term fix: builder pattern for test
+fixtures OR `..Default::default()` spread syntax.
