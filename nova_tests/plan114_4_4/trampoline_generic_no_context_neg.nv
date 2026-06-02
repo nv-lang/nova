@@ -1,0 +1,14 @@
+// Plan 114.4.4 V4.5 Ф.3 NEGATIVE: generic const fn first-class used WITHOUT
+// HOF context — cannot infer T. V1 supports only Call.args context.
+// `ro f = id` без typed context → friendly error.
+
+// EXPECT_COMPILE_ERROR E_CONST_FN_FIRST_CLASS
+
+module plan114_4_4.trampoline_generic_no_context_neg
+
+fn id[T](const x T) -> const T => x
+
+test "generic const fn без HOF context rejected" {
+    ro f = id   // No context → can't infer T → friendly error.
+    assert(f(7) == 7)
+}

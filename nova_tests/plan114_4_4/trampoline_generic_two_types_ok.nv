@@ -1,0 +1,17 @@
+// Plan 114.4.4 V4.5 Ф.3 POSITIVE: generic const fn instantiated с разными
+// concrete types — две distinct trampoline specializations.
+
+module plan114_4_4.trampoline_generic_two_types_ok
+
+fn id[T](const x T) -> const T => x
+
+fn apply_i(f fn(int) -> int, x int) -> int => f(x)
+fn apply_b(f fn(bool) -> bool, x bool) -> bool => f(x)
+
+test "generic const fn — multiple instantiations" {
+    ro r1 = apply_i(id, 99)       // id__trampoline_int
+    assert(r1 == 99)
+
+    ro r2 = apply_b(id, true)     // id__trampoline_bool — distinct spec
+    assert(r2 == true)
+}
