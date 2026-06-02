@@ -1163,6 +1163,20 @@ pub fn subst_type_ref_pub(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> Type
     subst_type_ref(t, subst)
 }
 
+/// Plan 114.4.4 V4.6 M3: pub re-export для const_fn_closure.rs HOF inference.
+pub fn build_fn_signature_registry_pub(module: &Module) -> HashMap<String, Vec<TypeRef>> {
+    build_fn_signature_registry(module)
+}
+
+/// Plan 114.4.4 V4.6 M3: pub re-export для const_fn_closure.rs.
+pub fn infer_generic_subst_pub(
+    const_fn: &FnDecl,
+    expected_params: &[TypeRef],
+    expected_ret: Option<&TypeRef>,
+) -> Result<HashMap<String, TypeRef>, String> {
+    infer_generic_subst(const_fn, expected_params, expected_ret)
+}
+
 /// Substitute generic param names с concrete types в TypeRef (returns new).
 fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
     use TypeRef as TR;
