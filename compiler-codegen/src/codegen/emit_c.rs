@@ -8063,6 +8063,30 @@ impl CEmitter {
     }
 
     fn emit_type_decl(&mut self, t: &TypeDecl) -> Result<(), String> {
+        // Plan 124.8 (D226 / [M-124.8-value-codegen-stack] followup):
+        // value-record (`type X value { ... }`) — surface syntax accepted в
+        // parser/AST/type-checker. Codegen V1: treats as heap-record (no
+        // behavioral change beyond standard record path).
+        //
+        // V2 followup [M-124.8-value-codegen-stack] will implement proper
+        // stack allocation:
+        //   - Emit `typedef struct { ... } Nova_<Name>;` (no pointer alias).
+        //   - Field access via `.` (struct member), не `->` (pointer member).
+        //   - Pass-by-value на parameters (memcpy at call site).
+        //   - `[]Vec3` inline storage (instead of array of pointers).
+        //   - `@` receiver as `Nova_<Name>*` pointer to stack-slot.
+        //   - Auto-coerce при escape: heap-promote через managed GC if
+        //     value escapes lexical scope (D6 contract).
+        //
+        // V1 limitation: value-record allocates на heap при construction
+        // (как heap-record). Это known limitation, documented в D226 §«V1
+        // scope». User-facing impact: meaningfully same semantics (memberwise
+        // access works, methods work, equality еще не auto-derived); только
+        // perf профиль different (heap alloc vs stack alloc).
+        //
+        // No allocation enum match here — value/heap difference is transparent
+        // to V1 codegen. AST поле t.allocation preserved для V2 lookup.
+        let _ = &t.allocation; // suppress unused-field warning during V1
         // Plan 62.D.bis (D126): `external type X` — opaque, no emission.
         // Struct definition lives in runtime header (`nova_rt/<name>.h`),
         // never emit'нем locally. Forward-decl skip уже handled через
