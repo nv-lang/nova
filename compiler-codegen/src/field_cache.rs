@@ -603,25 +603,178 @@ fn build_write_set_registry(module: &Module, iter_limit: usize) -> HashMap<(Stri
         collect_direct_writes(&pf.items_here, &mut direct, &mut callees);
     }
 
-    // Iterative closure (≤ iter_limit iterations bound; converges for
-    // typical call graphs in ≤3).
-    for _ in 0..iter_limit {
-        let mut changed = false;
-        for (key, callees_set) in &callees {
-            for callee in callees_set {
-                if let Some(callee_writes) = direct.get(callee).cloned() {
-                    let entry = direct.entry(key.clone()).or_default();
-                    for f in callee_writes {
-                        if entry.insert(f) {
-                            changed = true;
+    // Plan 123.7.3 (V7.3, 2026-06-02): SCC-based exact closure via
+    // Tarjan's algorithm. Replaces V7 iterative ≤N-iteration cap with
+    // O(V+E) exact fixed-point. When env override
+    // `NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1` set, falls back to V7's
+    // bounded-iteration loop (forensic-only, to A/B compare).
+    if std::env::var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE").ok().as_deref() == Some("1") {
+        for _ in 0..iter_limit {
+            let mut changed = false;
+            for (key, callees_set) in &callees {
+                for callee in callees_set {
+                    if let Some(callee_writes) = direct.get(callee).cloned() {
+                        let entry = direct.entry(key.clone()).or_default();
+                        for f in callee_writes {
+                            if entry.insert(f) {
+                                changed = true;
+                            }
                         }
                     }
                 }
             }
+            if !changed { break; }
         }
-        if !changed { break; }
+        return direct;
     }
+    propagate_via_scc(&mut direct, &callees);
     direct
+}
+
+/// Plan 123.7.3 (V7.3, 2026-06-02): exact fixed-point propagation via
+/// Tarjan's SCC + reverse-topological visit.
+///
+/// Algorithm:
+/// 1. Compute SCCs of the call graph (`callees`).
+/// 2. Visit SCCs в reverse-topological order (leaves first).
+/// 3. For each SCC:
+///    a. Pool union(direct[m] for m in scc) ∪ union(direct[c] for c in callees of scc).
+///    b. Assign pool to direct[m] for every m in scc.
+/// 4. Singleton non-recursive SCCs reduce to direct-callee union (V7
+///    behavior on acyclic part).
+fn propagate_via_scc(
+    direct: &mut HashMap<(String, String), HashSet<String>>,
+    callees: &HashMap<(String, String), HashSet<(String, String)>>,
+) {
+    // Gather all nodes: union of direct.keys() + callees.keys() + callees.values().
+    let mut nodes: HashSet<(String, String)> = HashSet::new();
+    for k in direct.keys() { nodes.insert(k.clone()); }
+    for (k, cs) in callees.iter() {
+        nodes.insert(k.clone());
+        for c in cs { nodes.insert(c.clone()); }
+    }
+    let nodes_vec: Vec<(String, String)> = nodes.into_iter().collect();
+    let node_index: HashMap<(String, String), usize> = nodes_vec.iter().enumerate()
+        .map(|(i, n)| (n.clone(), i)).collect();
+    // Adjacency lists by index.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes_vec.len()];
+    for (k, cs) in callees.iter() {
+        let from = node_index[k];
+        for c in cs {
+            if let Some(&to) = node_index.get(c) { adj[from].push(to); }
+        }
+    }
+    // Tarjan's SCC.
+    let sccs = tarjan_scc(&adj);
+    // sccs come out in reverse topological order (leaves first).
+    // Build mapping node→scc index for callee lookup.
+    let mut node_to_scc: Vec<usize> = vec![usize::MAX; nodes_vec.len()];
+    for (si, members) in sccs.iter().enumerate() {
+        for &m in members { node_to_scc[m] = si; }
+    }
+    // Per-SCC propagated write-set, computed leaf-first.
+    let mut scc_set: Vec<HashSet<String>> = vec![HashSet::new(); sccs.len()];
+    for (si, members) in sccs.iter().enumerate() {
+        let mut pool: HashSet<String> = HashSet::new();
+        // Direct writes of all members.
+        for &m in members {
+            if let Some(s) = direct.get(&nodes_vec[m]) {
+                for f in s { pool.insert(f.clone()); }
+            }
+        }
+        // Transitive: callees outside this SCC are already processed
+        // (we visit SCCs in reverse-topological order, leaves first).
+        for &m in members {
+            for &neighbor in &adj[m] {
+                let target_scc = node_to_scc[neighbor];
+                if target_scc != si {
+                    for f in &scc_set[target_scc] { pool.insert(f.clone()); }
+                }
+            }
+        }
+        scc_set[si] = pool;
+    }
+    // Assign pooled set back to every member.
+    for (si, members) in sccs.iter().enumerate() {
+        for &m in members {
+            direct.insert(nodes_vec[m].clone(), scc_set[si].clone());
+        }
+    }
+}
+
+/// Tarjan's strongly-connected components algorithm.
+/// Returns SCCs in reverse-topological order (leaves first, roots last).
+fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut index_counter = 0usize;
+    let mut stack: Vec<usize> = Vec::new();
+    let mut on_stack: Vec<bool> = vec![false; n];
+    let mut index: Vec<isize> = vec![-1; n];
+    let mut lowlink: Vec<usize> = vec![0; n];
+    let mut sccs: Vec<Vec<usize>> = Vec::new();
+
+    // Iterative DFS to avoid Rust stack overflow on deep graphs.
+    // Frame: (node, neighbor-iter-pos).
+    fn strong_connect(
+        v: usize,
+        adj: &[Vec<usize>],
+        index_counter: &mut usize,
+        stack: &mut Vec<usize>,
+        on_stack: &mut [bool],
+        index: &mut [isize],
+        lowlink: &mut [usize],
+        sccs: &mut Vec<Vec<usize>>,
+    ) {
+        // Use explicit work-stack.
+        let mut work: Vec<(usize, usize)> = vec![(v, 0)];
+        index[v] = *index_counter as isize;
+        lowlink[v] = *index_counter;
+        *index_counter += 1;
+        stack.push(v);
+        on_stack[v] = true;
+
+        while let Some(&(node, next_i)) = work.last() {
+            if next_i < adj[node].len() {
+                let w = adj[node][next_i];
+                // Advance the index in the current frame.
+                if let Some(top) = work.last_mut() { top.1 += 1; }
+                if index[w] == -1 {
+                    index[w] = *index_counter as isize;
+                    lowlink[w] = *index_counter;
+                    *index_counter += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    work.push((w, 0));
+                } else if on_stack[w] {
+                    lowlink[node] = lowlink[node].min(index[w] as usize);
+                }
+            } else {
+                // Finished node — pop frame, propagate lowlink к parent.
+                let finished = work.pop().unwrap().0;
+                if lowlink[finished] == index[finished] as usize {
+                    let mut scc: Vec<usize> = Vec::new();
+                    loop {
+                        let m = stack.pop().expect("stack non-empty");
+                        on_stack[m] = false;
+                        scc.push(m);
+                        if m == finished { break; }
+                    }
+                    sccs.push(scc);
+                }
+                if let Some(&(parent, _)) = work.last() {
+                    lowlink[parent] = lowlink[parent].min(lowlink[finished]);
+                }
+            }
+        }
+    }
+
+    for v in 0..n {
+        if index[v] == -1 {
+            strong_connect(v, adj, &mut index_counter, &mut stack,
+                &mut on_stack, &mut index, &mut lowlink, &mut sccs);
+        }
+    }
+    sccs
 }
 
 fn collect_direct_writes(
@@ -817,22 +970,27 @@ fn build_read_set_registry(module: &Module, iter_limit: usize) -> HashMap<(Strin
     for pf in &module.peer_files {
         collect_direct_reads(&pf.items_here, &mut direct, &mut callees);
     }
-    // Plan 123.6.3 (V6.3): iter_limit configurable (default 10).
-    // Same pattern as write_sets.
-    for _ in 0..iter_limit {
-        let mut changed = false;
-        for (key, callees_set) in &callees {
-            for callee in callees_set {
-                if let Some(callee_reads) = direct.get(callee).cloned() {
-                    let entry = direct.entry(key.clone()).or_default();
-                    for f in callee_reads {
-                        if entry.insert(f) { changed = true; }
+    // Plan 123.7.3 (V7.3, 2026-06-02): SCC-based exact closure
+    // (write- and read-set propagation share the algorithm). Legacy
+    // iterative path retained when NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1.
+    if std::env::var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE").ok().as_deref() == Some("1") {
+        for _ in 0..iter_limit {
+            let mut changed = false;
+            for (key, callees_set) in &callees {
+                for callee in callees_set {
+                    if let Some(callee_reads) = direct.get(callee).cloned() {
+                        let entry = direct.entry(key.clone()).or_default();
+                        for f in callee_reads {
+                            if entry.insert(f) { changed = true; }
+                        }
                     }
                 }
             }
+            if !changed { break; }
         }
-        if !changed { break; }
+        return direct;
     }
+    propagate_via_scc(&mut direct, &callees);
     direct
 }
 
@@ -7461,6 +7619,79 @@ fn Outer @use_both() -> int {
     // Plan 123.6.2 (V6.2, 2026-06-02): CPU savings estimate API for Plan
     // 57 nova bench gate integration.
     // ─────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.7.3 (V7.3, 2026-06-02): SCC-based exact closure replaces
+    // V7 iterative ≤N-iteration approximation.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn v73_tarjan_scc_returns_singletons_for_dag() {
+        // 0 -> 1 -> 2 (linear DAG). 3 SCCs, all singleton.
+        let adj = vec![vec![1usize], vec![2usize], vec![]];
+        let sccs = tarjan_scc(&adj);
+        assert_eq!(sccs.len(), 3);
+        for s in &sccs { assert_eq!(s.len(), 1); }
+    }
+
+    #[test]
+    fn v73_tarjan_scc_finds_cycle() {
+        // 0 -> 1 -> 2 -> 0 (3-cycle). 1 SCC containing все 3.
+        let adj = vec![vec![1usize], vec![2usize], vec![0usize]];
+        let sccs = tarjan_scc(&adj);
+        assert_eq!(sccs.len(), 1);
+        assert_eq!(sccs[0].len(), 3);
+    }
+
+    #[test]
+    fn v73_tarjan_scc_reverse_topological_order() {
+        // 0 -> 1 (linear). Leaves first: [1], then [0].
+        let adj = vec![vec![1usize], vec![]];
+        let sccs = tarjan_scc(&adj);
+        assert_eq!(sccs, vec![vec![1usize], vec![0usize]]);
+    }
+
+    #[test]
+    fn v73_scc_propagates_writes_through_cycle() {
+        // Two methods in mutual recursion (cycle):
+        //   Counter.inc writes @n; calls @double().
+        //   Counter.double calls @inc().
+        // SCC closure: both should report write_set = {"n"}.
+        let src = r#"
+module testmod.v73_scc
+type Counter { mut n int }
+fn Counter mut @inc() -> () { @n = @n + 1  @double() }
+fn Counter mut @double() -> () { @inc() }
+"#;
+        let module = crate::parser::parse(src).expect("parse");
+        let cfg = FieldCacheConfig::default();
+        let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
+        let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
+        let double_set = ws.get(&("Counter".to_string(), "double".to_string())).expect("double");
+        assert!(inc_set.contains("n"), "inc should write n directly");
+        assert!(double_set.contains("n"),
+            "double should inherit n via SCC closure (cycle with inc); got {:?}",
+            double_set);
+    }
+
+    #[test]
+    fn v73_legacy_iterative_fallback() {
+        // Setting NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1 must still produce
+        // valid (correct если iter_limit достаточен) closures.
+        // Сохраним then restore env var.
+        std::env::set_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE", "1");
+        let src = r#"
+module testmod.v73_legacy
+type Counter { mut n int }
+fn Counter mut @inc() -> () { @n = @n + 1 }
+"#;
+        let module = crate::parser::parse(src).expect("parse");
+        let cfg = FieldCacheConfig::default();
+        let ws = build_write_set_registry(&module, cfg.ipa_iter_limit);
+        std::env::remove_var("NOVA_FC_LEGACY_ITERATIVE_CLOSURE");
+        let inc_set = ws.get(&("Counter".to_string(), "inc".to_string())).expect("inc");
+        assert!(inc_set.contains("n"));
+    }
 
     #[test]
     fn v62_cpu_savings_estimate_aggregates_layers() {

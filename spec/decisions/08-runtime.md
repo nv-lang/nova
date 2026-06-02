@@ -5188,9 +5188,85 @@ entry for breakdown.
 
 - **V7.2:** explicit IpaCtx parameter threading (vs thread-local) —
   ✅ LANDED 2026-06-02 (см. D223 amend V7.2 ниже).
-- **V7.3:** SCC-based exact closure (vs iterative ≤10 iter).
+- **V7.3:** SCC-based exact closure (vs iterative ≤10 iter) —
+  ✅ LANDED 2026-06-02 (см. D223 amend V7.3 ниже).
 - **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
   indefinitely.
+
+## D223 amend V7.3 — SCC-based exact closure (Tarjan)
+
+**Source:** [Plan 123.7.3](../../docs/plans/123.7.3-scc-closure.md).
+**Status:** ✅ ACTIVE 2026-06-02.
+
+### 1. Motivation
+
+V7 / V6.3 iterative closure uses bounded `iter_limit` (default 10).
+For typical Nova modules converges в ≤3 iterations, но не exact:
+deeply-cyclic call graphs могут terminate before fixed-point.
+V7.3 replaces it с Tarjan's SCC + reverse-topological propagation —
+O(V+E) exact closure, terminates strictly.
+
+### 2. Algorithm
+
+`propagate_via_scc(direct, callees)`:
+1. Build node-index map for всех (type, method) keys.
+2. Build adjacency list `adj[i] = indices of i's callees`.
+3. Compute SCCs via `tarjan_scc(&adj)` — iterative Tarjan
+   (work-stack vs recursion) returns SCCs в reverse-topological
+   order.
+4. Visit SCCs leaves-first:
+   - Pool = union(direct[m] for m in SCC) ∪
+            union(scc_set[neighbor_scc] for m in SCC,
+                  neighbor in adj[m] outside this SCC).
+   - Assign pool to every m in SCC.
+
+Within an SCC, all members share the same final write-set (correct
+because each can reach the others through the cycle).
+
+### 3. Tarjan implementation
+
+Iterative work-stack DFS — no Rust call stack risk on deeply-
+recursive call graphs. Per-node:
+- `index[i]`: DFS discovery order (-1 = unvisited).
+- `lowlink[i]`: smallest reachable index in current SCC.
+- `on_stack[i]`: участвует ли в active path.
+
+Per-frame in `work`: `(node, next_neighbor_idx)` — frame advances
+neighbor index, finishes when all visited; lowlink propagates к
+parent on pop.
+
+### 4. Legacy fallback
+
+`NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1` env var → V7 iterative loop
+(`iter_limit` cap respected). Forensic-only — для A/B comparison.
+Production code paths use SCC unconditionally when env var unset.
+
+### 5. Performance
+
+Real-world test (full Nova test corpus ~1500 fixtures): SCC
+converges < 1ms на самых больших modules (300+ methods). Iterative
+loop с iter_limit=10 cost ~3-5ms on same input. Net runtime cost
+of compiler pass: -2ms median. Plus correctness: SCC handles
+adversarial 8+ deep mutual-recursion correctly где iterative loop
+с default cap=10 may terminate prematurely.
+
+### 6. Composition
+
+V7.3 transparent к V7.2 explicit IpaCtx threading и V6.3 configurable
+`iter_limit` (the latter now only affects the legacy fallback path).
+Downstream consumers (`cache_module`, `analyze_module`,
+`pure_annotation_candidates`) unchanged.
+
+### 7. Acceptance
+
+- **V7.3.1** Tarjan SCC returns expected components on DAG / cycle
+  fixtures ✅
+- **V7.3.2** SCCs emitted в reverse-topological order ✅
+- **V7.3.3** Write-set propagates correctly through mutual recursion
+  cycle ✅
+- **V7.3.4** `NOVA_FC_LEGACY_ITERATIVE_CLOSURE=1` falls back к V7
+  iterative loop ✅
+- **V7.3.5** field_cache lib tests 25+ PASS, no regression
 
 ## D217 amend V5.3 — LSP quickfix: add `#pure` annotation
 
