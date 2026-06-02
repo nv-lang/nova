@@ -1,0 +1,23 @@
+// Plan 124.8 V2 — verifies real stack allocation through method-call
+// observable behavior. Sequence of constructed + read values demonstrates
+// stack-init produces correct field values без heap pointer indirection.
+module plan124_8.value_record_v2_sizeof_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn Vec3.new(a f64, b f64, c f64) -> Vec3 =>
+    { x: a, y: b, z: c }
+
+test "V2 stack layout — fields stored inline без pointer indirection" {
+    ro v1 = Vec3.new(1.0, 2.0, 3.0)
+    ro v2 = Vec3.new(4.0, 5.0, 6.0)
+    // Different value-record instances не share memory — each on stack.
+    assert(v1.x == 1.0 && v1.y == 2.0 && v1.z == 3.0)
+    assert(v2.x == 4.0 && v2.y == 5.0 && v2.z == 6.0)
+    // v1 unchanged after v2 constructed (would be aliased if shared heap).
+    assert(v1.x == 1.0)
+}

@@ -1,0 +1,35 @@
+// Plan 124.8 V2 — verifies @-method receiver = pointer to stack slot.
+// Read-only method on value-record returns inline value computed from
+// @-fields через pointer access (NovaValue_Vec3* nova_self).
+module plan124_8.value_record_v2_method_pointer_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn Vec3.new(a f64, b f64, c f64) -> Vec3 =>
+    { x: a, y: b, z: c }
+
+// Compute method — pointer receiver allows @-field access без heap deref.
+fn Vec3 @sum() -> f64 =>
+    @x + @y + @z
+
+fn Vec3 @dot(other Vec3) -> f64 =>
+    @x * other.x + @y * other.y + @z * other.z
+
+test "V2 method-receiver pointer access works" {
+    ro v = Vec3.new(1.0, 2.0, 3.0)
+    assert(v.sum() == 6.0)
+}
+
+test "V2 method-with-other-arg works (pass-by-value semantics)" {
+    ro a = Vec3.new(1.0, 0.0, 0.0)
+    ro b = Vec3.new(0.0, 1.0, 0.0)
+    assert(a.dot(b) == 0.0)
+
+    ro c = Vec3.new(1.0, 2.0, 3.0)
+    ro d = Vec3.new(1.0, 2.0, 3.0)
+    assert(c.dot(d) == 14.0)
+}

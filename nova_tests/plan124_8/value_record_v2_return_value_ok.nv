@@ -1,0 +1,26 @@
+// Plan 124.8 V2 — verifies return-by-value semantics. Function returns
+// value-record by value (copy/RVO). Caller receives independent stack slot.
+module plan124_8.value_record_v2_return_value_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn Vec3.new(a f64, b f64, c f64) -> Vec3 =>
+    { x: a, y: b, z: c }
+
+fn make_vec3(scale f64) -> Vec3 =>
+    Vec3.new(1.0 * scale, 2.0 * scale, 3.0 * scale)
+
+fn Vec3 @magnitude_sq() -> f64 =>
+    @x * @x + @y * @y + @z * @z
+
+test "V2 return-by-value works — caller получает independent stack slot" {
+    ro v = make_vec3(2.0)
+    assert(v.x == 2.0)
+    assert(v.y == 4.0)
+    assert(v.z == 6.0)
+    assert(v.magnitude_sq() == 56.0)
+}
