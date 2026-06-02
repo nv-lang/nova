@@ -95,6 +95,11 @@ enum Cmd {
         /// Skip files whose path matches this substring (repeatable).
         #[arg(long = "skip", value_name = "PATTERN")]
         skip: Vec<String>,
+        /// Plan 123.5 (D217 §6 amend V5): emit field-cache analysis
+        /// report per method. Shows D217/D218/D219/chain cache
+        /// decisions that would be inserted at codegen.
+        #[arg(long = "explain-cache")]
+        explain_cache: bool,
     },
     /// Run a Nova source file via the interpreter.
     Run {
@@ -1160,6 +1165,123 @@ fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<
 ///   - `--format human|short` (JSON/SARIF/JUnit — sub-plan 36.A).
 ///   - `--include-runtime` skip std/runtime/ override.
 ///   - `--skip PATTERN` repeatable substring skip filter.
+/// Plan 123.5 (D217 §6 amend V5): --explain-cache mode.
+///
+/// For each .nv file, run AST analysis (parser + type-check + pipeline
+/// passes до cache_module), then call analyze_module to get per-fn
+/// cache decisions; emit human-readable report on stdout.
+fn cmd_check_explain_cache(
+    paths: &[PathBuf],
+    include_runtime: bool,
+    skip: &[String],
+) -> Result<()> {
+    let owned_root;
+    let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
+        owned_root = find_repo_root()?;
+        vec![owned_root.clone()]
+    } else {
+        paths.iter().cloned().collect()
+    };
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    for p in &resolved_paths {
+        if !p.exists() {
+            return Err(usage_err(format!("path not found: {}", p.display())));
+        }
+        if p.is_file() {
+            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                return Err(usage_err(format!("not a Nova source: {}", p.display())));
+            }
+            files.push(p.clone());
+        } else if p.is_dir() {
+            let mut found = Vec::new();
+            nova_codegen::test_runner::walk_nv(p, &mut found)
+                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+            for f in found {
+                if !should_skip_path_full(&f, include_runtime, skip) {
+                    files.push(f);
+                }
+            }
+        }
+    }
+
+    let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+    let mut grand_total_methods = 0usize;
+    let mut grand_total_caches = 0usize;
+    for file in &files {
+        let src = match std::fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("warn: skip {} (read error: {})", file.display(), e);
+                continue;
+            }
+        };
+        let mut module = match nova_codegen::parser::parse(&src) {
+            Ok(m) => m,
+            Err(d) => {
+                eprintln!("warn: skip {} (parse error: {})", file.display(),
+                    d.render(&src, &file.to_string_lossy()));
+                continue;
+            }
+        };
+        // Resolve imports (mirror test_runner pipeline).
+        if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(file) {
+            let stdlib_dir = repo.join("std");
+            if let Err(e) = nova_codegen::imports::resolve_imports_inline_ex(file, &mut module, &repo, &stdlib_dir, true) {
+                eprintln!("warn: skip {} (import resolve failed: {})", file.display(), e);
+                continue;
+            }
+        }
+        // Type-check (skip on error — analyze best-effort).
+        if let Err(_errs) = nova_codegen::types::check_module(&module) {
+            eprintln!("warn: skip {} (type-check failed)", file.display());
+            continue;
+        }
+        // Run pipeline до cache_module.
+        let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
+        nova_codegen::types::annotate_map_literals(&mut module);
+        nova_codegen::desugar::desugar_module(&mut module);
+        nova_codegen::types::infer_effects(&mut module);
+        nova_codegen::callnorm::normalize_module(&mut module);
+        let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
+        if !report.per_fn.is_empty() {
+            println!("=== {} ===", file.display());
+            emit_explain_report_for_file(&report);
+            println!();
+            grand_total_methods += report.per_fn.len();
+            grand_total_caches += report.per_fn.iter().map(|f| f.total()).sum::<usize>();
+        }
+    }
+    println!("field-cache total: {} method(s) affected, {} cache(s) inserted across {} file(s)",
+        grand_total_methods, grand_total_caches, files.len());
+    Ok(())
+}
+
+fn emit_explain_report_for_file(report: &nova_codegen::field_cache::ExplainReport) {
+    for info in &report.per_fn {
+        println!("  fn {} @{} — {} cache(s):",
+            info.type_name, info.fn_name, info.total());
+        if !info.ro_caches.is_empty() {
+            println!("    D217 field cache: {}", info.ro_caches.join(", "));
+        }
+        if !info.mut_caches.is_empty() {
+            println!("    D217 mut first-region: {}", info.mut_caches.join(", "));
+        }
+        if !info.licm_hoists.is_empty() {
+            println!("    D218 LICM loop hoist: {}", info.licm_hoists.join(", "));
+        }
+        if !info.pure_caches.is_empty() {
+            println!("    D219 pure-call cache: {}", info.pure_caches.join(", "));
+        }
+        if !info.chain_caches.is_empty() {
+            let paths: Vec<String> = info.chain_caches.iter()
+                .map(|p| format!("@{}", p.join(".")))
+                .collect();
+            println!("    D217 V4 chain cache: {}", paths.join(", "));
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_check(
     paths: &[PathBuf],
@@ -1170,7 +1292,14 @@ fn cmd_check(
     format: &str,
     include_runtime: bool,
     skip: &[String],
+    explain_cache: bool,
 ) -> Result<()> {
+    // Plan 123.5 (D217 §6 amend V5): --explain-cache mode — per-file
+    // analyze module без mutation, emit report to stdout. Skips
+    // standard error rendering — just emit cache decisions.
+    if explain_cache {
+        return cmd_check_explain_cache(paths, include_runtime, skip);
+    }
     // Если пути не указаны — используем workspace root.
     let owned_root;
     let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
@@ -4528,7 +4657,7 @@ fn run() -> ExitCode {
     }
 
     let result = match cli.cmd {
-        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip } => cmd_check(
+        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache } => cmd_check(
             &paths,
             jobs,
             quiet,
@@ -4537,6 +4666,7 @@ fn run() -> ExitCode {
             &format,
             include_runtime,
             &skip,
+            explain_cache,
         ),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(
