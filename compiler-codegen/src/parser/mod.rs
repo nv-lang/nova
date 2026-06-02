@@ -5421,6 +5421,16 @@ impl Parser {
                 self.pos = saved_pos;
                 break;
             }
+            // Plan 114.4.4 V4.6 M2 [M-114.4.4-closure-light-after-const-stmt-parser]:
+            // disambiguation — после newline pattern `|ident<,ident>*|` это ClosureLight
+            // start (новое expression), не binary OR continuation. Lookahead:
+            //   peek = `|`, peek_at(1) = Ident OR `_`, then `,` Ident sequence,
+            //   ends с `|`.
+            // Если pattern detected — pos restore'им и breakаем (binary OR done).
+            if self.pos != saved_pos && self.looks_like_closure_light_params() {
+                self.pos = saved_pos;
+                break;
+            }
             self.bump();
             self.skip_newlines();
             let right = self.parse_bit_xor()?;
@@ -5435,6 +5445,32 @@ impl Parser {
             );
         }
         Ok(left)
+    }
+
+    /// Plan 114.4.4 V4.6 M2 lookahead: looking at `|`, check whether form is
+    /// `|ident_list|` (ClosureLight params). Returns true if YES — caller can
+    /// stop parsing binary OR continuation. Pos NOT mutated (lookahead only).
+    fn looks_like_closure_light_params(&self) -> bool {
+        // Expected at peek: `|`. Then ident(or `_`), optionally repeated с `,`,
+        // ending с `|`.
+        if !matches!(self.peek().kind, TokenKind::Pipe) { return false; }
+        let mut i: usize = 1;
+        // Empty `||` is parsed as separate PipePipe token; we handle only
+        // non-empty closure params `|x|`, `|x, y|`, `|_|`.
+        loop {
+            // Skip newlines between tokens.
+            while matches!(self.peek_at(i).kind, TokenKind::Newline) { i += 1; }
+            match &self.peek_at(i).kind {
+                TokenKind::Ident(_) => { i += 1; }
+                _ => return false,
+            }
+            while matches!(self.peek_at(i).kind, TokenKind::Newline) { i += 1; }
+            match &self.peek_at(i).kind {
+                TokenKind::Comma => { i += 1; continue; }
+                TokenKind::Pipe => return true,
+                _ => return false,
+            }
+        }
     }
 
     /// Bitwise-xor `^` (level 8).

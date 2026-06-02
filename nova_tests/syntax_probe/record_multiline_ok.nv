@@ -1,0 +1,34 @@
+// Probe: record types — multi-line форма работает с commas OR newlines.
+// Baseline для comparison с named tuple parsing asymmetry.
+module syntax_probe.record_multiline_ok
+
+// Form 1: comma separator
+type Point2 {
+    x int,
+    y int,
+}
+
+// Form 2: newline-as-separator
+type Point3 {
+    x int
+    y int
+    z int
+}
+
+// Form 3: mixed
+type Point4 {
+    x int,
+    y int
+    z int,
+}
+
+// Form 4: single-line
+type Point5 { x int, y int }
+
+test "all four record forms compile + construct" {
+    ro p2 = Point2 { x: 1, y: 2 }
+    ro p3 = Point3 { x: 1, y: 2, z: 3 }
+    ro p4 = Point4 { x: 1, y: 2, z: 3 }
+    ro p5 = Point5 { x: 1, y: 2 }
+    assert(p2.x == 1 && p3.x == 1 && p4.x == 1 && p5.x == 1)
+}

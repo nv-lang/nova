@@ -1,0 +1,14 @@
+// Plan 114.4.4 V4.6 M2 POSITIVE: ClosureLight `|x| body` после Stmt::Const
+// должен parse'иться как closure, не binary OR.
+
+module plan114_4_4.closure_outer_pipe_ok
+
+fn make_thing(const base int) -> const fn(int) -> int {
+    const offset = base + 10
+    |x| x + offset
+}
+
+test "ClosureLight after Stmt::Const" {
+    ro t5 = make_thing(5)
+    assert(t5(3) == 18)
+}

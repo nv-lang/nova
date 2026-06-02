@@ -7583,6 +7583,95 @@ infrastructure as Ф.3. Will be unblocked together. Tracked:
 | A38 | Padding/alignment edge cases для tuples (layout semantics) | size_of_padding_ok (V4.4 Ф.1 docs) — 7 edge cases: inner/tail-pad, big gaps, no-pad uniform, multi-step alignment, unit, mixed sizes |
 | A39 | Generic const fn first-class via HOF inference | trampoline_generic_inferred_ok / _two_types_ok / _no_context_neg (V4.5 Ф.3) |
 | A40 | Generic closure-returning const fn via TurboFish | closure_generic_ok / closure_generic_const_arg_ok / _no_turbofish_neg (V4.5 Ф.4) |
+| A41 | size_of/align_of для user records + sums | size_of_record_ok / size_of_sum_ok (V4.6 M1) |
+| A42 | ClosureLight `\|x\|` после Stmt::Const parses correctly | closure_outer_pipe_ok (V4.6 M2) |
+| A43 | Closure-generic HOF inference without TurboFish | closure_generic_hof_inferred_ok (V4.6 M3) |
+| A44 | Composite concrete types (Tuple/Array) в generic instantiation | trampoline_generic_tuple_concrete_ok / closure_generic_tuple_turbofish_ok (V4.6 M4) |
+
+### V4.6 extensions (Plan 114.4.4 V4.6 final-followups session, 2026-06-03)
+
+**M1 — size_of/align_of для user-defined records + sums (closes [M-114.4.4-trampoline-named-types]):**
+
+V4.4 Ф.1 расширил layout computation до composite ABI types но всё ещё
+ограничивался primitive Named types. M1 finalizes к user-defined Named:
+
+- **Records** `type T { f1, f2 }` — C struct layout, natural alignment +
+  tail-pad to max-field-align.
+- **NamedTuple** `type T(f1, f2)` (Plan 120 forward-compat) — same as Record.
+- **Sum-types** `type Color | Red | Green | Blue` — tag (i32 = 4 bytes,
+  align 4) + max-variant payload, align = max(4, max_payload_align).
+- **Variants:** Unit (size 0), Tuple (sum + padding), Record (struct layout).
+- **Newtype** / **Alias** — transparent.
+- **Opaque/Effect/Protocol** — None (no concrete layout).
+
+Implementation via TypeDecl registry: `type_size_or_align_resolved` accepts
+registry, backward-compat wrapper uses thread-local via `TypeDeclRegistryGuard`
+(RAII install/clear). Registry built at start of `rewrite_const_fn_calls`.
+
+**M2 — Parser disambiguation `|x|` after Stmt::Const (closes [M-114.4.4-closure-light-after-const-stmt-parser]):**
+
+V4.4 Ф.2 documented parser ambiguity workaround. M2 implements lookahead
+disambiguation в `parse_bit_or`:
+
+```nova
+fn make_thing(const base int) -> const fn(int) -> int {
+    const offset = base + 10
+    |x| x + offset   // V4.6 M2: parses correctly as ClosureLight (was binary OR)
+}
+```
+
+`looks_like_closure_light_params` lookahead helper peeks pattern
+`|ident<,ident>*|`. If detected, bit-or continuation breaks; ClosureLight
+starts as new expression.
+
+**M3 — Closure-generic HOF inference (closes [M-114.4.4-closure-generic-hof-inference]):**
+
+V4.5 Ф.4 required explicit TurboFish at call site. M3 extends к HOF context
+where TurboFish becomes optional:
+
+```nova
+fn make_id[T]() -> const fn(T) -> T => fn(x T) -> T => x
+fn apply_i(f fn(int) -> int, x int) -> int => f(x)
+test {
+    ro r = apply_i(make_id(), 7)   // T=int inferred from apply_i's f param
+}
+```
+
+`GenericClosureHofCtx` pre-pass walks module mutably, at each Call site
+checks args; for bare `Call(generic_closure_fn, [], None)` без TurboFish,
+matches host's return-type Func against expected param Func via
+`unify_simple`. Wraps Ident в TurboFish; existing rewriter handles rest.
+
+**M4 — Composite concrete types (closes [M-114.4.4-trampoline-complex-concrete]):**
+
+V4.5 ограничивался simple Named concrete types (`int`, `str`). M4 расширяет
+к composite TypeRef в both trampoline and closure paths:
+
+- Tuple `(int, int)` → mangle `tup2_int_int`
+- Array `[]int` → `arr_int`
+- FixedArray `[4]int` → `fixarr4_int`
+- Named-with-generics `Option[int]` → `Option_int`
+- Unit `()` → `unit`
+- Readonly `readonly T` → `ro_<m>`
+- Func type → `fn<n>_<params>_ret_<ret>`
+
+`GenericInst.concrete` теперь `Vec<TypeRef>`. Hash/Eq via `mangled_args()`
+stable serialization. `mangle_type_ref` pub helper exported для cross-module
+use. Closure spec value: `(spec_name, Vec<TypeRef>)` — TypeRefs retained
+для substitution.
+
+### 🎯 Plan 114.4.4 family COMPLETE — V3-V4.6 (всё закрыто)
+
+- ✅ V3 (Ф.1-Ф.5) + V4 (Ф.1-Ф.5) — base.
+- ✅ V4.1 mono-specialization (Plan 114.4.4.5).
+- ✅ V4.2 runtime trampoline (Plan 114.4.4.3).
+- ✅ V4.3 closure-from-const-fn (Plan 114.4.4.4).
+- ✅ V4.4 Ф.1+Ф.2 composite-sizeof + outer-captures (Plan 114.4.4.6).
+- ✅ V4.5 Ф.3+Ф.4 generic trampoline + generic closure.
+- ✅ V4.6 M1+M2+M3+M4 (Plan 114.4.4.7).
+
+**Cumulative:** 15 markers `[M-114.4.4-*]` все закрыты, A1-A44 acceptance,
+70/70 fixtures PASS на release nova-cli.
 
 ### V4.5 extensions (Plan 114.4.4 V4.5 followups session, 2026-06-02)
 

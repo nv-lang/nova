@@ -1005,7 +1005,52 @@ pub fn simple_type_name_str(t: &crate::ast::TypeRef) -> Option<String> {
 ///   `[M-114.4.4-trampoline-named-types]`.
 /// - Named sum-types (tagged unions) → same followup.
 /// - Generic instantiations `Option[int]` etc — same followup.
+thread_local! {
+    /// Plan 114.4.4 V4.6 M1: thread-local TypeDecl registry для resolving
+    /// Named user-defined types inside `size_of[T]()` / `align_of[T]()`
+    /// intrinsics. Populated в `rewrite_const_fn_calls` (single-threaded
+    /// compile pass), cleared при exit. Thread-local используется чтобы
+    /// не invasive thread параметр через все call sites.
+    static TYPE_DECL_REGISTRY: std::cell::RefCell<HashMap<String, crate::ast::TypeDecl>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Plan 114.4.4 V4.6 M1: install registry для текущего pass. RAII guard
+/// auto-clears on drop.
+pub struct TypeDeclRegistryGuard;
+impl TypeDeclRegistryGuard {
+    pub fn new(registry: HashMap<String, crate::ast::TypeDecl>) -> Self {
+        TYPE_DECL_REGISTRY.with(|r| *r.borrow_mut() = registry);
+        TypeDeclRegistryGuard
+    }
+}
+impl Drop for TypeDeclRegistryGuard {
+    fn drop(&mut self) {
+        TYPE_DECL_REGISTRY.with(|r| r.borrow_mut().clear());
+    }
+}
+
 pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64> {
+    TYPE_DECL_REGISTRY.with(|r| {
+        type_size_or_align_resolved(t, is_align, &r.borrow())
+    })
+}
+
+/// Plan 114.4.4 V4.6 M1 [M-114.4.4-trampoline-named-types]: extended layout
+/// computation с TypeDecl registry. Supports user-defined Named types:
+/// - **Records** `type T { f1, f2, .. }` — C struct layout: fields в order,
+///   natural alignment, tail-pad up to max-field-align.
+/// - **NamedTuple** `type T(f1, f2)` (Plan 120) — same layout as Record.
+/// - **Sum-types** `type T { A, B(X), C { y int } }` — tag (i32 = 4 bytes
+///   align 4) + max variant payload size, alignment = max(4, max_variant_align).
+/// - **Newtype** `type T = inner` — transparent (layout of inner).
+/// - **Alias** `type T alias other` — recurse on aliased.
+/// - **Opaque** (Plan 91.12 retracted external type) — None (unknown layout).
+pub fn type_size_or_align_resolved(
+    t: &crate::ast::TypeRef,
+    is_align: bool,
+    type_decls: &HashMap<String, crate::ast::TypeDecl>,
+) -> Option<i64> {
     use crate::ast::TypeRef;
     match t {
         TypeRef::Named { path, generics, .. }
@@ -1014,16 +1059,21 @@ pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64
             let name = &path[0];
             // Primitive type table (default 64-bit ABI, matches nova_rt).
             // (size, align) tuples — для str align != size (slice ABI).
-            let (size, align) = match name.as_str() {
-                "int" | "i64" | "u64" | "f64" => (8, 8),
-                "i32" | "u32" | "f32" => (4, 4),
-                "i16" | "u16" => (2, 2),
-                "i8" | "u8" | "bool" => (1, 1),
-                "char" => (4, 4), // Plan Q-char-literals: u32 codepoint.
-                "str" => (16, 8), // pointer + length (slice-style ABI).
-                _ => return None, // user-defined named types — V2
+            let prim = match name.as_str() {
+                "int" | "i64" | "u64" | "f64" => Some((8i64, 8i64)),
+                "i32" | "u32" | "f32" => Some((4, 4)),
+                "i16" | "u16" => Some((2, 2)),
+                "i8" | "u8" | "bool" => Some((1, 1)),
+                "char" => Some((4, 4)),
+                "str" => Some((16, 8)),
+                _ => None,
             };
-            Some(if is_align { align } else { size })
+            if let Some((size, align)) = prim {
+                return Some(if is_align { align } else { size });
+            }
+            // Plan 114.4.4 V4.6 M1: lookup в TypeDecl registry.
+            let td = type_decls.get(name)?;
+            type_decl_size_or_align(td, is_align, type_decls)
         }
         TypeRef::Tuple(elems, _) => {
             // C struct-style layout: elements в порядке с natural alignment,
@@ -1031,8 +1081,8 @@ pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64
             let mut max_align: i64 = 1;
             let mut size: i64 = 0;
             for e in elems {
-                let elem_size = type_size_or_align(e, false)?;
-                let elem_align = type_size_or_align(e, true)?;
+                let elem_size = type_size_or_align_resolved(e, false, type_decls)?;
+                let elem_align = type_size_or_align_resolved(e, true, type_decls)?;
                 if elem_align < 1 { return None; }
                 if elem_align > max_align { max_align = elem_align; }
                 // Pad current size up to elem alignment.
@@ -1048,8 +1098,8 @@ pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64
             Some(if is_align { max_align } else { size })
         }
         TypeRef::FixedArray(n, elem, _) => {
-            let elem_size = type_size_or_align(elem, false)?;
-            let elem_align = type_size_or_align(elem, true)?;
+            let elem_size = type_size_or_align_resolved(elem, false, type_decls)?;
+            let elem_align = type_size_or_align_resolved(elem, true, type_decls)?;
             if is_align { Some(elem_align) } else { Some((*n as i64) * elem_size) }
         }
         TypeRef::Array(_, _) => {
@@ -1059,9 +1109,158 @@ pub fn type_size_or_align(t: &crate::ast::TypeRef, is_align: bool) -> Option<i64
         TypeRef::Unit(_) => {
             Some(if is_align { 1 } else { 0 })
         }
-        TypeRef::Readonly(inner, _) => type_size_or_align(inner, is_align),
+        TypeRef::Readonly(inner, _) => type_size_or_align_resolved(inner, is_align, type_decls),
         _ => None,
     }
+}
+
+/// Plan 114.4.4 V4.6 M1: compute layout for a user-defined TypeDecl.
+fn type_decl_size_or_align(
+    td: &crate::ast::TypeDecl,
+    is_align: bool,
+    type_decls: &HashMap<String, crate::ast::TypeDecl>,
+) -> Option<i64> {
+    use crate::ast::TypeDeclKind;
+    match &td.kind {
+        TypeDeclKind::Record(fields) => {
+            // C struct layout from RecordField list — natural alignment + tail-pad.
+            let mut max_align: i64 = 1;
+            let mut size: i64 = 0;
+            for f in fields {
+                let fs = type_size_or_align_resolved(&f.ty, false, type_decls)?;
+                let fa = type_size_or_align_resolved(&f.ty, true, type_decls)?;
+                if fa < 1 { return None; }
+                if fa > max_align { max_align = fa; }
+                let rem = size % fa;
+                if rem != 0 { size += fa - rem; }
+                size += fs;
+            }
+            if max_align > 1 {
+                let rem = size % max_align;
+                if rem != 0 { size += max_align - rem; }
+            }
+            Some(if is_align { max_align } else { size })
+        }
+        TypeDeclKind::NamedTuple(fields) => {
+            // Same layout as Record but fields imply ordered positional access.
+            let mut max_align: i64 = 1;
+            let mut size: i64 = 0;
+            for f in fields {
+                let fs = type_size_or_align_resolved(&f.ty, false, type_decls)?;
+                let fa = type_size_or_align_resolved(&f.ty, true, type_decls)?;
+                if fa < 1 { return None; }
+                if fa > max_align { max_align = fa; }
+                let rem = size % fa;
+                if rem != 0 { size += fa - rem; }
+                size += fs;
+            }
+            if max_align > 1 {
+                let rem = size % max_align;
+                if rem != 0 { size += max_align - rem; }
+            }
+            Some(if is_align { max_align } else { size })
+        }
+        TypeDeclKind::Sum(variants) => {
+            // Tagged union: tag (i32 = 4, align 4) + max variant payload.
+            // Each variant payload determined by its payload kind.
+            let tag_size: i64 = 4;
+            let tag_align: i64 = 4;
+            let mut max_payload_size: i64 = 0;
+            let mut max_payload_align: i64 = 1;
+            for v in variants {
+                let (vsize, valign) = sum_variant_layout(v, type_decls)?;
+                if vsize > max_payload_size { max_payload_size = vsize; }
+                if valign > max_payload_align { max_payload_align = valign; }
+            }
+            let max_align = tag_align.max(max_payload_align);
+            // Layout: tag + payload (padded to payload alignment after tag).
+            let mut size = tag_size;
+            if max_payload_align > 1 {
+                let rem = size % max_payload_align;
+                if rem != 0 { size += max_payload_align - rem; }
+            }
+            size += max_payload_size;
+            // Tail-pad to max align.
+            if max_align > 1 {
+                let rem = size % max_align;
+                if rem != 0 { size += max_align - rem; }
+            }
+            Some(if is_align { max_align } else { size })
+        }
+        TypeDeclKind::Newtype(inner) => type_size_or_align_resolved(inner, is_align, type_decls),
+        TypeDeclKind::Alias(inner) => type_size_or_align_resolved(inner, is_align, type_decls),
+        TypeDeclKind::Opaque
+        | TypeDeclKind::Effect(_)
+        | TypeDeclKind::Protocol { .. } => None, // no concrete layout.
+    }
+}
+
+/// Plan 114.4.4 V4.6 M1: compute (size, align) for one sum variant's payload.
+fn sum_variant_layout(
+    v: &crate::ast::SumVariant,
+    type_decls: &HashMap<String, crate::ast::TypeDecl>,
+) -> Option<(i64, i64)> {
+    use crate::ast::SumVariantKind;
+    match &v.kind {
+        SumVariantKind::Unit => Some((0, 1)),
+        SumVariantKind::Tuple(types) => {
+            // Treat as tuple TypeRef для reuse.
+            let mut max_align: i64 = 1;
+            let mut size: i64 = 0;
+            for t in types {
+                let fs = type_size_or_align_resolved(t, false, type_decls)?;
+                let fa = type_size_or_align_resolved(t, true, type_decls)?;
+                if fa < 1 { return None; }
+                if fa > max_align { max_align = fa; }
+                let rem = size % fa;
+                if rem != 0 { size += fa - rem; }
+                size += fs;
+            }
+            if max_align > 1 {
+                let rem = size % max_align;
+                if rem != 0 { size += max_align - rem; }
+            }
+            Some((size, max_align))
+        }
+        SumVariantKind::Record(fields) => {
+            let mut max_align: i64 = 1;
+            let mut size: i64 = 0;
+            for f in fields {
+                let fs = type_size_or_align_resolved(&f.ty, false, type_decls)?;
+                let fa = type_size_or_align_resolved(&f.ty, true, type_decls)?;
+                if fa < 1 { return None; }
+                if fa > max_align { max_align = fa; }
+                let rem = size % fa;
+                if rem != 0 { size += fa - rem; }
+                size += fs;
+            }
+            if max_align > 1 {
+                let rem = size % max_align;
+                if rem != 0 { size += max_align - rem; }
+            }
+            Some((size, max_align))
+        }
+    }
+}
+
+/// Plan 114.4.4 V4.6 M1: build TypeDecl registry from module items.
+pub fn build_type_decl_registry(
+    module: &crate::ast::Module,
+) -> HashMap<String, crate::ast::TypeDecl> {
+    let mut out: HashMap<String, crate::ast::TypeDecl> = HashMap::new();
+    for item in &module.items {
+        if let crate::ast::Item::Type(td) = item {
+            out.insert(td.name.clone(), td.clone());
+        }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let crate::ast::Item::Type(td) = item {
+                out.insert(td.name.clone(), td.clone());
+            }
+        }
+    }
+    out
 }
 
 pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
@@ -1148,6 +1347,12 @@ fn _pattern_ident_marker(_p: &Pattern) {
 pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic> {
     use crate::ast::{Item, Module};
     let mut errors: Vec<Diagnostic> = Vec::new();
+
+    // Plan 114.4.4 V4.6 M1: install TypeDecl registry для duration этого pass.
+    // Все вызовы type_size_or_align inside этой scope (size_of/align_of
+    // intrinsics в const fn body, const RHS) могут resolve user-defined
+    // Named types через thread-local.
+    let _registry_guard = TypeDeclRegistryGuard::new(build_type_decl_registry(module));
 
     // Two-stage borrow: clone fn registry into a self-owning structure
     // so we can hold the immutable view while we mutate other parts of

@@ -1,0 +1,20 @@
+// Plan 114.4.4 V4.6 M3 POSITIVE: generic closure-returning const fn через
+// HOF type inference (без explicit TurboFish at call site).
+// Closes [M-114.4.4-closure-generic-hof-inference].
+
+module plan114_4_4.closure_generic_hof_inferred_ok
+
+fn make_id[T]() -> const fn(T) -> T => fn(x T) -> T => x
+
+fn apply_i(f fn(int) -> int, x int) -> int => f(x)
+fn apply_b(f fn(bool) -> bool, x bool) -> bool => f(x)
+
+test "generic closure HOF inference" {
+    // T inferred = int from apply_i's f param expected type
+    ro r1 = apply_i(make_id(), 42)
+    assert(r1 == 42)
+
+    // T inferred = bool from apply_b's f param
+    ro r2 = apply_b(make_id(), true)
+    assert(r2 == true)
+}

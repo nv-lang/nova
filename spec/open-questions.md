@@ -232,6 +232,21 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 🎯 **Plan 114.4.4 family fully complete** — все 11 [M-114.4.4-*] markers
 closed, A1-A40 acceptance criteria, 65/65 fixtures PASS на release nova-cli.
 
+**V4.6 extensions (Plan 114.4.4 V4.6 final-followups session, 2026-06-03):**
+- ✅ M1 [M-114.4.4-trampoline-named-types] — size_of/align_of для user
+  records + sums через TypeDecl registry (thread-local guard).
+- ✅ M2 [M-114.4.4-closure-light-after-const-stmt-parser] — parser lookahead
+  disambiguation. ClosureLight `|x|` после Stmt::Const works correctly now.
+- ✅ M3 [M-114.4.4-closure-generic-hof-inference] — TurboFish optional для
+  generic closure-returning fns в HOF context (pre-pass adds TurboFish
+  via inference).
+- ✅ M4 [M-114.4.4-trampoline-complex-concrete] — composite TypeRef concrete
+  types (Tuple/Array/FixedArray/Named-with-generics/Unit/Readonly/Func)
+  via mangle_type_ref stable serialization.
+
+🎯🎯 **Plan 114.4.4 family ПОЛНОСТЬЮ ЗАКРЫТА V3-V4.6** — все 15 markers
+закрыты, A1-A44 acceptance criteria, 70/70 fixtures PASS на release nova-cli.
+
 **Что остаётся открытым (Q7 V4.3+):**
 - Comptime-функции имеют доступ к типам как первый класс?
   → V4.0 size_of/align для primitives ✅; records/generics → Plan 114.4.4.2.

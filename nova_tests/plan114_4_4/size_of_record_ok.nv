@@ -1,0 +1,31 @@
+// Plan 114.4.4 V4.6 M1 POSITIVE: size_of/align_of для user-defined records.
+// Closes [M-114.4.4-trampoline-named-types] (record variant).
+
+module plan114_4_4.size_of_record_ok
+
+type Point { x int, y int }
+type Mixed { a i8, b i32, c bool }
+type Empty {}
+
+// Point: 2 × i64 = 16, align 8.
+const SIZE_POINT = size_of[Point]()
+const ALIGN_POINT = align_of[Point]()
+
+// Mixed: i8 (1) + pad(3) + i32 (4) + bool (1) + tail-pad(3) = 12, align 4.
+const SIZE_MIXED = size_of[Mixed]()
+const ALIGN_MIXED = align_of[Mixed]()
+
+// Empty: size 0, align 1.
+const SIZE_EMPTY = size_of[Empty]()
+const ALIGN_EMPTY = align_of[Empty]()
+
+test "size_of for user records" {
+    assert(SIZE_POINT == 16)
+    assert(ALIGN_POINT == 8)
+
+    assert(SIZE_MIXED == 12)
+    assert(ALIGN_MIXED == 4)
+
+    assert(SIZE_EMPTY == 0)
+    assert(ALIGN_EMPTY == 1)
+}

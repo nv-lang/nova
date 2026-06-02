@@ -1,0 +1,26 @@
+// Plan 114.4.4 V4.6 M1 POSITIVE: size_of/align_of для user-defined sum types.
+
+module plan114_4_4.size_of_sum_ok
+
+// Unit-only sum: tag (4 bytes, align 4) + max payload (0) + tail pad = 4.
+type Color | Red | Green | Blue
+
+// Mixed sum: max payload = (int,int) = 16 bytes align 8.
+// Layout: tag(4) + pad(4 to align 8) + payload(16) + tail-pad(0) = 24.
+type Shape | None | Point(int) | Line(int, int)
+
+const SIZE_COLOR = size_of[Color]()
+const ALIGN_COLOR = align_of[Color]()
+
+const SIZE_SHAPE = size_of[Shape]()
+const ALIGN_SHAPE = align_of[Shape]()
+
+test "size_of for user sum types" {
+    // Color: 4 / 4 — all unit variants.
+    assert(SIZE_COLOR == 4)
+    assert(ALIGN_COLOR == 4)
+
+    // Shape: tag (4) + pad (4) + max-variant (int, int) = 16 = 24, align 8.
+    assert(SIZE_SHAPE == 24)
+    assert(ALIGN_SHAPE == 8)
+}

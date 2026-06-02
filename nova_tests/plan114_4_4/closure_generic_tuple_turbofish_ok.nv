@@ -1,0 +1,14 @@
+// Plan 114.4.4 V4.6 M4 POSITIVE: generic closure-returning const fn с
+// composite TurboFish concrete type. Closes part of
+// [M-114.4.4-trampoline-complex-concrete] для closure path.
+
+module plan114_4_4.closure_generic_tuple_turbofish_ok
+
+fn make_id[T]() -> const fn(T) -> T => fn(x T) -> T => x
+
+test "generic closure с tuple TurboFish" {
+    // T = (int, int) — explicit composite TurboFish
+    ro id_pair = make_id[(int, int)]()
+    ro r = id_pair((10, 20))
+    assert(r == (10, 20))
+}
