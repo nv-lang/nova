@@ -15668,6 +15668,7 @@ pub(crate) fn check_unsafe_context_in_module(
         depth: 0,
         unsafe_fns,
         fail_fns,
+        in_realtime: false,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -15683,11 +15684,19 @@ pub(crate) fn check_unsafe_context_in_module(
             // #unsafe fn body — implicit unsafe context per D216 §9.
             let entered_unsafe_fn = fd.unsafe_attr;
             if entered_unsafe_fn { state.depth += 1; }
+            // Plan 118 A33: #realtime fn body — pointer ops banned.
+            let entered_realtime = matches!(
+                fd.realtime_attr,
+                crate::ast::RealtimeAttr::Realtime | crate::ast::RealtimeAttr::RealtimeNogc
+            ) || matches!(fd.sync_class, Some(crate::ast::SyncClass::Realtime));
+            let prev_realtime = state.in_realtime;
+            if entered_realtime { state.in_realtime = true; }
             if let FnBody::Block(b) = &fd.body {
                 state.walk_block(b, errors);
             } else if let FnBody::Expr(e) = &fd.body {
                 state.walk_expr(e, errors);
             }
+            state.in_realtime = prev_realtime;
             if entered_unsafe_fn { state.depth -= 1; }
         }
         if let Item::Test(t) = item {
@@ -15704,6 +15713,11 @@ struct UnsafeCtx {
     /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
     /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     fail_fns: HashSet<String>,
+    /// Plan 118 A33 enforcement: currently walking body #realtime fn.
+    /// Pointer ops (AddrOf, Deref) inside #realtime fn → E_REALTIME_POINTER_OP
+    /// — deref может GC trigger (allocation), violates realtime guarantee
+    /// (Plan 113 D172 cross-ref).
+    in_realtime: bool,
 }
 
 impl UnsafeCtx {
@@ -15756,6 +15770,19 @@ impl UnsafeCtx {
                         e.span,
                     ));
                 }
+                // Plan 118 A33: pointer ops banned в #realtime fn body
+                // (D216 §20, D172 cross-ref) — deref может GC trigger,
+                // & may allocate via auto-promote.
+                if self.in_realtime {
+                    errors.push(Diagnostic::new(
+                        "[E_REALTIME_POINTER_OP] `&value` pointer creation \
+                         forbidden в `#realtime fn` body (Plan 118 D216 §20 \
+                         + Plan 113 D172). `&` может trigger heap allocation \
+                         via escape-analysis auto-promote — violates \
+                         realtime no-GC-pause guarantee.".to_string(),
+                        e.span,
+                    ));
+                }
                 self.walk_expr(operand, errors);
             }
             ExprKind::Unary { op: UnOp::Deref, operand } => {
@@ -15765,6 +15792,15 @@ impl UnsafeCtx {
                          requires unsafe context (Plan 118 D216 §8). Wrap \
                          expression в `unsafe { ... }` block, или mark \
                          enclosing fn `#unsafe`.".to_string(),
+                        e.span,
+                    ));
+                }
+                if self.in_realtime {
+                    errors.push(Diagnostic::new(
+                        "[E_REALTIME_POINTER_OP] `*expr` pointer dereference \
+                         forbidden в `#realtime fn` body (Plan 118 D216 §20 \
+                         + Plan 113 D172). Deref может GC trigger (если \
+                         pointee references GC-tracked memory).".to_string(),
                         e.span,
                     ));
                 }
