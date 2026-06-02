@@ -5151,6 +5151,22 @@ impl Parser {
                         start,
                     ));
                 }
+                // Plan 118 D216 §15: `&arr[i]` forbidden — array buffer
+                // может resize / GC compaction → pointer dangling. Для FFI
+                // buffer access use slice fat-pointer pattern (Plan 118.2)
+                // или `.as_ptr_unsafe()` method (deferred Q-block).
+                if matches!(operand.kind, ExprKind::Index { .. }) {
+                    return Err(Diagnostic::new(
+                        "[E_ARRAY_INDEX_PTR_BANNED] `&arr[i]` forbidden \
+                         (Plan 118 D216 §15) — array buffer может resize \
+                         (`.push`) или relocate via GC compaction; pointer \
+                         становится dangling. Для FFI buffer access use \
+                         slice fat-pointer pattern (Plan 118.2 — *[T] /\
+                         *ro [T] / *mut [T]) которое carries (ptr, len) pair \
+                         с bounds-tracking.".to_string(),
+                        start,
+                    ));
+                }
                 let span = start.merge(operand.span);
                 Ok(Expr::new(
                     ExprKind::Unary {

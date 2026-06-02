@@ -1,0 +1,15 @@
+// Plan 118 Ф.4 NEG-T4.19 — `&arr[i]` forbidden (D216 §15).
+//
+// Array buffer может resize (`.push`) или relocate via GC compaction;
+// pointer становится dangling. Для FFI buffer access use slice
+// fat-pointer pattern (Plan 118.2).
+//
+// EXPECT_COMPILE_ERROR E_ARRAY_INDEX_PTR_BANNED
+
+module plan118.t4_neg_amp_array_index
+
+test "rejects &arr[i]" {
+    ro arr = [1, 2, 3]
+    ro p = &arr[1]
+    assert(1 == 1)
+}
