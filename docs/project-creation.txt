@@ -27802,3 +27802,83 @@ Deferred к next session (per umbrella roadmap):
 - Plan 124.6 Test access + visible_to friends
 - Plan 124.7 Type-level priv flip (tuples)
 
+
+================================================================================
+Plan 114.4.4 finish session — Ф.4 + Ф.5 V4 (2 markers closed) — 2026-06-02
+================================================================================
+
+Branch: plan-114.4.4-finish (off main a78f837d1b1).
+
+Закрыты 2 V4 markers через 2 V3 phases lifted:
+- [M-114.4.3-pattern-record-sum] → Ф.4 record/sum/tuple patterns.
+- [M-114.4.3-t-reflection] для primitives → Ф.5 sizeof/align_of.
+
+V4 phase summaries:
+
+Ф.4 record/sum patterns (3ba795e5281):
+- ConstValue enum extended: Tuple(Vec<ConstValue>) + Variant(name, args)
+  + Record(Vec<(name, value)>) variants.
+- match_const_pattern extended: Pattern::Tuple, Pattern::Variant{path, kind},
+  Pattern::Record{fields, rest}, Pattern::Binding handled.
+- check_const_fn_pattern: V2.0 subset → V4 expanded subset.
+- check_const_fn_expr Match: arm_locals collect pattern bindings для
+  arm body/guard validation. collect_const_fn_pattern_bindings helper.
+- TupleLit/RecordLit accepted в body checker (recursive sub-validation).
+- Variant constructor heuristic в check + eval + try_literal_to_value:
+  Call(Ident(TitleCase), args) и Name не в const_fn_names → variant.
+- try_literal_to_value extended: Unary/Binary/As/TupleLit/Call(variant)
+  для arg pre-evaluation на call sites.
+
+Ф.5 t-reflection primitives (69f8d9a1381):
+- type_size_or_align(t, is_align) helper: primitive ABI table per
+  default 64-bit ABI (int=8, i32=4, i16=2, i8=1, bool=1, char=4,
+  str=16, etc.).
+- simple_type_name_str helper.
+- check_const_fn_expr Call: turbofish callee unwrap; sizeof/align_of
+  recognized as builtin без registration.
+- check_const_constexpr_ex Call: sizeof/align_of pre-accept перед
+  const_fn_names check.
+- OwnedEvaluator.eval_expr: sizeof/align_of intrinsic → ConstValue::Int.
+- try_literal_to_value: TurboFish sizeof/align_of pre-evaluation.
+- walk_expr: sizeof[T]() / align_of[T]() → IntLit replacement для
+  module-level const RHS.
+- is_known: sizeof/align_of recognized as builtin identifiers
+  (name resolution).
+- rewrite_const_fn_calls: early-return removed (walk module даже без
+  const fn для sizeof intrinsic в const RHS).
+- V4.0 surface: primitives only. Records/generics → Plan 114.4.4.2.
+
+V4 extensions spec (4d3764abdae):
+- D199 V4 extensions subsection added после V3.
+- Q7 updated с V4 closures.
+- A31 + A32 acceptance criteria.
+
+Tests (plan114_4_4/, 4 new):
+- pattern_tuple_ok: classify(x, y) с tuple pattern arms.
+- pattern_variant_ok: unwrap_or через Some(x)/None pattern.
+- sizeof_primitives_ok: 5 sizeof/align_of usage examples.
+- sizeof_in_const_fn_ok: buf_size(10) = 10*sizeof[int]() = 80.
+
+Verification: 12/12 plan114_4_4 + 14/14 plan114_4_3 + 16/16 plan114_4_2
+= 42/42 PASS на release nova-cli.
+
+What extracted (Ф.6-Ф.8 — focused dev-day each, separate plans):
+- Plan 114.4.4.3 — runtime HOF trampoline. Requires ABI design для
+  const fn → function pointer conversion. Complex codegen.
+- Plan 114.4.4.4 — closure-returning const fn. Closure capture
+  semantics на compile-time.
+- Plan 114.4.4.5 — true per-const-arg monomorphization. Deep Plan 70.5
+  mono pipeline integration.
+
+Each Plan 114.4.4.3/4/5 ships independently when triggered.
+
+Final markers closed (Plan 114.4.3 chain): 6 of 9 V2.1/V3 followups
+landed (4 в первой Plan 114.4.4 + 2 в этой finish session):
+- [M-114.4.3-configurable-depth] ✅
+- [M-114.4.3-runtime-let-enforcement] ✅
+- [M-114.4.3-friendly-hof-error] ✅
+- [M-114.4.3-loops] ✅
+- [M-114.4.3-pattern-record-sum] ✅ (этот session)
+- [M-114.4.3-t-reflection] ✅ для primitives (этот session)
+
+Remaining 3 deferred to Plan 114.4.4.3/4/5 (V4.1+ scope).
