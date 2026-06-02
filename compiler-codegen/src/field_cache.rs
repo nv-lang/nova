@@ -47,21 +47,38 @@ pub struct FieldCacheConfig {
     pub enabled: bool,
     pub threshold: usize,
     pub max_per_fn: usize,
+    /// Plan 123.2 (D218): enable Loop-Invariant Code Motion phase.
+    /// LICM phase runs BEFORE per-fn ro/mut caching и hoist'ит
+    /// invariant `@<F>` reads из loop bodies в pre-loop position.
+    pub licm_enabled: bool,
+    /// Plan 123.2 LICM threshold: min reads inside a single loop body
+    /// to trigger hoist. Default 2.
+    pub licm_threshold: usize,
+    /// Plan 123.2 LICM cap: max hoists per loop. Default 4.
+    pub licm_max_per_loop: usize,
 }
 
 impl Default for FieldCacheConfig {
     fn default() -> Self {
-        Self { enabled: true, threshold: 2, max_per_fn: 8 }
+        Self {
+            enabled: true,
+            threshold: 2,
+            max_per_fn: 8,
+            licm_enabled: true,
+            licm_threshold: 2,
+            licm_max_per_loop: 4,
+        }
     }
 }
 
 impl FieldCacheConfig {
     /// `threshold == 0` → disabled (escape hatch).
     pub fn from_threshold(threshold: usize, max_per_fn: usize) -> Self {
+        let base = Self::default();
         if threshold == 0 {
-            Self { enabled: false, threshold: 2, max_per_fn }
+            Self { enabled: false, threshold: 2, max_per_fn, ..base }
         } else {
-            Self { enabled: true, threshold, max_per_fn }
+            Self { enabled: true, threshold, max_per_fn, ..base }
         }
     }
 
@@ -93,6 +110,28 @@ impl FieldCacheConfig {
             if let Ok(n) = v.parse::<usize>() {
                 if n > 0 {
                     cfg.max_per_fn = n;
+                }
+            }
+        }
+        // Plan 123.2 LICM env vars.
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_LICM") {
+            if v == "0" || v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("false") {
+                cfg.licm_enabled = false;
+            }
+        }
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_LICM_THRESHOLD") {
+            if let Ok(n) = v.parse::<usize>() {
+                if n == 0 {
+                    cfg.licm_enabled = false;
+                } else {
+                    cfg.licm_threshold = n;
+                }
+            }
+        }
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_LICM_MAX") {
+            if let Ok(n) = v.parse::<usize>() {
+                if n > 0 {
+                    cfg.licm_max_per_loop = n;
                 }
             }
         }
@@ -131,12 +170,21 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
 
     for item in &mut module.items {
         if let Item::Fn(f) = item {
+            // Plan 123.2 (D218): LICM phase FIRST — hoist invariant
+            // loop reads. Plan 123.1 (D217) per-fn caching SECOND —
+            // sees hoisted locals as already cached.
+            if cfg.licm_enabled {
+                licm_fn(f, &registry, cfg);
+            }
             cache_fn(f, &registry, cfg);
         }
     }
     for pf in &mut module.peer_files {
         for item in &mut pf.items_here {
             if let Item::Fn(f) = item {
+                if cfg.licm_enabled {
+                    licm_fn(f, &registry, cfg);
+                }
                 cache_fn(f, &registry, cfg);
             }
         }
@@ -2255,6 +2303,1073 @@ fn rewrite_trailing(t: &mut Trailing, replace_map: &HashMap<String, String>) {
             // Trailing closure scopes — same logic as ClosureLight/Full
             // (different scope, no cache local). Skip recursion.
         }
+    }
+}
+
+// ===== Plan 123.2 (D218): LICM — Loop-Invariant Code Motion =====
+//
+// Phase invoked BEFORE per-fn ro/mut caching (см. cache_module).
+// Walks fn body recursively; for each loop (For/While/Loop/WhileLet),
+// detects @<F> reads that are invariant w.r.t. loop iteration —
+// hoists `ro _at_<F>_loop = @<F>` immediately before the loop in
+// the enclosing Block.
+//
+// ParallelFor — skipped (concurrent body, aliasing safety).
+//
+// Eligibility per field F:
+// - reads inside loop body ≥ cfg.licm_threshold (default 2).
+// - NOT written in body (Assign or compound on @F anywhere).
+// - NOT captured by any closure in body.
+// - Body does NOT contain Spawn / Supervised / Detach / Blocking.
+// - For mut field: body does NOT contain any Call (V2 conservative).
+// - For ro field: calls in body are OK (frozen — no aliasing).
+//
+// Naming: `_at_<field>_loop` (distinct from Plan 123.1 `_at_<field>`).
+// Collision avoidance: numeric suffix `_<N>`.
+
+/// Per-fn LICM entry point.
+fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    let Some(recv) = &f.receiver else { return };
+    if recv.kind == ReceiverKind::Static {
+        return;
+    }
+    let type_name = &recv.type_name;
+    if reg.skip_types.contains(type_name) {
+        return;
+    }
+    let Some(fields) = reg.by_type.get(type_name) else {
+        return;
+    };
+    if fields.is_empty() {
+        return;
+    }
+    if f.is_external {
+        return;
+    }
+
+    // Pre-collect existing locals для collision avoidance.
+    let mut local_names: HashSet<String> = HashSet::new();
+    for p in &f.params {
+        local_names.insert(p.name.clone());
+    }
+    collect_local_names_fn(f, &mut local_names);
+
+    let mut hoist_count = 0usize;
+
+    match &mut f.body {
+        FnBody::Block(b) => {
+            licm_block(b, fields, cfg, &mut local_names, &mut hoist_count);
+        }
+        FnBody::Expr(e) => {
+            // Body is Expr; recurse into it. If the entire body is a
+            // loop (rare), we coerce to Block first so hoist can be
+            // inserted before it.
+            let span = e.span;
+            // Check if expr itself is a loop.
+            if matches!(e.kind, ExprKind::For { .. } | ExprKind::While { .. }
+                       | ExprKind::Loop { .. } | ExprKind::WhileLet { .. }) {
+                // Coerce FnBody::Expr → Block-with-trailing.
+                let body_expr = match std::mem::replace(&mut f.body, FnBody::External) {
+                    FnBody::Expr(e) => e,
+                    _ => unreachable!(),
+                };
+                let block = Block {
+                    stmts: Vec::new(),
+                    trailing: Some(Box::new(body_expr)),
+                    span,
+                };
+                f.body = FnBody::Block(block);
+                if let FnBody::Block(b) = &mut f.body {
+                    licm_block(b, fields, cfg, &mut local_names, &mut hoist_count);
+                }
+            } else {
+                licm_expr(e, fields, cfg, &mut local_names, &mut hoist_count);
+            }
+        }
+        FnBody::External => {}
+    }
+}
+
+/// LICM walk for a Block — process inner loops and trailing.
+fn licm_block(
+    b: &mut Block,
+    fields: &HashMap<String, FieldKind>,
+    cfg: &FieldCacheConfig,
+    local_names: &mut HashSet<String>,
+    hoist_count: &mut usize,
+) {
+    // Phase A: recurse into each stmt first (handles nested loops
+    // в inner blocks DFS-postorder — inner loops processed before
+    // we hoist for outer). Then rebuild stmts vec, inserting hoists
+    // before any stmt that contains a top-level loop expression.
+    let old_stmts = std::mem::take(&mut b.stmts);
+    let mut new_stmts: Vec<Stmt> = Vec::with_capacity(old_stmts.len() + 4);
+
+    for mut s in old_stmts {
+        // First recurse for nested loops в this stmt's sub-blocks.
+        licm_stmt(&mut s, fields, cfg, local_names, hoist_count);
+
+        // If this stmt IS a top-level loop expression, process LICM
+        // for it и insert hoists before.
+        if let Stmt::Expr(loop_expr) = &mut s {
+            if let Some(body_ref) = expr_as_loop_body_mut(loop_expr) {
+                process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut new_stmts);
+            }
+        }
+        new_stmts.push(s);
+    }
+
+    b.stmts = new_stmts;
+
+    // Phase B: handle trailing — recurse, then if trailing IS a loop,
+    // hoist as last stmts of stmts.
+    if let Some(t) = &mut b.trailing {
+        licm_expr(t, fields, cfg, local_names, hoist_count);
+        if let Some(body_ref) = expr_as_loop_body_mut(t) {
+            process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut b.stmts);
+        }
+    }
+}
+
+/// Compute eligible fields для hoisting и rewrite loop body.
+/// Emit hoist let statements into `out_stmts`.
+fn process_loop(
+    body: &mut Block,
+    fields: &HashMap<String, FieldKind>,
+    cfg: &FieldCacheConfig,
+    local_names: &mut HashSet<String>,
+    hoist_count: &mut usize,
+    out_stmts: &mut Vec<Stmt>,
+) {
+    let eligible = collect_loop_eligible_fields(body, fields, cfg);
+    // Bound by max-per-loop AND remaining max_per_fn quota.
+    let remaining = cfg.max_per_fn.saturating_sub(*hoist_count);
+    let take = eligible.len().min(cfg.licm_max_per_loop).min(remaining);
+    for (fname, span) in eligible.into_iter().take(take) {
+        // Generate collision-safe cache local name.
+        let base = format!("_at_{}_loop", fname);
+        let mut chosen = base.clone();
+        let mut suffix = 0usize;
+        while local_names.contains(&chosen) {
+            suffix += 1;
+            chosen = format!("{}_{}", base, suffix);
+        }
+        local_names.insert(chosen.clone());
+
+        // Emit hoist let — `ro _at_<F>_loop = @<F>`.
+        let hoist = make_hoist_let(&chosen, &fname, span);
+        out_stmts.push(hoist);
+
+        // Rewrite reads of @F inside loop body.
+        let replace_map: HashMap<String, String> =
+            std::iter::once((fname.clone(), chosen.clone())).collect();
+        rewrite_block(body, &replace_map);
+
+        *hoist_count += 1;
+    }
+}
+
+/// Helper: build `ro _at_<F>_loop = @<F>` Stmt::Let.
+fn make_hoist_let(local_name: &str, fname: &str, span: crate::diag::Span) -> Stmt {
+    let access = Expr {
+        kind: ExprKind::Member {
+            obj: Box::new(Expr {
+                kind: ExprKind::SelfAccess,
+                span,
+            }),
+            name: fname.to_string(),
+        },
+        span,
+    };
+    Stmt::Let(LetDecl {
+        mutable: false,
+        pattern: Pattern::Ident {
+            name: local_name.to_string(),
+            span,
+            is_mut: false,
+        },
+        ty: None,
+        value: access,
+        span,
+        is_ghost: false,
+        consume: false,
+    })
+}
+
+/// Match expression to a mutable loop body Block reference.
+fn expr_as_loop_body_mut(e: &mut Expr) -> Option<&mut Block> {
+    match &mut e.kind {
+        ExprKind::For { body, .. } => Some(body),
+        ExprKind::While { body, .. } => Some(body),
+        ExprKind::Loop { body, .. } => Some(body),
+        ExprKind::WhileLet { body, .. } => Some(body),
+        _ => None,
+    }
+}
+
+/// Recurse LICM into stmt's child blocks.
+fn licm_stmt(
+    s: &mut Stmt,
+    fields: &HashMap<String, FieldKind>,
+    cfg: &FieldCacheConfig,
+    local_names: &mut HashSet<String>,
+    hoist_count: &mut usize,
+) {
+    match s {
+        Stmt::Let(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count),
+        Stmt::Const(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count),
+        Stmt::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+        Stmt::Assign { target, value, .. } => {
+            licm_expr(target, fields, cfg, local_names, hoist_count);
+            licm_expr(value, fields, cfg, local_names, hoist_count);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                licm_expr(v, fields, cfg, local_names, hoist_count);
+            }
+        }
+        Stmt::Throw { value, .. } => {
+            licm_expr(value, fields, cfg, local_names, hoist_count);
+        }
+        Stmt::Defer { body, .. }
+        | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. }
+        | Stmt::DeferWithResult { body, .. } => {
+            licm_expr(body, fields, cfg, local_names, hoist_count);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            licm_expr(init, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            licm_expr(expr, fields, cfg, local_names, hoist_count);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+/// Recurse LICM into all Block-containing expression children.
+/// Note: для loops в expression position (as opposed to top-level
+/// stmts), we recurse into body but DON'T emit hoist there — hoist
+/// requires a Block.stmts list to insert into. Loops в trailing or
+/// в conditional expressions get hoisted в их enclosing Block via
+/// the licm_block walker.
+fn licm_expr(
+    e: &mut Expr,
+    fields: &HashMap<String, FieldKind>,
+    cfg: &FieldCacheConfig,
+    local_names: &mut HashSet<String>,
+    hoist_count: &mut usize,
+) {
+    match &mut e.kind {
+        ExprKind::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+        ExprKind::If { cond, then, else_ } => {
+            licm_expr(cond, fields, cfg, local_names, hoist_count);
+            licm_block(then, fields, cfg, local_names, hoist_count);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
+            licm_block(then, fields, cfg, local_names, hoist_count);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard {
+                    licm_expr(g, fields, cfg, local_names, hoist_count);
+                }
+                match &mut arm.body {
+                    MatchArmBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    MatchArmBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            licm_expr(iter, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            // Concurrent body — skip LICM. Still recurse into iter
+            // (could contain nested control flow).
+            licm_expr(iter, fields, cfg, local_names, hoist_count);
+            // DON'T recurse into body — body executes concurrently
+            // per element; hoisting would change semantics.
+            let _ = body;
+        }
+        ExprKind::While { cond, body, .. } => {
+            licm_expr(cond, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Loop { body, .. } => {
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::With { bindings, body } => {
+            for wb in bindings {
+                licm_expr(&mut wb.handler, fields, cfg, local_names, hoist_count);
+            }
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            licm_block(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            // Supervised body — concurrent (fibers). Skip LICM on body.
+            let _ = body;
+            if let Some(c) = cancel {
+                licm_expr(c, fields, cfg, local_names, hoist_count);
+            }
+        }
+        ExprKind::Detach(_) | ExprKind::Blocking(_) | ExprKind::Spawn(_) => {
+            // Concurrent or threadpool body — skip.
+        }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => {
+            licm_expr(e, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            licm_expr(a, fields, cfg, local_names, hoist_count);
+            licm_expr(b, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Index { obj, index } => {
+            licm_expr(obj, fields, cfg, local_names, hoist_count);
+            licm_expr(index, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            licm_expr(func, fields, cfg, local_names, hoist_count);
+            for a in args {
+                match a {
+                    CallArg::Item(e) | CallArg::Spread(e) =>
+                        licm_expr(e, fields, cfg, local_names, hoist_count),
+                    CallArg::Named { value, .. } =>
+                        licm_expr(value, fields, cfg, local_names, hoist_count),
+                }
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    Trailing::Fn(sb) => match &mut sb.body {
+                        FnBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                        FnBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) =>
+                        licm_block(&mut tb.body, fields, cfg, local_names, hoist_count),
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    licm_expr(e, fields, cfg, local_names, hoist_count);
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) =>
+                        licm_expr(e, fields, cfg, local_names, hoist_count),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        licm_expr(k, fields, cfg, local_names, hoist_count);
+                        licm_expr(v, fields, cfg, local_names, hoist_count);
+                    }
+                    MapElem::Spread(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &mut rf.value {
+                    licm_expr(v, fields, cfg, local_names, hoist_count);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                licm_expr(el, fields, cfg, local_names, hoist_count);
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &mut arm.guard {
+                    licm_expr(g, fields, cfg, local_names, hoist_count);
+                }
+                licm_block(&mut arm.body, fields, cfg, local_names, hoist_count);
+                match &mut arm.op {
+                    SelectOp::Recv { chan, .. } => licm_expr(chan, fields, cfg, local_names, hoist_count),
+                    SelectOp::Send { chan, value } => {
+                        licm_expr(chan, fields, cfg, local_names, hoist_count);
+                        licm_expr(value, fields, cfg, local_names, hoist_count);
+                    }
+                    SelectOp::Default => {}
+                }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { licm_expr(s, fields, cfg, local_names, hoist_count); }
+            if let Some(e) = end { licm_expr(e, fields, cfg, local_names, hoist_count); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            licm_expr(range, fields, cfg, local_names, hoist_count);
+            licm_expr(body, fields, cfg, local_names, hoist_count);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count); }
+        }
+        ExprKind::Throw(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            licm_expr(tag, fields, cfg, local_names, hoist_count);
+            for a in args { licm_expr(a, fields, cfg, local_names, hoist_count); }
+        }
+        // Closures — separate scope; don't process LICM inside.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => {}
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::SelfAccess => {}
+    }
+}
+
+/// Compute eligible fields для hoisting from a loop body.
+/// Reuses existing helpers: count_field_reads_in_block,
+/// block_contains_write_to, block_contains_call, scan_block (closures),
+/// и block_contains_spawn (new).
+fn collect_loop_eligible_fields(
+    body: &Block,
+    fields: &HashMap<String, FieldKind>,
+    cfg: &FieldCacheConfig,
+) -> Vec<(String, crate::diag::Span)> {
+    // Spawn / Supervised / Detach / Blocking → skip whole loop.
+    if block_contains_spawn(body) {
+        return Vec::new();
+    }
+    // Detect fields captured by closure bodies WITHIN the loop body.
+    // NB: scan_block treats ALL @F references as captures (designed
+    // for use on closure bodies). For loop body, we need a different
+    // helper: walk into nested closures only, and within them apply
+    // capture detection. See `collect_closures_captures_in_block`.
+    let mut closure_captured: HashSet<String> = HashSet::new();
+    collect_closures_captures_in_block(body, fields, &mut closure_captured);
+
+    // Detect if loop body has any Call (mut fields invalidated).
+    let body_has_call = block_contains_call(body);
+
+    let mut result: Vec<(String, crate::diag::Span)> = Vec::new();
+    let mut keys: Vec<&String> = fields.keys().collect();
+    keys.sort();
+    for fname in keys {
+        let count = count_field_reads_in_block(body, fname);
+        if count < cfg.licm_threshold {
+            continue;
+        }
+        if block_contains_write_to(body, fname) {
+            continue;
+        }
+        if closure_captured.contains(fname) {
+            continue;
+        }
+        let kind = match fields.get(fname) {
+            Some(k) => *k,
+            None => continue,
+        };
+        if matches!(kind, FieldKind::Mut) && body_has_call {
+            continue;
+        }
+        // First-span lookup — find first `@F` access in body.
+        let span = first_field_span_in_block(body, fname).unwrap_or(body.span);
+        result.push((fname.clone(), span));
+    }
+    result
+}
+
+/// Walk block looking for nested closure expressions. For each closure
+/// body encountered, scan its body using scan_expr/scan_block (which
+/// adds all @F references). NB: this does NOT add @F references that
+/// appear OUTSIDE closures.
+fn collect_closures_captures_in_block(
+    b: &Block,
+    fields: &HashMap<String, FieldKind>,
+    out: &mut HashSet<String>,
+) {
+    for s in &b.stmts {
+        collect_closures_captures_in_stmt(s, fields, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_closures_captures_in_expr(t, fields, out);
+    }
+}
+
+fn collect_closures_captures_in_stmt(
+    s: &Stmt,
+    fields: &HashMap<String, FieldKind>,
+    out: &mut HashSet<String>,
+) {
+    match s {
+        Stmt::Let(d) => collect_closures_captures_in_expr(&d.value, fields, out),
+        Stmt::Const(d) => collect_closures_captures_in_expr(&d.value, fields, out),
+        Stmt::Expr(e) => collect_closures_captures_in_expr(e, fields, out),
+        Stmt::Assign { target, value, .. } => {
+            collect_closures_captures_in_expr(target, fields, out);
+            collect_closures_captures_in_expr(value, fields, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_closures_captures_in_expr(v, fields, out);
+            }
+        }
+        Stmt::Throw { value, .. } => {
+            collect_closures_captures_in_expr(value, fields, out);
+        }
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            collect_closures_captures_in_expr(body, fields, out);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_closures_captures_in_expr(init, fields, out);
+            collect_closures_captures_in_block(body, fields, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_closures_captures_in_expr(expr, fields, out);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn collect_closures_captures_in_expr(
+    e: &Expr,
+    fields: &HashMap<String, FieldKind>,
+    out: &mut HashSet<String>,
+) {
+    // Found a closure — scan its body with the capture scanner.
+    match &e.kind {
+        ExprKind::Lambda { body, .. } => {
+            scan_expr(body, fields, out);
+            return;
+        }
+        ExprKind::ClosureLight { body, .. } => {
+            match body {
+                ClosureBody::Expr(e) => scan_expr(e, fields, out),
+                ClosureBody::Block(b) => scan_block(b, fields, out),
+            }
+            return;
+        }
+        ExprKind::ClosureFull(sb) => {
+            match &sb.body {
+                FnBody::Expr(e) => scan_expr(e, fields, out),
+                FnBody::Block(b) => scan_block(b, fields, out),
+                FnBody::External => {}
+            }
+            return;
+        }
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(e) => scan_expr(e, fields, out),
+                    HandlerMethodBody::Block(b) => scan_block(b, fields, out),
+                }
+            }
+            return;
+        }
+        _ => {}
+    }
+    // No closure here — recurse into sub-expressions / sub-blocks
+    // looking for nested closures.
+    match &e.kind {
+        ExprKind::Block(b) => collect_closures_captures_in_block(b, fields, out),
+        ExprKind::If { cond, then, else_ } => {
+            collect_closures_captures_in_expr(cond, fields, out);
+            collect_closures_captures_in_block(then, fields, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_closures_captures_in_block(b, fields, out),
+                    ElseBranch::If(e) => collect_closures_captures_in_expr(e, fields, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            collect_closures_captures_in_expr(scrutinee, fields, out);
+            collect_closures_captures_in_block(then, fields, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => collect_closures_captures_in_block(b, fields, out),
+                    ElseBranch::If(e) => collect_closures_captures_in_expr(e, fields, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_closures_captures_in_expr(scrutinee, fields, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_closures_captures_in_expr(g, fields, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => collect_closures_captures_in_expr(e, fields, out),
+                    MatchArmBody::Block(b) => collect_closures_captures_in_block(b, fields, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            collect_closures_captures_in_expr(iter, fields, out);
+            collect_closures_captures_in_block(body, fields, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_closures_captures_in_expr(cond, fields, out);
+            collect_closures_captures_in_block(body, fields, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            collect_closures_captures_in_expr(scrutinee, fields, out);
+            collect_closures_captures_in_block(body, fields, out);
+        }
+        ExprKind::Loop { body, .. } => collect_closures_captures_in_block(body, fields, out),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings {
+                collect_closures_captures_in_expr(&wb.handler, fields, out);
+            }
+            collect_closures_captures_in_block(body, fields, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            collect_closures_captures_in_block(body, fields, out);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            collect_closures_captures_in_block(body, fields, out);
+            if let Some(c) = cancel { collect_closures_captures_in_expr(c, fields, out); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            collect_closures_captures_in_expr(e, fields, out);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            collect_closures_captures_in_expr(a, fields, out);
+            collect_closures_captures_in_expr(b, fields, out);
+        }
+        ExprKind::Index { obj, index } => {
+            collect_closures_captures_in_expr(obj, fields, out);
+            collect_closures_captures_in_expr(index, fields, out);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            collect_closures_captures_in_expr(func, fields, out);
+            for a in args {
+                collect_closures_captures_in_expr(a.expr(), fields, out);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => collect_closures_captures_in_block(b, fields, out),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => collect_closures_captures_in_block(b, fields, out),
+                        FnBody::Expr(e) => collect_closures_captures_in_expr(e, fields, out),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) =>
+                        collect_closures_captures_in_block(&tb.body, fields, out),
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    collect_closures_captures_in_expr(e, fields, out);
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) =>
+                        collect_closures_captures_in_expr(e, fields, out),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        collect_closures_captures_in_expr(k, fields, out);
+                        collect_closures_captures_in_expr(v, fields, out);
+                    }
+                    MapElem::Spread(e) => collect_closures_captures_in_expr(e, fields, out),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value {
+                    collect_closures_captures_in_expr(v, fields, out);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                collect_closures_captures_in_expr(el, fields, out);
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_closures_captures_in_expr(g, fields, out);
+                }
+                collect_closures_captures_in_block(&arm.body, fields, out);
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => collect_closures_captures_in_expr(chan, fields, out),
+                    SelectOp::Send { chan, value } => {
+                        collect_closures_captures_in_expr(chan, fields, out);
+                        collect_closures_captures_in_expr(value, fields, out);
+                    }
+                    SelectOp::Default => {}
+                }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { collect_closures_captures_in_expr(s, fields, out); }
+            if let Some(e) = end { collect_closures_captures_in_expr(e, fields, out); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            collect_closures_captures_in_expr(range, fields, out);
+            collect_closures_captures_in_expr(body, fields, out);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { collect_closures_captures_in_expr(e, fields, out); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            collect_closures_captures_in_expr(tag, fields, out);
+            for a in args { collect_closures_captures_in_expr(a, fields, out); }
+        }
+        // Leaves.
+        _ => {}
+    }
+}
+
+/// Block contains Spawn/Supervised/Detach/Blocking expr.
+fn block_contains_spawn(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_contains_spawn)
+        || b.trailing.as_ref().map_or(false, |t| expr_contains_spawn(t))
+}
+
+fn stmt_contains_spawn(s: &Stmt) -> bool {
+    match s {
+        Stmt::Let(d) => expr_contains_spawn(&d.value),
+        Stmt::Const(d) => expr_contains_spawn(&d.value),
+        Stmt::Expr(e) => expr_contains_spawn(e),
+        Stmt::Assign { target, value, .. } => {
+            expr_contains_spawn(target) || expr_contains_spawn(value)
+        }
+        Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_contains_spawn(v)),
+        Stmt::Throw { value, .. } => expr_contains_spawn(value),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            expr_contains_spawn(body)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_contains_spawn(init) || block_contains_spawn(body)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_contains_spawn(expr),
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn expr_contains_spawn(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Spawn(_) | ExprKind::Supervised { .. }
+        | ExprKind::Detach(_) | ExprKind::Blocking(_)
+        | ExprKind::ParallelFor { .. } => true,
+        ExprKind::Block(b) => block_contains_spawn(b),
+        ExprKind::If { cond, then, else_ } => {
+            expr_contains_spawn(cond) || block_contains_spawn(then)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => block_contains_spawn(b),
+                    ElseBranch::If(e) => expr_contains_spawn(e),
+                })
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            expr_contains_spawn(scrutinee) || block_contains_spawn(then)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => block_contains_spawn(b),
+                    ElseBranch::If(e) => expr_contains_spawn(e),
+                })
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_contains_spawn(scrutinee) || arms.iter().any(|arm| {
+                arm.guard.as_ref().map_or(false, |g| expr_contains_spawn(g))
+                    || match &arm.body {
+                        MatchArmBody::Expr(e) => expr_contains_spawn(e),
+                        MatchArmBody::Block(b) => block_contains_spawn(b),
+                    }
+            })
+        }
+        ExprKind::For { iter, body, .. } => {
+            expr_contains_spawn(iter) || block_contains_spawn(body)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_contains_spawn(cond) || block_contains_spawn(body)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            expr_contains_spawn(scrutinee) || block_contains_spawn(body)
+        }
+        ExprKind::Loop { body, .. } => block_contains_spawn(body),
+        ExprKind::With { bindings, body } => {
+            bindings.iter().any(|wb| expr_contains_spawn(&wb.handler))
+                || block_contains_spawn(body)
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            block_contains_spawn(body)
+        }
+        ExprKind::Throw(e) | ExprKind::Spawn(e) => expr_contains_spawn(e),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => expr_contains_spawn(e),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            expr_contains_spawn(a) || expr_contains_spawn(b)
+        }
+        ExprKind::Index { obj, index } => expr_contains_spawn(obj) || expr_contains_spawn(index),
+        ExprKind::Call { func, args, trailing } => {
+            expr_contains_spawn(func)
+                || args.iter().any(|a| expr_contains_spawn(a.expr()))
+                || trailing.as_ref().map_or(false, |t| match t {
+                    Trailing::Block(b) => block_contains_spawn(b),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => block_contains_spawn(b),
+                        FnBody::Expr(e) => expr_contains_spawn(e),
+                        FnBody::External => false,
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => block_contains_spawn(&tb.body),
+                })
+        }
+        ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
+            ArrayElem::Item(e) | ArrayElem::Spread(e) => expr_contains_spawn(e),
+        }),
+        ExprKind::MapLit { elems, .. } => elems.iter().any(|el| match el {
+            MapElem::Pair(k, v) => expr_contains_spawn(k) || expr_contains_spawn(v),
+            MapElem::Spread(e) => expr_contains_spawn(e),
+        }),
+        ExprKind::RecordLit { fields: rfields, .. } => rfields.iter().any(|rf| {
+            rf.value.as_ref().map_or(false, |v| expr_contains_spawn(v))
+        }),
+        ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_spawn(el)),
+        ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
+            if let InterpStrPart::Expr(e) = p { expr_contains_spawn(e) } else { false }
+        }),
+        ExprKind::Select { arms } => arms.iter().any(|arm| {
+            block_contains_spawn(&arm.body)
+                || arm.guard.as_ref().map_or(false, |g| expr_contains_spawn(g))
+                || match &arm.op {
+                    SelectOp::Recv { chan, .. } => expr_contains_spawn(chan),
+                    SelectOp::Send { chan, value } => expr_contains_spawn(chan) || expr_contains_spawn(value),
+                    SelectOp::Default => false,
+                }
+        }),
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().map_or(false, |s| expr_contains_spawn(s))
+                || end.as_ref().map_or(false, |e| expr_contains_spawn(e))
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            expr_contains_spawn(range) || expr_contains_spawn(body)
+        }
+        ExprKind::Interrupt(opt) => opt.as_ref().map_or(false, |e| expr_contains_spawn(e)),
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            expr_contains_spawn(tag) || args.iter().any(expr_contains_spawn)
+        }
+        // Closures — values, not synchronous execution. Don't propagate.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => false,
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::SelfAccess => false,
+    }
+}
+
+/// Find first span of @F access in block (для debug-info на hoisted let).
+fn first_field_span_in_block(b: &Block, fname: &str) -> Option<crate::diag::Span> {
+    for s in &b.stmts {
+        if let Some(sp) = first_field_span_in_stmt(s, fname) {
+            return Some(sp);
+        }
+    }
+    b.trailing.as_ref().and_then(|t| first_field_span_in_expr(t, fname))
+}
+
+fn first_field_span_in_stmt(s: &Stmt, fname: &str) -> Option<crate::diag::Span> {
+    match s {
+        Stmt::Let(d) => first_field_span_in_expr(&d.value, fname),
+        Stmt::Const(d) => first_field_span_in_expr(&d.value, fname),
+        Stmt::Expr(e) => first_field_span_in_expr(e, fname),
+        Stmt::Assign { target, value, .. } => {
+            first_field_span_in_expr(target, fname).or_else(|| first_field_span_in_expr(value, fname))
+        }
+        Stmt::Return { value, .. } => value.as_ref().and_then(|v| first_field_span_in_expr(v, fname)),
+        Stmt::Throw { value, .. } => first_field_span_in_expr(value, fname),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            first_field_span_in_expr(body, fname)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            first_field_span_in_expr(init, fname).or_else(|| first_field_span_in_block(body, fname))
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            first_field_span_in_expr(expr, fname)
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => None,
+    }
+}
+
+fn first_field_span_in_expr(e: &Expr, fname: &str) -> Option<crate::diag::Span> {
+    if let Some(t_fname) = match_self_field(e) {
+        if t_fname == fname { return Some(e.span); }
+    }
+    // Skip into closures — different scope.
+    if matches!(&e.kind,
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. })
+    {
+        return None;
+    }
+    match &e.kind {
+        ExprKind::Block(b) => first_field_span_in_block(b, fname),
+        ExprKind::If { cond, then, else_ } => {
+            first_field_span_in_expr(cond, fname)
+                .or_else(|| first_field_span_in_block(then, fname))
+                .or_else(|| else_.as_ref().and_then(|eb| match eb {
+                    ElseBranch::Block(b) => first_field_span_in_block(b, fname),
+                    ElseBranch::If(e) => first_field_span_in_expr(e, fname),
+                }))
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            first_field_span_in_expr(scrutinee, fname)
+                .or_else(|| first_field_span_in_block(then, fname))
+                .or_else(|| else_.as_ref().and_then(|eb| match eb {
+                    ElseBranch::Block(b) => first_field_span_in_block(b, fname),
+                    ElseBranch::If(e) => first_field_span_in_expr(e, fname),
+                }))
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            first_field_span_in_expr(scrutinee, fname).or_else(|| {
+                arms.iter().find_map(|arm| {
+                    arm.guard.as_ref().and_then(|g| first_field_span_in_expr(g, fname))
+                        .or_else(|| match &arm.body {
+                            MatchArmBody::Expr(e) => first_field_span_in_expr(e, fname),
+                            MatchArmBody::Block(b) => first_field_span_in_block(b, fname),
+                        })
+                })
+            })
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            first_field_span_in_expr(iter, fname)
+                .or_else(|| first_field_span_in_block(body, fname))
+        }
+        ExprKind::While { cond, body, .. } => {
+            first_field_span_in_expr(cond, fname)
+                .or_else(|| first_field_span_in_block(body, fname))
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            first_field_span_in_expr(scrutinee, fname)
+                .or_else(|| first_field_span_in_block(body, fname))
+        }
+        ExprKind::Loop { body, .. } => first_field_span_in_block(body, fname),
+        ExprKind::With { bindings, body } => {
+            bindings.iter().find_map(|wb| first_field_span_in_expr(&wb.handler, fname))
+                .or_else(|| first_field_span_in_block(body, fname))
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            first_field_span_in_block(body, fname)
+        }
+        ExprKind::Supervised { body, cancel } => {
+            first_field_span_in_block(body, fname)
+                .or_else(|| cancel.as_ref().and_then(|c| first_field_span_in_expr(c, fname)))
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            first_field_span_in_expr(e, fname)
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            first_field_span_in_expr(a, fname).or_else(|| first_field_span_in_expr(b, fname))
+        }
+        ExprKind::Index { obj, index } => {
+            first_field_span_in_expr(obj, fname).or_else(|| first_field_span_in_expr(index, fname))
+        }
+        ExprKind::Call { func, args, trailing } => {
+            first_field_span_in_expr(func, fname)
+                .or_else(|| args.iter().find_map(|a| first_field_span_in_expr(a.expr(), fname)))
+                .or_else(|| trailing.as_ref().and_then(|t| match t {
+                    Trailing::Block(b) => first_field_span_in_block(b, fname),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => first_field_span_in_block(b, fname),
+                        FnBody::Expr(e) => first_field_span_in_expr(e, fname),
+                        FnBody::External => None,
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => first_field_span_in_block(&tb.body, fname),
+                }))
+        }
+        ExprKind::ArrayLit(elems) => elems.iter().find_map(|el| match el {
+            ArrayElem::Item(e) | ArrayElem::Spread(e) => first_field_span_in_expr(e, fname),
+        }),
+        ExprKind::MapLit { elems, .. } => elems.iter().find_map(|el| match el {
+            MapElem::Pair(k, v) => first_field_span_in_expr(k, fname).or_else(|| first_field_span_in_expr(v, fname)),
+            MapElem::Spread(e) => first_field_span_in_expr(e, fname),
+        }),
+        ExprKind::RecordLit { fields: rfields, .. } => rfields.iter().find_map(|rf| {
+            rf.value.as_ref().and_then(|v| first_field_span_in_expr(v, fname))
+        }),
+        ExprKind::TupleLit(elems) => elems.iter().find_map(|el| first_field_span_in_expr(el, fname)),
+        ExprKind::InterpolatedStr { parts } => parts.iter().find_map(|p| {
+            if let InterpStrPart::Expr(e) = p { first_field_span_in_expr(e, fname) } else { None }
+        }),
+        ExprKind::Select { arms } => arms.iter().find_map(|arm| {
+            (arm.guard.as_ref().and_then(|g| first_field_span_in_expr(g, fname)))
+                .or_else(|| first_field_span_in_block(&arm.body, fname))
+                .or_else(|| match &arm.op {
+                    SelectOp::Recv { chan, .. } => first_field_span_in_expr(chan, fname),
+                    SelectOp::Send { chan, value } => first_field_span_in_expr(chan, fname)
+                        .or_else(|| first_field_span_in_expr(value, fname)),
+                    SelectOp::Default => None,
+                })
+        }),
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().and_then(|s| first_field_span_in_expr(s, fname))
+                .or_else(|| end.as_ref().and_then(|e| first_field_span_in_expr(e, fname)))
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            first_field_span_in_expr(range, fname)
+                .or_else(|| first_field_span_in_expr(body, fname))
+        }
+        ExprKind::Interrupt(opt) => opt.as_ref().and_then(|e| first_field_span_in_expr(e, fname)),
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            first_field_span_in_expr(tag, fname)
+                .or_else(|| args.iter().find_map(|a| first_field_span_in_expr(a, fname)))
+        }
+        _ => None,
     }
 }
 
