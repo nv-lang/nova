@@ -1,0 +1,34 @@
+// Plan 123.4.3 (V4.3, 2026-06-03): NEGATIVE — три chains через
+// разные middle segments shared только length-2 prefix @a.b, не
+// length-3. V4.3 не должен выдумывать length-3 prefix (только 1
+// chain через каждый из @a.b.c, @a.b.d, @a.b.e). Поведение
+// идентично V4.2 baseline.
+
+module plan123_4_3.v43_no_deep_prefix_three_distinct_chains_ok
+
+type L { ro x int, ro y int, ro z int }
+type Mid { ro c L, ro d L, ro e L }
+type Inn { ro b Mid }
+type Out { ro a Inn }
+
+fn Out @sum_all() -> int {
+    // 6 chain occurrences (3 distinct chains, каждая встречается 2 раза).
+    // Length-2 prefix @a.b shared всеми; length-3 prefix НЕ shared
+    // (только 1 chain через каждое из .c, .d, .e).
+    @a.b.c.x + @a.b.c.x + @a.b.d.y + @a.b.d.y + @a.b.e.z + @a.b.e.z
+}
+
+fn Out.new() -> Out {
+    Out { a: Inn { b: Mid {
+        c: L { x: 1, y: 0, z: 0 },
+        d: L { x: 0, y: 10, z: 0 },
+        e: L { x: 0, y: 0, z: 100 },
+    } } }
+}
+
+test "V4.3: no deep prefix when single chain через each middle" {
+    ro r = Out.new()
+    ro got = r.sum_all()
+    // 1+1 + 10+10 + 100+100 = 222
+    assert(got == 222)
+}

@@ -1,0 +1,30 @@
+// Plan 123.4.3 (V4.3, 2026-06-03): deep chain prefix sharing.
+// Two chains @a.b.c.x и @a.b.c.y (length 4) share length-3 prefix
+// @a.b.c. V4.3 эмитит length-2 `_at_a_b_pre = @a.b` + length-3
+// `_at_a_b_c_pre = _at_a_b_pre.c` + per-chain lets reference longest
+// covering prefix. Поведение должно остаться semantic-identical V4/V4.2.
+
+module plan123_4_3.v43_deep_prefix_three_level_ok
+
+type L { ro x int, ro y int }
+type M { ro c L }
+type N { ro b M }
+type O { ro a N }
+
+fn O @sum_both() -> int {
+    // 4 chain occurrences exceeds chain_threshold=2; both .x и .y
+    // share length-3 prefix @a.b.c. V4.3 chains через iterative
+    // deepening: @a.b → _at_a_b_pre, @a.b.c → _at_a_b_c_pre.c
+    @a.b.c.x + @a.b.c.x + @a.b.c.y + @a.b.c.y
+}
+
+fn O.new() -> O {
+    O { a: N { b: M { c: L { x: 7, y: 11 } } } }
+}
+
+test "V4.3: length-3 deep prefix preserves semantics" {
+    ro r = O.new()
+    ro got = r.sum_both()
+    // 7 + 7 + 11 + 11 = 36
+    assert(got == 36)
+}

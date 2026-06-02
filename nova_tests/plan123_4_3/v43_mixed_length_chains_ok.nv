@@ -1,0 +1,30 @@
+// Plan 123.4.3 (V4.3, 2026-06-03): MIXED — четыре chains разной
+// длины: два @a.b.c (length 3, share length-2 prefix @a.b), два
+// @a.b.c.x.k (length 5, share length-3 prefix @a.b.c). V4.3 должен
+// обработать обе глубины корректно.
+
+module plan123_4_3.v43_mixed_length_chains_ok
+
+type Bot { ro k int }
+type Mid { ro x Bot }
+type L { ro c int, ro d Mid }
+type M { ro b L }
+type N { ro a M }
+
+fn N @combo() -> int {
+    // length-2 shared (@a.b → for @a.b.c & @a.b.d): emitted length-2.
+    // length-3+ chains @a.b.d.x не shared с другими.
+    // Здесь только length-2 sharing активен (depth=4 default).
+    @a.b.c + @a.b.c + @a.b.c + @a.b.d.x.k + @a.b.d.x.k + @a.b.d.x.k
+}
+
+fn N.new() -> N {
+    N { a: M { b: L { c: 3, d: Mid { x: Bot { k: 5 } } } } }
+}
+
+test "V4.3: mixed-length chains semantic preservation" {
+    ro r = N.new()
+    ro got = r.combo()
+    // 3*3 + 5*3 = 24
+    assert(got == 24)
+}
