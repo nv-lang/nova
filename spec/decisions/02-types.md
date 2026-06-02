@@ -7538,7 +7538,8 @@ V2 — research `extern "C-unwind"` (Rust 2024 model);
 - `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` (Plan 115 V1) retracted
 - `E_UNDEFINED_USE_NONE_INIT_PATTERN` — `undefined` used
 - `E_CLOSURE_HAS_ENV` — fn → *fn cast attempted с closure env
-- `E_CALLBACK_THROWS_OVER_C_ABI` — Fn-with-Fail → *fn cast
+- `E_CALLBACK_THROWS_OVER_C_ABI` — Fn-with-Fail → *fn cast. Active
+  enforcement — D216 §10/§20 V1 ENFORCED 2026-06-02 (commit e4cff57142e)
 - `E_EXTERNAL_FN_FAIL_EFFECT` — external fn declaration с Fail
 - `E_PTR_ARITHMETIC_INVALID` — `p * 2`, `p / 4`, etc.
 - `E_POINTER_RO_ASSIGN` — `*p = v` / `p.field = v` где p ro
@@ -7547,7 +7548,9 @@ V2 — research `extern "C-unwind"` (Rust 2024 model);
 - `E_INVALID_POINTER_MODIFIER` — `*const T` и др.
 - `E_DUPLICATE_POINTER_MODIFIER` — `*ro mut T`
 - `E_PARSE_POINTER_TYPE_INCOMPLETE` — `*` без type
-- `E_REALTIME_POINTER_OP` — pointer op в `#realtime fn` body
+- `E_REALTIME_POINTER_OP` — pointer op в `#realtime fn` body. Active
+  enforcement — D216 §20 + Plan 113 D172 V1 ENFORCED 2026-06-02
+  (commit 6752565f453)
 - `E_UNSAFE_HANDLER_BUILTIN_ONLY` — user-defined unsafe_handler attempt
 - `E_AMP_CONST_BINDING` — `&const_value`
 - `E_AMP_LITERAL` — `&42`

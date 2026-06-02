@@ -2263,12 +2263,20 @@ issue → extract в followup (`[M-118-perf-*]`).
   Walker pre-collects #unsafe fn names, detects calls outside unsafe
   context. **Closes A11** ✅. Updated t3_2_unsafe_fn_attr_ok.nv +
   added t3_neg_unsafe_call_no_wrap.nv.
+- `984a2f49493` — docs+spec updates для A11 closure
+- `e4cff57142e` — **Ф.6 A25: E_CALLBACK_THROWS_OVER_C_ABI** enforcement.
+  Walker pre-collects fns с Fail effect, detects `fn as *fn(...)` cast
+  и emits error. **Closes A25** ✅. Added t6_neg_callback_throws_over_c_abi.nv.
+- `6752565f453` — **Ф.7 A33: E_REALTIME_POINTER_OP** enforcement (Plan 113
+  D172 cross-ref). Pointer ops AddrOf/Deref в #realtime fn body banned —
+  even с unsafe { } wrap (realtime no-GC-pause guarantee, orthogonal к
+  unsafe enforcement). **Closes A33** ✅. Added t8_neg_realtime_pointer_op.nv.
 
 **Regression smoke post-merge (release test-build):**
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **22/0** (12 positive + 10 NEG, post-Ф.3.5 + A11) |
+| plan118 | **24/0** (12 positive + 12 NEG, post-Ф.3.5 + A11 + A25 + A33) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |

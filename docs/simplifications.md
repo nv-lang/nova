@@ -28465,7 +28465,14 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
 - `abd4be4603b` — **E_UNSAFE_CALL_REQUIRES_WRAP** enforcement: walker
   pre-collects #unsafe fn names, detects calls outside unsafe context.
   **Closes acceptance A11** ✅
-- plan118 fixtures: **22/0** (12 positive + 10 NEG)
+- `e4cff57142e` — **E_CALLBACK_THROWS_OVER_C_ABI** enforcement: walker
+  pre-collects fns с Fail effect, detects fn-with-Fail as *fn cast.
+  **Closes acceptance A25** ✅
+- `6752565f453` — **E_REALTIME_POINTER_OP** enforcement (Plan 113 D172
+  cross-ref): walker tracks #realtime fn context, bans pointer ops
+  inside (orthogonal к unsafe — even с unsafe wrap, realtime banned).
+  **Closes acceptance A33** ✅
+- plan118 fixtures: **24/0** (12 positive + 12 NEG)
 
 ---
 
