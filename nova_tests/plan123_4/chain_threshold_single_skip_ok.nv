@@ -1,0 +1,24 @@
+// Plan 123.4 T1.7: single chain access — below threshold, not cached.
+
+module plan123_4.chain_threshold_single_skip_ok
+
+type Layer {
+    ro inner Layer_Inner
+}
+
+type Layer_Inner {
+    ro v int
+}
+
+fn Layer @single() -> int {
+    @inner.v
+}
+
+fn Layer.new(v int) -> Layer {
+    Layer { inner: Layer_Inner { v } }
+}
+
+test "single chain access not cached" {
+    ro l = Layer.new(42)
+    assert(l.single() == 42)
+}

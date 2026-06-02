@@ -1,0 +1,42 @@
+// Plan 123.2 T-PROP.2: LICM composes correctly with Plan 123.1
+// (no double-cache, no shadowing, all reads correctly resolved).
+
+module plan123_2.prop_licm_composition_ok
+
+type Mix {
+    ro factor int
+    mut counter int
+}
+
+fn Mix mut @combined(n int) -> int {
+    // Reads outside loop + reads inside loop:
+    // @factor: 1 outside + (2 × n) inside = 1 + 2n.
+    // @counter: 2 inside + 1 outside (assign) = 3.
+    ro initial = @factor
+    mut sum = 0
+    mut i = 0
+    while i < n {
+        sum = sum + @factor * @factor
+        i = i + 1
+    }
+    @counter = @counter + 1
+    sum + initial + @counter
+}
+
+fn Mix.new(f int, c int) -> Mix {
+    Mix { factor: f, counter: c }
+}
+
+test "LICM + Plan 123.1 composition correct" {
+    mut m = Mix.new(3, 10)
+    ro r = m.combined(4)
+    // initial=3, sum = 4*(3*3)=36, counter 10→11, return 36+3+11=50.
+    assert(r == 50)
+}
+
+test "composition zero iter" {
+    mut m = Mix.new(5, 0)
+    ro r = m.combined(0)
+    // initial=5, sum=0, counter 0→1, return 0+5+1=6.
+    assert(r == 6)
+}

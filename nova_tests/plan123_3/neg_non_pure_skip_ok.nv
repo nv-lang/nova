@@ -1,0 +1,23 @@
+// Plan 123.3 T-NEG.1: non-pure method (no #pure annotation) →
+// V3 doesn't cache. Result preserved.
+
+module plan123_3.neg_non_pure_skip_ok
+
+type Cnt {
+    ro v int
+}
+
+fn Cnt @get_v() -> int { @v }  // NOT #pure → not eligible
+
+fn Cnt @double() -> int {
+    @get_v() + @get_v()
+}
+
+fn Cnt.new(v int) -> Cnt {
+    Cnt { v }
+}
+
+test "non-pure method not cached" {
+    ro c = Cnt.new(7)
+    assert(c.double() == 14)
+}

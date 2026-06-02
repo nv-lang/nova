@@ -1,0 +1,30 @@
+// Plan 123.3 T1.7: pure-call cache survives conditional branches.
+
+module plan123_3.pure_in_conditional_branches_ok
+
+type Interval {
+    ro lo int
+    ro hi int
+}
+
+#pure
+fn Interval @span() -> int => @hi - @lo
+
+fn Interval @classify() -> int {
+    if @span() < 5 {
+        @span() + @lo
+    } else {
+        @span() * 2 + @hi
+    }
+}
+
+fn Interval.new(lo int, hi int) -> Interval {
+    Interval { lo, hi }
+}
+
+test "pure cache valid across if-else branches" {
+    ro r1 = Interval.new(0, 3).classify()  // span=3<5 → 3+0 = 3.
+    assert(r1 == 3)
+    ro r2 = Interval.new(0, 10).classify()  // span=10>=5 → 20+10 = 30.
+    assert(r2 == 30)
+}

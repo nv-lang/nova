@@ -1,0 +1,23 @@
+// Plan 123.1 T2.10 (negative-style): static method `Type.method`
+// — no @self/@field access → no caching attempted, no panic.
+
+module plan123_1.static_method_no_cache_ok
+
+type Calc {
+    ro factor int
+}
+
+fn Calc.constant() -> int {
+    42
+}
+
+fn Calc.from_pair(a int, b int) -> Calc {
+    Calc { factor: a + b }
+}
+
+test "static methods unaffected" {
+    ro c1 = Calc.constant()
+    assert(c1 == 42)
+    ro c2 = Calc.from_pair(3, 4)
+    assert(c2.factor == 7)
+}

@@ -1,0 +1,33 @@
+// Plan 123.3 T-PROP.1: semantic equivalence — pure method results
+// invariant per call regardless of caching.
+
+module plan123_3.prop_pure_semantic_ok
+
+type Pair {
+    ro a int
+    ro b int
+}
+
+#pure
+fn Pair @sum() -> int => @a + @b
+
+#pure
+fn Pair @diff() -> int => @a - @b
+
+fn Pair @combine() -> int {
+    @sum() * @sum() - @diff() * @diff()
+}
+
+fn Pair.new(a int, b int) -> Pair {
+    Pair { a, b }
+}
+
+test "pure semantic preserved across various inputs" {
+    // (a+b)^2 - (a-b)^2 = 4ab.
+    ro p1 = Pair.new(3, 5)
+    assert(p1.combine() == 4 * 3 * 5)
+    ro p2 = Pair.new(2, 7)
+    assert(p2.combine() == 4 * 2 * 7)
+    ro p3 = Pair.new(10, 1)
+    assert(p3.combine() == 4 * 10 * 1)
+}

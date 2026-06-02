@@ -1,0 +1,36 @@
+// Plan 123.7.1 T1.1: mut field cache survives call to method that
+// doesn't write that field per IPA write_set.
+
+module plan123_7_1.ipa_mut_survives_non_writing_call_ok
+
+type Box {
+    mut counter int
+    mut other int
+}
+
+// This method writes ONLY @other — IPA write_set = {"other"}.
+fn Box mut @bump_other() -> () {
+    @other = @other + 1
+}
+
+fn Box mut @use_counter() -> int {
+    // 2 reads of @counter, then call @bump_other (writes only @other),
+    // then 2 more reads of @counter.
+    // V7 conservative would bail at @bump_other call.
+    // V7.1 IPA: @bump_other doesn't write @counter → cache survives.
+    ro a = @counter + @counter
+    @bump_other()
+    ro b = @counter + @counter
+    a + b
+}
+
+fn Box.new(c int, o int) -> Box {
+    Box { counter: c, other: o }
+}
+
+test "IPA: mut cache survives non-writing self call" {
+    mut b = Box.new(5, 0)
+    ro r = b.use_counter()
+    // a = 10, bump_other (counter unchanged), b = 10, return 20.
+    assert(r == 20)
+}

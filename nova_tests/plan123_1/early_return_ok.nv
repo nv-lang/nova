@@ -1,0 +1,33 @@
+// Plan 123.1 T2.5: early return preserves cache semantics —
+// `return` inside conditional doesn't invalidate ro-cache.
+
+module plan123_1.early_return_ok
+
+type Rect {
+    ro w int
+    ro h int
+}
+
+fn Rect @area_or_zero() -> int {
+    // 4 reads of ro @w, @h → cache emitted.
+    if @w == 0 {
+        return 0
+    }
+    if @h == 0 {
+        return 0
+    }
+    @w * @h
+}
+
+fn Rect.new(w int, h int) -> Rect {
+    Rect { w, h }
+}
+
+test "early return preserves cache" {
+    ro r1 = Rect.new(5, 3).area_or_zero()
+    assert(r1 == 15)
+    ro r2 = Rect.new(0, 99).area_or_zero()
+    assert(r2 == 0)
+    ro r3 = Rect.new(99, 0).area_or_zero()
+    assert(r3 == 0)
+}

@@ -1,0 +1,33 @@
+// Plan 123.7.1 T-NEG.2: V7.1 disabled (NOVA_FIELD_CACHE_IPA=0) →
+// fallback к V1-V6 conservative. Semantic preserved.
+
+module plan123_7_1.neg_ipa_disabled_fallback_ok
+
+type Counter {
+    mut value int
+    mut log int
+}
+
+fn Counter mut @bump_log() -> () {
+    @log = @log + 1
+}
+
+fn Counter mut @work() -> int {
+    // V7.1 would survive @bump_log call (writes only @log).
+    // V7.1 disabled: V1 conservative — bail at call boundary.
+    // Result identical either way (semantic equivalence).
+    ro a = @value + @value
+    @bump_log()
+    a + @value + @value
+}
+
+fn Counter.new(v int, l int) -> Counter {
+    Counter { value: v, log: l }
+}
+
+test "IPA disabled fallback preserves semantics" {
+    mut c = Counter.new(7, 0)
+    ro r = c.work()
+    // 4 reads of @value=7 → 28.
+    assert(r == 28)
+}

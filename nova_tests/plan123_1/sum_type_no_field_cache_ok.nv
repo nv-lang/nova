@@ -1,0 +1,24 @@
+// Plan 123.1 T2.13 (negative-style): sum-type receiver — no direct
+// record fields → pass adds receiver type to skip_types; methods
+// on sum types unaffected.
+
+module plan123_1.sum_type_no_field_cache_ok
+
+type Shape | Circle(int) | Square(int) | Rect(int, int)
+
+fn Shape @area() -> int {
+    match @ {
+        Circle(r) => r * r * 3,
+        Square(s) => s * s,
+        Rect(w, h) => w * h,
+    }
+}
+
+test "sum type receiver — no caching attempted" {
+    ro c = Circle(2)
+    assert(c.area() == 12)
+    ro s = Square(5)
+    assert(s.area() == 25)
+    ro r = Rect(3, 4)
+    assert(r.area() == 12)
+}

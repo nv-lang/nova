@@ -1,0 +1,33 @@
+// Plan 123.7.1 T4.1 (V4.1 per-root): chain cache survives writes
+// to UNRELATED root fields.
+
+module plan123_7_1.ipa_chain_per_root_invalidation_ok
+
+type Inner {
+    ro v int
+}
+
+type Outer {
+    ro inner Inner
+    mut tag int
+}
+
+fn Outer mut @sum_with_tag_bump() -> int {
+    // V4 conservative: @tag = ... → skips chain cache for @inner.v.
+    // V4.1 per-root: @tag write doesn't touch @inner subtree →
+    // chain @inner.v survives.
+    ro a = @inner.v + @inner.v
+    @tag = @tag + 1
+    a + @inner.v + @inner.v
+}
+
+fn Outer.new(v int, t int) -> Outer {
+    Outer { inner: Inner { v }, tag: t }
+}
+
+test "V4.1 per-root: chain survives unrelated root write" {
+    mut o = Outer.new(5, 0)
+    ro r = o.sum_with_tag_bump()
+    // 4 reads of @inner.v=5 → 20.
+    assert(r == 20)
+}

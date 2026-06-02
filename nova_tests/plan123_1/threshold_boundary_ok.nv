@@ -1,0 +1,27 @@
+// Plan 123.1 T2.8 (negative-style): single-access field NOT cached;
+// 2-access field IS cached. Confirms threshold N=2 default boundary.
+
+module plan123_1.threshold_boundary_ok
+
+type Both {
+    ro single_read int
+    ro double_read int
+}
+
+fn Both @compute() -> int {
+    // single_read: 1 access → no cache.
+    // double_read: 2 accesses → cache.
+    ro a = @single_read
+    ro b = @double_read + @double_read
+    a + b
+}
+
+fn Both.new(s int, d int) -> Both {
+    Both { single_read: s, double_read: d }
+}
+
+test "threshold boundary correctness" {
+    ro r = Both.new(10, 5).compute()
+    // 10 + (5+5) = 20.
+    assert(r == 20)
+}

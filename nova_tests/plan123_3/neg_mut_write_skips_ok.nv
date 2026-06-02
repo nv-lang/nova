@@ -1,0 +1,30 @@
+// Plan 123.3 T-NEG.2: @F = ... anywhere in body → V3 conservative
+// skips all pure-call caching (without frame info).
+
+module plan123_3.neg_mut_write_skips_ok
+
+type Cell {
+    mut value int
+}
+
+#pure
+fn Cell @snapshot() -> int => @value
+
+fn Cell mut @update_and_double() -> int {
+    // body has @value = ... → pure cache skipped полностью.
+    ro before = @snapshot()
+    @value = @value + 1
+    ro after = @snapshot()
+    before + after
+}
+
+fn Cell.new(v int) -> Cell {
+    Cell { value: v }
+}
+
+test "mut write in body skips pure cache (correctness)" {
+    mut c = Cell.new(10)
+    ro r = c.update_and_double()
+    // before=10, value 10→11, after=11. 10+11=21.
+    assert(r == 21)
+}

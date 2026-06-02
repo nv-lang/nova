@@ -1,0 +1,32 @@
+// Plan 123.2 T1.8: while-let form — LICM hoists invariant @field.
+
+module plan123_2.licm_while_let_ok
+
+type Counter {
+    ro limit int
+}
+
+fn Counter @count_options() -> int {
+    mut x = 0
+    mut state = Some(0)
+    while let Some(v) = state {
+        if v >= @limit + @limit {
+            state = None
+        } else {
+            x = x + 1
+            state = Some(v + 1)
+        }
+    }
+    x
+}
+
+fn Counter.new(l int) -> Counter {
+    Counter { limit: l }
+}
+
+test "while-let — @limit hoisted" {
+    ro c = Counter.new(3)
+    ro r = c.count_options()
+    // 2*3=6 iterations.
+    assert(r == 6)
+}
