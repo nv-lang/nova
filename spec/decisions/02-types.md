@@ -7113,7 +7113,20 @@ Canonical Rust grammar.
 - `&value` creates `*ro T` or `*mut T` (по контексту binding) — **в unsafe context**
 - Stack values (primitives, tuples) auto-promoted в heap если pointer escapes
   scope (return / closure / heap-field store / fn arg)
-- Records (heap references) — `&record` creates pointer на reference
+- Records (heap references) — `&record` creates pointer на reference.
+  Result C type: `Nova_Record**` (double-pointer because record уже
+  Nova_Record* в C ABI). Used primarily для FFI out-params:
+  `external fn try_init(out *Acc) -> i64` — C side fills `*out`.
+- **`&Record { ... }` literal без named binding forbidden** —
+  `E_AMP_RECORD_LITERAL`. Anonymous-local auto-promote from temporary
+  слишком implicit для production-grade reader clarity. Required pattern:
+  ```nova
+  // ❌ implicit anonymous local
+  ro p = &Acc { name: "Piter" }
+  // ✓  explicit named local
+  ro acc = Acc { name: "Piter" }
+  ro p = &acc
+  ```
 - GC-friendly семантика (vs Rust lifetimes — у нас GC + auto-promote)
 - Conservative V1: promote если ANY uncertainty; precise inlining followup
   `[M-118-escape-precise]`
@@ -7368,6 +7381,7 @@ V2 — research `extern "C-unwind"` (Rust 2024 model);
 - `E_UNSAFE_HANDLER_BUILTIN_ONLY` — user-defined unsafe_handler attempt
 - `E_AMP_CONST_BINDING` — `&const_value`
 - `E_AMP_LITERAL` — `&42`
+- `E_AMP_RECORD_LITERAL` — `&Record { ... }` без named binding (Plan 118 §4 amend)
 - `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"`
 - `E_VARARG_NOT_SUPPORTED` — vararg FFI call
 - `E_CAST_RAW_FN_TO_CLOSURE` — `*fn → fn` cast outside unsafe

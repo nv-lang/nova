@@ -5125,6 +5125,32 @@ impl Parser {
             TokenKind::Amp => {
                 self.bump();
                 let operand = self.parse_unary()?;
+                // Plan 118 (D216 §4 amend, user design decision Session 2):
+                // `&Record { ... }` без named binding запрещён —
+                // E_AMP_RECORD_LITERAL. Records в Nova уже heap-allocated
+                // (D32) → `*Record` это double-pointer (Nova_Record**).
+                // Anonymous-local-from-temporary auto-promote слишком
+                // implicit для prod-grade кода. User должен ввести named
+                // local + `&named_local` для clarity:
+                //
+                //   ❌ ro p = &Acc { name: "Piter" }
+                //   ✓  ro acc = Acc { name: "Piter" }; ro p = &acc
+                //
+                // Aналогично NEG-T2.11 (`&42` literal → E_AMP_LITERAL),
+                // unified design — `&` требует named lvalue.
+                if matches!(operand.kind, ExprKind::RecordLit { .. }) {
+                    return Err(Diagnostic::new(
+                        "[E_AMP_RECORD_LITERAL] `&Record { ... }` без named \
+                         binding запрещён (Plan 118 D216 §4 amend). Records \
+                         в Nova уже heap-allocated (D32) — `*Record` это \
+                         double-pointer (Nova_Record**) used для FFI \
+                         out-params. Required pattern: \
+                         `ro acc = Record { ... }; ro p = &acc` — \
+                         explicit named local makes storage semantics clear \
+                         для reader.".to_string(),
+                        start,
+                    ));
+                }
                 let span = start.merge(operand.span);
                 Ok(Expr::new(
                     ExprKind::Unary {
