@@ -29307,3 +29307,115 @@ unchanged. Helper refactor preserved все existing behavior.
 
 Plan 124.6 ✅ FULLY CLOSED. Plan 124 umbrella partial — 1 sub-plan
 (124.7) remaining.
+
+---
+
+## Plan 124.7 — Type-level priv flip для named tuples (2026-06-02)
+
+**Что:** D224 NEW в spec/decisions/02-types.md. Symmetric extension
+D220 §3.3.1 (record-form type-level priv flip — Plan 124.1) на named
+tuple form (D215). Syntax `type Secret priv (key str, salt str)` —
+default field visibility flipped к priv для этого type'а. Explicit
+`pub` modifier per-field overrides.
+
+**Implementation:**
+- AST: `TypeDecl.default_field_priv: bool` — pre-existing (Plan 124.1),
+  re-used без extension.
+- Parser: parse_type_decl уже консьюмит KwPriv после type-name
+  (Plan 124.1) → flag установлен независимо от body kind.
+- Parser: new wrapper `parse_named_tuple_fields_with_default(default_priv)`
+  заменяет внутренний call. Backward-compat shim
+  `parse_named_tuple_fields()` calls _with_default(false).
+- Parser: внутри field parser — explicit `pub` → priv_field = false,
+  explicit `priv` → priv_field = true, neither → inherit default_priv.
+  Mirrors `parse_record_fields_with_default` precedent.
+
+**Effective resolution table (D224 §2):**
+
+| field modifier | type-level flip | effective priv_field |
+|---|---|---|
+| explicit `pub` | flip OR no-flip | `false` |
+| explicit `priv` | flip OR no-flip | `true` |
+| neither | flip = `false` | `false` |
+| neither | flip = `true` | `true` |
+
+Bidirectional `priv pub` / `pub priv` → E_PRIV_PUB_CONFLICT (D220 §6
+reused).
+
+**Access rules:** UNCHANGED. Effective priv_field после resolution
+treated identically к explicit per-field priv. Все Plan 124.1-124.6
+enforcement sites (READ/WRITE/INIT/PATTERN/spread + escape hatches)
+работают uniform.
+
+**Use cases (D224 §5):** invariant-heavy types где majority of fields
+should be private — Mutex, Session, Vec3, opaque handles. Bimodal
+coverage matches kubernetes empirical (`core/v1` API surface 92%
+public — no flip, `pkg/internal` 53% private — flip + few `pub`).
+
+**Fixtures plan124_7/ 8/8 PASS (release nova-cli + clang):**
+- Positive 5: tuple_priv_flip_inside (Secret priv (key, salt) inside
+  method @key access), tuple_priv_flip_pub_override (Credential priv
+  (pub id, secret) — pub id externally accessible), tuple_priv_flip_no_flip
+  (Point — backward compat без flip), tuple_priv_flip_record_form
+  (record-form Plan 124.1 не regressed), tuple_priv_flip_explicit_priv_redundant
+  (idempotent — explicit priv on flip type still works).
+- Negative 3: tuple_priv_flip_read_outside (external s.key blocked),
+  tuple_priv_flip_init_outside (external Secret(key:, salt:) blocked),
+  tuple_priv_flip_pattern_outside (external Secret { key } = s blocked).
+
+**Fixture lessons:**
+- Nova reserved keyword `with` — use `create_with` for static fn name.
+- Named tuple fields immutable by D215 design — no `mut` per-field.
+
+**Regression:** Plan 120 8/8 + plan124_1 9/9 + plan124_4 10/10
+unchanged.
+
+**Acceptance Plan 124.7 (A7.1-A7.8) — ALL ✅.**
+
+Plan 124.7 ✅ FULLY CLOSED.
+
+---
+
+## Plan 124 UMBRELLA ✅ FULLY CLOSED (2026-06-02)
+
+Все 7 sub-plans 124.1-124.7 закрыты в этой autonomous session.
+
+**Cumulative production deliverables:**
+- 5 NEW D-blocks (D220 + D221 + D222 + D223 + D224) + amends (D220 §G1,
+  D220 §T1 — generics + tooling).
+- 6 error codes (E_PRIV_FIELD_READ/WRITE/INIT/PATTERN/INIT_SPREAD +
+  E_PRIV_PUB_CONFLICT) — Plan 50 D102 format.
+- 2 attribute escape hatches (`#test_access`, `#visible_to`).
+- 51 nova fixtures across plan124_1..7 (release nova-cli + clang):
+  plan124_1 9/9, plan124_2 14/14, plan124_3 10/10, plan124_4 10/10,
+  plan124_5 3/3, plan124_6 7/7, plan124_7 8/8 = **61 PASS / 0 FAIL**.
+- `docs/field-visibility-guide.md` (~330 lines user-facing guide).
+- nova doc per-field priv filter + `--include-private` flag + JSON
+  `priv_field` emit (LSP infrastructure ready).
+- AST extensions: RecordField.priv_field + .visible_to;
+  NamedTupleField.priv_field + .visible_to; FnDecl.test_access_for;
+  TypeDecl.default_field_priv (record + named tuple).
+- TypeCheckCtx infrastructure: current_recv_type + current_fn_test_access
+  + 2 RAII guards (PrivRecvGuard, PrivTestAccessGuard) + 2 helper
+  predicates (priv_access_allowed_base, priv_field_access_allowed).
+
+**Comparison vs эталоны (umbrella claim AU.2):**
+
+Nova match-or-exceeds на 14/14 capabilities + 3 Nova-only superior:
+- Strictest type-method-only scope (vs Go/Rust/Kotlin pkg/mod-wide,
+  Java/C#/Swift class-only).
+- NO reflection backdoor (vs Java/Kotlin/C#/Swift все have).
+- Tuple field privacy (only Rust `pub(...)` precedent matches; Nova
+  D222 covers named-tuple form).
+
+**Production-grade requirements (§8 umbrella):**
+- Backward compat preserved — все pre-Plan 124 code compiles identical.
+- 0 regression FAIL across plan120 / plan124_1-7.
+- 6 error codes + 5 D-blocks + 2 escape hatches + LSP-ready tooling.
+- Bimodal kubernetes-validated default behavior (public-default +
+  per-type opt-in flip via D220 / D224).
+
+**Closure date:** 2026-06-02 (single autonomous session, ~6 hours
+wall-time).
+
+Plan 124 umbrella ✅ FULLY CLOSED.

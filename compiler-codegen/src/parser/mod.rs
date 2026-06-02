@@ -3194,9 +3194,13 @@ impl Parser {
             // positional tuple `type Point(f64, f64)` — disambiguate here.
             // Lookahead: after `(`, if IDENT followed by type-starting token
             // → named tuple. Otherwise delegate to parse_type() as before.
+            //
+            // Plan 124.7 (D224): `type Vec3 priv (x f64, y f64, z f64)` —
+            // type-level priv default flip для tuple form (extends D220
+            // record form). default_field_priv pass'ится в field parser.
             TokenKind::LParen if self.is_named_tuple_decl() => {
                 self.bump(); // consume `(`
-                let fields = self.parse_named_tuple_fields()?;
+                let fields = self.parse_named_tuple_fields_with_default(default_field_priv)?;
                 self.expect(&TokenKind::RParen)?;
                 TypeDeclKind::NamedTuple(fields)
             }
@@ -3283,10 +3287,18 @@ impl Parser {
     }
 
     /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
-    /// Called after consuming `(`. Stops before `)`.
-    /// Plan 124.4 (D222): per-field `priv` / `pub` modifier supported
-    /// перед field name.
+    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(false).
+    #[allow(dead_code)]
     fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
+        self.parse_named_tuple_fields_with_default(false)
+    }
+
+    /// Plan 120 (D215) + Plan 124.4 (D222) + Plan 124.7 (D224): parse named
+    /// tuple fields с per-field `priv`/`pub` modifier + type-level default
+    /// `priv` propagation. `default_priv = true` пришёл из
+    /// `type X priv (...)` syntax (D224).
+    /// Called after consuming `(`. Stops before `)`.
+    fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
         loop {
             self.skip_newlines();
@@ -3295,12 +3307,15 @@ impl Parser {
             }
             let field_start = self.peek().span;
             // Plan 124.4 (D222): optional `priv` / `pub` modifier.
-            let mut priv_field = false;
-            let mut saw_pub = false;
+            // Plan 124.7 (D224): type-level `priv` default flip — when
+            // default_priv = true (`type X priv (...)`), field's effective
+            // priv_field = default_priv unless explicit `pub` overrides.
+            let mut explicit_priv = false;
+            let mut explicit_pub = false;
             loop {
                 match self.peek().kind {
                     TokenKind::KwPriv => {
-                        if saw_pub {
+                        if explicit_pub {
                             let sp = self.peek().span;
                             return Err(Diagnostic::new(
                                 "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
@@ -3308,11 +3323,11 @@ impl Parser {
                                 sp,
                             ));
                         }
-                        priv_field = true;
+                        explicit_priv = true;
                         self.bump();
                     }
                     TokenKind::KwPub => {
-                        if priv_field {
+                        if explicit_priv {
                             let sp = self.peek().span;
                             return Err(Diagnostic::new(
                                 "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
@@ -3320,12 +3335,19 @@ impl Parser {
                                 sp,
                             ));
                         }
-                        saw_pub = true;
+                        explicit_pub = true;
                         self.bump();
                     }
                     _ => break,
                 }
             }
+            // Effective priv_field resolution (Plan 124.7 / D224):
+            //   - explicit `pub` → priv_field = false (overrides type-level)
+            //   - explicit `priv` → priv_field = true
+            //   - neither → priv_field = default_priv (type-level inherit)
+            let priv_field = if explicit_priv { true }
+                             else if explicit_pub { false }
+                             else { default_priv };
             // Expect IDENT (field name)
             if !matches!(self.peek().kind, TokenKind::Ident(_)) {
                 let sp = self.peek().span;

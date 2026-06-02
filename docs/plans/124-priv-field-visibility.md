@@ -1025,8 +1025,8 @@ Check open-questions.md для существующих Q'ов:
 | 124.4 Tuple + protocol | 🟢 **CLOSED 2026-06-02** — NamedTupleField priv parsing + 3 checker hooks + protocol impl boundary §3 (D222 NEW); 10/10 plan124_4 PASS |
 | 124.5 nova doc + LSP | 🟢 **CLOSED 2026-06-02** — nova doc strip_private filter per-field + render priv keyword + JSON priv_field emit + docs/field-visibility-guide.md; LSP hover/completion forward-ref Plan 104.2/104.3 |
 | 124.6 Test access + visible_to | 🟢 **CLOSED 2026-06-02** — `#test_access(TypeX...)` fn attr + `#visible_to(TypeY...)` field attr + unified `priv_field_access_allowed` predicate (D223 NEW); 7/7 plan124_6 PASS |
-| 124.7 Type-level priv flip (named tuples) | 🆕 PLANNED |
-| **Umbrella** | 🟡 PARTIAL — Plan 124.1 V1 fully closed (compile-time enforcement working); 6 sub-plans remaining (124.2-124.7) |
+| 124.7 Type-level priv flip (named tuples) | 🟢 **CLOSED 2026-06-02** — `type X priv (...)` symmetric extension D220 §3.3.1 на named tuple form (D224 NEW); parser shim parse_named_tuple_fields_with_default; 8/8 plan124_7 PASS |
+| **Umbrella** | ✅ **FULLY CLOSED 2026-06-02** — все 7 sub-plans 124.1-124.7 ✅; D220+D221+D222+D223+D224 spec corpus complete; production-grade per-field privacy in Nova match-or-exceeds Go/Rust/TS/Java/Swift/C# на 14 capabilities + 3 Nova-only superior axes |
 
 ---
 

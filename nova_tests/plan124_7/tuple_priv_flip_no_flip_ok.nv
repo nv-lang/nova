@@ -1,0 +1,17 @@
+// Plan 124.7 — positive: tuple WITHOUT type-level priv (Plan 120
+// backward compat). Fields default = public.
+module plan124_7.tuple_priv_flip_no_flip_ok
+
+type Point(x f64, y f64)
+
+fn Point.origin() -> Point =>
+    Point(x: 0.0, y: 0.0)
+
+// External access to public fields — OK.
+fn sum(p Point) -> f64 =>
+    p.x + p.y
+
+test "Plan 124.7: no flip — fields stay public (backward compat)" {
+    ro p = Point.origin()
+    assert(sum(p) == 0.0)
+}

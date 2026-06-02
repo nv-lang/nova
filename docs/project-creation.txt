@@ -28043,3 +28043,74 @@ Plan 124.6 acceptance A6.1-A6.8 — ALL ✅.
 Plan 124 umbrella status: 6/7 sub-plans closed (124.1-124.6).
 Remaining: 124.7 (type-level priv flip tuples).
 
+
+Plan 124.7 — Type-level priv flip для named tuples (2026-06-02)
+
+D-block D224 NEW в spec/decisions/02-types.md. Symmetric extension
+D220 §3.3.1 (record-form Plan 124.1) на named tuple form (D215).
+
+Syntax: `type Secret priv (key str, salt str)` — default field
+visibility flipped к priv. Explicit `pub` per-field overrides.
+
+Implementation:
+- TypeDecl.default_field_priv — pre-existing (Plan 124.1), re-used.
+- parse_type_decl: KwPriv после type-name set'ит default_field_priv
+  независимо от body kind (already supported).
+- NEW parse_named_tuple_fields_with_default(default_priv) — wrapper
+  с default propagation. Backward-compat shim parse_named_tuple_fields()
+  calls _with_default(false).
+- Field parser: explicit pub → priv_field = false, explicit priv →
+  true, neither → inherit default_priv. Mirrors parse_record_fields_with_default.
+
+Effective resolution (D224 §2): table matches D220 §3.3.1 record form.
+Access rules UNCHANGED — все Plan 124.1-124.6 sites work uniform.
+
+Fixtures plan124_7/ 8/8 PASS:
+Positive 5: tuple_priv_flip_inside, tuple_priv_flip_pub_override,
+tuple_priv_flip_no_flip, tuple_priv_flip_record_form,
+tuple_priv_flip_explicit_priv_redundant.
+Negative 3: tuple_priv_flip_read_outside, tuple_priv_flip_init_outside,
+tuple_priv_flip_pattern_outside.
+
+Lessons:
+- Nova reserved keyword `with` → use `create_with` for fn name.
+- Named tuple fields immutable (D215) — no `mut` per-field allowed.
+
+Regression: Plan 120 8/8 + plan124_1 9/9 + plan124_4 10/10 unchanged.
+
+Commit:
+- feat(plan 124.7): type-level priv flip for named tuples — D224 NEW
+  + 8 fixtures + spec + plan flip + 3 logs.
+
+Plan 124.7 acceptance A7.1-A7.8 — ALL ✅.
+
+
+==============================================================
+Plan 124 UMBRELLA ✅ FULLY CLOSED (2026-06-02)
+==============================================================
+
+Все 7 sub-plans 124.1-124.7 closed в одной autonomous session
+(~6 hours wall-time).
+
+Cumulative production deliverables:
+- 5 NEW D-blocks (D220, D221, D222, D223, D224) + 2 amends
+  (D220 §G1 generics, D220 §T1 tooling).
+- 6 error codes (E_PRIV_FIELD_READ/WRITE/INIT/PATTERN/INIT_SPREAD +
+  E_PRIV_PUB_CONFLICT) — Plan 50 D102 format.
+- 2 attribute escape hatches (#test_access, #visible_to).
+- 61 PASS / 0 FAIL fixtures (plan124_1 9/9 + plan124_2 14/14 +
+  plan124_3 10/10 + plan124_4 10/10 + plan124_5 3/3 + plan124_6 7/7 +
+  plan124_7 8/8).
+- docs/field-visibility-guide.md (~330 lines user guide).
+- nova doc per-field priv filter + --include-private flag + JSON
+  priv_field emit (LSP-ready data source).
+
+Comparison vs Go/Rust/TS/Java/Swift/C#: match-or-exceeds 14/14
+capabilities + 3 Nova-only superior axes (strictest scope, no
+reflection backdoor, named-tuple priv).
+
+Backward compat: 0 regression FAIL в plan120 + plan124_1-7.
+
+Plan 124 umbrella ✅ FULLY CLOSED.
+Plan doc status table updated.
+

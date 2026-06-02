@@ -7787,6 +7787,113 @@ ALL closed 2026-06-02:
   unchanged.
 - A6.8 ✅ D223 NEW + cross-refs к D220-D222.
 
+---
+
+## D224. Type-level priv flip для named tuples (Plan 124.7)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.7 closure).
+> **Extends:** D220 §3.3.1 (record-form type-level flip) + D222
+> (named tuple priv per-field) + D215 (named tuple form, Plan 120).
+> **Plan:** [Plan 124.7](../../docs/plans/124.7-tuple-type-level.md).
+> **Cross-refs:** D220, D215, D222.
+
+### §1 Syntax
+
+Symmetric extension to record-form D220 §3.3.1:
+
+```nova
+// Record form (Plan 124.1 / D220 §3.3.1)
+type Account priv {
+    pub ro name str          // explicit pub override
+    mut balance f64          // default = priv (inherits type-level)
+}
+
+// Named tuple form (Plan 124.7 / D224 — this section)
+type Secret priv (key str, salt str)
+//             ^^^^ priv ПОСЛЕ имени type'а, ДО `(`
+
+type Credential priv (pub id str, secret str)
+//                    ^^^ explicit pub override per field
+```
+
+`priv` keyword position между type name (+ optional generics) и
+opening `(` — same position как для record form's `{`.
+
+### §2 Effective priv_field resolution
+
+Per-field `priv_field` для named-tuple field resolves в parser
+identical к record form (D220 §3.3.1):
+
+| field-level modifier | type-level flip | effective |
+|---|---|---|
+| explicit `pub` | flip or no-flip | `false` (overrides) |
+| explicit `priv` | flip or no-flip | `true` |
+| neither | flip = `false` | `false` (default public) |
+| neither | flip = `true` | `true` (inherits) |
+
+Bidirectional `priv pub` / `pub priv` → `E_PRIV_PUB_CONFLICT` (D220 §6).
+
+### §3 Implementation hooks
+
+- AST `TypeDecl.default_field_priv: bool` — пере-used (no extension
+  needed; Plan 124.1 уже добавила).
+- Parser `parse_type_decl`: KwPriv после type-name установится в
+  `default_field_priv` (existing — Plan 124.1).
+- Parser `parse_named_tuple_fields_with_default(default_priv)` — NEW
+  wrapper around old `parse_named_tuple_fields`. Propagates default
+  в effective `priv_field` resolution per field (mirror к
+  `parse_record_fields_with_default` precedent).
+- Backward-compat shim `parse_named_tuple_fields()` calls _with_default(false).
+
+### §4 Access rules — unchanged (D220 §4 / D221 / D222 / D223)
+
+Effective priv_field после resolution applied identically к explicit
+per-field priv. All Plan 124.1-124.6 enforcement sites (READ /
+WRITE / INIT / PATTERN / spread, + escape hatches `#test_access`,
+`#visible_to`) work uniform.
+
+### §5 Use cases
+
+Invariant-heavy types где majority of fields should be private:
+
+```nova
+// Encapsulated handles (private impl detail)
+type Mutex priv (state u32, owner_fid u64, pub kind MutexKind)
+
+// Sensitive data + opaque session
+type Session priv (token []u8, expires_at Instant, pub user_id u64)
+
+// Tightly-coupled coordinate types
+type Vec3 priv (x f64, y f64, z f64)
+```
+
+Bimodal coverage matches kubernetes empirical: `core/v1` API surface
+92% public (use no flip), `pkg/internal` 53% private (use flip + few `pub`).
+
+### §6 Cross-refs
+
+- D215 — named tuple base syntax.
+- D220 §3.3.1 — record-form type-level flip (D224 symmetric).
+- D222 — named tuple per-field priv (D224 builds on this).
+- D102 — diagnostic format.
+
+### Acceptance — Plan 124.7
+
+ALL closed 2026-06-02:
+
+- A7.1 ✅ Parser принимает `type X priv { ... }` syntax (record form —
+  Plan 124.1 preserved).
+- A7.2 ✅ Parser принимает `type X priv (...)` syntax (named tuple
+  form — D224 NEW).
+- A7.3 ✅ `pub` modifier на field overrides type-level priv default.
+- A7.4 ✅ Field без modifier inherits type-level default (priv).
+- A7.5 ✅ Type-level + field-level combinations 4 cases verified:
+  default-default ✅, default-explicit ✅, flip-default ✅, flip-explicit ✅.
+- A7.6 ✅ plan124_7 fixtures 8/8 PASS (5 positive + 3 negative).
+- A7.7 ✅ Regression Plan 120 8/8 + plan124_1 9/9 + plan124_4 10/10
+  unchanged.
+- A7.8 ✅ D224 NEW + cross-refs.
+
 ### Acceptance — Plan 124.2
 
 ALL closed 2026-06-02:
