@@ -26,6 +26,7 @@ pub mod profile;
 pub mod criterion_compat;
 pub mod cpu_instr;
 pub mod corpus;
+pub mod field_cache_wallclock;
 pub mod anomaly;
 pub mod remote;
 pub mod ai;

@@ -4943,8 +4943,134 @@ Cycle constants tunable via env (forensic):
 
 ### 7. Followups
 
-- **V6.2.1 (future):** real wall-clock bench integration via
-  `nova bench corpus` runner (Plan 57 sub-plan).
+- **V6.2.1:** ✅ DELIVERED 2026-06-03 — см. D217 amend V6.2.1 ниже.
+
+## D217 amend V6.2.1 — Real wall-clock bench (Plan 123 V6.2.1)
+
+**Source:** [Plan 123.6.2.1](../../docs/plans/123.6.2.1-real-wallclock-bench.md).
+**Status:** ✅ ACTIVE 2026-06-03.
+
+### 1. Scope
+
+V6.2 эмиттит static cycle-savings estimate. Эта оценка — heuristic
+(4/40/8 cycle weights × LOC pattern counts) и нуждается в
+cross-validation против real-program wallclock. V6.2.1 adds a
+dedicated subcommand `nova bench field-cache` which:
+
+1. Builds each input `.nv` file **twice** через subprocess `nova build`
+   с дополнительным env override:
+   - **ON variant:** `NOVA_FIELD_CACHE=1` (default cfg + cache pass)
+   - **OFF variant:** `NOVA_FIELD_CACHE=0` (pipeline skips `cache_module`)
+2. Runs each variant N samples (default 11) с warmup (default 2);
+   measures process wallclock via `std::time::Instant`.
+3. Reports median per variant, speedup-pct (off-on)/off×100, и
+   V6.2 static estimate side-by-side для cross-validation.
+
+The OFF variant uses the **same pipeline minus the cache_module pass**
+— все остальное (parse, typecheck, codegen, link, GC) идентично, что
+гарантирует causal attribution только полю `cache_module` effect.
+
+### 2. Public API (CLI surface)
+
+```
+nova bench field-cache <PATH> [OPTIONS]
+
+PATH                       Single .nv file OR directory (recursive)
+
+  --samples N              Samples kept per variant (default 11)
+  --warmup N               Warmup runs per variant, discarded (default 2)
+  --mode release|dev       Build mode (default release)
+  --toolchain ...          Compiler (default auto)
+  --gc malloc|boehm        GC backend (default boehm)
+  --out FILE.json          Write JSON v1 result
+  --baseline FILE.json     Compare geomean_speedup_pct against baseline
+  --gate-regression-pp N   Regression threshold pp (default 2.0)
+  --skip-failed            Skip non-buildable files vs hard fail
+```
+
+Behavior:
+
+- Files без `fn main` automatically skipped с status `"skip: no fn main"`.
+- Subprocess build/run timeouts soft-bounded (default 120s build, 60s run).
+- Samples interleaved off-then-on per iteration (mitigates systematic
+  drift из CPU thermal / scheduler jitter).
+- Aggregate uses geometric mean of `(1 + speedup_i/100)` factors per file
+  (Hennessy & Patterson §1.10 — unbiased composite ratio).
+
+### 3. JSON v1 schema
+
+```json
+{
+  "format_version": "1",
+  "kind": "field-cache-wallclock",
+  "samples_per_variant": 11,
+  "warmup_runs": 2,
+  "entries": [
+    {
+      "file": "...",
+      "status": "ok",
+      "off_median_ns": ...,
+      "on_median_ns": ...,
+      "off_samples_ns": [...],
+      "on_samples_ns": [...],
+      "speedup_pct": ...,
+      "static_cycles": ...,
+      "static_per_layer": {
+        "ro": ..., "mut": ..., "licm": ...,
+        "pure": ..., "chain": ...
+      }
+    }
+  ],
+  "aggregate": {
+    "geomean_speedup_pct": ...,
+    "total_static_cycles": ...,
+    "files_measured": ...,
+    "files_skipped": ...
+  }
+}
+```
+
+Forwards-compatible: bumping `format_version` requires migration
+note in this section (mirror D217 V6 / V6.1 / V6.2 conventions).
+
+### 4. Baseline regression gate
+
+When `--baseline FILE` provided:
+
+- Parse `aggregate.geomean_speedup_pct` from baseline JSON (required).
+- Compute `drop = baseline_geomean − new_geomean`.
+- If `drop > --gate-regression-pp threshold` (default 2.0 pp) → exit 1.
+
+Rationale: percentage-point delta is interpretable across runs without
+needing relative-pct normalization. 2.0 pp default chosen as 1σ noise
+floor on Windows MSVC + boehm runs (calibrated 2026-06-03).
+
+### 5. Configuration
+
+CLI flags override defaults. No new env vars introduced; existing
+`NOVA_FIELD_CACHE=0` (D217 V1 escape hatch) is the disable mechanism.
+
+### 6. Acceptance
+
+- **V6.2.1.1** Subcommand registered, builds twice, emits per-file row ✅
+- **V6.2.1.2** `--out` writes valid JSON v1 schema with all documented
+  fields including per-layer breakdown ✅
+- **V6.2.1.3** Dir mode walks .nv files recursively; non-main files
+  marked `"skip: no fn main"` ✅
+- **V6.2.1.4** `--baseline` + `--gate-regression-pp` exit 1 when drop
+  exceeds threshold; exit 0 otherwise ✅
+- **V6.2.1.5** Static `static_cycles` field matches in-process
+  `cpu_savings_estimate(analyze_module(...))` output ✅
+- **V6.2.1.6** Unit tests cover median (odd/even/empty), geomean
+  (3-file/empty/skip-exclusion), JSON shape, has_fn_main, formatting
+  (12 tests) ✅
+
+### 7. Followups
+
+- **V6.2.2 (future):** continuous orphan-branch history for
+  wallclock JSON (mirror Plan 57 `nova bench history-add`).
+- **V6.2.3 (future):** sweep cycle-weight calibration via least-squares
+  fit of static estimate vs measured speedup across the corpus.
 
 ## D217 amend V6.3 — Configurable gate thresholds (Plan 123 V6.3)
 
