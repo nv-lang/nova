@@ -265,6 +265,16 @@ fn cmd_check(path: &PathBuf) -> Result<()> {
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
     println!("ok: {} parsed and checked", path.display());
     Ok(())
 }
@@ -296,6 +306,16 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     if !cfn_errs.is_empty() {
         let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
             .iter()
             .map(|d| d.render(&src, &path.to_string_lossy()))
             .collect();
@@ -344,6 +364,16 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     if !cfn_errs.is_empty() {
         let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
             .iter()
             .map(|d| d.render(&src, &path.to_string_lossy()))
             .collect();
@@ -404,6 +434,16 @@ fn cmd_test(path: &PathBuf) -> Result<()> {
     let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     if !cfn_errs.is_empty() {
         let messages: Vec<String> = cfn_errs
+            .iter()
+            .map(|d| d.render(&src, &path.to_string_lossy()))
+            .collect();
+        return Err(anyhow!("{}", messages.join("\n")));
+    }
+    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
+    // specialization). Runs AFTER rewriter (fully-const fns dropped).
+    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
+    if !mono_errs.is_empty() {
+        let messages: Vec<String> = mono_errs
             .iter()
             .map(|d| d.render(&src, &path.to_string_lossy()))
             .collect();
