@@ -4813,6 +4813,57 @@ matches Plan 57 metric format; wiring straightforward.
 - All previous D217 amends + D218 + D219.
 - Plan 57 (bench infrastructure) — future CI gate integration.
 
+## D217 §7 amend V6.1 — Sugar CLI flags + CI perf gate (Plan 123.6.1)
+
+**Source:** [Plan 123.6.1](../../docs/plans/123.6.1-cli-flags-ci-gates.md).
+
+### 1. Global CLI flags
+
+12 flags added к `nova-cli::Cli` struct (global=true), translated к
+env vars before subcommand dispatch:
+
+| Flag | Env var (set on use) |
+|---|---|
+| `--no-field-cache` | `NOVA_FIELD_CACHE=0` |
+| `--no-field-cache-licm` | `NOVA_FIELD_CACHE_LICM=0` |
+| `--no-field-cache-pure` | `NOVA_FIELD_CACHE_PURE=0` |
+| `--no-field-cache-chain` | `NOVA_FIELD_CACHE_CHAIN=0` |
+| `--no-field-cache-ipa` | `NOVA_FIELD_CACHE_IPA=0` |
+| `--field-cache-threshold=N` | `NOVA_FIELD_CACHE_THRESHOLD=N` |
+| `--field-cache-licm-threshold=N` | `NOVA_FIELD_CACHE_LICM_THRESHOLD=N` |
+| `--field-cache-pure-threshold=N` | `NOVA_FIELD_CACHE_PURE_THRESHOLD=N` |
+| `--field-cache-chain-threshold=N` | `NOVA_FIELD_CACHE_CHAIN_THRESHOLD=N` |
+| `--field-cache-max=N` | `NOVA_FIELD_CACHE_MAX=N` |
+| `--field-cache-licm-max=N` | `NOVA_FIELD_CACHE_LICM_MAX=N` |
+| `--field-cache-chain-depth=N` | `NOVA_FIELD_CACHE_CHAIN_DEPTH=N` |
+
+CLI flag overrides env var when both present.
+
+### 2. CI perf regression gate
+
+`nova check --telemetry-cache --telemetry-baseline=baseline.json`:
+
+1. Computes current telemetry (V6 flow).
+2. Parses baseline JSON (minimal hand-rolled extractor, no
+   serde_json dep).
+3. Compares metrics:
+   - `methods_affected_pct`: absolute drop > **5 percentage points**
+     → regression.
+   - `caches_total`: relative drop > **10%** → regression.
+4. Exit code **1** on regression; **0** otherwise.
+
+### 3. Acceptance
+
+A6.1.1-A6.1.5 ✅. Verified: `--no-field-cache` triggers regression
+gate (100% drop); `--field-cache-threshold=3` reduces affected
+count.
+
+### 4. V6.2+ followups
+
+- **V6.2:** integration с Plan 57 `nova bench` для CPU time
+  regression.
+- **V6.3:** custom thresholds via flags.
+
 ## D220. IPA — Inter-Procedural Analysis для field caching — Plan 123.7
 
 **Source:** [Plan 123.7](../../docs/plans/123.7-ipa.md). Implementation:

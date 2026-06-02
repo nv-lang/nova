@@ -57,6 +57,49 @@ struct Cli {
           value_parser = ["auto", "always", "never"])]
     color: String,
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Plan 123.6.1 (V6.1): field-cache sugar CLI flags — global. Translate
+    // to NOVA_FIELD_CACHE_* env vars before subcommand dispatch.
+    // Env vars still respected when CLI flags absent.
+    // ─────────────────────────────────────────────────────────────────────
+    /// Disable Plan 123 field caching entirely (umbrella escape hatch).
+    /// Equivalent to `NOVA_FIELD_CACHE=0`.
+    #[arg(long = "no-field-cache", global = true)]
+    no_field_cache: bool,
+    /// Disable Plan 123.2 LICM phase (D218).
+    #[arg(long = "no-field-cache-licm", global = true)]
+    no_field_cache_licm: bool,
+    /// Disable Plan 123.3 pure-call cache phase (D219).
+    #[arg(long = "no-field-cache-pure", global = true)]
+    no_field_cache_pure: bool,
+    /// Disable Plan 123.4 chain cache phase (D217 amend V4).
+    #[arg(long = "no-field-cache-chain", global = true)]
+    no_field_cache_chain: bool,
+    /// Disable Plan 123.7 IPA refinements (D220 amend V7.1).
+    #[arg(long = "no-field-cache-ipa", global = true)]
+    no_field_cache_ipa: bool,
+    /// D217 V1 cache threshold (default 2). Min reads to cache @field.
+    #[arg(long = "field-cache-threshold", global = true, value_name = "N")]
+    field_cache_threshold: Option<usize>,
+    /// D218 LICM threshold (default 2). Min reads inside loop.
+    #[arg(long = "field-cache-licm-threshold", global = true, value_name = "N")]
+    field_cache_licm_threshold: Option<usize>,
+    /// D219 pure-call threshold (default 2). Min @<method>() calls.
+    #[arg(long = "field-cache-pure-threshold", global = true, value_name = "N")]
+    field_cache_pure_threshold: Option<usize>,
+    /// D217 V4 chain threshold (default 2). Min chain occurrences.
+    #[arg(long = "field-cache-chain-threshold", global = true, value_name = "N")]
+    field_cache_chain_threshold: Option<usize>,
+    /// Per-fn cap across all layers (default 8).
+    #[arg(long = "field-cache-max", global = true, value_name = "N")]
+    field_cache_max: Option<usize>,
+    /// Per-loop LICM cap (default 4).
+    #[arg(long = "field-cache-licm-max", global = true, value_name = "N")]
+    field_cache_licm_max: Option<usize>,
+    /// Chain max depth (default 4, min 2).
+    #[arg(long = "field-cache-chain-depth", global = true, value_name = "N")]
+    field_cache_chain_depth: Option<usize>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -109,6 +152,12 @@ enum Cmd {
         /// readable). Requires --telemetry-cache.
         #[arg(long = "telemetry-json")]
         telemetry_json: bool,
+        /// Plan 123.6.1 (V6.1): compare current telemetry с baseline
+        /// JSON file. If methods_affected_pct drops >5% OR
+        /// caches_total drops >10% → exit code 1 (CI regression
+        /// gate). Requires --telemetry-cache.
+        #[arg(long = "telemetry-baseline", value_name = "FILE")]
+        telemetry_baseline: Option<PathBuf>,
     },
     /// Run a Nova source file via the interpreter.
     Run {
@@ -1273,6 +1322,7 @@ fn cmd_check_telemetry_cache(
     include_runtime: bool,
     skip: &[String],
     json: bool,
+    baseline_path: Option<&Path>,
 ) -> Result<()> {
     let owned_root;
     let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
@@ -1409,7 +1459,63 @@ fn cmd_check_telemetry_cache(
         println!("  D219 pure-call cache:  {}", layer_pure);
         println!("  D217 V4 chain cache:   {}", layer_chain);
     }
+
+    // Plan 123.6.1 (V6.1): CI perf regression gate. If baseline
+    // path provided, compare current metrics. Regression thresholds:
+    // - methods_affected_pct drops > 5 percentage points → fail.
+    // - caches_total drops > 10% relative → fail.
+    if let Some(baseline) = baseline_path {
+        let baseline_text = std::fs::read_to_string(baseline)
+            .map_err(|e| anyhow!("read baseline {}: {}", baseline.display(), e))?;
+        let bl_pct = parse_json_number(&baseline_text, "methods_affected_pct").unwrap_or(0.0);
+        let bl_caches = parse_json_number(&baseline_text, "caches_total").unwrap_or(0.0) as usize;
+
+        let mut messages: Vec<String> = Vec::new();
+        let pct_delta = pct_affected - bl_pct;
+        if pct_delta < -5.0 {
+            messages.push(format!(
+                "PERF REGRESSION: methods_affected_pct dropped from {:.2}% (baseline) to {:.2}% (Δ {:+.2}pp)",
+                bl_pct, pct_affected, pct_delta
+            ));
+        }
+        if bl_caches > 0 {
+            let rel = (total_caches as f64 - bl_caches as f64) / bl_caches as f64;
+            if rel < -0.10 {
+                messages.push(format!(
+                    "PERF REGRESSION: caches_total dropped from {} (baseline) to {} (Δ {:.1}%)",
+                    bl_caches, total_caches, rel * 100.0
+                ));
+            }
+        }
+        if !messages.is_empty() {
+            eprintln!();
+            for m in &messages {
+                eprintln!("error: {}", m);
+            }
+            return Err(usage_err("V6.1 CI perf regression gate failed"));
+        } else {
+            eprintln!();
+            eprintln!("V6.1 perf gate: OK (vs baseline {})", baseline.display());
+        }
+    }
+
     Ok(())
+}
+
+/// Plan 123.6.1: minimal JSON number extractor (no serde_json dep
+/// needed for this small operation). Looks for `"<key>": <number>`
+/// pattern.
+fn parse_json_number(json: &str, key: &str) -> Option<f64> {
+    let pattern = format!("\"{}\"", key);
+    let pos = json.find(&pattern)?;
+    let after = &json[pos + pattern.len()..];
+    let after = after.trim_start();
+    let after = after.strip_prefix(':')?;
+    let after = after.trim_start();
+    // Extract number until `,` or `}` or whitespace.
+    let end = after.find(|c: char| c == ',' || c == '}' || c == '\n').unwrap_or(after.len());
+    let num_str = after[..end].trim();
+    num_str.parse::<f64>().ok()
 }
 
 fn count_instance_methods(module: &nova_codegen::ast::Module) -> usize {
@@ -1475,6 +1581,7 @@ fn cmd_check(
     explain_cache: bool,
     telemetry_cache: bool,
     telemetry_json: bool,
+    telemetry_baseline: Option<&Path>,
 ) -> Result<()> {
     // Plan 123.5 (D217 §6 amend V5): --explain-cache mode — per-file
     // analyze module без mutation, emit report to stdout. Skips
@@ -1482,9 +1589,9 @@ fn cmd_check(
     if explain_cache {
         return cmd_check_explain_cache(paths, include_runtime, skip);
     }
-    // Plan 123.6 (D217 §7 amend V6): aggregated telemetry mode.
+    // Plan 123.6 (D217 §7 amend V6) + V6.1 baseline comparison.
     if telemetry_cache {
-        return cmd_check_telemetry_cache(paths, include_runtime, skip, telemetry_json);
+        return cmd_check_telemetry_cache(paths, include_runtime, skip, telemetry_json, telemetry_baseline);
     }
     // Если пути не указаны — используем workspace root.
     let owned_root;
@@ -4831,6 +4938,23 @@ fn run() -> ExitCode {
         std::process::exit(101);
     }));
 
+    fn apply_field_cache_cli_flags(cli: &Cli) {
+        // Disable flags take precedence — set env var to "0".
+        if cli.no_field_cache { std::env::set_var("NOVA_FIELD_CACHE", "0"); }
+        if cli.no_field_cache_licm { std::env::set_var("NOVA_FIELD_CACHE_LICM", "0"); }
+        if cli.no_field_cache_pure { std::env::set_var("NOVA_FIELD_CACHE_PURE", "0"); }
+        if cli.no_field_cache_chain { std::env::set_var("NOVA_FIELD_CACHE_CHAIN", "0"); }
+        if cli.no_field_cache_ipa { std::env::set_var("NOVA_FIELD_CACHE_IPA", "0"); }
+        // Threshold/cap flags translate to env vars.
+        if let Some(n) = cli.field_cache_threshold { std::env::set_var("NOVA_FIELD_CACHE_THRESHOLD", n.to_string()); }
+        if let Some(n) = cli.field_cache_licm_threshold { std::env::set_var("NOVA_FIELD_CACHE_LICM_THRESHOLD", n.to_string()); }
+        if let Some(n) = cli.field_cache_pure_threshold { std::env::set_var("NOVA_FIELD_CACHE_PURE_THRESHOLD", n.to_string()); }
+        if let Some(n) = cli.field_cache_chain_threshold { std::env::set_var("NOVA_FIELD_CACHE_CHAIN_THRESHOLD", n.to_string()); }
+        if let Some(n) = cli.field_cache_max { std::env::set_var("NOVA_FIELD_CACHE_MAX", n.to_string()); }
+        if let Some(n) = cli.field_cache_licm_max { std::env::set_var("NOVA_FIELD_CACHE_LICM_MAX", n.to_string()); }
+        if let Some(n) = cli.field_cache_chain_depth { std::env::set_var("NOVA_FIELD_CACHE_CHAIN_DEPTH", n.to_string()); }
+    }
+
     let cli = Cli::parse();
 
     // Plan 36 R10: apply --color setting before any output.
@@ -4842,8 +4966,13 @@ fn run() -> ExitCode {
         }
     }
 
+    // Plan 123.6.1 (V6.1): translate field-cache CLI flags → env vars
+    // so codegen pipeline picks them up. CLI flags override env vars
+    // when present.
+    apply_field_cache_cli_flags(&cli);
+
     let result = match cli.cmd {
-        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json } => cmd_check(
+        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json, telemetry_baseline } => cmd_check(
             &paths,
             jobs,
             quiet,
@@ -4855,6 +4984,7 @@ fn run() -> ExitCode {
             explain_cache,
             telemetry_cache,
             telemetry_json,
+            telemetry_baseline.as_deref(),
         ),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(

@@ -27724,3 +27724,28 @@ Implementation (~180 LOC):
 D-block: D217 §6 amend V5.1 (~80 lines).
 
 Future V5.2/V5.3 followups: semantic tokens + quickfix `#pure`.
+
+
+================================================================================
+Plan 123.6.1 — D217 §7 amend V6.1 CLI flags + CI gates (2026-06-02)
+================================================================================
+
+✅ ЗАКРЫТ 2026-06-02. V6.1 followup.
+
+12 global CLI flags + CI perf regression gate.
+
+Implementation (~150 LOC):
+- 12 flags в Cli struct (global=true).
+- apply_field_cache_cli_flags translator (CLI → env vars).
+- cmd_check_telemetry_cache extended c baseline_path.
+- parse_json_number minimal JSON number extractor.
+
+CI workflow:
+- Baseline capture: `nova check src/ --telemetry-cache --telemetry-json > baseline.json`.
+- PR validation: `nova check src/ --telemetry-cache --telemetry-baseline=baseline.json`.
+- Exit 1 on regression (methods_affected_pct drop > 5pp OR caches_total drop > 10%).
+
+D-block: D217 §7 amend V6.1 (~75 lines).
+README: D217 amend V6.1 row.
+
+Open V6.2 followups: Plan 57 CPU bench integration + custom thresholds.

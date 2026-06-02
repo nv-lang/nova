@@ -29241,3 +29241,35 @@ Pure-call cache extended к args-with-literal-arguments. V3 cached
    → empty result, no exception. IDE responsiveness > precision.
 3. **Public fn exports enable integration testing.** Avoid full
    LSP RPC test harness when unit-level testing suffices.
+
+
+## Plan 123.6.1 closure (2026-06-02): D217 §7 amend V6.1 CLI flags + CI gates
+
+**V6.1 followup**, ✅ ЗАКРЫТ.
+
+**Acceptance A6.1.1-A6.1.5:**
+- A6.1.1 🟢 12 CLI flags disable layers / set thresholds.
+- A6.1.2 🟢 Thresholds override (verified via telemetry drop).
+- A6.1.3 🟢 Baseline gate detects regressions.
+- A6.1.4 🟢 Exit code 1 on regression.
+- A6.1.5 🟢 D217 §7 amend V6.1 landed.
+
+**Implementation (~150 LOC):**
+- Cli struct: 12 global flags.
+- apply_field_cache_cli_flags translator.
+- --telemetry-baseline=FILE comparison logic.
+- parse_json_number minimal extractor.
+
+**Lessons:**
+1. **Global CLI flags + env-var translation cleanest.** Single
+   translator function before subcommand dispatch. CLI overrides
+   env vars naturally.
+2. **Hand-rolled JSON parser sufficient for narrow CI need.**
+   No serde_json dep added; ~10 LOC string ops.
+3. **Threshold drops > absolute drops для CI.** Methods_affected_pct
+   absolute pp drop > 5pp catches "feature was effective, now
+   barely is". Caches_total relative > 10% catches volume drops.
+
+**V6.2+ followups:**
+- [M-123.6.1-bench-cpu] — Plan 57 CPU time regression.
+- [M-123.6.1-custom-thresholds] — `--telemetry-baseline-pct-drop=N`.
