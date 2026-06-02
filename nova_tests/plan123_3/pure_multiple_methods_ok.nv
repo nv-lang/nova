@@ -1,0 +1,29 @@
+// Plan 123.3 T1.3: multiple pure methods cached independently.
+
+module plan123_3.pure_multiple_methods_ok
+
+type Stat {
+    ro n int
+    ro k int
+}
+
+#pure
+fn Stat @doubled() -> int => @n * 2
+
+#pure
+fn Stat @tripled() -> int => @n * 3
+
+fn Stat @combined() -> int {
+    @doubled() + @tripled() + @doubled() + @tripled()
+}
+
+fn Stat.new(n int, k int) -> Stat {
+    Stat { n, k }
+}
+
+test "multiple pure methods independently cached" {
+    ro s = Stat.new(5, 1)
+    ro r = s.combined()
+    // 10+15+10+15 = 50.
+    assert(r == 50)
+}

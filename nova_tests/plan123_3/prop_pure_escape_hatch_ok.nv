@@ -1,0 +1,35 @@
+// Plan 123.3 T-PROP.2: escape hatch — semantic equivalence under
+// NOVA_FIELD_CACHE_PURE=0.
+
+module plan123_3.prop_pure_escape_hatch_ok
+
+type Polynomial {
+    ro coeff int
+    ro power int
+}
+
+#pure
+fn Polynomial @value() -> int {
+    mut r = 1
+    mut i = 0
+    while i < @power {
+        r = r * @coeff
+        i = i + 1
+    }
+    r
+}
+
+fn Polynomial @sum_three() -> int {
+    @value() + @value() + @value()
+}
+
+fn Polynomial.new(c int, p int) -> Polynomial {
+    Polynomial { coeff: c, power: p }
+}
+
+test "pure cache escape hatch preserves semantics" {
+    ro p = Polynomial.new(2, 5)
+    ro r = p.sum_three()
+    // 2^5 = 32, ×3 = 96.
+    assert(r == 96)
+}

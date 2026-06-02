@@ -56,6 +56,12 @@ pub struct FieldCacheConfig {
     pub licm_threshold: usize,
     /// Plan 123.2 LICM cap: max hoists per loop. Default 4.
     pub licm_max_per_loop: usize,
+    /// Plan 123.3 (D219): enable pure-call result caching. Caches
+    /// `@<pure_method>()` results when method is Purity::Pure и
+    /// no @F mutation в body.
+    pub pure_enabled: bool,
+    /// Plan 123.3 threshold: min pure-call occurrences. Default 2.
+    pub pure_threshold: usize,
 }
 
 impl Default for FieldCacheConfig {
@@ -67,6 +73,8 @@ impl Default for FieldCacheConfig {
             licm_enabled: true,
             licm_threshold: 2,
             licm_max_per_loop: 4,
+            pure_enabled: true,
+            pure_threshold: 2,
         }
     }
 }
@@ -135,6 +143,21 @@ impl FieldCacheConfig {
                 }
             }
         }
+        // Plan 123.3 pure-call env vars.
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_PURE") {
+            if v == "0" || v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("false") {
+                cfg.pure_enabled = false;
+            }
+        }
+        if let Ok(v) = std::env::var("NOVA_FIELD_CACHE_PURE_THRESHOLD") {
+            if let Ok(n) = v.parse::<usize>() {
+                if n == 0 {
+                    cfg.pure_enabled = false;
+                } else {
+                    cfg.pure_threshold = n;
+                }
+            }
+        }
         cfg
     }
 }
@@ -167,14 +190,25 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
         return;
     }
     let registry = build_registry(module);
+    // Plan 123.3 (D219): build pure-method registry for V3 pure-call
+    // caching phase. HashSet of (type_name, method_name) tuples.
+    let pure_methods: HashSet<(String, String)> = if cfg.pure_enabled {
+        build_pure_methods_registry(module)
+    } else {
+        HashSet::new()
+    };
 
     for item in &mut module.items {
         if let Item::Fn(f) = item {
             // Plan 123.2 (D218): LICM phase FIRST — hoist invariant
-            // loop reads. Plan 123.1 (D217) per-fn caching SECOND —
-            // sees hoisted locals as already cached.
+            // loop reads. Plan 123.3 (D219) pure-call SECOND. Plan
+            // 123.1 (D217) per-fn caching THIRD — sees both as already
+            // cached.
             if cfg.licm_enabled {
                 licm_fn(f, &registry, cfg);
+            }
+            if cfg.pure_enabled {
+                pure_cache_fn(f, &registry, &pure_methods, cfg);
             }
             cache_fn(f, &registry, cfg);
         }
@@ -185,7 +219,37 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
                 if cfg.licm_enabled {
                     licm_fn(f, &registry, cfg);
                 }
+                if cfg.pure_enabled {
+                    pure_cache_fn(f, &registry, &pure_methods, cfg);
+                }
                 cache_fn(f, &registry, cfg);
+            }
+        }
+    }
+}
+
+/// Plan 123.3: build pure-method registry. Includes only methods с
+/// `purity == Purity::Pure` AND args-less (V3 scope).
+fn build_pure_methods_registry(module: &Module) -> HashSet<(String, String)> {
+    let mut out: HashSet<(String, String)> = HashSet::new();
+    register_pure_items(&module.items, &mut out);
+    for pf in &module.peer_files {
+        register_pure_items(&pf.items_here, &mut out);
+    }
+    out
+}
+
+fn register_pure_items(items: &[Item], out: &mut HashSet<(String, String)>) {
+    for item in items {
+        if let Item::Fn(f) = item {
+            if let Some(recv) = &f.receiver {
+                // V3: pure + instance method + no params.
+                if f.purity == Purity::Pure
+                    && recv.kind == ReceiverKind::Instance
+                    && f.params.is_empty()
+                {
+                    out.insert((recv.type_name.clone(), f.name.clone()));
+                }
             }
         }
     }
@@ -3370,6 +3434,810 @@ fn first_field_span_in_expr(e: &Expr, fname: &str) -> Option<crate::diag::Span> 
                 .or_else(|| args.iter().find_map(|a| first_field_span_in_expr(a, fname)))
         }
         _ => None,
+    }
+}
+
+// ===== Plan 123.3 (D219): Pure call result caching =====
+//
+// V3 phase. Caches `@<pure_method>()` results within method body when:
+// - pure_method has Purity::Pure (D24 infrastructure)
+// - method is args-less (V3 scope; V3.1 adds args-with-literals)
+// - method body has no @F write anywhere (conservative invalidation)
+// - method body has no closure-capture / no concurrent body
+// - call count ≥ cfg.pure_threshold
+//
+// Cache naming: `_at_<method>_call` (distinct от D217/D218 naming).
+//
+// Composition с D217+D218:
+// - LICM (D218) runs FIRST.
+// - Pure-cache (D219) runs SECOND — sees post-LICM AST (hoisted
+//   locals don't interfere; @<method>() pattern unaffected by
+//   LICM).
+// - D217 per-fn cache runs LAST — sees cached pure-call locals
+//   as regular Ident references (no @F pattern match).
+
+/// Per-fn V3 pure-call cache entry point.
+fn pure_cache_fn(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    pure_methods: &HashSet<(String, String)>,
+    cfg: &FieldCacheConfig,
+) {
+    let Some(recv) = &f.receiver else { return };
+    if recv.kind == ReceiverKind::Static {
+        return;
+    }
+    let type_name = recv.type_name.clone();
+    if reg.skip_types.contains(&type_name) {
+        return;
+    }
+    if f.is_external {
+        return;
+    }
+    // Conservative V3: if any `@F = ...` write anywhere в body, skip
+    // pure-cache. Rationale — without frame info, mutation may affect
+    // pure method's result.
+    if body_has_any_self_field_write(&f.body) {
+        return;
+    }
+    // V3 skip if concurrent constructs.
+    if body_has_concurrent(&f.body) {
+        return;
+    }
+
+    // Count `@<method>()` calls per method name where (type_name,
+    // method_name) is in pure_methods.
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut first_spans: HashMap<String, crate::diag::Span> = HashMap::new();
+    let mut captured_methods: HashSet<String> = HashSet::new();
+    count_pure_calls_in_body(&f.body, pure_methods, &type_name, &mut counts, &mut first_spans, &mut captured_methods);
+
+    // Collect existing local names for collision avoidance.
+    let mut local_names: HashSet<String> = HashSet::new();
+    for p in &f.params {
+        local_names.insert(p.name.clone());
+    }
+    collect_local_names_fn(f, &mut local_names);
+
+    // Decide candidates: count >= threshold, not closure-captured.
+    let mut names: Vec<&String> = counts.keys().collect();
+    names.sort();
+    let mut to_cache: Vec<(String, crate::diag::Span)> = Vec::new();
+    let body_span = match &f.body {
+        FnBody::Block(b) => b.span,
+        FnBody::Expr(e) => e.span,
+        FnBody::External => return,
+    };
+    for mname in names {
+        if counts[mname] < cfg.pure_threshold {
+            continue;
+        }
+        if captured_methods.contains(mname) {
+            continue;
+        }
+        let span = first_spans.get(mname).copied().unwrap_or(body_span);
+        to_cache.push((mname.clone(), span));
+        if to_cache.len() >= cfg.max_per_fn {
+            break;
+        }
+    }
+
+    if to_cache.is_empty() {
+        return;
+    }
+
+    // Generate collision-safe cache local names.
+    let mut name_map: HashMap<String, String> = HashMap::new();
+    for (mname, _) in &to_cache {
+        let base = format!("_at_{}_call", mname);
+        let mut chosen = base.clone();
+        let mut suffix = 0usize;
+        while local_names.contains(&chosen) {
+            suffix += 1;
+            chosen = format!("{}_{}", base, suffix);
+        }
+        local_names.insert(chosen.clone());
+        name_map.insert(mname.clone(), chosen);
+    }
+
+    // Coerce FnBody::Expr → Block-with-trailing для prepend.
+    match &mut f.body {
+        FnBody::Block(_) => {}
+        FnBody::Expr(_) => {
+            let body_expr = match std::mem::replace(&mut f.body, FnBody::External) {
+                FnBody::Expr(e) => e,
+                _ => unreachable!(),
+            };
+            let span = body_expr.span;
+            let new_block = Block {
+                stmts: Vec::new(),
+                trailing: Some(Box::new(body_expr)),
+                span,
+            };
+            f.body = FnBody::Block(new_block);
+        }
+        FnBody::External => return,
+    }
+
+    // Rewrite `@<method>()` call sites with cache idents.
+    if let FnBody::Block(b) = &mut f.body {
+        let mut all_renames: HashMap<String, String> = HashMap::new();
+        for (mname, local) in &name_map {
+            all_renames.insert(mname.clone(), local.clone());
+        }
+        rewrite_pure_calls_in_block(b, &all_renames);
+    }
+
+    // Prepend cache let statements at body start.
+    if let FnBody::Block(b) = &mut f.body {
+        let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len());
+        for (mname, span) in &to_cache {
+            let local_name = &name_map[mname];
+            // Construct `@<method>()` call expression.
+            let call_expr = Expr {
+                kind: ExprKind::Call {
+                    func: Box::new(Expr {
+                        kind: ExprKind::Member {
+                            obj: Box::new(Expr {
+                                kind: ExprKind::SelfAccess,
+                                span: *span,
+                            }),
+                            name: mname.clone(),
+                        },
+                        span: *span,
+                    }),
+                    args: Vec::new(),
+                    trailing: None,
+                },
+                span: *span,
+            };
+            prefix.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Ident {
+                    name: local_name.clone(),
+                    span: *span,
+                    is_mut: false,
+                },
+                ty: None,
+                value: call_expr,
+                span: *span,
+                is_ghost: false,
+                consume: false,
+            }));
+        }
+        prefix.append(&mut b.stmts);
+        b.stmts = prefix;
+    }
+}
+
+/// True if body contains any top-level Assign with target = `@<F>`.
+fn body_has_any_self_field_write(body: &FnBody) -> bool {
+    match body {
+        FnBody::Block(b) => block_has_any_self_field_write(b),
+        FnBody::Expr(e) => expr_has_any_self_field_write(e),
+        FnBody::External => false,
+    }
+}
+
+fn block_has_any_self_field_write(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_has_any_self_field_write)
+        || b.trailing.as_ref().map_or(false, |t| expr_has_any_self_field_write(t))
+}
+
+fn stmt_has_any_self_field_write(s: &Stmt) -> bool {
+    match s {
+        Stmt::Assign { target, .. } => {
+            if match_self_field(target).is_some() {
+                return true;
+            }
+            // Even в nested expression — e.g. `let x = if cond { @F = ... }`.
+            // For V3 conservative, just check top-level Assign на target.
+            false
+        }
+        Stmt::Let(d) => expr_has_any_self_field_write(&d.value),
+        Stmt::Const(d) => expr_has_any_self_field_write(&d.value),
+        Stmt::Expr(e) => expr_has_any_self_field_write(e),
+        Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_has_any_self_field_write(v)),
+        Stmt::Throw { value, .. } => expr_has_any_self_field_write(value),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            expr_has_any_self_field_write(body)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_has_any_self_field_write(init) || block_has_any_self_field_write(body)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            expr_has_any_self_field_write(expr)
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn expr_has_any_self_field_write(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) => block_has_any_self_field_write(b),
+        ExprKind::If { cond, then, else_ } => {
+            expr_has_any_self_field_write(cond)
+                || block_has_any_self_field_write(then)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => block_has_any_self_field_write(b),
+                    ElseBranch::If(e) => expr_has_any_self_field_write(e),
+                })
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            expr_has_any_self_field_write(scrutinee)
+                || block_has_any_self_field_write(then)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => block_has_any_self_field_write(b),
+                    ElseBranch::If(e) => expr_has_any_self_field_write(e),
+                })
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_has_any_self_field_write(scrutinee)
+                || arms.iter().any(|arm| match &arm.body {
+                    MatchArmBody::Expr(e) => expr_has_any_self_field_write(e),
+                    MatchArmBody::Block(b) => block_has_any_self_field_write(b),
+                })
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            expr_has_any_self_field_write(iter) || block_has_any_self_field_write(body)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_has_any_self_field_write(cond) || block_has_any_self_field_write(body)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            expr_has_any_self_field_write(scrutinee) || block_has_any_self_field_write(body)
+        }
+        ExprKind::Loop { body, .. } => block_has_any_self_field_write(body),
+        ExprKind::With { body, .. } => block_has_any_self_field_write(body),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            block_has_any_self_field_write(body)
+        }
+        ExprKind::Supervised { body, .. } => block_has_any_self_field_write(body),
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            expr_has_any_self_field_write(e)
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            expr_has_any_self_field_write(a) || expr_has_any_self_field_write(b)
+        }
+        ExprKind::Index { obj, index } => {
+            expr_has_any_self_field_write(obj) || expr_has_any_self_field_write(index)
+        }
+        ExprKind::Call { func, args, .. } => {
+            expr_has_any_self_field_write(func)
+                || args.iter().any(|a| expr_has_any_self_field_write(a.expr()))
+        }
+        _ => false, // Conservative — other expressions don't have stmts.
+    }
+}
+
+/// True if body contains Spawn/Supervised/Detach/Blocking/ParallelFor.
+fn body_has_concurrent(body: &FnBody) -> bool {
+    match body {
+        FnBody::Block(b) => block_contains_spawn(b),
+        FnBody::Expr(e) => expr_contains_spawn(e),
+        FnBody::External => false,
+    }
+}
+
+/// Walk body and count `@<method>()` calls where (recv_type, method) is
+/// в pure_methods. Also track first span per method.
+/// Additionally, detect closure-captured calls (treat closure-internal
+/// calls как captured → exclude).
+fn count_pure_calls_in_body(
+    body: &FnBody,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    counts: &mut HashMap<String, usize>,
+    first_spans: &mut HashMap<String, crate::diag::Span>,
+    captured: &mut HashSet<String>,
+) {
+    match body {
+        FnBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, false),
+        FnBody::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, false),
+        FnBody::External => {}
+    }
+}
+
+fn count_pure_in_block(
+    b: &Block,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    counts: &mut HashMap<String, usize>,
+    first_spans: &mut HashMap<String, crate::diag::Span>,
+    captured: &mut HashSet<String>,
+    in_closure: bool,
+) {
+    for s in &b.stmts {
+        count_pure_in_stmt(s, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+    }
+    if let Some(t) = &b.trailing {
+        count_pure_in_expr(t, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+    }
+}
+
+fn count_pure_in_stmt(
+    s: &Stmt,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    counts: &mut HashMap<String, usize>,
+    first_spans: &mut HashMap<String, crate::diag::Span>,
+    captured: &mut HashSet<String>,
+    in_closure: bool,
+) {
+    match s {
+        Stmt::Let(d) => count_pure_in_expr(&d.value, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+        Stmt::Const(d) => count_pure_in_expr(&d.value, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+        Stmt::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+        Stmt::Assign { target, value, .. } => {
+            count_pure_in_expr(target, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_expr(value, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                count_pure_in_expr(v, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            }
+        }
+        Stmt::Throw { value, .. } => count_pure_in_expr(value, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            count_pure_in_expr(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            count_pure_in_expr(init, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            count_pure_in_expr(expr, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn count_pure_in_expr(
+    e: &Expr,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+    counts: &mut HashMap<String, usize>,
+    first_spans: &mut HashMap<String, crate::diag::Span>,
+    captured: &mut HashSet<String>,
+    in_closure: bool,
+) {
+    // Detect `@<method>()` pattern.
+    if let Some(mname) = match_self_pure_call(e, pure_methods, recv_type) {
+        if in_closure {
+            captured.insert(mname.to_string());
+        } else {
+            *counts.entry(mname.to_string()).or_insert(0) += 1;
+            first_spans.entry(mname.to_string()).or_insert(e.span);
+        }
+        // Don't recurse into args (we already verified args.len() == 0).
+        return;
+    }
+    // Recurse, switching in_closure flag when entering closure bodies.
+    match &e.kind {
+        ExprKind::Lambda { body, .. } => count_pure_in_expr(body, pure_methods, recv_type, counts, first_spans, captured, true),
+        ExprKind::ClosureLight { body, .. } => {
+            match body {
+                ClosureBody::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, true),
+                ClosureBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, true),
+            }
+        }
+        ExprKind::ClosureFull(sb) => {
+            match &sb.body {
+                FnBody::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, true),
+                FnBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, true),
+                FnBody::External => {}
+            }
+        }
+        ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, true),
+                    HandlerMethodBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, true),
+                }
+            }
+        }
+        ExprKind::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+        ExprKind::If { cond, then, else_ } => {
+            count_pure_in_expr(cond, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_block(then, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                    ElseBranch::If(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            count_pure_in_expr(scrutinee, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_block(then, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                    ElseBranch::If(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            count_pure_in_expr(scrutinee, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    count_pure_in_expr(g, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                    MatchArmBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            count_pure_in_expr(iter, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::While { cond, body, .. } => {
+            count_pure_in_expr(cond, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            count_pure_in_expr(scrutinee, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Loop { body, .. } => count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings {
+                count_pure_in_expr(&wb.handler, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            }
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            if let Some(c) = cancel { count_pure_in_expr(c, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            count_pure_in_expr(a, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_expr(b, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Index { obj, index } => {
+            count_pure_in_expr(obj, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_expr(index, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            count_pure_in_expr(func, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            for a in args {
+                count_pure_in_expr(a.expr(), pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => count_pure_in_block(b, pure_methods, recv_type, counts, first_spans, captured, true),
+                        FnBody::Expr(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, true),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) =>
+                        count_pure_in_block(&tb.body, pure_methods, recv_type, counts, first_spans, captured, true),
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) =>
+                        count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        count_pure_in_expr(k, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                        count_pure_in_expr(v, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                    }
+                    MapElem::Spread(e) => count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &rf.value {
+                    count_pure_in_expr(v, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                count_pure_in_expr(el, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    count_pure_in_expr(g, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                }
+                count_pure_in_block(&arm.body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => count_pure_in_expr(chan, pure_methods, recv_type, counts, first_spans, captured, in_closure),
+                    SelectOp::Send { chan, value } => {
+                        count_pure_in_expr(chan, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                        count_pure_in_expr(value, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+                    }
+                    SelectOp::Default => {}
+                }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { count_pure_in_expr(s, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+            if let Some(e) = end { count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            count_pure_in_expr(range, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            count_pure_in_expr(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            count_pure_in_expr(tag, pure_methods, recv_type, counts, first_spans, captured, in_closure);
+            for a in args { count_pure_in_expr(a, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+        }
+        // Leaves.
+        _ => {}
+    }
+}
+
+/// Match `Call { func: Member{SelfAccess, name: M}, args: [] }` pattern
+/// where (recv_type, M) is в pure_methods registry.
+fn match_self_pure_call<'a>(
+    e: &'a Expr,
+    pure_methods: &HashSet<(String, String)>,
+    recv_type: &str,
+) -> Option<&'a str> {
+    if let ExprKind::Call { func, args, trailing } = &e.kind {
+        if !args.is_empty() || trailing.is_some() {
+            return None;
+        }
+        if let ExprKind::Member { obj, name } = &func.kind {
+            if matches!(obj.kind, ExprKind::SelfAccess) {
+                if pure_methods.contains(&(recv_type.to_string(), name.clone())) {
+                    return Some(name.as_str());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn rewrite_pure_calls_in_block(b: &mut Block, renames: &HashMap<String, String>) {
+    for s in &mut b.stmts {
+        rewrite_pure_calls_in_stmt(s, renames);
+    }
+    if let Some(t) = &mut b.trailing {
+        rewrite_pure_calls_in_expr(t, renames);
+    }
+}
+
+fn rewrite_pure_calls_in_stmt(s: &mut Stmt, renames: &HashMap<String, String>) {
+    match s {
+        Stmt::Let(d) => rewrite_pure_calls_in_expr(&mut d.value, renames),
+        Stmt::Const(d) => rewrite_pure_calls_in_expr(&mut d.value, renames),
+        Stmt::Expr(e) => rewrite_pure_calls_in_expr(e, renames),
+        Stmt::Assign { target, value, .. } => {
+            rewrite_pure_calls_in_expr(target, renames);
+            rewrite_pure_calls_in_expr(value, renames);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                rewrite_pure_calls_in_expr(v, renames);
+            }
+        }
+        Stmt::Throw { value, .. } => rewrite_pure_calls_in_expr(value, renames),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            rewrite_pure_calls_in_expr(body, renames);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            rewrite_pure_calls_in_expr(init, renames);
+            rewrite_pure_calls_in_block(body, renames);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            rewrite_pure_calls_in_expr(expr, renames);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
+    // Detect `@<method>()` pattern → replace с Ident(local).
+    if let ExprKind::Call { func, args, trailing } = &e.kind {
+        if args.is_empty() && trailing.is_none() {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if matches!(obj.kind, ExprKind::SelfAccess) {
+                    if let Some(local) = renames.get(name) {
+                        e.kind = ExprKind::Ident(local.clone());
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // Don't recurse into closure bodies — cache locals not in their scope.
+    match &e.kind {
+        ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+        | ExprKind::Lambda { .. } | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. } => return,
+        _ => {}
+    }
+    // Recurse children.
+    match &mut e.kind {
+        ExprKind::Block(b) => rewrite_pure_calls_in_block(b, renames),
+        ExprKind::If { cond, then, else_ } => {
+            rewrite_pure_calls_in_expr(cond, renames);
+            rewrite_pure_calls_in_block(then, renames);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rewrite_pure_calls_in_block(b, renames),
+                    ElseBranch::If(e) => rewrite_pure_calls_in_expr(e, renames),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            rewrite_pure_calls_in_expr(scrutinee, renames);
+            rewrite_pure_calls_in_block(then, renames);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => rewrite_pure_calls_in_block(b, renames),
+                    ElseBranch::If(e) => rewrite_pure_calls_in_expr(e, renames),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            rewrite_pure_calls_in_expr(scrutinee, renames);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard { rewrite_pure_calls_in_expr(g, renames); }
+                match &mut arm.body {
+                    MatchArmBody::Expr(e) => rewrite_pure_calls_in_expr(e, renames),
+                    MatchArmBody::Block(b) => rewrite_pure_calls_in_block(b, renames),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            rewrite_pure_calls_in_expr(iter, renames);
+            rewrite_pure_calls_in_block(body, renames);
+        }
+        ExprKind::While { cond, body, .. } => {
+            rewrite_pure_calls_in_expr(cond, renames);
+            rewrite_pure_calls_in_block(body, renames);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            rewrite_pure_calls_in_expr(scrutinee, renames);
+            rewrite_pure_calls_in_block(body, renames);
+        }
+        ExprKind::Loop { body, .. } => rewrite_pure_calls_in_block(body, renames),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { rewrite_pure_calls_in_expr(&mut wb.handler, renames); }
+            rewrite_pure_calls_in_block(body, renames);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            rewrite_pure_calls_in_block(body, renames);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            rewrite_pure_calls_in_block(body, renames);
+            if let Some(c) = cancel { rewrite_pure_calls_in_expr(c, renames); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
+            rewrite_pure_calls_in_expr(e, renames);
+        }
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            rewrite_pure_calls_in_expr(a, renames);
+            rewrite_pure_calls_in_expr(b, renames);
+        }
+        ExprKind::Index { obj, index } => {
+            rewrite_pure_calls_in_expr(obj, renames);
+            rewrite_pure_calls_in_expr(index, renames);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            rewrite_pure_calls_in_expr(func, renames);
+            for a in args {
+                match a {
+                    CallArg::Item(e) | CallArg::Spread(e) => rewrite_pure_calls_in_expr(e, renames),
+                    CallArg::Named { value, .. } => rewrite_pure_calls_in_expr(value, renames),
+                }
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => rewrite_pure_calls_in_block(b, renames),
+                    Trailing::Fn(_) | Trailing::LegacyBlockWithParams(_) => {}
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { rewrite_pure_calls_in_expr(e, renames); }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => rewrite_pure_calls_in_expr(e, renames),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        rewrite_pure_calls_in_expr(k, renames);
+                        rewrite_pure_calls_in_expr(v, renames);
+                    }
+                    MapElem::Spread(e) => rewrite_pure_calls_in_expr(e, renames),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields: rfields, .. } => {
+            for rf in rfields {
+                if let Some(v) = &mut rf.value { rewrite_pure_calls_in_expr(v, renames); }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { rewrite_pure_calls_in_expr(el, renames); }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &mut arm.guard { rewrite_pure_calls_in_expr(g, renames); }
+                rewrite_pure_calls_in_block(&mut arm.body, renames);
+                match &mut arm.op {
+                    SelectOp::Recv { chan, .. } => rewrite_pure_calls_in_expr(chan, renames),
+                    SelectOp::Send { chan, value } => {
+                        rewrite_pure_calls_in_expr(chan, renames);
+                        rewrite_pure_calls_in_expr(value, renames);
+                    }
+                    SelectOp::Default => {}
+                }
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { rewrite_pure_calls_in_expr(s, renames); }
+            if let Some(e) = end { rewrite_pure_calls_in_expr(e, renames); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            rewrite_pure_calls_in_expr(range, renames);
+            rewrite_pure_calls_in_expr(body, renames);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { rewrite_pure_calls_in_expr(e, renames); }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            rewrite_pure_calls_in_expr(tag, renames);
+            for a in args { rewrite_pure_calls_in_expr(a, renames); }
+        }
+        _ => {}
     }
 }
 
