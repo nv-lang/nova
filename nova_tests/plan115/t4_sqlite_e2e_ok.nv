@@ -110,8 +110,8 @@ test "distinct handle types — Db vs Stmt nominally distinct" {
     // через successful unwrap (`.0` extracts inner ptr) — passing
     // wrong handle к fn(Db) или fn(Stmt) → E7301 (см.
     // t3_handle_type_mismatch_neg.nv).
-    assert(db.0 != null ptr)
-    assert(stmt.0 != null ptr)
+    assert(db.0 != (0 as ptr))
+    assert(stmt.0 != (0 as ptr))
 
     mini_sqlite_finalize(stmt.0)
     mini_sqlite_close(db.0)

@@ -29,8 +29,8 @@ test "tuple with three ptrs — all fields preserved" {
     assert(c as int == 3)
 }
 
-test "null ptr inside tuple" {
-    ro (p, n) = (null ptr, 99)
-    assert(p == null ptr)
+test "(0 as ptr) inside tuple" {
+    ro (p, n) = ((0 as ptr), 99)
+    assert(p == (0 as ptr))
     assert(n == 99)
 }

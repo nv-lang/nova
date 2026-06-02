@@ -30,9 +30,9 @@ test "distinct handle types — same underlying ptr, different Nova type" {
     assert(sq.0 == png.0)
 }
 
-test "handle construction from null ptr" {
-    ro h = SqHandle(null ptr)
-    assert(h.0 == null ptr)
+test "handle construction from (0 as ptr)" {
+    ro h = SqHandle((0 as ptr))
+    assert(h.0 == (0 as ptr))
 }
 
 test "multiple handles — independent values" {
