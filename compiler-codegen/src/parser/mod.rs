@@ -3709,7 +3709,7 @@ impl Parser {
                 Some(Block {
                     stmts: vec![],
                     trailing: Some(Box::new(expr)),
-                    span,
+                    span, is_unsafe: false
                 })
             } else if matches!(self.peek().kind, TokenKind::LBrace) {
                 Some(self.parse_block()?)
@@ -4367,7 +4367,7 @@ impl Parser {
                 name,
                 setup: Vec::new(),
                 // Placeholder — never used когда groups непустой.
-                measure_body: Block { stmts: Vec::new(), trailing: None, span: brace_open.merge(brace_close) },
+                measure_body: Block { stmts: Vec::new(), trailing: None, span: brace_open.merge(brace_close), is_unsafe: false },
                 teardown: Vec::new(),
                 params,
                 groups,
@@ -6017,7 +6017,12 @@ impl Parser {
             // up» — unsafe encapsulates per fn (canonical Rust pattern).
             TokenKind::KwUnsafe => {
                 self.bump(); // eat 'unsafe' keyword; LBrace остаётся для parse_block
-                let block = self.parse_block()?;
+                let mut block = self.parse_block()?;
+                // Plan 118 (D216 §8, Ф.3.3 enforcement foundation): mark
+                // block as unsafe-context. Type-checker (Ф.3.5 follow-on)
+                // uses is_unsafe flag для E_UNSAFE_REQUIRED gating pointer
+                // ops (&, *, *T deref, p.field на pointer).
+                block.is_unsafe = true;
                 let span = start.merge(block.span);
                 Ok(Expr::new(ExprKind::Block(block), span))
             }
@@ -7033,7 +7038,7 @@ impl Parser {
                 MatchArmBody::Block(Block {
                     stmts,
                     trailing: None,
-                    span: pattern.span().merge(last_span),
+                    span: pattern.span().merge(last_span), is_unsafe: false
                 })
             } else if matches!(self.peek().kind, TokenKind::LBrace) {
                 let saved = self.pos;
@@ -7364,7 +7369,7 @@ impl Parser {
         let block = Block {
             stmts,
             trailing: Some(Box::new(loop_expr)),
-            span,
+            span, is_unsafe: false
         };
         Expr::new(ExprKind::Block(block), span)
     }
@@ -7939,7 +7944,7 @@ impl Parser {
         Ok(Block {
             stmts,
             trailing,
-            span: start.merge(end),
+            span: start.merge(end), is_unsafe: false
         })
     }
 
@@ -8200,6 +8205,7 @@ impl Parser {
                 stmts,
                 trailing,
                 span: start.merge(end),
+                is_unsafe: false,
             },
             span: start.merge(end),
         })

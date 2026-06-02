@@ -271,7 +271,7 @@ impl DesugarCtx {
         ExprKind::Block(Block {
             stmts,
             trailing: Some(Box::new(trailing)),
-            span,
+            span, is_unsafe: false
         })
     }
 
@@ -543,7 +543,7 @@ impl DesugarCtx {
                     let for_body = Block {
                         stmts: vec![v_let, Stmt::Expr(insert_in_loop)],
                         trailing: None,
-                        span,
+                        span, is_unsafe: false
                     };
                     let for_expr = Expr::new(
                         ExprKind::For {
@@ -597,7 +597,7 @@ impl DesugarCtx {
         ExprKind::Block(Block {
             stmts,
             trailing: Some(Box::new(trailing)),
-            span,
+            span, is_unsafe: false
         })
     }
 

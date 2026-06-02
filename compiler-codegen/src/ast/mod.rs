@@ -1191,7 +1191,15 @@ pub struct Block {
     pub stmts: Vec<Stmt>,
     pub trailing: Option<Box<Expr>>,
     pub span: Span,
+    /// Plan 118 (D216 §8, D2 amend): `unsafe { ... }` block marker.
+    /// Type-checker uses for unsafe-context tracking — pointer ops
+    /// (&, *, *T deref, p.field на pointer) require unsafe context
+    /// (E_UNSAFE_REQUIRED иначе — Ф.3.5 follow-on). Default false;
+    /// set true by parser для KwUnsafe-prefixed blocks (parse_primary
+    /// KwUnsafe arm).
+    pub is_unsafe: bool,
 }
+
 
 #[derive(Debug, Clone)]
 pub enum Stmt {

@@ -6455,13 +6455,13 @@ impl CEmitter {
                     let for_body = Block {
                         stmts: vec![Stmt::Expr(spawn_expr)],
                         trailing: None,
-                        span,
+                        span, is_unsafe: false
                     };
                     let for_expr = Expr::new(
                         ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                         span,
                     );
-                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                     self.emit_supervised(&supervised_block, None)?;
                     self.indent -= 1;
                     self.line("}");
@@ -6476,13 +6476,13 @@ impl CEmitter {
             let for_body = Block {
                 stmts: vec![Stmt::Expr(spawn_expr)],
                 trailing: None,
-                span,
+                span, is_unsafe: false
             };
             let for_expr = Expr::new(
                 ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                 span,
             );
-            let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+            let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
             return self.emit_supervised(&supervised_block, None);
         }
 
@@ -6502,13 +6502,13 @@ impl CEmitter {
                 let for_body = Block {
                     stmts: vec![Stmt::Expr(spawn_expr)],
                     trailing: None,
-                    span,
+                    span, is_unsafe: false
                 };
                 let for_expr = Expr::new(
                     ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                     span,
                 );
-                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                 return self.emit_supervised(&supervised_block, None);
             }
         };
@@ -6541,12 +6541,12 @@ impl CEmitter {
                 if elems.iter().any(|e| matches!(e, ArrayElem::Spread(_))) {
                     let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
                     let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
-                    let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span };
+                    let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span, is_unsafe: false };
                     let for_expr = Expr::new(
                         ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                         span,
                     );
-                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                     return self.emit_supervised(&supervised_block, None);
                 }
                 // Materialise the array once, then walk indices.
@@ -6587,13 +6587,13 @@ impl CEmitter {
                 let for_body = Block {
                     stmts: vec![Stmt::Expr(spawn_expr)],
                     trailing: None,
-                    span,
+                    span, is_unsafe: false
                 };
                 let for_expr = Expr::new(
                     ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                     span,
                 );
-                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                 return self.emit_supervised(&supervised_block, None);
             }
         };
