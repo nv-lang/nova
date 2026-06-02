@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_WRITE
+//
+// Plan 124.1 — negative: priv field write вне type-method scope
+// → E_PRIV_FIELD_WRITE (Plan 124 / D220 §4).
+module plan124_1.priv_write_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External free fn — writing priv field NOT allowed.
+fn external_writer(mut acc Account) {
+    acc.money = 100.0
+}

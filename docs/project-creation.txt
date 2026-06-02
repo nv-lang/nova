@@ -27680,3 +27680,125 @@ Tests: N/A (planning task, no implementation). Implementation
 tests запланированы в Plan 124.1-124.7 sub-plans (плановое
 ≥15 fixtures per sub-plan, positive + negative + property).
 
+
+
+================================================================================
+Plan 124.1 V1 — priv field infrastructure landed (2026-06-02 autonomous session)
+================================================================================
+
+Autonomous session — Plan 124.1 V1 implementation. Started after
+Plan 124 umbrella merged в main (cf383d43f5e). User instruction:
+work isolated, no stops, status at completion.
+
+Что landed:
+- Lexer KwPriv + KwPub tokens
+- AST RecordField.priv_field + TypeDecl.default_field_priv
+- Parser per-field priv/pub + type-level type X priv {} flip
+- Bidirectional E_PRIV_PUB_CONFLICT detection
+- 4 fixtures plan124_1/ (3 positive + 1 negative) — 4/4 PASS на
+  release nova-cli + clang
+- Spec D220 NEW (02-types.md, ~190 lines, 7 sub-sections)
+- README spec index D220 entry
+- D47 amend cross-ref maintained (already landed earlier
+  b0d86ac669b)
+
+Что НЕ landed (honest scope):
+- Type-checker enforcement (4 error codes READ/WRITE/INIT/PATTERN)
+  — followup [M-124.1-checker-enforcement]
+- Plan 124.2-124.7 sub-plans — separate roadmap entries
+  (Plan 124 umbrella doc §4.2-4.7)
+
+Rationale partial scope:
+- Plan 124.1 originally estimated ~2-3 dev-day. V1 infrastructure
+  представляет ~50% of full sub-plan scope. Type-checker enforcement
+  — separate big task requiring deep integration с 15+ Member access
+  resolution sites в types/mod.rs.
+- Plan 73.1 / 100.4 / 110 precedent: ship clean infrastructure
+  phases, enforcement / runtime behavior в follow-up phases. Production-
+  grade decision: no half-done enforcement (parser/AST infrastructure
+  ready to hook).
+
+Commits на ветке plan-124-priv-fields (V1 implementation):
+1. 68a7a77eabc — feat Ф.1 priv/pub lexer + AST + parser
+2. (Ф.4 commit) — feat tests + bidirectional conflict
+3. ba79256d409 — spec D220 NEW
+
+Acceptance criteria final (Plan 124.1 V1):
+- A1.1-A1.3 ✅ parser/AST infrastructure
+- A1.4-A1.7 🟡 type-checker enforcement deferred → followup
+- A1.6-A1.7 ✅ semantic accepted inside type-methods (no enforcement
+  yet but parser/AST ready)
+- A1.8 ✅ regression plan90 9/0, syntax 53/1 pre-existing — 0 new FAIL
+- A1.9 ✅ plan124_1 fixtures 4/4 PASS
+- A1.10 ✅ spec D220 NEW + README index + D47 amend
+
+Closes (V1 infrastructure):
+- [M-124.1-lexer] — KwPriv/KwPub
+- [M-124.1-ast] — priv_field + default_field_priv
+- [M-124.1-parser-field-mod] — priv/pub field parsing
+- [M-124.1-parser-type-flip] — type X priv {} syntax
+- [M-124.1-spec-d220] — D220 NEW
+- [M-D47-amend-2026-06-02] — _prefix deprecated
+
+Unblocks:
+- [M-124.1-checker-enforcement] — implementation work ready (parser
+  emits priv_field bit; checker hook нужен)
+- Plan 124.2-124.7 sub-plans — могут спавнить sub-plan docs когда
+  ready
+
+Honest deferred (NOT executed in this session):
+- Plan 124.2 Pattern/literal init rules
+- Plan 124.3 Generics uniform
+- Plan 124.4 Named tuple priv + protocol impl
+- Plan 124.5 nova doc + LSP integration
+- Plan 124.6 Test access + visible_to friends
+- Plan 124.7 Type-level priv flip (named tuples)
+
+Worktree nova-p124 preserved для followup [M-124.1-checker-enforcement]
++ subsequent sub-plans (per project convention nova-pNN persistent).
+Branch plan-124-priv-fields pushed на github, не merged в main pending
+user review.
+
+
+
+================================================================================
+Plan 124.1 V1 fully closed — checker enforcement (2026-06-02)
+================================================================================
+
+Autonomous continuation after V1 infrastructure landed earlier session.
+Production-grade closure of [M-124.1-checker-enforcement].
+
+Implementation hooks (compiler-codegen/src/types/mod.rs):
+1. E_PRIV_FIELD_READ — f3_check_member
+2. E_PRIV_FIELD_WRITE — check_target_readonly
+3. E_PRIV_FIELD_INIT — walk_expr RecordLit
+4. E_PRIV_FIELD_PATTERN — f1_block Stmt::Let Pattern::Record
+
+Central RAII tracking: TypeCheckCtx.current_recv_type set in check_fn
++ f1_check_fn via PrivRecvGuard. Matches ConstFnFlagGuard pattern.
+
+Tests added (plan124_1/): 5 new fixtures (1 positive + 4 negative).
+All 9/9 PASS на release nova-cli + clang. Regression plan90 9/0,
+plan90_1 20/0. 0 new FAIL.
+
+Commits this session:
+- Merge main (sync с latest)
+- Ф.2.1 E_PRIV_FIELD_READ
+- Ф.2.2 E_PRIV_FIELD_WRITE
+- Ф.2.3 E_PRIV_FIELD_INIT
+- Ф.2.4 E_PRIV_FIELD_PATTERN
+- Closure (this commit)
+
+Spec D220 amended: V1 acceptance ALL ✅ closed.
+Plan doc: Plan 124.1 status flipped 🟡 → 🟢 V1 FULLY CLOSED.
+
+Plan 124.1 V1 acceptance A1.1-A1.10 — ALL ✅.
+
+Deferred к next session (per umbrella roadmap):
+- Plan 124.2 Pattern destructure + literal init rules expansion
+- Plan 124.3 Generics uniform handling
+- Plan 124.4 Named tuple priv + protocol impl
+- Plan 124.5 nova doc + LSP integration
+- Plan 124.6 Test access + visible_to friends
+- Plan 124.7 Type-level priv flip (tuples)
+

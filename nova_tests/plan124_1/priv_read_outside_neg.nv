@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.1 — negative: priv field read outside type-method scope
+// → E_PRIV_FIELD_READ enforcement (Plan 124 / D220).
+module plan124_1.priv_read_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External free fn — accessing priv field NOT allowed.
+fn external_reader(acc Account) -> f64 => acc.money

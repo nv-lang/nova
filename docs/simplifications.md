@@ -28857,3 +28857,155 @@ sub-plan + umbrella-level. Documented в
    provides false sense of encapsulation. Compile-time `priv` reveals
    real API boundary при refactoring.
 
+
+---
+
+## Plan 124.1 V1 — Per-field visibility priv keyword (parser/AST/lexer infrastructure, 2026-06-02)
+
+**Что:** V1 infrastructure для per-field `priv` modifier — lexer
+tokens, AST extensions, parser, basic tests, spec D220 NEW. Type-checker
+enforcement deferred → followup `[M-124.1-checker-enforcement]`.
+
+**Status:** 🟢 V1 INFRASTRUCTURE LANDED. Branch `plan-124-priv-fields`,
+3 commits на ветке для V1 (68a7a77eabc + 2 followup + ba79256d409 spec).
+
+**CLOSED markers:**
+- ✅ `[M-124.1-lexer]` — KwPriv + KwPub tokens.
+- ✅ `[M-124.1-ast]` — RecordField.priv_field + TypeDecl.default_field_priv.
+- ✅ `[M-124.1-parser-field-mod]` — per-field priv/pub parsing с
+  bidirectional E_PRIV_PUB_CONFLICT detection.
+- ✅ `[M-124.1-parser-type-flip]` — type-level `type X priv {}` syntax.
+- ✅ `[M-124.1-spec-d220]` — D220 NEW в 02-types.md + README index.
+- ✅ `[M-D47-amend-2026-06-02]` — _prefix convention deprecated.
+
+**OPEN markers (V1 enforcement gap — followup):**
+- 🟡 `[M-124.1-checker-enforcement]` — type-checker emit 4 error
+  codes E_PRIV_FIELD_{READ,WRITE,INIT,PATTERN}. Parser/AST infrastructure
+  ready (priv_field bit на RecordField + default_field_priv на TypeDecl);
+  enforcement requires hook в Member access resolution + literal init
+  + pattern destructure paths. Priority: P1 (without enforcement priv
+  is parser-only, no runtime guarantee). Estimate: ~1 dev-day.
+
+**OPEN markers (Plan 124 future sub-plans, carried forward):**
+- 🟡 `[M-124.2-pattern-literal]` — pattern destructure + literal init rules.
+- 🟡 `[M-124.2-priv-embed]` — `priv use NAME Type` private embed.
+- 🟡 `[M-124.3-generics]` — generic type uniform handling.
+- 🟡 `[M-124.4-tuple-priv]` — named tuple priv (Plan 120 D215 ext).
+- 🟡 `[M-124.4-protocol-impl-boundary]` — protocol impl rules.
+- 🟡 `[M-124.5-doc-lsp]` — nova doc hide + LSP filter.
+- 🟡 `[M-124.6-test-access]` — `#[test_access]` + `#[visible_to]`.
+- 🟡 `[M-124.7-type-level-priv-tuple]` — type-level priv flip for
+  named tuples.
+
+**Acceptance criteria (Plan 124.1 V1 — A1.1-A1.10):**
+- A1.1 ✅ Parser принимает `priv` modifier — `type X { priv mut f T }` parses.
+- A1.2 ✅ Modifier composition `priv mut / priv ro / priv consume` —
+  все three combinations PASS на parser.
+- A1.3 ✅ AST `RecordField.priv_field` корректно set по explicit
+  modifier или type-level inherit.
+- A1.4 🟡 Type-checker E_PRIV_FIELD_READ — DEFERRED.
+- A1.5 🟡 Type-checker E_PRIV_FIELD_WRITE — DEFERRED.
+- A1.6 ✅ Inside type instance method `@priv_field` access PASS
+  (semantic accepted; checker doesn't enforce пока).
+- A1.7 ✅ Inside type static method priv field access PASS (semantic
+  accepted).
+- A1.8 ✅ Regression — plan90 9/0, syntax 53/1 pre-existing (0 new
+  FAIL).
+- A1.9 ✅ plan124_1 fixtures 4/4 PASS (3 positive + 1 negative on
+  release nova-cli + clang).
+- A1.10 ✅ Spec D220 NEW + README spec entry + D47 amend.
+
+**Subsystems landed:**
+1. Lexer (`compiler-codegen/src/lexer/{token.rs, mod.rs}`) — 2 new
+   keyword tokens.
+2. AST (`compiler-codegen/src/ast/mod.rs`) — 2 new fields с inline
+   documentation.
+3. Parser (`compiler-codegen/src/parser/mod.rs`) — type-level priv
+   detection + per-field priv/pub modifier с bidirectional conflict
+   detection + parse_record_fields_with_default(default_priv) thread-through.
+4. Tests (`nova_tests/plan124_1/`) — 4 fixtures (smoke_parse +
+   priv_field_basic + type_level_priv + priv_pub_conflict_neg).
+5. Spec (`spec/decisions/02-types.md`) — D220 NEW section ~190 lines
+   с 7 sub-sections + acceptance + followups.
+6. Spec README index (`spec/decisions/README.md`) — D220 entry.
+
+**Honest scope assessment:**
+
+Plan 124.1 originally estimated ~2-3 dev-day. V1 infrastructure landed
+in this autonomous session (~2 hours actual work). Type-checker
+enforcement (A1.4-A1.7) — substantial separate phase, requires
+deep integration с Member access resolution в types/mod.rs (multiple
+codepaths, 15+ sites identified в Ф.0 investigation). Deferred к
+next session as `[M-124.1-checker-enforcement]` — same pattern as
+Plan 73.1 partial closures, Plan 100.4 sub-sub-plan extractions,
+Plan 110 phase extractions. Production-grade decision: ship clean
+infrastructure (no half-done enforcement), enforcement in dedicated
+follow-up.
+
+**Design lessons:**
+1. **Bidirectional conflict detection.** `priv pub` и `pub priv` оба
+   detected explicitly — без double-check, generic parse error fires
+   на следующем unexpected keyword token (poor UX). Cost: ~5 LOC.
+2. **Type-level + field-level symmetric.** `priv` keyword usable в
+   обоих positions — parse_type_decl + parse_record_fields. AST
+   threading через parse_record_fields_with_default(default_priv).
+3. **Parser refactor backward-compat.** parse_record_fields() остаётся
+   wrapper shim к parse_record_fields_with_default(false) — все
+   existing callers unchanged (sum-variant fields default public).
+4. **Plan 50 D102 diagnostic format adherence.** E_PRIV_PUB_CONFLICT
+   message включает hint («Choose one: priv OR pub») + context
+   reference («redundant без type-level priv {} flip») + spec link
+   (D220).
+
+
+
+---
+
+## Plan 124.1 V1 FULLY CLOSED — checker enforcement landed (2026-06-02)
+
+Type-checker enforcement landed для all 4 E_PRIV_FIELD_* error codes
+via centralized TypeCheckCtx hooks. Plan 124 / D220 §3-§4 acceptance
+A1.4-A1.7 закрыты.
+
+CLOSED markers:
+- [M-124.1-checker-enforcement] — all 4 codes via current_recv_type
+  RAII tracking (PrivRecvGuard pattern matches ConstFnFlagGuard).
+
+Implementation hooks:
+1. E_PRIV_FIELD_READ — f3_check_member (line 3712), field-resolution
+   after fields.iter().find. priv_field + recv mismatch → emit.
+2. E_PRIV_FIELD_WRITE — check_target_readonly (line 4528), after
+   readonly check. Same priv + recv check.
+3. E_PRIV_FIELD_INIT — walk_expr ExprKind::RecordLit (line 2852),
+   after assoc-const check. Per-field iteration emits на priv outside.
+4. E_PRIV_FIELD_PATTERN — f1_block Stmt::Let Pattern::Record. Pattern
+   field iteration + RecordField lookup + outside check.
+
+current_recv_type tracking:
+- TypeCheckCtx.current_recv_type: RefCell<Option<String>>
+- check_fn (line 2235) + f1_check_fn (line 3028) — оба set recv
+- PrivRecvGuard RAII restore on exit (Plan 114.4.2 D199 precedent)
+
+Tests (nova_tests/plan124_1/) — 9/9 PASS на release nova-cli + clang:
+- 4 positive: smoke_parse, priv_field_basic, type_level_priv,
+  priv_read_inside_method_ok
+- 5 negative: priv_pub_conflict_neg, priv_read_outside_neg,
+  priv_write_outside_neg, priv_init_outside_neg, priv_pattern_outside_neg
+
+Regression: plan90 9/0, plan90_1 20/0, syntax 53/1 pre-existing.
+
+Acceptance Plan 124.1 V1 A1.1-A1.10 — ALL closed 2026-06-02.
+
+Design lessons:
+1. Multi-Ctx architecture — types/mod.rs has TypeCheckCtx + BoundCtx
+   + others. Initial PATTERN hook misplaced в BoundCtx (no `types`
+   field) → compile error → relocated to TypeCheckCtx.
+2. Two-pass f1_check_fn + check_fn — both must set recv_type via
+   PrivRecvGuard. Single-set leaks tracking.
+3. Each error message Plan 50 D102 format с Hint + spec link.
+4. Test fixture nuance: Account { ... } redundant when return type
+   already specifies → use array context [Account { ... }] для
+   negative INIT test.
+
+Plan 124.1 V1 ✅ FULLY CLOSED. Plan 124 umbrella partial — 6
+sub-plans (124.2-124.7) remaining.

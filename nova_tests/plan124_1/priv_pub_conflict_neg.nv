@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_PRIV_PUB_CONFLICT
+//
+// Plan 124.1 — negative: field cannot have both `priv` AND `pub` modifiers.
+// `pub` overrides type-level priv default; explicit `priv` re-asserts.
+// Both на одном field — design conflict, parser отвергает.
+module plan124_1.priv_pub_conflict_neg
+
+export type X priv {
+    priv pub mut both f64
+}
+
+fn main() -> () { }

@@ -2915,7 +2915,16 @@ impl Parser {
         // caller must consume instances (via consume-method wrapper). No body
         // needed — consume enforcement is field-independent for opaque types
         // (the entire opaque value is the resource).
-        let consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        //
+        // Plan 124 (D220): `type X priv { ... }` — type-level default visibility
+        // flip; fields default = priv для этого type'а, explicit `pub` modifier
+        // на field override priv default. Markers `consume` и `priv` могут идти
+        // в любом порядке (взаимно независимые).
+        let mut consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        let default_field_priv = self.eat(&TokenKind::KwPriv).is_some();
+        if !consume_marker {
+            consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        }
 
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
         // реализация в runtime. Body отсутствует — никакого `{ ... }`, `|`,
@@ -3004,6 +3013,7 @@ impl Parser {
                 invariants: Vec::new(),
                 axioms: Vec::new(),
                 consume: consume_marker,
+                default_field_priv,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3074,6 +3084,7 @@ impl Parser {
                     invariants: Vec::new(),
                     axioms: Vec::new(),
                     consume: false,
+                    default_field_priv: false,
                     impl_protocols: impl_protocols.clone(),
                 });
             }
@@ -3116,7 +3127,8 @@ impl Parser {
             }
             TokenKind::LBrace => {
                 self.bump();
-                let (fields, acs) = self.parse_record_fields()?;
+                // Plan 124 (D220): pass type-level default visibility to field parser.
+                let (fields, acs) = self.parse_record_fields_with_default(default_field_priv)?;
                 assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
@@ -3189,6 +3201,7 @@ impl Parser {
             invariants,
             axioms: effect_axioms,
             consume: consume_marker,
+            default_field_priv,
             impl_protocols,
         })
     }
@@ -3277,6 +3290,16 @@ impl Parser {
     /// внутри `type X { ... }` collected отдельно как associated constants —
     /// НЕ в instance layout, accessible через namespace `Type.NAME`.
     fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
+        // Backward-compat shim: existing call sites still call без default_priv;
+        // default_priv = false (public default — D47 unchanged).
+        self.parse_record_fields_with_default(false)
+    }
+
+    /// Plan 124 (D220): parse record fields с type-level default visibility.
+    /// `default_priv` приходит из `type X priv { ... }` syntax (parse_type_decl
+    /// after type-level marker parsing); если `false` — fields default = public
+    /// (D47 unchanged). Field-level explicit `priv`/`pub` override default.
+    fn parse_record_fields_with_default(&mut self, default_priv: bool) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
@@ -3308,6 +3331,54 @@ impl Parser {
                 }
                 continue;
             }
+            // Plan 124 (D220): per-field visibility modifier. `priv` или `pub`
+            // (mutually exclusive); idёт ДО mutability modifiers (ro/mut/consume)
+            // — symmetric с module-level `export` keyword position.
+            //
+            // Effective priv_field resolution:
+            //   - Explicit `pub` → priv_field = false (overrides type-level default)
+            //   - Explicit `priv` → priv_field = true (overrides type-level default)
+            //   - Neither → priv_field = default_priv (type-level inherit; D47 default = public)
+            //
+            // Conflict detection: both orders `priv pub` и `pub priv` — explicit
+            // E_PRIV_PUB_CONFLICT error.
+            let mut explicit_priv = self.eat(&TokenKind::KwPriv).is_some();
+            let mut explicit_pub = self.eat(&TokenKind::KwPub).is_some();
+            if explicit_priv && explicit_pub {
+                return Err(Diagnostic::new(
+                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
+                     modifiers — these are mutually exclusive (Plan 124 / D220). \
+                     Choose one: `priv` (private to type-methods) OR `pub` (explicit \
+                     public; redundant без type-level `priv {}` flip).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Также handle reverse order: `pub priv` — pub matched first,
+            // then priv. Re-check.
+            if explicit_pub && !explicit_priv {
+                if self.eat(&TokenKind::KwPriv).is_some() {
+                    return Err(Diagnostic::new(
+                        "[E_PRIV_PUB_CONFLICT] field cannot have both `pub` and `priv` \
+                         modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
+                        self.peek().span,
+                    ));
+                }
+            }
+            // Also `priv pub` — priv matched first then pub on next iteration
+            // (already handled by the second eat above). Sanity:
+            if explicit_priv && self.eat(&TokenKind::KwPub).is_some() {
+                return Err(Diagnostic::new(
+                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
+                     modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
+                    self.peek().span,
+                ));
+            }
+            // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
+            let _ = (&mut explicit_priv, &mut explicit_pub);
+            let field_priv = if explicit_priv { true }
+                             else if explicit_pub { false }
+                             else { default_priv };
+
             let mut readonly = false;
             let mut mutable = false;
             // Plan 114 (D184) Ф.1.5: `readonly` retracted; `ro` — canonical
@@ -3404,6 +3475,7 @@ impl Parser {
                 embed_anonymous: anonymous,
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
+                priv_field: field_priv,
             });
             // запятая или newline
             if self.eat(&TokenKind::Comma).is_some() {
