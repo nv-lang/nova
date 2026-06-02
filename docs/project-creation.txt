@@ -27680,3 +27680,63 @@ Tests: N/A (planning task, no implementation). Implementation
 tests запланированы в Plan 124.1-124.7 sub-plans (плановое
 ≥15 fixtures per sub-plan, positive + negative + property).
 
+
+
+[Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support] 2026-06-02
+
+Контекст: Plan 91.12 V2 ранее закрыл миграцию sync types (OnceCell/Lazy/Condvar)
+на tuple-newtype через hardcoded per-name routing (RUNTIME_BACKED_NEWTYPES list).
+Этот followup extends generic newtype support к произвольным user-level types,
+закрывая [M-115-newtype-constructor-generic] и unblocking real user FFI use
+cases (phantom-T handles, mutability-tagged buffers, region/arena ownership).
+
+Изменения:
+
+**compiler-codegen/src/codegen/emit_c.rs:**
+
+1. emit_type_decl generic-types branch — добавлен TypeDeclKind::Newtype handler.
+   Generic Record/Sum уже emit'ились (lines 8237-8430); Newtype falls through
+   на bare `return Ok(())` без emission. Fix: внутри `if !t.generics.is_empty()`
+   block добавлен Newtype branch — emit'ает `typedef nova_ptr Nova_X;` (single
+   typedef shared across all T monomorphizations) + регистрирует type_aliases
+   entry. Skip для RUNTIME_BACKED_NEWTYPES (OnceCell/Lazy/Condvar handled
+   через emit_generic_type_instance per-T mono).
+
+2. emit_call constructor intercept (line ~17374) — расширен match для
+   TurboFish form:
+   - ExprKind::Ident(n) → Some(n) (non-generic case, Plan 115 V1)
+   - ExprKind::TurboFish { base: Ident(n), .. } → Some(n) (generic, V2 followup)
+   Без этого `MyHandle[int](raw)` пытался резолвиться через free_fn dispatch
+   → undefined symbol "MyHandle" в linker stage.
+
+Tests (nova_tests/plan91_12/v3_user_generic_newtype_ok.nv — NEW, 6 blocks):
+- single-param `MyHandle[int]` construct + .0
+- single-param `MyHandle[str]` construct + .0
+- distinct T'ы share same C ABI (nova_ptr equality test)
+- multi-param `MultiParam[T, U]` construct + .0
+- generic newtype + null ptr literal
+- multiple instances — independent values
+
+Spec (spec/decisions/02-types.md D214):
+- D214 status header amended: «Plan 91.12 V2 amend (2026-06-02): generic
+  tuple-newtype `type X[T](ptr)` now supported».
+- NEW §«Generic opaque handle — type X[T](ptr)» с phantom-T semantics +
+  multi-param example.
+
+Doc (docs/migration/d126-to-tuple-newtype.md):
+- §«Pattern 2 — Tuple newtype над ptr» extended subsection
+  «Generic user FFI handle (Plan 91.12 V2 followup, 2026-06-02)» с
+  Region[T]/DualHandle[T, U] examples.
+
+Markers:
+- ✅ [M-115-newtype-constructor-generic] — CLOSED.
+- 🟡 [M-91.12-generic-newtype-non-ptr-inner] — open carry-forward (low
+  priority: `type Wrap[T](int)` пер-T mono — non-FFI use case).
+
+Regression:
+- plan91_12 7/7 PASS (6 V2 fixtures + 1 V3 new).
+- buffers 11/11 PASS.
+- plan115 11/11 PASS.
+- plan103_5 (OnceCell/Lazy/Once family) 20/20 PASS.
+
+Worktree: nova-p91-12 (продолжается). Branch: plan-91.12.

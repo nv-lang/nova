@@ -28857,3 +28857,48 @@ sub-plan + umbrella-level. Documented в
    provides false sense of encapsulation. Compile-time `priv` reveals
    real API boundary при refactoring.
 
+
+## Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support (2026-06-02)
+
+**Status:** ✅ CLOSED 2026-06-02. Extends Plan 91.12 V2 sync types migration к user-level case.
+
+**CLOSED markers:**
+- ✅ `[M-115-newtype-constructor-generic]` — generic newtype `type X[T](ptr)` constructor + `.0` access. V1 (Plan 115) supported только non-generic `type X(ptr)`. V2 followup extends к generic forms — `type Region[T](ptr)`, `type DualHandle[T, U](ptr)` (multi-param). All monomorphizations share C ABI (single `typedef nova_ptr Nova_X;` без per-T emission); T parameter — type-system fiction (compile-time phantom discrimination, zero runtime overhead).
+
+**Codegen integration (compiler-codegen/src/codegen/emit_c.rs):**
+
+1. **emit_type_decl generic-types branch** — добавлен `TypeDeclKind::Newtype` handler:
+   ```rust
+   if let TypeDeclKind::Newtype(inner) = &t.kind {
+       // skip RUNTIME_BACKED_NEWTYPES (OnceCell/Lazy/Condvar — handled by per-T mono)
+       // else: emit `typedef nova_ptr Nova_X;` + register type_aliases
+   }
+   ```
+   Generic newtypes (Record/Sum) уже handled; Newtype был пропущен — fall through на `return Ok(())` без emission.
+
+2. **emit_call constructor intercept** — расширен для TurboFish form:
+   ```rust
+   let name_opt = match &func.kind {
+       ExprKind::Ident(n) => Some(n),
+       ExprKind::TurboFish { base, .. } => {
+           if let ExprKind::Ident(n) = &base.kind { Some(n) } else { None }
+       }
+       _ => None,
+   };
+   ```
+   Без этого `MyHandle[int](raw)` parses как `Call { func: TurboFish { base: Ident, .. }, .. }` и не матчит на старый `if let Ident(name) = &func.kind`.
+
+**Spec:** D214 amended с new §«Generic opaque handle» — `type X[T](ptr)` use case (phantom T для compile-time discrimination + identical C ABI).
+
+**Doc:** docs/migration/d126-to-tuple-newtype.md — added «Generic user FFI handle» section.
+
+**Tests:**
+- NEW `nova_tests/plan91_12/v3_user_generic_newtype_ok.nv` — 6 test blocks (single-param, str-param, multi-param `[T, U]`, null ptr, multiple instances).
+- Regression: plan91_12 7/7 + buffers 11/11 + plan115 11/11 + plan103_5 20/20 PASS.
+
+**OPEN markers (V2 carry-forward):**
+- 🟡 `[M-91.12-generic-newtype-non-ptr-inner]` — generic newtype с non-ptr inner type (e.g. `type Wrap[T](int)`). Currently V2 emit'ает `typedef nova_int Nova_Wrap;` (single typedef для всех T), что functionally работает но потенциально less type-safe чем per-T mono. Low priority — no user demand yet.
+
+**Design lesson:**
+- **Generic newtype над ptr ≠ generic newtype над other primitives.** Ptr-newtypes share single typedef (T is phantom). Inner non-ptr types (`type Wrap[T](int)`) might want per-T monomorphization для proper phantom-type ABI distinction. Текущая impl unified single typedef для both — works for current use cases (FFI handles).
+- **TurboFish form для type-constructor** — generic instantiation в Nova проходит через TurboFish AST node. Constructor intercepts должны handle оба формы: `Ident` (non-generic) и `TurboFish{base:Ident}` (generic).

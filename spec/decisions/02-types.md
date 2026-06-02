@@ -6857,7 +6857,11 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 
 ## D214. `ptr` opaque pointer type + tuple FFI returns + opaque handle pattern
 
-> **Plan 115** (foundational FFI). **Status:** 🆕 draft (V1, finalized в Ф.4).
+> **Plan 115** (foundational FFI). **Status:** active (V1, finalized в Ф.4).
+>
+> **Plan 91.12 V2 amend (2026-06-02):** generic tuple-newtype `type X[T](ptr)`
+> now supported (was V1-limited to non-generic `type X(ptr)`). См. §«Generic
+> opaque handle» ниже. Closes `[M-115-newtype-constructor-generic]`.
 
 ### Что
 
@@ -7079,6 +7083,38 @@ close_sqlite(png)                             // ✗ E_TYPE_MISMATCH — PngHand
   ptr` — нельзя передать без явного wrap/unwrap.
 - **Construct:** `Sqlite3Handle(ptr_value)` — standard tuple constructor.
 - **Destructure:** `handle.0` — D52 tuple field access.
+
+#### Generic opaque handle — `type X[T](ptr)` (Plan 91.12 V2, 2026-06-02)
+
+Generic newtype над `ptr` поддерживается для type-parameterized FFI
+handles (phantom T для compile-time discrimination):
+
+```nova
+type Region[T](ptr)             // generic phantom T
+type RegionKind = Persistent
+type RegionKind = Transient
+
+// Distinct types at compile-time, identical ABI at runtime
+ro p = Region[Persistent](some_ptr)
+ro t = Region[Transient](other_ptr)
+// fn drop_persistent(r Region[Persistent]) — нельзя передать Region[Transient]
+
+// Multi-param OK
+type DualHandle[T, U](ptr)
+ro h = DualHandle[int, str](raw)
+```
+
+**Семантика.** `T` параметр — type-system fiction; C-level ABI identical
+(`Nova_Region` ≡ `nova_ptr`). All monomorphizations share typedef.
+Codegen emit'ает single `typedef nova_ptr Nova_X;` (не per-T), `.0` access
++ constructor — identity cast same как non-generic case.
+
+**Use case:** phantom type discrimination для same-runtime-shape handles
+(prepared statement kinds, region/arena ownership classes, FFI buffer
+mutability flags, и т.д.).
+
+**Inner non-ptr types** (e.g. `type Wrap[T](int)`) — followup
+`[M-91.12-generic-newtype-non-ptr-inner]` (low priority).
 
 #### `consume close()` cleanup convention
 
