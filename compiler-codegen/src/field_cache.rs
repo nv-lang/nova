@@ -388,10 +388,10 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
     for item in &mut module.items {
         if let Item::Fn(f) = item {
             if cfg.licm_enabled {
-                licm_fn_with_ipa(f, &registry, cfg, &write_sets);
+                licm_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
             }
             if cfg.chain_enabled {
-                chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets);
+                chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
             }
             if cfg.pure_enabled {
                 pure_cache_fn_with_ipa(f, &registry, &pure_methods, cfg, &write_sets, &read_sets);
@@ -403,10 +403,10 @@ pub fn cache_module(module: &mut Module, cfg: &FieldCacheConfig) {
         for item in &mut pf.items_here {
             if let Item::Fn(f) = item {
                 if cfg.licm_enabled {
-                    licm_fn_with_ipa(f, &registry, cfg, &write_sets);
+                    licm_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
                 }
                 if cfg.chain_enabled {
-                    chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets);
+                    chain_cache_fn_with_ipa(f, &registry, cfg, &write_sets, &read_sets);
                 }
                 if cfg.pure_enabled {
                     pure_cache_fn_with_ipa(f, &registry, &pure_methods, cfg, &write_sets, &read_sets);
@@ -866,28 +866,27 @@ fn collect_reads_expr(e: &Expr, recv_type: &str, reads: &mut HashSet<String>, ca
     }
 }
 
-/// Plan 123.7.1 LICM wrapper. Ф.2 will refine — currently delegates.
+/// Plan 123 V7.2 (2026-06-02): explicit IPA wrappers — pre-build the
+/// `IpaCtx<'_>` borrow and pass it as parameter to the impl. Replaces
+/// V7.1 thread-local plumbing (LICM_WRITE_SETS / PURE_IPA_CTX /
+/// CHAIN_IPA_CTX removed). `recv_type` is cloned into a local String
+/// up-front to avoid aliasing `&f` borrow with the `&mut f` passed
+/// downward to `*_impl`.
 fn licm_fn_with_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
     cfg: &FieldCacheConfig,
     write_sets: &HashMap<(String, String), HashSet<String>>,
+    read_sets: &HashMap<(String, String), HashSet<String>>,
 ) {
-    LICM_WRITE_SETS.with(|ws| {
-        if cfg.ipa_enabled && !write_sets.is_empty() {
-            if let Some(recv) = &f.receiver {
-                *ws.borrow_mut() = Some((recv.type_name.clone(), write_sets.clone()));
-            }
-        }
-    });
-    licm_fn(f, reg, cfg);
-    LICM_WRITE_SETS.with(|ws| {
-        *ws.borrow_mut() = None;
-    });
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { licm_fn_impl(f, reg, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    licm_fn_impl(f, reg, cfg, Some(ipa))
 }
 
-/// Plan 123.7.1 pure-cache wrapper. Ф.3 will refine — uses read_sets
-/// для frame-based invalidation.
 fn pure_cache_fn_with_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
@@ -896,44 +895,42 @@ fn pure_cache_fn_with_ipa(
     write_sets: &HashMap<(String, String), HashSet<String>>,
     read_sets: &HashMap<(String, String), HashSet<String>>,
 ) {
-    PURE_IPA_CTX.with(|p| {
-        if cfg.ipa_enabled && !write_sets.is_empty() {
-            if let Some(recv) = &f.receiver {
-                *p.borrow_mut() = Some((recv.type_name.clone(), read_sets.clone()));
-            }
-        }
-    });
-    let _ = write_sets;
-    pure_cache_fn(f, reg, pure_methods, cfg);
-    PURE_IPA_CTX.with(|p| { *p.borrow_mut() = None; });
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { pure_cache_fn_impl(f, reg, pure_methods, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    pure_cache_fn_impl(f, reg, pure_methods, cfg, Some(ipa))
 }
 
-/// Plan 123.7.1 chain wrapper. Ф.4 will refine — chain survives writes
-/// to unrelated root fields.
 fn chain_cache_fn_with_ipa(
     f: &mut FnDecl,
     reg: &FieldRegistry,
     cfg: &FieldCacheConfig,
     write_sets: &HashMap<(String, String), HashSet<String>>,
+    read_sets: &HashMap<(String, String), HashSet<String>>,
 ) {
-    CHAIN_IPA_CTX.with(|c| {
-        if cfg.ipa_enabled && !write_sets.is_empty() {
-            if let Some(recv) = &f.receiver {
-                *c.borrow_mut() = Some((recv.type_name.clone(), write_sets.clone()));
-            }
-        }
-    });
-    chain_cache_fn(f, reg, cfg);
-    CHAIN_IPA_CTX.with(|c| { *c.borrow_mut() = None; });
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { chain_cache_fn_impl(f, reg, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    chain_cache_fn_impl(f, reg, cfg, Some(ipa))
 }
 
-// Plan 123.7.1: thread-local IPA contexts threaded through existing
-// pass functions без refactoring all signatures. Set by *_with_ipa
-// wrappers, consulted by inner barrier helpers when present.
-thread_local! {
-    static LICM_WRITE_SETS: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
-    static PURE_IPA_CTX: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
-    static CHAIN_IPA_CTX: std::cell::RefCell<Option<(String, HashMap<(String, String), HashSet<String>>)>> = const { std::cell::RefCell::new(None) };
+/// Plan 123 V7.2 (2026-06-02): clone recv_type into a local String when
+/// IPA is enabled and applicable. Returning `Option<String>` (vs &str)
+/// detaches the borrow from `f`, so the caller can later pass `&mut f`
+/// to the impl without aliasing conflicts.
+fn recv_type_for_ipa(
+    f: &FnDecl,
+    cfg: &FieldCacheConfig,
+    write_sets: &HashMap<(String, String), HashSet<String>>,
+) -> Option<String> {
+    if !cfg.ipa_enabled || write_sets.is_empty() {
+        return None;
+    }
+    f.receiver.as_ref().map(|r| r.type_name.clone())
 }
 
 /// Plan 123.7.1 (V7.1): IPA context — threading write_sets +
@@ -3390,6 +3387,18 @@ fn rewrite_trailing(t: &mut Trailing, replace_map: &HashMap<String, String>) {
 
 /// Per-fn LICM entry point.
 fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    licm_fn_impl(f, reg, cfg, None)
+}
+
+/// Plan 123 V7.2 (2026-06-02): explicit IPA threading — replaces the
+/// V7.1 thread-local plumbing. `ipa` flows from `cache_module` through
+/// every recursive descent in lieu of LICM_WRITE_SETS.with(...) snapshot.
+fn licm_fn_impl(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
     if recv.kind == ReceiverKind::Static {
         return;
@@ -3419,7 +3428,7 @@ fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
 
     match &mut f.body {
         FnBody::Block(b) => {
-            licm_block(b, fields, cfg, &mut local_names, &mut hoist_count);
+            licm_block(b, fields, cfg, &mut local_names, &mut hoist_count, ipa);
         }
         FnBody::Expr(e) => {
             // Body is Expr; recurse into it. If the entire body is a
@@ -3441,10 +3450,10 @@ fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
                 };
                 f.body = FnBody::Block(block);
                 if let FnBody::Block(b) = &mut f.body {
-                    licm_block(b, fields, cfg, &mut local_names, &mut hoist_count);
+                    licm_block(b, fields, cfg, &mut local_names, &mut hoist_count, ipa);
                 }
             } else {
-                licm_expr(e, fields, cfg, &mut local_names, &mut hoist_count);
+                licm_expr(e, fields, cfg, &mut local_names, &mut hoist_count, ipa);
             }
         }
         FnBody::External => {}
@@ -3458,6 +3467,7 @@ fn licm_block(
     cfg: &FieldCacheConfig,
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     // Phase A: recurse into each stmt first (handles nested loops
     // в inner blocks DFS-postorder — inner loops processed before
@@ -3468,13 +3478,13 @@ fn licm_block(
 
     for mut s in old_stmts {
         // First recurse for nested loops в this stmt's sub-blocks.
-        licm_stmt(&mut s, fields, cfg, local_names, hoist_count);
+        licm_stmt(&mut s, fields, cfg, local_names, hoist_count, ipa);
 
         // If this stmt IS a top-level loop expression, process LICM
         // for it и insert hoists before.
         if let Stmt::Expr(loop_expr) = &mut s {
             if let Some(body_ref) = expr_as_loop_body_mut(loop_expr) {
-                process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut new_stmts);
+                process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut new_stmts, ipa);
             }
         }
         new_stmts.push(s);
@@ -3485,9 +3495,9 @@ fn licm_block(
     // Phase B: handle trailing — recurse, then if trailing IS a loop,
     // hoist as last stmts of stmts.
     if let Some(t) = &mut b.trailing {
-        licm_expr(t, fields, cfg, local_names, hoist_count);
+        licm_expr(t, fields, cfg, local_names, hoist_count, ipa);
         if let Some(body_ref) = expr_as_loop_body_mut(t) {
-            process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut b.stmts);
+            process_loop(body_ref, fields, cfg, local_names, hoist_count, &mut b.stmts, ipa);
         }
     }
 }
@@ -3501,8 +3511,9 @@ fn process_loop(
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
     out_stmts: &mut Vec<Stmt>,
+    ipa: Option<IpaCtx<'_>>,
 ) {
-    let eligible = collect_loop_eligible_fields(body, fields, cfg);
+    let eligible = collect_loop_eligible_fields(body, fields, cfg, ipa);
     // Bound by max-per-loop AND remaining max_per_fn quota.
     let remaining = cfg.max_per_fn.saturating_sub(*hoist_count);
     let take = eligible.len().min(cfg.licm_max_per_loop).min(remaining);
@@ -3575,35 +3586,36 @@ fn licm_stmt(
     cfg: &FieldCacheConfig,
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     match s {
-        Stmt::Let(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count),
-        Stmt::Const(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count),
-        Stmt::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+        Stmt::Let(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count, ipa),
+        Stmt::Const(d) => licm_expr(&mut d.value, fields, cfg, local_names, hoist_count, ipa),
+        Stmt::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
         Stmt::Assign { target, value, .. } => {
-            licm_expr(target, fields, cfg, local_names, hoist_count);
-            licm_expr(value, fields, cfg, local_names, hoist_count);
+            licm_expr(target, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::Return { value, .. } => {
             if let Some(v) = value {
-                licm_expr(v, fields, cfg, local_names, hoist_count);
+                licm_expr(v, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         Stmt::Throw { value, .. } => {
-            licm_expr(value, fields, cfg, local_names, hoist_count);
+            licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::Defer { body, .. }
         | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. }
         | Stmt::DeferWithResult { body, .. } => {
-            licm_expr(body, fields, cfg, local_names, hoist_count);
+            licm_expr(body, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::ConsumeScope { init, body, .. } => {
-            licm_expr(init, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(init, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            licm_expr(expr, fields, cfg, local_names, hoist_count);
+            licm_expr(expr, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
@@ -3622,78 +3634,79 @@ fn licm_expr(
     cfg: &FieldCacheConfig,
     local_names: &mut HashSet<String>,
     hoist_count: &mut usize,
+    ipa: Option<IpaCtx<'_>>,
 ) {
     match &mut e.kind {
-        ExprKind::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+        ExprKind::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
         ExprKind::If { cond, then, else_ } => {
-            licm_expr(cond, fields, cfg, local_names, hoist_count);
-            licm_block(then, fields, cfg, local_names, hoist_count);
+            licm_expr(cond, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(then, fields, cfg, local_names, hoist_count, ipa);
             if let Some(eb) = else_ {
                 match eb {
-                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
-                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
+                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
-            licm_block(then, fields, cfg, local_names, hoist_count);
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(then, fields, cfg, local_names, hoist_count, ipa);
             if let Some(eb) = else_ {
                 match eb {
-                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
-                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    ElseBranch::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
+                    ElseBranch::If(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count, ipa);
             for arm in arms {
                 if let Some(g) = &mut arm.guard {
-                    licm_expr(g, fields, cfg, local_names, hoist_count);
+                    licm_expr(g, fields, cfg, local_names, hoist_count, ipa);
                 }
                 match &mut arm.body {
-                    MatchArmBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
-                    MatchArmBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    MatchArmBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
+                    MatchArmBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            licm_expr(iter, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(iter, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::ParallelFor { iter, body, .. } => {
             // Concurrent body — skip LICM. Still recurse into iter
             // (could contain nested control flow).
-            licm_expr(iter, fields, cfg, local_names, hoist_count);
+            licm_expr(iter, fields, cfg, local_names, hoist_count, ipa);
             // DON'T recurse into body — body executes concurrently
             // per element; hoisting would change semantics.
             let _ = body;
         }
         ExprKind::While { cond, body, .. } => {
-            licm_expr(cond, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(cond, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            licm_expr(scrutinee, fields, cfg, local_names, hoist_count);
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_expr(scrutinee, fields, cfg, local_names, hoist_count, ipa);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Loop { body, .. } => {
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::With { bindings, body } => {
             for wb in bindings {
-                licm_expr(&mut wb.handler, fields, cfg, local_names, hoist_count);
+                licm_expr(&mut wb.handler, fields, cfg, local_names, hoist_count, ipa);
             }
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
-            licm_block(body, fields, cfg, local_names, hoist_count);
+            licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Supervised { body, cancel } => {
             // Supervised body — concurrent (fibers). Skip LICM on body.
             let _ = body;
             if let Some(c) = cancel {
-                licm_expr(c, fields, cfg, local_names, hoist_count);
+                licm_expr(c, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         ExprKind::Detach(_) | ExprKind::Blocking(_) | ExprKind::Spawn(_) => {
@@ -3702,43 +3715,43 @@ fn licm_expr(
         ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => {
-            licm_expr(e, fields, cfg, local_names, hoist_count);
+            licm_expr(e, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
-            licm_expr(a, fields, cfg, local_names, hoist_count);
-            licm_expr(b, fields, cfg, local_names, hoist_count);
+            licm_expr(a, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(b, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Index { obj, index } => {
-            licm_expr(obj, fields, cfg, local_names, hoist_count);
-            licm_expr(index, fields, cfg, local_names, hoist_count);
+            licm_expr(obj, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(index, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Call { func, args, trailing } => {
-            licm_expr(func, fields, cfg, local_names, hoist_count);
+            licm_expr(func, fields, cfg, local_names, hoist_count, ipa);
             for a in args {
                 match a {
                     CallArg::Item(e) | CallArg::Spread(e) =>
-                        licm_expr(e, fields, cfg, local_names, hoist_count),
+                        licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                     CallArg::Named { value, .. } =>
-                        licm_expr(value, fields, cfg, local_names, hoist_count),
+                        licm_expr(value, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
             if let Some(t) = trailing {
                 match t {
-                    Trailing::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
+                    Trailing::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
                     Trailing::Fn(sb) => match &mut sb.body {
-                        FnBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count),
-                        FnBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                        FnBody::Block(b) => licm_block(b, fields, cfg, local_names, hoist_count, ipa),
+                        FnBody::Expr(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                         FnBody::External => {}
                     },
                     Trailing::LegacyBlockWithParams(tb) =>
-                        licm_block(&mut tb.body, fields, cfg, local_names, hoist_count),
+                        licm_block(&mut tb.body, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr(e) = p {
-                    licm_expr(e, fields, cfg, local_names, hoist_count);
+                    licm_expr(e, fields, cfg, local_names, hoist_count, ipa);
                 }
             }
         }
@@ -3746,7 +3759,7 @@ fn licm_expr(
             for el in elems {
                 match el {
                     ArrayElem::Item(e) | ArrayElem::Spread(e) =>
-                        licm_expr(e, fields, cfg, local_names, hoist_count),
+                        licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
@@ -3754,56 +3767,56 @@ fn licm_expr(
             for el in elems {
                 match el {
                     MapElem::Pair(k, v) => {
-                        licm_expr(k, fields, cfg, local_names, hoist_count);
-                        licm_expr(v, fields, cfg, local_names, hoist_count);
+                        licm_expr(k, fields, cfg, local_names, hoist_count, ipa);
+                        licm_expr(v, fields, cfg, local_names, hoist_count, ipa);
                     }
-                    MapElem::Spread(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+                    MapElem::Spread(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
                 }
             }
         }
         ExprKind::RecordLit { fields: rfields, .. } => {
             for rf in rfields {
                 if let Some(v) = &mut rf.value {
-                    licm_expr(v, fields, cfg, local_names, hoist_count);
+                    licm_expr(v, fields, cfg, local_names, hoist_count, ipa);
                 }
             }
         }
         ExprKind::TupleLit(elems) => {
             for el in elems {
-                licm_expr(el, fields, cfg, local_names, hoist_count);
+                licm_expr(el, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         ExprKind::Select { arms } => {
             for arm in arms {
                 if let Some(g) = &mut arm.guard {
-                    licm_expr(g, fields, cfg, local_names, hoist_count);
+                    licm_expr(g, fields, cfg, local_names, hoist_count, ipa);
                 }
-                licm_block(&mut arm.body, fields, cfg, local_names, hoist_count);
+                licm_block(&mut arm.body, fields, cfg, local_names, hoist_count, ipa);
                 match &mut arm.op {
-                    SelectOp::Recv { chan, .. } => licm_expr(chan, fields, cfg, local_names, hoist_count),
+                    SelectOp::Recv { chan, .. } => licm_expr(chan, fields, cfg, local_names, hoist_count, ipa),
                     SelectOp::Send { chan, value } => {
-                        licm_expr(chan, fields, cfg, local_names, hoist_count);
-                        licm_expr(value, fields, cfg, local_names, hoist_count);
+                        licm_expr(chan, fields, cfg, local_names, hoist_count, ipa);
+                        licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
                     }
                     SelectOp::Default => {}
                 }
             }
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { licm_expr(s, fields, cfg, local_names, hoist_count); }
-            if let Some(e) = end { licm_expr(e, fields, cfg, local_names, hoist_count); }
+            if let Some(s) = start { licm_expr(s, fields, cfg, local_names, hoist_count, ipa); }
+            if let Some(e) = end { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
         }
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            licm_expr(range, fields, cfg, local_names, hoist_count);
-            licm_expr(body, fields, cfg, local_names, hoist_count);
+            licm_expr(range, fields, cfg, local_names, hoist_count, ipa);
+            licm_expr(body, fields, cfg, local_names, hoist_count, ipa);
         }
         ExprKind::Interrupt(opt) => {
-            if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count); }
+            if let Some(e) = opt { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
         }
-        ExprKind::Throw(e) => licm_expr(e, fields, cfg, local_names, hoist_count),
+        ExprKind::Throw(e) => licm_expr(e, fields, cfg, local_names, hoist_count, ipa),
         ExprKind::TaggedTemplate { tag, args, .. } => {
-            licm_expr(tag, fields, cfg, local_names, hoist_count);
-            for a in args { licm_expr(a, fields, cfg, local_names, hoist_count); }
+            licm_expr(tag, fields, cfg, local_names, hoist_count, ipa);
+            for a in args { licm_expr(a, fields, cfg, local_names, hoist_count, ipa); }
         }
         // Closures — separate scope; don't process LICM inside.
         ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
@@ -3824,6 +3837,7 @@ fn collect_loop_eligible_fields(
     body: &Block,
     fields: &HashMap<String, FieldKind>,
     cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
 ) -> Vec<(String, crate::diag::Span)> {
     // Spawn / Supervised / Detach / Blocking → skip whole loop.
     if block_contains_spawn(body) {
@@ -3833,9 +3847,10 @@ fn collect_loop_eligible_fields(
     let mut closure_captured: HashSet<String> = HashSet::new();
     collect_closures_captures_in_block(body, fields, &mut closure_captured);
 
-    // Plan 123.7.1 Ф.2: IPA-aware mut barrier per-field. Snapshot
-    // thread-local LICM context (set by licm_fn_with_ipa wrapper).
-    let licm_ipa = LICM_WRITE_SETS.with(|ws| ws.borrow().clone());
+    // Plan 123 V7.2 (2026-06-02): explicit `ipa` parameter replaces the
+    // V7.1 thread-local LICM_WRITE_SETS snapshot. None == V1 conservative
+    // "any call = barrier"; Some == frame-aware invalidation via
+    // `IpaCtx::call_invalidates_field`.
 
     let mut result: Vec<(String, crate::diag::Span)> = Vec::new();
     let mut keys: Vec<&String> = fields.keys().collect();
@@ -3857,16 +3872,8 @@ fn collect_loop_eligible_fields(
         };
         // Mut field — check call barrier per IPA (если context set'нут).
         if matches!(kind, FieldKind::Mut) {
-            let body_invalidates_field = match &licm_ipa {
-                Some((recv_type, write_sets)) => {
-                    let read_sets_empty = HashMap::new();
-                    let ipa = IpaCtx {
-                        write_sets,
-                        recv_type: recv_type.as_str(),
-                        read_sets: &read_sets_empty,
-                    };
-                    block_contains_invalidating_call_for(body, fname, Some(ipa))
-                }
+            let body_invalidates_field = match ipa {
+                Some(ipa) => block_contains_invalidating_call_for(body, fname, Some(ipa)),
                 None => block_contains_call(body), // V1 conservative.
             };
             if body_invalidates_field {
@@ -4471,6 +4478,19 @@ fn pure_cache_fn(
     pure_methods: &HashSet<(String, String)>,
     cfg: &FieldCacheConfig,
 ) {
+    pure_cache_fn_impl(f, reg, pure_methods, cfg, None)
+}
+
+/// Plan 123 V7.2 (2026-06-02): explicit IPA threading for pure-cache.
+/// `ipa` carries (recv_type, write_sets, read_sets) into the frame-aware
+/// invalidation branch, replacing PURE_IPA_CTX thread-local.
+fn pure_cache_fn_impl(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    pure_methods: &HashSet<(String, String)>,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
     if recv.kind == ReceiverKind::Static {
         return;
@@ -4487,10 +4507,10 @@ fn pure_cache_fn(
         return;
     }
 
-    // Plan 123.7.1 Ф.3 (V3.1): snapshot IPA pure context (set by
-    // pure_cache_fn_with_ipa wrapper). When present, enables frame-
-    // based invalidation refinement.
-    let pure_ipa = PURE_IPA_CTX.with(|p| p.borrow().clone());
+    // Plan 123 V7.2 (2026-06-02): explicit IPA ctx replaces PURE_IPA_CTX
+    // thread-local snapshot. Some == V3.1 frame-aware; None == V3 conservative.
+    let pure_ipa: Option<(String, HashMap<(String, String), HashSet<String>>)> =
+        ipa.map(|i| (i.recv_type.to_string(), i.read_sets.clone()));
 
     // Collect body's write-set (which fields are mutated в body).
     let body_writes: HashSet<String> = collect_body_writes(&f.body);
@@ -5906,6 +5926,17 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
 // - Receiver type не protocol/effect/opaque/sum/newtype/alias.
 
 fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
+    chain_cache_fn_impl(f, reg, cfg, None)
+}
+
+/// Plan 123 V7.2 (2026-06-02): explicit IPA threading for chain-cache.
+/// `ipa` carries write_sets для per-root invalidation, replacing CHAIN_IPA_CTX.
+fn chain_cache_fn_impl(
+    f: &mut FnDecl,
+    reg: &FieldRegistry,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+) {
     let Some(recv) = &f.receiver else { return };
     if recv.kind == ReceiverKind::Static {
         return;
@@ -5924,9 +5955,11 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     if body_has_concurrent(&f.body) {
         return;
     }
-    // Plan 123.7.1 Ф.4 (V4.1): per-root invalidation. Snapshot
-    // chain-IPA context (set by chain_cache_fn_with_ipa wrapper).
-    let chain_ipa = CHAIN_IPA_CTX.with(|c| c.borrow().clone());
+    // Plan 123 V7.2 (2026-06-02): explicit IPA ctx replaces CHAIN_IPA_CTX
+    // thread-local snapshot. Some == V4.1 per-root invalidation;
+    // None == V4 conservative "any write skips chain caching".
+    let chain_ipa: Option<(String, HashMap<(String, String), HashSet<String>>)> =
+        ipa.map(|i| (i.recv_type.to_string(), i.write_sets.clone()));
 
     // Collect body's write-set (top-level fields written).
     let body_writes: HashSet<String> = collect_body_writes(&f.body);

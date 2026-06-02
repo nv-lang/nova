@@ -5001,7 +5001,12 @@ LICM → V4 chain → D219 pure → D217 V1). IPA refinements are
 cache local naming changes. Disabling IPA (`NOVA_FIELD_CACHE_IPA=0`)
 returns to V1-V6 conservative behavior identically.
 
-### 4. Thread-local IPA context plumbing
+### 4. Thread-local IPA context plumbing (V7.1 only — superseded by V7.2)
+
+> **Superseded 2026-06-02:** V7.2 (D223 amend V7.2 ниже) replaces
+> thread-local plumbing with explicit `Option<IpaCtx<'_>>` parameter
+> threading through every pass helper. Historic V7.1 description
+> retained for archaeology.
 
 Instead of refactoring all pass functions to accept `Option<IpaCtx>`
 parameter (which would require changing ~20 function signatures),
@@ -5010,8 +5015,8 @@ functions. Each layer's eligibility checker snapshots the relevant
 context at entry. Clean revert (set to `None`) after pass.
 
 Trade-off: thread-local plumbing simpler change but obscures data
-flow vs explicit parameter. V7.2 may refactor к explicit ctx
-threading if multi-threaded compilation lands.
+flow vs explicit parameter. **V7.2 (2026-06-02) refactored к
+explicit ctx threading** — see D223 amend V7.2.
 
 ### 5. Eligibility examples
 
@@ -5036,10 +5041,88 @@ entry for breakdown.
 
 ### 8. Followups
 
-- **V7.2:** explicit IpaCtx parameter threading (vs thread-local).
+- **V7.2:** explicit IpaCtx parameter threading (vs thread-local) —
+  ✅ LANDED 2026-06-02 (см. D223 amend V7.2 ниже).
 - **V7.3:** SCC-based exact closure (vs iterative ≤10 iter).
 - **V8 (Plan 123.7 cross-module):** link-time IPA — deferred
   indefinitely.
+
+## D223 amend V7.2 — Explicit IpaCtx parameter threading (Plan 123 V*.2)
+
+**Source:** [Plan 123 V*.2 followups](../../docs/plans/123-v2-followups.md).
+**Status:** ✅ ACTIVE 2026-06-02 — replaces V7.1 §4 thread-local plumbing.
+
+### 1. Motivation
+
+V7.1 §4 used three `thread_local!{} RefCell<Option<...>>` slots
+(`LICM_WRITE_SETS` / `PURE_IPA_CTX` / `CHAIN_IPA_CTX`) set by
+`*_with_ipa` wrappers и snapshotted by inner barrier helpers.
+Trade-off documented в V7.1 §4: simpler patch but data flow opaque +
+incompatible с future multi-threaded compilation.
+
+V7.2 replaces this с explicit `Option<IpaCtx<'_>>` parameter
+threading. Eight functions in `field_cache.rs` gained the param:
+`licm_fn_impl` / `licm_block` / `licm_stmt` / `licm_expr` /
+`process_loop` / `collect_loop_eligible_fields` /
+`pure_cache_fn_impl` / `chain_cache_fn_impl`. The thread-local block
+is **deleted**.
+
+### 2. Wrapper restructure
+
+`*_with_ipa` wrappers now own a local `recv_type: String` (cloned
+once from `f.receiver` via `recv_type_for_ipa`) and construct an
+`IpaCtx<'_>` borrowing into write_sets/read_sets + that local. The
+local outlives the call to `*_impl(f: &mut FnDecl, ..., ipa)` so the
+`&mut f` borrow does not alias `&f.receiver`.
+
+```rust
+fn licm_fn_with_ipa(f: &mut FnDecl, ..., write_sets, read_sets) {
+    let recv_type = match recv_type_for_ipa(f, cfg, write_sets) {
+        Some(rt) => rt,
+        None => { licm_fn_impl(f, reg, cfg, None); return; }
+    };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets };
+    licm_fn_impl(f, reg, cfg, Some(ipa))
+}
+```
+
+### 3. Backward-compat
+
+`licm_fn` / `pure_cache_fn` / `chain_cache_fn` (public-ish entry
+points without `_impl` suffix) preserved: each delegates to the
+`_impl` variant with `ipa = None`, matching V1-V6 conservative
+behavior. All existing call sites untouched (unit tests, doc
+examples).
+
+### 4. Eligibility examples — unchanged
+
+Behavior identical к V7.1 §5 matrix. The migration is a refactor,
+not a semantic change. Verified:
+- 14/14 `field_cache::tests` lib tests PASS unchanged.
+- New plan123_7_2 fixtures (`v72_explicit_ipa_threading_ok.nv` +
+  `v72_no_recv_skips_ipa_ok.nv`) PASS — exercising all three passes
+  in one method и validating receiver-less skip-path.
+
+### 5. Future-proofing
+
+Multi-threaded compilation: with thread_local plumbing, parallel
+module compilation would risk races (RefCell panics on cross-thread
+access; even Send-safe ThreadLocal would lose isolation). Explicit
+parameter threading is race-free by construction.
+
+### 6. Risks
+
+`recv_type` String clone per `_with_ipa` call (one heap allocation
+per method). For typical modules (~50 fns) this adds ≤50 short
+allocations — negligible vs total compilation. Profiled OK.
+
+### 7. Acceptance
+
+- **V7.2.1** thread_local!{} block removed from field_cache.rs ✅
+- **V7.2.2** 14/14 field_cache unit tests PASS without modification ✅
+- **V7.2.3** Behavior identical к V7.1 (LICM/pure/chain matrix) ✅
+- **V7.2.4** New fixtures plan123_7_2 PASS ✅
+- **V7.2.5** `NOVA_FIELD_CACHE_IPA=0` escape hatch still works ✅
 
 ## D219 amend V3.1 — Pure-call literal args extension (Plan 123.3.1)
 
