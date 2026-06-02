@@ -28958,3 +28958,54 @@ follow-up.
    (D220).
 
 
+
+---
+
+## Plan 124.1 V1 FULLY CLOSED — checker enforcement landed (2026-06-02)
+
+Type-checker enforcement landed для all 4 E_PRIV_FIELD_* error codes
+via centralized TypeCheckCtx hooks. Plan 124 / D220 §3-§4 acceptance
+A1.4-A1.7 закрыты.
+
+CLOSED markers:
+- [M-124.1-checker-enforcement] — all 4 codes via current_recv_type
+  RAII tracking (PrivRecvGuard pattern matches ConstFnFlagGuard).
+
+Implementation hooks:
+1. E_PRIV_FIELD_READ — f3_check_member (line 3712), field-resolution
+   after fields.iter().find. priv_field + recv mismatch → emit.
+2. E_PRIV_FIELD_WRITE — check_target_readonly (line 4528), after
+   readonly check. Same priv + recv check.
+3. E_PRIV_FIELD_INIT — walk_expr ExprKind::RecordLit (line 2852),
+   after assoc-const check. Per-field iteration emits на priv outside.
+4. E_PRIV_FIELD_PATTERN — f1_block Stmt::Let Pattern::Record. Pattern
+   field iteration + RecordField lookup + outside check.
+
+current_recv_type tracking:
+- TypeCheckCtx.current_recv_type: RefCell<Option<String>>
+- check_fn (line 2235) + f1_check_fn (line 3028) — оба set recv
+- PrivRecvGuard RAII restore on exit (Plan 114.4.2 D199 precedent)
+
+Tests (nova_tests/plan124_1/) — 9/9 PASS на release nova-cli + clang:
+- 4 positive: smoke_parse, priv_field_basic, type_level_priv,
+  priv_read_inside_method_ok
+- 5 negative: priv_pub_conflict_neg, priv_read_outside_neg,
+  priv_write_outside_neg, priv_init_outside_neg, priv_pattern_outside_neg
+
+Regression: plan90 9/0, plan90_1 20/0, syntax 53/1 pre-existing.
+
+Acceptance Plan 124.1 V1 A1.1-A1.10 — ALL closed 2026-06-02.
+
+Design lessons:
+1. Multi-Ctx architecture — types/mod.rs has TypeCheckCtx + BoundCtx
+   + others. Initial PATTERN hook misplaced в BoundCtx (no `types`
+   field) → compile error → relocated to TypeCheckCtx.
+2. Two-pass f1_check_fn + check_fn — both must set recv_type via
+   PrivRecvGuard. Single-set leaks tracking.
+3. Each error message Plan 50 D102 format с Hint + spec link.
+4. Test fixture nuance: Account { ... } redundant when return type
+   already specifies → use array context [Account { ... }] для
+   negative INIT test.
+
+Plan 124.1 V1 ✅ FULLY CLOSED. Plan 124 umbrella partial — 6
+sub-plans (124.2-124.7) remaining.

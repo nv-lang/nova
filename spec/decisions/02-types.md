@@ -7285,16 +7285,19 @@ Compile-time enforcement vs convention: prior _prefix hint-only privacy — fals
 
 ### Acceptance
 
-V1 (Plan 124.1):
+V1 (Plan 124.1) — ALL closed 2026-06-02:
 - A1.1-A1.3 ✅ Parser/AST infrastructure (Ф.1 + Ф.4 commits).
-- A1.4-A1.7 🟡 Type-checker enforcement — [M-124.1-checker-enforcement].
+- A1.4 ✅ E_PRIV_FIELD_READ enforcement (Ф.2 — f3_check_member hook).
+- A1.5 ✅ E_PRIV_FIELD_WRITE enforcement (Ф.2.2 — check_target_readonly hook).
+- A1.6 ✅ E_PRIV_FIELD_INIT enforcement (Ф.2.3 — RecordLit walk_expr hook).
+- A1.7 ✅ E_PRIV_FIELD_PATTERN enforcement (Ф.2.4 — Pattern::Record f1_block hook).
 - A1.8 ✅ Regression 0 new FAIL.
-- A1.9 ✅ plan124_1 fixtures 4/4 PASS.
+- A1.9 ✅ plan124_1 fixtures 9/9 PASS (4 positive + 5 negative).
 - A1.10 ✅ Spec D220 NEW (this section).
 
 ### Followup markers
 
-- [M-124.1-checker-enforcement] — type-checker 4 error codes.
+- ✅ [M-124.1-checker-enforcement] CLOSED 2026-06-02 — all 4 codes via TypeCheckCtx current_recv_type RAII tracking.
 - [M-124.2-priv-embed] — priv use NAME Type.
 - [M-124.4-tuple-priv] — named tuple priv (D215 ext).
 - [M-124.4-protocol-impl-boundary].

@@ -27759,3 +27759,46 @@ Worktree nova-p124 preserved для followup [M-124.1-checker-enforcement]
 Branch plan-124-priv-fields pushed на github, не merged в main pending
 user review.
 
+
+
+================================================================================
+Plan 124.1 V1 fully closed — checker enforcement (2026-06-02)
+================================================================================
+
+Autonomous continuation after V1 infrastructure landed earlier session.
+Production-grade closure of [M-124.1-checker-enforcement].
+
+Implementation hooks (compiler-codegen/src/types/mod.rs):
+1. E_PRIV_FIELD_READ — f3_check_member
+2. E_PRIV_FIELD_WRITE — check_target_readonly
+3. E_PRIV_FIELD_INIT — walk_expr RecordLit
+4. E_PRIV_FIELD_PATTERN — f1_block Stmt::Let Pattern::Record
+
+Central RAII tracking: TypeCheckCtx.current_recv_type set in check_fn
++ f1_check_fn via PrivRecvGuard. Matches ConstFnFlagGuard pattern.
+
+Tests added (plan124_1/): 5 new fixtures (1 positive + 4 negative).
+All 9/9 PASS на release nova-cli + clang. Regression plan90 9/0,
+plan90_1 20/0. 0 new FAIL.
+
+Commits this session:
+- Merge main (sync с latest)
+- Ф.2.1 E_PRIV_FIELD_READ
+- Ф.2.2 E_PRIV_FIELD_WRITE
+- Ф.2.3 E_PRIV_FIELD_INIT
+- Ф.2.4 E_PRIV_FIELD_PATTERN
+- Closure (this commit)
+
+Spec D220 amended: V1 acceptance ALL ✅ closed.
+Plan doc: Plan 124.1 status flipped 🟡 → 🟢 V1 FULLY CLOSED.
+
+Plan 124.1 V1 acceptance A1.1-A1.10 — ALL ✅.
+
+Deferred к next session (per umbrella roadmap):
+- Plan 124.2 Pattern destructure + literal init rules expansion
+- Plan 124.3 Generics uniform handling
+- Plan 124.4 Named tuple priv + protocol impl
+- Plan 124.5 nova doc + LSP integration
+- Plan 124.6 Test access + visible_to friends
+- Plan 124.7 Type-level priv flip (tuples)
+
