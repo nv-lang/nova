@@ -2519,9 +2519,80 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(&f.ty, &gs, errors);
                 }
             }
-            TypeDeclKind::Newtype(tr) => self.walk_typeref(tr, &gs, errors),
+            TypeDeclKind::Newtype(tr) => {
+                self.walk_typeref(tr, &gs, errors);
+                // Plan 91.12 V2 followup [M-91.12-generic-newtype-non-ptr-inner]
+                // (2026-06-02): generic newtype `type X[T](INNER)` где INNER
+                // использует generic param T (e.g. `type Wrap[T](T)`) НЕ
+                // поддерживается. Causes: codegen emit'ит `typedef Nova_T
+                // Nova_Wrap;` где `Nova_T` — type-param placeholder, не
+                // resolved C type → C compile error.
+                //
+                // Semantically tuple newtype = transparent typedef (Plan 115
+                // D214); same C ABI shared across mono'd instances. Per-T
+                // storage variance (sizeof(T) differs) — это record-semantics,
+                // не newtype. User should migrate к record form:
+                //   type Wrap[T] { value T }   ← properly mono'd per T
+                if !td.generics.is_empty() {
+                    let type_params: HashSet<String> = td.generics.iter()
+                        .map(|g| g.name.clone())
+                        .collect();
+                    if Self::typeref_uses_param(tr, &type_params) {
+                        let inner_span = match tr {
+                            TypeRef::Named { span, .. } => *span,
+                            TypeRef::Array(_, span) => *span,
+                            TypeRef::FixedArray(_, _, span) => *span,
+                            TypeRef::Tuple(_, span) => *span,
+                            TypeRef::Func { span, .. } => *span,
+                            TypeRef::Protocol { span, .. } => *span,
+                            TypeRef::Unit(span) => *span,
+                            TypeRef::Readonly(_, span) => *span,
+                            _ => td.span,
+                        };
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_GENERIC_NEWTYPE_INNER_USES_PARAM] generic newtype \
+                                 `type {}[..](..)` cannot use type-parameter \
+                                 in inner position — newtype = transparent typedef \
+                                 (Plan 115 D214), shared C ABI across all T's. \
+                                 Per-T storage requires record-semantics: replace \
+                                 with `type {} {{ value T }}` (record form, properly \
+                                 mono'd per T).",
+                                td.name, td.name
+                            ),
+                            inner_span,
+                        ));
+                    }
+                }
+            }
             TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Opaque => {}
+        }
+    }
+
+    /// Plan 91.12 V2 followup: рекурсивная проверка, использует ли TypeRef
+    /// один из generic params из set'а. Mirror codegen `type_ref_uses_any_type_param`
+    /// (emit_c.rs:9225); duplicated здесь чтобы избежать cross-module dependency.
+    fn typeref_uses_param(tr: &TypeRef, params: &HashSet<String>) -> bool {
+        match tr {
+            TypeRef::Named { path, generics, .. } => {
+                if path.len() == 1 && params.contains(&path[0]) { return true; }
+                generics.iter().any(|g| Self::typeref_uses_param(g, params))
+            }
+            TypeRef::Array(inner, _)
+            | TypeRef::FixedArray(_, inner, _) => Self::typeref_uses_param(inner, params),
+            TypeRef::Tuple(ts, _) => ts.iter().any(|t| Self::typeref_uses_param(t, params)),
+            TypeRef::Func { params: p, return_type, .. } => {
+                p.iter().any(|t| Self::typeref_uses_param(t, params))
+                    || return_type.as_ref().map_or(false, |t| Self::typeref_uses_param(t, params))
+            }
+            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
+                m.params.iter().any(|p| Self::typeref_uses_param(&p.ty, params))
+                    || m.return_type.as_ref()
+                        .map_or(false, |t| Self::typeref_uses_param(t, params))
+            }),
+            TypeRef::Readonly(inner, _) => Self::typeref_uses_param(inner, params),
+            TypeRef::Unit(_) => false,
         }
     }
 
