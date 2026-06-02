@@ -2164,21 +2164,12 @@ mod tests {
 
         /// Создаёт fake prelude peer file со списком top-level type-имён.
         fn fake_prelude_peer(name_decls: &[&str]) -> PeerFile {
+            // Plan 123 baseline-fix (2026-06-02): Default::default() spread.
             let items: Vec<Item> = name_decls.iter().map(|n| Item::Type(TypeDecl {
-                doc: None,
-                doc_attrs: Vec::new(),
                 is_export: true,
                 name: (*n).to_string(),
-                generics: Vec::new(),
                 kind: TypeDeclKind::Record(Vec::new()),
-                span: Span::dummy(),
-                attrs: Vec::new(),
-                invariants: Vec::new(),
-                axioms: Vec::new(),
-                consume: false,
-                impl_protocols: Vec::new(),
-                assoc_consts: Vec::new(),
-                default_field_priv: false,
+                ..Default::default()
             })).collect();
             PeerFile {
                 path: PathBuf::from("/synthetic/std/prelude/core.nv"),
