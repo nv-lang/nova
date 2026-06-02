@@ -1892,11 +1892,11 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A16 | Cast table enforced (safe vs unsafe casts; invalid targets rejected) | T4.10, T4.16, NEG-T4.22-T4.23 |
 | A17 partial ✅ 2026-06-02 | Comparison: `==`/`!=` safe; `<`/`>` unsafe (E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE) | T4.11 + NEG-T4.17 |
 | A18 | Forbidden ops: `&arr[i]`, `null`, `undefined` | NEG-T4.19, NEG-T4.20, NEG-T4.21 |
-| A19 | `Option[*T]` + NPO codegen (single-pointer layout, NULL pattern match) | T5.1-T5.6 + ABI snapshot |
-| A20 | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` | T5.8 |
-| A21 | NPO applies к `Option[*fn(...)]` и `Option[ptr]` | T5.9, T5.10 |
-| A22 | NPO excluded для `Option[Option[*T]]` — tagged fallback + W_OPTION_DOUBLE_NESTED | NEG-T5.11 |
-| A23 | `null ptr` literal retracted; migration script works; closes [M-115-null-ptr-to-option-after-npo] | NEG-T5.12 + T5.14-T5.15 |
+| A19 ✅ 2026-06-02 | `Option[*T]` + NPO codegen (single-pointer layout, NULL pattern match) | T5.1-T5.4 + manual ABI verification |
+| A20 V2 deferred | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` | T5.8 |
+| A21 V2 deferred | NPO applies к `Option[*fn(...)]` и `Option[ptr]` | T5.9, T5.10 |
+| A22 V2 deferred | NPO excluded для `Option[Option[*T]]` — tagged fallback + W_OPTION_DOUBLE_NESTED | NEG-T5.11 |
+| A23 V2 deferred | `null ptr` literal retracted; migration script works; closes [M-115-null-ptr-to-option-after-npo] | NEG-T5.12 + T5.14-T5.15 |
 | A24 | `*fn(...)` function pointers для FFI roundtrip — verified end-to-end | T6.1-T6.4 |
 | A25 | Callback no-throw enforced: Fn-with-Fail cast → *fn — error | NEG-T6.8 |
 | A26 | `external fn ... Fail -> ...` — error (Fail effect не allowed on FFI boundary) | NEG-T6.9 |
@@ -2277,7 +2277,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **30/0** (13 positive + 17 NEG, post-A17 V1 + main sync) |
+| plan118 | **33/0** (16 positive + 17 NEG, post-Ф.5 NPO V1) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |

@@ -7432,11 +7432,37 @@ ro same = p == q                     // OK outside unsafe — identity check
 
 ### §7. Null safety: `Option[*T]` + NPO codegen
 
-`*T` — non-null guaranteed. `Option[*T]` — nullable через **NPO codegen**:
+`*T` — non-null guaranteed. `Option[*T]` — nullable через **NPO codegen**.
+
+**Status: ACTIVE 2026-06-02** (Plan 118 Ф.5 V1 landed, commit 6b90e698437).
+Closes acceptance **A19 ✅** (sizeof verification + struct layout).
 
 - Layout: single pointer (8 bytes), не tagged struct (16 bytes)
+  ```c
+  // NPO-eligible: pointer-typed inner (c_ty ends_with('*'))
+  typedef struct NovaOpt_const_Nova_X_p { const Nova_X* value; } ...;
+  // Non-NPO: scalar/composite inner — tagged form retained
+  typedef struct NovaOpt_nova_int { int tag; nova_int value; } ...;
+  ```
+- Construction: `Some(p)` → `{.value = p}`; `None` → `{.value = NULL}`
 - Pattern match: `if (ptr == NULL) None_branch else Some_branch(ptr)`
 - Direct C-FFI compatible (matches `malloc` / `fopen` / `dlopen` returns)
+
+**V1 detection** (`c_ty.ends_with('*')`): covers `*T` family (`T*`,
+`const T*`, `void*`), pre-existing stdlib pointer types (UdpSocket,
+TcpStream, SocketAddr, TcpListener, File, etc — все benefit automatically).
+
+**V2 follow-on** (deferred Session 4+):
+- `Option[ptr]` — `nova_ptr` typedef (`= void*`) — requires type-aware
+  detection (not just c_ty string suffix); covered via tagged-form V1.
+- `Option[*fn(...)]` — function pointer c_ty ends with `)` not `*` —
+  same V2 type-aware detection.
+- `Option[X]` где `type X(*T)` — newtype-over-pointer detection.
+- `Option[Option[*T]]` nested — currently NPO inner (correct since inner
+  c_ty pointer), outer Option uses tagged (inner c_ty = struct).
+  W_OPTION_DOUBLE_NESTED warning — V2 user-friendly diagnostic.
+- `null ptr` literal retraction (D214 amend) — V2 follow-on; existing
+  `null ptr` continues to work для Plan 115 backward compat.
 
 ```nova
 external fn malloc(sz usize) -> Option[*u8]

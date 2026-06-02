@@ -11642,18 +11642,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         "NovaOpt_nova_int _erased = {}(({})nova_self);",
                         erased_method, base_recv_ty
                     ));
+                    // Plan 118 Ф.5: _erased is NovaOpt_nova_int (erased form,
+                    // never NPO) — tag-check stays. Return constructors use
+                    // ret_c which может быть NPO-eligible (NovaOpt_Nova_X_p).
                     self.line("if (_erased.tag == NOVA_TAG_Option_None) {");
                     self.indent += 1;
-                    self.line(&format!(
-                        "return (({}){{.tag = NOVA_TAG_Option_None}});",
-                        ret_c
-                    ));
+                    let ret_sani = ret_c.strip_prefix("NovaOpt_").unwrap_or(&ret_c);
+                    self.line(&format!("return {};", self.option_none_expr(ret_sani)));
                     self.indent -= 1;
                     self.line("}");
-                    self.line(&format!(
-                        "return (({}){{.tag = NOVA_TAG_Option_Some, .value = {}}});",
-                        ret_c, value_convert
-                    ));
+                    self.line(&format!("return {};",
+                        self.option_some_expr(ret_sani, &value_convert)));
                     true
                 } else { false }
             } else { false }
@@ -12105,13 +12104,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // get() -> Option[T]
         self.line(&format!("static inline {o} {m}_method_get({m}* _c) {{", o = opt_ty, m = m));
         self.indent += 1;
-        self.line(&format!("{o} _r;", o = opt_ty));
+        // Plan 118 Ф.5: NPO-aware return constructors.
+        let opt_sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
+        let some_expr = self.option_some_expr(opt_sani, "_c->value");
+        let none_expr = self.option_none_expr(opt_sani);
         self.line("if (__atomic_load_n(&_c->has_value, __ATOMIC_ACQUIRE)) {");
         self.indent += 1;
-        self.line("_r.tag = NOVA_TAG_Option_Some; _r.value = _c->value; return _r;");
+        self.line(&format!("return {};", some_expr));
         self.indent -= 1;
         self.line("}");
-        self.line(&format!("_r.tag = NOVA_TAG_Option_None; memset(&_r.value, 0, sizeof(_r.value)); return _r;"));
+        self.line(&format!("return {};", none_expr));
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -12200,18 +12202,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line(&format!("static inline {o} {m}_method_take({m}* _c) {{", o = opt_ty, m = m));
         self.indent += 1;
         self.line("nova_mutex_lock(&_c->mu);");
-        self.line(&format!("{o} _r;", o = opt_ty));
+        // Plan 118 Ф.5: NPO-aware constructors.
+        let opt_sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
+        let none_expr = self.option_none_expr(opt_sani);
+        let some_v_expr = self.option_some_expr(opt_sani, "_v");
         self.line("if (!_c->has_value) {");
         self.indent += 1;
         self.line("nova_mutex_unlock(&_c->mu);");
-        self.line("_r.tag = NOVA_TAG_Option_None; memset(&_r.value, 0, sizeof(_r.value)); return _r;");
+        self.line(&format!("return {};", none_expr));
         self.indent -= 1;
         self.line("}");
         self.line(&format!("{t} _v = _c->value;", t = t_cty));
         self.line("__atomic_store_n(&_c->has_value, false, __ATOMIC_RELEASE);");
         self.line("_c->state = 0; /* EMPTY — re-initializable */");
         self.line("nova_mutex_unlock(&_c->mu);");
-        self.line("_r.tag = NOVA_TAG_Option_Some; _r.value = _v; return _r;");
+        self.line(&format!("return {};", some_v_expr));
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -14918,8 +14923,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         if target_ty_c.starts_with("NovaOpt_") {
             if let ExprKind::Ident(name) = &expr.kind {
                 if name == "None" {
-                    return Ok(format!(
-                        "(({}){{.tag = NOVA_TAG_Option_None}})", target_ty_c));
+                    // Plan 118 Ф.5: NPO-aware None constructor.
+                    let sani = target_ty_c.strip_prefix("NovaOpt_").unwrap_or(target_ty_c);
+                    return Ok(self.option_none_expr(sani));
                 }
             }
         }
@@ -15090,8 +15096,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 .filter(|t| t.starts_with("NovaOpt_"))
                                 .cloned()
                                 .unwrap_or_else(|| "NovaOpt_nova_int".into());
-                            return Ok(format!(
-                                "(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
+                            // Plan 118 Ф.5: NPO-aware None constructor.
+                            let sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
+                            return Ok(self.option_none_expr(sani));
                         }
                         return Ok(format!("nova_make_{}_{}()", type_name, name));
                     }
@@ -15366,10 +15373,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     };
                     let elem_ty = canonical_opt_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string();
                     // Re-cast bare None-literal to canonical opt_ty if it slipped through.
-                    // Pattern: "((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})"
+                    // Pattern: "((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})" —
+                    // NovaOpt_nova_int never NPO (nova_int is не pointer), pattern
+                    // string stays tagged-form. Plan 118 Ф.5: replacement = NPO
+                    // form when canonical_opt_ty is NPO-eligible.
                     let none_pat = "((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})";
-                    let none_replacement = format!(
-                        "(({}){{.tag = NOVA_TAG_Option_None}})", canonical_opt_ty);
+                    let none_replacement = self.option_none_expr(&elem_ty);
                     let l_fixed = if lty == "NovaOpt_nova_int" && l.contains(none_pat) && canonical_opt_ty != "NovaOpt_nova_int" {
                         l.replace(none_pat, &none_replacement)
                     } else { l.clone() };
@@ -16069,14 +16078,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 if inner_ty.starts_with("NovaOpt_") {
                     // Option?: if None, return None; else extract value.
                     // Plan 14 Ф.1: typed early-return None — текст compound
-                    // literal'а соответствует current_fn_return_ty (= тип
-                    // контейнера, в который мы возвращаем).
+                    // literal'а соответствует current_fn_return_ty.
+                    // Plan 118 Ф.5: NPO-aware None constructor + is-none check.
                     let none_expr: String = self.current_fn_return_ty.as_ref()
                         .filter(|t| t.starts_with("NovaOpt_"))
-                        .map(|t| format!("(({}){{.tag = NOVA_TAG_Option_None}})", t))
+                        .map(|t| {
+                            let sani = t.strip_prefix("NovaOpt_").unwrap_or(t);
+                            self.option_none_expr(sani)
+                        })
                         .unwrap_or_else(|| "nova_make_Option_None()".to_string());
+                    let inner_sani = inner_ty.strip_prefix("NovaOpt_").unwrap_or(&inner_ty);
+                    let none_check = self.option_is_none_check(&try_tmp, inner_sani);
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
-                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_None) {{ return {}; }}", try_tmp, none_expr));
+                    self.line(&format!("if ({}) {{ return {}; }}", none_check, none_expr));
                     Ok(format!("({}.value)", try_tmp))
                 } else if Self::is_result_like(&inner_ty) {
                     // Result?: if Err, propagate Err; else extract Ok value.
@@ -16181,10 +16195,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 let bang_tmp = self.fresh_tmp();
                 if inner_ty.starts_with("NovaOpt_") {
                     // Option!!: на None бросаем RuntimeNoneError.
+                    // Plan 118 Ф.5: NPO-aware is-none check.
                     self.line(&format!("{} {} = {};", inner_ty, bang_tmp, val));
+                    let inner_sani = inner_ty.strip_prefix("NovaOpt_").unwrap_or(&inner_ty);
+                    let none_check = self.option_is_none_check(&bang_tmp, inner_sani);
                     self.line(&format!(
-                        "if ({}.tag == NOVA_TAG_Option_None) {{ nova_throw_runtime_none_error(); }}",
-                        bang_tmp
+                        "if ({}) {{ nova_throw_runtime_none_error(); }}",
+                        none_check
                     ));
                     Ok(format!("({}.value)", bang_tmp))
                 } else if Self::is_result_like(&inner_ty) {
@@ -16371,6 +16388,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Tag access depends on layout:
                 //   NovaOpt_nova_int (Option) → value-struct, dot accessor
                 //   Nova_<Sum>* (custom sum)  → pointer, arrow accessor
+                // Plan 118 Ф.5: NPO-aware check для NovaOpt_<T*> — value-based
+                // null-check instead of tag-compare (since NPO layout drops tag).
+                if inner_ty.starts_with("NovaOpt_") && !inner_ty.ends_with('*') && sum_type == "Option" {
+                    let sani = inner_ty.strip_prefix("NovaOpt_").unwrap_or(&inner_ty);
+                    let check = match variant_name.as_str() {
+                        "None" => self.option_is_none_check(&format!("({})", inner_c), sani),
+                        "Some" => self.option_is_some_check(&format!("({})", inner_c), sani),
+                        _ => format!("({}).tag == NOVA_TAG_{}_{}", inner_c, sum_type, variant_name),
+                    };
+                    return Ok(format!("({})", check));
+                }
                 let accessor = if inner_ty.starts_with("NovaOpt_") && !inner_ty.ends_with('*') {
                     "."
                 } else {
@@ -16387,7 +16415,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 if left_ty.starts_with("NovaOpt_") {
                     let opt_tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", left_ty, opt_tmp, l));
-                    Ok(format!("({}.tag == NOVA_TAG_Option_Some ? {}.value : {})", opt_tmp, opt_tmp, r))
+                    // Plan 118 Ф.5: NPO-aware is-some check.
+                    let sani = left_ty.strip_prefix("NovaOpt_").unwrap_or(&left_ty);
+                    let some_check = self.option_is_some_check(&opt_tmp, sani);
+                    Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else {
                     Ok(format!("({} /*?? unsupported */ , {})", l, r))
                 }
@@ -17196,9 +17227,8 @@ _cp++; \
                 if !arg_ty.is_empty() && arg_ty != "void*" {
                     let sanitized = Self::sanitize_for_novaopt(&arg_ty);
                     self.register_novaopt_decl(&sanitized, &arg_ty);
-                    return Ok(format!(
-                        "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
-                        sanitized, arg_v));
+                    // Plan 118 Ф.5: NPO-aware Some(v) constructor.
+                    return Ok(self.option_some_expr(&sanitized, &arg_v));
                 }
                 // arg_ty erased/void* — fall through к legacy
                 // (nova_make_Option_Some helper @ :17339).
@@ -17207,9 +17237,8 @@ _cp++; \
                 // None — context `-> Option[X]` = NovaOpt_<X>.
                 if name == "None" && args.is_empty() && rt.starts_with("NovaOpt_") {
                     let sani = &rt["NovaOpt_".len()..];
-                    return Ok(format!(
-                        "((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})",
-                        sani));
+                    // Plan 118 Ф.5: NPO-aware None constructor.
+                    return Ok(self.option_none_expr(sani));
                 }
                 // Ok(v) / Err(e) — context `-> Result[T, E]` = NovaRes_<n>*.
                 if (name == "Ok" || name == "Err") && Self::is_result_like(&rt) {
@@ -17956,11 +17985,12 @@ _cp++; \
                                             format!("*({}*)nova_cancel_token_reason_raw({})",
                                                 t_c, obj_c)
                                         };
+                                        // Plan 118 Ф.5: NPO-aware Some/None constructors.
+                                        let some_expr = self.option_some_expr(&sanitized, &read_back);
+                                        let none_expr = self.option_none_expr(&sanitized);
                                         return Ok(format!(
-                                            "(nova_cancel_token_has_reason({tok}) \
-                                              ? (NovaOpt_{sn}){{ .tag = NOVA_TAG_Option_Some, .value = {rb} }} \
-                                              : (NovaOpt_{sn}){{ .tag = NOVA_TAG_Option_None }})",
-                                            tok = obj_c, rb = read_back, sn = sanitized
+                                            "(nova_cancel_token_has_reason({tok}) ? {se} : {ne})",
+                                            tok = obj_c, se = some_expr, ne = none_expr
                                         ));
                                     }
                                 }
@@ -18236,9 +18266,11 @@ _cp++; \
                         match method.as_str() {
                             "unwrap" => {
                                 // Inline check + Nova_Fail_fail on None
+                                // Plan 118 Ф.5: NPO-aware is-none check.
                                 let tmp = self.fresh_tmp();
                                 self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
-                                self.line(&format!("if ({}.tag == NOVA_TAG_Option_None) {{", tmp));
+                                let none_check = self.option_is_none_check(&tmp, &elem_ty);
+                                self.line(&format!("if ({}) {{", none_check));
                                 self.indent += 1;
                                 self.line("Nova_Fail_fail((nova_str){.ptr=\"called unwrap on None\", .len=21});");
                                 self.indent -= 1;
@@ -20932,9 +20964,8 @@ _cp++; \
                         if !arg_ty.is_empty() && arg_ty != "void*" {
                             let sanitized = Self::sanitize_for_novaopt(&arg_ty);
                             self.register_novaopt_decl(&sanitized, &arg_ty);
-                            return Ok(format!(
-                                "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
-                                sanitized, arg_v));
+                            // Plan 118 Ф.5: NPO-aware Some(v).
+                            return Ok(self.option_some_expr(&sanitized, &arg_v));
                         }
                         return Ok(format!("nova_make_Option_Some({})", arg_v));
                     }
@@ -20943,7 +20974,9 @@ _cp++; \
                             .filter(|t| t.starts_with("NovaOpt_"))
                             .cloned()
                             .unwrap_or_else(|| "NovaOpt_nova_int".into());
-                        return Ok(format!("(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
+                        // Plan 118 Ф.5: NPO-aware None.
+                        let sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
+                        return Ok(self.option_none_expr(sani));
                     }
                     // Plan 88 Ф.1: `recv_seg` — receiver, резолвленный из
                     // type-параметра mono-контекста (или сам `parts[0]`).
@@ -20989,9 +21022,8 @@ _cp++; \
             if !is_erased && !arg_ty.is_empty() && arg_ty != "void*" {
                 let sanitized = Self::sanitize_for_novaopt(&arg_ty);
                 self.register_novaopt_decl(&sanitized, &arg_ty);
-                return Ok(format!(
-                    "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
-                    sanitized, arg_v));
+                // Plan 118 Ф.5: NPO-aware Some(v).
+                return Ok(self.option_some_expr(&sanitized, &arg_v));
             }
             // Fallback (erased/unknown arg-type): legacy helper.
             return Ok(format!("nova_make_Option_Some({})", arg_v));
@@ -21001,8 +21033,9 @@ _cp++; \
                 .filter(|t| t.starts_with("NovaOpt_"))
                 .cloned()
                 .unwrap_or_else(|| "NovaOpt_nova_int".into());
-            return Ok(format!(
-                "(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
+            // Plan 118 Ф.5: NPO-aware None.
+            let sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
+            return Ok(self.option_none_expr(sani));
         }
         // Option/Result_Ok constructors use nova_int storage; nested struct args must be heap-boxed.
         // Result_Err takes nova_str directly. User-defined sum types have proper typed fields.
@@ -21889,8 +21922,9 @@ _cp++; \
                 self.line(&format!(
                     "{} {} = Nova_{}_method_next({});",
                     opt_c_ty, opt_tmp, iter_type, it_tmp));
-                self.line(&format!(
-                    "if ({}.tag == NOVA_TAG_Option_None) break;", opt_tmp));
+                // Plan 118 Ф.5: NPO-aware is-none check для for-in iterator.
+                let none_check = self.option_is_none_check(&opt_tmp, &elem_c_ty);
+                self.line(&format!("if ({}) break;", none_check));
                 if let Pattern::Tuple(parts, _) = pattern {
                     let arity = parts.len();
                     // Plan 56 followup: register mono'd tuple element types для
@@ -23503,7 +23537,23 @@ _cp++; \
                     format!("NOVA_TAG_{}_{}", type_name, variant_name)
                 };
                 let accessor = if is_opt { "." } else { "->" };
-                let base = format!("({}{acc}tag == {})", scr, tag, acc = accessor);
+                // Plan 118 Ф.5: NPO-aware match-pattern check для Option[*T].
+                // Tag field dropped в NPO layout — use value-NULL convention.
+                let base = if is_opt && !is_opt_ptr {
+                    let opt_ty_str = if scr_ty.starts_with("NovaOpt_") { &scr_ty } else { &type_name };
+                    let sani = opt_ty_str.strip_prefix("NovaOpt_").unwrap_or(opt_ty_str);
+                    if self.is_novaopt_npo(sani) {
+                        match variant_name.as_str() {
+                            "None" => format!("({})", self.option_is_none_check(&scr, sani)),
+                            "Some" => format!("({})", self.option_is_some_check(&scr, sani)),
+                            _ => format!("({}{acc}tag == {})", scr, tag, acc = accessor),
+                        }
+                    } else {
+                        format!("({}{acc}tag == {})", scr, tag, acc = accessor)
+                    }
+                } else {
+                    format!("({}{acc}tag == {})", scr, tag, acc = accessor)
+                };
                 match kind {
                     VariantPatternKind::Unit => Ok(base),
                     VariantPatternKind::Tuple { patterns, .. } => {
@@ -25562,18 +25612,41 @@ _cp++; \
         // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
         self.novaopt_value_types.borrow_mut()
             .insert(sanitized.to_string(), c_ty.to_string());
-        let line = format!(
-            "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
-            sanitized, c_ty, sanitized);
+        // Plan 118 Ф.5 (D216 §7): NPO codegen — для pointer-typed inner
+        // emit single-pointer layout (no tag field, sizeof == 8 на 64-bit;
+        // NULL = None convention). Direct C-FFI ABI compatibility — matches
+        // `malloc`/`fopen`/`dlopen` returns.
+        //
+        // NPO-eligible: c_ty ends with '*' covers
+        //   - `*T` family (Plan 118 — emit `T*` / `const T*` / `void*`)
+        //   - `ptr` (Plan 115 — emit `nova_ptr` typedef'd as `void*`)
+        //   - `*fn(...)` function pointers
+        //   - Newtype-over-pointer (через type_ref_to_c lowering)
+        //
+        // NPO НЕ применяется к: nested `Option[Option[*T]]` — outer Option's
+        // inner c_ty is `NovaOpt_<inner_sani>` (struct, not pointer) → falls
+        // через в tagged branch automatically (W_OPTION_DOUBLE_NESTED
+        // warning planned A22 followup).
+        let is_pointer = c_ty.ends_with('*');
+        let is_npo = is_pointer; // V1: pointer-only detection
+        let line = if is_npo {
+            // NPO layout: single-pointer struct (sizeof = sizeof(c_ty) = 8).
+            // No tag field — NULL = None, !NULL = Some.
+            format!(
+                "typedef struct NovaOpt_{} {{ {} value; }} NovaOpt_{};\n",
+                sanitized, c_ty, sanitized)
+        } else {
+            // Standard tagged layout (sizeof = 8 + sizeof(c_ty) padded).
+            format!(
+                "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
+                sanitized, c_ty, sanitized)
+        };
         self.novaopt_typedefs_buf.borrow_mut().push_str(&line);
 
         // Plan 39 Issue A: auto-generate `nova_opt_eq_<sanitized>` helper.
         // Без него `r == None` где `r: NovaOpt_<T>` падает с undefined symbol.
-        // Сравнение: по tag. Если tag одинаковый — None: всегда equal; Some:
-        // сравниваем value. Для pointer-types — pointer equality (как Rust для
-        // `&T`). Для value-структур — memcmp (как для tuples). Для scalar —
-        // плоское `==`.
-        let is_pointer = c_ty.ends_with('*');
+        // Сравнение: по tag (или value==NULL для NPO). Если tag одинаковый —
+        // None: всегда equal; Some: сравниваем value.
         let is_scalar = matches!(c_ty, "nova_int" | "nova_bool" | "nova_byte"
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
@@ -25583,13 +25656,23 @@ _cp++; \
         } else {
             format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
         };
-        let eq_fn = format!(
-            "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
-             \x20   if (a.tag != b.tag) return 0;\n\
-             \x20   if (a.tag == NOVA_TAG_Option_None) return 1;\n\
-             \x20   return {body};\n\
-             }}\n",
-            sani = sanitized, body = cmp_body);
+        let eq_fn = if is_npo {
+            // NPO eq: value-based identity (NULL == NULL = None equal;
+            // p1 == p2 for Some). No tag field.
+            format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   return a.value == b.value;\n\
+                 }}\n",
+                sani = sanitized)
+        } else {
+            format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if (a.tag != b.tag) return 0;\n\
+                 \x20   if (a.tag == NOVA_TAG_Option_None) return 1;\n\
+                 \x20   return {body};\n\
+                 }}\n",
+                sani = sanitized, body = cmp_body)
+        };
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
 
         // Plan 95.bis Ф.2: lazy-emit `unwrap_or` для не-runtime типов —
@@ -25599,6 +25682,57 @@ _cp++; \
         // C-redefinition collision при оставлении lazy-emit.
         //
         // (Раньше тут также генерились is_some/is_none — Plan 95 Ф.4.2.)
+    }
+
+    /// Plan 118 Ф.5 (D216 §7): determine whether sanitized NovaOpt name is
+    /// NPO-eligible (pointer-typed inner — single-pointer layout без tag).
+    /// V1 detection: c_ty ends_with('*') covers `*T` family + `ptr` typedef +
+    /// `*fn(...)` + newtype-over-pointer (after type_ref_to_c lowering).
+    fn is_novaopt_npo(&self, sanitized: &str) -> bool {
+        self.novaopt_value_types.borrow()
+            .get(sanitized)
+            .map_or(false, |c_ty| c_ty.ends_with('*'))
+    }
+
+    /// Plan 118 Ф.5: emit `Some(value)` constructor для NovaOpt — NPO form
+    /// (just `{.value = v}`) или tagged form (`{.tag = SOME, .value = v}`).
+    fn option_some_expr(&self, sanitized: &str, value_expr: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("((NovaOpt_{}){{.value = ({})}})", sanitized, value_expr)
+        } else {
+            format!("((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                sanitized, value_expr)
+        }
+    }
+
+    /// Plan 118 Ф.5: emit `None` constructor для NovaOpt — NPO form
+    /// (`{.value = NULL}`) или tagged form (`{.tag = NONE}`).
+    fn option_none_expr(&self, sanitized: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("((NovaOpt_{}){{.value = NULL}})", sanitized)
+        } else {
+            format!("((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})", sanitized)
+        }
+    }
+
+    /// Plan 118 Ф.5: emit `is None` check для NovaOpt — NPO form
+    /// (`v.value == NULL`) или tagged form (`v.tag == NONE`).
+    fn option_is_none_check(&self, opt_var: &str, sanitized: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("{}.value == NULL", opt_var)
+        } else {
+            format!("{}.tag == NOVA_TAG_Option_None", opt_var)
+        }
+    }
+
+    /// Plan 118 Ф.5: emit `is Some` check для NovaOpt — NPO form
+    /// (`v.value != NULL`) или tagged form (`v.tag == SOME`).
+    fn option_is_some_check(&self, opt_var: &str, sanitized: &str) -> String {
+        if self.is_novaopt_npo(sanitized) {
+            format!("{}.value != NULL", opt_var)
+        } else {
+            format!("{}.tag == NOVA_TAG_Option_Some", opt_var)
+        }
     }
 
     /// Plan 59 Ф.7.5: резолвит (T, E) generics `Result[T,E]` в concrete

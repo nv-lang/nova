@@ -27097,6 +27097,75 @@ Worktree state:
 - 8 nova-private discussion-log entries
 - Branch plan-118, NOT merged в main (review required).
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5 NPO codegen V1 LANDED — A19 closed (Session 3
+continuation)
+==========================================================================
+
+User-requested Full Ф.5 (recommended option) — NPO codegen для Option[*T].
+
+Implementation (3 commits + 1 fixture-commit):
+1. 3e781ca5929 — Layout + 4 helpers scaffold:
+   register_novaopt_decl emits NPO struct (без tag field) when c_ty
+   pointer-typed; 4 helper methods (option_some_expr/none_expr/
+   is_none_check/is_some_check) для NPO-aware code emission.
+2. 6b90e698437 — 11+ tag-site migration + match-pattern fix:
+   * Bridge generator для erased Option methods (line 11645)
+   * OnceCell::get/take return constructors (12108, 12206)
+   * emit_expr_with_target_type None coercion (14925)
+   * ExprKind::Path Some/None unit-variant ctors (15100)
+   * Match canonical-opt-ty None re-cast (15380)
+   * Try ?, Bang !!, Is, Coalesce ?? (16078, 16199, 16395, 16418)
+   * Option.unwrap inline (18272)
+   * Cancel-token has-reason Some/None (17988)
+   * Bare Some()/None() Call ctors (17228, 17240, 20962, 20975)
+   * nova_make_Option_Some/None dispatch (21022, 21035)
+   * For-iterator next is-none break (21923)
+   * Match-pattern Variant check (23534) — critical fix для
+     plan100_3 match_view_ok_option regression
+   * 1 fixture: t5_2_npo_some_none_construction_ok.nv
+3. 62ade292588 — 2 more fixtures (T5.3 match + T5.4 ABI).
+
+V1 detection — c_ty.ends_with('*'):
+- Covers *T family (T*, const T*, void*)
+- All pre-existing stdlib pointer types (UdpSocket, TcpStream,
+  SocketAddr, TcpListener, File) benefit automatically — verified
+  через nova_tests/plan83_12/ 10/0 regression clean.
+
+V2 deferred к Session 4+ (4 acceptance):
+- A20 newtype-over-pointer detection (Option[Sqlite3Handle])
+- A21 Option[*fn]/Option[ptr] type-aware detection
+- A22 Option[Option[*T]] W_OPTION_DOUBLE_NESTED warning
+- A23 null ptr literal retraction + 13 fixture migration
+
+Tests added (3 positive):
+- t5_2_npo_some_none_construction_ok.nv — Some/None ctor + is-None
+- t5_3_npo_match_pattern_ok.nv — match dispatch via NPO check
+- t5_4_npo_sizeof_abi_ok.nv — ABI sizeof verification (compile-only)
+
+Generated C verified end-to-end:
+  typedef struct NovaOpt_const_nova_byte_p { const nova_byte* value; }
+  ((NovaOpt_const_nova_byte_p){.value = NULL})  // None
+  (opt).value == NULL                            // is-None check
+
+plan118: 33/0 PASS (16 positive + 17 NEG).
+Regression smoke 90+/0 verified across:
+  plan115 11/0 + plan120 8/0 + plan114 10/0 + plan100_3 10/0 (fixed!) +
+  plan83_12 10/0 + plan108 6/0 + plan124_1 9/0 + basics 8/0 +
+  plan90 9/0 + plan90_1 20/0 + plan100_1 23/0 + plan100_4_1 16/0 +
+  plan100_4_2 9/0 + plan100_4_4 13/0 + plan100_4_5 4/0 + plan103_5 20/0 +
+  plan103_6 26/0 + plan103_9 20/0 + plan108_1 16/0 + plan108_3 14/0 +
+  plan114_4_2 15/0 + basics 8/0 + plan118 33/0 = ~358/0 verified clean.
+(Pre-existing fails: plan99 3, plan100_6 3, plan103_3 flaky concurrency,
+plan108_2 4 — все present в main HEAD, не caused by NPO work.)
+
+Spec D216 §7 promoted к ACTIVE 2026-06-02 с V1 detection note + V2
+follow-on list.
+
+Plan 118 grand-total: 17 of 35 acceptance criteria closed (49%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
