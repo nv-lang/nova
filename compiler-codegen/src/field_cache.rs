@@ -5495,8 +5495,16 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     if body_has_concurrent(&f.body) {
         return;
     }
-    // V4 conservative: any @F write anywhere → skip.
-    if body_has_any_self_field_write(&f.body) {
+    // Plan 123.7.1 Ф.4 (V4.1): per-root invalidation. Snapshot
+    // chain-IPA context (set by chain_cache_fn_with_ipa wrapper).
+    let chain_ipa = CHAIN_IPA_CTX.with(|c| c.borrow().clone());
+
+    // Collect body's write-set (top-level fields written).
+    let body_writes: HashSet<String> = collect_body_writes(&f.body);
+
+    // V4 conservative fallback when IPA disabled: any write → skip.
+    let use_ipa_per_root = chain_ipa.is_some();
+    if !use_ipa_per_root && !body_writes.is_empty() {
         return;
     }
 
@@ -5507,7 +5515,6 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     let max_depth = cfg.chain_max_depth.max(2);
     count_chains_in_body(&f.body, &mut counts, &mut first_spans, &mut closure_captured, max_depth, false);
 
-    // Collect existing locals for collision avoidance.
     let mut local_names: HashSet<String> = HashSet::new();
     for p in &f.params {
         local_names.insert(p.name.clone());
@@ -5525,13 +5532,23 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
     };
     for path in keys {
         if path.len() < 2 {
-            continue; // Single-field handled by D217.
+            continue;
         }
         if counts[path] < cfg.chain_threshold {
             continue;
         }
         if closure_captured.contains(path) {
             continue;
+        }
+        // V4.1 per-root invalidation: chain `@a.b.c` invalidated only
+        // if root field `a` is in body's write-set OR
+        // any intermediate path segment written
+        // (V4.1 simpler: just check root + intermediates anyway via
+        // path components intersection с body_writes).
+        if use_ipa_per_root {
+            if path.iter().any(|seg| body_writes.contains(seg)) {
+                continue;
+            }
         }
         let span = first_spans.get(path).copied().unwrap_or(body_span);
         to_cache.push((path.clone(), span));
