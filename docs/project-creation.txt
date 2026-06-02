@@ -26814,3 +26814,44 @@ Open V1 limitations (followup phases):
 Next session pickup: Ф.4 (auto-deref + binding mut + chain order) OR
 Ф.5 (NPO codegen + null-ptr retraction closing [M-115-null-ptr-to-option-after-npo]).
 Plan file status section с detailed handoff checklist.
+
+==========================================================================
+2026-06-01/02 evening-2 — Plan 118 Session continuation (autonomous)
+==========================================================================
+
+Дополнительные commits + concrete deliverables:
+
+Closed acceptance criteria:
+- A26 ✅ E_EXTERNAL_FN_FAIL_EFFECT enforcement (commit 7ff3007f3af)
+- A12 partial — p.field auto-deref для *Record (commit 9ece8bfdaea):
+  codegen detects double-pointer (Nova_Record**), emits (*p)->field
+
+Design decision locked (Session 2 user signoff): Option A for *Record:
+- *T для record T means Nova_T** в C ABI (double-pointer)
+- Used для FFI out-params + lock-free linked structures
+- For domain code: just use `Acc` (already heap reference per D32)
+- E_AMP_RECORD_LITERAL forbids `&Record{...}` без named binding —
+  anonymous-local auto-promote слишком implicit (commit 986fdb04c0d)
+
+Updated spec D216 §4 + diagnostic codes (E_AMP_RECORD_LITERAL added).
+
+Latest commits:
+- 6d6a18a2ab7 — NEG-T1.13: E_INVALID_POINTER_MODIFIER для *const T
+- f7c628ffa7d — Ф.9: ffi-cookbook Plan 118 preview section
+- c2fb3f3b9cb — NEG: pointer_incomplete + ro_in_expression_pos
+- 1634b0cb598 — NEG-T1.15: duplicate_modifier rejection
+- 4ded191f7b5 — status intermediate update
+- 7ff3007f3af — Ф.6 partial #2: E_EXTERNAL_FN_FAIL_EFFECT (A26)
+- 1dbabdaa69f — closure update
+- 9ece8bfdaea — Ф.4 codegen: (*p)->field для *Record (A12 partial)
+- 986fdb04c0d — NEG: E_AMP_RECORD_LITERAL (Session 2 design decision)
+
+plan118 fixtures: 16/0 PASS (10 positive + 6 NEG):
+- t1_1, t1_3, t1_6, t1_8, t2_1, t3_1, t3_2, t4_1, t5_1, t6_1 (positive)
+- t1_neg_const_modifier, t1_neg_pointer_incomplete,
+  t1_neg_ro_in_expression_pos, t1_neg_duplicate_modifier,
+  t6_neg_external_fn_fail_effect, t2_neg_amp_record_literal (NEG)
+
+Regression smoke: 70/0 verified + syntax 53/1 (1 pre-existing unrelated).
+
+Worktree total: 30 commits на plan-118 branch.

@@ -28410,3 +28410,40 @@ Plus nova-private separate repo: `2a1c425cc4` — discussion-log с
 4-round design discussion.
 
 **Worktree NOT merged в main** (review required first per design).
+
+## Plan 118 — Session 2 evening-2 + Session continuation (2026-06-01/02)
+
+Дополнительные commits + Ф.6/Ф.4/Ф.9 partials + Session 3 continuation:
+
+**Latest commits на plan-118 branch:**
+- `6d6a18a2ab7` — NEG-T1.13: E_INVALID_POINTER_MODIFIER для `*const T`
+- `f7c628ffa7d` — Ф.9: ffi-cookbook Plan 118 preview section
+- `c2fb3f3b9cb` — NEG: pointer_incomplete + ro_in_expression_pos
+- `1634b0cb598` — NEG-T1.15: duplicate_modifier rejection
+- `4ded191f7b5` — status intermediate update
+- `7ff3007f3af` — **Ф.6 partial #2: E_EXTERNAL_FN_FAIL_EFFECT** ✅ closes A26
+- `1dbabdaa69f` — closure update
+- `9ece8bfdaea` — **Ф.4 codegen: (*p)->field для *T над record (double-pointer auto-deref)**
+- `986fdb04c0d` — **NEG: E_AMP_RECORD_LITERAL** — Session 2 design decision
+  Option A: `&Record{...}` без named binding forbidden (Records уже heap
+  per D32; anonymous-local auto-promote слишком implicit)
+
+**Design decision locked (Session 2 user signoff Option A):**
+`*Record` для heap-record означает Nova_Record** в C ABI (double-pointer).
+Used для FFI out-params + lock-free linked structures. Domain code:
+just use `Acc` (already reference per D32) — `*Acc` is FFI-specific.
+
+**plan118 fixtures: 16/0 PASS:**
+- 10 positive: t1_1, t1_3, t1_6, t1_8, t2_1, t3_1, t3_2, t4_1, t5_1, t6_1
+- 6 NEG: const_modifier, pointer_incomplete, ro_in_expr_pos,
+  duplicate_modifier, external_fn_fail_effect, amp_record_literal
+
+**Closed acceptance criteria (Session 2):**
+- A1, A3, A4 (typed pointer family + chain + codegen)
+- A9, A10 (unsafe block + #unsafe attribute)
+- A12 partial (`p.field` auto-deref для *Record via codegen `(*p)->field`)
+- A26 ✅ (E_EXTERNAL_FN_FAIL_EFFECT enforcement)
+- A29 (D214 backward compat — plan115 11/0 regression)
+- A34, A35 (FFI handle docs + examples 3/0 PASS)
+
+**Worktree total: 30 commits на plan-118 + 2 в nova-private.**
