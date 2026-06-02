@@ -1,0 +1,14 @@
+// Plan 114.4.4 V4.6 M4 POSITIVE: generic const fn first-class с tuple
+// concrete type через HOF inference. Closes [M-114.4.4-trampoline-complex-concrete].
+
+module plan114_4_4.trampoline_generic_tuple_concrete_ok
+
+fn id[T](const x T) -> const T => x
+
+fn apply_pair(f fn((int, int)) -> (int, int), p (int, int)) -> (int, int) => f(p)
+
+test "generic с tuple concrete type" {
+    // T inferred = (int, int) from apply_pair's f param
+    ro r = apply_pair(id, (3, 7))
+    assert(r == (3, 7))
+}

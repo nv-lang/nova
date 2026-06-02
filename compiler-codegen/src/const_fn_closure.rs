@@ -74,10 +74,40 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
         return errors;
     }
 
+    // Plan 114.4.4 V4.6 M3 [M-114.4.4-closure-generic-hof-inference]: pre-pass
+    // — auto-add TurboFish к bare Calls of generic closure-returning fns в
+    // HOF context. Walks module mutably; at each Call(callee, args), checks
+    // если arg is `Call(generic_closure_fn, [], None)` без TurboFish и
+    // enclosing callee's expected param type — Func. Infers T via unification
+    // и wraps generic_closure_fn в TurboFish так existing rewriter handles
+    // remaining work.
+    let fn_signatures = crate::const_fn_trampoline::build_fn_signature_registry_pub(module);
+    let generic_closure_fns: std::collections::HashSet<String> = closure_fns
+        .iter()
+        .filter(|(_, fd)| !fd.generics.is_empty())
+        .map(|(n, _)| n.clone())
+        .collect();
+    if !generic_closure_fns.is_empty() {
+        let mut hof_ctx = GenericClosureHofCtx {
+            closure_fns: &closure_fns,
+            generic_closure_fns: &generic_closure_fns,
+            fn_signatures: &fn_signatures,
+            errors: &mut errors,
+        };
+        for item in &mut module.items {
+            hof_ctx.visit_item_mut(item);
+        }
+        for pf in &mut module.peer_files {
+            for item in &mut pf.items_here {
+                hof_ctx.visit_item_mut(item);
+            }
+        }
+    }
+
     // Step 2 — walk module, rewrite Call sites + collect specs.
-    // Plan 114.4.4 V4.5 Ф.4: spec key includes Vec<String> type_args mangle
-    // names (empty для non-generic).
-    let mut specs: HashMap<(String, Vec<ConstValue>, Vec<String>), String> = HashMap::new();
+    // Plan 114.4.4 V4.5 Ф.4 + V4.6 M4: spec value = (spec_name, original_type_args
+    // as Vec<TypeRef>) — TypeRefs retained для composite type substitution.
+    let mut specs: HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)> = HashMap::new();
     let mut spec_counter: usize = 0;
     for item in &mut module.items {
         rewrite_item(item, &closure_fns, &mut specs, &mut spec_counter, &mut errors);
@@ -89,15 +119,15 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
     }
 
     // Step 3 — generate specialized FnDecls.
-    let mut sorted_specs: Vec<((&String, &Vec<ConstValue>, &Vec<String>), &String)> = specs
+    let mut sorted_specs: Vec<((&String, &Vec<ConstValue>, &Vec<String>), &(String, Vec<TypeRef>))> = specs
         .iter()
         .map(|((n, a, ta), s)| ((n, a, ta), s))
         .collect();
-    sorted_specs.sort_by(|a, b| a.1.cmp(b.1));
+    sorted_specs.sort_by(|a, b| a.1.0.cmp(&b.1.0));
     let mut specialized_items: Vec<Item> = Vec::new();
-    for ((host_name, const_args, type_mangle), spec_name) in sorted_specs {
+    for ((host_name, const_args, _type_mangle), (spec_name, type_args)) in sorted_specs {
         let host = &closure_fns[host_name];
-        match generate_closure_spec(host, const_args, type_mangle, spec_name) {
+        match generate_closure_spec(host, const_args, type_args, spec_name) {
             Ok(fd) => specialized_items.push(Item::Fn(fd)),
             Err(d) => errors.push(d),
         }
@@ -123,6 +153,294 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
     }
 
     errors
+}
+
+// =========================================================================
+// Plan 114.4.4 V4.6 M3 — HOF inference pre-pass для generic closure-returning
+// const fns без TurboFish at call site.
+// =========================================================================
+
+struct GenericClosureHofCtx<'a> {
+    closure_fns: &'a HashMap<String, FnDecl>,
+    generic_closure_fns: &'a std::collections::HashSet<String>,
+    fn_signatures: &'a HashMap<String, Vec<TypeRef>>,
+    errors: &'a mut Vec<Diagnostic>,
+}
+
+impl<'a> GenericClosureHofCtx<'a> {
+    fn visit_item_mut(&mut self, item: &mut Item) {
+        match item {
+            Item::Fn(fd) => {
+                let all_const = !fd.params.is_empty() && fd.params.iter().all(|p| p.is_const);
+                let is_fully = (all_const || fd.params.is_empty()) && fd.return_is_const;
+                if is_fully { return; }
+                for p in &mut fd.params {
+                    if let Some(def) = &mut p.default { self.visit_expr_mut(def); }
+                }
+                match &mut fd.body {
+                    FnBody::Expr(e) => self.visit_expr_mut(e),
+                    FnBody::Block(b) => self.visit_block_mut(b),
+                    FnBody::External => {}
+                }
+            }
+            Item::Const(c) => self.visit_expr_mut(&mut c.value),
+            Item::Let(l) => self.visit_expr_mut(&mut l.value),
+            Item::Test(t) => self.visit_block_mut(&mut t.body),
+            Item::Bench(b) => {
+                for s in &mut b.setup { self.visit_stmt_mut(s); }
+                self.visit_block_mut(&mut b.measure_body);
+                for s in &mut b.teardown { self.visit_stmt_mut(s); }
+            }
+            Item::Type(_) | Item::Lemma(_) => {}
+        }
+    }
+    fn visit_block_mut(&mut self, b: &mut Block) {
+        for s in &mut b.stmts { self.visit_stmt_mut(s); }
+        if let Some(t) = &mut b.trailing { self.visit_expr_mut(t); }
+    }
+    fn visit_stmt_mut(&mut self, s: &mut Stmt) {
+        match s {
+            Stmt::Let(d) => self.visit_expr_mut(&mut d.value),
+            Stmt::Const(d) => self.visit_expr_mut(&mut d.value),
+            Stmt::Expr(e) => self.visit_expr_mut(e),
+            Stmt::Assign { target, value, .. } => {
+                self.visit_expr_mut(target);
+                self.visit_expr_mut(value);
+            }
+            Stmt::Return { value: Some(v), .. } => self.visit_expr_mut(v),
+            Stmt::Throw { value, .. } => self.visit_expr_mut(value),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                self.visit_expr_mut(body);
+            }
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.visit_expr_mut(init);
+                self.visit_block_mut(body);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.visit_expr_mut(expr);
+            }
+            _ => {}
+        }
+    }
+    fn visit_expr_mut(&mut self, e: &mut Expr) {
+        // For Call: check each arg position для bare generic-closure call.
+        if let ExprKind::Call { func, args, trailing } = &mut e.kind {
+            // Extract callee name (только bare Ident form для HOF).
+            let callee_name: Option<String> = match &func.kind {
+                ExprKind::Ident(n) => Some(n.clone()),
+                _ => None,
+            };
+            let expected_types: Option<Vec<TypeRef>> = callee_name
+                .as_ref()
+                .and_then(|n| self.fn_signatures.get(n).cloned());
+            if !matches!(&func.kind, ExprKind::Ident(_)) {
+                self.visit_expr_mut(func);
+            }
+            for (idx, a) in args.iter_mut().enumerate() {
+                match a {
+                    CallArg::Item(x) | CallArg::Spread(x) => {
+                        if let Some(et) = &expected_types {
+                            if let Some(expected) = et.get(idx) {
+                                self.try_add_turbofish(x, expected);
+                            }
+                        }
+                        self.visit_expr_mut(x);
+                    }
+                    CallArg::Named { value, .. } => self.visit_expr_mut(value),
+                }
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => self.visit_block_mut(b),
+                    Trailing::Fn(sb) => match &mut sb.body {
+                        FnBody::Expr(e) => self.visit_expr_mut(e),
+                        FnBody::Block(b) => self.visit_block_mut(b),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => self.visit_block_mut(&mut tb.body),
+                }
+            }
+            return;
+        }
+        // Other expr kinds — recurse children.
+        match &mut e.kind {
+            ExprKind::Unary { operand, .. } => self.visit_expr_mut(operand),
+            ExprKind::Binary { left, right, .. } => {
+                self.visit_expr_mut(left); self.visit_expr_mut(right);
+            }
+            ExprKind::As(x, _) | ExprKind::Is(x, _) => self.visit_expr_mut(x),
+            ExprKind::Try(x) | ExprKind::Bang(x) => self.visit_expr_mut(x),
+            ExprKind::Coalesce(a, b) => { self.visit_expr_mut(a); self.visit_expr_mut(b); }
+            ExprKind::Member { obj, .. } => self.visit_expr_mut(obj),
+            ExprKind::Index { obj, index } => {
+                self.visit_expr_mut(obj);
+                self.visit_expr_mut(index);
+            }
+            ExprKind::TurboFish { base, .. } => self.visit_expr_mut(base),
+            ExprKind::TupleLit(items) => for x in items { self.visit_expr_mut(x); },
+            ExprKind::ArrayLit(elems) => for el in elems {
+                match el { ArrayElem::Item(x) | ArrayElem::Spread(x) => self.visit_expr_mut(x), }
+            },
+            ExprKind::If { cond, then, else_ } => {
+                self.visit_expr_mut(cond);
+                self.visit_block_mut(then);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.visit_block_mut(b),
+                        ElseBranch::If(ie) => self.visit_expr_mut(ie),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.visit_expr_mut(scrutinee);
+                for arm in arms {
+                    if let Some(g) = &mut arm.guard { self.visit_expr_mut(g); }
+                    match &mut arm.body {
+                        MatchArmBody::Expr(e) => self.visit_expr_mut(e),
+                        MatchArmBody::Block(b) => self.visit_block_mut(b),
+                    }
+                }
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.visit_expr_mut(iter);
+                self.visit_block_mut(body);
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.visit_expr_mut(cond);
+                self.visit_block_mut(body);
+            }
+            ExprKind::Loop { body, .. } => self.visit_block_mut(body),
+            ExprKind::Block(b) => self.visit_block_mut(b),
+            _ => {}
+        }
+    }
+    /// If `arg` is `Call(Ident(generic_closure_fn), [], None)` without TurboFish
+    /// AND expected_type is Func — infer T from host's return-type and wrap
+    /// Ident в TurboFish. Existing rewriter then handles spec gen + Call→Ident.
+    fn try_add_turbofish(&mut self, arg: &mut Expr, expected_type: &TypeRef) {
+        let ExprKind::Call { func, args, trailing } = &mut arg.kind else { return };
+        if !args.is_empty() { return; } // V1: only no-const-arg generic.
+        if trailing.is_some() { return; }
+        let ExprKind::Ident(name) = &func.kind else { return };
+        if !self.generic_closure_fns.contains(name) { return; }
+        let Some(host) = self.closure_fns.get(name) else { return };
+        let expected = expected_type.strip_readonly();
+        let TypeRef::Func { params: expected_params, return_type: expected_ret, .. } = expected
+        else {
+            return;
+        };
+        // Host's return type должно быть `const fn(T1,..) -> R` — match его
+        // против expected Func type. Strip readonly + Func unwrap.
+        let Some(host_ret) = &host.return_type else { return };
+        let host_ret_stripped = host_ret.strip_readonly();
+        let TypeRef::Func { params: host_ret_params, return_type: host_ret_ret, .. } = host_ret_stripped
+        else {
+            return;
+        };
+        // Use infer_generic_subst pattern: treat host's return-type as the
+        // signature to match. Build a synthetic FnDecl с params = host_ret_params
+        // и return = host_ret_ret (но не нужно полный FnDecl — write helper inline).
+        let mut subst: HashMap<String, TypeRef> = HashMap::new();
+        let generic_names: std::collections::HashSet<String> = host.generics.iter()
+            .map(|g| g.name.clone())
+            .collect();
+        if host_ret_params.len() != expected_params.len() { return; }
+        for (h, e) in host_ret_params.iter().zip(expected_params.iter()) {
+            if !unify_simple(h, e, &generic_names, &mut subst) { return; }
+        }
+        match (host_ret_ret, expected_ret) {
+            (Some(h), Some(e)) => {
+                if !unify_simple(h, e, &generic_names, &mut subst) { return; }
+            }
+            (None, None) => {}
+            _ => return,
+        }
+        // Materialize type args в declaration order.
+        let mut type_args: Vec<TypeRef> = Vec::with_capacity(host.generics.len());
+        for g in &host.generics {
+            let Some(ty) = subst.get(&g.name) else { return; };
+            type_args.push(ty.clone());
+        }
+        // Wrap Ident в TurboFish: Call(TurboFish(Ident(name), type_args), [])
+        let span = func.span;
+        let old_func = (**func).clone();
+        **func = Expr {
+            kind: ExprKind::TurboFish {
+                base: Box::new(old_func),
+                type_args,
+            },
+            span,
+        };
+        let _ = self.errors;
+    }
+}
+
+/// Plan 114.4.4 V4.6 M3: simplified unification без full FnDecl context.
+/// Returns true if unification succeeded, mutating subst.
+fn unify_simple(
+    pattern: &TypeRef,
+    concrete: &TypeRef,
+    generic_names: &std::collections::HashSet<String>,
+    subst: &mut HashMap<String, TypeRef>,
+) -> bool {
+    if let TypeRef::Named { path, generics, .. } = pattern {
+        if path.len() == 1 && generics.is_empty() && generic_names.contains(&path[0]) {
+            let g = &path[0];
+            if let Some(prev) = subst.get(g) {
+                return type_refs_eq_simple(prev, concrete);
+            }
+            subst.insert(g.clone(), concrete.clone());
+            return true;
+        }
+    }
+    use TypeRef as TR;
+    match (pattern, concrete) {
+        (TR::Named { path: p1, generics: g1, .. }, TR::Named { path: p2, generics: g2, .. }) => {
+            p1 == p2 && g1.len() == g2.len()
+                && g1.iter().zip(g2.iter()).all(|(x, y)| unify_simple(x, y, generic_names, subst))
+        }
+        (TR::Tuple(a, _), TR::Tuple(b, _)) => {
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| unify_simple(x, y, generic_names, subst))
+        }
+        (TR::Array(a, _), TR::Array(b, _)) => unify_simple(a, b, generic_names, subst),
+        (TR::FixedArray(n1, e1, _), TR::FixedArray(n2, e2, _)) => {
+            n1 == n2 && unify_simple(e1, e2, generic_names, subst)
+        }
+        (TR::Func { params: p1, return_type: r1, .. }, TR::Func { params: p2, return_type: r2, .. }) => {
+            if p1.len() != p2.len() { return false; }
+            for (x, y) in p1.iter().zip(p2.iter()) {
+                if !unify_simple(x, y, generic_names, subst) { return false; }
+            }
+            match (r1, r2) {
+                (Some(a), Some(b)) => unify_simple(a, b, generic_names, subst),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        (TR::Unit(_), TR::Unit(_)) => true,
+        (TR::Readonly(a, _), TR::Readonly(b, _)) => unify_simple(a, b, generic_names, subst),
+        (TR::Readonly(a, _), o) => unify_simple(a, o, generic_names, subst),
+        (p, TR::Readonly(b, _)) => unify_simple(p, b, generic_names, subst),
+        _ => false,
+    }
+}
+
+fn type_refs_eq_simple(a: &TypeRef, b: &TypeRef) -> bool {
+    use TypeRef as TR;
+    match (a, b) {
+        (TR::Named { path: p1, generics: g1, .. }, TR::Named { path: p2, generics: g2, .. }) => {
+            p1 == p2 && g1.len() == g2.len() && g1.iter().zip(g2.iter()).all(|(x, y)| type_refs_eq_simple(x, y))
+        }
+        (TR::Tuple(a, _), TR::Tuple(b, _)) => {
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| type_refs_eq_simple(x, y))
+        }
+        (TR::Array(a, _), TR::Array(b, _)) => type_refs_eq_simple(a, b),
+        (TR::FixedArray(n1, e1, _), TR::FixedArray(n2, e2, _)) => n1 == n2 && type_refs_eq_simple(e1, e2),
+        (TR::Unit(_), TR::Unit(_)) => true,
+        (TR::Readonly(a, _), TR::Readonly(b, _)) => type_refs_eq_simple(a, b),
+        _ => false,
+    }
 }
 
 fn is_closure_literal(e: &Expr) -> bool {
@@ -190,18 +508,14 @@ fn subst_then_eval(e: &Expr, subst: &HashMap<String, ConstValue>) -> Option<Cons
 fn generate_closure_spec(
     host: &FnDecl,
     const_args: &[ConstValue],
-    type_mangle: &[String],
+    type_args: &[TypeRef],
     spec_name: &str,
 ) -> Result<FnDecl, Diagnostic> {
-    // Plan 114.4.4 V4.5 Ф.4: build generic type subst map (host generic
-    // name → concrete TypeRef constructed from mangle string).
+    // Plan 114.4.4 V4.5 Ф.4 + V4.6 M4: type_args теперь Vec<TypeRef>,
+    // composite types passed directly (Tuple/Array/FixedArray/Named-with-generics).
     let mut type_subst: HashMap<String, TypeRef> = HashMap::new();
-    for (g, t_name) in host.generics.iter().zip(type_mangle.iter()) {
-        type_subst.insert(g.name.clone(), TypeRef::Named {
-            path: vec![t_name.clone()],
-            generics: vec![],
-            span: host.span,
-        });
+    for (g, ty) in host.generics.iter().zip(type_args.iter()) {
+        type_subst.insert(g.name.clone(), ty.clone());
     }
     // Build substitution map: host const param name → literal value.
     let mut subst: HashMap<String, ConstValue> = HashMap::new();
@@ -573,7 +887,7 @@ fn subst_expr(e: &mut Expr, subst: &HashMap<String, ConstValue>) {
 fn rewrite_item(
     item: &mut Item,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -613,7 +927,7 @@ fn rewrite_item(
 fn rewrite_block(
     b: &mut Block,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -628,7 +942,7 @@ fn rewrite_block(
 fn rewrite_stmt(
     s: &mut Stmt,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -660,7 +974,7 @@ fn rewrite_stmt(
 fn rewrite_expr(
     e: &mut Expr,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -814,37 +1128,23 @@ fn rewrite_expr(
             ));
             return;
         }
-        // Build type-args mangle string from TypeRef (V1: simple Named names).
-        let mut type_mangle: Vec<String> = Vec::with_capacity(type_args.len());
-        let mut mangle_ok = true;
-        for ta in &type_args {
-            match crate::const_fn_eval::simple_type_name_str(ta) {
-                Some(s) => type_mangle.push(s),
-                None => {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_CONST_FN_CLOSURE_GENERIC_COMPLEX] TurboFish arg для `{}` \
-                             must be simple Named type (V4.5 Ф.4).",
-                            host_name
-                        ),
-                        e.span,
-                    ));
-                    mangle_ok = false;
-                    break;
-                }
-            }
-        }
-        if !mangle_ok { return; }
+        // Plan 114.4.4 V4.6 M4: composite TypeRef concrete types supported
+        // (Tuple/Array/FixedArray/Named-with-generics/Unit/Readonly) через
+        // mangle_type_ref stable serialization.
+        let type_mangle: Vec<String> = type_args
+            .iter()
+            .map(crate::const_fn_trampoline::mangle_type_ref)
+            .collect();
         let key = (host_name.clone(), const_args, type_mangle.clone());
         let counter_val = &mut *spec_counter;
-        let spec_name = specs.entry(key).or_insert_with(|| {
+        let (spec_name, _) = specs.entry(key).or_insert_with(|| {
             let suffix = if type_mangle.is_empty() {
                 format!("__closure_{}", counter_val)
             } else {
                 format!("__closure_{}_{}", type_mangle.join("_"), counter_val)
             };
             *counter_val += 1;
-            format!("{}{}", host_name, suffix)
+            (format!("{}{}", host_name, suffix), type_args.clone())
         }).clone();
         let span = e.span;
         *e = Expr { kind: ExprKind::Ident(spec_name), span };
