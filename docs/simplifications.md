@@ -29881,3 +29881,45 @@ active on main. github/main updated.
   123.7 and Plan 124.1 both designated D220. Plan 124 merged first
   (alphabetical commit order). Lesson: reserve D-blocks atomically
   с plan doc creation OR coordinate via lockfile в spec/decisions/.
+
+---
+
+## Plan 114.4.4.3 V4.2 — runtime trampoline landed (2026-06-02)
+
+**Status:** 🟢 V1 LANDED. Branch `plan-114.4.4-v4-2` off main `800f40a4c2a`.
+
+**Closed marker:** ✅ `[M-114.4.3-runtime-hof]`.
+
+**What:** Automatic generation of runtime trampoline fn для fully-const
+fn used as first-class value (Call arg, Let value, alias use, recursive
+ref). V3 ограничение friendly-error на эти контексты снято — V4.2
+trampoline pass генерирует `<orig>__trampoline` с demoted modifiers
+(const params/return → runtime) и переписывает Ident references.
+
+**Implementation:** New module `compiler-codegen/src/const_fn_trampoline.rs`
+(~660 LOC). 4 steps: collect first-class seeds → transitive closure через
+nested Call analysis → generate trampoline FnDecls (clone + demote + body
+walk) → rewrite Ident references на trampoline names. Pipeline placement:
+внутри `rewrite_const_fn_calls`, ПОСЛЕ main walker (inline + intrinsics),
+ДО validate + retain. Validate теперь принимает `trampoline_set` и
+skip'ает those names.
+
+**Tests (release nova-cli):**
+- 5 POS: runtime_hof_{arg,let_binding,transitive,alias,recursive}_ok.
+- 1 NEG: runtime_hof_generic_neg (E_CONST_FN_TRAMPOLINE_GENERIC).
+- 2 V3-superseded removed: runtime_hof_const_fn_neg + runtime_let_to_const_fn_neg.
+- 17/17 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 46/46 PASS.
+
+**Spec:** D199 V4.2 extensions subsection + A34 acceptance criterion.
+Q7 V4.2+ closure note.
+
+**V4.2 limitations:**
+- Generic const fn rejected (`E_CONST_FN_TRAMPOLINE_GENERIC`) — trampoline
+  body needs concrete types для intrinsic substitution. Followup
+  `[M-114.4.4-trampoline-generics]`.
+- Closure literals в body — Plan 114.4.4.4 territory.
+
+**Design lesson:** "Demote modifier" strategy для trampoline gen — клонируем
+оригинал, сбрасываем `is_const`/`return_is_const` в false, body остаётся
+работоспособен в runtime (т.к. fully-const fn body состоит из выражений
+валидных и в runtime). Cheap pattern, избегает invasive codegen изменений.

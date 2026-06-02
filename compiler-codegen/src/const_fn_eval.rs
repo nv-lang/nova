@@ -1170,11 +1170,24 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
 
     walk_module(module, &mut owned, &mut errors);
 
+    // Plan 114.4.4.3 V4.2: generate runtime trampolines для fully-const fn
+    // used as first-class values. Inserted в module.items BEFORE validate +
+    // retain. Trampoline names (`<orig>__trampoline`) survive retain since
+    // const_names filter matches только original names.
+    let (trampoline_set, t_errors) = crate::const_fn_trampoline::generate_const_fn_trampolines(
+        module,
+        &owned.fns,
+        &owned.aliases,
+    );
+    errors.extend(t_errors);
+
     // Plan 114.4.4 Ф.2 (D199 V3): friendly UX validation — detect runtime
     // misuse of const fn names BEFORE codegen drops them. After this pass
     // any Ident referencing const fn в non-call-func position → error
     // с actionable suggestion.
-    validate_const_fn_runtime_uses(module, &owned, &mut errors);
+    // Plan 114.4.4.3 V4.2: skip validation для names в trampoline_set —
+    // those usages already rewritten к trampoline по step 4.
+    validate_const_fn_runtime_uses(module, &owned, &trampoline_set, &mut errors);
 
     // Drop const fn declarations + alias const decls (V2 Ф.5) из items.
     let const_names = owned.names();
@@ -2331,11 +2344,24 @@ fn walk_match_arm_body(
 fn validate_const_fn_runtime_uses(
     module: &crate::ast::Module,
     ev: &OwnedEvaluator,
+    trampoline_set: &std::collections::HashSet<String>,
     errors: &mut Vec<Diagnostic>,
 ) {
+    // Plan 114.4.4.3 V4.2: names в trampoline_set теперь имеют runtime
+    // symbol `<name>__trampoline` и first-class uses переписаны на него
+    // step'ом 4 trampoline pass. Не флагаем как ошибку.
+    // Aliases для names в trampoline_set тоже skip — они resolve'ятся.
     let cf_names: std::collections::HashSet<String> = ev.fns.keys()
         .chain(ev.mixed_const_params.keys())
         .chain(ev.aliases.keys())
+        .filter(|name| {
+            if trampoline_set.contains(name.as_str()) { return false; }
+            // Check alias target.
+            if let Some(target) = ev.aliases.get(name.as_str()) {
+                if trampoline_set.contains(target.as_str()) { return false; }
+            }
+            true
+        })
         .cloned()
         .collect();
     if cf_names.is_empty() {
