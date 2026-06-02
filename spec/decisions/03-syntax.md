@@ -7287,17 +7287,63 @@ attribute `#fn_eval_max_iterations(N)` — V4 followup.
 - Plan 114.4.4.4 — closure-returning const fn.
 - Plan 114.4.4.5 — true per-const-arg monomorphization.
 
-### V3 acceptance — A27-A30 (landed)
+### V4 extensions (Plan 114.4.4 finish session, 2026-06-02)
+
+**Ф.4 — Record/sum/tuple patterns в match:**
+
+Pattern V2.0 subset → V4 расширен с structured destructuring:
+- `(a, b)` — tuple pattern.
+- `Variant`, `Variant(p1, p2)`, `Cons(h, ..)` — sum-type destructuring.
+- `{ field: pat }` или `{ field }` (shorthand) — record destructuring.
+- `pat as name` — binding pattern.
+
+ConstValue extended с `Tuple(Vec<ConstValue>)`, `Variant(String,
+Vec<ConstValue>)`, `Record(Vec<(String, ConstValue)>)` variants.
+
+Variant constructor recognition heuristic: `Call(Ident(Name), args)` где
+`Name` starts с uppercase letter и НЕ const fn → constructed as
+`ConstValue::Variant`. Lowercase Idents trigger const fn lookup.
+
+**Ф.5 — Type reflection (sizeof/align_of):**
+
+Built-in intrinsics evaluating at compile time:
+```nova
+const SIZE_INT = sizeof[int]()        // 8
+const SIZE_BOOL = sizeof[bool]()       // 1
+const ALIGN_F64 = align_of[f64]()      // 8
+
+fn buf_size(const count int) -> const int =>
+    count * sizeof[int]()              // works в const fn body
+```
+
+V4.0 surface (primitive types only — hardcoded per default 64-bit ABI):
+- `int` / `i64` / `u64` / `f64` → 8 bytes.
+- `i32` / `u32` / `f32` → 4 bytes.
+- `i16` / `u16` → 2 bytes.
+- `i8` / `u8` / `bool` → 1 byte.
+- `char` → 4 bytes (u32 codepoint per Plan Q-char-literals).
+- `str` → 16 bytes (pointer + length per Plan 26 prelude).
+
+Records / sum-types / generic types → V4 followup
+`[M-114.4.4-record-reflection]` (Plan 114.4.4.2 covers it).
+
+`sizeof`/`align_of` recognized as built-in identifiers в name resolution
+(special-cased в `is_known`); replaced литералом в rewriter pass до
+codegen.
+
+### V3+V4 acceptance — A27-A32 (landed)
 
 | # | Критерий | Verification |
 |---|---|---|
-| A27 | `#fn_eval_max_depth(N)` override работает | T4.4 Ф.1 fixtures |
+| A27 | `#fn_eval_max_depth(N)` override работает | Ф.1 fixtures |
 | A28 | Runtime-let `ro f = const_fn` → friendly error | Ф.2 negatives |
 | A29 | HOF passing → friendly error | Ф.2 negatives |
 | A30 | Loops + mut/assign/break/continue работают | Ф.3 fixtures |
+| A31 | Record/sum/tuple patterns в match destructure | Ф.4 fixtures |
+| A32 | `sizeof[T]()` / `align_of[T]()` для primitives | Ф.5 fixtures |
 
-A31-A35 (record-pattern / t-reflection / runtime-hof / closures /
-mono-specialization) → extracted plans 114.4.4.1-5.
+A33-A35 (runtime-hof / closures / mono-specialization) → extracted
+plans 114.4.4.3-5 (V4.1+).
 
 ### V2 acceptance — A19-A26
 

@@ -29009,6 +29009,7 @@ Design lessons:
 
 Plan 124.1 V1 ✅ FULLY CLOSED. Plan 124 umbrella partial — 6
 sub-plans (124.2-124.7) remaining.
+
 ## Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support (2026-06-02)
 
 **Status:** ✅ CLOSED 2026-06-02. Extends Plan 91.12 V2 sync types migration к user-level case.
@@ -29053,3 +29054,66 @@ sub-plans (124.2-124.7) remaining.
 **Design lesson:**
 - **Generic newtype над ptr ≠ generic newtype над other primitives.** Ptr-newtypes share single typedef (T is phantom). Inner non-ptr types (`type Wrap[T](int)`) might want per-T monomorphization для proper phantom-type ABI distinction. Текущая impl unified single typedef для both — works for current use cases (FFI handles).
 - **TurboFish form для type-constructor** — generic instantiation в Nova проходит через TurboFish AST node. Constructor intercepts должны handle оба формы: `Ident` (non-generic) и `TurboFish{base:Ident}` (generic).
+
+---
+
+## Plan 114.4.4 finish — Ф.4 + Ф.5 V4 landed (2 markers closed) — 2026-06-02
+
+**Status:** 🟢 partial close (2 of 5 remaining V4 phases). Branch
+`plan-114.4.4-finish` off main `a78f837d1b1`.
+
+**Closed markers:**
+- ✅ `[M-114.4.3-pattern-record-sum]` — Ф.4 record/sum/tuple patterns.
+- ✅ `[M-114.4.3-t-reflection]` для primitives — Ф.5 sizeof/align_of.
+
+**Implementation:**
+
+1. **ConstValue extension:** Tuple/Variant/Record variants added для
+   structured comptime data. Manual PartialEq/Hash extended.
+
+2. **Variant constructor heuristic:** `Call(Ident(Name), args)` где
+   `Name` начинается с uppercase letter и НЕ const fn → constructs
+   `ConstValue::Variant`. Distinguishes от const fn calls (lowercase
+   convention).
+
+3. **Type reflection primitives:** sizeof/align_of intrinsics возвращают
+   hardcoded sizes per default 64-bit ABI (int=8, char=4, bool=1, etc.).
+   Recognized as builtin identifiers в name resolution (special-case
+   в `is_known`). Replaced literal в rewriter pass до codegen.
+
+4. **try_literal_to_value extended:** Unary/Binary/As/TupleLit/Call
+   (variant or sizeof) pre-evaluation. Позволяет args на const fn
+   call sites быть non-trivial constexpr expressions.
+
+**Tests: 4 new fixtures.** 12/12 plan114_4_4 + 14/14 plan114_4_3 +
+16/16 plan114_4_2 = 42/42 PASS на release nova-cli.
+
+**Remaining V4.1+ (extracted plans, ship-when-triggered):**
+- Plan 114.4.4.3 — runtime HOF trampoline.
+- Plan 114.4.4.4 — closure-returning const fn.
+- Plan 114.4.4.5 — true per-const-arg monomorphization.
+
+**Design lessons:**
+
+1. **Variant constructor heuristic** — case-sensitivity convention
+   (TitleCase = variant, lowercase = fn) — clean без explicit type
+   system integration. Works for Option/Result/User-defined sum types.
+
+2. **Primitive sizeof hardcode** — V4.0 conservative. Real type
+   reflection (records / generics / sum-type layout) требует deep
+   type system integration через TypeInfo trait или sizeof attribute
+   for records. Followup Plan 114.4.4.2.
+
+3. **Walk module даже без const fn** — early-return removed чтобы
+   sizeof intrinsics на module-level `const SIZE = sizeof[int]()`
+   были replaced литералом без const fn declarations в module.
+
+4. **Pattern bindings в arm body** — match arm pattern bindings
+   collected via collect_const_fn_pattern_bindings и добавлены в
+   arm-local scope для body/guard validation. Без этого `Some(x)`
+   pattern в arm body refers `x` failed name resolution.
+
+5. **Safety hatches design pattern** — Ф.6/Ф.7/Ф.8 require deep codegen
+   integration (trampoline ABI, closure capture, mono pipeline).
+   Extracted as Plan 114.4.4.3/4/5 для focused dev-day каждый. NOT
+   silent simplification.

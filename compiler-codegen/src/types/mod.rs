@@ -797,6 +797,11 @@ fn check_const_constexpr_ex(
                 _ => None,
             };
             if let Some(name) = callee_name_opt {
+                // Plan 114.4.4 Ф.5 V4: sizeof/align_of intrinsics accepted
+                // на module-level const RHS (`const SIZE = sizeof[int]()`).
+                if name == "sizeof" || name == "align_of" {
+                    return Ok(());
+                }
                 if const_fn_names.contains(name) {
                     for a in args {
                         match a {
@@ -940,9 +945,20 @@ fn check_const_fn_expr(
                     expr.span,
                 ));
             }
-            // Callee должен быть Ident, и это имя должно быть const fn.
+            // Callee должен быть Ident (или TurboFish<Ident> для generic
+            // const fn / sizeof/align_of intrinsics).
             let callee_name = match &func.kind {
                 E::Ident(n) => n.clone(),
+                E::TurboFish { base, .. } => match &base.kind {
+                    E::Ident(n) => n.clone(),
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "[E_CONST_FN_EFFECT_IN_BODY] non-ident turbofish base \
+                             (D199).".to_string(),
+                            expr.span,
+                        ));
+                    }
+                }
                 _ => {
                     return Err(Diagnostic::new(
                         "[E_CONST_FN_EFFECT_IN_BODY] indirect / method / path calls \
@@ -953,12 +969,22 @@ fn check_const_fn_expr(
                     ));
                 }
             };
-            if !const_fn_names.contains(&callee_name) {
+            // Plan 114.4.4 Ф.4 V4: variant constructor heuristic —
+            // Call(Ident(Name), args) где Name начинается с uppercase
+            // letter и НЕ const fn — treat as variant constructor
+            // (e.g. `Some(5)`, `Ok(v)`, `Err(e)`, `Cons(h, t)`).
+            let is_variant_constructor = !const_fn_names.contains(&callee_name)
+                && callee_name.chars().next().map_or(false, |c| c.is_uppercase());
+            // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics — sizeof / align_of.
+            // Recognized как built-in const fn без registration.
+            let is_t_reflection = callee_name == "sizeof" || callee_name == "align_of";
+            if !const_fn_names.contains(&callee_name) && !is_variant_constructor && !is_t_reflection {
                 return Err(Diagnostic::new(
                     format!(
                         "[E_CONST_FN_EFFECT_IN_BODY] call `{}(...)` from const fn \
-                         body — `{}` is not a `const fn` (D199). Only calls to other \
-                         const fn are allowed. Use runtime fn if needed.",
+                         body — `{}` is not a `const fn` или variant constructor \
+                         (D199). Only calls к другим const fn или Variant constructors \
+                         (TitleCase names) allowed. Use runtime fn if needed.",
                         callee_name, callee_name
                     ),
                     expr.span,
@@ -966,10 +992,10 @@ fn check_const_fn_expr(
             }
             // Plan 114.4.3 Ф.2 (V2): direct self-recursion allowed.
             // Evaluator enforces depth limit + memoization.
-            // V1 reject removed; cycle detection (mutual) downgraded
-            // to informational — handled at module-pass level.
             let _self_call = callee_name == current_fn;
-            call_targets.insert(callee_name);
+            if !is_variant_constructor {
+                call_targets.insert(callee_name);
+            }
             // Args также constexpr-eligible — recurse.
             for a in args {
                 match a {
@@ -1033,19 +1059,22 @@ fn check_const_fn_expr(
                 scrutinee, param_consts, const_fn_names, local_consts, current_fn, call_targets,
             )?;
             for arm in arms {
-                // Validate pattern V2.0 subset.
                 check_const_fn_pattern(&arm.pattern, expr.span)?;
+                // Plan 114.4.4 Ф.4 V4: bindings из pattern добавляются в
+                // arm-local scope для body/guard validation.
+                let mut arm_locals = local_consts.clone();
+                collect_const_fn_pattern_bindings(&arm.pattern, &mut arm_locals);
                 if let Some(g) = &arm.guard {
                     check_const_fn_expr(
-                        g, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                        g, param_consts, const_fn_names, &arm_locals, current_fn, call_targets,
                     )?;
                 }
                 match &arm.body {
                     crate::ast::MatchArmBody::Expr(e) => check_const_fn_expr(
-                        e, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                        e, param_consts, const_fn_names, &arm_locals, current_fn, call_targets,
                     )?,
                     crate::ast::MatchArmBody::Block(b) => check_const_fn_block(
-                        b, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                        b, param_consts, const_fn_names, &arm_locals, current_fn, call_targets,
                     )?,
                 }
             }
@@ -1101,12 +1130,36 @@ fn check_const_fn_expr(
                 .to_string(),
             expr.span,
         )),
-        E::RecordLit { .. } | E::TupleLit(_) => Err(Diagnostic::new(
-            "[E_CONST_FN_ALLOCATION] record/tuple literals не разрешены в const \
-             fn body V1 (D199). Use scalar const fn for V1."
-                .to_string(),
-            expr.span,
-        )),
+        // Plan 114.4.4 Ф.4 V4: tuple literals — recursive sub-validation.
+        // ConstValue::Tuple supports structured comptime data.
+        E::TupleLit(elems) => {
+            for e in elems {
+                check_const_fn_expr(
+                    e, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                )?;
+            }
+            Ok(())
+        }
+        // Plan 114.4.4 Ф.4 V4: record literals — recursive sub-validation
+        // на каждое field value. ConstValue::Record supports structured
+        // comptime data.
+        E::RecordLit { fields, .. } => {
+            for f in fields {
+                if f.is_spread {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_FN_ALLOCATION] spread `...` в record literal не \
+                         разрешён в const fn body (D199).".to_string(),
+                        expr.span,
+                    ));
+                }
+                if let Some(v) = &f.value {
+                    check_const_fn_expr(
+                        v, param_consts, const_fn_names, local_consts, current_fn, call_targets,
+                    )?;
+                }
+            }
+            Ok(())
+        }
         // Member/Index/Path — runtime access.
         E::Member { .. } | E::Index { .. } | E::Path(_) | E::TurboFish { .. }
         | E::SelfAccess => Err(Diagnostic::new(
@@ -1140,13 +1193,13 @@ fn check_const_fn_pattern(
     pat: &crate::ast::Pattern,
     span: Span,
 ) -> Result<(), Diagnostic> {
-    use crate::ast::Pattern;
+    use crate::ast::{Pattern, VariantPatternKind};
     match pat {
         Pattern::Wildcard(_) => Ok(()),
         Pattern::Ident { is_mut: false, .. } => Ok(()),
         Pattern::Ident { is_mut: true, .. } => Err(Diagnostic::new(
             "[E_CONST_FN_PATTERN_NOT_SUPPORTED] `mut` pattern в const fn match \
-             arm not allowed (D199 V2.0). Remove `mut`."
+             arm not allowed (D199 V4). Remove `mut`."
                 .to_string(),
             span,
         )),
@@ -1157,15 +1210,79 @@ fn check_const_fn_pattern(
             }
             Ok(())
         }
+        // Plan 114.4.4 Ф.4 V4: tuple destructuring pattern.
+        Pattern::Tuple(pats, _) => {
+            for p in pats { check_const_fn_pattern(p, span)?; }
+            Ok(())
+        }
+        // Plan 114.4.4 Ф.4 V4: variant destructuring pattern.
+        Pattern::Variant { kind, .. } => {
+            match kind {
+                VariantPatternKind::Unit => Ok(()),
+                VariantPatternKind::Tuple { patterns, .. } => {
+                    for p in patterns { check_const_fn_pattern(p, span)?; }
+                    Ok(())
+                }
+            }
+        }
+        // Plan 114.4.4 Ф.4 V4: record destructuring pattern.
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                if let Some(p) = &f.pattern {
+                    check_const_fn_pattern(p, span)?;
+                }
+            }
+            Ok(())
+        }
+        Pattern::Binding { inner, .. } => check_const_fn_pattern(inner, span),
         _ => Err(Diagnostic::new(
             "[E_CONST_FN_PATTERN_NOT_SUPPORTED] pattern form not supported в \
-             const fn match arm V2.0 (D199). Allowed: literal patterns, \
-             wildcard `_`, single ident bind, simple `|` alternation. \
-             Record/sum/tuple destructuring — followup \
-             `[M-114.4.3-pattern-record-sum]`."
+             const fn match arm (D199). Allowed: literal patterns, wildcard `_`, \
+             ident bind, `|` alternation, tuple `(a, b)`, variant `Name(args)`, \
+             record `{ field: pat }`."
                 .to_string(),
             span,
         )),
+    }
+}
+
+/// Plan 114.4.4 Ф.4 V4: collect bindings from match arm pattern.
+/// Used при validating arm body — bindings из pattern visible.
+fn collect_const_fn_pattern_bindings(
+    pat: &crate::ast::Pattern,
+    locals: &mut std::collections::HashSet<String>,
+) {
+    use crate::ast::{Pattern, VariantPatternKind};
+    match pat {
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+        Pattern::Ident { name, .. } => { locals.insert(name.clone()); }
+        Pattern::Tuple(pats, _) => {
+            for p in pats { collect_const_fn_pattern_bindings(p, locals); }
+        }
+        Pattern::Variant { kind, .. } => match kind {
+            VariantPatternKind::Unit => {}
+            VariantPatternKind::Tuple { patterns, .. } => {
+                for p in patterns { collect_const_fn_pattern_bindings(p, locals); }
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(p) => collect_const_fn_pattern_bindings(p, locals),
+                    None => { locals.insert(f.name.clone()); }
+                }
+            }
+        }
+        Pattern::Or { alternatives, .. } => {
+            if let Some(first) = alternatives.first() {
+                collect_const_fn_pattern_bindings(first, locals);
+            }
+        }
+        Pattern::Binding { name, inner, .. } => {
+            locals.insert(name.clone());
+            collect_const_fn_pattern_bindings(inner, locals);
+        }
+        _ => {}
     }
 }
 
@@ -8281,6 +8398,10 @@ impl NameResCtx {
     }
 
     fn is_known(&self, name: &str, file_id: FileId, scope: &[HashSet<String>]) -> bool {
+        // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics — built-in
+        // const fn names recognized без registration. Replaced литералом
+        // в rewriter pass (const_fn_eval.rs).
+        if name == "sizeof" || name == "align_of" { return true; }
         if self.builtins.contains(name) { return true; }
         // Plan 42.15 Rule C: declarations module-group СЌС‚РѕРіРѕ peer'Р°
         // (peers РѕРґРЅРѕРіРѕ folder-module РґРµР»СЏС‚ declarations namespace).
