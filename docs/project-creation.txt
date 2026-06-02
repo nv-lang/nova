@@ -26925,6 +26925,69 @@ blocks, so enforcement не сломала existing tests.
 Worktree D:/Sources/nv-lang/nova-p118 branch plan-118.
 40 commits ahead в plan-118 branch (40 = 36 base + 4 new).
 
+==========================================================================
+2026-06-02 Plan 118 Session 3 grand finale — A11+A25+A33+A24+A30 closed
+==========================================================================
+
+Дополнительные 5 acceptance criteria closed после A8:
+
+- A11 ✅ (abd4be4603b) — E_UNSAFE_CALL_REQUIRES_WRAP for calling #unsafe
+  fn без unsafe block wrap. Walker pre-collects unsafe_fns HashSet,
+  detects call sites with depth == 0.
+- A25 ✅ (e4cff57142e) — E_CALLBACK_THROWS_OVER_C_ABI for cast
+  fn-with-Fail-effect к *fn(...). Walker pre-collects fail_fns HashSet,
+  detects As cast targets.
+- A33 ✅ (6752565f453) — E_REALTIME_POINTER_OP for pointer ops внутри
+  #realtime fn body. Walker tracks in_realtime bool; AddrOf/Deref
+  banned even с unsafe { } wrap (orthogonal к unsafe enforcement —
+  realtime guarantees overrule).
+- A24 ✅ (060fb3a65a0) — E_CLOSURE_HAS_ENV for closure-literal cast к
+  *fn(...). ExprKind::ClosureLight, ClosureFull, bound-method (Member
+  с @ prefix) all rejected.
+- A30 ✅ (060fb3a65a0 spec change) — D216 promoted к ACTIVE 2026-06-02
+  в spec. Listed all 13 acceptance criteria с commit refs. Status flip
+  from 'draft 2026-06-01 (Ф.0 GATE)' к 'ACTIVE 2026-06-02 (... 13
+  acceptance criteria closed)'.
+
+Walker architecture (single pass UnsafeCtx struct):
+- depth: usize — unsafe block / #unsafe fn nesting depth
+- unsafe_fns: HashSet<String> — names of #unsafe fns
+- fail_fns: HashSet<String> — names of fns с Fail effect
+- in_realtime: bool — currently inside #realtime fn body
+
+Pre-collection HashSet pattern → O(1) lookup при call/cast sites.
+
+Test fixtures added:
+- t3_neg_deref_outside_unsafe.nv (A8)
+- t3_3_addr_of_deref_in_unsafe_ok.nv (A8 positive)
+- t3_neg_unsafe_call_no_wrap.nv (A11)
+- t6_neg_callback_throws_over_c_abi.nv (A25)
+- t8_neg_realtime_pointer_op.nv (A33)
+- t6_neg_closure_has_env.nv (A24)
+
+plan118 total: 25/0 PASS (12 positive + 13 NEG).
+Regression smoke: 87/0 verified clean (plan115/120/114/100_3/108/
+plan124_1/basics + plan118).
+
+Session 3 grand-total Plan 118 acceptance closed: 14 of 35 (40%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25,
+A26, A29, A30, A33, A34, A35.
+
+Memory file C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/
+memory/project-plan118-status.md updated с current substantial scaffold
+status + 14 acceptance criteria list + 50 commit count.
+
+Worktree D:/Sources/nv-lang/nova-p118 branch plan-118.
+50 worktree commits + 6 nova-private. Fully synced с main. NOT merged.
+
+Session 4+ remaining work (~5-7 dev-days):
+- Ф.4 full auto-deref codegen integration (A12-A17 partial → full)
+- Ф.5 full NPO codegen (A19-A23 + closes [M-115-null-ptr-to-option-after-npo])
+  — 117 sites refactor
+- Ф.7 W_UNSAFE_GC_TRIGGER warning + (*T).to_debug_str() (A27, A28)
+- Ф.8 cross-platform CI matrix + ABI snapshot + perf bench (A31, A32)
+- Plan 118.1/118.2/118.3 sub-plans
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================

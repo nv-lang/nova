@@ -2276,7 +2276,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **24/0** (12 positive + 12 NEG, post-Ф.3.5 + A11 + A25 + A33) |
+| plan118 | **25/0** (12 positive + 13 NEG, post-A24 + D216 ACTIVE) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |
