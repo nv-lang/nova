@@ -15669,6 +15669,7 @@ pub(crate) fn check_unsafe_context_in_module(
         unsafe_fns,
         fail_fns,
         in_realtime: false,
+        ptr_vars: vec![HashSet::new()],
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -15718,19 +15719,53 @@ struct UnsafeCtx {
     /// — deref может GC trigger (allocation), violates realtime guarantee
     /// (Plan 113 D172 cross-ref).
     in_realtime: bool,
+    /// Plan 118 A28 enforcement: locals bound к typed-pointer expression
+    /// (let x = &v, let x = *p, let x = expr as *T). Stack of scope-frames
+    /// (push на block entry, pop при exit) — позволяет shadowing-safe lookup.
+    /// `"${x}"` interpolation на ptr var → E_PTR_NO_DISPLAY_USE_DEBUG_STR.
+    ptr_vars: Vec<HashSet<String>>,
 }
 
 impl UnsafeCtx {
     fn walk_block(&mut self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
         // Plan 118 D216 §8: track unsafe context entry/exit.
         if b.is_unsafe { self.depth += 1; }
+        // Plan 118 A28: push fresh ptr-var scope frame.
+        self.ptr_vars.push(HashSet::new());
         for stmt in &b.stmts {
             self.walk_stmt(stmt, errors);
         }
         if let Some(t) = &b.trailing {
             self.walk_expr(t, errors);
         }
+        self.ptr_vars.pop();
         if b.is_unsafe { self.depth -= 1; }
+    }
+
+    /// Plan 118 A28: syntactic check для "expression value is a typed pointer".
+    /// Conservative — fires only when can be detected without full type-inference:
+    ///   - `&value` / `*expr` unary
+    ///   - `expr as *T` (cast к pointer type)
+    ///   - Ident binding к локалу, RHS которого был один из above
+    /// Полная type-aware enforcement — Session 4+ через infer_expr_type.
+    fn expr_is_typed_pointer(&self, e: &Expr) -> bool {
+        use crate::ast::{ExprKind, UnOp};
+        match &e.kind {
+            ExprKind::Unary { op: UnOp::AddrOf, .. } => true,
+            ExprKind::Unary { op: UnOp::Deref, .. } => true,
+            ExprKind::As(_, ty) => matches!(ty, crate::ast::TypeRef::Pointer(_, _, _)),
+            ExprKind::Ident(name) => self.ptr_vars.iter().rev().any(|f| f.contains(name)),
+            _ => false,
+        }
+    }
+
+    /// Plan 118 A28: register `name` as typed-pointer local в current frame
+    /// (innermost scope). Shadowing automatic — Ident lookup walks frames
+    /// outer-most-last, so latest binding wins.
+    fn register_ptr_var(&mut self, name: &str) {
+        if let Some(frame) = self.ptr_vars.last_mut() {
+            frame.insert(name.to_string());
+        }
     }
 
     fn walk_stmt(&mut self, s: &crate::ast::Stmt, errors: &mut Vec<Diagnostic>) {
@@ -15739,6 +15774,13 @@ impl UnsafeCtx {
             Stmt::Expr(e) => self.walk_expr(e, errors),
             Stmt::Let(d) => {
                 self.walk_expr(&d.value, errors);
+                // Plan 118 A28: track typed-pointer locals для interpolation
+                // diagnostic. Match только simple-ident pattern (no destructure).
+                if self.expr_is_typed_pointer(&d.value) {
+                    if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                        self.register_ptr_var(name);
+                    }
+                }
             }
             Stmt::Const(c) => {
                 self.walk_expr(&c.value, errors);
@@ -15948,6 +15990,31 @@ impl UnsafeCtx {
             }
             // Plan 83 fiber-runtime constructs — body is Block.
             ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, errors),
+            // Plan 118 A28: `"... ${expr} ..."` interpolation. Если выражение
+            // часть — typed pointer (`&v` / `*p` / `e as *T` / locale-ptr-var),
+            // emit E_PTR_NO_DISPLAY_USE_DEBUG_STR. D216 §15 motivation: address
+            // disclosure (security leak vector) + GC mover invalidates raw
+            // address in str (stale value). Pointer Debug fmt — opt-in только
+            // через `.to_debug_str()` (unsafe context — A27).
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(ex) = p {
+                        if self.expr_is_typed_pointer(ex) {
+                            errors.push(Diagnostic::new(
+                                "[E_PTR_NO_DISPLAY_USE_DEBUG_STR] typed pointer \
+                                 value cannot be interpolated в str через `\"${...}\"` \
+                                 (Plan 118 D216 §15). Pointer Display не auto-emitted: \
+                                 (1) address disclosure leaks security-sensitive info; \
+                                 (2) GC mover invalidates raw address — interpolated \
+                                 value становится stale. Fix: use \
+                                 `${p.to_debug_str()}` (Plan 118 Ф.7, inside unsafe).".to_string(),
+                                ex.span,
+                            ));
+                        }
+                        self.walk_expr(ex, errors);
+                    }
+                }
+            }
             // Plan 118 Ф.3.5 leaf nodes (literals, idents, paths) — no children.
             // Other variants covered through their child expressions (handler
             // bodies, closure lits etc.) — V1 scaffold не deep-walks все edge
