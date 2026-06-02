@@ -2239,7 +2239,36 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 ### Session 2 grand-final accomplishments
 
-**Total: 34 worktree commits + 3 nova-private commits.**
+**Total: 36 worktree commits + 3 nova-private commits.**
+
+### Post-grand-closure additions
+
+- `044881ee993` — **Merge main into plan-118** sync — Plan 124.1 V1 (priv
+  field per-field visibility, D220, 4 error codes) + Plan 114.4.2 (const
+  fn comptime evaluable, D199 V3) integrated. **7 conflicts resolved**
+  (lexer/token + lexer/mod + ast + parser + spec/02-types + project-
+  creation + simplifications) — keep both Plan 118 (unsafe_attr,
+  KwUnsafe, D216) + Plan 124 (priv/pub, KwPriv/KwPub, D220) + Plan 114.4.2
+  (fn_eval_max_depth) additions; semantically не конфликтуют.
+
+**Regression smoke post-merge (release test-build):**
+
+| Plan | PASS/FAIL |
+|---|---|
+| plan118 | 19/0 (10 positive + 9 NEG) |
+| plan115 | 11/0 (D214 backward compat preserved) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| plan124_1 | 9/0 (NEW from main merge — D220 priv enforcement) |
+
+**TOTAL: 81/0 PASS** (release build). Debug build hits stack overflow
+на test-all runner (unrelated Windows stack size issue; release works
+clean).
+
+---
 
 ### Session 2 evening-3 extensions (post-grand-closure)
 

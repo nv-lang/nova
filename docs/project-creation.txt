@@ -26856,6 +26856,35 @@ Regression smoke: 70/0 verified + syntax 53/1 (1 pre-existing unrelated).
 
 Worktree total: 30 commits на plan-118 branch.
 
+==========================================================================
+2026-06-02 Plan 118 — merge с main (sync Plan 124.1 + Plan 114.4.2)
+==========================================================================
+
+98 commits ahead в main pulled into plan-118 (Plan 124.1 V1 priv field +
+Plan 114.4.2 const fn + кучу других внутренних обновлений). 7 conflicts
+resolved keep-both:
+- compiler-codegen/src/lexer/{token,mod}.rs — KwUnsafe + KwPriv + KwPub
+- compiler-codegen/src/ast/mod.rs — FnDecl с unsafe_attr + fn_eval_max_depth
+- compiler-codegen/src/parser/mod.rs — ContractAttrs с обоих fields
+- spec/decisions/02-types.md — D216 (Plan 118) + D220 (Plan 124)
+- docs/simplifications.md + docs/project-creation.txt — chronological merge
+
+Regression smoke (release build, clang toolchain, libuv enabled):
+
+| Plan | PASS/FAIL |
+| plan118 | 19/0 (10 positive + 9 NEG) |
+| plan115 | 11/0 (D214 backward compat) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| plan124_1 | 9/0 (NEW from main — D220 priv enforcement) |
+| TOTAL | 81/0 PASS |
+
+Worktree total: 36 commits на plan-118 + 3 в nova-private.
+Branch plan-118 fully synced с main (0 commits ahead в main).
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================

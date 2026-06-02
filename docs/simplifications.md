@@ -28448,7 +28448,13 @@ just use `Acc` (already reference per D32) — `*Acc` is FFI-specific.
 - A29 (D214 backward compat — plan115 11/0 regression)
 - A34, A35 (FFI handle docs + examples 3/0 PASS)
 
-**Worktree total: 30 commits на plan-118 + 2 в nova-private.**
+**Worktree total: 36 commits на plan-118 + 3 в nova-private (post-merge с main).**
+
+**Merge main → plan-118 (2026-06-02):** Plan 124.1 V1 (D220 priv field
+visibility) + Plan 114.4.2 (D199 V3 const fn). 7 conflicts resolved keep
+both Plan 118 + main additions. Regression release-build smoke 81/0
+verified (plan118 19/0 + plan115 11/0 + plan120 8/0 + plan114 10/0 +
+plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
 
 ---
 
