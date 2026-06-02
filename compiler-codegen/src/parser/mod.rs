@@ -27,6 +27,11 @@ pub(crate) struct ContractAttrs {
     pub no_overflow: bool,
     /// Plan 103.6 / Plan 113: sync interaction class from #realtime/#parks/#wakes.
     pub sync_class: Option<crate::ast::SyncClass>,
+    /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
+    /// Body implicitly в unsafe context; callers must `unsafe { }` wrap.
+    /// V1 Ф.3.2: parsed + stored в FnDecl.unsafe_attr; checker enforcement
+    /// E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
+    pub unsafe_attr: bool,
     /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` — per-fn override
     /// const fn evaluator recursion depth (default 256). For deep recursion
     /// (e.g. fact(500) с big-int arith). 0 < N <= 65535.
@@ -47,6 +52,7 @@ impl ContractAttrs {
             && self.fuel.is_none()
             && !self.no_overflow
             && self.sync_class.is_none()
+            && !self.unsafe_attr
             && self.fn_eval_max_depth.is_none()
             && self.test_access_for.is_empty()
     }
@@ -1797,7 +1803,24 @@ impl Parser {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
             }
-            // Look ahead: `#` затем Ident с одним из contract-keyword'ов.
+            // Look ahead: `#` затем Ident с одним из contract-keyword'ов,
+            // или KwUnsafe (Plan 118 Ф.3.2 — `#unsafe` keyword-attribute).
+            // KwUnsafe handled inline ниже; others via Ident branch.
+            if matches!(self.peek_at(1).kind, TokenKind::KwUnsafe) {
+                // Plan 118 (D216 §9, D2 amend): #unsafe attribute on fn.
+                if attrs.unsafe_attr {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "duplicate `#unsafe` attribute",
+                        span,
+                    ));
+                }
+                self.bump(); // #
+                self.bump(); // unsafe
+                attrs.unsafe_attr = true;
+                self.skip_newlines(); // align с parse_sync_class_attr pattern
+                continue;
+            }
             let next_name = match &self.peek_at(1).kind {
                 TokenKind::Ident(n) => n.clone(),
                 _ => break, // не идентификатор после `#` — выходим
@@ -2647,6 +2670,10 @@ impl Parser {
             sync_class: contract_attrs.sync_class,
             // Plan 100.5 (D163): capability requirements for external fn.
             needs_caps,
+            // Plan 118 (D216 §9, D2 amend): #unsafe attribute parsed в
+            // parse_contract_attrs (handles KwUnsafe inline). Type-checker
+            // enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
+            unsafe_attr: contract_attrs.unsafe_attr,
             fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
             test_access_for: contract_attrs.test_access_for.clone(),
         })
@@ -3850,7 +3877,7 @@ impl Parser {
                 Some(Block {
                     stmts: vec![],
                     trailing: Some(Box::new(expr)),
-                    span,
+                    span, is_unsafe: false
                 })
             } else if matches!(self.peek().kind, TokenKind::LBrace) {
                 Some(self.parse_block()?)
@@ -4508,7 +4535,7 @@ impl Parser {
                 name,
                 setup: Vec::new(),
                 // Placeholder — never used когда groups непустой.
-                measure_body: Block { stmts: Vec::new(), trailing: None, span: brace_open.merge(brace_close) },
+                measure_body: Block { stmts: Vec::new(), trailing: None, span: brace_open.merge(brace_close), is_unsafe: false },
                 teardown: Vec::new(),
                 params,
                 groups,
@@ -4727,6 +4754,51 @@ impl Parser {
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
+            }
+            // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
+            // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
+            // Chain order: `*mut *ro T` = mut pointer на ro pointer на T
+            // (recursive PointerType production, left-to-right).
+            TokenKind::Star => {
+                self.bump(); // eat *
+                // Plan 118 (D216 §1): Rust-import error — `*const T`. Emit
+                // explicit E_INVALID_POINTER_MODIFIER с hint к canonical
+                // Nova syntax (`*ro T` или just `*T`).
+                if matches!(self.peek().kind, TokenKind::KwConst) {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[E_INVALID_POINTER_MODIFIER] `*const T` is not valid \
+                         Nova syntax — use `*ro T` (canonical readonly) or \
+                         just `*T` (default readonly per D216 §1). Nova \
+                         pointer modifiers: `ro` / `mut` / `unsafe`. \
+                         `const` is a keyword для const declarations, не \
+                         pointer modifier.".to_string(),
+                        span,
+                    ));
+                }
+                // Optional modifier (ro / mut / unsafe ident).
+                let modifier = match &self.peek().kind {
+                    TokenKind::KwRo => {
+                        self.bump();
+                        crate::ast::PointerModifier::Ro
+                    }
+                    TokenKind::KwMut => {
+                        self.bump();
+                        crate::ast::PointerModifier::Mut
+                    }
+                    // Plan 118 Ф.3 (D2 amend): KwUnsafe keyword. Used в
+                    // `*unsafe T` pointer modifier + `unsafe { }` block +
+                    // `#unsafe` attribute.
+                    TokenKind::KwUnsafe => {
+                        self.bump();
+                        crate::ast::PointerModifier::Unsafe
+                    }
+                    // Default modifier = Ro (когда `*T` без явного modifier).
+                    _ => crate::ast::PointerModifier::Ro,
+                };
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                return Ok(TypeRef::Pointer(modifier, Box::new(inner), span));
             }
             TokenKind::LBracket => {
                 self.bump();
@@ -5467,6 +5539,99 @@ impl Parser {
                     span,
                 ))
             }
+            // Plan 118 D216 §4: `&value` pointer creation (prefix operator,
+            // expr-position only — type-position `&Type` doesn't exist).
+            // Type-checker (Ф.2.3) enforces unsafe context требование +
+            // (Ф.2.4) escape analysis с auto-promote.
+            TokenKind::Amp => {
+                self.bump();
+                let operand = self.parse_unary()?;
+                // Plan 118 (D216 §4 amend, user design decision Session 2):
+                // `&Record { ... }` без named binding запрещён —
+                // E_AMP_RECORD_LITERAL. Records в Nova уже heap-allocated
+                // (D32) → `*Record` это double-pointer (Nova_Record**).
+                // Anonymous-local-from-temporary auto-promote слишком
+                // implicit для prod-grade кода. User должен ввести named
+                // local + `&named_local` для clarity:
+                //
+                //   ❌ ro p = &Acc { name: "Piter" }
+                //   ✓  ro acc = Acc { name: "Piter" }; ro p = &acc
+                //
+                // Aналогично NEG-T2.11 (`&42` literal → E_AMP_LITERAL),
+                // unified design — `&` требует named lvalue.
+                if matches!(operand.kind, ExprKind::RecordLit { .. }) {
+                    return Err(Diagnostic::new(
+                        "[E_AMP_RECORD_LITERAL] `&Record { ... }` без named \
+                         binding запрещён (Plan 118 D216 §4 amend). Records \
+                         в Nova уже heap-allocated (D32) — `*Record` это \
+                         double-pointer (Nova_Record**) used для FFI \
+                         out-params. Required pattern: \
+                         `ro acc = Record { ... }; ro p = &acc` — \
+                         explicit named local makes storage semantics clear \
+                         для reader.".to_string(),
+                        start,
+                    ));
+                }
+                // Plan 118 D216 §15: `&arr[i]` forbidden — array buffer
+                // может resize / GC compaction → pointer dangling. Для FFI
+                // buffer access use slice fat-pointer pattern (Plan 118.2)
+                // или `.as_ptr_unsafe()` method (deferred Q-block).
+                if matches!(operand.kind, ExprKind::Index { .. }) {
+                    return Err(Diagnostic::new(
+                        "[E_ARRAY_INDEX_PTR_BANNED] `&arr[i]` forbidden \
+                         (Plan 118 D216 §15) — array buffer может resize \
+                         (`.push`) или relocate via GC compaction; pointer \
+                         становится dangling. Для FFI buffer access use \
+                         slice fat-pointer pattern (Plan 118.2 — *[T] /\
+                         *ro [T] / *mut [T]) которое carries (ptr, len) pair \
+                         с bounds-tracking.".to_string(),
+                        start,
+                    ));
+                }
+                // Plan 118 D216 §15: `&<literal>` forbidden — literals
+                // не addressable (no stable storage). User должен bind в
+                // named local + take address of it.
+                if matches!(
+                    operand.kind,
+                    ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                        | ExprKind::BoolLit(_) | ExprKind::CharLit(_)
+                        | ExprKind::StrLit(_)
+                ) {
+                    return Err(Diagnostic::new(
+                        "[E_AMP_LITERAL] `&<literal>` forbidden \
+                         (Plan 118 D216 §15) — literals (числа, строки, \
+                         bools, chars) не addressable; они не имеют stable \
+                         storage. Bind в named local: \
+                         `ro x = 42; ro p = &x` — explicit local has \
+                         well-defined storage (stack или heap via escape \
+                         analysis auto-promote per D216 §4).".to_string(),
+                        start,
+                    ));
+                }
+                let span = start.merge(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        op: UnOp::AddrOf,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
+            // Plan 118 D216 §5: `*p` explicit deref (prefix in expression
+            // position). Type-position `*T` parsed в parse_type (Ф.1.2).
+            // Type-checker (Ф.4) enforces unsafe context + one-level deref.
+            TokenKind::Star => {
+                self.bump();
+                let operand = self.parse_unary()?;
+                let span = start.merge(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        op: UnOp::Deref,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
             _ => self.parse_postfix(),
         }
     }
@@ -6008,6 +6173,26 @@ impl Parser {
                     let span = block.span;
                     Ok(Expr::new(ExprKind::Block(block), span))
                 }
+            }
+            // Plan 118 D216 §8 (D2 amend): `unsafe { ... }` block. Syntactic
+            // sugar над built-in `unsafe_handler` effect handler (D2 v2):
+            //   unsafe { expr } ≡ with unsafe_handler { perform UnsafeOps.<op>(expr) }
+            //
+            // V1 Ф.3 scaffold: parsed как regular Block expression (no
+            // runtime overhead — block emits identical C code). Type-checker
+            // enforcement (Ф.3.5 E_UNSAFE_REQUIRED / E_UNSAFE_CALL_REQUIRES_WRAP)
+            // — followup phase. Effect propagation: D216 §8 «no propagation
+            // up» — unsafe encapsulates per fn (canonical Rust pattern).
+            TokenKind::KwUnsafe => {
+                self.bump(); // eat 'unsafe' keyword; LBrace остаётся для parse_block
+                let mut block = self.parse_block()?;
+                // Plan 118 (D216 §8, Ф.3.3 enforcement foundation): mark
+                // block as unsafe-context. Type-checker (Ф.3.5 follow-on)
+                // uses is_unsafe flag для E_UNSAFE_REQUIRED gating pointer
+                // ops (&, *, *T deref, p.field на pointer).
+                block.is_unsafe = true;
+                let span = start.merge(block.span);
+                Ok(Expr::new(ExprKind::Block(block), span))
             }
             TokenKind::LBracket => self.parse_array_lit(),
             TokenKind::LParen => {
@@ -7021,7 +7206,7 @@ impl Parser {
                 MatchArmBody::Block(Block {
                     stmts,
                     trailing: None,
-                    span: pattern.span().merge(last_span),
+                    span: pattern.span().merge(last_span), is_unsafe: false
                 })
             } else if matches!(self.peek().kind, TokenKind::LBrace) {
                 let saved = self.pos;
@@ -7352,7 +7537,7 @@ impl Parser {
         let block = Block {
             stmts,
             trailing: Some(Box::new(loop_expr)),
-            span,
+            span, is_unsafe: false
         };
         Expr::new(ExprKind::Block(block), span)
     }
@@ -7927,7 +8112,7 @@ impl Parser {
         Ok(Block {
             stmts,
             trailing,
-            span: start.merge(end),
+            span: start.merge(end), is_unsafe: false
         })
     }
 
@@ -8188,6 +8373,7 @@ impl Parser {
                 stmts,
                 trailing,
                 span: start.merge(end),
+                is_unsafe: false,
             },
             span: start.merge(end),
         })

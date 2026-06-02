@@ -615,6 +615,13 @@ impl<'a> Lexer<'a> {
             // Plan 114 (D184): retracted; lexer still recognizes the lexeme
             // so parser can emit `E_KW_REMOVED_READONLY` with a clear hint.
             "readonly" => TokenKind::KwReadonly,
+            // Plan 118 (D216 §8, D2 amend): `unsafe` keyword. Used в:
+            //   - `*unsafe T` pointer modifier (parser sees KwUnsafe в
+            //     parse_type для PointerModifier::Unsafe; legacy ident
+            //     branch preserved для backward compat),
+            //   - `unsafe { ... }` block (Ф.3),
+            //   - `#unsafe` attribute on fn declarations (Ф.3).
+            "unsafe" => TokenKind::KwUnsafe,
             // Plan 124 (D220): per-field private visibility modifier +
             // type-level default flip (`type X priv { ... }`). Compile-time
             // enforcement of `priv` field access — выбрасывает

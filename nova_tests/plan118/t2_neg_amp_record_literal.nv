@@ -1,0 +1,23 @@
+// Plan 118 Ф.2 NEG-T2.11.5 — `&Record { ... }` без named binding rejected.
+// D216 §4 amend (Session 2 design decision):
+//
+// Records в Nova уже heap-allocated (D32); `*Record` это double-pointer
+// (Nova_Record**) used для FFI out-params. Anonymous-local auto-promote
+// из temporary record literal слишком implicit для production-grade
+// reader clarity. Required pattern: explicit named binding first.
+//
+//   ❌ ro p = &Acc { name: "Piter" }                  // implicit anonymous local
+//   ✓  ro acc = Acc { name: "Piter" }; ro p = &acc    // explicit named local
+//
+// EXPECT_COMPILE_ERROR E_AMP_RECORD_LITERAL
+
+module plan118.t2_neg_amp_record_literal
+
+type Acc {
+    ro name str
+}
+
+test "rejects &Record{} без named binding" {
+    ro p = &Acc { name: "Piter" }
+    assert(1 == 1)
+}

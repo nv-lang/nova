@@ -1,0 +1,29 @@
+// Plan 118 Ф.5 T5.1 — Option[*T] type parses + type-checks.
+// (D216 §7 + NPO codegen).
+//
+// V1 scaffold: Option[*T] currently lowers через generic tagged-struct
+// codegen (NovaOpt_<X> с tag + value). NPO single-pointer layout
+// optimization landing в Ф.5 proper codegen work (closes
+// [M-115-null-ptr-to-option-after-npo]).
+
+module plan118.t5_1_option_pointer_parses_ok
+
+type Resource {
+    ro id i64
+}
+
+// External fn returning nullable typed pointer — production-grade FFI
+// pattern (malloc returns null on OOM).
+external fn p118_try_alloc(size i64) -> Option[*Resource]
+
+// Option[*T] в parameter position.
+external fn p118_use_optional(p Option[*Resource]) -> i64
+
+// Option[*T] field в record.
+type Container {
+    ro maybe_resource Option[*Resource]
+}
+
+test "Option[*T] parses + type-checks (V1 scaffold; NPO codegen Ф.5)" {
+    assert(1 == 1)
+}

@@ -1,0 +1,25 @@
+// Plan 118 Ф.4 NEG-T4.17 / A17 — pointer-pointer order comparison
+// (`<`/`<=`/`>`/`>=`) requires unsafe context (D216 §6 cast/compare table).
+//
+// Rationale:
+//   1. Pointer addresses not stable ordinals — GC-relocation breaks ordering.
+//   2. OS ASLR randomizes layout — comparison non-deterministic across runs.
+//   3. Equality `==`/`!=` safe (identity check); order forces unsafe gating.
+//
+// V1 syntactic detection: both operands match expr_is_typed_pointer pattern
+// (AddrOf/Deref direct + As(*T) cast + Ident in ptr_vars scope-stack).
+//
+// EXPECT_COMPILE_ERROR E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE
+
+module plan118.t4_neg_ptr_order_compare
+
+test "rejects pointer < pointer outside unsafe" {
+    ro x = 10
+    ro y = 20
+    ro p = unsafe { &x }
+    ro q = unsafe { &y }
+    // Both p and q registered в ptr_vars; `<` order-compare outside
+    // unsafe fires E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE.
+    ro lt = p < q
+    assert(lt == lt)
+}

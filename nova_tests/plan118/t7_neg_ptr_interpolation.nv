@@ -1,0 +1,21 @@
+// Plan 118 Ф.7 NEG-T7.6 / A28 — `"${p}"` interpolation на typed pointer
+// rejected. D216 §15 rationale:
+//   (1) Address disclosure leaks security-sensitive info — ASLR bypass vector.
+//   (2) GC mover может переместить pointee — raw address в str становится
+//       stale (silent correctness bug, hard to debug).
+//   (3) Pointer Display — explicit opt-in only через `.to_debug_str()` (Ф.7),
+//       и только inside unsafe context (A27).
+//
+// V1 syntactic detection: AddrOf/Deref direct + locals bound к ptr via let.
+//
+// EXPECT_COMPILE_ERROR E_PTR_NO_DISPLAY_USE_DEBUG_STR
+
+module plan118.t7_neg_ptr_interpolation
+
+test "rejects ${&x} direct AddrOf interpolation" {
+    ro x = 42
+    ro s = unsafe {
+        "addr=${&x}"
+    }
+    assert(s.len() > 0)
+}

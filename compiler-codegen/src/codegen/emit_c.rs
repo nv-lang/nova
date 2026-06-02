@@ -3538,6 +3538,14 @@ impl CEmitter {
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Plan 118 D216 §4-5: pointer ops not valid в const
+                    // expressions (constexpr evaluation has no addressable
+                    // storage / runtime pointer values).
+                    UnOp::AddrOf | UnOp::Deref => {
+                        return Err("[E_PTR_OP_IN_CONST] pointer operators \
+                             (&/*) are not valid в const expression context"
+                            .to_string());
+                    }
                 };
                 Ok(format!("({}({}))", op_str, inner))
             }
@@ -4718,6 +4726,18 @@ impl CEmitter {
             TypeRef::Protocol { .. } => Ok("void*".into()),
             // D176 (Plan 108): readonly T — zero overhead, transparent for codegen.
             TypeRef::Readonly(inner, _) => self.type_ref_to_c(inner),
+            // Plan 118 D216 §1: typed pointer family `*T` family — emit C pointer.
+            // §11 codegen: `*ro T` → `const T*` (helps clang/MSVC optimizer);
+            // `*mut T` / `*unsafe T` → `T*`. ABI consistent с Plan 115 ptr.
+            TypeRef::Pointer(modif, inner, _) => {
+                let inner_c = self.type_ref_to_c(inner)?;
+                Ok(match modif {
+                    crate::ast::PointerModifier::Ro => format!("const {}*", inner_c),
+                    crate::ast::PointerModifier::Mut | crate::ast::PointerModifier::Unsafe => {
+                        format!("{}*", inner_c)
+                    }
+                })
+            }
         }
     }
 
@@ -6435,13 +6455,13 @@ impl CEmitter {
                     let for_body = Block {
                         stmts: vec![Stmt::Expr(spawn_expr)],
                         trailing: None,
-                        span,
+                        span, is_unsafe: false
                     };
                     let for_expr = Expr::new(
                         ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                         span,
                     );
-                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                     self.emit_supervised(&supervised_block, None)?;
                     self.indent -= 1;
                     self.line("}");
@@ -6456,13 +6476,13 @@ impl CEmitter {
             let for_body = Block {
                 stmts: vec![Stmt::Expr(spawn_expr)],
                 trailing: None,
-                span,
+                span, is_unsafe: false
             };
             let for_expr = Expr::new(
                 ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                 span,
             );
-            let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+            let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
             return self.emit_supervised(&supervised_block, None);
         }
 
@@ -6482,13 +6502,13 @@ impl CEmitter {
                 let for_body = Block {
                     stmts: vec![Stmt::Expr(spawn_expr)],
                     trailing: None,
-                    span,
+                    span, is_unsafe: false
                 };
                 let for_expr = Expr::new(
                     ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                     span,
                 );
-                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                 return self.emit_supervised(&supervised_block, None);
             }
         };
@@ -6521,12 +6541,12 @@ impl CEmitter {
                 if elems.iter().any(|e| matches!(e, ArrayElem::Spread(_))) {
                     let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
                     let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
-                    let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span };
+                    let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span, is_unsafe: false };
                     let for_expr = Expr::new(
                         ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                         span,
                     );
-                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                     return self.emit_supervised(&supervised_block, None);
                 }
                 // Materialise the array once, then walk indices.
@@ -6567,13 +6587,13 @@ impl CEmitter {
                 let for_body = Block {
                     stmts: vec![Stmt::Expr(spawn_expr)],
                     trailing: None,
-                    span,
+                    span, is_unsafe: false
                 };
                 let for_expr = Expr::new(
                     ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
                     span,
                 );
-                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
                 return self.emit_supervised(&supervised_block, None);
             }
         };
@@ -9217,6 +9237,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner для
+            // dependency collection (pointee type must be declared).
+            TypeRef::Pointer(_, inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
 
@@ -9228,6 +9251,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// helper, removed duplication с types/mod.rs's parallel impl.
     #[inline]
     fn type_ref_uses_any_type_param(ty: &crate::ast::TypeRef, type_params: &HashSet<String>) -> bool {
+        // Plan 91.12 V2 followup #3: delegate to TypeRef::uses_any_type_param
+        // (single source of truth in ast/mod.rs). Plan 118 D216 added Pointer
+        // recursion to the upstream method, so this thin wrapper supports
+        // `*T` family automatically.
         ty.uses_any_type_param(type_params)
     }
 
@@ -11076,6 +11103,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             TypeRef::Unit(_) => false,
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::type_ref_mentions_name(inner, names),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner.
+            TypeRef::Pointer(_, inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
 
@@ -15596,6 +15625,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Plan 118 D216 §4-5: pointer ops emit C address-of/deref.
+                    // V1 scaffolding: direct &(...) / *(...) emission.
+                    // Ф.2.4 escape analysis с auto-promote — separate IR pass
+                    // (currently locals NOT yet auto-promoted; user code
+                    // должен соблюдать contract вручную).
+                    UnOp::AddrOf => "&",
+                    UnOp::Deref => "*",
                 };
                 Ok(format!("({}{})", op_str, v))
             }
@@ -15780,9 +15816,22 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         }
                     }
                 }
-                // nova_str and other value types use `.`, pointer types use `->`
+                // nova_str and other value types use `.`, pointer types use `->`.
+                // Plan 118 D216 §5: typed pointer `*T` для record T (Nova_T*) →
+                // C double-pointer (Nova_T**). Member access `p.field` requires
+                // ONE extra deref before arrow: `(*p)->field`. Detect `**`
+                // suffix и prepend `*` к obj C expression. Multi-level `***`
+                // not yet supported (D216 §5: «one-level only»).
+                let trimmed = obj_ty.trim_start_matches("const ").trim();
+                let is_double_ptr = trimmed.ends_with("**");
                 let accessor = if Self::is_value_type(&obj_ty) { "." } else { "->" };
-                Ok(format!("({}{}{})", o, accessor, field_name))
+                if is_double_ptr {
+                    // *T где T = record (уже Nova_T*) → emit (*p)->field
+                    // per D216 §5 auto-deref one level.
+                    Ok(format!("((*{}){}{})", o, accessor, field_name))
+                } else {
+                    Ok(format!("({}{}{})", o, accessor, field_name))
+                }
             }
 
             ExprKind::For { pattern, iter, body, .. } => {
@@ -25498,6 +25547,10 @@ _cp++; \
             TypeRef::Protocol { .. } => {} // не sum-тип
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner для
+            // NovaOpt decl pre-emit. Note: NPO codegen для Option[*T]
+            // landing в Ф.5 — здесь recurse для pointee.
+            TypeRef::Pointer(_, inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }
 
@@ -26197,6 +26250,23 @@ _cp++; \
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Not => "nova_bool".into(),
                 UnOp::Neg => self.infer_expr_c_type(operand),
+                // Plan 118 D216 §4-5: `&value` returns pointer-to-T;
+                // `*p` returns pointee-T. Inference best-effort: `&x` →
+                // `<x_type>*`; `*p` → strip trailing `*` если есть, иначе
+                // unknown. Ф.4 (auto-deref) добавит proper Ty::TypedPtr
+                // resolution; здесь scaffold.
+                UnOp::AddrOf => {
+                    let inner = self.infer_expr_c_type(operand);
+                    if inner.is_empty() || inner == "void*" { "void*".into() } else { format!("{}*", inner) }
+                }
+                UnOp::Deref => {
+                    let inner = self.infer_expr_c_type(operand);
+                    if let Some(stripped) = inner.strip_suffix('*') {
+                        stripped.to_string()
+                    } else {
+                        "void*".into()
+                    }
+                }
             },
             // Plan 08 Ф.4: Block — тип trailing expression.
             // Plan 52 Ф.16: enhancement — если trailing это Ident, и в
@@ -28067,7 +28137,12 @@ _cp++; \
                 format!("{}({})", fn_name, arg_strs.join(", "))
             }
             ExprKind::Unary { op, operand } => {
-                let op_str = match op { UnOp::Neg => "-", UnOp::Not => "!" };
+                let op_str = match op {
+                    UnOp::Neg => "-",
+                    UnOp::Not => "!",
+                    UnOp::AddrOf => "&",
+                    UnOp::Deref => "*",
+                };
                 format!("{}{}", op_str, Self::expr_to_display(operand))
             }
             _ => "assert".to_string(),

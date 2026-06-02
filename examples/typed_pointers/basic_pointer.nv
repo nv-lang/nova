@@ -1,0 +1,36 @@
+// Plan 118 D216 §1 — typed pointer family `*T` basic example.
+//
+// Demonstrates declaration positions для все 4 modifier variants:
+//   *T          (= *ro T) — readonly typed pointer (default)
+//   *ro T       — explicit readonly
+//   *mut T      — mutable typed pointer
+//   *unsafe T   — pointer после arithmetic (alignment/bounds gone)
+//
+// V1 scope: type-system distinction enabled; pointer ops + auto-deref
+// + unsafe context enforcement landing в Ф.4 + Ф.3.3-3.5 followup.
+
+module typed_pointers.basic_pointer
+
+type Buffer {
+    ro length i64
+    ro capacity i64
+}
+
+// Readonly pointer parameters (default).
+external fn read_buffer(buf *Buffer) -> i64
+
+// Mutable pointer для FFI out-params.
+external fn fill_buffer(buf *mut Buffer, value i64) -> i64
+
+// Unsafe pointer arises после arithmetic.
+external fn buffer_at_offset(buf *unsafe Buffer, idx i64) -> i64
+
+// Returning typed pointer.
+external fn allocate_buffer(size i64) -> *Buffer
+
+test "typed pointer family — declarations parse + type-check" {
+    // V1 limit: pointer creation (&) + deref (*) + auto-deref require
+    // unsafe context — proper enforcement landing в Ф.3.3-3.5.
+    // Declarations alone exercise parser + type-checker.
+    assert(1 == 1)
+}

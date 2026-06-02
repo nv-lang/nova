@@ -507,7 +507,7 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
     Some(ExprKind::Block(Block {
         stmts,
         trailing: Some(Box::new(new_call)),
-        span: sp,
+        span: sp, is_unsafe: false
     }))
 }
 

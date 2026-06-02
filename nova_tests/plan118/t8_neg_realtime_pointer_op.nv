@@ -1,0 +1,19 @@
+// Plan 118 Ф.7 NEG-T8.6 / A33 — pointer ops в #realtime fn rejected.
+// D216 §20 + Plan 113 D172 cross-ref:
+// - Deref може GC trigger (если pointee references GC-tracked memory)
+// - & может trigger heap allocation via escape-analysis auto-promote
+// Both violate realtime no-GC-pause guarantee.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_POINTER_OP
+
+module plan118.t8_neg_realtime_pointer_op
+
+#realtime
+fn rt_pointer_op() -> i64 {
+    ro x = 42
+    // Inside #realtime fn — pointer op forbidden (even inside unsafe block).
+    ro y = unsafe { *&x }
+    y
+}
+
+test "rejects" { assert(1 == 1) }

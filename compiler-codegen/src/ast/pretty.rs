@@ -269,6 +269,9 @@ fn unop_str(op: &UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
         UnOp::Not => "!",
+        // Plan 118 D216 §4-5: pointer creation + deref.
+        UnOp::AddrOf => "&",
+        UnOp::Deref => "*",
     }
 }
 

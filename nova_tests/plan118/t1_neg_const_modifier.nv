@@ -1,0 +1,17 @@
+// Plan 118 Ф.1 NEG-T1.13 — `*const T` invalid modifier.
+//
+// Rust developers may try `*const T` (Rust syntax for readonly raw
+// pointer). Nova uses `*ro T` or `*T` (default ro per D216 §1).
+// Parser emits E_INVALID_POINTER_MODIFIER with migration hint.
+//
+// EXPECT_COMPILE_ERROR E_INVALID_POINTER_MODIFIER
+
+module plan118.t1_neg_const_modifier
+
+type Acc {
+    ro id i64
+}
+
+external fn p118_take(p *const Acc) -> i64
+
+test "rejects" { assert(1 == 1) }

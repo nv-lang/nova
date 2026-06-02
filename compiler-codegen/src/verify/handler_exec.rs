@@ -579,12 +579,12 @@ fn extract_block_assignments(block: &crate::ast::Block) -> Vec<(String, crate::a
                                     then: crate::ast::Block {
                                         stmts: Vec::new(),
                                         trailing: Some(Box::new(then_val.clone())),
-                                        span: then_val.span,
+                                        span: then_val.span, is_unsafe: false
                                     },
                                     else_: Some(crate::ast::ElseBranch::Block(crate::ast::Block {
                                         stmts: Vec::new(),
                                         trailing: Some(Box::new(else_val.clone())),
-                                        span: else_val.span,
+                                        span: else_val.span, is_unsafe: false
                                     })),
                                 },
                                 span: e.span,
@@ -688,12 +688,12 @@ fn extract_match_assignments(
                     then: crate::ast::Block {
                         stmts: Vec::new(),
                         trailing: Some(Box::new(val.clone())),
-                        span: val.span,
+                        span: val.span, is_unsafe: false
                     },
                     else_: Some(crate::ast::ElseBranch::Block(crate::ast::Block {
                         stmts: Vec::new(),
                         trailing: Some(Box::new(acc.clone())),
-                        span: acc.span,
+                        span: acc.span, is_unsafe: false
                     })),
                 },
                 span: match_span,

@@ -278,6 +278,12 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                 UnOp::Neg if is_fp => Ok(SmtTerm::App("fp.neg".into(), vec![v])),
                 UnOp::Neg => Ok(SmtTerm::App("-".into(),
                     vec![SmtTerm::IntLit(0), v])),
+                // Plan 118 D216 §4-5: pointer ops not supported в SMT
+                // verification (Z3 не моделирует raw pointers; contracts
+                // на typed pointer ops — Ф.4 followup).
+                UnOp::AddrOf | UnOp::Deref => Err(EncodingError::Unsupported(
+                    "Plan 118 pointer ops (&/*) not yet supported in SMT verification".into()
+                )),
             }
         }
 

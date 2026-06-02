@@ -1,0 +1,16 @@
+// Plan 118 Ф.7 NEG-T7.6b / A28 — `"${p}"` where `p` is local typed-pointer
+// var (bound via `let p = &x`). Walker tracks Ident → ptr_vars frame и
+// catches indirect interpolation, не только direct `${&x}`.
+//
+// EXPECT_COMPILE_ERROR E_PTR_NO_DISPLAY_USE_DEBUG_STR
+
+module plan118.t7_neg_ptr_interp_local_var
+
+test "rejects ${p} where p is local typed-pointer binding" {
+    ro x = 42
+    ro msg = unsafe {
+        ro p = &x
+        "pointer = ${p}"
+    }
+    assert(msg.len() > 0)
+}

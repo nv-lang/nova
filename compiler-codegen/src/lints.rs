@@ -533,6 +533,8 @@ fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
         TypeRef::Unit(_) => {}
         // D176 (Plan 108): readonly T — transparent.
         TypeRef::Readonly(inner, _) => collect_tr(inner, out),
+        // Plan 118 D216: typed pointer `*T` — recurse on inner.
+        TypeRef::Pointer(_, inner, _) => collect_tr(inner, out),
     }
 }
 

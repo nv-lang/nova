@@ -26617,6 +26617,486 @@ Closes marker: [M-D78-strict-removal].
 Unblocks: strict rev-3 enforcement в любых будущих кодогенерационных
 plans (manifest dispatch, cross-module symbol resolution).
 
+==========================================================================
+2026-06-01 Plan 118 (typed pointers `*T` family + unsafe model + NPO) —
+ревизия + Ф.0 GATE phase
+==========================================================================
+
+Контекст:
+Plan 118 — major language addition: typed pointer family `*T` / `*ro T` /
+`*mut T` / `*unsafe T` + unsafe model + NPO codegen + escape analysis с
+auto-promote + `*fn(...)` FFI + `ptr` redefine. Заменяет Plan 115 V1
+opaque-only `ptr` model на typed alternative; backward-compatible.
+
+Ревизия 2026-06-01 (по user request «production-grade без упрощений»):
+- Original Plan 118 (~1169 lines, 15 acceptance, 7 risks, ~50 tests) →
+  revised Plan 118 core (~2259 lines, 35 acceptance, 16 risks, ~100
+  positive + ~50 negative tests).
+- Decomposed into Plan 118 family для staged delivery:
+    * Plan 118 (core, ~8-10 dev-day): *T family + unsafe + NPO + escape +
+      *fn + GC honor-system + Debug fmt
+    * Plan 118.1 (~3-4 day): FFI memory intrinsics (volatile/copy/read/
+      write + addr_of + C-string cstr"..." literal)
+    * Plan 118.2 (~3-4 day): slice fat-pointer `*[T]` + MaybeUninit[T]
+      + ManuallyDrop[T]
+    * Plan 118.3 (~2-3 day): pointer concurrency safety + AtomicPtr[T]
+      + cross-fiber/suspend rules
+- Worktree: nova-p118 (sibling of main), branch plan-118.
+
+Locked design решения (через AskUserQuestion):
+- GC pin: honor-system + W_UNSAFE_GC_TRIGGER warning (vs formal pin API)
+- Slice → Plan 118.2 (staged delivery)
+- &acc syntax kept (vs *acc — deref ambiguity major risk)
+- Callback no-throw across C ABI enforced (E_CALLBACK_THROWS_OVER_C_ABI)
+- Tuple newtype `type Handle(*T)` canonical для opaque FFI handles
+  (zero-overhead vs record `{value ptr}` indirection)
+
+Commits на branch plan-118 (worktree D:/Sources/nv-lang/nova-p118):
+
+1. e642fc86d1e — docs(plans): revise Plan 118 production-grade + decompose
+   into Plan 118 family
+   - docs/plans/118-typed-pointers-and-unsafe.md (1169 → 2259 lines;
+     production-grade rewrite)
+   - docs/plans/118.1-ffi-intrinsics-and-cstring.md (NEW, 628 lines)
+   - docs/plans/118.2-slice-fat-pointer-and-uninit.md (NEW, 573 lines)
+   - docs/plans/118.3-pointer-concurrency-safety.md (NEW, 578 lines)
+   - docs/plans/README.md (4 entries updated/added)
+
+2. (next) feat(plan118 Ф.0): GATE — design freeze + D216/D2/D214/D32
+   amend drafts + audit + logs
+   - spec/decisions/02-types.md:
+       * D216 NEW appended (~290 lines, 20 §-sections + diagnostic codes
+         + mainstream comparison + use cases + cross-refs)
+       * D214 amend prepended (Plan 118 redefine + null ptr retraction
+         note)
+       * D32 amend prepended (`&value` is typed ptr construction, NOT
+         Rust borrow)
+   - spec/decisions/04-effects.md:
+       * D2 amend prepended (unsafe { } keyword restored as effect-
+         handler sugar)
+   - docs/simplifications.md: ## Plan 118 section appended (open 11
+     [M-118-*] markers; deferred markers map к sub-plans; permanently-out
+     list; Ф.0 progress)
+   - docs/project-creation.txt: this entry
+   - nova-private/discussion-log.md: design discussion log (3 round
+     decisions captured)
+
+Audit ptr usages (Ф.0.6):
+- 47 `null ptr` occurrences across 10 .nv files (Plan 115 fixtures +
+  examples/ffi + std/runtime + nova_tests/types)
+- 4 files с `external fn ... ptr` signatures (плans 115 + examples)
+- 25 files mention ptr globally
+- 6 compiler-codegen src файлов touch ptr:
+    * codegen/emit_c.rs (nova_ptr codegen)
+    * codegen/external_registry.rs
+    * lexer/mod.rs (Star, Amp tokens — already tokenized)
+    * lexer/token.rs (Star/Amp/AmpAmp/StarEq variants)
+    * parser/mod.rs (existing ptr type parsing)
+    * types/mod.rs (Ty::Ptr unit variant — needs extension к
+      Ty::Ptr(modifier, Box<Ty>))
+
+Acceptance gate (А1-А35 finalized в plan-118 file):
+- 35 acceptance criteria, все measurable с verification refs
+- Test plan: T1-T8 + R1-R5 series (~100 positive + ~50 negative)
+- Cross-platform CI matrix: Linux × clang/gcc + Win × MSVC/clang +
+  macOS × clang (5+ combos required)
+- Performance benchmarks: escape promote < 5ns, NPO == sizeof(*T) на
+  каждой platform, auto-deref zero-cost asm, arith unit-scaling correct
+
+Next steps (Ф.1+):
+- Ф.1 *T family parser/checker + ptr redefine (~1.5 day)
+- Ф.2 &value operator + escape analysis с auto-promote (~1.5 day)
+- Ф.3 unsafe { } block + #unsafe attribute (D2 amend) (~1 day)
+- Ф.4 Auto-deref + pointer ops (~1.5 day)
+- Ф.5 Option[*T] + NPO codegen + null-ptr retraction (~1 day)
+- Ф.6 *fn(...) function pointers + callback no-throw (~½-1 day)
+- Ф.7 GC honor-system warnings + Debug fmt (~½ day)
+- Ф.8 Regression + cross-platform + ABI snapshot + perf bench (~1 day)
+- Ф.9 Spec promote + ffi-cookbook + examples + closure (~½-1 day)
+- Ф.10 Reserved (safety hatch / post-review)
+
+Closes (planned по фазам):
+- Ф.5: [M-115-null-ptr-to-option-after-npo] ✅
+- Ф.9: [M-118-handle-migration] ✅
+
+Unblocks: Plan 118.1/118.2/118.3 sub-plans (parallel execution после core
+merge); Plan 121 (stack-fixed-arrays — uses `*[N]T` foundations).
+
+==========================================================================
+2026-06-01 evening — Plan 118 Session 2 progress (autonomous continuation)
+==========================================================================
+
+Substantial implementation landed через Ф.3 partial. Worktree
+D:/Sources/nv-lang/nova-p118 branch plan-118 — 11 commits total,
+7 fixtures PASS, no regression introduced.
+
+Commits на branch plan-118 (Session 2 additions):
+- 5069e76a983 — feat(plan118 Ф.1.5): Ty::TypedPtr proper variant в
+  type-checker
+- 0c420b727fd — feat(plan118 Ф.1.9): T1 positive fixtures (4 PASS)
+- f9e2a7a9a89 — feat(plan118 Ф.2 scaffold): &value + *expr unary
+  prefix operators
+- 09be551b945 — feat(plan118 Ф.3 scaffold): KwUnsafe keyword + unsafe
+  block syntax
+- 25b39646639 — test(plan118 Ф.3): unsafe block in expression position
+- 9509ba0e219 — docs(plan118): status checkpoint evening
+- 8127e3303a1 — test(plan118 Ф.6 partial): *fn function pointer type
+
+Plan 118 fixtures (7/0 PASS):
+- t1_1_parse_pointer_types_ok — *T / *ro T / *mut T / *unsafe T в
+  external fn signatures
+- t1_3_chain_multi_level_ok — multi-level pointer chains
+- t1_6_record_field_pointer_ok — tuple newtype + record FFI handles
+- t1_8_ptr_legacy_compat_ok — Plan 115 ptr + Plan 118 *T coexist
+- t2_1_addr_of_deref_in_unsafe_ok — unsafe block в expression position
+- t3_1_unsafe_block_parses_ok — unsafe block syntax (3 tests)
+- t6_1_fn_pointer_type_ok — *fn(...) declaration parses
+
+Regression smoke (release test-build, libuv enabled, GC linkage via
+main repo vcpkg_installed/x64-windows-static):
+
+| Plan | PASS/FAIL |
+| plan118 | 7/0 (new) |
+| plan115 | 11/0 (D214 backward compat preserved) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| syntax | 53/1 (1 pre-existing for_in_range_iter, unrelated) |
+| TOTAL | 113/1 |
+
+Build setup (worktree-only):
+- libuv submodule copied from main + libuv/.git removed
+- env vars: NOVA_GC_INCLUDE_DIR + NOVA_GC_LIB_DIR pointing к
+  D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/
+  x64-windows-static/{include,lib}
+
+Implementation pieces landed:
+
+Lexer (compiler-codegen/src/lexer/):
+- New KwUnsafe keyword variant + "unsafe" lexeme recognition
+
+AST (compiler-codegen/src/ast/mod.rs):
+- New PointerModifier enum (Ro/Mut/Unsafe)
+- New TypeRef::Pointer(PointerModifier, Box<TypeRef>, Span) variant
+- UnOp extended (AddrOf, Deref)
+
+Parser (compiler-codegen/src/parser/mod.rs):
+- parse_type: `*T` / `*ro T` / `*mut T` / `*unsafe T` production
+  (recursive для chains `*mut *ro T`)
+- parse_unary: TokenKind::Amp / TokenKind::Star prefix ops
+- parse_primary: `unsafe { ... }` block
+
+Type-checker (compiler-codegen/src/types/mod.rs):
+- New Ty::TypedPtr(PointerModifier, Box<Ty>) variant
+- ty_of_ref maps TypeRef::Pointer → Ty::TypedPtr correctly
+- TyCat::Ptr category (consistent с D214 ptr)
+- type_key includes modifier для overload disambiguation
+
+Codegen (compiler-codegen/src/codegen/emit_c.rs + external_registry.rs):
+- TypeRef::Pointer → `const T*` (ro) / `T*` (mut/unsafe) emission
+- UnOp::AddrOf → `&(...)` C, UnOp::Deref → `*(...)` C
+- Exhaustive-match arms updated в 17 sites across 8 files
+
+Open V1 limitations (followup phases):
+- [M-118-addrof-deref-expr-inference] AddrOf/Deref proper Ty::TypedPtr
+  inference в expression position (current: best-effort string ops)
+- [M-118-typed-int-literal-ptr-context] _i64/_u32 suffix literals
+  + pointer ops triggers C generation error
+- [M-118-unsafe-context-enforcement] E_UNSAFE_REQUIRED type-checker
+  enforcement (Ф.3.3-3.5 followup)
+- [M-118-unsafe-fn-attribute] #unsafe attribute on fn (Ф.3.2 followup)
+- [M-118-fn-ptr-c-type-precise] Ret (*name)(Args) C emission (Ф.6)
+- Escape analysis с auto-promote (Ф.2.4)
+- NPO codegen Option[*T] (Ф.5)
+
+Next session pickup: Ф.4 (auto-deref + binding mut + chain order) OR
+Ф.5 (NPO codegen + null-ptr retraction closing [M-115-null-ptr-to-option-after-npo]).
+Plan file status section с detailed handoff checklist.
+
+==========================================================================
+2026-06-01/02 evening-2 — Plan 118 Session continuation (autonomous)
+==========================================================================
+
+Дополнительные commits + concrete deliverables:
+
+Closed acceptance criteria:
+- A26 ✅ E_EXTERNAL_FN_FAIL_EFFECT enforcement (commit 7ff3007f3af)
+- A12 partial — p.field auto-deref для *Record (commit 9ece8bfdaea):
+  codegen detects double-pointer (Nova_Record**), emits (*p)->field
+
+Design decision locked (Session 2 user signoff): Option A for *Record:
+- *T для record T means Nova_T** в C ABI (double-pointer)
+- Used для FFI out-params + lock-free linked structures
+- For domain code: just use `Acc` (already heap reference per D32)
+- E_AMP_RECORD_LITERAL forbids `&Record{...}` без named binding —
+  anonymous-local auto-promote слишком implicit (commit 986fdb04c0d)
+
+Updated spec D216 §4 + diagnostic codes (E_AMP_RECORD_LITERAL added).
+
+Latest commits:
+- 6d6a18a2ab7 — NEG-T1.13: E_INVALID_POINTER_MODIFIER для *const T
+- f7c628ffa7d — Ф.9: ffi-cookbook Plan 118 preview section
+- c2fb3f3b9cb — NEG: pointer_incomplete + ro_in_expression_pos
+- 1634b0cb598 — NEG-T1.15: duplicate_modifier rejection
+- 4ded191f7b5 — status intermediate update
+- 7ff3007f3af — Ф.6 partial #2: E_EXTERNAL_FN_FAIL_EFFECT (A26)
+- 1dbabdaa69f — closure update
+- 9ece8bfdaea — Ф.4 codegen: (*p)->field для *Record (A12 partial)
+- 986fdb04c0d — NEG: E_AMP_RECORD_LITERAL (Session 2 design decision)
+
+plan118 fixtures: 16/0 PASS (10 positive + 6 NEG):
+- t1_1, t1_3, t1_6, t1_8, t2_1, t3_1, t3_2, t4_1, t5_1, t6_1 (positive)
+- t1_neg_const_modifier, t1_neg_pointer_incomplete,
+  t1_neg_ro_in_expression_pos, t1_neg_duplicate_modifier,
+  t6_neg_external_fn_fail_effect, t2_neg_amp_record_literal (NEG)
+
+Regression smoke: 70/0 verified + syntax 53/1 (1 pre-existing unrelated).
+
+Worktree total: 30 commits на plan-118 branch.
+
+==========================================================================
+2026-06-02 Plan 118 — merge с main (sync Plan 124.1 + Plan 114.4.2)
+==========================================================================
+
+98 commits ahead в main pulled into plan-118 (Plan 124.1 V1 priv field +
+Plan 114.4.2 const fn + кучу других внутренних обновлений). 7 conflicts
+resolved keep-both:
+- compiler-codegen/src/lexer/{token,mod}.rs — KwUnsafe + KwPriv + KwPub
+- compiler-codegen/src/ast/mod.rs — FnDecl с unsafe_attr + fn_eval_max_depth
+- compiler-codegen/src/parser/mod.rs — ContractAttrs с обоих fields
+- spec/decisions/02-types.md — D216 (Plan 118) + D220 (Plan 124)
+- docs/simplifications.md + docs/project-creation.txt — chronological merge
+
+Regression smoke (release build, clang toolchain, libuv enabled):
+
+| Plan | PASS/FAIL |
+| plan118 | 19/0 (10 positive + 9 NEG) |
+| plan115 | 11/0 (D214 backward compat) |
+| plan120 | 8/0 |
+| plan114 | 10/0 |
+| plan100_3 | 10/0 |
+| plan108 | 6/0 |
+| basics | 8/0 |
+| plan124_1 | 9/0 (NEW from main — D220 priv enforcement) |
+| TOTAL | 81/0 PASS |
+
+Worktree total: 36 commits на plan-118 + 3 в nova-private.
+Branch plan-118 fully synced с main (0 commits ahead в main).
+
+==========================================================================
+2026-06-02 Plan 118 Ф.3.3 + Ф.3.5 — Block.is_unsafe + E_UNSAFE_REQUIRED
+enforcement (A8 closed)
+==========================================================================
+
+Substantial Ф.3 enforcement work landed:
+
+Ф.3.3 scaffold (commit 86ec057122e):
+- AST Block struct: new is_unsafe: bool field. Default false; parser
+  KwUnsafe arm sets true. 24 Block construction sites updated across 5
+  files (callnorm + emit_c + desugar + parser + verify/handler_exec) с
+  is_unsafe: false. Foundation для Ф.3.5 enforcement.
+
+Ф.3.5 enforcement (commit 5c0d2c975ce):
+- New free fn check_unsafe_context_in_module() в types/mod.rs.
+- UnsafeCtx struct с depth: usize counter.
+- walk_block: if b.is_unsafe → depth++, recurse, depth--.
+- walk_expr: AddrOf / Deref check depth == 0 → emit E_UNSAFE_REQUIRED.
+- #unsafe fn body имплицитно unsafe (depth++ при fn entry).
+- Recursive walker covers Block/Binary/Call/Member/Index/If/While/Loop/
+  For/Match/As/Is/Try/Bang/Detach/Blocking.
+- Hook в check_module — после existing checks; errors accumulated в
+  same Vec → all diagnostics в single compile.
+
+Test coverage (commits 5c0d2c975ce + b2d9cf46c3f):
+- t3_neg_deref_outside_unsafe.nv — NEG (EXPECT_COMPILE_ERROR
+  E_UNSAFE_REQUIRED). PASS (negative).
+- t3_3_addr_of_deref_in_unsafe_ok.nv — POSITIVE (& + * inline inside
+  unsafe + nested unsafe). PASS.
+
+Closes acceptance A8 (& operator outside unsafe → E_UNSAFE_REQUIRED).
+
+Regression smoke (release build): plan118 21/0 (11 positive + 10 NEG),
+plan115 11/0 (D214 backward compat preserved), plan120 8/0, plan114
+10/0 — all unchanged. No existing code uses AddrOf/Deref outside unsafe
+blocks, so enforcement не сломала existing tests.
+
+Worktree D:/Sources/nv-lang/nova-p118 branch plan-118.
+40 commits ahead в plan-118 branch (40 = 36 base + 4 new).
+
+==========================================================================
+2026-06-02 Plan 118 Session 3 grand finale — A11+A25+A33+A24+A30 closed
+==========================================================================
+
+Дополнительные 5 acceptance criteria closed после A8:
+
+- A11 ✅ (abd4be4603b) — E_UNSAFE_CALL_REQUIRES_WRAP for calling #unsafe
+  fn без unsafe block wrap. Walker pre-collects unsafe_fns HashSet,
+  detects call sites with depth == 0.
+- A25 ✅ (e4cff57142e) — E_CALLBACK_THROWS_OVER_C_ABI for cast
+  fn-with-Fail-effect к *fn(...). Walker pre-collects fail_fns HashSet,
+  detects As cast targets.
+- A33 ✅ (6752565f453) — E_REALTIME_POINTER_OP for pointer ops внутри
+  #realtime fn body. Walker tracks in_realtime bool; AddrOf/Deref
+  banned even с unsafe { } wrap (orthogonal к unsafe enforcement —
+  realtime guarantees overrule).
+- A24 ✅ (060fb3a65a0) — E_CLOSURE_HAS_ENV for closure-literal cast к
+  *fn(...). ExprKind::ClosureLight, ClosureFull, bound-method (Member
+  с @ prefix) all rejected.
+- A30 ✅ (060fb3a65a0 spec change) — D216 promoted к ACTIVE 2026-06-02
+  в spec. Listed all 13 acceptance criteria с commit refs. Status flip
+  from 'draft 2026-06-01 (Ф.0 GATE)' к 'ACTIVE 2026-06-02 (... 13
+  acceptance criteria closed)'.
+
+Walker architecture (single pass UnsafeCtx struct):
+- depth: usize — unsafe block / #unsafe fn nesting depth
+- unsafe_fns: HashSet<String> — names of #unsafe fns
+- fail_fns: HashSet<String> — names of fns с Fail effect
+- in_realtime: bool — currently inside #realtime fn body
+
+Pre-collection HashSet pattern → O(1) lookup при call/cast sites.
+
+Test fixtures added:
+- t3_neg_deref_outside_unsafe.nv (A8)
+- t3_3_addr_of_deref_in_unsafe_ok.nv (A8 positive)
+- t3_neg_unsafe_call_no_wrap.nv (A11)
+- t6_neg_callback_throws_over_c_abi.nv (A25)
+- t8_neg_realtime_pointer_op.nv (A33)
+- t6_neg_closure_has_env.nv (A24)
+
+plan118 total: 25/0 PASS (12 positive + 13 NEG).
+Regression smoke: 87/0 verified clean (plan115/120/114/100_3/108/
+plan124_1/basics + plan118).
+
+Session 3 grand-total Plan 118 acceptance closed: 14 of 35 (40%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25,
+A26, A29, A30, A33, A34, A35.
+
+Memory file C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/
+memory/project-plan118-status.md updated с current substantial scaffold
+status + 14 acceptance criteria list + 50 commit count.
+
+Worktree D:/Sources/nv-lang/nova-p118 branch plan-118.
+50 worktree commits + 6 nova-private. Fully synced с main. NOT merged.
+
+==========================================================================
+2026-06-02 Plan 118 Session 3 epilogue — A28 V1 syntactic enforcement
+==========================================================================
+
+Continuation work — добавили A28 V1 (E_PTR_NO_DISPLAY_USE_DEBUG_STR).
+
+- A28 partial ✅ (a9327c65d3f) — V1 syntactic enforcement: `"${p}"`
+  interpolation на typed-pointer-typed Expr rejected (D216 §15).
+  Rationale: (1) address disclosure — security leak vector (ASLR
+  bypass); (2) GC mover invalidates raw address — interpolated str
+  становится stale silent correctness bug; (3) pointer Debug fmt =
+  explicit opt-in only через `.to_debug_str()` inside unsafe (A27).
+
+Walker extension (UnsafeCtx):
+- ptr_vars: Vec<HashSet<String>> — scope-stack frames (push/pop block).
+- register_ptr_var в walk_stmt Let arm: RHS = AddrOf/Deref/As(*T)
+  marks local pointer-typed.
+- expr_is_typed_pointer: syntactic detect:
+  - Unary{AddrOf|Deref}
+  - As(_, TypeRef::Pointer(_, _, _))
+  - Ident lookup в ptr_vars frames (рев. порядок — shadow safe).
+- InterpolatedStr arm walks parts; pointer-typed → emit diagnostic.
+
+V1 limitations (deferred Session 4+):
+- Returned pointer values from fn calls (whose Display would be
+  type-aware) — не fires.
+- Member access на ptr field — не tracked в ptr_vars (V2 — full
+  type-aware enforcement через infer_expr_type).
+
+Test fixtures added:
+- t7_neg_ptr_interpolation.nv — direct `${&x}` AddrOf.
+- t7_neg_ptr_interp_local_var.nv — Ident bound к pointer var.
+
+plan118 total: 27/0 PASS (12 positive + 15 NEG).
+Regression smoke: 89/0 verified clean (plan115 11 + plan120 8 +
+plan114 10 + plan100_3 10 + plan108 6 + plan124_1 9 + basics 8 +
+plan118 27 = 89).
+
+Session 3 grand-total Plan 118 acceptance closed: 15 of 35 (43%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A18 partial, A24, A25,
+A26, A28 partial, A29, A30, A33, A34, A35.
+
+Session 4+ remaining work (~5-7 dev-days):
+- Ф.4 full auto-deref codegen integration (A12-A17 partial → full)
+- Ф.5 full NPO codegen (A19-A23 + closes [M-115-null-ptr-to-option-after-npo])
+  — 117 sites refactor
+- Ф.7 W_UNSAFE_GC_TRIGGER warning + (*T).to_debug_str() (A27 + A28 full)
+- Ф.8 cross-platform CI matrix + ABI snapshot + perf bench (A31, A32)
+- Plan 118.1/118.2/118.3 sub-plans
+
+==========================================================================
+2026-06-02 Plan 118 + main sync — A17 closed via order-compare enforcement
+==========================================================================
+
+После Session 3 epilogue (A28), user requested:
+- продолжай (continue closing acceptance criteria)
+- синканись с main D:/Sources/nv-lang/nova
+- update spec/D/Q/docs + commit разбитый по задачам
+
+Main sync (commit 8fc3473e22b):
+- Fetched 66 commits from main (Plan 114.4.4.5 V4.1 + V4.2 + V4.3 +
+  Plan 123 V7 + Plan 91.12 V2#3 + baseline fixes).
+- 3 conflicts resolved keep-both:
+  - ast/mod.rs: is_pointer (Plan 118) + uses_any_type_param (Plan 91.12)
+    — added Pointer arm to combined helper
+  - emit_c.rs type_ref_uses_any_type_param: delegated к
+    TypeRef::uses_any_type_param (upstream)
+  - spec/02-types.md D214: both amends kept (Plan 118 D216 redefine +
+    Plan 91.12 V2 generic newtype)
+- field_cache.rs Block { is_unsafe: false } fix (4 sites)
+- Regression smoke 92/0 verified clean after merge.
+
+A17 partial ✅ (601af30fc30) — E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE.
+D216 §6 cast/compare table: pointer-pointer order comparison
+(`<`/`<=`/`>`/`>=`) outside unsafe rejected. Equality `==`/`!=`
+remains safe everywhere (identity check).
+
+Rationale:
+1. Pointer addresses не stable ordinals — GC-relocation invalidates
+   ordering invariant (Boehm conservative GC не relocates сейчас,
+   но V1 rule sets future-compat для moving GC).
+2. OS ASLR randomizes layout per process — order-compare results
+   не deterministic across runs.
+3. Order-compare ergonomically usually wrong; explicit unsafe makes
+   intent clear (Rust pattern — pointer ordering — unsafe op).
+
+Walker extension (types/mod.rs Binary arm):
+- is_order_cmp matches BinOp::Lt|Le|Gt|Ge
+- depth == 0 (outside unsafe) AND both operands match
+  expr_is_typed_pointer → emit E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE
+- Extended expr_is_typed_pointer to peek в Block.trailing — covers
+  `let p = unsafe { &x }` pattern (idiomatic Nova usage form).
+
+Test fixtures added:
+- t4_3_ptr_order_compare_in_unsafe_ok.nv — positive: order-compare
+  inside unsafe + equality outside unsafe both pass.
+- t4_neg_ptr_order_compare.nv — `p < q` outside unsafe fires
+  E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE.
+
+plan118 total: 30/0 PASS (13 positive + 17 NEG).
+Regression smoke 92/0 verified clean (plan115 11 + plan120 8 +
+plan114 10 + plan100_3 10 + plan108 6 + plan124_1 9 + basics 8 +
+plan118 30 = 92).
+
+Spec D216 §6 (pointer arithmetic + order comparison) ACTIVE 2026-06-02
+с E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE enforcement note + equality
+explicit safety guarantee. Plan 118 plan-doc A17 flagged partial ✅.
+
+Plan 118 grand-total: 16 of 35 acceptance criteria closed (46%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A24, A25, A26, A28 partial, A29, A30, A33, A34, A35.
+
+Worktree state:
+- 56 commits ahead of main (merge + A17 impl + A17 tests + docs)
+- 8 nova-private discussion-log entries
+- Branch plan-118, NOT merged в main (review required).
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================

@@ -27,6 +27,16 @@ pub enum Ty {
     /// Arithmetic banned (E_PTR_ARITHMETIC_BANNED); member access banned
     /// (E_PTR_NO_MEMBER); equality + casts (as u64/i64/int) allowed.
     Ptr,
+    /// Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` / `*mut T`
+    /// / `*unsafe T`. Distinct от `Ty::Ptr` (opaque Plan 115 D214) на
+    /// type-check уровне — typed pointer carries pointee type + modifier.
+    ///
+    /// Auto-deref `p.field` / `p.method()` / `p.field = v` (only в unsafe
+    /// context — D216 §5) использует inner Ty для member resolution.
+    /// Binding-mut rule (D216 §2): `mut p *T` infers modifier=Mut. ABI:
+    /// same as `Ty::Ptr` (`void*` / `T*` в codegen, см. emit_c.rs
+    /// type_ref_to_c для TypeRef::Pointer).
+    TypedPtr(crate::ast::PointerModifier, Box<Ty>),
     /// Р›СЋР±РѕР№ С‚РёРї / РЅРµРёР·РІРµСЃС‚РЅС‹Р№ (РґР»СЏ bootstrap'Р° вЂ” fallback).
     Any,
     /// РРјРµРЅРѕРІР°РЅРЅС‹Р№ С‚РёРї (record, sum, effect, newtype, alias).
@@ -122,6 +132,33 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     // `[M-115-ffi-build-pipeline]` formalizes shim linking
                     // CLI.
                     let _ = fd.needs_caps; // backward-compat field, всегда empty.
+
+                    // Plan 118 (D216 §20): `external fn ... Fail -> ...` —
+                    // E_EXTERNAL_FN_FAIL_EFFECT. C ABI не propagates Nova
+                    // exception machinery; Fail effect crossing FFI boundary
+                    // = undefined behavior (no DWARF unwinder hookup). User
+                    // должен catch внутри callback / wrapper, return sentinel.
+                    // V1 enforcement: rejected on declaration. Future
+                    // `extern "C-unwind"` (Rust 2024 model) — V2 research
+                    // [M-118-extern-c-unwind].
+                    for eff in &fd.effects {
+                        if let TypeRef::Named { path, .. } = eff {
+                            if path.last().map_or(false, |n| n == "Fail") {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_EXTERNAL_FN_FAIL_EFFECT] `external fn {}` declares `Fail` effect — \
+                                         not allowed на Nova→C FFI boundary (D216 §20). C runtime не propagates \
+                                         Nova exception machinery; throwing across C ABI = undefined behavior. \
+                                         Workaround: catch внутри wrapper, return sentinel value (e.g. negative \
+                                         error code) — let Nova-side caller convert sentinel к Fail. Future \
+                                         `extern \"C-unwind\"` (Rust 2024 model) — `[M-118-extern-c-unwind]`.",
+                                        fd.name,
+                                    ),
+                                    eff.span(),
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             // Plan 62.D.bis (D126) + Plan 100.5 (D163) + Plan 91.12 V2 retract
@@ -616,6 +653,12 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         // Р­С‚Рѕ Р±СѓРґРµС‚ СѓС‚РѕС‡РЅРµРЅРѕ РєРѕРіРґР° РґРѕР±Р°РІРёС‚СЃСЏ warning severity (Plan 36).
         let _ = report.warnings; // intentionally silent
     }
+
+    // Plan 118 D216 §8 (Ф.3.5): enforce E_UNSAFE_REQUIRED — `&value` /
+    // `*expr` pointer ops require unsafe context (block.is_unsafe = true
+    // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
+    // depth counter, emits diagnostic при depth == 0.
+    check_unsafe_context_in_module(module, &mut errors);
 
     if errors.is_empty() {
         Ok(env)
@@ -2897,6 +2940,8 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent, walk inner.
             TypeRef::Readonly(inner, _) => self.walk_typeref(inner, gs, errors),
+            // Plan 118 D216: typed pointer `*T` — walk inner for arity checks.
+            TypeRef::Pointer(_, inner, _) => self.walk_typeref(inner, gs, errors),
         }
     }
 
@@ -2932,6 +2977,8 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::collect_named_idents(inner, out),
+            // Plan 118 D216: typed pointer `*T` — recurse on inner.
+            TypeRef::Pointer(_, inner, _) => Self::collect_named_idents(inner, out),
         }
     }
 
@@ -4279,6 +4326,16 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         let Some(obj_tr) = self.infer_expr_type(obj, scope) else { return; };
+        // Plan 118 D216 §5: auto-deref one level для typed pointer `*T` —
+        // permissive в type-checker (skip f3 not-found error so codegen может
+        // attempt arrow `p->field`). Full proper auto-deref resolution
+        // с codegen integration (emit `p->field` C consistently для both
+        // record and primitive pointee) — Ф.4 followup work. V1: skip check
+        // для pointer types — permissive (codegen may produce CC-FAIL if
+        // arrow codegen path не handles *T properly yet).
+        if matches!(obj_tr, TypeRef::Pointer(_, _, _)) {
+            return; // permissive — defer to codegen + Ф.4 full integration
+        }
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         let Some(td) = self.types.get(tname) else { return; };
@@ -5259,6 +5316,11 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => TyCat::Unit,
             // D176 (Plan 108): readonly T — same category as inner (transparent for assignability).
             TypeRef::Readonly(inner, _) => self.cat_of_depth(inner, gs, depth + 1),
+            // Plan 118 D216: typed pointer `*T` — category Ptr (matches D214
+            // `ptr` opaque). Внутренний type categorization не нужен для
+            // assignability rules (pointer category распространяется на все
+            // `*T` family variants; mutability/safety enforced отдельно в Ф.4).
+            TypeRef::Pointer(_, _, _) => TyCat::Ptr,
         }
     }
 }
@@ -5425,6 +5487,15 @@ fn typeref_display(tr: &TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", typeref_display(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, typeref_display(inner))
+        }
     }
 }
 
@@ -8951,6 +9022,15 @@ fn render_type_ref(t: &TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", render_type_ref(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, render_type_ref(inner))
+        }
     }
 }
 
@@ -9189,6 +9269,10 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
         TypeRef::Unit(_) => Ty::Unit,
         // D176 (Plan 108): readonly T — same Ty as inner (transparent).
         TypeRef::Readonly(inner, _) => ty_of_ref(inner),
+        // Plan 118 D216 §1: typed pointer `*T` family → Ty::TypedPtr.
+        // Modifier (Ro/Mut/Unsafe) + inner Ty propagated; используется
+        // в auto-deref resolution (Ф.4) + binding mut rule (D216 §2).
+        TypeRef::Pointer(modif, inner, _) => Ty::TypedPtr(*modif, Box::new(ty_of_ref(inner))),
     }
 }
 
@@ -9550,6 +9634,16 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                 TypeRef::Unit(_) => "()".to_string(),
                 // D176 (Plan 108): readonly T — key as "readonly_<inner>"
                 TypeRef::Readonly(inner, _) => format!("readonly_{}", type_key(inner)),
+                // Plan 118 D216 §1: typed pointer `*T` family — key includes
+                // modifier (Ro/Mut/Unsafe) для overload disambiguation.
+                TypeRef::Pointer(modif, inner, _) => {
+                    let modif_str = match modif {
+                        crate::ast::PointerModifier::Ro => "ro",
+                        crate::ast::PointerModifier::Mut => "mut",
+                        crate::ast::PointerModifier::Unsafe => "unsafe",
+                    };
+                    format!("*{}_{}", modif_str, type_key(inner))
+                }
             }
         }
         fn op_sig(m: &EffectMethod) -> String {
@@ -15269,6 +15363,15 @@ fn typeref_render(t: &TypeRef) -> String {
         TypeRef::Protocol { methods, .. } => format!("protocol {{...{} sigs}}", methods.len()),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", typeref_render(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — render with modifier.
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, typeref_render(inner))
+        }
     }
 }
 
@@ -16016,3 +16119,450 @@ pub fn check_atomic_store_ordering(
         _ => Ok(()),
     }
 }
+
+// =============================================================================
+// Plan 118 Ф.3.5 — E_UNSAFE_REQUIRED enforcement
+// =============================================================================
+
+/// Plan 118 D216 §8 (D2 amend): Walk fn bodies, emit E_UNSAFE_REQUIRED
+/// для AddrOf (`&value`) / Deref (`*expr`) used вне `unsafe { ... }` block
+/// или `#unsafe fn` body context.
+///
+/// Маркер unsafe context'а — Block.is_unsafe field (set parser в KwUnsafe
+/// arm of parse_primary) OR fn.unsafe_attr (Plan 118 Ф.3.2 #unsafe attr).
+///
+/// Depth counter incremented при entry в unsafe block / fn; pointer ops
+/// allowed iff depth > 0.
+pub(crate) fn check_unsafe_context_in_module(
+    module: &crate::ast::Module,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::{Item, FnBody};
+    // Pre-collect names of #unsafe fns для A11 enforcement
+    // (E_UNSAFE_CALL_REQUIRES_WRAP — calling #unsafe fn без `unsafe { }` wrap).
+    // Plan 118 A25: pre-collect fn names that have Fail effect — cast к
+    // *fn → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
+    let mut unsafe_fns: HashSet<String> = HashSet::new();
+    let mut fail_fns: HashSet<String> = HashSet::new();
+    let collect_from = |item: &Item, unsafe_fns: &mut HashSet<String>, fail_fns: &mut HashSet<String>| {
+        if let Item::Fn(fd) = item {
+            if fd.unsafe_attr {
+                unsafe_fns.insert(fd.name.clone());
+            }
+            // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
+            // где last segment == "Fail". Fn с Fail effect = throwable —
+            // cast к *fn forbidden.
+            for eff in &fd.effects {
+                if let crate::ast::TypeRef::Named { path, .. } = eff {
+                    if path.last().map_or(false, |n| n == "Fail") {
+                        fail_fns.insert(fd.name.clone());
+                        break;
+                    }
+                }
+            }
+        }
+    };
+    for item in &module.items {
+        collect_from(item, &mut unsafe_fns, &mut fail_fns);
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            collect_from(item, &mut unsafe_fns, &mut fail_fns);
+        }
+    }
+    let mut state = UnsafeCtx {
+        depth: 0,
+        unsafe_fns,
+        fail_fns,
+        in_realtime: false,
+        ptr_vars: vec![HashSet::new()],
+    };
+    // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
+    let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
+        module.items.iter().collect()
+    } else {
+        module.peer_files.iter()
+            .filter(|pf| pf.is_entry_module)
+            .flat_map(|pf| pf.items_here.iter())
+            .collect()
+    };
+    for item in entry_items {
+        if let Item::Fn(fd) = item {
+            // #unsafe fn body — implicit unsafe context per D216 §9.
+            let entered_unsafe_fn = fd.unsafe_attr;
+            if entered_unsafe_fn { state.depth += 1; }
+            // Plan 118 A33: #realtime fn body — pointer ops banned.
+            let entered_realtime = matches!(
+                fd.realtime_attr,
+                crate::ast::RealtimeAttr::Realtime | crate::ast::RealtimeAttr::RealtimeNogc
+            ) || matches!(fd.sync_class, Some(crate::ast::SyncClass::Realtime));
+            let prev_realtime = state.in_realtime;
+            if entered_realtime { state.in_realtime = true; }
+            if let FnBody::Block(b) = &fd.body {
+                state.walk_block(b, errors);
+            } else if let FnBody::Expr(e) = &fd.body {
+                state.walk_expr(e, errors);
+            }
+            state.in_realtime = prev_realtime;
+            if entered_unsafe_fn { state.depth -= 1; }
+        }
+        if let Item::Test(t) = item {
+            state.walk_block(&t.body, errors);
+        }
+    }
+}
+
+struct UnsafeCtx {
+    depth: usize,
+    /// Plan 118 A11 enforcement: names of #unsafe fns в текущем module.
+    /// Call с этим именем outside unsafe context → E_UNSAFE_CALL_REQUIRES_WRAP.
+    unsafe_fns: HashSet<String>,
+    /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
+    /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
+    fail_fns: HashSet<String>,
+    /// Plan 118 A33 enforcement: currently walking body #realtime fn.
+    /// Pointer ops (AddrOf, Deref) inside #realtime fn → E_REALTIME_POINTER_OP
+    /// — deref может GC trigger (allocation), violates realtime guarantee
+    /// (Plan 113 D172 cross-ref).
+    in_realtime: bool,
+    /// Plan 118 A28 enforcement: locals bound к typed-pointer expression
+    /// (let x = &v, let x = *p, let x = expr as *T). Stack of scope-frames
+    /// (push на block entry, pop при exit) — позволяет shadowing-safe lookup.
+    /// `"${x}"` interpolation на ptr var → E_PTR_NO_DISPLAY_USE_DEBUG_STR.
+    ptr_vars: Vec<HashSet<String>>,
+}
+
+impl UnsafeCtx {
+    fn walk_block(&mut self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
+        // Plan 118 D216 §8: track unsafe context entry/exit.
+        if b.is_unsafe { self.depth += 1; }
+        // Plan 118 A28: push fresh ptr-var scope frame.
+        self.ptr_vars.push(HashSet::new());
+        for stmt in &b.stmts {
+            self.walk_stmt(stmt, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, errors);
+        }
+        self.ptr_vars.pop();
+        if b.is_unsafe { self.depth -= 1; }
+    }
+
+    /// Plan 118 A28/A17: syntactic check для "expression value is a typed pointer".
+    /// Conservative — fires only when can be detected without full type-inference:
+    ///   - `&value` / `*expr` unary
+    ///   - `expr as *T` (cast к pointer type)
+    ///   - Block expression — peek в trailing (handles `unsafe { &x }` form)
+    ///   - Ident binding к локалу, RHS которого был один из above
+    /// Полная type-aware enforcement — Session 4+ через infer_expr_type.
+    fn expr_is_typed_pointer(&self, e: &Expr) -> bool {
+        use crate::ast::{ExprKind, UnOp};
+        match &e.kind {
+            ExprKind::Unary { op: UnOp::AddrOf, .. } => true,
+            ExprKind::Unary { op: UnOp::Deref, .. } => true,
+            ExprKind::As(_, ty) => matches!(ty, crate::ast::TypeRef::Pointer(_, _, _)),
+            ExprKind::Ident(name) => self.ptr_vars.iter().rev().any(|f| f.contains(name)),
+            // Block-trailing inheritance: `unsafe { &x }` / nested block.
+            // Empty trailing => not a pointer (unit-typed).
+            ExprKind::Block(b) => b.trailing.as_ref()
+                .map_or(false, |t| self.expr_is_typed_pointer(t)),
+            _ => false,
+        }
+    }
+
+    /// Plan 118 A28: register `name` as typed-pointer local в current frame
+    /// (innermost scope). Shadowing automatic — Ident lookup walks frames
+    /// outer-most-last, so latest binding wins.
+    fn register_ptr_var(&mut self, name: &str) {
+        if let Some(frame) = self.ptr_vars.last_mut() {
+            frame.insert(name.to_string());
+        }
+    }
+
+    fn walk_stmt(&mut self, s: &crate::ast::Stmt, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::Stmt;
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, errors),
+            Stmt::Let(d) => {
+                self.walk_expr(&d.value, errors);
+                // Plan 118 A28: track typed-pointer locals для interpolation
+                // diagnostic. Match только simple-ident pattern (no destructure).
+                if self.expr_is_typed_pointer(&d.value) {
+                    if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                        self.register_ptr_var(name);
+                    }
+                }
+            }
+            Stmt::Const(c) => {
+                self.walk_expr(&c.value, errors);
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, errors);
+                self.walk_expr(value, errors);
+            }
+            Stmt::Return { value: Some(e), .. } => self.walk_expr(e, errors),
+            // Plan 118 Ф.3.5: остальные stmt-варианты не имеют sub-expressions
+            // или covered downstream walks (`for`/`while`/`loop` body — Expr).
+            _ => {}
+        }
+    }
+
+    fn walk_expr(&mut self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::{ExprKind, UnOp};
+        match &e.kind {
+            // Plan 118 D216 §8 ENFORCEMENT POINT: AddrOf / Deref require
+            // unsafe context (block с is_unsafe = true OR enclosing #unsafe fn).
+            ExprKind::Unary { op: UnOp::AddrOf, operand } => {
+                if self.depth == 0 {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_REQUIRED] `&value` pointer creation \
+                         requires unsafe context (Plan 118 D216 §8). Wrap \
+                         expression в `unsafe { ... }` block, или mark \
+                         enclosing fn `#unsafe`. D2 amend: unsafe is \
+                         syntactic sugar над built-in effect handler.".to_string(),
+                        e.span,
+                    ));
+                }
+                // Plan 118 A33: pointer ops banned в #realtime fn body
+                // (D216 §20, D172 cross-ref) — deref может GC trigger,
+                // & may allocate via auto-promote.
+                if self.in_realtime {
+                    errors.push(Diagnostic::new(
+                        "[E_REALTIME_POINTER_OP] `&value` pointer creation \
+                         forbidden в `#realtime fn` body (Plan 118 D216 §20 \
+                         + Plan 113 D172). `&` может trigger heap allocation \
+                         via escape-analysis auto-promote — violates \
+                         realtime no-GC-pause guarantee.".to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_expr(operand, errors);
+            }
+            ExprKind::Unary { op: UnOp::Deref, operand } => {
+                if self.depth == 0 {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_REQUIRED] `*expr` pointer dereference \
+                         requires unsafe context (Plan 118 D216 §8). Wrap \
+                         expression в `unsafe { ... }` block, или mark \
+                         enclosing fn `#unsafe`.".to_string(),
+                        e.span,
+                    ));
+                }
+                if self.in_realtime {
+                    errors.push(Diagnostic::new(
+                        "[E_REALTIME_POINTER_OP] `*expr` pointer dereference \
+                         forbidden в `#realtime fn` body (Plan 118 D216 §20 \
+                         + Plan 113 D172). Deref может GC trigger (если \
+                         pointee references GC-tracked memory).".to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_expr(operand, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, errors),
+            // Recurse в children.
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::Binary { left, right, op } => {
+                // Plan 118 A17 enforcement (D216 §6 cast/compare table):
+                // pointer-pointer order comparison (`<`, `<=`, `>`, `>=`)
+                // requires unsafe context. Pointer addresses are not stable
+                // ordinals across allocations (GC-relocation invariance broken;
+                // OS ASLR randomizes layout). Equality (`==`/`!=`) — safe.
+                // V1 syntactic detection: both operands match expr_is_typed_pointer
+                // (Unary AddrOf/Deref / As(*T) / Ident in ptr_vars). Full
+                // type-aware enforcement — Session 4+ via infer_expr_type.
+                let is_order_cmp = matches!(
+                    op,
+                    crate::ast::BinOp::Lt | crate::ast::BinOp::Le
+                    | crate::ast::BinOp::Gt | crate::ast::BinOp::Ge
+                );
+                if is_order_cmp
+                    && self.depth == 0
+                    && self.expr_is_typed_pointer(left)
+                    && self.expr_is_typed_pointer(right)
+                {
+                    errors.push(Diagnostic::new(
+                        "[E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE] pointer-pointer \
+                         order comparison (`<`, `<=`, `>`, `>=`) requires unsafe \
+                         context (Plan 118 D216 §6). Pointer addresses не stable \
+                         ordinals: (1) GC-relocation invalidates ordering invariant; \
+                         (2) OS ASLR randomizes address layout per process — \
+                         comparison results не deterministic across runs. \
+                         Equality `==`/`!=` — safe (identity check). \
+                         Fix: wrap в `unsafe {{ ... }}` block если действительно \
+                         нужно order-compare; rethink если это normal control flow.".to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_expr(left, errors);
+                self.walk_expr(right, errors);
+            }
+            ExprKind::Call { func, args, .. } => {
+                // Plan 118 A11 enforcement: detect call к #unsafe fn outside
+                // unsafe context. Callee identification: Ident (free fn) — look
+                // up в unsafe_fns. Method calls (Member receiver) — Ф.3.5
+                // followup (method-level #unsafe attribute).
+                if self.depth == 0 {
+                    if let ExprKind::Ident(fname) = &func.kind {
+                        if self.unsafe_fns.contains(fname) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_CALL_REQUIRES_WRAP] calling \
+                                     `#unsafe fn {}` requires `unsafe {{ ... }}` \
+                                     block wrap (Plan 118 D216 §9). #unsafe fn \
+                                     body содержит pointer ops без unsafe-block \
+                                     gating; callers must explicitly opt-in \
+                                     к unsafe context (Rust pattern — no \
+                                     effect propagation up the call stack).",
+                                    fname,
+                                ),
+                                func.span,
+                            ));
+                        }
+                    }
+                }
+                self.walk_expr(func, errors);
+                for a in args {
+                    self.walk_expr(a.expr(), errors);
+                }
+            }
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, errors);
+                self.walk_expr(index, errors);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, errors);
+                self.walk_block(then, errors);
+                if let Some(eb) = else_ {
+                    // ElseBranch has either block или another If — handle both
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.walk_block(b, errors),
+                        crate::ast::ElseBranch::If(e) => self.walk_expr(e, errors),
+                    }
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.walk_expr(cond, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::Loop { body, .. } => self.walk_block(body, errors),
+            ExprKind::For { iter, body, .. } => {
+                self.walk_expr(iter, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::Match { scrutinee, arms, .. } => {
+                self.walk_expr(scrutinee, errors);
+                for arm in arms {
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expr(e) => self.walk_expr(e, errors),
+                        crate::ast::MatchArmBody::Block(b) => self.walk_block(b, errors),
+                    }
+                }
+            }
+            ExprKind::As(inner, ty) => {
+                // Plan 118 A24+A25: cast `expr as *fn(...)` checks:
+                //   A24 — closure-with-env cast banned (E_CLOSURE_HAS_ENV)
+                //   A25 — fn-with-Fail cast banned (E_CALLBACK_THROWS_OVER_C_ABI)
+                if let crate::ast::TypeRef::Pointer(_, inner_ty, _) = ty {
+                    if matches!(inner_ty.as_ref(), crate::ast::TypeRef::Func { .. }) {
+                        // A24: closure literal с env captures — banned.
+                        // V1 conservative: any ClosureLight/ClosureFull → reject.
+                        // Free fn identifiers (Ident) — permissive (no env at
+                        // top-level fns). Method values (Member с @ prefix) —
+                        // also rejected (bound self captures receiver).
+                        match &inner.kind {
+                            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                                errors.push(Diagnostic::new(
+                                    "[E_CLOSURE_HAS_ENV] cast `<closure> as \
+                                     *fn(...)` forbidden — closure literals \
+                                     может capture environment (Plan 118 \
+                                     D216 §10). C ABI requires captureless \
+                                     fn pointer. Workaround: extract closure \
+                                     к top-level free fn, тогда cast \
+                                     `free_fn as *fn(...)` valid.".to_string(),
+                                    e.span,
+                                ));
+                            }
+                            // Method value `obj.@method` — bound self capture
+                            // (D11 Ф.4). For V1 conservative reject; bare
+                            // type-level `Type.@method` (unbound method) — OK
+                            // когда detected through parent expr context.
+                            ExprKind::Member { name, .. } if name.starts_with('@') => {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_CLOSURE_HAS_ENV] cast method value \
+                                         `{}` as *fn(...) forbidden — bound \
+                                         method captures receiver (self) \
+                                         (Plan 118 D216 §10). Use static \
+                                         fn (free function) для FFI callback \
+                                         registration.",
+                                        name,
+                                    ),
+                                    e.span,
+                                ));
+                            }
+                            _ => {}
+                        }
+                        // A25: source fn has Fail effect — banned.
+                        if let ExprKind::Ident(fname) = &inner.kind {
+                            if self.fail_fns.contains(fname) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_CALLBACK_THROWS_OVER_C_ABI] cast \
+                                         `{} as *fn(...)` forbidden — source \
+                                         fn declares Fail effect (Plan 118 \
+                                         D216 §10, §20). C ABI не propagates \
+                                         Nova exception machinery; callback \
+                                         throwing across boundary = UB. \
+                                         Workaround: wrap fn body в `catch` \
+                                         expression, return sentinel value.",
+                                        fname,
+                                    ),
+                                    e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
+                self.walk_expr(inner, errors);
+            }
+            ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                self.walk_expr(inner, errors);
+            }
+            // Plan 83 fiber-runtime constructs — body is Block.
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, errors),
+            // Plan 118 A28: `"... ${expr} ..."` interpolation. Если выражение
+            // часть — typed pointer (`&v` / `*p` / `e as *T` / locale-ptr-var),
+            // emit E_PTR_NO_DISPLAY_USE_DEBUG_STR. D216 §15 motivation: address
+            // disclosure (security leak vector) + GC mover invalidates raw
+            // address in str (stale value). Pointer Debug fmt — opt-in только
+            // через `.to_debug_str()` (unsafe context — A27).
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(ex) = p {
+                        if self.expr_is_typed_pointer(ex) {
+                            errors.push(Diagnostic::new(
+                                "[E_PTR_NO_DISPLAY_USE_DEBUG_STR] typed pointer \
+                                 value cannot be interpolated в str через `\"${...}\"` \
+                                 (Plan 118 D216 §15). Pointer Display не auto-emitted: \
+                                 (1) address disclosure leaks security-sensitive info; \
+                                 (2) GC mover invalidates raw address — interpolated \
+                                 value становится stale. Fix: use \
+                                 `${p.to_debug_str()}` (Plan 118 Ф.7, inside unsafe).".to_string(),
+                                ex.span,
+                            ));
+                        }
+                        self.walk_expr(ex, errors);
+                    }
+                }
+            }
+            // Plan 118 Ф.3.5 leaf nodes (literals, idents, paths) — no children.
+            // Other variants covered through their child expressions (handler
+            // bodies, closure lits etc.) — V1 scaffold не deep-walks все edge
+            // cases. Closures + handler bodies — Ф.3.5 follow-on extension.
+            _ => {}
+        }
+    }
+}
+

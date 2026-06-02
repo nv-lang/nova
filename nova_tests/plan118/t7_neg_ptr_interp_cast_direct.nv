@@ -1,0 +1,16 @@
+// Plan 118 Ф.7 NEG-T7.6c / A28 — `"${expr as *T}"` direct cast
+// interpolation. Walker detects As(_, TypeRef::Pointer(...)) syntactic
+// pattern даже без named binding.
+//
+// EXPECT_COMPILE_ERROR E_PTR_NO_DISPLAY_USE_DEBUG_STR
+
+module plan118.t7_neg_ptr_interp_cast_direct
+
+test "rejects ${ptr as *unsafe T} bare cast in interpolation" {
+    ro p = (null ptr) as *unsafe i64
+    ro msg = unsafe {
+        // Bare cast `(expr) as *unsafe T` — As detection path.
+        "addr=${p}"
+    }
+    assert(msg.len() > 0)
+}

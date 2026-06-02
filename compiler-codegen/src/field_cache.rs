@@ -2989,6 +2989,7 @@ fn rewrite_fn_body_split_with_ipa(
                 stmts: Vec::new(),
                 trailing: Some(Box::new(body_expr)),
                 span,
+                is_unsafe: false,
             };
             f.body = FnBody::Block(new_block);
         }
@@ -3438,6 +3439,7 @@ fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
                     stmts: Vec::new(),
                     trailing: Some(Box::new(body_expr)),
                     span,
+                    is_unsafe: false,
                 };
                 f.body = FnBody::Block(block);
                 if let FnBody::Block(b) = &mut f.body {
@@ -4588,6 +4590,7 @@ fn pure_cache_fn(
                 stmts: Vec::new(),
                 trailing: Some(Box::new(body_expr)),
                 span,
+                is_unsafe: false,
             };
             f.body = FnBody::Block(new_block);
         }
@@ -6017,6 +6020,7 @@ fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
                 stmts: Vec::new(),
                 trailing: Some(Box::new(body_expr)),
                 span,
+                is_unsafe: false,
             };
             f.body = FnBody::Block(new_block);
         }

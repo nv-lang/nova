@@ -1,0 +1,23 @@
+// Plan 118 Ф.6 T6.1 — `*fn(Args) -> Ret` function pointer type parses
+// + type-checks. (D216 §10).
+//
+// V1 scaffold: parsed via existing parse_type recursion — `*fn(...)`
+// becomes Pointer(Ro, Func{...}). Codegen emits `Ret (*fn_name)(Args)`.
+// Cast `fn → *fn` + captureless check + callback no-throw enforcement
+// (E_CALLBACK_THROWS_OVER_C_ABI / E_EXTERNAL_FN_FAIL_EFFECT) — Ф.6
+// follow-on phase work.
+
+module plan118.t6_1_fn_pointer_type_ok
+
+// External fn declaring callback parameter — fn pointer type в signature.
+external fn p118_register_cb(cb *fn(i64) -> i64) -> i64
+
+// Multi-arg callback.
+external fn p118_register_pair_cb(cb *fn(i64, i64) -> i64) -> i64
+
+// Return type *fn(...) (less common but valid).
+external fn p118_get_default_cb() -> *fn(i64) -> i64
+
+test "function pointer types parse + type-check" {
+    assert(1 == 1)
+}

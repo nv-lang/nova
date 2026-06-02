@@ -1,0 +1,15 @@
+// Plan 118 Ф.1 NEG — `*ro T` в expression position (not type position).
+// Parser disambiguates: `*` в expression position parses как Deref unary
+// (Plan 118 Ф.2). `ro` после `*` в expression position — parse error
+// (ro keyword не valid в expression).
+//
+// EXPECT_COMPILE_ERROR expected
+
+module plan118.t1_neg_ro_in_expression_pos
+
+test "rejects *ro в expression position" {
+    // *ro x — invalid в expression position. `*` parses как Deref op,
+    // then expects expression, sees `ro` keyword — fail.
+    ro x = *ro 42
+    assert(1 == 1)
+}

@@ -1,0 +1,29 @@
+// Plan 118 Ф.1 T1.8 — backward compat: existing `ptr` (Plan 115 D214)
+// continues to work post-D214 amend.
+//
+// D214 amend (Plan 118): `type ptr Option[*unsafe ()]` — newtype над
+// nullable unsafe void pointer. ABI preserved (single `void*`). Legacy
+// usages of `ptr` opaque continue работать transparent'но.
+//
+// NOTE: full `null ptr` literal retraction landing в Ф.5 (NPO codegen
+// + `[M-115-null-ptr-to-option-after-npo]` closure). Until then, `ptr`
+// (Plan 115 V1) и `*T` (Plan 118) coexist.
+
+module plan118.t1_8_ptr_legacy_compat_ok
+
+// Plan 115 V1 opaque handle pattern — continues работать.
+type LegacyHandle(ptr)
+
+// Plan 118 typed handle — recommended canonical.
+type TypedBuffer {
+    ro size i64
+}
+type TypedHandle(*TypedBuffer)
+
+// External fns mixing legacy ptr + typed *T — both should compile.
+external fn p118_legacy_fn(h LegacyHandle) -> i64
+external fn p118_typed_fn(h TypedHandle) -> i64
+
+test "legacy ptr + typed *T pattern coexist (Plan 115 D214 backward compat)" {
+    assert(1 == 1)
+}

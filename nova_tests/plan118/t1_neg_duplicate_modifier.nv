@@ -1,0 +1,19 @@
+// Plan 118 Ф.1 NEG-T1.15 — `*ro mut T` (duplicate / conflicting modifier).
+//
+// Parser sees `*ro`, consumes modifier; then recursive parse_type sees
+// `mut` keyword. `mut` is not valid type starter — parse error.
+//
+// User likely meant either `*ro *mut T` (chain) or `*mut T`. Clear
+// error message lets dev fix easily.
+//
+// EXPECT_COMPILE_ERROR expected type
+
+module plan118.t1_neg_duplicate_modifier
+
+type Acc {
+    ro id i64
+}
+
+external fn p118_bad(p *ro mut Acc) -> i64
+
+test "rejects" { assert(1 == 1) }

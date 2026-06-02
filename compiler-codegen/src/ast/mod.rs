@@ -424,6 +424,14 @@ pub struct FnDecl {
     /// needs clause declared (used by type-checker to emit D163-missing-cap
     /// when the function carries consume-obligations).
     pub needs_caps: Vec<String>,
+    /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
+    /// Body implicitly в unsafe context (pointer ops без unsafe{} wrap).
+    /// Callers must `unsafe { ... }` wrap the call (E_UNSAFE_CALL_REQUIRES_WRAP
+    /// иначе). No effect propagation up — каждая fn decides encapsulate or
+    /// propagate (canonical Rust pattern). V1 Ф.3.2: parse + AST storage;
+    /// type-checker enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5
+    /// followup. Default `false`.
+    pub unsafe_attr: bool,
     /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` attribute —
     /// per-fn override const fn evaluator recursion depth (default 256).
     /// `None` = use evaluator default. Range 1..=65535 (parser-enforced).
@@ -1098,6 +1106,22 @@ pub struct BenchCase {
     pub span: Span,
 }
 
+/// Plan 118 (D216 §1-3): pointer modifier in `*T` / `*ro T` / `*mut T` /
+/// `*unsafe T` family. Default = `Ro` (omitted modifier ≡ `*ro T`).
+///
+/// Chain order: modifier applies to ITS `*`, read left-to-right.
+/// `*mut *ro T` = mut pointer на (ro pointer на T).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerModifier {
+    /// `*T` (default) или `*ro T` — readonly typed pointer
+    Ro,
+    /// `*mut T` — mutable typed pointer
+    Mut,
+    /// `*unsafe T` — pointer после arithmetic (alignment/bounds gone);
+    /// deref требует ещё один unsafe wrap
+    Unsafe,
+}
+
 /// Ссылка на тип. Для bootstrap'а — упрощённая структура.
 #[derive(Debug, Clone)]
 pub enum TypeRef {
@@ -1137,6 +1161,15 @@ pub enum TypeRef {
     /// Zero runtime overhead: only compile-time check. Forbids mut-methods
     /// and index writes. `T → readonly T` coerce allowed; reverse forbidden.
     Readonly(Box<TypeRef>, Span),
+    /// Plan 118 (D216 §1-3): typed pointer family `*T` / `*ro T` /
+    /// `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
+    ///
+    /// Examples:
+    /// - `*T` → `Pointer(Ro, T, span)` (default ro)
+    /// - `*mut T` → `Pointer(Mut, T, span)`
+    /// - `*mut *ro Acc` → `Pointer(Mut, Pointer(Ro, Acc, ...), ...)`
+    ///   (mut pointer на ro pointer на Acc)
+    Pointer(PointerModifier, Box<TypeRef>, Span),
 }
 
 impl TypeRef {
@@ -1149,7 +1182,8 @@ impl TypeRef {
             | TypeRef::Func { span, .. }
             | TypeRef::Protocol { span, .. }
             | TypeRef::Unit(span)
-            | TypeRef::Readonly(_, span) => *span,
+            | TypeRef::Readonly(_, span)
+            | TypeRef::Pointer(_, _, span) => *span,
         }
     }
 
@@ -1163,6 +1197,11 @@ impl TypeRef {
 
     pub fn is_readonly(&self) -> bool {
         matches!(self, TypeRef::Readonly(..))
+    }
+
+    /// Plan 118: returns true if this is a typed pointer `*T` (any modifier).
+    pub fn is_pointer(&self) -> bool {
+        matches!(self, TypeRef::Pointer(..))
     }
 
     /// Plan 91.12 V2 followup #3 (2026-06-02): рекурсивная проверка
@@ -1186,6 +1225,7 @@ impl TypeRef {
     ///   - Func: recurse на params + return type.
     ///   - Protocol: recurse на methods' params + return types.
     ///   - Unit: false.
+    ///   - Pointer (Plan 118): recurse на inner.
     pub fn uses_any_type_param(&self, params: &std::collections::HashSet<String>) -> bool {
         match self {
             TypeRef::Named { path, generics, .. } => {
@@ -1206,6 +1246,7 @@ impl TypeRef {
                     || m.return_type.as_ref()
                         .map_or(false, |t| t.uses_any_type_param(params))
             }),
+            TypeRef::Pointer(_, inner, _) => inner.uses_any_type_param(params),
             TypeRef::Unit(_) => false,
         }
     }
@@ -1217,7 +1258,15 @@ pub struct Block {
     pub stmts: Vec<Stmt>,
     pub trailing: Option<Box<Expr>>,
     pub span: Span,
+    /// Plan 118 (D216 §8, D2 amend): `unsafe { ... }` block marker.
+    /// Type-checker uses for unsafe-context tracking — pointer ops
+    /// (&, *, *T deref, p.field на pointer) require unsafe context
+    /// (E_UNSAFE_REQUIRED иначе — Ф.3.5 follow-on). Default false;
+    /// set true by parser для KwUnsafe-prefixed blocks (parse_primary
+    /// KwUnsafe arm).
+    pub is_unsafe: bool,
 }
+
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -2119,6 +2168,15 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    /// Plan 118 D216 §4: `&value` pointer creation. Result type =
+    /// `*ro T` или `*mut T` (per binding context). Inside unsafe context
+    /// only (E_UNSAFE_REQUIRED иначе). Escape analysis с auto-promote
+    /// (D32 amend) — stack values auto-promoted в heap если pointer
+    /// escapes scope.
+    AddrOf,
+    /// Plan 118 D216 §5: `*p` explicit deref (one level). Result type =
+    /// inner pointee T. Inside unsafe context only.
+    Deref,
 }
 
 /// Pattern для match / let / if-let.

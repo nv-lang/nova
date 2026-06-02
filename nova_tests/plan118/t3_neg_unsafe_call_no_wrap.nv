@@ -1,0 +1,17 @@
+// Plan 118 Ф.3.5 NEG-T3.8 — calling #unsafe fn без unsafe wrap rejected.
+// D216 §9 enforcement.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+
+module plan118.t3_neg_unsafe_call_no_wrap
+
+#unsafe
+fn risky() -> i64 {
+    42
+}
+
+test "rejects calling #unsafe fn без unsafe wrap" {
+    // Direct call к #unsafe fn outside unsafe — error.
+    ro v = risky()
+    assert(v == 42)
+}

@@ -308,6 +308,57 @@ guard ensures single definition).
   Nova spawns fibers that touch the handle, ensure handle is either
   thread-safe or pinned to one fiber.
 
+## Plan 118 preview — typed pointers + unsafe model
+
+> **Status:** Plan 118 scaffolding landed (Session 2, 2026-06-01).
+> Full implementation through Ф.9 — in progress. Reference doc:
+> [`docs/typed-pointers.md`](typed-pointers.md). Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](plans/118-typed-pointers-and-unsafe.md).
+
+After Plan 118 lands, FFI patterns evolve from opaque `ptr` к typed
+pointer family `*T` для type-safe FFI с buffers / structs / nullable
+returns:
+
+```nova
+// Plan 115 V1 (current — works today):
+external fn nova_sqlite3_open(path str) -> (ptr, int)
+
+ro (h, rc) = nova_sqlite3_open(path)
+if rc != 0 { Fail.throw(DbError.OpenFailed(rc)) }
+
+// Plan 118 V2 (typed + nullable + NPO):
+external fn sqlite3_open(path str) -> (Option[Sqlite3Handle], i64)
+type Sqlite3Handle(*sqlite3)               // tuple newtype, zero-overhead
+
+unsafe {
+    match sqlite3_open(path) {
+        (Some(h), 0) => use_handle(h),
+        (None, rc)   => Fail.throw(DbError.OpenFailed(rc)),
+        (Some(_), rc) => Fail.throw(DbError.OpenFailed(rc)),  // C bug
+    }
+}
+```
+
+**Key improvements:**
+
+| | Plan 115 V1 (ptr) | Plan 118 V2 (*T family) |
+|---|---|---|
+| Type safety | ❌ opaque ptr cast вручную | ✓ compile-time pointee check |
+| Mutability | ❌ нет различия | ✓ `*ro T` / `*mut T` |
+| Null safety | ❌ `null ptr` runtime check | ✓ `Option[*T]` + NPO zero-cost |
+| FFI buffer | ❌ untyped `ptr` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
+| Callback registration | ❌ N/A | ✓ `*fn(Args) -> Ret` |
+
+**Migration path:**
+- Existing `ptr` usages — **no migration required** (D214 amend backward-
+  compatible)
+- `null ptr` literals — automated sed migration к `None` (Ф.5 task)
+- Record handle wrappers `type X { ro value ptr }` — migrate к tuple
+  newtype `type X(ptr)` или `type X(*T)` для zero-overhead ABI
+
+See [`docs/typed-pointers.md`](typed-pointers.md) для полной reference
+documentation и [`examples/typed_pointers/`](../examples/typed_pointers/)
+для minimal working samples.
+
 ## Followups
 
 | Marker | What | Status |

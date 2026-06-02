@@ -81,6 +81,10 @@ pub enum TokenKind {
     /// Plan 114 (D184): retracted in favour of `ro`. Lexer still recognizes
     /// the lexeme `readonly` so parser can emit `E_KW_REMOVED_READONLY`.
     KwReadonly,
+    /// Plan 118 (D216 §8, D2 amend): `unsafe` keyword.
+    /// Used: `*unsafe T` modifier (Ф.1), `unsafe { ... }` block (Ф.3),
+    /// `#unsafe` attribute on fn declarations (Ф.3).
+    KwUnsafe,
     /// Plan 124 (D220): per-field private visibility modifier.
     /// `priv mut money f64` — field accessible только из методов own type'а.
     /// Также позиционирован после `type X` для type-level default flip:
@@ -237,6 +241,7 @@ impl TokenKind {
             TokenKind::KwConsume => "`consume`",
             TokenKind::KwRo => "`ro`",
             TokenKind::KwReadonly => "`readonly`",
+            TokenKind::KwUnsafe => "`unsafe`",
             TokenKind::KwPriv => "`priv`",
             TokenKind::KwPub => "`pub`",
             TokenKind::KwIf => "`if`",

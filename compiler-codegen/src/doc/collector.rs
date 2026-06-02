@@ -865,6 +865,16 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108) / Plan 114 D184: ro T — display as "ro T"
         TypeRef::Readonly(inner, _) => format!("ro {}", render_type(inner)),
+        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
+        // Default `Ro` rendered without prefix (matches user-facing `*T` syntax).
+        TypeRef::Pointer(modif, inner, _) => {
+            let prefix = match modif {
+                crate::ast::PointerModifier::Ro => "*",
+                crate::ast::PointerModifier::Mut => "*mut ",
+                crate::ast::PointerModifier::Unsafe => "*unsafe ",
+            };
+            format!("{}{}", prefix, render_type(inner))
+        }
     }
 }
 
