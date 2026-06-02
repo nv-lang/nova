@@ -1,0 +1,33 @@
+// Plan 114.4.4 Ф.5 V4.4 Ф.1 POSITIVE: sizeof для FixedArray + Array + Unit.
+
+module plan114_4_4.sizeof_fixed_array_ok
+
+// [4]int — 4 elements × 8 bytes = 32, align 8
+const SIZE_4INT = sizeof[[4]int]()
+const ALIGN_4INT = align_of[[4]int]()
+
+// [16]i8 — 16 bytes, align 1
+const SIZE_16I8 = sizeof[[16]i8]()
+const ALIGN_16I8 = align_of[[16]i8]()
+
+// []int (slice) — pointer + length = 16 bytes, align 8
+const SIZE_SLICE = sizeof[[]int]()
+const ALIGN_SLICE = align_of[[]int]()
+
+// () unit — size 0, align 1
+const SIZE_UNIT = sizeof[()]()
+const ALIGN_UNIT = align_of[()]()
+
+test "sizeof FixedArray + Array + Unit" {
+    assert(SIZE_4INT == 32)
+    assert(ALIGN_4INT == 8)
+
+    assert(SIZE_16I8 == 16)
+    assert(ALIGN_16I8 == 1)
+
+    assert(SIZE_SLICE == 16)
+    assert(ALIGN_SLICE == 8)
+
+    assert(SIZE_UNIT == 0)
+    assert(ALIGN_UNIT == 1)
+}

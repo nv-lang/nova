@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.4 — negative: external free-fn implementing protocol-like
+// method on named tuple type → priv access BLOCKED (D222 §3 — protocol
+// impl boundary: type-method gets access; external fn does NOT).
+//
+// `compute_sum_outside` тематически реализует "Sum" протокол, но это
+// просто free fn — recv = None → priv check fires.
+module plan124_4.named_tuple_protocol_external_fn_neg
+
+type Vec3(priv x f64, priv y f64, priv z f64)
+
+fn Vec3.unit_x() -> Vec3 =>
+    Vec3(x: 1.0, y: 0.0, z: 0.0)
+
+// External fn — pretends to implement "Sum" protocol method but
+// is just a free fn → priv access blocked.
+fn compute_sum_outside(v Vec3) -> f64 =>
+    v.x + v.y + v.z

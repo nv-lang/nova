@@ -1,0 +1,23 @@
+// Plan 124.2 — positive: match arm на public field outside type-method
+// scope — OK (no priv concern).
+module plan124_2.public_field_match_outside_ok
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External fn pattern-matches только public `name` field.
+fn describe(acc Account) -> str {
+    match acc {
+        Account { name, .. } => name
+    }
+}
+
+test "Plan 124.2: match на public field outside — OK" {
+    ro acc = Account.new("dave")
+    assert(describe(acc) == "dave")
+}

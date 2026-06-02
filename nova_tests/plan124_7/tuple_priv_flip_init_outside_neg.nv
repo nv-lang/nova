@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_INIT
+//
+// Plan 124.7 — negative: type-level priv flip — external init of
+// type-default-priv field via named-tuple constructor blocked.
+module plan124_7.tuple_priv_flip_init_outside_neg
+
+type Secret priv (key str, salt str)
+
+// External fn — Secret(key:, salt:) ctor inits priv `key` → blocked.
+fn external_make(k str, s str) -> Secret =>
+    Secret(key: k, salt: s)

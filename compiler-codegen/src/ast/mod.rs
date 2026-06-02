@@ -436,6 +436,11 @@ pub struct FnDecl {
     /// per-fn override const fn evaluator recursion depth (default 256).
     /// `None` = use evaluator default. Range 1..=65535 (parser-enforced).
     pub fn_eval_max_depth: Option<u32>,
+    /// Plan 124.6 (D225): `#test_access(TypeX, TypeY...)` attribute —
+    /// fn body получает priv-field access к указанным types (escape
+    /// hatch для unit tests + sibling helper fns). Empty = no extra
+    /// access. Backward-compat: default empty Vec.
+    pub test_access_for: Vec<String>,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
@@ -816,6 +821,15 @@ pub struct NamedTupleField {
     pub name: String,
     pub ty: TypeRef,
     pub span: Span,
+    /// Plan 124.4 (D222): per-field private visibility marker для
+    /// named tuple. Same semantics as RecordField.priv_field:
+    /// accessible only из methods own type'а.
+    /// Backward-compat: default false (= public).
+    pub priv_field: bool,
+    /// Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
+    /// friend declaration. Same semantics как RecordField.visible_to.
+    /// Backward-compat: default empty Vec.
+    pub visible_to: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -857,6 +871,12 @@ pub struct RecordField {
     /// (priv_field stays false).
     /// Backward-compat: default false (= public; D47 MVP unchanged).
     pub priv_field: bool,
+    /// Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
+    /// attribute — explicit friend declaration. Methods of listed
+    /// types ALSO get priv access (besides own type). Empty = strict
+    /// type-only access (default).
+    /// Backward-compat: default empty Vec.
+    pub visible_to: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

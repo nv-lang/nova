@@ -497,9 +497,12 @@ fn render_type_definition(name: &str, def: &TypeDefinition, consume: bool) -> St
     match def {
         TypeDefinition::Record(fields) => {
             let _ = write!(s, "type {}{} {{ ", name, consume_kw);
+            // Plan 124.5 (D220/D222): render `priv` modifier для priv fields
+            // когда `--include-private` shows them.
             let fs = fields.iter().map(|f| {
-                if f.mutable { format!("mut {} {}", f.name, f.ty) }
-                else { format!("{} {}", f.name, f.ty) }
+                let priv_kw = if f.priv_field { "priv " } else { "" };
+                if f.mutable { format!("{}mut {} {}", priv_kw, f.name, f.ty) }
+                else { format!("{}{} {}", priv_kw, f.name, f.ty) }
             }).collect::<Vec<_>>().join("; ");
             let _ = write!(s, "{} }}", fs);
         }

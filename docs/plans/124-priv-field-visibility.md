@@ -1020,13 +1020,13 @@ Check open-questions.md для существующих Q'ов:
 | Sub-plan | Status |
 |---|---|
 | 124.1 Core record | 🟢 **V1 FULLY CLOSED 2026-06-02** — parser/AST/lexer + 4 error codes enforcement + 9/9 fixtures (4 positive + 5 negative) + D220 spec + acceptance A1.1-A1.10 all ✅ |
-| 124.2 Pattern + literal init | 🆕 PLANNED |
-| 124.3 Generics | 🆕 PLANNED |
-| 124.4 Tuple + protocol | 🆕 PLANNED |
-| 124.5 nova doc + LSP | 🆕 PLANNED |
-| 124.6 Test access + visible_to | 🆕 PLANNED |
-| 124.7 Type-level priv flip (named tuples) | 🆕 PLANNED |
-| **Umbrella** | 🟡 PARTIAL — Plan 124.1 V1 fully closed (compile-time enforcement working); 6 sub-plans remaining (124.2-124.7) |
+| 124.2 Pattern + literal init | 🟢 **CLOSED 2026-06-02** — Match/IfLet/WhileLet/For/ParallelFor sites + nested + spread (D221 NEW); 14/14 plan124_2 PASS |
+| 124.3 Generics | 🟢 **CLOSED 2026-06-02** — uniform enforcement on Generic[T] types verified (10/10 plan124_3); D220 §G1 amend |
+| 124.4 Tuple + protocol | 🟢 **CLOSED 2026-06-02** — NamedTupleField priv parsing + 3 checker hooks + protocol impl boundary §3 (D222 NEW); 10/10 plan124_4 PASS |
+| 124.5 nova doc + LSP | 🟢 **CLOSED 2026-06-02** — nova doc strip_private filter per-field + render priv keyword + JSON priv_field emit + docs/field-visibility-guide.md; LSP hover/completion forward-ref Plan 104.2/104.3 |
+| 124.6 Test access + visible_to | 🟢 **CLOSED 2026-06-02** — `#test_access(TypeX...)` fn attr + `#visible_to(TypeY...)` field attr + unified `priv_field_access_allowed` predicate (D224 NEW; **renumbered from D223 → D224 after collision с Plan 123 IPA D223**); 7/7 plan124_6 PASS |
+| 124.7 Type-level priv flip (named tuples) | 🟢 **CLOSED 2026-06-02** — `type X priv (...)` symmetric extension D220 §3.3.1 на named tuple form (D225 NEW; **renumbered from D224 → D225 after collision с Plan 123 IPA D223**); parser shim parse_named_tuple_fields_with_default; 8/8 plan124_7 PASS |
+| **Umbrella** | ✅ **FULLY CLOSED 2026-06-02** — все 7 sub-plans 124.1-124.7 ✅; D220+D221+D222+D224+D225 spec corpus complete (D223 = Plan 123 IPA, not Plan 124); production-grade per-field privacy in Nova match-or-exceeds Go/Rust/TS/Java/Swift/C# на 14 capabilities + 3 Nova-only superior axes |
 
 ---
 

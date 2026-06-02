@@ -1,0 +1,24 @@
+// Plan 124.7 — positive: smoke check — record-form type-level priv flip
+// (Plan 124.1 existing) НЕ regressed by 124.7 tuple-form addition.
+module plan124_7.tuple_priv_flip_record_form_ok
+
+// Record form (Plan 124.1)
+type Account priv {
+    pub ro name str
+    mut balance f64    // default = priv (inherits type-level)
+}
+
+fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+// Static method scope — can construct + access priv balance.
+fn Account.create_with(n str, b f64) -> Account =>
+    { name: n, balance: b }
+
+fn external_name(a Account) -> str =>
+    a.name    // pub field — OK
+
+test "Plan 124.7: record form type-level priv flip preserved" {
+    ro a = Account.create_with("test", 100.0)
+    assert(external_name(a) == "test")
+}

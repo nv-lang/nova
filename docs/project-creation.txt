@@ -28282,6 +28282,319 @@ Deferred к next session (per umbrella roadmap):
 - Plan 124.6 Test access + visible_to friends
 - Plan 124.7 Type-level priv flip (tuples)
 
+
+Plan 124.2 — pattern destructure + literal init edge cases (2026-06-02)
+
+Sub-plan Plan 124 — расширяет 124.1 enforcement на доп. pattern sites
++ recursive nested + record-literal spread. Closed в той же autonomous
+session что и 124.1.
+
+Изменения compiler-codegen/src/types/mod.rs:
+- NEW: helper check_priv_pattern_recursive(pattern, scrutinee_ty,
+  errors) — обходит Pattern::Record + Or + Binding; для Record
+  делает top-level check + recurses в sub-patterns с resolved
+  sub-field type через outer RecordField.ty.
+- Stmt::Let inline 40-line check заменён на 2-line call.
+- Hooks added: ExprKind::Match (per arm.pattern), IfLet (pattern),
+  WhileLet (pattern), For (pattern + elem_type via infer_iter_elem_type),
+  ParallelFor (same).
+- Spread check в walk_expr RecordLit: для типа с priv fields outside
+  type-method scope, `...other` emits E_PRIV_FIELD_INIT_SPREAD (NEW).
+
+D-block: D221 NEW в spec/decisions/02-types.md (после D220).
+Includes §1 Scope, §2 Pattern sites enumeration table, §3 Rest
+pattern semantics, §4 Nested Pattern::Record recursion, §5 Spread,
+§6 Diagnostic codes, §7 Cross-refs, Acceptance A2.1-A2.10 ✅.
+
+README.md spec index: D221 entry добавлен.
+
+Fixtures nova_tests/plan124_2/ (14/14 PASS):
+Positive (8): match_arm_inside_method_ok, if_let_inside_method_ok
+(static method scope), rest_pattern_ignores_priv_ok, public_field_match_outside_ok
+(no false-positive), spread_inside_method_ok, spread_no_priv_outside_ok,
+nested_destructure_inside_method_ok, for_pattern_public_outside_ok.
+Negative (6): match_arm_outside_neg, if_let_outside_neg,
+while_let_outside_neg, for_pattern_outside_neg,
+nested_destructure_outside_neg, spread_outside_neg.
+
+Verified через release nova-cli + clang (toolchain Dev).
+
+Regression: plan124_1 9/9 PASS unchanged.
+
+Commit:
+- feat(plan 124.2): pattern destructure + literal spread edge cases (D221)
+  — implementation + 14 fixtures.
+- Spec D221 + plan status flip + 3 logs — separate closure commit.
+
+Plan 124.2 acceptance A2.1-A2.10 — ALL ✅.
+
+Plan 124 umbrella status: 2/7 sub-plans closed (124.1, 124.2).
+Remaining: 124.3 (generics), 124.4 (named tuple + protocol),
+124.5 (nova doc + LSP), 124.6 (test_access + visible_to),
+124.7 (type-level priv flip for tuples).
+
+
+Plan 124.3 — Generics uniform handling (2026-06-02)
+
+Sub-plan Plan 124 — verifies priv enforcement applies uniformly к
+generic record types. Zero implementation code change (architecture
+already AST-level), purely fixture + spec amend + logs.
+
+D-block: D220 §G1 NEW amend в spec/decisions/02-types.md.
+- Articulates AST-level enforcement architecture.
+- Receiver tracking name-based (generic params ignored).
+- Documents bootstrap parser limitation: explicit `Stack[int] { ... }`
+  in expression position not supported → anonymous form `{ ... }` с
+  return-type inference является canonical.
+- Acceptance A3.1-A3.8 ✅.
+
+Fixtures nova_tests/plan124_3/ (10/10 PASS):
+Positive 6: generic_priv_inside_method_ok, generic_stack_inside_ok
+(Stack[int] + Stack[str] both), generic_public_field_outside_ok,
+option_priv_field_pass, generic_static_constructor_ok (anonymous
+literal), generic_pub_only_no_false_positive_ok.
+Negative 4: generic_priv_read_outside_neg, generic_priv_write_outside_neg,
+generic_priv_pattern_outside_neg (`Stack { fields }` без generic args),
+generic_priv_write_after_new_neg.
+
+Verified release nova-cli + clang.
+
+Regression: plan124_1 9/9, plan124_2 14/14 unchanged.
+
+Commit:
+- feat(plan 124.3): generics uniform — 10 fixtures + spec D220 §G1
+  + plan flip + 3 logs.
+
+Plan 124.3 acceptance A3.1-A3.8 — ALL ✅.
+
+Plan 124 umbrella status: 3/7 sub-plans closed (124.1, 124.2, 124.3).
+Remaining: 124.4 (named tuple + protocol), 124.5 (doc + LSP),
+124.6 (test_access + visible_to), 124.7 (type-level priv flip tuples).
+
+
+Plan 124.4 — Named tuple priv + protocol impl boundary (2026-06-02)
+
+Sub-plan Plan 124. D222 NEW в spec/decisions/02-types.md.
+
+AST/parser change:
+- NamedTupleField gets priv_field: bool (default false).
+- parser/mod.rs: is_named_tuple_decl recognizes KwPriv/KwPub.
+  parse_named_tuple_fields accepts modifier с E_PRIV_PUB_CONFLICT
+  bidirectional.
+
+Checker hooks:
+- f3_check_member NamedTuple arm: E_PRIV_FIELD_READ per priv field
+  access outside type-method scope (Plan 124.1 receiver tracking).
+- f5_check_tuple_construct: NamedTuple branch INIT check on named-args.
+  E_PRIV_FIELD_INIT per priv-named-arg.
+- check_priv_pattern_recursive (Plan 124.2 helper): unified Record +
+  NamedTuple. Resolves field types через field_types vec, supports
+  recursion для nested through both forms.
+
+Protocol impl boundary (D222 §3):
+- Type-method `fn Vec3 @to_string()` — recv = "Vec3", priv access OK.
+- External free-fn `fn compute(v Vec3) => v.x + ...` — recv = None,
+  priv access → E_PRIV_FIELD_READ.
+
+D-block: D222 NEW. §1 Named tuple syntax, §2 Access rules uniform с
+D220, §3 Protocol impl boundary, §4 Diagnostic codes (reuses D220/D221),
+§5 Implementation hooks, §6 Cross-refs, Acceptance A4.1-A4.10 ✅.
+
+README spec index: D222 entry.
+
+Fixtures nova_tests/plan124_4/ — 10/10 PASS:
+Positive 5: named_tuple_priv_parse_ok, named_tuple_inside_method_ok,
+named_tuple_mixed_priv_pub_ok, named_tuple_no_priv_ok,
+named_tuple_protocol_method_inside_ok.
+Negative 5: named_tuple_priv_pub_conflict_neg, named_tuple_priv_read_outside_neg,
+named_tuple_priv_init_outside_neg, named_tuple_priv_pattern_outside_neg,
+named_tuple_protocol_external_fn_neg.
+
+Regression: Plan 120 8/8 + plan124_1 9/9 + plan124_2 14/14 unchanged.
+
+Commit:
+- feat(plan 124.4): named tuple priv + protocol impl boundary — D222
+  + 10 fixtures + spec + plan flip + 3 logs.
+
+Plan 124.4 acceptance A4.1-A4.10 — ALL ✅.
+
+Plan 124 umbrella status: 4/7 sub-plans closed (124.1, 124.2, 124.3, 124.4).
+Remaining: 124.5 (doc + LSP), 124.6 (test_access + visible_to),
+124.7 (type-level priv flip tuples).
+
+
+Plan 124.5 — nova doc + LSP integration (2026-06-02)
+
+Sub-plan Plan 124. doc tree расширен per-field priv metadata.
+
+Changes:
+- compiler-codegen/src/doc/doctree.rs: RecordField.priv_field bool.
+- compiler-codegen/src/doc/collector.rs: 3 sites populate priv_field
+  from AST (Record TypeDecl + Sum-Record-variant + NamedTuple).
+- compiler-codegen/src/doc/mod.rs::strip_private: per-field filter
+  extended (priv fields removed from Record + Sum-Record).
+- render_md.rs: `priv` keyword preserved in signature.
+- render_html.rs: same.
+- render_json.rs: emit "priv_field": true|false для каждого field.
+
+LSP: Plan 104.x infrastructure currently covers diagnostics only
+(Plan 104.1 closed). Hover (104.2) и completion (104.3) — separate
+sub-plans. Plan 124.5 V1 wires doc-layer; LSP integration deferred.
+
+docs/field-visibility-guide.md создан (~330 lines):
+- TL;DR + use cases + syntax + composition + diagnostics + tooling +
+  comparison vs Go/Rust/TS/Java/Swift/C# + migration + 3 patterns.
+
+D-block: D220 §T1 amend в spec/decisions/02-types.md (tooling section).
+Acceptance A5.1-A5.8 ✅ (A5.3-A5.5 LSP forward-ref Plan 104.2/104.3).
+
+Fixtures plan124_5/ 3/3 PASS via release nova-cli + clang:
+- doc_priv_fixture, doc_no_priv_fixture, doc_mixed_priv_fixture.
+E2E verification manual:
+- nova doc fixture.nv → priv hidden.
+- nova doc fixture.nv --include-private → priv keyword preserved.
+- nova doc fixture.nv --include-private --format json → "priv_field"
+  emitted per field.
+
+Commit:
+- feat(plan 124.5): nova doc per-field priv + visibility guide
+  — doc tree + collector + 3 renderers + 3 fixtures + guide + 3 logs.
+
+Plan 124.5 acceptance A5.1-A5.8 — ALL ✅ (LSP forward-ref).
+
+Plan 124 umbrella status: 5/7 sub-plans closed (124.1, 124.2, 124.3, 124.4, 124.5).
+Remaining: 124.6 (test_access + visible_to), 124.7 (type-level priv flip tuples).
+
+
+Plan 124.6 — Escape hatches #test_access + #visible_to (2026-06-02)
+
+D-block D224 NEW (renumbered from D223 после Plan 123 collision) в spec/decisions/02-types.md. Two opt-in escape
+hatches для controlled priv-access relaxation.
+
+#test_access(TypeX[, TypeY...]) fn attribute:
+- body fn gets priv-field access ко всем listed types.
+- Test escape hatch для unit tests + sibling helper fns.
+- AST: FnDecl.test_access_for: Vec<String>.
+
+#visible_to(OtherType[, ...]) field attribute:
+- methods listed types get priv access ТОЛЬКО к marked field.
+- Per-field friend declaration — granular, не whole-type.
+- AST: RecordField.visible_to, NamedTupleField.visible_to: Vec<String>.
+
+Parser:
+- ContractAttrs gets test_access_for + is_empty() check.
+- parse_contract_attrs(): "#test_access" matcher — identifier list
+  comma-separated в parens, non-empty required.
+- parse_record_fields_with_default(): #visible_to parsed BEFORE
+  priv/pub modifier (logical grouping).
+
+Type-checker:
+- TypeCheckCtx: current_fn_test_access RefCell<Vec<String>> field.
+- PrivTestAccessGuard RAII (mirrors PrivRecvGuard pattern).
+- Set + cleared в check_fn + f1_check_fn (mirrors PrivRecvGuard sites).
+- Helper priv_access_allowed_base(tname): type-method-scope OR test_access.
+- Helper priv_field_access_allowed(tname, visible_to): base OR friend.
+- All 6 priv-check sites refactored (Record READ + NamedTuple READ +
+  WRITE + RecordLit INIT + spread + NamedTuple INIT + Pattern recursive).
+
+Diagnostic hints updated: все Plan 124.1-124.4 codes now mention
+#test_access(T) escape hatch + spec D224 link.
+
+Combined access predicate (D224 §4):
+- type-method-scope (D220), OR
+- tname ∈ current_fn.test_access_for (D224 §2), OR
+- current_recv ∈ field.visible_to (D224 §3).
+
+Fixtures nova_tests/plan124_6/ — 7/7 PASS:
+Positive 4: test_access_grants_priv_ok, test_access_multiple_types_ok,
+test_access_init_priv_ok, visible_to_friend_ok.
+Negative 3: no_attr_still_blocked_neg (backward compat), test_access_wrong_type_neg,
+visible_to_non_friend_neg.
+
+Regression: plan124_1 9/9 + plan124_2 14/14 + plan124_4 10/10 unchanged.
+
+D-block + plan flip + 3 logs.
+
+Commit:
+- feat(plan 124.6): test_access + visible_to escape hatches (D224).
+
+Plan 124.6 acceptance A6.1-A6.8 — ALL ✅.
+
+Plan 124 umbrella status: 6/7 sub-plans closed (124.1-124.6).
+Remaining: 124.7 (type-level priv flip tuples).
+
+
+Plan 124.7 — Type-level priv flip для named tuples (2026-06-02)
+
+D-block D225 NEW (renumbered from D224) в spec/decisions/02-types.md. Symmetric extension
+D220 §3.3.1 (record-form Plan 124.1) на named tuple form (D215).
+
+Syntax: `type Secret priv (key str, salt str)` — default field
+visibility flipped к priv. Explicit `pub` per-field overrides.
+
+Implementation:
+- TypeDecl.default_field_priv — pre-existing (Plan 124.1), re-used.
+- parse_type_decl: KwPriv после type-name set'ит default_field_priv
+  независимо от body kind (already supported).
+- NEW parse_named_tuple_fields_with_default(default_priv) — wrapper
+  с default propagation. Backward-compat shim parse_named_tuple_fields()
+  calls _with_default(false).
+- Field parser: explicit pub → priv_field = false, explicit priv →
+  true, neither → inherit default_priv. Mirrors parse_record_fields_with_default.
+
+Effective resolution (D225 §2): table matches D220 §3.3.1 record form.
+Access rules UNCHANGED — все Plan 124.1-124.6 sites work uniform.
+
+Fixtures plan124_7/ 8/8 PASS:
+Positive 5: tuple_priv_flip_inside, tuple_priv_flip_pub_override,
+tuple_priv_flip_no_flip, tuple_priv_flip_record_form,
+tuple_priv_flip_explicit_priv_redundant.
+Negative 3: tuple_priv_flip_read_outside, tuple_priv_flip_init_outside,
+tuple_priv_flip_pattern_outside.
+
+Lessons:
+- Nova reserved keyword `with` → use `create_with` for fn name.
+- Named tuple fields immutable (D215) — no `mut` per-field allowed.
+
+Regression: Plan 120 8/8 + plan124_1 9/9 + plan124_4 10/10 unchanged.
+
+Commit:
+- feat(plan 124.7): type-level priv flip for named tuples — D225 NEW
+  + 8 fixtures + spec + plan flip + 3 logs.
+
+Plan 124.7 acceptance A7.1-A7.8 — ALL ✅.
+
+
+==============================================================
+Plan 124 UMBRELLA ✅ FULLY CLOSED (2026-06-02)
+==============================================================
+
+Все 7 sub-plans 124.1-124.7 closed в одной autonomous session
+(~6 hours wall-time).
+
+Cumulative production deliverables:
+- 5 NEW D-blocks (D220, D221, D222, D224, D225) + 2 amends
+  (D220 §G1 generics, D220 §T1 tooling).
+- 6 error codes (E_PRIV_FIELD_READ/WRITE/INIT/PATTERN/INIT_SPREAD +
+  E_PRIV_PUB_CONFLICT) — Plan 50 D102 format.
+- 2 attribute escape hatches (#test_access, #visible_to).
+- 61 PASS / 0 FAIL fixtures (plan124_1 9/9 + plan124_2 14/14 +
+  plan124_3 10/10 + plan124_4 10/10 + plan124_5 3/3 + plan124_6 7/7 +
+  plan124_7 8/8).
+- docs/field-visibility-guide.md (~330 lines user guide).
+- nova doc per-field priv filter + --include-private flag + JSON
+  priv_field emit (LSP-ready data source).
+
+Comparison vs Go/Rust/TS/Java/Swift/C#: match-or-exceeds 14/14
+capabilities + 3 Nova-only superior axes (strictest scope, no
+reflection backdoor, named-tuple priv).
+
+Backward compat: 0 regression FAIL в plan120 + plan124_1-7.
+
+Plan 124 umbrella ✅ FULLY CLOSED.
+Plan doc status table updated.
+
+
 [Plan 91.12 V2 followup — Generic newtype `type X[T](ptr)` user-FFI support] 2026-06-02
 
 Контекст: Plan 91.12 V2 ранее закрыл миграцию sync types (OnceCell/Lazy/Condvar)
@@ -29232,3 +29545,76 @@ Lessons:
 - 114.4.4.4 V4.3 closure-from-const-fn (this session)
 
 All 9 markers from [M-114.4.3-*] closed.
+
+
+================================================================================
+== 2026-06-02 — Plan 114.4.4 V4.4 followups bundle (Ф.1+Ф.2 LANDED, Ф.3+Ф.4 DEFERRED)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-v4-4-followups (off main 23fe1479e89)
+> Sub-plan doc: docs/plans/114.4.4.6-v4-followups.md
+> Status: 🟡 PARTIAL — 2/4 markers closed.
+
+Замысел:
+Закрыть 4 открытых markers из Plan 114.4.4 V4.2/V4.3:
+- [M-114.4.4-trampoline-record-reflection] — sizeof для composite types.
+- [M-114.4.4-closure-captures-outer] — closure body captures outer consts.
+- [M-114.4.4-trampoline-generics] — generic const fn first-class use.
+- [M-114.4.4-closure-generic] — generic closure-returning const fn.
+
+Реализовано (Ф.1+Ф.2 — LANDED):
+
+Ф.1 sizeof для composite types (commit 2d552ea2742):
+- Extend type_size_or_align от primitives-only до:
+  * Tuples — C struct layout с natural alignment + tail-pad.
+  * FixedArray [N]T — N * sizeof(elem).
+  * Array []T — slice ABI 16 bytes, align 8.
+  * Unit () — 0/1.
+  * Readonly T — transparent wrapper.
+- Primitive table теперь (size, align) tuples — str = (16, 8).
+- 4 POS + 1 NEG fixtures. A36 acceptance.
+- Still V2: Named user records/sums — followup [M-114.4.4-trampoline-named-types].
+
+Ф.2 closure outer captures (commit 879ebc11ba6):
+- has_closure_returning_body допускает Block body с
+  stmts=all_Stmt::Const + trailing=closure literal.
+- generate_closure_spec eval'ит outer consts в порядке (с host params
+  substituted), результат добавляется в subst map для closure body.
+- check_const_fn_decl расширен для Block-body validation.
+- 2 POS + 1 NEG fixtures. A37 acceptance.
+- Parser note: |x| после const Stmt парсится как binary OR; workaround =
+  explicit ClosureFull `fn(x T) -> R => body`. Followup
+  [M-114.4.4-closure-light-after-const-stmt-parser].
+
+Deferred (Ф.3+Ф.4):
+
+Ф.3 generic trampoline + Ф.4 generic closure-spec — DEFERRED design pending.
+Blocker: generic instantiation requires one из:
+1. Parser TurboFish-as-fn-value (`id[int]` в expression position).
+2. HOF context type inference (callee's expected fn-type → generic T).
+3. Explicit type annotation (`ro f fn(int) -> int = id`).
+Recommended path #2; ~300 LOC trampoline pass extension.
+
+Documented в docs/plans/114.4.4.6-v4-followups.md с детальным design analysis.
+НЕ silent simplification — design decision needs user input.
+
+Tests (release nova-cli): 30/30 plan114_4_4 PASS — 5 новых (Ф.1) + 3 новых (Ф.2).
+No regression на plan114_4_2/3 (15+14 = 29/29).
+Total: 59/59 PASS on Plan 114.4 family.
+
+Spec/Q updates:
+- D199 V4.4 extensions subsection (spec/decisions/03-syntax.md).
+- A36+A37 acceptance criteria.
+- Q7 V4.4 closure note (spec/open-questions.md).
+- docs/plans/114.4.4.6-v4-followups.md — sub-plan-doc с status, blocker analysis.
+
+Lessons:
+- Pragmatic V1 boundaries — extending type_size_or_align к composite types
+  WITHOUT TypeDecl lookup possible (tuples/arrays computed from element types
+  recursively). Named records/sums genuinely require TypeDecl pass integration.
+- Parser ambiguity surfaces — ClosureLight `|x|` после Stmt::Const tokenized
+  как binary OR. Documented как followup, не блокирует Ф.2 thanks к ClosureFull
+  fallback.
+- Design-pending followups (Ф.3+Ф.4) deferred с clear blocker docs, не
+  half-baked impl. Production-ready scope requires user input on syntax/inference choice.

@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_INIT_SPREAD
+//
+// Plan 124.2 — negative: record literal spread `...other` outside
+// type-method scope для типа с priv fields → E_PRIV_FIELD_INIT_SPREAD
+// (D221 §5).
+//
+// Spread implicitly copies all fields (including priv), что нарушает
+// encapsulation outside type's own scope.
+module plan124_2.spread_outside_neg
+
+export type Account {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account.new(n str) -> Account =>
+    { money: 0.0, name: n }
+
+// External fn — spread на Account с priv `money`.
+fn external_spread(orig Account, new_name str) -> Account {
+    Account { ...orig, name: new_name }
+}

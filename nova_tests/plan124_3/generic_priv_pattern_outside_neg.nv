@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_PATTERN
+//
+// Plan 124.3 — negative: pattern destructure priv field generic type
+// outside any type-method scope → E_PRIV_FIELD_PATTERN (D220 §G1
+// + D221 §2). Pattern omits generic args — type name only used.
+module plan124_3.generic_priv_pattern_outside_neg
+
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+
+export fn Stack[T].new(cap int) -> Stack[T] =>
+    { len: 0, capacity: cap }
+
+// External fn — let-pattern destructure priv (Stack без generic args
+// в pattern — резолвится через scrutinee type).
+fn external_unpack(s Stack[int]) -> int {
+    ro Stack { len, capacity: _ } = s
+    len
+}

@@ -1,0 +1,26 @@
+// Plan 114.4.4 Ф.5 V4.4 Ф.1 POSITIVE: sizeof для вложенных composite types.
+
+module plan114_4_4.sizeof_nested_composite_ok
+
+// ([4]int, i32) — 32 (array) + pad to 8 (max-align tail) = 40, align 8
+const SIZE_ARR_I32 = sizeof[([4]int, i32)]()
+const ALIGN_ARR_I32 = align_of[([4]int, i32)]()
+
+// ((i8, i8), i32) — inner tuple = 2 bytes align 1; outer: pad to 4 + i32 = 8, align 4
+const SIZE_NESTED = sizeof[((i8, i8), i32)]()
+const ALIGN_NESTED = align_of[((i8, i8), i32)]()
+
+// (str, []int) — 16 + 16 = 32, align 8
+const SIZE_STR_SLICE = sizeof[(str, []int)]()
+const ALIGN_STR_SLICE = align_of[(str, []int)]()
+
+test "nested composite sizes" {
+    assert(SIZE_ARR_I32 == 40)
+    assert(ALIGN_ARR_I32 == 8)
+
+    assert(SIZE_NESTED == 8)
+    assert(ALIGN_NESTED == 4)
+
+    assert(SIZE_STR_SLICE == 32)
+    assert(ALIGN_STR_SLICE == 8)
+}

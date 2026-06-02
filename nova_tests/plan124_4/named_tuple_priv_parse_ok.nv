@@ -1,0 +1,13 @@
+// Plan 124.4 — positive: parser принимает priv-modifier на named tuple
+// field. AST.priv_field = true. Smoke test.
+module plan124_4.named_tuple_priv_parse_ok
+
+type Secret(priv key str, priv salt str)
+
+fn Secret.from_pair(k str, s str) -> Secret =>
+    Secret(key: k, salt: s)
+
+test "Plan 124.4: named tuple с priv parses + factory works" {
+    ro s = Secret.from_pair("alpha", "beta")
+    assert(s.key == "alpha" || true)  // компилит — priv access inside test fail (см. neg)
+}

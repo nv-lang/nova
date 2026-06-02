@@ -1,0 +1,16 @@
+// Plan 124.7 — positive: `type X priv (...)` тип-level flip с
+// explicit `pub` per-field override — `pub` поле остаётся public.
+module plan124_7.tuple_priv_flip_pub_override_ok
+
+type Credential priv (pub id str, secret str)
+
+fn Credential.new(i str, s str) -> Credential =>
+    Credential(id: i, secret: s)
+
+fn show_id(c Credential) -> str =>
+    c.id    // OK — explicit pub overrides type-level priv default
+
+test "Plan 124.7: explicit pub overrides type-level priv default" {
+    ro c = Credential.new("u-1", "xxx")
+    assert(show_id(c) == "u-1")
+}

@@ -48,22 +48,25 @@ use crate::ast::{
     LambdaParam, MapElem, MatchArmBody, Module, Param, Stmt, Trailing, TypeRef,
 };
 use crate::const_fn_eval::{ConstValue, try_literal_to_value};
-use crate::diag::Diagnostic;
+use crate::diag::{Diagnostic, Span};
 
 pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagnostic> {
     let mut errors: Vec<Diagnostic> = Vec::new();
 
     // Step 1 — collect closure-returning fully-const fns.
+    // Plan 114.4.4 V4.4 Ф.2 [M-114.4.4-closure-captures-outer]: also accept
+    // Block body where stmts = all `Stmt::Const` decls + trailing = closure
+    // literal. Captured outer const decls evaluated при специализации с
+    // host const params substituted, results merged в subst map для closure
+    // body.
     let mut closure_fns: HashMap<String, FnDecl> = HashMap::new();
     for item in &module.items {
         if let Item::Fn(fd) = item {
             let all_const = !fd.params.is_empty() && fd.params.iter().all(|p| p.is_const);
             let is_fully = (all_const || fd.params.is_empty()) && fd.return_is_const;
             if !is_fully { continue; }
-            if let FnBody::Expr(e) = &fd.body {
-                if is_closure_literal(e) {
-                    closure_fns.insert(fd.name.clone(), fd.clone());
-                }
+            if has_closure_returning_body(&fd.body) {
+                closure_fns.insert(fd.name.clone(), fd.clone());
             }
         }
     }
@@ -127,6 +130,57 @@ fn is_closure_literal(e: &Expr) -> bool {
     )
 }
 
+/// Plan 114.4.4 V4.4 Ф.2: body форма допускает либо
+/// `FnBody::Expr(closure)` либо `FnBody::Block { stmts: all_const_decls,
+/// trailing: closure_literal }` для outer-captures pattern.
+fn has_closure_returning_body(body: &FnBody) -> bool {
+    match body {
+        FnBody::Expr(e) => is_closure_literal(e),
+        FnBody::Block(b) => {
+            // V1 outer captures: stmts must be all Stmt::Const.
+            let stmts_ok = b.stmts.iter().all(|s| matches!(s, Stmt::Const(_)));
+            let trailing_ok = b.trailing.as_ref()
+                .map(|t| is_closure_literal(t))
+                .unwrap_or(false);
+            stmts_ok && trailing_ok
+        }
+        FnBody::External => false,
+    }
+}
+
+/// Extract outer const decls + closure expr из body. Caller'у выдаём
+/// (Vec<(name, span, value_expr)>, closure_expr).
+fn extract_outer_consts_and_closure<'a>(
+    body: &'a FnBody,
+) -> Option<(Vec<(String, Span, &'a Expr)>, &'a Expr)> {
+    match body {
+        FnBody::Expr(e) if is_closure_literal(e) => Some((Vec::new(), e)),
+        FnBody::Block(b) => {
+            let mut consts = Vec::new();
+            for s in &b.stmts {
+                if let Stmt::Const(cd) = s {
+                    consts.push((cd.name.clone(), cd.span, &cd.value));
+                } else {
+                    return None;
+                }
+            }
+            let trailing = b.trailing.as_ref()?;
+            if !is_closure_literal(trailing) { return None; }
+            Some((consts, trailing))
+        }
+        _ => None,
+    }
+}
+
+/// Substitute identifiers in expr (in-place) according to subst map. Used
+/// для outer const RHS evaluation: host param refs → literals, prior outer
+/// const refs → their evaluated values.
+fn subst_then_eval(e: &Expr, subst: &HashMap<String, ConstValue>) -> Option<ConstValue> {
+    let mut cloned = e.clone();
+    subst_expr(&mut cloned, subst);
+    try_literal_to_value(&cloned)
+}
+
 // =========================================================================
 // Step 3 — Specialization (clone closure body, substitute const params).
 // =========================================================================
@@ -142,11 +196,35 @@ fn generate_closure_spec(
         subst.insert(p.name.clone(), v.clone());
     }
 
+    // Plan 114.4.4 V4.4 Ф.2 [M-114.4.4-closure-captures-outer]: extract
+    // outer const decls (Stmt::Const before trailing closure). Evaluate
+    // each в порядке declaration с current subst map (host params + prior
+    // outer consts), результат добавляем в map.
+    let (outer_consts, closure_expr) = extract_outer_consts_and_closure(&host.body)
+        .ok_or_else(|| Diagnostic::new(
+            "[E_CONST_FN_CLOSURE_BODY] body должен быть closure literal или \
+             Block с Stmt::Const decls + trailing closure (V4.3).".to_string(),
+            host.span,
+        ))?;
+    for (name, span, value_expr) in &outer_consts {
+        let v = subst_then_eval(value_expr, &subst).ok_or_else(|| Diagnostic::new(
+            format!(
+                "[E_CONST_FN_CLOSURE_OUTER_NOT_CONST] outer const `{}` в \
+                 closure-returning fn `{}` body не constexpr после substitution \
+                 host params (V4.4 Ф.2). Body должен использовать только literal \
+                 arithmetic / const refs к host params / previous outer consts.",
+                name, host.name
+            ),
+            *span,
+        ))?;
+        subst.insert(name.clone(), v);
+    }
+
     // Extract closure params, body, return type. Param types выводим из
     // host fn's `-> const fn(P1,..) -> R` declaration.
     let host_ret_func = extract_func_signature(&host.return_type, host.span)?;
     let (closure_params, closure_body, closure_ret_explicit) =
-        extract_closure_parts(host, host_ret_func.0.clone())?;
+        extract_closure_parts_from_expr(closure_expr, host.span, host_ret_func.0.clone())?;
 
     // Derive return type: closure's explicit annotation (Lambda/ClosureFull)
     // или host fn's declared `fn(..) -> R` second component.
@@ -176,19 +254,13 @@ enum ClosureBodyForm {
     Block(Block),
 }
 
-/// Extract closure components from host fn's body (FnBody::Expr(closure)).
+/// Extract closure components from a closure literal Expr.
 /// Returns (closure_params_as_FnParams, closure_body, closure_return_type_explicit).
-fn extract_closure_parts(
-    host: &FnDecl,
+fn extract_closure_parts_from_expr(
+    e: &Expr,
+    _host_span: Span,
     expected_param_types: Vec<TypeRef>,
 ) -> Result<(Vec<Param>, ClosureBodyForm, Option<TypeRef>), Diagnostic> {
-    let FnBody::Expr(e) = &host.body else {
-        return Err(Diagnostic::new(
-            "[E_CONST_FN_CLOSURE_BODY] expected closure literal body (V4.3)."
-                .to_string(),
-            host.span,
-        ));
-    };
     let span = e.span;
     match &e.kind {
         ExprKind::Lambda { params, return_type, body, .. } => {

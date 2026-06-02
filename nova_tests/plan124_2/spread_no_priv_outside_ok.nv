@@ -1,0 +1,22 @@
+// Plan 124.2 — positive: record spread на type WITHOUT priv fields,
+// outside any type scope — OK (no priv concern).
+module plan124_2.spread_no_priv_outside_ok
+
+// Все public — нет priv → spread allowed везде.
+export type Point {
+    ro x f64
+    ro y f64
+}
+
+export fn Point.origin() -> Point => { x: 0.0, y: 0.0 }
+
+fn shift(p Point, dx f64) -> Point {
+    Point { ...p, x: p.x + dx }
+}
+
+test "Plan 124.2: spread на public-only type — OK везде" {
+    ro p = Point.origin()
+    ro q = shift(p, 5.0)
+    assert(q.x == 5.0)
+    assert(q.y == 0.0)
+}

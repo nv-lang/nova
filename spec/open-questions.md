@@ -214,6 +214,20 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
   `make_adder(LITERAL)` генерирует specialized fn `<host>__closure_<idx>`
   с substituted const param + closure body, replaced в call site как fn pointer.
 
+**V4.4 extensions (Plan 114.4.4 V4.4 followups session, 2026-06-02):**
+- ✅ Ф.1: sizeof/align_of для composite types — tuples / FixedArray /
+  Array / Unit / Readonly. Closes [M-114.4.4-trampoline-record-reflection].
+- ✅ Ф.2: Closure-returning const fn captures outer const locals
+  (Block body с Stmt::Const + trailing closure). Closes
+  [M-114.4.4-closure-captures-outer]. Parser note: ClosureLight `|x|`
+  после `const X = ...` парсится как binary OR — workaround =
+  explicit ClosureFull `fn(x T) -> R => body` syntax.
+- 🟡 Ф.3: generic const fn first-class use — DEFERRED. Design question:
+  parser TurboFish-as-fn-value VS HOF context type inference VS explicit
+  type annotation. Tracked [M-114.4.4-trampoline-generics].
+- 🟡 Ф.4: generic closure-returning const fn — DEFERRED, same blocker
+  как Ф.3. Tracked [M-114.4.4-closure-generic].
+
 **Что остаётся открытым (Q7 V4.3+):**
 - Comptime-функции имеют доступ к типам как первый класс?
   → V4.0 sizeof/align для primitives ✅; records/generics → Plan 114.4.4.2.

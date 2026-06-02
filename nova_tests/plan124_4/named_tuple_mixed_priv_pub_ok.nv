@@ -1,0 +1,17 @@
+// Plan 124.4 — positive: mixed priv + public fields на named tuple.
+// External access only к public; priv hidden от external scope.
+module plan124_4.named_tuple_mixed_priv_pub_ok
+
+type Account(priv balance f64, name str)
+
+fn Account.new(n str) -> Account =>
+    Account(balance: 0.0, name: n)
+
+// External fn — accesses only public `name` field.
+fn describe(a Account) -> str =>
+    a.name
+
+test "Plan 124.4: mixed priv/public — external sees public field" {
+    ro a = Account.new("alice")
+    assert(describe(a) == "alice")
+}

@@ -1,0 +1,19 @@
+// Plan 114.4.4 V4.4 Ф.2 POSITIVE: multiple outer const decls chaining —
+// each can reference previous ones.
+
+module plan114_4_4.closure_outer_chained_ok
+
+fn make_compound(const base int) -> const fn(int) -> int {
+    const a = base * 2
+    const b = a + 1
+    const c = b - base
+    fn(x int) -> int => x + a + b + c
+}
+
+test "closure outer consts chained" {
+    // base = 10: a = 20, b = 21, c = 11
+    // closure(x) = x + 20 + 21 + 11 = x + 52
+    ro f = make_compound(10)
+    assert(f(0) == 52)
+    assert(f(8) == 60)
+}

@@ -1,0 +1,24 @@
+// Plan 124.2 — positive: nested destructure через priv-containing inner
+// type ВНУТРИ Address's static method scope — recv = Address,
+// priv access allowed in nested pattern descent.
+module plan124_2.nested_destructure_inside_method_ok
+
+export type Address {
+    priv mut zip str
+    ro city str
+}
+
+export fn Address.new(z str, c str) -> Address =>
+    { zip: z, city: c }
+
+// Static method scope of Address — priv zip pattern OK.
+export fn Address.zip_of(a Address) -> str {
+    ro Address { zip, city: _ } = a
+    zip
+}
+
+test "Plan 124.2: nested destructure внутри Address.method — OK" {
+    ro a = Address.new("12345", "Paris")
+    ro z = Address.zip_of(a)
+    assert(z == "12345")
+}

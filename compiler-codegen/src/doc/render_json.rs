@@ -465,6 +465,9 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
                     w.array_object(|w| {
                         w.field_bool("mutable", f.mutable);
                         w.field_str("name", &f.name);
+                        // Plan 124.5 (D220/D222): emit `priv_field` для
+                        // tooling-aware consumers (LSP / IDE).
+                        w.field_bool("priv_field", f.priv_field);
                         w.field_str("type", &f.ty);
                     });
                 }
@@ -495,6 +498,7 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
                                         w.array_object(|w| {
                                             w.field_bool("mutable", f.mutable);
                                             w.field_str("name", &f.name);
+                                            w.field_bool("priv_field", f.priv_field);
                                             w.field_str("type", &f.ty);
                                         });
                                     }

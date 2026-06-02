@@ -647,7 +647,9 @@ fn write_type_def(out: &mut String, name: &str, def: &TypeDefinition) {
         TypeDefinition::Record(fields) => {
             let _ = writeln!(out, "type {} {{", html_escape(name));
             for f in fields {
-                let _ = writeln!(out, "    {} {}", html_escape(&f.name), html_escape(&f.ty));
+                // Plan 124.5 (D220/D222): priv badge.
+                let priv_kw = if f.priv_field { "priv " } else { "" };
+                let _ = writeln!(out, "    {}{} {}", priv_kw, html_escape(&f.name), html_escape(&f.ty));
             }
             out.push('}');
         }

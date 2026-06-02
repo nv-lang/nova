@@ -1,0 +1,28 @@
+// Plan 124.3 — positive: generic type без priv fields — все access
+// patterns OK extern (no false-positive из generic recv tracking).
+//
+// Uses single-param generic (multi-param Pair[A, B] explicit init
+// has bootstrap parser limit — anonymous literal {first: a, second: b}
+// inferred from return type works в static method).
+module plan124_3.generic_pub_only_no_false_positive_ok
+
+export type Holder[T] {
+    ro value T
+    ro count int
+}
+
+export fn Holder[T].new(v T, n int) -> Holder[T] =>
+    { value: v, count: n }
+
+// External fn — accesses public fields в Member position.
+fn show_count(h Holder[int]) -> int =>
+    h.count
+
+fn show_value(h Holder[int]) -> int =>
+    h.value
+
+test "Plan 124.3: generic no-priv → external access OK" {
+    ro h = Holder[int].new(42, 1)
+    assert(show_count(h) == 1)
+    assert(show_value(h) == 42)
+}

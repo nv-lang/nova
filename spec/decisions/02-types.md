@@ -7814,8 +7814,614 @@ V1 (Plan 124.1) — ALL closed 2026-06-02:
 ### Followup markers
 
 - ✅ [M-124.1-checker-enforcement] CLOSED 2026-06-02 — all 4 codes via TypeCheckCtx current_recv_type RAII tracking.
+- ✅ [M-124.2-pattern-sites-extension] CLOSED 2026-06-02 — Match/IfLet/WhileLet/For/ParallelFor + nested + spread (D221).
 - [M-124.2-priv-embed] — priv use NAME Type.
 - [M-124.4-tuple-priv] — named tuple priv (D215 ext).
 - [M-124.4-protocol-impl-boundary].
 - [M-124.5-doc-lsp].
 - [M-124.6-test-access].
+
+---
+
+## D221. Pattern destructure + literal init edge cases (Plan 124.2)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.2 closure).
+> **Extends:** D220 §3-§4. Self-contained sub-decision: covers
+> pattern-site и literal-spread edges not addressed в D220 §4.
+> **Plan:** [Plan 124.2](../../docs/plans/124.2-pattern-literal-edges.md).
+> **Cross-refs:** D220 (core priv semantics), D52 §1-§2 (record
+> declaration / `@field` shorthand), D17 (pattern syntax).
+
+### §1 Scope
+
+D220 §4 описывает priv-access rules для базовых форм (Member access
++ Stmt::Let pattern + RecordLit named fields). D221 расширяет
+coverage на:
+
+1. Дополнительные pattern sites: match, if-let, while-let, for-in,
+   parallel-for.
+2. Nested Pattern::Record — recursive descent через sub-field types.
+3. Record literal spread `Type { ...other }`.
+4. Rest pattern `{ field, .. }` — non-binding semantics.
+
+### §2 Pattern sites — complete enumeration
+
+Following pattern-bearing forms ALL apply priv-pattern enforcement
+(Plan 124.2 implementation hook each site):
+
+| Site | AST node | Scrutinee source |
+|---|---|---|
+| `let PAT = EXPR` | `Stmt::Let { pattern, value }` | type of `value` |
+| `if PAT = EXPR { ... }` | `ExprKind::IfLet { pattern, scrutinee }` | type of `scrutinee` |
+| `while PAT = EXPR { ... }` | `ExprKind::WhileLet { pattern, scrutinee }` | type of `scrutinee` |
+| `match EXPR { PAT => ... }` | `ExprKind::Match { scrutinee, arms[].pattern }` | type of `scrutinee` |
+| `for PAT in EXPR { ... }` | `ExprKind::For { pattern, iter, elem_type }` | `elem_type` ∥ inferred element type |
+| `parallel for PAT in EXPR { ... }` | `ExprKind::ParallelFor { pattern, iter, elem_type }` | same |
+
+В каждой точке: for each Pattern::Record outside type-method scope,
+each explicitly-named RecordPatternField corresponding к priv-field
+→ `E_PRIV_FIELD_PATTERN`.
+
+### §3 Rest pattern `..` — non-binding
+
+```nova
+ro Account { name, .. } = acc    // outside-of-Account ok if `name` public.
+                                  // `..` does NOT bind priv `money`.
+```
+
+Pattern::Record.rest = true маркирует syntactic `..`. Семантика:
+**игнорировать остальные поля, no bindings produced**. Priv-fields
+не leak'аются через `..` потому что нет binding'а.
+
+NB: explicit field names ARE checked даже если `..` присутствует —
+`{ money, .. }` outside Account → E_PRIV_FIELD_PATTERN на `money`.
+
+### §4 Nested Pattern::Record
+
+```nova
+type Address { priv mut zip str, ro city str }
+type User { ro name str, ro addr Address }
+
+// Outside any method scope:
+ro User { addr: Address { zip }, name } = u   // ❌ E_PRIV_FIELD_PATTERN
+                                               //   on `zip` (Address-internal)
+```
+
+Recursive descent: для каждой `RecordPatternField { name, pattern: Some(sub), .. }`
+sub-pattern проверяется against sub-field's declared type (via outer
+type's RecordField.ty). Outer field accessibility (User.addr public)
+не освобождает inner check (Address.zip priv).
+
+### §5 Record literal spread — `E_PRIV_FIELD_INIT_SPREAD`
+
+```nova
+type Account { priv mut money f64, ro name str }
+
+// Outside Account-method scope:
+Account { ...orig, name: "new" }   // ❌ E_PRIV_FIELD_INIT_SPREAD
+```
+
+Spread `...src` implicitly копирует все fields (включая priv).
+Outside type-method scope, это нарушает encapsulation. Эмитим
+**E_PRIV_FIELD_INIT_SPREAD** на spread field span с hint'ом
+использовать factory method.
+
+Inside type-method scope — allowed (recv = T → каноническая ситуация).
+
+Note: type без priv fields → spread OK везде (нет encapsulation
+boundary).
+
+### §6 Diagnostic codes
+
+| Code | Where | Plan |
+|---|---|---|
+| `E_PRIV_FIELD_PATTERN` | Pattern sites §2 + nested §4 | D220 §4 (reused) |
+| `E_PRIV_FIELD_INIT_SPREAD` | RecordLit spread §5 | **D221 NEW** |
+
+Format (Plan 50 D102):
+```
+[E_PRIV_FIELD_INIT_SPREAD] cannot use spread `...` in record literal
+of `T` outside type-method scope: type has private fields which would
+be implicitly initialized via copy (Plan 124 / D221 §5). Hint: use
+factory method `T.new(...)` or list each public field explicitly.
+```
+
+### §7 Cross-refs
+
+- D17 — pattern syntax.
+- D52 §2 — record literal + field shorthand.
+- D220 — core priv semantics (default vis, scope, access rules).
+- D215 — named tuples; D221 covers ONLY record form, tuple-pattern
+  priv в D222 (Plan 124.4).
+
+### §G1 Generic types — uniform enforcement (Plan 124.3 amend)
+
+> **Added 2026-06-02.** Plan 124.3 closure.
+
+Per-field `priv` modifier applies uniformly к generic record types:
+
+```nova
+export type Stack[T] {
+    priv mut len int
+    ro capacity int
+}
+```
+
+**Enforcement architecture:** check site reads `RecordField.priv_field`
+из AST (pre-monomorphization). Mono'd instances (`Stack[int]`,
+`Stack[str]`) inherit identical enforcement — T-substitution не
+изменяет field metadata.
+
+**Receiver-type tracking** (TypeCheckCtx.current_recv_type) uses
+**type-name only**:
+- `fn Stack[T] @push(...)` body sees recv = `Some("Stack")`.
+- Generic parameters не factor в name comparison.
+- Inside generic methods, accessing priv fields на ЛЮБОЙ T
+  instantiation OWN type'а — allowed.
+- Cross-type access (`Stack[int].@field` из `Queue[T].method`) —
+  blocked (recv = "Queue", не "Stack").
+
+**Bootstrap parser limitation:** explicit generic prefix в record
+literal expression position (`Stack[int] { len: 5, capacity: 10 }`)
+не парсится в bootstrap (parser-ambiguity с array-literal opening
+`[`). Canonical form — **anonymous literal** `{ len: ..., capacity: ... }`
+с return-type inference:
+
+```nova
+export fn Stack[T].with_len(initial int, cap int) -> Stack[T] =>
+    { len: initial, capacity: cap }      // ✅ anonymous, inferred
+```
+
+Pattern destructure аналогично: `Stack { fields } = expr` (без
+generic args) — resolved through scrutinee type.
+
+INIT path (E_PRIV_FIELD_INIT) testing для generic types использует
+non-generic specialized variant ИЛИ relies на anonymous literal
+form's type inference (target type known via expected return type
+of enclosing method).
+
+### Acceptance — Plan 124.3
+
+ALL closed 2026-06-02:
+
+- A3.1 ✅ Generic type `Stack[T] { priv ... }` parser PASS.
+- A3.2 ✅ Mono'd instance external access: write → E_PRIV_FIELD_WRITE,
+  read → E_PRIV_FIELD_READ.
+- A3.3 ✅ Inside `Stack[T].method` — @field access OK.
+- A3.4 ✅ Generic method calling another OK.
+- A3.5 ✅ Multiple instantiations (Stack[int] + Stack[str]) — same
+  enforcement.
+- A3.6 ✅ `Option[Account]` — outer Option public, inner Account rules
+  unchanged.
+- A3.7 ✅ plan124_3 10/10 fixtures PASS.
+- A3.8 ✅ Regression plan124_1 9/9 + plan124_2 14/14 unchanged.
+
+---
+
+## D222. Named tuple priv + protocol impl boundary (Plan 124.4)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.4 closure).
+> **Extends:** D220 (per-field priv) + D215 (named tuples, Plan 120) +
+> D221 (pattern check). Self-contained sub-decision: covers named tuple
+> form + protocol impl boundary explicitly.
+> **Plan:** [Plan 124.4](../../docs/plans/124.4-named-tuple-protocol.md).
+> **Cross-refs:** D215 (named tuple form), D220 (core priv), D221
+> (pattern), D52 §2 (record field syntax).
+
+### §1 Named tuple priv syntax
+
+```nova
+type Vec3(priv x f64, priv y f64, priv z f64)
+type Account(priv balance f64, name str)    // mixed
+type Secret(pub key str, priv salt []u8)    // explicit pub override
+```
+
+Same modifier semantic as RecordField: `priv` before field name (or
+`pub` for explicit public override; reserved для D220 type-level flip
+extension Plan 124.7). Mutual exclusion enforced —
+`priv pub x f64` / `pub priv x f64` → `E_PRIV_PUB_CONFLICT`.
+
+### §2 Access rules — uniform with D220
+
+**Read** (`v.x`):
+- Inside named tuple's own methods (instance `@field` or static
+  `T.method(...)`) — OK regardless of priv.
+- Outside → `E_PRIV_FIELD_READ` если field marked priv.
+
+**Init** via named-arg constructor (`Vec3(x: 1.0, y: 2.0, z: 3.0)`):
+- Inside type-method scope — OK (recv = T).
+- Outside → `E_PRIV_FIELD_INIT` для каждого priv-named arg.
+
+**Pattern destructure** (`Vec3 { x, y, z } = v` record-style):
+- Same as record (D221 §2-§4): outside → `E_PRIV_FIELD_PATTERN`
+  per priv field; `..` rest is non-binding; nested descent recursive.
+
+**Write** — N/A: named tuple fields are immutable by D215 design
+(no `mut` modifier на field). Все assignments к `v.x = ...` fail
+`E_READONLY_FIELD` before priv check.
+
+**Positional access `.0`/`.1`** — already blocked by Plan 120
+`E_TUPLE_POSITIONAL_ACCESS_ON_NAMED` (D215 Q120 Option B); priv
+не нужно добавлять отдельный код.
+
+### §3 Protocol implementation boundary
+
+Protocol satisfaction в Nova реализуется ДВУМЯ способами (D186 / Plan 91.9):
+
+1. **Type-method impl** — `fn Vec3 @to_string() -> str`. Receiver = T;
+   `current_recv_type = Some("Vec3")` → priv access OK канонически.
+   ✅ Allowed.
+
+2. **External free-fn** — `fn compute_sum(v Vec3) -> f64 => v.x + v.y + v.z`.
+   No receiver tracking; `current_recv_type = None` →
+   `E_PRIV_FIELD_READ` fires при touching priv. ✅ Blocked.
+
+→ Encapsulation guarantee: protocol impls cannot **bypass** priv
+boundary unless declared as type-method. Mirrors Rust trait impl
+rules; stricter than Go/Kotlin (pkg-wide-allowed).
+
+### §4 Diagnostic codes
+
+| Code | Site | Plan |
+|---|---|---|
+| `E_PRIV_FIELD_READ` | Member access на priv named-tuple field | D220 §4 (reused) |
+| `E_PRIV_FIELD_INIT` | `T(field: ...)` named-arg ctor priv field | D220 §4 (reused) |
+| `E_PRIV_FIELD_PATTERN` | `T { field, ... } = v` priv field | D221 §2 (reused) |
+| `E_PRIV_PUB_CONFLICT` | `priv pub` / `pub priv` mutual exclusion | D220 §6 (reused) |
+| `E_TUPLE_POSITIONAL_ACCESS_ON_NAMED` | `.0` access | D215 / Plan 120 (preexisting) |
+
+No new codes — D222 reuses D220/D221 codes uniformly. Spec mentions
+named-tuple context в hint text.
+
+### §5 Implementation hooks
+
+| Layer | Site | Change |
+|---|---|---|
+| AST | `NamedTupleField` struct | Added `priv_field: bool` |
+| Lexer | `KwPriv`, `KwPub` | Already declared (Plan 124.1) |
+| Parser | `is_named_tuple_decl` | Recognize `priv`/`pub` as named-marker |
+| Parser | `parse_named_tuple_fields` | Accept `priv`/`pub` modifier с conflict-check |
+| Checker | `f3_check_member` NamedTuple arm | Added priv check (mirror Record) |
+| Checker | `f5_check_tuple_construct` | INIT priv check on named-args |
+| Checker | `check_priv_pattern_recursive` | Unified для Record + NamedTuple |
+
+### §6 Cross-refs
+
+- D215 — named tuple syntax + access rules.
+- D220 — core priv semantics, error codes definition.
+- D221 — pattern destructure + spread.
+- D52 §2 — record field syntax (mirror form).
+- D186 — protocol satisfaction (Plan 91.9): type-method primary,
+  external-fn-impl secondary; D222 §3 formalizes boundary impact.
+
+### Acceptance — Plan 124.4
+
+ALL closed 2026-06-02:
+
+- A4.1 ✅ Named tuple `type Vec3(priv x f64, ...)` parser PASS.
+- A4.2 ✅ Positional `.0` access — handled by preexisting Plan 120
+  E_TUPLE_POSITIONAL_ACCESS_ON_NAMED (priv-orthogonal).
+- A4.3 ✅ Named `.x` access на priv field outside → E_PRIV_FIELD_READ.
+- A4.4 ✅ Inside type-method scope — read + init + pattern + protocol
+  method все allow.
+- A4.5 ✅ Protocol impl (type-method-based, `fn Vec3 @method()`) —
+  priv access OK.
+- A4.6 ✅ Protocol impl external-fn-based (`fn compute(v Vec3)`) —
+  priv access BLOCKED (E_PRIV_FIELD_READ).
+- A4.7 ✅ plan124_4 10/10 fixtures PASS.
+- A4.8 ✅ Regression Plan 120 (8/8) + plan124_1 (9/9) + plan124_2
+  (14/14) unchanged.
+- A4.9 ✅ D222 NEW + D215 cross-ref + D220/D221 code reuse.
+- A4.10 ✅ plan120 backward compat — все existing named-tuple
+  fixtures без `priv` modifier работают unchanged.
+
+### §T1 nova doc + LSP integration (Plan 124.5 amend)
+
+> **Added 2026-06-02.** Plan 124.5 closure. Cross-references D107
+> (nova doc schema) + Plan 104.x (LSP infrastructure).
+
+**nova doc behavior:**
+- Default: priv fields **hidden** from rendered documentation
+  (markdown / HTML / JSON).
+- `--include-private` flag shows all fields с `priv` keyword
+  preserved in signature rendering (`type X { priv mut f T }`).
+- JSON output emits `"priv_field": true|false` per field
+  regardless of `--include-private` — consumed by tooling.
+
+**LSP integration (forward-ref):**
+- AST `RecordField.priv_field` + `NamedTupleField.priv_field` flags
+  available для LSP hover (Plan 104.2) и completion (Plan 104.3)
+  integration once these ship.
+- Expected behavior: priv-field filter в autocomplete outside
+  type-method scope; 🔒 priv badge в hover popups; priv-field
+  code-lens decoration.
+
+**User-facing documentation:**
+- `docs/field-visibility-guide.md` — comprehensive guide:
+  use cases, syntax, composition, diagnostics, tooling, comparison
+  vs Go/Rust/TS/Java/Swift/C#, migration, common patterns.
+
+### Acceptance — Plan 124.5
+
+ALL closed 2026-06-02:
+
+- A5.1 ✅ `nova doc` hides priv fields by default.
+- A5.2 ✅ `nova doc --include-private` shows priv с keyword preserved.
+- A5.3 🟡 LSP autocomplete filter — forward-ref Plan 104.3 (infra
+  data source ready).
+- A5.4 🟡 LSP hover badge — forward-ref Plan 104.2 (infra ready).
+- A5.5 🟡 Quick-fix suggestion — forward-ref Plan 104.x (Plan 50 D102
+  format hints уже в error messages).
+- A5.6 ✅ plan124_5 fixtures 3/3 PASS (parser + smoke; doc behavior
+  e2e verified manually).
+- A5.7 ✅ `docs/field-visibility-guide.md` created (~330 lines).
+- A5.8 ✅ Regression: existing nova doc fixtures unchanged.
+
+---
+
+## D224. Escape hatches — `#test_access` + `#visible_to` (Plan 124.6)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.6 closure).
+> **Extends:** D220 §3 (scope rules) + D222 §3 (protocol boundary).
+> **Plan:** [Plan 124.6](../../docs/plans/124.6-friend-attrs.md).
+> **Cross-refs:** D220, D221, D222 (priv core + pattern + tuple).
+
+### §1 Motivation
+
+D220 устанавливает **strict type-method-only** scope для priv field
+access — strictнее чем эталоны (Kotlin `internal` module-wide,
+Rust `pub(crate)` crate-wide, Java package-private). В некоторых
+production scenarios нужна controlled relaxation:
+
+1. **Unit tests** должны verify internal state (balance, cache size,
+   internal cursor pos) без публикации getter в public API.
+2. **Sibling helper types** (`Account` + `Bank` audit utilities) —
+   coordinated access без friend boilerplate.
+
+D224 вводит **two explicit opt-in escape hatches** — каждый
+syntactically marked, никаких неявных relaxation.
+
+### §2 `#test_access(TypeX[, TypeY...])` — fn-level access grant
+
+Attribute перед `fn` declaration: body fn получает priv-field access
+ко всем listed types (READ + WRITE + INIT + PATTERN).
+
+```nova
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+#test_access(Account)
+fn assert_balance_eq(acc Account, expected f64) -> bool =>
+    acc.balance == expected        // ✅ allowed by #test_access
+```
+
+Multi-type form:
+```nova
+#test_access(Account, Vault)
+fn cross_audit(a Account, v Vault) -> bool =>
+    a.balance == 0.0 && v.amount == 0.0
+```
+
+Scope: applies **only к body of marked fn**. Caller scope unchanged.
+Composable: можно combine с `#realtime`, `#blocking`, `#verify`,
+etc. — порядок attribute parsing уже supports multi-attribute.
+
+### §3 `#visible_to(OtherType[, ...])` — field-level friend declaration
+
+Attribute перед field declaration в `type X { ... }` или
+`type X(...)`: methods listed types получают priv access **только
+к этому field**.
+
+```nova
+export type Account {
+    ro name str
+    #visible_to(Bank) priv mut balance f64
+}
+
+export type Bank {
+    ro id str
+}
+
+export fn Bank @audit_account(a Account) -> f64 =>
+    a.balance        // ✅ allowed: Bank ∈ Account.balance.visible_to
+```
+
+Per-field granularity:
+- Different fields могут have different friend lists.
+- Other Account fields without `#visible_to` — strict type-only.
+- Other types (НЕ Bank) — no access:
+  ```nova
+  export fn Auditor @check(a Account) -> f64 =>
+      a.balance     // ❌ E_PRIV_FIELD_READ — Auditor not in visible_to
+  ```
+
+### §4 Combined access predicate
+
+priv-field access allowed когда **любое** из:
+
+1. `current_recv_type == tname` — canonical type-method scope (D220).
+2. `tname ∈ current_fn.test_access_for` — `#test_access` grant.
+3. `current_recv_type ∈ field.visible_to` — friend grant.
+
+Implementation: `TypeCheckCtx::priv_field_access_allowed(tname, &visible_to)`
+combines all three checks. `priv_access_allowed_base(tname)` covers
+(1)+(2); per-field `visible_to` requires field-specific context
+(handled at each callsite).
+
+### §5 Diagnostic codes
+
+D224 reuses Plan 124.1-124.4 codes (no new codes), but hints
+now mention escape hatches:
+
+```
+[E_PRIV_FIELD_READ] cannot read private field `Account.balance` ...
+Hint: add public getter method on `Account`, move accessing code
+into a method of `Account`, or use `#test_access(Account)` on test
+fn (escape hatch — D224).
+```
+
+Parser-level errors:
+- `#test_access(...)` without `(` → "требует list: `#test_access(TypeX, ...)`".
+- Empty list `#test_access()` → "требует хотя бы один Type".
+- `#visible_to(...)` same shape.
+
+### §6 Anti-patterns + lint guidance
+
+Escape hatches — **opt-in, syntactically explicit**. Recommended
+discipline:
+
+- `#test_access` — only on test fns or dedicated assertion helpers.
+  Production-code uses должны trigger code-review concern.
+- `#visible_to` — explicit, named friend types only. Cross-module
+  abuse — code-smell.
+- Future lint (Plan 124.x): warn if `#test_access` used >N times
+  per project (suggests missing public API).
+
+### §7 Cross-refs
+
+- D220 — core priv semantics, scope rules.
+- D221 — pattern destructure / spread sites.
+- D222 — named tuple + protocol impl boundary.
+- D102 — diagnostic format (Plan 50).
+- Plan 104.x — LSP hover/completion will display escape-hatch
+  badges (forward-ref).
+
+### Acceptance — Plan 124.6
+
+ALL closed 2026-06-02:
+
+- A6.1 ✅ `#test_access(TypeX)` attribute parser PASS.
+- A6.2 ✅ Test fn с attribute получает priv access к TypeX.
+- A6.3 ✅ `#visible_to(TypeY)` field attribute parser PASS.
+- A6.4 ✅ TypeY's methods get access к marked priv field of TypeX.
+- A6.5 ✅ Conservative: только marked fields, не whole type
+  (per-field granular).
+- A6.6 ✅ plan124_6 fixtures 7/7 PASS (4 positive + 3 negative).
+- A6.7 ✅ Regression plan124_1 9/9 + plan124_2 14/14 + plan124_4 10/10
+  unchanged.
+- A6.8 ✅ D224 NEW + cross-refs к D220-D222.
+
+---
+
+## D225. Type-level priv flip для named tuples (Plan 124.7)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.7 closure).
+> **Extends:** D220 §3.3.1 (record-form type-level flip) + D222
+> (named tuple priv per-field) + D215 (named tuple form, Plan 120).
+> **Plan:** [Plan 124.7](../../docs/plans/124.7-tuple-type-level.md).
+> **Cross-refs:** D220, D215, D222.
+
+### §1 Syntax
+
+Symmetric extension to record-form D220 §3.3.1:
+
+```nova
+// Record form (Plan 124.1 / D220 §3.3.1)
+type Account priv {
+    pub ro name str          // explicit pub override
+    mut balance f64          // default = priv (inherits type-level)
+}
+
+// Named tuple form (Plan 124.7 / D225 — this section)
+type Secret priv (key str, salt str)
+//             ^^^^ priv ПОСЛЕ имени type'а, ДО `(`
+
+type Credential priv (pub id str, secret str)
+//                    ^^^ explicit pub override per field
+```
+
+`priv` keyword position между type name (+ optional generics) и
+opening `(` — same position как для record form's `{`.
+
+### §2 Effective priv_field resolution
+
+Per-field `priv_field` для named-tuple field resolves в parser
+identical к record form (D220 §3.3.1):
+
+| field-level modifier | type-level flip | effective |
+|---|---|---|
+| explicit `pub` | flip or no-flip | `false` (overrides) |
+| explicit `priv` | flip or no-flip | `true` |
+| neither | flip = `false` | `false` (default public) |
+| neither | flip = `true` | `true` (inherits) |
+
+Bidirectional `priv pub` / `pub priv` → `E_PRIV_PUB_CONFLICT` (D220 §6).
+
+### §3 Implementation hooks
+
+- AST `TypeDecl.default_field_priv: bool` — пере-used (no extension
+  needed; Plan 124.1 уже добавила).
+- Parser `parse_type_decl`: KwPriv после type-name установится в
+  `default_field_priv` (existing — Plan 124.1).
+- Parser `parse_named_tuple_fields_with_default(default_priv)` — NEW
+  wrapper around old `parse_named_tuple_fields`. Propagates default
+  в effective `priv_field` resolution per field (mirror к
+  `parse_record_fields_with_default` precedent).
+- Backward-compat shim `parse_named_tuple_fields()` calls _with_default(false).
+
+### §4 Access rules — unchanged (D220 §4 / D221 / D222 / D224)
+
+Effective priv_field после resolution applied identically к explicit
+per-field priv. All Plan 124.1-124.6 enforcement sites (READ /
+WRITE / INIT / PATTERN / spread, + escape hatches `#test_access`,
+`#visible_to`) work uniform.
+
+### §5 Use cases
+
+Invariant-heavy types где majority of fields should be private:
+
+```nova
+// Encapsulated handles (private impl detail)
+type Mutex priv (state u32, owner_fid u64, pub kind MutexKind)
+
+// Sensitive data + opaque session
+type Session priv (token []u8, expires_at Instant, pub user_id u64)
+
+// Tightly-coupled coordinate types
+type Vec3 priv (x f64, y f64, z f64)
+```
+
+Bimodal coverage matches kubernetes empirical: `core/v1` API surface
+92% public (use no flip), `pkg/internal` 53% private (use flip + few `pub`).
+
+### §6 Cross-refs
+
+- D215 — named tuple base syntax.
+- D220 §3.3.1 — record-form type-level flip (D225 symmetric).
+- D222 — named tuple per-field priv (D225 builds on this).
+- D102 — diagnostic format.
+
+### Acceptance — Plan 124.7
+
+ALL closed 2026-06-02:
+
+- A7.1 ✅ Parser принимает `type X priv { ... }` syntax (record form —
+  Plan 124.1 preserved).
+- A7.2 ✅ Parser принимает `type X priv (...)` syntax (named tuple
+  form — D225 NEW).
+- A7.3 ✅ `pub` modifier на field overrides type-level priv default.
+- A7.4 ✅ Field без modifier inherits type-level default (priv).
+- A7.5 ✅ Type-level + field-level combinations 4 cases verified:
+  default-default ✅, default-explicit ✅, flip-default ✅, flip-explicit ✅.
+- A7.6 ✅ plan124_7 fixtures 8/8 PASS (5 positive + 3 negative).
+- A7.7 ✅ Regression Plan 120 8/8 + plan124_1 9/9 + plan124_4 10/10
+  unchanged.
+- A7.8 ✅ D225 NEW + cross-refs.
+
+### Acceptance — Plan 124.2
+
+ALL closed 2026-06-02:
+
+- A2.1 ✅ Match arm pattern outside → E_PRIV_FIELD_PATTERN.
+- A2.2 ✅ IfLet pattern outside → error.
+- A2.3 ✅ WhileLet pattern outside → error.
+- A2.4 ✅ For-loop pattern outside → error (positive case verifies
+  no false-positive on public-only types).
+- A2.5 ✅ Nested Pattern::Record с priv inner → error.
+- A2.6 ✅ Spread outside → E_PRIV_FIELD_INIT_SPREAD.
+- A2.7 ✅ Inside type-method scope — все hooks allow.
+- A2.8 ✅ `..` rest pattern — no false-positive.
+- A2.9 ✅ plan124_2 fixtures 14/14 PASS (8+ positive, 6 negative).
+- A2.10 ✅ Regression plan124_1 9/9 unchanged.
