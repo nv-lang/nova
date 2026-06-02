@@ -222,11 +222,15 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
   [M-114.4.4-closure-captures-outer]. Parser note: ClosureLight `|x|`
   после `const X = ...` парсится как binary OR — workaround =
   explicit ClosureFull `fn(x T) -> R => body` syntax.
-- 🟡 Ф.3: generic const fn first-class use — DEFERRED. Design question:
-  parser TurboFish-as-fn-value VS HOF context type inference VS explicit
-  type annotation. Tracked [M-114.4.4-trampoline-generics].
-- 🟡 Ф.4: generic closure-returning const fn — DEFERRED, same blocker
-  как Ф.3. Tracked [M-114.4.4-closure-generic].
+- ✅ Ф.3 [M-114.4.4-trampoline-generics] — generic const fn first-class
+  через HOF type inference (V4.5 Ф.3 session, 2026-06-02). Approach #2
+  chosen — recursive structural unification + in-place Ident rewrite.
+- ✅ Ф.4 [M-114.4.4-closure-generic] — generic closure-returning const fn
+  через explicit TurboFish (V4.5 Ф.4 session, 2026-06-02). Reuses
+  subst_type_ref helper.
+
+🎯 **Plan 114.4.4 family fully complete** — все 11 [M-114.4.4-*] markers
+closed, A1-A40 acceptance criteria, 65/65 fixtures PASS на release nova-cli.
 
 **Что остаётся открытым (Q7 V4.3+):**
 - Comptime-функции имеют доступ к типам как первый класс?

@@ -30905,3 +30905,46 @@ ported в proper user-facing doc + test fixture. Two artifacts:
 **explanation** (doc) для human reader + **assertions** (fixture)
 для compile-time verification. Это «documentation as test»: layout
 semantics проверяется на каждом build.
+
+
+---
+
+## Plan 114.4.4 V4.5 Ф.3 + Ф.4 generics landed (2026-06-02)
+
+**Status:** ✅ LANDED. Branch `plan-114.4.4-v4-followups-Ф3`.
+
+**Closed markers:**
+- ✅ `[M-114.4.4-trampoline-generics]` → Ф.3.
+- ✅ `[M-114.4.4-closure-generic]` → Ф.4.
+
+**🎯 Plan 114.4.4 family полностью закрыта** — все 11 markers closed,
+A1-A40 acceptance criteria, 65/65 fixtures PASS.
+
+**Ф.3 (commit 599a78c75f4):** Generic const fn first-class через HOF type
+inference. Approach #2 chosen из 3 V4.4 design options (parser turbofish
+/ HOF inference / explicit annotation). ~600 LOC: GenericInst struct,
+build_fn_signature_registry, structural unification (infer_generic_subst +
+unify_type), in-place Ident rewrite (GenericMutateCtx), specialized FnDecl
+generation с TypeRef substitution. 3 fixtures POS+NEG.
+
+**Ф.4 (commit 21d3cfbb110):** Generic closure-returning const fn через
+explicit TurboFish at call site. ~150 LOC delta: spec key extended
+с type_mangle, Call rewriter accepts both Ident and TurboFish forms,
+generate_closure_spec substitutes generic types. Cross-module helper
+re-export pattern (subst_type_ref_pub). 3 fixtures POS+NEG.
+
+**Tests:** 36/36 plan114_4_4 + 15/15 plan114_4_2 + 14/14 plan114_4_3 = 65/65 PASS.
+
+**Design lesson — different problems, different solutions:**
+- Ф.3 HOF inference works because callee fn signature provides expected
+  type — natural UX (no TurboFish syntax noise).
+- Ф.4 TurboFish required because closure-returning fn called directly,
+  no HOF context для inference. Explicit syntax = explicit intent.
+
+**Implementation lesson — multiple instantiations:** Same generic fn used
+с different concrete types в same module нельзя disambiguate в late
+rewriter pass с name→mangled HashMap (only one entry per name).
+Solution: in-place Ident rewrite at detection site (GenericMutateCtx).
+Each Call.args site gets correct mangled name based on its specific
+context. This pattern applies whenever specialization depends on
+context, not name alone.

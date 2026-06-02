@@ -7581,6 +7581,79 @@ infrastructure as Ф.3. Will be unblocked together. Tracked:
 | A36 | size_of/align_of для tuples/arrays/Unit/Readonly | size_of_tuple_ok / size_of_fixed_array_ok / size_of_nested_composite_ok (V4.4 Ф.1) |
 | A37 | Closure-returning const fn с outer const captures | closure_outer_const_ok / closure_outer_chained_ok (V4.4 Ф.2) |
 | A38 | Padding/alignment edge cases для tuples (layout semantics) | size_of_padding_ok (V4.4 Ф.1 docs) — 7 edge cases: inner/tail-pad, big gaps, no-pad uniform, multi-step alignment, unit, mixed sizes |
+| A39 | Generic const fn first-class via HOF inference | trampoline_generic_inferred_ok / _two_types_ok / _no_context_neg (V4.5 Ф.3) |
+| A40 | Generic closure-returning const fn via TurboFish | closure_generic_ok / closure_generic_const_arg_ok / _no_turbofish_neg (V4.5 Ф.4) |
+
+### V4.5 extensions (Plan 114.4.4 V4.5 followups session, 2026-06-02)
+
+**Ф.3 — Generic const fn first-class через HOF type inference (closes [M-114.4.4-trampoline-generics]):**
+
+V4.2 baseline отвергал generic const fn как first-class value. V4.5 Ф.3
+снимает ограничение: при passing generic const fn как arg в HOF callee,
+компилятор infers concrete generic types из callee's expected param fn-type:
+
+```nova
+fn id[T](const x T) -> const T => x
+fn apply_i(f fn(int) -> int, x int) -> int => f(x)
+
+test {
+    ro r = apply_i(id, 7)   // inferred T=int → id__trampoline_int generated
+    assert(r == 7)
+}
+```
+
+*Semantics:*
+- Build fn signature registry от non-const fns в модуле.
+- На каждом Call.args site проверить: arg = Ident matching generic const
+  fn AND callee's expected param[i].ty = TypeRef::Func.
+- Unification: structural recursion (Named/Tuple/Array/FixedArray/Func/
+  Unit/Readonly), bind generic params к concrete types.
+- Generate specialized monomorph FnDecl с substituted TypeRef positions
+  + dropped generics + demoted const modifiers.
+- Mangled name: `<orig>__trampoline_<T1>_<T2>...`
+- In-place Ident rewrite at each Call.args site (multiple instantiations
+  same name not disambiguable from later rewriter pass).
+
+*V4.5 Ф.3 limitations:*
+- Inference только в Call.args position. Let/Assign/Return positions
+  require type annotation infrastructure (V2 followup).
+- Concrete TurboFish args должны быть simple Named (V2 followup для
+  nested generics).
+- Multiple generic params supported (independent inference per position).
+
+**Ф.4 — Generic closure-returning const fn via TurboFish (closes [M-114.4.4-closure-generic]):**
+
+```nova
+fn make_id[T]() -> const fn(T) -> T => fn(x T) -> T => x
+
+test {
+    ro id_i = make_id[int]()     // make_id__closure_int_0
+    ro id_b = make_id[bool]()    // make_id__closure_bool_1 — distinct
+}
+```
+
+*Semantics:*
+- Detect closure-returning const fns с non-empty generics.
+- Call rewriter accepts BOTH `Ident(name)(args)` AND `Ident(name)[T1,..](args)`
+  (TurboFish form).
+- Spec key extended: `(name, const_args, type_args_mangle)`.
+- generate_closure_spec substitutes generic types в host return signature,
+  closure params, closure body via shared `subst_type_ref_pub` helper
+  (exposed from const_fn_trampoline.rs).
+- Mangled name: `<orig>__closure_<T1>_<T2>_<idx>`.
+
+*V4.5 Ф.4 limitations:*
+- TurboFish required at call site (no HOF inference для closure-returning).
+  Followup `[M-114.4.4-closure-generic-hof-inference]`.
+- Concrete TurboFish args must be simple Named.
+- TurboFish arity must match host's generics.
+
+🎯 **Plan 114.4.4 family complete (umbrella + all V4.x sub-plans):**
+- ✅ V3 (Ф.1-Ф.5) + V4 + V4.1 mono + V4.2 trampoline + V4.3 closure +
+  V4.4 Ф.1 composite-sizeof + V4.4 Ф.2 outer-captures + V4.5 Ф.3
+  generic-trampoline + V4.5 Ф.4 generic-closure.
+- All `[M-114.4.4-*]` markers closed (11 cumulative).
+- A1-A40 acceptance criteria.
 
 🎯 **Plan 114.4.4 family extended status:**
 - ✅ V3/V4/V4.1/V4.2/V4.3 phases (А1-А35) — landed earlier sessions.

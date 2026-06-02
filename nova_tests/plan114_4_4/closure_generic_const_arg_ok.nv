@@ -1,0 +1,17 @@
+// Plan 114.4.4 V4.5 Ф.4 POSITIVE: generic closure-returning const fn
+// с const arg — type and const arg both specialized per call site.
+
+module plan114_4_4.closure_generic_const_arg_ok
+
+fn make_scaler[T](const factor int) -> const fn(int) -> int =>
+    fn(x int) -> int => x * factor
+
+test "generic + const arg combination" {
+    // T=int, factor=3 → spec body: x * 3
+    ro s3 = make_scaler[int](3)
+    assert(s3(5) == 15)
+
+    // T=int, factor=10 → distinct spec, body: x * 10
+    ro s10 = make_scaler[int](10)
+    assert(s10(5) == 50)
+}

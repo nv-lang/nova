@@ -75,7 +75,9 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
     }
 
     // Step 2 — walk module, rewrite Call sites + collect specs.
-    let mut specs: HashMap<(String, Vec<ConstValue>), String> = HashMap::new();
+    // Plan 114.4.4 V4.5 Ф.4: spec key includes Vec<String> type_args mangle
+    // names (empty для non-generic).
+    let mut specs: HashMap<(String, Vec<ConstValue>, Vec<String>), String> = HashMap::new();
     let mut spec_counter: usize = 0;
     for item in &mut module.items {
         rewrite_item(item, &closure_fns, &mut specs, &mut spec_counter, &mut errors);
@@ -87,15 +89,15 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
     }
 
     // Step 3 — generate specialized FnDecls.
-    let mut sorted_specs: Vec<((&String, &Vec<ConstValue>), &String)> = specs
+    let mut sorted_specs: Vec<((&String, &Vec<ConstValue>, &Vec<String>), &String)> = specs
         .iter()
-        .map(|((n, a), s)| ((n, a), s))
+        .map(|((n, a, ta), s)| ((n, a, ta), s))
         .collect();
     sorted_specs.sort_by(|a, b| a.1.cmp(b.1));
     let mut specialized_items: Vec<Item> = Vec::new();
-    for ((host_name, const_args), spec_name) in sorted_specs {
+    for ((host_name, const_args, type_mangle), spec_name) in sorted_specs {
         let host = &closure_fns[host_name];
-        match generate_closure_spec(host, const_args, spec_name) {
+        match generate_closure_spec(host, const_args, type_mangle, spec_name) {
             Ok(fd) => specialized_items.push(Item::Fn(fd)),
             Err(d) => errors.push(d),
         }
@@ -188,8 +190,19 @@ fn subst_then_eval(e: &Expr, subst: &HashMap<String, ConstValue>) -> Option<Cons
 fn generate_closure_spec(
     host: &FnDecl,
     const_args: &[ConstValue],
+    type_mangle: &[String],
     spec_name: &str,
 ) -> Result<FnDecl, Diagnostic> {
+    // Plan 114.4.4 V4.5 Ф.4: build generic type subst map (host generic
+    // name → concrete TypeRef constructed from mangle string).
+    let mut type_subst: HashMap<String, TypeRef> = HashMap::new();
+    for (g, t_name) in host.generics.iter().zip(type_mangle.iter()) {
+        type_subst.insert(g.name.clone(), TypeRef::Named {
+            path: vec![t_name.clone()],
+            generics: vec![],
+            span: host.span,
+        });
+    }
     // Build substitution map: host const param name → literal value.
     let mut subst: HashMap<String, ConstValue> = HashMap::new();
     for (p, v) in host.params.iter().zip(const_args.iter()) {
@@ -221,21 +234,35 @@ fn generate_closure_spec(
     }
 
     // Extract closure params, body, return type. Param types выводим из
-    // host fn's `-> const fn(P1,..) -> R` declaration.
-    let host_ret_func = extract_func_signature(&host.return_type, host.span)?;
+    // host fn's `-> const fn(P1,..) -> R` declaration (после type subst).
+    // Plan 114.4.4 V4.5 Ф.4: substitute generic types в host return type
+    // BEFORE extracting closure parts, чтобы expected_param_types для
+    // ClosureLight type inference уже concrete.
+    let substituted_ret = host.return_type.as_ref()
+        .map(|r| crate::const_fn_trampoline::subst_type_ref_pub(r, &type_subst));
+    let host_ret_func = extract_func_signature(&substituted_ret, host.span)?;
     let (closure_params, closure_body, closure_ret_explicit) =
         extract_closure_parts_from_expr(closure_expr, host.span, host_ret_func.0.clone())?;
 
     // Derive return type: closure's explicit annotation (Lambda/ClosureFull)
-    // или host fn's declared `fn(..) -> R` second component.
-    let return_type = closure_ret_explicit.or(host_ret_func.1);
+    // или host fn's declared `fn(..) -> R` second component (after type subst).
+    let mut return_type = closure_ret_explicit
+        .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(&t, &type_subst))
+        .or(host_ret_func.1);
+    if let Some(rt) = &return_type {
+        return_type = Some(crate::const_fn_trampoline::subst_type_ref_pub(rt, &type_subst));
+    }
 
     // Build specialized FnDecl.
     let mut spec = host.clone();
     spec.name = spec_name.to_string();
-    spec.params = closure_params;
+    spec.params = closure_params.into_iter().map(|mut p| {
+        p.ty = crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &type_subst);
+        p
+    }).collect();
     spec.return_type = return_type;
     spec.return_is_const = false;
+    spec.generics = Vec::new(); // monomorph — drop generics.
     spec.body = match closure_body {
         ClosureBodyForm::Expr(mut e) => {
             subst_expr(&mut e, &subst);
@@ -546,7 +573,7 @@ fn subst_expr(e: &mut Expr, subst: &HashMap<String, ConstValue>) {
 fn rewrite_item(
     item: &mut Item,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -586,7 +613,7 @@ fn rewrite_item(
 fn rewrite_block(
     b: &mut Block,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -601,7 +628,7 @@ fn rewrite_block(
 fn rewrite_stmt(
     s: &mut Stmt,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -633,7 +660,7 @@ fn rewrite_stmt(
 fn rewrite_expr(
     e: &mut Expr,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -715,11 +742,22 @@ fn rewrite_expr(
         }
         _ => {}
     }
-    // Now check Call against closure_fns.
-    let mut do_rewrite: Option<(String, Vec<ConstValue>)> = None;
+    // Now check Call against closure_fns. Plan 114.4.4 V4.5 Ф.4: also accept
+    // TurboFish form (Ident[T1, T2]) для generic closure-returning fns.
+    let mut do_rewrite: Option<(String, Vec<ConstValue>, Vec<TypeRef>)> = None;
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
-        if let ExprKind::Ident(name) = &func.kind {
-            if closure_fns.contains_key(name) {
+        // Extract (name, type_args) from either Ident or TurboFish(Ident, ..).
+        let extracted: Option<(String, Vec<TypeRef>)> = match &func.kind {
+            ExprKind::Ident(n) => Some((n.clone(), Vec::new())),
+            ExprKind::TurboFish { base, type_args } => {
+                if let ExprKind::Ident(n) = &base.kind {
+                    Some((n.clone(), type_args.clone()))
+                } else { None }
+            }
+            _ => None,
+        };
+        if let Some((name, type_args)) = extracted {
+            if closure_fns.contains_key(&name) {
                 let mut arg_vals = Vec::with_capacity(args.len());
                 let mut ok = true;
                 for a in args {
@@ -746,18 +784,67 @@ fn rewrite_expr(
                         e.span,
                     ));
                 } else {
-                    do_rewrite = Some((name.clone(), arg_vals));
+                    do_rewrite = Some((name, arg_vals, type_args));
                 }
             }
         }
     }
-    if let Some((host_name, const_args)) = do_rewrite {
-        let key = (host_name.clone(), const_args);
+    if let Some((host_name, const_args, type_args)) = do_rewrite {
+        // Validate type_args presence matches host's generics.
+        let host = &closure_fns[&host_name];
+        if !host.generics.is_empty() && type_args.is_empty() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONST_FN_CLOSURE_GENERIC_NO_TURBOFISH] generic closure-returning \
+                     const fn `{}` requires explicit TurboFish: `{}[T1, ..](..)` (V4.5 Ф.4).",
+                    host_name, host_name
+                ),
+                e.span,
+            ));
+            return;
+        }
+        if !type_args.is_empty() && type_args.len() != host.generics.len() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONST_FN_CLOSURE_GENERIC_ARITY] TurboFish arity {} != host `{}` \
+                     generics {} (V4.5 Ф.4).",
+                    type_args.len(), host_name, host.generics.len()
+                ),
+                e.span,
+            ));
+            return;
+        }
+        // Build type-args mangle string from TypeRef (V1: simple Named names).
+        let mut type_mangle: Vec<String> = Vec::with_capacity(type_args.len());
+        let mut mangle_ok = true;
+        for ta in &type_args {
+            match crate::const_fn_eval::simple_type_name_str(ta) {
+                Some(s) => type_mangle.push(s),
+                None => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_CONST_FN_CLOSURE_GENERIC_COMPLEX] TurboFish arg для `{}` \
+                             must be simple Named type (V4.5 Ф.4).",
+                            host_name
+                        ),
+                        e.span,
+                    ));
+                    mangle_ok = false;
+                    break;
+                }
+            }
+        }
+        if !mangle_ok { return; }
+        let key = (host_name.clone(), const_args, type_mangle.clone());
         let counter_val = &mut *spec_counter;
         let spec_name = specs.entry(key).or_insert_with(|| {
-            let n = format!("{}__closure_{}", host_name, counter_val);
+            let suffix = if type_mangle.is_empty() {
+                format!("__closure_{}", counter_val)
+            } else {
+                format!("__closure_{}_{}", type_mangle.join("_"), counter_val)
+            };
             *counter_val += 1;
-            n
+            format!("{}{}", host_name, suffix)
         }).clone();
         let span = e.span;
         *e = Expr { kind: ExprKind::Ident(spec_name), span };

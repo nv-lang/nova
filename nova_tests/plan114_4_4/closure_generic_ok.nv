@@ -1,0 +1,16 @@
+// Plan 114.4.4 V4.5 Ф.4 POSITIVE: generic closure-returning const fn.
+// Closes [M-114.4.4-closure-generic]. Call site через TurboFish.
+
+module plan114_4_4.closure_generic_ok
+
+fn make_id[T]() -> const fn(T) -> T => fn(x T) -> T => x
+
+test "generic closure-returning const fn" {
+    // make_id[int]() → specialized fn make_id__closure_int_0(x int) -> int { x }
+    ro id_i = make_id[int]()
+    assert(id_i(42) == 42)
+
+    // make_id[bool]() → distinct spec make_id__closure_bool_1(x bool) -> bool { x }
+    ro id_b = make_id[bool]()
+    assert(id_b(true) == true)
+}

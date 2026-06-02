@@ -1243,12 +1243,20 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // used as first-class values. Inserted в module.items BEFORE validate +
     // retain. Trampoline names (`<orig>__trampoline`) survive retain since
     // const_names filter matches только original names.
-    let (trampoline_set, t_errors) = crate::const_fn_trampoline::generate_const_fn_trampolines(
-        module,
-        &owned.fns,
-        &owned.aliases,
-    );
+    let (trampoline_set, generic_trampoline_set, t_errors) =
+        crate::const_fn_trampoline::generate_const_fn_trampolines(
+            module,
+            &owned.fns,
+            &owned.aliases,
+        );
     errors.extend(t_errors);
+    // Plan 114.4.4 V4.5 Ф.3: union non-generic + generic trampoline sets для
+    // validate skip — both kinds suppress first-class errors.
+    let combined_trampoline_set: std::collections::HashSet<String> = trampoline_set
+        .iter()
+        .chain(generic_trampoline_set.iter())
+        .cloned()
+        .collect();
 
     // Plan 114.4.4 Ф.2 (D199 V3): friendly UX validation — detect runtime
     // misuse of const fn names BEFORE codegen drops them. After this pass
@@ -1256,7 +1264,7 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
     // с actionable suggestion.
     // Plan 114.4.4.3 V4.2: skip validation для names в trampoline_set —
     // those usages already rewritten к trampoline по step 4.
-    validate_const_fn_runtime_uses(module, &owned, &trampoline_set, &mut errors);
+    validate_const_fn_runtime_uses(module, &owned, &combined_trampoline_set, &mut errors);
 
     // Drop const fn declarations + alias const decls (V2 Ф.5) из items.
     let const_names = owned.names();
