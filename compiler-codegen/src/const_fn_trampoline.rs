@@ -12,7 +12,7 @@
 //! работает за счёт того, что body fully-const fn состоит из выражений
 //! над const-params, литералами и control-flow — то же самое работает
 //! и в runtime). Транзитивные вызовы других const fn внутри body
-//! перепиываются на `__trampoline`-имена; sizeof[T]()/align_of[T]()
+//! перепиываются на `__trampoline`-имена; size_of[T]()/align_of[T]()
 //! intrinsics инлайнятся литералами при генерации trampoline body.
 //!
 //! Pipeline placement: внутри `rewrite_const_fn_calls`, ПОСЛЕ основного
@@ -26,7 +26,7 @@
 //! - Body может содержать calls только к другим fully-const fn —
 //!   они автоматически добавляются в trampoline-set транзитивно.
 //! - Generic const fn unsupported (followup `[M-114.4.4-trampoline-generics]`).
-//! - sizeof[T]()/align_of[T]() — только primitive T (V4.0 limitation).
+//! - size_of[T]()/align_of[T]() — только primitive T (V4.0 limitation).
 //! - Closure literals в body — обрабатываются Plan 114.4.4.4 (отдельно).
 
 use std::collections::{HashMap, HashSet};
@@ -548,7 +548,7 @@ fn generate_trampoline_decl(
     }
     td.return_is_const = false;
     // Walk body: rewrite Call к other const fn → trampoline name; substitute
-    // sizeof/align_of intrinsics с literal Int.
+    // size_of/align_of intrinsics с literal Int.
     let local_errors = rewrite_trampoline_body(&mut td.body, trampoline_set);
     if !local_errors.is_empty() {
         errors.extend(local_errors);
@@ -605,12 +605,12 @@ fn rewrite_body_stmt(s: &mut Stmt, ts: &HashSet<String>, errs: &mut Vec<Diagnost
 fn rewrite_body_expr(e: &mut Expr, ts: &HashSet<String>, errs: &mut Vec<Diagnostic>) {
     // First recurse into children.
     rewrite_body_children(e, ts, errs);
-    // Handle sizeof[T]() / align_of[T]() intrinsics.
+    // Handle size_of[T]() / align_of[T]() intrinsics.
     let span = e.span;
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
         if let ExprKind::TurboFish { base, type_args } = &func.kind {
             if let ExprKind::Ident(n) = &base.kind {
-                if (n == "sizeof" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
+                if (n == "size_of" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
                     match type_size_or_align(&type_args[0], n == "align_of") {
                         Some(v) => {
                             *e = Expr { kind: ExprKind::IntLit(v), span };

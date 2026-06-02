@@ -1,0 +1,12 @@
+// Plan 114.4.4 Ф.5 positive: size_of[T]() в const fn body.
+
+module plan114_4_4.size_of_in_const_fn_ok
+
+fn buf_size(const count int) -> const int =>
+    count * size_of[int]()
+
+test "size_of в const fn body" {
+    const TOTAL = buf_size(10)
+    // 10 * 8 = 80
+    assert(TOTAL == 80)
+}

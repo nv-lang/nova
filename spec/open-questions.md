@@ -184,7 +184,7 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
   Mixed fn stays в codegen с const-param validation at call sites.
   Covers `[M-114.4.2-runtime-return]` (subset).
 - ✅ **Generic const fn:** `fn[T] foo(const a int) -> const int`
-  T-independent body. T reflection (sizeof[T]) → V3.
+  T-independent body. T reflection (size_of[T]) → V3.
 - ✅ **First-class alias:** `const ALIAS = const_fn` allowed; calls
   через alias map. Real first-class через runtime trampoline → V3.
 
@@ -195,7 +195,7 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 
 **V4 extensions (Plan 114.4.4 finish, 2026-06-02):**
 - ✅ Record/sum/tuple patterns в match (closes [M-114.4.3-pattern-record-sum]).
-- ✅ Type reflection sizeof[T]/align_of[T] для primitives (closes
+- ✅ Type reflection size_of[T]/align_of[T] для primitives (closes
   [M-114.4.3-t-reflection] для primitive surface).
 
 **V4.1 extensions (Plan 114.4.4 V4.1 session, 2026-06-02):**
@@ -215,7 +215,7 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
   с substituted const param + closure body, replaced в call site как fn pointer.
 
 **V4.4 extensions (Plan 114.4.4 V4.4 followups session, 2026-06-02):**
-- ✅ Ф.1: sizeof/align_of для composite types — tuples / FixedArray /
+- ✅ Ф.1: size_of/align_of для composite types — tuples / FixedArray /
   Array / Unit / Readonly. Closes [M-114.4.4-trampoline-record-reflection].
 - ✅ Ф.2: Closure-returning const fn captures outer const locals
   (Block body с Stmt::Const + trailing closure). Closes
@@ -230,11 +230,11 @@ comptime-функции через **`const fn`** (D199) — V2 production-grade
 
 **Что остаётся открытым (Q7 V4.3+):**
 - Comptime-функции имеют доступ к типам как первый класс?
-  → V4.0 sizeof/align для primitives ✅; records/generics → Plan 114.4.4.2.
+  → V4.0 size_of/align для primitives ✅; records/generics → Plan 114.4.4.2.
 - Можно ли генерировать код во время компиляции?
   → Нет (без macro-system; future Q-блок).
 - Reflection во время компиляции — да или нет?
-  → V4 primitives sizeof/align_of ✅; records/generics → V4.1.
+  → V4 primitives size_of/align_of ✅; records/generics → V4.1.
 - Custom DSL через comptime — допускается?
   → Нет (out-of-scope).
 - ✅ Loops (`for`/`while`) в body — закрыто Plan 114.4.4 Ф.3 (2026-06-01).

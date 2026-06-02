@@ -29618,3 +29618,35 @@ Lessons:
   fallback.
 - Design-pending followups (Ф.3+Ф.4) deferred с clear blocker docs, не
   half-baked impl. Production-ready scope requires user input on syntax/inference choice.
+
+
+================================================================================
+== 2026-06-02 — Rename sizeof → size_of для Rust-style consistency
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-114.4.4-sizeof-rename (off main fd0419a1139)
+
+Замысел:
+Plan 114.4.4 Ф.5 V4 originally shipped `sizeof` (no underscore) +
+`align_of` (with underscore) — inconsistent naming. Rust имеет
+`std::mem::size_of::<T>()` + `align_of::<T>()` (both with underscore).
+Rename `sizeof` → `size_of` для consistency с Rust convention.
+
+Изменения:
+- compiler-codegen/src/{const_fn_eval,const_fn_trampoline,types/mod}.rs:
+  string literal "sizeof" → "size_of" в parser/eval recognition.
+- 6 fixture files renamed (git mv): sizeof_*.nv → size_of_*.nv в
+  plan114_4_4 + plan114_4_3/generic_size_of_neg.nv.
+- Sed-bulk update fixture content + spec/docs.
+- Migration note в spec D199 V4.4 section.
+
+Тесты (release nova-cli): 30/30 plan114_4_4 + 14/14 plan114_4_3 PASS.
+No regression на plan114_4_2 (15/15).
+
+Breaking change:
+- Bootstrap-stage, no external users yet — no deprecation shim shipped.
+- Future code must use `size_of[T]()`.
+
+Note: C codegen `sizeof()` (literal C language keyword в emit_c.rs
+output strings) untouched — это другой sizeof (C's), not Nova's.

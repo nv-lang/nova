@@ -986,14 +986,14 @@ pub fn simple_type_name_str(t: &crate::ast::TypeRef) -> Option<String> {
     }
 }
 
-/// Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1: sizeof[T]()/align_of[T]() — type layout.
+/// Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1: size_of[T]()/align_of[T]() — type layout.
 ///
 /// V4.0 supported только primitives (hardcoded 64-bit ABI).
 /// V4.4 Ф.1 (Plan 114.4.4.6 followup) расширил поддержку до composite
 /// types БЕЗ TypeDecl lookup:
 /// - **Tuples** `(T1, T2, ..)` — C struct layout: fields в порядке,
 ///   natural alignment, tail-pad up to max field alignment.
-/// - **FixedArray** `[N]T` — `N * sizeof(T)` с element alignment.
+/// - **FixedArray** `[N]T` — `N * size_of(T)` с element alignment.
 /// - **Array** `[]T` — slice ABI = pointer + length = 16 bytes.
 /// - **Unit** `()` — size=0, align=1 (no storage).
 /// - **Readonly** `readonly T` — same layout as T.
@@ -1093,10 +1093,10 @@ pub fn try_literal_to_value(expr: &Expr) -> Option<ConstValue> {
             Some(ConstValue::Tuple(vs))
         }
         ExprKind::Call { func, args, trailing: None } => {
-            // Plan 114.4.4 Ф.5 V4: sizeof/align_of intrinsics — TurboFish callee.
+            // Plan 114.4.4 Ф.5 V4: size_of/align_of intrinsics — TurboFish callee.
             if let ExprKind::TurboFish { base, type_args } = &func.kind {
                 if let ExprKind::Ident(n) = &base.kind {
-                    if (n == "sizeof" || n == "align_of") && type_args.len() == 1 && args.is_empty() {
+                    if (n == "size_of" || n == "align_of") && type_args.len() == 1 && args.is_empty() {
                         return type_size_or_align(&type_args[0], n == "align_of")
                             .map(ConstValue::Int);
                     }
@@ -1180,9 +1180,9 @@ pub fn rewrite_const_fn_calls(module: &mut crate::ast::Module) -> Vec<Diagnostic
             _ => None,
         })
         .collect();
-    // Plan 114.4.4 Ф.5: walk module even без const fns — sizeof/align_of
+    // Plan 114.4.4 Ф.5: walk module even без const fns — size_of/align_of
     // intrinsics могут use'аться в module-level const RHS без const fn
-    // decls (e.g. `const SIZE = sizeof[int]()`).
+    // decls (e.g. `const SIZE = size_of[int]()`).
     let mut owned = OwnedEvaluator::new(const_fn_decls);
     for (name, flags, fd) in mixed_fns {
         owned.register_mixed(name, flags, fd);
@@ -1727,7 +1727,7 @@ impl OwnedEvaluator {
             }
             ExprKind::Call { func, args, trailing: None } => {
                 // Plan 114.4.3 Ф.4 V2: turbofish callee для generic const fn.
-                // Plan 114.4.4 Ф.5 V4: extract type_args (для sizeof[T]).
+                // Plan 114.4.4 Ф.5 V4: extract type_args (для size_of[T]).
                 let (callee_name, type_args) = match &func.kind {
                     ExprKind::Ident(n) => (n.clone(), Vec::new()),
                     ExprKind::TurboFish { base, type_args } => {
@@ -1747,7 +1747,7 @@ impl OwnedEvaluator {
                     )),
                 };
                 // Plan 114.4.4 Ф.5 V4: t-reflection intrinsics.
-                if callee_name == "sizeof" || callee_name == "align_of" {
+                if callee_name == "size_of" || callee_name == "align_of" {
                     if type_args.len() != 1 {
                         return Err(Diagnostic::new(
                             format!(
@@ -2109,11 +2109,11 @@ fn walk_expr(
     // Mixed fns остаются в codegen, не evaluated, но const params на call site
     // требуют constexpr arg.
     if let ExprKind::Call { func, args, trailing: None } = &e.kind {
-        // Plan 114.4.4 Ф.5 V4: sizeof[T]() / align_of[T]() intrinsics —
+        // Plan 114.4.4 Ф.5 V4: size_of[T]() / align_of[T]() intrinsics —
         // replace call с literal Int.
         if let ExprKind::TurboFish { base, type_args } = &func.kind {
             if let ExprKind::Ident(n) = &base.kind {
-                if (n == "sizeof" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
+                if (n == "size_of" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
                     match type_size_or_align(&type_args[0], n == "align_of") {
                         Some(size) => {
                             let span = e.span;

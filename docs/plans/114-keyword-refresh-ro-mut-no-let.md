@@ -380,7 +380,7 @@ type Config {
 Config.VERSION                                    // ✓ 2 (no instance needed)
 Config.MAX_PEERS                                  // ✓ 1024
 ro c = Config { name: "alice", timeout: SECOND }  // VERSION/MAX_PEERS не указываются
-sizeof(Config)                                    // == sizeof(name) + sizeof(timeout)
+size_of(Config)                                    // == size_of(name) + size_of(timeout)
                                                   //    NO storage for const fields
 
 // 3. Sum-type associated constant
@@ -395,7 +395,7 @@ ro s = Active                                     // обычная variant cons
 // 4. Generic-type associated constant (T-independent vs T-dependent)
 type Box[T] {
     const TAG int = 0                             // T-independent: emit once
-    const SIZE int = sizeof(T)                    // T-dependent: per-monomorphization
+    const SIZE int = size_of(T)                    // T-dependent: per-monomorphization
     value T
 }
 
@@ -406,7 +406,7 @@ Box.SIZE                                          // ✗ E_GENERIC_CONST_REQUIRE
                                                   //   hint: «use Box[T].SIZE — depends on T»
 
 type Pair[T, U] {
-    const TOTAL int = sizeof(T) + sizeof(U)       // depends on both T and U
+    const TOTAL int = size_of(T) + size_of(U)       // depends on both T and U
     first T
     second U
 }
@@ -1032,7 +1032,7 @@ errors достаточны.
 > Если associated-const реализация усложняется неожиданно (codegen namespace
 > resolution для `Type.FIELD`, doc-gen для associated consts, ABI implications
 > для `export const` field, или edge-cases с generic-types `type Box[T] {
-> const SIZE int = sizeof(T) }` — последнее за scope, comptime feature) —
+> const SIZE int = size_of(T) }` — последнее за scope, comptime feature) —
 > Ф.10 extract'ится в **Plan 114.2** (sub-plan) одним revert'ом. Plan 114 шипится с Ф.9
 > narrowing + module-level `const` only. Все Ф.10 артефакты сгруппированы.
 
@@ -1056,7 +1056,7 @@ errors достаточны.
   - **Generic-type assoc const (T-independent):** RHS не ссылается на generic
     params — checker evaluates сразу, emit единственный symbol.
   - **Generic-type assoc const (T-dependent):** RHS references хотя бы один
-    generic param (e.g. `sizeof(T)`, `T.SIZE`, арифметика над ними) —
+    generic param (e.g. `size_of(T)`, `T.SIZE`, арифметика над ними) —
     evaluation **deferred** до monomorphization. Per-(T1,T2,…)-mono symbol.
   - **Namespace resolution для generic:**
     - `Box.TAG` (T-independent) — works directly.
@@ -1064,7 +1064,7 @@ errors достаточны.
     - `Box.SIZE` (T-dependent без instantiation) →
       `E_GENERIC_CONST_REQUIRES_INSTANTIATION` с hint «depends on T;
       use `Box[T].SIZE`».
-  - **Cyclic detection:** `type Tree[T] { const SIZE = sizeof(T) + sizeof(Tree[T]) }`
+  - **Cyclic detection:** `type Tree[T] { const SIZE = size_of(T) + size_of(Tree[T]) }`
     — circular monomorphization → `E_GENERIC_CONST_CYCLE`.
 - **Ф.10.3** Codegen:
   - Scope-local const: inline literal value at use-sites (zero allocation).
@@ -1080,7 +1080,7 @@ errors достаточны.
   - Associated consts отображаются в type-page рядом с methods/fields —
     отдельная секция «Associated constants».
   - Cross-link `Type.FOO` в API docs.
-  - Для generic T-dependent: render «`const SIZE int = sizeof(T)` — computed
+  - Для generic T-dependent: render «`const SIZE int = size_of(T)` — computed
     per monomorphization».
 - **Ф.10.5** Spec D-block: новый **D200** (Associated constants — `const`
   field в `type X`, расширенный sum-types + generic-types); амендмент **D27**
@@ -1339,7 +1339,7 @@ c.VERSION                                     // ✗ E_CONST_INSTANCE_ACCESS
                                               //   hint: «use Config.VERSION»
 
 // Layout
-sizeof(Config) == sizeof(name) + sizeof(timeout)  // const fields НЕ занимают storage
+size_of(Config) == size_of(name) + size_of(timeout)  // const fields НЕ занимают storage
 ```
 
 **Семантика.**
@@ -1401,10 +1401,10 @@ Box.TAG                        // ✓ emit single symbol BoxTAG
 ```
 
 **T-dependent** — RHS reference'ит хотя бы один generic param через
-`sizeof(T)`, `T.CONST_ON_T`, или арифметику над ними:
+`size_of(T)`, `T.CONST_ON_T`, или арифметику над ними:
 ```nova
 type Box[T] {
-    const SIZE int = sizeof(T)
+    const SIZE int = size_of(T)
     value T
 }
 Box[int].SIZE                  // ✓ 8 — emit per-mono Box_int_SIZE
@@ -1413,7 +1413,7 @@ Box.SIZE                       // ✗ E_GENERIC_CONST_REQUIRES_INSTANTIATION
                                //   («depends on T; use Box[T].SIZE»)
 
 type Pair[T, U] {
-    const TOTAL int = sizeof(T) + sizeof(U)
+    const TOTAL int = size_of(T) + size_of(U)
     first T
     second U
 }
@@ -1421,15 +1421,15 @@ Pair[int, str].TOTAL           // ✓ per-(T,U)-mono — emit Pair_int_str_TOTAL
 ```
 
 **Allowed in T-dependent RHS (V1):**
-- `sizeof(T)` где `T` — generic param
-- Арифметика над `sizeof(T_i)` и literals
+- `size_of(T)` где `T` — generic param
+- Арифметика над `size_of(T_i)` и literals
 - Ссылки на T-independent `const` (через `Type.CONST`)
 
 **НЕ allowed в V1** (followups):
 - `T.METHOD()` calls — runtime, не constexpr
 - `const fn` calls с generic args — `[M-114-generic-const-fn]` (требует
   generic const fn monomorphization)
-- Recursive type references (`Tree[T] { const X = sizeof(Tree[T]) }`) —
+- Recursive type references (`Tree[T] { const X = size_of(Tree[T]) }`) —
   `E_GENERIC_CONST_CYCLE`
 
 **Сравнение с mainstream:**
@@ -1647,7 +1647,7 @@ param как `comptime` per-param), но без runtime-call-mode (всегда 
 - **T9.4** Associated const: `type Config { const VERSION int = 2; name str }`
   parses; `Config.VERSION` resolves to `2`; emit top-level `const int
   Config_VERSION = 2;`.
-- **T9.5** `sizeof(Config) == sizeof(name_field_only)` (const fields НЕ в
+- **T9.5** `size_of(Config) == size_of(name_field_only)` (const fields НЕ в
   layout).
 - **T9.6** `let c = Config { name: "alice" }` — record literal без `VERSION`
   field; type-checks.
@@ -1668,17 +1668,17 @@ param как `comptime` per-param), но без runtime-call-mode (всегда 
   VERSION int = 2 }` — `Status.VERSION` == 2; emit single `Status_VERSION`.
 - **T9.16** Generic T-independent: `type Box[T] { const TAG int = 0 }` —
   `Box.TAG` == 0; emit single `Box_TAG`.
-- **T9.17** Generic T-dependent — `type Box[T] { const SIZE int = sizeof(T) }`:
+- **T9.17** Generic T-dependent — `type Box[T] { const SIZE int = size_of(T) }`:
   `Box[int].SIZE` == 8; `Box[str].SIZE` == 16; emit per-mono `Box_int_SIZE`,
   `Box_str_SIZE`.
-- **T9.18** Generic T-dependent с арифметикой: `const HEADER int = sizeof(T)
+- **T9.18** Generic T-dependent с арифметикой: `const HEADER int = size_of(T)
   + 8` — `Box[int].HEADER` == 16.
-- **T9.19** Cross-T-param: `type Pair[T, U] { const TOTAL int = sizeof(T)
-  + sizeof(U) }` — `Pair[int, str].TOTAL` per-(T,U)-mono.
+- **T9.19** Cross-T-param: `type Pair[T, U] { const TOTAL int = size_of(T)
+  + size_of(U) }` — `Pair[int, str].TOTAL` per-(T,U)-mono.
 - **T9.20** **NEG**: `Box.SIZE` (T-dependent без instantiation) →
   `E_GENERIC_CONST_REQUIRES_INSTANTIATION`.
-- **T9.21** **NEG**: cyclic `type Tree[T] { const SIZE int = sizeof(T) +
-  sizeof(Tree[T]) }` → `E_GENERIC_CONST_CYCLE`.
+- **T9.21** **NEG**: cyclic `type Tree[T] { const SIZE int = size_of(T) +
+  size_of(Tree[T]) }` → `E_GENERIC_CONST_CYCLE`.
 
 ### T10 — `const fn` comptime evaluable (Ф.11)
 
@@ -1772,7 +1772,7 @@ param как `comptime` per-param), но без runtime-call-mode (всегда 
 | **R-9** | **Ф.9 `const` tightening** ломает pre-existing `const`-сайты которые think'ались constexpr но на самом деле нет (e.g. record-literal references runtime fn) | Compiler errors показывают конкретные сайты с `E_CONST_NOT_CONSTEXPR`; manual demote в `ro`; ожидается ~5 из 76 — manageable. **Safety hatch:** если число affected > 20 — Ф.9 extract'ится в **Plan 114.1** (sub-plan), `const` остаётся со старой broad-semantics в Plan 114. Decision point: первый `nova test` post-Ф.9.1 |
 | **R-10** | **Ф.10 associated consts** усложняют codegen namespace resolution / doc-gen / ABI (especially `export const` field) больше чем expected | **Self-contained slice (Ф.10 preamble): extract в Plan 114.2 (sub-plan) одним revert'ом, Plan 114 шипится без Ф.10 — `const` остаётся module-level only. Triggers для extract: namespace resolution для `Type.FIELD` требует значительного рефактора name-resolver'а; doc-gen `nova doc` ломает existing render; ABI implications для `export const Type.FIELD` создают cross-module compatibility issues. Decision point: конец Ф.10.3 (codegen smoke)** |
 | **R-11** | `nova_const_<name>()` lazy-init runtime symbols collide с Ф.9 tightening (теперь только `ro` non-constexpr использует lazy) | **Решение в Ф.9.2:** keep `nova_const_<name>()` C-symbol naming (legacy от Plan 14 Ф.2); только Nova-side semantics меняется. C-side ABI инвариантен — zero migration для downstream FFI users |
-| R-12 | Associated-const + generic-type interaction: `const SIZE = sizeof(T)` deferred evaluation + per-mono codegen + namespace resolution `Box[T].SIZE` | **In-scope для Ф.10** (после переоценки 2026-05-30: не deep refactor — Nova уже monomorphizes; evaluator reuses Plan 14 Ф.2 logic с T-bound env; per-mono codegen symbol naming тривиально по аналогии с generic fields). Cost: +½ day к Ф.10. Followup `[M-114-generic-const-fn]` остаётся (generic `const fn` — отдельная фича) |
+| R-12 | Associated-const + generic-type interaction: `const SIZE = size_of(T)` deferred evaluation + per-mono codegen + namespace resolution `Box[T].SIZE` | **In-scope для Ф.10** (после переоценки 2026-05-30: не deep refactor — Nova уже monomorphizes; evaluator reuses Plan 14 Ф.2 logic с T-bound env; per-mono codegen symbol naming тривиально по аналогии с generic fields). Cost: +½ day к Ф.10. Followup `[M-114-generic-const-fn]` остаётся (generic `const fn` — отдельная фича) |
 | **R-13** | **Ф.11 comptime-evaluator** усложняется неожиданно (shared interpreter logic с runtime; integration с existing Plan 14 Ф.2 constexpr-engine; corner cases в const-fn-calls-const-fn chains) | **Self-contained slice (Ф.11 preamble): extract в Plan 114.3 (sub-plan) одним revert'ом, Plan 114 шипится без Ф.11 — `const` data-only (literals + arithmetic + record-literals). Decision point: конец Ф.11.3 evaluator smoke на minimal example. Triggers для extract: evaluator требует >1 dev-day; body-checker для V1 subset усложняется неожиданно; integration deep refactor** |
 | R-14 | `const fn` evaluator integer overflow / div-by-zero — silent vs explicit | Explicit errors: `E_CONST_FN_EVAL_OVERFLOW` / `E_CONST_FN_DIV_ZERO` с pointer на offending expression в body + call site context. Не tradition-silent (Rust `const fn` ловит на debug, не на release). Nova V2 — всегда compile-error |
 
@@ -1812,7 +1812,7 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
 | `[M-114-comptime-mixed-args]` | `fn mixed(const a int, b int) -> int` — некоторые params const, некоторые runtime; partial specialization | Zig-like `comptime` per-param flexibility; требует runtime + comptime variants emission |
 | `[M-114-const-param-runtime-return]` | `fn make_buf(const n int) -> []u8` — const param, runtime return (specialized runtime fn) | Plan 114 V1 = all-or-nothing; этот followup отдельно вводит partial specialization |
 | `[M-114-const-fn-first-class]` | `ro f = some_const_fn` — first-class const fn | V1 reject'ит; followup может ввести через runtime-wrapper (call site становится runtime trampoline) |
-| `[M-114-generic-const-fn]` | `const fn sizeof[T]() -> const int { … }` | Generic-aware comptime; unblock'нет R-12 (generic assoc const) |
+| `[M-114-generic-const-fn]` | `const fn size_of[T]() -> const int { … }` | Generic-aware comptime; unblock'нет R-12 (generic assoc const) |
 
 ---
 

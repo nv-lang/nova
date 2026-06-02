@@ -30712,3 +30712,34 @@ without TypeDecl lookup possible через recursive element walk. Generic
 instantiation genuinely cross-cutting (parser OR type-inference OR
 annotation) — design questions surface при scope expansion; не shipped
 half-baked, deferred с clear rationale.
+
+
+---
+
+## Rename `sizeof` → `size_of` для Rust-style consistency (2026-06-02)
+
+**Status:** ✅ LANDED. Branch `plan-114.4.4-sizeof-rename`.
+
+**Замысел:** Plan 114.4.4 Ф.5 V4 originally shipped inconsistent naming:
+`sizeof[T]()` (без `_`) + `align_of[T]()` (с `_`). Rust convention =
+both with underscore (`std::mem::size_of::<T>()` + `align_of::<T>()`).
+Rename `sizeof` → `size_of` для consistency.
+
+**Implementation:** Single-token rename в parser/eval/trampoline
+recognition tables (3 source files). 6 fixture files renamed via
+`git mv`. Bulk-sed update fixture content + spec/docs. Migration note
+в D199 V4.4 section.
+
+**Tests:** 30/30 plan114_4_4 + 14/14 plan114_4_3 + 15/15 plan114_4_2 = 59/59 PASS.
+
+**Breaking change rationale:** Bootstrap-stage, no external users.
+No deprecation shim — clean rename. Future code uses `size_of[T]()`.
+
+**C `sizeof()` untouched:** emit_c.rs output strings still emit `sizeof()`
+для C codegen — это C language keyword, не Nova intrinsic. Two
+"sizeofs" coexist по слоям (Nova → `size_of[T]`, C output → `sizeof(...)`).
+
+**Design lesson:** Consistency surfaces поздно — user-pointed
+inconsistency после V4.4 Ф.1/Ф.2 ship. Rule: at intrinsic naming
+decisions, audit ВСЁ family (size_of + align_of + future offset_of /
+type_name etc) для одного pattern. Rust convention = `<verb>_of` form.

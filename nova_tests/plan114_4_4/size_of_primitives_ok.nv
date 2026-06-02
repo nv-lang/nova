@@ -1,0 +1,17 @@
+// Plan 114.4.4 Ф.5 positive: size_of[T]() intrinsic для primitive types.
+
+module plan114_4_4.size_of_primitives_ok
+
+const SIZE_INT = size_of[int]()
+const SIZE_BOOL = size_of[bool]()
+const SIZE_CHAR = size_of[char]()
+const SIZE_F64 = size_of[f64]()
+const ALIGN_INT = align_of[int]()
+
+test "size_of primitives" {
+    assert(SIZE_INT == 8)
+    assert(SIZE_BOOL == 1)
+    assert(SIZE_CHAR == 4)
+    assert(SIZE_F64 == 8)
+    assert(ALIGN_INT == 8)
+}

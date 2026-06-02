@@ -1,25 +1,25 @@
-// Plan 114.4.4 Ф.5 V4.4 Ф.1 POSITIVE: sizeof для tuple types.
+// Plan 114.4.4 Ф.5 V4.4 Ф.1 POSITIVE: size_of для tuple types.
 // Closes part of [M-114.4.4-trampoline-record-reflection].
 
-module plan114_4_4.sizeof_tuple_ok
+module plan114_4_4.size_of_tuple_ok
 
 // (int, int) — 2 × 8 = 16, align 8
-const SIZE_2INT = sizeof[(int, int)]()
+const SIZE_2INT = size_of[(int, int)]()
 const ALIGN_2INT = align_of[(int, int)]()
 
 // (i8, i32) — pad i8 to align 4, then i32 → 8 bytes (4+4), align 4
-const SIZE_MIXED = sizeof[(i8, i32)]()
+const SIZE_MIXED = size_of[(i8, i32)]()
 const ALIGN_MIXED = align_of[(i8, i32)]()
 
 // (bool, int) — pad bool to align 8, then int → 16 bytes, align 8
-const SIZE_BI = sizeof[(bool, int)]()
+const SIZE_BI = size_of[(bool, int)]()
 const ALIGN_BI = align_of[(bool, int)]()
 
 // (i8, i8, i8) — 3 bytes, align 1
-const SIZE_3I8 = sizeof[(i8, i8, i8)]()
+const SIZE_3I8 = size_of[(i8, i8, i8)]()
 const ALIGN_3I8 = align_of[(i8, i8, i8)]()
 
-test "sizeof for tuple types" {
+test "size_of for tuple types" {
     assert(SIZE_2INT == 16)
     assert(ALIGN_2INT == 8)
 
