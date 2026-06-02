@@ -361,6 +361,12 @@ pub struct CEmitter {
     emitted_vtable_instances: HashSet<(String, String)>,
     /// Maps struct name → field name → C type
     record_schemas: HashMap<String, HashMap<String, String>>,
+    /// Plan 124.8 V2 (D226): names of value-records — `type X value { ... }`.
+    /// emit_record_lit checks this set чтобы emit stack-init code path
+    /// instead of heap-alloc (Nova_X*) path. is_value_type recognizes
+    /// `NovaValue_` prefix; this set isolates user-declared value-records
+    /// from runtime types.
+    value_record_names: HashSet<String>,
     /// Maps sum type name → variant name → field types (positional)
     sum_schemas: HashMap<String, HashMap<String, Vec<String>>>,
     /// Maps effect name → method name → (param_types, return_type)
@@ -929,6 +935,7 @@ impl CEmitter {
             emitted_vtable_types: HashSet::new(),
             emitted_vtable_instances: HashSet::new(),
             record_schemas: HashMap::new(),
+            value_record_names: HashSet::new(),
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
@@ -1688,8 +1695,19 @@ impl CEmitter {
             if let Item::Type(t) = item {
                 match &t.kind {
                     TypeDeclKind::Record(_) => {
-                        self.user_type_fwd_decls.push_str(&format!(
-                            "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                        // Plan 124.8 V2 (D226): value-records emit own
+                        // `typedef struct NovaValue_X NovaValue_X;` в
+                        // emit_value_record_type. Skip Nova_X forward decl
+                        // (которая wouldn't have a corresponding struct
+                        // definition) для value-records.
+                        use crate::ast::AllocKind;
+                        if matches!(t.allocation, AllocKind::Value) {
+                            self.user_type_fwd_decls.push_str(&format!(
+                                "typedef struct NovaValue_{0} NovaValue_{0};\n", t.name));
+                        } else {
+                            self.user_type_fwd_decls.push_str(&format!(
+                                "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                        }
                     }
                     TypeDeclKind::Sum(variants) => {
                         // Plan 72 P1-B: an empty sum (0 variants) is emitted by
@@ -8063,30 +8081,23 @@ impl CEmitter {
     }
 
     fn emit_type_decl(&mut self, t: &TypeDecl) -> Result<(), String> {
-        // Plan 124.8 (D226 / [M-124.8-value-codegen-stack] followup):
-        // value-record (`type X value { ... }`) — surface syntax accepted в
-        // parser/AST/type-checker. Codegen V1: treats as heap-record (no
-        // behavioral change beyond standard record path).
+        // Plan 124.8 V2 (D226 §«codegen» V2 production): value-record
+        // (`type X value { ... }`) emits as inline C struct (value type)
+        // через emit_value_record_type — symmetric с NamedTuple path
+        // (Plan 120 D215). Branch by t.allocation enum в Record dispatch
+        // ниже в this function.
         //
-        // V2 followup [M-124.8-value-codegen-stack] will implement proper
-        // stack allocation:
-        //   - Emit `typedef struct { ... } Nova_<Name>;` (no pointer alias).
-        //   - Field access via `.` (struct member), не `->` (pointer member).
-        //   - Pass-by-value на parameters (memcpy at call site).
-        //   - `[]Vec3` inline storage (instead of array of pointers).
-        //   - `@` receiver as `Nova_<Name>*` pointer to stack-slot.
-        //   - Auto-coerce при escape: heap-promote через managed GC if
-        //     value escapes lexical scope (D6 contract).
+        // V2 capabilities:
+        // - `typedef struct NovaValue_X NovaValue_X;` inline value type.
+        // - Field access via `.` (struct member, not `->` pointer member).
+        // - Pass-by-value на parameter passes (C handles natively).
+        // - Stack init для record literal (no nova_alloc heap allocation).
+        // - is_value_type recognizes NovaValue_ prefix for member-access path.
         //
-        // V1 limitation: value-record allocates на heap при construction
-        // (как heap-record). Это known limitation, documented в D226 §«V1
-        // scope». User-facing impact: meaningfully same semantics (memberwise
-        // access works, methods work, equality еще не auto-derived); только
-        // perf профиль different (heap alloc vs stack alloc).
-        //
-        // No allocation enum match here — value/heap difference is transparent
-        // to V1 codegen. AST поле t.allocation preserved для V2 lookup.
-        let _ = &t.allocation; // suppress unused-field warning during V1
+        // V2.1 advanced (further followups):
+        // - `[]NovaValue_X` array inline storage (currently boxes elements).
+        // - Escape analysis (auto-promote to heap if value escapes scope).
+        // - Cross-module generic instantiation для value-records.
         // Plan 62.D.bis (D126): `external type X` — opaque, no emission.
         // Struct definition lives in runtime header (`nova_rt/<name>.h`),
         // never emit'нем locally. Forward-decl skip уже handled через
@@ -8526,7 +8537,14 @@ impl CEmitter {
         }
         match &t.kind {
             TypeDeclKind::Record(fields) => {
-                self.emit_record_type(&t.name, fields)?;
+                // Plan 124.8 V2 (D226): branch by allocation contract.
+                // Heap (default) → emit_record_type (pointer-based, GC).
+                // Value → emit_value_record_type (inline struct, stack).
+                use crate::ast::AllocKind;
+                match t.allocation {
+                    AllocKind::Heap => self.emit_record_type(&t.name, fields)?,
+                    AllocKind::Value => self.emit_value_record_type(&t.name, fields)?,
+                }
             }
             TypeDeclKind::Sum(variants) => {
                 self.emit_sum_type(&t.name, variants)?;
@@ -8769,6 +8787,58 @@ impl CEmitter {
                 self.line("");
             }
         }
+        Ok(())
+    }
+
+    /// Plan 124.8 V2 (D226 §«codegen» V2): emit value-record as inline
+    /// C struct (value type). Mirror NamedTuple emission pattern with
+    /// `NovaValue_<Name>` prefix to distinguish from heap-record path.
+    ///
+    /// Registers in `record_schemas` (для field access lookup) +
+    /// `type_aliases` (для type_ref_to_c returning value type, not pointer).
+    /// `is_value_type` уже distinguishes `NovaValue_` prefix.
+    fn emit_value_record_type(&mut self, name: &str, fields: &[RecordField]) -> Result<(), String> {
+        let mut schema = HashMap::new();
+        self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
+        self.line(&format!("struct NovaValue_{} {{", name));
+        self.indent += 1;
+        if fields.is_empty() {
+            self.line("char _empty_value_record_marker;");
+        }
+        for f in fields {
+            let ty_c = self.type_ref_to_c(&f.ty)?;
+            schema.insert(f.name.clone(), ty_c.clone());
+            let mangled = Self::mangle_field_name(&f.name);
+            self.line(&format!("{} {};", ty_c, mangled));
+            // Plan 14 Ф.4: fn-typed field sig registry mirror.
+            if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+                let ptys: Vec<String> = fp.iter()
+                    .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                        &format!("value-record `{}` fn-typed field `{}` param", name, f.name),
+                        &e,
+                    )))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let rty = match return_type.as_ref() {
+                    Some(rt) => self.type_ref_to_c(rt).map_err(|e| self.err_no_int_fallback(
+                        &format!("value-record `{}` fn-typed field `{}` return", name, f.name),
+                        &e,
+                    ))?,
+                    None => "nova_unit".to_string(),
+                };
+                self.record_field_fn_sigs.insert(
+                    (name.to_string(), f.name.clone()),
+                    (ptys, rty),
+                );
+            }
+        }
+        self.indent -= 1;
+        self.line("};");
+        self.line("");
+        self.record_schemas.insert(name.to_string(), schema);
+        // Value-type alias: Named{Vec3} → "NovaValue_Vec3" (no pointer).
+        self.type_aliases.insert(name.to_string(), format!("NovaValue_{}", name));
+        // Mark as value-record for emit_record_lit detection.
+        self.value_record_names.insert(name.to_string());
         Ok(())
     }
 
@@ -9426,9 +9496,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     return format!("{}*", other);
                 }
                 // Plan 120 (D215): named tuple receiver — value type, no pointer.
+                // Plan 124.8 V2 (D226): value-record receiver — pointer to stack
+                // slot (NovaValue_X*) so @field mutations propagate to caller.
                 if let Some(c_ty) = self.type_aliases.get(other) {
                     if c_ty.starts_with("NovaTuple_") {
                         return c_ty.clone();
+                    }
+                    if c_ty.starts_with("NovaValue_") {
+                        // Pointer to stack-slot для in-place mutation (D226 §«method receiver»).
+                        return format!("{}*", c_ty);
                     }
                 }
                 format!("Nova_{}*", other)
@@ -19368,6 +19444,10 @@ _cp++; \
                                 .collect();
                             if let Some(sig) = inst_overloads.first() {
                                 let obj_c = self.emit_expr(obj)?;
+                                // Plan 124.8 V2 (D226): value-record receiver
+                                // needs `&obj` (pointer to stack slot).
+                                let obj_ty_local = self.infer_expr_c_type(obj);
+                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local);
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 // D178: fill in default values for omitted trailing params.
@@ -20338,6 +20418,10 @@ _cp++; \
                     };
                     if is_instance {
                         let obj_c = self.emit_expr(obj)?;
+                        // Plan 124.8 V2 (D226): value-record receiver needs `&obj`
+                        // (pointer to stack-slot) so @field mutations propagate.
+                        let obj_ty_local = self.infer_expr_c_type(obj);
+                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local);
                         let mut arg_strs = vec![obj_c];
                         for a in args {
                             if is_generic_type {
@@ -22863,8 +22947,38 @@ _cp++; \
                 }
                 self.line(&format!("void* {} = NULL; /* unknown type {} */", tmp, struct_name));
                 self.var_types.insert(tmp.clone(), "void*".into());
+            } else if self.value_record_names.contains(&struct_name) {
+                // Plan 124.8 V2 (D226): value-record stack init.
+                // Emit `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` — no heap alloc.
+                self.line(&format!("NovaValue_{} {};", struct_name, tmp));
+                for f in fields {
+                    if f.is_spread {
+                        if let Some(src_expr) = &f.value {
+                            let src = self.emit_expr(src_expr)?;
+                            self.line(&format!("{} = {};", tmp, src));
+                        }
+                    } else {
+                        let field_ty = self.record_schemas.get(&struct_name)
+                            .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                        let val = if let Some(v) = &f.value {
+                            self.emit_expr_with_target_type(v, &field_ty)?
+                        } else {
+                            f.name.clone()
+                        };
+                        if field_ty == "void*" {
+                            let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
+                            let boxed = self.box_value_as_void_ptr(&val, &val_ty);
+                            let mfn = Self::mangle_field_name(&f.name);
+                            self.line(&format!("{}.{} = {};", tmp, mfn, boxed));
+                        } else {
+                            let mfn = Self::mangle_field_name(&f.name);
+                            self.line(&format!("{}.{} = {};", tmp, mfn, val));
+                        }
+                    }
+                }
+                self.var_types.insert(tmp.clone(), format!("NovaValue_{}", struct_name));
             } else {
-                // Plain record struct
+                // Plain record struct (heap-allocated, GC-managed)
                 self.line(&format!("Nova_{}* {} = (Nova_{}*)nova_alloc(sizeof(Nova_{}));",
                     struct_name, tmp, struct_name, struct_name));
                 for f in fields {
@@ -22916,8 +23030,15 @@ _cp++; \
                     "anonymous record literal: expected struct '{}' not in record_schemas",
                     struct_name));
             }
-            self.line(&format!("Nova_{0}* {1} = (Nova_{0}*)nova_alloc(sizeof(Nova_{0}));",
-                struct_name, tmp));
+            // Plan 124.8 V2 (D226): branch by value-record marker.
+            let is_value_rec = self.value_record_names.contains(&struct_name);
+            if is_value_rec {
+                self.line(&format!("NovaValue_{} {};", struct_name, tmp));
+            } else {
+                self.line(&format!("Nova_{0}* {1} = (Nova_{0}*)nova_alloc(sizeof(Nova_{0}));",
+                    struct_name, tmp));
+            }
+            let access = if is_value_rec { "." } else { "->" };
             for f in fields {
                 if f.is_spread { continue; }
                 // Compute field_ty first so array literals get the correct element type hint.
@@ -22934,13 +23055,17 @@ _cp++; \
                     } else { "nova_int".into() };
                     let boxed = self.box_value_as_void_ptr(&val, &val_ty);
                     let mfn = Self::mangle_field_name(&f.name);
-                    self.line(&format!("{}->{} = {};", tmp, mfn, boxed));
+                    self.line(&format!("{}{}{} = {};", tmp, access, mfn, boxed));
                 } else {
                     let mfn = Self::mangle_field_name(&f.name);
-                    self.line(&format!("{}->{} = {};", tmp, mfn, val));
+                    self.line(&format!("{}{}{} = {};", tmp, access, mfn, val));
                 }
             }
-            self.var_types.insert(tmp.clone(), format!("Nova_{}*", struct_name));
+            if is_value_rec {
+                self.var_types.insert(tmp.clone(), format!("NovaValue_{}", struct_name));
+            } else {
+                self.var_types.insert(tmp.clone(), format!("Nova_{}*", struct_name));
+            }
         } else if let Some(src) = spread_src {
             // Anonymous record with spread: `{ ...p, y: 10.0 }`
             // Determine the struct type from var_types table.
@@ -25396,6 +25521,10 @@ _cp++; \
     /// Для не-Nova_-типов возвращает None.
     fn struct_name_from_c_type(c_ty: &str) -> Option<String> {
         let trimmed = c_ty.trim_end_matches('*').trim();
+        // Plan 124.8 V2 (D226): value-record C type is `NovaValue_X` (no pointer).
+        if let Some(s) = trimmed.strip_prefix("NovaValue_") {
+            return Some(s.to_string());
+        }
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
@@ -26256,12 +26385,43 @@ _cp++; \
     }
 
     /// Returns true for C types that are passed by value (use `.` accessor, not `->`).
+    /// Plan 124.8 V2 (D226 §«method receiver»): prepare obj as method receiver.
+    /// For value-record types (`NovaValue_X`), method receiver must be pointer
+    /// (`NovaValue_X*`) so @field mutations propagate к caller. Take address if
+    /// obj_c is identifier; else hoist к temp variable + take address.
+    ///
+    /// For other types (heap records `Nova_X*`, primitives, named tuples),
+    /// obj_c passes through unchanged.
+    fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str) -> String {
+        if obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*') {
+            // Identifier? Direct &id.
+            let trimmed = obj_c.trim();
+            let is_ident = !trimmed.is_empty()
+                && trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+                && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_');
+            if is_ident {
+                format!("&{}", trimmed)
+            } else {
+                // Hoist к temp + take address.
+                let tmp = self.fresh_tmp();
+                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
+                format!("&{}", tmp)
+            }
+        } else {
+            obj_c.to_string()
+        }
+    }
+
     fn is_value_type(ty: &str) -> bool {
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
             return true;
         }
         // Plan 120 (D215): named tuples are value types (stack-allocated structs).
         if ty.starts_with("NovaTuple_") && !ty.ends_with('*') {
+            return true;
+        }
+        // Plan 124.8 V2 (D226): value-records `NovaValue_X` are stack-allocated.
+        if ty.starts_with("NovaValue_") && !ty.ends_with('*') {
             return true;
         }
         matches!(ty,
