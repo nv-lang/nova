@@ -28462,7 +28462,10 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   counter detects `&value` / `*expr` outside unsafe block / `#unsafe fn`
   body. **Closes acceptance A8** ✅
 - `b2d9cf46c3f` — positive fixture confirming valid usage passes
-- plan118 fixtures: **21/0** (11 positive + 10 NEG)
+- `abd4be4603b` — **E_UNSAFE_CALL_REQUIRES_WRAP** enforcement: walker
+  pre-collects #unsafe fn names, detects calls outside unsafe context.
+  **Closes acceptance A11** ✅
+- plan118 fixtures: **22/0** (12 positive + 10 NEG)
 
 ---
 

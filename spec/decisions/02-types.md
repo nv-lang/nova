@@ -7529,7 +7529,10 @@ V2 — research `extern "C-unwind"` (Rust 2024 model);
   unsafe context (block.is_unsafe = false AND not в `#unsafe fn` body).
   Active enforcement через `check_unsafe_context_in_module` walker pass с
   depth counter — D216 §8 V1 ENFORCED 2026-06-02
-- `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn без wrap
+- `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn без `unsafe { }`
+  wrap. Active enforcement через `check_unsafe_context_in_module` walker
+  с pre-collected unsafe_fns: HashSet<String>. D216 §9 V1 ENFORCED
+  2026-06-02 (commit abd4be4603b)
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — `null` literal (general)
 - `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` (Plan 115 V1) retracted

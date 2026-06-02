@@ -2258,12 +2258,17 @@ issue → extract в followup (`[M-118-perf-*]`).
   с depth counter (incremented в unsafe blocks + #unsafe fn body).
   **Closes acceptance A8** ✅.
 - `b2d9cf46c3f` — Ф.3.5 positive fixture (`*&q` inline + nested unsafe)
+- `7c73155bc5b` — docs(plan118 Ф.3.5) log + spec updates — A8 closed
+- `abd4be4603b` — **Ф.3.5 A11: E_UNSAFE_CALL_REQUIRES_WRAP** enforcement.
+  Walker pre-collects #unsafe fn names, detects calls outside unsafe
+  context. **Closes A11** ✅. Updated t3_2_unsafe_fn_attr_ok.nv +
+  added t3_neg_unsafe_call_no_wrap.nv.
 
 **Regression smoke post-merge (release test-build):**
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **21/0** (11 positive + 10 NEG, post-Ф.3.5) |
+| plan118 | **22/0** (12 positive + 10 NEG, post-Ф.3.5 + A11) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |
