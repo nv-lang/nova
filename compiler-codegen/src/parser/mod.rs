@@ -31,6 +31,10 @@ pub(crate) struct ContractAttrs {
     /// const fn evaluator recursion depth (default 256). For deep recursion
     /// (e.g. fact(500) с big-int arith). 0 < N <= 65535.
     pub fn_eval_max_depth: Option<u32>,
+    /// Plan 124.6 (D223): `#test_access(TypeX, TypeY, ...)` — fn body
+    /// gets priv-field access to listed types (escape hatch для unit
+    /// tests). Default empty Vec = no extra access.
+    pub test_access_for: Vec<String>,
 }
 
 impl ContractAttrs {
@@ -44,6 +48,7 @@ impl ContractAttrs {
             && !self.no_overflow
             && self.sync_class.is_none()
             && self.fn_eval_max_depth.is_none()
+            && self.test_access_for.is_empty()
     }
 }
 
@@ -1962,6 +1967,53 @@ impl Parser {
                     self.bump(); // )
                     attrs.fn_eval_max_depth = Some(n);
                 }
+                "test_access" => {
+                    // Plan 124.6 (D223): `#test_access(TypeX[, TypeY...])`
+                    // — fn body получает priv-field access к указанным types.
+                    // Escape hatch для unit tests + sibling helper fns.
+                    self.bump(); // #
+                    self.bump(); // test_access
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#test_access требует list: `#test_access(TypeX, TypeY, ...)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let mut names = Vec::new();
+                    loop {
+                        match self.peek().kind.clone() {
+                            TokenKind::Ident(n) => {
+                                names.push(n);
+                                self.bump();
+                            }
+                            TokenKind::RParen => break,
+                            _ => {
+                                let sp = self.peek().span;
+                                return Err(Diagnostic::new(
+                                    "ожидался Type-identifier или `)` в #test_access(...)",
+                                    sp,
+                                ));
+                            }
+                        }
+                        if matches!(self.peek().kind, TokenKind::Comma) {
+                            self.bump();
+                            self.skip_newlines();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    if names.is_empty() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#test_access требует хотя бы один Type: `#test_access(TypeX, ...)`",
+                            sp,
+                        ));
+                    }
+                    attrs.test_access_for.extend(names);
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -2596,6 +2648,7 @@ impl Parser {
             // Plan 100.5 (D163): capability requirements for external fn.
             needs_caps,
             fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
+            test_access_for: contract_attrs.test_access_for.clone(),
         })
     }
 
@@ -3308,7 +3361,7 @@ impl Parser {
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span, priv_field });
+            fields.push(NamedTupleField { name, ty, span, priv_field, visible_to: Vec::new() });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -3369,6 +3422,59 @@ impl Parser {
                     self.skip_newlines();
                 }
                 continue;
+            }
+            // Plan 124.6 (D223): `#visible_to(OtherType[, ...])` field-level
+            // attribute — explicit friend declaration. Methods of listed
+            // types get priv access. Parsed BEFORE priv/pub modifier.
+            let mut visible_to: Vec<String> = Vec::new();
+            while matches!(self.peek().kind, TokenKind::Hash) {
+                if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+                    if n == "visible_to" {
+                        self.bump(); // #
+                        self.bump(); // visible_to
+                        if !matches!(self.peek().kind, TokenKind::LParen) {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "#visible_to требует list: `#visible_to(TypeX, TypeY, ...)`",
+                                sp,
+                            ));
+                        }
+                        self.bump(); // (
+                        loop {
+                            match self.peek().kind.clone() {
+                                TokenKind::Ident(t) => {
+                                    visible_to.push(t);
+                                    self.bump();
+                                }
+                                TokenKind::RParen => break,
+                                _ => {
+                                    let sp = self.peek().span;
+                                    return Err(Diagnostic::new(
+                                        "ожидался Type-identifier или `)` в #visible_to(...)",
+                                        sp,
+                                    ));
+                                }
+                            }
+                            if matches!(self.peek().kind, TokenKind::Comma) {
+                                self.bump();
+                                self.skip_newlines();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                        if visible_to.is_empty() {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "#visible_to требует хотя бы один Type",
+                                sp,
+                            ));
+                        }
+                        self.skip_newlines();
+                        continue;
+                    }
+                }
+                break;
             }
             // Plan 124 (D220): per-field visibility modifier. `priv` или `pub`
             // (mutually exclusive); idёт ДО mutability modifiers (ro/mut/consume)
@@ -3515,6 +3621,7 @@ impl Parser {
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
                 priv_field: field_priv,
+                visible_to,
             });
             // запятая или newline
             if self.eat(&TokenKind::Comma).is_some() {

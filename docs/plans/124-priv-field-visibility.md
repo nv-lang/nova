@@ -1024,7 +1024,7 @@ Check open-questions.md для существующих Q'ов:
 | 124.3 Generics | 🟢 **CLOSED 2026-06-02** — uniform enforcement on Generic[T] types verified (10/10 plan124_3); D220 §G1 amend |
 | 124.4 Tuple + protocol | 🟢 **CLOSED 2026-06-02** — NamedTupleField priv parsing + 3 checker hooks + protocol impl boundary §3 (D222 NEW); 10/10 plan124_4 PASS |
 | 124.5 nova doc + LSP | 🟢 **CLOSED 2026-06-02** — nova doc strip_private filter per-field + render priv keyword + JSON priv_field emit + docs/field-visibility-guide.md; LSP hover/completion forward-ref Plan 104.2/104.3 |
-| 124.6 Test access + visible_to | 🆕 PLANNED |
+| 124.6 Test access + visible_to | 🟢 **CLOSED 2026-06-02** — `#test_access(TypeX...)` fn attr + `#visible_to(TypeY...)` field attr + unified `priv_field_access_allowed` predicate (D223 NEW); 7/7 plan124_6 PASS |
 | 124.7 Type-level priv flip (named tuples) | 🆕 PLANNED |
 | **Umbrella** | 🟡 PARTIAL — Plan 124.1 V1 fully closed (compile-time enforcement working); 6 sub-plans remaining (124.2-124.7) |
 

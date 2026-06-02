@@ -29249,3 +29249,61 @@ Plan 104.2/104.3 as documented forward-ref).
 
 Plan 124.5 ✅ FULLY CLOSED. Plan 124 umbrella partial — 2 sub-plans
 (124.6-124.7) remaining.
+
+---
+
+## Plan 124.6 — Escape hatches `#test_access` + `#visible_to` (2026-06-02)
+
+**Что:** D223 NEW в spec/decisions/02-types.md. Two opt-in escape
+hatches для controlled priv-access relaxation:
+- `#test_access(TypeX[, TypeY...])` fn attribute — body получает priv
+  access ко всем listed types.
+- `#visible_to(OtherType[, ...])` field attribute — methods listed
+  types получают priv access ТОЛЬКО к marked field (per-field friend
+  declaration).
+
+**Implementation:**
+- AST: FnDecl.test_access_for: Vec<String>; RecordField.visible_to: Vec<String>;
+  NamedTupleField.visible_to: Vec<String>. All default empty Vec —
+  backward-compat preserved.
+- ContractAttrs adds test_access_for; is_empty() checks added.
+- Parser parse_contract_attrs(): `#test_access(T1, T2, ...)` matcher —
+  identifier list comma-separated, requires non-empty.
+- Parser parse_record_fields_with_default(): `#visible_to(...)` parsed
+  BEFORE priv/pub modifier (logical grouping).
+- TypeCheckCtx: current_fn_test_access RefCell<Vec<String>> field +
+  PrivTestAccessGuard RAII. Set + cleared в check_fn + f1_check_fn.
+- Two helper methods: `priv_access_allowed_base(tname)` — checks
+  type-method-scope OR test_access list; `priv_field_access_allowed(tname,
+  visible_to)` — combines base + field's friend list.
+- All 6 priv-check sites (f3_check_member Record + NamedTuple,
+  check_target_readonly WRITE, walk_expr RecordLit INIT, RecordLit
+  spread, f5_check_tuple_construct INIT, check_priv_pattern_recursive)
+  refactored к use new predicates.
+
+**Diagnostic hints updated:** все Plan 124.1-124.4 codes now mention
+`#test_access(T)` escape hatch + spec D223 link.
+
+**Combined access predicate semantic (D223 §4):**
+- priv field accessible когда current_recv == tname (canonical
+  type-method scope, D220), OR
+- tname ∈ current_fn.test_access_for (test escape, D223 §2), OR
+- current_recv ∈ field.visible_to (friend grant, D223 §3).
+
+**Fixtures plan124_6/ 7/7 PASS (release nova-cli + clang):**
+- Positive 4: test_access_grants_priv (assert_balance_eq fn reads
+  Account.balance), test_access_multiple_types (#test_access(Account,
+  Vault)), test_access_init_priv (record literal с priv field works
+  inside #test_access fn), visible_to_friend (Bank @audit_account
+  reads Account.balance через #visible_to(Bank)).
+- Negative 3: no_attr_still_blocked (sanity — backward compat без
+  attrs), test_access_wrong_type (Account-only attr НЕ covers Vault),
+  visible_to_non_friend (Auditor НЕ в visible_to → blocked).
+
+**Regression:** plan124_1 9/9 + plan124_2 14/14 + plan124_4 10/10
+unchanged. Helper refactor preserved все existing behavior.
+
+**Acceptance Plan 124.6 (A6.1-A6.8) — ALL ✅.**
+
+Plan 124.6 ✅ FULLY CLOSED. Plan 124 umbrella partial — 1 sub-plan
+(124.7) remaining.

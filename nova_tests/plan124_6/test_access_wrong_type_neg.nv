@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.6 — negative: #test_access(TypeA) НЕ grants access к TypeB.
+// Accessing TypeB.priv from fn marked #test_access(TypeA) → blocked.
+module plan124_6.test_access_wrong_type_neg
+
+export type Account {
+    priv mut balance f64
+    ro name str
+}
+
+export type Vault {
+    priv mut amount f64
+    ro id str
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+export fn Vault.new(id str) -> Vault =>
+    { id: id, amount: 0.0 }
+
+// #test_access(Account) только — Vault.amount остаётся blocked.
+#test_access(Account)
+fn check_vault_balance(v Vault) -> f64 =>
+    v.amount

@@ -27985,3 +27985,61 @@ Plan 124.5 acceptance A5.1-A5.8 — ALL ✅ (LSP forward-ref).
 Plan 124 umbrella status: 5/7 sub-plans closed (124.1, 124.2, 124.3, 124.4, 124.5).
 Remaining: 124.6 (test_access + visible_to), 124.7 (type-level priv flip tuples).
 
+
+Plan 124.6 — Escape hatches #test_access + #visible_to (2026-06-02)
+
+D-block D223 NEW в spec/decisions/02-types.md. Two opt-in escape
+hatches для controlled priv-access relaxation.
+
+#test_access(TypeX[, TypeY...]) fn attribute:
+- body fn gets priv-field access ко всем listed types.
+- Test escape hatch для unit tests + sibling helper fns.
+- AST: FnDecl.test_access_for: Vec<String>.
+
+#visible_to(OtherType[, ...]) field attribute:
+- methods listed types get priv access ТОЛЬКО к marked field.
+- Per-field friend declaration — granular, не whole-type.
+- AST: RecordField.visible_to, NamedTupleField.visible_to: Vec<String>.
+
+Parser:
+- ContractAttrs gets test_access_for + is_empty() check.
+- parse_contract_attrs(): "#test_access" matcher — identifier list
+  comma-separated в parens, non-empty required.
+- parse_record_fields_with_default(): #visible_to parsed BEFORE
+  priv/pub modifier (logical grouping).
+
+Type-checker:
+- TypeCheckCtx: current_fn_test_access RefCell<Vec<String>> field.
+- PrivTestAccessGuard RAII (mirrors PrivRecvGuard pattern).
+- Set + cleared в check_fn + f1_check_fn (mirrors PrivRecvGuard sites).
+- Helper priv_access_allowed_base(tname): type-method-scope OR test_access.
+- Helper priv_field_access_allowed(tname, visible_to): base OR friend.
+- All 6 priv-check sites refactored (Record READ + NamedTuple READ +
+  WRITE + RecordLit INIT + spread + NamedTuple INIT + Pattern recursive).
+
+Diagnostic hints updated: все Plan 124.1-124.4 codes now mention
+#test_access(T) escape hatch + spec D223 link.
+
+Combined access predicate (D223 §4):
+- type-method-scope (D220), OR
+- tname ∈ current_fn.test_access_for (D223 §2), OR
+- current_recv ∈ field.visible_to (D223 §3).
+
+Fixtures nova_tests/plan124_6/ — 7/7 PASS:
+Positive 4: test_access_grants_priv_ok, test_access_multiple_types_ok,
+test_access_init_priv_ok, visible_to_friend_ok.
+Negative 3: no_attr_still_blocked_neg (backward compat), test_access_wrong_type_neg,
+visible_to_non_friend_neg.
+
+Regression: plan124_1 9/9 + plan124_2 14/14 + plan124_4 10/10 unchanged.
+
+D-block + plan flip + 3 logs.
+
+Commit:
+- feat(plan 124.6): test_access + visible_to escape hatches (D223).
+
+Plan 124.6 acceptance A6.1-A6.8 — ALL ✅.
+
+Plan 124 umbrella status: 6/7 sub-plans closed (124.1-124.6).
+Remaining: 124.7 (type-level priv flip tuples).
+

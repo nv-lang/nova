@@ -1,0 +1,20 @@
+// Plan 124.6 — positive: #test_access allows priv field INIT — record
+// literal с priv field works в fn body.
+module plan124_6.test_access_init_priv_ok
+
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+#test_access(Account)
+fn make_with_balance(n str, b f64) -> Account =>
+    { name: n, balance: b }    // priv balance init OK с #test_access
+
+test "Plan 124.6: #test_access INIT priv via record literal" {
+    ro a = make_with_balance("zoe", 500.0)
+    assert(a.name == "zoe")
+}

@@ -1,0 +1,29 @@
+// Plan 124.6 — positive: #test_access(TypeA, TypeB) grants access к
+// нескольким types одновременно.
+module plan124_6.test_access_multiple_types_ok
+
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+export type Vault {
+    ro id str
+    priv mut amount f64
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+export fn Vault.new(id str) -> Vault =>
+    { id, amount: 0.0 }
+
+#test_access(Account, Vault)
+fn verify_zero(a Account, v Vault) -> bool =>
+    a.balance == 0.0 && v.amount == 0.0
+
+test "Plan 124.6: #test_access supports multiple types" {
+    ro a = Account.new("bob")
+    ro v = Vault.new("v1")
+    assert(verify_zero(a, v))
+}

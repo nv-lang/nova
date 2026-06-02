@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 124.6 — negative: WITHOUT #test_access, priv field access from
+// external fn still blocked (backward compat sanity).
+module plan124_6.no_attr_still_blocked_neg
+
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+export fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+// No #test_access — access blocked.
+fn external_reader(a Account) -> f64 =>
+    a.balance

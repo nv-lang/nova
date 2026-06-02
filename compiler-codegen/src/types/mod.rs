@@ -1365,6 +1365,11 @@ struct TypeCheckCtx<'a> {
     /// access check: если field.priv_field И current_recv_type != obj's type
     /// → emit E_PRIV_FIELD_READ.
     current_recv_type: std::cell::RefCell<Option<String>>,
+    /// Plan 124.6 (D223): current fn's `#test_access(TypeA, TypeB, ...)` list.
+    /// Если non-empty, current fn body получает priv-field access ко всем
+    /// перечисленным types (escape hatch для unit tests + sibling helper
+    /// fns). Cleared on fn exit. Combines с current_recv_type для allow-list.
+    current_fn_test_access: std::cell::RefCell<Vec<String>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -1388,6 +1393,17 @@ struct PrivRecvGuard<'a, 'b> {
 impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_recv_type.borrow_mut() = self.prev.take();
+    }
+}
+
+/// Plan 124.6 (D223): RAII guard для current_fn_test_access vec в TypeCheckCtx.
+struct PrivTestAccessGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Vec<String>,
+}
+impl<'a, 'b> Drop for PrivTestAccessGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_fn_test_access.borrow_mut() = std::mem::take(&mut self.prev);
     }
 }
 
@@ -1532,7 +1548,8 @@ impl<'a> TypeCheckCtx<'a> {
         }
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
-            current_recv_type: std::cell::RefCell::new(None) }
+            current_recv_type: std::cell::RefCell::new(None),
+            current_fn_test_access: std::cell::RefCell::new(Vec::new()) }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -2248,6 +2265,11 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+        // Plan 124.6 (D223): set current_fn_test_access — fn body gets priv
+        // access к listed types (escape hatch для tests + helper fns).
+        let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
+        *self.current_fn_test_access.borrow_mut() = fd.test_access_for.clone();
+        let _ta_guard = PrivTestAccessGuard { ctx: self, prev: prev_ta };
         // Generic-scope функции: её собственные generic-параметры +
         // generic-параметры receiver-типа (`fn Box[T] @get() -> T`).
         let mut gs: HashSet<String> = HashSet::new();
@@ -2873,12 +2895,12 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                             }
-                            // Plan 124 (D220/D221): priv field INIT check — record literal
-                            // outside type-method scope cannot init priv fields.
+                            // Plan 124 (D220/D221) + 124.6 (D223): priv field INIT
+                            // check — record literal outside type-method scope cannot
+                            // init priv fields (unless #test_access).
                             if let TypeDeclKind::Record(rec_fields) = &td.kind {
-                                let current_recv = self.current_recv_type.borrow();
-                                let allowed = current_recv.as_deref() == Some(last.as_str());
-                                if !allowed {
+                                let base_allowed = self.priv_access_allowed_base(last.as_str());
+                                if !base_allowed {
                                     let has_priv = rec_fields.iter().any(|fd| fd.priv_field);
                                     for f in fields {
                                         // Plan 124.2 (D221 §5): spread `...other` outside
@@ -2905,7 +2927,9 @@ impl<'a> TypeCheckCtx<'a> {
                                             continue;
                                         }
                                         if let Some(fdecl) = rec_fields.iter().find(|fd| fd.name == f.name) {
-                                            if fdecl.priv_field {
+                                            if fdecl.priv_field
+                                                && !self.priv_field_access_allowed(last.as_str(), &fdecl.visible_to)
+                                            {
                                                 errors.push(Diagnostic::new(
                                                     format!(
                                                         "[E_PRIV_FIELD_INIT] cannot \
@@ -2913,9 +2937,9 @@ impl<'a> TypeCheckCtx<'a> {
                                                          via record literal outside type-\
                                                          method scope. Field marked `priv` \
                                                          (Plan 124 / D220). Hint: use \
-                                                         factory method like `{}.new(...)` \
-                                                         which constructs the type internally.",
-                                                        last, f.name, last,
+                                                         factory method like `{}.new(...)`, \
+                                                         or use `#test_access({})` on test fn.",
+                                                        last, f.name, last, last,
                                                     ),
                                                     f.span,
                                                 ));
@@ -3083,6 +3107,11 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+        // Plan 124.6 (D223): set current_fn_test_access — fn body gets priv
+        // access к listed types.
+        let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
+        *self.current_fn_test_access.borrow_mut() = fd.test_access_for.clone();
+        let _ta_guard = PrivTestAccessGuard { ctx: self, prev: prev_ta };
 
         let gs = fn_generic_scope(fd);
         let mut scope: HashMap<String, TypeRef> = HashMap::new();
@@ -3571,6 +3600,46 @@ impl<'a> TypeCheckCtx<'a> {
     // E_PRIV_FIELD_PATTERN per priv field. Recurses into sub-patterns
     // (nested destructure) using the corresponding RecordField type.
     //
+    /// Plan 124.6 (D223): unified priv access predicate. Returns true if
+    /// current fn body has priv access ко `tname` (т.е. может читать/писать/
+    /// init/destructure priv-помеченные fields этого type'а).
+    ///
+    /// Allowed когда:
+    /// 1. current_recv_type == tname (canonical type-method scope), OR
+    /// 2. tname ∈ current_fn_test_access (escape hatch — `#test_access(tname)`),
+    ///    OR
+    /// 3. current_recv_type ∈ field.visible_to (friend declaration —
+    ///    `#visible_to(curr_recv)` on the specific field).
+    ///
+    /// Visible_to per-field check requires field-level context (handled at
+    /// call sites because field.visible_to is field-specific, not type-wide).
+    /// This helper covers (1) и (2); call sites combine with (3).
+    fn priv_access_allowed_base(&self, tname: &str) -> bool {
+        let current_recv = self.current_recv_type.borrow();
+        if current_recv.as_deref() == Some(tname) {
+            return true;
+        }
+        if self.current_fn_test_access.borrow().iter().any(|t| t == tname) {
+            return true;
+        }
+        false
+    }
+
+    /// Combines `priv_access_allowed_base(tname)` с per-field visible_to:
+    /// true if access allowed, considering field's friend list.
+    fn priv_field_access_allowed(&self, tname: &str, visible_to: &[String]) -> bool {
+        if self.priv_access_allowed_base(tname) {
+            return true;
+        }
+        let current_recv = self.current_recv_type.borrow();
+        if let Some(cur) = current_recv.as_deref() {
+            if visible_to.iter().any(|t| t == cur) {
+                return true;
+            }
+        }
+        false
+    }
+
     // Pattern::Or → recurses into all alternatives (same scrutinee_ty).
     // Pattern::Binding → recurses into inner.
     // Pattern::Tuple — Plan 124.4 covers tuple priv; here no-op (no type
@@ -3601,35 +3670,42 @@ impl<'a> TypeCheckCtx<'a> {
                     });
                 let Some(tname) = tname_opt else { return };
                 let Some(td) = self.types.get(tname.as_str()) else { return };
-                // Plan 124.2 + 124.4 (D221 + D222): unified priv check works
-                // для и Record и NamedTuple. Tuple form via Vec3 { x, y, z }
-                // record-style pattern destructure (D215 syntax).
-                let (priv_fields, field_types): (Vec<(String, bool)>, Vec<(String, TypeRef)>) = match &td.kind {
-                    TypeDeclKind::Record(rec_fields) => (
-                        rec_fields.iter().map(|f| (f.name.clone(), f.priv_field)).collect(),
-                        rec_fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect(),
-                    ),
-                    TypeDeclKind::NamedTuple(nt_fields) => (
-                        nt_fields.iter().map(|f| (f.name.clone(), f.priv_field)).collect(),
-                        nt_fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect(),
-                    ),
+                // Plan 124.2 + 124.4 + 124.6 (D221+D222+D223): unified priv
+                // check (Record + NamedTuple). Per-field visible_to taken into
+                // account (Plan 124.6).
+                struct FieldMeta { name: String, priv_field: bool, visible_to: Vec<String>, ty: TypeRef }
+                let metas: Vec<FieldMeta> = match &td.kind {
+                    TypeDeclKind::Record(rec_fields) => rec_fields.iter().map(|f| FieldMeta {
+                        name: f.name.clone(),
+                        priv_field: f.priv_field,
+                        visible_to: f.visible_to.clone(),
+                        ty: f.ty.clone(),
+                    }).collect(),
+                    TypeDeclKind::NamedTuple(nt_fields) => nt_fields.iter().map(|f| FieldMeta {
+                        name: f.name.clone(),
+                        priv_field: f.priv_field,
+                        visible_to: f.visible_to.clone(),
+                        ty: f.ty.clone(),
+                    }).collect(),
                     _ => return,
                 };
-                let current_recv = self.current_recv_type.borrow();
-                let allowed = current_recv.as_deref() == Some(tname.as_str());
-                if !allowed {
+                let base_allowed = self.priv_access_allowed_base(tname.as_str());
+                if !base_allowed {
                     for pf in fields {
-                        if let Some((_, is_priv)) = priv_fields.iter().find(|(n, _)| n == &pf.name) {
-                            if *is_priv {
+                        if let Some(meta) = metas.iter().find(|m| m.name == pf.name) {
+                            if meta.priv_field
+                                && !self.priv_field_access_allowed(tname.as_str(), &meta.visible_to)
+                            {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_PRIV_FIELD_PATTERN] cannot destructure \
                                          private field `{}.{}` в pattern outside type-\
                                          method scope. Field marked `priv` (Plan 124 / \
                                          D220/D221/D222). Hint: bind the value to a variable \
-                                         and access via public methods of `{}`, or move \
-                                         the destructure into a method of `{}`.",
-                                        tname, pf.name, tname, tname,
+                                         and access via public methods of `{}`, move \
+                                         destructure into a method of `{}`, or use \
+                                         `#test_access({})` (D223).",
+                                        tname, pf.name, tname, tname, tname,
                                     ),
                                     pf.span,
                                 ));
@@ -3641,9 +3717,9 @@ impl<'a> TypeCheckCtx<'a> {
                 let _ = span;
                 for pf in fields {
                     if let Some(sub) = &pf.pattern {
-                        let sub_ty = field_types.iter()
-                            .find(|(n, _)| n == &pf.name)
-                            .map(|(_, ty)| ty.clone());
+                        let sub_ty = metas.iter()
+                            .find(|m| m.name == pf.name)
+                            .map(|m| m.ty.clone());
                         self.check_priv_pattern_recursive(sub, sub_ty.as_ref(), errors);
                     }
                 }
@@ -3933,24 +4009,24 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
-                    // Plan 124 (D220): priv field READ access check.
-                    // Field accessible только из methods own type'а.
-                    if field.priv_field {
-                        let current_recv = self.current_recv_type.borrow();
-                        let allowed = current_recv.as_deref() == Some(tname.as_str());
-                        if !allowed {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_PRIV_FIELD_READ] cannot read private field \
-                                     `{}.{}` outside type-method scope. Field marked \
-                                     `priv` (Plan 124 / D220). Hint: add public \
-                                     getter method on `{}` or move accessing code \
-                                     into a method of `{}`.",
-                                    tname, name, tname, tname,
-                                ),
-                                span,
-                            ));
-                        }
+                    // Plan 124 (D220) + 124.6 (D223): priv field READ access check.
+                    // Allowed: own type-method, или fn с #test_access(tname),
+                    // или current_recv ∈ field.visible_to (friend).
+                    if field.priv_field
+                        && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_PRIV_FIELD_READ] cannot read private field \
+                                 `{}.{}` outside type-method scope. Field marked \
+                                 `priv` (Plan 124 / D220). Hint: add public \
+                                 getter method on `{}`, or move accessing code \
+                                 into a method of `{}`, or use `#test_access({})` \
+                                 на test fn (escape hatch — D223).",
+                                tname, name, tname, tname, tname,
+                            ),
+                            span,
+                        ));
                     }
                     return;
                 }
@@ -4030,23 +4106,23 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
-                    // Plan 124.4 (D222): priv field READ access check для named tuple.
-                    if field.priv_field {
-                        let current_recv = self.current_recv_type.borrow();
-                        let allowed = current_recv.as_deref() == Some(tname.as_str());
-                        if !allowed {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_PRIV_FIELD_READ] cannot read private field \
-                                     `{}.{}` outside type-method scope. Named-tuple \
-                                     field marked `priv` (Plan 124 / D220 / D222). \
-                                     Hint: add public getter method on `{}` or move \
-                                     accessing code into a method of `{}`.",
-                                    tname, name, tname, tname,
-                                ),
-                                span,
-                            ));
-                        }
+                    // Plan 124.4 (D222) + 124.6 (D223): priv field READ check
+                    // для named tuple — uniform allowance с Record.
+                    if field.priv_field
+                        && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_PRIV_FIELD_READ] cannot read private field \
+                                 `{}.{}` outside type-method scope. Named-tuple \
+                                 field marked `priv` (Plan 124 / D220 / D222). \
+                                 Hint: add public getter method on `{}`, move \
+                                 accessing code into a method of `{}`, или use \
+                                 `#test_access({})` на test fn (D223).",
+                                tname, name, tname, tname, tname,
+                            ),
+                            span,
+                        ));
                     }
                     return;
                 }
@@ -4124,12 +4200,10 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(td) = self.types.get(name.as_str()) else { return; };
         match &td.kind {
             TypeDeclKind::NamedTuple(fields) => {
-                // Plan 124.4 (D222): if any priv field exists AND outside
-                // type-method scope, check each named-arg для priv-field init.
+                // Plan 124.4 (D222) + 124.6 (D223): if any priv field exists,
+                // for each named-arg targeting priv field check access allowance.
                 let has_priv = fields.iter().any(|f| f.priv_field);
-                let current_recv = self.current_recv_type.borrow();
-                let allowed = current_recv.as_deref() == Some(name.as_str());
-                drop(current_recv);
+                let base_allowed = self.priv_access_allowed_base(name.as_str());
                 for arg in args {
                     if let CallArg::Named { name: field_name, value: arg_value } = arg {
                         if !fields.iter().any(|f| &f.name == field_name) {
@@ -4152,18 +4226,19 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                             errors.push(diag);
                         }
-                        // Plan 124.4 (D222): priv field INIT via named-arg ctor.
-                        if has_priv && !allowed {
+                        if has_priv && !base_allowed {
                             if let Some(fd) = fields.iter().find(|f| &f.name == field_name) {
-                                if fd.priv_field {
+                                if fd.priv_field
+                                    && !self.priv_field_access_allowed(name.as_str(), &fd.visible_to)
+                                {
                                     errors.push(Diagnostic::new(
                                         format!(
                                             "[E_PRIV_FIELD_INIT] cannot initialize private \
                                              field `{}.{}` via named-tuple constructor outside \
                                              type-method scope. Field marked `priv` (Plan 124 / \
                                              D220 / D222). Hint: use factory method like \
-                                             `{}.new(...)` which constructs the type internally.",
-                                            name, field_name, name,
+                                             `{}.new(...)`, or use `#test_access({})` on test fn.",
+                                            name, field_name, name, name,
                                         ),
                                         arg_value.span,
                                     ));
@@ -4775,24 +4850,23 @@ impl<'a> TypeCheckCtx<'a> {
                                         target.span,
                                     ));
                                 }
-                                // Plan 124 (D220): priv field WRITE access check.
-                                if f.priv_field {
-                                    let current_recv = self.current_recv_type.borrow();
-                                    let allowed = current_recv.as_deref() == Some(tname);
-                                    if !allowed {
-                                        errors.push(Diagnostic::new(
-                                            format!(
-                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
-                                                 field `{}.{}` outside type-method scope. \
-                                                 Field marked `priv` (Plan 124 / D220). \
-                                                 Hint: add public mutator method on `{}` \
-                                                 (e.g. `export fn {} mut @set_{}(v T)`) \
-                                                 or move accessing code into a method of `{}`.",
-                                                tname, field_name, tname, tname, field_name, tname,
-                                            ),
-                                            target.span,
-                                        ));
-                                    }
+                                // Plan 124 (D220) + 124.6 (D223): priv field WRITE check.
+                                if f.priv_field
+                                    && !self.priv_field_access_allowed(tname, &f.visible_to)
+                                {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_WRITE] cannot write to private \
+                                             field `{}.{}` outside type-method scope. \
+                                             Field marked `priv` (Plan 124 / D220). \
+                                             Hint: add public mutator method on `{}` \
+                                             (e.g. `export fn {} mut @set_{}(v T)`), \
+                                             move accessing code into a method of `{}`, \
+                                             or use `#test_access({})` (D223).",
+                                            tname, field_name, tname, tname, field_name, tname, tname,
+                                        ),
+                                        target.span,
+                                    ));
                                 }
                             }
                         }

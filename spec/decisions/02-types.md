@@ -7641,6 +7641,152 @@ ALL closed 2026-06-02:
 - A5.7 ✅ `docs/field-visibility-guide.md` created (~330 lines).
 - A5.8 ✅ Regression: existing nova doc fixtures unchanged.
 
+---
+
+## D223. Escape hatches — `#test_access` + `#visible_to` (Plan 124.6)
+
+> **Status:** ✅ ACTIVE since 2026-06-02 (Plan 124.6 closure).
+> **Extends:** D220 §3 (scope rules) + D222 §3 (protocol boundary).
+> **Plan:** [Plan 124.6](../../docs/plans/124.6-friend-attrs.md).
+> **Cross-refs:** D220, D221, D222 (priv core + pattern + tuple).
+
+### §1 Motivation
+
+D220 устанавливает **strict type-method-only** scope для priv field
+access — strictнее чем эталоны (Kotlin `internal` module-wide,
+Rust `pub(crate)` crate-wide, Java package-private). В некоторых
+production scenarios нужна controlled relaxation:
+
+1. **Unit tests** должны verify internal state (balance, cache size,
+   internal cursor pos) без публикации getter в public API.
+2. **Sibling helper types** (`Account` + `Bank` audit utilities) —
+   coordinated access без friend boilerplate.
+
+D223 вводит **two explicit opt-in escape hatches** — каждый
+syntactically marked, никаких неявных relaxation.
+
+### §2 `#test_access(TypeX[, TypeY...])` — fn-level access grant
+
+Attribute перед `fn` declaration: body fn получает priv-field access
+ко всем listed types (READ + WRITE + INIT + PATTERN).
+
+```nova
+export type Account {
+    ro name str
+    priv mut balance f64
+}
+
+#test_access(Account)
+fn assert_balance_eq(acc Account, expected f64) -> bool =>
+    acc.balance == expected        // ✅ allowed by #test_access
+```
+
+Multi-type form:
+```nova
+#test_access(Account, Vault)
+fn cross_audit(a Account, v Vault) -> bool =>
+    a.balance == 0.0 && v.amount == 0.0
+```
+
+Scope: applies **only к body of marked fn**. Caller scope unchanged.
+Composable: можно combine с `#realtime`, `#blocking`, `#verify`,
+etc. — порядок attribute parsing уже supports multi-attribute.
+
+### §3 `#visible_to(OtherType[, ...])` — field-level friend declaration
+
+Attribute перед field declaration в `type X { ... }` или
+`type X(...)`: methods listed types получают priv access **только
+к этому field**.
+
+```nova
+export type Account {
+    ro name str
+    #visible_to(Bank) priv mut balance f64
+}
+
+export type Bank {
+    ro id str
+}
+
+export fn Bank @audit_account(a Account) -> f64 =>
+    a.balance        // ✅ allowed: Bank ∈ Account.balance.visible_to
+```
+
+Per-field granularity:
+- Different fields могут have different friend lists.
+- Other Account fields without `#visible_to` — strict type-only.
+- Other types (НЕ Bank) — no access:
+  ```nova
+  export fn Auditor @check(a Account) -> f64 =>
+      a.balance     // ❌ E_PRIV_FIELD_READ — Auditor not in visible_to
+  ```
+
+### §4 Combined access predicate
+
+priv-field access allowed когда **любое** из:
+
+1. `current_recv_type == tname` — canonical type-method scope (D220).
+2. `tname ∈ current_fn.test_access_for` — `#test_access` grant.
+3. `current_recv_type ∈ field.visible_to` — friend grant.
+
+Implementation: `TypeCheckCtx::priv_field_access_allowed(tname, &visible_to)`
+combines all three checks. `priv_access_allowed_base(tname)` covers
+(1)+(2); per-field `visible_to` requires field-specific context
+(handled at each callsite).
+
+### §5 Diagnostic codes
+
+D223 reuses Plan 124.1-124.4 codes (no new codes), but hints
+now mention escape hatches:
+
+```
+[E_PRIV_FIELD_READ] cannot read private field `Account.balance` ...
+Hint: add public getter method on `Account`, move accessing code
+into a method of `Account`, or use `#test_access(Account)` on test
+fn (escape hatch — D223).
+```
+
+Parser-level errors:
+- `#test_access(...)` without `(` → "требует list: `#test_access(TypeX, ...)`".
+- Empty list `#test_access()` → "требует хотя бы один Type".
+- `#visible_to(...)` same shape.
+
+### §6 Anti-patterns + lint guidance
+
+Escape hatches — **opt-in, syntactically explicit**. Recommended
+discipline:
+
+- `#test_access` — only on test fns or dedicated assertion helpers.
+  Production-code uses должны trigger code-review concern.
+- `#visible_to` — explicit, named friend types only. Cross-module
+  abuse — code-smell.
+- Future lint (Plan 124.x): warn if `#test_access` used >N times
+  per project (suggests missing public API).
+
+### §7 Cross-refs
+
+- D220 — core priv semantics, scope rules.
+- D221 — pattern destructure / spread sites.
+- D222 — named tuple + protocol impl boundary.
+- D102 — diagnostic format (Plan 50).
+- Plan 104.x — LSP hover/completion will display escape-hatch
+  badges (forward-ref).
+
+### Acceptance — Plan 124.6
+
+ALL closed 2026-06-02:
+
+- A6.1 ✅ `#test_access(TypeX)` attribute parser PASS.
+- A6.2 ✅ Test fn с attribute получает priv access к TypeX.
+- A6.3 ✅ `#visible_to(TypeY)` field attribute parser PASS.
+- A6.4 ✅ TypeY's methods get access к marked priv field of TypeX.
+- A6.5 ✅ Conservative: только marked fields, не whole type
+  (per-field granular).
+- A6.6 ✅ plan124_6 fixtures 7/7 PASS (4 positive + 3 negative).
+- A6.7 ✅ Regression plan124_1 9/9 + plan124_2 14/14 + plan124_4 10/10
+  unchanged.
+- A6.8 ✅ D223 NEW + cross-refs к D220-D222.
+
 ### Acceptance — Plan 124.2
 
 ALL closed 2026-06-02:
