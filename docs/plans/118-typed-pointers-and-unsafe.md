@@ -1894,7 +1894,7 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A18 | Forbidden ops: `&arr[i]`, `null`, `undefined` | NEG-T4.19, NEG-T4.20, NEG-T4.21 |
 | A19 ✅ 2026-06-02 | `Option[*T]` + NPO codegen (single-pointer layout, NULL pattern match) | T5.1-T5.4 + manual ABI verification |
 | A20 ✅ 2026-06-02 | NPO applies через newtype: `Option[Sqlite3Handle]` где `type Sqlite3Handle(*T)` / `(ptr)`. Transparent typedef collapse OR type_aliases V3 lookup. | T5.6 |
-| A21 partial ✅ 2026-06-02 (Option[ptr]) | NPO applies к `Option[*fn(...)]` и `Option[ptr]`. Option[ptr] V1 NPO; *fn V3 deferred. | T5.5 + V3 T5.9 |
+| A21 ✅ 2026-06-02 | NPO applies к `Option[*fn(...)]` и `Option[ptr]`. Option[ptr] via Ф.5.4 V2 nova_ptr branch; *fn via Ф.5.10 V5 — Func→void* + outer Pointer adds *, triggers V1 ends_with('*'). | T5.5 + T5.7 |
 | A22 ✅ 2026-06-02 | NPO excluded для `Option[Option[*T]]` — tagged fallback + W_OPTION_DOUBLE_NESTED warning через lint framework. Closes via lints.rs lint_option_double_nested pass. | t5_warn_option_double_nested |
 | A23 ✅ 2026-06-02 | `null ptr` literal retracted; 14 fixtures migrated к `(0 as ptr)`; closes [M-115-null-ptr-to-option-after-npo] | NEG-T5.12 t5_neg_null_ptr_retracted + T5.14 t1_null_non_ptr_neg |
 | A24 | `*fn(...)` function pointers для FFI roundtrip — verified end-to-end | T6.1-T6.4 |
@@ -2277,7 +2277,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 
 | Plan | PASS/FAIL |
 |---|---|
-| plan118 | **37/0** (18 positive + 18 NEG + 1 WARN, post-A22 lint emission) |
+| plan118 | **38/0** (19 positive + 18 NEG + 1 WARN, post-A21 Option[*fn] verified) |
 | plan115 | 11/0 (D214 backward compat preserved) |
 | plan120 | 8/0 |
 | plan114 | 10/0 |
