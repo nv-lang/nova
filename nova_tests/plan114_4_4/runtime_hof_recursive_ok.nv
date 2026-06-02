@@ -1,0 +1,17 @@
+// Plan 114.4.4.3 V4.2 POSITIVE: recursive const fn used as HOF arg.
+// Trampoline body must rewrite self-recursive calls к own trampoline name.
+
+module plan114_4_4.runtime_hof_recursive_ok
+
+fn factorial(const n int) -> const int {
+    if n <= 1 { return 1 }
+    n * factorial(n - 1)
+}
+
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+test "recursive const fn through trampoline" {
+    ro r = apply(factorial, 5)
+    // 5! = 120
+    assert(r == 120)
+}

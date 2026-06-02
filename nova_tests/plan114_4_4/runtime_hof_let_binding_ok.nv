@@ -1,0 +1,15 @@
+// Plan 114.4.4.3 V4.2 POSITIVE: const fn captured в runtime let binding —
+// automatic trampoline.
+//
+// Before V4.2: this raised E_CONST_FN_FIRST_CLASS.
+// V4.2: `ro f = double` → `ro f = double__trampoline` (fn pointer).
+
+module plan114_4_4.runtime_hof_let_binding_ok
+
+fn triple(const x int) -> const int => x * 3
+
+test "const fn captured в runtime let" {
+    ro f = triple
+    ro r = f(4)
+    assert(r == 12)
+}
