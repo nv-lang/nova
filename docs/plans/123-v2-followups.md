@@ -83,4 +83,28 @@ V*.2 split:
 
 ## 6. Closure status
 
-🟡 IN PROGRESS 2026-06-02. Flip to ✅ via final commit (#9).
+✅ CLOSED 2026-06-02. All 10 commits landed на plan-123-v2-followups.
+
+### Final tally
+
+| Followup | Commit | Acceptance | Tests |
+|---|---|---|---|
+| baseline-fix | 73010bf9 | B1-B4 ✅ | n/a |
+| V7.2 | (later commit) | V7.2.1-V7.2.5 ✅ | 14 + 2 fixtures |
+| V6.3 | (later commit) | V6.3.1-V6.3.4 ✅ | 14 unchanged |
+| V5.2 | 0e43f907 | V5.2.1-V5.2.5 ✅ | 7 LSP |
+| V5.3 | 518d78f8 | V5.3.1-V5.3.5 ✅ | 10 LSP |
+| V3.2 | (later commit) | V3.2.1-V3.2.6 ✅ | +7 V3.2 unit |
+| V4.2 | (later commit) | V4.2.1-V4.2.5 ✅ | +2 V4.2 + 1 fixture |
+| V6.2 | ac69a5b7 | V6.2.1-V6.2.5 ✅ | +2 V6.2 unit |
+| V7.3 | 80f35a4e | V7.3.1-V7.3.5 ✅ | +5 V7.3 unit |
+
+### Aggregate
+- 32 field_cache lib tests (14 baseline + 18 V*.2)
+- 10 nova-lsp integration tests (3 baseline + 7 V*.2)
+- 4 runtime fixtures (plan123_7_2 / 3_2 / 4_2)
+- 9 spec amends (D217 ×5, D219 ×1, D223 ×2 — V7.1 §4 superseded)
+- 9 sub-plan docs + 1 umbrella doc
+
+### Branch
+`plan-123-v2-followups` pushed к origin для review. NOT merged.
