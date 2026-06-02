@@ -1121,6 +1121,11 @@ fn type_refs_eq(a: &TypeRef, b: &TypeRef) -> bool {
     }
 }
 
+/// Public alias для cross-module use (const_fn_closure.rs V4.5 Ф.4).
+pub fn subst_type_ref_pub(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
+    subst_type_ref(t, subst)
+}
+
 /// Substitute generic param names с concrete types в TypeRef (returns new).
 fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
     use TypeRef as TR;
