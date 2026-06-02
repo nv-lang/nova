@@ -1,0 +1,13 @@
+// Plan 118 Ф.2 NEG-T2.11 — `&<literal>` forbidden (D216 §15).
+//
+// Literals (числа/bools/chars/strings) не addressable — нет stable
+// storage. Bind в named local first для explicit storage semantics.
+//
+// EXPECT_COMPILE_ERROR E_AMP_LITERAL
+
+module plan118.t2_neg_amp_literal
+
+test "rejects &42 literal" {
+    ro p = &42
+    assert(1 == 1)
+}

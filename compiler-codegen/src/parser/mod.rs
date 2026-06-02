@@ -5167,6 +5167,26 @@ impl Parser {
                         start,
                     ));
                 }
+                // Plan 118 D216 §15: `&<literal>` forbidden — literals
+                // не addressable (no stable storage). User должен bind в
+                // named local + take address of it.
+                if matches!(
+                    operand.kind,
+                    ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                        | ExprKind::BoolLit(_) | ExprKind::CharLit(_)
+                        | ExprKind::StrLit(_)
+                ) {
+                    return Err(Diagnostic::new(
+                        "[E_AMP_LITERAL] `&<literal>` forbidden \
+                         (Plan 118 D216 §15) — literals (числа, строки, \
+                         bools, chars) не addressable; они не имеют stable \
+                         storage. Bind в named local: \
+                         `ro x = 42; ro p = &x` — explicit local has \
+                         well-defined storage (stack или heap via escape \
+                         analysis auto-promote per D216 §4).".to_string(),
+                        start,
+                    ));
+                }
                 let span = start.merge(operand.span);
                 Ok(Expr::new(
                     ExprKind::Unary {
