@@ -27860,3 +27860,57 @@ Regression:
 - plan103_5 (OnceCell/Lazy/Once family) 20/20 PASS.
 
 Worktree: nova-p91-12 (продолжается). Branch: plan-91.12.
+
+
+[Plan 91.12 V2 followup #2 — Generic newtype non-ptr inner + reject inner-uses-param] 2026-06-02
+
+Контекст: V2 followup #1 (2026-06-02) закрыл [M-115-newtype-constructor-generic]
+для generic ptr-newtype. V2 followup #2 extends к non-ptr inner types (int/str/
+bool/f64) и добавляет type-checker reject для invalid form `type X[T](T)`.
+
+Изменения:
+
+**compiler-codegen/src/types/mod.rs:**
+- NEW `typeref_uses_param(tr, params)` static helper — recursive check
+  использует ли TypeRef один из generic params (mirror codegen's
+  type_ref_uses_any_type_param).
+- `TypeDeclKind::Newtype` walk extended: после walk_typeref, для
+  generic newtype (t.generics non-empty), check `typeref_uses_param(inner, t.generics)`.
+  Если true → error E_GENERIC_NEWTYPE_INNER_USES_PARAM с migration hint:
+  «replace with `type X { value T }` (record form)».
+
+Codegen `emit_type_decl` generic-types branch уже handled non-ptr inner
+через unified `type_ref_to_c(inner)` call — V2 followup #2 не требует
+codegen changes (только type-checker guard).
+
+**Tests:**
+- NEW `nova_tests/plan91_12/v3_generic_newtype_non_ptr_inner_ok.nv`
+  (11 positive blocks): Counter[T](int)/Tag[T](str)/Flag[T](bool)/
+  Measure[T](f64)/Tagged[T,U](int) — construct + .0 + distinct T.
+- NEW `nova_tests/plan91_12/v3_generic_newtype_inner_uses_param_neg.nv`
+  (negative): `type Wrap[T](T)` → E_GENERIC_NEWTYPE_INNER_USES_PARAM.
+
+**Spec D214 (spec/decisions/02-types.md):**
+- §«Generic opaque handle — `type X[T](ptr)`» extended с §«Inner non-ptr
+  types» (positive cases) + §«Inner uses generic param» (REJECTED с
+  E_GENERIC_NEWTYPE_INNER_USES_PARAM + migration hint).
+- Closes [M-91.12-generic-newtype-non-ptr-inner] explicitly.
+
+**Doc docs/migration/d126-to-tuple-newtype.md:**
+- «Generic user FFI handle» subsection extended с non-ptr inner examples
+  + REJECTED form pattern + record-form alternative.
+
+**Acceptance criteria (A1-A8):**
+- A1-A5 ✅ — positive cases (int/str/bool/f64/multi-param) PASS.
+- A6 ✅ — negative `type Wrap[T](T)` rejected с E_GENERIC_NEWTYPE_INNER_USES_PARAM.
+- A7 ✅ — spec D214 amended.
+- A8 ✅ — migration guide updated.
+
+**Regression:** plan91_12 9/9 (5 V2 + 2 V3 positive + 2 V3 negative) +
+buffers 11/11 + plan115 11/11 + plan103_5 20/20 = 51/51 PASS.
+
+Markers:
+- ✅ [M-91.12-generic-newtype-non-ptr-inner] — CLOSED.
+- No new open followups для Plan 91.12.
+
+Worktree: nova-p91-12 (continued). Branch: plan-91.12.

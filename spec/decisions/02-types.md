@@ -7113,8 +7113,27 @@ Codegen emit'ает single `typedef nova_ptr Nova_X;` (не per-T), `.0` access
 (prepared statement kinds, region/arena ownership classes, FFI buffer
 mutability flags, и т.д.).
 
-**Inner non-ptr types** (e.g. `type Wrap[T](int)`) — followup
-`[M-91.12-generic-newtype-non-ptr-inner]` (low priority).
+**Inner non-ptr types** (Plan 91.12 V2 followup, 2026-06-02) — generic
+newtype над любым primitive типом supported: `type Counter[T](int)`,
+`type Tag[T](str)`, `type Flag[T](bool)`, `type Measure[T](f64)`.
+Семантика идентична ptr-case: phantom T для compile-time discrimination,
+single shared typedef над inner C type, zero runtime overhead. Use cases:
+typed int counters, tagged strings (Email/UserId), tagged booleans
+(Visible/Hidden), tagged floats (measurement units).
+
+**Inner uses generic param** (`type Wrap[T](T)`) — **REJECTED** type-checker'ом
+с `[E_GENERIC_NEWTYPE_INNER_USES_PARAM]`. Tuple newtype = transparent
+typedef (shared C ABI across T's); per-T storage variance — record-semantics:
+
+```nova
+// ✗ E_GENERIC_NEWTYPE_INNER_USES_PARAM
+type Wrap[T](T)                  // inner depends on T → not newtype
+
+// ✓ Correct migration to record form (per-T mono)
+type Wrap[T] { value T }         // properly mono'd по T
+```
+
+Closes `[M-91.12-generic-newtype-non-ptr-inner]`.
 
 #### `consume close()` cleanup convention
 

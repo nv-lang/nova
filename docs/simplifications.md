@@ -29047,8 +29047,8 @@ sub-plans (124.2-124.7) remaining.
 - NEW `nova_tests/plan91_12/v3_user_generic_newtype_ok.nv` — 6 test blocks (single-param, str-param, multi-param `[T, U]`, null ptr, multiple instances).
 - Regression: plan91_12 7/7 + buffers 11/11 + plan115 11/11 + plan103_5 20/20 PASS.
 
-**OPEN markers (V2 carry-forward):**
-- 🟡 `[M-91.12-generic-newtype-non-ptr-inner]` — generic newtype с non-ptr inner type (e.g. `type Wrap[T](int)`). Currently V2 emit'ает `typedef nova_int Nova_Wrap;` (single typedef для всех T), что functionally работает но потенциально less type-safe чем per-T mono. Low priority — no user demand yet.
+**CLOSED markers (V2 followup #2, 2026-06-02):**
+- 🟢 `[M-91.12-generic-newtype-non-ptr-inner]` → **CLOSED 2026-06-02**. Generic newtype над любым primitive типом supported: `type Counter[T](int)`, `type Tag[T](str)`, `type Flag[T](bool)`, `type Measure[T](f64)`, `type Tagged[T, U](int)` — all positive cases verified (11 test blocks в `v3_generic_newtype_non_ptr_inner_ok.nv`). Edge case `type Wrap[T](T)` (inner uses generic param) — REJECTED type-checker'ом с NEW `[E_GENERIC_NEWTYPE_INNER_USES_PARAM]` + migration hint к record form `type Wrap[T] { value T }`. Implementation: `typeref_uses_param` helper в types/mod.rs + validation в `TypeDeclKind::Newtype` walk. Spec D214 amended (`§«Inner non-ptr types»` + reject section); migration guide updated с non-ptr examples + record-form alternative.
 
 **Design lesson:**
 - **Generic newtype над ptr ≠ generic newtype над other primitives.** Ptr-newtypes share single typedef (T is phantom). Inner non-ptr types (`type Wrap[T](int)`) might want per-T monomorphization для proper phantom-type ABI distinction. Текущая impl unified single typedef для both — works for current use cases (FFI handles).
