@@ -75,9 +75,9 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
     }
 
     // Step 2 — walk module, rewrite Call sites + collect specs.
-    // Plan 114.4.4 V4.5 Ф.4: spec key includes Vec<String> type_args mangle
-    // names (empty для non-generic).
-    let mut specs: HashMap<(String, Vec<ConstValue>, Vec<String>), String> = HashMap::new();
+    // Plan 114.4.4 V4.5 Ф.4 + V4.6 M4: spec value = (spec_name, original_type_args
+    // as Vec<TypeRef>) — TypeRefs retained для composite type substitution.
+    let mut specs: HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)> = HashMap::new();
     let mut spec_counter: usize = 0;
     for item in &mut module.items {
         rewrite_item(item, &closure_fns, &mut specs, &mut spec_counter, &mut errors);
@@ -89,15 +89,15 @@ pub fn specialize_closure_returning_const_fns(module: &mut Module) -> Vec<Diagno
     }
 
     // Step 3 — generate specialized FnDecls.
-    let mut sorted_specs: Vec<((&String, &Vec<ConstValue>, &Vec<String>), &String)> = specs
+    let mut sorted_specs: Vec<((&String, &Vec<ConstValue>, &Vec<String>), &(String, Vec<TypeRef>))> = specs
         .iter()
         .map(|((n, a, ta), s)| ((n, a, ta), s))
         .collect();
-    sorted_specs.sort_by(|a, b| a.1.cmp(b.1));
+    sorted_specs.sort_by(|a, b| a.1.0.cmp(&b.1.0));
     let mut specialized_items: Vec<Item> = Vec::new();
-    for ((host_name, const_args, type_mangle), spec_name) in sorted_specs {
+    for ((host_name, const_args, _type_mangle), (spec_name, type_args)) in sorted_specs {
         let host = &closure_fns[host_name];
-        match generate_closure_spec(host, const_args, type_mangle, spec_name) {
+        match generate_closure_spec(host, const_args, type_args, spec_name) {
             Ok(fd) => specialized_items.push(Item::Fn(fd)),
             Err(d) => errors.push(d),
         }
@@ -190,18 +190,14 @@ fn subst_then_eval(e: &Expr, subst: &HashMap<String, ConstValue>) -> Option<Cons
 fn generate_closure_spec(
     host: &FnDecl,
     const_args: &[ConstValue],
-    type_mangle: &[String],
+    type_args: &[TypeRef],
     spec_name: &str,
 ) -> Result<FnDecl, Diagnostic> {
-    // Plan 114.4.4 V4.5 Ф.4: build generic type subst map (host generic
-    // name → concrete TypeRef constructed from mangle string).
+    // Plan 114.4.4 V4.5 Ф.4 + V4.6 M4: type_args теперь Vec<TypeRef>,
+    // composite types passed directly (Tuple/Array/FixedArray/Named-with-generics).
     let mut type_subst: HashMap<String, TypeRef> = HashMap::new();
-    for (g, t_name) in host.generics.iter().zip(type_mangle.iter()) {
-        type_subst.insert(g.name.clone(), TypeRef::Named {
-            path: vec![t_name.clone()],
-            generics: vec![],
-            span: host.span,
-        });
+    for (g, ty) in host.generics.iter().zip(type_args.iter()) {
+        type_subst.insert(g.name.clone(), ty.clone());
     }
     // Build substitution map: host const param name → literal value.
     let mut subst: HashMap<String, ConstValue> = HashMap::new();
@@ -573,7 +569,7 @@ fn subst_expr(e: &mut Expr, subst: &HashMap<String, ConstValue>) {
 fn rewrite_item(
     item: &mut Item,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -613,7 +609,7 @@ fn rewrite_item(
 fn rewrite_block(
     b: &mut Block,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -628,7 +624,7 @@ fn rewrite_block(
 fn rewrite_stmt(
     s: &mut Stmt,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -660,7 +656,7 @@ fn rewrite_stmt(
 fn rewrite_expr(
     e: &mut Expr,
     closure_fns: &HashMap<String, FnDecl>,
-    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), String>,
+    specs: &mut HashMap<(String, Vec<ConstValue>, Vec<String>), (String, Vec<TypeRef>)>,
     spec_counter: &mut usize,
     errors: &mut Vec<Diagnostic>,
 ) {
@@ -814,37 +810,23 @@ fn rewrite_expr(
             ));
             return;
         }
-        // Build type-args mangle string from TypeRef (V1: simple Named names).
-        let mut type_mangle: Vec<String> = Vec::with_capacity(type_args.len());
-        let mut mangle_ok = true;
-        for ta in &type_args {
-            match crate::const_fn_eval::simple_type_name_str(ta) {
-                Some(s) => type_mangle.push(s),
-                None => {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_CONST_FN_CLOSURE_GENERIC_COMPLEX] TurboFish arg для `{}` \
-                             must be simple Named type (V4.5 Ф.4).",
-                            host_name
-                        ),
-                        e.span,
-                    ));
-                    mangle_ok = false;
-                    break;
-                }
-            }
-        }
-        if !mangle_ok { return; }
+        // Plan 114.4.4 V4.6 M4: composite TypeRef concrete types supported
+        // (Tuple/Array/FixedArray/Named-with-generics/Unit/Readonly) через
+        // mangle_type_ref stable serialization.
+        let type_mangle: Vec<String> = type_args
+            .iter()
+            .map(crate::const_fn_trampoline::mangle_type_ref)
+            .collect();
         let key = (host_name.clone(), const_args, type_mangle.clone());
         let counter_val = &mut *spec_counter;
-        let spec_name = specs.entry(key).or_insert_with(|| {
+        let (spec_name, _) = specs.entry(key).or_insert_with(|| {
             let suffix = if type_mangle.is_empty() {
                 format!("__closure_{}", counter_val)
             } else {
                 format!("__closure_{}_{}", type_mangle.join("_"), counter_val)
             };
             *counter_val += 1;
-            format!("{}{}", host_name, suffix)
+            (format!("{}{}", host_name, suffix), type_args.clone())
         }).clone();
         let span = e.span;
         *e = Expr { kind: ExprKind::Ident(spec_name), span };

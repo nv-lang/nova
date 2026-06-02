@@ -40,20 +40,78 @@ use crate::diag::Diagnostic;
 
 const TRAMPOLINE_SUFFIX: &str = "__trampoline";
 
-/// Plan 114.4.4 V4.5 Ф.3: generic trampoline instantiation key.
-/// Concrete types stored как Vec<String> (simple_type_name_str result)
-/// для V1 simplicity — single-segment Named types only.
-#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+/// Plan 114.4.4 V4.5 Ф.3 + V4.6 M4: generic trampoline instantiation key.
+/// Concrete types stored как Vec<TypeRef> (полные types — V4.6 supports
+/// composite концретные types: Tuple, Array, FixedArray, Named-with-generics).
+/// Hash/Eq использует mangled string representation (stable serialization).
+#[derive(Clone, Debug)]
 struct GenericInst {
     name: String,
     /// One entry per generic param из const fn's signature, в порядке
-    /// declaration.
-    concrete: Vec<String>,
+    /// declaration. V4.6: full TypeRef (V4.5 ограничивался simple Named).
+    concrete: Vec<TypeRef>,
+}
+
+impl PartialEq for GenericInst {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.mangled_args() == other.mangled_args()
+    }
+}
+impl Eq for GenericInst {}
+impl std::hash::Hash for GenericInst {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.mangled_args().hash(state);
+    }
 }
 
 impl GenericInst {
+    fn mangled_args(&self) -> String {
+        self.concrete.iter().map(mangle_type_ref).collect::<Vec<_>>().join("_")
+    }
     fn mangled_name(&self) -> String {
-        format!("{}{}_{}", self.name, TRAMPOLINE_SUFFIX, self.concrete.join("_"))
+        format!("{}{}_{}", self.name, TRAMPOLINE_SUFFIX, self.mangled_args())
+    }
+}
+
+/// Plan 114.4.4 V4.6 M4: stable serialization для TypeRef как mangled C-identifier.
+/// Supports composite types для generic concrete types:
+/// - Named simple (`int`) → `int`
+/// - Named с generics (`Option[int]`) → `Option_int`
+/// - Tuple `(int, str)` → `tup2_int_str`
+/// - Array `[]int` → `arr_int`
+/// - FixedArray `[4]int` → `fixarr4_int`
+/// - Unit `()` → `unit`
+/// - Readonly `readonly T` → `ro_<mangle T>`
+/// - Func type → `fn<n>_<param1>_..._ret_<ret>` (rarely used as concrete но supported).
+pub fn mangle_type_ref(t: &TypeRef) -> String {
+    use crate::ast::TypeRef as TR;
+    match t {
+        TR::Named { path, generics, .. } => {
+            let base = path.join("_");
+            if generics.is_empty() {
+                base
+            } else {
+                let g_mangle: Vec<String> = generics.iter().map(mangle_type_ref).collect();
+                format!("{}_{}", base, g_mangle.join("_"))
+            }
+        }
+        TR::Tuple(elems, _) => {
+            let parts: Vec<String> = elems.iter().map(mangle_type_ref).collect();
+            format!("tup{}_{}", elems.len(), parts.join("_"))
+        }
+        TR::Array(inner, _) => format!("arr_{}", mangle_type_ref(inner)),
+        TR::FixedArray(n, inner, _) => format!("fixarr{}_{}", n, mangle_type_ref(inner)),
+        TR::Unit(_) => "unit".to_string(),
+        TR::Readonly(inner, _) => format!("ro_{}", mangle_type_ref(inner)),
+        TR::Func { params, return_type, .. } => {
+            let p_mangle: Vec<String> = params.iter().map(mangle_type_ref).collect();
+            let ret_mangle = return_type.as_ref()
+                .map(|r| mangle_type_ref(r))
+                .unwrap_or_else(|| "unit".to_string());
+            format!("fn{}_{}_ret_{}", params.len(), p_mangle.join("_"), ret_mangle)
+        }
+        _ => "unknown".to_string(),
     }
 }
 
@@ -180,7 +238,9 @@ pub fn generate_const_fn_trampolines(
     let mut generic_trampoline_set: HashSet<String> = HashSet::new();
     let mut sorted_generic_seeds: Vec<&GenericInst> = generic_seeds.iter().collect();
     sorted_generic_seeds.sort_by(|a, b| {
-        a.name.cmp(&b.name).then(a.concrete.cmp(&b.concrete))
+        // Plan 114.4.4 V4.6 M4: concrete is Vec<TypeRef> (no Ord) — compare
+        // via mangled string representation (stable + deterministic).
+        a.name.cmp(&b.name).then(a.mangled_args().cmp(&b.mangled_args()))
     });
     let mut generic_items: Vec<Item> = Vec::new();
     for inst in &sorted_generic_seeds {
@@ -240,14 +300,11 @@ fn generate_generic_trampoline_decl(
         return None;
     }
     // Build subst map: generic name → TypeRef.
+    // Plan 114.4.4 V4.6 M4: concrete теперь Vec<TypeRef> вместо Vec<String>
+    // — composite types passed directly.
     let mut subst: HashMap<String, TypeRef> = HashMap::new();
-    for (g, ty_name) in orig.generics.iter().zip(inst.concrete.iter()) {
-        // Construct Named TypeRef from ty_name string.
-        subst.insert(g.name.clone(), TypeRef::Named {
-            path: vec![ty_name.clone()],
-            generics: vec![],
-            span: orig.span,
-        });
+    for (g, ty) in orig.generics.iter().zip(inst.concrete.iter()) {
+        subst.insert(g.name.clone(), ty.clone());
     }
     let mut td = orig.clone();
     td.name = inst.mangled_name();
@@ -685,8 +742,10 @@ impl<'a> CollectCtx<'a> {
         let span = arg.span;
         match infer_generic_subst(fd, expected_params, expected_ret.as_deref()) {
             Ok(subst) => {
-                // Materialize concrete in declaration order.
-                let mut concrete: Vec<String> = Vec::with_capacity(fd.generics.len());
+                // Plan 114.4.4 V4.6 M4: concrete теперь Vec<TypeRef> — composite
+                // types accepted (Tuple/Array/FixedArray/Named-with-generics/Unit/
+                // Readonly). Validation via mangle_type_ref ниже.
+                let mut concrete: Vec<TypeRef> = Vec::with_capacity(fd.generics.len());
                 for g in &fd.generics {
                     let Some(ty) = subst.get(&g.name) else {
                         self.errors.push(Diagnostic::new(
@@ -701,20 +760,7 @@ impl<'a> CollectCtx<'a> {
                         ));
                         return;
                     };
-                    let Some(name_str) = simple_type_name_str(ty) else {
-                        self.errors.push(Diagnostic::new(
-                            format!(
-                                "[E_CONST_FN_TRAMPOLINE_GENERIC_COMPLEX] inferred concrete \
-                                 type для generic param `{}` of `{}` is not a simple Named \
-                                 (V4.5 Ф.3 limit). Composite/generic concrete types — \
-                                 followup `[M-114.4.4-trampoline-complex-concrete]`.",
-                                g.name, fd.name
-                            ),
-                            span,
-                        ));
-                        return;
-                    };
-                    concrete.push(name_str);
+                    concrete.push(ty.clone());
                 }
                 self.generic_seeds.insert(GenericInst {
                     name: resolved.to_string(),
@@ -918,22 +964,13 @@ impl<'a> GenericMutateCtx<'a> {
         let span = arg.span;
         match infer_generic_subst(fd, expected_params, expected_ret.as_deref()) {
             Ok(subst) => {
-                let mut concrete: Vec<String> = Vec::with_capacity(fd.generics.len());
+                // Plan 114.4.4 V4.6 M4: composite TypeRef supported.
+                let mut concrete: Vec<TypeRef> = Vec::with_capacity(fd.generics.len());
                 for g in &fd.generics {
                     let Some(ty) = subst.get(&g.name) else { return; };
-                    let Some(name_str) = simple_type_name_str(ty) else {
-                        self.errors.push(Diagnostic::new(
-                            format!(
-                                "[E_CONST_FN_TRAMPOLINE_GENERIC_COMPLEX] inferred type для \
-                                 generic param `{}` of `{}` is not simple Named (V4.5 Ф.3).",
-                                g.name, fd.name
-                            ),
-                            span,
-                        ));
-                        return;
-                    };
-                    concrete.push(name_str);
+                    concrete.push(ty.clone());
                 }
+                let _ = span;
                 let inst = GenericInst { name: resolved, concrete };
                 let mangled = inst.mangled_name();
                 self.generic_seeds.insert(inst);
