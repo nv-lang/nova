@@ -826,6 +826,71 @@ extern __thread NovaVtable_Time* _nova_handler_Time;
  * forward-declared here because callers always include nova_rt.h which pulls
  * in fibers.h after effects.h. */
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
+ * Application register_finalizer LIFO stack runtime.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Per-`with Application = handler { body }` block stack of fn pointers.
+ * Registered via `nova_app_register_finalizer(fn)`; fired LIFO at block
+ * exit (both normal completion AND throw path).
+ *
+ * D195 R2 (test isolation): finalizer registry NOT inherited across
+ * nested Application handlers — each `with Application = ...` block
+ * gets fresh stack, previous TLS pointer saved + restored on exit.
+ *
+ * D195 R8: abort/SIGKILL не fires finalizers (OS limitation).
+ *
+ * Codegen integration: `with Application = handler { body }` emits
+ * prologue (save+init TLS) + body + epilogue (fire+restore TLS) — both
+ * normal AND throw path fire the stack. See emit_with в emit_c.rs.
+ */
+
+/* Store closure form (fn + env) для compatibility с Nova fn types,
+ * которые wrapped в NovaClosBase {fn, env}. Free fns get env=NULL. */
+typedef struct NovaFinalizer {
+    void* fn;   /* nova_unit (*)(void* env) — closure entry */
+    void* env;  /* captured environment (NULL для free fns) */
+    struct NovaFinalizer* prev;
+} NovaFinalizer;
+
+typedef struct {
+    NovaFinalizer* top;  /* LIFO list head — push prepends, fire walks. */
+} NovaFinalizerStack;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaFinalizerStack* _nova_active_finalizer_stack;
+#else
+extern __thread NovaFinalizerStack* _nova_active_finalizer_stack;
+#endif
+
+/* Push closure (fn + env) onto active stack. No-op if no active stack
+ * or fn==NULL. */
+static inline void nova_finalizer_push(NovaFinalizerStack* s, void* fn, void* env) {
+    if (!s || !fn) return;
+    NovaFinalizer* node = (NovaFinalizer*)nova_alloc(sizeof(NovaFinalizer));
+    node->fn = fn;
+    node->env = env;
+    node->prev = s->top;
+    s->top = node;
+}
+
+/* Fire all finalizers LIFO. Stack drained — re-firing safe (no-op).
+ * Throws from finalizers propagate up через current fail-frame — caller
+ * must wrap if needed. */
+static inline void nova_finalizer_fire_lifo(NovaFinalizerStack* s) {
+    if (!s) return;
+    NovaFinalizer* cur = s->top;
+    s->top = NULL;
+    while (cur) {
+        NovaFinalizer* next = cur->prev;
+        if (cur->fn) {
+            ((nova_unit (*)(void*))cur->fn)(cur->env);
+        }
+        cur = next;
+    }
+}
+
 /* ---- Per-fiber handler scoping (D-handler-scope) ---- *
  *
  * Все `_nova_handler_X` — `__declspec(thread)` глобалы, по факту делящиеся
