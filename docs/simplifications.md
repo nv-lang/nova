@@ -31641,3 +31641,18 @@ Workaround через `ro` + constructor pattern. Not zero_on_move specific.
 A8.21-A8.30 (10 new criteria). См. `spec/decisions/02-types.md`.
 
 Plan 124.8 V2.1 ✅ PRODUCTION-GRADE LANDED.
+
+
+## Plan 91.13 partial — str.from_codepoint(int) -> str (2026-06-03)
+
+**Why explicit `from_codepoint` instead of forcing callers через `char.try_from`:** D54 (Plan 34 Ф.5.2) запретил `int as char` direct cast чтобы избежать silent miscompile при int values вне char range. Workaround — `char.try_from(n)?` — returns `Result[char, _]` и unwrap adds Fail effect indirection. Для callers что ALREADY validated codepoint range (JSON parser проверяет hex digits ⊆ [0, 0x10FFFF]), Fail unwrap — false-positive ceremony. Explicit `str.from_codepoint(int)` — "trust me, callee, this int IS a valid codepoint" path. Same UTF-8 encode runtime impl, no API duplication overhead.
+
+**Why silent-empty for invalid codepoint (not panic / not Result):** semantic choice — fall back gracefully для unintended caller mistakes. Three options considered: (1) panic — too aggressive для recoverable parsing, (2) Result[str, InvalidCodepoint] — adds Fail effect (defeats purpose of bypassing char.try_from indirection), (3) empty str — caller sees suspicious output, debuggable, no UB. Choice: (3). JSON parser uses validated input → never hit invalid path; if hit, "" propagates as visible artefact (not silent miscompile, not crash). Strict variant possible как followup if explicit error path requested by future users.
+
+**Why inline alias in C header instead of custom c_name in runtime_registry:** codegen generates static-method calls as `Nova_<recv>_static_<fn>` pattern (line 19260+ etc) — auto-derived from Nova type/fn name. RuntimeFn's `c_name` field IS used в some dispatch paths (MethodSig.c_name), но не для default static-method dispatch. Two ways to wire: (a) modify codegen dispatch для special-case look up RuntimeFn.c_name on every static call (broad change, regression-risk), (b) C-level alias making both names exist (~3 lines). Choice: (b) — minimal change, no codegen risk, idiomatic in C (inline wrapper).
+
+**Why both positive AND negative tests for V1:** positive (ASCII / BMP / supplementary / NUL) cover happy-path UTF-8 encode correctness — verifies runtime backing works. Negative (-1, 0x110000, max/min int) cover invalid-input contract — verifies silent-empty semantics is consistent. Test format: explicit literal codepoints chosen для diverse coverage (1/2/3/4-byte UTF-8 sequences) + boundary conditions (NUL = 0, invalid below 0, invalid above max). 4+4 = 8 test cases total, all PASS.
+
+**Why partial closure (Plan 91.13 V1) instead of full JSON Ф.3:** discovered блокер — divergence-aware if-expr inference — это **separate codegen issue** (`if cond { throw } else { value }` pattern), не stdlib API gap. Previous fix attempt (block_diverges check in emit_if_expr) revert'нут из-за 24 regressions в Plan 108 binding rules + concurrency. Honest defer — committing what's working (API addition) с polished tests/docs/acceptance, marking next blocker как followup. Net forward progress vs all-or-nothing waiting.
+
+**Why no new D-block:** addition consistent with existing `str.from(char)` pattern (same runtime helper, alternative entry point). No semantic change в language spec — just bypasses D54 char-cast ban для known-valid contexts. spec/decisions/README.md не требует update. Plan 91.13 doc captures rationale.

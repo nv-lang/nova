@@ -30949,3 +30949,78 @@ Lessons:
 - Parser `parse_type_attrs` extensible через explicit tuple return —
   3rd boolean cleaner чем new TypeAttr variant для attributes which
   affect codegen integration (not literal coercion).
+
+
+================================================================================
+2026-06-03 (continued) — Plan 91.13 partial: str.from_codepoint(int) -> str
+================================================================================
+
+Sub-plan под Plan 91 (Ф.3 JSON conformance). Trigger — обнаружен stdlib
+API gap при попытке написать JSON roundtrip conformance test после
+Plan 48.1 closure.
+
+Bug discovery:
+- std/encoding/json.nv использует `str.from_codepoint(code)` в Unicode
+  escape parsing (\uXXXX → codepoint → UTF-8 str)
+- Функция НЕ объявлена в std/runtime/string.nv или char.nv
+- D54 (Plan 34 Ф.5.2) запретил `int as char` direct cast — workaround
+  через `char.try_from(n)?` adds Fail effect indirection
+- JSON parser уже validates hex digits ⊆ [0, 0x10FFFF] — нужен прямой
+  "known-valid" path без Fail unwrap
+
+Fix:
+- std/runtime/char.nv: `export external fn str.from_codepoint(cp int) -> str`
+- compiler-codegen/src/codegen/runtime_registry.rs: RuntimeFn entry,
+  c_name = "Nova_str_static_from_char" (alias) для backing
+- compiler-codegen/nova_rt/string_builder.h: inline alias
+  `Nova_str_static_from_codepoint(cp) → Nova_str_static_from_char(cp)`
+  (так как codegen генерирует `Nova_<recv>_static_<name>` pattern,
+  custom c_name in RuntimeFn не honored для этого path)
+
+Semantics:
+- Same UTF-8 encode impl как str.from(char) — Plan 04
+- Invalid codepoint (< 0 или > 0x10FFFF) → empty str ("") silent
+- Strict variant (str.try_from_codepoint -> Result[str, ...]) — followup
+  [M-91.13-strict-from_codepoint]
+
+Tests (release nova binary):
+- nova_tests/plan91_13/from_codepoint_test.nv — 4 positive cases:
+  ASCII (65 → "A"), BMP (0x041F → "П"), supplementary (0x1F600 → "😀"),
+  NUL (0 → str.len == 1)
+- nova_tests/plan91_13/from_codepoint_invalid_neg.nv — 4 negative cases:
+  negative -1, above 0x110000, max int, min int → all empty str
+
+Targeted regression check: plan48_1 (2/0), plan90_1 (20/0), plan73
+(25/0), plan77 (7/0), plan91_8a_2 (27/0) — 0 regressions.
+
+Plan 91.13 partial closed. Full closure blocked on
+[M-91.13-if-expr-divergence-aware-inference] — divergence-aware if-expr
+type inference для `if cond { throw } else { str_value }` pattern.
+Previous attempt (block_diverges check in emit_if_expr) revert'нут
+из-за 24 regressions в Plan 108 binding rules + concurrency tests.
+Нужен targeted approach (whitelist of divergent patterns), not blanket
+check.
+
+Acceptance criteria (V1):
+- [✓] str.from_codepoint(65) == "A" (ASCII)
+- [✓] str.from_codepoint(0x041F) == "П" (BMP)
+- [✓] str.from_codepoint(0x1F600) == "😀" (supplementary)
+- [✓] str.from_codepoint(0) с len = 1 (NUL)
+- [✓] str.from_codepoint(invalid) == "" (4 negative cases)
+- [✓] 0 regressions на targeted suites
+
+Plan 91 Ф.3 (JSON conformance) status: BLOCKED на Ф.2 divergence fix.
+After that lands, plan91_13/json_roundtrip_*.nv suite будет добавлен.
+
+Commits:
+- 40bfc73cc4e feat(plan91.13 partial): str.from_codepoint(int) -> str
+  (already merged + pushed)
+- (this entry): docs(plan91.13): plan doc + negative test + closure entries
+
+Followups:
+- [M-91.13-if-expr-divergence-aware-inference] — targeted divergence
+  fix (priority: P1 blocker for JSON Ф.3)
+- [M-91.13-json-roundtrip-full] — full conformance suite (depends on
+  above)
+- [M-91.13-strict-from_codepoint] — Result-returning strict variant
+  (optional)
