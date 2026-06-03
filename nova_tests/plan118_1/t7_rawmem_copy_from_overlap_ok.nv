@@ -1,0 +1,25 @@
+// Plan 118.1 Ф.1 T7 — RawMem.copy_from overlap-safe semantic.
+//
+// memmove must produce correct results even when src/dst overlap.
+// Tests shifting elements forward в same buffer (classic overlap case).
+
+module plan118_1.t7_rawmem_copy_from_overlap_ok
+
+import std.runtime.raw_mem
+
+test "RawMem.copy_from forward overlap shifts correctly" {
+    // buf = [1, 2, 3, 4, 5]
+    // Shift first 4 bytes forward by 1 byte: buf[1..5] = buf[0..4]
+    // Expected: [1, 1, 2, 3, 4]  (memmove semantics)
+    mut buf []u8 = [1, 2, 3, 4, 5]
+    unsafe {
+        ro src_view = buf[0..4]
+        mut dst_view = buf[1..5]
+        RawMem.copy_from(src_view.as_ptr(), dst_view.as_mut_ptr(), 4 as usize)
+    }
+    assert(buf[0] == (1 as u8))
+    assert(buf[1] == (1 as u8))
+    assert(buf[2] == (2 as u8))
+    assert(buf[3] == (3 as u8))
+    assert(buf[4] == (4 as u8))
+}

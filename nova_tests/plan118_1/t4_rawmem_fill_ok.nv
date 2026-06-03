@@ -1,0 +1,38 @@
+// Plan 118.1 Ф.1 T4 — RawMem.fill memset primitive.
+//
+// Tests byte-pattern fill at *mut u8 dst.
+
+module plan118_1.t4_rawmem_fill_ok
+
+import std.runtime.raw_mem
+
+test "RawMem.fill writes byte-pattern across buffer" {
+    mut buf []u8 = [0, 0, 0, 0, 0]
+    unsafe {
+        RawMem.fill(buf.as_mut_ptr(), 0xAA as u8, 5 as usize)
+    }
+    assert(buf[0] == (0xAA as u8))
+    assert(buf[1] == (0xAA as u8))
+    assert(buf[4] == (0xAA as u8))
+}
+
+test "RawMem.fill with zero-init pattern" {
+    mut buf []u8 = [1, 2, 3, 4]
+    unsafe {
+        RawMem.fill(buf.as_mut_ptr(), 0 as u8, 4 as usize)
+    }
+    assert(buf[0] == (0 as u8))
+    assert(buf[3] == (0 as u8))
+}
+
+test "RawMem.fill partial range leaves tail untouched" {
+    mut buf []u8 = [9, 9, 9, 9, 9]
+    unsafe {
+        RawMem.fill(buf.as_mut_ptr(), 7 as u8, 3 as usize)
+    }
+    assert(buf[0] == (7 as u8))
+    assert(buf[1] == (7 as u8))
+    assert(buf[2] == (7 as u8))
+    assert(buf[3] == (9 as u8))
+    assert(buf[4] == (9 as u8))
+}
