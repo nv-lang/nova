@@ -30372,6 +30372,53 @@ Followup markers:
 
 
 ================================================================================
+== 2026-06-03 — Plan 110.2-110.8 metadata status headers (✅ ЗАКРЫТ flip)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110-substatus-update (off main 5f61fde102e)
+
+Замысел:
+Plan 110 umbrella + Plan 110.1 status flipped 🆕 PLANNED → ✅ ЗАКРЫТ
+earlier commit 53c3bb2effe. Sub-plans 110.2-110.8 plan-docs не имели
+explicit Status headers (только "Создан 2026-05-31" + "Sub-plan Plan 110"
+narrative) — metadata gap при umbrella merge 874f5766ca5.
+
+Этот session flips status headers всех 7 sub-plans:
+- 110.2 (Ф.3 cancel-shield + async cleanup + 3-level timeout)
+- 110.3 (Ф.4+Ф.5 stdlib migration)
+- 110.4 (Ф.6+Ф.7+Ф.8 MultiError + Cleanup + Application)
+- 110.5 (Ф.9 migration autofix tool)
+- 110.6 (Ф.10+Ф.11 diagnostic UX + LSP + stress + bench)
+- 110.7 (Ф.12 FFI integration с #cancel_safe)
+- 110.8 (Ф.13+Ф.14 regression + cross-platform + docs close)
+
+Все references на umbrella merge 874f5766ca5 + closure summary 1c09f315f02.
+
+Plan 110.9 (V1.1 production-grade closure) остаётся 📋 PLANNED — deferred
+until trigger condition. 5 V1.1 sub-tasks НЕ implementированы — отдельная
+session требуется (~3-4 dev-day estimated).
+
+Реализация (metadata-only):
+- 7 status blocks inserted после "**Создан 2026-05-31.** Sub-plan Plan 110..."
+  narrative, перед "**Цель:**" section.
+- Uniform message: "✅ ЗАКРЫТ (2026-06-01) — sub-plan Plan 110 umbrella
+  (merge 874f5766ca5). Phases shipped через atomic commits; close summary
+  в 1c09f315f02. Fixtures в nova_tests/plan110/ верифицируют integrated
+  behavior."
+
+Тесты: не применимо (metadata-only doc updates). Underlying plans already
+shipped с своими fixtures (64 fixtures в nova_tests/plan110/, 36 verified
+PASS earlier).
+
+Lessons:
+- Plan-doc status discipline: at umbrella merge time flip ALL sub-plan
+  statuses вместе с umbrella. Easy to miss when umbrella close happens
+  через multiple commits over week+.
+- Doc consistency audit как routine закрытия plan family.
+
+
+================================================================================
 == 2026-06-03 — Plan 124.8 V2 codegen production-grade stack LANDED
 ================================================================================
 

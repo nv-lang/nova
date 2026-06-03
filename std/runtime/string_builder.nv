@@ -35,7 +35,9 @@ const INITIAL_CAPACITY = 16
 export fn StringBuilder.new() -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY)
 
 // StringBuilder с pre-allocated capacity n байт.
-export fn StringBuilder.with_capacity(n int) -> Self => { buf: []u8.with_capacity(n) }
+export fn StringBuilder.with_capacity(n int) -> Self
+    requires n >= 0
+=> { buf: []u8.with_capacity(n) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
 export fn StringBuilder.from(s str) -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY).append(s)
