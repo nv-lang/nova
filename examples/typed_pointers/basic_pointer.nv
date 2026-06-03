@@ -1,13 +1,14 @@
-// Plan 118 D216 §1 — typed pointer family `*T` basic example.
+// Plan 118 / 118.5 D216 V2 — typed pointer family basic example.
 //
-// Demonstrates declaration positions для все 4 modifier variants:
-//   *T          (= *ro T) — readonly typed pointer (default)
-//   *ro T       — explicit readonly
-//   *mut T      — mutable typed pointer
-//   *unsafe T   — pointer после arithmetic (alignment/bounds gone)
+// V2 canonical right-binding forms:
+//   *T          — readonly pointer (default canonical)
+//   ro * T      — readonly pointer (explicit; semantically identical)
+//   mut * T     — mutable pointer (can be rebound + deref-store)
+//   unsafe * T  — possibly-null/dangling pointer (escape hatch)
+//   * unsafe T  — valid pointer к possibly-uninit T (MaybeUninit semantic)
 //
 // V1 scope: type-system distinction enabled; pointer ops + auto-deref
-// + unsafe context enforcement landing в Ф.4 + Ф.3.3-3.5 followup.
+// + unsafe context enforcement landing per Plan 118 + 118.5 Ф.4.
 
 module typed_pointers.basic_pointer
 
@@ -17,16 +18,16 @@ type Buffer {
 }
 
 // Readonly pointer parameters (default).
-external fn read_buffer(buf *Buffer) -> i64
+external fn read_buffer(buf * Buffer) -> i64
 
-// Mutable pointer для FFI out-params.
-external fn fill_buffer(buf *mut Buffer, value i64) -> i64
+// Mutable pointer для FFI out-params (V2 canonical right-binding).
+external fn fill_buffer(buf mut * Buffer, value i64) -> i64
 
-// Unsafe pointer arises после arithmetic.
-external fn buffer_at_offset(buf *unsafe Buffer, idx i64) -> i64
+// Unsafe pointer arises после arithmetic (V2 canonical right-binding).
+external fn buffer_at_offset(buf unsafe * Buffer, idx i64) -> i64
 
 // Returning typed pointer.
-external fn allocate_buffer(size i64) -> *Buffer
+external fn allocate_buffer(size i64) -> * Buffer
 
 test "typed pointer family — declarations parse + type-check" {
     // V1 limit: pointer creation (&) + deref (*) + auto-deref require

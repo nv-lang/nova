@@ -1,0 +1,22 @@
+// Plan 118.5 Ф.4 T1 — canonical right-binding pointer syntax parses + typechecks.
+//
+// Tests new V2 grammar: ro * T, mut * T, unsafe * T forms in
+// external fn signatures (parser + typecheck only — no runtime ops).
+//
+// Per D216 V2 §V2.1-§V2.2, modifier on left side wraps the entire
+// pointer construct.
+
+module plan118_5.t1_canonical_right_binding_ok
+
+type Acc {
+    id i64
+}
+
+external fn p118_5_t1_a(p * Acc) -> ()
+external fn p118_5_t1_b(p ro * Acc) -> ()
+external fn p118_5_t1_c(p mut * Acc) -> ()
+external fn p118_5_t1_d(p unsafe * Acc) -> ()
+
+test "parses canonical right-binding forms" {
+    assert(1 == 1)
+}

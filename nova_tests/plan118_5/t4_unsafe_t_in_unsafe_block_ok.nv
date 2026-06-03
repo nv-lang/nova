@@ -1,0 +1,20 @@
+// Plan 118.5 Ф.4 T4 — reading `unsafe T` binding inside unsafe { } block.
+//
+// Demonstrates that the E_UNSAFE_T_READ_REQUIRES_WRAP enforcement allows
+// the read когда properly wrapped в unsafe context. Mirror Plan 118 pattern
+// for AddrOf/Deref: depth-counted via Block.is_unsafe flag.
+
+module plan118_5.t4_unsafe_t_in_unsafe_block_ok
+
+fn read_unsafe_value() -> () {
+    ro x unsafe int = 42
+    unsafe {
+        // OK — read inside unsafe block.
+        ro y = x
+        assert(y == 42)
+    }
+}
+
+test "unsafe T read inside unsafe { } block allowed" {
+    read_unsafe_value()
+}

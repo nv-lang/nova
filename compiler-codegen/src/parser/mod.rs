@@ -74,6 +74,13 @@ pub struct Parser {
     /// `.n.m`-positional-tuple-access, где Float-токен нужно
     /// расщепить обратно в две части).
     src: String,
+    /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** parser-emitted lint
+    /// warnings collected during parsing. Drained by the driver via
+    /// `into_warnings()` and merged with post-parse lint_module() output.
+    /// Currently emits W_DEPRECATED_POINTER_INLINE_MODIFIER and
+    /// W_BREAKING_UNSAFE_PTR_MEANING for legacy pointer syntax during
+    /// grace period.
+    pub warnings: Vec<crate::diag::Diagnostic>,
 }
 
 impl Parser {
@@ -88,7 +95,15 @@ impl Parser {
             no_struct_lit: false,
             no_trailing_block: false,
             src,
+            warnings: Vec::new(),
         }
+    }
+
+    /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** consume the parser
+    /// and return collected warnings. Driver merges these with post-parse
+    /// lint_module() warnings.
+    pub fn into_warnings(self) -> Vec<crate::diag::Diagnostic> {
+        self.warnings
     }
 
     fn src_substring(&self, span: Span) -> String {
@@ -4922,6 +4937,32 @@ impl Parser {
                 let span = start.merge(inner.span());
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
             }
+            // **Plan 118.5 Ф.2.1 / D216 V2 §V2.1 (2026-06-04):** universal
+            // right-binding rule — `mut T` type-level modifier. Parses
+            // recursively (same template as KwRo arm above). Distinct от
+            // binding-level `mut x T` (Plan 108) — here it's the **type**
+            // that carries mutability marker. Canonical form для wrapped
+            // pointer: `mut * T` ≡ Mut(Pointer(T)).
+            TokenKind::KwMut => {
+                self.bump();
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                return Ok(TypeRef::Mut(Box::new(inner), span));
+            }
+            // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04):** universal
+            // right-binding rule — `unsafe T` type-level modifier. Parses
+            // recursively (same template as KwRo arm above). Marks T's
+            // safety contracts off (init/layout/aliasing/identity) —
+            // MaybeUninit-style first-class wrapper. Two orthogonal axes:
+            //   `unsafe * T` → Unsafe(Pointer(T)) — possibly-null ptr к valid T
+            //   `* unsafe T` → Pointer(Unsafe(T)) — valid ptr к possibly-uninit T
+            // Read enforcement E_UNSAFE_T_READ_REQUIRES_WRAP — Ф.4 work.
+            TokenKind::KwUnsafe => {
+                self.bump();
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                return Ok(TypeRef::Unsafe(Box::new(inner), span));
+            }
             // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
             // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
             // Chain order: `*mut *ro T` = mut pointer на ro pointer на T
@@ -4943,29 +4984,29 @@ impl Parser {
                         span,
                     ));
                 }
-                // Optional modifier (ro / mut / unsafe ident).
-                let modifier = match &self.peek().kind {
-                    TokenKind::KwRo => {
-                        self.bump();
-                        crate::ast::PointerModifier::Ro
-                    }
-                    TokenKind::KwMut => {
-                        self.bump();
-                        crate::ast::PointerModifier::Mut
-                    }
-                    // Plan 118 Ф.3 (D2 amend): KwUnsafe keyword. Used в
-                    // `*unsafe T` pointer modifier + `unsafe { }` block +
-                    // `#unsafe` attribute.
-                    TokenKind::KwUnsafe => {
-                        self.bump();
-                        crate::ast::PointerModifier::Unsafe
-                    }
-                    // Default modifier = Ro (когда `*T` без явного modifier).
-                    _ => crate::ast::PointerModifier::Ro,
-                };
+                // **Plan 118.5 / D216 V2 §V2.2 (2026-06-04):** Star is a pure
+                // pointer constructor — NO inline modifier consumption. The
+                // recursive parse_type() call below picks up any modifier
+                // (ro/mut/unsafe) via its own right-binding arms, producing:
+                //   `*T`        → Pointer(T)              (default canonical)
+                //   `*ro T`     → Pointer(Readonly(T))    (ptr к ro T)
+                //   `*mut T`    → Pointer(Mut(T))         (ptr к mut T)
+                //   `*unsafe T` → Pointer(Unsafe(T))      (ptr к uninit T)
+                //
+                // Canonical V2 forms for the rev-1 «modifier on pointer» meanings
+                // use left-side modifier instead:
+                //   `ro * T`     → Readonly(Pointer(T))   (ro ptr к T)
+                //   `mut * T`    → Mut(Pointer(T))        (mut ptr к T)
+                //   `unsafe * T` → Unsafe(Pointer(T))     (unsafe ptr к T)
+                //
+                // **Migration note:** rev-1 code that wrote `*mut T` expecting
+                // «mut ptr к T» now parses as `Pointer(Mut(T))` («ptr к mut T»)
+                // under V2 rules. This is a silent semantic shift; Plan 118.5
+                // Ф.5 migration sweep explicitly rewrites such code to preserve
+                // original intent.
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
-                return Ok(TypeRef::Pointer(modifier, Box::new(inner), span));
+                return Ok(TypeRef::Pointer(Box::new(inner), span));
             }
             TokenKind::LBracket => {
                 self.bump();
@@ -8968,6 +9009,21 @@ pub fn parse_with_file_id(src: &str, file_id: crate::diag::FileId) -> Result<Mod
     // удалён.
     let mut p = Parser::with_src(tokens, src.to_string());
     p.parse_module()
+}
+
+/// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** parse and return both module
+/// and parser-emitted warnings (Plan 118.5 deprecation warnings, etc.).
+///
+/// Use this instead of `parse()` when the driver wants to surface parser
+/// warnings to the user. Existing callers of `parse()` continue to work
+/// (warnings silently dropped).
+pub fn parse_collecting_warnings(
+    src: &str,
+) -> Result<(Module, Vec<Diagnostic>), Diagnostic> {
+    let tokens = crate::lexer::lex(src)?;
+    let mut p = Parser::with_src(tokens, src.to_string());
+    let module = p.parse_module()?;
+    Ok((module, p.into_warnings()))
 }
 
 /// Plan 45 Ф.24.6: parse a Nova type expression string → TypeRef AST.

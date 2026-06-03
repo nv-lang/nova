@@ -631,17 +631,30 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
                 write_typeref_structural(w, inner);
             });
         }
-        // Plan 118 D216 §1: typed pointer `*T` family.
-        TypeRef::Pointer(modif, inner, _) => {
+        // Plan 118 D216 §1 / Plan 118.5: typed pointer `*T` family.
+        // V2 canonical form: bare Pointer = `*T` (ro); Mut/Unsafe are wrappers
+        // that may wrap Pointer (e.g. `*mut T` = Mut(Pointer(T))) or other types.
+        TypeRef::Pointer(inner, _) => {
             let source = super::collector::render_type_for_doc(ty);
-            let modif_str = match modif {
-                crate::ast::PointerModifier::Ro => "ro",
-                crate::ast::PointerModifier::Mut => "mut",
-                crate::ast::PointerModifier::Unsafe => "unsafe",
-            };
             w.field_object("structural_type", |w| {
                 w.field_str("kind", "pointer");
-                w.field_str("modifier", modif_str);
+                w.field_str("modifier", "ro");
+                w.field_str("source", &source);
+                write_typeref_structural(w, inner);
+            });
+        }
+        TypeRef::Mut(inner, _) => {
+            let source = super::collector::render_type_for_doc(ty);
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "mut_wrap");
+                w.field_str("source", &source);
+                write_typeref_structural(w, inner);
+            });
+        }
+        TypeRef::Unsafe(inner, _) => {
+            let source = super::collector::render_type_for_doc(ty);
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "unsafe_wrap");
                 w.field_str("source", &source);
                 write_typeref_structural(w, inner);
             });

@@ -13,8 +13,9 @@
 // variants (`RawMem.copy_from[T]`) — V2 follow-on, require `sizeof[T]()`
 // const fn intrinsic propagation.
 //
-// Pointer types: `*u8` (`*ro u8` per D216 §1 default) для src,
-// `*mut u8` для dst. `usize` для byte count (D226 alias, C size_t ABI).
+// Pointer types: `*u8` (default ro per D216 §1) для src,
+// `mut * u8` (canonical V2 right-binding per D216 V2 §V2.1) для dst.
+// `usize` для byte count (D226 alias, C size_t ABI).
 //
 // Rust precedents:
 //   - ptr::copy (memmove)              -> RawMem.copy_from
@@ -44,7 +45,7 @@ export type RawMem
 ///
 /// V1 contract: caller wraps в `unsafe { }` block for clarity (parser
 /// does not yet support `#unsafe` attribute on `external fn`).
-export external fn RawMem.copy_from(src *u8, dst *mut u8, n usize) -> ()
+export external fn RawMem.copy_from(src *u8, dst mut * u8, n usize) -> ()
 
 /// memcpy — copy `n` bytes from `src` к `dst`. UB при overlap.
 ///
@@ -53,20 +54,20 @@ export external fn RawMem.copy_from(src *u8, dst *mut u8, n usize) -> ()
 ///
 /// Use cases: known-distinct buffers (e.g., between two arrays,
 /// from FFI buffer к Nova buffer).
-export external fn RawMem.copy_nonoverlapping(src *u8, dst *mut u8, n usize) -> ()
+export external fn RawMem.copy_nonoverlapping(src *u8, dst mut * u8, n usize) -> ()
 
 /// memset — fill `n` bytes at `dst` с byte-pattern `val`.
 ///
 /// Single-byte fill. For typed-element fill (e.g., u32 array filled с
 /// specific i32 value), iterate manually OR use `write_bytes` (alias)
 /// для clarity того что byte-pattern semantic.
-export external fn RawMem.fill(dst *mut u8, val u8, n usize) -> ()
+export external fn RawMem.fill(dst mut * u8, val u8, n usize) -> ()
 
 /// memset alias — Rust `ptr::write_bytes` precedent.
 ///
 /// Identical semantic к `fill`. Provided для discoverability — when
 /// reader expects Rust idiom `write_bytes(dst, 0, n)` для zero-init.
-export external fn RawMem.write_bytes(dst *mut u8, val u8, n usize) -> ()
+export external fn RawMem.write_bytes(dst mut * u8, val u8, n usize) -> ()
 
 /// memcmp — compare `n` bytes at `a` и `b`. Returns -1/0/+1.
 ///

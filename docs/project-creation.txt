@@ -31374,3 +31374,121 @@ D216 V2 amend ✅ LANDED on main (commit b10317dfb76). Plan 118.5 implementation
 🆕 PLANNED — 7 phases queued. Existing Plan 118 V1 / Plan 118.4 V1 code не
 affected (use bare `*T` без inline modifier — already V2-compliant). RawMem
 stdlib signatures будут migrated в Plan 118.5 Ф.5 sweep.
+
+═══════════════════════════════════════════════════════════════════════
+2026-06-04 (вечер) — Plan 118.5 V1 LANDED — universal right-binding rule
++ first-class unsafe T wrapper (4 commits + 2 workflows)
+═══════════════════════════════════════════════════════════════════════
+
+Branch plan-118.5 / worktree nova-p118.5. 4 commits + 2 workflows:
+  - 0a100283f03 — feat(Ф.1+Ф.3 partial): AST split Pointer/Mut/Unsafe +
+    propagate через 21 codegen sites
+  - 0d2eec161a8 — feat(Ф.2): parser uniform right-binding rule +
+    KwMut/KwUnsafe arms
+  - c075afc0b5a — feat(Ф.4 partial): unsafe T MaybeUninit read enforcement
+    + 6 fixtures
+  - 8cf39ee7862 — refactor(Ф.5): migration sweep — raw_mem.nv canonical +
+    chain test replacement
+
+Workflows used:
+  - Discovery (wt9exkt66): 6 parallel audit agents + synthesis к concrete
+    75-location implementation plan (~492k tokens, 14 min)
+  - Pattern fixes (wl3oge377): 7 parallel codegen-fix agents (21 pattern
+    sites fixed в lockstep, ~334k tokens, 3.5 min)
+
+### Что зафиксировано
+
+AST extension (compiler-codegen/src/ast/mod.rs):
+  - TypeRef::Pointer transformed от 3-tuple к 2-tuple (drop PointerModifier
+    field)
+  - NEW TypeRef::Mut(Box, Span) — mutability marker wrapper
+  - NEW TypeRef::Unsafe(Box, Span) — MaybeUninit-style first-class wrapper
+  - PointerModifier enum retained для Ty::TypedPtr runtime tag (decoupled)
+  - 4 new helpers: strip_modifiers, is_mut, is_unsafe,
+    outer_unsafe_before_pointer (NPO support)
+
+Parser (compiler-codegen/src/parser/mod.rs):
+  - NEW KwMut arm — `mut T` → Mut(inner) recursive parse
+  - NEW KwUnsafe arm — `unsafe T` → Unsafe(inner) recursive parse
+  - Star branch — pure pointer constructor (removed inline-modifier detection)
+  - Parser.warnings infrastructure (currently unused но plumbed для future)
+
+Codegen propagation (21 sites across 8 files):
+  - emit_c.rs / external_registry.rs — type_ref_to_c with Mut/Unsafe transparent
+  - doc/collector.rs + render_json.rs — display + JSON output
+  - types/mod.rs — 11 sites including ty_of_ref SEMANTIC COLLAPSE point
+  - lints.rs — 3 sites
+  - All Mut/Unsafe wrappers transparent at C level (no ABI change)
+
+Type-checker (compiler-codegen/src/types/mod.rs):
+  - UnsafeCtx.unsafe_t_vars scope-stack parallel к ptr_vars
+  - walk_block push/pop frames lockstep
+  - Stmt::Let registration via outer_unsafe_before_pointer detection
+  - ExprKind::Ident emits E_UNSAFE_T_READ_REQUIRES_WRAP outside unsafe block
+  - Fn params registration at fn entry
+
+Migration (Ф.5):
+  - std/runtime/raw_mem.nv — 5 sigs migrated к `mut * u8` canonical
+  - t1_neg_duplicate_modifier deleted (concept doesn't exist under V2)
+  - t1_9_chain_modifiers_ok NEW POS replacing obsolete NEG
+  - examples/typed_pointers/basic_pointer.nv — all 4 forms canonical
+
+### CRITICAL design correction после user feedback
+
+Initial implementation incorrectly framed `*ro T` / `*mut T` / `*unsafe T`
+as «legacy syntax» needing deprecation warning. User correctly identified
+that under V2 right-binding rule these ARE valid V2 syntax (just produce
+different AST shape than rev-1):
+  - rev-1 `*mut T`  = Readonly(Pointer(T)) («mut ptr к T»)
+  - V2   `*mut T`   = Pointer(Mut(T))      («ptr к mut T»)
+Both compile, both produce same C ABI (T*), but semantically different
+intent. Removed false deprecation detection + warnings entirely. Rev-1
+code that wrote `*mut T` expecting «mut ptr к T» now silently produces
+different AST shape — Ф.5 migration sweep explicitly rewrites such code
+к preserve original intent (`*mut T` → `mut * T`).
+
+### Tests
+
+  - plan118 (umbrella): 38/38 PASS
+  - plan118_1 (RawMem): 7/7 PASS (ABI-clean migration)
+  - plan118_4 (typed read/write): 4/4 PASS
+  - plan118_5 (NEW): 6/6 PASS (4 POS + 2 NEG)
+  - Total: 55/55 PASS, ZERO regression
+
+### V1 follow-up markers (9 opened)
+
+  - [M-118.5-narrow-cast]
+  - [M-118.5-arg-coerce-unsafe]
+  - [M-118.5-write-safe-tracking]
+  - [M-118.5-npo-recalculation]
+  - [M-118.5-member-index-call-broader]
+  - [M-118.5-unsafe-t-readwrite-semantics]
+  - [M-118.5-consume-as-type-modifier]
+  - [M-118.5-d218-maybeuninit-duplication]
+  - [M-118.5-mut-t-vs-binding-distinction]
+
+### Lessons learned
+
+1. **User feedback can correct design framing mid-implementation.** Initial
+   "legacy syntax" framing для `*ro T` was wrong; correction yielded
+   cleaner implementation (no warnings infrastructure burden, simpler parser).
+
+2. **Workflow parallelization is powerful для mechanical work.** 7 agents
+   fixing 21 codegen sites simultaneously took ~3.5 min vs ~30 min
+   sequential. Caveat: agents reported "sites in OTHER files" outside
+   their assigned scope — final cargo check used к verify all sites
+   actually covered.
+
+3. **AST variant arity changes cascade massively.** 22 pattern matches
+   broke when Pointer went от 3-tuple к 2-tuple. cargo check enumerates
+   them all — easy fix.
+
+4. **Semantic collapse point (ty_of_ref) is THE key infrastructure call.**
+   AST wrappers (Mut/Unsafe) lose information when converted к Ty —
+   accepted asymmetry. Semantic enforcement happens at TypeRef walk level,
+   not Ty level.
+
+### State
+
+Plan 118.5 V1 ✅ LANDED on plan-118.5 branch. Next: bidirectional sync с
+main (commit chain merge).
