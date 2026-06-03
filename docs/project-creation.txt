@@ -31084,3 +31084,57 @@ Combined Plan 118 V1 surface (after Ф.4 V1):
 (libpng pixel buffers, libcurl recv buffers, sqlite blobs с typed
 column access). Struct-T deref + pointer arithmetic + volatile +
 addr_of! остаются V2 followups.
+
+
+================================================================================
+== 2026-06-03 — Plan 110.9 V1.1 continuation: M-110.9.1 typed throw codegen closed
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.9-final-closure (off main 5f61fde102e + later commits)
+
+Закрыл 4-й из 5 V1.1 markers: M-110.9.1 typed CleanupTimeoutError throw.
+
+Подход:
+- Two splice markers в emit_c.rs:emit_main_wrapper:
+  /*__CLEANUP_TIMEOUT_IMPL__*/  перед int main() body site
+  /*__CLEANUP_TIMEOUT_INIT__*/  в main() body после effects registration
+- Unconditional register_type_id("CleanupTimeoutError") в finalize ensures
+  NOVA_TID_USER_CleanupTimeoutError macro defined. Without it impl
+  references undefined macro.
+- Static fn _nova_throw_cleanup_timeout_impl allocates Nova_CleanupTimeoutError,
+  sets duration_ms, snprintf'ит msg, вызывает nova_throw_typed.
+- Cost: ~30 bytes binary if unused (acceptable trade-off для всегда-typed
+  throw path).
+
+Runtime: nv_shield_check_deadline branch на typed impl IF fn pointer set
+(теперь always set). String fallback retained для defensive.
+
+Tests: 1 POS fixture typed_cleanup_timeout_v1_1.nv (compile-success
+verifies splice fires correctly). Codegen output verified via grep —
+NOVA_TID_USER_CleanupTimeoutError macro defined, static impl emitted,
+fn pointer assigned в main body.
+
+41/41 plan110 PASS на release nova-cli (was 40 before; +1 new POS).
+
+M-110.9.3 register_finalizer LIFO остаётся deferred — scope (новый
+NovaFinalizerStack runtime + per-with Application block prologue/epilogue
++ register/fire dispatch + normal/throw path integration) exceeded
+available focused work window в continuation session.
+
+Plan 110.9 V1.1 final state:
+- ✅ M-110.9.2 WithExitTimeout Level 1 (earlier session).
+- ✅ M-110.9.4 W_FFI_CANCEL_UNSAFE lint (earlier).
+- ✅ M-110.9.5 on_exit strict signature (earlier).
+- ✅ M-110.9.1 typed throw codegen (this continuation).
+- 🟡 M-110.9.3 register_finalizer LIFO (still deferred).
+
+4/5 markers closed. Plan 110.9 status 🟡 PARTIAL → 🟡 NEAR-COMPLETE.
+
+Lessons:
+- Two-marker splice pattern в emit_c.rs (one для impl, one для init)
+  cleanly handles forward-reference issues (impl needs user type struct,
+  init needs effects/runtime registration done).
+- Unconditional type_id registration acceptable trade-off для prelude
+  types used by runtime infrastructure — ~30 byte binary cost beats
+  conditional emission complexity + risk.

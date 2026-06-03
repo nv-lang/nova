@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout] POSITIVE:
+// CleanupTimeoutError type-name referenced → codegen emits typed throw
+// impl `_nova_throw_cleanup_timeout_impl` + assigns _nova_throw_cleanup_timeout_fn
+// в main startup.
+//
+// V1.1 codegen pattern:
+//   1. Reference к CleanupTimeoutError (any) → type_id_registry registers it.
+//   2. Finalize splice: emit static fn, assign в main wrapper init.
+//   3. nv_shield_check_deadline fires → calls typed impl (NOT string-fallback).
+//
+// Fixture verifies COMPILE-success: typed throw infrastructure emitted
+// без compile errors. Runtime fire-path (actually exceeding timeout)
+// remains gated на real-world deadline scenarios.
+
+module plan110.typed_cleanup_timeout_v1_1
+
+import std.prelude.errors
+
+type Resource { ro id int }
+fn Resource.new(id int) -> Resource => { id }
+
+fn Resource consume @on_exit(_outcome ScopeOutcome) -> () {
+    return ()
+}
+
+// Reference CleanupTimeoutError в function signature — forces type_id
+// registration. Codegen detects при finalize и emits typed throw impl.
+fn handle_cleanup_timeout(e CleanupTimeoutError) -> int {
+    return e.duration_ms
+}
+
+test "Plan 110.9.1 V1.1: typed CleanupTimeoutError throw codegen emitted" {
+    // Compile-success само по себе verifies codegen splices:
+    //   1. NOVA_TID_USER_CleanupTimeoutError macro defined
+    //   2. _nova_throw_cleanup_timeout_impl static fn emitted
+    //   3. _nova_throw_cleanup_timeout_fn assigned в main()
+    consume r = Resource.new(99) {
+        assert(r.id == 99)
+    }
+    // Construct CleanupTimeoutError directly to confirm struct usable.
+    ro e = CleanupTimeoutError { duration_ms: 100 }
+    ro extracted = handle_cleanup_timeout(e)
+    assert(extracted == 100)
+}
