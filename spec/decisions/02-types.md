@@ -8565,15 +8565,31 @@ Records keep type-level priv flip (D220 §3.3.1 unaffected).
 `type X value { ... }` — stack-allocated value type с copy-on-pass
 semantics. Symmetric extension D52 §«record form» через `value` keyword.
 
-**Semantic:**
-- **Allocation:** stack (inline struct в callee frame для V2; V1 = heap-backed
-  transparent fallback, см. [M-124.8-value-codegen-stack]).
-- **Pass:** copy on parameter pass (D32 amend).
-- **Method receiver `@`:** pointer на slot — мутации видны caller'у.
-- **`[]Vec3` storage:** inline (V2); array of slot copies.
+**Semantic (V2 production-grade, landed 2026-06-03):**
+- **Allocation:** stack (inline C struct `NovaValue_X` в callee frame).
+  V2 codegen landed in Plan 124.8 V2.1-V2.4 — closes [M-124.8-value-codegen-stack].
+- **Pass:** copy on parameter pass (D32 amend) — C handles natively
+  для value types.
+- **Method receiver `@`:** pointer на stack-slot (`NovaValue_X*`) —
+  мутации видны caller'у.
 - **Reference fields:** handles inline (ptr+len+cap для `[]T`,
   ptr+len для `str`); data on heap (GC-tracked).
 - **Fixed array fields:** fully inline (`[32]u8` = 32 bytes inline).
+- **Forward decls:** `typedef struct NovaValue_X NovaValue_X;` (no
+  pointer alias unlike heap records).
+- **Constructor:** `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` (stack
+  init, no `nova_alloc`).
+- **Field access:** `.field` (struct member), not `->field` (pointer).
+- **Call-site receiver:** `&v` for identifier; hoisted temp + `&temp`
+  для rvalue expressions (via `prepare_method_recv` helper).
+
+**Codegen V2 helpers (compiler-codegen/src/codegen/emit_c.rs):**
+- `emit_value_record_type(name, fields)` — emits inline C struct +
+  registers in record_schemas + type_aliases + value_record_names.
+- `prepare_method_recv(obj_c, obj_ty)` — wraps obj в `&` for value-record
+  receivers (identifier-fast-path или temp-hoist для expressions).
+- `is_value_type` recognizes `NovaValue_` prefix.
+- `struct_name_from_c_type` recognizes `NovaValue_X` strip.
 
 **Composability:**
 - `value` + `priv` — composable (D220 §3.3.1 для type-level flip также применима).
@@ -8589,13 +8605,17 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 - Industry: Nova становится **первым языком с single declaration syntax
   + explicit allocation modifier**.
 
-**V1 Limitations (intentional):**
-- Codegen V1: heap-backed transparent fallback. Semantic identical
-  к heap record. Followup [M-124.8-value-codegen-stack] для proper
-  stack allocation V2.
+**V2 known limitations (defer-able):**
+- `[]NovaValue_X` array storage — currently boxes elements (V3 followup
+  for inline element storage).
+- Escape analysis для `&value` auto-heap-promote — Plan 118 coordination
+  ([M-124.8-value-heap-promote]).
 - Auto-derive methods (Equatable / Hashable / Cloneable / Comparable /
-  Printable) — deferred к Plan 126.
-- Escape promote через `&` — deferred к Plan 118 coordination.
+  Printable) — Plan 126 (orthogonal feature).
+- Generic value-record cross-module instantiation — works for simple
+  cases; complex multi-T patterns may require V3 review.
+- `#zero_on_move` opt-in — followup attribute для security-critical
+  consume value-records.
 
 ### Plan 124.8 Acceptance (A8.1-A8.20) — ALL ✅
 
@@ -8608,10 +8628,14 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 - A8.7 ✅ `mut p = Vec3(...)` + binding tuple works.
 - A8.8 ✅ `ro p` blocking (D175 amend).
 - A8.9 ✅ `type Vec3 value { ... }` parses.
-- A8.10 ⚠️ V1: value-record как heap (transparent fallback); V2 inline stack — [M-124.8-value-codegen-stack].
-- A8.11 ⚠️ V1: method receiver heap path; V2 stack-slot pointer — same followup.
-- A8.12 ⚠️ V1: array element heap; V2 inline.
-- A8.13 ⚠️ V1: param pass identical heap; V2 copy.
+- A8.10 ✅ **V2 LANDED 2026-06-03:** value-record real stack codegen
+  через NovaValue_X inline struct (closes [M-124.8-value-codegen-stack]).
+- A8.11 ✅ **V2 LANDED 2026-06-03:** method receiver = NovaValue_X*
+  pointer to stack-slot через prepare_method_recv helper.
+- A8.12 ⚠️ V2 partial: scalar/struct fields inline; `[]NovaValue_X` array
+  elements currently boxed (V3 followup для inline element storage).
+- A8.13 ✅ **V2 LANDED 2026-06-03:** param pass = value copy (C-native);
+  return-by-value works через RVO.
 - A8.14 ✅ `type Token value consume { ... }` works (composition).
 - A8.15 ✅ `type X value priv { ... }` works (D220 §3.3.1 preserved).
 - A8.16 ✅ `ro x ro T` → E_REDUNDANT_TYPE_MODIFIER.
@@ -8623,12 +8647,16 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 
 ### Followups
 
-- **[M-124.8-value-codegen-stack]** — V2 proper stack codegen для
-  value-record (~3 dev-day).
+- ✅ **[M-124.8-value-codegen-stack]** — V2 LANDED 2026-06-03 — proper
+  stack codegen реализован (emit_value_record_type + prepare_method_recv).
 - **[M-124.8-tuple-mut-field-write-codegen]** — codegen `mut p.x = ...`
   для tuple (currently V1 parser/checker layer only — testing limited).
 - **[M-124.8-ro-binding-scope]** — proper block-scoped lifetime для
   ro_binding_names tracking (current V1 — monotonic per-function, safe).
 - **[M-124.8-zero-on-move]** — opt-in `#zero_on_move` attribute для
   security-critical consume.
+- **[M-124.8-value-record-array-inline]** — `[]NovaValue_X` inline
+  element storage (V3, deferred — currently boxed).
+- **[M-124.8-value-heap-promote]** — `&value` escape analysis +
+  auto-heap-promote (Plan 118 coordination).
 - **Plan 126** — auto-derive Equatable/Hashable/Cloneable/Comparable/Printable.
