@@ -180,6 +180,11 @@ __declspec(thread) int                 _nova_active_slot   = -1;
 __declspec(thread) void (*_nova_park_unlock_fn)(void*) = NULL;
 __declspec(thread) void*               _nova_park_unlock_arg = NULL;
 __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
+/* Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: active finalizer
+ * stack for Application effect. Saved+initialized в `with Application = ...`
+ * block prologue, fired LIFO + restored на exit. NULL outside Application
+ * blocks → nova_app_register_finalizer becomes no-op. */
+__declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
@@ -193,6 +198,8 @@ __thread int                 _nova_active_slot   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;
 __thread void*               _nova_park_unlock_arg = NULL;
 __thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
+/* Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: см. MSVC branch. */
+__thread NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #endif
 
 /* Per-fiber handler scoping: registry of effect-storage addresses.

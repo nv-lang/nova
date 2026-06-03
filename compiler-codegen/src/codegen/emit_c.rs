@@ -4867,6 +4867,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mut saves: Vec<(String, String, String)> = Vec::new();
         let mut has_fail = false;
 
+        // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: detect
+        // Application binding для init/fire finalizer stack. Local stack
+        // var + TLS pointer swap. Fired LIFO в обоих normal + throw paths.
+        let mut application_fs_var: Option<String> = None;
+        let mut application_fs_prev: Option<String> = None;
+        let has_application = bindings.iter().any(|b| matches!(
+            &b.effect,
+            TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "Application")
+        ));
+        if has_application {
+            let fs_var = self.fresh_tmp();
+            let prev_var = self.fresh_tmp();
+            self.line(&format!(
+                "NovaFinalizerStack {fs} = {{ NULL }};  /* Plan 110.9.3 V1.1 */",
+                fs = fs_var
+            ));
+            self.line(&format!(
+                "NovaFinalizerStack* {prev} = _nova_active_finalizer_stack;",
+                prev = prev_var
+            ));
+            self.line(&format!(
+                "_nova_active_finalizer_stack = &{fs};",
+                fs = fs_var
+            ));
+            application_fs_var = Some(fs_var);
+            application_fs_prev = Some(prev_var);
+        }
+
         for binding in bindings {
             let effect_name = match &binding.effect {
                 TypeRef::Named { path, .. } => path.join("_"),
@@ -5195,6 +5223,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 eff = effect_name, prev = prev_var));
         }
         self.line("nova_interrupt_pop();");
+
+        // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: fire
+        // finalizers LIFO + restore prev TLS. Runs unconditionally на
+        // both normal completion AND throw path (D195 spec). Already
+        // past the throw-catch logic above — at this point we either
+        // completed normally OR caught a throw that was handled.
+        if let (Some(fs_var), Some(prev_var)) = (&application_fs_var, &application_fs_prev) {
+            self.line(&format!(
+                "nova_finalizer_fire_lifo(&{fs});  /* Plan 110.9.3 V1.1 LIFO fire */",
+                fs = fs_var
+            ));
+            self.line(&format!(
+                "_nova_active_finalizer_stack = {prev};",
+                prev = prev_var
+            ));
+        }
 
         Ok(result_tmp)
     }
@@ -8789,10 +8833,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 ret = ret, name = name, method = mangled, params = fn_params_str
             ));
             self.indent += 1;
-            self.line(&format!(
-                "return _nova_handler_{name}->{field}({args});",
-                name = name, field = mangled, args = call_args_str
-            ));
+            // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
+            // intercept Application.register_finalizer dispatcher — push к
+            // active LIFO stack БЕЗ handler-vtable call. User handler impl
+            // ignored (V1 design: runtime-managed LIFO; per-handler observer
+            // logic moves к Cleanup effect Plan 110.4.4).
+            if name == "Application" && m.name == "register_finalizer" {
+                // Plan 110.9.3 V1.1: fn arg — NovaClosBase* (fn + env)
+                // wrapping Nova fn type. Extract closure parts через
+                // nova_clos_base_fn / _env macros (defined в nova_rt.h).
+                // Push pair to TLS LIFO stack.
+                let fn_arg = m.params.first()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "f".to_string());
+                self.line(&format!(
+                    "NovaClosBase* _nv_clos = (NovaClosBase*)({});",
+                    fn_arg
+                ));
+                self.line(
+                    "nova_finalizer_push(_nova_active_finalizer_stack, \
+                     _nv_clos ? _nv_clos->fn : NULL, \
+                     _nv_clos ? _nv_clos->env : NULL);"
+                );
+                self.line("nova_unit _u = { 0 };");
+                self.line("return _u;");
+            } else {
+                self.line(&format!(
+                    "return _nova_handler_{name}->{field}({args});",
+                    name = name, field = mangled, args = call_args_str
+                ));
+            }
             self.indent -= 1;
             self.line("}");
             self.line("");
