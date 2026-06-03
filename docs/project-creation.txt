@@ -30488,3 +30488,62 @@ Lessons:
   modular extension; не trespass на existing record paths.
 - Forward-decl branching on AllocKind prevents Nova_X / NovaValue_X name
   conflict при mixed allocation в same module.
+
+=== Plan 123.5.5 — Incremental LSP semantic-tokens delta (V5.5, 2026-06-03) ===
+
+Followup [M-123.5-incremental-semantic-tokens] closure. V5.2 server
+recomputed entire token-set каждый request; V5.5 adds protocol
+`textDocument/semanticTokens/full/delta` для wire-efficient incremental
+updates. Single-edit prefix-suffix algorithm + per-URI snapshot cache +
+monotonic result_id.
+
+Implementation (~430 LOC):
+- nova-lsp/src/semantic_tokens_delta.rs (NEW, ~250 LOC):
+  - SemanticTokensSnapshot struct
+  - compute_semantic_token_edits — single-edit prefix-suffix
+  - build_delta_response — decision-and-snapshot helper
+  - 14 unit tests covering algorithm + decision
+- nova-lsp/src/state.rs: semantic_tokens_cache + semantic_tokens_counter
+  + next_semantic_tokens_result_id()
+- nova-lsp/src/server.rs: capability Delta { delta: Some(true) } +
+  semantic_tokens_full caches snapshot + NEW semantic_tokens_full_delta
+  handler dispatches к build_delta_response.
+- nova-lsp/src/lib.rs: module declaration.
+
+Algorithm — single-edit prefix-suffix reduction:
+  P = longest common prefix length (in tokens)
+  S = longest common suffix length (bounded к non-overlap)
+  emit one SemanticTokensEdit { start: P*5, delete_count:
+    (old.len() - P - S) * 5, data: Some(new[P..new.len() - S]) }
+
+Не minimum-edit (true LCS would split unrelated changes в N edits),
+но wire-equivalent or better для typical localized LSP edits.
+Indices гарантированно 5-aligned (каждый SemanticToken = 5 u32s).
+
+Verification (release nova-lsp + cargo test --release):
+- 14 V5.5 unit tests PASS (10 algorithm + 4 decision helper).
+- Zero regressions: 115/115 LSP tests PASS (56 lib + 10 V5.5 +
+  49 integration across 13 binaries).
+- Positive coverage: identical, append, prepend, middle, total replace,
+  empty old, empty new, modifier diff.
+- Negative coverage: mismatched prev_id → fallback, no cached snapshot
+  → fallback.
+
+Spec: D217 amend V5.5 (~140 lines) — capability, protocol surface,
+algorithm, state, decision helper, V5.5.1-V5.5.14 acceptance.
+
+Plan doc: docs/plans/123.5.5-incremental-semantic-tokens.md.
+
+Pattern lessons:
+- Pure helper extraction (build_delta_response) — testable без async
+  Backend/Client mock. State-update + response-construction live
+  в one place, makes regression sweep cheap.
+- LSP spec `data: Option<Vec<u32>>` deserialized as
+  Option<Vec<SemanticToken>> by lsp-types — algorithm works в
+  SemanticToken space, indices scale ×5 для wire format.
+- Snapshot must be updated even на fallback path (stale id) —
+  иначе client retries индефинитно с same stale id.
+
+Followup markers:
+- [M-123.5.5-lcs-multi-edit] — V5.5.1 true LCS multi-edit.
+- [M-123.5.5-snapshot-eviction] — V5.5.2 LRU/size cap.
