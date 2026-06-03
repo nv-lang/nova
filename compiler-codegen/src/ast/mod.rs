@@ -785,6 +785,15 @@ pub struct TypeDecl {
     /// bare call к default-body-synthesized method gives E7320 (no method).
     /// Empty Vec — default (no opt-in).
     pub impl_protocols: Vec<String>,
+    /// Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): opt-in security
+    /// attribute — `#zero_on_move type Secret { ... }`. На consume такого
+    /// type'а codegen emits `memset(source, 0, sizeof)` для затирания
+    /// исходной ячейки. Защищает секреты (ключи, токены, пароли) от
+    /// утечки через core-dump / stack-scan / memory disclosure.
+    /// Применимо к Record (heap и value), NamedTuple, Newtype. Для типов
+    /// не участвующих в consume-flow — no-op (flag сохраняется).
+    /// Backward-compat: default false.
+    pub zero_on_move: bool,
 }
 
 #[derive(Debug, Clone)]

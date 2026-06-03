@@ -8632,6 +8632,45 @@ impl CEmitter {
             // present для exhaustiveness; semantically meaningful no-op.
             TypeDeclKind::Opaque => {}
         }
+        // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): emit per-type
+        // `Nova_T_zero_storage` helper для types помеченных #zero_on_move.
+        // V1: helper доступен явному вызову; auto-injection в consume-call
+        // sites deferred → V2 followup [M-124.8-zero-on-move-auto-inject].
+        if t.zero_on_move {
+            self.emit_zero_on_move_helper(t)?;
+        }
+        Ok(())
+    }
+
+    /// Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): emit per-type zero
+    /// helper. For value records / named tuples / newtypes — `memset` of the
+    /// underlying storage. For heap records — `memset` of the pointee.
+    /// Generated form:
+    ///   static inline void Nova_T_zero_storage(<C_type> *p) {
+    ///       if (p) memset(p, 0, sizeof(*p));
+    ///   }
+    /// Callable from Nova через external decl или будущий auto-inject hook.
+    fn emit_zero_on_move_helper(&mut self, t: &TypeDecl) -> Result<(), String> {
+        use crate::ast::AllocKind;
+        let target_c_type = match &t.kind {
+            TypeDeclKind::Record(_) => {
+                match t.allocation {
+                    AllocKind::Heap => format!("Nova_{}", t.name),
+                    AllocKind::Value => format!("NovaValue_{}", t.name),
+                }
+            }
+            TypeDeclKind::NamedTuple(_) => format!("NovaTuple_{}", t.name),
+            TypeDeclKind::Newtype(_) => format!("Nova_{}", t.name),
+            _ => return Ok(()),
+        };
+        self.line(&format!(
+            "static inline void Nova_{}_zero_storage({}* p) {{",
+            t.name, target_c_type
+        ));
+        self.indent += 1;
+        self.line("if (p) memset((void*)p, 0, sizeof(*p));");
+        self.indent -= 1;
+        self.line("}");
         Ok(())
     }
 

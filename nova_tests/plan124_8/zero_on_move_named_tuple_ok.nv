@@ -1,0 +1,12 @@
+// Plan 124.8 [M-124.8-zero-on-move] — positive:
+// `#zero_on_move` применим к named tuples (Plan 120 D215).
+module plan124_8.zero_on_move_named_tuple_ok
+
+#zero_on_move
+type Credential(user str, password str)
+
+test "zero_on_move named tuple" {
+    ro c = Credential(user: "alice", password: "s3cr3t")
+    assert(c.user == "alice")
+    assert(c.password == "s3cr3t")
+}

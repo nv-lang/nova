@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_ZERO_ON_MOVE_INVALID_KIND
+//
+// Plan 124.8 [M-124.8-zero-on-move] — negative:
+// `#zero_on_move` нельзя применить к alias (нет own layout).
+module plan124_8.zero_on_move_on_alias_neg
+
+#zero_on_move
+type SecretInt alias int
