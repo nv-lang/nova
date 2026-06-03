@@ -8970,6 +8970,118 @@ order-independent; lint W_NON_CANONICAL_TYPE_MODIFIER_ORDER — V2 followup.
 
 Changed: `mut field` теперь НЕ "always-mutable" — binding dominates.
 
+### D175 amend §V2 «binding dominates — explanatory consolidation» (2026-06-04)
+
+> **Rationale:** Clarifying amend без semantic change. Consolidates rules
+> разбросанные между D33 amend, D36, D175 amend, D176 V1, Plan 108.1-108.3 в
+> единое explanatory section. Никаких behavior changes — все existing rules
+> stay valid.
+
+#### Принцип: **binding dominates → access-time enforcement**
+
+Mutability при доступе к value (поля, индексы, mut-методы) определяется
+**комбинацией двух факторов**, в порядке приоритета:
+
+1. **Binding mutability** (call-site decision) — DOMINATES
+2. **Type / field declaration** (definition-site intent) — refines what
+   binding permits
+
+Никакой **transitive type-modifier propagation** в spec НЕТ. Вместо неё —
+runtime/check-time enforcement: каждое `acc.field`/`arr[i]` access валидируется
+по обоим уровням. Это эквивалентно Rust `&T` vs `&mut T` philosophy — modifier
+живёт на binding/reference, не propagates через type structure.
+
+#### Полная таблица combination (5 axes × 2 binding modes)
+
+| Field declaration | Access под `ro acc` | Access под `mut acc` | Reasoning |
+|-------------------|---------------------|----------------------|-----------|
+| `field T` (default) | ❌ read-only, ❌ mutate | ✅ read, ✅ mutate | binding dominates ro; mut binding allows default |
+| `ro field T` | ❌ / ❌ | ❌ / ❌ (always frozen) | type-author intent enforced regardless |
+| `mut field T` | ❌ / ❌ (dominates!) | ✅ / ✅ | binding ro blocks even «explicit mut» field |
+| `field ro T` | ❌ / ❌ | ✅ reassign, ❌ content | content modifier independent of binding |
+| `mut field ro T` | ❌ / ❌ | ✅ reassign, ❌ content | same: content ro is invariant |
+
+**Ключевая asymmetry:** `ro acc` **dominates** ВСЕ field declarations
+(everything frozen). `mut acc` **respects** field declarations (ro field stays
+ro, mut/default field becomes mut).
+
+#### Почему НЕТ transitive type-modifier inflation
+
+User's mental model «`fn f(b []str)` == `fn f(ro b ro [] ro str)` (полная
+inflation всех ro on each nesting level)» — **НЕ работает** в Nova spec.
+Reasons:
+
+1. **D33 amend** explicit: `ro x ro T` → `E_REDUNDANT_TYPE_MODIFIER`. Single
+   `ro` on binding **is enough** — propagation handled access-time.
+2. **Implementation simplicity:** access-time enforcement requires single
+   binding-modifier check; transitive inflation would require type-level
+   modifier propagation through all nested wrappers.
+3. **Rust precedent:** `&T` doesn't inflate to `&&T` for nested fields — same
+   logic.
+
+#### `let` keyword retracted — нет «neutral binding»
+
+Plan 114 D184 retracted `let` keyword. **No third binding mode** — binary
+`ro` / `mut` choice only. Rationale:
+
+- 2-state model symmetric с Plan 108.x default-ro rule
+- 3-state (`let` neutral / `ro` frozen / `mut` writable) ambiguous для
+  default-prefix fields — would require defining «default field under let»
+  semantic
+- Call-site explicit choice (`ro` or `mut`) **dominates** type author's
+  per-field intent — call-site has full safety knowledge
+
+If user wants «trust type author's per-field declarations»:
+- Use `mut acc` binding — ro fields stay ro, mut/default fields mut
+- This is **already** what type author's intent maps к under `mut` binding
+
+Hypothetical neutral `let acc = X{...}` mode adds no expressiveness —
+either синоним `ro acc` (least permissive) or `mut acc` (respects field
+intent). Rejected to keep binding-modifier landscape minimal.
+
+#### Function return type interaction
+
+Return type modifier (Plan 114 D184 default = mut, explicit ro allowed)
+participates в same rules:
+
+```nova
+// 1. Return default mut Acc, ro binding dominates
+fn make_acc() -> Acc => Acc{...}
+ro b = make_acc()
+b.name = "x"           // ❌ E_LOCAL_NOT_MUT — binding dominates
+
+// 2. Return default mut Acc, mut binding allows full access
+mut c = make_acc()
+c.name = "x"           // ✅
+
+// 3. Explicit ro return, mut binding without type annotation
+fn make_ro_acc() -> ro Acc => Acc{...}
+mut c = make_ro_acc()  // type inferred as `ro Acc`
+                       // → D33 amend row «mut x ro T»: binding mut,
+                       // content ro — split semantics
+c = different_acc      // ✅ reassign OK (binding mut)
+c.name = "x"           // ❌ E_READONLY_CONTENT (content ro)
+
+// 4. Explicit ro return + explicit mut type annotation = coerce error
+mut c Acc = make_ro_acc()    // ❌ E_READONLY_COERCE
+                              // ro Acc → mut Acc forbidden (D176)
+```
+
+#### Cross-refs
+
+- D33 amend (binding propagation) — [02-types.md:8927](#d33-amend-binding-propagation-plan-1248-ф2)
+- D36 / Plan 108.2 enforcement — [02-types.md:2684](#enforcement-plan-1082-2026-05-30)
+- D175 V1 amend (this section, just above)
+- D176 (readonly T modifier + Plan 108.1 param default flip) — [02-types.md:2763](#d176-readonly-t--тип-модификатор)
+- D184 (Plan 114 — `let` keyword retracted) — [03-syntax.md#d184](03-syntax.md#d184)
+- D216 V2 (right-binding rule + universal type modifiers) — [02-types.md:7790](#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class)
+
+#### Status
+
+✅ **ACTIVE since 2026-06-04** — explanatory consolidation, no behavior change.
+Implementation across D33 / D36 / D175 V1 / D176 / Plan 108.1-108.3 / Plan 114
+unchanged. This amend documents existing rules в единую читаемую секцию.
+
 ### D176 amend §«mut T в binding position» (Plan 124.8 Ф.2)
 
 `mut T` теперь принимается в binding type annotation после name.
