@@ -97,6 +97,13 @@ static inline nova_str Nova_str_static_from_char(nova_int cp) {
     return (nova_str){.ptr = buf, .len = (size_t)n};
 }
 
+/* Plan 91.13: str.from_codepoint(int) — alias for str.from(char).
+ * Bypasses `int as char` D54 ban для known-valid codepoints
+ * (JSON \uXXXX escapes, protocol decoders). Same UTF-8 encode impl. */
+static inline nova_str Nova_str_static_from_codepoint(nova_int cp) {
+    return Nova_str_static_from_char(cp);
+}
+
 /* str.from_bytes_unchecked(bytes readonly []u8) -> str.
  * O(n) copy. Caller guarantees valid UTF-8. */
 static inline nova_str nova_str_from_bytes_unchecked(NovaArray_nova_byte* arr) {

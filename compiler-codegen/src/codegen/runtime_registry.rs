@@ -781,6 +781,25 @@ fn char_runtime() -> Vec<RuntimeFn> {
             doc: "UTF-8 encode codepoint в 1-4 байта (D73 auto-derive: char.into() -> str).",
         nova_body: None,
     },
+        // Plan 91.13 followup: `str.from_codepoint(int) -> str` — explicit
+        // unchecked UTF-8 encode из codepoint integer. Используется в
+        // JSON unicode escape parsing (\uXXXX) и других protocol decoders
+        // где код уже validated (hex digits ⊆ [0, 0x10FFFF]). Backed by
+        // тем же runtime helper что `str.from(char)` — Nova_str_static_
+        // from_char (D54 bypass для known-valid codepoints; `int as char`
+        // забанен Plan 34 Ф.5.2).
+        RuntimeFn {
+            module: "std.runtime.char",
+            receiver: Some("str"),
+            is_static: true, is_mut: false, is_consume: false,
+            name: "from_codepoint",
+            params: &[("cp", "int")],
+            return_ty: "str",
+            effects: &[],
+            c_name: "Nova_str_static_from_char",
+            doc: "Unchecked UTF-8 encode codepoint в 1-4 байта. Caller гарантирует cp ∈ [0, 0x10FFFF]. Invalid codepoint → empty str (silent — predictable degradation). Используется JSON unicode escape parser-ами + другими decoders.",
+        nova_body: None,
+    },
     ]
 }
 

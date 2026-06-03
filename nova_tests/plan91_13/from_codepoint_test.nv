@@ -1,0 +1,34 @@
+// Plan 91.13 partial: str.from_codepoint(int) -> str regression test.
+//
+// Background: json.nv использует `str.from_codepoint(code)` для Unicode
+// escape parsing (\uXXXX), но stdlib API gap — функция не была declared.
+// D54 запретил `int as char` (Plan 34 Ф.5.2) → workaround
+// `char.try_from(n)?` adds Fail effect indirection. Sometimes caller
+// already validated cp range (e.g. JSON parser checks hex digits ⊆ [0,
+// 0x10FFFF]) — нужен прямой "known-valid" path.
+//
+// Fix: explicit `str.from_codepoint(int) -> str` external fn в
+// std/runtime/char.nv. Same runtime backing as `str.from(char)` —
+// Nova_str_static_from_char (via alias Nova_str_static_from_codepoint).
+
+module plan91_13.from_codepoint_test
+
+test "ASCII codepoint" {
+    ro s = str.from_codepoint(65)  // 'A'
+    assert(s == "A")
+}
+
+test "BMP codepoint" {
+    ro s = str.from_codepoint(0x041F)  // 'П' (Cyrillic П)
+    assert(s == "П")
+}
+
+test "supplementary codepoint" {
+    ro s = str.from_codepoint(0x1F600)  // 😀 emoji
+    assert(s == "😀")
+}
+
+test "zero codepoint (NUL)" {
+    ro s = str.from_codepoint(0)
+    assert(s.len() == 1)  // UTF-8: \x00
+}
