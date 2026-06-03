@@ -31933,3 +31933,78 @@ Nova syntax more uniform (single rule) vs Rust trio (`&T` / `NonNull<T>` /
 `*const T` / `MaybeUninit<T>` separate types). Trade-off: Rust's
 heterogeneity makes types more visible at decl site; Nova's homogeneity
 makes combinations naturally composable.
+
+---
+
+## 2026-06-04 (вечер) — Plan 118.5 V1 IMPLEMENTATION simplifications
+
+**Branch:** plan-118.5 (4 commits: 0a100..., 0d2eec..., c075a..., 8cf39...).
+
+V1 implementation shipped с following intentional scope limitations.
+Remaining work tracked в 9 followup markers.
+
+### V1 simplifications (intentional)
+
+#### S118.5-1: Read enforcement only (no narrow cast / arg coerce)
+
+Shipped: `E_UNSAFE_T_READ_REQUIRES_WRAP` для Ident reads of unsafe-T
+binding outside unsafe { } block. Covers Stmt::Let-bound locals + fn
+params via UnsafeCtx.unsafe_t_vars scope-stack.
+
+NOT shipped (followups):
+- Explicit narrow cast `unsafe { x as T }` checker — `[M-118.5-narrow-cast]`
+- Arg coercion check parallel к check_readonly_coerce_args —
+  `[M-118.5-arg-coerce-unsafe]`
+- Write-to-unsafe-binding tracking — `[M-118.5-write-safe-tracking]`
+- Broader Member/Index/Call enforcement — `[M-118.5-member-index-call-broader]`
+
+Rationale: Read enforcement is primary user-visible safety guarantee;
+deferring secondary checks keeps V1 review boundary clean.
+
+#### S118.5-2: NPO recalculation deferred (basic NPO works)
+
+Shipped: helper `outer_unsafe_before_pointer()` для future structural walk.
+NOT shipped: structural distinction `Option[unsafe * T]` (16 bytes) vs
+`Option[* unsafe T]` (8 bytes) per D216 V2 §V2.4 — `[M-118.5-npo-recalculation]`.
+Current heuristic conservative — common `Option[*T]` still works.
+
+#### S118.5-3: 6 fixtures (4 POS + 2 NEG) vs planned 10
+
+4 fixtures deferred к match deferred enforcement:
+- T2 narrow-in-unsafe → `[M-118.5-narrow-cast]`
+- T3 write-safe → `[M-118.5-write-safe-tracking]`
+- T4 NPO → `[M-118.5-npo-recalculation]`
+- N4 legacy-post-grace → N/A under user-corrected design (no legacy concept)
+
+#### S118.5-4: Deprecation warnings infrastructure preserved but unused
+
+Built Parser.warnings infrastructure during initial wrong-framing
+("legacy syntax") then user feedback corrected the design (V2 syntax IS
+valid, no warning warranted). Infrastructure kept для future parser lints;
+currently no warnings emitted. ~30 min sunk cost; net value as
+future-proofing для `[M-118.5-consume-as-type-modifier]` work.
+
+#### S118.5-5: Migration sweep stdlib + examples; plan118 fixtures comment-level
+
+stdlib raw_mem.nv + examples/typed_pointers/basic_pointer.nv migrated к V2
+canonical. plan118 family fixtures retain `*ro T` / `*mut T` references —
+under V2 rule these ARE valid syntax (different AST shape than rev-1),
+fixtures still compile + tests PASS. Full cosmetic-level sweep across
+~50 files deferred.
+
+### V1 acceptance criteria
+
+- ✅ A-118.5-V1.a/b/c/d — Grammar + AST shapes correct
+- ⏭ A-118.5-V1.e/f — Legacy deprecation warnings DROPPED (user correction)
+- ✅ A-118.5-V1.g — `unsafe T` read requires unsafe { } wrap
+- ⏭ A-118.5-V1.h — NPO recalc — DEFERRED
+- ✅ A-118.5-V1.i/j — Zero regressions, Plan 118 family compatible
+
+### V1 limitation summary
+
+Plan 118.5 V1 = minimal foundational implementation. Grammar landed
+universally (ro/mut/unsafe right-binding). AST/codegen transparent (no
+ABI change). Read enforcement provides primary safety guarantee. V2
+typed-pointer ergonomics (narrow cast, arg coerce, write tracking,
+structural NPO, broader enforcement, consume-as-type, D218 retract) all
+queued as 9 followup markers.
