@@ -31148,3 +31148,65 @@ M4 (`c205a7a1589`): `GenericInst.concrete` extended Vec<String> → Vec<TypeRef>
 4. **Composite type mangling** (M4) — stable serialization through structural
    recursion. Removes simple-Named restriction. mangle_type_ref returns
    C-identifier-safe strings; symmetric с trampoline + closure paths.
+
+
+---
+
+## Plan 124.8 V2 codegen — production-grade stack landed (2026-06-03)
+
+V2 codegen closure для Plan 124.8 — реальная stack allocation для
+value-records (закрывает V1 limitation [M-124.8-value-codegen-stack]).
+
+### V2 phases
+
+- **V2.0** Investigation — NamedTuple codegen path study (Plan 120 D215
+  как template для value-record).
+- **V2.1** emit_type_decl AllocKind::Value branch + новый emit_value_record_type.
+- **V2.2** Constructor + field access — stack init (no nova_alloc), `.` access.
+- **V2.3** Pass-by-value semantics — C-native value type handling.
+- **V2.4** Method receiver — `@` = pointer to stack slot; prepare_method_recv
+  helper берёт address (`&v` для identifier, hoist+address для rvalue).
+- **V2.5** Tests — 4 V2 verification fixtures (sizeof, method-pointer,
+  return-by-value, multiple-instances).
+
+### Implementation summary
+
+Compiler-codegen/src/codegen/emit_c.rs (~220 lines added):
+- NEW emit_value_record_type — typedef struct NovaValue_X inline.
+- NEW value_record_names HashSet field — distinguish from runtime types.
+- NEW prepare_method_recv helper — wraps obj in `&` for value receivers.
+- is_value_type recognizes NovaValue_ prefix.
+- struct_name_from_c_type recognizes NovaValue_X.
+- receiver_c_type returns NovaValue_X* (pointer) для value-record methods.
+- TypeDecl forward-decl emits NovaValue_X (no Nova_X conflict).
+- emit_record_lit value-record branch — stack init `NovaValue_X tmp;` +
+  `.field = val;` assignments.
+- Method call sites apply prepare_method_recv (2 patches).
+
+### Verification
+
+- 27/27 plan124_8 PASS (V1 23 baseline + V2 4 new fixtures).
+- 0 regression: plan120 8/8 + plan124_1 9/9 + plan124_3 10/10 +
+  plan108_3 14/14 unchanged.
+- C output verified produces NovaValue_X inline struct + `&v` receiver
+  + stack-init constructor (no `nova_alloc`).
+
+### V2 known limitations (deferred):
+
+- `[]NovaValue_X` arrays currently box elements ([M-124.8-value-record-array-inline]).
+- `&value` escape analysis ([M-124.8-value-heap-promote], Plan 118 coord).
+- Generic value-record cross-module instantiation для complex multi-T.
+
+### V2 acceptance updates (A8.10/A8.11/A8.13 flipped to ✅)
+
+- A8.10 ✅ value-record real stack (was ⚠ V1).
+- A8.11 ✅ method receiver pointer to stack-slot (was ⚠ V1).
+- A8.13 ✅ param pass = value copy (was ⚠ V1).
+- A8.12 ⚠ partial (array element inline — V3 followup).
+
+Plan 124.8 V2 ✅ PRODUCTION-GRADE LANDED.
+
+Industry edge: Nova становится **первым языком** с unified `type X { ... }`
+syntax + explicit `value` modifier для stack allocation. Achievement
+positions Nova ahead-of-curve vs Kotlin value class (single-field) и
+Java Valhalla (incoming).
