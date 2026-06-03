@@ -1,0 +1,20 @@
+// Plan 118.5 Ф.4 NEG T1 — reading `unsafe T` binding в safe context fails.
+//
+// E_UNSAFE_T_READ_REQUIRES_WRAP enforcement: caller must wrap read site
+// в `unsafe { ... }` block. MaybeUninit-style semantic — read of
+// possibly-uninit value is UB in safe code.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_T_READ_REQUIRES_WRAP
+
+module plan118_5.t1_neg_unsafe_t_read_no_wrap
+
+fn unsafe_read_fails() -> () {
+    ro x unsafe int = 42
+    // ❌ read outside unsafe { } — error
+    ro y = x
+    assert(y == 42)
+}
+
+test "rejects unsafe T read outside unsafe block" {
+    unsafe_read_fails()
+}

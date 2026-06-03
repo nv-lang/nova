@@ -1,0 +1,25 @@
+// Plan 118.5 Ф.4 T3 — `* unsafe T` (Pointer wrapping Unsafe) syntactic form.
+//
+// V2 new orthogonal axis: pointer-to-uninit-pointee. Distinct from
+// `unsafe * T` (possibly-null pointer к valid T) — different AST shapes,
+// different semantic axes.
+//
+//   * unsafe T  → Pointer(Unsafe(T))   — valid ptr к possibly-uninit T
+//   unsafe * T  → Unsafe(Pointer(T))   — possibly-null/dangling ptr к valid T
+//
+// C ABI for both: T* (transparent). Semantic differentiation enforced at
+// type-check level (read of unsafe-T binding requires unsafe block).
+
+module plan118_5.t3_ptr_to_uninit_ok
+
+type Buf {
+    n i64
+}
+
+external fn p118_5_t3_a(p * unsafe Buf) -> ()
+external fn p118_5_t3_b(p mut * unsafe Buf) -> ()
+external fn p118_5_t3_c(p * unsafe * Buf) -> ()
+
+test "parses pointer-to-uninit forms" {
+    assert(1 == 1)
+}

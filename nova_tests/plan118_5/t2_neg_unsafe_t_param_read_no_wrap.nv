@@ -1,0 +1,19 @@
+// Plan 118.5 Ф.4 NEG T2 — reading `unsafe T` parameter в safe context fails.
+//
+// Function parameters declared с unsafe T type are registered in
+// unsafe_t_vars at fn entry. Reading param outside unsafe block fires
+// E_UNSAFE_T_READ_REQUIRES_WRAP.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_T_READ_REQUIRES_WRAP
+
+module plan118_5.t2_neg_unsafe_t_param_read_no_wrap
+
+fn read_unsafe_param(x unsafe int) -> () {
+    // ❌ read outside unsafe { } — error
+    ro y = x
+    assert(y == 42)
+}
+
+test "rejects unsafe T param read outside unsafe block" {
+    read_unsafe_param(42)
+}

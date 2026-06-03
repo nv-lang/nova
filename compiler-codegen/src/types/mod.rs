@@ -16419,6 +16419,7 @@ pub(crate) fn check_unsafe_context_in_module(
         fail_fns,
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
+        unsafe_t_vars: vec![HashSet::new()],
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -16441,11 +16442,22 @@ pub(crate) fn check_unsafe_context_in_module(
             ) || matches!(fd.sync_class, Some(crate::ast::SyncClass::Realtime));
             let prev_realtime = state.in_realtime;
             if entered_realtime { state.in_realtime = true; }
+            // Plan 118.5 Ф.4 / D216 V2 §V2.3: register fn params типа unsafe T.
+            // Push fresh fn-scope unsafe_t frame BEFORE walking body so that
+            // params bound к unsafe T types fire E_UNSAFE_T_READ_REQUIRES_WRAP
+            // on safe-context reads inside body.
+            state.unsafe_t_vars.push(HashSet::new());
+            for p in &fd.params {
+                if p.ty.outer_unsafe_before_pointer() {
+                    state.register_unsafe_t_var(&p.name);
+                }
+            }
             if let FnBody::Block(b) = &fd.body {
                 state.walk_block(b, errors);
             } else if let FnBody::Expr(e) = &fd.body {
                 state.walk_expr(e, errors);
             }
+            state.unsafe_t_vars.pop();
             state.in_realtime = prev_realtime;
             if entered_unsafe_fn { state.depth -= 1; }
         }
@@ -16473,6 +16485,11 @@ struct UnsafeCtx {
     /// (push на block entry, pop при exit) — позволяет shadowing-safe lookup.
     /// `"${x}"` interpolation на ptr var → E_PTR_NO_DISPLAY_USE_DEBUG_STR.
     ptr_vars: Vec<HashSet<String>>,
+    /// **Plan 118.5 Ф.4 / D216 V2 §V2.3 (2026-06-04):** locals/params bound к
+    /// `unsafe T` type. Reading these в safe context →
+    /// `E_UNSAFE_T_READ_REQUIRES_WRAP`. Write safe (transitions к valid).
+    /// Stack of scope-frames mirrors ptr_vars structure.
+    unsafe_t_vars: Vec<HashSet<String>>,
 }
 
 impl UnsafeCtx {
@@ -16481,14 +16498,32 @@ impl UnsafeCtx {
         if b.is_unsafe { self.depth += 1; }
         // Plan 118 A28: push fresh ptr-var scope frame.
         self.ptr_vars.push(HashSet::new());
+        // Plan 118.5 Ф.4: push fresh unsafe-T scope frame (parallel к ptr_vars).
+        self.unsafe_t_vars.push(HashSet::new());
         for stmt in &b.stmts {
             self.walk_stmt(stmt, errors);
         }
         if let Some(t) = &b.trailing {
             self.walk_expr(t, errors);
         }
+        self.unsafe_t_vars.pop();
         self.ptr_vars.pop();
         if b.is_unsafe { self.depth -= 1; }
+    }
+
+    /// **Plan 118.5 Ф.4 (2026-06-04):** check if `name` ∈ any unsafe-T scope
+    /// frame. Used by walk_expr Ident arm to detect read of unsafe binding.
+    fn is_unsafe_t_var(&self, name: &str) -> bool {
+        self.unsafe_t_vars.iter().rev().any(|f| f.contains(name))
+    }
+
+    /// **Plan 118.5 Ф.4 (2026-06-04):** register `name` as bound к unsafe-T
+    /// type в innermost scope. Shadowing automatic — Ident lookup walks
+    /// outer-most-last, latest binding wins.
+    fn register_unsafe_t_var(&mut self, name: &str) {
+        if let Some(frame) = self.unsafe_t_vars.last_mut() {
+            frame.insert(name.to_string());
+        }
     }
 
     /// Plan 118 A28/A17: syntactic check для "expression value is a typed pointer".
@@ -16542,6 +16577,18 @@ impl UnsafeCtx {
                 if self.expr_is_typed_pointer(&d.value) {
                     if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
                         self.register_ptr_var(name);
+                    }
+                }
+                // Plan 118.5 Ф.4 / D216 V2 §V2.3: track unsafe-T bindings.
+                // When type annotation explicitly has `unsafe T` shape (outer
+                // wrapper is Unsafe before any Pointer), register binding name —
+                // subsequent Ident reads outside unsafe { } context emit
+                // E_UNSAFE_T_READ_REQUIRES_WRAP.
+                if let Some(ty) = &d.ty {
+                    if ty.outer_unsafe_before_pointer() {
+                        if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                            self.register_unsafe_t_var(name);
+                        }
                     }
                 }
             }
@@ -16812,6 +16859,33 @@ impl UnsafeCtx {
                         }
                         self.walk_expr(ex, errors);
                     }
+                }
+            }
+            // **Plan 118.5 Ф.4 / D216 V2 §V2.3 (2026-06-04):** detect read
+            // of `unsafe T` binding outside unsafe { } context. Write safe
+            // (transitions к valid); read requires unsafe wrap because value
+            // may be uninitialized (MaybeUninit-style semantic).
+            //
+            // Detection: Ident expression resolving к binding registered в
+            // unsafe_t_vars. Member/Index/Call access on unsafe-T binding
+            // catches naturally via the Member/Index/Call arms recursing into
+            // the Ident base (the access ITSELF is the read).
+            ExprKind::Ident(name) => {
+                if self.depth == 0 && self.is_unsafe_t_var(name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_UNSAFE_T_READ_REQUIRES_WRAP] reading `unsafe T` \
+                             binding `{}` requires unsafe context (Plan 118.5 \
+                             Ф.4 / D216 V2 §V2.3). `unsafe T` values may be \
+                             uninitialized — read без prior write is UB. Fix: \
+                             wrap read site в `unsafe {{ ... }}` block, или \
+                             use explicit narrow `unsafe {{ {} as T }}` after \
+                             initialization. Write to `unsafe T` slot — safe \
+                             (transitions к valid initialized state).",
+                            name, name,
+                        ),
+                        e.span,
+                    ));
                 }
             }
             // Plan 118 Ф.3.5 leaf nodes (literals, idents, paths) — no children.
