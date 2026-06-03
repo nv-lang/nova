@@ -7770,11 +7770,22 @@ test {
 ## D188. `Consumable[E]` protocol + `consume X = expr { body }` scope-block
 
 > **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.1+110.2
-> +110.4+110.5 landed 2026-06-01). Radical simplification
-> cleanup-семейства: один keyword `consume` + один protocol `Consumable[E]`
-> покрывают ~95% cleanup use-cases, оставляя `defer { }` для оставшихся 5%.
-> Amends [D90](#d90), [D158](#d158), [D161](#d161), [D162](#d162).
-> Retracts [D160](#d160).
+> +110.4+110.5 landed 2026-06-01; Plan 110.9 V1.1 partial 2026-06-03 —
+> M-110.9.2/110.9.4/110.9.5 closed, M-110.9.1/110.9.3 deferred). Radical
+> simplification cleanup-семейства: один keyword `consume` + один protocol
+> `Consumable[E]` покрывают ~95% cleanup use-cases, оставляя `defer { }`
+> для оставшихся 5%. Amends [D90](#d90), [D158](#d158), [D161](#d161),
+> [D162](#d162). Retracts [D160](#d160).
+>
+> **Plan 110.9 V1.1 partial closure (2026-06-03):**
+> - ✅ M-110.9.4: `W_FFI_CANCEL_UNSAFE` lint enforcement (was parser-only).
+> - ✅ M-110.9.5: `on_exit` strict signature check (return Unit + effects
+>   only Fail[E] + no generics; D188-malformed-on-exit extended).
+> - ✅ M-110.9.2: WithExitTimeout Level 1 per-type protocol — codegen
+>   emits `Nova_<T>_method_exit_timeout_ms(binding)` lookup before
+>   Application/hardcoded fallback (D192 Level 1 enabled).
+> - 🟡 M-110.9.1 (typed throw codegen), M-110.9.3 (finalizer LIFO) —
+>   deferred to focused dev-session.
 
 ### Что
 

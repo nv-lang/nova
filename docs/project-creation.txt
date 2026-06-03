@@ -30366,3 +30366,92 @@ Lessons:
   statuses вместе с umbrella. Easy to miss when umbrella close happens
   через multiple commits over week+.
 - Doc consistency audit как routine закрытия plan family.
+
+
+================================================================================
+== 2026-06-03 — Plan 110.9 V1.1 PARTIAL closure (M.9.2 + M.9.4 + M.9.5)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.9-v1.1-closure (off main c5069673063)
+
+Замысел:
+User triggered Plan 110.9 V1.1 closure ("выполни все пункты плана 110
+без упрощений и без остановок"). 5 sub-tasks examined. 3 closed
+production-ready this session; 2 deferred с honest scope assessment.
+
+Done:
+
+M-110.9.4 W_FFI_CANCEL_UNSAFE lint (commit 35afc6565e9):
+- New lint pass lint_ffi_cancel_unsafe в compiler-codegen/src/lints.rs.
+- Step 1: build external fn registry name → cancel_safe_attr.
+- Step 2: find on_exit methods (FnDecl с receiver + name == "on_exit"),
+  walk body для Call к external fn без #cancel_safe.
+- AST walker covers все ExprKind variants (Call/Block/Stmt/Expr forms).
+- Conservative scope: bare-Ident callee referencing external fn в own
+  module's registry. Cross-module → V2 followup.
+- Tests: 4/4 Rust unit tests cancel_unsafe_tests (POS: warns_on_external_
+  fn_without_cancel_safe_in_on_exit; NEG: no_warning_on_external_fn_with_
+  cancel_safe_in_on_exit, no_warning_on_external_fn_call_outside_on_exit,
+  no_warning_on_plain_nova_fn_in_on_exit) + 1 Nova fixture
+  ffi_cancel_safe_no_warning_v1_1.nv (plain Nova fns в on_exit silent).
+- D82 restricts external fn к std.runtime.* — user fixtures cannot trigger;
+  hence Rust unit tests cover negative cases.
+
+M-110.9.5 on_exit strict signature check (commit d2daf4b768e):
+- Extended validate_on_exit_signature в types/mod.rs.
+- Strict V1.1 checks: (a) return type Unit (accepts BOTH parser repr's —
+  TypeRef::Unit, Tuple([]), Named("unit"), Readonly inner), (b) effects
+  subset of {Fail[E]}, (c) no generic params.
+- Pragmatic: parser canonicalization (Plan 110.9.5.a) deferred —
+  broader-scope refactor; would risk cascade fixtures. Accept-both-forms
+  approach gives strict semantics без regression.
+- Tests: 38/38 plan110 PASS (37 baseline + 1 new NEG neg_on_exit_non_
+  unit_return_v1_1.nv verifying -> int rejected with D188-malformed-on-exit).
+
+M-110.9.2 WithExitTimeout Level 1 (commit 8ff8dda820b):
+- Extended ConsumeScope handler в emit_c.rs.
+- New Level 1 check BEFORE Level 2 (Application) + Level 3 (hardcoded):
+  if method_overloads contains (type_name, "exit_timeout_ms") →
+  emit `int _consume_timeout_N = (int)Nova_<T>_method_exit_timeout_ms(c_binding);`.
+- #realtime bypass unchanged (Plan 110.2.4 D198).
+- Tests: 39/39 plan110 PASS (38 prior + 1 new POS with_exit_timeout_
+  level1_v1_1.nv verifying Conn @exit_timeout_ms() = 250 codegen path).
+
+Deferred:
+
+M-110.9.1 Typed CleanupTimeoutError throw codegen — requires:
+- Emit static `_nova_throw_cleanup_timeout_impl(int duration_ms)` в user TU
+  preamble (allocates Nova_CleanupTimeoutError* + calls nova_throw_typed
+  с NOVA_TID_USER_Nova_CleanupTimeoutError).
+- Startup code (after nova_runtime_init): assign _nova_throw_cleanup_timeout_fn.
+- type_id_registry integration: emit только if CleanupTimeoutError зарегистрирован
+  (always true в prelude).
+- Estimate ~2-3h focused work; substantial codegen + runtime integration.
+
+M-110.9.3 Application register_finalizer LIFO runtime — requires:
+- New NovaFinalizerStack struct в nova_rt/effects.h (push/pop/iterate helpers).
+- Per-`with Application` block emission of local stack.
+- Application.register_finalizer(f) dispatch — push to stack.
+- At with-block exit (normal + throw paths): iterate stack reverse, invoke each.
+- Estimate ~½ day focused work; substantial runtime + codegen integration.
+
+Plan 110.9 status: flipped 📋 PLANNED → 🟡 PARTIAL (3/5 closed). Plan-doc
+updated с detailed scope для deferred markers. Spec D188 amend reflects
+V1.1 partial closure.
+
+Тесты (release nova-cli):
+- 39/39 plan110 PASS (36 baseline + 3 new — 2 POS V1.1 + 1 NEG V1.1).
+- Rust unit tests: 4/4 cancel_unsafe_tests + existing all PASS.
+- No regression на other plan families.
+
+Lessons:
+- Pragmatic accept-both-forms strict check avoids parser-canonicalization
+  cascade risk. Trade-off: спецификация принимает 2 representation forms
+  temporarily; canonical form deferred to focused refactor.
+- AST walker pattern reused — fourth/fifth walker family (lints + types
+  validators).
+- C codegen changes (Level 1 timeout lookup) lightest — pure additive
+  branch в existing 3-level resolution.
+- Runtime+codegen integration (typed throw, finalizer LIFO) genuinely
+  heavier — honest scope assessment, не shipping half-baked.

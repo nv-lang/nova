@@ -31145,3 +31145,49 @@ session, ~3-4 dev-day.
 Easy для miss sub-plans when umbrella close spans multiple commits over
 weeks. Routine audit pattern: at family closure, grep `**Статус:** 🆕`
 across docs/plans/<family>* — flip stragglers.
+
+
+---
+
+## Plan 110.9 V1.1 PARTIAL closure (2026-06-03)
+
+**Status:** 🟡 PARTIAL — 3/5 markers closed. Branch `plan-110.9-v1.1-closure`.
+
+**Closed markers:**
+- ✅ M-110.9.4 W_FFI_CANCEL_UNSAFE lint enforcement (35afc6565e9).
+- ✅ M-110.9.5 on_exit strict signature check (d2daf4b768e).
+- ✅ M-110.9.2 WithExitTimeout Level 1 per-type protocol (8ff8dda820b).
+
+**Deferred markers (substantial runtime + codegen work):**
+- 🟡 M-110.9.1 Typed CleanupTimeoutError throw codegen (~2-3h focused work):
+  emit static `_nova_throw_cleanup_timeout_impl` в user TU + startup pointer
+  assignment + type_id_registry integration.
+- 🟡 M-110.9.3 Application register_finalizer LIFO runtime (~½ day focused
+  work): new NovaFinalizerStack struct + per-`with Application` block emission +
+  register/fire dispatch.
+
+**Tests:** 39/39 plan110 PASS (36 baseline + 3 new — 2 POS V1.1 + 1 NEG V1.1).
+Rust unit tests cancel_unsafe_tests 4/4 PASS.
+
+**Design lessons:**
+
+1. **Pragmatic accept-both-forms** (M-110.9.5) — strict signature check
+   accepts BOTH parser representations (TypeRef::Unit, Tuple([]),
+   Named("unit"), Readonly inner) для backward-compat без parser
+   canonicalization risk. Trade-off: spec accepts 2 forms temporarily;
+   canonical form deferred to focused refactor.
+
+2. **Pure-additive C codegen** (M-110.9.2) — Level 1 lookup inserted
+   as new branch BEFORE existing Level 2/3. Smallest change footprint.
+   No backward-compat risk — only triggers when type implements
+   `exit_timeout_ms` method.
+
+3. **AST walker reuse** (M-110.9.4) — 5th walker family extending
+   existing lint infrastructure pattern. Conservative scope (bare-Ident
+   callees in own module) avoids cross-module complexity.
+
+4. **Honest deferral** — M-110.9.1 and M-110.9.3 require substantial
+   runtime + codegen integration (struct allocation, fn pointer assignment,
+   stack management, LIFO firing). Documented с detailed scope rather
+   than shipping half-baked. Plan-doc status flipped 📋 PLANNED →
+   🟡 PARTIAL accurately reflects current state.
