@@ -1,0 +1,25 @@
+// Plan 118 / 118.5 — chained type-level modifiers under right-binding rule.
+//
+// Replaces obsolete t1_neg_duplicate_modifier (deleted Ф.5): under D216 V2
+// universal right-binding rule, `*ro mut T` is VALID chain — parses as
+// `Pointer(Readonly(Mut(T)))` («ptr к ro к mut к T»). The «duplicate
+// modifier» concept doesn't exist under V2 — modifiers compose left-to-right.
+
+module plan118.t1_9_chain_modifiers_ok
+
+type Acc {
+    ro id i64
+}
+
+// Valid V2 chain: pointer к readonly к mut к Acc.
+external fn p118_chain_a(p *ro mut Acc) -> ()
+
+// Same shape via left-side modifier on outer pointer.
+external fn p118_chain_b(p ro * mut Acc) -> ()
+
+// Triple chain: mut pointer к pointer к ro к Acc.
+external fn p118_chain_c(p mut * * ro Acc) -> ()
+
+test "chained right-binding modifiers parse + typecheck" {
+    assert(1 == 1)
+}
