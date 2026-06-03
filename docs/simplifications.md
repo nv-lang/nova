@@ -31298,3 +31298,121 @@ Industry edge: Nova становится **первым языком** с unifie
 syntax + explicit `value` modifier для stack allocation. Achievement
 positions Nova ahead-of-curve vs Kotlin value class (single-field) и
 Java Valhalla (incoming).
+
+---
+
+## 2026-06-03 — Plan 118 V1 foundational FFI: simplification scope
+
+**Branch:** plan-118 / worktree nova-p118 (3 commits — `37629325392`,
+`e80a57e54e7`, `009bc3b92fc`).
+
+### V1 simplifications (intentional — V2 scope)
+
+#### S118-1: RawMem byte-level only, no typed `(*T).read()`/`.write()`
+
+Shipped: `RawMem.copy_from / copy_nonoverlapping / fill / write_bytes /
+compare` operating на `*u8` / `*mut u8` + `usize` byte counts. Caller
+computes `count * sizeof(T)` manually.
+
+**NOT shipped:** typed instance methods на `*T` family —
+`(*ro T).read() -> T`, `(*mut T).write(v T)`, `(*ro T).copy_to[count
+usize](dst *mut T)`. Эти require Plan 118 Ф.4 auto-deref codegen +
+`size_of[T]()` const-fn intrinsic. Followups:
+`[M-118.1-typed-pointer-instance-methods]`, `[M-118.1-sizeof-intrinsic]`.
+
+**Use-case coverage:** все libc-style byte operations (memmove/memcpy/
+memset/memcmp) accessible today; struct-typed FFI requires manual
+casting + byte-count arithmetic. Acceptable для current FFI prelude
+demand (Plan 91.12 / 115 examples) — `[]u8` buffer + `RawMem.*` covers
+sqlite blob, libpng pixel buffer, libcurl recv buffer patterns.
+
+#### S118-2: `unsafe { }` by convention, not enforced на `external fn`
+
+Shipped: каждая call site to `RawMem.*` wrapped в `unsafe { ... }`
+block (syntactic, parser supports `unsafe-block` expression). Checker
+NOT verify the wrap exists.
+
+**NOT shipped:** `E_UNSAFE_CALL_REQUIRES_WRAP` enforcement на
+`external fn` declarations. Атрибут `#unsafe` на `fn` works (Plan
+118 Ф.3.2 parser pass landed earlier), но parser rejects его перед
+`external fn` — required а second `parse_contract_attrs` invocation
+path для `external` items. Followup: `[M-118.1-unsafe-attr-on-external-fn]`.
+
+**Practical impact:** caller discipline по convention + reviewable
+PR-time check. Future closure of the marker will retrofit enforcement
+без syntactic breakage (existing `unsafe { }` blocks remain valid).
+
+#### S118-3: No CStr newtype + no `cstr"..."` literal
+
+V1 leaves users at `*u8` для C-string interop. Refined 2026-06-03
+design (`type CStr(*u8)` + `try_from` / `from_unchecked` / `from_view` +
+D77 from/into synthesis + `cstr"..."` lexer token) — fully designed в
+plan-doc but not landed. Requires:
+- consume-type integration для unique-ownership CStr ergonomics
+- D77 from/into auto-synthesis from `try_from` (already partially landed
+  via Plan 91 stdlib MVP но не for newtype-over-pointer cases)
+- new lexer token + codegen `.rodata` emission
+
+Followups: `[M-118.1-cstr-newtype]`, `[M-118.1-cstr-literal]`.
+
+#### S118-4: No volatile reads/writes (MMIO patterns)
+
+`volatile` qualifier на access points (Ф.2.1-2.5) not emitted в V1.
+Driver/embedded users requiring MMIO must wait for
+`(*T).read_volatile()` / `(*mut T).write_volatile(v)` methods + codegen
+`volatile` cast.
+
+**Practical impact:** Nova currently NOT recommended for kernel-mode
+MMIO drivers (clang optimizer may collapse repeated reads). User-space
+FFI (libc/openssl/sqlite/libpng) — fully covered. Followup:
+`[M-118.1-volatile-ops]`.
+
+#### S118-5: No `addr_of!` / `addr_of_mut!` macros
+
+`&value` syntax for taking address of arbitrary lvalue не V1 scope.
+Users access via `[]T.as_ptr()` / `.as_mut_ptr()` (already shipped —
+Plan 118.2 Ф.1, commit `e80a57e54e7`), which covers slice + array
+ownership cases. Single-value addresses (e.g. `&local_int` for out-param
+patterns) require Plan 118 Ф.3 macro framework. Followup:
+`[M-118.1-addr-of-macros]`.
+
+#### S118-6: No align_of / size_of compile-time intrinsics
+
+`align_of[T]()` and `size_of[T]()` as const-fn intrinsics не V1 scope.
+Users hardcode literal sizes (`8 as usize` for i64, `4` for i32) на call
+sites. Closure requires layout-table propagation в const evaluator +
+front-end type-parameter substitution at call site. Followup:
+`[M-118.1-sizeof-intrinsic]`.
+
+#### S118-7: No ABI snapshot tests + no perf bench + no cross-platform CI
+
+Ф.5 closure activities deferred:
+- `tests/abi/plan118_1/*` snapshot tests — would lock-in ABI но
+  require Windows/Linux/macOS triple-target validation.
+- memcpy/memmove benchmark within 5% of native libc — needs criterion
+  harness setup for FFI primitive calls.
+- 5+ combo CI matrix (clang+MSVC × x64-windows-static + Linux + macOS +
+  AArch64) — config-heavy GitHub Actions work.
+
+Followup: `[M-118.1-ffi-perf-bench]`.
+
+### V1 acceptance criteria (scope-limited)
+
+- ✅ A118.1-V1.a — `usize`/`isize` parse/typecheck/codegen/arithmetic
+- ✅ A118.1-V1.b — `[]T.as_ptr()` returns `T*`; `as_mut_ptr` enforces mut
+- ✅ A118.1-V1.c — `RawMem.{5 methods}` byte-level via `*u8`/`*mut u8`
+- ✅ A118.1-V1.d — Overlap-safe `copy_from` (T7 fixture)
+- ✅ A118.1-V1.e — Normalized memcmp -1/0/+1 (T6 fixture)
+- ✅ A118.1-V1.f — `unsafe { }` block syntax accepted (convention only)
+- ✅ A118.1-V1.g — 9 fixtures PASS end-to-end под release `nova test`
+- ⚠ A118.1-V1.h — `#unsafe` enforcement (convention only — followup)
+
+### V1 limitation summary
+
+Plan 118.1 V1 — **production-quality minimal substrate** — каждый shipped
+primitive verified end-to-end, но scope intentionally narrow:
+byte-level only, no typed instance-method ergonomics, no compile-time layout
+intrinsics, no MMIO support, no C-string newtype. Downstream consumers
+(Plan 91.12 std FFI prelude, Plan 115 V2, future driver/embedded work)
+build on this substrate; advanced ergonomics arrive в V2 when typed
+auto-deref + size_of/align_of land.

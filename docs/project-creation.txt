@@ -30488,3 +30488,105 @@ Lessons:
   modular extension; не trespass на existing record paths.
 - Forward-decl branching on AllocKind prevents Nova_X / NovaValue_X name
   conflict при mixed allocation в same module.
+
+═══════════════════════════════════════════════════════════════════════
+2026-06-03 — Plan 118 V1 foundational FFI primitives (RawMem +
+usize/isize + []T as_ptr/as_mut_ptr) landed
+═══════════════════════════════════════════════════════════════════════
+
+Worktree: nova-p118 / branch plan-118. Three commits:
+  - 37629325392 — D226 amend: usize/isize built-in platform-pointer
+    aliases (usize↔u64, isize↔i64 on 64-bit; C size_t ABI).
+  - e80a57e54e7 — Plan 118.2 Ф.1: []T.@as_ptr() / @as_mut_ptr() FFI
+    access methods. as_mut_ptr enforces mut-binding via
+    builtin_mut_method registration (NEG E_PARAM_NOT_MUT).
+  - 009bc3b92fc — Plan 118.1 Ф.1 V1: RawMem byte-level memory
+    intrinsics. std/runtime/raw_mem.nv с пятью external fn:
+    copy_from (memmove), copy_nonoverlapping (memcpy), fill (memset),
+    write_bytes (Rust alias), compare (normalized -1/0/+1 memcmp).
+    Pointer params via *u8 / *mut u8; size via usize. Каждая call site
+    wraps в unsafe { } block per D216 §8.
+
+Scope deliberately narrow — production-quality foundation rather than
+full Plan 118.x closure. 9 fixtures end-to-end (parse → typecheck →
+codegen → C compile → link → run → assert), all PASS под release
+`nova test`:
+  - plan118_1/t1_usize_isize_aliases_ok (5 sub-tests)
+  - plan118_1/t2_rawmem_copy_from_ok (memmove + view subrange)
+  - plan118_1/t3_rawmem_copy_nonoverlapping_ok (memcpy + zero-length)
+  - plan118_1/t4_rawmem_fill_ok (pattern + zero-init + partial range)
+  - plan118_1/t5_rawmem_write_bytes_ok (alias equivalence)
+  - plan118_1/t6_rawmem_compare_ok (eq/lt/gt + zero-length)
+  - plan118_1/t7_rawmem_copy_from_overlap_ok (forward overlap)
+  - plan118_2/t1_as_ptr_basic_ok (4 sub-tests)
+  - plan118_2/t1_neg_as_mut_ptr_on_ro_binding (NEG E_PARAM_NOT_MUT)
+
+V1 scope shipped:
+  - Typed pointer params `*u8` / `*mut u8` parse + map к C `const
+    nova_byte*` / `nova_byte*` (parser already supported the syntax;
+    external_registry needed usize→uint64_t plug to match call-site
+    types).
+  - RawMem unit-type namespace pattern (mirror `type Empty` / `Sentinel`
+    из spec/02-types.md examples).
+  - Overlap-safe memmove + UB-on-overlap memcpy distinction.
+  - Normalized memcmp return (no implementation-defined non-zero).
+  - usize/isize: TyCat::Int recognition + BUILTIN_TYPE_NAMES + C type
+    mapping + apply_type_subst_to_ref + receiver detection. usize ABI
+    matches C size_t on 64-bit. Spec D226 amended с formal D-block.
+
+V1 out-of-scope (deferred to followups):
+  - Typed (*T).read() / .write() instance methods — requires Plan 118
+    Ф.4 auto-deref codegen.
+  - Bulk copy via .copy_to[count] — requires size_of[T]() const fn.
+  - Volatile reads/writes (Ф.2.1-2.5).
+  - align_of[T]() / size_of[T]() compile-time const (Ф.2.3).
+  - addr_of! / addr_of_mut! macros (Ф.3) — needs built-in macro
+    framework.
+  - CStr newtype + try_from / from_unchecked / from_view (Ф.4 refined
+    design 2026-06-03) — file std/ffi/cstr.nv не landed.
+  - cstr"..." literal token (Ф.4.1-4.6).
+  - Cross-platform CI matrix, ABI snapshots, perf bench.
+  - DebugPrintable protocol + ${p:?} format spec (Ф.7).
+
+Key bugfix uncovered: ExternalRegistry's type_ref_to_c did not handle
+usize/isize. Without it the external_registry-pass registered
+RawMem.fill with param types containing fallback `Nova_usize*`,
+которые не matched call-site arg types (`uint64_t`). Strict-matching
+dispatch then picked the parser-pass registration с overload-mangled
+c_name (`Nova_RawMem_static_fill__nova_byte_p_nova_byte_uint64_t`) →
+undefined linker symbol. Fix: parallel addition of usize/isize к
+external_registry::type_ref_to_c so both candidate signatures match
+exactly; dispatch picks first (external_registry, unmangled name)
+which matches the runtime symbol. Lesson: at multiple registration
+sites C-type mapping must agree byte-for-byte, else strict overload
+selection silently picks the WRONG c_name.
+
+Plan 118 family НЕ closed:
+  - Plan 118 typed-pointer foundation (Ф.1 parser/checker/codegen):
+    parser supports `*T` syntax (verified); type-checker has TyPtr; но
+    full deref `*p` / arrow `p->m` / arithmetic — не V1 scope.
+  - Plan 118.1: V1 partial — byte-level only, typed-pointer-instance-
+    method API остаётся открытой.
+  - Plan 118.2: Ф.1 closed (as_ptr/as_mut_ptr); Ф.2 (MaybeUninit[T])
+    deferred (generic record machinery deep work).
+  - Plan 118.3: AtomicPtr[T] + cross-suspend pass — не trended yet.
+
+Followup markers opened (see Plan 118.1 plan-doc Status section):
+  [M-118.1-typed-pointer-instance-methods]
+  [M-118.1-sizeof-intrinsic]
+  [M-118.1-cstr-newtype]
+  [M-118.1-unsafe-attr-on-external-fn]
+  [M-118.1-volatile-ops]
+  [M-118.1-addr-of-macros]
+  [M-118.1-cstr-literal]
+  [M-118.1-ffi-perf-bench]
+  [M-118.1-typed-pointer-cookbook]
+  [M-118-ftype-pointer-family]
+  [M-118-npo-codegen]
+  [M-118-debug-printable]
+
+Status: 🟢 V1 LANDED, branch plan-118 ready для bidirectional sync с
+main. V2 typed-pointer instance methods + CStr + volatile + addr_of!
+макросы — отдельная multi-day work, gated на Plan 118 Ф.4 auto-deref
+codegen и user demand priority (current FFI use-cases solvable через
+RawMem byte-level + manual size arithmetic).
