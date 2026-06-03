@@ -1,0 +1,39 @@
+// Plan 123.1.1 (V1.1, 2026-06-03): three regions split by mixed
+// barriers (write + self-mutating call). Each region accumulates
+// 2+ reads → three cache lets emitted.
+
+module plan123_1_1.v1_1_three_regions_mixed_ok
+
+type State {
+    mut x int
+}
+
+fn State.new() -> State => { x: 1 }
+
+fn State mut @bump_x() -> () {
+    @x = @x + 1
+}
+
+fn State mut @triple() -> int {
+    // Region A: x == 1, 2 reads.
+    ro a1 = @x
+    ro a2 = @x
+    // Barrier: direct write.
+    @x = 10
+    // Region B: x == 10, 2 reads.
+    ro b1 = @x
+    ro b2 = @x
+    // Barrier: self-mutating call.
+    @bump_x()
+    // Region C: x == 11, 2 reads.
+    ro c1 = @x
+    ro c2 = @x
+    a1 + a2 + b1 + b2 + c1 + c2
+}
+
+test "V1.1: 3-region mut cache (write + call barriers)" {
+    mut s = State.new()
+    ro r = s.triple()
+    // (1+1) + (10+10) + (11+11) = 44
+    assert(r == 44)
+}

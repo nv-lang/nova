@@ -1,0 +1,36 @@
+// Plan 123.1.1 (V1.1, 2026-06-03): multi-region mut cache.
+// Closes [M-123.1-mut-region-recache].
+//
+// Two regions separated by `@x = N` write boundary; каждая region
+// имеет ≥ threshold (2) reads → V1.1 emits two cache lets
+// (`_at_x` first region + `_at_x_r1` second region). Semantic
+// preservation: cached path равняется uncached.
+
+module plan123_1_1.v1_1_two_regions_write_ok
+
+type Counter {
+    mut x int
+}
+
+fn Counter.new(start int) -> Counter {
+    Counter { x: start }
+}
+
+fn Counter mut @cycle(target int) -> int {
+    // Region A — 2 reads.
+    ro before_a = @x
+    ro before_b = @x
+    // Barrier: write @x.
+    @x = target
+    // Region B — 2 reads, должны видеть target.
+    ro after_a = @x
+    ro after_b = @x
+    before_a + before_b + after_a + after_b
+}
+
+test "V1.1: 2-region mut cache preserves semantics" {
+    mut c = Counter.new(5)
+    ro r = c.cycle(20)
+    // 5 + 5 + 20 + 20 = 50
+    assert(r == 50)
+}

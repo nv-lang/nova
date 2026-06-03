@@ -31138,3 +31138,78 @@ Lessons:
 - Unconditional type_id registration acceptable trade-off для prelude
   types used by runtime infrastructure — ~30 byte binary cost beats
   conditional emission complexity + risk.
+
+=== Plan 123.1.1 — Multi-region mut cache (V1.1, 2026-06-03) ===
+
+Followup [M-123.1-mut-region-recache] closure — last open V1 followup в
+Plan 123 family. Расширяет V1 first-region-only mut-кеширование к
+multi-region: body's top-level stmts split на barrier boundaries (write
+OR call), каждая region с reads ≥ threshold получает own cache local.
+
+Algorithm: find_mut_regions_with_ipa(body, fname, ipa, span) returns
+Vec<MutRegion { start, end, reads, first_span, trailing_included }>.
+cache_fn_with_ipa iterates regions, keeps reads ≥ threshold, allocates
+MutRegionTarget per region. First region per field keeps name
+`_at_<F>` (V1 backward-compat); subsequent regions use `_at_<F>_r<N>`
+(N starts at 1).
+
+Rewrite: per-region read rewrite + per-region let insertion. Non-prefix
+groups (start > 0) processed в descending-start order so insertion
+preserves untouched indices. Prefix bucket (ro fields + first-region
+mut) prepended together.
+
+Implementation (~430 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - MutRegion struct NEW (~25 LOC)
+  - MutRegionTarget struct NEW (~15 LOC)
+  - find_mut_regions_with_ipa helper NEW (~80 LOC)
+  - stmt_span helper NEW (~20 LOC)
+  - cache_fn_with_ipa modified — per-region target allocation (~60 LOC)
+  - rewrite_fn_body_split_with_ipa modified — per-region rewrite +
+    multi-position let insertion (~80 LOC)
+  - build_at_field_let helper NEW (~15 LOC)
+  - analyze_fn_for_explain modified — scan ALL top-level _at_* lets (~5 LOC)
+  - 8 unit tests v1_1_* (~250 LOC)
+- nova_tests/plan123_1_1/ — 3 runtime fixtures:
+  - v1_1_two_regions_write_ok.nv (positive 2-region split by write)
+  - v1_1_three_regions_mixed_ok.nv (positive 3-region mixed barriers)
+  - v1_1_single_read_region_no_cache_ok.nv (negative — partial coverage)
+
+Verification (release nova-cli + clang):
+- 8 V1.1 unit tests PASS
+- 3 runtime fixtures PASS via `nova test nova_tests/plan123_1_1`
+- Zero regressions:
+  - field_cache lib 55/55 PASS (47 baseline + 8 V1.1)
+  - plan123_1 18/18 PASS
+  - plan123_2 14/14 PASS
+  - plan123_4 10/10 PASS
+
+Spec: D217 amend V1.1 (~180 lines) — motivation, algorithm, per-region
+naming, rewrite phases, ExplainReport compatibility, codegen impact,
+V1.1.1-V1.1.8 acceptance.
+
+Plan doc: docs/plans/123.1.1-mut-multi-region.md.
+
+Real-world impact: closes mut-region-recache gap для Counter-style
+mutating methods. Не closes WriteBuffer.@write_char chain pattern —
+тот случай связан с codegen chain expansion (@buf.push().push() lowering
+emits nova_self->buf per chained call); требует V7.5 callee-non-self-
+mutation IPA — отдельный followup.
+
+Pattern lessons:
+- Per-region target list cleaner than recursive AST mutation —
+  decouple analysis (regions) от rewrite (per-region read + let-injection).
+- Descending-order multi-position insertion keeps remaining indices
+  valid без re-indexing pass.
+- IPA-aware barrier detection (V7.1) уже handles real-call vs
+  non-mutating-call distinction — V1.1 inherits gratis.
+- analyze_fn_for_explain "scan all top-level" rule generalizes
+  cleanly от V1's "prefix run" approach без changing per-let semantics.
+
+Followup markers:
+- [M-123.1.1-nested-regions] — V1.2 nested barrier analysis в
+  if/while/match-arm bodies.
+- [M-123.1.1-callee-non-self-mutation-ipa] — V7.5 fluent-builder IPA
+  для []T.push(self mut) non-invalidation recognition.
+
+🎯 Plan 123 V1 family — все markers closed.
