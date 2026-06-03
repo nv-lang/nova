@@ -30636,3 +30636,79 @@ Lessons:
   branch в existing 3-level resolution.
 - Runtime+codegen integration (typed throw, finalizer LIFO) genuinely
   heavier — honest scope assessment, не shipping half-baked.
+
+
+================================================================================
+2026-06-03 — Plan 48.1: cross-module generic template registration ordering
+================================================================================
+
+Sub-plan под Plan 48 (mono pass). Trigger: при работе над Plan 91.13
+(Ф.3 JSON conformance) обнаружен codegen-bug — cross-module
+Option[HashMap[K,V]] return type signature имел `NovaOpt_nova_int`
+(erased fallback), а body — `NovaOpt_Nova_HashMap_p` (mono'd) → CC-FAIL
+type mismatch.
+
+Root cause:
+- `generic_type_templates` populated per-module из `module.items`
+- Cross-module imports (HashMap из std/collections/hashmap.nv) НЕ были
+  в templates во время forward-decl pass'a
+- type_ref_to_c для inner generic fallback'ил в `Nova_HashMap*` (erased
+  line ~4503)
+- Option case checked is_concrete_type → false → returned NovaOpt_nova_int
+- Body pass позже видел mono'd type (drain enqueued instance) → mismatch
+
+Fix #1 (peer_files scan, ~30 строк в emit_module):
+- Pre-populate generic_type_templates из peer_files
+  (transitively-imported modules) ПОСЛЕ module.items pass, ДО
+  forward-decl pass'a
+- Same skip-list logic (Option/Result/protocols/newtypes)
+- Insert с entry()/or_insert_with — module.items wins на коллизии
+
+Fix #2 (forward typedef, ~15 строк в register_novaopt_decl):
+- При registration NovaOpt typedef для pointer to mono'd struct
+  (Nova_X____<args>*), emit forward `typedef struct Nova_X____ Nova_X____;`
+  ДО NovaOpt typedef
+- Без этого NovaOpt struct содержит field type ссылающийся на
+  undeclared struct → C-compiler "unknown type name"
+- Polluting check: только для mono'd names (contain "____" delim) с
+  Nova_ prefix; skip primitives + runtime-defined
+
+Regression test:
+- nova_tests/plan48_1/option_hashmap_cross_module.nv — минимальный
+  fixture с Option[HashMap[str, int]] cross-module use
+- 1/0 PASS post-fix; CODEGEN-FAIL pre-fix (reproduces bug)
+
+Test impact (full nova test):
+- Baseline:  1865 PASS / 173 FAIL / 56 SKIP
+- Post-fix:  1867 PASS / 172 FAIL / 56 SKIP
+- Delta:     +2 PASS / -1 FAIL / 0 real regressions
+- Diff:
+  + concurrency/sleep_precision_bench (flaky recovery)
+  + protocols/conversion/from_basic (flaky recovery)
+  + plan103_3/mutex_mutual_exclusion_observed_interleave (flaky)
+  - concurrency/mn_runtime_cross_channel (flaky timeout — env-flake)
+
+Commits:
+- e467e7707ab feat(plan48.1): cross-module generic template registration
+- 353d1b70ec2 Merge plan-48.1 into main
+- Push: github/main + github/plan-48.1
+
+Followups (post-MVP, не блокеры):
+- [M-48.1-transitive-type-import-auto] — auto-pull транзитивных type
+  refs из импортированных types (e.g. JsonValue references HashMap →
+  auto-import HashMap транзитивно). Сейчас user должен ЯВНО import
+  HashMap если использует JsonValue.@as_object().
+- [M-48.1-if-expr-result-type-infer] — emit_if_expr result type
+  inference не учитывает let-binding annotations в then-branch; нужен
+  upgrade tmp declaration на основе actual emitted type. Surfaced при
+  написании регрессионного теста.
+- [M-48.1-lazy-template-registration] — lazy registration (on first
+  reference) если eager даёт perf hit. Сейчас eager (cheap).
+- [M-48.1-import-graph-validation] — diagnostic when transitively-
+  imported generic не разрешается.
+
+Plan 91.13 status: остался deferred. После Plan 48.1 signature теперь
+правильный, но второй pre-existing bug в json.nv codegen (NOVA_UNIT cast
+to nova_int в char-handling) — не часть Plan 48.1.
+
+Plan 48.1 ✅ CLOSED.

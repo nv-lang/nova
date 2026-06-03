@@ -31395,3 +31395,18 @@ Rust unit tests cancel_unsafe_tests 4/4 PASS.
    stack management, LIFO firing). Documented с detailed scope rather
    than shipping half-baked. Plan-doc status flipped 📋 PLANNED →
    🟡 PARTIAL accurately reflects current state.
+
+
+## Plan 48.1 — cross-module generic template registration ordering (2026-06-03)
+
+**Why peer_files scan вместо разработки auto-transitive type-ref discovery:** auto-pull транзитивных type refs из импортированных types — это import-graph traversal на уровне type-ref внутри type-decl полей (e.g. JsonValue.Object(HashMap[str, JsonValue]) → должен авто-import HashMap). Это architectural change в import resolver (`resolve_imports_inline_ex`). Plan 48.1 — точечный codegen fix, не import-system overhaul. Pragmatic: peer_files уже содержит directly-imported modules; eager scan их generic types — small targeted change. Followup `[M-48.1-transitive-type-import-auto]` оставлен на potential future use case.
+
+**Why forward typedef в `register_novaopt_decl` а не separate pre-emit pass:** NovaOpt typedef уже emit'ится lazily при первом референсе (через `novaopt_decls_seen` cache). Добавление forward typedef в ту же function — единая точка emission, всегда before NovaOpt. Separate pass потребовал бы tracking всех mono'd struct'ов нужных для NovaOpt — дублирование state. Co-location keeps invariant proof local: "если NovaOpt typedef emitted, forward typedef уже там же".
+
+**Why skip-list (Option/Result/protocols/newtypes) mirror module.items pass:** consistency с existing handling. Plan 62.A handles Option/Result via NovaOpt_<T>/Nova_Result* parallel infrastructure (registering as template создаёт coll'isions с runtime helpers). Plan 62.E handles protocols через `protocol_box_c_type_for` separate path. Plan 91.12 V2 handles newtypes via `type_aliases`. Peer-scan не должен ломать эти parallel mechanisms — соблюдает same skip-rules.
+
+**Why polluting check `contains("____") && starts_with("Nova_")` для forward typedef:** mono'd generic names имеют canonical pattern `Nova_<Base>____<args>` (compute_generic_type_c_name produces `Nova_HashMap____nova_str__Nova_JsonValue_p`). Forward typedef emit нужен ТОЛЬКО для этих синтезированных names. Skipping nova_int/nova_str/runtime-defined types (e.g. `nova_unit`, `NovaArray_*`) — они уже declared. Lightweight string check вместо tracking state — корректно для current naming convention.
+
+**Why не написал spec D-block amendment:** Plan 48.1 — pure codegen pass-ordering fix без semantic change в language spec. Поведение программ не меняется — те же программы которые compile успешно с workaround (явный import HashMap) теперь compile correctly. Тэ что fail'ились с CC-FAIL → теперь compile success. Нет нового D-block, нет amend существующего — это implementation detail, не language semantics.
+
+**Why minimal regression test (1 fixture, 1 test):** focused на ROOT bug (signature/typedef mismatch). Полные roundtrip tests (Plan 91.13 JSON) показали что есть SEPARATE bug в json.nv codegen (NOVA_UNIT cast в char-handling). Включение их в Plan 48.1 raised false-positive — bug якобы не fixed. Minimal test изолирует Plan 48.1's specific fix.
