@@ -3065,8 +3065,11 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent, walk inner.
             TypeRef::Readonly(inner, _) => self.walk_typeref(inner, gs, errors),
-            // Plan 118 D216: typed pointer `*T` — walk inner for arity checks.
-            TypeRef::Pointer(_, inner, _) => self.walk_typeref(inner, gs, errors),
+            // Plan 118 D216 + Plan 118.5: typed pointer `*T` family
+            // (Pointer/Mut/Unsafe) — all transparent, walk inner for arity checks.
+            TypeRef::Pointer(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => self.walk_typeref(inner, gs, errors),
         }
     }
 
@@ -3102,8 +3105,11 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => {}
             // D176 (Plan 108): readonly T — transparent.
             TypeRef::Readonly(inner, _) => Self::collect_named_idents(inner, out),
-            // Plan 118 D216: typed pointer `*T` — recurse on inner.
-            TypeRef::Pointer(_, inner, _) => Self::collect_named_idents(inner, out),
+            // Plan 118 D216 + Plan 118.5: typed pointer `*T` family
+            // (Pointer/Mut/Unsafe) — all transparent, recurse on inner.
+            TypeRef::Pointer(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => Self::collect_named_idents(inner, out),
         }
     }
 
@@ -4485,7 +4491,11 @@ impl<'a> TypeCheckCtx<'a> {
         // record and primitive pointee) — Ф.4 followup work. V1: skip check
         // для pointer types — permissive (codegen may produce CC-FAIL if
         // arrow codegen path не handles *T properly yet).
-        if matches!(obj_tr, TypeRef::Pointer(_, _, _)) {
+        // Plan 118.5: pointer-like = Pointer | Mut | Unsafe (all auto-deref candidates).
+        if matches!(
+            obj_tr,
+            TypeRef::Pointer(_, _) | TypeRef::Mut(_, _) | TypeRef::Unsafe(_, _)
+        ) {
             return; // permissive — defer to codegen + Ф.4 full integration
         }
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
@@ -5501,9 +5511,14 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Readonly(inner, _) => self.cat_of_depth(inner, gs, depth + 1),
             // Plan 118 D216: typed pointer `*T` — category Ptr (matches D214
             // `ptr` opaque). Внутренний type categorization не нужен для
-            // assignability rules (pointer category распространяется на все
-            // `*T` family variants; mutability/safety enforced отдельно в Ф.4).
-            TypeRef::Pointer(_, _, _) => TyCat::Ptr,
+            // assignability rules; mutability/safety enforced отдельно в Ф.4.
+            TypeRef::Pointer(_, _) => TyCat::Ptr,
+            // Plan 118.5: `mut T` / `unsafe T` modifiers are transparent —
+            // their category derives from inner (typically a Pointer → Ptr,
+            // но возможны и другие inner-shapes, e.g. `mut * T`).
+            TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+                self.cat_of_depth(inner, gs, depth + 1)
+            }
         }
     }
 }
@@ -5670,15 +5685,15 @@ fn typeref_display(tr: &TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", typeref_display(inner)),
-        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
-        TypeRef::Pointer(modif, inner, _) => {
-            let prefix = match modif {
-                crate::ast::PointerModifier::Ro => "*",
-                crate::ast::PointerModifier::Mut => "*mut ",
-                crate::ast::PointerModifier::Unsafe => "*unsafe ",
-            };
-            format!("{}{}", prefix, typeref_display(inner))
-        }
+        // Plan 118 D216 §1 + Plan 118.5: typed pointer `*T` family — new
+        // canonical syntax with each modifier as its own variant. Pointer is
+        // the only sigil-introducing variant; Mut/Unsafe are pre-modifiers
+        // that wrap an inner (typically `Pointer(T)`, producing `mut *T`/
+        // `unsafe *T`). Display recursively to preserve nesting (e.g.
+        // `Mut(Pointer(Readonly(Pointer(T))))` → `mut *ro *T`).
+        TypeRef::Pointer(inner, _) => format!("*{}", typeref_display(inner)),
+        TypeRef::Mut(inner, _) => format!("mut {}", typeref_display(inner)),
+        TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_display(inner)),
     }
 }
 
@@ -9205,15 +9220,14 @@ fn render_type_ref(t: &TypeRef) -> String {
         TypeRef::Unit(_) => "()".to_string(),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", render_type_ref(inner)),
-        // Plan 118 D216 §1: typed pointer `*T` family — display with modifier.
-        TypeRef::Pointer(modif, inner, _) => {
-            let prefix = match modif {
-                crate::ast::PointerModifier::Ro => "*",
-                crate::ast::PointerModifier::Mut => "*mut ",
-                crate::ast::PointerModifier::Unsafe => "*unsafe ",
-            };
-            format!("{}{}", prefix, render_type_ref(inner))
-        }
+        // Plan 118 D216 §1 / Plan 118.5 V2 (2026-06-04): typed pointer
+        // `*T` family — split into three AST wrapper arms after V2 amend.
+        //   - Pointer(T, _)    → `* T` (canonical readonly)
+        //   - Mut(inner, _)    → `mut <inner>` (right-binding wrapper)
+        //   - Unsafe(inner, _) → `unsafe <inner>` (right-binding wrapper)
+        TypeRef::Pointer(inner, _) => format!("* {}", render_type_ref(inner)),
+        TypeRef::Mut(inner, _) => format!("mut {}", render_type_ref(inner)),
+        TypeRef::Unsafe(inner, _) => format!("unsafe {}", render_type_ref(inner)),
     }
 }
 
@@ -9452,10 +9466,40 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
         TypeRef::Unit(_) => Ty::Unit,
         // D176 (Plan 108): readonly T — same Ty as inner (transparent).
         TypeRef::Readonly(inner, _) => ty_of_ref(inner),
-        // Plan 118 D216 §1: typed pointer `*T` family → Ty::TypedPtr.
-        // Modifier (Ro/Mut/Unsafe) + inner Ty propagated; используется
-        // в auto-deref resolution (Ф.4) + binding mut rule (D216 §2).
-        TypeRef::Pointer(modif, inner, _) => Ty::TypedPtr(*modif, Box::new(ty_of_ref(inner))),
+        // Plan 118 D216 §1 / Plan 118.5 V2 (2026-06-04): SEMANTIC COLLAPSE.
+        // AST is structural (separate Mut/Unsafe wrappers); Ty is collapsed
+        // semantic (single TypedPtr variant carries the modifier).
+        //
+        // Rules:
+        //   - Pointer(inner)               → TypedPtr(Ro, inner)
+        //   - Mut(Pointer(inner))          → TypedPtr(Mut, inner)
+        //   - Unsafe(Pointer(inner))       → TypedPtr(Unsafe, inner)
+        //   - Mut(non-Pointer)             → transparent recurse (no Ty
+        //                                    representation for type-level
+        //                                    `mut` over non-pointer; this
+        //                                    documented asymmetry между AST
+        //                                    и Ty — bootstrap-minimal).
+        //   - Unsafe(non-Pointer)          → transparent recurse (ditto for
+        //                                    `unsafe T` over non-pointer:
+        //                                    no Ty variant — safety-axis
+        //                                    enforced separately at AST level).
+        TypeRef::Pointer(inner, _) => {
+            Ty::TypedPtr(crate::ast::PointerModifier::Ro, Box::new(ty_of_ref(inner)))
+        }
+        TypeRef::Mut(inner, _) => match inner.as_ref() {
+            TypeRef::Pointer(p_inner, _) => Ty::TypedPtr(
+                crate::ast::PointerModifier::Mut,
+                Box::new(ty_of_ref(p_inner)),
+            ),
+            _ => ty_of_ref(inner),
+        },
+        TypeRef::Unsafe(inner, _) => match inner.as_ref() {
+            TypeRef::Pointer(p_inner, _) => Ty::TypedPtr(
+                crate::ast::PointerModifier::Unsafe,
+                Box::new(ty_of_ref(p_inner)),
+            ),
+            _ => ty_of_ref(inner),
+        },
     }
 }
 
@@ -9817,16 +9861,27 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                 TypeRef::Unit(_) => "()".to_string(),
                 // D176 (Plan 108): readonly T — key as "readonly_<inner>"
                 TypeRef::Readonly(inner, _) => format!("readonly_{}", type_key(inner)),
-                // Plan 118 D216 §1: typed pointer `*T` family — key includes
-                // modifier (Ro/Mut/Unsafe) для overload disambiguation.
-                TypeRef::Pointer(modif, inner, _) => {
-                    let modif_str = match modif {
-                        crate::ast::PointerModifier::Ro => "ro",
-                        crate::ast::PointerModifier::Mut => "mut",
-                        crate::ast::PointerModifier::Unsafe => "unsafe",
-                    };
-                    format!("*{}_{}", modif_str, type_key(inner))
-                }
+                // Plan 118 D216 §1 / Plan 118.5 V2 (2026-06-04): typed
+                // pointer `*T` family — split into three arms по AST
+                // wrappers. Keys distinct для overload disambiguation:
+                //   - Pointer(T)             → "*ro_<inner>"
+                //   - Mut(Pointer(T))        → "*mut_<inner>" (pointee)
+                //   - Mut(non-Pointer)       → inner key (transparent)
+                //   - Unsafe(Pointer(T))     → "*unsafe_<inner>" (pointee)
+                //   - Unsafe(non-Pointer)    → inner key (transparent)
+                TypeRef::Pointer(inner, _) => format!("*ro_{}", type_key(inner)),
+                TypeRef::Mut(inner, _) => match inner.as_ref() {
+                    TypeRef::Pointer(p_inner, _) => {
+                        format!("*mut_{}", type_key(p_inner))
+                    }
+                    _ => type_key(inner),
+                },
+                TypeRef::Unsafe(inner, _) => match inner.as_ref() {
+                    TypeRef::Pointer(p_inner, _) => {
+                        format!("*unsafe_{}", type_key(p_inner))
+                    }
+                    _ => type_key(inner),
+                },
             }
         }
         fn op_sig(m: &EffectMethod) -> String {
@@ -15552,15 +15607,14 @@ fn typeref_render(t: &TypeRef) -> String {
         TypeRef::Protocol { methods, .. } => format!("protocol {{...{} sigs}}", methods.len()),
         // D176 (Plan 108): readonly T — display as "readonly T"
         TypeRef::Readonly(inner, _) => format!("ro {}", typeref_render(inner)),
-        // Plan 118 D216 §1: typed pointer `*T` family — render with modifier.
-        TypeRef::Pointer(modif, inner, _) => {
-            let prefix = match modif {
-                crate::ast::PointerModifier::Ro => "*",
-                crate::ast::PointerModifier::Mut => "*mut ",
-                crate::ast::PointerModifier::Unsafe => "*unsafe ",
-            };
-            format!("{}{}", prefix, typeref_render(inner))
-        }
+        // Plan 118 D216 §1 / Plan 118.5 V2 (2026-06-04): typed pointer
+        // `*T` family — split into three AST wrapper arms after V2 amend.
+        //   - Pointer(T, _)    → `* T` (canonical readonly)
+        //   - Mut(inner, _)    → `mut <inner>` (right-binding wrapper)
+        //   - Unsafe(inner, _) → `unsafe <inner>` (right-binding wrapper)
+        TypeRef::Pointer(inner, _) => format!("* {}", typeref_render(inner)),
+        TypeRef::Mut(inner, _) => format!("mut {}", typeref_render(inner)),
+        TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_render(inner)),
     }
 }
 
@@ -16449,7 +16503,16 @@ impl UnsafeCtx {
         match &e.kind {
             ExprKind::Unary { op: UnOp::AddrOf, .. } => true,
             ExprKind::Unary { op: UnOp::Deref, .. } => true,
-            ExprKind::As(_, ty) => matches!(ty, crate::ast::TypeRef::Pointer(_, _, _)),
+            // Plan 118.5 V2 (2026-06-04): expanded to detect all pointer-
+            // family AST wrappers — Pointer (canonical), Mut (mut * T),
+            // Unsafe (unsafe * T). Each represents a typed-pointer cast
+            // target at the syntactic level.
+            ExprKind::As(_, ty) => matches!(
+                ty,
+                crate::ast::TypeRef::Pointer(_, _)
+                    | crate::ast::TypeRef::Mut(_, _)
+                    | crate::ast::TypeRef::Unsafe(_, _)
+            ),
             ExprKind::Ident(name) => self.ptr_vars.iter().rev().any(|f| f.contains(name)),
             // Block-trailing inheritance: `unsafe { &x }` / nested block.
             // Empty trailing => not a pointer (unit-typed).
@@ -16653,7 +16716,12 @@ impl UnsafeCtx {
                 // Plan 118 A24+A25: cast `expr as *fn(...)` checks:
                 //   A24 — closure-with-env cast banned (E_CLOSURE_HAS_ENV)
                 //   A25 — fn-with-Fail cast banned (E_CALLBACK_THROWS_OVER_C_ABI)
-                if let crate::ast::TypeRef::Pointer(_, inner_ty, _) = ty {
+                //
+                // Plan 118.5 V2 (2026-06-04): strip Mut/Unsafe/Readonly
+                // modifier wrappers via strip_modifiers() to detect the
+                // underlying Pointer regardless of right-binding wrappers
+                // (e.g. `expr as mut * fn(...)` also matches).
+                if let crate::ast::TypeRef::Pointer(inner_ty, _) = ty.strip_modifiers() {
                     if matches!(inner_ty.as_ref(), crate::ast::TypeRef::Func { .. }) {
                         // A24: closure literal с env captures — banned.
                         // V1 conservative: any ClosureLight/ClosureFull → reject.

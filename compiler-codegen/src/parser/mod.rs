@@ -4943,29 +4943,50 @@ impl Parser {
                         span,
                     ));
                 }
-                // Optional modifier (ro / mut / unsafe ident).
-                let modifier = match &self.peek().kind {
+                // Plan 118.5 / D216 V2 §V2.6 (2026-06-04): legacy inline
+                // modifier syntax `*ro T` / `*mut T` / `*unsafe T` is
+                // grace-period-deprecated. Internally rewrite to canonical
+                // right-binding AST shape:
+                //   *ro T     → Readonly(Pointer(T))
+                //   *mut T    → Mut(Pointer(T))
+                //   *unsafe T → Unsafe(Pointer(T))     ← semantic shift!
+                //               (rev-1: «unsafe pointer»; V2: «possibly-null
+                //               ptr к valid T» — see W_BREAKING_UNSAFE_PTR_MEANING)
+                //   *T        → Pointer(T) (default ro, canonical)
+                //
+                // Warning emission (W_DEPRECATED_POINTER_INLINE_MODIFIER /
+                // W_BREAKING_UNSAFE_PTR_MEANING) deferred to Ф.2 once Parser
+                // warnings infrastructure lands.
+                let legacy_modifier = match &self.peek().kind {
                     TokenKind::KwRo => {
                         self.bump();
-                        crate::ast::PointerModifier::Ro
+                        Some(crate::ast::PointerModifier::Ro)
                     }
                     TokenKind::KwMut => {
                         self.bump();
-                        crate::ast::PointerModifier::Mut
+                        Some(crate::ast::PointerModifier::Mut)
                     }
-                    // Plan 118 Ф.3 (D2 amend): KwUnsafe keyword. Used в
-                    // `*unsafe T` pointer modifier + `unsafe { }` block +
-                    // `#unsafe` attribute.
                     TokenKind::KwUnsafe => {
                         self.bump();
-                        crate::ast::PointerModifier::Unsafe
+                        Some(crate::ast::PointerModifier::Unsafe)
                     }
-                    // Default modifier = Ro (когда `*T` без явного modifier).
-                    _ => crate::ast::PointerModifier::Ro,
+                    _ => None,
                 };
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
-                return Ok(TypeRef::Pointer(modifier, Box::new(inner), span));
+                let pointer = TypeRef::Pointer(Box::new(inner), span);
+                return Ok(match legacy_modifier {
+                    None => pointer,
+                    Some(crate::ast::PointerModifier::Ro) => {
+                        TypeRef::Readonly(Box::new(pointer), span)
+                    }
+                    Some(crate::ast::PointerModifier::Mut) => {
+                        TypeRef::Mut(Box::new(pointer), span)
+                    }
+                    Some(crate::ast::PointerModifier::Unsafe) => {
+                        TypeRef::Unsafe(Box::new(pointer), span)
+                    }
+                });
             }
             TokenKind::LBracket => {
                 self.bump();

@@ -494,17 +494,21 @@ impl ExternalRegistry {
             TypeRef::Protocol { .. } => Ok("void*".into()),
             // D176 (Plan 108): readonly T — transparent for codegen.
             TypeRef::Readonly(inner, _) => Self::type_ref_to_c(inner, recv),
-            // Plan 118 D216 §1: typed pointer `*T` family — emit C `T*`.
-            // §11 codegen: `*ro T` → `const T*` (helps clang/MSVC optimizer);
-            // `*mut T` / `*unsafe T` → `T*`. ABI consistent с D214 ptr.
-            TypeRef::Pointer(modif, inner, _) => {
+            // Plan 118.5 D216 V2 §V2.3: typed pointer `*T` is canonical
+            // read-only — emit C `const T*`. `mut`/`unsafe` are first-class
+            // wrappers; when they wrap a Pointer they strip the `const`
+            // (→ `T*`); otherwise they are transparent for codegen.
+            TypeRef::Pointer(inner, _) => {
                 let inner_c = Self::type_ref_to_c(inner, recv)?;
-                Ok(match modif {
-                    crate::ast::PointerModifier::Ro => format!("const {}*", inner_c),
-                    crate::ast::PointerModifier::Mut | crate::ast::PointerModifier::Unsafe => {
-                        format!("{}*", inner_c)
-                    }
-                })
+                Ok(format!("const {}*", inner_c))
+            }
+            TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+                if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    let p_inner_c = Self::type_ref_to_c(p_inner, recv)?;
+                    Ok(format!("{}*", p_inner_c))
+                } else {
+                    Self::type_ref_to_c(inner, recv)
+                }
             }
         }
     }

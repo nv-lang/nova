@@ -1157,19 +1157,27 @@ pub struct BenchCase {
     pub span: Span,
 }
 
-/// Plan 118 (D216 §1-3): pointer modifier in `*T` / `*ro T` / `*mut T` /
+/// Plan 118 (D216 §1-3, rev-1): pointer modifier in `*T` / `*ro T` / `*mut T` /
 /// `*unsafe T` family. Default = `Ro` (omitted modifier ≡ `*ro T`).
 ///
-/// Chain order: modifier applies to ITS `*`, read left-to-right.
-/// `*mut *ro T` = mut pointer на (ro pointer на T).
+/// **Plan 118.5 / D216 V2 amend (2026-06-04):** Decoupled from `TypeRef`.
+/// Pointer modifiers at AST level migrated to separate wrapper variants
+/// (`TypeRef::Mut` / `TypeRef::Unsafe`) per universal right-binding rule.
+/// `TypeRef::Pointer` is now pure constructor without modifier.
+///
+/// This enum **remains** as a runtime tag used by `Ty::TypedPtr` (see
+/// `types/mod.rs`) — bootstrap-minimal Ty collapses Readonly/Mut/Unsafe
+/// wrappers around a Pointer into a single TypedPtr with this modifier tag.
+/// The asymmetry is documented: AST = structural (separate wrappers); Ty =
+/// collapsed semantic (embedded modifier).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PointerModifier {
-    /// `*T` (default) или `*ro T` — readonly typed pointer
+    /// `*T` (default) — readonly typed pointer
     Ro,
-    /// `*mut T` — mutable typed pointer
+    /// `mut * T` (canonical) — mutable typed pointer
     Mut,
-    /// `*unsafe T` — pointer после arithmetic (alignment/bounds gone);
-    /// deref требует ещё один unsafe wrap
+    /// `unsafe * T` (canonical) — pointer with weakened safety contract
+    /// (may be null/dangling/misaligned); deref требует unsafe block
     Unsafe,
 }
 
@@ -1208,19 +1216,45 @@ pub enum TypeRef {
     },
     /// `()` unit
     Unit(Span),
-    /// `readonly T` — compile-time immutability modifier (D176, Plan 108).
+    /// `ro T` — compile-time immutability modifier (D176, Plan 108).
     /// Zero runtime overhead: only compile-time check. Forbids mut-methods
-    /// and index writes. `T → readonly T` coerce allowed; reverse forbidden.
+    /// and index writes. `T → ro T` coerce allowed; reverse forbidden.
     Readonly(Box<TypeRef>, Span),
-    /// Plan 118 (D216 §1-3): typed pointer family `*T` / `*ro T` /
-    /// `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
+    /// **Plan 118.5 / D216 V2 §V2.1 (2026-06-04):** `mut T` — compile-time
+    /// mutability marker as right-binding type wrapper. Semantic-only at
+    /// C-codegen level (no ABI change). Distinct from `ro` (forbids
+    /// mutation) and from binding-level `mut x T` (Plan 108 binding rule);
+    /// here it's the **type** that carries the modifier.
     ///
-    /// Examples:
-    /// - `*T` → `Pointer(Ro, T, span)` (default ro)
-    /// - `*mut T` → `Pointer(Mut, T, span)`
-    /// - `*mut *ro Acc` → `Pointer(Mut, Pointer(Ro, Acc, ...), ...)`
-    ///   (mut pointer на ro pointer на Acc)
-    Pointer(PointerModifier, Box<TypeRef>, Span),
+    /// Example: `mut * T` → `Mut(Pointer(T, span_inner), span_outer)`.
+    /// Combined: `unsafe * mut T` → `Unsafe(Pointer(Mut(T, ...), ...), ...)`.
+    Mut(Box<TypeRef>, Span),
+    /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04):** `unsafe T` — first-class
+    /// MaybeUninit-like type wrapper. Inner T's safety contracts off:
+    ///   - init: value may be uninitialized (read without prior write is UB)
+    ///   - layout: alignment / size = T's, but caller asserts validity
+    ///   - identity: bit-pattern validity caller-asserted
+    ///   - aliasing: exclusivity rules off
+    /// Read requires `unsafe { }` wrap (`E_UNSAFE_T_READ_REQUIRES_WRAP`).
+    /// Write safe (transitions к valid). `T → unsafe T` implicit widen
+    /// allowed; `unsafe T → T` narrow requires `unsafe { }` + explicit cast.
+    ///
+    /// Examples (two orthogonal safety axes):
+    ///   - `unsafe * T` → `Unsafe(Pointer(T))` — possibly-null/dangling ptr к valid T
+    ///   - `* unsafe T` → `Pointer(Unsafe(T))` — valid ptr к possibly-uninit T
+    ///   - `unsafe * unsafe T` → `Unsafe(Pointer(Unsafe(T)))` — worst case
+    Unsafe(Box<TypeRef>, Span),
+    /// Plan 118 (D216 §1-3): typed pointer family `*T`.
+    ///
+    /// **Plan 118.5 / D216 V2 (2026-06-04):** Pure constructor — NO inline
+    /// modifier field. Modifiers expressed as outer wrappers per universal
+    /// right-binding rule:
+    ///   - `*T` (default) → `Pointer(T, span)` (canonical readonly)
+    ///   - `mut * T` → `Mut(Pointer(T, ...), ...)`
+    ///   - `unsafe * T` → `Unsafe(Pointer(T, ...), ...)`
+    ///   - `* unsafe T` → `Pointer(Unsafe(T, ...), ...)` (valid ptr к uninit T)
+    ///   - `mut * ro * T` → `Mut(Pointer(Readonly(Pointer(T))))`
+    Pointer(Box<TypeRef>, Span),
 }
 
 // Plan 123 baseline-fix (2026-06-02): Default for TypeRef used by test
@@ -1241,14 +1275,30 @@ impl TypeRef {
             | TypeRef::Protocol { span, .. }
             | TypeRef::Unit(span)
             | TypeRef::Readonly(_, span)
-            | TypeRef::Pointer(_, _, span) => *span,
+            | TypeRef::Mut(_, span)
+            | TypeRef::Unsafe(_, span)
+            | TypeRef::Pointer(_, span) => *span,
         }
     }
 
-    /// Returns the inner type if this is `readonly T`, otherwise returns `self`.
+    /// Returns the inner type if this is `ro T`, otherwise returns `self`.
     pub fn strip_readonly(&self) -> &TypeRef {
         match self {
             TypeRef::Readonly(inner, _) => inner.strip_readonly(),
+            other => other,
+        }
+    }
+
+    /// **Plan 118.5 / D216 V2 §V2.5 (2026-06-04):** Strip outermost
+    /// type-level modifier wrappers (`Readonly` / `Mut` / `Unsafe`) and
+    /// return the inner non-wrapper type. Used for method dispatch lookup
+    /// (e.g. `mut * T` method-resolves on `Pointer(T)`, not on the Mut
+    /// wrapper).
+    pub fn strip_modifiers(&self) -> &TypeRef {
+        match self {
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => inner.strip_modifiers(),
             other => other,
         }
     }
@@ -1257,9 +1307,41 @@ impl TypeRef {
         matches!(self, TypeRef::Readonly(..))
     }
 
-    /// Plan 118: returns true if this is a typed pointer `*T` (any modifier).
+    /// **Plan 118.5 / D216 V2 (2026-06-04):** is this `mut T` wrapper?
+    pub fn is_mut(&self) -> bool {
+        matches!(self, TypeRef::Mut(..))
+    }
+
+    /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04):** is this `unsafe T`
+    /// wrapper (outermost)?
+    pub fn is_unsafe(&self) -> bool {
+        matches!(self, TypeRef::Unsafe(..))
+    }
+
+    /// **Plan 118.5 / D216 V2 §V2.4 (2026-06-04):** does this TypeRef
+    /// contain an Unsafe wrapper at the OUTERMOST position (before any
+    /// Pointer)? Used by NPO calculation: if outermost wrapper is Unsafe
+    /// around a Pointer, NPO is disabled (null is a valid Some value).
+    ///
+    /// Returns true for: `Unsafe(*T)`, `Mut(Unsafe(*T))`, `Readonly(Unsafe(*T))`
+    /// (any outer chain of non-Pointer wrappers ending in Unsafe before
+    /// the first Pointer).
+    /// Returns false for: `*T`, `*unsafe T` (= `Pointer(Unsafe(T))`),
+    /// `mut * T`, `ro * T` (any chain where Pointer is the first non-
+    /// Mut/Ro wrapper encountered).
+    pub fn outer_unsafe_before_pointer(&self) -> bool {
+        match self {
+            TypeRef::Unsafe(_, _) => true,
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _) => inner.outer_unsafe_before_pointer(),
+            _ => false,
+        }
+    }
+
+    /// Plan 118: returns true if this is a typed pointer `*T` (any modifier
+    /// wrapping). Strips outer Readonly/Mut/Unsafe wrappers first.
     pub fn is_pointer(&self) -> bool {
-        matches!(self, TypeRef::Pointer(..))
+        matches!(self.strip_modifiers(), TypeRef::Pointer(..))
     }
 
     /// Plan 91.12 V2 followup #3 (2026-06-02): рекурсивная проверка
@@ -1292,7 +1374,10 @@ impl TypeRef {
             }
             TypeRef::Array(inner, _)
             | TypeRef::FixedArray(_, inner, _)
-            | TypeRef::Readonly(inner, _) => inner.uses_any_type_param(params),
+            | TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Pointer(inner, _) => inner.uses_any_type_param(params),
             TypeRef::Tuple(ts, _) => ts.iter().any(|t| t.uses_any_type_param(params)),
             TypeRef::Func { params: p, return_type, .. } => {
                 p.iter().any(|t| t.uses_any_type_param(params))
@@ -1304,7 +1389,6 @@ impl TypeRef {
                     || m.return_type.as_ref()
                         .map_or(false, |t| t.uses_any_type_param(params))
             }),
-            TypeRef::Pointer(_, inner, _) => inner.uses_any_type_param(params),
             TypeRef::Unit(_) => false,
         }
     }
