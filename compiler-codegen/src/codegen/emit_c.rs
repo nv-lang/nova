@@ -1912,6 +1912,37 @@ impl CEmitter {
                 }
             }
         }
+        // 1a-cross-module. Plan 48.1: ALSO register generic type templates
+        // from peer_files (transitively-imported modules). Without this,
+        // cross-module generic references (e.g. `Option[HashMap[K,V]]` где
+        // HashMap живёт в std/collections/hashmap.nv) во время forward-decl
+        // pass'a резолвятся как `Nova_HashMap*` (erased fallback в
+        // `type_ref_to_c` line 4567) — а body pass позже видит mono'd type
+        // → signature mismatch CC-FAIL.
+        //
+        // Mirror логики module.items pass'a: skip Option/Result (специальная
+        // обработка), skip protocols (value-erased к void*), skip newtypes
+        // (другая infrastructure). Регистрируем только Record/Sum generic
+        // templates — те, что нужны для mono pipeline.
+        for pf in &module.peer_files {
+            for item in &pf.items_here {
+                if let Item::Type(t) = item {
+                    if t.generics.is_empty() { continue; }
+                    if t.name == "Option" || t.name == "Result" { continue; }
+                    if matches!(t.kind, crate::ast::TypeDeclKind::Protocol { .. }) {
+                        // Protocol registration уже сделана через module.items
+                        // pass или через emit_protocol_box_typedef on-demand.
+                        continue;
+                    }
+                    // entry-only `insert` — module.items wins на коллизии
+                    // (test peer's own type-decl beats imported re-export).
+                    self.generic_types.insert(t.name.clone());
+                    self.generic_type_templates
+                        .entry(t.name.clone())
+                        .or_insert_with(|| t.clone());
+                }
+            }
+        }
         // 1a1b. Plan 103.5: register type_decls from ExternalRegistry (sync.nv etc.).
         //
         // sync.nv declares:
@@ -25608,6 +25639,27 @@ _cp++; \
         let mut seen = self.novaopt_decls_seen.borrow_mut();
         if seen.contains(sanitized) { return; }
         seen.insert(sanitized.to_string());
+        // Plan 48.1: для mono'd generic struct pointer (`Nova_X____<args>*`),
+        // emit forward typedef ПЕРЕД NovaOpt typedef. NovaOpt struct содержит
+        // pointer field на inner struct; C требует at least forward typedef
+        // имени до использования в struct field. Без этого `unknown type
+        // name 'Nova_HashMap____nova_str__Nova_JsonValue_p'` на NovaOpt
+        // typedef line.
+        //
+        // Polluting check: только для mono'd names (contain "____" delim).
+        // Skip nova_int / nova_str / runtime-defined structs.
+        if let Some(stripped) = c_ty.strip_suffix('*') {
+            let inner_name = stripped.trim();
+            if inner_name.contains("____") && inner_name.starts_with("Nova_") {
+                let fwd = format!(
+                    "typedef struct {} {};\n",
+                    inner_name, inner_name);
+                let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+                if !buf.contains(&fwd) {
+                    buf.push_str(&fwd);
+                }
+            }
+        }
         // Plan 54 Ф.9: запомнить реальный c_ty для recovery в
         // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
         self.novaopt_value_types.borrow_mut()
