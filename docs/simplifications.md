@@ -31116,3 +31116,32 @@ nova-cli + clang. plan123_4 10/10 + plan123_4_2 1/1 + field_cache lib
 - `[M-123.4.3-mut-prefix]` — V4.5 mut-root prefix (currently inherits
   V4 V4.1 skip-when-body-writes constraint).
 
+
+---
+
+## Plan 110.2-110.8 metadata status headers ✅ ЗАКРЫТ (2026-06-03)
+
+**Status:** ✅ LANDED. Branch `plan-110-substatus-update`.
+
+**What:** Metadata-only fix — Plan 110 sub-plans 110.2-110.8 plan-docs не
+имели explicit Status headers. Added uniform `> **Статус:** ✅ ЗАКРЫТ
+(2026-06-01) — sub-plan Plan 110 umbrella (merge 874f5766ca5)...` блоков
+после first narrative paragraph.
+
+**Sub-plans covered:**
+- 110.2 cancel-shield + async cleanup + 3-level timeout
+- 110.3 stdlib migration
+- 110.4 MultiError + Cleanup + Application effects
+- 110.5 migration autofix tool
+- 110.6 diagnostic UX + LSP + stress + bench
+- 110.7 FFI integration с #cancel_safe
+- 110.8 regression + cross-platform + docs close
+
+**Plan 110.9 (V1.1 production-grade closure)** остаётся 📋 PLANNED —
+5 sub-tasks деferred until trigger condition. Implementation = отдельная
+session, ~3-4 dev-day.
+
+**Design lesson:** Plan-doc status discipline at umbrella merge time.
+Easy для miss sub-plans when umbrella close spans multiple commits over
+weeks. Routine audit pattern: at family closure, grep `**Статус:** 🆕`
+across docs/plans/<family>* — flip stragglers.
