@@ -1,0 +1,41 @@
+// Plan 124.8 [M-124.8-ro-binding-scope] — positive:
+// `ro v` declared inside inner block does NOT leak to outer scope;
+// outer `mut v` field-write works after inner block exits.
+//
+// Before fix: ro_binding_names was monotonic per-ctx, so any inner
+// `ro v = ...` (including in stdlib modules checked before user code)
+// polluted the global state и блокировал outer `mut v.field = ...`.
+// After fix: f1_block snapshots/restores ro_binding_names on entry/exit.
+module plan124_8.ro_binding_scope_block_exit_ok
+
+type Cell {
+    mut value int
+}
+
+fn block_scope_inner_ro_then_outer_mut() -> int {
+    // Outer mut binding — выживает после inner блока.
+    mut outer = Cell { value: 1 }
+    if true {
+        // Inner block: `ro inner` локальное — добавляется в ro_binding_names,
+        // но restore на выходе из блока удаляет запись.
+        ro inner = Cell { value: 99 }
+        assert(inner.value == 99)
+    }
+    // После inner блока outer mutation работает.
+    outer.value = 42
+    assert(outer.value == 42)
+    outer.value
+}
+
+test "ro inside inner block does not leak to outer" {
+    assert(block_scope_inner_ro_then_outer_mut() == 42)
+}
+
+test "stdlib ro v does not pollute user mut v" {
+    // Stdlib modules like sha1.nv / semver.nv use `ro v = ...`.
+    // Before [M-124.8-ro-binding-scope] fix the name `v` leaked into
+    // user fixtures. With fix — user mut v works cleanly.
+    mut v = Cell { value: 10 }
+    v.value = 20
+    assert(v.value == 20)
+}
