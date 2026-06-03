@@ -1,0 +1,44 @@
+// Plan 118.1 Ф.1 T6 — RawMem.compare memcmp primitive.
+//
+// Verifies normalized -1/0/+1 result (libc memcmp returns
+// implementation-defined non-zero; Nova normalizes for portability).
+
+module plan118_1.t6_rawmem_compare_ok
+
+import std.runtime.raw_mem
+
+test "RawMem.compare returns 0 for equal buffers" {
+    ro a []u8 = [1, 2, 3, 4]
+    ro b []u8 = [1, 2, 3, 4]
+    ro r = unsafe {
+        RawMem.compare(a.as_ptr(), b.as_ptr(), 4 as usize)
+    }
+    assert(r == 0)
+}
+
+test "RawMem.compare returns -1 when a < b" {
+    ro a []u8 = [1, 2, 3, 4]
+    ro b []u8 = [1, 2, 9, 4]
+    ro r = unsafe {
+        RawMem.compare(a.as_ptr(), b.as_ptr(), 4 as usize)
+    }
+    assert(r == -1)
+}
+
+test "RawMem.compare returns +1 when a > b" {
+    ro a []u8 = [1, 2, 99, 4]
+    ro b []u8 = [1, 2, 3, 4]
+    ro r = unsafe {
+        RawMem.compare(a.as_ptr(), b.as_ptr(), 4 as usize)
+    }
+    assert(r == 1)
+}
+
+test "RawMem.compare zero-length is 0 (trivially equal)" {
+    ro a []u8 = [1, 2, 3]
+    ro b []u8 = [9, 9, 9]
+    ro r = unsafe {
+        RawMem.compare(a.as_ptr(), b.as_ptr(), 0 as usize)
+    }
+    assert(r == 0)
+}

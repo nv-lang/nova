@@ -30489,6 +30489,396 @@ Lessons:
 - Forward-decl branching on AllocKind prevents Nova_X / NovaValue_X name
   conflict при mixed allocation в same module.
 
+═══════════════════════════════════════════════════════════════════════
+2026-06-03 — Plan 118 V1 foundational FFI primitives (RawMem +
+usize/isize + []T as_ptr/as_mut_ptr) landed
+═══════════════════════════════════════════════════════════════════════
+
+Worktree: nova-p118 / branch plan-118. Three commits:
+  - 37629325392 — D226 amend: usize/isize built-in platform-pointer
+    aliases (usize↔u64, isize↔i64 on 64-bit; C size_t ABI).
+  - e80a57e54e7 — Plan 118.2 Ф.1: []T.@as_ptr() / @as_mut_ptr() FFI
+    access methods. as_mut_ptr enforces mut-binding via
+    builtin_mut_method registration (NEG E_PARAM_NOT_MUT).
+  - 009bc3b92fc — Plan 118.1 Ф.1 V1: RawMem byte-level memory
+    intrinsics. std/runtime/raw_mem.nv с пятью external fn:
+    copy_from (memmove), copy_nonoverlapping (memcpy), fill (memset),
+    write_bytes (Rust alias), compare (normalized -1/0/+1 memcmp).
+    Pointer params via *u8 / *mut u8; size via usize. Каждая call site
+    wraps в unsafe { } block per D216 §8.
+
+Scope deliberately narrow — production-quality foundation rather than
+full Plan 118.x closure. 9 fixtures end-to-end (parse → typecheck →
+codegen → C compile → link → run → assert), all PASS под release
+`nova test`:
+  - plan118_1/t1_usize_isize_aliases_ok (5 sub-tests)
+  - plan118_1/t2_rawmem_copy_from_ok (memmove + view subrange)
+  - plan118_1/t3_rawmem_copy_nonoverlapping_ok (memcpy + zero-length)
+  - plan118_1/t4_rawmem_fill_ok (pattern + zero-init + partial range)
+  - plan118_1/t5_rawmem_write_bytes_ok (alias equivalence)
+  - plan118_1/t6_rawmem_compare_ok (eq/lt/gt + zero-length)
+  - plan118_1/t7_rawmem_copy_from_overlap_ok (forward overlap)
+  - plan118_2/t1_as_ptr_basic_ok (4 sub-tests)
+  - plan118_2/t1_neg_as_mut_ptr_on_ro_binding (NEG E_PARAM_NOT_MUT)
+
+V1 scope shipped:
+  - Typed pointer params `*u8` / `*mut u8` parse + map к C `const
+    nova_byte*` / `nova_byte*` (parser already supported the syntax;
+    external_registry needed usize→uint64_t plug to match call-site
+    types).
+  - RawMem unit-type namespace pattern (mirror `type Empty` / `Sentinel`
+    из spec/02-types.md examples).
+  - Overlap-safe memmove + UB-on-overlap memcpy distinction.
+  - Normalized memcmp return (no implementation-defined non-zero).
+  - usize/isize: TyCat::Int recognition + BUILTIN_TYPE_NAMES + C type
+    mapping + apply_type_subst_to_ref + receiver detection. usize ABI
+    matches C size_t on 64-bit. Spec D226 amended с formal D-block.
+
+V1 out-of-scope (deferred to followups):
+  - Typed (*T).read() / .write() instance methods — requires Plan 118
+    Ф.4 auto-deref codegen.
+  - Bulk copy via .copy_to[count] — requires size_of[T]() const fn.
+  - Volatile reads/writes (Ф.2.1-2.5).
+  - align_of[T]() / size_of[T]() compile-time const (Ф.2.3).
+  - addr_of! / addr_of_mut! macros (Ф.3) — needs built-in macro
+    framework.
+  - CStr newtype + try_from / from_unchecked / from_view (Ф.4 refined
+    design 2026-06-03) — file std/ffi/cstr.nv не landed.
+  - cstr"..." literal token (Ф.4.1-4.6).
+  - Cross-platform CI matrix, ABI snapshots, perf bench.
+  - DebugPrintable protocol + ${p:?} format spec (Ф.7).
+
+Key bugfix uncovered: ExternalRegistry's type_ref_to_c did not handle
+usize/isize. Without it the external_registry-pass registered
+RawMem.fill with param types containing fallback `Nova_usize*`,
+которые не matched call-site arg types (`uint64_t`). Strict-matching
+dispatch then picked the parser-pass registration с overload-mangled
+c_name (`Nova_RawMem_static_fill__nova_byte_p_nova_byte_uint64_t`) →
+undefined linker symbol. Fix: parallel addition of usize/isize к
+external_registry::type_ref_to_c so both candidate signatures match
+exactly; dispatch picks first (external_registry, unmangled name)
+which matches the runtime symbol. Lesson: at multiple registration
+sites C-type mapping must agree byte-for-byte, else strict overload
+selection silently picks the WRONG c_name.
+
+Plan 118 family НЕ closed:
+  - Plan 118 typed-pointer foundation (Ф.1 parser/checker/codegen):
+    parser supports `*T` syntax (verified); type-checker has TyPtr; но
+    full deref `*p` / arrow `p->m` / arithmetic — не V1 scope.
+  - Plan 118.1: V1 partial — byte-level only, typed-pointer-instance-
+    method API остаётся открытой.
+  - Plan 118.2: Ф.1 closed (as_ptr/as_mut_ptr); Ф.2 (MaybeUninit[T])
+    deferred (generic record machinery deep work).
+  - Plan 118.3: AtomicPtr[T] + cross-suspend pass — не trended yet.
+
+Followup markers opened (see Plan 118.1 plan-doc Status section):
+  [M-118.1-typed-pointer-instance-methods]
+  [M-118.1-sizeof-intrinsic]
+  [M-118.1-cstr-newtype]
+  [M-118.1-unsafe-attr-on-external-fn]
+  [M-118.1-volatile-ops]
+  [M-118.1-addr-of-macros]
+  [M-118.1-cstr-literal]
+  [M-118.1-ffi-perf-bench]
+  [M-118.1-typed-pointer-cookbook]
+  [M-118-ftype-pointer-family]
+  [M-118-npo-codegen]
+  [M-118-debug-printable]
+
+Status: 🟢 V1 LANDED, branch plan-118 ready для bidirectional sync с
+main. V2 typed-pointer instance methods + CStr + volatile + addr_of!
+макросы — отдельная multi-day work, gated на Plan 118 Ф.4 auto-deref
+codegen и user demand priority (current FFI use-cases solvable через
+RawMem byte-level + manual size arithmetic).
+
+=== Plan 123.5.5 — Incremental LSP semantic-tokens delta (V5.5, 2026-06-03) ===
+
+Followup [M-123.5-incremental-semantic-tokens] closure. V5.2 server
+recomputed entire token-set каждый request; V5.5 adds protocol
+`textDocument/semanticTokens/full/delta` для wire-efficient incremental
+updates. Single-edit prefix-suffix algorithm + per-URI snapshot cache +
+monotonic result_id.
+
+Implementation (~430 LOC):
+- nova-lsp/src/semantic_tokens_delta.rs (NEW, ~250 LOC):
+  - SemanticTokensSnapshot struct
+  - compute_semantic_token_edits — single-edit prefix-suffix
+  - build_delta_response — decision-and-snapshot helper
+  - 14 unit tests covering algorithm + decision
+- nova-lsp/src/state.rs: semantic_tokens_cache + semantic_tokens_counter
+  + next_semantic_tokens_result_id()
+- nova-lsp/src/server.rs: capability Delta { delta: Some(true) } +
+  semantic_tokens_full caches snapshot + NEW semantic_tokens_full_delta
+  handler dispatches к build_delta_response.
+- nova-lsp/src/lib.rs: module declaration.
+
+Algorithm — single-edit prefix-suffix reduction:
+  P = longest common prefix length (in tokens)
+  S = longest common suffix length (bounded к non-overlap)
+  emit one SemanticTokensEdit { start: P*5, delete_count:
+    (old.len() - P - S) * 5, data: Some(new[P..new.len() - S]) }
+
+Не minimum-edit (true LCS would split unrelated changes в N edits),
+но wire-equivalent or better для typical localized LSP edits.
+Indices гарантированно 5-aligned (каждый SemanticToken = 5 u32s).
+
+Verification (release nova-lsp + cargo test --release):
+- 14 V5.5 unit tests PASS (10 algorithm + 4 decision helper).
+- Zero regressions: 115/115 LSP tests PASS (56 lib + 10 V5.5 +
+  49 integration across 13 binaries).
+- Positive coverage: identical, append, prepend, middle, total replace,
+  empty old, empty new, modifier diff.
+- Negative coverage: mismatched prev_id → fallback, no cached snapshot
+  → fallback.
+
+Spec: D217 amend V5.5 (~140 lines) — capability, protocol surface,
+algorithm, state, decision helper, V5.5.1-V5.5.14 acceptance.
+
+Plan doc: docs/plans/123.5.5-incremental-semantic-tokens.md.
+
+Pattern lessons:
+- Pure helper extraction (build_delta_response) — testable без async
+  Backend/Client mock. State-update + response-construction live
+  в one place, makes regression sweep cheap.
+- LSP spec `data: Option<Vec<u32>>` deserialized as
+  Option<Vec<SemanticToken>> by lsp-types — algorithm works в
+  SemanticToken space, indices scale ×5 для wire format.
+- Snapshot must be updated even на fallback path (stale id) —
+  иначе client retries индефинитно с same stale id.
+
+Followup markers:
+- [M-123.5.5-lcs-multi-edit] — V5.5.1 true LCS multi-edit.
+- [M-123.5.5-snapshot-eviction] — V5.5.2 LRU/size cap.
+
+
+================================================================================
+== 2026-06-03 — Plan 110.9 V1.1 PARTIAL closure (M.9.2 + M.9.4 + M.9.5)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.9-v1.1-closure (off main c5069673063)
+
+Замысел:
+User triggered Plan 110.9 V1.1 closure ("выполни все пункты плана 110
+без упрощений и без остановок"). 5 sub-tasks examined. 3 closed
+production-ready this session; 2 deferred с honest scope assessment.
+
+Done:
+
+M-110.9.4 W_FFI_CANCEL_UNSAFE lint (commit 35afc6565e9):
+- New lint pass lint_ffi_cancel_unsafe в compiler-codegen/src/lints.rs.
+- Step 1: build external fn registry name → cancel_safe_attr.
+- Step 2: find on_exit methods (FnDecl с receiver + name == "on_exit"),
+  walk body для Call к external fn без #cancel_safe.
+- AST walker covers все ExprKind variants (Call/Block/Stmt/Expr forms).
+- Conservative scope: bare-Ident callee referencing external fn в own
+  module's registry. Cross-module → V2 followup.
+- Tests: 4/4 Rust unit tests cancel_unsafe_tests (POS: warns_on_external_
+  fn_without_cancel_safe_in_on_exit; NEG: no_warning_on_external_fn_with_
+  cancel_safe_in_on_exit, no_warning_on_external_fn_call_outside_on_exit,
+  no_warning_on_plain_nova_fn_in_on_exit) + 1 Nova fixture
+  ffi_cancel_safe_no_warning_v1_1.nv (plain Nova fns в on_exit silent).
+- D82 restricts external fn к std.runtime.* — user fixtures cannot trigger;
+  hence Rust unit tests cover negative cases.
+
+M-110.9.5 on_exit strict signature check (commit d2daf4b768e):
+- Extended validate_on_exit_signature в types/mod.rs.
+- Strict V1.1 checks: (a) return type Unit (accepts BOTH parser repr's —
+  TypeRef::Unit, Tuple([]), Named("unit"), Readonly inner), (b) effects
+  subset of {Fail[E]}, (c) no generic params.
+- Pragmatic: parser canonicalization (Plan 110.9.5.a) deferred —
+  broader-scope refactor; would risk cascade fixtures. Accept-both-forms
+  approach gives strict semantics без regression.
+- Tests: 38/38 plan110 PASS (37 baseline + 1 new NEG neg_on_exit_non_
+  unit_return_v1_1.nv verifying -> int rejected with D188-malformed-on-exit).
+
+M-110.9.2 WithExitTimeout Level 1 (commit 8ff8dda820b):
+- Extended ConsumeScope handler в emit_c.rs.
+- New Level 1 check BEFORE Level 2 (Application) + Level 3 (hardcoded):
+  if method_overloads contains (type_name, "exit_timeout_ms") →
+  emit `int _consume_timeout_N = (int)Nova_<T>_method_exit_timeout_ms(c_binding);`.
+- #realtime bypass unchanged (Plan 110.2.4 D198).
+- Tests: 39/39 plan110 PASS (38 prior + 1 new POS with_exit_timeout_
+  level1_v1_1.nv verifying Conn @exit_timeout_ms() = 250 codegen path).
+
+Deferred:
+
+M-110.9.1 Typed CleanupTimeoutError throw codegen — requires:
+- Emit static `_nova_throw_cleanup_timeout_impl(int duration_ms)` в user TU
+  preamble (allocates Nova_CleanupTimeoutError* + calls nova_throw_typed
+  с NOVA_TID_USER_Nova_CleanupTimeoutError).
+- Startup code (after nova_runtime_init): assign _nova_throw_cleanup_timeout_fn.
+- type_id_registry integration: emit только if CleanupTimeoutError зарегистрирован
+  (always true в prelude).
+- Estimate ~2-3h focused work; substantial codegen + runtime integration.
+
+M-110.9.3 Application register_finalizer LIFO runtime — requires:
+- New NovaFinalizerStack struct в nova_rt/effects.h (push/pop/iterate helpers).
+- Per-`with Application` block emission of local stack.
+- Application.register_finalizer(f) dispatch — push to stack.
+- At with-block exit (normal + throw paths): iterate stack reverse, invoke each.
+- Estimate ~½ day focused work; substantial runtime + codegen integration.
+
+Plan 110.9 status: flipped 📋 PLANNED → 🟡 PARTIAL (3/5 closed). Plan-doc
+updated с detailed scope для deferred markers. Spec D188 amend reflects
+V1.1 partial closure.
+
+Тесты (release nova-cli):
+- 39/39 plan110 PASS (36 baseline + 3 new — 2 POS V1.1 + 1 NEG V1.1).
+- Rust unit tests: 4/4 cancel_unsafe_tests + existing all PASS.
+- No regression на other plan families.
+
+Lessons:
+- Pragmatic accept-both-forms strict check avoids parser-canonicalization
+  cascade risk. Trade-off: спецификация принимает 2 representation forms
+  temporarily; canonical form deferred to focused refactor.
+- AST walker pattern reused — fourth/fifth walker family (lints + types
+  validators).
+- C codegen changes (Level 1 timeout lookup) lightest — pure additive
+  branch в existing 3-level resolution.
+- Runtime+codegen integration (typed throw, finalizer LIFO) genuinely
+  heavier — honest scope assessment, не shipping half-baked.
+
+
+================================================================================
+2026-06-03 — Plan 48.1: cross-module generic template registration ordering
+================================================================================
+
+Sub-plan под Plan 48 (mono pass). Trigger: при работе над Plan 91.13
+(Ф.3 JSON conformance) обнаружен codegen-bug — cross-module
+Option[HashMap[K,V]] return type signature имел `NovaOpt_nova_int`
+(erased fallback), а body — `NovaOpt_Nova_HashMap_p` (mono'd) → CC-FAIL
+type mismatch.
+
+Root cause:
+- `generic_type_templates` populated per-module из `module.items`
+- Cross-module imports (HashMap из std/collections/hashmap.nv) НЕ были
+  в templates во время forward-decl pass'a
+- type_ref_to_c для inner generic fallback'ил в `Nova_HashMap*` (erased
+  line ~4503)
+- Option case checked is_concrete_type → false → returned NovaOpt_nova_int
+- Body pass позже видел mono'd type (drain enqueued instance) → mismatch
+
+Fix #1 (peer_files scan, ~30 строк в emit_module):
+- Pre-populate generic_type_templates из peer_files
+  (transitively-imported modules) ПОСЛЕ module.items pass, ДО
+  forward-decl pass'a
+- Same skip-list logic (Option/Result/protocols/newtypes)
+- Insert с entry()/or_insert_with — module.items wins на коллизии
+
+Fix #2 (forward typedef, ~15 строк в register_novaopt_decl):
+- При registration NovaOpt typedef для pointer to mono'd struct
+  (Nova_X____<args>*), emit forward `typedef struct Nova_X____ Nova_X____;`
+  ДО NovaOpt typedef
+- Без этого NovaOpt struct содержит field type ссылающийся на
+  undeclared struct → C-compiler "unknown type name"
+- Polluting check: только для mono'd names (contain "____" delim) с
+  Nova_ prefix; skip primitives + runtime-defined
+
+Regression test:
+- nova_tests/plan48_1/option_hashmap_cross_module.nv — минимальный
+  fixture с Option[HashMap[str, int]] cross-module use
+- 1/0 PASS post-fix; CODEGEN-FAIL pre-fix (reproduces bug)
+
+Test impact (full nova test):
+- Baseline:  1865 PASS / 173 FAIL / 56 SKIP
+- Post-fix:  1867 PASS / 172 FAIL / 56 SKIP
+- Delta:     +2 PASS / -1 FAIL / 0 real regressions
+- Diff:
+  + concurrency/sleep_precision_bench (flaky recovery)
+  + protocols/conversion/from_basic (flaky recovery)
+  + plan103_3/mutex_mutual_exclusion_observed_interleave (flaky)
+  - concurrency/mn_runtime_cross_channel (flaky timeout — env-flake)
+
+Commits:
+- e467e7707ab feat(plan48.1): cross-module generic template registration
+- 353d1b70ec2 Merge plan-48.1 into main
+- Push: github/main + github/plan-48.1
+
+Followups (post-MVP, не блокеры):
+- [M-48.1-transitive-type-import-auto] — auto-pull транзитивных type
+  refs из импортированных types (e.g. JsonValue references HashMap →
+  auto-import HashMap транзитивно). Сейчас user должен ЯВНО import
+  HashMap если использует JsonValue.@as_object().
+- [M-48.1-if-expr-result-type-infer] — emit_if_expr result type
+  inference не учитывает let-binding annotations в then-branch; нужен
+  upgrade tmp declaration на основе actual emitted type. Surfaced при
+  написании регрессионного теста.
+- [M-48.1-lazy-template-registration] — lazy registration (on first
+  reference) если eager даёт perf hit. Сейчас eager (cheap).
+- [M-48.1-import-graph-validation] — diagnostic when transitively-
+  imported generic не разрешается.
+
+Plan 91.13 status: остался deferred. После Plan 48.1 signature теперь
+правильный, но второй pre-existing bug в json.nv codegen (NOVA_UNIT cast
+to nova_int в char-handling) — не часть Plan 48.1.
+
+Plan 48.1 ✅ CLOSED.
+
+=== Plan 123.7.4 — Incremental SCC cache (V7.4, 2026-06-03) ===
+
+Followup [M-123.7-incremental-scc] closure. Финальный followup Plan 123
+V*.3+ backlog'а — все четыре подплана закрыты в одной сессии.
+
+V7.3 emits exact Tarjan SCC + reverse-topological propagation per
+cache_module invocation (~1ms на typical module). Realistic workloads
+(LSP rechecks, IDE batch passes, build-cache hits) repeatedly invoke
+cache_module на identical modules → wasted work.
+
+V7.4 adds process-level memoization: fingerprint входной граф,
+restore cached propagated direct map по fingerprint hit. O(1) для
+repeated identical inputs.
+
+Implementation (~430 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - ScCache struct (last_fingerprint, last_result, hits, misses)
+  - WRITE_SET_SCC_CACHE + READ_SET_SCC_CACHE OnceLock<Mutex<ScCache>>
+  - scc_cache_enabled / scc_cache_stats / reset_scc_caches public API
+  - compute_scc_fingerprint — BTreeMap-canonical hash via DefaultHasher;
+    sentinel-reserves 0 to disambiguate empty-cache vs empty-graph
+  - propagate_via_scc_cached wrapper around V7.3 propagate_via_scc
+  - Wired into build_write_set_registry + build_read_set_registry
+  - 10 V7.4 unit tests (6 positive + 4 negative)
+
+Opt-in via NOVA_FIELD_CACHE_SCC_CACHE=1 — default-off preserves V7.3
+deterministic test contract. Two separate cache slots (write/read)
+domain-separate fingerprint space — no collision risk.
+
+Verification (release nova-cli + clang):
+- field_cache::tests 47/47 PASS (10 V7.4 + 5 V7.3 + 32 baseline).
+- nova_tests/plan123_7   1/1   PASS (default cfg).
+- nova_tests/plan123_7_1 10/10 PASS (default cfg AND с cache enabled).
+- nova_tests/plan123_7_2 2/2   PASS.
+
+Spec: D223 amend V7.4 (~150 lines) — cache structure, fingerprint,
+opt-in semantics, telemetry, V7.4.1-V7.4.10 acceptance.
+
+Plan doc: docs/plans/123.7.4-incremental-scc.md.
+
+🎯 Plan 123 V*.3+ backlog ПОЛНОСТЬЮ ЗАКРЫТ:
+  V6.2.1 wallclock bench + V4.3 deep prefix + V5.5 incremental semtokens
+  + V7.4 incremental SCC — 4 sub-plans, 1 session, ~1610 LOC delta.
+  Только V8 cross-module IPA остался (DEFERRED INDEFINITELY).
+
+Pattern lessons:
+- Process-level OnceLock<Mutex<T>> для compiler memoization — clean
+  без thread-local invasion. Compute outside lock минимизирует
+  serialization серьёзных threads.
+- Fingerprint via BTreeMap canonicalization защищает от HashMap
+  iteration nondeterminism. DefaultHasher quality достаточен для
+  false-collision probability ≪ 2⁻⁶³.
+- Single-slot cache достаточен для hot LSP edit-loop scenario.
+  Multi-slot LRU полезен для batch-compile (V7.4.1 followup).
+- Test-isolation via static Mutex<()> + RAII env-var guard required
+  когда tests share process state.
+
+Followup markers:
+- [M-123.7.4-lru-multi-slot] — V7.4.1 multi-slot LRU (~8 entries).
+- [M-123.7.4-telemetry-json] — V7.4.2 nova check --telemetry-cache
+  integration with hits/misses fields.
+- [M-123.7.4-auto-enable] — V7.4.3 opportunistic auto-enable когда
+  detected LSP runtime context.
+
 
 ================================================================================
 == 2026-06-03 — Plan 124.8 V2.1 — 3 followup markers CLOSED

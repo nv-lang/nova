@@ -1,0 +1,16 @@
+// Plan 118.2 NEG-T1 — @as_mut_ptr requires mut binding (Plan 108.1 D176).
+// Calling on ro array → E_PARAM_NOT_MUT (mut-method on readonly binding).
+//
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+
+module plan118_2.t1_neg_as_mut_ptr_on_ro_binding
+
+fn try_mut_ptr(arr []int) -> () {
+    ro p = arr.as_mut_ptr()
+    assert(1 == 1)
+}
+
+test "as_mut_ptr on ro param rejected" {
+    ro arr = [1, 2, 3]
+    try_mut_ptr(arr)
+}

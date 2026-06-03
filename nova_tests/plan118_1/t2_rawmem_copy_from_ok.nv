@@ -1,0 +1,32 @@
+// Plan 118.1 Ф.1 T2 — RawMem.copy_from memmove primitive.
+//
+// Tests byte-level copy between Nova-managed buffers через ptr-extraction
+// + RawMem.copy_from. Mirror Plan 90 D141 []T.copy_from semantics
+// (overlap-safe memmove).
+
+module plan118_1.t2_rawmem_copy_from_ok
+
+import std.runtime.raw_mem
+
+test "RawMem.copy_from copies bytes between buffers" {
+    ro src []u8 = [11, 22, 33, 44, 55]
+    mut dst []u8 = [0, 0, 0, 0, 0]
+    unsafe {
+        RawMem.copy_from(src.as_ptr(), dst.as_mut_ptr(), 5 as usize)
+    }
+    assert(dst[0] == (11 as u8))
+    assert(dst[4] == (55 as u8))
+}
+
+test "RawMem.copy_from with view subrange" {
+    ro src []u8 = [10, 20, 30, 40, 50]
+    mut dst []u8 = [0, 0, 0]
+    unsafe {
+        // Copy middle 3 elements (src[1..4]) to dst.
+        ro view = src[1..4]
+        RawMem.copy_from(view.as_ptr(), dst.as_mut_ptr(), view.len() as usize)
+    }
+    assert(dst[0] == (20 as u8))
+    assert(dst[1] == (30 as u8))
+    assert(dst[2] == (40 as u8))
+}

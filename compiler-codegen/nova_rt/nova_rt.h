@@ -494,4 +494,36 @@ typedef struct { char _dummy; } nova_unit;
  * `nova_tests/nova.toml [ffi] c_shims` force-includes header per package.
  * См. examples/ffi/sqlite_mini_ffi.h + nova_tests/nova.toml. */
 
+/* Plan 118.1 Ф.1 (D-block — see plan-doc): RawMem byte-level memory
+ * intrinsics. Underlying C primitives для FFI / driver / embedded work.
+ *
+ * Naming convention: `Nova_RawMem_static_*` matches Nova's static-method
+ * external-fn binding `RawMem.copy_from` → C `Nova_RawMem_static_copy_from`
+ * (codegen mangles static methods as `Nova_<Type>_static_<method>`). Plain
+ * wrappers around libc memmove/memcpy/memset/memcmp.
+ *
+ * Pointer types: const void* / void* — opaque (caller casts *T to *u8
+ * or *T as appropriate; codegen handles ABI mapping). usize for byte
+ * count (D226 §3 amend — usize = u64 alias, ABI-compatible с C size_t).
+ */
+static inline void Nova_RawMem_static_copy_from(const void* src, void* dst, uint64_t n) {
+    memmove(dst, src, (size_t)n);
+}
+static inline void Nova_RawMem_static_copy_nonoverlapping(const void* src, void* dst, uint64_t n) {
+    memcpy(dst, src, (size_t)n);
+}
+static inline void Nova_RawMem_static_fill(void* dst, nova_byte val, uint64_t n) {
+    memset(dst, (int)val, (size_t)n);
+}
+static inline void Nova_RawMem_static_write_bytes(void* dst, nova_byte val, uint64_t n) {
+    /* Identical semantic к fill (libc memset takes byte-pattern val).
+     * Provided для Rust ptr::write_bytes naming parity. */
+    memset(dst, (int)val, (size_t)n);
+}
+static inline nova_int Nova_RawMem_static_compare(const void* a, const void* b, uint64_t n) {
+    int r = memcmp(a, b, (size_t)n);
+    /* Normalize libc memcmp's implementation-defined non-zero к -1/+1. */
+    return (nova_int)(r > 0 ? 1 : (r < 0 ? -1 : 0));
+}
+
 #endif /* NOVA_RT_H */

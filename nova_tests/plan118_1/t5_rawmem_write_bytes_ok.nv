@@ -1,0 +1,21 @@
+// Plan 118.1 Ф.1 T5 — RawMem.write_bytes (memset alias for fill).
+//
+// Verifies write_bytes behaves identically к fill (Rust precedent name).
+
+module plan118_1.t5_rawmem_write_bytes_ok
+
+import std.runtime.raw_mem
+
+test "RawMem.write_bytes is identical к RawMem.fill" {
+    mut a []u8 = [0, 0, 0, 0]
+    mut b []u8 = [0, 0, 0, 0]
+    unsafe {
+        RawMem.fill(a.as_mut_ptr(), 0x42 as u8, 4 as usize)
+        RawMem.write_bytes(b.as_mut_ptr(), 0x42 as u8, 4 as usize)
+    }
+    assert(a[0] == b[0])
+    assert(a[1] == b[1])
+    assert(a[2] == b[2])
+    assert(a[3] == b[3])
+    assert(a[0] == (0x42 as u8))
+}

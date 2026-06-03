@@ -1,0 +1,42 @@
+// Plan 118.2 T1 — []T @as_ptr() / @as_mut_ptr() FFI access.
+//
+// Provides direct access к internal data pointer of []T для FFI calls
+// requiring (ptr, len) pair (e.g., C `read(fd, buf, n)`, `memcpy`).
+//
+// SAFE method — pointer value extraction itself is not a dereference;
+// caller wraps subsequent ptr ops в `unsafe { }` per E_UNSAFE_REQUIRED.
+
+module plan118_2.t1_as_ptr_basic_ok
+
+test "[]int.as_ptr() returns valid pointer" {
+    ro arr = [1, 2, 3, 4, 5]
+    ro p = arr.as_ptr()
+    // Read first element through pointer (requires unsafe).
+    ro first = unsafe { *p }
+    assert(first == 1)
+}
+
+test "[]int.as_ptr() respects view offset (D144)" {
+    ro arr = [10, 20, 30, 40, 50]
+    ro view = arr[2..4]               // []int view, len=2
+    ro p = view.as_ptr()              // pointer offset to arr[2]
+    ro first = unsafe { *p }
+    assert(first == 30)
+}
+
+test "[]u8.as_mut_ptr() for mutable buffer access" {
+    mut buf []u8 = [0, 0, 0, 0]
+    ro p = buf.as_mut_ptr()
+    unsafe { *p = (42 as u8) }
+    assert(buf[0] == (42 as u8))
+}
+
+test "as_ptr() + len() pair for FFI signature" {
+    ro arr = [100, 200, 300]
+    ro p = arr.as_ptr()
+    ro n = arr.len()
+    assert(n == 3)
+    // Pattern для FFI: pass p + (n as usize) к C function.
+    ro n_usize = n as usize
+    assert(n_usize == 3)
+}

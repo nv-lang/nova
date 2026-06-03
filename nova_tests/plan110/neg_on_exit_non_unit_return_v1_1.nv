@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.9.5 V1.1 [M-110.9.5-on-exit-strict-signature] NEG:
+// on_exit с non-Unit return type rejected.
+
+// EXPECT_COMPILE_ERROR D188-malformed-on-exit
+
+module plan110.neg_on_exit_non_unit_return_v1_1
+
+type Conn { ro h int }
+fn Conn.new(h int) -> Conn => { h }
+
+fn Conn consume @on_exit(_outcome ScopeOutcome) -> int {
+    return @h
+}
+
+test "on_exit с non-Unit return rejected" {
+    consume conn = Conn.new(5) {
+        assert(conn.h == 5)
+    }
+}

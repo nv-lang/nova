@@ -1756,6 +1756,9 @@ impl CEmitter {
             const BUILTIN_TYPE_NAMES: &[&str] = &[
                 "int", "i64", "i32", "i16", "i8",
                 "u64", "u32", "u16", "u8",
+                // Plan 118.1: platform-pointer-width aliases (usize = u64,
+                // isize = i64 на bootstrap 64-bit; ABI bridge для C size_t).
+                "usize", "isize",
                 "f64", "f32", "bool", "str", "char",
                 // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
                 "Option", "Result", "Self", "Effect", "CancelToken",
@@ -4455,6 +4458,12 @@ impl CEmitter {
                     "u64"  => Ok("uint64_t".into()),
                     // Plan 70.5: uint = alias u64 (bootstrap, mirror int = i64).
                     "uint" => Ok("uint64_t".into()),
+                    // Plan 118.1 (D-block [M-D226-isize-usize-alias-D-block]):
+                    // usize/isize — platform-pointer-width aliases. Bootstrap
+                    // 64-bit only: usize = u64, isize = i64. ABI bridge для
+                    // C `size_t` / `ptrdiff_t` в FFI signatures (D226 §5).
+                    "usize" => Ok("uint64_t".into()),
+                    "isize" => Ok("nova_int".into()),
                     "u32"  => Ok("uint32_t".into()),
                     "u16"  => Ok("uint16_t".into()),
                     // Plan 70.4 Ф.4: u8 → nova_byte (same as byte). Both are
@@ -11295,10 +11304,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // без registry, поэтому только примитивы.
                 let c = match name.as_str() {
                     "int" | "i64" => "nova_int",
+                    // Plan 118.1: isize platform alias
+                    "isize" => "nova_int",
                     "f64" => "nova_f64",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
                     "u8" => "nova_byte",
+                    // Plan 118.1: usize platform alias
+                    "usize" => "uint64_t",
                     _ => return None,
                 };
                 Some(c.to_string())
@@ -14855,10 +14868,23 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 110.2.4 (D198): #realtime fn bypasses 3-level resolution,
                 // emits hardcoded 0 (no timeout = realtime-incompatible suspend).
                 let timeout_var = format!("_consume_timeout_{}", scope_id);
+                // Plan 110.9.2 V1.1 [M-110.9.2-with-exit-timeout-level1]:
+                // Level 1 WithExitTimeout per-type protocol lookup. If type
+                // implements `exit_timeout_ms()` method — use it (beats
+                // Application + hardcoded fallback). Symbol pattern
+                // `Nova_<TypeName>_method_exit_timeout_ms`.
+                let level1_key = (type_name.clone(), "exit_timeout_ms".to_string());
+                let has_level1 = self.method_overloads.contains_key(&level1_key);
                 if self.in_realtime {
                     self.line(&format!(
                         "int {} = 0;  /* Plan 110.2.4 (D198): #realtime bypass — no timeout */",
                         timeout_var
+                    ));
+                } else if has_level1 {
+                    // Plan 110.9.2 V1.1: per-type WithExitTimeout beats Application + Level 3.
+                    self.line(&format!(
+                        "int {} = (int)Nova_{}_method_exit_timeout_ms({});  /* Plan 110.9.2 V1.1 Level 1 */",
+                        timeout_var, type_name, c_binding
                     ));
                 } else if self.effect_schemas.contains_key("Application") {
                     // Plan 110.4.6.a (D192 Level 2 + D195): consult Application
@@ -19377,6 +19403,21 @@ _cp++; \
                         "is_empty" if args.is_empty() => {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("(({}->len) == 0)", obj_c));
+                        }
+                        // Plan 118.2 (D-block — see plan-doc) — FFI access
+                        // к internal data pointer. Zero-overhead — emits
+                        // `arr->data` (T* field). Caller responsibility:
+                        // not deref past `arr->len`; not retain pointer past
+                        // mutation/realloc of arr.
+                        // `as_ptr` returns `*ro T` (ABI: `const T*` per D216 §11)
+                        // `as_mut_ptr` returns `*mut T` (ABI: `T*`)
+                        "as_ptr" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("(({}->data))", obj_c));
+                        }
+                        "as_mut_ptr" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("(({}->data))", obj_c));
                         }
                         "get" => {
                             let obj_c = self.emit_expr(obj)?;
@@ -25117,12 +25158,16 @@ _cp++; \
         // pointer Nova_<T>*.
         let recv_c_ty = match type_name.as_str() {
             "int" | "i64" => "nova_int".to_string(),
+            // Plan 118.1: isize alias = nova_int
+            "isize" => "nova_int".to_string(),
             "f64" => "nova_f64".to_string(),
             "f32" => "nova_f32".to_string(),
             "str" => "nova_str".to_string(),
             "char" => "nova_int".to_string(),
             "u8" => "nova_byte".to_string(),
             "bool" => "nova_bool".to_string(),
+            // Plan 118.1: usize alias = uint64_t
+            "usize" => "uint64_t".to_string(),
             _ => format!("Nova_{}*", type_name),
         };
 
@@ -27967,6 +28012,14 @@ _cp++; \
                             // Plan 60 / D117: size-accessor methods.
                             "len" | "capacity" => return "nova_int".into(),
                             "is_empty" => return "nova_bool".into(),
+                            // Plan 118.2 — FFI access to internal data pointer.
+                            // Returns C `T*` for both as_ptr and as_mut_ptr;
+                            // semantic distinction (*ro T vs *mut T) enforced
+                            // в type-checker через mut binding requirement
+                            // (as_mut_ptr requires mut binding per D108.1).
+                            // C-side const qualifier dropped to avoid temp-var
+                            // const-init issues в unsafe blocks (codegen layout).
+                            "as_ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
                             _ => {
                                 // Plan 101.1: user-extension array method
                                 // (fn[T] []T @method...). Поиск в mono_method_decls
