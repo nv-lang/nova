@@ -31298,3 +31298,57 @@ Industry edge: Nova становится **первым языком** с unifie
 syntax + explicit `value` modifier для stack allocation. Achievement
 positions Nova ahead-of-curve vs Kotlin value class (single-field) и
 Java Valhalla (incoming).
+
+
+---
+
+## Plan 124.8 V2.1 — 3 followup markers CLOSED (2026-06-03)
+
+V2.1 micro-closure follows V2 production-grade landing. Закрывает 3
+из 5 V2 followup markers:
+
+### Markers closed
+
+**[M-124.8-ro-binding-scope]:** root-cause cross-module leak —
+`ro_binding_names` была monotonic per-ctx. Stdlib `ro v = ...`
+(sha1.nv / semver.nv) полютировало пользовательские fixtures с
+`mut v = ...`. Fix: `f1_block` snapshots/restores `ro_binding_names`
+на entry/exit (parallel scope snapshot/restore). `Stmt::Let`
+shadow-aware — всегда removes prior entry, добавляет назад только если
+ro. 3 fixtures positive + negative.
+
+**[M-124.8-tuple-mut-field-write-codegen]:** coverage gap. End-to-end
+positive (single/multi/sequential/compound/cross-field) + binding-
+dominates negative через D175 `ro` chain. 4 fixtures. Через release
+nova-cli + clang.
+
+**[M-124.8-zero-on-move] V1:** opt-in security attribute. Parser
+recognizes `#zero_on_move` (duplicate detection, только перед `type`).
+Checker validates kind (allowed: Record heap+value, NamedTuple, Newtype;
+reject Effect/Protocol/Sum/Alias/Opaque с E_ZERO_ON_MOVE_INVALID_KIND).
+Codegen emits per-type `static inline void Nova_T_zero_storage(<C_type>* p)`
+helper после typedef. 6 fixtures (3 positive + 3 negative).
+
+### V2 deferred
+
+**[M-124.8-zero-on-move-auto-inject]:** auto memset injection at
+consume call sites. Требует deep integration с consume codegen
+(Plan 100.x sync primitives) — regression risk. Defer to V2.
+
+### Pre-existing bug exposed при testing (НЕ caused by V2.1)
+
+**[M-124.8-value-record-mut-literal-codegen]:** `mut t = ValueT { ... }`
+direct literal binding emits `Nova_T*` instead of `NovaValue_T`.
+Workaround через `ro` + constructor pattern. Not zero_on_move specific.
+
+### Verification
+
+- plan124_8 40/40 PASS (V1 23 + V2 4 + V2.1 13 new fixtures).
+- 0 regression: plan120 8/8 + plan124_1 9/9 + plan124_3 10/10 +
+  plan108_3 14/14 unchanged.
+
+### V2.1 acceptance
+
+A8.21-A8.30 (10 new criteria). См. `spec/decisions/02-types.md`.
+
+Plan 124.8 V2.1 ✅ PRODUCTION-GRADE LANDED.

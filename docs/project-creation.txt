@@ -30488,3 +30488,74 @@ Lessons:
   modular extension; не trespass на existing record paths.
 - Forward-decl branching on AllocKind prevents Nova_X / NovaValue_X name
   conflict при mixed allocation в same module.
+
+
+================================================================================
+== 2026-06-03 — Plan 124.8 V2.1 — 3 followup markers CLOSED
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p124-8
+> Branch: plan-124.8-tuple-value-refine
+
+V2.1 followup closure после V2 production-grade. Закрывает 3 марковых
+followup из original V2 closure list:
+
+[M-124.8-ro-binding-scope] ✅ CLOSED
+- Root cause: ro_binding_names monotonic per-ctx — stdlib `ro v = ...`
+  (sha1.nv / semver.nv) leak'ало в user fixtures `mut v = ...`.
+- Fix: f1_block snapshots/restores ro_binding_names на entry/exit
+  (parallel scope snapshot/restore). Stmt::Let shadow-aware — всегда
+  removes prior entry, добавляет назад только если ro.
+- Tests: 3 fixtures positive + negative (block-exit cleanup,
+  shadowing, outer-ro-still-blocks).
+
+[M-124.8-tuple-mut-field-write-codegen] ✅ CLOSED
+- Coverage gap. Negotation сценарии тестированы только частично.
+- Tests: 4 fixtures end-to-end через release nova-cli + clang —
+  single field write, multi-field write, sequential overwrite,
+  compound expression, cross-field arithmetic, method-call visibility,
+  ro-binding-dominates negative.
+
+[M-124.8-zero-on-move] V1 ✅ CLOSED
+- Opt-in security attribute `#zero_on_move` для consume types.
+- V1: parser + AST (`TypeDecl.zero_on_move: bool`) + checker validation
+  (allowed kinds Record/NamedTuple/Newtype; reject Effect/Protocol/Sum/
+  Alias/Opaque с E_ZERO_ON_MOVE_INVALID_KIND) + per-type codegen helper
+  `static inline void Nova_T_zero_storage(<C_type>* p)` (Nova_T для
+  heap+newtype, NovaValue_T для value, NovaTuple_T для named tuple).
+- V2 followup [M-124.8-zero-on-move-auto-inject]: auto memset injection
+  at consume call sites — deferred (требует deep consume codegen Plan
+  100.x integration; regression risk для sync primitives).
+- Tests: 6 fixtures (3 positive — heap/value/named-tuple; 3 negative —
+  protocol, alias, duplicate).
+
+Reorganization:
+- spec/02-types.md: 3 markers flipped ✅ CLOSED; 2 new followups added
+  for deferred work; A8.21-A8.30 acceptance criteria.
+- plan-doc: status flipped V2 → V2.1 PRODUCTION-GRADE.
+
+Verification (release nova-cli + clang):
+- plan124_8 40/40 PASS (V1 23 + V2 4 + V2.1 13 new fixtures).
+- 0 regression: plan120 8/8 + plan124_1 9/9 + plan124_3 10/10 +
+  plan108_3 14/14 unchanged.
+
+Pre-existing bug exposed при testing (НЕ caused by V2.1):
+- [M-124.8-value-record-mut-literal-codegen]: `mut t = ValueT { ... }`
+  direct literal binding emits `Nova_T*` вместо `NovaValue_T`. Workaround
+  via `ro` + constructor. Will need fix в emit_let_binding C-type
+  resolution для value-record direct-literal RHS path.
+
+Lessons:
+- Cross-module state leak в ro_binding_names = textbook bug class —
+  всегда тестировать checker passes с stdlib included (sha1/semver
+  имеют `ro v = ...` boundaries).
+- Block-scoped snapshot/restore = correct primitive для any per-block
+  state tracking; pattern должен mirror scope snapshot.
+- Shadow semantics: «всегда remove prior entry» = bulletproof; avoid
+  «remove only if mut» branching.
+- For codegen-affecting attributes (`#zero_on_move`): emit helper +
+  defer auto-inject = safe incremental approach. V2 followup для full
+  integration с consume call sites.
+- Parser `parse_type_attrs` extensible через explicit tuple return —
+  3rd boolean cleaner чем new TypeAttr variant для attributes which
+  affect codegen integration (not literal coercion).
