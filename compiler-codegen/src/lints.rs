@@ -251,7 +251,222 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     // Plan 118 Ф.5 A22 (D216 §7): W_OPTION_DOUBLE_NESTED — nested
     // Option[Option[*T|ptr]] ambiguous под NPO codegen.
     warnings.extend(lint_option_double_nested(m));
+    // Plan 110.9.4 (D188 amend): W_FFI_CANCEL_UNSAFE — non-cancel_safe FFI
+    // call inside on_exit body. Stdlib types implementing Consumable must
+    // annotate native cleanup external fns с `#cancel_safe`.
+    warnings.extend(lint_ffi_cancel_unsafe(m));
     warnings
+}
+
+// ============================================================================
+// Plan 110.9.4 [M-110.9.4-ffi-cancel-unsafe-lint]: W_FFI_CANCEL_UNSAFE.
+//
+// При invoke external fn БЕЗ `#cancel_safe` attribute inside ConsumeScope's
+// `on_exit` method body — warning. Rationale: under cancel-shield deadline
+// model (Plan 110.2 D188 R3), cancellation может deliver inside cleanup
+// body; native fns без attestation могут блок'нуть или crash. `#cancel_safe`
+// attribute attests C-side function is safe to invoke в этом scenario.
+//
+// Conservative: only fires when callee is plain Ident referencing external
+// fn in module's own item registry. Cross-module external fns require
+// import + name resolution which lint pass не выполняет.
+// ============================================================================
+
+fn lint_ffi_cancel_unsafe(m: &Module) -> Vec<LintWarning> {
+    let mut warnings = Vec::new();
+    use std::collections::HashMap as Map;
+    // Step 1: build external fn registry: name → cancel_safe_attr.
+    let mut external_fns: Map<String, bool> = Map::new();
+    let mut collect = |fd: &FnDecl| {
+        if fd.is_external {
+            external_fns.insert(fd.name.clone(), fd.cancel_safe_attr);
+        }
+    };
+    for item in &m.items {
+        if let Item::Fn(fd) = item { collect(fd); }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item { collect(fd); }
+        }
+    }
+    if external_fns.is_empty() { return warnings; }
+    // Step 2: find on_exit methods (Item::Fn with receiver и name == "on_exit"),
+    // walk их body looking for external-fn calls.
+    let mut visit_fn = |fd: &FnDecl| {
+        if fd.receiver.is_some() && fd.name == "on_exit" {
+            match &fd.body {
+                FnBody::Expr(e) => walk_expr_for_cancel_unsafe(e, &external_fns, &mut warnings),
+                FnBody::Block(b) => walk_block_for_cancel_unsafe(b, &external_fns, &mut warnings),
+                FnBody::External => {}
+            }
+        }
+    };
+    for item in &m.items {
+        if let Item::Fn(fd) = item { visit_fn(fd); }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item { visit_fn(fd); }
+        }
+    }
+    warnings
+}
+
+fn walk_block_for_cancel_unsafe(
+    b: &Block,
+    external_fns: &std::collections::HashMap<String, bool>,
+    warnings: &mut Vec<LintWarning>,
+) {
+    for s in &b.stmts {
+        walk_stmt_for_cancel_unsafe(s, external_fns, warnings);
+    }
+    if let Some(t) = &b.trailing {
+        walk_expr_for_cancel_unsafe(t, external_fns, warnings);
+    }
+}
+
+fn walk_stmt_for_cancel_unsafe(
+    s: &Stmt,
+    external_fns: &std::collections::HashMap<String, bool>,
+    warnings: &mut Vec<LintWarning>,
+) {
+    match s {
+        Stmt::Let(d) => walk_expr_for_cancel_unsafe(&d.value, external_fns, warnings),
+        Stmt::Const(d) => walk_expr_for_cancel_unsafe(&d.value, external_fns, warnings),
+        Stmt::Expr(e) => walk_expr_for_cancel_unsafe(e, external_fns, warnings),
+        Stmt::Assign { target, value, .. } => {
+            walk_expr_for_cancel_unsafe(target, external_fns, warnings);
+            walk_expr_for_cancel_unsafe(value, external_fns, warnings);
+        }
+        Stmt::Return { value: Some(v), .. } => walk_expr_for_cancel_unsafe(v, external_fns, warnings),
+        Stmt::Throw { value, .. } => walk_expr_for_cancel_unsafe(value, external_fns, warnings),
+        Stmt::Defer { body, .. } => walk_expr_for_cancel_unsafe(body, external_fns, warnings),
+        Stmt::ConsumeScope { init, body, .. } => {
+            walk_expr_for_cancel_unsafe(init, external_fns, warnings);
+            walk_block_for_cancel_unsafe(body, external_fns, warnings);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            walk_expr_for_cancel_unsafe(expr, external_fns, warnings);
+        }
+        _ => {}
+    }
+}
+
+fn walk_expr_for_cancel_unsafe(
+    e: &Expr,
+    external_fns: &std::collections::HashMap<String, bool>,
+    warnings: &mut Vec<LintWarning>,
+) {
+    if let ExprKind::Call { func, args, trailing } = &e.kind {
+        // Detect bare-Ident callee referencing external fn без #cancel_safe.
+        if let ExprKind::Ident(name) = &func.kind {
+            if let Some(cancel_safe) = external_fns.get(name) {
+                if !cancel_safe {
+                    warnings.push(LintWarning {
+                        rule: "W_FFI_CANCEL_UNSAFE",
+                        diag: Diagnostic::new(
+                            format!(
+                                "[W_FFI_CANCEL_UNSAFE] call to external fn `{}` from \
+                                 within `on_exit` body without `#cancel_safe` attribute \
+                                 (Plan 110.9.4 / D188 R3). Under cancel-shield deadline \
+                                 cancellation may be delivered inside cleanup; native \
+                                 functions without attestation may block, deadlock, or \
+                                 crash. If `{}` is verified safe to invoke under \
+                                 cancel-shield (e.g., closes/frees that complete bounded \
+                                 time, does not acquire shared locks), add `#cancel_safe` \
+                                 to its `external fn` declaration. Otherwise wrap the \
+                                 call в a separate fiber spawned before the consume \
+                                 scope.",
+                                name, name
+                            ),
+                            e.span,
+                        ),
+                    });
+                }
+            }
+        }
+        walk_expr_for_cancel_unsafe(func, external_fns, warnings);
+        for a in args {
+            match a {
+                crate::ast::CallArg::Item(x) | crate::ast::CallArg::Spread(x) => {
+                    walk_expr_for_cancel_unsafe(x, external_fns, warnings);
+                }
+                crate::ast::CallArg::Named { value, .. } => {
+                    walk_expr_for_cancel_unsafe(value, external_fns, warnings);
+                }
+            }
+        }
+        if let Some(t) = trailing {
+            match t {
+                crate::ast::Trailing::Block(b) => walk_block_for_cancel_unsafe(b, external_fns, warnings),
+                crate::ast::Trailing::Fn(sb) => match &sb.body {
+                    FnBody::Expr(e) => walk_expr_for_cancel_unsafe(e, external_fns, warnings),
+                    FnBody::Block(b) => walk_block_for_cancel_unsafe(b, external_fns, warnings),
+                    FnBody::External => {}
+                },
+                crate::ast::Trailing::LegacyBlockWithParams(tb) => walk_block_for_cancel_unsafe(&tb.body, external_fns, warnings),
+            }
+        }
+        return;
+    }
+    // Recurse into other expr kinds.
+    match &e.kind {
+        ExprKind::Unary { operand, .. } => walk_expr_for_cancel_unsafe(operand, external_fns, warnings),
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_for_cancel_unsafe(left, external_fns, warnings);
+            walk_expr_for_cancel_unsafe(right, external_fns, warnings);
+        }
+        ExprKind::As(x, _) | ExprKind::Is(x, _) => walk_expr_for_cancel_unsafe(x, external_fns, warnings),
+        ExprKind::Try(x) | ExprKind::Bang(x) => walk_expr_for_cancel_unsafe(x, external_fns, warnings),
+        ExprKind::Coalesce(a, b) => {
+            walk_expr_for_cancel_unsafe(a, external_fns, warnings);
+            walk_expr_for_cancel_unsafe(b, external_fns, warnings);
+        }
+        ExprKind::Member { obj, .. } => walk_expr_for_cancel_unsafe(obj, external_fns, warnings),
+        ExprKind::Index { obj, index } => {
+            walk_expr_for_cancel_unsafe(obj, external_fns, warnings);
+            walk_expr_for_cancel_unsafe(index, external_fns, warnings);
+        }
+        ExprKind::TurboFish { base, .. } => walk_expr_for_cancel_unsafe(base, external_fns, warnings),
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_for_cancel_unsafe(cond, external_fns, warnings);
+            walk_block_for_cancel_unsafe(then, external_fns, warnings);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_block_for_cancel_unsafe(b, external_fns, warnings),
+                    ElseBranch::If(ie) => walk_expr_for_cancel_unsafe(ie, external_fns, warnings),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_for_cancel_unsafe(scrutinee, external_fns, warnings);
+            for arm in arms {
+                if let Some(g) = &arm.guard { walk_expr_for_cancel_unsafe(g, external_fns, warnings); }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => walk_expr_for_cancel_unsafe(e, external_fns, warnings),
+                    MatchArmBody::Block(b) => walk_block_for_cancel_unsafe(b, external_fns, warnings),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            walk_expr_for_cancel_unsafe(iter, external_fns, warnings);
+            walk_block_for_cancel_unsafe(body, external_fns, warnings);
+        }
+        ExprKind::While { cond, body, .. } => {
+            walk_expr_for_cancel_unsafe(cond, external_fns, warnings);
+            walk_block_for_cancel_unsafe(body, external_fns, warnings);
+        }
+        ExprKind::Loop { body, .. } => walk_block_for_cancel_unsafe(body, external_fns, warnings),
+        ExprKind::Block(b) => walk_block_for_cancel_unsafe(b, external_fns, warnings),
+        ExprKind::TupleLit(items) => for x in items { walk_expr_for_cancel_unsafe(x, external_fns, warnings); },
+        ExprKind::ArrayLit(elems) => for el in elems {
+            match el {
+                ArrayElem::Item(x) | ArrayElem::Spread(x) => walk_expr_for_cancel_unsafe(x, external_fns, warnings),
+            }
+        },
+        _ => {}
+    }
 }
 
 // ============================================================================
@@ -2404,5 +2619,93 @@ mod tests {
             let ws = lint_prelude_shadow(&m);
             assert!(ws.is_empty(), "prelude self-module must be skipped");
         }
+    }
+}
+
+// ============================================================================
+// Plan 110.9.4 — W_FFI_CANCEL_UNSAFE unit tests.
+// ============================================================================
+
+#[cfg(test)]
+mod cancel_unsafe_tests {
+    use super::*;
+    use crate::lexer::lex;
+    use crate::parser::Parser;
+
+    fn parse(src: &str) -> Module {
+        let toks = lex(src).unwrap();
+        let mut p = Parser::new(toks);
+        p.parse_module().unwrap()
+    }
+
+    #[test]
+    fn warns_on_external_fn_without_cancel_safe_in_on_exit() {
+        let m = parse(
+            "module foo\n\
+             external fn native_close(h int) -> int\n\
+             type Conn { ro h int }\n\
+             fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {\n\
+                 ro _r = native_close(@h)\n\
+                 return ()\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
+            "expected W_FFI_CANCEL_UNSAFE warning, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_external_fn_with_cancel_safe_in_on_exit() {
+        let m = parse(
+            "module foo\n\
+             #cancel_safe\n\
+             external fn native_close(h int) -> int\n\
+             type Conn { ro h int }\n\
+             fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {\n\
+                 ro _r = native_close(@h)\n\
+                 return ()\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
+            "no W_FFI_CANCEL_UNSAFE expected (cancel_safe attestation), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_external_fn_call_outside_on_exit() {
+        let m = parse(
+            "module foo\n\
+             external fn native_close(h int) -> int\n\
+             fn regular_fn(h int) -> int => native_close(h)\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
+            "external fn call outside on_exit must be silent"
+        );
+    }
+
+    #[test]
+    fn no_warning_on_plain_nova_fn_in_on_exit() {
+        let m = parse(
+            "module foo\n\
+             fn plain_close(h int) -> int => h\n\
+             type Conn { ro h int }\n\
+             fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {\n\
+                 ro _r = plain_close(@h)\n\
+                 return ()\n\
+             }\n",
+        );
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
+            "plain Nova fn call from on_exit must be silent (not FFI)"
+        );
     }
 }
