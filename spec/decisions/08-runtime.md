@@ -831,16 +831,49 @@ fn str @bytes() -> []u8                    // copy (D73 []u8.from(s))
   Result-форма (`str.try_from(b)` → `Result[str, Utf8Error]`)
   доступна через D77 как convenience sugar.
 
-**Nul-termination (C-interop):** `nova_str_concat` сейчас аллоцирует
-`len + 1` байт и кладёт `\0` после данных, чтобы `s.ptr` можно было
-передать в C-функции. Литералы тоже nul-terminated (`.rodata` C-string).
-Slice — **НЕ** добавляет `\0` (просто view). Это значит
-`nova_str.ptr` — **не** гарантированно cstring; зависит от того как
-строка построена. **Открытый вопрос (Q-cstring):** либо унифицировать
-("все `nova_str` всегда nul-terminated, slice копирует") ценой
-аллокаций, либо отказаться от частичной гарантии и ввести явный
-`s.as_cstr() -> *const char` (с копированием при необходимости).
-В bootstrap'е действует текущее inconsistent поведение.
+**Nul-termination (C-interop, RESOLVED 2026-06-03 — Plan 118.1 closes Q-cstring):**
+
+Nova str storage invariant — formal rules:
+
+1. **Full str** (literal, runtime-allocated through concat/from_X/etc):
+   - Backing buffer is **`len + 1` bytes**
+   - `ptr[len] == '\0'` **ALWAYS**
+   - `ptr` can be passed directly to C functions expecting `const char*`
+   - Implementation: все Nova allocator paths (`nova_str_concat`,
+     `nova_str_to_upper/lower`, `string_builder.h`, `conv.h`, literals в
+     `.rodata`) allocate `len + 1` + explicit `buf[len] = '\0'`.
+
+2. **Substring view** (created via `s[a..b]` per D144):
+   - Shares backing buffer of parent str
+   - `view.ptr[view.len]` MAY OR MAY NOT be `'\0'`:
+     - TRUE iff view ends at parent's `len` (e.g., `s[5..]`)
+     - FALSE iff view ends mid-buffer (e.g., `s[2..5]`)
+   - Parent's `'\0'` exists at `parent.ptr[parent.len]`, **beyond view's window**
+   - Memory access at `view.ptr[view.len]` ALWAYS safe (within parent buffer
+     которое `parent.len + 1` bytes, и `view.len <= parent.len`).
+
+3. **`str @as_cstr()` resolution** (Q-cstring closed — Plan 118.1):
+   - Runtime check: `ptr[len] == 0`?
+     - TRUE → zero-copy view (CStr wraps `ptr` directly)
+     - FALSE → allocate `len + 1`, copy + NUL (fallback к `@to_cstr` semantics)
+   - SAFE primitive (no `#unsafe` attribute):
+     ```nova
+     fn str @as_cstr() -> CStr      // zero-copy or copy fallback
+     fn str @to_cstr() -> CStr      // always allocates + copy + NUL
+     ```
+   - Both validate против embedded NUL в str body (panic если найден —
+     C-side truncation prevention; `@as_cstr_unchecked` skips validation
+     for perf-critical paths).
+
+4. **`CStr` type definition** (Plan 118.1 — `std/ffi/cstr.nv`):
+   ```nova
+   type CStr(*u8)                   // tuple newtype, zero-overhead
+   ```
+   Implements D73 From/Into для `str` (через `try_from` per D77 canonical
+   form). См. Plan 118.1 для полной API surface.
+
+См. [Plan 118.1](../../docs/plans/118.1-ffi-intrinsics-and-cstring.md) для
+implementation details + complete CStr/str conversion matrix.
 
 **Дедупликация / interning:** `str` **не интернируется автоматически**.
 Одинаковые runtime-строки — разные инстансы. `==` сравнивает контент
