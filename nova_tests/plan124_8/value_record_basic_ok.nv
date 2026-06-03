@@ -1,4 +1,4 @@
-// Plan 124.8 — positive: value-record (D226 NEW).
+// Plan 124.8 — positive: value-record (D228 NEW).
 // V1 codegen treats as heap-backed (transparent fallback) — see
 // [M-124.8-value-codegen-stack] для V2 proper stack allocation.
 module plan124_8.value_record_basic_ok

@@ -30975,7 +30975,7 @@ context, not name alone.
 
 **Что:** V2 refinement Plan 124 V1 (124.1-124.7). Tuples становятся
 all-public (D222 amend + D225 retract), records получают `value`
-modifier для stack allocation (D226 NEW), binding propagation rules
+modifier для stack allocation (D228 NEW, renumbered from D226), binding propagation rules
 formalized (D33/D176 amend), `ro acc` binding dominates (D175 amend).
 
 ### Phases (Ф.0-Ф.8) — все ✅
@@ -30996,7 +30996,7 @@ formalized (D33/D176 amend), `ro acc` binding dominates (D175 amend).
 - **Ф.4 — Codegen V1:** value-record treated AS heap-record (transparent
   fallback). [M-124.8-value-codegen-stack] для V2 proper stack allocation.
 - **Ф.5 — Tests:** plan124_8/ 23/23 PASS (16 positive + 7 negative).
-- **Ф.6 — Spec:** D33/D52/D175/D176/D215/D222/D225 amends + D226 NEW
+- **Ф.6 — Spec:** D33/D52/D175/D176/D215/D222/D225 amends + D228 NEW (renumbered from D226 on 2026-06-03)
   appended в 02-types.md (~160 lines), README.md spec index updated.
 - **Ф.7 — Cleanup:** 17 obsolete fixtures deleted (9 plan124_4 priv-tests
   + 8 plan124_7), 1 kept (named_tuple_no_priv_ok — Plan 120 backward

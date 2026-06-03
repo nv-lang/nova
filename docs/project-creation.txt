@@ -30217,7 +30217,9 @@ D-block changes:
 - D215 amend: multi-line tuple + binding-level mutability.
 - D222 amend: tuple priv portion retract; protocol impl boundary preserved.
 - D225 retract: type-level priv flip для tuples removed.
-- D226 NEW: value-record core allocation contract.
+- D228 NEW (renumbered from D226 on 2026-06-03 — main concurrently took
+  D226 «signed indexing» + D227 «numeric literal inference»):
+  value-record core allocation contract.
 
 Plan 124.4/124.7 fixtures cleaned up:
 - Deleted 17 fixtures (priv-on-tuple no longer valid).
@@ -30420,7 +30422,8 @@ V2 known limitations (deferred):
 - &value escape analysis ([M-124.8-value-heap-promote], Plan 118 coord).
 - Generic value-record cross-module instantiation для complex multi-T.
 
-Spec: D226 V2 amend (02-types.md) flips A8.10/A8.11/A8.13 to ✅.
+Spec: D228 V2 amend (02-types.md, renumbered from D226) flips
+A8.10/A8.11/A8.13 to ✅.
 
 Plan 124.8 V2 ✅ PRODUCTION-GRADE LANDED.
 

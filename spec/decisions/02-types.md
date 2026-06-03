@@ -8561,7 +8561,7 @@ intentional — tuples = compact pure-data form.
 «Named tuple priv» portion **retract**: `priv`/`pub` на tuple field —
 parser-error `E_TUPLE_NO_PRIV`. Tuples = pure data carriers (как Rust
 tuples, C# ValueTuple), always all-public. Encapsulation на стеке —
-через `type X value { priv field T }` form (D226 NEW).
+через `type X value { priv field T }` form (D228 NEW).
 
 «Protocol impl boundary» portion preserved для records (heap + value).
 
@@ -8571,7 +8571,11 @@ tuples, C# ValueTuple), always all-public. Encapsulation на стеке —
 всегда all-public; `type X priv (...)` syntax больше НЕ supported.
 Records keep type-level priv flip (D220 §3.3.1 unaffected).
 
-### D226 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
+### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
+
+> Renumbered from D226 (2026-06-03) — D226 in main concurrently assigned
+> to «signed indexing convention» commit `8827f8ec132`. D227 taken by
+> «numeric literal inference» commit `41d4be096fa`. D228 next free.
 
 `type X value { ... }` — stack-allocated value type с copy-on-pass
 semantics. Symmetric extension D52 §«record form» через `value` keyword.
