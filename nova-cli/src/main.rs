@@ -1980,15 +1980,19 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
     let path_str = path.to_string_lossy();
 
     // 1. parse
-    let mut module = match nova_codegen::parser::parse(&src) {
-        Ok(m) => m,
-        Err(d) => return CheckResult {
-            file: path.to_path_buf(),
-            error: Some(d.render(&src, &path_str)),
-            warnings: Vec::new(),
-            elapsed_ms: measure(t0),
-        },
-    };
+    // Plan 118.5 / D216 V2 §V2.6 (2026-06-04): use parse_collecting_warnings
+    // to surface parser-emitted deprecation warnings (legacy `*ro T` /
+    // `*mut T` / `*unsafe T` syntax during grace period).
+    let (mut module, parser_warnings) =
+        match nova_codegen::parser::parse_collecting_warnings(&src) {
+            Ok(pair) => pair,
+            Err(d) => return CheckResult {
+                file: path.to_path_buf(),
+                error: Some(d.render(&src, &path_str)),
+                warnings: Vec::new(),
+                elapsed_ms: measure(t0),
+            },
+        };
 
     // 2. check_module_path
     if let Err(e) = check_module_path(path, &module) {
