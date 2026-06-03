@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+//
+// Plan 124.8 [M-124.8-tuple-mut-field-write-codegen] — negative:
+// codegen path для tuple field-write properly блокируется когда
+// access path идёт через `ro` binding (D175 binding-dominates).
+module plan124_8.tuple_field_write_through_ro_chain_neg
+
+type Vec3(x f64, y f64, z f64)
+
+test "tuple field write через ro binding blocked" {
+    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    v.x = 99.0
+}

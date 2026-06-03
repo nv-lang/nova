@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR duplicate
+//
+// Plan 124.8 [M-124.8-zero-on-move] — negative:
+// duplicate `#zero_on_move` attributes — parser error.
+module plan124_8.zero_on_move_duplicate_neg
+
+#zero_on_move
+#zero_on_move
+type Secret {
+    mut key str
+}

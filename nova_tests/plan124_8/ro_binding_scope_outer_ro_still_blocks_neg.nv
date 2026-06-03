@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+//
+// Plan 124.8 [M-124.8-ro-binding-scope] — negative:
+// `ro x` в outer scope all-still blocks mutation within nested blocks
+// (transitivity preserved — fix только убирает CROSS-BLOCK leak, NE
+// меняет нормальную binding-dominates semantics).
+module plan124_8.ro_binding_scope_outer_ro_still_blocks_neg
+
+type Cell {
+    mut value int
+}
+
+fn outer_ro_inner_block_write() -> int {
+    ro outer = Cell { value: 1 }
+    if true {
+        // outer is still ro в этом nested scope — write blocked.
+        outer.value = 99
+    }
+    outer.value
+}
+
+test "outer ro blocks inner write" {
+    assert(outer_ro_inner_block_write() == 1)
+}

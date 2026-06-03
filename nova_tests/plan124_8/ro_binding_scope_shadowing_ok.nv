@@ -1,0 +1,30 @@
+// Plan 124.8 [M-124.8-ro-binding-scope] — positive:
+// outer `ro x` properly blocks mutation, then inner block redeclares
+// `mut x` (shadowing), inner mutation works, after inner exits outer
+// `x` is still recognized as `ro`.
+module plan124_8.ro_binding_scope_shadowing_ok
+
+type Box {
+    mut n int
+}
+
+fn shadow_outer_ro_with_inner_mut() -> int {
+    ro outer_x = Box { n: 1 }
+    assert(outer_x.n == 1)
+    // Inner block shadow.
+    ro result = if true {
+        mut outer_x = Box { n: 100 }  // shadow inner — mut binding
+        outer_x.n = 200
+        outer_x.n
+    } else {
+        0
+    }
+    // outer_x still ro в outer scope — read-only access works,
+    // outer value unchanged (inner shadowed по value semantics).
+    assert(outer_x.n == 1)
+    result
+}
+
+test "outer ro / inner mut shadow preserves outer ro semantics" {
+    assert(shadow_outer_ro_with_inner_mut() == 200)
+}

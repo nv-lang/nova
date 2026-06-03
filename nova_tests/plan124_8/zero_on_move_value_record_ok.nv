@@ -1,0 +1,22 @@
+// Plan 124.8 [M-124.8-zero-on-move] — positive:
+// `#zero_on_move` composes с `value` modifier (stack-allocated value
+// record). Both attributes apply ortogonally; type works normally в
+// absence of consume operations.
+//
+// Note: пре-существующий bug `mut t = Type { ... }` direct literal
+// для value-records (отдельный followup [M-124.8-value-record-mut-literal-codegen]) —
+// тест обходит через `ro` + constructor pattern (поддерживаемый flow).
+module plan124_8.zero_on_move_value_record_ok
+
+#zero_on_move
+type Token value {
+    bits int
+}
+
+fn Token.new(b int) -> Token =>
+    { bits: b }
+
+test "zero_on_move + value record (ro binding via constructor)" {
+    ro t = Token.new(3735928559)
+    assert(t.bits == 3735928559)
+}

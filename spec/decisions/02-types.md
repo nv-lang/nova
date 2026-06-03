@@ -8864,16 +8864,72 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 - A8.20 ✅ Regression: plan120 8/8 + plan124_1 9/9 + plan124_2 14/14 +
   plan124_3 10/10 + plan124_6 7/7 + plan108_3 14/14 unchanged.
 
+### Plan 124.8 V2.1 Acceptance — followup markers closed (A8.21-A8.30)
+
+V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
+
+- A8.21 ✅ [M-124.8-ro-binding-scope]: `ro_binding_names` block-scoped.
+  `f1_block` snapshots/restores на entry/exit. Inner `ro x = ...` не
+  leak'ит в outer scope. Cross-module contamination (stdlib `ro v` →
+  user `mut v`) fixed.
+- A8.22 ✅ [M-124.8-ro-binding-scope] shadow: `Stmt::Let` shadow-aware.
+  `ro x; { mut x; x.field = ... }` works через inner mut shadow remove
+  prior ro entry; outer state restored на block exit.
+- A8.23 ✅ [M-124.8-tuple-mut-field-write-codegen]: end-to-end positive
+  (single field write, multi-field write, sequential overwrite,
+  compound expressions, cross-field arithmetic, write-then-method-read).
+- A8.24 ✅ [M-124.8-tuple-mut-field-write-codegen]: negative — D175
+  binding-dominates на tuple field write через ro binding →
+  E_READONLY_FIELD.
+- A8.25 ✅ [M-124.8-zero-on-move] V1 parser: `#zero_on_move` attribute
+  recognized наряду с #from_fields/#from_pairs/#impl. Duplicate detection.
+  Только перед `type` декларацией валидно.
+- A8.26 ✅ [M-124.8-zero-on-move] V1 AST: TypeDecl.zero_on_move: bool
+  flag (default false; backward-compat preserved).
+- A8.27 ✅ [M-124.8-zero-on-move] V1 checker validation: allowed kinds
+  Record (heap + value), NamedTuple, Newtype. Reject Effect/Protocol/
+  Sum/Alias/Opaque с E_ZERO_ON_MOVE_INVALID_KIND.
+- A8.28 ✅ [M-124.8-zero-on-move] V1 codegen: per-type
+  `static inline void Nova_T_zero_storage(<C_type>* p)` helper emit.
+  Picks correct C type (Nova_T для heap+newtype, NovaValue_T для value,
+  NovaTuple_T для named tuple).
+- A8.29 ⚠️ [M-124.8-zero-on-move-auto-inject] V2: auto memset at
+  consume call sites — deferred (requires consume codegen Plan 100.x
+  integration; regression risk для sync primitives).
+- A8.30 ✅ Regression V2.1: plan120 8/8 + plan124_1 9/9 + plan124_3 10/10
+  + plan108_3 14/14 unchanged. plan124_8 27/27 → 40/40 PASS (+13 new
+  fixtures для 3 markers).
+
 ### Followups
 
 - ✅ **[M-124.8-value-codegen-stack]** — V2 LANDED 2026-06-03 — proper
   stack codegen реализован (emit_value_record_type + prepare_method_recv).
-- **[M-124.8-tuple-mut-field-write-codegen]** — codegen `mut p.x = ...`
-  для tuple (currently V1 parser/checker layer only — testing limited).
-- **[M-124.8-ro-binding-scope]** — proper block-scoped lifetime для
-  ro_binding_names tracking (current V1 — monotonic per-function, safe).
-- **[M-124.8-zero-on-move]** — opt-in `#zero_on_move` attribute для
-  security-critical consume.
+- ✅ **[M-124.8-tuple-mut-field-write-codegen]** — CLOSED 2026-06-03.
+  4 fixtures cover named-tuple field-write end-to-end через release
+  nova-cli + clang: single field write, multi-field write, sequential
+  overwrite, compound expression (`p.value = p.value * 2 + p.step`),
+  cross-field arithmetic, write-then-method-call visibility,
+  binding-dominates negative (`ro v` блокирует write).
+- ✅ **[M-124.8-ro-binding-scope]** — CLOSED 2026-06-03. Root cause:
+  `ro_binding_names` была monotonic per-ctx (никогда не очищалась).
+  Stdlib `ro v = ...` (sha1.nv / semver.nv) leak'ало в пользовательские
+  fixtures с `mut v = ...`. Fix: `f1_block` snapshots/restores
+  `ro_binding_names` на entry/exit; `Stmt::Let` shadow-aware (всегда
+  removes prior entry, добавляет назад только если ro). 3 fixtures
+  positive + negative.
+- ✅ **[M-124.8-zero-on-move]** V1 CLOSED 2026-06-03 — opt-in
+  `#zero_on_move` attribute. V1 parser + AST + checker validation +
+  per-type `Nova_T_zero_storage` helper emit. Allowed kinds: Record
+  (heap + value), NamedTuple, Newtype. Reject Effect/Protocol/Sum/
+  Alias/Opaque с E_ZERO_ON_MOVE_INVALID_KIND. Auto-injection
+  отложено к V2 followup [M-124.8-zero-on-move-auto-inject].
+- **[M-124.8-zero-on-move-auto-inject]** V2 — auto memset of source
+  при consume call. Требует deep integration с consume codegen
+  (Plan 100.x sync primitives) — non-trivial regression risk.
+- **[M-124.8-value-record-mut-literal-codegen]** — pre-existing bug
+  (exposed at 2026-06-03 testing): `mut t = ValueT { ... }` direct
+  literal binding emits `Nova_T*` вместо `NovaValue_T`. Workaround:
+  `ro` + constructor pattern. Not zero_on_move specific.
 - **[M-124.8-value-record-array-inline]** — `[]NovaValue_X` inline
   element storage (V3, deferred — currently boxed).
 - **[M-124.8-value-heap-promote]** — `&value` escape analysis +

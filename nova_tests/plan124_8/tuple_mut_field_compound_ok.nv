@@ -1,0 +1,36 @@
+// Plan 124.8 [M-124.8-tuple-mut-field-write-codegen] — positive:
+// compound assignment patterns on tuple field — value re-read after
+// write используется в expression (assign-then-read flow).
+module plan124_8.tuple_mut_field_compound_ok
+
+type Counter(value int, step int)
+
+fn increment_n_times(n int) -> int {
+    mut c = Counter(value: 0, step: 5)
+    mut i = 0
+    while i < n {
+        c.value = c.value + c.step
+        i = i + 1
+    }
+    c.value
+}
+
+test "tuple field write in loop body" {
+    assert(increment_n_times(3) == 15)
+    assert(increment_n_times(0) == 0)
+    assert(increment_n_times(10) == 50)
+}
+
+test "tuple field read-then-write in single expression" {
+    mut c = Counter(value: 10, step: 3)
+    c.value = c.value * 2 + c.step
+    assert(c.value == 23)
+}
+
+test "tuple field cross-field arithmetic" {
+    mut p = Counter(value: 100, step: 7)
+    p.step = p.value / 10
+    assert(p.step == 10)
+    p.value = p.value + p.step
+    assert(p.value == 110)
+}

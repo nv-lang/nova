@@ -1,0 +1,20 @@
+// Plan 124.8 [M-124.8-zero-on-move] — positive:
+// `#zero_on_move` attribute parses and applies к heap record. V1 emits
+// Nova_T_zero_storage helper; auto-injection at consume sites is V2
+// followup [M-124.8-zero-on-move-auto-inject]. Тест verifies type
+// declares successfully и normal field access работает (no behavior
+// change в absence of consume).
+module plan124_8.zero_on_move_record_ok
+
+#zero_on_move
+type Secret {
+    mut key str
+    mut nonce int
+}
+
+test "zero_on_move heap record — declared and used normally" {
+    mut s = Secret { key: "abc", nonce: 42 }
+    assert(s.nonce == 42)
+    s.nonce = 100
+    assert(s.nonce == 100)
+}

@@ -2943,6 +2943,38 @@ impl<'a> TypeCheckCtx<'a> {
             TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
             TypeDeclKind::Opaque => {}
         }
+        // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): validation —
+        // `#zero_on_move` применим только к Record (heap + value), NamedTuple,
+        // Newtype. Не применим к Effect/Protocol (нет storage), Sum (variant
+        // storage non-trivial; V2 followup), Alias/Opaque (нет own layout).
+        if td.zero_on_move {
+            let kind_ok = matches!(
+                &td.kind,
+                TypeDeclKind::Record(_) | TypeDeclKind::NamedTuple(_) | TypeDeclKind::Newtype(_)
+            );
+            if !kind_ok {
+                let kind_str = match &td.kind {
+                    TypeDeclKind::Record(_) => "record",
+                    TypeDeclKind::Sum(_) => "sum",
+                    TypeDeclKind::Effect(_) => "effect",
+                    TypeDeclKind::Protocol { .. } => "protocol",
+                    TypeDeclKind::Alias(_) => "alias",
+                    TypeDeclKind::Opaque => "external opaque",
+                    TypeDeclKind::NamedTuple(_) => "named tuple",
+                    TypeDeclKind::Newtype(_) => "newtype",
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_ZERO_ON_MOVE_INVALID_KIND] `#zero_on_move` cannot be \
+                         applied to `{}` ({}). Allowed kinds: record \
+                         (heap + value), named tuple, newtype. Plan 124.8 \
+                         [M-124.8-zero-on-move].",
+                        td.name, kind_str
+                    ),
+                    td.span,
+                ));
+            }
+        }
     }
 
     /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над
@@ -3577,6 +3609,15 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 124.8 [M-124.8-ro-binding-scope] fix (2026-06-03):
+        // snapshot `ro_binding_names` at block entry, restore at exit.
+        // Without restore, `ro x = ...` inside ANY block leaks `x` into the
+        // global ctx state — survives even cross-module type-check passes
+        // (e.g., stdlib sha1.nv `ro v = ...` polluted user fixtures that
+        // later used `mut v = ...`). Each block now properly cleans up the
+        // entries it added. Outer scopes are preserved (transitivity D175).
+        let ro_snapshot: std::collections::HashSet<String> =
+            self.ro_binding_names.borrow().clone();
         for s in &b.stmts {
             self.f1_stmt(s, gs, scope, errors);
         }
@@ -3590,6 +3631,7 @@ impl<'a> TypeCheckCtx<'a> {
                 None => { scope.remove(&n); }
             }
         }
+        *self.ro_binding_names.borrow_mut() = ro_snapshot;
     }
 
     fn f1_stmt(
@@ -3611,10 +3653,18 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.8 (D175 amend): track ro-binding names. `ro x = expr`
                 // делает binding immutable — даже `mut field` через `x.f = ...`
                 // блокируется (Rust-style binding dominates).
-                // Cleared on scope exit via f1_block snapshot/restore.
-                if !d.mutable {
-                    if let Some(name) = pattern_simple_name(&d.pattern) {
-                        self.ro_binding_names.borrow_mut().insert(name);
+                // Cleared on enclosing block exit via f1_block snapshot/restore
+                // (fixed 2026-06-03 — [M-124.8-ro-binding-scope] closed).
+                //
+                // Shadow semantics: at each let, replace the prior entry (if
+                // any) — `ro x; { mut x; x.field = ... }` works because the
+                // inner `mut x` removes `x` from ro_binding_names. Outer
+                // state restored by enclosing f1_block snapshot/restore.
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    let mut set = self.ro_binding_names.borrow_mut();
+                    set.remove(&name);
+                    if !d.mutable {
+                        set.insert(name);
                     }
                 }
                 // Ф.1: annotation ↔ RHS.

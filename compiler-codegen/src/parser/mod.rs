@@ -1129,7 +1129,7 @@ impl Parser {
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
         // `type`. Контекстный разбор после `#` (не keyword).
-        let (type_attrs, impl_protocols) = self.parse_type_attrs()?;
+        let (type_attrs, impl_protocols, zero_on_move_attr) = self.parse_type_attrs()?;
 
         // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
         // form `#cancel_safe\nexternal fn ...` работала (attribute может
@@ -1252,18 +1252,20 @@ impl Parser {
         };
         // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
         // Plan 91.9 (D186): `#impl(...)` тоже только перед `type`.
-        if (!type_attrs.is_empty() || !impl_protocols.is_empty())
+        // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
+        // перед `type`.
+        if (!type_attrs.is_empty() || !impl_protocols.is_empty() || zero_on_move_attr)
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` / `#from_pairs` / `#impl` are only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#impl` / `#zero_on_move` are only valid before `type`",
                 span,
             ));
         }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -2054,12 +2056,15 @@ impl Parser {
     ///   list. Verification: каждый Name должен быть protocol-типом
     ///   и type должен предоставить все методы. Gates bare-call synthesis.
     ///
-    /// Returns `(attrs, impl_protocols)`.
+    /// Returns `(attrs, impl_protocols, zero_on_move)`.
     fn parse_type_attrs(&mut self)
-        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>), Diagnostic>
+        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool), Diagnostic>
     {
         let mut attrs = Vec::new();
         let mut impl_protocols: Vec<String> = Vec::new();
+        // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): `#zero_on_move`
+        // attribute opts a type into memset-zero-on-consume codegen.
+        let mut zero_on_move: bool = false;
         loop {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
@@ -2132,11 +2137,28 @@ impl Parser {
                     }
                     impl_protocols = names;
                 }
+                "zero_on_move" => {
+                    // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03):
+                    // opt-in security attribute — на consume value такого
+                    // type'а codegen emits memset(source, 0) для затирания
+                    // исходной ячейки. Применимо к records (heap + value),
+                    // named tuples, newtypes.
+                    if zero_on_move {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#zero_on_move` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // zero_on_move
+                    zero_on_move = true;
+                }
                 _ => break,
             }
             self.skip_newlines();
         }
-        Ok((attrs, impl_protocols))
+        Ok((attrs, impl_protocols, zero_on_move))
     }
 
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
@@ -2975,7 +2997,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -3121,6 +3143,7 @@ impl Parser {
                 consume: consume_marker,
                 default_field_priv,
                 allocation,
+                zero_on_move,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3194,6 +3217,7 @@ impl Parser {
                     default_field_priv: false,
                     allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
+                    zero_on_move,
                 });
             }
         }
@@ -3316,6 +3340,7 @@ impl Parser {
             default_field_priv,
             allocation,
             impl_protocols,
+            zero_on_move,
         })
     }
 
