@@ -1,0 +1,27 @@
+// Plan 48.1 positive: cross-module Option[HashMap] Some path.
+//
+// Дополнение к option_hashmap_cross_module.nv (None path).
+// Verifies что mono'd NovaOpt_<HashMap>* correctly emit'ит Some
+// constructor + match destructuring access HashMap methods.
+
+module plan48_1.option_hashmap_some_path
+
+import std.collections.hashmap.{HashMap}
+
+// Производит непустую HashMap внутри Option, mono'd return type.
+fn make_pair() -> Option[HashMap[str, int]] {
+    mut m HashMap[str, int] = ["x": 10, "y": 20]
+    Some(m)
+}
+
+test "Option[HashMap] Some — destructure + access" {
+    ro r = make_pair()
+    match r {
+        Some(m2) => {
+            assert(m2.get("x") == Some(10))
+            assert(m2.get("y") == Some(20))
+            assert(m2.get("z") == None)
+        }
+        None => assert(false, "expected Some")
+    }
+}

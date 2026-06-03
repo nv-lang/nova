@@ -8877,5 +8877,10 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 - **[M-124.8-value-record-array-inline]** — `[]NovaValue_X` inline
   element storage (V3, deferred — currently boxed).
 - **[M-124.8-value-heap-promote]** — `&value` escape analysis +
-  auto-heap-promote (Plan 118 coordination).
+  auto-heap-promote. **Scope assigned to Plan 127** (2026-06-03) после
+  consultation с Plan 118 owner: Plan 118 Ф.2 V1 покрывает primitives +
+  named tuples, value-records остаются вне scope. Plan 127 extends Plan
+  118 Ф.2 walker на value-records; reuse `escape_analyze` + extend
+  trigger conditions.
 - **Plan 126** — auto-derive Equatable/Hashable/Cloneable/Comparable/Printable.
+- **Plan 127** — value-record escape & auto-promote (см. выше).

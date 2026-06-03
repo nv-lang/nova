@@ -19,6 +19,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::compiler::{check_file, check_workspace, run_with_large_stack};
 use crate::diagnostic_mapping::to_lsp;
 use crate::incremental::apply_changes;
+use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
 use crate::state::{ParsedFile, WorkspaceState};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +226,10 @@ impl LanguageServer for Backend {
                 // to CSE/cache. Colors them differently from plain
                 // field accesses. Legend defines the custom modifier
                 // "cached" alongside standard "property" type.
+                // Plan 123.5.5 (V5.5, 2026-06-03): advertise delta
+                // support so clients send `semanticTokens/full/delta`
+                // after the first full request — bandwidth-saving для
+                // typical incremental edits.
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -234,7 +239,9 @@ impl LanguageServer for Backend {
                                 token_modifiers: cached_field_semantic_token_modifiers(),
                             },
                             range: Some(false),
-                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            full: Some(SemanticTokensFullOptions::Delta {
+                                delta: Some(true),
+                            }),
                         },
                     ),
                 ),
@@ -480,12 +487,58 @@ impl LanguageServer for Backend {
         drop(doc);
 
         let tokens = run_with_large_stack(move || compute_field_cache_semantic_tokens(&src));
+        // Plan 123.5.5 (V5.5, 2026-06-03): cache snapshot и assign
+        // monotonic `result_id` для последующих delta requests от клиента.
         Ok(tokens.map(|data| {
+            let result_id = self.state.next_semantic_tokens_result_id();
+            self.state.semantic_tokens_cache.insert(
+                uri.clone(),
+                SemanticTokensSnapshot {
+                    result_id: result_id.clone(),
+                    tokens: data.clone(),
+                },
+            );
             SemanticTokensResult::Tokens(SemanticTokens {
-                result_id: None,
+                result_id: Some(result_id),
                 data,
             })
         }))
+    }
+
+    /// Plan 123.5.5 (V5.5, 2026-06-03): incremental semantic-tokens delta.
+    /// Client passes back the `previous_result_id` it last received; if it
+    /// matches our cached snapshot, we compute a minimal edit script via
+    /// `compute_semantic_token_edits`; otherwise we fallback к a full
+    /// re-response (per LSP spec — server is free to return either variant).
+    async fn semantic_tokens_full_delta(
+        &self,
+        params: SemanticTokensDeltaParams,
+    ) -> Result<Option<SemanticTokensFullDeltaResult>> {
+        let uri = params.text_document.uri.clone();
+        let prev_result_id = params.previous_result_id;
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        let new_tokens = run_with_large_stack(
+            move || compute_field_cache_semantic_tokens(&src),
+        );
+        let Some(new_tokens) = new_tokens else { return Ok(None); };
+
+        // Look up the cached snapshot. If `previous_result_id` matches,
+        // compute delta; otherwise fallback к polite full response — the
+        // client will re-sync через the returned snapshot.
+        let cached = self.state.semantic_tokens_cache.get(&uri)
+            .map(|r| r.value().clone());
+        let new_result_id = self.state.next_semantic_tokens_result_id();
+        let (response, updated_snap) = build_delta_response(
+            cached.as_ref(),
+            &prev_result_id,
+            new_tokens,
+            new_result_id,
+        );
+        self.state.semantic_tokens_cache.insert(uri, updated_snap);
+        Ok(Some(response))
     }
 }
 

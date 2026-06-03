@@ -31416,3 +31416,174 @@ intrinsics, no MMIO support, no C-string newtype. Downstream consumers
 (Plan 91.12 std FFI prelude, Plan 115 V2, future driver/embedded work)
 build on this substrate; advanced ergonomics arrive в V2 when typed
 auto-deref + size_of/align_of land.
+
+---
+
+## Plan 123.5.5 — Incremental LSP semantic-tokens delta (V5.5)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v5-5-incremental-semtokens. ~430 LOC delta.
+Closes `[M-123.5-incremental-semantic-tokens]`.
+
+**Что сделано:** LSP `textDocument/semanticTokens/full/delta` protocol
+для wire-efficient incremental semantic-tokens updates. Server кеширует
+per-URI snapshot последнего ответа + monotonic `result_id`; delta
+request валидирует `previous_result_id` против snapshot и возвращает
+либо edit-script (TokensDelta), либо полный fallback (Tokens — stale
+id или cold cache).
+
+**Принципы:**
+
+- **Single-edit prefix-suffix reduction** вместо true LCS:
+  - O(N) compute (N = token count); LCS would be O(N²).
+  - Wire-equivalent or better для typical localized LSP edits.
+  - Worst case (no shared prefix/suffix) collapses к single full-
+    replacement edit — never worse than full fallback.
+- **Pure helper extraction** (`build_delta_response` + `compute_
+  semantic_token_edits`) — algorithm/decision/state-update в pure
+  functions, testable в isolation без async Backend/Client mock.
+- **5-aligned indices invariant:** каждый SemanticToken = 5 u32s на
+  wire. Working в SemanticToken-space + multiplying ×5 гарантирует
+  invariant без manual bookkeeping.
+- **Fallback всегда обновляет snapshot:** даже когда stale id triggers
+  Tokens response (не TokensDelta), updated snapshot must be cached —
+  иначе client retries индефинитно с same stale id.
+- **Monotonic counter format `st-<N>`:** stable prefix для quick
+  client-side identification, monotonic integer гарантирует no reuse
+  across server lifetime.
+
+**Acceptance (V5.5.1-V5.5.14 все ✅):** 10 algorithm + 4 decision
+helper unit tests covering identical/append/prepend/middle/tail-
+delete/total-replace/empty-old/empty-new/modifier-diff/5-aligned-
+invariant; matching-id/mismatched-id/no-cache/identical-with-id
+decision paths.
+
+**Verification:** 14 V5.5 unit tests + 115/115 LSP suite PASS via
+release cargo test — zero regressions.
+
+**Followup markers:**
+
+- `[M-123.5.5-lcs-multi-edit]` — V5.5.1 true LCS multi-edit script
+  (benefits только при interleaved changes, rare в practice).
+- `[M-123.5.5-snapshot-eviction]` — V5.5.2 LRU/size-cap eviction
+  для long-running server sessions.
+
+
+---
+
+## Plan 110.9 V1.1 PARTIAL closure (2026-06-03)
+
+**Status:** 🟡 PARTIAL — 3/5 markers closed. Branch `plan-110.9-v1.1-closure`.
+
+**Closed markers:**
+- ✅ M-110.9.4 W_FFI_CANCEL_UNSAFE lint enforcement (35afc6565e9).
+- ✅ M-110.9.5 on_exit strict signature check (d2daf4b768e).
+- ✅ M-110.9.2 WithExitTimeout Level 1 per-type protocol (8ff8dda820b).
+
+**Deferred markers (substantial runtime + codegen work):**
+- 🟡 M-110.9.1 Typed CleanupTimeoutError throw codegen (~2-3h focused work):
+  emit static `_nova_throw_cleanup_timeout_impl` в user TU + startup pointer
+  assignment + type_id_registry integration.
+- 🟡 M-110.9.3 Application register_finalizer LIFO runtime (~½ day focused
+  work): new NovaFinalizerStack struct + per-`with Application` block emission +
+  register/fire dispatch.
+
+**Tests:** 39/39 plan110 PASS (36 baseline + 3 new — 2 POS V1.1 + 1 NEG V1.1).
+Rust unit tests cancel_unsafe_tests 4/4 PASS.
+
+**Design lessons:**
+
+1. **Pragmatic accept-both-forms** (M-110.9.5) — strict signature check
+   accepts BOTH parser representations (TypeRef::Unit, Tuple([]),
+   Named("unit"), Readonly inner) для backward-compat без parser
+   canonicalization risk. Trade-off: spec accepts 2 forms temporarily;
+   canonical form deferred to focused refactor.
+
+2. **Pure-additive C codegen** (M-110.9.2) — Level 1 lookup inserted
+   as new branch BEFORE existing Level 2/3. Smallest change footprint.
+   No backward-compat risk — only triggers when type implements
+   `exit_timeout_ms` method.
+
+3. **AST walker reuse** (M-110.9.4) — 5th walker family extending
+   existing lint infrastructure pattern. Conservative scope (bare-Ident
+   callees in own module) avoids cross-module complexity.
+
+4. **Honest deferral** — M-110.9.1 and M-110.9.3 require substantial
+   runtime + codegen integration (struct allocation, fn pointer assignment,
+   stack management, LIFO firing). Documented с detailed scope rather
+   than shipping half-baked. Plan-doc status flipped 📋 PLANNED →
+   🟡 PARTIAL accurately reflects current state.
+
+
+## Plan 48.1 — cross-module generic template registration ordering (2026-06-03)
+
+**Why peer_files scan вместо разработки auto-transitive type-ref discovery:** auto-pull транзитивных type refs из импортированных types — это import-graph traversal на уровне type-ref внутри type-decl полей (e.g. JsonValue.Object(HashMap[str, JsonValue]) → должен авто-import HashMap). Это architectural change в import resolver (`resolve_imports_inline_ex`). Plan 48.1 — точечный codegen fix, не import-system overhaul. Pragmatic: peer_files уже содержит directly-imported modules; eager scan их generic types — small targeted change. Followup `[M-48.1-transitive-type-import-auto]` оставлен на potential future use case.
+
+**Why forward typedef в `register_novaopt_decl` а не separate pre-emit pass:** NovaOpt typedef уже emit'ится lazily при первом референсе (через `novaopt_decls_seen` cache). Добавление forward typedef в ту же function — единая точка emission, всегда before NovaOpt. Separate pass потребовал бы tracking всех mono'd struct'ов нужных для NovaOpt — дублирование state. Co-location keeps invariant proof local: "если NovaOpt typedef emitted, forward typedef уже там же".
+
+**Why skip-list (Option/Result/protocols/newtypes) mirror module.items pass:** consistency с existing handling. Plan 62.A handles Option/Result via NovaOpt_<T>/Nova_Result* parallel infrastructure (registering as template создаёт coll'isions с runtime helpers). Plan 62.E handles protocols через `protocol_box_c_type_for` separate path. Plan 91.12 V2 handles newtypes via `type_aliases`. Peer-scan не должен ломать эти parallel mechanisms — соблюдает same skip-rules.
+
+**Why polluting check `contains("____") && starts_with("Nova_")` для forward typedef:** mono'd generic names имеют canonical pattern `Nova_<Base>____<args>` (compute_generic_type_c_name produces `Nova_HashMap____nova_str__Nova_JsonValue_p`). Forward typedef emit нужен ТОЛЬКО для этих синтезированных names. Skipping nova_int/nova_str/runtime-defined types (e.g. `nova_unit`, `NovaArray_*`) — они уже declared. Lightweight string check вместо tracking state — корректно для current naming convention.
+
+**Why не написал spec D-block amendment:** Plan 48.1 — pure codegen pass-ordering fix без semantic change в language spec. Поведение программ не меняется — те же программы которые compile успешно с workaround (явный import HashMap) теперь compile correctly. Тэ что fail'ились с CC-FAIL → теперь compile success. Нет нового D-block, нет amend существующего — это implementation detail, не language semantics.
+
+**Why minimal regression test (1 fixture, 1 test):** focused на ROOT bug (signature/typedef mismatch). Полные roundtrip tests (Plan 91.13 JSON) показали что есть SEPARATE bug в json.nv codegen (NOVA_UNIT cast в char-handling). Включение их в Plan 48.1 raised false-positive — bug якобы не fixed. Minimal test изолирует Plan 48.1's specific fix.
+
+---
+
+## Plan 123.7.4 — Incremental SCC cache (V7.4)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v7-4-incremental-scc. ~430 LOC delta.
+Closes `[M-123.7-incremental-scc]`.
+
+**Что сделано:** Process-level memoization для Tarjan SCC propagation
+из V7.3. Realistic workloads (LSP rechecks, IDE batch passes) repeatedly
+invoke `cache_module` на identical modules и плотят полную V7.3 цену
+~1ms каждый раз; V7.4 fingerprints граф и restore'ит cached propagated
+direct map за O(1) на hit.
+
+**Принципы:**
+
+- **Process-level OnceLock<Mutex<ScCache>>** вместо thread-local —
+  clean, без invasion (V7.2 explicitly removed thread-locals).
+  Compute happens outside the lock → no serialization between
+  concurrent miss threads.
+- **Opt-in через env `NOVA_FIELD_CACHE_SCC_CACHE=1`** — default-off
+  preserves V7.3 deterministic test contract. Tests share process
+  state → cache enabled-by-default would induce non-determinism.
+- **Single-slot cache** per registry (write/read) вместо multi-slot
+  LRU — optimal для LSP edit-loop hottest scenario (same file typed
+  repeatedly). Multi-slot полезен для batch-compile (V7.4.1 followup).
+- **BTreeMap canonicalization для fingerprint** — HashMap iteration
+  nondeterministic; sorted-key serialization защищает от false
+  fingerprint variance.
+- **DefaultHasher (SipHash-1-3)** для fingerprint — quality enough
+  для false-collision probability ≪ 2⁻⁶³ на realistic graph
+  populations. No `seahash`/`fxhash`/`xxhash` dep needed.
+- **Sentinel `0` reservation** — empty cache state encoded `(0, _)`;
+  empty graphs hashed → bias к non-zero output. Disambiguates
+  "no entry" vs "valid hash equals 0".
+- **Separate write/read cache slots** — domain-separated, no
+  collision risk across semantic categories.
+
+**Acceptance (V7.4.1-V7.4.10 все ✅):** identical hit, fingerprint
+deterministic, counter accuracy, change-triggered miss, slot isolation,
+reset semantics, default-off, empty-graph non-zero, distinct-graph
+distinct-fingerprint, V7.3-semantics preservation.
+
+**Verification:** 10 V7.4 unit tests + zero regressions (47/47
+field_cache lib + 13/13 V7.x runtime fixtures на default cfg + 10/10
+with cache enabled).
+
+**🎯 Plan 123 V*.3+ backlog ПОЛНОСТЬЮ ЗАКРЫТ** — V6.2.1 + V4.3 +
+V5.5 + V7.4 закрыты в одной сессии 2026-06-03 (~1610 LOC delta total).
+Только V8 cross-module IPA остаётся (DEFERRED INDEFINITELY).
+
+**Followup markers:**
+
+- `[M-123.7.4-lru-multi-slot]` — V7.4.1 multi-slot LRU (capacity 8+).
+- `[M-123.7.4-telemetry-json]` — V7.4.2 nova check --telemetry-cache
+  hits/misses fields.
+- `[M-123.7.4-auto-enable]` — V7.4.3 opportunistic auto-enable
+  in LSP runtime context.

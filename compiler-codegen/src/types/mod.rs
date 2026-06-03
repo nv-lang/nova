@@ -2192,13 +2192,15 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 110.1.2 / refine (D188-malformed-on-exit): on_exit signature check.
+    /// Plan 110.1.2 / refine (D188-malformed-on-exit) + 110.9.5 V1.1 strict:
+    /// on_exit signature check.
     /// Verifies:
     /// - Param[0] is `outcome ScopeOutcome`.
     /// - Exactly 1 param (D188 protocol contract).
     /// - Return type is `()` or absent (D188 protocol contract).
     /// - Effects are either empty (Consumable[never]) or `Fail[E]` only
     ///   (no other effects).
+    /// - No generic parameters (cleanup methods on concrete types).
     fn validate_on_exit_signature(&self, type_name: &str, init_span: Span, errors: &mut Vec<Diagnostic>) {
         let Some(methods) = self.method_table.get(type_name) else { return; };
         let Some(decls) = methods.get("on_exit") else { return; };
@@ -2237,15 +2239,88 @@ impl<'a> TypeCheckCtx<'a> {
                 continue;
             }
 
-            // Return type strict check disabled bootstrap — `-> ()` имеет
-            // parser-specific TypeRef encoding не uniformly Tuple([]). Full
-            // return type / effects check после parser representation
-            // canonicalization ([M-110-on-exit-strict-sig]).
+            // Plan 110.9.5 V1.1 [M-110.9.5-on-exit-strict-signature]: full
+            // signature validation. Accepts BOTH `-> ()` parser representations
+            // (Tuple([]) и Named("unit")) для backward-compat без parser
+            // canonicalization (Plan 110.9.5.a deferred — broader-scope
+            // refactor required).
             //
-            // Currently bootstrap: param count + first param ScopeOutcome
-            // enough for catching most malformed sigs.
-            let _ = decl.return_type.as_ref();
-            let _ = &decl.effects;
+            // Strict checks added V1.1:
+            //   (a) Return type must be `()` (Unit form).
+            //   (b) Effects must be subset of `{ Fail[E] }`.
+            //   (c) No generic params allowed.
+            // 1. Return type strict check.
+            // is_unit_type_ref: accepts BOTH parser representations
+            // (Tuple([]) и Named("unit") и TypeRef::Unit) — pragmatic
+            // backward-compat без parser canonicalization.
+            fn is_unit_tr(t: &TypeRef) -> bool {
+                match t {
+                    TypeRef::Unit(_) => true,
+                    TypeRef::Tuple(elems, _) => elems.is_empty(),
+                    TypeRef::Named { path, generics, .. } => {
+                        generics.is_empty() && path.len() == 1 && path[0] == "unit"
+                    }
+                    TypeRef::Readonly(inner, _) => is_unit_tr(inner),
+                    _ => false,
+                }
+            }
+            let ret_ok = match &decl.return_type {
+                None => true, // implicit Unit → OK.
+                Some(rt) => is_unit_tr(rt),
+            };
+            if !ret_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` return type \
+                         invalid (Plan 110.9.5 V1.1): protocol requires `()` (Unit) return. \
+                         Got `{rt}`. Correct: `fn {tn} consume @on_exit(outcome ScopeOutcome) \
+                         Fail[E] -> () => {{ ... }}` (or omit `-> ()`).",
+                        tn = type_name,
+                        rt = decl.return_type.as_ref()
+                            .map(|t| format!("{:?}", t))
+                            .unwrap_or_else(|| "<missing>".to_string()),
+                    ),
+                    init_span,
+                ));
+                continue;
+            }
+            // 2. Effects must contain at most Fail[E].
+            let effects_ok = decl.effects.iter().all(|eff| {
+                matches!(
+                    eff,
+                    TypeRef::Named { path, .. }
+                        if path.last().map_or(false, |s| s == "Fail")
+                )
+            });
+            if !effects_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` effects list \
+                         invalid (Plan 110.9.5 V1.1): protocol allows only `Fail[E]` effect \
+                         (or no effects). Other effects (handler invocations, `parks`/`wakes`, \
+                         capability requirements) violate cleanup contract. Got: {effs:?}.",
+                        tn = type_name,
+                        effs = decl.effects
+                    ),
+                    init_span,
+                ));
+                continue;
+            }
+            // 3. No generic params (would imply per-call mono за scope of cleanup).
+            if !decl.generics.is_empty() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` declares generic \
+                         params `[{gens}]` (Plan 110.9.5 V1.1): protocol forbids generics \
+                         on cleanup methods — resource-state types already concrete by \
+                         construction.",
+                        tn = type_name,
+                        gens = decl.generics.iter().map(|g| g.name.clone()).collect::<Vec<_>>().join(", ")
+                    ),
+                    init_span,
+                ));
+                continue;
+            }
         }
     }
 

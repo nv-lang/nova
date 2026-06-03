@@ -5427,6 +5427,133 @@ Downstream consumers (`cache_module`, `analyze_module`,
   iterative loop ✅
 - **V7.3.5** field_cache lib tests 25+ PASS, no regression
 
+### 8. Followups
+
+- **V7.4:** ✅ DELIVERED 2026-06-03 — см. D223 amend V7.4 ниже.
+
+## D223 amend V7.4 — Incremental SCC cache (Plan 123.7.4)
+
+**Source:** [Plan 123.7.4](../../docs/plans/123.7.4-incremental-scc.md).
+**Status:** ✅ ACTIVE 2026-06-03.
+
+### 1. Motivation
+
+V7.3 emits exact Tarjan SCC + reverse-topological propagation per
+`cache_module` invocation. Cost — ~1ms на typical module (300+
+methods). Realistic workloads (LSP rechecks с debouncer, IDE batch
+passes, build-cache hits) repeatedly invoke `cache_module` на
+**identical** modules, paying full SCC cost каждый раз — wasted work.
+
+V7.4 adds a process-level memoization layer: fingerprint the input
+graph, cache propagated `direct` map by fingerprint, restore on hit.
+Provides true O(1) `cache_module` for repeated identical inputs.
+
+### 2. Cache structure
+
+Per-registry single-slot cache:
+
+```rust
+pub struct ScCache {
+    last_fingerprint: u64,
+    last_result: HashMap<(String, String), HashSet<String>>,
+    has_entry: bool,
+    pub hits: u64,
+    pub misses: u64,
+}
+
+static WRITE_SET_SCC_CACHE: OnceLock<Mutex<ScCache>>;
+static READ_SET_SCC_CACHE:  OnceLock<Mutex<ScCache>>;
+```
+
+Two caches (write-set + read-set) — domain-separated so fingerprint
+collision risk between semantically-distinct graphs is eliminated by
+construction.
+
+### 3. Fingerprint algorithm
+
+`compute_scc_fingerprint(direct, callees) -> u64`:
+
+1. Canonicalize via `BTreeMap` / `BTreeSet` — sorts iteration order
+   (HashMap иначе non-deterministic).
+2. Hash via `DefaultHasher` (SipHash-1-3 quality).
+3. Domain-separator string `"scc_fingerprint_v1"` prefixed so future
+   format changes can be detected.
+4. Reserve `0` как sentinel "no entry"; bias к `1` to guarantee
+   non-zero output even for empty graphs.
+
+### 4. Opt-in semantics
+
+Env var `NOVA_FIELD_CACHE_SCC_CACHE=1` (also accepts `on`/`true`)
+required к enable cache. Default-off preserves V7.3 deterministic
+test contract; unit/integration tests using shared mutable state
+won't observe cache-induced timing variance.
+
+### 5. Cache-hit semantics
+
+`propagate_via_scc_cached(direct, callees, cache_cell)`:
+
+1. If cache disabled → tail-call к `propagate_via_scc` (no-overhead).
+2. Compute `fingerprint`.
+3. Lock cache, check `has_entry && last_fingerprint == fingerprint`:
+   - Hit: copy `last_result` к `direct`, bump `hits`, return.
+4. Drop lock, compute `propagate_via_scc` outside lock (avoid
+   serialization когда concurrent threads miss).
+5. Lock cache again, store `(fingerprint, result_clone)`, bump
+   `misses`.
+
+`saturating_add` для counters — no wraparound на long-lived sessions.
+
+### 6. Observable telemetry
+
+```rust
+pub fn scc_cache_stats() -> (u64, u64, u64, u64);
+// returns (write_hits, write_misses, read_hits, read_misses)
+
+pub fn reset_scc_caches();
+// reset both slots + counters
+```
+
+Exposed for `nova check --telemetry-cache` integration (future V6.4),
+LSP perf monitoring, and test assertions.
+
+### 7. Concurrent-safety
+
+`Mutex<ScCache>` guards each slot. Compute happens outside the lock
+(only fingerprint + cache lookups under lock), so concurrent threads
+with identical inputs serialize только на the brief lookup window.
+
+### 8. Acceptance
+
+- **V7.4.1** Identical input → cache hit on second call (hits=1,
+  misses=1) ✅
+- **V7.4.2** Fingerprint stable across HashMap iteration order ✅
+- **V7.4.3** Hits + misses counters track correctly через repeated
+  calls ✅
+- **V7.4.4** Changed graph (added node/edge) triggers re-compute
+  (miss) ✅
+- **V7.4.5** Write- и read-set caches isolated (separate slots) ✅
+- **V7.4.6** `reset_scc_caches()` clears state и zeros counters ✅
+- **V7.4.7** Cache disabled by default — no counter activity без
+  env opt-in ✅
+- **V7.4.8** Empty graph fingerprint non-zero (sentinel reservation) ✅
+- **V7.4.9** Distinct graphs (different direct OR callees) produce
+  distinct fingerprints ✅
+- **V7.4.10** Cache hit preserves V7.3 propagation semantics
+  bitwise-identical к miss path ✅
+- Zero regressions: field_cache lib 47/47 + plan123_7 1/1 +
+  plan123_7_1 10/10 + plan123_7_2 2/2 PASS via release
+  `nova test`. Also passes с cache enabled.
+
+### 9. Followups
+
+- **V7.4.1 (future):** multi-slot LRU cache (capacity 8+) — useful
+  для batch-compile of many distinct modules. Single-slot — optimal
+  для LSP edit-loops, suboptimal для batch.
+- **V7.4.2 (future):** integration с `nova check --telemetry-cache`
+  JSON emit (hits/misses fields в V6.x telemetry).
+- **V7.4.3 (future):** opportunistic auto-enable когда host
+  обнаруживает "LSP server" environment.
+
 ## D217 amend V5.3 — LSP quickfix: add `#pure` annotation
 
 **Source:** [Plan 123.5.3](../../docs/plans/123.5.3-pure-quickfix.md).
@@ -5530,6 +5657,135 @@ fixed `readonly|cached` bitmask. Length covers `@` + name.
 - **V5.2.4** Delta encoding sane (monotonic, sortable) ✅
 - **V5.2.5** Compute panics-free under best-effort pipeline (None on
   parse failure, not error) ✅
+
+### 7. Followups
+
+- **V5.5:** ✅ DELIVERED 2026-06-03 — incremental delta protocol; см.
+  D217 amend V5.5 ниже.
+
+## D217 amend V5.5 — Incremental LSP semantic-tokens delta (Plan 123.5.5)
+
+**Source:** [Plan 123.5.5](../../docs/plans/123.5.5-incremental-semantic-tokens.md).
+**Status:** ✅ ACTIVE 2026-06-03.
+
+### 1. Scope
+
+V5.2 ships `textDocument/semanticTokens/full` — server recomputes
+entire token set on every request. Realistic LSP edit sessions
+(typing within a function body) produce hundreds of identical or
+near-identical token sets между requests. V5.5 adds protocol
+support для **incremental deltas** через
+`textDocument/semanticTokens/full/delta`: client provides
+`previous_result_id`; server validates against cached snapshot and
+returns a minimal **edit script** transforming previous tokens →
+new tokens. Saves wire bandwidth + reduces editor token-array
+mutation cost.
+
+### 2. Protocol surface
+
+- **Capability:** `semantic_tokens_provider.full =
+  SemanticTokensFullOptions::Delta { delta: Some(true) }`. Tells
+  client server accepts `full/delta` after the first `full` request.
+- **Handler signature** (tower-lsp 0.20):
+  ```rust
+  async fn semantic_tokens_full_delta(
+      &self,
+      params: SemanticTokensDeltaParams,
+  ) -> Result<Option<SemanticTokensFullDeltaResult>>
+  ```
+- **Response variants** (`SemanticTokensFullDeltaResult`):
+  - `TokensDelta { result_id, edits }` — when client's
+    `previous_result_id` matches server's cached snapshot.
+  - `Tokens { result_id, data }` — fallback when client's id is
+    stale OR no cache entry exists (cold start, server restart,
+    eviction). Client re-syncs against the returned full snapshot.
+
+### 3. State
+
+`WorkspaceState` extended with:
+
+```rust
+pub semantic_tokens_cache: DashMap<Url, SemanticTokensSnapshot>,
+pub semantic_tokens_counter: AtomicU64,
+
+pub struct SemanticTokensSnapshot {
+    pub result_id: String,   // format "st-<N>"
+    pub tokens: Vec<SemanticToken>,
+}
+```
+
+`next_semantic_tokens_result_id()` — monotonic allocator. Format
+`st-<N>` gives clients a stable prefix to identify nova-lsp ids and
+a unique integer guaranteeing no reuse across server lifetime.
+
+Snapshot updated on:
+- Every successful `semantic_tokens_full` response.
+- Every `semantic_tokens_full_delta` response (delta OR fallback).
+
+### 4. Edit algorithm
+
+Pure function `compute_semantic_token_edits(old, new) ->
+Vec<SemanticTokensEdit>` в `nova-lsp::semantic_tokens_delta`.
+Single-edit **prefix-suffix reduction**:
+
+1. Find longest common token-prefix length `P` (token equality на
+   all 5 fields: deltaLine/deltaStart/length/tokenType/modifiers).
+2. Find longest common token-suffix length `S` (bounded by
+   `min(old.len() − P, new.len() − P)` to prevent overlap).
+3. Emit ONE `SemanticTokensEdit { start: P*5, delete_count:
+   (old.len() − P − S) * 5, data: Some(new[P..new.len() − S].to_vec()) }`.
+
+Invariants:
+- `start % 5 == 0`, `delete_count % 5 == 0` (each `SemanticToken` =
+  5 u32s в wire format).
+- `old == new` → zero edits, не one no-op edit (bandwidth optimum).
+- Worst case (no shared prefix/suffix) → one full-replacement edit
+  — wire-equivalent к full fallback, never worse.
+
+Not minimum-edit: true LCS would split unrelated changes into N
+edits. For typical LSP scenarios (single localized edit per request)
+single-edit dominates LCS в both compute time и wire bytes.
+
+### 5. Decision helper
+
+Pure `build_delta_response(prev_snapshot, prev_result_id,
+new_tokens, new_result_id) -> (response, updated_snapshot)` —
+encapsulates the cache-match-or-fallback decision. Used by the
+server handler so что state-update и response-construction stay
+in one tested function.
+
+### 6. Composition
+
+V5.5 is purely additive к V5.2 — same token-computation pipeline
+(`compute_field_cache_semantic_tokens`), same legend, same eligibility
+rules. Snapshot caching is opt-in для clients (they can keep sending
+plain `full` if they prefer).
+
+### 7. Acceptance
+
+- **V5.5.1** Identical input → zero edits (no-op delta) ✅
+- **V5.5.2** Append at end → single tail edit ✅
+- **V5.5.3** Prepend at start → single head edit ✅
+- **V5.5.4** Middle change → single middle edit ✅
+- **V5.5.5** Tail deletion → single edit с `data: None` ✅
+- **V5.5.6** Total replacement → single full edit ✅
+- **V5.5.7** Empty old → pure insertion edit ✅
+- **V5.5.8** Empty new → full deletion edit ✅
+- **V5.5.9** Modifier-bitset difference detected как change ✅
+- **V5.5.10** All emitted indices 5-aligned (invariant) ✅
+- **V5.5.11** Matching `previous_result_id` → `TokensDelta` variant ✅
+- **V5.5.12** Mismatched `previous_result_id` → `Tokens` fallback ✅
+- **V5.5.13** No cached snapshot → `Tokens` fallback ✅
+- **V5.5.14** Matching id + identical tokens → `TokensDelta { edits: [] }` ✅
+- Zero regressions on V5.2 baseline + LSP full suite (115/115 PASS).
+
+### 8. Followups
+
+- **V5.5.1 (future):** LCS-based multi-edit script для interleaved
+  changes (current single-edit always wire-equivalent or better).
+- **V5.5.2 (future):** Snapshot eviction policy (LRU / size cap) —
+  current DashMap grows monotonically, OK для typical workspace
+  sizes но требует attention для very-long sessions.
 
 ## D223 amend V7.2 — Explicit IpaCtx parameter threading (Plan 123 V*.2)
 
