@@ -9130,6 +9130,33 @@ Rust-style fallback «default to `i32` when value fits» **отвергнут**.
    `uN` типа — **hard error**, не wrap. Для wrap-семантики используется
    `(-1) as u32` (D54 saturation rules apply).
 
+7. **Pointer-typed positions.** Литералы **не coerce'ятся в pointer
+   type** автоматически (в отличие от numeric Rule 2). Требуется
+   явный `as`-cast:
+
+    ```nova
+    ro p ptr = 0                  // ✗ E_LIT_PTR_NO_COERCE
+    ro p ptr = 0 as ptr           // ok — explicit cast (D214)
+    ro h ptr = 0x1000 as ptr      // ok — opaque handle from integer
+    ro q *u8  = some_ptr          // ok — pointer-to-pointer, no literal
+    ```
+
+   В pointer arithmetic offset — обычный `int` per Rule 1, scaled
+   by `sizeof(T)` runtime ([D216](02-types.md#d216) §6):
+
+    ```nova
+    unsafe {
+        ro p2 = some_ptr + 1      // 1: int (Rule 1), p2: *unsafe T
+        ro p3 = some_ptr + offset // offset: int
+    }
+    ```
+
+   `null ptr` literal **retracted** (Plan 118 A23, 2026-06-02
+   [D214 amend](02-types.md#d214)) — стандартный паттерн стал
+   `(0 as ptr)`. Для nullable pointers — `Option[*T]` (NPO codegen
+   per [D216](02-types.md#d216) §7), `None` это constructor, не
+   литерал.
+
 ### Почему
 
 **Industry baseline (2026-06).**
@@ -9214,7 +9241,12 @@ Rust-style narrow-fallback и **без** Java/C# silent widening / suffix.
 - [D130](02-types.md#d130) — `uint = u64` alias.
 - [D226](02-types.md#d226) — signed indexing convention (`int` для
   len/capacity/index, дополняется правилом «литерал в индексной
-  позиции = int by Rule 1»).
+  позиции = int by Rule 1»). См. также [D226 §7](02-types.md#d226)
+  «Pointer interactions» — matrix offset/diff/FFI типов.
+- [D214](02-types.md#d214) — `ptr` opaque type + null retract → `(0 as ptr)`
+  (motivates Rule 7).
+- [D216](02-types.md#d216) — `*T` typed pointer family + arithmetic
+  semantics (motivates Rule 7 «offset = int per Rule 1» pattern).
 - [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) Ф.1 — runtime
   `int` overflow → panic (motivates compile-time literal range-check).
 

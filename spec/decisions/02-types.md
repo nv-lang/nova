@@ -8896,14 +8896,40 @@ ALL closed 2026-06-02:
    `xs.len() - 1` даёт `-1`, что валидно как loop-guard вход
    (`for j in 0..-1` — пустой range).
 
-5. **`uint`/`u64` — только для bit-twiddling и FFI.** Hash-значения,
-   битовые маски, raw memory addresses, sized-integer аргументы C-API
-   — это `u64`/`uint`. Cross в `int` через `as` (saturation, D54).
+5. **`uint`/`u64`/`usize` — только для bit-twiddling, FFI и pointer
+   bridge.** Hash-значения, битовые маски, raw memory addresses,
+   sized-integer аргументы C-API — это `u64`/`uint`. **`usize`** —
+   ABI-bridge тип в FFI signatures (`external fn malloc(sz usize)`,
+   matches C `size_t`) и в pointer-integer casts (`p as usize`,
+   `usize as *T`) для opaque handle storage / hash-key extraction
+   ([D214](#d214) §casts, [D216](#d216) §casts). На bootstrap
+   `usize`/`isize` — implicit aliases `u64`/`i64` (см. spec-drift
+   followup `[M-D226-isize-usize-alias-D-block]`). Cross в `int`
+   через `as` (saturation, D54).
 
 6. **Future-arch path.** При миграции Nova на multi-arch (32-bit / WASM)
    `int` становится platform-pointer-width signed (= Rust `isize`),
    `i64` остаётся fixed-64. Index API не меняется — auto-scale без
    breaking change. См. [D129](#d129) migration note.
+
+7. **Pointer interactions.** Pointer arithmetic и pointer-integer
+   bridges имеют свою numeric matrix, ортогональную stdlib index-API
+   (Rule 1). Все signed для offset/diff (в духе Rule 4 «разности
+   естественно signed»), `usize` только на ABI-границе.
+
+   | Операция | Тип | Где |
+   |---|---|---|
+   | `coll.len()` / `coll[i]` | `int` | stdlib index-API (Rule 1) |
+   | `arr[a..b]` slice bounds | `int` | sub-slice views ([D144](#d144)) |
+   | `ptr + N` / `*T + N` offset | `int` | pointer arith ([D216](#d216) §6) — scaled by `sizeof(T)` |
+   | `ptr - ptr` / `*T - *T` diff | `isize` | element count ([D216](#d216) §6) — signed |
+   | `external fn(..., sz usize)` | `usize` | FFI ABI ([D214](#d214), [D216](#d216) FFI) — matches C `size_t` |
+   | `p as usize` / `usize as *T` | `usize` | explicit address cast — opaque handle, hash key, GC-hazard ([D214](#d214) §casts) |
+   | `ptr as u64` / `i64 as ptr` | `u64`/`i64` | opaque handle storage ([D214](#d214) §casts) |
+
+   **Правило:** stdlib API никогда не использует `usize`/`u64` для
+   index/len/capacity (Rule 1); FFI / pointer arithmetic / cast bridges
+   — единственные легальные exemptions.
 
 ### Почему
 
@@ -8985,6 +9011,8 @@ ALL closed 2026-06-02:
 - [D109](../08-runtime.md#d109) — встроенные методы примитивов (включая `int`).
 - [D141](../08-runtime.md#d141) — `byte_at`/bulk slice API использует `int` индексы.
 - [D144](#d144) — sub-slice views `arr[a..b]` — границы `int`.
+- [D214](#d214) — `ptr` opaque type + `usize` ABI bridge + cast rules.
+- [D216](#d216) — `*T` typed pointer family + arithmetic (`int` offset, `isize` diff) + FFI.
 - [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) — `int` overflow → panic (soundness).
 
 ### Эволюция
@@ -8995,6 +9023,10 @@ ALL closed 2026-06-02:
 - **2026-06-03** (D226, этот блок): формализация в самостоятельное
   D-решение + правило `requires n >= 0` на capacity-API +
   cross-language baseline + future-arch migration path.
+- **2026-06-03** (D226 amend, pointer-aware): §5 расширен для
+  `usize` ABI bridge + pointer-integer casts; §7 «Pointer interactions»
+  с numeric matrix для всех ptr ops; cross-refs на [D214](#d214) +
+  [D216](#d216). Закрывает gap research'а §3 ([docs/research/08](../../docs/research/08-int-width-and-literal-inference.md)).
 
 ### Acceptance criteria
 
@@ -9009,6 +9041,9 @@ ALL closed 2026-06-02:
   при literal-args (без Z3) — followup `[M-D226-negative-literal-lint]`
 - [ ] `_experimental/` capacity APIs (`Queue.with_capacity`) — sweep после
   promotion в stable.
+- [ ] `isize` / `usize` explicit D-блок aliasing для `i64`/`u64` —
+  followup `[M-D226-isize-usize-alias-D-block]` (spec-drift cleanup,
+  не в scope D226 amend).
 
 ### Amend 2026-06-03 — `usize` / `isize` formal alias D-block
 
