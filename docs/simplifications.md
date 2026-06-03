@@ -31395,3 +31395,38 @@ Rust unit tests cancel_unsafe_tests 4/4 PASS.
    stack management, LIFO firing). Documented с detailed scope rather
    than shipping half-baked. Plan-doc status flipped 📋 PLANNED →
    🟡 PARTIAL accurately reflects current state.
+
+
+---
+
+## Plan 110.9 V1.1 continuation — M-110.9.1 closed (2026-06-03)
+
+**Status:** 🟡 NEAR-COMPLETE. Branch `plan-110.9-final-closure`.
+4/5 V1.1 markers closed total (M-110.9.3 register_finalizer still deferred).
+
+**M-110.9.1 typed CleanupTimeoutError throw** (commit `1377c611a57`):
+- Two splice markers added в `emit_c.rs:emit_main_wrapper` —
+  `__CLEANUP_TIMEOUT_IMPL__` перед `int main()`, `__CLEANUP_TIMEOUT_INIT__`
+  в main body.
+- Unconditional `register_type_id("CleanupTimeoutError")` в finalize —
+  ensures NOVA_TID_USER_* macro always defined. Cost: ~30 bytes binary
+  if unused (acceptable).
+- Static `_nova_throw_cleanup_timeout_impl` emitted: alloc struct, set
+  duration_ms, snprintf msg, call `nova_throw_typed`. Fn pointer assigned
+  в main body after effects registration.
+- Runtime `nv_shield_check_deadline` теперь always uses typed path.
+- 1 new POS fixture (typed_cleanup_timeout_v1_1) + codegen output grep
+  verification. 41/41 plan110 PASS.
+
+**Design lesson — splice marker placement matters:**
+Forward-reference issues solved через two-marker pattern: impl emitted
+ПОСЛЕ user-type struct defs (needs Nova_CleanupTimeoutError struct);
+init emitted в main body ПОСЛЕ effects registration (needs runtime infra).
+Single placeholder would require careful ordering hacks.
+
+**M-110.9.3 register_finalizer LIFO** — still deferred:
+- Substantial scope: new NovaFinalizerStack TLS struct в effects.h +
+  per-`with Application` block prologue/epilogue codegen + register_finalizer
+  method dispatch + normal/throw path integration.
+- Estimate ~½ day focused work. Not shipped в continuation session —
+  honest scope acknowledgement.
