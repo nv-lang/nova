@@ -2951,6 +2951,13 @@ impl CEmitter {
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
 
+        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: unconditionally
+        // register CleanupTimeoutError type id (prelude type used by runtime
+        // cleanup-deadline path). Ensures NOVA_TID_USER_CleanupTimeoutError
+        // macro defined + typed throw impl emitted (см. splice ниже).
+        // Cost: ~30 bytes binary if otherwise unused (acceptable).
+        self.register_type_id("CleanupTimeoutError");
+
         // Plan 61 Ф.1: splice TypeId defines + overriding nova_typeid_to_name.
         // Каждый registered user-type получает `#define NOVA_TID_USER_<X> N`;
         // также emit'тся overriding `nova_typeid_to_name` switch для diagnostic.
@@ -2988,6 +2995,31 @@ impl CEmitter {
             tid_defines.push_str("}\n");
         }
         self.out = self.out.replace("/*__TYPEID_DEFINES__*/", &tid_defines);
+
+        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: typed throw
+        // codegen для CleanupTimeoutError. Emitted ТОЛЬКО if
+        // CleanupTimeoutError is in type_id_registry (user code references
+        // it; otherwise string-fallback в nv_shield_check_deadline kicks in).
+        let (ct_impl, ct_init) = if self.type_id_registry.contains_key("CleanupTimeoutError") {
+            let impl_block = "\
+/* Plan 110.9.1 V1.1: typed CleanupTimeoutError throw — assigned к\n\
+ * _nova_throw_cleanup_timeout_fn в main(). Replaces string-fallback\n\
+ * в nv_shield_check_deadline когда CleanupTimeoutError referenced. */\n\
+static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
+    Nova_CleanupTimeoutError* _e = (Nova_CleanupTimeoutError*)nova_alloc(sizeof(Nova_CleanupTimeoutError));\n\
+    _e->duration_ms = (nova_int)duration_ms;\n\
+    char _buf[96];\n\
+    snprintf(_buf, sizeof(_buf), \"cleanup-timeout-exceeded: %d ms over budget\", duration_ms);\n\
+    (void)nova_throw_typed(nova_str_from_cstr(_buf), (void*)_e, NOVA_TID_USER_CleanupTimeoutError);\n\
+    /* unreachable */\n\
+}\n".to_string();
+            let init_line = "    _nova_throw_cleanup_timeout_fn = &_nova_throw_cleanup_timeout_impl;".to_string();
+            (impl_block, init_line)
+        } else {
+            (String::new(), String::new())
+        };
+        self.out = self.out.replace("/*__CLEANUP_TIMEOUT_IMPL__*/", &ct_impl);
+        self.out = self.out.replace("/*__CLEANUP_TIMEOUT_INIT__*/", &ct_init);
 
         // Plan 61 followup #4: per-E Fail dispatch splice.
         let per_e_decls = self.render_per_e_fail_decls();
@@ -13483,6 +13515,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line("}");
         self.line("");
 
+        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: typed throw
+        // impl splice marker. Emitted ПОСЛЕ user-type struct definitions
+        // (incl. Nova_CleanupTimeoutError) и ДО int main() — нужны:
+        //   - struct Nova_CleanupTimeoutError (для allocate+set)
+        //   - NOVA_TID_USER_CleanupTimeoutError macro (из typeid splice)
+        //   - nova_throw_typed (из effects.h, всегда доступно)
+        // Replaced в finalize условно if CleanupTimeoutError registered.
+        self.line("/*__CLEANUP_TIMEOUT_IMPL__*/");
+
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
@@ -13518,6 +13559,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         //  emit_main_function via emit_effects_registrar_fn.)
         self.line("_nova_register_effects_fn = _nova_register_all_effects_;");
         self.line("_nova_register_all_effects_();");
+        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: assign typed
+        // CleanupTimeoutError throw fn pointer (if CleanupTimeoutError is
+        // referenced). Spliced at finalize via __CLEANUP_TIMEOUT_INIT__
+        // placeholder.
+        self.line("/*__CLEANUP_TIMEOUT_INIT__*/");
         // Plan 22 Ф.5 (D92): implicit main-scope. Top-level main теперь
         // имеет supervised-like scope для detach'ей, pending timer'ов и
         // background fiber'ов. Они доработают до quiescence перед exit.
