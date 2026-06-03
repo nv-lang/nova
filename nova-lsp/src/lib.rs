@@ -10,5 +10,6 @@ pub mod debouncer;
 pub mod diagnostic_mapping;
 pub mod incremental;
 pub mod perf;
+pub mod semantic_tokens_delta;
 pub mod server;
 pub mod state;

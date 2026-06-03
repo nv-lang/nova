@@ -6,12 +6,14 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use ropey::Rope;
 use tower_lsp::lsp_types::Url;
 
 use crate::debouncer::Debouncer;
+use crate::semantic_tokens_delta::SemanticTokensSnapshot;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data model
@@ -59,6 +61,20 @@ pub struct WorkspaceState {
     /// Workspace root path, set from `initialize` rootUri / workspaceFolders.
     /// `None` until `initialize` is received.
     pub workspace_root: Mutex<Option<PathBuf>>,
+
+    /// Plan 123.5.5 (V5.5, 2026-06-03): per-URI snapshot последнего
+    /// semantic-tokens ответа сервера. Используется `semantic_tokens_full_delta`
+    /// для валидации `previous_result_id` клиента и computeединия минимального
+    /// edit script'а через `compute_semantic_token_edits`. Snapshot
+    /// перезаписывается каждый раз когда server отвечает полным
+    /// `semantic_tokens_full` (либо delta запрос неудачный, fallback к full).
+    pub semantic_tokens_cache: DashMap<Url, SemanticTokensSnapshot>,
+
+    /// Plan 123.5.5: monotonic counter генерирующий уникальные `result_id`
+    /// для каждого emitted snapshot. Format `st-<N>` (stable prefix +
+    /// monotonic integer). Гарантирует client'у что old result_ids не
+    /// будут случайно reused при wrap-around.
+    pub semantic_tokens_counter: AtomicU64,
 }
 
 impl Default for WorkspaceState {
@@ -67,6 +83,8 @@ impl Default for WorkspaceState {
             docs: DashMap::new(),
             debouncer: Debouncer::default(),
             workspace_root: Mutex::new(None),
+            semantic_tokens_cache: DashMap::new(),
+            semantic_tokens_counter: AtomicU64::new(0),
         }
     }
 }
@@ -87,6 +105,15 @@ impl WorkspaceState {
         if let Ok(path) = uri.to_file_path() {
             *self.workspace_root.lock().unwrap() = Some(path);
         }
+    }
+
+    /// Plan 123.5.5 (V5.5): allocate the next monotonic semantic-tokens
+    /// `result_id`. Format `st-<N>` — stable prefix gives clients a
+    /// quick way to validate they're looking at a nova-lsp result id;
+    /// monotonic integer ensures uniqueness across the server lifetime.
+    pub fn next_semantic_tokens_result_id(&self) -> String {
+        let n = self.semantic_tokens_counter.fetch_add(1, Ordering::Relaxed);
+        format!("st-{}", n)
     }
 }
 

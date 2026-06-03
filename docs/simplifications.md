@@ -31298,3 +31298,55 @@ Industry edge: Nova становится **первым языком** с unifie
 syntax + explicit `value` modifier для stack allocation. Achievement
 positions Nova ahead-of-curve vs Kotlin value class (single-field) и
 Java Valhalla (incoming).
+
+---
+
+## Plan 123.5.5 — Incremental LSP semantic-tokens delta (V5.5)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v5-5-incremental-semtokens. ~430 LOC delta.
+Closes `[M-123.5-incremental-semantic-tokens]`.
+
+**Что сделано:** LSP `textDocument/semanticTokens/full/delta` protocol
+для wire-efficient incremental semantic-tokens updates. Server кеширует
+per-URI snapshot последнего ответа + monotonic `result_id`; delta
+request валидирует `previous_result_id` против snapshot и возвращает
+либо edit-script (TokensDelta), либо полный fallback (Tokens — stale
+id или cold cache).
+
+**Принципы:**
+
+- **Single-edit prefix-suffix reduction** вместо true LCS:
+  - O(N) compute (N = token count); LCS would be O(N²).
+  - Wire-equivalent or better для typical localized LSP edits.
+  - Worst case (no shared prefix/suffix) collapses к single full-
+    replacement edit — never worse than full fallback.
+- **Pure helper extraction** (`build_delta_response` + `compute_
+  semantic_token_edits`) — algorithm/decision/state-update в pure
+  functions, testable в isolation без async Backend/Client mock.
+- **5-aligned indices invariant:** каждый SemanticToken = 5 u32s на
+  wire. Working в SemanticToken-space + multiplying ×5 гарантирует
+  invariant без manual bookkeeping.
+- **Fallback всегда обновляет snapshot:** даже когда stale id triggers
+  Tokens response (не TokensDelta), updated snapshot must be cached —
+  иначе client retries индефинитно с same stale id.
+- **Monotonic counter format `st-<N>`:** stable prefix для quick
+  client-side identification, monotonic integer гарантирует no reuse
+  across server lifetime.
+
+**Acceptance (V5.5.1-V5.5.14 все ✅):** 10 algorithm + 4 decision
+helper unit tests covering identical/append/prepend/middle/tail-
+delete/total-replace/empty-old/empty-new/modifier-diff/5-aligned-
+invariant; matching-id/mismatched-id/no-cache/identical-with-id
+decision paths.
+
+**Verification:** 14 V5.5 unit tests + 115/115 LSP suite PASS via
+release cargo test — zero regressions.
+
+**Followup markers:**
+
+- `[M-123.5.5-lcs-multi-edit]` — V5.5.1 true LCS multi-edit script
+  (benefits только при interleaved changes, rare в practice).
+- `[M-123.5.5-snapshot-eviction]` — V5.5.2 LRU/size-cap eviction
+  для long-running server sessions.
+

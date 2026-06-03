@@ -5531,6 +5531,135 @@ fixed `readonly|cached` bitmask. Length covers `@` + name.
 - **V5.2.5** Compute panics-free under best-effort pipeline (None on
   parse failure, not error) ✅
 
+### 7. Followups
+
+- **V5.5:** ✅ DELIVERED 2026-06-03 — incremental delta protocol; см.
+  D217 amend V5.5 ниже.
+
+## D217 amend V5.5 — Incremental LSP semantic-tokens delta (Plan 123.5.5)
+
+**Source:** [Plan 123.5.5](../../docs/plans/123.5.5-incremental-semantic-tokens.md).
+**Status:** ✅ ACTIVE 2026-06-03.
+
+### 1. Scope
+
+V5.2 ships `textDocument/semanticTokens/full` — server recomputes
+entire token set on every request. Realistic LSP edit sessions
+(typing within a function body) produce hundreds of identical or
+near-identical token sets между requests. V5.5 adds protocol
+support для **incremental deltas** через
+`textDocument/semanticTokens/full/delta`: client provides
+`previous_result_id`; server validates against cached snapshot and
+returns a minimal **edit script** transforming previous tokens →
+new tokens. Saves wire bandwidth + reduces editor token-array
+mutation cost.
+
+### 2. Protocol surface
+
+- **Capability:** `semantic_tokens_provider.full =
+  SemanticTokensFullOptions::Delta { delta: Some(true) }`. Tells
+  client server accepts `full/delta` after the first `full` request.
+- **Handler signature** (tower-lsp 0.20):
+  ```rust
+  async fn semantic_tokens_full_delta(
+      &self,
+      params: SemanticTokensDeltaParams,
+  ) -> Result<Option<SemanticTokensFullDeltaResult>>
+  ```
+- **Response variants** (`SemanticTokensFullDeltaResult`):
+  - `TokensDelta { result_id, edits }` — when client's
+    `previous_result_id` matches server's cached snapshot.
+  - `Tokens { result_id, data }` — fallback when client's id is
+    stale OR no cache entry exists (cold start, server restart,
+    eviction). Client re-syncs against the returned full snapshot.
+
+### 3. State
+
+`WorkspaceState` extended with:
+
+```rust
+pub semantic_tokens_cache: DashMap<Url, SemanticTokensSnapshot>,
+pub semantic_tokens_counter: AtomicU64,
+
+pub struct SemanticTokensSnapshot {
+    pub result_id: String,   // format "st-<N>"
+    pub tokens: Vec<SemanticToken>,
+}
+```
+
+`next_semantic_tokens_result_id()` — monotonic allocator. Format
+`st-<N>` gives clients a stable prefix to identify nova-lsp ids and
+a unique integer guaranteeing no reuse across server lifetime.
+
+Snapshot updated on:
+- Every successful `semantic_tokens_full` response.
+- Every `semantic_tokens_full_delta` response (delta OR fallback).
+
+### 4. Edit algorithm
+
+Pure function `compute_semantic_token_edits(old, new) ->
+Vec<SemanticTokensEdit>` в `nova-lsp::semantic_tokens_delta`.
+Single-edit **prefix-suffix reduction**:
+
+1. Find longest common token-prefix length `P` (token equality на
+   all 5 fields: deltaLine/deltaStart/length/tokenType/modifiers).
+2. Find longest common token-suffix length `S` (bounded by
+   `min(old.len() − P, new.len() − P)` to prevent overlap).
+3. Emit ONE `SemanticTokensEdit { start: P*5, delete_count:
+   (old.len() − P − S) * 5, data: Some(new[P..new.len() − S].to_vec()) }`.
+
+Invariants:
+- `start % 5 == 0`, `delete_count % 5 == 0` (each `SemanticToken` =
+  5 u32s в wire format).
+- `old == new` → zero edits, не one no-op edit (bandwidth optimum).
+- Worst case (no shared prefix/suffix) → one full-replacement edit
+  — wire-equivalent к full fallback, never worse.
+
+Not minimum-edit: true LCS would split unrelated changes into N
+edits. For typical LSP scenarios (single localized edit per request)
+single-edit dominates LCS в both compute time и wire bytes.
+
+### 5. Decision helper
+
+Pure `build_delta_response(prev_snapshot, prev_result_id,
+new_tokens, new_result_id) -> (response, updated_snapshot)` —
+encapsulates the cache-match-or-fallback decision. Used by the
+server handler so что state-update и response-construction stay
+in one tested function.
+
+### 6. Composition
+
+V5.5 is purely additive к V5.2 — same token-computation pipeline
+(`compute_field_cache_semantic_tokens`), same legend, same eligibility
+rules. Snapshot caching is opt-in для clients (they can keep sending
+plain `full` if they prefer).
+
+### 7. Acceptance
+
+- **V5.5.1** Identical input → zero edits (no-op delta) ✅
+- **V5.5.2** Append at end → single tail edit ✅
+- **V5.5.3** Prepend at start → single head edit ✅
+- **V5.5.4** Middle change → single middle edit ✅
+- **V5.5.5** Tail deletion → single edit с `data: None` ✅
+- **V5.5.6** Total replacement → single full edit ✅
+- **V5.5.7** Empty old → pure insertion edit ✅
+- **V5.5.8** Empty new → full deletion edit ✅
+- **V5.5.9** Modifier-bitset difference detected как change ✅
+- **V5.5.10** All emitted indices 5-aligned (invariant) ✅
+- **V5.5.11** Matching `previous_result_id` → `TokensDelta` variant ✅
+- **V5.5.12** Mismatched `previous_result_id` → `Tokens` fallback ✅
+- **V5.5.13** No cached snapshot → `Tokens` fallback ✅
+- **V5.5.14** Matching id + identical tokens → `TokensDelta { edits: [] }` ✅
+- Zero regressions on V5.2 baseline + LSP full suite (115/115 PASS).
+
+### 8. Followups
+
+- **V5.5.1 (future):** LCS-based multi-edit script для interleaved
+  changes (current single-edit always wire-equivalent or better).
+- **V5.5.2 (future):** Snapshot eviction policy (LRU / size cap) —
+  current DashMap grows monotonically, OK для typical workspace
+  sizes но требует attention для very-long sessions.
+
 ## D223 amend V7.2 — Explicit IpaCtx parameter threading (Plan 123 V*.2)
 
 **Source:** [Plan 123 V*.2 followups](../../docs/plans/123-v2-followups.md).
