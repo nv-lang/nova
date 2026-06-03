@@ -12,3 +12,10 @@ module runtime.char
 // UTF-8 encode codepoint в 1-4 байта (D73 auto-derive: char.into() -> str).
 export external fn str.from(c char) -> str
 
+// Unchecked UTF-8 encode int codepoint в 1-4 байта. Caller гарантирует
+// cp ∈ [0, 0x10FFFF]; invalid → empty str. Используется JSON parser
+// (\uXXXX escape) и другими decoders где cp уже validated.
+// Plan 91.13 followup: D54 запретил `int as char`; этот fn — explicit
+// "known-valid" path для skipping char.try_from(n)?? indirection.
+export external fn str.from_codepoint(cp int) -> str
+

@@ -1,0 +1,37 @@
+// Plan 91.13: str.from_codepoint behaviour for invalid codepoints.
+//
+// Semantics: invalid cp (negative или > 0x10FFFF) → empty str ("").
+// Это **silent degradation** — caller гарантирует validity (V1 contract).
+// Strict variant (str.try_from_codepoint) — followup
+// [M-91.13-strict-from_codepoint] если потребуется explicit error path.
+//
+// Rationale: JSON parser, который основной consumer, уже validates hex
+// digits в \uXXXX → range безопасен. Silent-empty не маскирует баги —
+// produced "" видно в output, debuggable. Strict variant добавляет Fail
+// effect indirection для cases где validity уже proven.
+
+module plan91_13.from_codepoint_invalid_neg
+
+test "negative codepoint — empty str" {
+    ro s = str.from_codepoint(-1)
+    assert(s == "")
+    assert(s.len() == 0)
+}
+
+test "above 0x10FFFF — empty str" {
+    ro s = str.from_codepoint(0x110000)
+    assert(s == "")
+    assert(s.len() == 0)
+}
+
+test "very large invalid — empty str" {
+    ro s = str.from_codepoint(0x7FFFFFFF)
+    assert(s == "")
+    assert(s.len() == 0)
+}
+
+test "very negative invalid — empty str" {
+    ro s = str.from_codepoint(-2147483648)
+    assert(s == "")
+    assert(s.len() == 0)
+}
