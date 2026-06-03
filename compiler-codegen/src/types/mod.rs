@@ -5309,7 +5309,9 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 match name.as_str() {
                     "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
-                    | "u32" | "u64" | "uint" => TyCat::Int,
+                    | "u32" | "u64" | "uint"
+                    // Plan 118.1: usize/isize platform-pointer-width aliases
+                    | "usize" | "isize" => TyCat::Int,
                     "f32" | "f64" => TyCat::Float,
                     "bool" => TyCat::Bool,
                     "str" => TyCat::Str,

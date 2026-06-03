@@ -8637,6 +8637,56 @@ ALL closed 2026-06-02:
 - [ ] `_experimental/` capacity APIs (`Queue.with_capacity`) — sweep после
   promotion в stable.
 
+### Amend 2026-06-03 — `usize` / `isize` formal alias D-block
+
+Closes followup `[M-D226-isize-usize-alias-D-block]`.
+
+**Definition:**
+
+| Alias | Bootstrap (64-bit) | Future arch |
+|---|---|---|
+| `usize` | `u64` (= `uint64_t`) | platform-pointer-width unsigned |
+| `isize` | `i64` (= `nova_int`) | platform-pointer-width signed |
+
+**Use cases:**
+
+1. **FFI ABI bridge** (primary use) — C `size_t` / `ptrdiff_t`:
+   ```nova
+   external fn malloc(sz usize) -> Option[*u8]            // C: size_t
+   external fn read(fd int, buf *mut u8, n usize) -> isize  // C: size_t, ssize_t
+   ```
+
+2. **Pointer differences** (D216 §6) — `ptr - ptr → isize`, signed semantically.
+
+3. **Platform-pointer-width** future arch — currently bootstrap 64-bit only,
+   но aliases reserve the semantic meaning for future 32-bit ARM/RISC-V
+   targets where `usize = u32`.
+
+**НЕ для:**
+
+- `len`/`capacity`/index APIs — используют `int` (per D226 Rule 1). Reason:
+  signed convention; arithmetic safety (signed underflow detectable).
+- General-purpose unsigned arithmetic — используют `uint` (= `u64` alias)
+  per Plan 70.5.
+
+**Casts:**
+
+- `int as usize` / `usize as int` — explicit (D226 §3, no implicit coercion).
+- `usize as ptr` / `ptr as usize` — explicit, allowed для opaque handles +
+  address-as-integer (D216 §6, D214).
+
+**Spec drift fix:** `isize`/`usize` использовались в D216/D214 examples и
+Plan 118 FFI без formal D-block aliasing. This amend formalizes.
+
+**Implementation:** `compiler-codegen/src/codegen/emit_c.rs` + `types/mod.rs`
+type_ref_to_c + TyCat::Int + BUILTIN_TYPE_NAMES registry updated 2026-06-03.
+
+**Cross-refs:**
+
+- [D129](#d129) — `int` = `i64` aliasing
+- [D216 §6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — pointer arithmetic
+- [Plan 118.1](../../docs/plans/118.1-ffi-intrinsics-and-cstring.md) — FFI signatures use usize
+
 ---
 
 ## Plan 124.8 — Tuple+Value-Record design refinement (2026-06-02)
