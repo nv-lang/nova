@@ -31855,3 +31855,81 @@ helpers must extract via cast `((NovaClosBase*)arg)->fn`. Initial naive
 design treated arg as raw `void(*)(void)` — crashed на first push.
 Pattern: any runtime helper accepting Nova fn arg should extract NovaClosBase
 parts and store closure-form.
+
+---
+
+## 2026-06-04 — D216 V2 + Plan 118.5: right-binding rule formalization
+
+**Commit:** `b10317dfb76` (spec + plan-doc only — implementation Plan 118.5).
+
+### NOT a V1 simplification — это planned breaking-change
+
+Plan 118.5 — breaking change к existing pointer syntax. Spec landed;
+implementation deferred к sub-plan phases.
+
+### Что устраняется
+
+Inconsistency между двумя grammar rules:
+- `ro T` parses recursively (right-binding via `parse_type` arm) — rule ✅
+- `*ro T` / `*mut T` / `*unsafe T` uses inline-modifier inside pointer constructor — different rule ❌
+
+После Plan 118.5:
+- `ro T` без изменений
+- `ro * T` instead of `*ro T`
+- `mut * T` instead of `*mut T`
+- `unsafe * T` instead of `*unsafe T` (старый смысл — unsafe pointer)
+- `* unsafe T` (новый смысл — valid ptr к uninit T, ≈ Rust `*mut MaybeUninit<T>`)
+
+### Что добавляется
+
+`unsafe T` first-class type wrapper (MaybeUninit-style):
+- init/layout/aliasing/identity contracts off
+- read → E_UNSAFE_T_READ_REQUIRES_WRAP в safe context
+- write → safe (transitions к valid)
+
+Two orthogonal safety axes:
+- pointer-validity (null/dangling): controlled by modifier на `*`
+- pointee-validity (init/aligned): controlled by modifier на T
+
+### Migration scope
+
+54 occurrences across 14 nova_tests files + std/runtime/raw_mem.nv + 1
+example. Grace period с deprecation warnings, errors после release cycle.
+
+### Why deferred к Plan 118.5
+
+Spec landed sample-clean (1 commit), implementation требует:
+- AST extension (Mut/Unsafe wrappers)
+- Parser refactor (uniform parse_type arms)
+- Codegen migration (wrappers transparent для C)
+- Type-checker enforcement
+- Migration sweep
+- Spec amends downstream
+
+Bundling в один commit risk → review overload. Splitting в Plan 118.5 phases
+дает clean review boundaries.
+
+### Followup markers
+
+- [M-118.5-right-binding-migration]
+- [M-118.5-unsafe-t-readwrite-semantics]
+- [M-118.5-mut-t-vs-binding-distinction]
+- [M-118.5-consume-as-type-modifier]
+- [M-118.5-d218-maybeuninit-duplication]
+- [M-118.5-npo-recalculation]
+
+### Rust precedent table
+
+| Nova V2 syntax | Rust equivalent |
+|---|---|
+| `ro * T` ≡ `* T` | `&T` или `NonNull<T>` (non-null, ro) |
+| `mut * T` | `&mut T` (or `NonNull<T>` mut view) |
+| `unsafe * T` | `*const T` (raw, may null/dangle) |
+| `* unsafe T` | `*mut MaybeUninit<T>` (valid ptr к uninit) |
+| `unsafe T` (value) | `MaybeUninit<T>` (value) |
+| `unsafe * unsafe T` | raw `*mut MaybeUninit<T>` (worst case) |
+
+Nova syntax more uniform (single rule) vs Rust trio (`&T` / `NonNull<T>` /
+`*const T` / `MaybeUninit<T>` separate types). Trade-off: Rust's
+heterogeneity makes types more visible at decl site; Nova's homogeneity
+makes combinations naturally composable.

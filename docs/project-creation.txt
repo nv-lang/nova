@@ -31276,3 +31276,101 @@ Lessons:
   matters more than per-handler customization. Observability moves к
   Cleanup effect on_scope_enter/_exit (Plan 110.4.4) where customization
   semantically belongs.
+
+═══════════════════════════════════════════════════════════════════════
+2026-06-04 — D216 V2 amend + Plan 118.5 NEW (right-binding rule
+formalization + unsafe T first-class)
+═══════════════════════════════════════════════════════════════════════
+
+Spec design landed (commit b10317dfb76, branch main):
+- D216 V2 amend §V2.1-§V2.7 (spec/decisions/02-types.md)
+- Plan 118.5 sub-plan doc (docs/plans/118.5-right-binding-rule-migration.md)
+
+### Что зафиксировано
+
+Universal right-binding rule: каждый type-level modifier (ro/mut/unsafe/
+consume) применяется ко ВСЕМУ что справа до конца type-expression либо
+до следующего modifier. Парсер для `ro` уже это делает (verified в
+parse_type recursive arm). `mut` / `unsafe` / `consume` нужны parallel
+TypeRef wrappers + parser arms.
+
+Pointer family syntax migrates с inline-modifier (`*ro T` / `*mut T` /
+`*unsafe T`) к prefix form (`ro * T` / `mut * T` / `unsafe * T`).
+`*` остаётся pure constructor без inline modifier.
+
+Дополнительно `unsafe T` first-class — MaybeUninit-style semantic:
+init/layout/aliasing/identity contracts off; read requires unsafe { } wrap
+(E_UNSAFE_T_READ_REQUIRES_WRAP); write safe (transitions к valid).
+
+Two orthogonal safety оси:
+  ro * T              — readonly ptr к valid T (canonical safe)
+  mut * T             — mut ptr к valid T
+  unsafe * T          — possibly-null/dangling ptr к valid T (Rust *const T)
+  * unsafe T          — valid ptr к possibly-uninit T (Rust *mut MaybeUninit<T>)
+  unsafe * unsafe T   — both unsafe (worst case)
+
+NPO recalculation §V2.4: `unsafe *T` excluded (null может быть valid value);
+`* unsafe T` включён (pointer still non-null).
+
+### Зачем breaking change сейчас
+
+Inconsistency обнаружена 2026-06-04 при design discussion:
+- Parser применяет right-binding для `ro` (recursive parse_type → Readonly)
+- Pointer family использует inline-modifier (специальный case)
+- Users intuit'ивно ожидают единое правило
+- `mut * T` / `unsafe * T` parse error в current parser
+- `* unsafe T` (valid ptr к uninit T) — невозможно express
+
+Migration cost линейно с FFI footprint. Audit grep: 54 occurrences across
+14 nova_tests files + std/runtime/raw_mem.nv + 1 example. Manageable.
+
+### Migration plan (Plan 118.5)
+
+7 фаз ~1-2 dev-day total:
+  Ф.0 GATE — design freeze + audit
+  Ф.1 AST — TypeRef::Mut + TypeRef::Unsafe + Pointer без modifier field
+  Ф.2 Parser — recursive arms для mut/unsafe + legacy detection
+  Ф.3 Codegen — wrappers transparent для C
+  Ф.4 Type-checker — unsafe T semantic enforcement
+  Ф.5 Sweep — rewrite 54 occurrences
+  Ф.6 Closure — D33/D216/D217/D218 amends + meta-logs
+
+Grace period: legacy `*ro T` / `*mut T` emit W_DEPRECATED warning;
+legacy `*unsafe T` emit W_BREAKING_UNSAFE_PTR_MEANING (semantic shift).
+Errors after one release cycle.
+
+### Followup markers opened
+
+- [M-118.5-right-binding-migration]      — overall impl tracking
+- [M-118.5-unsafe-t-readwrite-semantics] — checker E_UNSAFE_T_READ_REQUIRES_WRAP
+- [M-118.5-mut-t-vs-binding-distinction] — disambiguate `mut T` vs `mut x T`
+- [M-118.5-consume-as-type-modifier]     — generalize consume
+- [M-118.5-d218-maybeuninit-duplication] — review redundancy с D218 MaybeUninit
+- [M-118.5-npo-recalculation]            — NPO codegen extension
+
+### Lessons / design rationale
+
+1. **Inconsistency спрятавшаяся за convenience.** Parser had right-binding
+   для `ro` long-time; pointer-modifier kept inline form (possibly из-за
+   "C-imported notation" instinct). Single rule cleaner для users.
+
+2. **Breaking change cost vs ergonomics gain.** ~54 occurrences manageable;
+   future FFI surface will grow it. Fix now < fix later.
+
+3. **`unsafe T` first-class subsumes MaybeUninit<T>.** Plan 118.2 D218
+   может стать redundant. Tracked в [M-118.5-d218-maybeuninit-duplication].
+
+4. **Two safety оси orthogonal** — pointer-validity (null/dangling) vs
+   pointee-validity (init/aligned). Combinations cover real FFI/embedded
+   patterns previously requiring conventions.
+
+5. **Rust precedent confirmed.** `NonNull<T>`/`&T` ↔ Nova `ro * T`/`mut * T`.
+   `*const T`/`*mut T` ↔ Nova `unsafe * T`. `MaybeUninit<T>` ↔ Nova `unsafe T`.
+   Direct parallel — Nova syntax more uniform.
+
+### State
+
+D216 V2 amend ✅ LANDED on main (commit b10317dfb76). Plan 118.5 implementation
+🆕 PLANNED — 7 phases queued. Existing Plan 118 V1 / Plan 118.4 V1 code не
+affected (use bare `*T` без inline modifier — already V2-compliant). RawMem
+stdlib signatures будут migrated в Plan 118.5 Ф.5 sweep.
