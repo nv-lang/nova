@@ -27296,6 +27296,82 @@ A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
 A19 ✅, A20 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29,
 A30, A33, A34, A35.
 
+==========================================================================
+2026-06-02 Plan 118 Ф.5.9 A22 ✅ CLOSED — W_OPTION_DOUBLE_NESTED lint
+==========================================================================
+
+User-requested closure A22 — W_OPTION_DOUBLE_NESTED warning emission.
+
+Implementation (2 commits):
+1. 3725af23fcd — feat(Ф.5.9 A22): lints.rs lint_option_double_nested
+   pass:
+   - typeref_is_nested_option_ptr: recursive matcher
+     Option[Option[<pointer-like>]]
+   - is_pointer_like: TypeRef::Pointer (Plan 118) + Named["ptr"] (Plan 115)
+   - walk_typeref_for_a22: recurses через все TypeRef children
+   - lint_option_double_nested: top-level pass — Fn signatures
+     (params/return/effects), TypeDecl bodies (Record/Sum/Newtype/Alias),
+     Const/Let ascriptions
+2. a1c8e9b0617 — test(A22): t5_warn_option_double_nested.nv
+   verifies warning fires для Option[Option[ptr]] external fn signature.
+
+False-positive prevention verified:
+- plan95 option_predicates_migrated (Option[Option[int]]) — unchanged
+- plan98 nested_option_inference (same) — unchanged
+- Non-pointer innermost не triggers warning.
+
+plan118: 37/0 PASS (18 positive + 18 NEG + 1 WARN).
+Spec D216 §7 updated: V4 ACTIVE 2026-06-02 + V5 deferred list
+(only A21 remainder left).
+
+Plan 118 grand-total: 21 of 35 acceptance criteria closed (60%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A20 ✅, A21 partial, A22 ✅, A23 ✅, A24, A25, A26, A28 partial,
+A29, A30, A33, A34, A35.
+
+==========================================================================
+2026-06-02 Plan 118 Ф.5.10 A21 ✅ FULLY CLOSED — Option[*fn(...)] NPO
+==========================================================================
+
+User-requested closure A21 remainder — последний акцепт Ф.5 NPO family.
+
+Audit-only discovery: `TypeRef::Pointer(_, TypeRef::Func{...}, _)`
+lowers через type_ref_to_c в C-string `void**`:
+  1. Inner Func → "void*" (codegen line 4710 — opaque function pointer)
+  2. Outer Pointer wraps inner_c: format!("{}*", inner_c) или
+     format!("const {}*", inner_c) → "void**" / "const void**"
+  3. Both end с '*' → V1 detection (is_novaopt_npo branch 1) ALREADY
+     triggers NPO для Option[*fn(...)] без code changes!
+
+A21 remainder ✅ CLOSED через existing V1 infrastructure (Ф.5 A19
+landing did it implicitly). Test fixture verifies generated C:
+
+  typedef struct NovaOpt_const_void_p_p { const void** value; }
+  static inline nova_bool nova_opt_eq_const_void_p_p(...) {
+      return a.value == b.value;
+  }
+  NovaOpt_const_void_p_p cb = ((NovaOpt_const_void_p_p){.value = NULL});
+
+Implementation (1 commit):
+1. test(A21): t5_7_npo_option_fn_pointer_ok.nv — 2 positive tests
+   verifying Option[*fn(i64) -> i64] None ctor + equality check.
+
+plan118: 38/0 PASS (19 positive + 18 NEG + 1 WARN).
+
+🎯 ВСЕ Ф.5 NPO acceptance criteria CLOSED: A19, A20, A21, A22, A23.
+
+Plan 118 grand-total: 22 of 35 acceptance criteria closed (63%):
+A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
+A19 ✅, A20 ✅, A21 ✅, A22 ✅, A23 ✅, A24, A25, A26, A28 partial, A29,
+A30, A33, A34, A35.
+
+Ф.5 NPO infrastructure готова для production FFI patterns:
+- malloc/calloc/realloc-style: Option[*u8] / Option[*T]
+- fopen/dlopen/sqlite3_open-style: Option[*FILE] / Option[*sqlite3]
+- dlsym-style callback registration: Option[*fn(...)]
+- libpng/libcurl handle pattern: Option[Sqlite3Handle] (newtype)
+- Plan 115 opaque pointer: Option[ptr]
+
 ================================================================================
 Plan 114.4.2 — const fn comptime evaluable functions (D199) — CLOSED 2026-06-01
 ================================================================================
@@ -30237,6 +30313,60 @@ Lessons:
   rewriter с extra logic. Existing handler picks up rewritten form.
 - Composite type mangling via stable serialization: removes simple-Named
   restriction enabling rich generic instantiation.
+
+=== Plan 123.4.3 — Deep chain prefix sharing (V4.3, 2026-06-03) ===
+
+Followup `[M-123.4-deep-prefix-sharing]` closure. Расширяет V4.2 length-2
+prefix sharing к length-3+ через iterative deepening + parent prefix
+chaining.
+
+Algorithm: для prefix-длины L = 2..max_path_len, группируем chains по
+path[..L]. Для ≥2-element groups alloc'им `_at_<segs>_pre` с reference
+на longest existing shallower parent. Emission shorter-first так что
+deeper prefix строится из shallower через `<parent>.<remaining>` chain.
+Per-chain lets picks LONGEST covering prefix (не just length-2).
+
+Implementation (~280 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - struct PrefixInfo { name, span, parent } (NEW)
+  - fn compute_chain_prefix_sharing — replaced V4.2 length-2-only с
+    iterative deepening (~60 LOC)
+  - fn find_longest_existing_parent (NEW, 10 LOC)
+  - fn find_chain_shared_prefix — now picks longest, walks rev (15 LOC)
+  - emission loop — sort key `(len, lex)`, parent-aware value (~20 LOC)
+  - 6 unit tests v43_* (length-3, parent ref, longest cover, no
+    spurious, length-4 chain, emission order)
+- nova_tests/plan123_4_3/ — 3 runtime fixtures:
+  - v43_deep_prefix_three_level_ok.nv (positive length-3 sharing)
+  - v43_no_deep_prefix_three_distinct_chains_ok.nv (negative — only L2)
+  - v43_mixed_length_chains_ok.nv (mixed length-3 + length-5 chains)
+
+Verification (release nova-cli + clang):
+- 8 V4.3 unit tests PASS (including length-4 + emission order).
+- 3 runtime fixtures PASS via `nova test nova_tests/plan123_4_3`.
+- Zero regressions:
+  - plan123_4 (V4 baseline) 10/10 PASS
+  - plan123_4_2 (V4.2 baseline) 1/1 PASS
+  - field_cache lib tests 37/37 PASS (8 v43 + 2 v42 + 27 baseline)
+
+Spec: D217 amend V4.3 (~110 lines) — algorithm, emission order,
+composition, V4.3.1-V4.3.8 acceptance criteria.
+
+Plan doc: docs/plans/123.4.3-deep-prefix-sharing.md.
+
+Pattern lesson:
+- Iterative deepening + parent chaining clean way support O(depth)
+  sharing — alternative recursive LCA computation сложнее без
+  benefit (same algorithmic depth).
+- Sort key `(len, lex)` для deterministic emission order critical
+  когда deeper prefix references shallower — wrong order breaks codegen.
+- Per-chain "longest cover first" rule via walking
+  `(2..path.len()).rev()` дёт правильное hop minimization без
+  global optimization.
+
+Followup markers:
+- [M-123.4.3-cross-fn-prefix-sharing] — V4.4 module-level CSE.
+- [M-123.4.3-mut-prefix] — V4.5 mut-root prefix.
 
 
 ================================================================================

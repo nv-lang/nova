@@ -7473,13 +7473,24 @@ TcpStream, SocketAddr, TcpListener, File, etc — все benefit automatically).
   pattern Nova type system pre-collapses к underlying (nova_ptr) —
   V2 branch fires directly; V3 defensive coverage для future paths.
 
-**V4 follow-on** (deferred Session 4+):
-- `Option[*fn(...)]` — function pointer c_ty ends with `)` not `*` —
-  requires structural detection. A21 remainder.
-- `Option[Option[*T]]` nested — currently NPO inner (correct since inner
-  c_ty pointer), outer Option uses tagged (inner c_ty = struct).
-  W_OPTION_DOUBLE_NESTED warning — A22, требует lint framework
-  integration (detection logic documented в walk_typeref).
+**V4 detection** (Plan 118 Ф.5.9 ACTIVE 2026-06-02, commit 3725af23fcd):
+- `Option[Option[*T|ptr]]` nested — emits `W_OPTION_DOUBLE_NESTED`
+  warning через lint framework (lints.rs lint_option_double_nested).
+  Outer Option uses tagged fallback (correctly — inner c_ty = struct);
+  semantically ambiguous (None vs Some(None)). **Closes A22 ✅.**
+
+**V5 detection** (Plan 118 Ф.5.10 ACTIVE 2026-06-02):
+- `Option[*fn(...)]` — function pointer types. После audit type_ref_to_c
+  lowering: `TypeRef::Pointer(modif, TypeRef::Func{...}, _)` → `void**`
+  (Func → `void*`, outer Pointer adds another `*`). c_ty ends with `*`
+  → V1 detection (Ф.5 A19) ALREADY triggers NPO. **Closes A21 remainder ✅**
+  через existing infrastructure без code changes. Test fixture
+  t5_7_npo_option_fn_pointer_ok verifies.
+
+**All Ф.5 NPO acceptance criteria CLOSED:** A19 ✅, A20 ✅, A21 ✅,
+A22 ✅, A23 ✅.
+
+**Other deferred** (Session 4+):
 - ~~`null ptr` literal retraction~~ — **A23 ✅ CLOSED 2026-06-02**.
   D214 amended; parser emits `E_NULL_PTR_RETRACTED_USE_OPTION`;
   14 fixtures migrated к `(0 as ptr)`. Closes `[M-115-null-ptr-to-option-after-npo]`.

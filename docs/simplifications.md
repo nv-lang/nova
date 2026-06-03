@@ -28521,19 +28521,29 @@ plan100_3 10/0 + plan108 6/0 + basics 8/0 + plan124_1 9/0).
   для canonical Plan 115 pattern Nova type system pre-collapses к
   underlying nova_ptr (V2 branch fires directly); V3 defensive
   coverage для future paths. 3 positive tests в t5_6_npo_newtype_handle_ok.
-- plan118 fixtures: **36/0** (18 positive + 18 NEG)
+- **Ф.5.9 A22 ✅ CLOSED 2026-06-02** (commit 3725af23fcd) —
+  W_OPTION_DOUBLE_NESTED warning emission через lint framework
+  (lints.rs lint_option_double_nested pass). Detects
+  `Option[Option[*T|ptr]]` nested pattern в Fn signatures, Type decls,
+  Const/Let ascriptions. Existing `Option[Option[int]]` fixtures (plan95,
+  plan98) verified clean — non-pointer inner doesn't trigger.
+- **Ф.5.10 A21 ✅ CLOSED 2026-06-02** — NPO для `Option[*fn(...)]`.
+  Post-audit: `TypeRef::Pointer(_, TypeRef::Func{...}, _)` lowers к
+  `void**` (Func → `void*`, outer Pointer adds another `*`). c_ty
+  ends with `*` → V1 detection (Ф.5 A19) ALREADY triggers NPO без
+  code changes. Test fixture t5_7_npo_option_fn_pointer_ok verifies.
+- plan118 fixtures: **38/0** (19 positive + 18 NEG + 1 WARN)
 
-**Session 3 + Ф.5/Ф.5.4/Ф.5.7/Ф.5.8 grand-total Plan 118 acceptance closed: 20 of 35 (57%):**
+**🎯 ALL Ф.5 NPO acceptance criteria CLOSED:** A19, A20, A21, A22, A23.
+
+**Session 3 + Ф.5.x grand-total Plan 118 acceptance closed: 22 of 35 (63%):**
 A1, A3, A4, A8, A9, A10, A11, A12 partial, A17 partial, A18 partial,
-A19 ✅, A20 ✅, A21 partial, A23 ✅, A24, A25, A26, A28 partial, A29,
+A19 ✅, A20 ✅, A21 ✅, A22 ✅, A23 ✅, A24, A25, A26, A28 partial, A29,
 A30, A33, A34, A35.
 
-**Ф.5 V4 deferred (Session 4+):**
-- A21 remainder — NPO для `Option[*fn(...)]` (c_ty ends with `)`) —
-  V4 structural detection
-- A22 — `Option[Option[*T]]` warning W_OPTION_DOUBLE_NESTED — detection
-  logic documented в walk_typeref; emission requires lint framework
-  integration (LintWarning через lints.rs)
+**Ф.5 NPO codegen — fully complete:** все A19-A23 закрыты, NPO
+infrastructure готова для production FFI patterns (malloc-style,
+dlsym-style, sqlite-handle-style — все get sizeof=8).
 
 **Main sync 2026-06-02 (commit 8fc3473e22b):** merged 66 commits from
 main (Plan 114.4.4.5 V4.1 mono-specialization + V4.2 runtime trampoline +
@@ -31148,6 +31158,54 @@ M4 (`c205a7a1589`): `GenericInst.concrete` extended Vec<String> → Vec<TypeRef>
 4. **Composite type mangling** (M4) — stable serialization through structural
    recursion. Removes simple-Named restriction. mangle_type_ref returns
    C-identifier-safe strings; symmetric с trampoline + closure paths.
+
+---
+
+## Plan 123.4.3 — Deep chain prefix sharing (V4.3)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v4-3-deep-prefix. ~280 LOC delta.
+Closes `[M-123.4-deep-prefix-sharing]`.
+
+**Что cделано:** V4.2 length-2 prefix sharing расширено к length 3+
+через iterative deepening + parent prefix chaining. Deeper prefix
+references shallower parent (`_at_a_b_c_pre = _at_a_b_pre.c`), per-
+chain lets picks longest covering prefix. Поддерживает arbitrary
+depth до `chain_max_depth - 1`.
+
+**Принципы:**
+
+- **Iterative deepening** вместо recursive LCA computation: проще
+  understand + debug, same algorithmic depth. for L=2..max_depth →
+  group by path[..L] → emit qualifying groups.
+- **Parent chaining** через struct `PrefixInfo { name, span, parent
+  Option<Vec<String>> }` — `parent: None` = V4.2 case (=root @<prefix>),
+  `parent: Some` = build value `<parent_local>.<remaining_segs>`.
+- **Sort key `(len, lex)`** для deterministic emission order. Critical:
+  deeper prefix references shallower parent, поэтому shallower MUST
+  быть emitted first.
+- **Per-chain longest cover rule:** `find_chain_shared_prefix` walks
+  `(2..path.len()).rev()` — picks deepest matching prefix, гарантирует
+  minimum-hop access.
+- **Budget shared с per-chain lets:** prefix count toward
+  `cfg.max_per_fn`. Deeper depths skip когда budget exhausted —
+  graceful degradation к V4.2 behavior.
+
+**Acceptance (V4.3.1-V4.3.8 все ✅):** length-3 emission, parent-ref
+value-expr, longest cover per-chain, length-4 chained parents, no
+spurious singleton prefixes, shorter-first emission order, runtime
+semantic preservation, zero regressions.
+
+**Verification:** 8 unit tests + 3 runtime fixtures PASS via release
+nova-cli + clang. plan123_4 10/10 + plan123_4_2 1/1 + field_cache lib
+37/37 PASS — zero regressions.
+
+**Followup markers:**
+
+- `[M-123.4.3-cross-fn-prefix-sharing]` — V4.4 module-level CSE same-type
+  methods.
+- `[M-123.4.3-mut-prefix]` — V4.5 mut-root prefix (currently inherits
+  V4 V4.1 skip-when-body-writes constraint).
 
 
 ---

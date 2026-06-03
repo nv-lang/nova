@@ -248,6 +248,154 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     warnings.extend(lint_prelude_shadow(m));
     // Plan 81 Ф.4: неиспользуемые импорты.
     warnings.extend(lint_unused_imports(m));
+    // Plan 118 Ф.5 A22 (D216 §7): W_OPTION_DOUBLE_NESTED — nested
+    // Option[Option[*T|ptr]] ambiguous под NPO codegen.
+    warnings.extend(lint_option_double_nested(m));
+    warnings
+}
+
+// ============================================================================
+// Plan 118 Ф.5 A22 (D216 §7): W_OPTION_DOUBLE_NESTED.
+//
+// `Option[Option[*T]]` / `Option[Option[ptr]]` — nested Option pattern
+// под NPO codegen ambiguous: inner Option benefits from NPO (single
+// pointer); outer Option falls в tagged form (inner c_ty = struct, not
+// pointer). Semantically `None` vs `Some(None)` оба distinct legal
+// states но user-facing semantics confusing.
+//
+// Warning suggests:
+//  - unwrap к single Option[*T] if both-None semantics не distinguishable
+//  - use `Result[*T, MyError]` for distinct "absent" vs "error" cases
+// ============================================================================
+
+/// Recursive check: returns true если TypeRef есть `Option[Option[<ptr-like>]]`.
+fn typeref_is_nested_option_ptr(tr: &TypeRef) -> bool {
+    if let TypeRef::Named { path, generics, .. } = tr {
+        if path.last().map_or(false, |n| n == "Option") && generics.len() == 1 {
+            // Inner is Option[X] — check X for pointer-like.
+            if let TypeRef::Named { path: ipath, generics: igen, .. } = &generics[0] {
+                if ipath.last().map_or(false, |n| n == "Option") && igen.len() == 1 {
+                    // Check innermost — *T or ptr?
+                    return is_pointer_like(&igen[0]);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// True for pointer-like TypeRef:
+/// - `TypeRef::Pointer(*T)` (Plan 118)
+/// - `TypeRef::Named { path: ["ptr"] }` (Plan 115)
+fn is_pointer_like(tr: &TypeRef) -> bool {
+    match tr {
+        TypeRef::Pointer(..) => true,
+        TypeRef::Named { path, .. } => path.last().map_or(false, |n| n == "ptr"),
+        _ => false,
+    }
+}
+
+/// Walk TypeRef recursively, emit W_OPTION_DOUBLE_NESTED для каждого
+/// nested-Option-ptr matched site.
+fn walk_typeref_for_a22(tr: &TypeRef, warnings: &mut Vec<LintWarning>) {
+    if typeref_is_nested_option_ptr(tr) {
+        let span = match tr {
+            TypeRef::Named { span, .. } => *span,
+            TypeRef::Array(_, span) => *span,
+            TypeRef::FixedArray(_, _, span) => *span,
+            TypeRef::Tuple(_, span) => *span,
+            TypeRef::Func { span, .. } => *span,
+            TypeRef::Protocol { span, .. } => *span,
+            TypeRef::Unit(span) => *span,
+            TypeRef::Readonly(_, span) => *span,
+            TypeRef::Pointer(_, _, span) => *span,
+        };
+        warnings.push(LintWarning {
+            rule: "W_OPTION_DOUBLE_NESTED",
+            diag: Diagnostic::new(
+                "[W_OPTION_DOUBLE_NESTED] `Option[Option[*T|ptr]]` nested Option \
+                 ambiguous под NPO codegen (Plan 118 D216 §7). Inner Option benefits \
+                 from NPO (single-pointer layout); outer Option falls в tagged repr \
+                 (inner c_ty = struct, не pointer). Semantically `None` vs \
+                 `Some(None)` оба distinct legal states но difficult к distinguish. \
+                 Suggest: либо collapse к `Option[*T]` (если both-None semantics \
+                 не distinguishable), либо `Result[*T, E]` для distinct \
+                 \"absent\" vs \"error\" cases.".to_string(),
+                span,
+            ),
+        });
+    }
+    // Recurse в child TypeRef-ах.
+    match tr {
+        TypeRef::Named { generics, .. } => {
+            for g in generics { walk_typeref_for_a22(g, warnings); }
+        }
+        TypeRef::Array(inner, _)
+        | TypeRef::FixedArray(_, inner, _)
+        | TypeRef::Readonly(inner, _)
+        | TypeRef::Pointer(_, inner, _) => walk_typeref_for_a22(inner, warnings),
+        TypeRef::Tuple(items, _) => {
+            for it in items { walk_typeref_for_a22(it, warnings); }
+        }
+        TypeRef::Func { params, return_type, .. } => {
+            for p in params { walk_typeref_for_a22(p, warnings); }
+            if let Some(rt) = return_type { walk_typeref_for_a22(rt, warnings); }
+        }
+        TypeRef::Protocol { methods, .. } => {
+            for m in methods {
+                for p in &m.params { walk_typeref_for_a22(&p.ty, warnings); }
+                if let Some(rt) = &m.return_type { walk_typeref_for_a22(rt, warnings); }
+            }
+        }
+        TypeRef::Unit(_) => {}
+    }
+}
+
+fn lint_option_double_nested(m: &Module) -> Vec<LintWarning> {
+    let mut warnings = Vec::new();
+    for item in &m.items {
+        match item {
+            Item::Fn(f) => {
+                // Fn signature: params + return + effects.
+                for p in &f.params { walk_typeref_for_a22(&p.ty, &mut warnings); }
+                if let Some(rt) = &f.return_type {
+                    walk_typeref_for_a22(rt, &mut warnings);
+                }
+                for e in &f.effects { walk_typeref_for_a22(e, &mut warnings); }
+            }
+            Item::Type(t) => {
+                // Type decl bodies — record fields, sum variants, newtype inner.
+                match &t.kind {
+                    TypeDeclKind::Record(fields) => {
+                        for f in fields { walk_typeref_for_a22(&f.ty, &mut warnings); }
+                    }
+                    TypeDeclKind::Sum(variants) => {
+                        for v in variants {
+                            match &v.kind {
+                                crate::ast::SumVariantKind::Tuple(tys) => {
+                                    for ty in tys { walk_typeref_for_a22(ty, &mut warnings); }
+                                }
+                                crate::ast::SumVariantKind::Record(fields) => {
+                                    for f in fields { walk_typeref_for_a22(&f.ty, &mut warnings); }
+                                }
+                                crate::ast::SumVariantKind::Unit => {}
+                            }
+                        }
+                    }
+                    TypeDeclKind::Newtype(inner) => walk_typeref_for_a22(inner, &mut warnings),
+                    TypeDeclKind::Alias(inner) => walk_typeref_for_a22(inner, &mut warnings),
+                    _ => {}
+                }
+            }
+            Item::Const(c) => {
+                if let Some(ty) = &c.ty { walk_typeref_for_a22(ty, &mut warnings); }
+            }
+            Item::Let(l) => {
+                if let Some(ty) = &l.ty { walk_typeref_for_a22(ty, &mut warnings); }
+            }
+            _ => {}
+        }
+    }
     warnings
 }
 

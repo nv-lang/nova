@@ -6437,17 +6437,20 @@ fn chain_cache_fn_impl(
         name_map.insert(path.clone(), chosen);
     }
 
-    // Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing.
-    // Identify length-2 prefixes shared by ≥2 chains; emit a shared
-    // base let `_at_<a>_<b>_pre = @<a>.<b>` so the per-chain lets need
-    // only walk the remaining tail. Reduces `@<root>` reads from
-    // N×depth to 1 + N×(depth - shared_len).
+    // Plan 123.4.2 (V4.2, 2026-06-02): chain prefix sharing length-2.
+    // Plan 123.4.3 (V4.3, 2026-06-03): deep prefix sharing (length 3+).
     //
-    // Note: prefix lets follow `cfg.max_per_fn` budget too — we count
-    // them in `to_cache.len() + prefix_count`. Eligibility happens
-    // ONLY when shared prefix of length 2; deeper sharing (≥3) =
-    // V4.3 followup. Single-chain-per-prefix gets no prefix let
-    // (would be net 0 savings).
+    // V4.2 emit'нул shared `_at_<a>_<b>_pre = @<a>.<b>` для group из ≥2
+    // chains, делящих length-2 prefix. V4.3 extends iteratively: после
+    // length-2 grouping проверяем length-3, length-4 … вплоть до
+    // max_chain_depth − 1. Deeper prefix references shallower parent
+    // если такой существует (chain `_at_a_b_c_pre = _at_a_b_pre.c`
+    // вместо `@a.b.c`), что транзитивно даёт O(1) hops в финальной
+    // chain instead of O(depth).
+    //
+    // Budget: prefix lets count toward `cfg.max_per_fn` (shared с per-
+    // chain lets). Eligibility: ≥2 chains sharing prefix AND длина
+    // prefix < min-chain-длина в группе (нужен ≥1 tail segment).
     let prefix_map = compute_chain_prefix_sharing(&to_cache, &mut local_names, cfg.max_per_fn);
 
     // Coerce Expr body → Block для prepend.
@@ -6479,25 +6482,34 @@ fn chain_cache_fn_impl(
     if let FnBody::Block(b) = &mut f.body {
         let mut prefix: Vec<Stmt> = Vec::with_capacity(to_cache.len() + prefix_map.len());
 
-        // Plan 123.4.2 (V4.2): shared-prefix lets first — sorted by
-        // prefix for deterministic ordering. Each shared prefix yields
-        // a single `_at_a_b_pre = @a.b` let; subsequent per-chain lets
-        // reference it via `<prefix-local>.c.d.e` instead of full chain.
+        // Plan 123.4.2 (V4.2): shared-prefix lets first.
+        // Plan 123.4.3 (V4.3): emit prefixes shorter-first so deeper
+        // prefixes can reference shallower parents (e.g. `_at_a_b_c_pre
+        // = _at_a_b_pre.c` после `_at_a_b_pre = @a.b`). Sort key:
+        // (length, lexicographic) для determinism.
         let mut prefix_keys: Vec<&Vec<String>> = prefix_map.keys().collect();
-        prefix_keys.sort();
+        prefix_keys.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
         for pkey in &prefix_keys {
-            let (pname, pspan) = &prefix_map[*pkey];
-            let access = build_chain_expr(pkey, *pspan);
+            let info = &prefix_map[*pkey];
+            // V4.3: prefix value builds от parent prefix (если есть)
+            // через ident chain, иначе от `@<full prefix>`.
+            let access = if let Some(parent_path) = &info.parent {
+                let parent_info = &prefix_map[parent_path];
+                let tail = &pkey[parent_path.len()..];
+                build_chain_from_ident(&parent_info.name, tail, info.span)
+            } else {
+                build_chain_expr(pkey, info.span)
+            };
             prefix.push(Stmt::Let(LetDecl {
                 mutable: false,
                 pattern: Pattern::Ident {
-                    name: pname.clone(),
-                    span: *pspan,
+                    name: info.name.clone(),
+                    span: info.span,
                     is_mut: false,
                 },
                 ty: None,
                 value: access,
-                span: *pspan,
+                span: info.span,
                 is_ghost: false,
                 consume: false,
             }));
@@ -6505,9 +6517,9 @@ fn chain_cache_fn_impl(
 
         for (path, span) in &to_cache {
             let local_name = &name_map[path];
-            // V4.2: when this chain has a shared prefix, build value
-            // expression as `<prefix-local>.<tail>` instead of
-            // `@<full path>`. Otherwise fall back to full `@chain`.
+            // V4.3: pick LONGEST covering prefix (deeper sharing → fewer
+            // hops в финальной chain value). Если нет cover'а →
+            // полная `@chain` (V4 fallback).
             let access = if let Some((prefix_name, tail)) =
                 find_chain_shared_prefix(&prefix_map, path)
             {
@@ -6534,57 +6546,110 @@ fn chain_cache_fn_impl(
     }
 }
 
-/// Plan 123.4.2 (V4.2, 2026-06-02): determine shared length-2 prefixes
-/// among `to_cache` paths. Returns map: prefix-path → (synthetic-local-name, span).
+/// Plan 123.4.2 (V4.2, 2026-06-02): metadata per shared prefix.
+/// Plan 123.4.3 (V4.3, 2026-06-03): + `parent` — prefix path этого prefix'а
+/// строится через `<parent_local>.<remaining>` chain если такой есть,
+/// иначе через full `@<prefix_path>` (V4.2 case = parent=None).
+#[derive(Debug, Clone)]
+pub(crate) struct PrefixInfo {
+    pub(crate) name: String,
+    pub(crate) span: crate::diag::Span,
+    pub(crate) parent: Option<Vec<String>>,
+}
+
+/// Plan 123.4.2/4.3: determine shared prefixes (length 2..=N-1) среди
+/// `to_cache` paths. Returns map: prefix-path → PrefixInfo.
 ///
-/// Only groups с ≥2 chains and total emit count within `max_per_fn`
-/// budget qualify. Pure additive — no chains removed from to_cache.
+/// Algorithm (iterative deepening):
+///   for L = 2..=max_chain_depth-1:
+///     group chains by path[..L]
+///     for each group ≥2 chains AND budget available:
+///       find longest existing parent (shorter prefix that covers L)
+///       allocate `_at_<path-joined>_pre[_N]` collision-safe name
+///       record PrefixInfo with parent ref
+///
+/// Budget: prefix lets count toward `max_per_fn` (shared с per-chain lets).
 fn compute_chain_prefix_sharing(
     to_cache: &[(Vec<String>, crate::diag::Span)],
     local_names: &mut HashSet<String>,
     max_per_fn: usize,
-) -> HashMap<Vec<String>, (String, crate::diag::Span)> {
-    let mut groups: HashMap<Vec<String>, Vec<&(Vec<String>, crate::diag::Span)>> = HashMap::new();
-    for entry in to_cache {
-        let path = &entry.0;
-        if path.len() < 3 { continue; }
-        let prefix = path[..2].to_vec();
-        groups.entry(prefix).or_default().push(entry);
-    }
-    let mut out: HashMap<Vec<String>, (String, crate::diag::Span)> = HashMap::new();
+) -> HashMap<Vec<String>, PrefixInfo> {
+    let mut out: HashMap<Vec<String>, PrefixInfo> = HashMap::new();
+    if to_cache.len() < 2 { return out; }
     let mut emitted = to_cache.len();
-    let mut keys: Vec<Vec<String>> = groups.keys().cloned().collect();
-    keys.sort();
-    for prefix in keys {
-        let entries = &groups[&prefix];
-        if entries.len() < 2 { continue; }
+    let max_path_len: usize = to_cache.iter().map(|(p, _)| p.len()).max().unwrap_or(0);
+    // Iterative deepening: length 2 first (V4.2), then 3+, …, up to
+    // max_path_len-1 (need ≥1 tail segment beyond prefix).
+    for prefix_len in 2..max_path_len {
         if emitted >= max_per_fn { break; }
-        // Synthesize collision-safe local name: `_at_a_b_pre[_N]`.
-        let base = format!("_at_{}_pre", prefix.join("_"));
-        let mut chosen = base.clone();
-        let mut suffix = 0usize;
-        while local_names.contains(&chosen) {
-            suffix += 1;
-            chosen = format!("{}_{}", base, suffix);
+        let mut groups: HashMap<Vec<String>, Vec<&(Vec<String>, crate::diag::Span)>>
+            = HashMap::new();
+        for entry in to_cache {
+            // path.len() must be > prefix_len, чтобы был ≥1 tail.
+            if entry.0.len() <= prefix_len { continue; }
+            groups.entry(entry.0[..prefix_len].to_vec()).or_default().push(entry);
         }
-        local_names.insert(chosen.clone());
-        let earliest_span = entries.iter().map(|e| e.1).min_by_key(|s| s.start).unwrap_or(entries[0].1);
-        out.insert(prefix, (chosen, earliest_span));
-        emitted += 1;
+        let mut keys: Vec<Vec<String>> = groups.keys().cloned().collect();
+        keys.sort();
+        for prefix in keys {
+            let entries = &groups[&prefix];
+            if entries.len() < 2 { continue; }
+            if emitted >= max_per_fn { break; }
+            let parent = find_longest_existing_parent(&out, &prefix);
+            // Synthesize collision-safe local name: `_at_<segs>_pre[_N]`.
+            let base = format!("_at_{}_pre", prefix.join("_"));
+            let mut chosen = base.clone();
+            let mut suffix = 0usize;
+            while local_names.contains(&chosen) {
+                suffix += 1;
+                chosen = format!("{}_{}", base, suffix);
+            }
+            local_names.insert(chosen.clone());
+            let earliest_span = entries.iter()
+                .map(|e| e.1).min_by_key(|s| s.start)
+                .unwrap_or(entries[0].1);
+            out.insert(prefix.clone(), PrefixInfo {
+                name: chosen,
+                span: earliest_span,
+                parent,
+            });
+            emitted += 1;
+        }
     }
     out
 }
 
-/// Plan 123.4.2 (V4.2): if `path` is covered by a length-2 prefix in
-/// `prefix_map`, return `(prefix-local-name, tail-segments)`. Else None.
+/// Plan 123.4.3 (V4.3): find longest existing prefix в `out` который
+/// является prefix'ом `prefix` (т.е. `prefix[..L]` для какого-то L < prefix.len()).
+/// Returns owned `Vec<String>` (parent key для map lookup'а).
+fn find_longest_existing_parent(
+    out: &HashMap<Vec<String>, PrefixInfo>,
+    prefix: &[String],
+) -> Option<Vec<String>> {
+    // Walk lengths from longest-possible-parent down to 2.
+    for len in (2..prefix.len()).rev() {
+        let candidate = &prefix[..len];
+        if let Some(_) = out.get(candidate) {
+            return Some(candidate.to_vec());
+        }
+    }
+    None
+}
+
+/// Plan 123.4.2/4.3: find LONGEST prefix в `prefix_map` который cover'ит
+/// `path` (`path[..L]` для L < path.len()). Returns
+/// `(prefix-local-name, tail-segments)`. None если нет cover'а.
 fn find_chain_shared_prefix<'a, 'p>(
-    prefix_map: &'a HashMap<Vec<String>, (String, crate::diag::Span)>,
+    prefix_map: &'a HashMap<Vec<String>, PrefixInfo>,
     path: &'p [String],
 ) -> Option<(&'a str, &'p [String])> {
-    if path.len() < 3 { return None; }
-    let prefix_key = &path[..2];
-    let (pname, _) = prefix_map.get(prefix_key)?;
-    Some((pname.as_str(), &path[2..]))
+    // Walk from longest possible cover (path.len()-1) down to 2.
+    for len in (2..path.len()).rev() {
+        if let Some(info) = prefix_map.get(&path[..len]) {
+            return Some((info.name.as_str(), &path[len..]));
+        }
+    }
+    None
 }
 
 /// Plan 123.4.2 (V4.2): build `<ident>.<seg1>.<seg2>.<...>` expression.
@@ -7680,6 +7745,234 @@ fn Outer @use_both() -> int {
             "expected per-chain let _at_a_b_c_chain; got {:?}", names);
         assert!(names.iter().any(|n| n == "_at_a_b_d_chain"),
             "expected per-chain let _at_a_b_d_chain; got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.4.3 (V4.3, 2026-06-03): deep chain prefix sharing.
+    // Extends V4.2 (length-2 only) к length-3+ via iterative deepening
+    // + parent-prefix chaining.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn v43_length3_shared_prefix_emitted() {
+        // Two chains @a.b.c.x и @a.b.c.y (length 4, share length-3
+        // prefix @a.b.c). V4.3 должен emit'нуть `_at_a_b_pre` (length-2,
+        // covers both) AND `_at_a_b_c_pre` (length-3, deeper).
+        let src = r#"
+module testmod.v43_len3
+type L { ro x int, ro y int }
+type M { ro c L }
+type N { ro b M }
+type O { ro a N }
+fn O @use_both() -> int {
+    @a.b.c.x + @a.b.c.x + @a.b.c.y + @a.b.c.y
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_both");
+        let names = fn_prefix_lets(f);
+        assert!(names.iter().any(|n| n == "_at_a_b_pre"),
+            "expected length-2 prefix let _at_a_b_pre; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_pre"),
+            "expected length-3 prefix let _at_a_b_c_pre; got {:?}", names);
+        // Per-chain lets также присутствуют.
+        assert!(names.iter().any(|n| n == "_at_a_b_c_x_chain"));
+        assert!(names.iter().any(|n| n == "_at_a_b_c_y_chain"));
+    }
+
+    #[test]
+    fn v43_length3_prefix_references_length2_parent() {
+        // Length-3 prefix `_at_a_b_c_pre` value-expression must be
+        // `_at_a_b_pre.c` (reference parent), NOT `@a.b.c`.
+        let src = r#"
+module testmod.v43_parent_ref
+type L { ro x int, ro y int }
+type M { ro c L }
+type N { ro b M }
+type O { ro a N }
+fn O @use_both() -> int {
+    @a.b.c.x + @a.b.c.x + @a.b.c.y + @a.b.c.y
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_both");
+        // Find the `_at_a_b_c_pre` let, check its value-expression.
+        if let FnBody::Block(b) = &f.body {
+            let stmt = b.stmts.iter().find(|s| match s {
+                Stmt::Let(d) => matches!(&d.pattern,
+                    Pattern::Ident { name, .. } if name == "_at_a_b_c_pre"),
+                _ => false,
+            }).expect("`_at_a_b_c_pre` let not found");
+            if let Stmt::Let(d) = stmt {
+                // Value should be Member { obj: Ident("_at_a_b_pre"), name: "c" }
+                if let ExprKind::Member { obj, name } = &d.value.kind {
+                    assert_eq!(name, "c", "expected member name 'c'; got {}", name);
+                    if let ExprKind::Ident(id) = &obj.kind {
+                        assert_eq!(id, "_at_a_b_pre",
+                            "expected ident parent _at_a_b_pre; got {}", id);
+                    } else {
+                        panic!("expected Ident obj; got {:?}", obj.kind);
+                    }
+                } else {
+                    panic!("expected Member value; got {:?}", d.value.kind);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn v43_chain_let_uses_longest_prefix_cover() {
+        // Per-chain let `_at_a_b_c_x_chain` value should reference
+        // longest prefix `_at_a_b_c_pre` (NOT length-2 `_at_a_b_pre`).
+        let src = r#"
+module testmod.v43_longest_cover
+type L { ro x int, ro y int }
+type M { ro c L }
+type N { ro b M }
+type O { ro a N }
+fn O @use_both() -> int {
+    @a.b.c.x + @a.b.c.x + @a.b.c.y + @a.b.c.y
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_both");
+        if let FnBody::Block(b) = &f.body {
+            let stmt = b.stmts.iter().find(|s| match s {
+                Stmt::Let(d) => matches!(&d.pattern,
+                    Pattern::Ident { name, .. } if name == "_at_a_b_c_x_chain"),
+                _ => false,
+            }).expect("`_at_a_b_c_x_chain` let not found");
+            if let Stmt::Let(d) = stmt {
+                // Should be Member { obj: Ident("_at_a_b_c_pre"), name: "x" }
+                if let ExprKind::Member { obj, name } = &d.value.kind {
+                    assert_eq!(name, "x");
+                    if let ExprKind::Ident(id) = &obj.kind {
+                        assert_eq!(id, "_at_a_b_c_pre",
+                            "expected ident _at_a_b_c_pre (longest cover); got {}", id);
+                    } else { panic!("expected Ident obj"); }
+                } else { panic!("expected Member value"); }
+            }
+        }
+    }
+
+    #[test]
+    fn v43_no_deep_prefix_when_only_one_chain_at_depth3() {
+        // Three chains @a.b.c.x / @a.b.d.y / @a.b.e.z — все имеют
+        // length-2 prefix @a.b (≥2 sharing), но length-3 group имеет по
+        // 1 chain'у каждая (no length-3 sharing). V4.3 emit'ит ТОЛЬКО
+        // `_at_a_b_pre`, не выдумывает length-3 prefix.
+        let src = r#"
+module testmod.v43_only_l2
+type L { ro x int, ro y int, ro z int }
+type Mid { ro c L, ro d L, ro e L }
+type Inn { ro b Mid }
+type Out { ro a Inn }
+fn Out @use_three() -> int {
+    @a.b.c.x + @a.b.c.x + @a.b.d.y + @a.b.d.y + @a.b.e.z + @a.b.e.z
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "use_three");
+        let names = fn_prefix_lets(f);
+        assert!(names.iter().any(|n| n == "_at_a_b_pre"),
+            "expected _at_a_b_pre; got {:?}", names);
+        assert!(!names.iter().any(|n| n == "_at_a_b_c_pre"),
+            "must NOT emit length-3 prefix (only 1 chain через _.c); got {:?}",
+            names);
+        assert!(!names.iter().any(|n| n == "_at_a_b_d_pre"));
+        assert!(!names.iter().any(|n| n == "_at_a_b_e_pre"));
+    }
+
+    #[test]
+    fn v43_length4_prefix_chains_through_parents() {
+        // Two chains @a.b.c.d.e и @a.b.c.d.f (length 5, share length-4
+        // prefix @a.b.c.d). V4.3 эмитит length-2 `_at_a_b_pre`,
+        // length-3 `_at_a_b_c_pre` = `_at_a_b_pre.c`, length-4
+        // `_at_a_b_c_d_pre` = `_at_a_b_c_pre.d`.
+        // Default chain_max_depth=4 skips length-5 chains; bump к 6.
+        let src = r#"
+module testmod.v43_len4
+type Leaf { ro e int, ro f int }
+type L4 { ro d Leaf }
+type L3 { ro c L4 }
+type L2 { ro b L3 }
+type L1 { ro a L2 }
+fn L1 @use_both() -> int {
+    @a.b.c.d.e + @a.b.c.d.e + @a.b.c.d.f + @a.b.c.d.f
+}
+"#;
+        let mut cfg = FieldCacheConfig::default();
+        cfg.chain_max_depth = 6;
+        cfg.max_per_fn = 16;
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "use_both");
+        let names = fn_prefix_lets(f);
+        assert!(names.iter().any(|n| n == "_at_a_b_pre"),
+            "expected _at_a_b_pre; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_pre"),
+            "expected _at_a_b_c_pre; got {:?}", names);
+        assert!(names.iter().any(|n| n == "_at_a_b_c_d_pre"),
+            "expected _at_a_b_c_d_pre; got {:?}", names);
+        // Verify parent chain: a_b_c_d → a_b_c → a_b → @.
+        if let FnBody::Block(b) = &f.body {
+            let stmt = b.stmts.iter().find(|s| match s {
+                Stmt::Let(d) => matches!(&d.pattern,
+                    Pattern::Ident { name, .. } if name == "_at_a_b_c_d_pre"),
+                _ => false,
+            }).expect("`_at_a_b_c_d_pre` let not found");
+            if let Stmt::Let(d) = stmt {
+                if let ExprKind::Member { obj, name } = &d.value.kind {
+                    assert_eq!(name, "d");
+                    if let ExprKind::Ident(id) = &obj.kind {
+                        assert_eq!(id, "_at_a_b_c_pre",
+                            "length-4 prefix must reference length-3 parent");
+                    } else { panic!("expected Ident parent ref"); }
+                } else { panic!("expected Member value"); }
+            }
+        }
+    }
+
+    #[test]
+    fn v43_emission_order_shorter_first() {
+        // Prefix emission order: length-2 BEFORE length-3 BEFORE
+        // length-4 (so deeper prefixes can reference shallower).
+        let src = r#"
+module testmod.v43_order
+type Leaf { ro e int, ro f int }
+type L4 { ro d Leaf }
+type L3 { ro c L4 }
+type L2 { ro b L3 }
+type L1 { ro a L2 }
+fn L1 @use_both() -> int {
+    @a.b.c.d.e + @a.b.c.d.e + @a.b.c.d.f + @a.b.c.d.f
+}
+"#;
+        let mut cfg = FieldCacheConfig::default();
+        cfg.chain_max_depth = 6;
+        cfg.max_per_fn = 16;
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "use_both");
+        if let FnBody::Block(b) = &f.body {
+            let positions: Vec<(String, usize)> = b.stmts.iter()
+                .enumerate()
+                .filter_map(|(i, s)| match s {
+                    Stmt::Let(d) => match &d.pattern {
+                        Pattern::Ident { name, .. } if name.ends_with("_pre")
+                            => Some((name.clone(), i)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
+            let l2 = positions.iter().find(|(n, _)| n == "_at_a_b_pre")
+                .expect("_at_a_b_pre").1;
+            let l3 = positions.iter().find(|(n, _)| n == "_at_a_b_c_pre")
+                .expect("_at_a_b_c_pre").1;
+            let l4 = positions.iter().find(|(n, _)| n == "_at_a_b_c_d_pre")
+                .expect("_at_a_b_c_d_pre").1;
+            assert!(l2 < l3, "length-2 must precede length-3");
+            assert!(l3 < l4, "length-3 must precede length-4");
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────
