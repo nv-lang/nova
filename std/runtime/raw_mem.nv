@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// std.runtime.raw_mem — low-level byte-level memory intrinsics для
+// FFI / driver / embedded scenarios (Plan 118.1 D-block — see plan-doc).
+//
+// **RawMem namespace** (`type RawMem`) groups raw memory operations.
+// All methods conceptually unsafe — caller wraps в `unsafe { ... }` block
+// per E_UNSAFE_REQUIRED (Plan 118 D216 §8). V1 limitation: `#unsafe` is
+// not yet enforced on `external fn`; caller discipline is by convention.
+//
+// V1 scope (this file): byte-level untyped operations. User responsible
+// for size calculations (`count * sizeof(T)` patterns). Generic typed
+// variants (`RawMem.copy_from[T]`) — V2 follow-on, require `sizeof[T]()`
+// const fn intrinsic propagation.
+//
+// Pointer types: `*u8` (`*ro u8` per D216 §1 default) для src,
+// `*mut u8` для dst. `usize` для byte count (D226 alias, C size_t ABI).
+//
+// Rust precedents:
+//   - ptr::copy (memmove)              -> RawMem.copy_from
+//   - ptr::copy_nonoverlapping (memcpy) -> RawMem.copy_nonoverlapping
+//   - ptr::write_bytes (memset)        -> RawMem.write_bytes / RawMem.fill
+//
+// Zig precedents:
+//   - @memcpy(dst, src) -> RawMem.copy_nonoverlapping
+//   - @memset(dst, val) -> RawMem.fill
+
+module runtime.raw_mem
+
+/// RawMem — namespace для low-level memory operations.
+///
+/// Unit type (no fields). Used as static-method namespace per Nova
+/// convention (см. spec/02-types.md примеры `type Empty` / `type Sentinel`).
+export type RawMem
+
+/// memmove — copy `n` bytes from `src` к `dst`. Overlap-safe.
+///
+/// Mirror semantic для `[]T.copy_from` (Plan 90 / D141): safe even when
+/// `src` и `dst` ranges overlap. ~2-5% slower than `copy_nonoverlapping`
+/// due to overlap check, но safe для arbitrary pointer pairs.
+///
+/// Use cases: generic memory copy where overlap possible (slice
+/// rotation, buffer scrolling).
+///
+/// V1 contract: caller wraps в `unsafe { }` block for clarity (parser
+/// does not yet support `#unsafe` attribute on `external fn`).
+export external fn RawMem.copy_from(src *u8, dst *mut u8, n usize) -> ()
+
+/// memcpy — copy `n` bytes from `src` к `dst`. UB при overlap.
+///
+/// Faster than `copy_from` (no overlap check). Caller must ensure
+/// `[src, src+n)` и `[dst, dst+n)` ranges do NOT overlap.
+///
+/// Use cases: known-distinct buffers (e.g., between two arrays,
+/// from FFI buffer к Nova buffer).
+export external fn RawMem.copy_nonoverlapping(src *u8, dst *mut u8, n usize) -> ()
+
+/// memset — fill `n` bytes at `dst` с byte-pattern `val`.
+///
+/// Single-byte fill. For typed-element fill (e.g., u32 array filled с
+/// specific i32 value), iterate manually OR use `write_bytes` (alias)
+/// для clarity того что byte-pattern semantic.
+export external fn RawMem.fill(dst *mut u8, val u8, n usize) -> ()
+
+/// memset alias — Rust `ptr::write_bytes` precedent.
+///
+/// Identical semantic к `fill`. Provided для discoverability — when
+/// reader expects Rust idiom `write_bytes(dst, 0, n)` для zero-init.
+export external fn RawMem.write_bytes(dst *mut u8, val u8, n usize) -> ()
+
+/// memcmp — compare `n` bytes at `a` и `b`. Returns -1/0/+1.
+///
+/// Result normalized к -1/0/+1 (libc memcmp's non-zero result
+/// implementation-defined; Nova normalizes для consistency).
+///
+///   - Returns `0` если bytes equal
+///   - Returns `-1` если first differing byte в `a` is less than в `b`
+///   - Returns `+1` если first differing byte в `a` is greater than в `b`
+export external fn RawMem.compare(a *u8, b *u8, n usize) -> int

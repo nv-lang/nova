@@ -5384,7 +5384,9 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 match name.as_str() {
                     "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
-                    | "u32" | "u64" | "uint" => TyCat::Int,
+                    | "u32" | "u64" | "uint"
+                    // Plan 118.1: usize/isize platform-pointer-width aliases
+                    | "usize" | "isize" => TyCat::Int,
                     "f32" | "f64" => TyCat::Float,
                     "bool" => TyCat::Bool,
                     "str" => TyCat::Str,
@@ -12822,6 +12824,9 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     | "sort" | "sort_by" | "set" | "extend" | "extend_from"
                                     | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
                                     | "drain" | "dedup" | "reverse" | "shuffle"
+                                    // Plan 118.2: as_mut_ptr exposes mutable
+                                    // internal pointer — requires mut binding.
+                                    | "as_mut_ptr"
                                 );
                                 if registered || builtin_mut_method {
                                     let ty_str = recv_ty.as_deref().unwrap_or("?");
@@ -12862,6 +12867,9 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     | "sort" | "sort_by" | "set" | "extend" | "extend_from"
                                     | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
                                     | "drain" | "dedup" | "reverse" | "shuffle"
+                                    // Plan 118.2: as_mut_ptr exposes mutable
+                                    // internal pointer — requires mut binding.
+                                    | "as_mut_ptr"
                                 );
                                 if registered || builtin_mut_method {
                                     let ty_str = recv_ty.as_deref().unwrap_or("?");

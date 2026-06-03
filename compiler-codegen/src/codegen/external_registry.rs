@@ -85,6 +85,9 @@ impl ExternalRegistry {
         include_str!("../../../std/runtime/char.nv");
     pub const SYNC_SRC: &'static str =
         include_str!("../../../std/runtime/sync.nv");
+    // Plan 118.1 Ф.1: byte-level memory intrinsics для FFI / driver work.
+    pub const RAW_MEM_SRC: &'static str =
+        include_str!("../../../std/runtime/raw_mem.nv");
 
     // Plan 83.12: std/net — async TCP/UDP socket stdlib.
     pub const NET_ADDR_SRC: &'static str =
@@ -109,6 +112,8 @@ impl ExternalRegistry {
             ("read_buffer.nv",    Self::READ_BUFFER_SRC),
             ("char.nv",           Self::CHAR_SRC),
             ("sync.nv",           Self::SYNC_SRC),
+            // Plan 118.1 Ф.1: RawMem intrinsics.
+            ("raw_mem.nv",        Self::RAW_MEM_SRC),
             // Plan 83.12: net stdlib.
             ("net/addr.nv",       Self::NET_ADDR_SRC),
             ("net/tcp.nv",        Self::NET_TCP_SRC),
@@ -329,6 +334,10 @@ impl ExternalRegistry {
                     "u64" => "uint64_t".into(),
                     // Plan 70.5: uint = alias u64.
                     "uint" => "uint64_t".into(),
+                    // Plan 118 / D226 amend: usize = u64 alias (platform
+                    // pointer width on 64-bit), isize = i64 alias.
+                    "usize" => "uint64_t".into(),
+                    "isize" => "nova_int".into(),
                     "u32" => "uint32_t".into(),
                     "u16" => "uint16_t".into(),
                     // Plan 70.4 Ф.4: u8 → nova_byte (unified with byte).

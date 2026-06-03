@@ -1,0 +1,44 @@
+// Plan 118.1 T1 — usize/isize platform-pointer-width aliases.
+//
+// Per D226 §3 amend (2026-06-03): bootstrap 64-bit only,
+//   usize ≡ u64 (ABI bridge для C size_t)
+//   isize ≡ i64 (signed pointer difference, also alias для int)
+//
+// Verifies:
+//   - usize/isize parse + type-check как primitives
+//   - Arithmetic + comparison работают
+//   - Cast `int as usize` / `usize as int` OK
+
+module plan118_1.t1_usize_isize_aliases_ok
+
+test "usize is u64 alias — arithmetic" {
+    ro a usize = 1024
+    ro b usize = 512
+    ro c = a + b
+    assert(c == 1536)
+}
+
+test "isize is i64/int alias — signed arithmetic" {
+    ro a isize = 100
+    ro b isize = -50
+    ro diff = a + b
+    assert(diff == 50)
+}
+
+test "int as usize cast" {
+    ro n int = 42
+    ro u = n as usize
+    assert(u == 42)
+}
+
+test "usize as int cast" {
+    ro u usize = 1000
+    ro n = u as int
+    assert(n == 1000)
+}
+
+test "isize as int cast (identity для bootstrap 64-bit)" {
+    ro i isize = -42
+    ro n = i as int
+    assert(n == -42)
+}
