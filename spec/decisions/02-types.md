@@ -7789,6 +7789,204 @@ V2 — research `extern "C-unwind"` (Rust 2024 model);
 
 ---
 
+## D216 V2 amend (2026-06-04) — universal right-binding rule для type-level modifiers + `unsafe T` first-class
+
+> **Status:** 🆕 SPEC LANDED 2026-06-04 (parser/codegen migration — Plan 118.5
+> NEW sub-plan, см. follow-up markers ниже). Этот amend **breaking change**
+> для existing `*ro T` / `*mut T` / `*unsafe T` syntax.
+
+### Motivation
+
+Inconsistency discovered 2026-06-04: parser применяет «right-binding rule»
+для `ro T` (`TokenKind::KwRo` → recursive `parse_type()` → `Readonly(inner)`),
+но pointer-modifier syntax `*ro T` / `*mut T` / `*unsafe T` использует
+**inline modifier-after-star** form. Это создаёт два правила в одной грамматике:
+
+| Token | До amend (current) | После amend (V2) |
+|-------|--------------------|------------------|
+| `ro T` | `Readonly(T)` ✅ right-binds | без изменений |
+| `mut T` | parse error в type-position | `Mut(T)` — new wrapper |
+| `unsafe T` | parse error | `Unsafe(T)` — new wrapper |
+| `consume T` | partial (только receiver/field/decl) | generalized к type wrapper |
+| `*T` | `Pointer(Ro, T)` (inline default) | `Pointer(T)` — no inline modifier |
+| `*ro T` | `Pointer(Ro, T)` | **deprecated** — мигрируется на `*T` или `ro * T` |
+| `*mut T` | `Pointer(Mut, T)` | **deprecated** — мигрируется на `mut * T` |
+| `*unsafe T` | `Pointer(Unsafe, T)` (unsafe pointer) | **значение меняется** — теперь `Pointer(Unsafe(T))` = pointer to uninit T |
+| `mut * T` | parse error | `Mut(Pointer(T))` ✅ |
+| `unsafe * T` | parse error | `Unsafe(Pointer(T))` — unsafe pointer (старый смысл `*unsafe T`) |
+
+### §V2.1 — universal right-binding rule
+
+**Правило:** type-level modifier применяется к ВСЕМУ что справа от него до
+конца type-expression, либо до следующего modifier.
+
+Modifiers (выровненная иерархия):
+- `ro` — readonly (compile-time immutability)
+- `mut` — mutable (compile-time mutability marker)
+- `unsafe` — unsafe (init/layout/aliasing contracts off)
+- `consume` — consume (unique ownership, D162 follow rules)
+
+Parser pattern (uniform):
+```
+TYPE := MODIFIER TYPE | BASE_TYPE | '*' TYPE | '[' ']' TYPE | ...
+MODIFIER := 'ro' | 'mut' | 'unsafe' | 'consume'
+```
+
+Каждый modifier — `TypeRef::<Modifier>(Box<TypeRef>)` wrapper. Recursion
+автоматическая через `parse_type()`. `*` остаётся pure constructor —
+**без inline modifier**.
+
+### §V2.2 — chain semantic (multi-modifier / multi-pointer)
+
+Под V2 rule типы читаются строго left-to-right:
+
+```nova
+ro * T              // Readonly(Pointer(T))     — ro-binding ptr к T
+mut * T             // Mut(Pointer(T))          — mut-binding ptr к T
+unsafe * T          // Unsafe(Pointer(T))       — unsafe ptr (may null/dangle) к T
+* unsafe T          // Pointer(Unsafe(T))       — valid ptr к possibly-uninit T
+unsafe * unsafe T   // Unsafe(Pointer(Unsafe(T))) — unsafe ptr к uninit T (worst case)
+mut * ro * T        // Mut(Pointer(Readonly(Pointer(T))))
+                    // mut-binding ptr к ro-ptr к T
+ro p mut * unsafe T // binding `p`: ro; type: Mut(Pointer(Unsafe(T)))
+                    // = ro-binding к mut-ptr к possibly-uninit T
+```
+
+Канонический пример FFI out-param:
+```nova
+external fn os_read(fd int, buf mut * unsafe u8, n usize) -> int
+//                     binding mut  ptr (uninit) byte
+// buf: mut-pointer; pointee initially uninit; OS fills, returns count.
+```
+
+### §V2.3 — `unsafe T` semantic (MaybeUninit-style)
+
+`unsafe T` означает «T-typed memory с снятыми init/layout/aliasing contracts».
+Caller asserts validity at use sites. Concretely:
+
+- **Init:** значение **может быть uninitialized** — read без prior write — UB
+- **Layout:** alignment / size — **same as T** (не bitwise opaque)
+- **Identity:** bit-pattern **valid для T** at каждом read site
+- **Aliasing:** Nova exclusivity rules off (но atomicity не гарантирована)
+
+**Operations:**
+- Read `unsafe T` value — **requires `unsafe { }` block** (caller asserts init)
+- Write `unsafe T` slot — **safe** (transitions to valid)
+- Cast `unsafe T → T` — **requires `unsafe { }` + value-level assertion**
+  (e.g. `unsafe { x as T }` или dedicated `assume_init` builtin)
+
+Соответствует Rust `MaybeUninit<T>` semantic, но как type modifier вместо
+generic wrapper.
+
+**Default-init для `unsafe T` bindings:** `mut x unsafe T` — slot выделена,
+но не initialized. Compiler-emitted runtime check НЕ выполняется (это и
+есть escape hatch).
+
+### §V2.4 — Option B / niche optimization под V2
+
+NPO (Plan 118 D216 §7) применяется к pointer-typed Option **в зависимости
+от outermost pointer modifier**:
+
+| Тип | Может содержать null? | NPO размер |
+|-----|----------------------|------------|
+| `Option[* T]` (≡ `Option[ro * T]`) | ❌ | 8 байт ✅ |
+| `Option[mut * T]` | ❌ | 8 байт ✅ |
+| `Option[unsafe * T]` | ✅ да (unsafe-pointer допускает null) | 16 байт ❌ |
+| `Option[* unsafe T]` | ❌ pointer non-null; pointee uninit OK | 8 байт ✅ |
+| `Option[unsafe * unsafe T]` | ✅ | 16 байт ❌ |
+
+NPO triggers iff outermost wrapper guarantees pointer-non-null. `unsafe * T`
+исключается — null может быть legitimate value. `* unsafe T` включён —
+pointer всё ещё guaranteed non-null, только pointee suspect.
+
+### §V2.5 — migration path
+
+**Plan 118.5 NEW sub-plan** ([M-118.5-right-binding-migration]) — отдельный
+implementation effort, ~1-2 dev-day:
+
+1. **AST changes:**
+   - Добавить `TypeRef::Mut(Box<TypeRef>)`
+   - Добавить `TypeRef::Unsafe(Box<TypeRef>)`
+   - Generalize `TypeRef::Readonly` → unified `TypeRef::Modifier(Mod, Box<TypeRef>)`
+     OR оставить три separate (cleaner pattern matching)
+   - Remove `PointerModifier` enum from `TypeRef::Pointer`; pointer becomes
+     `Pointer(Box<TypeRef>)`
+
+2. **Parser changes:**
+   - Добавить `mut T` / `unsafe T` parse arms в `parse_type()`, recursive
+   - Remove inline modifier parsing в `Star` branch
+   - Emit `W_DEPRECATED_POINTER_INLINE_MODIFIER` для legacy `*ro T` / `*mut T` /
+     `*unsafe T` syntax (one-release grace period)
+
+3. **Codegen changes:**
+   - `Mut(T)` / `Unsafe(T)` — C-level **no-op** для primitive T (Just inner_c)
+   - `Unsafe(T)` runtime semantics: MaybeUninit storage — no zeroing on init
+   - `Unsafe(Pointer(T))` legitimate pointer; `Pointer(Unsafe(T))` legitimate
+     pointee — оба emit same C `T*` ABI
+
+4. **Type-checker changes:**
+   - `Unsafe(T)` value read → require `unsafe { }` context — emit
+     `E_UNSAFE_T_READ_REQUIRES_WRAP`
+   - `Unsafe(T)` value write — safe (transition)
+   - `T → Unsafe(T)` implicit (widening — safety contract relaxes)
+   - `Unsafe(T) → T` explicit — requires `unsafe { }` + cast (narrowing)
+   - NPO calculation under §V2.4 table
+
+5. **Migration sweep:**
+   - ~30-50 nova_tests fixtures с `*ro T` / `*mut T` / `*unsafe T`
+   - ~5-10 stdlib references (`std/runtime/raw_mem.nv` пр.)
+   - Examples/cookbook updates
+   - Plan 118.1 / 118.2 / 118.3 / 118.4 syntax updates
+
+6. **Spec amends downstream:**
+   - D33 (binding propagation) — extend для `mut` / `unsafe` / `consume`
+   - D216 §1-3 (pointer family + chain order) — replace inline-modifier examples
+   - D217 (FFI intrinsics) — RawMem signatures под new syntax
+   - D218 (slice + MaybeUninit) — рассмотреть, не дублирует ли `unsafe T` MaybeUninit
+
+### §V2.6 — backward compatibility
+
+В V2 grace period:
+- `*ro T` / `*mut T` parsed как legacy syntax — emit `W_DEPRECATED_POINTER_INLINE_MODIFIER`,
+  internally rewritten к `Readonly(Pointer(T))` / `Mut(Pointer(T))`
+- `*unsafe T` — **breaking semantic change** — emit `W_BREAKING_UNSAFE_PTR_MEANING`,
+  treat as `Unsafe(Pointer(T))` (старый смысл — unsafe pointer). New code должен
+  использовать `unsafe * T` для unsafe pointer и `* unsafe T` для pointee uninit
+- After V2.1 release (one cycle): warnings становятся errors
+
+### §V2.7 — follow-up markers
+
+- `[M-118.5-right-binding-migration]` — implementation (parser + codegen + tests)
+- `[M-118.5-unsafe-t-readwrite-semantics]` — type-checker E_UNSAFE_T_READ_REQUIRES_WRAP
+- `[M-118.5-mut-t-vs-binding-distinction]` — clarify когда `mut T` тип-level vs
+  binding-level (`mut x T` vs `x mut T`)
+- `[M-118.5-consume-as-type-modifier]` — generalize `consume` (currently
+  receiver/field/decl) к универсальный type wrapper
+- `[M-118.5-d218-maybeuninit-duplication]` — review whether Plan 118.2 D218
+  MaybeUninit[T] остаётся отдельным wrapper или заменяется `unsafe T` syntax
+- `[M-118.5-npo-recalculation]` — extend NPO codegen support под §V2.4 table
+
+### Cross-amend impact
+
+- **D33** (binding propagation) — extend rule к `mut` / `unsafe` / `consume`
+- **D216 §1-3** — pointer modifier syntax migrated к prefix form
+- **D217** (FFI intrinsics) — RawMem signatures rewritten
+- **D218** (slice + MaybeUninit) — possible redundancy review
+- **D162** (consume types) — extend для `consume T` type wrapper position
+
+### Why now
+
+Right-binding rule **уже** работает для `ro` (parser-verified). `mut` /
+`unsafe` / `consume` остаются ad-hoc. Без формализации — будущие user
+attempts писать `mut * T` или `unsafe T` встретят неинтуитивные parse errors.
+Formalize ДО того как FFI surface разрастётся; migration cost растёт линейно
+с количеством fixtures.
+
+`unsafe T` first-class также unlock'ает MaybeUninit semantic без duplication
+с Plan 118.2 D218 — это **simplification**, не addition.
+
+---
+
 ## D220. Per-field visibility — `priv` keyword + type-level default flip
 
 > **Status:** V1 ACTIVE (spec + parser/AST infrastructure landed, 2026-06-02). Реализация — [Plan 124](../../docs/plans/124-priv-field-visibility.md). Empirical validation — [docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md). Amends [D47](07-modules.md#d47) (replaces deprecated `_prefix` convention с compile-time enforcement).
