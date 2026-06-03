@@ -1,0 +1,26 @@
+// Plan 118 Ф.4 T4 — read/write roundtrip + RawMem composition.
+//
+// Verifies typed read/write composes correctly с byte-level RawMem
+// operations и c view-pointers.
+
+module plan118_4.t4_ptr_roundtrip_ok
+
+import std.runtime.raw_mem
+
+test "write then read recovers value" {
+    mut buf []i32 = [0]
+    unsafe {
+        buf.as_mut_ptr().write(424242 as i32)
+        ro v = buf.as_mut_ptr().read()
+        assert(v == (424242 as i32))
+    }
+}
+
+test "RawMem.fill then read returns filled byte" {
+    mut buf []u8 = [0, 0, 0, 0]
+    unsafe {
+        RawMem.fill(buf.as_mut_ptr(), 0x55 as u8, 4 as usize)
+        ro v = buf.as_ptr().read()
+        assert(v == (0x55 as u8))
+    }
+}

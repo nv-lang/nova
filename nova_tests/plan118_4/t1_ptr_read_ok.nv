@@ -1,0 +1,23 @@
+// Plan 118 Ф.4 T1 — (*ro T).read() primitive deref read.
+//
+// Tests typed pointer read on u8/i32/i64.
+
+module plan118_4.t1_ptr_read_ok
+
+test "*ro u8 read returns first byte" {
+    ro buf []u8 = [42, 100, 200]
+    ro b = unsafe { buf.as_ptr().read() }
+    assert(b == (42 as u8))
+}
+
+test "*ro i32 read returns first i32" {
+    ro buf []i32 = [1000, 2000, 3000]
+    ro v = unsafe { buf.as_ptr().read() }
+    assert(v == (1000 as i32))
+}
+
+test "*ro i64 read returns first i64" {
+    ro buf []i64 = [123456789, 987654321]
+    ro v = unsafe { buf.as_ptr().read() }
+    assert(v == (123456789 as i64))
+}

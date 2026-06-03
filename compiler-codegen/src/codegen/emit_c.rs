@@ -19577,6 +19577,37 @@ _cp++; \
                         }
                     }
                 }
+                // Plan 118 Ф.4 V1: typed pointer instance methods.
+                // `(*ro T).read() -> T`     → `(*p)`             (deref read)
+                // `(*mut T).write(v T)`     → `((*p) = v, NOVA_UNIT)` (deref store)
+                // Detection: obj_ty ends с `*` и НЕ известный typedef
+                // (Nova_*, NovaArray_*, NovaOpt_*, NovaRes_*, NovaBox_*,
+                // NovaValue_*, void*, nova_ptr). Caller wraps в `unsafe { }`
+                // (parser не enforces; см. [M-118.1-unsafe-attr-on-external-fn]).
+                if obj_ty.ends_with('*')
+                    && !obj_ty.starts_with("Nova_")
+                    && !obj_ty.starts_with("NovaArray_")
+                    && !obj_ty.starts_with("NovaOpt_")
+                    && !obj_ty.starts_with("NovaRes_")
+                    && !obj_ty.starts_with("NovaBox_")
+                    && !obj_ty.starts_with("NovaValue_")
+                    && obj_ty != "void*"
+                    && obj_ty != "nova_ptr"
+                {
+                    let is_const = obj_ty.starts_with("const ");
+                    if method == "read" && args.is_empty() {
+                        let obj_c = self.emit_expr(obj)?;
+                        return Ok(format!("(*({}))", obj_c));
+                    }
+                    if method == "write" && args.len() == 1 && !is_const {
+                        let obj_c = self.emit_expr(obj)?;
+                        let val_c = self.emit_expr(args[0].expr())?;
+                        // void-returning store via comma-operator + NOVA_UNIT
+                        // чтобы expression-context (let _ = p.write(v)) тоже
+                        // compiled.
+                        return Ok(format!("((*({})) = ({}), NOVA_UNIT)", obj_c, val_c));
+                    }
+                }
                 // 3c. D74 math methods on int (selected — abs, sign):
                 //     `n.abs()` → `llabs(n)`. Большинство int-методов — это
                 //     int-to-string, обработаны в str.from(...).
@@ -27622,6 +27653,29 @@ _cp++; \
                     // closure return type).
                     if let Some(ret) = self.infer_mono_method_ret_with_args(&obj_ty, method, args) {
                         return ret;
+                    }
+                    // Plan 118 Ф.4 V1: typed pointer (*T).read() -> T,
+                    // (*mut T).write(v T) -> nova_unit. Match obj_ty pattern
+                    // `T*` или `const T*`, NOT Nova_*/NovaArray_*/etc.
+                    if obj_ty.ends_with('*')
+                        && !obj_ty.starts_with("Nova_")
+                        && !obj_ty.starts_with("NovaArray_")
+                        && !obj_ty.starts_with("NovaOpt_")
+                        && !obj_ty.starts_with("NovaRes_")
+                        && !obj_ty.starts_with("NovaBox_")
+                        && !obj_ty.starts_with("NovaValue_")
+                        && obj_ty != "void*"
+                        && obj_ty != "nova_ptr"
+                    {
+                        if method == "read" && args.is_empty() {
+                            // pointee = strip "const " prefix + trailing '*'
+                            let pointee = obj_ty.trim_start_matches("const ")
+                                .trim_end_matches('*').trim();
+                            return pointee.to_string();
+                        }
+                        if method == "write" && args.len() == 1 {
+                            return "nova_unit".into();
+                        }
                     }
                     // Plan 14 std-fix: built-in str методы (starts_with/ends_with/
                     // contains/eq/...) — return-type из hardcoded map'а. Без этого
