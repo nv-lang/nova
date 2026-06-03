@@ -14716,10 +14716,23 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 110.2.4 (D198): #realtime fn bypasses 3-level resolution,
                 // emits hardcoded 0 (no timeout = realtime-incompatible suspend).
                 let timeout_var = format!("_consume_timeout_{}", scope_id);
+                // Plan 110.9.2 V1.1 [M-110.9.2-with-exit-timeout-level1]:
+                // Level 1 WithExitTimeout per-type protocol lookup. If type
+                // implements `exit_timeout_ms()` method — use it (beats
+                // Application + hardcoded fallback). Symbol pattern
+                // `Nova_<TypeName>_method_exit_timeout_ms`.
+                let level1_key = (type_name.clone(), "exit_timeout_ms".to_string());
+                let has_level1 = self.method_overloads.contains_key(&level1_key);
                 if self.in_realtime {
                     self.line(&format!(
                         "int {} = 0;  /* Plan 110.2.4 (D198): #realtime bypass — no timeout */",
                         timeout_var
+                    ));
+                } else if has_level1 {
+                    // Plan 110.9.2 V1.1: per-type WithExitTimeout beats Application + Level 3.
+                    self.line(&format!(
+                        "int {} = (int)Nova_{}_method_exit_timeout_ms({});  /* Plan 110.9.2 V1.1 Level 1 */",
+                        timeout_var, type_name, c_binding
                     ));
                 } else if self.effect_schemas.contains_key("Application") {
                     // Plan 110.4.6.a (D192 Level 2 + D195): consult Application
