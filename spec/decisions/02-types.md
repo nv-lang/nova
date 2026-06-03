@@ -7568,6 +7568,38 @@ type ptr Option[*unsafe ()]
 - Backward-compatible для existing `ptr` usages (handle patterns, tuple
   FFI returns, etc.)
 
+### §11a. Typed pointer instance methods (Ф.4 V1, amend 2026-06-03)
+
+Primitive-`T` typed pointer instance methods landed (V1 scope —
+primitive `T` only, struct-`T` deferred):
+
+| Method                  | Receiver      | Returns    | C codegen                          |
+|-------------------------|---------------|------------|------------------------------------|
+| `(*ro T).read()`        | any `*T`/`*ro T`/`*mut T`/`*unsafe T` | `T`        | `(*p)`                             |
+| `(*mut T).write(v T)`   | `*mut T` / `*unsafe T`                | `nova_unit`| `((*p) = v, NOVA_UNIT)`            |
+
+Detection: `obj_ty` ends в `*` AND not a known Nova typedef
+(`Nova_*`/`NovaArray_*`/`NovaOpt_*`/`NovaRes_*`/`NovaBox_*`/`NovaValue_*`)
+AND not `void*` / `nova_ptr`. `is_const` derived от `const ` prefix on
+`obj_ty`; controls write availability.
+
+**Safety convention:** caller wraps в `unsafe { ... }` block. Parser does
+not yet enforce (followup `[M-118.1-unsafe-attr-on-external-fn]`).
+
+**Diagnostic:**
+- `(*ro T).write(v)` — currently emits generic "method not found" via
+  fall-through to default dispatcher; typed
+  `E_PTR_WRITE_ON_RO_TARGET` deferred — followup `[M-118.4-typed-ro-write-error]`
+
+**Limitations (V2 follow-up):**
+- Struct `T` (`obj_ty` starts с `Nova_`) — `read`/`write` not dispatched
+  (deep copy + ownership semantics required) — `[M-118.4-struct-ptr-read]`
+- Pointer arithmetic (`p.add(n)`, `p.offset(n)`) — `[M-118-ptr-arithmetic]`
+- Volatile variants (`read_volatile`/`write_volatile`) — `[M-118.1-volatile-ops]`
+
+Closes followup `[M-118.1-typed-pointer-instance-methods]` для primitive
+`T` scope.
+
 ### §12. Casts
 
 | From | To | Safe? |

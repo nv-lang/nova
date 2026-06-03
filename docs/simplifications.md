@@ -31656,3 +31656,63 @@ Plan 124.8 V2.1 ✅ PRODUCTION-GRADE LANDED.
 **Why partial closure (Plan 91.13 V1) instead of full JSON Ф.3:** discovered блокер — divergence-aware if-expr inference — это **separate codegen issue** (`if cond { throw } else { value }` pattern), не stdlib API gap. Previous fix attempt (block_diverges check in emit_if_expr) revert'нут из-за 24 regressions в Plan 108 binding rules + concurrency. Honest defer — committing what's working (API addition) с polished tests/docs/acceptance, marking next blocker как followup. Net forward progress vs all-or-nothing waiting.
 
 **Why no new D-block:** addition consistent with existing `str.from(char)` pattern (same runtime helper, alternative entry point). No semantic change в language spec — just bypasses D54 char-cast ban для known-valid contexts. spec/decisions/README.md не требует update. Plan 91.13 doc captures rationale.
+
+---
+
+## 2026-06-03 (вечер) — Plan 118 Ф.4 V1: typed pointer read/write
+
+**Branch:** plan-118 / worktree nova-p118 (commits `36b2a303ee0` + `ebad5690f29`).
+
+### V1 simplifications (intentional — V2 scope)
+
+#### S118.4-1: Primitive-T only, no struct-T deref
+
+V1 ships `(*ro T).read()` / `(*mut T).write(v)` только для **primitive T**
+(u8/i8/u16/i16/u32/i32/u64/i64/usize/isize/f32/f64/bool/char/byte).
+Detection в codegen — `obj_ty` ends в `*` AND not известный Nova typedef.
+
+**NOT shipped:** struct-T deref — `(*ro Nova_Foo).read() -> Foo` requires
+deep-copy + ownership semantics + allocator integration. Direct write
+к struct fields через pointer needs separate design (compound-assignment
+via projection). Followup `[M-118.4-struct-ptr-read]`.
+
+**Use-case coverage:** все primitive-typed FFI buffer patterns (libpng
+pixel u8, libcurl recv u8, sqlite int columns, openssl byte streams).
+
+#### S118.4-2: `.write()` on `*ro T` falls через, без typed diagnostic
+
+`*ro T` receivers with `.write()` — dispatcher detects match но `!is_const`
+fails → fall-through. Generic dispatcher emits "method not found" compile
+error. NEG test t3 verifies the rejection.
+
+**Practical impact:** error message less specific чем ideal typed
+`E_PTR_WRITE_ON_RO_TARGET`, but build still fails at compile time с line
+context. Followup `[M-118.4-typed-ro-write-error]`.
+
+#### S118.4-3: No volatile variants
+
+`.read_volatile()` / `.write_volatile()` not shipped — would require
+codegen volatile qualifier insertion on the C deref operator. Existing
+`[M-118.1-volatile-ops]` followup covers this.
+
+#### S118.4-4: No pointer arithmetic
+
+`p.add(n)` / `p.offset(n)` / `p.sub(n)` not shipped — needs design
+decisions around `usize` vs `isize` index semantics + safety contract +
+bounds-check expectations. Followup `[M-118-ptr-arithmetic]`.
+
+### Acceptance criteria (Ф.4 V1, scope-limited)
+
+- ✅ A-118.4-V1.a — `(*ro T).read() -> T` returns pointee value (T1)
+- ✅ A-118.4-V1.b — `(*mut T).write(v T)` stores в pointee (T2)
+- ✅ A-118.4-V1.c — `.write()` on `*ro T` rejected at compile time (T3)
+- ✅ A-118.4-V1.d — Roundtrip write→read recovers value (T4)
+- ✅ A-118.4-V1.e — Composes с RawMem byte-level operations (T4)
+- ✅ A-118.4-V1.f — No regressions in Plan 118.1 / 118.2 (9/9 prior PASS)
+
+### V1 limitation summary
+
+Ф.4 V1 — minimal primitive-T scope. Combined с Plan 118.1 V1 + 118.2 V1,
+delivers ergonomic FFI surface для primitive-typed buffers end-to-end.
+Struct-T deref + pointer arithmetic + volatile + addr_of! macros — V2
+followups gated на user-demand priority.

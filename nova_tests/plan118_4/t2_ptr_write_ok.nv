@@ -1,0 +1,31 @@
+// Plan 118 Ф.4 T2 — (*mut T).write(v) primitive deref store.
+//
+// Tests typed pointer write на u8/i32/i64.
+
+module plan118_4.t2_ptr_write_ok
+
+test "*mut u8 write stores byte at slot 0" {
+    mut buf []u8 = [0, 0, 0]
+    unsafe {
+        buf.as_mut_ptr().write(99 as u8)
+    }
+    assert(buf[0] == (99 as u8))
+    assert(buf[1] == (0 as u8))
+}
+
+test "*mut i32 write stores i32 at slot 0" {
+    mut buf []i32 = [0, 0, 0]
+    unsafe {
+        buf.as_mut_ptr().write(12345 as i32)
+    }
+    assert(buf[0] == (12345 as i32))
+    assert(buf[1] == (0 as i32))
+}
+
+test "*mut i64 write stores i64 at slot 0" {
+    mut buf []i64 = [0, 0]
+    unsafe {
+        buf.as_mut_ptr().write(9999999999 as i64)
+    }
+    assert(buf[0] == (9999999999 as i64))
+}

@@ -1,0 +1,15 @@
+// Plan 118 Ф.4 NEG T3 — write() on *ro pointer must fail.
+//
+// `*ro T` is readonly pointer; .write(v) is not permitted.
+// Expected: codegen or type-check rejects the call.
+//
+// EXPECT_COMPILE_ERROR
+
+module plan118_4.t3_neg_write_on_ro_ptr
+
+test "write on *ro pointer rejected" {
+    ro buf []u8 = [0, 0, 0]
+    unsafe {
+        buf.as_ptr().write(99 as u8)
+    }
+}
