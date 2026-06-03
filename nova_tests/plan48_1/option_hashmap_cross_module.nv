@@ -1,0 +1,29 @@
+// Plan 48.1 regression: cross-module Option[HashMap[K, V]] mono.
+//
+// Before fix: `Option[HashMap[str, int]]` в фn signature падал в erased
+// `NovaOpt_nova_int` (forward-decl pass — HashMap template из std/collections
+// не зарегистрирован в момент signature emission), а body инфер видел
+// правильный `NovaOpt_Nova_HashMap_p` через match-arm Some — type mismatch
+// CC-FAIL.
+//
+// Fix:
+//   - Pre-population pass для `generic_type_templates` из peer_files
+//     (transitively-imported modules) ДО forward-decl pass'a.
+//   - Forward typedef для mono'd struct при `register_novaopt_decl` —
+//     иначе NovaOpt typedef references undeclared struct.
+
+module plan48_1.option_hashmap_cross_module
+
+import std.collections.hashmap.{HashMap}
+
+// Function returning Option[HashMap[K, V]] cross-module — before fix
+// signature compiled to NovaOpt_nova_int while body inferred mono'd type.
+fn empty_map() -> Option[HashMap[str, int]] => None
+
+test "Option[HashMap] None — signature mono'd, no type-mismatch CC-FAIL" {
+    ro r = empty_map()
+    match r {
+        Some(_m) => assert(false, "expected None")
+        None             => assert(true)
+    }
+}
