@@ -31138,3 +31138,66 @@ Lessons:
 - Unconditional type_id registration acceptable trade-off для prelude
   types used by runtime infrastructure — ~30 byte binary cost beats
   conditional emission complexity + risk.
+
+
+================================================================================
+== 2026-06-03 — Plan 110.9 V1.1 COMPLETE — M-110.9.3 register_finalizer LIFO closed
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.9.3-register-finalizer-lifo (off main f6c538140f1)
+
+Финальный 5-й V1.1 marker закрыт. Plan 110.9 теперь ✅ COMPLETE.
+
+Three-layer integration:
+
+1. Runtime (effects.h + effects.c):
+   - NovaFinalizer struct: {void* fn, void* env, struct NovaFinalizer* prev}
+   - NovaFinalizerStack struct: {NovaFinalizer* top}
+   - _nova_active_finalizer_stack TLS pointer
+   - nova_finalizer_push(stack, fn, env) — push к stack head
+   - nova_finalizer_fire_lifo(stack) — drain stack, call closures с env
+
+2. Codegen (emit_c.rs::emit_with):
+   - Detect Application binding via TypeRef::Named last-segment
+   - Prologue: NovaFinalizerStack local var + save prev TLS + install new
+   - Epilogue (runs after handler restore, both paths): fire LIFO + restore
+
+3. Method dispatch (emit_c.rs::emit_effect_type):
+   - Intercept Application.register_finalizer — extract NovaClosBase
+     {fn, env} pair from arg, push к runtime stack directly.
+   - V1 design: handler's register_finalizer body ignored (runtime-managed
+     LIFO); per-handler observer logic moves к Cleanup effect (Plan 110.4.4).
+
+D195 R1+R2+R8 semantics integrated:
+- R1 inner handler wins via per-block stack.
+- R2 finalizer registry NOT inherited via TLS swap discipline.
+- R8 abort/SIGKILL bypasses runtime path (OS-level).
+
+Tests: 1 POS fixture (register_finalizer_lifo_v1_1) — compile-success +
+codegen output verified (nova_finalizer_push в dispatcher, init+fire+
+restore wrapper around with-block). 41/41 plan110 PASS на release nova-cli.
+
+🎯 Plan 110.9 V1.1 final state:
+- ✅ M-110.9.1 typed CleanupTimeoutError throw codegen (1377c611a57).
+- ✅ M-110.9.2 WithExitTimeout Level 1 (8ff8dda820b).
+- ✅ M-110.9.3 register_finalizer LIFO runtime (86028e74aac — этот session).
+- ✅ M-110.9.4 W_FFI_CANCEL_UNSAFE lint (35afc6565e9).
+- ✅ M-110.9.5 on_exit strict signature (d2daf4b768e).
+
+5/5 markers закрыто. Plan 110.9 = ✅ COMPLETE.
+Plan 110 family: umbrella + 110.1-110.8 + 110.9 = 9 sub-plans все закрыты.
+
+Lessons:
+- Three-layer integration pattern (runtime helpers + codegen prologue/epilogue
+  + method-dispatch intercept) — proven scalable для effect-with-runtime-state
+  patterns (Application LIFO, потенциально Cleanup observer scoping, etc).
+- NovaClosBase closure-form storage critical — Nova fn-types wrapped в
+  closure base struct, NOT raw fn pointers. Runtime helpers must handle
+  this (initial naive design treated fn arg as raw void(*)(void) — crashed
+  при first push).
+- Per-handler-vs-runtime trade-off: V1 design bypasses handler's
+  register_finalizer impl entirely. Rationale: deterministic LIFO firing
+  matters more than per-handler customization. Observability moves к
+  Cleanup effect on_scope_enter/_exit (Plan 110.4.4) where customization
+  semantically belongs.

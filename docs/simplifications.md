@@ -31751,3 +31751,48 @@ Single placeholder would require careful ordering hacks.
   method dispatch + normal/throw path integration.
 - Estimate ~½ day focused work. Not shipped в continuation session —
   honest scope acknowledgement.
+
+
+---
+
+## Plan 110.9 V1.1 ✅ COMPLETE — M-110.9.3 closed (2026-06-03)
+
+**Status:** ✅ COMPLETE. Branch `plan-110.9.3-register-finalizer-lifo`.
+All 5/5 V1.1 markers closed. Plan 110.9 = COMPLETE.
+
+**M-110.9.3 Application register_finalizer LIFO runtime** (commit `86028e74aac`):
+Three-layer integration:
+1. **Runtime** (effects.h + effects.c): `NovaFinalizer{fn, env, prev}` +
+   `NovaFinalizerStack{top}` + TLS pointer + push/fire-lifo helpers.
+   Closure-form storage (fn + env) compatible с Nova fn-type NovaClosBase.
+2. **Codegen prologue/epilogue** (emit_with): local stack var + TLS save/init
+   prologue; LIFO fire + TLS restore epilogue. Runs для any `with X = ...`
+   where X is Application (last-segment Named match).
+3. **Method dispatcher intercept** (emit_effect_type): `Application.register_finalizer`
+   pushes to runtime stack directly, bypasses handler vtable. V1 design:
+   handler observer logic semantically belongs к Cleanup effect (Plan 110.4.4).
+
+D195 R1+R2+R8 properly integrated. 1 POS fixture. 41/41 plan110 PASS.
+
+🎯 **Plan 110.9 family complete summary:**
+- M-110.9.1 typed CleanupTimeoutError throw codegen ✅
+- M-110.9.2 WithExitTimeout Level 1 ✅
+- M-110.9.3 register_finalizer LIFO ✅ (этот session)
+- M-110.9.4 W_FFI_CANCEL_UNSAFE lint ✅
+- M-110.9.5 on_exit strict signature ✅
+
+Plan 110 family полностью завершена: umbrella + 110.1-110.8 (V1) + 110.9 (V1.1)
+= 9 sub-plans все ✅ ЗАКРЫТ.
+
+**Design lesson — Three-layer effect-with-runtime-state pattern:**
+runtime helpers + codegen prologue/epilogue + method-dispatch intercept.
+Scalable approach для effect-runtime integration. Applied к Application.LIFO
+здесь; potential application к Cleanup observer scoping, other effect-bound
+runtime state patterns.
+
+**Design lesson — Closure-form storage:**
+Nova fn-types wrapped в NovaClosBase{fn, env}, NOT raw fn pointers. Runtime
+helpers must extract via cast `((NovaClosBase*)arg)->fn`. Initial naive
+design treated arg as raw `void(*)(void)` — crashed на first push.
+Pattern: any runtime helper accepting Nova fn arg should extract NovaClosBase
+parts and store closure-form.
