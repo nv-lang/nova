@@ -19352,6 +19352,21 @@ _cp++; \
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("(({}->len) == 0)", obj_c));
                         }
+                        // Plan 118.2 (D-block — see plan-doc) — FFI access
+                        // к internal data pointer. Zero-overhead — emits
+                        // `arr->data` (T* field). Caller responsibility:
+                        // not deref past `arr->len`; not retain pointer past
+                        // mutation/realloc of arr.
+                        // `as_ptr` returns `*ro T` (ABI: `const T*` per D216 §11)
+                        // `as_mut_ptr` returns `*mut T` (ABI: `T*`)
+                        "as_ptr" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("(({}->data))", obj_c));
+                        }
+                        "as_mut_ptr" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("(({}->data))", obj_c));
+                        }
                         "get" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
@@ -27945,6 +27960,14 @@ _cp++; \
                             // Plan 60 / D117: size-accessor methods.
                             "len" | "capacity" => return "nova_int".into(),
                             "is_empty" => return "nova_bool".into(),
+                            // Plan 118.2 — FFI access to internal data pointer.
+                            // Returns C `T*` for both as_ptr and as_mut_ptr;
+                            // semantic distinction (*ro T vs *mut T) enforced
+                            // в type-checker через mut binding requirement
+                            // (as_mut_ptr requires mut binding per D108.1).
+                            // C-side const qualifier dropped to avoid temp-var
+                            // const-init issues в unsafe blocks (codegen layout).
+                            "as_ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
                             _ => {
                                 // Plan 101.1: user-extension array method
                                 // (fn[T] []T @method...). Поиск в mono_method_decls
