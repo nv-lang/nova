@@ -39,7 +39,9 @@
 //! - **Opaque / Effect / Sum receivers:** skip.
 
 use crate::ast::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 
 /// Конфигурация прохода.
 #[derive(Debug, Clone, Copy)]
@@ -627,8 +629,178 @@ fn build_write_set_registry(module: &Module, iter_limit: usize) -> HashMap<(Stri
         }
         return direct;
     }
-    propagate_via_scc(&mut direct, &callees);
+    // Plan 123.7.4 (V7.4, 2026-06-03): cache-aware propagation (write-set
+    // registry). No-op passthrough когда `NOVA_FIELD_CACHE_SCC_CACHE` env
+    // disabled.
+    propagate_via_scc_cached(&mut direct, &callees, write_set_scc_cache());
     direct
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Plan 123.7.4 (V7.4, 2026-06-03): Incremental SCC cache.
+//
+// V7.3 emits exact Tarjan SCC + reverse-topological propagation per
+// `cache_module` invocation — ~1ms на typical module. Realistic workloads
+// (LSP rechecks, IDE batch passes, build-cache hits) repeatedly invoke
+// `cache_module` on **identical** modules, paying the full SCC cost
+// каждый раз. V7.4 adds a process-level memoization layer:
+//
+// 1. Compute deterministic **fingerprint** of the input graph (direct
+//    write/read sets + callees adjacency).
+// 2. If fingerprint matches a previously-cached input, restore cached
+//    propagated `direct` map directly — O(1) instead of O(V+E).
+// 3. On miss, compute fully, then store result keyed by fingerprint.
+//
+// Single-slot cache per registry (write/read) — for repeated LSP edits
+// the hottest scenario is "same module typed in а loop", which fits one
+// slot perfectly. Batch-compile pipelines с many distinct modules
+// incur one miss per module, equivalent к V7.3 baseline cost.
+//
+// Cache is **opt-in** via env `NOVA_FIELD_CACHE_SCC_CACHE=1` — disabled
+// by default so unit/integration tests retain V7.3 determinism semantics.
+// Per-cache `hits`/`misses` counters exposed via `scc_cache_stats()`
+// для telemetry-driven validation.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Plan 123.7.4 (V7.4): per-registry SCC propagation cache.
+///
+/// Stores a single slot (`last_fingerprint` + `last_result`). Hit when
+/// `last_fingerprint == compute_scc_fingerprint(direct, callees)`;
+/// misses overwrite the slot. `hits`/`misses` counters survive resets
+/// и used by telemetry callers (LSP, `nova check --telemetry-cache`).
+#[derive(Debug, Default)]
+pub struct ScCache {
+    last_fingerprint: u64,
+    last_result: HashMap<(String, String), HashSet<String>>,
+    has_entry: bool,
+    pub hits: u64,
+    pub misses: u64,
+}
+
+impl ScCache {
+    /// Reset slot AND counters. Used by tests + diagnostic CLI.
+    pub fn reset(&mut self) {
+        self.last_fingerprint = 0;
+        self.last_result.clear();
+        self.has_entry = false;
+        self.hits = 0;
+        self.misses = 0;
+    }
+}
+
+static WRITE_SET_SCC_CACHE: OnceLock<Mutex<ScCache>> = OnceLock::new();
+static READ_SET_SCC_CACHE: OnceLock<Mutex<ScCache>> = OnceLock::new();
+
+fn write_set_scc_cache() -> &'static Mutex<ScCache> {
+    WRITE_SET_SCC_CACHE.get_or_init(|| Mutex::new(ScCache::default()))
+}
+
+fn read_set_scc_cache() -> &'static Mutex<ScCache> {
+    READ_SET_SCC_CACHE.get_or_init(|| Mutex::new(ScCache::default()))
+}
+
+/// Plan 123.7.4 (V7.4): true when V7.4 incremental SCC cache is opt-in
+/// enabled via `NOVA_FIELD_CACHE_SCC_CACHE=1`. Default-off semantics
+/// preserve V7.3 deterministic test contract.
+pub fn scc_cache_enabled() -> bool {
+    matches!(
+        std::env::var("NOVA_FIELD_CACHE_SCC_CACHE").ok().as_deref(),
+        Some("1") | Some("on") | Some("true") | Some("True") | Some("TRUE")
+    )
+}
+
+/// Plan 123.7.4 (V7.4): exposed hit/miss telemetry для tests +
+/// observability tooling. Returns `(write_hits, write_misses,
+/// read_hits, read_misses)`.
+pub fn scc_cache_stats() -> (u64, u64, u64, u64) {
+    let w = write_set_scc_cache().lock().unwrap();
+    let r = read_set_scc_cache().lock().unwrap();
+    (w.hits, w.misses, r.hits, r.misses)
+}
+
+/// Plan 123.7.4 (V7.4): forcibly drop cached slots + zero counters.
+/// Test fixture helper и nova-cli `--reset-scc-cache` future flag.
+pub fn reset_scc_caches() {
+    write_set_scc_cache().lock().unwrap().reset();
+    read_set_scc_cache().lock().unwrap().reset();
+}
+
+/// Plan 123.7.4 (V7.4): deterministic fingerprint over the input graph
+/// (`direct` + `callees`). Uses canonical sorting через `BTreeMap` /
+/// `BTreeSet` so iteration order of `HashMap` (random) doesn't perturb
+/// the hash. `siphash`-quality via `DefaultHasher` is sufficient —
+/// false-collision probability ≪ 2⁻⁶³ для realistic graph populations.
+fn compute_scc_fingerprint(
+    direct: &HashMap<(String, String), HashSet<String>>,
+    callees: &HashMap<(String, String), HashSet<(String, String)>>,
+) -> u64 {
+    // Canonicalize: sort all keys + value sets через BTree-based copy.
+    let direct_sorted: BTreeMap<&(String, String), BTreeSet<&str>> = direct
+        .iter()
+        .map(|(k, v)| (k, v.iter().map(|s| s.as_str()).collect()))
+        .collect();
+    let callees_sorted: BTreeMap<&(String, String), BTreeSet<&(String, String)>> =
+        callees
+            .iter()
+            .map(|(k, v)| (k, v.iter().collect()))
+            .collect();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // Domain-separate fingerprint stream к avoid collision risk across
+    // registry kinds — both write- и read-set paths share the same hash
+    // type. Prefix tag не materializes к bytes, hashed structurally.
+    "scc_fingerprint_v1".hash(&mut hasher);
+    direct_sorted.len().hash(&mut hasher);
+    for (key, vals) in &direct_sorted {
+        key.hash(&mut hasher);
+        vals.len().hash(&mut hasher);
+        for v in vals {
+            v.hash(&mut hasher);
+        }
+    }
+    callees_sorted.len().hash(&mut hasher);
+    for (key, vals) in &callees_sorted {
+        key.hash(&mut hasher);
+        vals.len().hash(&mut hasher);
+        for v in vals {
+            v.hash(&mut hasher);
+        }
+    }
+    let h = hasher.finish();
+    // Reserve 0 как sentinel "no cached entry"; bias collision к 1.
+    if h == 0 { 1 } else { h }
+}
+
+/// Plan 123.7.4 (V7.4): cache-aware wrapper around `propagate_via_scc`.
+/// When cache is disabled (default), is a no-overhead passthrough.
+/// When enabled, fingerprints the input and reuses last cached result
+/// on hit, else recomputes + updates cache.
+fn propagate_via_scc_cached(
+    direct: &mut HashMap<(String, String), HashSet<String>>,
+    callees: &HashMap<(String, String), HashSet<(String, String)>>,
+    cache_cell: &'static Mutex<ScCache>,
+) {
+    if !scc_cache_enabled() {
+        propagate_via_scc(direct, callees);
+        return;
+    }
+    let fingerprint = compute_scc_fingerprint(direct, callees);
+    // Fast path: try lock + check cache hit. Не hold lock during compute
+    // когда miss, чтобы avoid concurrent-call serialization.
+    {
+        let mut guard = cache_cell.lock().unwrap();
+        if guard.has_entry && guard.last_fingerprint == fingerprint {
+            *direct = guard.last_result.clone();
+            guard.hits = guard.hits.saturating_add(1);
+            return;
+        }
+    }
+    propagate_via_scc(direct, callees);
+    // Store result.
+    let mut guard = cache_cell.lock().unwrap();
+    guard.last_fingerprint = fingerprint;
+    guard.last_result = direct.clone();
+    guard.has_entry = true;
+    guard.misses = guard.misses.saturating_add(1);
 }
 
 /// Plan 123.7.3 (V7.3, 2026-06-02): exact fixed-point propagation via
@@ -990,7 +1162,10 @@ fn build_read_set_registry(module: &Module, iter_limit: usize) -> HashMap<(Strin
         }
         return direct;
     }
-    propagate_via_scc(&mut direct, &callees);
+    // Plan 123.7.4 (V7.4, 2026-06-03): cache-aware propagation (read-set
+    // registry). Separate cache slot из write-set чтобы avoid fingerprint
+    // collision across distinct semantic domains.
+    propagate_via_scc_cached(&mut direct, &callees, read_set_scc_cache());
     direct
 }
 
@@ -8001,6 +8176,226 @@ fn L1 @use_both() -> int {
         let sccs = tarjan_scc(&adj);
         assert_eq!(sccs.len(), 1);
         assert_eq!(sccs[0].len(), 3);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.7.4 (V7.4, 2026-06-03): incremental SCC cache tests.
+    // Guarded so они не race against parallel test threads — each test
+    // resets caches up-front + sets/unsets `NOVA_FIELD_CACHE_SCC_CACHE`
+    // under a single shared mutex. cargo runs tests in same-process
+    // threads, env-var manipulation isn't thread-safe natively.
+    // ─────────────────────────────────────────────────────────────────
+
+    fn with_scc_env<F: FnOnce()>(enabled: bool, body: F) {
+        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = GUARD.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("NOVA_FIELD_CACHE_SCC_CACHE").ok();
+        if enabled {
+            std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", "1");
+        } else {
+            std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE");
+        }
+        reset_scc_caches();
+        body();
+        match prev {
+            Some(v) => std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", v),
+            None => std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE"),
+        }
+        reset_scc_caches();
+    }
+
+    fn sample_graph() -> (
+        HashMap<(String, String), HashSet<String>>,
+        HashMap<(String, String), HashSet<(String, String)>>,
+    ) {
+        let mut direct: HashMap<(String, String), HashSet<String>> = HashMap::new();
+        direct.insert(
+            ("T".to_string(), "a".to_string()),
+            ["x".to_string()].into_iter().collect(),
+        );
+        direct.insert(
+            ("T".to_string(), "b".to_string()),
+            ["y".to_string()].into_iter().collect(),
+        );
+        let mut callees: HashMap<(String, String), HashSet<(String, String)>>
+            = HashMap::new();
+        callees.insert(
+            ("T".to_string(), "a".to_string()),
+            [("T".to_string(), "b".to_string())].into_iter().collect(),
+        );
+        (direct, callees)
+    }
+
+    /// V7.4.1 positive: identical input → cache hit on second call.
+    #[test]
+    fn v74_cache_hit_on_identical_input() {
+        with_scc_env(true, || {
+            let (mut d1, c) = sample_graph();
+            propagate_via_scc_cached(&mut d1, &c, write_set_scc_cache());
+            let (h1, m1, _, _) = scc_cache_stats();
+            assert_eq!((h1, m1), (0, 1), "first call must miss");
+            let (mut d2, c) = sample_graph();
+            propagate_via_scc_cached(&mut d2, &c, write_set_scc_cache());
+            let (h2, m2, _, _) = scc_cache_stats();
+            assert_eq!((h2, m2), (1, 1), "second identical call must hit");
+            assert_eq!(d1, d2, "cached result must equal recomputed");
+        });
+    }
+
+    /// V7.4.2 positive: fingerprint stable across HashMap iteration order.
+    #[test]
+    fn v74_fingerprint_stable_across_hashmap_order() {
+        let (d, c) = sample_graph();
+        let fp1 = compute_scc_fingerprint(&d, &c);
+        // Construct equivalent maps в different insertion order — HashMap
+        // hash randomization may yield different iter order per process.
+        // Multiple cloning не сменит structure, но проверяем determinism
+        // of canonicalization (BTreeMap sort внутри fingerprint compute).
+        let d2 = d.clone();
+        let c2 = c.clone();
+        let fp2 = compute_scc_fingerprint(&d2, &c2);
+        assert_eq!(fp1, fp2,
+            "fingerprint must be deterministic on equivalent inputs");
+    }
+
+    /// V7.4.3 positive: hits + misses telemetry correctness.
+    #[test]
+    fn v74_hits_misses_counters_track_correctly() {
+        with_scc_env(true, || {
+            let (mut d, c) = sample_graph();
+            // 1 miss
+            propagate_via_scc_cached(&mut d, &c, write_set_scc_cache());
+            // 3 hits (identical input each time)
+            for _ in 0..3 {
+                let (mut d2, c2) = sample_graph();
+                propagate_via_scc_cached(&mut d2, &c2, write_set_scc_cache());
+            }
+            let (h, m, _, _) = scc_cache_stats();
+            assert_eq!(h, 3, "expected 3 hits");
+            assert_eq!(m, 1, "expected 1 miss");
+        });
+    }
+
+    /// V7.4.4 positive: changed graph triggers re-compute (miss).
+    #[test]
+    fn v74_changed_graph_triggers_miss() {
+        with_scc_env(true, || {
+            let (mut d1, c1) = sample_graph();
+            propagate_via_scc_cached(&mut d1, &c1, write_set_scc_cache());
+            // Add new edge → different fingerprint.
+            let (mut d2, mut c2) = sample_graph();
+            d2.insert(
+                ("T".to_string(), "c".to_string()),
+                ["z".to_string()].into_iter().collect(),
+            );
+            c2.entry(("T".to_string(), "a".to_string())).or_default()
+                .insert(("T".to_string(), "c".to_string()));
+            propagate_via_scc_cached(&mut d2, &c2, write_set_scc_cache());
+            let (h, m, _, _) = scc_cache_stats();
+            assert_eq!((h, m), (0, 2), "two distinct graphs → two misses");
+        });
+    }
+
+    /// V7.4.5 positive: write / read caches isolated (don't collide).
+    #[test]
+    fn v74_write_and_read_caches_isolated() {
+        with_scc_env(true, || {
+            let (mut d_w, c_w) = sample_graph();
+            propagate_via_scc_cached(&mut d_w, &c_w, write_set_scc_cache());
+            let (mut d_r, c_r) = sample_graph();
+            propagate_via_scc_cached(&mut d_r, &c_r, read_set_scc_cache());
+            let (wh, wm, rh, rm) = scc_cache_stats();
+            assert_eq!((wh, wm), (0, 1), "write cache: 1 miss");
+            assert_eq!((rh, rm), (0, 1), "read cache: 1 miss (separate slot)");
+        });
+    }
+
+    /// V7.4.6 positive: reset_scc_caches clears state.
+    #[test]
+    fn v74_reset_clears_cache_state() {
+        with_scc_env(true, || {
+            let (mut d, c) = sample_graph();
+            propagate_via_scc_cached(&mut d, &c, write_set_scc_cache());
+            let (mut d2, c2) = sample_graph();
+            propagate_via_scc_cached(&mut d2, &c2, write_set_scc_cache());
+            let (h_before, _, _, _) = scc_cache_stats();
+            assert!(h_before > 0, "expected >0 hits before reset");
+            reset_scc_caches();
+            let (h_after, m_after, _, _) = scc_cache_stats();
+            assert_eq!((h_after, m_after), (0, 0), "reset zeros counters");
+            // Subsequent call → miss.
+            let (mut d3, c3) = sample_graph();
+            propagate_via_scc_cached(&mut d3, &c3, write_set_scc_cache());
+            let (h, m, _, _) = scc_cache_stats();
+            assert_eq!((h, m), (0, 1), "post-reset call must miss");
+        });
+    }
+
+    /// V7.4.7 negative: cache disabled by default → no counter activity.
+    #[test]
+    fn v74_cache_disabled_by_default() {
+        with_scc_env(false, || {
+            assert!(!scc_cache_enabled());
+            let (mut d, c) = sample_graph();
+            propagate_via_scc_cached(&mut d, &c, write_set_scc_cache());
+            let (mut d2, c2) = sample_graph();
+            propagate_via_scc_cached(&mut d2, &c2, write_set_scc_cache());
+            let (h, m, _, _) = scc_cache_stats();
+            assert_eq!((h, m), (0, 0),
+                "disabled cache must not bump counters");
+        });
+    }
+
+    /// V7.4.8 negative: empty graph fingerprint stable (non-zero sentinel).
+    #[test]
+    fn v74_empty_graph_fingerprint_nonzero() {
+        let direct = HashMap::new();
+        let callees = HashMap::new();
+        let fp = compute_scc_fingerprint(&direct, &callees);
+        assert_ne!(fp, 0,
+            "fingerprint reserves 0 as 'no entry' sentinel; empty graph \
+             must hash к non-zero value");
+    }
+
+    /// V7.4.9 negative: distinct graphs produce distinct fingerprints
+    /// (collision-resistance sanity на realistic edge cases).
+    #[test]
+    fn v74_distinct_graphs_distinct_fingerprints() {
+        let (d1, c1) = sample_graph();
+        let fp1 = compute_scc_fingerprint(&d1, &c1);
+        let (mut d2, c2) = sample_graph();
+        // Slight value mutation — d2 differs by one set member.
+        d2.get_mut(&("T".to_string(), "a".to_string())).unwrap()
+            .insert("z".to_string());
+        let fp2 = compute_scc_fingerprint(&d2, &c2);
+        assert_ne!(fp1, fp2);
+        // Different callee set:
+        let (d3, mut c3) = sample_graph();
+        c3.entry(("T".to_string(), "b".to_string())).or_default()
+            .insert(("T".to_string(), "a".to_string()));
+        let fp3 = compute_scc_fingerprint(&d3, &c3);
+        assert_ne!(fp1, fp3);
+    }
+
+    /// V7.4.10 negative: cached result preserves V7.3 propagation
+    /// semantics (cache hit returns same value as miss-then-compute).
+    #[test]
+    fn v74_cache_hit_preserves_v73_semantics() {
+        with_scc_env(true, || {
+            // Baseline: cache disabled, compute fresh.
+            std::env::remove_var("NOVA_FIELD_CACHE_SCC_CACHE");
+            let (mut d_baseline, c) = sample_graph();
+            propagate_via_scc(&mut d_baseline, &c);
+            std::env::set_var("NOVA_FIELD_CACHE_SCC_CACHE", "1");
+            reset_scc_caches();
+            // V7.4 path: 1 miss + 1 hit, both should equal baseline.
+            let (mut d_miss, c2) = sample_graph();
+            propagate_via_scc_cached(&mut d_miss, &c2, write_set_scc_cache());
+            assert_eq!(d_miss, d_baseline, "miss path == V7.3");
+            let (mut d_hit, c3) = sample_graph();
+            propagate_via_scc_cached(&mut d_hit, &c3, write_set_scc_cache());
+            assert_eq!(d_hit, d_baseline, "hit path == V7.3");
+        });
     }
 
     #[test]

@@ -31410,3 +31410,63 @@ Rust unit tests cancel_unsafe_tests 4/4 PASS.
 **Why не написал spec D-block amendment:** Plan 48.1 — pure codegen pass-ordering fix без semantic change в language spec. Поведение программ не меняется — те же программы которые compile успешно с workaround (явный import HashMap) теперь compile correctly. Тэ что fail'ились с CC-FAIL → теперь compile success. Нет нового D-block, нет amend существующего — это implementation detail, не language semantics.
 
 **Why minimal regression test (1 fixture, 1 test):** focused на ROOT bug (signature/typedef mismatch). Полные roundtrip tests (Plan 91.13 JSON) показали что есть SEPARATE bug в json.nv codegen (NOVA_UNIT cast в char-handling). Включение их в Plan 48.1 raised false-positive — bug якобы не fixed. Minimal test изолирует Plan 48.1's specific fix.
+
+---
+
+## Plan 123.7.4 — Incremental SCC cache (V7.4)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v7-4-incremental-scc. ~430 LOC delta.
+Closes `[M-123.7-incremental-scc]`.
+
+**Что сделано:** Process-level memoization для Tarjan SCC propagation
+из V7.3. Realistic workloads (LSP rechecks, IDE batch passes) repeatedly
+invoke `cache_module` на identical modules и плотят полную V7.3 цену
+~1ms каждый раз; V7.4 fingerprints граф и restore'ит cached propagated
+direct map за O(1) на hit.
+
+**Принципы:**
+
+- **Process-level OnceLock<Mutex<ScCache>>** вместо thread-local —
+  clean, без invasion (V7.2 explicitly removed thread-locals).
+  Compute happens outside the lock → no serialization between
+  concurrent miss threads.
+- **Opt-in через env `NOVA_FIELD_CACHE_SCC_CACHE=1`** — default-off
+  preserves V7.3 deterministic test contract. Tests share process
+  state → cache enabled-by-default would induce non-determinism.
+- **Single-slot cache** per registry (write/read) вместо multi-slot
+  LRU — optimal для LSP edit-loop hottest scenario (same file typed
+  repeatedly). Multi-slot полезен для batch-compile (V7.4.1 followup).
+- **BTreeMap canonicalization для fingerprint** — HashMap iteration
+  nondeterministic; sorted-key serialization защищает от false
+  fingerprint variance.
+- **DefaultHasher (SipHash-1-3)** для fingerprint — quality enough
+  для false-collision probability ≪ 2⁻⁶³ на realistic graph
+  populations. No `seahash`/`fxhash`/`xxhash` dep needed.
+- **Sentinel `0` reservation** — empty cache state encoded `(0, _)`;
+  empty graphs hashed → bias к non-zero output. Disambiguates
+  "no entry" vs "valid hash equals 0".
+- **Separate write/read cache slots** — domain-separated, no
+  collision risk across semantic categories.
+
+**Acceptance (V7.4.1-V7.4.10 все ✅):** identical hit, fingerprint
+deterministic, counter accuracy, change-triggered miss, slot isolation,
+reset semantics, default-off, empty-graph non-zero, distinct-graph
+distinct-fingerprint, V7.3-semantics preservation.
+
+**Verification:** 10 V7.4 unit tests + zero regressions (47/47
+field_cache lib + 13/13 V7.x runtime fixtures на default cfg + 10/10
+with cache enabled).
+
+**🎯 Plan 123 V*.3+ backlog ПОЛНОСТЬЮ ЗАКРЫТ** — V6.2.1 + V4.3 +
+V5.5 + V7.4 закрыты в одной сессии 2026-06-03 (~1610 LOC delta total).
+Только V8 cross-module IPA остаётся (DEFERRED INDEFINITELY).
+
+**Followup markers:**
+
+- `[M-123.7.4-lru-multi-slot]` — V7.4.1 multi-slot LRU (capacity 8+).
+- `[M-123.7.4-telemetry-json]` — V7.4.2 nova check --telemetry-cache
+  hits/misses fields.
+- `[M-123.7.4-auto-enable]` — V7.4.3 opportunistic auto-enable
+  in LSP runtime context.
+

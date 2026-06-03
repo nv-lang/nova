@@ -30712,3 +30712,67 @@ Plan 91.13 status: остался deferred. После Plan 48.1 signature те�
 to nova_int в char-handling) — не часть Plan 48.1.
 
 Plan 48.1 ✅ CLOSED.
+
+=== Plan 123.7.4 — Incremental SCC cache (V7.4, 2026-06-03) ===
+
+Followup [M-123.7-incremental-scc] closure. Финальный followup Plan 123
+V*.3+ backlog'а — все четыре подплана закрыты в одной сессии.
+
+V7.3 emits exact Tarjan SCC + reverse-topological propagation per
+cache_module invocation (~1ms на typical module). Realistic workloads
+(LSP rechecks, IDE batch passes, build-cache hits) repeatedly invoke
+cache_module на identical modules → wasted work.
+
+V7.4 adds process-level memoization: fingerprint входной граф,
+restore cached propagated direct map по fingerprint hit. O(1) для
+repeated identical inputs.
+
+Implementation (~430 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - ScCache struct (last_fingerprint, last_result, hits, misses)
+  - WRITE_SET_SCC_CACHE + READ_SET_SCC_CACHE OnceLock<Mutex<ScCache>>
+  - scc_cache_enabled / scc_cache_stats / reset_scc_caches public API
+  - compute_scc_fingerprint — BTreeMap-canonical hash via DefaultHasher;
+    sentinel-reserves 0 to disambiguate empty-cache vs empty-graph
+  - propagate_via_scc_cached wrapper around V7.3 propagate_via_scc
+  - Wired into build_write_set_registry + build_read_set_registry
+  - 10 V7.4 unit tests (6 positive + 4 negative)
+
+Opt-in via NOVA_FIELD_CACHE_SCC_CACHE=1 — default-off preserves V7.3
+deterministic test contract. Two separate cache slots (write/read)
+domain-separate fingerprint space — no collision risk.
+
+Verification (release nova-cli + clang):
+- field_cache::tests 47/47 PASS (10 V7.4 + 5 V7.3 + 32 baseline).
+- nova_tests/plan123_7   1/1   PASS (default cfg).
+- nova_tests/plan123_7_1 10/10 PASS (default cfg AND с cache enabled).
+- nova_tests/plan123_7_2 2/2   PASS.
+
+Spec: D223 amend V7.4 (~150 lines) — cache structure, fingerprint,
+opt-in semantics, telemetry, V7.4.1-V7.4.10 acceptance.
+
+Plan doc: docs/plans/123.7.4-incremental-scc.md.
+
+🎯 Plan 123 V*.3+ backlog ПОЛНОСТЬЮ ЗАКРЫТ:
+  V6.2.1 wallclock bench + V4.3 deep prefix + V5.5 incremental semtokens
+  + V7.4 incremental SCC — 4 sub-plans, 1 session, ~1610 LOC delta.
+  Только V8 cross-module IPA остался (DEFERRED INDEFINITELY).
+
+Pattern lessons:
+- Process-level OnceLock<Mutex<T>> для compiler memoization — clean
+  без thread-local invasion. Compute outside lock минимизирует
+  serialization серьёзных threads.
+- Fingerprint via BTreeMap canonicalization защищает от HashMap
+  iteration nondeterminism. DefaultHasher quality достаточен для
+  false-collision probability ≪ 2⁻⁶³.
+- Single-slot cache достаточен для hot LSP edit-loop scenario.
+  Multi-slot LRU полезен для batch-compile (V7.4.1 followup).
+- Test-isolation via static Mutex<()> + RAII env-var guard required
+  когда tests share process state.
+
+Followup markers:
+- [M-123.7.4-lru-multi-slot] — V7.4.1 multi-slot LRU (~8 entries).
+- [M-123.7.4-telemetry-json] — V7.4.2 nova check --telemetry-cache
+  integration with hits/misses fields.
+- [M-123.7.4-auto-enable] — V7.4.3 opportunistic auto-enable когда
+  detected LSP runtime context.
