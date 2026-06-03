@@ -296,7 +296,7 @@ Existing codes (preserved):
 - D215 supersede — value types use unified `{}` form.
 - D32 amend — value type pass semantics formalized.
 - D123 amend — tuple monomorphization extends к `value {}` forms.
-- New D-block (D226 or next free): `type X value { ... }` syntax + semantics.
+- New D-block (D228 — was D226, renumbered after main collision): `type X value { ... }` syntax + semantics.
 - `docs/value-types-guide.md` — user guide.
 - `docs/migration/120-tuple-unification.md` — migration story.
 
@@ -487,7 +487,7 @@ Honest counterargument для recommendation against:
 
 ### Bundle:
 
-1. **D226 NEW** — `value` type modifier — unified `{}` syntax + allocation contract.
+1. **D228 NEW** (was D226 — renumbered 2026-06-03 after main collision) — `value` type modifier — unified `{}` syntax + allocation contract.
 2. **D52 amend** — `type X value { ... }` recognized as 7th form.
 3. **D215 supersede** — Plan 120 named tuples migrate к value record form via
    `nova migrate`; legacy `()` form preserved + multi-line fix.

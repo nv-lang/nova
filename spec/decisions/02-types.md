@@ -8482,3 +8482,350 @@ ALL closed 2026-06-02:
 - A2.8 ✅ `..` rest pattern — no false-positive.
 - A2.9 ✅ plan124_2 fixtures 14/14 PASS (8+ positive, 6 negative).
 - A2.10 ✅ Regression plan124_1 9/9 unchanged.
+
+---
+
+## D226. Signed indexing convention — `int` для `len` / `capacity` / index
+
+> **Принято 2026-06-03.** Формализует существующую практику: extracts из
+> [D130](#d130) Q3 (2026-05-19, «Indexing → Keep `int`, no change»),
+> поднимает в самостоятельный D-блок.
+
+### Что
+
+Все API длины, ёмкости и позиции в коллекциях Nova принимают и
+возвращают **signed `int`** ([D129](#d129) alias `i64`), а не unsigned
+`uint`/`u64`. Это касается `@len()`, `@capacity()`, `with_capacity(n)`,
+`reserve(n)`, `truncate(n)`, индексных параметров (`arr[i]`,
+`s.byte_at(i)`), позиций (`indexOf`/`find` возвращают `int` с `-1` или
+`Option[int]`), и slice-границ (`arr[a..b]` где `a`, `b` — `int`).
+
+### Правило
+
+1. **Stdlib invariant.** Любая публичная функция в `std/`, принимающая
+   или возвращающая «количество элементов» / «размер в байтах» /
+   «индекс позиции», использует `int`.
+
+2. **Защита от негатива через контракты.** Capacity-API
+   (`with_capacity`/`reserve` и аналоги) добавляют
+   `requires n >= 0` ([D24](../09-tooling.md#d24)). Это compile-time
+   проверка при Z3 backend / runtime debug-assert при TrivialBackend.
+   Compile-error на `with_capacity(-1)` без attempted конверсии типа.
+
+3. **Negative-as-sentinel разрешён.** Поиск/позиция могут возвращать
+   `-1` как «не найдено» (Java/Go convention) ИЛИ `Option[int]` —
+   stdlib-конвенция в пользу `Option[int]` для type-safety, но `-1`
+   sentinel допустим в low-level API (`str.find_byte`).
+
+4. **Разности — естественно signed.** `a.len() - b.len()`,
+   `xs.len() - 1`, обратные циклы `for i in (0..n).reverse()` работают
+   без явных кастов или underflow-паник. На пустой коллекции
+   `xs.len() - 1` даёт `-1`, что валидно как loop-guard вход
+   (`for j in 0..-1` — пустой range).
+
+5. **`uint`/`u64` — только для bit-twiddling и FFI.** Hash-значения,
+   битовые маски, raw memory addresses, sized-integer аргументы C-API
+   — это `u64`/`uint`. Cross в `int` через `as` (saturation, D54).
+
+6. **Future-arch path.** При миграции Nova на multi-arch (32-bit / WASM)
+   `int` становится platform-pointer-width signed (= Rust `isize`),
+   `i64` остаётся fixed-64. Index API не меняется — auto-scale без
+   breaking change. См. [D129](#d129) migration note.
+
+### Почему
+
+**Industry baseline (2026-06).**
+
+| Язык | Index/len тип | Знак | Hindsight |
+|---|---|---|---|
+| Go | `int` (platform-word) | **signed** | Сознательный выбор после C |
+| Swift | `Int` (platform-word) | **signed** | Apple: «harder to make off-by-one errors» |
+| Java | `int` (i32) | **signed** | Историческое; принято |
+| Kotlin | `Int` (i32) | **signed** | Mirror Java |
+| C# | `int` (i32) | **signed** | `LongLength` для >2B |
+| Python | `int` (arbitrary) | **signed** | Negative-index slicing |
+| TypeScript | `number` (f64) | signed (de facto) | Один тип |
+| Rust | `usize` (platform) | unsigned | Community regrets vocal |
+| C++ STL | `size_t` (platform) | unsigned | **Stroustrup: «I regret using unsigned for size in STL»** |
+| Zig | `usize` (platform) | unsigned | Embedded-first рационал |
+
+Счёт 7:3 в пользу signed. Двое из трёх unsigned-языков (C++ и Rust)
+имеют публичные authorial regrets.
+
+**Конкретные выгоды signed `int` для Nova:**
+
+1. **Нет underflow-trap.** `xs.len() - 1` на пустом vec не паникует
+   (даёт `-1`), в отличие от Rust `0_usize - 1` → overflow panic.
+   Это — самая частая newbie-trap в Rust.
+
+2. **Sentinel `-1`.** Эргономика find/indexOf без обязательной
+   `Option`-аллокации.
+
+3. **Разности и diff-логика.** `a.len() - b.len()` валидно signed;
+   sorting comparators, position deltas, scroll offsets — все естественны.
+
+4. **Mixed arithmetic без ceremony.** Никакого `(x as usize) + i`,
+   `(len as isize) - 1`. AI-first killer-use ([D10](../01-philosophy.md#d10)):
+   LLM пишет signed-индексацию правильно чаще, чем балансирует
+   `usize`/`i64` касты.
+
+5. **Bit-width аргумент мёртв на 64-bit.** Signed-`int` (= `i64`) даёт
+   `2⁶³ − 1` ≈ 9.2 × 10¹⁸ элементов — никакая коллекция в адресном
+   пространстве этого не достигнет.
+
+6. **Совместимость с overflow-семантикой.** [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md)
+   Ф.1: `int` overflow → `nv_panic` (`__builtin_*_overflow`). Если
+   ввести `uint` для len, мы заменим один trap (overflow on
+   saturation) на другой (underflow on `0 - 1`) — без выигрыша.
+
+7. **Effect/protocol симметрия.** Все примитивные методы
+   (`hash`/`eq`/`lt`/etc., [D109](../08-runtime.md#d109)) уже работают
+   с `int`. Введение второго numeric vocabulary для размеров
+   удвоит type-checker complexity без semantic gain.
+
+**Type-encoded invariant («n ≥ 0»)** — частично покрывается контрактами
+(`requires n >= 0`), которые при Z3 backend ([D24](../09-tooling.md#d24))
+дают **compile-time** гарантию того же уровня, что unsigned type.
+
+### Что отвергнуто
+
+1. **`uint`/`u64` для index/len** (как Rust `usize`, C++ `size_t`).
+   Отвергнут [D130](#d130) Q3 (2026-05-19): breaking change для 100+
+   APIs; underflow-trap хуже missing type-invariant; runtime
+   contract-based check покрывает основной use-case.
+
+2. **Mixed convention** (`uint` для capacity, `int` для index).
+   Отвергнут: создаёт постоянные касты на границе API, удваивает
+   protocol-method matrix.
+
+3. **Refinement type `nat = {x int | x >= 0}` как параметр капасити.**
+   Отвергнут на bootstrap: refinement-types — long-term Plan 33.x
+   (после full SMT integration); сейчас `requires n >= 0` даёт ту же
+   проверяемость без grammar-changes.
+
+### Связь
+
+- [D129](#d129) — `int = i64` alias decision (foundation).
+- [D130](#d130) — `uint` symmetric pair + Q3 indexing decision (historical origin).
+- [D24](../09-tooling.md#d24) — `requires`/`ensures` контракты для compile-time проверки.
+- [D54](../03-syntax.md#d54) — `int as uint` saturation (cross-type bridge).
+- [D109](../08-runtime.md#d109) — встроенные методы примитивов (включая `int`).
+- [D141](../08-runtime.md#d141) — `byte_at`/bulk slice API использует `int` индексы.
+- [D144](#d144) — sub-slice views `arr[a..b]` — границы `int`.
+- [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) — `int` overflow → panic (soundness).
+
+### Эволюция
+
+- **2026-05-19** ([D130](#d130) Q3): Решение «keep `int` for indexing,
+  no change» принято внутри `uint` plan'а — внутри одного из четырёх
+  Q-вопросов, не findable отдельно.
+- **2026-06-03** (D226, этот блок): формализация в самостоятельное
+  D-решение + правило `requires n >= 0` на capacity-API +
+  cross-language baseline + future-arch migration path.
+
+### Acceptance criteria
+
+- [x] `std/collections/hashmap.nv` `with_capacity(min_capacity int) requires min_capacity >= 0`
+- [x] `std/collections/set.nv` `with_capacity(cap int) requires cap >= 0`
+- [x] `std/runtime/string_builder.nv` `with_capacity(n int) requires n >= 0`
+- [x] `std/runtime/write_buffer.nv` `with_capacity(n int) requires n >= 0`
+- [x] D226 spec block с industry baseline + rationale + rejected alternatives
+- [ ] `[]T.with_capacity` / `[]T.reserve` built-in: requires-clause в
+  `compiler-codegen` external_registry — followup `[M-D226-builtin-capacity-requires]`
+- [ ] `nova check` lint W_D226_NEGATIVE_LITERAL — warn на `with_capacity(-N)`
+  при literal-args (без Z3) — followup `[M-D226-negative-literal-lint]`
+- [ ] `_experimental/` capacity APIs (`Queue.with_capacity`) — sweep после
+  promotion в stable.
+
+---
+
+## Plan 124.8 — Tuple+Value-Record design refinement (2026-06-02)
+
+Sub-plan Plan 124 V2 refinement. Amends 6 D-blocks + introduces 1 NEW.
+Status: ✅ ACTIVE since 2026-06-02 (Ф.0-Ф.5 closed).
+
+### D33 amend §«binding propagation» (Plan 124.8 Ф.2)
+
+`ro`/`mut` на binding **по default распространяется** на тип справа.
+Explicit повторение модификатора — redundant error.
+
+| Декларация | Парсится | Семантика |
+|---|---|---|
+| `ro x T` | ✅ default | binding ro, type implicit ro |
+| `mut x T` | ✅ default | binding mut, type implicit mut |
+| `ro x ro T` | ❌ `E_REDUNDANT_TYPE_MODIFIER` | то же что `ro x T` |
+| `mut x mut T` | ❌ `E_REDUNDANT_TYPE_MODIFIER` | то же что `mut x T` |
+| `ro x mut T` | ✅ NEW | binding ro, content mut (cannot reassign, can mutate) |
+| `mut x ro T` | ✅ existing | binding mut, content ro (can reassign, cannot mutate) |
+
+Closes D176 §«type-modifier в любой позиции» partial parser implementation
+gap — `mut T` теперь принимается в binding type annotation position.
+
+### D52 amend (Plan 124.8 Ф.2)
+
+7-я форма declaration: **value record** — `type X value { ... }`. 
+Stack-allocated reference type с copy-on-pass semantics (D32 amend). 
+Composable с `consume`/`priv` модификаторами в любом order.
+
+`value` — **contextual keyword** (recognized только в `type Name[Generics]
+[modifiers] value [modifiers] {` position; identifier `value` остаётся
+валидным во всех других позициях для backward compat).
+
+Canonical modifier order: `type X value consume priv { ... }` —
+allocation → ownership → visibility (outer → inner). Parser
+order-independent; lint W_NON_CANONICAL_TYPE_MODIFIER_ORDER — V2 followup.
+
+### D175 amend §«binding dominates» (Plan 124.8 Ф.3)
+
+`ro acc` binding теперь блокирует write к любому полю объекта, даже
+если поле помечено `mut field T`. Rust-style правило.
+
+| Field declaration | `ro acc` binding | `mut acc` binding |
+|---|---|---|
+| `field T` | ❌ переприсвоить, ❌ мутировать | ✅ / ✅ |
+| `ro field T` | ❌ / ❌ | ❌ / ❌ (always frozen) |
+| `field ro T` | ❌ / ❌ | ✅ / ❌ |
+| `mut field T` | **❌ / ❌** (was ✅ / ❌ before amend) | ✅ / ✅ |
+| `mut field ro T` | **❌ / ❌** (was ✅ / ❌ before amend) | ✅ / ❌ |
+
+Changed: `mut field` теперь НЕ "always-mutable" — binding dominates.
+
+### D176 amend §«mut T в binding position» (Plan 124.8 Ф.2)
+
+`mut T` теперь принимается в binding type annotation после name.
+Раньше parser принимал только в return-type и parameter positions.
+Pre-amend rendered impossible the legitimate `ro view mut []u8 = arr`
+form documented в D176 V1 §«type-modifier в любой позиции».
+
+### D215 amend (Plan 124.8 Ф.1)
+
+Named tuples (`type X(name1 T1, name2 T2)`) получают:
+1. **Multi-line support** — newlines между fields после comma.
+2. **Trailing comma support** — `type X(a int, b int,)`.
+3. **Binding-level mutability** — Rust-style: `mut p = Vec3(...)`
+   позволяет мутировать все поля; `ro p` блокирует все. Per-field
+   `mut`/`ro` modifiers запрещены (`E_TUPLE_NO_PER_FIELD_MOD`).
+
+Asymmetry с record `{}` form (which supports newline-as-separator)
+preserved: tuples требуют comma + optional newline после. Это
+intentional — tuples = compact pure-data form.
+
+### D222 amend (Plan 124.8 Ф.1)
+
+«Named tuple priv» portion **retract**: `priv`/`pub` на tuple field —
+parser-error `E_TUPLE_NO_PRIV`. Tuples = pure data carriers (как Rust
+tuples, C# ValueTuple), always all-public. Encapsulation на стеке —
+через `type X value { priv field T }` form (D228 NEW).
+
+«Protocol impl boundary» portion preserved для records (heap + value).
+
+### D225 retract (Plan 124.8 Ф.1)
+
+«Type-level priv flip для named tuples» — fully retracted. Tuples
+всегда all-public; `type X priv (...)` syntax больше НЕ supported.
+Records keep type-level priv flip (D220 §3.3.1 unaffected).
+
+### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
+
+> Renumbered from D226 (2026-06-03) — D226 in main concurrently assigned
+> to «signed indexing convention» commit `8827f8ec132`. D227 taken by
+> «numeric literal inference» commit `41d4be096fa`. D228 next free.
+
+`type X value { ... }` — stack-allocated value type с copy-on-pass
+semantics. Symmetric extension D52 §«record form» через `value` keyword.
+
+**Semantic (V2 production-grade, landed 2026-06-03):**
+- **Allocation:** stack (inline C struct `NovaValue_X` в callee frame).
+  V2 codegen landed in Plan 124.8 V2.1-V2.4 — closes [M-124.8-value-codegen-stack].
+- **Pass:** copy on parameter pass (D32 amend) — C handles natively
+  для value types.
+- **Method receiver `@`:** pointer на stack-slot (`NovaValue_X*`) —
+  мутации видны caller'у.
+- **Reference fields:** handles inline (ptr+len+cap для `[]T`,
+  ptr+len для `str`); data on heap (GC-tracked).
+- **Fixed array fields:** fully inline (`[32]u8` = 32 bytes inline).
+- **Forward decls:** `typedef struct NovaValue_X NovaValue_X;` (no
+  pointer alias unlike heap records).
+- **Constructor:** `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` (stack
+  init, no `nova_alloc`).
+- **Field access:** `.field` (struct member), not `->field` (pointer).
+- **Call-site receiver:** `&v` for identifier; hoisted temp + `&temp`
+  для rvalue expressions (via `prepare_method_recv` helper).
+
+**Codegen V2 helpers (compiler-codegen/src/codegen/emit_c.rs):**
+- `emit_value_record_type(name, fields)` — emits inline C struct +
+  registers in record_schemas + type_aliases + value_record_names.
+- `prepare_method_recv(obj_c, obj_ty)` — wraps obj в `&` for value-record
+  receivers (identifier-fast-path или temp-hoist для expressions).
+- `is_value_type` recognizes `NovaValue_` prefix.
+- `struct_name_from_c_type` recognizes `NovaValue_X` strip.
+
+**Composability:**
+- `value` + `priv` — composable (D220 §3.3.1 для type-level flip также применима).
+- `value` + `consume` — composable; value-record содержащий consume
+  field автоматически становится consume (user decision; orthogonal axes).
+- `value` + `mut`/`ro` per-field — composable (D175 binding-dominates rule applies).
+
+**Composition с эталонами:**
+- Kotlin `value class` (1.5+, single-field) — Nova value-record более powerful (multi-field).
+- Java Valhalla `value class` (incoming) — Nova alignment ahead-of-curve.
+- Rust `struct` (default stack) — Nova explicit allocation marker (vs Rust implicit).
+- C# `struct` vs `class` — Nova `value` modifier ≈ C# `struct`; reference record default ≈ C# `class`.
+- Industry: Nova становится **первым языком с single declaration syntax
+  + explicit allocation modifier**.
+
+**V2 known limitations (defer-able):**
+- `[]NovaValue_X` array storage — currently boxes elements (V3 followup
+  for inline element storage).
+- Escape analysis для `&value` auto-heap-promote — Plan 118 coordination
+  ([M-124.8-value-heap-promote]).
+- Auto-derive methods (Equatable / Hashable / Cloneable / Comparable /
+  Printable) — Plan 126 (orthogonal feature).
+- Generic value-record cross-module instantiation — works for simple
+  cases; complex multi-T patterns may require V3 review.
+- `#zero_on_move` opt-in — followup attribute для security-critical
+  consume value-records.
+
+### Plan 124.8 Acceptance (A8.1-A8.20) — ALL ✅
+
+- A8.1 ✅ Multi-line tuple `type X(\n a, \n b\n)` parses.
+- A8.2 ✅ Trailing comma `type X(a, b,)` parses.
+- A8.3 ✅ Multi-line + trailing comma parses.
+- A8.4 ✅ `type X(priv f int)` → E_TUPLE_NO_PRIV.
+- A8.5 ✅ `type X(pub f int)` → E_TUPLE_NO_PRIV.
+- A8.6 ✅ `type X(mut f int)` → E_TUPLE_NO_PER_FIELD_MOD.
+- A8.7 ✅ `mut p = Vec3(...)` + binding tuple works.
+- A8.8 ✅ `ro p` blocking (D175 amend).
+- A8.9 ✅ `type Vec3 value { ... }` parses.
+- A8.10 ✅ **V2 LANDED 2026-06-03:** value-record real stack codegen
+  через NovaValue_X inline struct (closes [M-124.8-value-codegen-stack]).
+- A8.11 ✅ **V2 LANDED 2026-06-03:** method receiver = NovaValue_X*
+  pointer to stack-slot через prepare_method_recv helper.
+- A8.12 ⚠️ V2 partial: scalar/struct fields inline; `[]NovaValue_X` array
+  elements currently boxed (V3 followup для inline element storage).
+- A8.13 ✅ **V2 LANDED 2026-06-03:** param pass = value copy (C-native);
+  return-by-value works через RVO.
+- A8.14 ✅ `type Token value consume { ... }` works (composition).
+- A8.15 ✅ `type X value priv { ... }` works (D220 §3.3.1 preserved).
+- A8.16 ✅ `ro x ro T` → E_REDUNDANT_TYPE_MODIFIER.
+- A8.17 ✅ `mut x mut T` → E_REDUNDANT_TYPE_MODIFIER.
+- A8.18 ✅ `ro x mut T` parses + works (D176 gap closed).
+- A8.19 ✅ `ro acc` blocks `acc.mut_field = X` (D175 amend).
+- A8.20 ✅ Regression: plan120 8/8 + plan124_1 9/9 + plan124_2 14/14 +
+  plan124_3 10/10 + plan124_6 7/7 + plan108_3 14/14 unchanged.
+
+### Followups
+
+- ✅ **[M-124.8-value-codegen-stack]** — V2 LANDED 2026-06-03 — proper
+  stack codegen реализован (emit_value_record_type + prepare_method_recv).
+- **[M-124.8-tuple-mut-field-write-codegen]** — codegen `mut p.x = ...`
+  для tuple (currently V1 parser/checker layer only — testing limited).
+- **[M-124.8-ro-binding-scope]** — proper block-scoped lifetime для
+  ro_binding_names tracking (current V1 — monotonic per-function, safe).
+- **[M-124.8-zero-on-move]** — opt-in `#zero_on_move` attribute для
+  security-critical consume.
+- **[M-124.8-value-record-array-inline]** — `[]NovaValue_X` inline
+  element storage (V3, deferred — currently boxed).
+- **[M-124.8-value-heap-promote]** — `&value` escape analysis +
+  auto-heap-promote (Plan 118 coordination).
+- **Plan 126** — auto-derive Equatable/Hashable/Cloneable/Comparable/Printable.

@@ -3000,10 +3000,36 @@ impl Parser {
         // flip; fields default = priv для этого type'а, explicit `pub` modifier
         // на field override priv default. Markers `consume` и `priv` могут идти
         // в любом порядке (взаимно независимые).
-        let mut consume_marker = self.eat(&TokenKind::KwConsume).is_some();
-        let default_field_priv = self.eat(&TokenKind::KwPriv).is_some();
-        if !consume_marker {
-            consume_marker = self.eat(&TokenKind::KwConsume).is_some();
+        //
+        // Plan 124.8 (D226 NEW): `type X value { ... }` — stack-allocated record
+        // (value type, copy semantics на pass). `value` — contextual keyword
+        // (Ident("value") в этой позиции; backward compat для variables/fields
+        // named `value`). Composable с consume/priv в любом порядке.
+        //
+        // Canonical order: type X value consume priv { ... } (allocation →
+        // ownership → visibility). Parser order-independent (parse loop).
+        let mut consume_marker = false;
+        let mut default_field_priv = false;
+        let mut allocation = crate::ast::AllocKind::Heap;
+        loop {
+            if !consume_marker && self.eat(&TokenKind::KwConsume).is_some() {
+                consume_marker = true;
+                continue;
+            }
+            if !default_field_priv && self.eat(&TokenKind::KwPriv).is_some() {
+                default_field_priv = true;
+                continue;
+            }
+            // Plan 124.8: `value` — contextual keyword (Ident match,
+            // не KwValue, для backward compat).
+            if matches!(allocation, crate::ast::AllocKind::Heap)
+                && matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "value")
+            {
+                self.bump();
+                allocation = crate::ast::AllocKind::Value;
+                continue;
+            }
+            break;
         }
 
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,
@@ -3094,6 +3120,7 @@ impl Parser {
                 axioms: Vec::new(),
                 consume: consume_marker,
                 default_field_priv,
+                allocation,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3165,6 +3192,7 @@ impl Parser {
                     axioms: Vec::new(),
                     consume: false,
                     default_field_priv: false,
+                    allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                 });
             }
@@ -3286,6 +3314,7 @@ impl Parser {
             axioms: effect_axioms,
             consume: consume_marker,
             default_field_priv,
+            allocation,
             impl_protocols,
         })
     }
@@ -3294,15 +3323,54 @@ impl Parser {
     /// Returns true if tokens[pos] = IDENT and tokens[pos+1] = type-start.
     /// This is called when we're positioned AT `(` in type decl.
     /// tokens[pos] = `(`, tokens[pos+1] = first token inside parens.
+    ///
+    /// Plan 124.8 (D215 amend): skip newlines в lookahead — поддержка
+    /// multi-line форм `type X(\n  name T,\n  ...\n)`.
     fn is_named_tuple_decl(&self) -> bool {
-        // tokens[pos] = `(` (current), tokens[pos+1] = first in parens
-        let first = &self.peek_at(1).kind;
-        // Plan 124.4: `priv` / `pub` перед field name treated as named-tuple
-        // marker (no positional `priv` form — `priv` всегда modifier).
-        if matches!(first, TokenKind::KwPriv | TokenKind::KwPub) {
+        // tokens[pos] = `(` (current). Skip newlines after `(` to find first
+        // non-trivia token.
+        let mut i = 1;
+        while matches!(self.peek_at(i).kind, TokenKind::Newline | TokenKind::Semicolon) {
+            i += 1;
+        }
+        let first = &self.peek_at(i).kind;
+        // Plan 124.4 (retracted в Plan 124.8 D222 amend): `priv` / `pub` на
+        // tuple field больше не разрешены, но если parser видит их —
+        // распознаём как «named tuple intent» чтобы emit clean error
+        // `E_TUPLE_NO_PRIV` в parse_named_tuple_fields_with_default.
+        // Plan 124.8 (D215 amend): same для `mut`/`ro` per-field modifiers —
+        // emit `E_TUPLE_NO_PER_FIELD_MOD` clean error.
+        if matches!(first, TokenKind::KwPriv | TokenKind::KwPub | TokenKind::KwMut) {
             return true;
         }
-        let second = &self.peek_at(2).kind;
+        // KwRo — может быть как per-field modifier (ban) или как type modifier
+        // в positional tuple `type X(ro []u8)`. Distinguish: KwRo + Ident-then-type
+        // → per-field modifier (named tuple intent); KwRo + type → positional.
+        if matches!(first, TokenKind::KwRo) {
+            // Lookahead: ro IDENT TYPE → named tuple intent (emit error);
+            // ro TYPE → positional (let parse_type handle).
+            let mut k = i + 1;
+            while matches!(self.peek_at(k).kind, TokenKind::Newline | TokenKind::Semicolon) {
+                k += 1;
+            }
+            if matches!(self.peek_at(k).kind, TokenKind::Ident(_)) {
+                let mut m = k + 1;
+                while matches!(self.peek_at(m).kind, TokenKind::Newline | TokenKind::Semicolon) {
+                    m += 1;
+                }
+                if matches!(self.peek_at(m).kind,
+                    TokenKind::Ident(_) | TokenKind::LBracket | TokenKind::KwFn | TokenKind::KwRo
+                ) {
+                    return true;
+                }
+            }
+        }
+        // Skip newlines between IDENT and type token.
+        let mut j = i + 1;
+        while matches!(self.peek_at(j).kind, TokenKind::Newline | TokenKind::Semicolon) {
+            j += 1;
+        }
+        let second = &self.peek_at(j).kind;
         // Named field: IDENT followed by a type-starting token (not `,` not `)`)
         matches!(first, TokenKind::Ident(_))
             && matches!(second,
@@ -3320,61 +3388,75 @@ impl Parser {
         self.parse_named_tuple_fields_with_default(false)
     }
 
-    /// Plan 120 (D215) + Plan 124.4 (D222) + Plan 124.7 (D225): parse named
-    /// tuple fields с per-field `priv`/`pub` modifier + type-level default
-    /// `priv` propagation. `default_priv = true` пришёл из
-    /// `type X priv (...)` syntax (D225).
+    /// Plan 120 (D215) — base parser for named tuple fields.
+    ///
+    /// Plan 124.8 (D215 amend + D222 amend + D225 retract):
+    /// - Multi-line + trailing comma support (skip_newlines after `(`,
+    ///   between fields, after comma).
+    /// - `priv`/`pub` modifiers → `E_TUPLE_NO_PRIV` (tuples всегда public).
+    /// - `mut`/`ro` per-field modifiers → `E_TUPLE_NO_PER_FIELD_MOD`
+    ///   (mutability — binding-level only, как Rust).
+    ///
+    /// `default_priv` parameter сохранён для backward-compat shim — но
+    /// после retract D225 всегда должен быть false (parser-level check).
     /// Called after consuming `(`. Stops before `)`.
     fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
+        // Plan 124.8: post-D225 retract, default_priv must always be false.
+        // If a caller passes true, that's a bug in caller (type-level priv flip
+        // для tuples retracted). Defensive assert — emit error if reached.
+        if default_priv {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_TUPLE_NO_PRIV] type-level `priv` flip для named tuples retracted \
+                 в Plan 124.8 (D225 superseded). Tuples всегда all-public. Use \
+                 `type X value priv { ... }` для stack-allocated record с priv (D226).",
+                sp,
+            ));
+        }
         loop {
             self.skip_newlines();
             if matches!(self.peek().kind, TokenKind::RParen) {
                 break;
             }
             let field_start = self.peek().span;
-            // Plan 124.4 (D222): optional `priv` / `pub` modifier.
-            // Plan 124.7 (D225): type-level `priv` default flip — when
-            // default_priv = true (`type X priv (...)`), field's effective
-            // priv_field = default_priv unless explicit `pub` overrides.
-            let mut explicit_priv = false;
-            let mut explicit_pub = false;
-            loop {
-                match self.peek().kind {
-                    TokenKind::KwPriv => {
-                        if explicit_pub {
-                            let sp = self.peek().span;
-                            return Err(Diagnostic::new(
-                                "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
-                                 `pub` on the same named-tuple field (Plan 124 / D220 / D222).",
-                                sp,
-                            ));
-                        }
-                        explicit_priv = true;
-                        self.bump();
-                    }
-                    TokenKind::KwPub => {
-                        if explicit_priv {
-                            let sp = self.peek().span;
-                            return Err(Diagnostic::new(
-                                "[E_PRIV_PUB_CONFLICT] cannot specify both `priv` and \
-                                 `pub` on the same named-tuple field (Plan 124 / D220 / D222).",
-                                sp,
-                            ));
-                        }
-                        explicit_pub = true;
-                        self.bump();
-                    }
-                    _ => break,
-                }
+            // Plan 124.8 (D222 amend): ban priv/pub modifiers на tuple field.
+            if matches!(self.peek().kind, TokenKind::KwPriv | TokenKind::KwPub) {
+                let sp = self.peek().span;
+                let modifier = if matches!(self.peek().kind, TokenKind::KwPriv) { "priv" } else { "pub" };
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_NO_PRIV] `{}` modifier не разрешён на tuple field \
+                         (Plan 124.8 / D222 amend / D225 retract). Tuples всегда \
+                         all-public по design (pure data carriers, как Rust tuples). \
+                         Если нужна encapsulation на стеке — используй \
+                         `type X value {{ {} f T }}` (D226).",
+                        modifier, modifier
+                    ),
+                    sp,
+                ));
             }
-            // Effective priv_field resolution (Plan 124.7 / D225):
-            //   - explicit `pub` → priv_field = false (overrides type-level)
-            //   - explicit `priv` → priv_field = true
-            //   - neither → priv_field = default_priv (type-level inherit)
-            let priv_field = if explicit_priv { true }
-                             else if explicit_pub { false }
-                             else { default_priv };
+            // Plan 124.8 (D215 amend): ban per-field mut/ro modifiers.
+            // Mutability — binding-level only (Rust-style: `mut p` → все
+            // поля mut; `ro p` → all frozen).
+            if matches!(self.peek().kind, TokenKind::KwMut | TokenKind::KwRo) {
+                let sp = self.peek().span;
+                let modifier = if matches!(self.peek().kind, TokenKind::KwMut) { "mut" } else { "ro" };
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_NO_PER_FIELD_MOD] `{}` per-field modifier не разрешён \
+                         на tuple field (Plan 124.8 / D215 amend). Tuples используют \
+                         binding-level mutability (Rust-style): `mut p = Vec3(...)` \
+                         позволяет мутировать все поля; `ro p = ...` блокирует все. \
+                         Если нужен per-field control — используй \
+                         `type X value {{ {} f T }}` record form (D226).",
+                        modifier, modifier
+                    ),
+                    sp,
+                ));
+            }
+            // Plan 124.8: priv_field always false для tuples (no priv allowed).
+            let priv_field = false;
             // Expect IDENT (field name)
             if !matches!(self.peek().kind, TokenKind::Ident(_)) {
                 let sp = self.peek().span;
@@ -3411,10 +3493,24 @@ impl Parser {
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
             fields.push(NamedTupleField { name, ty, span, priv_field, visible_to: Vec::new() });
+            // Plan 124.8 (D215 amend): allow trailing comma + multi-line.
+            // After parsing field — expect either Comma or RParen.
+            // If Comma: skip + skip_newlines → loop top will handle next
+            // field or RParen (trailing comma case).
+            // If RParen: break (end of fields).
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
+            self.skip_newlines();
         }
+        // Plan 124.8 (D215 amend): skip newlines перед closing `)` для
+        // multi-line форм без trailing comma:
+        //     type Vec3(
+        //         x f64,
+        //         y f64,
+        //         z f64        ← no trailing comma → newline → `)`
+        //     )
+        self.skip_newlines();
         if fields.is_empty() {
             let sp = self.peek().span;
             return Err(Diagnostic::new(
@@ -4256,6 +4352,52 @@ impl Parser {
             self.expect(&TokenKind::KwRo)?;
         }
         let pattern = self.parse_pattern()?;
+        // Plan 124.8 (D33/D176 amend) — binding propagation rules:
+        //
+        // `ro`/`mut` binding propagates по default на тип справа. Explicit
+        // повторение модификатора — redundant error.
+        //
+        // | Декларация       | Парсится | Семантика |
+        // |---|---|---|
+        // | `ro x T`         | ✅ default | binding ro → type ro |
+        // | `mut x T`        | ✅ default | binding mut → type mut |
+        // | `ro x ro T`      | ❌ E_REDUNDANT_TYPE_MODIFIER | то же что `ro x T` |
+        // | `mut x mut T`    | ❌ E_REDUNDANT_TYPE_MODIFIER | то же что `mut x T` |
+        // | `ro x mut T`     | ✅ NEW | binding ro, content mut |
+        // | `mut x ro T`     | ✅ existing | binding mut, content ro |
+        //
+        // Implementation:
+        // - `ro` после name: redundant if !is_mut; otherwise let parse_type
+        //   handle (TypeRef::Readonly wrapper).
+        // - `mut` после name: redundant if is_mut; otherwise consume + ignore
+        //   (mut T ≡ T в Nova type system; default mutability).
+        if matches!(self.peek().kind, TokenKind::KwRo) && !is_mut {
+            return Err(Diagnostic::new(
+                "[E_REDUNDANT_TYPE_MODIFIER] `ro` после `ro` binding — \
+                 redundant. `ro` binding автоматически распространяет \
+                 readonly на тип (D33/D176 amend, Plan 124.8). Напиши \
+                 `ro x T` вместо `ro x ro T`.".to_string(),
+                self.peek().span,
+            ));
+        }
+        if matches!(self.peek().kind, TokenKind::KwMut) && is_mut {
+            return Err(Diagnostic::new(
+                "[E_REDUNDANT_TYPE_MODIFIER] `mut` после `mut` binding — \
+                 redundant. `mut` binding автоматически распространяет \
+                 mutability на тип (D33/D176 amend, Plan 124.8). Напиши \
+                 `mut x T` вместо `mut x mut T`.".to_string(),
+                self.peek().span,
+            ));
+        }
+        // Plan 124.8 — `ro x mut T` form: binding ro, type explicit mut
+        // (content mutable through readonly binding-name). Consume `mut`
+        // и игнорируй (mut T ≡ T в Nova default-mut type system).
+        // Это закрывает D176 §«type-modifier в любой позиции» partial
+        // implementation gap (parser ранее не принимал `mut T` в binding
+        // type annotation; теперь принимает).
+        if matches!(self.peek().kind, TokenKind::KwMut) && !is_mut {
+            self.bump(); // consume `mut`, no AST effect (default-mut)
+        }
         let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
             Some(self.parse_type()?)
         } else {

@@ -1,0 +1,13 @@
+// Plan 124.8 — positive: `mut acc` binding allows write к `mut field`.
+module plan124_8.d175_mut_binding_ok
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+test "mut binding allows mut field write" {
+    mut acc = Acc { money: 100.0, name: "test" }
+    acc.money = 200.0
+    assert(acc.money == 200.0)
+}

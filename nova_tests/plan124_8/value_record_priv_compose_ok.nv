@@ -1,0 +1,19 @@
+// Plan 124.8 — positive: `value` composable с `priv` (Plan 124.1 D220).
+module plan124_8.value_record_priv_compose_ok
+
+type Secret value {
+    pub ro id u64
+    priv mut key str
+}
+
+fn Secret.create(i u64, k str) -> Secret =>
+    { id: i, key: k }
+
+fn Secret @get_id() -> u64 =>
+    @id
+
+test "value + priv composition" {
+    ro s = Secret.create(42, "key123")
+    assert(s.get_id() == 42)
+    assert(s.id == 42)
+}

@@ -712,6 +712,18 @@ pub enum TypeAttr {
     FromPairs,
 }
 
+/// Plan 124.8 (D226 NEW): allocation contract for record types.
+///
+/// `Heap` — `type X { ... }` обычный GC-managed reference type (default,
+/// backward compat). `Value` — `type X value { ... }` stack-allocated
+/// value type с copy semantics на pass / inline storage в коллекциях.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AllocKind {
+    #[default]
+    Heap,
+    Value,
+}
+
 /// Plan 123 baseline-fix (2026-06-02): `Default` derive — see FnDecl.
 #[derive(Debug, Clone, Default)]
 pub struct TypeDecl {
@@ -755,6 +767,14 @@ pub struct TypeDecl {
     /// Без `priv` после имени type'а — fields default = pub (D47 unchanged).
     /// Backward-compat: default false.
     pub default_field_priv: bool,
+    /// Plan 124.8 (D226 NEW): allocation contract for record types.
+    /// `Heap` (default) — `type X { ... }` GC-managed reference type.
+    /// `Value` — `type X value { ... }` stack-allocated value type
+    /// (copy semantics при передаче, inline в массивах и parent structs).
+    /// Применимо только к `TypeDeclKind::Record` — для других форм
+    /// (NamedTuple, Newtype, Sum, etc.) allocation захардкожена их kind'ом.
+    /// Backward-compat: default Heap (existing records unchanged).
+    pub allocation: AllocKind,
     /// Plan 91.9 (D186): `#impl(P1 + P2 + ...)` annotation list.
     /// Names of protocols the type explicitly opts into. Verification:
     /// compiler checks T provides every method of each P (via explicit

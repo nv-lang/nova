@@ -41,7 +41,9 @@ const INITIAL_CAPACITY = 16
 export fn WriteBuffer.new() -> Self => WriteBuffer.with_capacity(INITIAL_CAPACITY)
 
 // WriteBuffer с pre-allocated capacity n байт.
-export fn WriteBuffer.with_capacity(n int) -> Self => { buf: []u8.with_capacity(n) }
+export fn WriteBuffer.with_capacity(n int) -> Self
+    requires n >= 0
+=> { buf: []u8.with_capacity(n) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
 // Param `b` is readonly by default (D176 amend, Plan 108.1).

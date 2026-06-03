@@ -16,6 +16,7 @@
 | 04 | [04-gc-comparison.md](04-gc-comparison.md) | GC: размер кода и runtime overhead (ZGC, Go, .NET, Erlang, OCaml...) |
 | 05 | [05-go-mistakes-audit.md](05-go-mistakes-audit.md) | Аудит дизайна Nova по «100 Go Mistakes»: что закрыто, что воспроизводится |
 | 06 | [06-field-visibility-go-kubernetes.md](06-field-visibility-go-kubernetes.md) | Field visibility в Go production code: kubernetes statistical audit (35239 fields, 11099 structs; 59% public / 41% private; layer-dependent distribution) — validates Nova D47 public-default |
+| 08 | [08-int-width-and-literal-inference.md](08-int-width-and-literal-inference.md) | Int-ширина (i32 vs i64), signed vs unsigned для len/cap/index, literal inference (Rust narrow-fallback vs Zig comptime_int), pointer interactions gap — research foundation для D226 + D227; industry baseline 10 языков; Stroustrup/Rust regrets cited; pointer-aware amendments pending |
 
 > Нумерация начинается с 03, потому что 01 и 02 переехали в отдельную
 > репу с черновиками публикаций.

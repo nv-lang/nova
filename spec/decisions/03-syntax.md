@@ -2254,9 +2254,11 @@ ro x i32 = 100
 0xFF as u32
 ```
 
-Default-типы: `int` (платформенно-зависимая ширина) для целого,
+Default-типы: `int` (= `i64` на bootstrap per [D129](02-types.md#d129);
+future-arch may become platform-pointer-width signed) для целого,
 `f64` для дробного. Контекст (annotation, тип параметра, тип поля)
-переопределяет:
+переопределяет с **hard compile-time range-check** (см. [D227](#d227)
+для range-policy, no narrow-fallback, negative-в-unsigned правил):
 
 ```nova
 ro x u8 = 200             // 200 это u8
@@ -8916,3 +8918,192 @@ nova_throw_cancel + fail-frame).
   general FFI rules.
 - Followup [M-110.7.3-w-ffi-cancel-unsafe-lint] — runtime lint
   enforcement (currently parser stores attribute, lint check pending).
+
+---
+
+## D227. Numeric literal inference — default `int`, context coercion, hard range-check
+
+> **Принято 2026-06-03.** Уточняет и амендит [D44](#d44) §«default-типы»;
+> закрывает Rust-style narrow-fallback question. Связан с
+> [D129](02-types.md#d129) (`int = i64`) и [D226](02-types.md#d226)
+> (signed indexing).
+
+### Что
+
+Целочисленный литерал без context-аннотации имеет тип `int`
+([D129](02-types.md#d129) alias `i64`). В позиции с явным числовым
+типом (annotation, parameter type, field type, generic constraint)
+литерал **coerce**'ится в этот тип с **compile-time range-check**.
+Rust-style fallback «default to `i32` when value fits» **отвергнут**.
+
+### Правило
+
+1. **Default без context.** Голый литерал `42`, `0xFF`, `1_000_000_000`
+   в позиции без typed target → `int` (= `i64` per D129).
+
+    ```nova
+    ro x = 42                 // x: int
+    ro y = 0xFF               // y: int (= 255)
+    ro z = 3_000_000_000      // z: int (out of i32 range — fine, int = i64)
+    ```
+
+2. **Context coercion.** В позиции с явным numeric target литерал
+   принимает этот тип без cast:
+
+    ```nova
+    ro a i32 = 100            // a: i32
+    ro b u8  = 0xFF           // b: u8
+    fn write(b u8) -> () => ...
+    write(200)                // 200: u8 (coerce'ится из context)
+    ro arr []f32 = [1.0, 2.0] // элементы: f32
+    ```
+
+   Working positions: `let X T = …`, function-call argument, field
+   initializer, return statement в fn с явным return-type, generic
+   instantiation argument когда тип фиксирован, array/record literal в
+   typed context (см. [D55](02-types.md#d55)).
+
+3. **Range-check на compile time.** Если литерал не помещается в
+   target type — **hard compile error**, не silent truncation:
+
+    ```nova
+    ro a i32 = 3_000_000_000   // ✗ E_LIT_OUT_OF_RANGE: 3000000000 > i32.MAX (2147483647)
+    ro b u8  = 300             // ✗ E_LIT_OUT_OF_RANGE: 300 > u8.MAX (255)
+    ro c u8  = -1              // ✗ E_LIT_OUT_OF_RANGE: -1 < u8.MIN (0)
+    ro d i32 = 100 + 50        // ok если оба операнда — литералы, evaluator проверяет sum
+    ```
+
+   Это **отличие от Rust**, где `let a: i32 = 3_000_000_000` тоже
+   error, **но** `let x = 3_000_000_000` → silent `i64` (а в Nova →
+   `int` per Rule 1). И отличие от C/Java, где silent truncation.
+
+4. **Без type-suffix.** [D44](#d44) подтверждается: `100u32`, `1.5f32`
+   и прочие suffix-формы остаются rejected. Тип выбирается annotation'ом
+   или `as`-cast:
+
+    ```nova
+    100u32        // ✗ syntax error (D44)
+    100 as u32    // ok
+    let x u32 = 100   // ok (Rule 2)
+    ```
+
+5. **Floating-point параллельно.** Дробный литерал без context → `f64`
+   ([D44](#d44)); с context → `f32` или `f64` с range-check (overflow
+   при exponent overflow тоже compile error).
+
+6. **Negative literal в unsigned context.** `-1`, `-200` etc. в позиции
+   `uN` типа — **hard error**, не wrap. Для wrap-семантики используется
+   `(-1) as u32` (D54 saturation rules apply).
+
+### Почему
+
+**Industry baseline (2026-06).**
+
+| Язык | Default `42` | Coerce в context? | Range-check на compile? | Suffix? |
+|---|---|---|---|---|
+| Rust | `i32` (fallback) | Нет — strict | Да (на typed binding) | Да (`42i64`) |
+| Swift | `Int` (word) | Да | Да | Нет |
+| Go | untyped const → `int` | Да | Да | Нет |
+| Java | `int` (i32) | Implicit widen | Да (overflow → error при literal) | Да (`42L`) |
+| Kotlin | `Int` (i32) | Implicit widen | Да | Да (`42L`) |
+| C# | `int` (i32) | Implicit widen | Да (`unchecked` opt-in) | Да (`42L`) |
+| Zig | `comptime_int` (∞) | Yes (coerce at use) | Yes | Нет |
+| Nim | `int` (word) | Yes | Yes | Нет |
+| **Nova** | **`int` (= i64)** | **Yes** | **Yes — hard error** | **Нет** |
+
+Nova model = **Zig/Swift гибрид** (wide default + context coerce) **без**
+Rust-style narrow-fallback и **без** Java/C# silent widening / suffix.
+
+**Конкретные обоснования:**
+
+1. **Никакого `as i32` шума.** `arr[i]` где `i` индекс — работает без
+   cast потому что `int = i64` = natural index type per [D226](02-types.md#d226).
+   Rust `arr[x as usize]` — постоянная ceremony — заслужено критикуется.
+
+2. **Predictability.** «`42` это всегда тот же тип» — правило, которое
+   человек / LLM может удержать без edge cases. Rust `42` → `i32` если
+   default, → `usize` если в `Vec::with_capacity(42)`, → `u8` если field —
+   три разных типа по 5 правилам fallback. Slop.
+
+3. **Compile-error overflow > silent wrap.** `ro b u8 = 300` ошибка на
+   3 декларации раньше, чем `b` использован — surface area ошибки
+   минимальна. Plan 33.8 runtime `int` overflow → panic; literal
+   overflow надо catch'ить на компиляции, не runtime.
+
+4. **AI-first ([D10](01-philosophy.md#d10)).** LLM пишет числа без
+   suffix'а. Default = «общий int», context coerce'ит — LLM не должен
+   гадать ширину.
+
+5. **Generic instantiation hygiene.** `Vec.new()` потом `push(42)` →
+   `Vec[int]`. Без narrow-fallback `Vec[i32]` инстанциация не возникает
+   «случайно» — каждое `[i32]` появляется только из явной аннотации.
+   Меньше mangled symbols в binary.
+
+6. **Refactor safety.** Изменить `42` на `3_000_000_000` — `int`
+   спокойно держит. В Rust меняет тип `i32` → `i64` со cascade-effect
+   на все use sites.
+
+### Что отвергнуто
+
+1. **Rust-style narrow-fallback (`42` → `i32` если влезает).** Создаёт
+   3 разных типа для одного литерала в зависимости от контекста; cast-hell
+   с usize-индексами (у нас был бы `int`-индексами); refactor-hostile.
+   Главный design-debt Rust в области numeric ergonomics.
+
+2. **Default = `i32` (Java/Kotlin/C# stance).** Раскрыто в research
+   2026-06-03: overflow на 2.1B в современном коде вероятен (file sizes,
+   timestamps, counters, hashes), Plan 33.8 panic'ает, D226 индексы
+   ломаются. Java team регретит, ловить ту же грабельку — без выгоды.
+
+3. **Bigint-default (Python stance).** Performance regression vs
+   `i64`; runtime arbitrary-precision support увеличивает runtime
+   complexity. Plan 33.7 BitVec/sized integers покрывает domain, где
+   точная ширина нужна. Bigint — future stdlib type `BigInt`, не
+   primitive default.
+
+4. **Type-suffix (`42i64`, `100u8`).** Подтверждено [D44](#d44).
+   Annotation `let x i64 = 42` уже работает; suffix дублирует.
+
+5. **Silent truncation на overflow.** C/Java behaviour. Hidden bug
+   source; не AI-friendly; не aligned с Plan 33.8 soundness philosophy.
+
+### Связь
+
+- [D44](#d44) — базовый numeric literal grammar (этот D227 amend'ит
+  default-types раздел).
+- [D54](#d54) — `as`-cast saturation / narrowing semantics (runtime
+  conversion path).
+- [D55](02-types.md#d55) — literal coercion в typed positions (parallel
+  rule for record/sum constructors).
+- [D129](02-types.md#d129) — `int = i64` alias (bootstrap invariant).
+- [D130](02-types.md#d130) — `uint = u64` alias.
+- [D226](02-types.md#d226) — signed indexing convention (`int` для
+  len/capacity/index, дополняется правилом «литерал в индексной
+  позиции = int by Rule 1»).
+- [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) Ф.1 — runtime
+  `int` overflow → panic (motivates compile-time literal range-check).
+
+### Эволюция
+
+- **D44** (2025-Q4): зафиксировал «default int, context переопределяет»
+  + reject suffix. Не специфицировал: range-check policy, narrow-fallback
+  policy, behaviour negative-в-unsigned.
+- **D129** (2026-05-19): `int = i64` alias на bootstrap. D44 line
+  «`int` платформенно-зависимая ширина» становится drift.
+- **D226** (2026-06-03): signed indexing convention; внутренне
+  предполагает Rule 1 («голый литерал = int»), но не формализует.
+- **D227** (2026-06-03, этот блок): закрывает три пробела —
+  no narrow-fallback, hard range-check, negative-в-unsigned;
+  amend D44 default-type line (см. inline amend в D44 выше).
+
+### Acceptance criteria
+
+- [x] D227 spec block формализует 4 правила + industry baseline +
+  rejected alternatives
+- [x] D44 §«default-типы» amend cross-refs D129 + D227
+- [ ] Compiler error code `E_LIT_OUT_OF_RANGE` — followup
+  `[M-D227-lit-range-error-code]` (verify currently emitted code или add)
+- [ ] Test corpus `nova_tests/types/literal_range_*.nv` — positive
+  (boundary `127` для i8) + negative (`128` для i8 → error) —
+  followup `[M-D227-literal-range-tests]`
+

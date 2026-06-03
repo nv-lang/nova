@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+//
+// Plan 124.8 — negative: D175 amend — `ro acc` binding блокирует write
+// даже к `mut field T`. Rust-style: binding mutability dominates.
+module plan124_8.d175_binding_dominates_neg
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+fn main() {
+    ro acc = Acc { money: 100.0, name: "test" }
+    acc.money = 200.0    // ❌ ro binding dominates даже над mut field
+}

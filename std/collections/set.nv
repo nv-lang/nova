@@ -55,7 +55,9 @@ export fn Set[T].new() -> Self =>
 
 /// Создать пустое множество с pre-allocated ёмкостью.
 #stable(since = "0.1")
-export fn Set[T].with_capacity(cap int) -> Self =>
+export fn Set[T].with_capacity(cap int) -> Self
+    requires cap >= 0
+=>
     { map: HashMap[T, ()].with_capacity(cap) }
 
 /// Построить множество из итератора.

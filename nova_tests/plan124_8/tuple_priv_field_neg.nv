@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_NO_PRIV
+//
+// Plan 124.8 — negative: `priv` modifier на tuple field — запрещён.
+// D222 amend / D225 retract — tuples всегда all-public (pure data).
+module plan124_8.tuple_priv_field_neg
+
+type Secret(priv key str, salt str)
