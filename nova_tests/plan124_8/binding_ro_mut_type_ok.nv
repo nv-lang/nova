@@ -1,0 +1,9 @@
+// Plan 124.8 — positive: `ro x mut T = ...` form (binding ro, content mut)
+// — D176 amend Ф.2 closes parser gap.
+module plan124_8.binding_ro_mut_type_ok
+
+test "ro binding + mut type — parses + works" {
+    mut arr []int = [1, 2, 3]
+    ro view mut []int = arr      // valid distinct case
+    assert(view[0] == 1)
+}

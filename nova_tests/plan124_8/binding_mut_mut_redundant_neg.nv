@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+//
+// Plan 124.8 — negative: `mut x mut T` — redundant.
+module plan124_8.binding_mut_mut_redundant_neg
+
+fn main() {
+    mut arr []int = [1, 2, 3]
+    mut view mut []int = arr
+}

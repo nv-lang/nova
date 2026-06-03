@@ -1,0 +1,20 @@
+// Plan 124.8 — positive: type-level `priv` flip preserved на value-record
+// (D220 §3.3.1 для records survives — отличается от D225 retract для tuples).
+module plan124_8.value_record_priv_flip_ok
+
+type Hidden value priv {
+    pub ro tag str
+    secret int        // inherits priv flip
+}
+
+fn Hidden.new(t str, s int) -> Hidden =>
+    { tag: t, secret: s }
+
+fn Hidden @tag_only() -> str =>
+    @tag
+
+test "value + priv type-flip" {
+    ro h = Hidden.new("public", 42)
+    assert(h.tag == "public")
+    assert(h.tag_only() == "public")
+}

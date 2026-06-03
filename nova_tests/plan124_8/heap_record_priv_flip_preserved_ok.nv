@@ -1,0 +1,21 @@
+// Plan 124.8 — positive: heap-record type-level priv flip (D220 §3.3.1)
+// preserved post-Plan 124.7 D225 retract (которая удалила priv flip ТОЛЬКО
+// для tuples; records keep capability).
+module plan124_8.heap_record_priv_flip_preserved_ok
+
+type Account priv {
+    pub ro name str
+    mut balance f64       // inherits priv flip
+}
+
+fn Account.new(n str) -> Account =>
+    { name: n, balance: 0.0 }
+
+fn Account @public_name() -> str =>
+    @name
+
+test "heap-record type-level priv flip preserved" {
+    ro acc = Account.new("alice")
+    assert(acc.name == "alice")
+    assert(acc.public_name() == "alice")
+}

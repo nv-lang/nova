@@ -1641,6 +1641,12 @@ struct TypeCheckCtx<'a> {
     /// перечисленным types (escape hatch для unit tests + sibling helper
     /// fns). Cleared on fn exit. Combines с current_recv_type для allow-list.
     current_fn_test_access: std::cell::RefCell<Vec<String>>,
+    /// Plan 124.8 (D175 amend): set of `ro`-bound identifier names в текущем
+    /// scope. Когда target assignment пути starts с Ident name ∈ этого
+    /// set'а — binding dominates даже над `mut field` markers.
+    /// Закрывает D175 §«binding dominates» — Rust-style rule.
+    /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
+    ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -1820,7 +1826,8 @@ impl<'a> TypeCheckCtx<'a> {
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
-            current_fn_test_access: std::cell::RefCell::new(Vec::new()) }
+            current_fn_test_access: std::cell::RefCell::new(Vec::new()),
+            ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -3526,6 +3533,15 @@ impl<'a> TypeCheckCtx<'a> {
                 // covers nested destructure через sub-field types.
                 let scrut_ty = self.infer_expr_type(&d.value, scope);
                 self.check_priv_pattern_recursive(&d.pattern, scrut_ty.as_ref(), errors);
+                // Plan 124.8 (D175 amend): track ro-binding names. `ro x = expr`
+                // делает binding immutable — даже `mut field` через `x.f = ...`
+                // блокируется (Rust-style binding dominates).
+                // Cleared on scope exit via f1_block snapshot/restore.
+                if !d.mutable {
+                    if let Some(name) = pattern_simple_name(&d.pattern) {
+                        self.ro_binding_names.borrow_mut().insert(name);
+                    }
+                }
                 // Ф.1: annotation ↔ RHS.
                 if let (Some(ann), Some(name)) =
                     (&d.ty, pattern_simple_name(&d.pattern))
@@ -5134,6 +5150,18 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// Returns `true` if `expr` is an access path that goes through a readonly field,
     /// meaning any mutation through this path is forbidden (D175 transitivity).
+    /// Plan 124.8 (D175 amend): returns true if `expr` is a path rooted at
+    /// an Ident that is `ro`-bound. Walks through Member/Index chains к
+    /// корневому Ident.
+    fn is_through_ro_binding(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ident(name) => self.ro_binding_names.borrow().contains(name),
+            ExprKind::Member { obj, .. } => self.is_through_ro_binding(obj),
+            ExprKind::Index { obj, .. } => self.is_through_ro_binding(obj),
+            _ => false,
+        }
+    }
+
     fn is_readonly_path(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> bool {
         match &expr.kind {
             ExprKind::Member { obj, name: field_name } => {
@@ -5169,6 +5197,23 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         match &target.kind {
             ExprKind::Member { obj, name: field_name } => {
+                // Plan 124.8 (D175 amend): binding dominates — если корень
+                // path = Ident бинд'енный через `ro`, любой write блокируется
+                // даже если field имеет `mut` модификатор. Rust-style правило:
+                // `let x = ...; x.field = ...` ❌ vs `let mut x = ...; x.field = ...` ✅.
+                if self.is_through_ro_binding(obj) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_FIELD] cannot mutate `{}` через `ro`-binding \
+                             (binding dominates даже над `mut field` markers — Plan \
+                             124.8 / D175 amend). Hint: используй `mut binding-name = ...` \
+                             если нужна мутация.",
+                            field_name
+                        ),
+                        target.span,
+                    ));
+                    return;
+                }
                 // Transitivity check: mutation through a ro field (Plan 114 D184).
                 if self.is_readonly_path(obj, scope) {
                     errors.push(Diagnostic::new(

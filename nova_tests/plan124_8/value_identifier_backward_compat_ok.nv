@@ -1,0 +1,21 @@
+// Plan 124.8 — positive: `value` контекстный keyword — backward compat
+// для variables/fields с именем `value`.
+module plan124_8.value_identifier_backward_compat_ok
+
+type Item {
+    code int
+    value str
+}
+
+fn make() -> Item => { code: 1, value: "hello" }
+
+test "`value` as field name works" {
+    ro item = make()
+    assert(item.code == 1)
+    assert(item.value == "hello")
+}
+
+test "`value` as local binding name works" {
+    ro value = 42
+    assert(value == 42)
+}

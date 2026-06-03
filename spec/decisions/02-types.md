@@ -8637,3 +8637,195 @@ ALL closed 2026-06-02:
 - [ ] `_experimental/` capacity APIs (`Queue.with_capacity`) — sweep после
   promotion в stable.
 
+---
+
+## Plan 124.8 — Tuple+Value-Record design refinement (2026-06-02)
+
+Sub-plan Plan 124 V2 refinement. Amends 6 D-blocks + introduces 1 NEW.
+Status: ✅ ACTIVE since 2026-06-02 (Ф.0-Ф.5 closed).
+
+### D33 amend §«binding propagation» (Plan 124.8 Ф.2)
+
+`ro`/`mut` на binding **по default распространяется** на тип справа.
+Explicit повторение модификатора — redundant error.
+
+| Декларация | Парсится | Семантика |
+|---|---|---|
+| `ro x T` | ✅ default | binding ro, type implicit ro |
+| `mut x T` | ✅ default | binding mut, type implicit mut |
+| `ro x ro T` | ❌ `E_REDUNDANT_TYPE_MODIFIER` | то же что `ro x T` |
+| `mut x mut T` | ❌ `E_REDUNDANT_TYPE_MODIFIER` | то же что `mut x T` |
+| `ro x mut T` | ✅ NEW | binding ro, content mut (cannot reassign, can mutate) |
+| `mut x ro T` | ✅ existing | binding mut, content ro (can reassign, cannot mutate) |
+
+Closes D176 §«type-modifier в любой позиции» partial parser implementation
+gap — `mut T` теперь принимается в binding type annotation position.
+
+### D52 amend (Plan 124.8 Ф.2)
+
+7-я форма declaration: **value record** — `type X value { ... }`. 
+Stack-allocated reference type с copy-on-pass semantics (D32 amend). 
+Composable с `consume`/`priv` модификаторами в любом order.
+
+`value` — **contextual keyword** (recognized только в `type Name[Generics]
+[modifiers] value [modifiers] {` position; identifier `value` остаётся
+валидным во всех других позициях для backward compat).
+
+Canonical modifier order: `type X value consume priv { ... }` —
+allocation → ownership → visibility (outer → inner). Parser
+order-independent; lint W_NON_CANONICAL_TYPE_MODIFIER_ORDER — V2 followup.
+
+### D175 amend §«binding dominates» (Plan 124.8 Ф.3)
+
+`ro acc` binding теперь блокирует write к любому полю объекта, даже
+если поле помечено `mut field T`. Rust-style правило.
+
+| Field declaration | `ro acc` binding | `mut acc` binding |
+|---|---|---|
+| `field T` | ❌ переприсвоить, ❌ мутировать | ✅ / ✅ |
+| `ro field T` | ❌ / ❌ | ❌ / ❌ (always frozen) |
+| `field ro T` | ❌ / ❌ | ✅ / ❌ |
+| `mut field T` | **❌ / ❌** (was ✅ / ❌ before amend) | ✅ / ✅ |
+| `mut field ro T` | **❌ / ❌** (was ✅ / ❌ before amend) | ✅ / ❌ |
+
+Changed: `mut field` теперь НЕ "always-mutable" — binding dominates.
+
+### D176 amend §«mut T в binding position» (Plan 124.8 Ф.2)
+
+`mut T` теперь принимается в binding type annotation после name.
+Раньше parser принимал только в return-type и parameter positions.
+Pre-amend rendered impossible the legitimate `ro view mut []u8 = arr`
+form documented в D176 V1 §«type-modifier в любой позиции».
+
+### D215 amend (Plan 124.8 Ф.1)
+
+Named tuples (`type X(name1 T1, name2 T2)`) получают:
+1. **Multi-line support** — newlines между fields после comma.
+2. **Trailing comma support** — `type X(a int, b int,)`.
+3. **Binding-level mutability** — Rust-style: `mut p = Vec3(...)`
+   позволяет мутировать все поля; `ro p` блокирует все. Per-field
+   `mut`/`ro` modifiers запрещены (`E_TUPLE_NO_PER_FIELD_MOD`).
+
+Asymmetry с record `{}` form (which supports newline-as-separator)
+preserved: tuples требуют comma + optional newline после. Это
+intentional — tuples = compact pure-data form.
+
+### D222 amend (Plan 124.8 Ф.1)
+
+«Named tuple priv» portion **retract**: `priv`/`pub` на tuple field —
+parser-error `E_TUPLE_NO_PRIV`. Tuples = pure data carriers (как Rust
+tuples, C# ValueTuple), always all-public. Encapsulation на стеке —
+через `type X value { priv field T }` form (D228 NEW).
+
+«Protocol impl boundary» portion preserved для records (heap + value).
+
+### D225 retract (Plan 124.8 Ф.1)
+
+«Type-level priv flip для named tuples» — fully retracted. Tuples
+всегда all-public; `type X priv (...)` syntax больше НЕ supported.
+Records keep type-level priv flip (D220 §3.3.1 unaffected).
+
+### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
+
+> Renumbered from D226 (2026-06-03) — D226 in main concurrently assigned
+> to «signed indexing convention» commit `8827f8ec132`. D227 taken by
+> «numeric literal inference» commit `41d4be096fa`. D228 next free.
+
+`type X value { ... }` — stack-allocated value type с copy-on-pass
+semantics. Symmetric extension D52 §«record form» через `value` keyword.
+
+**Semantic (V2 production-grade, landed 2026-06-03):**
+- **Allocation:** stack (inline C struct `NovaValue_X` в callee frame).
+  V2 codegen landed in Plan 124.8 V2.1-V2.4 — closes [M-124.8-value-codegen-stack].
+- **Pass:** copy on parameter pass (D32 amend) — C handles natively
+  для value types.
+- **Method receiver `@`:** pointer на stack-slot (`NovaValue_X*`) —
+  мутации видны caller'у.
+- **Reference fields:** handles inline (ptr+len+cap для `[]T`,
+  ptr+len для `str`); data on heap (GC-tracked).
+- **Fixed array fields:** fully inline (`[32]u8` = 32 bytes inline).
+- **Forward decls:** `typedef struct NovaValue_X NovaValue_X;` (no
+  pointer alias unlike heap records).
+- **Constructor:** `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` (stack
+  init, no `nova_alloc`).
+- **Field access:** `.field` (struct member), not `->field` (pointer).
+- **Call-site receiver:** `&v` for identifier; hoisted temp + `&temp`
+  для rvalue expressions (via `prepare_method_recv` helper).
+
+**Codegen V2 helpers (compiler-codegen/src/codegen/emit_c.rs):**
+- `emit_value_record_type(name, fields)` — emits inline C struct +
+  registers in record_schemas + type_aliases + value_record_names.
+- `prepare_method_recv(obj_c, obj_ty)` — wraps obj в `&` for value-record
+  receivers (identifier-fast-path или temp-hoist для expressions).
+- `is_value_type` recognizes `NovaValue_` prefix.
+- `struct_name_from_c_type` recognizes `NovaValue_X` strip.
+
+**Composability:**
+- `value` + `priv` — composable (D220 §3.3.1 для type-level flip также применима).
+- `value` + `consume` — composable; value-record содержащий consume
+  field автоматически становится consume (user decision; orthogonal axes).
+- `value` + `mut`/`ro` per-field — composable (D175 binding-dominates rule applies).
+
+**Composition с эталонами:**
+- Kotlin `value class` (1.5+, single-field) — Nova value-record более powerful (multi-field).
+- Java Valhalla `value class` (incoming) — Nova alignment ahead-of-curve.
+- Rust `struct` (default stack) — Nova explicit allocation marker (vs Rust implicit).
+- C# `struct` vs `class` — Nova `value` modifier ≈ C# `struct`; reference record default ≈ C# `class`.
+- Industry: Nova становится **первым языком с single declaration syntax
+  + explicit allocation modifier**.
+
+**V2 known limitations (defer-able):**
+- `[]NovaValue_X` array storage — currently boxes elements (V3 followup
+  for inline element storage).
+- Escape analysis для `&value` auto-heap-promote — Plan 118 coordination
+  ([M-124.8-value-heap-promote]).
+- Auto-derive methods (Equatable / Hashable / Cloneable / Comparable /
+  Printable) — Plan 126 (orthogonal feature).
+- Generic value-record cross-module instantiation — works for simple
+  cases; complex multi-T patterns may require V3 review.
+- `#zero_on_move` opt-in — followup attribute для security-critical
+  consume value-records.
+
+### Plan 124.8 Acceptance (A8.1-A8.20) — ALL ✅
+
+- A8.1 ✅ Multi-line tuple `type X(\n a, \n b\n)` parses.
+- A8.2 ✅ Trailing comma `type X(a, b,)` parses.
+- A8.3 ✅ Multi-line + trailing comma parses.
+- A8.4 ✅ `type X(priv f int)` → E_TUPLE_NO_PRIV.
+- A8.5 ✅ `type X(pub f int)` → E_TUPLE_NO_PRIV.
+- A8.6 ✅ `type X(mut f int)` → E_TUPLE_NO_PER_FIELD_MOD.
+- A8.7 ✅ `mut p = Vec3(...)` + binding tuple works.
+- A8.8 ✅ `ro p` blocking (D175 amend).
+- A8.9 ✅ `type Vec3 value { ... }` parses.
+- A8.10 ✅ **V2 LANDED 2026-06-03:** value-record real stack codegen
+  через NovaValue_X inline struct (closes [M-124.8-value-codegen-stack]).
+- A8.11 ✅ **V2 LANDED 2026-06-03:** method receiver = NovaValue_X*
+  pointer to stack-slot через prepare_method_recv helper.
+- A8.12 ⚠️ V2 partial: scalar/struct fields inline; `[]NovaValue_X` array
+  elements currently boxed (V3 followup для inline element storage).
+- A8.13 ✅ **V2 LANDED 2026-06-03:** param pass = value copy (C-native);
+  return-by-value works через RVO.
+- A8.14 ✅ `type Token value consume { ... }` works (composition).
+- A8.15 ✅ `type X value priv { ... }` works (D220 §3.3.1 preserved).
+- A8.16 ✅ `ro x ro T` → E_REDUNDANT_TYPE_MODIFIER.
+- A8.17 ✅ `mut x mut T` → E_REDUNDANT_TYPE_MODIFIER.
+- A8.18 ✅ `ro x mut T` parses + works (D176 gap closed).
+- A8.19 ✅ `ro acc` blocks `acc.mut_field = X` (D175 amend).
+- A8.20 ✅ Regression: plan120 8/8 + plan124_1 9/9 + plan124_2 14/14 +
+  plan124_3 10/10 + plan124_6 7/7 + plan108_3 14/14 unchanged.
+
+### Followups
+
+- ✅ **[M-124.8-value-codegen-stack]** — V2 LANDED 2026-06-03 — proper
+  stack codegen реализован (emit_value_record_type + prepare_method_recv).
+- **[M-124.8-tuple-mut-field-write-codegen]** — codegen `mut p.x = ...`
+  для tuple (currently V1 parser/checker layer only — testing limited).
+- **[M-124.8-ro-binding-scope]** — proper block-scoped lifetime для
+  ro_binding_names tracking (current V1 — monotonic per-function, safe).
+- **[M-124.8-zero-on-move]** — opt-in `#zero_on_move` attribute для
+  security-critical consume.
+- **[M-124.8-value-record-array-inline]** — `[]NovaValue_X` inline
+  element storage (V3, deferred — currently boxed).
+- **[M-124.8-value-heap-promote]** — `&value` escape analysis +
+  auto-heap-promote (Plan 118 coordination).
+- **Plan 126** — auto-derive Equatable/Hashable/Cloneable/Comparable/Printable.

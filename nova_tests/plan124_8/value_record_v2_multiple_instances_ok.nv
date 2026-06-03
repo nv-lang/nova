@@ -1,0 +1,24 @@
+// Plan 124.8 V2 — verifies multiple value-record instances live independently
+// на stack (no aliasing). Critical для proving real stack semantic vs
+// V1 heap-fallback (where pointers would alias через shared GC handle).
+module plan124_8.value_record_v2_multiple_instances_ok
+
+type Pair value {
+    first int
+    second int
+}
+
+fn Pair.new(a int, b int) -> Pair => { first: a, second: b }
+
+fn Pair @sum() -> int => @first + @second
+
+test "V2 multiple independent value-records на stack" {
+    ro p1 = Pair.new(1, 2)
+    ro p2 = Pair.new(10, 20)
+    ro p3 = Pair.new(100, 200)
+    assert(p1.sum() == 3)
+    assert(p2.sum() == 30)
+    assert(p3.sum() == 300)
+    // Independence check: p1 unchanged after p2/p3 constructed.
+    assert(p1.first == 1 && p1.second == 2)
+}

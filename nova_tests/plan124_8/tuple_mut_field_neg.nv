@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_NO_PER_FIELD_MOD
+//
+// Plan 124.8 — negative: `mut` per-field modifier на tuple — запрещён.
+// Mutability — binding-level (Rust-style): `mut p = ...` мутирует все
+// поля, `ro p = ...` блокирует все.
+module plan124_8.tuple_mut_field_neg
+
+type Vec3(mut x f64, y f64, z f64)
