@@ -1,0 +1,32 @@
+// Plan 124.8 [M-124.8-tuple-mut-field-write-codegen] — positive:
+// single field write на named tuple через mut binding propagates and
+// persists в read.
+module plan124_8.tuple_mut_single_field_write_ok
+
+type Vec3(x f64, y f64, z f64)
+
+test "mut tuple single field write" {
+    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    v.x = 10.0
+    assert(v.x == 10.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "mut tuple multiple field writes" {
+    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    v.x = 100.0
+    v.y = 200.0
+    v.z = 300.0
+    assert(v.x == 100.0)
+    assert(v.y == 200.0)
+    assert(v.z == 300.0)
+}
+
+test "mut tuple sequential overwrite" {
+    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    v.x = 10.0
+    v.x = 20.0
+    v.x = 30.0
+    assert(v.x == 30.0)
+}
