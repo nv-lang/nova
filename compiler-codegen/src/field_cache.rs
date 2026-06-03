@@ -230,11 +230,13 @@ enum FieldKind {
     /// `RecordField.readonly == true` — unconditional cache (Ф.1 path).
     Ro,
     /// `RecordField.mutable == true` — straight-line region cache
-    /// (Ф.2 path). V1 implements **first-region** caching only —
-    /// cache valid от body start до first write OR first call boundary;
-    /// subsequent reads stay as `@F` (conservative). Full multi-region
-    /// re-cache после write → `[M-123.1-mut-region-recache]` P2
-    /// followup.
+    /// (Ф.2 path). V1 implemented **first-region** caching only.
+    /// Plan 123.1.1 (V1.1, 2026-06-03) extends к **multi-region**:
+    /// body's top-level stmts split на regions by write/call barriers,
+    /// each region с ≥threshold reads gets a fresh cache local.
+    /// First region keeps `_at_<F>` (V1 backward-compat); subsequent
+    /// regions use `_at_<F>_r<N>` (N ≥ 1). Closes followup
+    /// `[M-123.1-mut-region-recache]`.
     Mut,
 }
 
@@ -406,12 +408,15 @@ fn analyze_fn_for_explain(f: &FnDecl, recv: &Receiver, b: &Block) -> FnCacheInfo
         pure_caches: Vec::new(),
         chain_caches: Vec::new(),
     };
-    // Walk prefix `let _at_*` injected statements; classify by suffix.
+    // Plan 123.1.1 (V1.1, 2026-06-03): scan ALL top-level statements
+    // (not just prefix run) — V1.1 multi-region cache injects let'ы
+    // в body interior после write/call barriers, не только в head.
+    // Non-let / non-`_at_*` top-level stmts simply skipped.
     for s in &b.stmts {
         if let Stmt::Let(d) = s {
             if let Pattern::Ident { name, .. } = &d.pattern {
                 if !name.starts_with("_at_") {
-                    break; // End of prefix lets.
+                    continue;
                 }
                 // Classify by name suffix + binding shape.
                 if name.ends_with("_chain") {
@@ -444,12 +449,12 @@ fn analyze_fn_for_explain(f: &FnDecl, recv: &Receiver, b: &Block) -> FnCacheInfo
                         }
                     }
                 }
-            } else {
-                break;
             }
-        } else {
-            break;
+            // Patterns that aren't Ident (e.g., tuple-destructure) —
+            // skip silently — V1.1 generates only Ident patterns.
         }
+        // Non-Let stmts: V1 broke; V1.1 continues — body interior may
+        // contain non-let stmts с region cache let'ами после них.
     }
     info
 }
@@ -1598,7 +1603,10 @@ fn cache_fn_with_ipa(
     let mut field_names: Vec<&String> = analysis.read_counts.keys().collect();
     field_names.sort();
     let mut ro_candidates: Vec<(String, crate::diag::Span)> = Vec::new();
-    let mut mut_candidates: Vec<(String, crate::diag::Span)> = Vec::new();
+    // Plan 123.1.1 (V1.1): per-region mut targets. One field may produce
+    // several MutRegionTargets — each region с reads ≥ threshold gets
+    // own cache local (`_at_<F>` для region 0, `_at_<F>_r<N>` для N≥1).
+    let mut mut_region_targets: Vec<MutRegionTarget> = Vec::new();
     let mut total_caches = 0usize;
     for fname in field_names {
         if total_caches >= cfg.max_per_fn {
@@ -1621,24 +1629,62 @@ fn cache_fn_with_ipa(
                 }
             }
             FieldKind::Mut => {
-                // Plan 123.7.1: pass ipa context для refined barrier check.
-                if let Some(prefix_count) = count_mut_prefix_reads_with_ipa(&f.body, fname, ipa) {
-                    if prefix_count >= cfg.threshold {
-                        mut_candidates.push((fname.clone(), span));
-                        total_caches += 1;
+                // Plan 123.1.1 (V1.1): multi-region caching. Find all
+                // straight-line regions, allocate cache local per region
+                // с reads ≥ threshold. Falls back gracefully на V1
+                // first-region behavior для FnBody::Expr (None из helper).
+                let regions = find_mut_regions_with_ipa(
+                    &f.body, fname, ipa, body_span);
+                match regions {
+                    Some(regs) => {
+                        let mut kept = 0usize;
+                        for (idx, region) in regs.into_iter().enumerate() {
+                            if total_caches >= cfg.max_per_fn { break; }
+                            if region.reads < cfg.threshold { continue; }
+                            mut_region_targets.push(MutRegionTarget {
+                                fname: fname.clone(),
+                                region,
+                                region_idx: kept,
+                                local_name: String::new(), // filled below
+                            });
+                            kept += 1;
+                            total_caches += 1;
+                        }
+                    }
+                    None => {
+                        // V1 fallback: FnBody::Expr / External.
+                        if let Some(prefix_count) =
+                            count_mut_prefix_reads_with_ipa(&f.body, fname, ipa)
+                        {
+                            if prefix_count >= cfg.threshold {
+                                mut_region_targets.push(MutRegionTarget {
+                                    fname: fname.clone(),
+                                    region: MutRegion {
+                                        start: 0,
+                                        end: 0,
+                                        reads: prefix_count,
+                                        first_span: span,
+                                        trailing_included: true,
+                                    },
+                                    region_idx: 0,
+                                    local_name: String::new(),
+                                });
+                                total_caches += 1;
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    if ro_candidates.is_empty() && mut_candidates.is_empty() {
+    if ro_candidates.is_empty() && mut_region_targets.is_empty() {
         return;
     }
 
-    // Generate cache local names (collision-avoidance).
+    // Generate cache local names (collision-avoidance) для ro fields.
     let mut name_map: HashMap<String, String> = HashMap::new();
-    for (fname, _) in ro_candidates.iter().chain(mut_candidates.iter()) {
+    for (fname, _) in &ro_candidates {
         let base = format!("_at_{}", fname);
         let mut chosen = base.clone();
         let mut suffix = 0usize;
@@ -1649,8 +1695,38 @@ fn cache_fn_with_ipa(
         local_names.insert(chosen.clone());
         name_map.insert(fname.clone(), chosen);
     }
+    // Plan 123.1.1 (V1.1): mut region local names. First region per
+    // field keeps V1 naming `_at_<F>` для backwards compatibility;
+    // subsequent regions use `_at_<F>_r<N>` (N starts at 1).
+    for tgt in mut_region_targets.iter_mut() {
+        let base = if tgt.region_idx == 0 {
+            format!("_at_{}", tgt.fname)
+        } else {
+            format!("_at_{}_r{}", tgt.fname, tgt.region_idx)
+        };
+        let mut chosen = base.clone();
+        let mut suffix = 0usize;
+        while local_names.contains(&chosen) {
+            suffix += 1;
+            chosen = format!("{}_{}", base, suffix);
+        }
+        local_names.insert(chosen.clone());
+        tgt.local_name = chosen;
+    }
 
-    rewrite_fn_body_split_with_ipa(f, &ro_candidates, &mut_candidates, &name_map, ipa);
+    rewrite_fn_body_split_with_ipa(f, &ro_candidates, &mut_region_targets,
+        &name_map, ipa);
+}
+
+/// Plan 123.1.1 (V1.1, 2026-06-03): one region's caching target —
+/// `(field, region, region_idx, allocated_local_name)`. Multiple targets
+/// per field correspond к multiple regions (multi-region mut caching).
+#[derive(Debug)]
+struct MutRegionTarget {
+    fname: String,
+    region: MutRegion,
+    region_idx: usize,
+    local_name: String,
 }
 
 /// Count `@<fname>` reads в первой straight-line prefix region body'а.
@@ -1702,6 +1778,135 @@ fn count_mut_prefix_reads_with_ipa(
         }
         FnBody::External => None,
     }
+}
+
+/// Plan 123.1.1 (V1.1, 2026-06-03): one straight-line region between two
+/// barriers (or body bounds). Used by multi-region mut caching:
+/// `start..end` — half-open range in top-level stmts (use `len` to mean
+/// "trailing-only"); `trailing_included` flag tells rewrite phase
+/// whether the region's tail covers `Block.trailing`.
+#[derive(Debug, Clone)]
+struct MutRegion {
+    /// Index in `b.stmts` где region starts (inclusive).
+    start: usize,
+    /// Index в `b.stmts` где region ends (exclusive). Если
+    /// `trailing_included == true` AND start..end purchases весь stmts
+    /// tail, region extends к trailing expression тоже.
+    end: usize,
+    /// Reads of `@<fname>` inside this region.
+    reads: usize,
+    /// Earliest span seen в region — used для cache let position.
+    first_span: crate::diag::Span,
+    /// True iff `b.trailing` принадлежит этой region (region не
+    /// terminated barrier'ом на boundary).
+    trailing_included: bool,
+}
+
+/// Plan 123.1.1 (V1.1): split body's top-level into regions between
+/// write/call barriers и count reads of `@<fname>` per region.
+///
+/// Returns `None` для FnBody::External / Expr cases (V1 fallback).
+/// Otherwise returns regions in body order — each maximal stretch of
+/// non-barrier top-level stmts.
+fn find_mut_regions_with_ipa(
+    body: &FnBody,
+    fname: &str,
+    ipa: Option<IpaCtx<'_>>,
+    body_span: crate::diag::Span,
+) -> Option<Vec<MutRegion>> {
+    let b = match body {
+        FnBody::Block(b) => b,
+        FnBody::Expr(_) | FnBody::External => return None,
+    };
+    let mut regions: Vec<MutRegion> = Vec::new();
+    let mut region_start = 0usize;
+    let mut region_reads = 0usize;
+    let mut region_first_span: Option<crate::diag::Span> = None;
+    for (i, s) in b.stmts.iter().enumerate() {
+        let is_barrier = stmt_is_barrier_for_with_ipa(s, fname, ipa);
+        if is_barrier {
+            // Close current region [region_start..i).
+            if i > region_start {
+                regions.push(MutRegion {
+                    start: region_start,
+                    end: i,
+                    reads: region_reads,
+                    first_span: region_first_span.unwrap_or(body_span),
+                    trailing_included: false,
+                });
+            }
+            region_start = i + 1;
+            region_reads = 0;
+            region_first_span = None;
+            continue;
+        }
+        let in_stmt = count_field_reads_in_stmt(s, fname);
+        if in_stmt > 0 {
+            region_reads += in_stmt;
+            if region_first_span.is_none() {
+                region_first_span = Some(stmt_span(s).unwrap_or(body_span));
+            }
+        }
+    }
+    // Handle trailing expression: либо это barrier (close region без
+    // trailing), либо extend current region и include trailing.
+    let trailing_is_barrier = b.trailing.as_ref()
+        .map(|t| expr_is_barrier_for_with_ipa(t, fname, ipa))
+        .unwrap_or(false);
+    if trailing_is_barrier {
+        if b.stmts.len() > region_start {
+            regions.push(MutRegion {
+                start: region_start,
+                end: b.stmts.len(),
+                reads: region_reads,
+                first_span: region_first_span.unwrap_or(body_span),
+                trailing_included: false,
+            });
+        }
+    } else {
+        if let Some(t) = &b.trailing {
+            let trail_reads = count_field_reads_in_expr(t, fname);
+            if trail_reads > 0 {
+                region_reads += trail_reads;
+                if region_first_span.is_none() {
+                    region_first_span = Some(t.span);
+                }
+            }
+        }
+        // Final region — even если start == end (trailing-only).
+        if b.stmts.len() > region_start || b.trailing.is_some() {
+            regions.push(MutRegion {
+                start: region_start,
+                end: b.stmts.len(),
+                reads: region_reads,
+                first_span: region_first_span.unwrap_or(body_span),
+                trailing_included: true,
+            });
+        }
+    }
+    Some(regions)
+}
+
+/// Plan 123.1.1 (V1.1): best-effort span extraction для cache-let
+/// placement. Defensive — never panics, falls back на body_span.
+fn stmt_span(s: &Stmt) -> Option<crate::diag::Span> {
+    Some(match s {
+        Stmt::Let(d) => d.span,
+        Stmt::Const(d) => d.span,
+        Stmt::Expr(e) => e.span,
+        Stmt::Assign { span, .. } => *span,
+        Stmt::Return { span, .. } => *span,
+        Stmt::Throw { span, .. } => *span,
+        Stmt::Break(span) | Stmt::Continue(span) => *span,
+        Stmt::Defer { span, .. } | Stmt::ErrDefer { span, .. }
+        | Stmt::OkDefer { span, .. } | Stmt::DeferWithResult { span, .. } => *span,
+        Stmt::ConsumeScope { span, .. } => *span,
+        Stmt::AssertStatic { span, .. } => *span,
+        Stmt::Assume { span, .. } => *span,
+        Stmt::Apply { span, .. } => *span,
+        Stmt::Calc { span, .. } => *span,
+        Stmt::Reveal { span, .. } => *span,
+    })
 }
 
 #[allow(dead_code)]
@@ -3428,35 +3633,31 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
 // ----- REWRITE phase -----
 
 /// Объединённый rewrite: ro-fields → full-body replace; mut-fields →
-/// first-region replace (до first write OR first call boundary).
+/// Plan 123.1.1 (V1.1, 2026-06-03) multi-region rewrite — каждая
+/// MutRegionTarget cache локалу инжектируется на region.start.
 /// V7.1 adds optional `ipa` param — IPA-aware barrier detection.
+#[allow(dead_code)]
 fn rewrite_fn_body_split(
     f: &mut FnDecl,
     ro_cache: &[(String, crate::diag::Span)],
-    mut_cache: &[(String, crate::diag::Span)],
+    mut_targets: &[MutRegionTarget],
     name_map: &HashMap<String, String>,
 ) {
-    rewrite_fn_body_split_with_ipa(f, ro_cache, mut_cache, name_map, None)
+    rewrite_fn_body_split_with_ipa(f, ro_cache, mut_targets, name_map, None)
 }
 
 fn rewrite_fn_body_split_with_ipa(
     f: &mut FnDecl,
     ro_cache: &[(String, crate::diag::Span)],
-    mut_cache: &[(String, crate::diag::Span)],
+    mut_targets: &[MutRegionTarget],
     name_map: &HashMap<String, String>,
     ipa: Option<IpaCtx<'_>>,
 ) {
-    // Build replace maps.
+    let _ = ipa; // unused после V1.1 — regions pre-computed в cache_fn_with_ipa
+    // Build ro replace map (full-body rewrite).
     let ro_map: HashMap<String, String> = ro_cache.iter()
         .map(|(fname, _)| (fname.clone(), name_map[fname].clone()))
         .collect();
-    let mut_map: HashMap<String, String> = mut_cache.iter()
-        .map(|(fname, _)| (fname.clone(), name_map[fname].clone()))
-        .collect();
-    // Combined для prefix-let injection.
-    let mut combined_cache: Vec<(String, crate::diag::Span)> = Vec::new();
-    combined_cache.extend(ro_cache.iter().cloned());
-    combined_cache.extend(mut_cache.iter().cloned());
 
     // Ensure body is Block (coerce Expr → Block-with-trailing).
     match &mut f.body {
@@ -3478,35 +3679,21 @@ fn rewrite_fn_body_split_with_ipa(
         FnBody::External => return,
     }
 
-    // Mut-cache rewrite — bounded к first-region. Done BEFORE prefix
-    // insertion (indices stable). For each mut field, find boundary
-    // в top-level stmts; replace reads only в stmts[0..boundary]
-    // (включая trailing если no barrier).
+    // Plan 123.1.1 (V1.1, 2026-06-03): per-region mut rewrite. Each
+    // MutRegionTarget rewrites reads only в [start..end) range плюс
+    // trailing если region.trailing_included.
     if let FnBody::Block(b) = &mut f.body {
-        for (fname, _) in mut_cache {
-            // Find first-barrier index в TOP-LEVEL stmts (not nested).
-            let mut barrier_idx = b.stmts.len();
-            for (i, s) in b.stmts.iter().enumerate() {
-                if stmt_is_barrier_for_with_ipa(s, fname, ipa) {
-                    barrier_idx = i;
-                    break;
-                }
-            }
-            // Build per-field single-entry map.
-            let single: HashMap<String, String> = std::iter::once((fname.clone(), mut_map[fname].clone())).collect();
-            // Rewrite stmts[0..barrier_idx].
-            for s in b.stmts.iter_mut().take(barrier_idx) {
+        for tgt in mut_targets {
+            let single: HashMap<String, String> =
+                std::iter::once((tgt.fname.clone(), tgt.local_name.clone())).collect();
+            let end = tgt.region.end.min(b.stmts.len());
+            let start = tgt.region.start.min(end);
+            for s in b.stmts[start..end].iter_mut() {
                 rewrite_stmt(s, &single);
             }
-            // If no barrier — also rewrite trailing.
-            if barrier_idx == b.stmts.len() {
-                // Trailing еще не обработан barrier — но мог сам быть
-                // barrier'ом. Проверим.
+            if tgt.region.trailing_included {
                 if let Some(t) = &mut b.trailing {
-                    let trailing_barrier = expr_is_barrier_for_with_ipa(t, fname, ipa);
-                    if !trailing_barrier {
-                        rewrite_expr(t, &single);
-                    }
+                    rewrite_expr(t, &single);
                 }
             }
         }
@@ -3519,38 +3706,83 @@ fn rewrite_fn_body_split_with_ipa(
         }
     }
 
-    // Prepend cache lets. Order: ro first, then mut (sorted внутри
-    // через name_map keys insertion order, но мы передаём через
-    // combined_cache).
+    // Plan 123.1.1 (V1.1): insert region lets в их correct positions.
+    // Order: process non-prefix groups (start > 0) FIRST в reverse order
+    // (descending start) — preserves indices ahead of unprocessed groups.
+    // Then prefix lets для ro + first-region mut prepended вместе.
     if let FnBody::Block(b) = &mut f.body {
-        let mut prefix_stmts: Vec<Stmt> = Vec::with_capacity(combined_cache.len());
-        for (fname, span) in &combined_cache {
-            let local_name = &name_map[fname];
-            let access = Expr {
-                kind: ExprKind::Member {
-                    obj: Box::new(Expr { kind: ExprKind::SelfAccess, span: *span }),
-                    name: fname.clone(),
-                },
-                span: *span,
-            };
-            let let_stmt = Stmt::Let(LetDecl {
-                mutable: false,
-                pattern: Pattern::Ident {
-                    name: local_name.clone(),
-                    span: *span,
-                    is_mut: false,
-                },
-                ty: None,
-                value: access,
-                span: *span,
-                is_ghost: false,
-                consume: false,
-            });
-            prefix_stmts.push(let_stmt);
+        use std::collections::BTreeMap;
+        let mut by_start: BTreeMap<usize, Vec<&MutRegionTarget>> = BTreeMap::new();
+        for tgt in mut_targets {
+            by_start.entry(tgt.region.start).or_default().push(tgt);
         }
-        prefix_stmts.append(&mut b.stmts);
-        b.stmts = prefix_stmts;
+        // Phase 1: non-prefix groups (start > 0).
+        let mut keys: Vec<usize> = by_start.keys().copied()
+            .filter(|k| *k > 0).collect();
+        keys.sort_by(|a, b| b.cmp(a)); // descending
+        for k in keys {
+            let group = &by_start[&k];
+            // Build let'ы — order по region_idx ascending для determinism.
+            let mut group_sorted: Vec<&MutRegionTarget> = group.iter().copied()
+                .collect();
+            group_sorted.sort_by_key(|t| (t.fname.clone(), t.region_idx));
+            let mut lets: Vec<Stmt> = Vec::with_capacity(group_sorted.len());
+            for tgt in &group_sorted {
+                lets.push(build_at_field_let(&tgt.fname, &tgt.local_name,
+                    tgt.region.first_span));
+            }
+            // Splice all lets at position k.
+            for (i, s) in lets.into_iter().enumerate() {
+                b.stmts.insert(k + i, s);
+            }
+        }
+        // Phase 2: prefix — ro fields + mut targets с start==0.
+        let mut prefix_stmts: Vec<Stmt> = Vec::with_capacity(
+            ro_cache.len() + mut_targets.len());
+        for (fname, span) in ro_cache {
+            let local_name = &name_map[fname];
+            prefix_stmts.push(build_at_field_let(fname, local_name, *span));
+        }
+        // Stable ordering для prefix mut lets — fname + region_idx.
+        if let Some(group) = by_start.get(&0) {
+            let mut group_sorted: Vec<&MutRegionTarget> = group.iter().copied()
+                .collect();
+            group_sorted.sort_by_key(|t| (t.fname.clone(), t.region_idx));
+            for tgt in &group_sorted {
+                prefix_stmts.push(build_at_field_let(
+                    &tgt.fname, &tgt.local_name, tgt.region.first_span));
+            }
+        }
+        if !prefix_stmts.is_empty() {
+            prefix_stmts.append(&mut b.stmts);
+            b.stmts = prefix_stmts;
+        }
     }
+}
+
+/// Plan 123.1.1 (V1.1): construct `let <local_name> = @<fname>` stmt.
+fn build_at_field_let(fname: &str, local_name: &str,
+                       span: crate::diag::Span) -> Stmt {
+    let access = Expr {
+        kind: ExprKind::Member {
+            obj: Box::new(Expr { kind: ExprKind::SelfAccess, span }),
+            name: fname.to_string(),
+        },
+        span,
+    };
+    Stmt::Let(LetDecl {
+        mutable: false,
+        pattern: Pattern::Ident {
+            name: local_name.to_string(),
+            span,
+            is_mut: false,
+        },
+        ty: None,
+        value: access,
+        span,
+        is_ghost: false,
+        consume: false,
+    })
 }
 
 fn rewrite_block(b: &mut Block, replace_map: &HashMap<String, String>) {
@@ -7421,6 +7653,237 @@ mod tests {
         } else {
             0
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.1.1 (V1.1, 2026-06-03): multi-region mut cache tests.
+    // Closes [M-123.1-mut-region-recache].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Helper: count ALL `let _at_*` stmts anywhere в top-level body
+    /// (V1.1 may inject in interior, not just prefix).
+    fn count_all_at_lets(f: &FnDecl) -> usize {
+        let FnBody::Block(b) = &f.body else { return 0; };
+        b.stmts.iter().filter(|s| {
+            matches!(s, Stmt::Let(d)
+                if matches!(&d.pattern,
+                    Pattern::Ident { name, .. } if name.starts_with("_at_")))
+        }).count()
+    }
+
+    /// Helper: collect all `_at_*` let names in order seen в top-level body.
+    fn all_at_let_names(f: &FnDecl) -> Vec<String> {
+        let FnBody::Block(b) = &f.body else { return vec![]; };
+        b.stmts.iter().filter_map(|s| {
+            if let Stmt::Let(d) = s {
+                if let Pattern::Ident { name, .. } = &d.pattern {
+                    if name.starts_with("_at_") {
+                        return Some(name.clone());
+                    }
+                }
+            }
+            None
+        }).collect()
+    }
+
+    /// V1.1.1 positive: mut field с 2+ reads BEFORE и 2+ AFTER a write
+    /// emits **two** cache lets — `_at_x` at body prefix AND `_at_x_r1`
+    /// inserted после write boundary.
+    #[test]
+    fn v1_1_mut_two_regions_split_by_write() {
+        let src = r#"
+module testmod.v1_1_two_regions_write
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    @x = 99
+    ro c = @x
+    ro d = @x
+    a + b + c + d
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names(f);
+        assert!(names.contains(&"_at_x".to_string()),
+            "expected first-region _at_x; got {:?}", names);
+        assert!(names.contains(&"_at_x_r1".to_string()),
+            "expected second-region _at_x_r1; got {:?}", names);
+        assert_eq!(count_all_at_lets(f), 2);
+    }
+
+    /// V1.1.2 positive: mut field с 2 reads, then self-method call which
+    /// writes the SAME field (IPA-detected real barrier), then 2 more
+    /// reads → emits two cache lets.
+    #[test]
+    fn v1_1_mut_two_regions_split_by_call() {
+        let src = r#"
+module testmod.v1_1_two_regions_call
+type C { mut x int }
+fn C mut @bump_x() -> () { @x = @x + 1 }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    @bump_x()
+    ro c = @x
+    ro d = @x
+    a + b + c + d
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names(f);
+        assert!(names.contains(&"_at_x".to_string()),
+            "expected first-region _at_x; got {:?}", names);
+        assert!(names.contains(&"_at_x_r1".to_string()),
+            "expected second-region _at_x_r1 after self-mutating call; \
+             got {:?}", names);
+    }
+
+    /// V1.1.3 positive: three regions от двух real barriers (write
+    /// + self-mutating call) → three cache lets.
+    #[test]
+    fn v1_1_mut_three_regions() {
+        let src = r#"
+module testmod.v1_1_three_regions
+type C { mut x int }
+fn C mut @bump_x() -> () { @x = @x + 1 }
+fn C mut @do() -> int {
+    ro a1 = @x
+    ro a2 = @x
+    @x = 99
+    ro b1 = @x
+    ro b2 = @x
+    @bump_x()
+    ro c1 = @x
+    ro c2 = @x
+    a1 + a2 + b1 + b2 + c1 + c2
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names(f);
+        assert!(names.contains(&"_at_x".to_string()),
+            "got {:?}", names);
+        assert!(names.contains(&"_at_x_r1".to_string()),
+            "got {:?}", names);
+        assert!(names.contains(&"_at_x_r2".to_string()),
+            "got {:?}", names);
+        assert_eq!(count_all_at_lets(f), 3);
+    }
+
+    /// V1.1.4 positive: V1 single-region case (no barrier) emits ровно
+    /// одну cache let — backwards compat with V1 behavior.
+    #[test]
+    fn v1_1_single_region_preserves_v1_naming() {
+        let src = r#"
+module testmod.v1_1_single
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    a + b
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names(f);
+        assert_eq!(names, vec!["_at_x".to_string()],
+            "V1 backwards compat: single region keeps `_at_x` name; got {:?}",
+            names);
+    }
+
+    /// V1.1.5 negative: region с reads < threshold → no cache в той region.
+    #[test]
+    fn v1_1_region_below_threshold_skipped() {
+        let src = r#"
+module testmod.v1_1_below_threshold
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    @x = 99
+    ro c = @x
+    a + b + c
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names(f);
+        // First region has 2 reads (cached), second region only 1 (skipped).
+        assert!(names.contains(&"_at_x".to_string()));
+        assert!(!names.contains(&"_at_x_r1".to_string()),
+            "single-read region must NOT emit `_at_x_r1`; got {:?}", names);
+    }
+
+    /// V1.1.6 negative: no reads anywhere → no cache (sanity).
+    #[test]
+    fn v1_1_no_reads_no_cache() {
+        let src = r#"
+module testmod.v1_1_no_reads
+type C { mut x int }
+fn C mut @set_only() -> () { @x = 42 }
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "set_only");
+        assert_eq!(count_all_at_lets(f), 0);
+    }
+
+    /// V1.1.7 positive: ro field unaffected by V1.1 — still cached
+    /// only at body prefix даже с writes elsewhere in body.
+    #[test]
+    fn v1_1_ro_field_unaffected_by_barriers() {
+        let src = r#"
+module testmod.v1_1_ro_unaffected
+type C { ro x int, mut y int }
+fn C mut @do() -> int {
+    ro a = @x
+    @y = 99
+    ro b = @x
+    a + b
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names(f);
+        // ro `x` cache emitted ровно один раз at prefix.
+        assert_eq!(names.iter().filter(|n| *n == "_at_x").count(), 1,
+            "ro x should still be cached once; got {:?}", names);
+        assert!(!names.iter().any(|n| n.starts_with("_at_x_r")),
+            "ro fields shouldn't get region suffixes; got {:?}", names);
+    }
+
+    /// V1.1.8 positive: budget cap — `max_per_fn` clamps total regions
+    /// (включая первое, второе, и т.д.).
+    #[test]
+    fn v1_1_budget_caps_multi_region() {
+        let src = r#"
+module testmod.v1_1_budget
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a1 = @x
+    ro a2 = @x
+    @x = 1
+    ro b1 = @x
+    ro b2 = @x
+    @x = 2
+    ro c1 = @x
+    ro c2 = @x
+    a1 + a2 + b1 + b2 + c1 + c2
+}
+"#;
+        let cfg = FieldCacheConfig {
+            max_per_fn: 2, // только два cache local'а допустимы.
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names: Vec<String> = all_at_let_names(f).into_iter()
+            .filter(|n| n.starts_with("_at_x")).collect();
+        // Should emit only 2 (third region skipped due к budget).
+        assert!(names.len() <= 2,
+            "budget=2 must cap at 2 mut regions; got {:?}", names);
     }
 
     /// A1.1: ro field accessed 2+ раз → cache emitted.

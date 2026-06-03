@@ -31751,3 +31751,63 @@ Single placeholder would require careful ordering hacks.
   method dispatch + normal/throw path integration.
 - Estimate ~½ day focused work. Not shipped в continuation session —
   honest scope acknowledgement.
+
+---
+
+## Plan 123.1.1 — Multi-region mut cache (V1.1)
+
+✅ ЗАКРЫТ 2026-06-03 в worktree nova-p123, branch
+plan-123-v1-1-mut-multi-region. ~430 LOC delta. Closes
+`[M-123.1-mut-region-recache]` — **last open V1 followup** в Plan 123.
+
+**Что сделано:** V1 first-region-only mut-cache расширено к
+multi-region. Body top-level stmts split на barrier boundaries (write
+OR call); каждая region с reads ≥ threshold получает own cache local.
+First region keeps `_at_<F>` (V1 backward-compat); subsequent regions
+use `_at_<F>_r<N>` (N ≥ 1).
+
+**Принципы:**
+
+- **Region split decouples analysis от rewrite:** `find_mut_regions_with_ipa`
+  returns `Vec<MutRegion>` (start, end, reads, first_span, trailing_included).
+  `cache_fn_with_ipa` filters, allocates `MutRegionTarget` per qualifying
+  region. Rewrite phase consumes targets без re-traversing AST.
+
+- **Multi-position let insertion via descending-`start` order:** non-prefix
+  groups inserted в reverse так чтобы earlier-start groups' indices
+  оставались valid. Prefix bucket (ro + first-region mut) prepended
+  together — preserves V1 AST shape когда single region.
+
+- **IPA-aware barrier inherited gratis:** V1.1 reuses
+  `stmt_is_barrier_for_with_ipa` — V7.1 context distinguishes real vs
+  non-mutating self-method calls automatically.
+
+- **Backwards compat preserved:** single-region case производит identical
+  AST к pre-V1.1 (`_at_<F>` at body prefix, no suffix). V1.1.4 acceptance
+  verifies.
+
+- **ExplainReport generalization:** scan ALL top-level `_at_*` lets, не
+  just prefix run. V1 broke at first non-`_at_*` stmt; V1.1 continues.
+
+**Acceptance (V1.1.1-V1.1.8 все ✅):** 2-region write, 2-region IPA-real-
+call, 3-region mixed, V1 single-region backward-compat, threshold-below-
+region skip, no-reads sanity, ro-field unaffected, budget cap.
+
+**Verification:** 8 unit tests + 3 runtime fixtures PASS via release
+nova-cli + clang. plan123_1 18/18 + plan123_2 14/14 + plan123_4 10/10
++ field_cache lib 55/55 PASS — zero regressions.
+
+**Real-world impact:** Counter-style mutating methods (read 2× / write
+/ read 2×) now get both regions cached. НЕ closes WriteBuffer.@write_char
+chain pattern (3× `nova_self->buf` в C output) — тот case требует V7.5
+callee-non-self-mutation IPA, отдельный followup.
+
+**Followup markers:**
+
+- `[M-123.1.1-nested-regions]` — V1.2 nested barrier analysis в
+  if/while/match-arm bodies.
+- `[M-123.1.1-callee-non-self-mutation-ipa]` — V7.5 fluent-builder IPA
+  для `[]T.push(self mut)` non-invalidation recognition.
+
+🎯 **Plan 123 V1 family — все markers closed.**
+

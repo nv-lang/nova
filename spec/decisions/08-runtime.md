@@ -4062,9 +4062,12 @@ vars (см. §5).
     op). V1 conservative — IPA / `#nofield_mut` annotations refine
     в Plan 123.7.
 - Cache emitted при count reads-in-prefix-region ≥ threshold.
-- Reads после boundary stay as direct `@<F>` (no re-cache в V1).
-  Full multi-region recache — `[M-123.1-mut-region-recache]` P2
-  followup.
+- V1: reads после boundary stay as direct `@<F>` (single-region only).
+- **V1.1 (Plan 123.1.1, 2026-06-03):** multi-region — body's top-level
+  stmts split into maximal non-barrier runs; каждая region с reads ≥
+  threshold gets own cache local. First region keeps name `_at_<F>`
+  (backwards-compat); subsequent regions use `_at_<F>_r<N>` (N ≥ 1).
+  См. D217 amend V1.1 ниже. Closes `[M-123.1-mut-region-recache]`.
 
 ### 3. Safety constraints
 
@@ -5917,6 +5920,133 @@ the sharing pass.
 ### 6. Followups
 
 - **V4.3:** ✅ DELIVERED 2026-06-03 — см. D217 amend V4.3 ниже.
+
+## D217 amend V1.1 — Multi-region mut cache (Plan 123.1.1)
+
+**Source:** [Plan 123.1.1](../../docs/plans/123.1.1-mut-multi-region.md).
+**Status:** ✅ ACTIVE 2026-06-03.
+**Closes:** `[M-123.1-mut-region-recache]`.
+
+### 1. Motivation
+
+V1 mut-cache stops at the FIRST barrier (write OR call). Realistic Nova
+code often has writes/calls in the middle of a method, with read-heavy
+sections both before and after — V1 caches только pre-barrier reads,
+losing optimization potential на second+ regions. Example: `Counter
+@cycle()` reads `@x` 2× before write, 2× after — V1 caches only first 2.
+
+V1.1 generalizes mut caching к **multi-region**: split body's top-level
+stmts on every write/call barrier, emit a fresh cache local for each
+region with reads ≥ threshold.
+
+### 2. Algorithm
+
+`find_mut_regions_with_ipa(body, fname, ipa, body_span) -> Vec<MutRegion>`:
+
+```
+regions: Vec<MutRegion> = []
+region_start = 0
+region_reads = 0
+region_first_span = None
+for (i, stmt) in body.stmts.enumerate():
+    if stmt_is_barrier_for_with_ipa(stmt, fname, ipa):
+        if i > region_start:
+            regions.push(MutRegion {
+                start: region_start, end: i,
+                reads: region_reads, first_span: region_first_span,
+                trailing_included: false,
+            })
+        region_start = i + 1
+        region_reads = 0; region_first_span = None
+        continue
+    reads_in_stmt = count_field_reads_in_stmt(stmt, fname)
+    region_reads += reads_in_stmt
+    if reads_in_stmt > 0 && region_first_span.is_none():
+        region_first_span = Some(stmt.span)
+
+handle trailing similar to V1 (extends current region OR closes без trailing)
+```
+
+Each `MutRegion` carries `(start, end, reads, first_span, trailing_included)`.
+The `trailing_included` flag tells rewriter whether `Block.trailing` is
+part of this region (true когда no barrier on trailing boundary).
+
+### 3. Per-region target allocation
+
+`cache_fn_with_ipa` iterates `find_mut_regions_with_ipa(...)`, keeps
+regions where `reads >= cfg.threshold`. For each kept region:
+- Allocate fresh `MutRegionTarget { fname, region, region_idx, local_name }`.
+- `region_idx` = 0 for first kept region per field, 1 для second, etc.
+- `local_name` = `_at_<F>` if `region_idx == 0` (V1 backwards-compat),
+  иначе `_at_<F>_r<N>` (N = region_idx).
+- Collision suffix `_<K>` applied if base name conflicts с existing local.
+
+`cfg.max_per_fn` budget covers ALL regions (плюс ro lets + chain lets +
+LICM lets + pure lets) — first-come-first-served в body order.
+
+### 4. Rewrite + injection
+
+`rewrite_fn_body_split_with_ipa`:
+
+1. **Per-region read rewrite:** для каждого `MutRegionTarget`, walk
+   `stmts[start..end)` plus optional trailing, rewrite reads of `@<F>` →
+   `<local_name>`.
+2. **Ro full-body rewrite:** standard V1 path (unchanged).
+3. **Let insertion:** group targets by `region.start`. Process
+   non-prefix groups (start > 0) в descending order of `start` —
+   insert region's lets BEFORE `stmts[start]`. Descending order
+   keeps unprocessed indices valid.
+4. **Prefix bucket:** ro lets + first-region mut lets (start = 0)
+   prepended together (V1-shape preserved).
+
+Deterministic ordering: per-group sort by `(fname, region_idx)`.
+
+### 5. ExplainReport compatibility
+
+`analyze_fn_for_explain` updated к scan ALL top-level `_at_*` lets, not
+just the prefix run — V1.1 secondary-region let'ы live in body interior.
+Non-let / non-`_at_*` stmts simply skipped instead of breaking.
+
+Backwards compat: V1 single-region case produces identical AST к pre-V1.1
+behavior — `_at_<F>` at body prefix, no region suffix.
+
+### 6. Codegen impact
+
+V1.1 cache locals follow same lowering as V1: each let-binding becomes
+a C local variable. Region splits don't introduce new lifetimes —
+each `_at_<F>_r<N>` lives until end of containing block.
+
+### 7. Acceptance
+
+- **V1.1.1** Two regions split by direct write `@F = N` → emits both
+  `_at_F` (first region) + `_at_F_r1` (second region) ✅
+- **V1.1.2** Two regions split by self-mutating call (IPA-detected real
+  barrier) → emits both cache lets ✅
+- **V1.1.3** Three regions от mixed barriers (write + self-mutating
+  call) → three cache lets `_at_F`, `_at_F_r1`, `_at_F_r2` ✅
+- **V1.1.4** V1 single-region case preserves `_at_F` naming (no suffix)
+  — backwards compat ✅
+- **V1.1.5** Region с reads < threshold skipped — partial-coverage не
+  generates spurious cache let ✅
+- **V1.1.6** No reads anywhere → no cache (sanity) ✅
+- **V1.1.7** Ro field unaffected by mut barriers — still cached once
+  at prefix ✅
+- **V1.1.8** Budget `cfg.max_per_fn` caps total regions (FIFO в body
+  order) ✅
+- Zero regressions: field_cache lib **55/55** (47 baseline + 8 V1.1) +
+  plan123_1 **18/18** + plan123_2 **14/14** + plan123_4 **10/10**
+  PASS via release nova test + clang.
+- Runtime fixtures `nova_tests/plan123_1_1/` **3/3** PASS — semantic
+  preservation under 2-region, 3-region, partial-coverage scenarios.
+
+### 8. Followups
+
+- **V1.2 (future):** nested barriers — extend region analysis в
+  if/while/match-arm bodies (currently V1.1 covers только top-level).
+- **V7.5 (future):** callee-non-self-mutation IPA — пометить методы
+  вроде `[]u8.push(self mut)` как НЕ пишущие в outer self's `@F`.
+  Откроет caching через WriteBuffer.@write_char chain pattern и
+  similar fluent-builder code.
 
 ## D217 amend V4.3 — Deep chain prefix sharing (Plan 123.4.3)
 
