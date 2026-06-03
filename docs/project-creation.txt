@@ -31024,3 +31024,63 @@ Followups:
   above)
 - [M-91.13-strict-from_codepoint] — Result-returning strict variant
   (optional)
+
+═══════════════════════════════════════════════════════════════════════
+2026-06-03 (вечер) — Plan 118 Ф.4 V1: typed pointer read/write landed
+═══════════════════════════════════════════════════════════════════════
+
+Worktree nova-p118 / branch plan-118. Two new commits на top
+foundational V1 chain:
+  - 36b2a303ee0 — feat(plan118 Ф.4 V1): typed pointer (*ro T).read() +
+    (*mut T).write(v) — codegen + 4 fixtures
+  - ebad5690f29 — docs+spec(plan118 Ф.4 V1): plan-doc closure entry +
+    D216 §11a amend
+
+Scope: primitive-T typed pointer instance methods на typed pointer
+family (`*T` / `*ro T` / `*mut T` / `*unsafe T`). Closes high-priority
+followup [M-118.1-typed-pointer-instance-methods] для primitive T scope.
+
+Codegen wiring (emit_c.rs ~54 lines added):
+1. Method-call dispatch — detect `obj_ty` ends в `*` AND not известный
+   Nova typedef (Nova_*/NovaArray_*/NovaOpt_*/NovaRes_*/NovaBox_*/
+   NovaValue_*/void*/nova_ptr). `read` → `(*p)`; `write` → comma-op
+   `((*p)=v, NOVA_UNIT)`.
+2. Return-type inference parallel detection — `read` returns pointee
+   (strip `const ` + `*`); `write` returns `nova_unit`.
+
+is_const derived от const-prefix; write() falls through на *ro T,
+emits generic "method not found" (typed E_PTR_WRITE_ON_RO_TARGET
+deferred — [M-118.4-typed-ro-write-error]).
+
+Tests (4 fixtures, all PASS под release nova test):
+  - plan118_4/t1_ptr_read_ok        — *ro u8 / i32 / i64 read
+  - plan118_4/t2_ptr_write_ok       — *mut u8 / i32 / i64 write
+  - plan118_4/t3_neg_write_on_ro_ptr — write на *ro u8 rejected
+  - plan118_4/t4_ptr_roundtrip_ok   — write→read + RawMem.fill compose
+
+V2 followups opened:
+  - [M-118.4-struct-ptr-read]      — struct T deref (deep copy + own.)
+  - [M-118.4-typed-ro-write-error] — typed diagnostic
+  - [M-118-ptr-arithmetic]         — p.add(n) / p.offset(n)
+
+Acceptance criteria (V1, scope-limited):
+  ✅ A-118.4-V1.a — (*ro T).read() returns pointee value
+  ✅ A-118.4-V1.b — (*mut T).write(v T) stores в pointee
+  ✅ A-118.4-V1.c — .write() на *ro T rejected
+  ✅ A-118.4-V1.d — Roundtrip write→read recovers value
+  ✅ A-118.4-V1.e — Composes с RawMem byte-level operations
+  ✅ A-118.4-V1.f — No regressions in Plan 118.1 / 118.2 (9/9 prior PASS)
+
+Combined Plan 118 V1 surface (after Ф.4 V1):
+  - usize / isize (D226 amend)
+  - []T.@as_ptr() / @as_mut_ptr() (Plan 118.2 Ф.1)
+  - RawMem.{copy_from, copy_nonoverlapping, fill, write_bytes, compare}
+    (Plan 118.1 Ф.1)
+  - (*ro T).read() / (*mut T).write(v) для primitive T (Plan 118 Ф.4 V1)
+
+13/13 fixtures PASS под release nova test (no regressions).
+
+Это closure достаточен для idiomatic primitive-typed FFI buffer patterns
+(libpng pixel buffers, libcurl recv buffers, sqlite blobs с typed
+column access). Struct-T deref + pointer arithmetic + volatile +
+addr_of! остаются V2 followups.
