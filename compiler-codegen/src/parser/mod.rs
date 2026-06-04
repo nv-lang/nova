@@ -4957,6 +4957,27 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
+                // **Plan 118.5 V3 Ф.3 / §V3.2 (2026-06-04):** modifier
+                // ordering — safety modifier (`unsafe`) must wrap mutability
+                // modifier (`ro`/`mut`), NOT reverse. If inner contains
+                // `unsafe` in chain → E_MODIFIER_ORDER. Safe stopper
+                // suppresses (§V3.4 exception).
+                if inner.contains_unsafe_in_chain()
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_MODIFIER_ORDER] `ro` cannot wrap `unsafe` — \
+                         safety modifier (`unsafe`) must be outer, mutability \
+                         modifier (`ro`/`mut`) must be inner (Plan 118.5 V3 / \
+                         D216 V3 §V3.2). Write `unsafe ro T` (correct order) \
+                         instead of `ro unsafe T`. Rationale: safety wraps \
+                         mutability — «unsafe ro T» means «possibly-uninit \
+                         T that, if valid, is readonly»; the reverse \
+                         interpretation is not meaningful."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.1 / D216 V2 §V2.1 (2026-06-04):** universal
@@ -4969,6 +4990,22 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
+                // **Plan 118.5 V3 Ф.3 / §V3.2 (2026-06-04):** modifier
+                // ordering — same rule as KwRo arm. `mut` cannot wrap
+                // `unsafe`; safety must be outer.
+                if inner.contains_unsafe_in_chain()
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_MODIFIER_ORDER] `mut` cannot wrap `unsafe` — \
+                         safety modifier (`unsafe`) must be outer, mutability \
+                         modifier (`ro`/`mut`) must be inner (Plan 118.5 V3 / \
+                         D216 V3 §V3.2). Write `unsafe mut T` (correct order) \
+                         instead of `mut unsafe T`."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Mut(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04):** universal

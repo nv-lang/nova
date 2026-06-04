@@ -1,0 +1,26 @@
+// Plan 118.5 V3 Ф.3 POS T9 — safety-outer / mutability-inner valid forms.
+//
+// Per D216 V3 §V3.2: `unsafe ro T` / `unsafe mut T` / `unsafe * ro T` /
+// `unsafe * mut T` — all valid (safety wraps mutability).
+
+module plan118_5_v3.t9_safety_outer_ok
+
+type Acc {
+    id i64
+}
+
+// unsafe wrapping ro — value-level uninit + readonly contract
+external fn p1(x unsafe ro int) -> ()
+
+// unsafe wrapping mut — value-level uninit + mutable contract
+external fn p2(x unsafe mut int) -> ()
+
+// unsafe pointer outer + ro pointee inner — Rust *const T analog
+external fn p3(x unsafe * ro Acc) -> ()
+
+// unsafe pointer outer + mut pointee inner
+external fn p4(x unsafe * mut Acc) -> ()
+
+test "safety-outer modifier order accepted" {
+    assert(1 == 1)
+}

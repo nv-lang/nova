@@ -1,0 +1,10 @@
+// Plan 118.5 V3 Ф.3 NEG T6 — `ro unsafe T` → E_MODIFIER_ORDER.
+//
+// Per D216 V3 §V3.2: safety modifier (`unsafe`) must wrap mutability
+// modifier (`ro`/`mut`), NOT reverse.
+//
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+
+module plan118_5_v3.t6_neg_ro_wraps_unsafe
+
+external fn p(x ro unsafe int) -> ()

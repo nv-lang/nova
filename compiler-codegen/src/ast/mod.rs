@@ -1157,6 +1157,16 @@ pub struct BenchCase {
     pub span: Span,
 }
 
+/// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** modifier classes
+/// used by V3 redundancy check. Each TypeRef wrapper variant belongs к
+/// exactly one class. Same-class repetition в chain → E_REDUNDANT_TYPE_MODIFIER.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModifierClass {
+    Readonly,
+    Mut,
+    Unsafe,
+}
+
 /// Plan 118 (D216 §1-3, rev-1): pointer modifier in `*T` / `*ro T` / `*mut T` /
 /// `*unsafe T` family. Default = `Ro` (omitted modifier ≡ `*ro T`).
 ///
@@ -1316,6 +1326,55 @@ impl TypeRef {
     /// wrapper (outermost)?
     pub fn is_unsafe(&self) -> bool {
         matches!(self, TypeRef::Unsafe(..))
+    }
+
+    /// **Plan 118.5 V3 §V3.2 (D216 V3 amend, 2026-06-04):** does this
+    /// TypeRef contain an `Unsafe` wrapper anywhere в the chain of
+    /// `Readonly`/`Mut`/`Pointer`/`Unsafe` wrappers (stopping at first
+    /// non-wrapper: Named/Array/Tuple/Func/Protocol)?
+    ///
+    /// Used by V3 modifier-order check (safety-outer/mutability-inner rule):
+    /// `Readonly` или `Mut` wrapping ANY type that contains `Unsafe` через
+    /// the wrapper chain violates §V3.2.
+    pub fn contains_unsafe_in_chain(&self) -> bool {
+        match self {
+            TypeRef::Unsafe(..) => true,
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Pointer(inner, _) => inner.contains_unsafe_in_chain(),
+            _ => false,
+        }
+    }
+
+    /// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** does this
+    /// TypeRef contain the same modifier class в chain (recurses через
+    /// Readonly/Mut/Unsafe/Pointer wrappers, stops at first non-wrapper)?
+    ///
+    /// Returns true if outer-Readonly contains inner Readonly, outer-Mut
+    /// contains inner Mut, или outer-Unsafe contains inner Unsafe — same-
+    /// class repetition. Used by V3 §V3.4 redundancy check.
+    pub fn contains_same_class_in_chain(&self, class: ModifierClass) -> bool {
+        match (self, class) {
+            (TypeRef::Readonly(inner, _), ModifierClass::Readonly) => {
+                matches!(inner.as_ref(), TypeRef::Readonly(..))
+                    || inner.contains_same_class_in_chain(class)
+            }
+            (TypeRef::Mut(inner, _), ModifierClass::Mut) => {
+                matches!(inner.as_ref(), TypeRef::Mut(..))
+                    || inner.contains_same_class_in_chain(class)
+            }
+            (TypeRef::Unsafe(inner, _), ModifierClass::Unsafe) => {
+                matches!(inner.as_ref(), TypeRef::Unsafe(..))
+                    || inner.contains_same_class_in_chain(class)
+            }
+            (TypeRef::Readonly(inner, _), _)
+            | (TypeRef::Mut(inner, _), _)
+            | (TypeRef::Unsafe(inner, _), _)
+            | (TypeRef::Pointer(inner, _), _) => {
+                inner.contains_same_class_in_chain(class)
+            }
+            _ => false,
+        }
     }
 
     /// **Plan 118.5 / D216 V2 §V2.4 (2026-06-04):** does this TypeRef
