@@ -1,0 +1,39 @@
+// Plan 123.7.6 (V7.6, 2026-06-04): same-field reference-type IPA.
+// Closes [M-123.7.5-same-field-ref-type].
+//
+// `@arr.push(v)` on reference-typed `mut arr []int` doesn't invalidate
+// own `@arr` cache (the slot's header pointer is unchanged; only the
+// referenced array's internals change). Semantic preservation verified.
+
+module plan123_7_6.v7_6_array_own_cache_survives_ok
+
+type Buf {
+    mut arr []int
+}
+
+fn Buf.new() -> Buf => { arr: []int.new() }
+
+fn Buf mut @sample_len_and_grow(v int) -> int {
+    // 2 pre-push reads of @arr.len() — uses cached @arr handle.
+    ro a = @arr.len()
+    ro b = @arr.len()
+    // V7.6: @arr.push() mutates referenced []int; doesn't change
+    // @arr slot. Cache survives.
+    @arr.push(v)
+    // 2 post-push reads — V7.6 keeps single cache.
+    ro c = @arr.len()
+    ro d = @arr.len()
+    a + b + c + d
+}
+
+test "V7.6: ref-type @arr cache survives @arr.push()" {
+    mut b = Buf.new()
+    b.arr.push(1)
+    b.arr.push(2)
+    // Pre-state: len=2.
+    ro r = b.sample_len_and_grow(99)
+    // pre-reads see 2; post-reads see 3 (after push).
+    // 2 + 2 + 3 + 3 = 10
+    assert(r == 10)
+    assert(b.arr.len() == 3)
+}

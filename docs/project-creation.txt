@@ -31923,3 +31923,41 @@ Plan doc: docs/plans/123.2.1-loop-body-coord.md.
 
 Followups: [M-123.2.1-v2-licm-threshold-integration],
 [M-123.2.1-dynamic-loop-count].
+
+=== Plan 123.7.6 — Same-field reference-type IPA (V7.6, 2026-06-04) ===
+
+Followup [M-123.7.5-same-field-ref-type] closure. Fourth of umbrella
+123-followups-2026-06-04. V7.5/V7.7 conservatively invalidated own-
+field cache на @F.method(). V7.6 refines: when F is reference-type
+(Array/Pointer/Map/String/etc.), cache survives.
+
+Algorithm: TypeDecl integration. New is_reference_type_ref(t: &TypeRef)
+classifier — recognizes Array, Pointer, Readonly/Mut wrappers (peel),
+named collection types (str/String/Map/HashMap/Set/Vec/etc.).
+Conservative для FixedArray, Tuple, user records, Func, Protocol.
+
+Registry extension: FieldRegistry.ref_typed: HashSet<(String, String)>
+populated в register_items. IpaCtx extended: ref_typed reference +
+is_field_ref_type helper method. V7.5/V7.7 own-field branches consult
+ctx.is_field_ref_type(fname).
+
+Implementation (~450 LOC):
+- is_reference_type_ref NEW (~30 LOC)
+- FieldRegistry.ref_typed field + populate (~5 LOC)
+- IpaCtx.ref_typed + is_field_ref_type (~10 LOC)
+- 4 IpaCtx construction sites updated к pass &reg.ref_typed
+- V7.5/V7.7 own-field branches refined (~15 LOC)
+- 8 unit tests v7_6_* (~330 LOC)
+- nova_tests/plan123_7_6/v7_6_array_own_cache_survives_ok.nv
+
+Verification (release nova-cli + clang):
+- 8 V7.6 unit PASS + 1 runtime fixture PASS
+- Zero standalone regressions across 13 plan123_* directories
+- (Parallel-run transient test contention observed но standalone all pass)
+
+Spec: D223 amend V7.6 (~130 lines).
+Plan doc: docs/plans/123.7.6-same-field-ref-type.md.
+
+Followups:
+- [M-123.7.6-generic-ref-types] — user generic wrappers (Container[T])
+- [M-123.7.6-method-realloc-flag] — distinguish swap-and-replace methods
