@@ -43,12 +43,15 @@ jobs:
       - name: Install cvc5
         run: |
           set -euxo pipefail
-          CVC5_VERSION=1.2.0
+          CVC5_VERSION=1.3.4
           cd /tmp
           curl -fL -o cvc5.zip \
             "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
           unzip -q cvc5.zip
-          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f | head -1)
+          # `-print -quit` останавливает find на первом совпадении сам —
+          # без `| head -1`, который под `set -o pipefail` даёт SIGPIPE и
+          # роняет шаг (find продолжает писать после закрытия пайпа).
+          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f -print -quit)
           if [ -z "$CVC5_BIN" ]; then
             echo "ERROR: cvc5 binary not found in release archive"; exit 1
           fi
@@ -104,12 +107,15 @@ jobs:
       - name: Install cvc5
         run: |
           set -euxo pipefail
-          CVC5_VERSION=1.2.0
+          CVC5_VERSION=1.3.4
           cd /tmp
           curl -fL -o cvc5.zip \
             "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
           unzip -q cvc5.zip
-          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f | head -1)
+          # `-print -quit` останавливает find на первом совпадении сам —
+          # без `| head -1`, который под `set -o pipefail` даёт SIGPIPE и
+          # роняет шаг (find продолжает писать после закрытия пайпа).
+          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f -print -quit)
           sudo install -m 755 "$CVC5_BIN" /usr/local/bin/cvc5
           cvc5 --version
 
