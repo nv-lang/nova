@@ -1,0 +1,20 @@
+// Plan 118.5 V2 T6 — explicit narrow cast `x as T` inside unsafe block.
+//
+// Per D216 V2 §V2.3: narrowing `unsafe T` к `T` is value-level assertion that
+// the slot is initialized. Requires `unsafe { }` context. Inside unsafe
+// block, narrow cast succeeds.
+//
+// Closes [M-118.5-narrow-cast] POS half.
+
+module plan118_5.t6_unsafe_t_narrow_in_unsafe_ok
+
+fn use_narrowed() -> () {
+    mut x unsafe int = 0
+    x = 99                                  // safe write
+    ro y = unsafe { x as int }              // explicit narrow inside unsafe
+    assert(y == 99)
+}
+
+test "narrow cast inside unsafe block recovers T value" {
+    use_narrowed()
+}

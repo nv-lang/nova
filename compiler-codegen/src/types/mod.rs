@@ -16838,7 +16838,48 @@ impl UnsafeCtx {
                         }
                     }
                 }
-                self.walk_expr(inner, errors);
+                // **Plan 118.5 V2 [M-118.5-narrow-cast] (2026-06-04):** narrow
+                // cast `unsafe T → T` (strip Unsafe wrapper from value type) is
+                // a value-level assertion of validity. Requires `unsafe { }`
+                // context per D216 V2 §V2.3 — caller asserts the value is
+                // actually initialized.
+                //
+                // Detection: inner is `Ident` registered в `unsafe_t_vars` AND
+                // target ty (after strip_modifiers) is NOT an Unsafe wrapper
+                // (so cast narrows OUT of unsafe). If depth==0, emit specific
+                // narrow-cast error AND skip the inner walk (else generic
+                // E_UNSAFE_T_READ_REQUIRES_WRAP would also fire — double error).
+                let mut narrow_handled = false;
+                if self.depth == 0 {
+                    if let ExprKind::Ident(name) = &inner.kind {
+                        if self.is_unsafe_t_var(name)
+                            && !matches!(ty.strip_modifiers(),
+                                crate::ast::TypeRef::Unsafe(_, _))
+                        {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_T_NARROW_REQUIRES_UNSAFE] narrow \
+                                     cast from `unsafe T` binding `{}` к non-\
+                                     unsafe type requires `unsafe {{ ... }}` \
+                                     context (Plan 118.5 V2 / D216 V2 §V2.3). \
+                                     Caller must assert the value is actually \
+                                     initialized before narrowing. Wrap entire \
+                                     cast expression: `unsafe {{ {} as T }}`. \
+                                     Write к unsafe T binding is safe \
+                                     (transitions к valid); only the explicit \
+                                     drop of the `unsafe` wrapper requires \
+                                     unsafe context assertion.",
+                                    name, name,
+                                ),
+                                e.span,
+                            ));
+                            narrow_handled = true;
+                        }
+                    }
+                }
+                if !narrow_handled {
+                    self.walk_expr(inner, errors);
+                }
             }
             ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 self.walk_expr(inner, errors);
