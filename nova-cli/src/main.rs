@@ -1366,6 +1366,7 @@ fn cmd_check_explain_cache(
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
         if !report.per_fn.is_empty() {
             println!("=== {} ===", file.display());
@@ -1473,6 +1474,7 @@ fn cmd_check_telemetry_cache(
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
         // Count total instance methods in module for ratio.
         let module_methods_count: usize = count_instance_methods(&module);
@@ -2147,6 +2149,7 @@ fn cmd_run(path: &Path) -> Result<()> {
     // named args → positional + вставка defaults. После resolve_imports
     // (нужны все сигнатуры) и type-check, до запуска интерпретатора.
     nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp
         .load_module(&module)
@@ -3885,6 +3888,7 @@ fn cmd_build(
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
                 nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
             }
             let (c_code, warnings) = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");

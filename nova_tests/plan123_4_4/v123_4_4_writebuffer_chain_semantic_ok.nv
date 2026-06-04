@@ -1,0 +1,45 @@
+// Plan 123.4.4 (2026-06-04): codegen fluent-chain root-temp pre-pass.
+// Closes [M-123.4.4-codegen-fluent-chain-root-temp].
+//
+// Verifies that fluent chain `@buf.push(a).push(b).push(c)` preserves
+// semantics после chain_norm AST pre-pass rewrites it к Block с
+// `let _chain_root_<N>_buf = @buf; ...; _chain_root_<N>_buf`.
+// The actual C output should reference `nova_self->buf` only ONCE
+// (in the let-binding) instead of N times.
+
+module plan123_4_4.v123_4_4_writebuffer_chain_semantic_ok
+
+type Acc {
+    mut buf []int
+}
+
+fn Acc.new() -> Acc => { buf: []int.new() }
+
+fn Acc mut @add_three(a int, b int, c int) -> Acc {
+    @buf.push(a).push(b).push(c)
+    @
+}
+
+fn Acc mut @add_four(a int, b int, c int, d int) -> Acc {
+    @buf.push(a).push(b).push(c).push(d)
+    @
+}
+
+test "Plan 123.4.4: depth-3 chain preserves semantics" {
+    mut acc = Acc.new()
+    ro _ = acc.add_three(10, 20, 30)
+    assert(acc.buf.len() == 3)
+    assert(acc.buf[0] == 10)
+    assert(acc.buf[1] == 20)
+    assert(acc.buf[2] == 30)
+}
+
+test "Plan 123.4.4: depth-4 chain preserves semantics" {
+    mut acc = Acc.new()
+    ro _ = acc.add_four(1, 2, 3, 4)
+    assert(acc.buf.len() == 4)
+    assert(acc.buf[0] == 1)
+    assert(acc.buf[1] == 2)
+    assert(acc.buf[2] == 3)
+    assert(acc.buf[3] == 4)
+}

@@ -5557,6 +5557,120 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D217 amend Plan 123.4.4 — Codegen fluent-chain root-temp pre-pass
+
+**Source:** [Plan 123.4.4](../../docs/plans/123.4.4-codegen-chain-root-temp.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.4.4-codegen-fluent-chain-root-temp]`.
+
+### 1. Scope
+
+Fluent-chain expressions `@buf.push(a).push(b).push(c)` lower через
+`emit_c.rs` recursively. The `push` builtin handler emits its mutation
+statement using `obj_c = emit_expr(obj)?` (line 19567) и returns
+`Ok(obj_c)` (line 19593) per D181 fluent-`@`-return convention. Each
+chain level appends a statement using `obj_c`, и the returned string
+propagates upward. Result: `nova_self->buf` appears в C output **N
+times** для a depth-N chain — wasted memory loads.
+
+Field cache (V1 ro/mut) cannot help: the AST has only **one**
+`Member{SelfAccess, buf}` node (left-deep chain Call/Member tree). The
+duplication is purely codegen-level string substitution.
+
+### 2. Fix: AST pre-pass `chain_norm`
+
+New module `compiler-codegen/src/chain_norm.rs` running **adjacent к
+callnorm** (after `callnorm::normalize_module`). Detects fluent chains
+of depth ≥ 2 where:
+
+- Each method name appears в `FLUENT_BUILTIN_METHODS` hard-coded list
+  (push/append/extend_from/copy_from/insert/reserve/fill/clear +
+  WriteBuffer/StringBuilder write-family).
+- Root receiver is `Member{SelfAccess, F}` (the WriteBuffer/
+  StringBuilder/[]T common pattern).
+
+Rewrite:
+
+```nova
+@F.m1(a1).m2(a2).m3(a3)
+// ↓
+{
+    let _chain_root_<N>_<F> = @F;
+    _chain_root_<N>_<F>.m1(a1);
+    _chain_root_<N>_<F>.m2(a2);
+    _chain_root_<N>_<F>.m3(a3);
+    _chain_root_<N>_<F>
+}
+```
+
+The trailing `_chain_root_<N>_<F>` preserves chain's D181 receiver-
+return semantics — callers reading `e.m1().m2()` value see the
+(mutated) root binding.
+
+### 3. Safety scope
+
+Restricted к **reference-typed receivers** (`@F` где `F` is `[]T` или
+similar). `_chain_root = @F` is a pointer/handle copy; mutations
+through `_chain_root` and `@F` reach the same heap object. Semantics
+preserved.
+
+**Not handled:** value-type fields (rewrite would change semantics —
+`_chain_root` would be a copy, mutations не propagating к `@F`).
+Avoided by the hard-coded fluent-method whitelist — these methods
+only exist on reference types в Nova's stdlib (no value-type
+analogues currently exist). Future V2 will tighten with TypeDecl
+integration.
+
+### 4. Pipeline integration
+
+`normalize_chains_module(module)` invoked after `callnorm::
+normalize_module(module)` at every compilation site:
+
+- `compiler-codegen/src/main.rs:292`
+- `compiler-codegen/src/test_runner.rs:2350`
+- `compiler-codegen/src/doc/test_runner.rs:190`
+- `nova-cli/src/bench/run.rs:106` + `:367`
+- `nova-cli/src/bench/field_cache_wallclock.rs:324`
+- `nova-cli/src/main.rs:1369`, `:1477`, `:2152`, `:3891`
+- `nova-lsp/src/server.rs:586`, `:685`, `:766`, `:831`
+
+### 5. Acceptance
+
+- **123.4.4.1** Depth-2 fluent chain wraps в Block-with-temp ✅
+- **123.4.4.2** Depth-3 chain gets ONE temp (not three) ✅
+- **123.4.4.3** Depth-1 (single call) NOT wrapped ✅
+- **123.4.4.4** Non-fluent method (`len`/`get`/etc.) NOT wrapped ✅
+- **123.4.4.5** Non-self-rooted chain (`local.push().push()`) NOT
+  wrapped ✅
+- **123.4.4.6** After rewrite, `@F` Member-SelfAccess reads count = 1
+  (was N before) ✅
+- **123.4.4.7** Block trailing = `Ident(temp)` (chain value-as-receiver
+  semantics preserved) ✅
+- **123.4.4.8** `is_fluent_builtin_method` correctly recognizes
+  expected methods ✅
+- **123.4.4.9** Nested chain inside if-then wrapped correctly
+  (bottom-up handling) ✅
+- **123.4.4.10** Idempotent — second normalize pass is no-op ✅
+- Zero new regressions: field_cache lib **97/97** PASS. Pre-existing
+  33 lib failures (parser/lints/sum_schema) are Plan 114 `let`-removal
+  unrelated к this work.
+- Runtime fixture `nova_tests/plan123_4_4/v123_4_4_writebuffer_chain_
+  semantic_ok.nv` **1/1** PASS, two `test` assertions verify depth-3
+  and depth-4 semantic preservation.
+- **Integration confirmed**: WriteBuffer.@write_char chain (via
+  StringBuilder/`@buf.push().push().push()` pattern) emit `_chain_
+  root_<N>_buf = (nova_self->buf)` once + `_chain_root_<N>_buf` per
+  push instead of three `nova_self->buf` references.
+
+### 6. Followups
+
+- **V2 (future):** TypeDecl integration. Replace hard-coded fluent-
+  method list с FnDecl signature inspection (`fn -> @` ret type).
+  Covers user-defined fluent methods. Marker `[M-123.4.4-user-fluent-detection]`.
+- **V2.1 (future):** Apply chain-root к non-self receivers (Ident
+  / nested expression) where appropriate. Marker
+  `[M-123.4.4-non-self-receivers]`.
+
 ## D223 amend V7.6 — Same-field reference-type IPA (Plan 123.7.6)
 
 **Source:** [Plan 123.7.6](../../docs/plans/123.7.6-same-field-ref-type.md).

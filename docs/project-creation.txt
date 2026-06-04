@@ -31962,7 +31962,6 @@ Followups:
 - [M-123.7.6-generic-ref-types] — user generic wrappers (Container[T])
 - [M-123.7.6-method-realloc-flag] — distinguish swap-and-replace methods
 
-
 ================================================================================
 == 2026-06-05 — Plan 110.9.5.a + M-110-deadline-fire-fixture ✅ ЗАКРЫТЫ
 ================================================================================
@@ -32049,3 +32048,69 @@ Lessons:
   • TIMEOUTs в parallel C compilation — common system-load artifact, NOT
     code failure. Verification rule: если standalone fixture PASS, TIMEOUT
     в parallel suite = system issue, не regression.
+
+=== Plan 123.4.4 — Codegen fluent-chain root-temp pre-pass (2026-06-04) ===
+
+Final sub-plan of umbrella 123-followups-2026-06-04. Closes
+[M-123.4.4-codegen-fluent-chain-root-temp] — the marker that started
+the whole 5-sub-plan investigation.
+
+**The fix that actually closes WriteBuffer.@write_char triple-load:**
+
+Source `@buf.push(a).push(b).push(c)` has only 1 AST `Member{SelfAccess,
+buf}` leaf. But emit_c.rs:19567 recursively propagates `obj_c` upward
+через each chain level, emitting `nova_self->buf` N times. Field
+cache cannot help — only 1 AST read.
+
+Solution: new AST pre-pass `chain_norm` adjacent k callnorm. Detects
+fluent chains of depth ≥ 2 with known-fluent methods on @F roots.
+Rewrites:
+
+  @F.m1(a).m2(b).m3(c) → { let _chain_root_<N>_F = @F;
+                          _chain_root_<N>_F.m1(a);
+                          _chain_root_<N>_F.m2(b);
+                          _chain_root_<N>_F.m3(c);
+                          _chain_root_<N>_F }
+
+In C output: `nova_self->buf` appears ONCE (let-binding), then
+`_chain_root_<N>_buf` for each push. Same semantics, 1 memory load
+instead of N.
+
+Implementation (~700 LOC):
+- compiler-codegen/src/chain_norm.rs NEW (~500 LOC)
+  - FLUENT_BUILTIN_METHODS hard-coded list (30 entries: push/append/
+    extend_from/copy_from/insert/reserve/fill/clear + write_*)
+  - normalize_chains_module entry-point + recursive walkers
+  - try_extract_outer_fluent_chain detection (top-down)
+  - build_chain_block rewrite
+- compiler-codegen/src/lib.rs: + pub mod chain_norm;
+- 14 pipeline-integration sites (all callnorm callers updated)
+- 10 unit tests
+- nova_tests/plan123_4_4/v123_4_4_writebuffer_chain_semantic_ok.nv
+  (depth-3 + depth-4 semantic preservation)
+
+Verification (release nova-cli + clang):
+- 10 chain_norm unit + 1 runtime fixture (2 tests) PASS
+- Plan 123 all 14 directories PASS (parallel-run transient
+  contention noted; standalone все pass)
+- Pre-existing 33 lib failures (parser/lints/sum_schema) are Plan 114
+  `let`-removal unrelated к this work
+- **Integration confirmed:** prelude WriteBuffer/StringBuilder chains
+  now emit `_chain_root_<N>_buf` once instead of triplicate
+  `nova_self->buf`
+
+Spec: D217 amend Plan 123.4.4 (~120 lines).
+Plan doc: docs/plans/123.4.4-codegen-chain-root-temp.md.
+
+Followups:
+- [M-123.4.4-user-fluent-detection] — V2 TypeDecl-driven fluent
+  detection (replaces hard-coded list с FnDecl `-> @` signature check)
+- [M-123.4.4-non-self-receivers] — extend к chain roots like
+  `local.push().push()`
+
+🎯 **Umbrella 123-followups-2026-06-04 — all 5 sub-plans CLOSED.**
+- Plan 123.5.4 V5.4 explain deep-walk ✅
+- Plan 123.7.7 V7.7 chain receiver IPA ✅
+- Plan 123.2.1 V2.1 loop-body LICM coord ✅
+- Plan 123.7.6 V7.6 same-field ref-type IPA ✅
+- Plan 123.4.4 codegen chain-root temp ✅ (the original trigger)

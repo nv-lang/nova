@@ -103,6 +103,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
 
     // Codegen with bench_mode = true.
     let mut emitter = nova_codegen::codegen::CEmitter::new();
@@ -363,6 +364,7 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     emitter.set_source_for_annotations(src.clone());
