@@ -5557,6 +5557,112 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D223 amend V7.5 — Callee-non-self-mutation IPA (Plan 123.7.5)
+
+**Source:** [Plan 123.7.5](../../docs/plans/123.7.5-callee-non-self-ipa.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.1.1-callee-non-self-mutation-ipa]`.
+
+### 1. Scope
+
+V7.1 IPA refines `@method()` (direct self-method call) barrier
+detection — calls whose write-set excludes `fname` survive
+without invalidating its cache. But V7.1 keeps **conservative
+invalidate** для ANY non-direct-self receiver, including the very
+common `@F.method()` pattern (call on a self-field's value).
+
+V7.5 refines invalidation для `@F.method()`:
+- For **sibling field** caches (`fname != F`): non-invalidating.
+  A method invoked through `@F` operates on `@F`'s value — by
+  Nova's type system it cannot reach OTHER fields of `self` (no
+  `self` access path inside callee).
+- For **same field** cache (`fname == F`): **conservative**
+  invalidate. Distinguishing reference-vs-value types (whether
+  callee's mutation propagates back to caller's field slot)
+  requires TypeDecl integration — deferred to V7.6 territory.
+
+### 2. Implementation
+
+`expr_contains_invalidating_call_for` (V7.1 helper) refined в
+`compiler-codegen/src/field_cache.rs`:
+
+```rust
+if let ExprKind::Member { obj, name: m } = &func.kind {
+    if matches!(obj.kind, ExprKind::SelfAccess) {
+        // V7.1: direct @method(...)
+        ctx.call_invalidates_field(m, fname)
+    } else if let Some(recv_field) = call_recv_self_field(obj) {
+        // V7.5: @F.method(...)
+        if fname == recv_field { true }   // conservative для own
+        else { false }                      // sibling-safe
+    } else {
+        true  // var.method() / chain — conservative
+    }
+}
+```
+
+`call_recv_self_field(obj) -> Option<&str>` returns `Some(F)` if
+`obj` is `Member { obj: SelfAccess, name: F }`. Otherwise None.
+
+### 3. Scope intentionally narrow
+
+V7.5 deliberately excludes:
+- **Chain receivers** (`@a.b.method()`) — would require cross-chain
+  alias analysis. Rare in practice; conservative behavior preserved.
+- **Local variables receivers** (`var.method()`) — caller can't know
+  whether `var` aliases self's fields в general.
+- **Same-field refinement** — needs type-system integration to
+  distinguish "callee mutates F's slot" (value-type semantics) from
+  "callee mutates value reachable through F" (reference-type
+  semantics like `[]T`, `String`, `Map`).
+
+### 4. Composition
+
+V7.5 transparent к V7.1 / V7.2 / V7.3 / V7.4 IPA infrastructure —
+only refines one barrier-check branch. V1.1 / V1.2 multi-region
+caching benefits implicitly (more `@F` cache opportunities survive
+`@F.method()` calls inside their regions).
+
+### 5. Important non-applicability
+
+V7.5 does **NOT** fix the WriteBuffer `@write_char` chain pattern
+(3× `nova_self->buf` в C output). That pattern's root cause is
+codegen recursive `emit_expr(obj)` propagation в `emit_c.rs:19567` —
+single AST `@buf` read multiplied through string substitution. V7.5
+operates on AST, not C output. The codegen issue is tracked
+separately under `[M-123.4.4-codegen-fluent-chain-root-temp]`.
+
+### 6. Acceptance
+
+- **V7.5.1** `@arr.push(...)` doesn't invalidate sibling `@n` cache ✅
+- **V7.5.2** `@arr.push(...)` STILL invalidates own `@arr` cache
+  (conservative) ✅
+- **V7.5.3** Multiple sibling fields все cached across `@arr.push()` ✅
+- **V7.5.4** Local-var receiver (`var.method()`) still conservative ✅
+- **V7.5.5** Chain receiver (`@a.b.method()`) still conservative ✅
+- **V7.5.6** Composes с V1.1 multi-region — single region для
+  sibling fields даже когда `@F.method()` is в between ✅
+- Zero regressions: field_cache lib **70/70** (64 baseline + 6 V7.5)
+  + plan123_1 **18/18** + plan123_1_1 **3/3** + plan123_1_2 **5/5** +
+  plan123_2 **14/14** + plan123_4 **10/10** + plan123_7 **1/1** +
+  plan123_7_1 **10/10** + plan123_7_2 **2/2** PASS via release
+  nova test + clang.
+- Runtime fixtures `nova_tests/plan123_7_5/` **3/3** PASS —
+  semantic preservation under sibling-survives / multi-siblings /
+  var-method-invalidates scenarios.
+
+### 7. Followups
+
+- **V7.6 (future):** same-field refinement using reference-type
+  semantics. Reference types (`[]T`, `String`, `Map`, …) whose
+  mutation methods modify referenced-object contents но не
+  caller's slot пvalidate cache survives across own-field
+  `@F.method()`. Needs TypeDecl integration.
+- **V7.7 (future):** chain receivers (`@a.b.method()`) — extend
+  `call_recv_self_field` to chain prefix.
+- `[M-123.4.4-codegen-fluent-chain-root-temp]` — codegen fix для
+  WriteBuffer chain duplicate (separate layer, не V7 family).
+
 ## D217 amend V5.3 — LSP quickfix: add `#pure` annotation
 
 **Source:** [Plan 123.5.3](../../docs/plans/123.5.3-pure-quickfix.md).

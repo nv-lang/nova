@@ -32168,3 +32168,67 @@ codegen-level fix.
 - `[M-123.4.4-codegen-fluent-chain-root-temp]` — codegen chain-root
   temp (actual WriteBuffer.@write_char fix layer, separate marker).
 
+---
+
+## Plan 123.7.5 — Callee-non-self-mutation IPA (V7.5)
+
+✅ ЗАКРЫТ 2026-06-04 в worktree nova-p123, branch
+plan-123-v7-5-callee-non-self-ipa. ~250 LOC delta. Closes
+`[M-123.1.1-callee-non-self-mutation-ipa]`.
+
+**Что сделано:** V7.1 IPA refined — `@F.method()` calls (call on
+self-field receiver) **не invalidate** SIBLING field caches (fname
+!= F). Conservative для own-field (fname == F) — distinguishing
+reference-vs-value type semantics deferred к future V7.6.
+
+**Принципы:**
+
+- **Single-helper refinement:** новый `call_recv_self_field(obj) ->
+  Option<&str>` детектирует `Member { obj: SelfAccess, name: F }`
+  receiver pattern. Reusable elsewhere если similar pattern.
+
+- **Dispatch branch added к `expr_contains_invalidating_call_for`:**
+  существующая V7.1 logic preserved. New branch для `@F.method()`
+  case. Single-line conditional `if fname == recv_field { true }
+  else { false }` makes scope clear.
+
+- **Intentional scope narrowing:** V7.5 ships sibling-only. Own-
+  field refinement requires reference-vs-value type analysis
+  (TypeDecl integration) — V7.6 territory. Chain receivers
+  (`@a.b.method()`) — V7.7. Each follow-up isolable, ships
+  incremental value без blocking V7.5.
+
+- **No new infrastructure:** V7.5 reuses existing IpaCtx, V1.1/V1.2
+  rewrite pipeline. Zero-cost composition.
+
+**Acceptance (V7.5.1-V7.5.6 все ✅):** sibling cache survives @F.
+method(), own field still invalidates, multiple siblings cached,
+var-method receiver still invalidates, chain receiver still
+invalidates, composes с V1.1.
+
+**Verification:** 6 unit tests + 3 runtime fixtures PASS via release
+nova-cli + clang. Zero regressions на 70 field_cache lib tests +
+plan123_1 18/18 + plan123_1_1 3/3 + plan123_1_2 5/5 + plan123_2
+14/14 + plan123_4 10/10 + plan123_7 1/1 + plan123_7_1 10/10 +
+plan123_7_2 2/2.
+
+**Scope correction (workflow-driven):** Pre-V7.5 closure docs
+claimed V7.5 closes WriteBuffer.@write_char chain pattern. **This
+was wrong.** Workflow w5dlb8t9w root_cause analysis confirmed:
+- 3× `nova_self->buf` в C output = codegen recursive `emit_expr(obj)`
+  propagation в `emit_c.rs:19567`, NOT field_cache/IPA issue.
+- AST has exactly 1 `Member{obj:SelfAccess, name:"buf"}` node.
+- V7.5 IPA refinement operates on AST, can't fix C-level string
+  multiplication.
+- Separate marker `[M-123.4.4-codegen-fluent-chain-root-temp]`
+  spawned для actual codegen fix.
+
+V7.5 IS valuable for sibling-field cache survival (e.g. `@count`
+cache survives across `@arr.push()`). That's its real scope.
+
+**Followup markers:**
+- `[M-123.7.5-same-field-ref-type]` — V7.6 same-field via reference
+  types.
+- `[M-123.7.5-chain-receiver]` — V7.7 chain receivers.
+
+

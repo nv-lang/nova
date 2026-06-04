@@ -31667,3 +31667,69 @@ Pattern lessons:
   region_idx scheme — simpler than V1.1.
 - AST walker exhaustiveness critical — workflow agent enumerated
   все 23+ ExprKind variants requiring descent.
+
+=== Plan 123.7.5 — Callee-non-self-mutation IPA (V7.5, 2026-06-04) ===
+
+Followup [M-123.1.1-callee-non-self-mutation-ipa] closure. Refines V7.1
+IPA barrier detection: `@F.method()` calls do NOT invalidate SIBLING
+field caches (fname != F). Conservative for own-field (fname == F)
+без TypeDecl ref/value distinction.
+
+Algorithm (~12 LOC helper + ~10 LOC dispatch refinement):
+
+  call_recv_self_field(obj) -> Option<&str>:
+    matches obj.kind == Member{obj: SelfAccess, name: F} → Some("F")
+    else None
+
+  expr_contains_invalidating_call_for refined:
+    if obj is SelfAccess → V7.1 (direct @method())
+    elif call_recv_self_field(obj) == Some(recv_field):
+      if fname == recv_field → conservative invalidate
+      else → V7.5 sibling-safe (false)
+    else → conservative invalidate (var.method() / chain receiver)
+
+Implementation (~250 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - call_recv_self_field NEW (~12 LOC)
+  - expr_contains_invalidating_call_for refined (~10 LOC delta)
+  - Docstring updates documenting V7.5 scope (~30 LOC)
+  - 6 unit tests v7_5_* (~180 LOC)
+- nova_tests/plan123_7_5/ — 3 runtime fixtures:
+  - v7_5_sibling_survives_field_method_ok.nv (positive sibling)
+  - v7_5_multiple_siblings_ok.nv (positive multi-sibling)
+  - v7_5_var_method_invalidates_neg_ok.nv (negative var-method)
+
+Verification (release nova-cli + clang):
+- 6 V7.5 unit tests PASS
+- 3 runtime fixtures PASS via nova test
+- Zero regressions:
+  - field_cache lib 70/70 PASS (64 baseline + 6 V7.5)
+  - plan123_1 18/18 + plan123_1_1 3/3 + plan123_1_2 5/5 +
+    plan123_2 14/14 + plan123_4 10/10 + plan123_7 1/1 +
+    plan123_7_1 10/10 + plan123_7_2 2/2 PASS
+
+Spec: D223 amend V7.5 (~140 lines) — V7.5.1-V7.5.6 acceptance.
+Plan doc: docs/plans/123.7.5-callee-non-self-ipa.md.
+
+Important scope corrections в docs:
+- V7.5 does NOT close WriteBuffer.@write_char chain pattern
+  (3× nova_self->buf). Root cause = codegen recursive emit_expr(obj)
+  in emit_c.rs:19567. Separate marker [M-123.4.4-codegen-fluent-
+  chain-root-temp] spawned для actual fix.
+- V7.5 IS valuable for sibling-field cache survival — confirmed by
+  workflow w5dlb8t9w root_cause analysis.
+
+Followup markers spawned:
+- [M-123.7.5-same-field-ref-type] — V7.6 same-field refinement
+  using reference-type semantics (TypeDecl integration).
+- [M-123.7.5-chain-receiver] — V7.7 chain receiver extension.
+
+Pattern lessons:
+- Helper functions с clean Option return type compose well —
+  call_recv_self_field is reusable elsewhere если same pattern
+  needed.
+- Conservative scope limits ship faster value — V7.5 limited к
+  sibling-field-only, avoids TypeDecl complexity. Future V7.6+
+  can extend.
+- Test ordering: V7.5 tests follow V1.2 tests (which follow V1.1).
+  Each V*-series in field_cache::tests reads as a story.
