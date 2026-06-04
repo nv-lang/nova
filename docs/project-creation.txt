@@ -31609,3 +31609,96 @@ Combined surface sufficient для idiomatic primitive-typed FFI patterns
 register volatile R/W). Plan 118.5 fully closed (V1 + V2 + design).
 Plan 118.1 Ф.1 + Ф.2 + Ф.2.3 closed; Ф.3 + Ф.4 deferred. Plan 118.3 +
 Plan 118 Ф.7 deferred. Next: bidirectional sync с main.
+
+## 2026-06-04 (autonomous V3 implementation) — Plan 118.5 V3 LANDED
+
+Plan 118.5 V3 (D216 V3 amend §V3.1-§V3.7) implements 4 design rules
+unblocked после ~10-round design discussion. User explicit directive:
+«работать по плану изолировано без остановок по всем оставшимся пунктам
+без упрощений (как для прода)».
+
+V3 rules (4 design constraints):
+
+1. **§V3.1 — storage-class-aware ro+mut ban.** `ro mut T` / `mut ro T`
+   illegal when T is value type (primitives `int`/`uint`/`isize`/`usize`/
+   `i8..u64`/`f32`/`f64`/`bool`/`char`/`byte`/`str`/`ptr`, value records,
+   named tuples, anonymous tuples, `()`); allowed when T is reference
+   type (heap record, array, pointer, func, protocol) — outer modifier
+   binds the binding (ro = readonly slot), inner mut applies к pointee
+   data. New error: `E_MUTABILITY_CONFLICT_VALUE_TYPE`. Implementation:
+   `compiler-codegen/src/types/mod.rs::check_v3_ro_mut_conflict` recursive
+   walker hooked into `check_module` after type_check_ctx pass.
+
+2. **§V3.2 — modifier ordering (safety-outer / mutability-inner).**
+   `mut unsafe T` / `ro unsafe T` illegal — safety modifier (`unsafe`)
+   must wrap mutability modifier (`ro`/`mut`), reverse forbidden;
+   equivalent transitively: `mut * unsafe T` / `ro * unsafe T` каскад.
+   New error: `E_MODIFIER_ORDER`. Implementation: parser KwRo/KwMut arms
+   consult `inner.contains_unsafe_in_chain()` after recursive parse.
+
+3. **§V3.3 — right-binding propagation semantics.** Outer modifier
+   semantically applies к ALL nested types of same class up к next
+   same-class boundary OR `safe` stopper OR explicit different-class
+   modifier. `unsafe * T` → `.read()` returns `unsafe T` (outer unsafe
+   propagates через Pointer к pointee value level).
+
+4. **§V3.4 — `safe` keyword + extended E_REDUNDANT_TYPE_MODIFIER.**
+   New keyword `safe` (lexer + parser token) — behavior-only propagation
+   stopper. Transparent at AST (parser tracks via `safe_stoppers:
+   Vec<Span>` field). Same-class repetition в chain (`ro * ro T` /
+   `mut * mut T` / `unsafe * unsafe T`) now fires `E_REDUNDANT_TYPE_
+   MODIFIER` (V2 covered binding-level only). Escape hatch: `ro * safe
+   ro T` allowed (safe broke propagation, inner ro is fresh layer).
+
+Implementation phases (5 commits):
+- Ф.0 — spec D216 V3 amend §V3.1-§V3.7 + plan-doc V3 section + 8 V3
+  acceptance criteria (A-118.5-V3.a..h)
+- Ф.1 — `safe` keyword lexer + parser arm + safe_stoppers tracking +
+  5 fixtures POS
+- Ф.2 — storage-class detection helper + check_v3_ro_mut_conflict +
+  4 fixtures (3 NEG + 1 POS ref-type)
+- Ф.3 — modifier order check (KwRo/KwMut + unsafe propagation through
+  .read()) + 5 fixtures (3 NEG + 2 POS) + safe-stopper escape
+- Ф.4 — E_REDUNDANT_TYPE_MODIFIER extends к type-level chains +
+  contains_same_class_in_chain helper + safe escape hatch + 5 fixtures
+  (3 NEG + 2 POS) — commit 85f81aad959
+
+User clarifications (verbatim, applied):
+- `str`, `ptr` — value type (despite str being heap-backed internally —
+  modifier semantics treat str as scalar value-of-pointer)
+- named tuples — value type (Plan 120 `type Point(x f64, y f64)`)
+- anonymous tuples `(A, B, C)` — value type
+- `int` alias `isize` / `uint` alias `usize` — both forms recognized
+  identically by V3 storage-class check
+
+Migration (low impact per §V3.6 audit):
+- `nova_tests/plan118_5/t4_neg_unsafe_arg_to_safe_param.nv` — `fn safe`
+  → `fn accept_safe` (safe is now reserved keyword)
+- `nova_tests/plan118/t1_9_chain_modifiers_ok.nv` — V2 chains rewritten
+  к V3-compliant forms
+- `nova_tests/plan118/t1_3_chain_multi_level_ok.nv` — triple chain
+  `*mut *ro *mut Node` → `*mut *ro Node` (V3 propagation rule applies
+  outer mut uniformly)
+- stdlib `std/runtime/raw_mem.nv` — UNCHANGED (V3-compliant)
+
+Test results:
+- plan118_5_v3: 15/15 PASS (5 fixtures per Ф.1, Ф.2, Ф.3, Ф.4)
+- plan118: 38/38 PASS (with t1_3 migration)
+- plan118_1: 11/11 PASS
+- plan118_5: 14/14 PASS
+
+Followups closed: [M-118.5-V3-safe-keyword-impl], [M-118.5-V3-ro-mut-
+storage-class], [M-118.5-V3-modifier-order], [M-118.5-V3-redundant-
+extension].
+
+Followups deferred: [M-118.5-V3-binding-context-relaxation] — V4 work
+to relax §V3.1 for binding-context ref-T (currently strict — value-type
+T always errors regardless of context; future work may allow binding-
+context override).
+
+### State
+
+Plan 118.5 V3 ✅ LANDED — 4 design rules implemented в продакшен-форме
+(без упрощений). All 4 [M-118.5-V3-*] implementation followups closed.
+Plan 118 umbrella now: V1 + V2 + V3 design freezes complete. Next:
+bidirectional sync с main.

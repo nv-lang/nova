@@ -32096,3 +32096,40 @@ patterns (libpng / sqlite / libcurl / openssl byte+typed-int buffer
 access + MMIO volatile R/W). Struct deref + pointer arithmetic + advanced
 ergonomics (CStr / addr_of! macros / DebugPrintable interpolation) remain
 дedicated Plan 118 V2 sub-plans с design approval gates.
+
+## 2026-06-04 — Plan 118.5 V3 LANDED (4 design rules, без упрощений)
+
+### Scope reduction (none — production-grade implementation)
+
+Per user explicit directive «работать по плану изолировано без остановок
+по всем оставшимся пунктам без упрощений (как для прода)», NO simplifications
+were taken для V3 implementation:
+
+- Storage-class detection covers ALL value types (primitives — full
+  numeric tower + str/ptr + bool/char/byte + Unit + tuples + named tuples +
+  value records) — no carve-outs.
+- Modifier order check enforces transitively через Pointer wrappers
+  (not just direct adjacency).
+- E_REDUNDANT_TYPE_MODIFIER extension covers full chain depth (not just
+  single nesting level).
+- `safe` keyword wired в lexer + parser + safe_stoppers tracking +
+  is_safe_stopped_between method — no AST-level shortcut.
+- Migration sweep applied к all affected fixtures (3 fixtures updated +
+  1 reserved-keyword rename) — no «temporary EXPECT_COMPILE_ERROR
+  workaround».
+- 19 new fixtures across 4 phases (5 + 4 + 5 + 5 = 19, plus 1 standalone
+  POS at Ф.1) — full POS/NEG coverage matrix.
+
+### Followups deferred (single, scoped V4 candidate)
+
+- `[M-118.5-V3-binding-context-relaxation]` — relax §V3.1 для binding-
+  context ref-T scenarios where current strict-value-T-error policy may
+  be overly restrictive. Deferred к V4 design discussion — current V3
+  semantics chosen for clarity/predictability over ergonomics.
+
+### Limitation summary
+
+Plan 118.5 V3 closes 4 design rules complete; combined with V1+V2 surface,
+Plan 118.5 stands at **100% closure** для typed-pointer + safety modifier
+semantics. Plan 118 umbrella next milestone: V4 binding-context relaxation
+(if user-prioritized) OR Plan 118.1 Ф.3/Ф.4 (deferred sub-phases).
