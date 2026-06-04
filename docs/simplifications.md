@@ -32278,5 +32278,43 @@ caches.
 r-region vs V1.2 n-region tagging в report для V6 telemetry
 granularity.
 
+---
+
+## Plan 123.7.7 — Chain receiver IPA extension (V7.7)
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-v7-7-chain-receiver. ~250 LOC.
+Closes `[M-123.7.5-chain-receiver]`.
+
+**Что сделано:** V7.5 sibling-safe IPA refinement extended k chain
+receivers `@a.b.method()`, `@a.b.c.method()`, etc. By same self-type
+reasoning (callee invoked through self-chain can't reach OTHER fields),
+sibling caches survive chain calls.
+
+**Принципы:**
+
+- **`Option<Vec<String>>` helper return** — `call_recv_self_chain` walks
+  down receiver Expr accumulating Member names с loop+accumulator+reverse
+  pattern. Cleaner than recursive Rust function; depth-agnostic.
+
+- **Dispatch order matters:** V7.7 branch follows V7.5 (direct
+  `@F.method()`) so depth-1 case stays V7.5; depth-2+ catches V7.7.
+
+- **Conservative chain-root invalidation:** chain[0] == fname keeps
+  V7.5 contract — would require V7.6 ref-type integration к relax.
+
+**Acceptance (V7.7.1-V7.7.6 все ✅):** depth-2 sibling, depth-3
+sibling, chain-root invalidates, helper extracts segments, helper
+rejects non-self-rooted + plain SelfAccess.
+
+**Verification:** 6 unit + 2 runtime fixtures PASS. Zero regressions:
+field_cache lib 83/83 + plan123_* all 10 dirs.
+
+**Pre-existing codegen issue discovered:** nested record literal
+`{ inner: { sub: ... } }` mis-types inner anonymous record as Nova_C
+instead of Nova_Inner. Worked around в V7.7 fixtures using explicit
+`Inner.new()` constructors. Not introduced by V7.7 — should be tracked
+separately.
+
+
 
 

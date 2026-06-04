@@ -31781,3 +31781,45 @@ Plan doc: docs/plans/123.5.4-explain-deep-walk.md.
 Followup spawned:
 - [M-123.5.4-explain-region-tagging] — distinguish V1.1 r-region
   vs V1.2 n-region tagging в report.
+
+=== Plan 123.7.7 — Chain receiver IPA extension (V7.7, 2026-06-04) ===
+
+Followup [M-123.7.5-chain-receiver] closure. V7.5 IPA refinement
+extended к detect chain receivers `@a.b.method()` /
+`@a.b.c.method()` / arbitrary depth. By same self-type reasoning
+as V7.5, sibling field caches survive these calls.
+
+Implementation (~40 LOC core + ~210 LOC tests):
+- compiler-codegen/src/field_cache.rs:
+  - call_recv_self_chain helper NEW (~28 LOC) — walks down receiver
+    Expr accumulating Member names; stops at SelfAccess (success)
+    or returns None when chain doesn't root at self.
+  - expr_contains_invalidating_call_for dispatch refined — added
+    else-if branch для chain receivers (~12 LOC).
+  - 6 unit tests v7_7_*: depth-2/depth-3 positive, chain-root
+    negative, 3 helper unit tests covering AST construction.
+  - V7.5 negative test renamed `v7_5_chain_receiver_still_invalidates`
+    → `v7_5_chain_receiver_under_v7_7_sibling_safe` (now positive
+    under V7.7 extension).
+- nova_tests/plan123_7_7/ — 2 runtime fixtures:
+  - v7_7_chain_receiver_sibling_safe_ok.nv (depth-2)
+  - v7_7_depth_3_chain_ok.nv (depth-3)
+
+Verification (release nova-cli + clang):
+- 6 V7.7 unit + 2 runtime fixtures PASS
+- Zero regressions: field_cache lib 83/83 + plan123_* всех 10
+  directories.
+
+Spec: D223 amend V7.7 (~80 lines) — V7.7.1-V7.7.6 acceptance.
+Plan doc: docs/plans/123.7.7-chain-receiver.md.
+
+Discovered side-effect — codegen nested record literal inference
+broken: `{ inner: { sub: ... } }` (where inner field is typed Inner)
+codegen allocates Nova_C size для inner sub-literal вместо Nova_Inner.
+Worked around в fixtures using explicit Inner.new() constructors.
+Pre-existing bug, not introduced by V7.7. Should be tracked separately.
+
+Pattern lesson:
+- Helper pattern с Option<Vec<String>> return type cleanly handles
+  variable-depth chain walking без recursive Rust function. Loop
+  with accumulator + reverse at end is more efficient than recursion.

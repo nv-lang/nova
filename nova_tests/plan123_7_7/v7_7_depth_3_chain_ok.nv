@@ -1,0 +1,47 @@
+// Plan 123.7.7 (V7.7, 2026-06-04): deeper chain receiver
+// `@a.b.c.method()` still sibling-safe.
+
+module plan123_7_7.v7_7_depth_3_chain_ok
+
+type Leaf {
+    mut store []int
+}
+
+type Mid {
+    mut leaf Leaf
+}
+
+type Inner {
+    mut mid Mid
+}
+
+type C {
+    mut tag int
+    mut inner Inner
+}
+
+fn Leaf.new() -> Leaf => { store: []int.new() }
+fn Mid.new() -> Mid => { leaf: Leaf.new() }
+fn Inner.new() -> Inner => { mid: Mid.new() }
+
+fn C.new() -> C => { tag: 0, inner: Inner.new() }
+
+fn C mut @cycle(v int) -> int {
+    ro a = @tag
+    ro b = @tag
+    // depth-3 chain: @inner.mid.leaf.store.push(v)
+    @inner.mid.leaf.store.push(v)
+    ro c = @tag
+    ro d = @tag
+    a + b + c + d
+}
+
+test "V7.7: depth-3 chain doesn't invalidate sibling cache" {
+    mut c = C.new()
+    c.tag = 5
+    ro r = c.cycle(99)
+    // tag = 5 throughout — 5*4 = 20
+    assert(r == 20)
+    assert(c.inner.mid.leaf.store.len() == 1)
+    assert(c.inner.mid.leaf.store[0] == 99)
+}

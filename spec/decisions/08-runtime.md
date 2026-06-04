@@ -5557,6 +5557,111 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D223 amend V7.7 — Chain receiver IPA extension (Plan 123.7.7)
+
+**Source:** [Plan 123.7.7](../../docs/plans/123.7.7-chain-receiver.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.7.5-chain-receiver]`.
+
+### 1. Scope
+
+V7.5 IPA refinement detected ONLY direct `@F.method()` receivers
+(`Member{SelfAccess, F}`). Chains `@a.b.method()` /
+`@a.b.c.method()` / etc. fell through to conservative-invalidate.
+
+By the same self-type reasoning as V7.5: callees invoked through a
+self-rooted chain `@F0.F1.....Fn` operate on the chain leaf's value,
+cannot reach SIBLING fields of self (no `self` access path inside the
+callee body). So sibling caches survive these calls too.
+
+V7.7 extends V7.5 к detect chain receivers of arbitrary depth и apply
+the sibling-safe refinement.
+
+### 2. Algorithm
+
+New helper:
+
+```rust
+fn call_recv_self_chain(obj: &Expr) -> Option<Vec<String>> {
+    let mut segments = Vec::new();
+    let mut cur = obj;
+    loop {
+        match &cur.kind {
+            ExprKind::Member { obj: inner, name } => {
+                segments.push(name.clone());
+                cur = inner;
+            }
+            ExprKind::SelfAccess => break,
+            _ => return None,
+        }
+    }
+    if segments.is_empty() { return None; } // plain SelfAccess
+    segments.reverse();
+    Some(segments)
+}
+```
+
+Walks down the receiver expression, accumulating Member names. Stops
+at SelfAccess (success) or returns None when chain doesn't root at
+self.
+
+Refined dispatch в `expr_contains_invalidating_call_for`:
+
+```rust
+... else if let Some(chain) = call_recv_self_chain(obj) {
+    // V7.7: chain receiver `@F0.F1.....Fn.method()`.
+    // Chain root `chain[0]` is the immediate self-field. Same sibling
+    // rule as V7.5: only invalidate when fname matches chain root.
+    if chain.first().map(|s| s.as_str()) == Some(fname) {
+        true  // conservative: chain root cache might be stale
+    } else {
+        false // sibling-safe
+    }
+}
+```
+
+V7.7 dispatch runs AFTER V7.5's direct `@F.method()` branch — so V7.5
+keeps depth-1 case (single Member). V7.7 catches depth-2+ chains.
+
+### 3. Scope intentionally narrow
+
+V7.7 keeps the same conservative rules как V7.5:
+- Same-field/chain-root invalidation: conservative (could be relaxed
+  by V7.6 ref-type integration).
+- Non-self-rooted chains (e.g. `local.b.method()`): conservative
+  invalidate (local variable alias analysis out of scope).
+- `self.method()` syntax (plain SelfAccess receiver): не a chain;
+  not affected by V7.7.
+
+### 4. Composition
+
+V7.7 transparent к V7.1 / V7.2 / V7.3 / V7.4 / V7.5 / V7.6 IPA — only
+adds one dispatch branch. V1.x multi-region caching benefits
+implicitly когда chain-receiver method calls appear inside regions.
+
+### 5. Acceptance
+
+- **V7.7.1** Depth-2 chain `@a.b.method()` keeps sibling cache alive ✅
+- **V7.7.2** Depth-3 chain `@a.b.c.method()` keeps sibling cache ✅
+- **V7.7.3** Chain root cache (fname == chain[0]) still invalidates
+  (conservative) ✅
+- **V7.7.4** `call_recv_self_chain` unit: extracts segments correctly ✅
+- **V7.7.5** `call_recv_self_chain` unit: rejects non-self-rooted ✅
+- **V7.7.6** `call_recv_self_chain` unit: rejects plain SelfAccess ✅
+- Zero regressions: field_cache lib **83/83** PASS (77 baseline + 6
+  V7.7).
+- Runtime fixtures `nova_tests/plan123_7_7/` **2/2** PASS — depth-2
+  + depth-3 chain semantic preservation.
+- V7.5 negative test `v7_5_chain_receiver_still_invalidates` renamed
+  к `v7_5_chain_receiver_under_v7_7_sibling_safe` (positive под V7.7
+  extension).
+
+### 6. Followups
+
+- **V7.6 (open):** same-field/chain-root refinement via reference-type
+  semantics. Would relax conservative own-cache invalidation для
+  both V7.5 direct AND V7.7 chain cases. `[M-123.7.5-same-field-ref-type]`.
+
 ## D217 amend V5.4 — Explain deep-walk (Plan 123.5.4)
 
 **Source:** [Plan 123.5.4](../../docs/plans/123.5.4-explain-deep-walk.md).
