@@ -1,0 +1,37 @@
+// Plan 123.1.2 (V1.2, 2026-06-04): V1.1 outer cache AND V1.2 nested
+// cache compose in same fn без interference.
+
+module plan123_1_2.v1_2_outer_and_nested_compose_ok
+
+type Mixer {
+    mut x int
+}
+
+fn Mixer.new() -> Mixer => { x: 7 }
+
+fn Mixer mut @combine(cond bool) -> int {
+    // Outer region (V1.1) — 2 reads cached as _at_x.
+    ro top1 = @x
+    ro top2 = @x
+    if cond {
+        // Inner barrier: write.
+        @x = 50
+        // Nested region (V1.2) — 2 reads cached as _at_x_n*.
+        ro inner_a = @x
+        ro inner_b = @x
+        top1 + top2 + inner_a + inner_b
+    } else {
+        top1 + top2
+    }
+}
+
+test "V1.2: outer + nested compose preserves semantics" {
+    mut m = Mixer.new()
+    // cond=true: (7+7) + (50+50) = 114
+    ro r = m.combine(true)
+    assert(r == 114)
+    mut m2 = Mixer.new()
+    // cond=false: 7+7 = 14
+    ro r2 = m2.combine(false)
+    assert(r2 == 14)
+}

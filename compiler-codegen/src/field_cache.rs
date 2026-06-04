@@ -237,6 +237,13 @@ enum FieldKind {
     /// First region keeps `_at_<F>` (V1 backward-compat); subsequent
     /// regions use `_at_<F>_r<N>` (N ≥ 1). Closes followup
     /// `[M-123.1-mut-region-recache]`.
+    /// Plan 123.1.2 (V1.2, 2026-06-04) adds **nested-region** caching:
+    /// for barrier stmts at outer level (skipped by V1.1), recursively
+    /// descend into nested blocks (if-then/else, while/for/loop body,
+    /// match-arm body, with/handler body, etc.) and apply per-block
+    /// multi-region analysis. Nested cache locals use unique naming
+    /// `_at_<F>_n<N>` (N = ascending sequence). Closes followup
+    /// `[M-123.1.1-nested-regions]`.
     Mut,
 }
 
@@ -1678,7 +1685,17 @@ fn cache_fn_with_ipa(
         }
     }
 
-    if ro_candidates.is_empty() && mut_region_targets.is_empty() {
+    // Plan 123.1.2 (V1.2, 2026-06-04): even когда outer V1.1 has no
+    // targets, V1.2 may discover nested-block caching opportunities.
+    // Skip early-return only когда ALSO no mut field is read anywhere
+    // (then nothing for V1.2 to do either).
+    let any_mut_read_in_fn = fields.iter()
+        .filter(|(_, k)| matches!(k, FieldKind::Mut))
+        .filter(|(n, _)| !analysis.closure_captured.contains(n.as_str()))
+        .any(|(n, _)| analysis.read_counts.get(n).copied().unwrap_or(0) > 0);
+    if ro_candidates.is_empty() && mut_region_targets.is_empty()
+        && !any_mut_read_in_fn
+    {
         return;
     }
 
@@ -1714,8 +1731,48 @@ fn cache_fn_with_ipa(
         tgt.local_name = chosen;
     }
 
+    // Plan 123.1.2 (V1.2, 2026-06-04): collect mut field names whose
+    // BARRIER stmts may contain nested blocks that V1.1 skipped. We pass
+    // them to Phase 2 below — for fields с zero outer-region targets too,
+    // since the field may have ONLY nested-region cases.
+    let mut mut_field_names_for_nested: Vec<String> = Vec::new();
+    for fname in fields.keys() {
+        if let Some(FieldKind::Mut) = fields.get(fname) {
+            if analysis.closure_captured.contains(fname) { continue; }
+            // Only nested-process если field reads exist anywhere in body.
+            if analysis.read_counts.get(fname).copied().unwrap_or(0) > 0 {
+                mut_field_names_for_nested.push(fname.clone());
+            }
+        }
+    }
+    mut_field_names_for_nested.sort();
+
     rewrite_fn_body_split_with_ipa(f, &ro_candidates, &mut_region_targets,
         &name_map, ipa);
+
+    // Plan 123.1.2 (V1.2): Phase 2 — recursive nested-region cache.
+    // After Phase 1 (V1.1) inserts outer lets и rewrites @F → _at_F in
+    // outer regions, descend into each nested Block under fn body and
+    // apply per-block multi-region analysis. Nested reads inside
+    // V1.1's non-barrier stmts have ALREADY been rewritten to outer
+    // local_name → count_field_reads returns 0 → no nested target. Only
+    // nested reads inside V1.1's barrier stmts (untouched by Phase 1)
+    // are eligible. Budget: `cfg.max_per_fn − total_caches` remaining.
+    if !mut_field_names_for_nested.is_empty() {
+        if let FnBody::Block(top_b) = &mut f.body {
+            let mut nested_seq = 0usize;
+            let mut nested_budget = cfg.max_per_fn.saturating_sub(total_caches);
+            for fname in &mut_field_names_for_nested {
+                if nested_budget == 0 { break; }
+                walk_nested_blocks_for_mut_field(
+                    top_b, fname, cfg, ipa,
+                    &mut local_names,
+                    &mut nested_seq,
+                    &mut nested_budget,
+                );
+            }
+        }
+    }
 }
 
 /// Plan 123.1.1 (V1.1, 2026-06-03): one region's caching target —
@@ -1818,6 +1875,18 @@ fn find_mut_regions_with_ipa(
         FnBody::Block(b) => b,
         FnBody::Expr(_) | FnBody::External => return None,
     };
+    Some(find_mut_regions_in_block(b, fname, ipa, body_span))
+}
+
+/// Plan 123.1.2 (V1.2, 2026-06-04): block-level region scanner — works on
+/// **any** `&Block`, not just the FnBody's top block. Used by V1.1
+/// (через FnBody-wrapper) AND by V1.2 nested-region recursion.
+fn find_mut_regions_in_block(
+    b: &Block,
+    fname: &str,
+    ipa: Option<IpaCtx<'_>>,
+    body_span: crate::diag::Span,
+) -> Vec<MutRegion> {
     let mut regions: Vec<MutRegion> = Vec::new();
     let mut region_start = 0usize;
     let mut region_reads = 0usize;
@@ -1884,7 +1953,7 @@ fn find_mut_regions_with_ipa(
             });
         }
     }
-    Some(regions)
+    regions
 }
 
 /// Plan 123.1.1 (V1.1): best-effort span extraction для cache-let
@@ -3783,6 +3852,452 @@ fn build_at_field_let(fname: &str, local_name: &str,
         is_ghost: false,
         consume: false,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Plan 123.1.2 (V1.2, 2026-06-04): nested-region mut cache.
+//
+// V1.1 splits FN body's TOP-LEVEL stmts into regions by barriers. When
+// a top-level stmt itself contains a barrier (e.g. nested if-then с
+// write внутри), V1.1 treats the whole top-level stmt as a barrier —
+// reads inside the nested block are NOT cached (suboptimal).
+//
+// V1.2 closes the gap: after V1.1 finishes на outer level, recursively
+// descend into every nested `Block` (inside If/IfLet/While/WhileLet/
+// Match/For/ParallelFor/Loop/With/Forbid/Realtime/Detach/Blocking/
+// Supervised/Block-Expr/Closure-Block) и apply per-block multi-region
+// analysis. Nested cache locals use unique naming `_at_<F>_n<N>` где
+// N is a session-monotonic counter — no collision со V1.1 prefix
+// (`_at_<F>` / `_at_<F>_r<N>`) или с user locals.
+//
+// Closure caveat: V1.1 already excludes fields referenced inside
+// closure bodies (`closure_captured` set). V1.2 inherits this
+// exclusion — closures не descended into.
+//
+// Budget: V1.2 shares `cfg.max_per_fn` budget с V1.1 — нестед regions
+// considered after outer V1.1 ones, accept до global cap.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Plan 123.1.2 (V1.2): allocate collision-safe nested-region cache
+/// local name. Format: `_at_<F>_n<N>` где N — monotonic counter
+/// (session unique). Falls back to `_<K>` suffix on name clash.
+fn alloc_nested_region_local(
+    fname: &str,
+    seq: &mut usize,
+    local_names: &mut HashSet<String>,
+) -> String {
+    let base = format!("_at_{}_n{}", fname, *seq);
+    *seq += 1;
+    let mut chosen = base.clone();
+    let mut suffix = 0usize;
+    while local_names.contains(&chosen) {
+        suffix += 1;
+        chosen = format!("{}_{}", base, suffix);
+    }
+    local_names.insert(chosen.clone());
+    chosen
+}
+
+/// Plan 123.1.2 (V1.2): walk nested Blocks inside top-level stmts/trailing
+/// и apply per-block multi-region caching для mut field `fname`.
+///
+/// Skips closures (V1.1 already excludes via closure_captured check) и
+/// stays within `budget_left` cap. Bottom-up: recurses into nested blocks
+/// FIRST, then processes current block — guarantees inner caches landed
+/// before outer rewrites might descend over them (no double-rewrite
+/// because by-then nested `@F` reads have become `_at_<F>_n<N>` idents).
+fn walk_nested_blocks_for_mut_field(
+    top_block: &mut Block,
+    fname: &str,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+    local_names: &mut HashSet<String>,
+    seq: &mut usize,
+    budget_left: &mut usize,
+) {
+    // Recurse into every nested Block within top_block's stmts + trailing.
+    // Top block itself is processed by V1.1 — V1.2 only handles NESTED
+    // blocks (whose stmts will not be рассмотрены V1.1 region analysis).
+    for stmt in &mut top_block.stmts {
+        descend_stmt_for_nested(stmt, fname, cfg, ipa, local_names, seq, budget_left);
+    }
+    if let Some(t) = &mut top_block.trailing {
+        descend_expr_for_nested(t, fname, cfg, ipa, local_names, seq, budget_left);
+    }
+}
+
+/// Plan 123.1.2 (V1.2): process a single nested Block — find regions
+/// inside it, allocate targets, rewrite reads, inject lets. Bottom-up
+/// order: first descend into THIS block's nested children, then process
+/// THIS block.
+fn process_nested_block_for_mut_field(
+    block: &mut Block,
+    fname: &str,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+    local_names: &mut HashSet<String>,
+    seq: &mut usize,
+    budget_left: &mut usize,
+) {
+    if *budget_left == 0 { return; }
+    // Phase A: descend into THIS block's stmts/trailing first
+    // (bottom-up).
+    for stmt in &mut block.stmts {
+        descend_stmt_for_nested(stmt, fname, cfg, ipa, local_names, seq, budget_left);
+    }
+    if let Some(t) = &mut block.trailing {
+        descend_expr_for_nested(t, fname, cfg, ipa, local_names, seq, budget_left);
+    }
+    if *budget_left == 0 { return; }
+    // Phase B: process THIS block — region analysis, target allocation,
+    // read rewrite, let injection.
+    let block_span = block.span;
+    let regions = find_mut_regions_in_block(block, fname, ipa, block_span);
+    // Filter & build targets.
+    let mut targets: Vec<MutRegionTarget> = Vec::new();
+    for region in regions {
+        if *budget_left == 0 { break; }
+        if region.reads < cfg.threshold { continue; }
+        let local_name = alloc_nested_region_local(fname, seq, local_names);
+        targets.push(MutRegionTarget {
+            fname: fname.to_string(),
+            region,
+            region_idx: 0, // V1.2 uses monotonic `seq` for naming, not
+                           // per-field region_idx — kept 0 for clarity.
+            local_name,
+        });
+        *budget_left -= 1;
+    }
+    if targets.is_empty() { return; }
+    // Rewrite reads per-target.
+    for tgt in &targets {
+        let single: HashMap<String, String> = std::iter::once(
+            (tgt.fname.clone(), tgt.local_name.clone())).collect();
+        let end = tgt.region.end.min(block.stmts.len());
+        let start = tgt.region.start.min(end);
+        for s in block.stmts[start..end].iter_mut() {
+            rewrite_stmt(s, &single);
+        }
+        if tgt.region.trailing_included {
+            if let Some(t) = &mut block.trailing {
+                rewrite_expr(t, &single);
+            }
+        }
+    }
+    // Insert lets. Same algorithm as V1.1 outer rewrite phase 2 —
+    // non-prefix groups first в descending-start order, then prefix.
+    use std::collections::BTreeMap;
+    let mut by_start: BTreeMap<usize, Vec<&MutRegionTarget>> = BTreeMap::new();
+    for tgt in &targets {
+        by_start.entry(tgt.region.start).or_default().push(tgt);
+    }
+    let mut keys: Vec<usize> = by_start.keys().copied()
+        .filter(|k| *k > 0).collect();
+    keys.sort_by(|a, b| b.cmp(a)); // descending
+    for k in keys {
+        let group = &by_start[&k];
+        let mut group_sorted: Vec<&MutRegionTarget> = group.iter().copied().collect();
+        group_sorted.sort_by_key(|t| t.local_name.clone());
+        let mut lets: Vec<Stmt> = Vec::with_capacity(group_sorted.len());
+        for tgt in &group_sorted {
+            lets.push(build_at_field_let(&tgt.fname, &tgt.local_name,
+                tgt.region.first_span));
+        }
+        for (i, s) in lets.into_iter().enumerate() {
+            block.stmts.insert(k + i, s);
+        }
+    }
+    // Prefix bucket (start == 0).
+    if let Some(group) = by_start.get(&0) {
+        let mut group_sorted: Vec<&MutRegionTarget> = group.iter().copied().collect();
+        group_sorted.sort_by_key(|t| t.local_name.clone());
+        let mut prefix_stmts: Vec<Stmt> = Vec::with_capacity(group_sorted.len());
+        for tgt in &group_sorted {
+            prefix_stmts.push(build_at_field_let(
+                &tgt.fname, &tgt.local_name, tgt.region.first_span));
+        }
+        if !prefix_stmts.is_empty() {
+            prefix_stmts.append(&mut block.stmts);
+            block.stmts = prefix_stmts;
+        }
+    }
+}
+
+/// Plan 123.1.2 (V1.2): descend into a Stmt looking for nested blocks
+/// to process. Closures excluded (V1.1 closure_captured handles them).
+fn descend_stmt_for_nested(
+    s: &mut Stmt,
+    fname: &str,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+    local_names: &mut HashSet<String>,
+    seq: &mut usize,
+    budget_left: &mut usize,
+) {
+    if *budget_left == 0 { return; }
+    match s {
+        Stmt::Let(d) => descend_expr_for_nested(&mut d.value, fname, cfg, ipa,
+            local_names, seq, budget_left),
+        Stmt::Const(d) => descend_expr_for_nested(&mut d.value, fname, cfg, ipa,
+            local_names, seq, budget_left),
+        Stmt::Expr(e) => descend_expr_for_nested(e, fname, cfg, ipa,
+            local_names, seq, budget_left),
+        Stmt::Assign { target, value, .. } => {
+            descend_expr_for_nested(target, fname, cfg, ipa, local_names, seq, budget_left);
+            descend_expr_for_nested(value, fname, cfg, ipa, local_names, seq, budget_left);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                descend_expr_for_nested(v, fname, cfg, ipa, local_names, seq, budget_left);
+            }
+        }
+        Stmt::Throw { value, .. } => descend_expr_for_nested(value, fname, cfg, ipa,
+            local_names, seq, budget_left),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            descend_expr_for_nested(body, fname, cfg, ipa, local_names, seq, budget_left);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            descend_expr_for_nested(init, fname, cfg, ipa, local_names, seq, budget_left);
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            descend_expr_for_nested(expr, fname, cfg, ipa, local_names, seq, budget_left);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+/// Plan 123.1.2 (V1.2): descend into an Expr looking for nested Blocks
+/// to recursively process. Each Block encountered → call
+/// `process_nested_block_for_mut_field`. Closures NOT descended into.
+fn descend_expr_for_nested(
+    e: &mut Expr,
+    fname: &str,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+    local_names: &mut HashSet<String>,
+    seq: &mut usize,
+    budget_left: &mut usize,
+) {
+    if *budget_left == 0 { return; }
+    // Closures form separate scopes — V1 already skips fields referenced
+    // inside closures. V1.2 inherits the exclusion.
+    if matches!(&e.kind,
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. }
+    ) {
+        return;
+    }
+    match &mut e.kind {
+        ExprKind::Block(b) => process_nested_block_for_mut_field(b, fname, cfg, ipa,
+            local_names, seq, budget_left),
+        ExprKind::If { cond, then, else_ } => {
+            descend_expr_for_nested(cond, fname, cfg, ipa, local_names, seq, budget_left);
+            process_nested_block_for_mut_field(then, fname, cfg, ipa,
+                local_names, seq, budget_left);
+            if let Some(eb) = else_ {
+                descend_else_for_nested(eb, fname, cfg, ipa, local_names, seq, budget_left);
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            descend_expr_for_nested(scrutinee, fname, cfg, ipa, local_names, seq, budget_left);
+            process_nested_block_for_mut_field(then, fname, cfg, ipa,
+                local_names, seq, budget_left);
+            if let Some(eb) = else_ {
+                descend_else_for_nested(eb, fname, cfg, ipa, local_names, seq, budget_left);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            descend_expr_for_nested(scrutinee, fname, cfg, ipa, local_names, seq, budget_left);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard {
+                    descend_expr_for_nested(g, fname, cfg, ipa, local_names, seq, budget_left);
+                }
+                match &mut arm.body {
+                    MatchArmBody::Expr(e) => descend_expr_for_nested(e, fname, cfg, ipa,
+                        local_names, seq, budget_left),
+                    MatchArmBody::Block(b) => process_nested_block_for_mut_field(b, fname,
+                        cfg, ipa, local_names, seq, budget_left),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            descend_expr_for_nested(iter, fname, cfg, ipa, local_names, seq, budget_left);
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        ExprKind::While { cond, body, .. } => {
+            descend_expr_for_nested(cond, fname, cfg, ipa, local_names, seq, budget_left);
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            descend_expr_for_nested(scrutinee, fname, cfg, ipa, local_names, seq, budget_left);
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        ExprKind::Loop { body, .. } => process_nested_block_for_mut_field(body, fname,
+            cfg, ipa, local_names, seq, budget_left),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings.iter_mut() {
+                descend_expr_for_nested(&mut wb.handler, fname, cfg, ipa,
+                    local_names, seq, budget_left);
+            }
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            process_nested_block_for_mut_field(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+            if let Some(c) = cancel {
+                descend_expr_for_nested(c, fname, cfg, ipa, local_names, seq, budget_left);
+            }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => descend_expr_for_nested(e, fname,
+            cfg, ipa, local_names, seq, budget_left),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => descend_expr_for_nested(e, fname,
+            cfg, ipa, local_names, seq, budget_left),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            descend_expr_for_nested(a, fname, cfg, ipa, local_names, seq, budget_left);
+            descend_expr_for_nested(b, fname, cfg, ipa, local_names, seq, budget_left);
+        }
+        ExprKind::Index { obj, index } => {
+            descend_expr_for_nested(obj, fname, cfg, ipa, local_names, seq, budget_left);
+            descend_expr_for_nested(index, fname, cfg, ipa, local_names, seq, budget_left);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            descend_expr_for_nested(func, fname, cfg, ipa, local_names, seq, budget_left);
+            for arg in args.iter_mut() {
+                let inner = match arg {
+                    CallArg::Item(e) | CallArg::Spread(e) => e,
+                    CallArg::Named { value, .. } => value,
+                };
+                descend_expr_for_nested(inner, fname, cfg, ipa, local_names, seq, budget_left);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => process_nested_block_for_mut_field(b, fname,
+                        cfg, ipa, local_names, seq, budget_left),
+                    Trailing::Fn(sb) => match &mut sb.body {
+                        FnBody::Expr(e) => descend_expr_for_nested(e, fname, cfg, ipa,
+                            local_names, seq, budget_left),
+                        FnBody::Block(b) => process_nested_block_for_mut_field(b, fname,
+                            cfg, ipa, local_names, seq, budget_left),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) =>
+                        process_nested_block_for_mut_field(&mut tb.body, fname,
+                            cfg, ipa, local_names, seq, budget_left),
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems.iter_mut() {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) =>
+                        descend_expr_for_nested(e, fname, cfg, ipa,
+                            local_names, seq, budget_left),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems.iter_mut() {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        descend_expr_for_nested(k, fname, cfg, ipa,
+                            local_names, seq, budget_left);
+                        descend_expr_for_nested(v, fname, cfg, ipa,
+                            local_names, seq, budget_left);
+                    }
+                    MapElem::Spread(e) => descend_expr_for_nested(e, fname,
+                        cfg, ipa, local_names, seq, budget_left),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for rf in fields.iter_mut() {
+                if let Some(v) = &mut rf.value {
+                    descend_expr_for_nested(v, fname, cfg, ipa,
+                        local_names, seq, budget_left);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems.iter_mut() {
+                descend_expr_for_nested(el, fname, cfg, ipa,
+                    local_names, seq, budget_left);
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts.iter_mut() {
+                if let InterpStrPart::Expr(e) = p {
+                    descend_expr_for_nested(e, fname, cfg, ipa,
+                        local_names, seq, budget_left);
+                }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            descend_expr_for_nested(tag, fname, cfg, ipa,
+                local_names, seq, budget_left);
+            for a in args.iter_mut() {
+                descend_expr_for_nested(a, fname, cfg, ipa,
+                    local_names, seq, budget_left);
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                descend_expr_for_nested(s, fname, cfg, ipa,
+                    local_names, seq, budget_left);
+            }
+            if let Some(e) = end {
+                descend_expr_for_nested(e, fname, cfg, ipa,
+                    local_names, seq, budget_left);
+            }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            descend_expr_for_nested(range, fname, cfg, ipa,
+                local_names, seq, budget_left);
+            descend_expr_for_nested(body, fname, cfg, ipa,
+                local_names, seq, budget_left);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt {
+                descend_expr_for_nested(e, fname, cfg, ipa,
+                    local_names, seq, budget_left);
+            }
+        }
+        // Leaf / ignored: literals, ident, path, self, closures (handled
+        // above), select arms (not field-cache eligible), и т.д.
+        _ => {}
+    }
+}
+
+fn descend_else_for_nested(
+    eb: &mut ElseBranch,
+    fname: &str,
+    cfg: &FieldCacheConfig,
+    ipa: Option<IpaCtx<'_>>,
+    local_names: &mut HashSet<String>,
+    seq: &mut usize,
+    budget_left: &mut usize,
+) {
+    match eb {
+        ElseBranch::Block(b) => process_nested_block_for_mut_field(b, fname,
+            cfg, ipa, local_names, seq, budget_left),
+        ElseBranch::If(e) => descend_expr_for_nested(e, fname, cfg, ipa,
+            local_names, seq, budget_left),
+    }
 }
 
 fn rewrite_block(b: &mut Block, replace_map: &HashMap<String, String>) {
@@ -7884,6 +8399,425 @@ fn C mut @do() -> int {
         // Should emit only 2 (third region skipped due к budget).
         assert!(names.len() <= 2,
             "budget=2 must cap at 2 mut regions; got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.1.2 (V1.2, 2026-06-04): nested-region mut cache tests.
+    // Closes [M-123.1.1-nested-regions].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Walk top-level + nested blocks, gather every `_at_*` let name
+    /// в porządku discovery. Used к verify V1.2 nested injection.
+    fn all_at_let_names_recursive(f: &FnDecl) -> Vec<String> {
+        let mut out = Vec::new();
+        fn walk_block(b: &Block, out: &mut Vec<String>) {
+            for s in &b.stmts {
+                walk_stmt(s, out);
+            }
+            if let Some(t) = &b.trailing { walk_expr(t, out); }
+        }
+        fn walk_stmt(s: &Stmt, out: &mut Vec<String>) {
+            if let Stmt::Let(d) = s {
+                if let Pattern::Ident { name, .. } = &d.pattern {
+                    if name.starts_with("_at_") {
+                        out.push(name.clone());
+                    }
+                }
+                walk_expr(&d.value, out);
+                return;
+            }
+            match s {
+                Stmt::Const(d) => walk_expr(&d.value, out),
+                Stmt::Expr(e) => walk_expr(e, out),
+                Stmt::Assign { target, value, .. } => {
+                    walk_expr(target, out);
+                    walk_expr(value, out);
+                }
+                Stmt::Return { value, .. } => {
+                    if let Some(v) = value { walk_expr(v, out); }
+                }
+                Stmt::Throw { value, .. } => walk_expr(value, out),
+                Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+                | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                    walk_expr(body, out);
+                }
+                Stmt::ConsumeScope { init, body, .. } => {
+                    walk_expr(init, out);
+                    walk_block(body, out);
+                }
+                _ => {}
+            }
+        }
+        fn walk_expr(e: &Expr, out: &mut Vec<String>) {
+            match &e.kind {
+                ExprKind::Block(b) => walk_block(b, out),
+                ExprKind::If { cond, then, else_ } => {
+                    walk_expr(cond, out);
+                    walk_block(then, out);
+                    if let Some(eb) = else_ {
+                        match eb {
+                            ElseBranch::Block(b) => walk_block(b, out),
+                            ElseBranch::If(e) => walk_expr(e, out),
+                        }
+                    }
+                }
+                ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                    walk_expr(scrutinee, out);
+                    walk_block(then, out);
+                    if let Some(eb) = else_ {
+                        match eb {
+                            ElseBranch::Block(b) => walk_block(b, out),
+                            ElseBranch::If(e) => walk_expr(e, out),
+                        }
+                    }
+                }
+                ExprKind::Match { scrutinee, arms } => {
+                    walk_expr(scrutinee, out);
+                    for arm in arms {
+                        if let Some(g) = &arm.guard { walk_expr(g, out); }
+                        match &arm.body {
+                            MatchArmBody::Expr(e) => walk_expr(e, out),
+                            MatchArmBody::Block(b) => walk_block(b, out),
+                        }
+                    }
+                }
+                ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+                    walk_expr(iter, out);
+                    walk_block(body, out);
+                }
+                ExprKind::While { cond, body, .. } => {
+                    walk_expr(cond, out);
+                    walk_block(body, out);
+                }
+                ExprKind::WhileLet { scrutinee, body, .. } => {
+                    walk_expr(scrutinee, out);
+                    walk_block(body, out);
+                }
+                ExprKind::Loop { body, .. } => walk_block(body, out),
+                ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+                | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
+                    walk_block(body, out),
+                ExprKind::Supervised { body, cancel } => {
+                    walk_block(body, out);
+                    if let Some(c) = cancel { walk_expr(c, out); }
+                }
+                ExprKind::With { bindings, body } => {
+                    for wb in bindings { walk_expr(&wb.handler, out); }
+                    walk_block(body, out);
+                }
+                ExprKind::Call { func, args, trailing } => {
+                    walk_expr(func, out);
+                    for arg in args {
+                        let inner = match arg {
+                            CallArg::Item(e) | CallArg::Spread(e) => e,
+                            CallArg::Named { value, .. } => value,
+                        };
+                        walk_expr(inner, out);
+                    }
+                    if let Some(t) = trailing {
+                        match t {
+                            Trailing::Block(b) => walk_block(b, out),
+                            Trailing::Fn(sb) => match &sb.body {
+                                FnBody::Expr(e) => walk_expr(e, out),
+                                FnBody::Block(b) => walk_block(b, out),
+                                _ => {}
+                            },
+                            Trailing::LegacyBlockWithParams(tb) => walk_block(&tb.body, out),
+                        }
+                    }
+                }
+                ExprKind::Try(e) | ExprKind::Bang(e)
+                | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+                | ExprKind::As(e, _) | ExprKind::Is(e, _)
+                | ExprKind::Unary { operand: e, .. } => walk_expr(e, out),
+                ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+                    walk_expr(a, out);
+                    walk_expr(b, out);
+                }
+                ExprKind::Index { obj, index } => {
+                    walk_expr(obj, out);
+                    walk_expr(index, out);
+                }
+                ExprKind::Spawn(e) | ExprKind::Throw(e) => walk_expr(e, out),
+                _ => {}
+            }
+        }
+        if let FnBody::Block(b) = &f.body { walk_block(b, &mut out); }
+        out
+    }
+
+    /// V1.2.1 positive: when V1.1 outer skips a barrier if-stmt (write inside
+    /// nested then), V1.2 descends and caches the read-heavy region within
+    /// the then-block.
+    #[test]
+    fn v1_2_nested_then_block_with_internal_write_cached() {
+        let src = r#"
+module testmod.v1_2_then_internal_write
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    mut acc = 0
+    if cond {
+        ro a = @x
+        ro b = @x
+        @x = 99
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // The if-stmt is a barrier at outer (contains write to @x).
+        // V1.1 outer: no top-level region (only one stmt, the if, which is a barrier).
+        // V1.2 nested: inside if-then, region A (2 reads pre-write) and
+        // region B (2 reads post-write) → 2 nested cache lets.
+        let nested: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x_n")).collect();
+        assert!(nested.len() >= 2,
+            "expected >= 2 nested cache lets in then-block; got {:?}", names);
+    }
+
+    /// V1.2.2 positive: nested else-branch cached independently from then-branch.
+    #[test]
+    fn v1_2_nested_else_branch_independent() {
+        let src = r#"
+module testmod.v1_2_else_independent
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    if cond {
+        @x = 1
+        0
+    } else {
+        ro a = @x
+        ro b = @x
+        a + b
+    }
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // The if-stmt is a barrier at outer (write in then-branch).
+        // V1.2 nested: else-branch has 2 @x reads — cache emitted там.
+        let nested: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x_n")).collect();
+        assert!(!nested.is_empty(),
+            "expected nested cache let in else-branch; got {:?}", names);
+    }
+
+    /// V1.2.3 positive: while-loop body caches when reads ≥ threshold AND
+    /// outer treats the while as barrier (due к internal write).
+    #[test]
+    fn v1_2_nested_while_body_with_internal_write() {
+        let src = r#"
+module testmod.v1_2_while_internal
+type C { mut x int }
+fn C mut @loop_io(n int) -> int {
+    mut i = 0
+    while i < n {
+        ro a = @x
+        ro b = @x
+        @x = @x + 1
+        i = i + 1
+    }
+    @x
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "loop_io");
+        let names = all_at_let_names_recursive(f);
+        // Inside while body, region A has 2 reads (a, b) before the
+        // `@x = @x + 1` barrier; V1.2 should cache them.
+        let nested: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x_n")).collect();
+        assert!(!nested.is_empty(),
+            "expected nested cache let in while body; got {:?}", names);
+    }
+
+    /// V1.2.4 positive: match arm body with own reads + write splits cleanly.
+    #[test]
+    fn v1_2_nested_match_arm_body() {
+        let src = r#"
+module testmod.v1_2_match_arm
+type C { mut x int }
+fn C mut @do(tag int) -> int {
+    match tag {
+        0 => {
+            ro a = @x
+            ro b = @x
+            @x = 5
+            ro c = @x
+            ro d = @x
+            a + b + c + d
+        }
+        _ => 0
+    }
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        let nested: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x_n")).collect();
+        assert!(nested.len() >= 2,
+            "expected >= 2 nested cache lets in match arm 0 body; got {:?}", names);
+    }
+
+    /// V1.2.5 negative: ro field NOT affected by V1.2 — still cached only
+    /// at fn-body prefix, no nested duplicates.
+    #[test]
+    fn v1_2_ro_field_no_nested_duplicates() {
+        let src = r#"
+module testmod.v1_2_ro_no_nested
+type C { ro x int, mut y int }
+fn C mut @do(cond bool) -> int {
+    ro outer_a = @x
+    ro outer_b = @x
+    if cond {
+        @y = 1
+        ro inner_a = @x
+        ro inner_b = @x
+        outer_a + outer_b + inner_a + inner_b
+    } else {
+        0
+    }
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // _at_x emitted only ONCE (ro top-level prefix); no _at_x_n0.
+        let x_caches: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x")).collect();
+        assert_eq!(x_caches.len(), 1,
+            "ro x must emit ровно ONE cache let; got {:?}", names);
+        assert!(!names.iter().any(|n| n.starts_with("_at_x_n")),
+            "ro x must NOT get nested suffix; got {:?}", names);
+    }
+
+    /// V1.2.6 negative: nested block с reads < threshold не cached.
+    #[test]
+    fn v1_2_nested_below_threshold_skipped() {
+        let src = r#"
+module testmod.v1_2_below_threshold_nested
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    if cond {
+        @x = 99
+        ro a = @x
+        a
+    } else {
+        0
+    }
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // Then-block has 1 read post-barrier — below threshold.
+        let nested: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x_n")).collect();
+        assert!(nested.is_empty(),
+            "single-read nested region must NOT emit cache; got {:?}", names);
+    }
+
+    /// V1.2.7 positive: V1.1 outer + V1.2 nested compose — single fn
+    /// gets both top-level cache AND nested cache simultaneously.
+    #[test]
+    fn v1_2_outer_and_nested_compose() {
+        let src = r#"
+module testmod.v1_2_compose
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    ro top1 = @x
+    ro top2 = @x
+    if cond {
+        @x = 50
+        ro nested_a = @x
+        ro nested_b = @x
+        top1 + top2 + nested_a + nested_b
+    } else {
+        top1 + top2
+    }
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(names.iter().any(|n| n == "_at_x"),
+            "expected outer V1.1 _at_x; got {:?}", names);
+        assert!(names.iter().any(|n| n.starts_with("_at_x_n")),
+            "expected V1.2 nested _at_x_n*; got {:?}", names);
+    }
+
+    /// V1.2.8 negative: budget cap — `max_per_fn` clamps nested cache count.
+    #[test]
+    fn v1_2_budget_caps_nested() {
+        let src = r#"
+module testmod.v1_2_budget_nested
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    if cond {
+        ro a = @x
+        ro b = @x
+        @x = 1
+        ro c = @x
+        ro d = @x
+        @x = 2
+        ro e = @x
+        ro f = @x
+        a + b + c + d + e + f
+    } else {
+        0
+    }
+}
+"#;
+        let cfg = FieldCacheConfig {
+            max_per_fn: 2,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        let all_x: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x")).collect();
+        assert!(all_x.len() <= 2,
+            "budget=2 must cap total mut caches; got {:?}", names);
+    }
+
+    /// V1.2.9 positive: deeply nested (if inside while) gets caching.
+    #[test]
+    fn v1_2_deeply_nested_if_in_while() {
+        let src = r#"
+module testmod.v1_2_deep_nest
+type C { mut x int }
+fn C mut @do(n int) -> int {
+    mut i = 0
+    while i < n {
+        if i > 0 {
+            ro a = @x
+            ro b = @x
+            @x = a + b
+            ro c = @x
+            ro d = @x
+            i = i + c + d
+        }
+        i = i + 1
+    }
+    @x
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        let nested: Vec<&String> = names.iter()
+            .filter(|n| n.starts_with("_at_x_n")).collect();
+        assert!(!nested.is_empty(),
+            "expected nested cache let in deeply-nested if-inside-while; got {:?}",
+            names);
     }
 
     /// A1.1: ro field accessed 2+ раз → cache emitted.

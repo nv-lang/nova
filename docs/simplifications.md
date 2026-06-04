@@ -32096,3 +32096,75 @@ patterns (libpng / sqlite / libcurl / openssl byte+typed-int buffer
 access + MMIO volatile R/W). Struct deref + pointer arithmetic + advanced
 ergonomics (CStr / addr_of! macros / DebugPrintable interpolation) remain
 дedicated Plan 118 V2 sub-plans с design approval gates.
+
+---
+
+## Plan 123.1.2 — Nested-region mut cache (V1.2)
+
+✅ ЗАКРЫТ 2026-06-04 в worktree nova-p123, branch
+plan-123-v1-2-nested-regions. ~600 LOC delta. Closes
+`[M-123.1.1-nested-regions]`.
+
+**Что сделано:** V1.1 mut-cache (top-level multi-region) расширено к
+**nested** blocks. Когда top-level stmt является barrier'ом (contains
+nested write/call), V1.1 skips its body — V1.2 recursively descends
+и applies per-block region analysis. Nested cache locals use unique
+`_at_<F>_n<N>` naming (session-monotonic counter), distinct namespace
+от V1.1 outer caches.
+
+**Принципы:**
+
+- **Recursive bottom-up traversal:** `walk_nested_blocks_for_mut_field`
+  → `process_nested_block_for_mut_field` (Phase A descends, Phase B
+  processes). Bottom-up преж чем outer rewriter might descend
+  preserves correctness — inner `@F` reads become `_at_<F>_n<N>`
+  idents before outer might match them.
+
+- **Exhaustive AST walker:** `descend_expr_for_nested` covers all
+  nested-block-containing ExprKind variants: If/IfLet/While/WhileLet/
+  Match (arms)/For/ParallelFor/Loop/With/Forbid/Realtime/Detach/
+  Blocking/Supervised/Block-Expr/Trailing-Block/-Fn/-Legacy. Closure
+  variants (`Lambda/ClosureLight/ClosureFull/HandlerLit/ProtocolLit`)
+  explicitly skipped — V1 closure exclusion inherited.
+
+- **Global seq counter:** instead of per-field region_idx (V1.1
+  scheme), V1.2 uses one monotonic counter across all nested regions.
+  Simpler, guaranteed unique.
+
+- **Shared budget:** `cfg.max_per_fn − total_caches` remaining slots
+  after V1.1. V1.2 consumes one slot per allocated nested cache.
+
+- **Early-return refinement:** original `if ro_candidates.is_empty()
+  && mut_region_targets.is_empty() { return; }` extended к also check
+  `any_mut_read_in_fn`. Без этого fix, fns с no outer caching
+  opportunity skip V1.2 entirely, missing nested wins.
+
+**Acceptance (V1.2.1-V1.2.9 все ✅):** nested then-block with internal
+write, else-branch independent, while-body, match-arm body, ro-field
+unaffected, below-threshold skip, outer-and-nested compose, budget
+cap, deeply-nested if-in-while.
+
+**Verification:** 9 unit tests + 5 runtime fixtures PASS via release
+nova-cli + clang. plan123_1 18/18 + plan123_1_1 3/3 + plan123_2 14/14
++ plan123_4 10/10 + field_cache lib 64/64 PASS — zero regressions.
+
+**Workflow-driven insight correction:** Plan 123 V1.2 + V7.5 multi-
+agent exploration (w5dlb8t9w) revealed что earlier claim "V7.5 closes
+WriteBuffer.@write_char chain pattern" был **WRONG**. Root cause для
+3× `nova_self->buf` в C output = codegen recursive
+`emit_expr(obj)` propagation в `compiler-codegen/src/codegen/emit_c.rs`
+line 19567 (the `"push"` builtin handler). Single AST `@buf` read
+multiplied by 3 chained pushes through string-substitution — не
+field_cache или IPA issue. V7.5 IPA refines sibling-field cache
+survival (e.g. `@offset` cache survives `@buf.push()` call) which is
+genuinely valuable, но НЕ addresses chain duplicate. NEW marker
+`[M-123.4.4-codegen-fluent-chain-root-temp]` spawned для actual
+codegen-level fix.
+
+**Followup markers spawned:**
+
+- `[M-123.1.2-explain-deep-walk]` — V5 telemetry deep-walk.
+- `[M-123.1.2-loop-body-licm-coordination]` — V2 LICM cost model.
+- `[M-123.4.4-codegen-fluent-chain-root-temp]` — codegen chain-root
+  temp (actual WriteBuffer.@write_char fix layer, separate marker).
+

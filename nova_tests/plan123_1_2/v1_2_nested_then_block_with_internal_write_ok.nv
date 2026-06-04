@@ -1,0 +1,42 @@
+// Plan 123.1.2 (V1.2, 2026-06-04): nested-region mut cache.
+// Closes [M-123.1.1-nested-regions].
+//
+// Outer if-stmt is a barrier (contains nested write @x = 99).
+// V1.1 skips it; V1.2 descends and caches two nested regions внутри
+// then-block: 2 reads pre-write + 2 reads post-write. Semantic
+// preservation: cached path == uncached.
+
+module plan123_1_2.v1_2_nested_then_block_with_internal_write_ok
+
+type Counter {
+    mut x int
+}
+
+fn Counter.new(start int) -> Counter => { x: start }
+
+fn Counter mut @nested_cycle(cond bool, target int) -> int {
+    mut acc = 0
+    if cond {
+        // Nested region A — 2 reads (a, b).
+        ro a = @x
+        ro b = @x
+        // Nested barrier: write.
+        @x = target
+        // Nested region B — 2 reads (c, d).
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+
+test "V1.2: nested then-block multi-region preserves semantics" {
+    mut c = Counter.new(5)
+    ro r = c.nested_cycle(true, 20)
+    // (5+5) + (20+20) = 50
+    assert(r == 50)
+    // cond=false path — no nested execution.
+    mut c2 = Counter.new(5)
+    ro r2 = c2.nested_cycle(false, 99)
+    assert(r2 == 0)
+}
