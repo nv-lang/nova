@@ -2352,9 +2352,13 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
     st.scope = scope;
     st.slot = slot;
     st.cancel_scope = cancel_scope;
-    /* home_worker_id captured here — wake target. Cross-thread atomic read OK. */
-    extern __declspec(thread) int _current_worker_id;  /* runtime.c global */
-    st.home_worker_id = _current_worker_id;
+    /* home_worker_id captured here — wake target. Cross-thread atomic read OK.
+     * Через публичный аксессор, а не raw `extern __declspec(thread)`: тот был
+     * (а) непортируем — `__declspec` не включён на Linux clang без -fdeclspec,
+     * ронял компиляцию всего рантайма (fibers.h:2356); (б) extern к `static`
+     * TLS из runtime.c — линковочный хазард. nova_runtime_current_worker_id()
+     * читает ту же TLS внутри своего TU. */
+    st.home_worker_id = nova_runtime_current_worker_id();
     nova_aint_init(&st.stage, NOVA_SLEEP_DRV_NEW);
 
     /* Plan 83.11 Phase A fix: pre-initialize SchedState BEFORE ARM_SLEEP submission.
