@@ -20,6 +20,7 @@
 //! чтобы оставить `fn main` доступной для wrapped test body.
 
 use super::doctree::*;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocTestOutcome {
@@ -63,7 +64,7 @@ impl DocTestSummary {
 }
 
 pub fn run_doc_tests(tests: &[DocTest]) -> DocTestSummary {
-    run_doc_tests_with_source(tests, None)
+    run_doc_tests_with_context(tests, None, None)
 }
 
 /// Plan 45 Ф.21.1: prod-grade entry — каждый test получает crate-scope
@@ -72,9 +73,23 @@ pub fn run_doc_tests_with_source(
     tests: &[DocTest],
     original_source: Option<&str>,
 ) -> DocTestSummary {
+    run_doc_tests_with_context(tests, original_source, None)
+}
+
+/// Как `run_doc_tests_with_source`, но дополнительно принимает путь к
+/// документируемому файлу. Если задан, doc-test резолвит импорты + prelude
+/// (`resolve_imports_inline_ex`) перед type-check — иначе prelude-функции
+/// (`assert`/`println`/...) не определены (после Plan 62 prelude — file-based
+/// `std/prelude.nv`, а не hardcode в чекере). Soft-fail: ошибка резолва не
+/// фатальна — падаем обратно в isolated check (как раньше).
+pub fn run_doc_tests_with_context(
+    tests: &[DocTest],
+    original_source: Option<&str>,
+    entry_path: Option<&Path>,
+) -> DocTestSummary {
     let mut results = Vec::with_capacity(tests.len());
     for t in tests {
-        let outcome = run_one(t, original_source);
+        let outcome = run_one(t, original_source, entry_path);
         results.push(DocTestResult {
             id: t.id.clone(),
             outcome,
@@ -83,7 +98,7 @@ pub fn run_doc_tests_with_source(
     DocTestSummary { results }
 }
 
-fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
+fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>) -> DocTestOutcome {
     let modifiers = &t.modifiers;
     if modifiers.contains(&DocTestModifier::Ignore) {
         return DocTestOutcome::Skipped("ignore modifier".to_string());
@@ -109,6 +124,19 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
             ));
         }
     };
+
+    // Plan 45 / Plan 62: inject prelude + imports так, чтобы prelude-функции
+    // (`assert`/`println`/...) и items документируемого модуля резолвились в
+    // type-check. После Plan 62 prelude — file-based `std/prelude.nv` (не
+    // hardcode в чекере), поэтому isolated `check_module` без инъекции даёт
+    // `undefined identifier assert`. Soft-fail: ошибка резолва не фатальна —
+    // проваливаемся в обычный check (поведение как до фикса).
+    if let Some(ep) = entry_path {
+        if let Some(repo) = crate::test_runner::find_repo_root_from(ep) {
+            let stdlib = repo.join("std");
+            let _ = crate::imports::resolve_imports_inline_ex(ep, &mut module, &repo, &stdlib, false);
+        }
+    }
 
     // 2. Type-check.
     if let Err(errs) = crate::types::check_module(&module) {

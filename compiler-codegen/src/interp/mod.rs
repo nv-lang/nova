@@ -103,6 +103,17 @@ impl Interpreter {
         for item in &module.items {
             match item {
                 Item::Fn(fd) => {
+                    // D82: external fn (C-routed) интерпретатор не исполняет.
+                    // Пропускаем регистрацию вместо panic при загрузке: модуль
+                    // с prelude external fn (Plan 62 file-based `std/prelude.nv`)
+                    // грузится нормально — это нужно для doc-test execution и
+                    // чинит pre-existing Plan 81 баг «nova run падает на prelude
+                    // external fn». print/println/assert обслуживаются interp-
+                    // интринсиками (interp/stdlib.rs); вызов прочей external fn
+                    // в interp-контексте даст «undefined function» при обращении.
+                    if matches!(fd.body, FnBody::External) {
+                        continue;
+                    }
                     let key = match &fd.receiver {
                         Some(r) => format!("{}.{}", r.type_name, fd.name),
                         None => fd.name.clone(),
@@ -115,9 +126,7 @@ impl Interpreter {
                         body: match &fd.body {
                             FnBody::Expr(e) => ClosureBody::Expr(Box::new(e.clone())),
                             FnBody::Block(b) => ClosureBody::Block(b.clone()),
-                            // D82: external fn — interp не реализован для них
-                            // (interp удалён, оставляем panic как safety-fallback).
-                            FnBody::External => panic!("interp does not support external fn"),
+                            FnBody::External => unreachable!("external fn пропущен выше"),
                         },
                         env: self.globals.clone(),
                         receiver: None,

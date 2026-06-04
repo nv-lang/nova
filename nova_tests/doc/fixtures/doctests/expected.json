@@ -44,13 +44,13 @@
     },
     {
       "from_id": "doctests.sample::double",
-      "full_source": "ro x: int = \"not an int\"",
+      "full_source": "ro x int = \"not an int\"",
       "id": "doctests.sample::doc_test_5",
       "index": 5,
       "modifiers": [
         "compile_fail"
       ],
-      "visible_source": "ro x: int = \"not an int\""
+      "visible_source": "ro x int = \"not an int\""
     },
     {
       "from_id": "doctests.sample::double",
@@ -128,7 +128,7 @@
 
       ],
       "sections": {
-        "examples": "Тривиальный пример:\n\n```nova\nro x = 21\nro y = x * 2\n```\n\nCrate-scope (Ф.21.1): вызов документируемой функции:\n\n```nova\nassert(double(3) == 6)\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nro big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nro x: int = \"not an int\"\n```\n\nSMT-verified (Ф.21.4): без contracts → trivially verifies.\n\n```nova,must_verify\nro _ = 1\n```"
+        "examples": "Тривиальный пример:\n\n```nova\nro x = 21\nro y = x * 2\n```\n\nCrate-scope (Ф.21.1): вызов документируемой функции:\n\n```nova\nassert(double(3) == 6)\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nro big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nro x int = \"not an int\"\n```\n\nSMT-verified (Ф.21.4): без contracts → trivially verifies.\n\n```nova,must_verify\nro _ = 1\n```"
       },
       "source": {
         "file_id": 0,

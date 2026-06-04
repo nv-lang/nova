@@ -2235,7 +2235,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         return cmd_doc_mutate_contracts(&tree, format, if real_exec { Some(&src) } else { None });
     }
     if run_doc_tests {
-        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
+        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_context(&tree.doc_tests, Some(&src), Some(path));
         let total = summary.results.len();
         let passed = summary.passed();
         let failed = summary.failed();
@@ -2434,9 +2434,10 @@ fn cmd_doc_workspace(
         // doc-test'ам нужен только scope своего модуля, но merged
         // sources покрывают cross-module cases тоже.
         let combined_source = sources.join("\n\n");
-        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(
+        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_context(
             &tree.doc_tests,
             Some(&combined_source),
+            Some(dir),
         );
         return print_doc_test_summary(summary);
     }
@@ -2948,7 +2949,7 @@ fn cmd_doc_watch(
                         let lint_config = build_lint_config_for(path);
                         let _ = cmd_doc_check(&tree, format, &lint_config, strict);
                     } else if run_doc_tests {
-                        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
+                        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_context(&tree.doc_tests, Some(&src), Some(path));
                         let _ = print_doc_test_summary(summary);
                     } else {
                         let out = match format {
