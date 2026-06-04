@@ -1,11 +1,8 @@
 // Plan 118 Ф.1 T1.3 — chain order для multi-level pointers (D216 §3).
 //
-// Modifier перед `*` относится к ЭТОМУ pointer'у; read left-to-right.
-//   `*mut *ro Acc`  = mut pointer НА (ro pointer на Acc)
-//   `*ro *mut Acc`  = ro pointer НА (mut pointer на Acc)
-//
-// V1 scope: parser disambiguation; mutability enforcement через chain —
-// Ф.4 (auto-deref + assignment rules).
+// V3 canonical right-binding form (D216 V2 §V2.1): modifier ПЕРЕД `*`.
+//   `mut * ro * Acc`  = mut pointer НА (ro pointer на Acc)
+//   `ro * mut * Acc`  = ro pointer НА (mut pointer на Acc)
 
 module plan118.t1_3_chain_multi_level_ok
 
@@ -14,15 +11,15 @@ type Node {
 }
 
 // Two-level chain — mut/ro mixed.
-external fn p118_chain_mut_ro(pp *mut *ro Node) -> i64
-external fn p118_chain_ro_mut(pp *ro *mut Node) -> i64
+external fn p118_chain_mut_ro(pp mut * ro * Node) -> i64
+external fn p118_chain_ro_mut(pp ro * mut * Node) -> i64
 
-// Three-level chain (V3.4 migration: removed redundant inner *mut —
-// outer *mut propagates через *ro to innermost level per §V3.3-§V3.4).
-external fn p118_chain_triple(ppp *mut *ro Node) -> i64
+// Three-level chain (V3.4 migration: removed redundant inner `mut *` —
+// outer mut propagates через `ro *` к innermost level per §V3.3-§V3.4).
+external fn p118_chain_triple(ppp mut * ro * Node) -> i64
 
 // Chain в return position.
-external fn p118_return_chain() -> *mut *ro Node
+external fn p118_return_chain() -> mut * ro * Node
 
 test "multi-level pointer chains parse + type-check" {
     assert(1 == 1)
