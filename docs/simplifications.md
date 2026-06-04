@@ -32370,3 +32370,48 @@ field_cache lib 89/89 + all 11 plan123_* directories.
 **Followups:** `[M-123.2.1-v2-licm-threshold-integration]`,
 `[M-123.2.1-dynamic-loop-count]`.
 
+---
+
+## Plan 123.7.6 — Same-field reference-type IPA (V7.6)
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-v7-6-same-field-ref-type.
+~450 LOC. Closes `[M-123.7.5-same-field-ref-type]`.
+
+**Что сделано:** V7.5/V7.7 conservatively invalidated own-field cache
+на `@F.method()`. V7.6 refines using TypeDecl: when F is reference-
+typed (Array/Pointer/Map/String/StringBuilder/HashMap/etc.), the
+cache of `@F` survives `@F.method()` because mutation reaches the
+referenced object, не the slot bits.
+
+**Принципы:**
+
+- **TypeDecl integration:** `FieldRegistry` extended с
+  `ref_typed: HashSet<(String, String)>` populated при `register_items`.
+  `IpaCtx` carries `&'a HashSet<(...)>` reference + `is_field_ref_type`
+  helper method.
+
+- **Pure classifier:** `is_reference_type_ref(t: &TypeRef) -> bool`
+  walks TypeRef variants. Array/Pointer/Readonly/Mut peel; Named
+  matches well-known reference-type leaves. Conservative для FixedArray,
+  Tuple, Func, Protocol, Unit, Unsafe, unknown Named (user records).
+
+- **Minimal invasion:** V7.5/V7.7 own-field branches consult
+  `ctx.is_field_ref_type` — single conditional add per branch. No
+  refactoring callees of `expr_contains_invalidating_call_for`.
+
+- **Backward compat:** When IPA disabled (None ctx), V1 V-baseline
+  conservative behavior preserved. Implementation purely additive
+  для value-typed fields.
+
+**Acceptance (V7.6.1-V7.6.8 все ✅):** array own cache survives push,
+value-type still conservative, V7.5 + V7.6 compose, helper recognizes
+Array/Pointer/named collections, rejects value types, peels wrappers.
+
+**Verification:** 8 V7.6 unit + 1 runtime fixture PASS. Zero standalone
+regressions on 13 plan123_* directories. Parallel-run transient test
+contention observed but standalone все pass.
+
+**Followups:** `[M-123.7.6-generic-ref-types]` (user generic wrappers),
+`[M-123.7.6-method-realloc-flag]` (distinguish swap-and-replace).
+
+

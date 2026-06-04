@@ -5557,6 +5557,129 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D223 amend V7.6 — Same-field reference-type IPA (Plan 123.7.6)
+
+**Source:** [Plan 123.7.6](../../docs/plans/123.7.6-same-field-ref-type.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.7.5-same-field-ref-type]`.
+
+### 1. Scope
+
+V7.5/V7.7 IPA conservatively invalidates **own-field** cache на
+`@F.method()` (and chain-root case на chain receivers). For
+**reference-type** fields (`[]T`, `*T`, `Map`, `String`, etc.) the
+field's slot holds a header/pointer; mutations через `@F.method()`
+modify the referenced object, не the slot's bits. The cache of `@F`
+therefore survives such calls.
+
+V7.6 closes the gap by integrating с TypeDecl: classifies each field's
+declared `TypeRef` and relaxes V7.5/V7.7's own-field invalidation when
+the field is reference-typed.
+
+### 2. Reference-type classification
+
+New pure helper `is_reference_type_ref(t: &TypeRef) -> bool` recognizes:
+- `TypeRef::Array(_, _)` — `[]T` slice handle (heap, mutation through
+  push/extend doesn't change handle bits).
+- `TypeRef::Pointer(_, _)` — `*T` raw pointer (Plan 118).
+- `TypeRef::Readonly(inner, _)` / `TypeRef::Mut(inner, _)` — recurse
+  into wrapped type.
+- `TypeRef::Named` whose path leaf is one of the well-known reference
+  types: `str`, `string`, `String`, `StringBuilder`, `Map`, `HashMap`,
+  `BTreeMap`, `TreeMap`, `Set`, `HashSet`, `BTreeSet`, `TreeSet`,
+  `Vec`, `List`, `Deque`, `Queue`, `WriteBuffer`, `ReadBuffer`.
+
+Conservative for:
+- `TypeRef::FixedArray` — stack-stored fixed-size array.
+- `TypeRef::Tuple` — value-typed compound.
+- `TypeRef::Func`, `TypeRef::Protocol`, `TypeRef::Unit`,
+  `TypeRef::Unsafe` — semantic ambiguity / not reference-like.
+- Unknown `Named` types (user records) — value-type by default.
+
+### 3. Registry extension
+
+`FieldRegistry` extended:
+
+```rust
+struct FieldRegistry {
+    by_type: HashMap<String, HashMap<String, FieldKind>>,
+    skip_types: HashSet<String>,
+    ref_typed: HashSet<(String, String)>,  // V7.6 NEW
+}
+```
+
+`register_items` populates `ref_typed` per field during the existing
+record-walk. No extra pass; computed at `build_registry` time.
+
+### 4. IpaCtx extension
+
+```rust
+pub(crate) struct IpaCtx<'a> {
+    ...
+    ref_typed: &'a HashSet<(String, String)>,  // V7.6 NEW
+}
+
+impl<'a> IpaCtx<'a> {
+    pub(crate) fn is_field_ref_type(&self, fname: &str) -> bool {
+        self.ref_typed.contains(&(self.recv_type.to_string(), fname.to_string()))
+    }
+}
+```
+
+All 4 IpaCtx construction sites updated to pass `&reg.ref_typed`.
+
+### 5. V7.5/V7.7 own-field refinement
+
+`expr_contains_invalidating_call_for` (V7.5 direct + V7.7 chain
+branches) updated:
+
+```rust
+if fname == recv_field {  // V7.5: own field
+    if ctx.is_field_ref_type(fname) {
+        false  // V7.6: ref-type cache safe
+    } else {
+        true   // value-type: conservative
+    }
+}
+// chain branch follows same pattern для chain root
+```
+
+### 6. Composition
+
+V7.6 transparent к V7.5/V7.7. When IPA disabled (no ctx), V1 V-baseline
+conservative-invalidate preserved. Implementation purely additive; no
+behavioral change для value-typed fields.
+
+### 7. Acceptance
+
+- **V7.6.1** Reference-typed `@arr` cache survives `@arr.push()` ✅
+- **V7.6.2** Value-typed field still conservative ✅
+- **V7.6.3** V7.6 composes с V7.5 direct (ref-type own cache) ✅
+- **V7.6.4** `is_reference_type_ref` recognizes Array ✅
+- **V7.6.5** `is_reference_type_ref` recognizes Pointer ✅
+- **V7.6.6** `is_reference_type_ref` recognizes named collections ✅
+- **V7.6.7** `is_reference_type_ref` rejects value types ✅
+- **V7.6.8** `is_reference_type_ref` peels Readonly/Mut wrappers ✅
+- Zero regressions: field_cache lib **97/97** (89 baseline + 8 V7.6)
+  PASS via release `cargo test`.
+- All 13 plan123_* test directories PASS individually (some failures
+  observed when run в parallel due к build-artifact contention, but
+  все pass standalone).
+- Runtime fixture `nova_tests/plan123_7_6/` **1/1** PASS — semantic
+  preservation verified.
+
+### 8. Followups
+
+- **V7.6.1 (future):** generic types like `Map[K, V]` currently treated
+  as reference only when path leaf is one of the recognized names;
+  doesn't handle user generic wrappers like `Container[T]`. Could be
+  refined с TypeDecl-flag.
+- **V7.6.2 (future):** distinguish "method that COULD reallocate
+  underlying buffer" from "method that just reads internals" via
+  callee signature. Currently V7.6 assumes any `@F.method()` on
+  ref-type is safe for the slot's bits — true for typical cases but
+  brittle for unusual ABI (e.g. swap-and-replace).
+
 ## D218 amend V2.1 — Loop-body LICM coordination (Plan 123.2.1)
 
 **Source:** [Plan 123.2.1](../../docs/plans/123.2.1-loop-body-coord.md).
