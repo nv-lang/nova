@@ -622,6 +622,13 @@ impl<'a> Lexer<'a> {
             //   - `unsafe { ... }` block (Ф.3),
             //   - `#unsafe` attribute on fn declarations (Ф.3).
             "unsafe" => TokenKind::KwUnsafe,
+            // Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04): `safe`
+            // keyword as explicit propagation stopper. Used в type position:
+            // `unsafe * safe T` (outer unsafe applies к pointer ops; T
+            // pointee explicitly safe — propagation stopped). Behavior-only
+            // semantic — parser tracks safe_stoppers Vec<Span>; transparent
+            // в AST (parser-side check, no TypeRef variant).
+            "safe" => TokenKind::KwSafe,
             // Plan 124 (D220): per-field private visibility modifier +
             // type-level default flip (`type X priv { ... }`). Compile-time
             // enforcement of `priv` field access — выбрасывает

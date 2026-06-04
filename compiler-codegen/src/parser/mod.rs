@@ -81,6 +81,12 @@ pub struct Parser {
     /// W_BREAKING_UNSAFE_PTR_MEANING for legacy pointer syntax during
     /// grace period.
     pub warnings: Vec<crate::diag::Diagnostic>,
+    /// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** spans of `safe`
+    /// keyword occurrences encountered during parse_type. Each Span covers
+    /// the `safe` token + the inner type следующий за ним. Used by V3 rules
+    /// V3.2 (modifier order) and V3.4 (E_REDUNDANT_TYPE_MODIFIER) к skip
+    /// the error when `safe` explicitly broke the propagation chain.
+    safe_stoppers: Vec<crate::diag::Span>,
 }
 
 impl Parser {
@@ -96,7 +102,23 @@ impl Parser {
             no_trailing_block: false,
             src,
             warnings: Vec::new(),
+            safe_stoppers: Vec::new(),
         }
+    }
+
+    /// **Plan 118.5 V3 §V3.4 (2026-06-04):** check if any `safe` stopper
+    /// occurred between `outer_span` (modifier emission point) and
+    /// `inner_span` (potential redundant/conflict point). Used by Ф.3/Ф.4
+    /// rule checks к suppress diagnostic when user explicitly broke
+    /// propagation via `safe`.
+    pub(crate) fn is_safe_stopped_between(
+        &self,
+        outer_span: crate::diag::Span,
+        inner_span: crate::diag::Span,
+    ) -> bool {
+        self.safe_stoppers.iter().any(|s| {
+            s.start >= outer_span.start && s.end <= inner_span.end
+        })
     }
 
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** consume the parser
@@ -4962,6 +4984,29 @@ impl Parser {
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
                 return Ok(TypeRef::Unsafe(Box::new(inner), span));
+            }
+            // **Plan 118.5 V3 Ф.1 / D216 V3 §V3.4 (2026-06-04):** `safe`
+            // keyword as explicit propagation stopper. Behavior-only — emits
+            // inner TypeRef unchanged but records the safe-stopper span в
+            // parser state. Downstream V3 rule checks (§V3.2 modifier order +
+            // §V3.4 E_REDUNDANT_TYPE_MODIFIER) consult `is_safe_stopped_between`
+            // к suppress error при presence of safe stopper between outer
+            // modifier и inner same-class repetition.
+            //
+            // Examples:
+            //   `safe T`            → inner T transparent; safe registers stopper
+            //   `unsafe * safe T`   → Unsafe(Pointer(T)); deref pointee SAFE
+            //   `ro * safe mut T`   → Readonly(Pointer(Mut(T))); safe stops
+            //                          ro propagation, mut is independent
+            TokenKind::KwSafe => {
+                self.bump();
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                // Register safe-stopper covering the parsed inner span — V3
+                // rule checks downstream consult this register.
+                self.safe_stoppers.push(span);
+                // Emit inner unchanged (transparent at AST level).
+                return Ok(inner);
             }
             // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
             // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).

@@ -9138,33 +9138,65 @@ level OR binding+content level requires storage-class qualification.
 ro but reassigned per iteration. Plan 108.3 loop-var rule preserves this
 behavior; V3 §V3.1 does NOT fire on loop-var-introduced rebindings.
 
+**Value types per V3 (user-confirmed 2026-06-04):**
+
+1. **Primitives** (full list):
+   - Numeric: `int` (alias `isize`), `uint` (alias `usize`), `i8`/`i16`/`i32`/`i64`,
+     `u8`/`u16`/`u32`/`u64`, `f32`, `f64`
+   - Other: `bool`, `char`, `byte` (alias `u8`), `str`, `ptr`
+2. **Value records**: `type X value { ... }` (Plan 124.8 D228)
+3. **Named tuples**: `type Point(x f64, y f64)` (Plan 120 D215)
+4. **Anonymous tuples**: `(A, B, C)` literal type syntax
+5. **Unit**: `()` (zero-size value)
+
+**Reference types per V3:**
+
+- Records (`type X { ... }` default — heap)
+- Arrays `[]T` / FixedArray `[N]T` (heap-tracked для elements)
+- Pointer (any modifier wrapping)
+- Func, Protocol
+
 **Storage class detection** (compiler-codegen/src/types/mod.rs helper):
 ```rust
 fn is_value_type_for_v3(ty: &TypeRef, type_decls: &TypeDeclRegistry) -> bool {
     use TypeRef::*;
     match ty {
         Named { path, .. } if path.len() == 1 => {
-            let name = &path[0];
-            if is_primitive(name) { return true; }
+            let name = path[0].as_str();
+            // Primitives (per D226 amend: int/uint aliases for isize/usize)
+            if matches!(name,
+                "int" | "uint" | "isize" | "usize"
+                | "i8" | "i16" | "i32" | "i64"
+                | "u8" | "u16" | "u32" | "u64"
+                | "f32" | "f64"
+                | "bool" | "char" | "byte" | "str" | "ptr") { return true; }
+            // User type: value record OR named tuple
             if let Some(td) = type_decls.get(name) {
                 return td.is_value_record() || td.is_named_tuple();
             }
             false
         }
-        Tuple(..) => true,    // Plan 120 D215 anonymous tuples are value
-        FixedArray(..) => false,  // []N T is array-of-T, heap-tracked
-        Array(..) => false,
+        Tuple(..) => true,    // anonymous tuples — value
+        FixedArray(..) => false,  // [N]T — heap-tracked elements
+        Array(..) => false,       // []T — heap
         Pointer(..) => false,
-        Func { .. } => false, // fn types are pointer-к-fn-impl
+        Func { .. } => false,
         Protocol { .. } => false,
-        Unit(..) => true,     // unit value (zero-size, but value)
-        // Wrappers strip к inner
+        Unit(..) => true,
+        // Modifier wrappers strip к inner
         Readonly(inner, _) | Mut(inner, _) | Unsafe(inner, _) => {
             is_value_type_for_v3(inner, type_decls)
         }
     }
 }
 ```
+
+**Note re int/uint aliases (D226 amend, 2026-06-04 clarification):**
+
+`int` is alias for `isize` (platform-pointer-width signed integer);
+`uint` is alias for `usize` (platform-pointer-width unsigned). On 64-bit
+target both are i64/u64 respectively. Both `int` и `isize` etc. recognized
+identically by storage-class check.
 
 **Conflict detection** — at check_decl_type (compiler-codegen/src/types/mod.rs):
 ```rust

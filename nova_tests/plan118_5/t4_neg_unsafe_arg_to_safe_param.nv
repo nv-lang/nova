@@ -10,14 +10,14 @@
 
 module plan118_5.t4_neg_unsafe_arg_to_safe_param
 
-fn safe(x int) -> () {
+fn accept_safe(x int) -> () {
     assert(x == 42)
 }
 
 fn driver() -> () {
     mut x unsafe int = 0
     x = 42
-    safe(x)                          // ❌ unsafe T → int safe param — error
+    accept_safe(x)                          // ❌ unsafe T → int safe param — error
 }
 
 test "unsafe T arg к non-unsafe param rejected" {
