@@ -8941,6 +8941,149 @@ Explicit повторение модификатора — redundant error.
 Closes D176 §«type-modifier в любой позиции» partial parser implementation
 gap — `mut T` теперь принимается в binding type annotation position.
 
+### D33 amend §«consume binding-only — distinction rationale» (Plan 118.5 V2, 2026-06-04)
+
+> **Closes [M-118.5-consume-as-type-modifier].**
+
+`consume` НЕ становится type-level wrapper parallel к `ro` / `mut` / `unsafe`.
+Stays **binding-only** modifier (per D131, D133, D162, D164).
+
+**Rationale:**
+
+`ro` / `mut` / `unsafe` — syntactic compile-time modifiers expressing
+mutability / safety contract на the type. `consume` — fundamentally
+different: it expresses **ownership transfer / linearity / drop
+obligation** — semantic D-блоки D131 (linearity), D133 (consume types),
+D162 (consume types implementation), D164 (D-block consume types).
+
+Examples of the asymmetry:
+- `ro T` value — readonly view; multiple readonly aliases allowed.
+- `mut T` value — mutable; subject к binding-dominates rule (D175 amend).
+- `unsafe T` value — MaybeUninit; read requires assertion (D216 V2 §V2.3).
+- `consume T` value — **owned uniquely**; passing transfers ownership,
+  drops invariants at scope exit. Not a syntactic property of T; a
+  **structural property of the binding**.
+
+Hypothetical `consume * T` («consume pointer») would mean a pointer that
+the caller must consume — но это уже expressed via record-wrapped pointer
+(`type Handle consume(* T)`). Plain `consume T` за `T` уже-not-consume
+makes no semantic sense.
+
+**Decision:** keep current consume design (D162, D164). Right-binding
+rule applies only к ro/mut/unsafe. Reject Plan 118.5 V2 followup
+`[M-118.5-consume-as-type-modifier]` as **NO ACTION** — consume already
+fits its semantic-binding role correctly.
+
+### D216 V2 amend §V2.2b «mut T transparent» (Plan 118.5 V2, 2026-06-04)
+
+> **Closes [M-118.5-mut-t-vs-binding-distinction].**
+
+`TypeRef::Mut(T, span)` AST wrapper introduced in Plan 118.5 V1 (per V2
+right-binding rule §V2.1) is **purely transparent** at C codegen level:
+
+- AST representation: `Mut(inner, span)` carries no extra semantic vs `inner`
+- C codegen: `mut T` emits same C type as `T` (через transparent recurse)
+- Type-checker: `mut T` does NOT impose mutability requirement at the type
+  level — the mutability semantic belongs к **binding-level mut** (Plan 108
+  D176), не к type-level.
+
+**Why mut T exists at all:**
+
+Only purpose is **syntactic uniformity** under right-binding rule §V2.1.
+Without `mut T` arm в parse_type, the user's natural extension of `ro T`
+к `mut T` would fail к parse (no recursive arm). Adding the arm makes the
+grammar regular and predictable. The wrapper has zero semantic at runtime.
+
+**Practical implications:**
+
+- `mut * T` parses as `Mut(Pointer(T))` — Mut wraps Pointer; semantic
+  meaning «mut pointer» entirely encoded by the OUTER wrapper. Pointer +
+  Mut wrappers are distinct AST constructs.
+- `mut int` parses as `Mut(Named("int"))` — wrapper transparent for codegen
+  (emits just `nova_int`). Type-checker doesn't validate Mut(non-Pointer)
+  as anything special.
+- `let mut x int = ...` — the **binding** mut (Plan 108) provides mutation
+  rights. `let x mut int = ...` would parse but the `mut` wrapper on `int`
+  doesn't grant mutation (binding `x` is implicit ro per Plan 108).
+
+**Disambiguation reference:**
+
+| Form | Meaning | Source |
+|------|---------|--------|
+| `let mut x T = ...` | Binding `x` is mutable | Plan 108 D176 |
+| `let x mut T = ...` | Binding `x` is ro; type wrapper transparent (no mutation rights) | Plan 118.5 V2 §V2.2b |
+| `let mut x mut T = ...` | Binding mut; type wrapper transparent (same as `let mut x T = ...` semantically) | combined |
+
+User-visible recommendation: **prefer binding-level `mut`**; type-level
+`mut T` is for syntactic uniformity only.
+
+### D218 RETRACTED (Plan 118.5 V2, 2026-06-04)
+
+> **Closes [M-118.5-d218-maybeuninit-duplication].**
+
+D218 (Plan 118.2 — «Slice fat-pointer + MaybeUninit[T] + ManuallyDrop»)
+**partially retracted** — the MaybeUninit[T] sub-design is subsumed by
+Plan 118.5 V2 §V2.3 first-class `unsafe T` wrapper.
+
+**What D218 proposed:**
+
+`MaybeUninit[T]` generic wrapper providing «memory typed as T but may be
+uninitialized» semantic. Caller asserts validity via `assume_init()`
+method.
+
+**Why subsumed:**
+
+Plan 118.5 V2 §V2.3 promoted `unsafe T` to first-class type wrapper with
+*exactly* the MaybeUninit semantic:
+- init/layout/aliasing/identity contracts off (per §V2.3)
+- read requires `unsafe { }` wrap (E_UNSAFE_T_READ_REQUIRES_WRAP)
+- write safe (transitions к valid)
+- narrow `unsafe T → T` requires explicit unsafe cast
+  (E_UNSAFE_T_NARROW_REQUIRES_UNSAFE)
+
+This first-class wrapper:
+- Composes orthogonally с pointer modifier («ptr к uninit T» = `* unsafe T`)
+- Doesn't require generic instantiation
+- Uses universal right-binding rule for grammar uniformity
+- Provides finer-grained codegen control (NPO recalc per §V2.4)
+
+**What survives in D218:**
+
+The «slice fat-pointer» portion of D218 remains a valid sub-plan
+(Plan 118.2 Ф.1+Ф.2). ManuallyDrop redesign is separate.
+
+**Migration path для users:**
+
+| D218 form (deprecated) | Plan 118.5 V2 form |
+|------------------------|--------------------|
+| `MaybeUninit[i32]`     | `unsafe i32`       |
+| `MaybeUninit<T>::uninit()` | `mut x unsafe T = uninit_value` (write-safe init) |
+| `m.assume_init()`      | `unsafe { m as T }` (narrow cast) |
+| `*mut MaybeUninit<T>`  | `* unsafe T`       |
+
+`MaybeUninit[T]` type itself **not added** в std. D218 spec section marked
+RETRACTED для MaybeUninit subset; slice + ManuallyDrop subsets remain
+unchanged pending Plan 118.2 implementation.
+
+### D216 V2 amend §V2.3b «E_UNSAFE_ARG_REQUIRES_WRAP + E_UNSAFE_T_NARROW_REQUIRES_UNSAFE» (Plan 118.5 V2)
+
+> Closes [M-118.5-narrow-cast] + [M-118.5-arg-coerce-unsafe] spec slots.
+
+Two new error codes added для Plan 118.5 V2:
+
+- `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — explicit narrow cast `x as T` (where
+  x: unsafe T binding and T is non-unsafe target) outside unsafe block.
+  Caller must assert value validity via `unsafe { x as T }`.
+- `E_UNSAFE_ARG_REQUIRES_WRAP` — passing unsafe-T binding as Ident argument
+  к function/method parameter whose declared type is NOT `unsafe T`. Param-
+  level mismatch detected via ConsumeRegistry `fn_non_unsafe_params` /
+  `method_non_unsafe_params` registries.
+
+Both errors are suppressible by:
+- Wrapping the entire enclosing expression в `unsafe { ... }` block
+  (depth > 0 disables the checks).
+- Re-declaring the callee parameter as `unsafe T` (then arg-coerce matches).
+
 ### D52 amend (Plan 124.8 Ф.2)
 
 7-я форма declaration: **value record** — `type X value { ... }`. 
