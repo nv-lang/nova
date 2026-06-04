@@ -3,9 +3,9 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.must_verify.sample::abs",
+      "from_id": "must_verify.sample::abs",
       "full_source": "let x = abs(-3)\nassert(x >= 0)",
-      "id": "nova_tests.doc.fixtures.must_verify.sample::doc_test_1",
+      "id": "must_verify.sample::doc_test_1",
       "index": 1,
       "modifiers": [
         "must_verify"
@@ -27,7 +27,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.must_verify.sample",
+      "path": "must_verify.sample",
       "peers": [
 
       ],
@@ -52,6 +52,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -65,9 +69,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.must_verify.sample::ZERO",
+      "id": "must_verify.sample::ZERO",
       "kind": "const",
-      "module_path": "nova_tests.doc.fixtures.must_verify.sample",
+      "module_path": "must_verify.sample",
       "name": "ZERO",
       "reexport_from": null,
       "scraped_examples": [
@@ -94,6 +98,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -107,9 +115,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.must_verify.sample::abs",
+      "id": "must_verify.sample::abs",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.must_verify.sample",
+      "module_path": "must_verify.sample",
       "name": "abs",
       "reexport_from": null,
       "scraped_examples": [
@@ -182,6 +190,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -195,9 +207,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.must_verify.sample::max",
+      "id": "must_verify.sample::max",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.must_verify.sample",
+      "module_path": "must_verify.sample",
       "name": "max",
       "reexport_from": null,
       "scraped_examples": [

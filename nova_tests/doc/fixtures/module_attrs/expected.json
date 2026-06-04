@@ -18,7 +18,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "path": "module_attrs.sample",
       "peers": [
 
       ],
@@ -48,6 +48,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -61,9 +65,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.module_attrs.sample::bar",
+      "id": "module_attrs.sample::bar",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "module_path": "module_attrs.sample",
       "name": "bar",
       "reexport_from": null,
       "scraped_examples": [
@@ -141,6 +145,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -154,9 +162,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.module_attrs.sample::foo",
+      "id": "module_attrs.sample::foo",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "module_path": "module_attrs.sample",
       "name": "foo",
       "reexport_from": null,
       "scraped_examples": [

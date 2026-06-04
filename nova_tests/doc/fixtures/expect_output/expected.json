@@ -3,9 +3,9 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.expect_output.sample::add",
+      "from_id": "expect_output.sample::add",
       "full_source": "println(add(2, 3))",
-      "id": "nova_tests.doc.fixtures.expect_output.sample::doc_test_1",
+      "id": "expect_output.sample::doc_test_1",
       "index": 1,
       "modifiers": [
         "expect_output"
@@ -13,9 +13,9 @@
       "visible_source": "println(add(2, 3))\n// Output: 5"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.expect_output.sample::greet",
+      "from_id": "expect_output.sample::greet",
       "full_source": "println(greet(\"Nova\"))",
-      "id": "nova_tests.doc.fixtures.expect_output.sample::doc_test_2",
+      "id": "expect_output.sample::doc_test_2",
       "index": 2,
       "modifiers": [
         "expect_output"
@@ -37,7 +37,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.expect_output.sample",
+      "path": "expect_output.sample",
       "peers": [
 
       ],
@@ -62,6 +62,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -75,9 +79,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.expect_output.sample::add",
+      "id": "expect_output.sample::add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.expect_output.sample",
+      "module_path": "expect_output.sample",
       "name": "add",
       "reexport_from": null,
       "scraped_examples": [
@@ -161,6 +165,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -174,9 +182,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.expect_output.sample::greet",
+      "id": "expect_output.sample::greet",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.expect_output.sample",
+      "module_path": "expect_output.sample",
       "name": "greet",
       "reexport_from": null,
       "scraped_examples": [

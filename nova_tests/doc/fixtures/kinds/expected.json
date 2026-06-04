@@ -18,7 +18,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.kinds.sample",
+      "path": "kinds.sample",
       "peers": [
 
       ],
@@ -48,6 +48,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -61,9 +65,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.kinds.sample::AccountId",
+      "id": "kinds.sample::AccountId",
       "kind": "type",
-      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "module_path": "kinds.sample",
       "name": "AccountId",
       "reexport_from": null,
       "scraped_examples": [
@@ -97,6 +101,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -110,9 +118,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.kinds.sample::Color",
+      "id": "kinds.sample::Color",
       "kind": "type",
-      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "module_path": "kinds.sample",
       "name": "Color",
       "reexport_from": null,
       "scraped_examples": [
@@ -159,6 +167,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -172,9 +184,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.kinds.sample::Counter",
+      "id": "kinds.sample::Counter",
       "kind": "effect",
-      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "module_path": "kinds.sample",
       "name": "Counter",
       "reexport_from": null,
       "scraped_examples": [
@@ -222,6 +234,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -235,9 +251,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.kinds.sample::Eq",
+      "id": "kinds.sample::Eq",
       "kind": "protocol",
-      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "module_path": "kinds.sample",
       "name": "Eq",
       "reexport_from": null,
       "scraped_examples": [
@@ -289,6 +305,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -302,9 +322,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.kinds.sample::Pixels",
+      "id": "kinds.sample::Pixels",
       "kind": "type",
-      "module_path": "nova_tests.doc.fixtures.kinds.sample",
+      "module_path": "kinds.sample",
       "name": "Pixels",
       "reexport_from": null,
       "scraped_examples": [

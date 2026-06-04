@@ -3,24 +3,24 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.should_panic.sample::get",
-      "full_source": "let arr = [10, 20, 30]\nassert(arr[1] == 20)",
-      "id": "nova_tests.doc.fixtures.should_panic.sample::doc_test_1",
+      "from_id": "should_panic.sample::get",
+      "full_source": "let mut arr = [10, 20, 30]\nassert(arr[1] == 20)",
+      "id": "should_panic.sample::doc_test_1",
       "index": 1,
       "modifiers": [
 
       ],
-      "visible_source": "let arr = [10, 20, 30]\nassert(arr[1] == 20)"
+      "visible_source": "let mut arr = [10, 20, 30]\nassert(arr[1] == 20)"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.should_panic.sample::get",
-      "full_source": "let arr = [1, 2, 3]\nlet _ = arr[99]",
-      "id": "nova_tests.doc.fixtures.should_panic.sample::doc_test_2",
+      "from_id": "should_panic.sample::get",
+      "full_source": "let mut arr = [1, 2, 3]\nlet _ = arr[99]",
+      "id": "should_panic.sample::doc_test_2",
       "index": 2,
       "modifiers": [
         "should_panic"
       ],
-      "visible_source": "let arr = [1, 2, 3]\nlet _ = arr[99]"
+      "visible_source": "let mut arr = [1, 2, 3]\nlet _ = arr[99]"
     }
   ],
   "links": [
@@ -37,7 +37,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.should_panic.sample",
+      "path": "should_panic.sample",
       "peers": [
 
       ],
@@ -62,6 +62,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -75,16 +79,16 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.should_panic.sample::get",
+      "id": "should_panic.sample::get",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.should_panic.sample",
+      "module_path": "should_panic.sample",
       "name": "get",
       "reexport_from": null,
       "scraped_examples": [
 
       ],
       "sections": {
-        "examples": "Нормальный доступ:\n\n```nova\nlet arr = [10, 20, 30]\nassert(arr[1] == 20)\n```\n\nДоступ за границы → panic (ожидаемое поведение):\n\n```nova,should_panic\nlet arr = [1, 2, 3]\nlet _ = arr[99]\n```"
+        "examples": "Нормальный доступ:\n\n```nova\nlet mut arr = [10, 20, 30]\nassert(arr[1] == 20)\n```\n\nДоступ за границы → panic (ожидаемое поведение):\n\n```nova,should_panic\nlet mut arr = [1, 2, 3]\nlet _ = arr[99]\n```"
       },
       "source": {
         "file_id": 0,

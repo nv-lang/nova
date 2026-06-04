@@ -3,9 +3,9 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.stability.sample::add",
+      "from_id": "stability.sample::add",
       "full_source": "assert(add(2, 3) == 5)",
-      "id": "nova_tests.doc.fixtures.stability.sample::doc_test_1",
+      "id": "stability.sample::doc_test_1",
       "index": 1,
       "modifiers": [
 
@@ -13,9 +13,9 @@
       "visible_source": "assert(add(2, 3) == 5)"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.stability.sample::maybe_add",
+      "from_id": "stability.sample::maybe_add",
       "full_source": "assert(maybe_add(2, 3) == 5)",
-      "id": "nova_tests.doc.fixtures.stability.sample::doc_test_2",
+      "id": "stability.sample::doc_test_2",
       "index": 2,
       "modifiers": [
 
@@ -23,9 +23,9 @@
       "visible_source": "assert(maybe_add(2, 3) == 5)"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.stability.sample::plus",
+      "from_id": "stability.sample::plus",
       "full_source": "assert(plus(2, 3) == 5)",
-      "id": "nova_tests.doc.fixtures.stability.sample::doc_test_3",
+      "id": "stability.sample::doc_test_3",
       "index": 3,
       "modifiers": [
 
@@ -47,7 +47,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.stability.sample",
+      "path": "stability.sample",
       "peers": [
 
       ],
@@ -77,6 +77,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -90,9 +94,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::add",
+      "id": "stability.sample::add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "module_path": "stability.sample",
       "name": "add",
       "reexport_from": null,
       "scraped_examples": [
@@ -181,6 +185,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -194,9 +202,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::maybe_add",
+      "id": "stability.sample::maybe_add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "module_path": "stability.sample",
       "name": "maybe_add",
       "reexport_from": null,
       "scraped_examples": [
@@ -285,6 +293,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -298,9 +310,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::plus",
+      "id": "stability.sample::plus",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "module_path": "stability.sample",
       "name": "plus",
       "reexport_from": null,
       "scraped_examples": [

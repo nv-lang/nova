@@ -3,9 +3,9 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.sections.sample::divide",
+      "from_id": "sections.sample::divide",
       "full_source": "assert(divide(10, 3) == 3)",
-      "id": "nova_tests.doc.fixtures.sections.sample::doc_test_1",
+      "id": "sections.sample::doc_test_1",
       "index": 1,
       "modifiers": [
 
@@ -27,7 +27,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.sections.sample",
+      "path": "sections.sample",
       "peers": [
 
       ],
@@ -57,6 +57,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -70,9 +74,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.sections.sample::divide",
+      "id": "sections.sample::divide",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.sections.sample",
+      "module_path": "sections.sample",
       "name": "divide",
       "reexport_from": null,
       "scraped_examples": [
