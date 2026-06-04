@@ -1,6 +1,6 @@
 // Plan 42.12 Ф.2: stable peer без cfg.
 
-module feature_gate.stable
+module cfg.feature_gate
 
 export fn stable_fn() -> int =>
     100

@@ -2,7 +2,7 @@
 // External users делают import nova_tests.modules.reexport_facade,
 // видят parse() = parse_internal через re-export.
 
-module reexport_facade.public
+module modules.reexport_facade
 
 // Re-export: items из internal.impl становятся видны через эту facade.
 export import nova_tests.modules.reexport_facade.internal.impl.{parse_internal}

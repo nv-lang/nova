@@ -5,7 +5,7 @@
 // disabled_value() невидима импортирующему.
 
 #cfg(target_os = "windows" && target_os = "freebsd")
-module predicate_all_off.disabled
+module cfg.predicate_all_off
 
 export fn disabled_value() -> int =>
     777

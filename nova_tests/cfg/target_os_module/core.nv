@@ -1,6 +1,6 @@
 // Plan 42.12 Ф.2: core peer без cfg-guards.
 
-module target_os_module.core
+module cfg.target_os_module
 
 export fn shared_value() -> int =>
     42

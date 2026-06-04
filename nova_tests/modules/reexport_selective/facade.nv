@@ -2,6 +2,6 @@
 // internal/. Consumer, выбирающий только `alpha`, не должен видеть
 // `beta` — re-export проходит через селективный фильтр consumer'а.
 
-module reexport_selective.facade
+module modules.reexport_selective
 
 export import nova_tests.modules.reexport_selective.internal.impl.{alpha, beta}

@@ -6,7 +6,7 @@
 #doc ""
 #doc "- Содержит две peer-файла: core.nv + extra.nv."
 #doc "- Multi-peer doc lines конкатенируются alphabetical filename order."
-module folder_with_doc.core
+module modules.folder_with_doc
 
 export fn greet() -> str =>
     "hello from doc'd module"

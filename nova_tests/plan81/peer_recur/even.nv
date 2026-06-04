@@ -4,7 +4,7 @@
 // всех peer'ов до обхода тел, поэтому forward/backward-ссылки между
 // peer'ами резолвятся независимо от порядка объявлений.
 
-module peer_recur.even
+module plan81.peer_recur
 
 export fn is_even(n int) -> bool {
     if n == 0 { true } else { is_odd(n - 1) }

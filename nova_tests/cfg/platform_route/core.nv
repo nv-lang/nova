@@ -5,7 +5,7 @@
 //   - impl_macos.nv (active на macOS)
 // На каждой OS active ровно один — name collision исключён.
 
-module platform_route.core
+module cfg.platform_route
 
 export fn greet() -> str =>
     "hello from " + platform_name()

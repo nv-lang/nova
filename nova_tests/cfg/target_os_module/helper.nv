@@ -1,6 +1,6 @@
 // Plan 42.12 Ф.2: второй peer для folder-module detection (≥2 peers).
 
-module target_os_module.helper
+module cfg.target_os_module
 
 export fn helper_value() -> int =>
     7
