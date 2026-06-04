@@ -16596,7 +16596,16 @@ impl UnsafeCtx {
                 self.walk_expr(&c.value, errors);
             }
             Stmt::Assign { target, value, .. } => {
-                self.walk_expr(target, errors);
+                // **Plan 118.5 V2 [M-118.5-write-safe-tracking] (2026-06-04):**
+                // Write к unsafe T binding is SAFE (transitions value к valid
+                // initialized state per D216 V2 §V2.3). Skip the Ident read
+                // check for simple-Ident assign targets — `x = 42` doesn't
+                // READ x. Non-Ident targets (`x.field = 42`, `arr[i] = 42`)
+                // DO read x (to find field/element), so walk normally.
+                use crate::ast::ExprKind;
+                if !matches!(target.kind, ExprKind::Ident(_)) {
+                    self.walk_expr(target, errors);
+                }
                 self.walk_expr(value, errors);
             }
             Stmt::Return { value: Some(e), .. } => self.walk_expr(e, errors),
