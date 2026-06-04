@@ -32120,16 +32120,17 @@ were taken для V3 implementation:
 - 19 new fixtures across 4 phases (5 + 4 + 5 + 5 = 19, plus 1 standalone
   POS at Ф.1) — full POS/NEG coverage matrix.
 
-### Followups deferred (single, scoped V4 candidate)
+### Followups deferred
 
-- `[M-118.5-V3-binding-context-relaxation]` — relax §V3.1 для binding-
-  context ref-T scenarios where current strict-value-T-error policy may
-  be overly restrictive. Deferred к V4 design discussion — current V3
-  semantics chosen for clarity/predictability over ergonomics.
+NONE. Initially `[M-118.5-V3-binding-context-relaxation]` was deferred к
+V4, но **CLOSED 2026-06-05 в Ф.6** после user-confirmed: «ro x mut T -
+разрешенная схема». Binding-form теперь allowed regardless of T storage
+class; type-form check unchanged.
 
 ### Limitation summary
 
-Plan 118.5 V3 closes 4 design rules complete; combined with V1+V2 surface,
-Plan 118.5 stands at **100% closure** для typed-pointer + safety modifier
-semantics. Plan 118 umbrella next milestone: V4 binding-context relaxation
-(if user-prioritized) OR Plan 118.1 Ф.3/Ф.4 (deferred sub-phases).
+Plan 118.5 V3 closes ALL 4 design rules + 1 binding-context relaxation;
+combined with V1+V2 surface, Plan 118.5 stands at **100% closure** для
+typed-pointer + safety modifier semantics. ZERO V4 deferred markers.
+Plan 118 umbrella next milestone: Plan 118.1 Ф.3/Ф.4 (deferred sub-phases)
+OR переключение на Plan 91 (std MVP, P0 priority).

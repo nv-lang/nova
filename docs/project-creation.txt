@@ -31702,3 +31702,40 @@ Plan 118.5 V3 ✅ LANDED — 4 design rules implemented в продакшен-ф
 (без упрощений). All 4 [M-118.5-V3-*] implementation followups closed.
 Plan 118 umbrella now: V1 + V2 + V3 design freezes complete. Next:
 bidirectional sync с main.
+
+## 2026-06-05 — Plan 118.5 V3 Ф.6 — binding-context relaxation
+
+V3 §V3.1 amend (user-confirmed «ro x mut T - разрешенная схема»):
+binding-form `ro x mut T` (pre-name ro + post-name mut) теперь allowed
+regardless of T storage class. Симметричное `mut x ro T` уже работало.
+
+Closes [M-118.5-V3-binding-context-relaxation] — был V4 deferred, теперь
+RESOLVED в текущем V3 закрытии.
+
+Parser change (parser/mod.rs:2895-2906): убран inner
+E_PARAM_MOD_CONFLICT при has_readonly_prefix + post-name KwMut. Bumps
+mut token, sets is_mut=true. Type wrapped по has_readonly_prefix path:
+Readonly(T) (binding-ro компонент сохранён) + Param.is_mut=true
+(binding-mut компонент).
+
+Storage-class §V3.1 type-form check UNCHANGED:
+- `x ro mut int` (pure type-form) → still errors (t2_neg ✅)
+- `() -> mut ro str` (return type-form) → still errors (t3_neg ✅)
+
+Fixtures (2 new POS):
+- t16_binding_ro_type_mut_value_ok — `ro x mut int/str/Acc` all allowed
+- t17_binding_mut_type_ro_value_ok — symmetric `mut x ro int/str/Acc`
+
+Test results:
+- plan118_5_v3: 17/17 PASS (Ф.4 → 15, Ф.6 → 17)
+- plan118: 38/38, plan118_1: 11/11, plan118_5: 14/14, plan108_1: 16/16
+  — no regressions
+
+Commit: 9903a789145.
+
+### State
+
+Plan 118.5 V3 ✅ FULLY CLOSED Ф.0-Ф.6 — 0 V4 deferred markers (был
+[M-118.5-V3-binding-context-relaxation], теперь closed). Plan 118.5
+umbrella полностью готов: V1 + V2 + V3 finalized. Next: bidirectional
+sync с main.
