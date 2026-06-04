@@ -1,0 +1,30 @@
+// Plan 123.7.5 (V7.5, 2026-06-04): multiple sibling field caches
+// все survive across @arr.push().
+
+module plan123_7_5.v7_5_multiple_siblings_ok
+
+type Tracker {
+    mut count int
+    mut total int
+    mut arr []int
+}
+
+fn Tracker.new() -> Tracker => { count: 7, total: 100, arr: []int.new() }
+
+fn Tracker mut @sample_then_grow(v int) -> int {
+    ro c1 = @count
+    ro t1 = @total
+    @arr.push(v)
+    ro c2 = @count
+    ro t2 = @total
+    c1 + t1 + c2 + t2
+}
+
+test "V7.5: multiple siblings all survive" {
+    mut t = Tracker.new()
+    ro r = t.sample_then_grow(99)
+    // (7+100) + (7+100) = 214
+    assert(r == 214)
+    assert(t.arr.len() == 1)
+    assert(t.arr[0] == 99)
+}

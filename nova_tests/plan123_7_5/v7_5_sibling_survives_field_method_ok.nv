@@ -1,0 +1,42 @@
+// Plan 123.7.5 (V7.5, 2026-06-04): callee-non-self-mutation IPA.
+// Closes [M-123.1.1-callee-non-self-mutation-ipa].
+//
+// `@arr.push(...)` calls method through @arr field — cannot mutate
+// sibling fields (e.g. @count) of self. V7.5 IPA refinement allows
+// @count cache к survive across @arr.push() call.
+//
+// Semantic preservation проверяется: cached + uncached paths
+// produce identical results.
+
+module plan123_7_5.v7_5_sibling_survives_field_method_ok
+
+type Buf {
+    mut count int
+    mut arr []int
+}
+
+fn Buf.new() -> Buf => { count: 0, arr: []int.new() }
+
+fn Buf mut @track_and_grow(v int) -> int {
+    // Two sibling-field reads — V1.1 candidate region A.
+    ro a = @count
+    ro b = @count
+    // V7.5: @arr.push() does NOT invalidate @count cache.
+    @arr.push(v)
+    // Two more sibling-field reads — V1.1 candidate region B (or
+    // V7.5 makes whole thing one region for @count).
+    ro c = @count
+    ro d = @count
+    a + b + c + d
+}
+
+test "V7.5: sibling field survives @field.method() call" {
+    mut b = Buf.new()
+    b.count = 5
+    ro r = b.track_and_grow(42)
+    // count = 5 throughout — (5+5+5+5) = 20
+    assert(r == 20)
+    // Verify side-effect: @arr.push happened.
+    assert(b.arr.len() == 1)
+    assert(b.arr[0] == 42)
+}
