@@ -1,0 +1,33 @@
+// Plan 118.1 Ф.2 T10 — write_volatile() on typed pointer.
+//
+// Volatile write forces the compiler не fold/reorder/elide the store.
+// Used для MMIO patterns (e.g., consecutive writes to same hardware reg).
+//
+// Closes [M-118.1-volatile-ops] write half.
+
+module plan118_1.t10_write_volatile_ok
+
+test "write_volatile к u8 pointer" {
+    mut buf []u8 = [0, 0, 0]
+    unsafe {
+        buf.as_mut_ptr().write_volatile(99 as u8)
+    }
+    assert(buf[0] == (99 as u8))
+}
+
+test "write_volatile к i32 pointer" {
+    mut buf []i32 = [0, 0]
+    unsafe {
+        buf.as_mut_ptr().write_volatile(12345 as i32)
+    }
+    assert(buf[0] == (12345 as i32))
+}
+
+test "write_volatile then read_volatile roundtrip" {
+    mut buf []i64 = [0]
+    unsafe {
+        buf.as_mut_ptr().write_volatile(424242 as i64)
+        ro v = buf.as_mut_ptr().read_volatile()
+        assert(v == (424242 as i64))
+    }
+}

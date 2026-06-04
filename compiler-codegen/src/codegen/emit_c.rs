@@ -19745,6 +19745,34 @@ _cp++; \
                         // compiled.
                         return Ok(format!("((*({})) = ({}), NOVA_UNIT)", obj_c, val_c));
                     }
+                    // **Plan 118.1 Ф.2 [M-118.1-volatile-ops] (2026-06-04):**
+                    // volatile reads/writes для MMIO patterns. Distinct from
+                    // atomics (Plan 103.2) и memory ordering (Plan 103.1):
+                    // volatile is compiler-level qualifier — compiler must
+                    // NOT fold/reorder/elide; barriers/atomics handle CPU-
+                    // level ordering separately.
+                    //
+                    // Emission: `*(volatile T*)p` cast forces volatile access.
+                    // Read returns pointee value; write stores в pointee.
+                    if method == "read_volatile" && args.is_empty() {
+                        // Extract pointee from obj_ty: strip "const " prefix
+                        // and trailing "*".
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .trim_end_matches('*').trim();
+                        let obj_c = self.emit_expr(obj)?;
+                        return Ok(format!(
+                            "(*((volatile {}*)({})))",
+                            pointee, obj_c));
+                    }
+                    if method == "write_volatile" && args.len() == 1 && !is_const {
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .trim_end_matches('*').trim();
+                        let obj_c = self.emit_expr(obj)?;
+                        let val_c = self.emit_expr(args[0].expr())?;
+                        return Ok(format!(
+                            "((*((volatile {}*)({}))) = ({}), NOVA_UNIT)",
+                            pointee, obj_c, val_c));
+                    }
                 }
                 // 3c. D74 math methods on int (selected — abs, sign):
                 //     `n.abs()` → `llabs(n)`. Большинство int-методов — это
@@ -27906,6 +27934,16 @@ _cp++; \
                             return pointee.to_string();
                         }
                         if method == "write" && args.len() == 1 {
+                            return "nova_unit".into();
+                        }
+                        // Plan 118.1 Ф.2 [M-118.1-volatile-ops]: volatile
+                        // variants return same types as regular read/write.
+                        if method == "read_volatile" && args.is_empty() {
+                            let pointee = obj_ty.trim_start_matches("const ")
+                                .trim_end_matches('*').trim();
+                            return pointee.to_string();
+                        }
+                        if method == "write_volatile" && args.len() == 1 {
                             return "nova_unit".into();
                         }
                     }

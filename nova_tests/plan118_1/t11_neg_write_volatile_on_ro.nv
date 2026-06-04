@@ -1,0 +1,16 @@
+// Plan 118.1 Ф.2 NEG T11 — write_volatile on *ro pointer rejected.
+//
+// `*ro T` (= `Pointer(Readonly(T))` или `Pointer(T)` default) emit'ит C
+// `const T*`. The `is_const` check via "const " prefix gates the
+// write_volatile dispatch (mirrors regular write enforcement).
+//
+// EXPECT_COMPILE_ERROR
+
+module plan118_1.t11_neg_write_volatile_on_ro
+
+test "write_volatile on ro pointer fails" {
+    ro buf []u8 = [0, 0, 0]
+    unsafe {
+        buf.as_ptr().write_volatile(99 as u8)
+    }
+}

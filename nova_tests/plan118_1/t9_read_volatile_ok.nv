@@ -1,0 +1,28 @@
+// Plan 118.1 Ф.2 T9 — read_volatile() on typed pointer.
+//
+// Volatile read forces the compiler не fold/reorder/elide the access.
+// Used для MMIO patterns + signal handler observations. Distinct from
+// atomics (Plan 103.2) и memory ordering (Plan 103.1) — those handle
+// CPU-level ordering separately.
+//
+// Closes [M-118.1-volatile-ops] read half.
+
+module plan118_1.t9_read_volatile_ok
+
+test "read_volatile from u8 pointer" {
+    ro buf []u8 = [42, 100]
+    ro v = unsafe { buf.as_ptr().read_volatile() }
+    assert(v == (42 as u8))
+}
+
+test "read_volatile from i32 pointer" {
+    ro buf []i32 = [1000, 2000]
+    ro v = unsafe { buf.as_ptr().read_volatile() }
+    assert(v == (1000 as i32))
+}
+
+test "read_volatile from i64 pointer" {
+    ro buf []i64 = [99999, 88888]
+    ro v = unsafe { buf.as_ptr().read_volatile() }
+    assert(v == (99999 as i64))
+}
