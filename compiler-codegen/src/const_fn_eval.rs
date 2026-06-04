@@ -1110,6 +1110,21 @@ pub fn type_size_or_align_resolved(
             Some(if is_align { 1 } else { 0 })
         }
         TypeRef::Readonly(inner, _) => type_size_or_align_resolved(inner, is_align, type_decls),
+        // **Plan 118.1 Ф.2.3 / Plan 118.5 V2 (2026-06-04):** typed pointer
+        // family (`*T`) has uniform pointer layout — 8 bytes / 8 align on
+        // x64 ABI (matches nova_rt). Regardless of pointee type. Per D216
+        // §1 invariant.
+        //
+        // Plan 118.5 V2 transparent wrappers (Mut/Unsafe) recurse on inner:
+        // `mut * T` / `unsafe * T` / `* unsafe T` — all eventually reach a
+        // Pointer or some other resolvable layout.
+        //
+        // `unsafe T` for non-pointer T transparently recurses: `unsafe int`
+        // = 8 bytes (same as int). Matches §V2.3 zero-cost wrapper invariant.
+        TypeRef::Pointer(_, _) => Some(8),
+        TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+            type_size_or_align_resolved(inner, is_align, type_decls)
+        }
         _ => None,
     }
 }

@@ -1,0 +1,23 @@
+// Plan 118.5 V2 T5 — write к unsafe T binding is safe transition.
+//
+// Per D216 V2 §V2.3: writing к `unsafe T` slot is SAFE — transitions value
+// from possibly-uninitialized к valid initialized state. No `unsafe { }`
+// wrap needed для the write itself. Subsequent reads (also wrapped в
+// `unsafe { }` per E_UNSAFE_T_READ_REQUIRES_WRAP) get the written value.
+//
+// Closes [M-118.5-write-safe-tracking].
+
+module plan118_5.t5_unsafe_t_write_ok
+
+fn init_then_read() -> () {
+    mut x unsafe int = 0
+    x = 42                       // ✅ safe write (transitions к valid)
+    unsafe {
+        ro y = x                 // ✅ read inside unsafe block
+        assert(y == 42)
+    }
+}
+
+test "write к unsafe T binding then read inside unsafe block" {
+    init_then_read()
+}

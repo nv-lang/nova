@@ -1,0 +1,21 @@
+// Plan 118.5 V2 NEG T3 — narrow cast `x as T` outside unsafe block fails.
+//
+// Per D216 V2 §V2.3: narrowing requires unsafe context. Without wrap →
+// E_UNSAFE_T_NARROW_REQUIRES_UNSAFE.
+//
+// Closes [M-118.5-narrow-cast] NEG half.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_T_NARROW_REQUIRES_UNSAFE
+
+module plan118_5.t3_neg_unsafe_t_narrow_no_unsafe
+
+fn narrow_outside_unsafe() -> () {
+    mut x unsafe int = 0
+    x = 99
+    ro y = x as int                    // ❌ narrow без unsafe block
+    assert(y == 99)
+}
+
+test "narrow cast outside unsafe block rejected" {
+    narrow_outside_unsafe()
+}

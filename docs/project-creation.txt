@@ -31492,3 +31492,120 @@ different AST shape — Ф.5 migration sweep explicitly rewrites such code
 
 Plan 118.5 V1 ✅ LANDED on plan-118.5 branch. Next: bidirectional sync с
 main (commit chain merge).
+
+═══════════════════════════════════════════════════════════════════════
+2026-06-04 (поздний вечер) — Plan 118 family ITERATION 2: V2 closure +
+118.1 Ф.2 volatile + Ф.2.3 size_of-for-pointers (10 commits, 1 workflow)
+═══════════════════════════════════════════════════════════════════════
+
+User directive «выполни все пункты плана 118 без упрощений как для прода
+без остановок» triggered ultracode + autonomous continuation of Plan 118
+remaining work.
+
+Discovery workflow (wem90va5l, 8 agents, ~599k tokens): 7 parallel
+subsystem audits (118.5 V2 markers, 118.5 design followups, 118.1
+volatile, 118.1 sizeof, 118.1 addr_of, 118.1 cstr/atomic/debug, cross-
+cutting) + synthesis к concrete 15-item sequenced plan.
+
+Synthesis honest scope assessment: 14 outstanding items totaling 6-9
+dev-days; ~11 items realistic in autonomous session; 4 items DEFERRED
+(macros + CStr lexer + AtomicPtr GC + DebugPrintable format-DSL — each
+multi-day infrastructure work с design approval gates).
+
+### Commit chain (10 new commits после V1 merge 5a9de2c9f40)
+
+Plan 118.5 V2 markers — 5 implementation + 3 design = 8 markers CLOSED:
+  - c4b5f465197 — [M-118.5-write-safe-tracking]: assign-target Ident skip
+  - e9a35b4ac17 — [M-118.5-narrow-cast]: E_UNSAFE_T_NARROW_REQUIRES_UNSAFE
+  - 48205080620 — [M-118.5-arg-coerce-unsafe]: check_unsafe_coerce_args
+  - 5db1b3267b3 — [M-118.5-member-index-call-broader]: Member/Index walk
+  - b580a18cab5 — [M-118.5-npo-recalculation]: structural NPO walk
+  - c2beb86da8e — docs+spec: Plan 118.5 V2 closure + D33 amend (consume
+    binding-only) + D216 V2 §V2.2b (mut T transparent) + D218 RETRACTED
+    (MaybeUninit subsumed by unsafe T)
+
+Plan 118.1 Ф.2 + Ф.2.3 — 2 markers CLOSED:
+  - bebe3859827 — [M-118.1-sizeof-intrinsic partial]: size_of/align_of для
+    typed pointer family + Mut/Unsafe transparent wrappers
+  - 6f7c... (volatile commit, hash после rebuild) — [M-118.1-volatile-ops]:
+    read_volatile/write_volatile codegen + 3 fixtures
+
+Docs closure:
+  - 6438f330441 — docs(plan118.1 + plan118): Ф.2/Ф.2.3 closure + 4 deferral
+    markers (addr_of! macros, CStr lexer, AtomicPtr generic, DebugPrintable)
+
+### Tests
+
+- plan118_5 (V2 fixtures): **14/14 PASS** (was 6; +8 new V2 fixtures)
+- plan118_1 (RawMem + volatile + sizeof): **11/11 PASS** (was 7; +4 new)
+- plan118 (umbrella): 38/38 PASS
+- plan118_4 (typed read/write V1): 4/4 PASS
+- plan114_4_2 (const fn): 15/15 PASS — UNCHANGED
+- plan48_1 (NPO origin): 2/2 PASS — UNCHANGED
+- Total: 84+ tests verified PASS, zero regression vs pre-V2 baseline
+
+### Markers status
+
+CLOSED in this iteration (9 markers):
+  - [M-118.5-narrow-cast]
+  - [M-118.5-arg-coerce-unsafe]
+  - [M-118.5-write-safe-tracking]
+  - [M-118.5-npo-recalculation]
+  - [M-118.5-member-index-call-broader]
+  - [M-118.5-consume-as-type-modifier] (design: NO ACTION)
+  - [M-118.5-d218-maybeuninit-duplication] (design: D218 RETRACTED)
+  - [M-118.5-mut-t-vs-binding-distinction] (design: mut T transparent)
+  - [M-118.1-volatile-ops]
+  - [M-118.1-sizeof-intrinsic] (partial — pointer family + wrappers)
+
+DEFERRED (4 markers + 4 sub-plans):
+  - [M-118.1-cstr-newtype] / [M-118.1-cstr-deferred-to-V2] (lexer prefix infra)
+  - [M-118.1-addr-of-macros] / [M-118.1-addr-of-macro-defer-decision] (macro framework)
+  - [M-118.3-atomicptr-generic-deferred] (Plan 103.2 mono + GC integration)
+  - [M-118.7-debug-fmt-deferred] (format-DSL infra)
+
+Still open from V1 era (cross-cutting):
+  - [M-118.1-typed-pointer-cookbook] (docs polish)
+  - [M-118.1-ffi-perf-bench] (CI matrix scope)
+  - [M-118-debug-printable] = [M-118.7-debug-fmt-deferred]
+  - [M-118.4-struct-ptr-read] (struct T deref)
+  - [M-118.4-typed-ro-write-error] (typed diagnostic)
+  - [M-118-ptr-arithmetic] (p.add(n) / p.offset(n))
+
+### Spec amends в этой iteration
+
+  - D33 amend §«consume binding-only — distinction rationale»
+  - D216 V2 amend §V2.2b «mut T transparent»
+  - D216 V2 amend §V2.3b — E_UNSAFE_T_NARROW_REQUIRES_UNSAFE +
+    E_UNSAFE_ARG_REQUIRES_WRAP error codes registered
+  - D218 RETRACTED (MaybeUninit subset subsumed by unsafe T)
+
+### Lessons learned
+
+1. **Honest scope acknowledgement valuable.** Synthesis explicitly
+   recommended deferring 4/15 items с infrastructure-blocker rationale —
+   produced cleaner deliverable than half-implementations.
+
+2. **Parser warnings infrastructure (built earlier for false-framing
+   case) found 0 use here.** Kept anyway as future-proofing — `[M-118.5-
+   consume-as-type-modifier]` если revisited could use it.
+
+3. **NPO recalc lowest-risk via sibling-function pattern.** Adding
+   register_novaopt_decl_with_typeref + register_novaopt_decl_forced
+   alongside existing function preserved 7 other call sites' heuristic
+   behavior (correct для canonical forms). Structural check only at the
+   primary entry point where TypeRef is available.
+
+4. **ConsumeCtx in_call_arg flag pattern reusable.** Required для
+   [M-118.5-arg-coerce-unsafe] к coordinate UnsafeCtx Ident check with
+   precise ConsumeCtx coerce check (different contexts, conflicting
+   semantics resolved by deferral).
+
+### State
+
+Plan 118 family — 5/9 sub-plans LANDED, 4 DEFERRED с explicit blockers.
+Combined surface sufficient для idiomatic primitive-typed FFI patterns
+(libpng / sqlite / libcurl / openssl byte+typed-int buffer access + MMIO
+register volatile R/W). Plan 118.5 fully closed (V1 + V2 + design).
+Plan 118.1 Ф.1 + Ф.2 + Ф.2.3 closed; Ф.3 + Ф.4 deferred. Plan 118.3 +
+Plan 118 Ф.7 deferred. Next: bidirectional sync с main.

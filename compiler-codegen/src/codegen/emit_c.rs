@@ -19745,6 +19745,34 @@ _cp++; \
                         // compiled.
                         return Ok(format!("((*({})) = ({}), NOVA_UNIT)", obj_c, val_c));
                     }
+                    // **Plan 118.1 Ф.2 [M-118.1-volatile-ops] (2026-06-04):**
+                    // volatile reads/writes для MMIO patterns. Distinct from
+                    // atomics (Plan 103.2) и memory ordering (Plan 103.1):
+                    // volatile is compiler-level qualifier — compiler must
+                    // NOT fold/reorder/elide; barriers/atomics handle CPU-
+                    // level ordering separately.
+                    //
+                    // Emission: `*(volatile T*)p` cast forces volatile access.
+                    // Read returns pointee value; write stores в pointee.
+                    if method == "read_volatile" && args.is_empty() {
+                        // Extract pointee from obj_ty: strip "const " prefix
+                        // and trailing "*".
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .trim_end_matches('*').trim();
+                        let obj_c = self.emit_expr(obj)?;
+                        return Ok(format!(
+                            "(*((volatile {}*)({})))",
+                            pointee, obj_c));
+                    }
+                    if method == "write_volatile" && args.len() == 1 && !is_const {
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .trim_end_matches('*').trim();
+                        let obj_c = self.emit_expr(obj)?;
+                        let val_c = self.emit_expr(args[0].expr())?;
+                        return Ok(format!(
+                            "((*((volatile {}*)({}))) = ({}), NOVA_UNIT)",
+                            pointee, obj_c, val_c));
+                    }
                 }
                 // 3c. D74 math methods on int (selected — abs, sign):
                 //     `n.abs()` → `llabs(n)`. Большинство int-методов — это
@@ -26004,7 +26032,11 @@ _cp++; \
                     if let Ok(c) = self.type_ref_to_c(&generics[0]) {
                         if !c.is_empty() && c != "void*" {
                             let sani = Self::sanitize_for_novaopt(&c);
-                            self.register_novaopt_decl(&sani, &c);
+                            // Plan 118.5 V2 [M-118.5-npo-recalculation]:
+                            // structural NPO check via TypeRef inspection —
+                            // disables NPO для Option[unsafe * T] per §V2.4.
+                            self.register_novaopt_decl_with_typeref(
+                                &sani, &c, &generics[0]);
                         }
                     }
                 } else if name == "Result" && generics.len() == 2 {
@@ -26042,6 +26074,93 @@ _cp++; \
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
+    }
+
+    /// **Plan 118.5 V2 [M-118.5-npo-recalculation] (2026-06-04):** structural
+    /// NPO-aware version of `register_novaopt_decl`. Inspects the TypeRef
+    /// argument for outer Unsafe-before-Pointer — if true, disables NPO
+    /// regardless of c_ty string. Per D216 V2 §V2.4:
+    ///   - `Option[unsafe * T]` (Unsafe(Pointer(T))) → NPO disabled (null is
+    ///     a legitimate value of `unsafe * T`; can't distinguish from None)
+    ///   - `Option[* unsafe T]` (Pointer(Unsafe(T))) → NPO eligible (pointer
+    ///     itself non-null; only pointee is possibly-uninit)
+    ///   - `Option[* T]` / `Option[ro * T]` / `Option[mut * T]` → NPO eligible
+    /// Delegates к `register_novaopt_decl` для actual emission с the resolved
+    /// NPO eligibility flag.
+    fn register_novaopt_decl_with_typeref(
+        &self,
+        sanitized: &str,
+        c_ty: &str,
+        inner_ty: &crate::ast::TypeRef,
+    ) {
+        if inner_ty.outer_unsafe_before_pointer() {
+            // Force tagged layout regardless of c_ty heuristic.
+            self.register_novaopt_decl_forced(sanitized, c_ty, false);
+        } else {
+            // Use existing heuristic-based logic.
+            self.register_novaopt_decl(sanitized, c_ty);
+        }
+    }
+
+    /// Plan 118.5 V2 [M-118.5-npo-recalculation]: NPO-flag-forced variant of
+    /// register_novaopt_decl. Used когда structural analysis dictates NPO
+    /// eligibility independently of c_ty string heuristic.
+    fn register_novaopt_decl_forced(&self, sanitized: &str, c_ty: &str, force_npo: bool) {
+        let mut seen = self.novaopt_decls_seen.borrow_mut();
+        if seen.contains(sanitized) { return; }
+        seen.insert(sanitized.to_string());
+        // Forward-typedef для mono'd generic struct pointer (Plan 48.1).
+        if let Some(stripped) = c_ty.strip_suffix('*') {
+            let inner_name = stripped.trim();
+            if inner_name.contains("____") && inner_name.starts_with("Nova_") {
+                let fwd = format!(
+                    "typedef struct {} {};\n",
+                    inner_name, inner_name);
+                let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+                if !buf.contains(&fwd) {
+                    buf.push_str(&fwd);
+                }
+            }
+        }
+        self.novaopt_value_types.borrow_mut()
+            .insert(sanitized.to_string(), c_ty.to_string());
+        let line = if force_npo {
+            format!(
+                "typedef struct NovaOpt_{} {{ {} value; }} NovaOpt_{};\n",
+                sanitized, c_ty, sanitized)
+        } else {
+            format!(
+                "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
+                sanitized, c_ty, sanitized)
+        };
+        self.novaopt_typedefs_buf.borrow_mut().push_str(&line);
+        // Emit eq fn (delegates через same logic as non-forced variant).
+        let is_scalar = matches!(c_ty, "nova_int" | "nova_bool" | "nova_byte"
+            | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
+            | "nova_f32" | "nova_f64");
+        let is_pointer = c_ty.ends_with('*') || c_ty == "nova_ptr";
+        let cmp_body = if is_scalar || is_pointer {
+            "a.value == b.value".to_string()
+        } else {
+            format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
+        };
+        let eq_fn = if force_npo {
+            format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   return a.value == b.value;\n\
+                 }}\n",
+                sani = sanitized)
+        } else {
+            format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if (a.tag != b.tag) return 0;\n\
+                 \x20   if (a.tag == 0) return 1;\n\
+                 \x20   return {cmp};\n\
+                 }}\n",
+                sani = sanitized, cmp = cmp_body)
+        };
+        self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
     }
 
     fn register_novaopt_decl(&self, sanitized: &str, c_ty: &str) {
@@ -27815,6 +27934,16 @@ _cp++; \
                             return pointee.to_string();
                         }
                         if method == "write" && args.len() == 1 {
+                            return "nova_unit".into();
+                        }
+                        // Plan 118.1 Ф.2 [M-118.1-volatile-ops]: volatile
+                        // variants return same types as regular read/write.
+                        if method == "read_volatile" && args.is_empty() {
+                            let pointee = obj_ty.trim_start_matches("const ")
+                                .trim_end_matches('*').trim();
+                            return pointee.to_string();
+                        }
+                        if method == "write_volatile" && args.len() == 1 {
                             return "nova_unit".into();
                         }
                     }

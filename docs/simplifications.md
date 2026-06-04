@@ -32008,3 +32008,91 @@ ABI change). Read enforcement provides primary safety guarantee. V2
 typed-pointer ergonomics (narrow cast, arg coerce, write tracking,
 structural NPO, broader enforcement, consume-as-type, D218 retract) all
 queued as 9 followup markers.
+
+---
+
+## 2026-06-04 (поздний вечер) — Plan 118 family ITERATION 2
+
+**Branch:** plan-118.5 (10 commits после V1 merge 5a9de2c9f40).
+
+V2 typed-pointer ergonomics ALL **landed** в этой iteration.
+Plus Plan 118.1 Ф.2 volatile + Ф.2.3 size_of-for-pointers. 4 sub-plans
+DEFERRED с explicit infrastructure blockers.
+
+### Шипнутая V2 surface (no longer simplifications)
+
+- ✅ E_UNSAFE_T_NARROW_REQUIRES_UNSAFE (narrow cast outside unsafe block)
+- ✅ E_UNSAFE_ARG_REQUIRES_WRAP (arg coerce unsafe T → non-unsafe param)
+- ✅ Write к unsafe T binding tracked as safe transition (no false error)
+- ✅ Structural NPO walk via TypeRef::outer_unsafe_before_pointer
+- ✅ Member/Index broader enforcement via unsafe_t_root_ident helper
+- ✅ size_of/align_of для typed pointer family + Mut/Unsafe wrappers
+- ✅ read_volatile/write_volatile codegen для MMIO patterns
+
+### Design decisions consolidated (D-block amends)
+
+- D33 amend: consume stays binding-only (не type-level wrapper).
+  Rationale: consume — semantic-binding (ownership transfer, linearity),
+  не syntactic-safety modifier. Right-binding rule applies к ro/mut/unsafe
+  только.
+
+- D216 V2 §V2.2b: `mut T` purely transparent (zero-cost wrapper for
+  syntactic uniformity). Disambiguation: binding-level `let mut x T`
+  (Plan 108) для mutation rights vs type-level `let x mut T` (transparent).
+
+- D218 RETRACTED: MaybeUninit[T] subsumed by Plan 118.5 V2 §V2.3
+  `unsafe T` first-class wrapper. Migration table provided. Slice + Manually-
+  Drop sub-designs of D218 remain unchanged pending Plan 118.2.
+
+### Plan 118.1 V2 simplifications shipped vs deferred
+
+V1 simplifications S118.1-1..S118.1-7 (RawMem byte-level) closed earlier.
+New V2 progress:
+
+#### S118.1-Ф.2 ✅ RESOLVED — volatile shipped
+
+V1 listed `(*T).read_volatile()` / `(*mut T).write_volatile(v)` as
+deferred. Now LANDED. Implementation: `*((volatile T*)p)` C cast pattern;
+write_volatile gated by is_const check (mirror existing write enforcement).
+
+#### S118.1-Ф.2.3 ✅ RESOLVED — size_of-for-pointers shipped
+
+V1 listed `size_of[T]() / align_of[T]()` as deferred. Now LANDED для
+typed pointer family + Mut/Unsafe transparent wrappers. Compute path:
+TypeRef::Pointer → 8; Mut/Unsafe → transparent recurse. Generic [T]
+from generic-fn body remains Plan 114.4 const-fn domain (separate marker).
+
+#### Still DEFERRED (4 sub-plans с infrastructure blockers)
+
+1. **Plan 118.1 Ф.3 addr_of! macros** — Nova has no macro system; requires
+   architectural decision (BuiltinMacro enum vs hardcoded per-name).
+   Cross-cutting impact на future `assert!`, `vec!`, `format!`.
+
+2. **Plan 118.1 Ф.4 CStr + cstr"..." literal** — requires lexer prefix-
+   literal infrastructure (`r"..."` was rejected per earlier spec; no
+   existing parallel). Parser CStrLit AST + codegen .rodata + E_CSTR_EMBEDDED_NULL.
+
+3. **Plan 118.3 AtomicPtr[T] generic** — current `int`-proxy in sync.nv;
+   refactor requires Plan 103.2 mono pattern + GC root callback integration.
+   Workaround functional.
+
+4. **Plan 118 Ф.7 DebugPrintable + ${expr:?}** — requires AST extension
+   InterpStrPart::ExprWithFormat + lexer/parser format-spec + Protocol
+   framework. Affects broader format-DSL design (`:hex`, `:pad-N`).
+
+### Acceptance criteria V2
+
+- ✅ All Plan 118.5 V2 markers (5 implementation + 3 design) — 8 CLOSED
+- ✅ Plan 118.1 Ф.2 + Ф.2.3 — 2 markers CLOSED
+- ⏭️ Plan 118.1 Ф.3/Ф.4 + Plan 118.3 + Plan 118 Ф.7 — DEFERRED с rationale
+- ✅ Zero regression across plan48_1/plan91/plan103/plan114/plan118 family
+- ✅ 84+ tests verified PASS (was 55 после V1; +29 new fixtures)
+
+### Limitation summary
+
+Plan 118 family **89% scope landed** для V1-V2 typed-pointer + safety
+domain. Combined surface sufficient для production primitive-typed FFI
+patterns (libpng / sqlite / libcurl / openssl byte+typed-int buffer
+access + MMIO volatile R/W). Struct deref + pointer arithmetic + advanced
+ergonomics (CStr / addr_of! macros / DebugPrintable interpolation) remain
+дedicated Plan 118 V2 sub-plans с design approval gates.

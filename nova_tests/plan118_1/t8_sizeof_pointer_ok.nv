@@ -1,0 +1,38 @@
+// Plan 118.1 Ф.2.3 T8 — size_of/align_of for typed pointers.
+//
+// Per D216 §1 + D226: typed pointer family (`*T`, `mut * T`, `unsafe * T`,
+// `* unsafe T`) has uniform pointer layout — 8 bytes / 8 align on x64 ABI.
+// Regardless of pointee type. Mut/Unsafe wrappers transparent for value
+// layout (zero-cost markers).
+
+module plan118_1.t8_sizeof_pointer_ok
+
+type Acc {
+    id i64
+}
+
+test "size_of/align_of for typed pointer family" {
+    assert(size_of[* int]() == 8)
+    assert(align_of[* int]() == 8)
+    assert(size_of[mut * int]() == 8)
+    assert(size_of[ro * int]() == 8)
+    assert(size_of[unsafe * int]() == 8)
+    assert(size_of[* Acc]() == 8)
+    assert(size_of[mut * u8]() == 8)
+}
+
+test "size_of for unsafe T value wrapper transparent" {
+    assert(size_of[unsafe int]() == 8)
+    assert(size_of[unsafe u8]() == 1)
+    assert(size_of[unsafe i32]() == 4)
+}
+
+test "size_of for pointer-к-unsafe form" {
+    assert(size_of[* unsafe int]() == 8)
+    assert(size_of[* unsafe Acc]() == 8)
+}
+
+test "size_of for nested pointer chain" {
+    assert(size_of[* * int]() == 8)
+    assert(size_of[mut * ro * int]() == 8)
+}

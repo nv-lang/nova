@@ -10788,6 +10788,17 @@ struct ConsumeRegistry {
     /// Plan 108.1 followup: `(receiver_type, method_name)` → indices of
     /// `mut`-params.  Parallel free-fn `fn_mut_params`.
     method_mut_params: HashMap<(String, String), Vec<usize>>,
+    /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** free-fn
+    /// name → indices of params that are NOT `unsafe T` typed (their type
+    /// has no outer Unsafe wrapper before any Pointer). Used at call sites:
+    /// если arg в одной из этих позиций является unsafe-T binding (Ident
+    /// in `unsafe_t_locals`), → E_UNSAFE_ARG_REQUIRES_WRAP. Passing unsafe-T
+    /// arg к unsafe-T param does NOT error (matched contract).
+    fn_non_unsafe_params: HashMap<String, Vec<usize>>,
+    /// Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: `(receiver_type, method)`
+    /// → indices of non-unsafe-T-typed params. Parallel free-fn
+    /// `fn_non_unsafe_params`.
+    method_non_unsafe_params: HashMap<(String, String), Vec<usize>>,
 }
 
 impl ConsumeRegistry {
@@ -10805,6 +10816,10 @@ impl ConsumeRegistry {
         // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
         let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: non-unsafe-T params
+        // indices (positions where param's outer wrapper is NOT Unsafe).
+        let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut method_non_unsafe_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
         // Mirrors LinearityRegistry::build consume_types collection.
@@ -10850,6 +10865,14 @@ impl ConsumeRegistry {
                     .filter(|(_, p)| p.is_mut)
                     .map(|(i, _)| i)
                     .collect();
+                // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: positions of
+                // params whose declared type does NOT start with Unsafe
+                // wrapper. Passing unsafe-T arg at any of these positions
+                // outside unsafe block → E_UNSAFE_ARG_REQUIRES_WRAP.
+                let non_unsafe_idx: Vec<usize> = fd.params.iter().enumerate()
+                    .filter(|(_, p)| !p.ty.outer_unsafe_before_pointer())
+                    .map(|(i, _)| i)
+                    .collect();
                 match &fd.receiver {
                     Some(r) => {
                         if r.consume {
@@ -10862,6 +10885,12 @@ impl ConsumeRegistry {
                         if !mut_idx.is_empty() {
                             method_mut_params.insert(
                                 (r.type_name.clone(), fd.name.clone()), mut_idx.clone());
+                        }
+                        // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe].
+                        if !non_unsafe_idx.is_empty() {
+                            method_non_unsafe_params.insert(
+                                (r.type_name.clone(), fd.name.clone()),
+                                non_unsafe_idx.clone());
                         }
                         // Plan 103.9 (D174): track method return-type for inference.
                         // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
@@ -10890,6 +10919,10 @@ impl ConsumeRegistry {
                         // Plan 108.1 followup: mut-params indices.
                         if !mut_idx.is_empty() {
                             fn_mut_params.insert(fd.name.clone(), mut_idx);
+                        }
+                        // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe].
+                        if !non_unsafe_idx.is_empty() {
+                            fn_non_unsafe_params.insert(fd.name.clone(), non_unsafe_idx);
                         }
                         // Plan 73 followup: return-тип свободной функции.
                         if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
@@ -10960,6 +10993,7 @@ impl ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods,
             fn_mut_params, method_mut_params,
+            fn_non_unsafe_params, method_non_unsafe_params,
         }
     }
 }
@@ -11113,6 +11147,12 @@ struct ConsumeCtx<'a> {
     /// (explicit readonly annotation на let-binding или fn-param).
     /// Передача такого binding'а в `mut`-параметр → E_READONLY_COERCE.
     readonly_locals: HashSet<String>,
+    /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):**
+    /// HashSet локальных binding'ов/parameters объявленных с type `unsafe T`
+    /// (outer Unsafe wrapper detected via `outer_unsafe_before_pointer()`).
+    /// Передача такого binding'а в non-unsafe param outside unsafe context
+    /// → E_UNSAFE_ARG_REQUIRES_WRAP.
+    unsafe_t_locals: HashSet<String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -11133,6 +11173,7 @@ impl<'a> ConsumeCtx<'a> {
             param_mut: HashMap::new(),
             local_mut: HashMap::new(),
             readonly_locals: HashSet::new(),
+            unsafe_t_locals: HashSet::new(),
         }
     }
 
@@ -11785,6 +11826,12 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // consume params получают неявно mut (по spec).
                     let effective_mut = p.is_mut || p.consume;
                     ctx.param_mut.insert(p.name.clone(), effective_mut);
+                    // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: track
+                    // unsafe-T-annotated params (outer Unsafe wrapper detected
+                    // before any Pointer wrapper).
+                    if p.ty.outer_unsafe_before_pointer() {
+                        ctx.unsafe_t_locals.insert(p.name.clone());
+                    }
                     // Plan 108.1 followup: track readonly-annotated params.
                     if matches!(&p.ty, TypeRef::Readonly(..)) {
                         ctx.readonly_locals.insert(p.name.clone());
@@ -12100,6 +12147,61 @@ fn consume_join(saved: &HashMap<String, VarState>,
 /// Check args at mut-param positions for readonly-binding source.
 /// Передача readonly-binding (через `readonly_locals`) в `mut`-param
 /// → E_READONLY_COERCE с machine-applicable Suggestion.
+/// **Plan 118.5 V2 [M-118.5-member-index-call-broader] (2026-06-04):**
+/// recursively walk Member/Index chain down к the root Ident. Used by
+/// UnsafeCtx walk_expr Member/Index arms to detect access through unsafe-T
+/// bindings (e.g. `x.field.subfield` where x: unsafe T → root is `x`).
+/// Conservative: returns None for non-Ident / non-Member / non-Index roots
+/// (no false-positives on inferred types).
+fn unsafe_t_root_ident(e: &Expr) -> Option<String> {
+    use crate::ast::ExprKind;
+    match &e.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::Member { obj, .. } => unsafe_t_root_ident(obj),
+        ExprKind::Index { obj, .. } => unsafe_t_root_ident(obj),
+        _ => None,
+    }
+}
+
+/// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** passing
+/// `unsafe T` binding к non-unsafe param outside unsafe context →
+/// E_UNSAFE_ARG_REQUIRES_WRAP.
+///
+/// Parallel structure к `check_readonly_coerce_args` (D176 / Plan 108.1).
+/// `non_unsafe_param_idxs` — positions of params whose declared type is NOT
+/// `unsafe T` (after strip_modifiers check). Args at these positions whose
+/// expression is Ident в `ctx.unsafe_t_locals` violate the contract — the
+/// callee may read uninitialized memory.
+fn check_unsafe_coerce_args(
+    ctx: &ConsumeCtx,
+    args: &[CallArg],
+    non_unsafe_param_idxs: &[usize],
+    errors: &mut Vec<Diagnostic>,
+) {
+    for &idx in non_unsafe_param_idxs {
+        if let Some(CallArg::Item(arg)) = args.get(idx) {
+            if let ExprKind::Ident(name) = &arg.kind {
+                if ctx.unsafe_t_locals.contains(name) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_UNSAFE_ARG_REQUIRES_WRAP] argument `{}` имеет \
+                             тип `unsafe T`, но передаётся в non-unsafe \
+                             parameter — нарушение sound subtyping (Plan \
+                             118.5 V2 / D216 V2 §V2.3). callee может прочитать \
+                             uninitialized value. Решения: (a) wrap call site \
+                             в `unsafe {{ ... }}` block с явным narrow cast \
+                             argument: `unsafe {{ fn_name({} as T, ...) }}`; \
+                             (b) declare callee param как `unsafe T` (если \
+                             callee действительно handles uninit values).",
+                            name, name),
+                        arg.span,
+                    ));
+                }
+            }
+        }
+    }
+}
+
 fn check_readonly_coerce_args(
     ctx: &ConsumeCtx,
     args: &[CallArg],
@@ -12259,6 +12361,19 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 for n in &names {
                     if n != "_" {
                         ctx.readonly_locals.insert(n.clone());
+                    }
+                }
+            }
+            // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: track unsafe-T
+            // locals. Detect `let x unsafe T = ...` via the same
+            // outer_unsafe_before_pointer() helper used by Stmt::Let
+            // registration в UnsafeCtx.
+            let is_unsafe_t_annotated = decl.ty.as_ref()
+                .map_or(false, |t| t.outer_unsafe_before_pointer());
+            if is_unsafe_t_annotated {
+                for n in &names {
+                    if n != "_" {
+                        ctx.unsafe_t_locals.insert(n.clone());
                     }
                 }
             }
@@ -13033,9 +13148,17 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
                             // E_READONLY_COERCE — передача readonly-binding в mut-param метода.
                             if let Some(mut_idxs) = ctx.reg
-                                .method_mut_params.get(&(ty, method.clone())).cloned()
+                                .method_mut_params.get(&(ty.clone(), method.clone())).cloned()
                             {
                                 check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                            }
+                            // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]:
+                            // E_UNSAFE_ARG_REQUIRES_WRAP — передача unsafe-T-
+                            // binding в non-unsafe param метода.
+                            if let Some(non_unsafe_idxs) = ctx.reg
+                                .method_non_unsafe_params.get(&(ty, method.clone())).cloned()
+                            {
+                                check_unsafe_coerce_args(ctx, args, &non_unsafe_idxs, errors);
                             }
                         }
                     } else if let ExprKind::Member {
@@ -13141,6 +13264,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     // E_READONLY_COERCE — передача readonly-binding в mut-param.
                     if let Some(mut_idxs) = ctx.reg.fn_mut_params.get(fname.as_str()).cloned() {
                         check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                    }
+                    // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]:
+                    // E_UNSAFE_ARG_REQUIRES_WRAP — передача unsafe-T-binding
+                    // в non-unsafe param свободной функции.
+                    if let Some(non_unsafe_idxs) = ctx.reg
+                        .fn_non_unsafe_params.get(fname.as_str()).cloned()
+                    {
+                        check_unsafe_coerce_args(ctx, args, &non_unsafe_idxs, errors);
                     }
                     for (i, a) in args.iter().enumerate() {
                         let is_consume_param = consume_idxs.contains(&i);
@@ -16420,6 +16551,7 @@ pub(crate) fn check_unsafe_context_in_module(
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
         unsafe_t_vars: vec![HashSet::new()],
+        in_call_arg: false,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -16490,6 +16622,11 @@ struct UnsafeCtx {
     /// `E_UNSAFE_T_READ_REQUIRES_WRAP`. Write safe (transitions к valid).
     /// Stack of scope-frames mirrors ptr_vars structure.
     unsafe_t_vars: Vec<HashSet<String>>,
+    /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** when true,
+    /// the Ident read check для unsafe_t_vars is suppressed — defer к the
+    /// precise `check_unsafe_coerce_args` pass which knows callee param
+    /// types. Set when walking Call args; cleared при return.
+    in_call_arg: bool,
 }
 
 impl UnsafeCtx {
@@ -16596,7 +16733,16 @@ impl UnsafeCtx {
                 self.walk_expr(&c.value, errors);
             }
             Stmt::Assign { target, value, .. } => {
-                self.walk_expr(target, errors);
+                // **Plan 118.5 V2 [M-118.5-write-safe-tracking] (2026-06-04):**
+                // Write к unsafe T binding is SAFE (transitions value к valid
+                // initialized state per D216 V2 §V2.3). Skip the Ident read
+                // check for simple-Ident assign targets — `x = 42` doesn't
+                // READ x. Non-Ident targets (`x.field = 42`, `arr[i] = 42`)
+                // DO read x (to find field/element), so walk normally.
+                use crate::ast::ExprKind;
+                if !matches!(target.kind, ExprKind::Ident(_)) {
+                    self.walk_expr(target, errors);
+                }
                 self.walk_expr(value, errors);
             }
             Stmt::Return { value: Some(e), .. } => self.walk_expr(e, errors),
@@ -16721,12 +16867,65 @@ impl UnsafeCtx {
                     }
                 }
                 self.walk_expr(func, errors);
+                // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: walk args в
+                // in_call_arg mode — defers unsafe-T Ident read check к
+                // precise check_unsafe_coerce_args (ConsumeCtx pass), which
+                // knows callee param types and only errors on TRUE mismatches
+                // (unsafe-T arg → non-unsafe param).
+                let prev_in_call_arg = self.in_call_arg;
+                self.in_call_arg = true;
                 for a in args {
                     self.walk_expr(a.expr(), errors);
                 }
+                self.in_call_arg = prev_in_call_arg;
             }
-            ExprKind::Member { obj, .. } => self.walk_expr(obj, errors),
+            ExprKind::Member { obj, .. } => {
+                // Plan 118.5 V2 [M-118.5-member-index-call-broader] (2026-06-04):
+                // accessing a field on an unsafe-T binding reads the binding
+                // value (to evaluate the .field/.method) — this counts as
+                // unsafe read. Conservative scope: only fire if root Ident
+                // is unambiguously в unsafe_t_vars.
+                if self.depth == 0 && !self.in_call_arg {
+                    if let Some(root) = unsafe_t_root_ident(obj) {
+                        if self.is_unsafe_t_var(&root) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_T_READ_REQUIRES_WRAP] member \
+                                     access reads `unsafe T` binding `{}` — \
+                                     requires unsafe context (Plan 118.5 V2 / \
+                                     D216 V2 §V2.3). Field access evaluates \
+                                     the binding value (possibly uninitialized). \
+                                     Wrap access site в `unsafe {{ ... }}` block.",
+                                    root,
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
+                self.walk_expr(obj, errors)
+            }
             ExprKind::Index { obj, index } => {
+                // Plan 118.5 V2 [M-118.5-member-index-call-broader]: index
+                // access on unsafe-T binding reads the slot — needs unsafe.
+                if self.depth == 0 && !self.in_call_arg {
+                    if let Some(root) = unsafe_t_root_ident(obj) {
+                        if self.is_unsafe_t_var(&root) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_T_READ_REQUIRES_WRAP] index \
+                                     access reads `unsafe T` binding `{}` — \
+                                     requires unsafe context (Plan 118.5 V2 / \
+                                     D216 V2 §V2.3). Indexing evaluates the \
+                                     binding value (possibly uninitialized). \
+                                     Wrap в `unsafe {{ ... }}` block.",
+                                    root,
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 self.walk_expr(obj, errors);
                 self.walk_expr(index, errors);
             }
@@ -16829,7 +17028,48 @@ impl UnsafeCtx {
                         }
                     }
                 }
-                self.walk_expr(inner, errors);
+                // **Plan 118.5 V2 [M-118.5-narrow-cast] (2026-06-04):** narrow
+                // cast `unsafe T → T` (strip Unsafe wrapper from value type) is
+                // a value-level assertion of validity. Requires `unsafe { }`
+                // context per D216 V2 §V2.3 — caller asserts the value is
+                // actually initialized.
+                //
+                // Detection: inner is `Ident` registered в `unsafe_t_vars` AND
+                // target ty (after strip_modifiers) is NOT an Unsafe wrapper
+                // (so cast narrows OUT of unsafe). If depth==0, emit specific
+                // narrow-cast error AND skip the inner walk (else generic
+                // E_UNSAFE_T_READ_REQUIRES_WRAP would also fire — double error).
+                let mut narrow_handled = false;
+                if self.depth == 0 {
+                    if let ExprKind::Ident(name) = &inner.kind {
+                        if self.is_unsafe_t_var(name)
+                            && !matches!(ty.strip_modifiers(),
+                                crate::ast::TypeRef::Unsafe(_, _))
+                        {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_T_NARROW_REQUIRES_UNSAFE] narrow \
+                                     cast from `unsafe T` binding `{}` к non-\
+                                     unsafe type requires `unsafe {{ ... }}` \
+                                     context (Plan 118.5 V2 / D216 V2 §V2.3). \
+                                     Caller must assert the value is actually \
+                                     initialized before narrowing. Wrap entire \
+                                     cast expression: `unsafe {{ {} as T }}`. \
+                                     Write к unsafe T binding is safe \
+                                     (transitions к valid); only the explicit \
+                                     drop of the `unsafe` wrapper requires \
+                                     unsafe context assertion.",
+                                    name, name,
+                                ),
+                                e.span,
+                            ));
+                            narrow_handled = true;
+                        }
+                    }
+                }
+                if !narrow_handled {
+                    self.walk_expr(inner, errors);
+                }
             }
             ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 self.walk_expr(inner, errors);
@@ -16871,7 +17111,11 @@ impl UnsafeCtx {
             // catches naturally via the Member/Index/Call arms recursing into
             // the Ident base (the access ITSELF is the read).
             ExprKind::Ident(name) => {
-                if self.depth == 0 && self.is_unsafe_t_var(name) {
+                // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: when walking
+                // Call args, defer unsafe-T read check к the precise
+                // ConsumeCtx check_unsafe_coerce_args (which knows callee
+                // param types — matched-param pass should NOT error).
+                if self.depth == 0 && !self.in_call_arg && self.is_unsafe_t_var(name) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_UNSAFE_T_READ_REQUIRES_WRAP] reading `unsafe T` \

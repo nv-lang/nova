@@ -1,0 +1,25 @@
+// Plan 118.5 V2 NEG T4 — passing unsafe-T arg к non-unsafe param fails.
+//
+// Per D216 V2 §V2.3: callee with non-unsafe param T expects valid initialized
+// value. Passing unsafe-T binding outside unsafe block leaks uninit к callee
+// — emit E_UNSAFE_ARG_REQUIRES_WRAP.
+//
+// Closes [M-118.5-arg-coerce-unsafe] NEG half.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_ARG_REQUIRES_WRAP
+
+module plan118_5.t4_neg_unsafe_arg_to_safe_param
+
+fn safe(x int) -> () {
+    assert(x == 42)
+}
+
+fn driver() -> () {
+    mut x unsafe int = 0
+    x = 42
+    safe(x)                          // ❌ unsafe T → int safe param — error
+}
+
+test "unsafe T arg к non-unsafe param rejected" {
+    driver()
+}
