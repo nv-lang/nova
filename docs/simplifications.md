@@ -32414,4 +32414,64 @@ contention observed but standalone все pass.
 **Followups:** `[M-123.7.6-generic-ref-types]` (user generic wrappers),
 `[M-123.7.6-method-realloc-flag]` (distinguish swap-and-replace).
 
+---
+
+## Plan 123.4.4 — Codegen fluent-chain root-temp pre-pass
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-4-4-codegen-chain-root. ~700 LOC.
+Closes `[M-123.4.4-codegen-fluent-chain-root-temp]` — the marker that
+triggered the entire 5-sub-plan umbrella session.
+
+**Что сделано:** WriteBuffer.@write_char triple `nova_self->buf` issue
+fixed via AST pre-pass. Detects fluent chains of depth ≥ 2 with known-
+fluent methods on `@F` receivers and rewrites:
+
+```
+@F.m1(a).m2(b).m3(c)
+→ { let _chain_root_<N>_F = @F; _chain_root_<N>_F.m1(a);
+    _chain_root_<N>_F.m2(b); _chain_root_<N>_F.m3(c);
+    _chain_root_<N>_F }
+```
+
+**Принципы:**
+
+- **AST pre-pass adjacent к callnorm** chosen over codegen-level fix —
+  general, future-proof, transparent к downstream passes (field_cache
+  etc. see the rewritten form).
+
+- **Hard-coded fluent method list** для V1 scope. 30 entries cover all
+  known stdlib fluent builders ([]T mutators + WriteBuffer/
+  StringBuilder write-family). V2 will use FnDecl `-> @` signature
+  inspection.
+
+- **Top-down detection** — check outermost frame first, wrap whole
+  chain. Bottom-up would rewrite inner Calls first, breaking outer
+  extractor's left-deep walk.
+
+- **Reference-type safety** implicit в whitelist — these methods only
+  exist on reference types в Nova stdlib. Value-type rewrite would
+  change semantics; не handled until TypeDecl integration (V2).
+
+- **Pipeline integration** at 14 sites following each `callnorm::
+  normalize_module` call. main / test_runner / bench / nova-cli /
+  nova-lsp all updated.
+
+**Acceptance (V123.4.4.1-V123.4.4.10 все ✅):** depth-2/3 wrap, depth-1
+not wrapped, non-fluent rejected, non-self-root rejected, member reads
+count = 1 после rewrite, trailing returns receiver, fluent-method
+recognizer, nested-in-if handling, idempotency.
+
+**Verification:** 10 unit + 1 runtime fixture (2 tests) PASS via
+release nova test + clang. Pre-existing 33 lib failures (parser/
+lints/sum_schema) Plan 114 `let`-removal unrelated. Integration
+confirmed: prelude WriteBuffer/StringBuilder chains в C output now
+have `_chain_root_<N>_buf = (nova_self->buf)` once + per-push uses.
+
+**Followups:**
+- `[M-123.4.4-user-fluent-detection]` — V2 TypeDecl-driven detection.
+- `[M-123.4.4-non-self-receivers]` — extend к non-self chain roots.
+
+🎯 **Umbrella `123-followups-2026-06-04` — все 5 sub-plans CLOSED.**
+
+
 
