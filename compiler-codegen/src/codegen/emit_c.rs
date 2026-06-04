@@ -14453,6 +14453,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
+                } else if let Some(arr_elem_ty) = self.compute_array_elem_type_for_obj(&decl.value) {
+                    // Plan 123 chain-cache fix: RHS — field/chain access
+                    // (`@map._buckets` → `_at_map__buckets_chain`). `val` —
+                    // C-строка field-access, не ключ в array_element_types,
+                    // поэтому lookup выше промахивается. Вычисляем element type
+                    // из AST поля напрямую (через template+subst для generic
+                    // полей вроде `_buckets []Slot[K,V]`), иначе индексация
+                    // кэш-temp `_at_..._chain[i]` падает в nova_int fallback
+                    // → `slot->tag` на nova_int (CC-FAIL: set/hashmap iter).
+                    self.array_element_types.insert(binding.clone(), arr_elem_ty);
                 }
                 // Plan 63 Fix F+ [M-result-erased-no-mono]: production-grade
                 // propagation. Если RHS — call к fn'у с зарегистрированным
