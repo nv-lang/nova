@@ -32339,3 +32339,34 @@ separately.
 **Why hard cap "≥3 unexplained flip-сайтов в Ф.4 → откат":** Recursive composition (Ф.4) — riskiest шаг. Каждый рекурсивный шаг удваивает walk. Может покрыть exotic паттерн в неожиданном месте std/. Without hard cap, ползучий scope creep → repeat of 24-regression scenario. Whitelist'е Ф.1-Ф.3 (trailing-only без recursion) достаточно для JSON Ф.3 unblock (json.nv использует prosto trailing-throw в `read_unicode_escape`).
 
 **Why ф.5 (type-checker side) опциональна, не required:** codegen-only V1 закрывает Plan 91 Ф.3 (JSON conformance) — main user-facing goal. types/mod.rs change purely для semantic cleanliness + LSP correctness. Pragmatic shipping: codegen V1 production-ready, Ф.5 nice-to-have. Если Ф.5 gate fail'ит — `[M-125-type-checker-never-first-class]` followup, не блокер.
+
+---
+
+## Plan 123.2.1 — Loop-body LICM coordination (V2.1)
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-v2-1-loop-body-coord. ~400 LOC.
+Closes `[M-123.1.2-loop-body-licm-coordination]`.
+
+**Что сделано:** V1.1 outer region scanner under-promoted caching for
+loop-heavy fns. V2.1 weights loop-body reads by NOVA_FC_LOOP_ITERS
+(default 8, matches V6.2 cycle-estimate weight).
+
+**Принципы:**
+
+- **Parallel `_weighted` family** instead of refactoring existing
+  callers — keeps backward compat for V1.2 nested processing.
+- **Saturating multiplication** prevents pathological overflow.
+- **Env-tuned weight** (`NOVA_FC_LOOP_ITERS`) shares config с V6.2.
+- **V1.2 unchanged:** nested-region processing uses unweighted
+  (single-iteration semantics).
+
+**Acceptance (V2.1.1-V2.1.6 все ✅):** loop-body promotes top-level
+cache, no-loop fn no promotion, for-loop weighted, nested loops
+compound, env helper accuracy, weighted = simple на no-loop input.
+
+**Verification:** 6 unit + 1 runtime fixture PASS. Zero regressions:
+field_cache lib 89/89 + all 11 plan123_* directories.
+
+**Followups:** `[M-123.2.1-v2-licm-threshold-integration]`,
+`[M-123.2.1-dynamic-loop-count]`.
+

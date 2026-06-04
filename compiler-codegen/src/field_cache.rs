@@ -2137,9 +2137,239 @@ fn find_mut_regions_with_ipa(
     Some(find_mut_regions_in_block(b, fname, ipa, body_span))
 }
 
+/// Plan 123.2.1 (V2.1, 2026-06-04): loop iteration weight для read counts.
+/// Reads inside loop bodies (while/for/loop/while-let) are weighted by
+/// this factor when V2.1-aware region scanner is used. Env-tunable via
+/// `NOVA_FC_LOOP_ITERS` (same as V6.2 cycle-estimate weight). Default 8.
+///
+/// Closes `[M-123.1.2-loop-body-licm-coordination]`.
+fn v2_1_loop_iters_weight() -> usize {
+    std::env::var("NOVA_FC_LOOP_ITERS")
+        .ok().and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0).unwrap_or(8)
+}
+
+/// Plan 123.2.1 (V2.1): loop-weighted read counter. When the recursion
+/// enters a loop body (while/for/loop/while-let/parallel-for), multiplies
+/// the running `loop_mult` factor. Otherwise behaves identically к
+/// `count_field_reads_in_expr` (closures excluded, etc.).
+///
+/// Caller seeds `loop_mult = 1` at the top of a Block; deeper-nested
+/// loop bodies inherit a multiplied value. Used by V1.1 outer region
+/// counting к make top-level cache decisions sensitive к loop bodies'
+/// actual runtime cost.
+fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -> usize {
+    if let Some(t_fname) = match_self_field(e) {
+        return if t_fname == fname { loop_mult } else { 0 };
+    }
+    if matches!(&e.kind,
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. }
+    ) {
+        return 0;
+    }
+    let mut c = 0;
+    match &e.kind {
+        ExprKind::Block(b) => c += count_field_reads_in_block_weighted(b, fname, loop_mult),
+        ExprKind::If { cond, then, else_ } => {
+            c += count_field_reads_in_expr_weighted(cond, fname, loop_mult);
+            c += count_field_reads_in_block_weighted(then, fname, loop_mult);
+            if let Some(eb) = else_ {
+                c += match eb {
+                    ElseBranch::Block(b) => count_field_reads_in_block_weighted(b, fname, loop_mult),
+                    ElseBranch::If(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+                };
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            c += count_field_reads_in_expr_weighted(scrutinee, fname, loop_mult);
+            c += count_field_reads_in_block_weighted(then, fname, loop_mult);
+            if let Some(eb) = else_ {
+                c += match eb {
+                    ElseBranch::Block(b) => count_field_reads_in_block_weighted(b, fname, loop_mult),
+                    ElseBranch::If(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+                };
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            c += count_field_reads_in_expr_weighted(scrutinee, fname, loop_mult);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    c += count_field_reads_in_expr_weighted(g, fname, loop_mult);
+                }
+                c += match &arm.body {
+                    MatchArmBody::Expr(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+                    MatchArmBody::Block(b) => count_field_reads_in_block_weighted(b, fname, loop_mult),
+                };
+            }
+        }
+        // V2.1: entering a loop body multiplies the weight.
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            c += count_field_reads_in_expr_weighted(iter, fname, loop_mult);
+            c += count_field_reads_in_block_weighted(body, fname,
+                loop_mult.saturating_mul(v2_1_loop_iters_weight()));
+        }
+        ExprKind::While { cond, body, .. } => {
+            c += count_field_reads_in_expr_weighted(cond, fname, loop_mult);
+            c += count_field_reads_in_block_weighted(body, fname,
+                loop_mult.saturating_mul(v2_1_loop_iters_weight()));
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            c += count_field_reads_in_expr_weighted(scrutinee, fname, loop_mult);
+            c += count_field_reads_in_block_weighted(body, fname,
+                loop_mult.saturating_mul(v2_1_loop_iters_weight()));
+        }
+        ExprKind::Loop { body, .. } => {
+            c += count_field_reads_in_block_weighted(body, fname,
+                loop_mult.saturating_mul(v2_1_loop_iters_weight()));
+        }
+        ExprKind::With { bindings, body } => {
+            for wb in bindings {
+                c += count_field_reads_in_expr_weighted(&wb.handler, fname, loop_mult);
+            }
+            c += count_field_reads_in_block_weighted(body, fname, loop_mult);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            c += count_field_reads_in_block_weighted(body, fname, loop_mult);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            c += count_field_reads_in_block_weighted(body, fname, loop_mult);
+            if let Some(cc) = cancel {
+                c += count_field_reads_in_expr_weighted(cc, fname, loop_mult);
+            }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => c += count_field_reads_in_expr_weighted(e, fname, loop_mult),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => c += count_field_reads_in_expr_weighted(e, fname, loop_mult),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            c += count_field_reads_in_expr_weighted(a, fname, loop_mult);
+            c += count_field_reads_in_expr_weighted(b, fname, loop_mult);
+        }
+        ExprKind::Index { obj, index } => {
+            c += count_field_reads_in_expr_weighted(obj, fname, loop_mult);
+            c += count_field_reads_in_expr_weighted(index, fname, loop_mult);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            c += count_field_reads_in_expr_weighted(func, fname, loop_mult);
+            for arg in args {
+                c += count_field_reads_in_expr_weighted(arg.expr(), fname, loop_mult);
+            }
+            if let Some(t) = trailing {
+                c += match t {
+                    Trailing::Block(b) => count_field_reads_in_block_weighted(b, fname, loop_mult),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+                        FnBody::Block(b) => count_field_reads_in_block_weighted(b, fname, loop_mult),
+                        FnBody::External => 0,
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => count_field_reads_in_block_weighted(&tb.body, fname, loop_mult),
+                };
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                c += match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+                };
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                c += match el {
+                    MapElem::Pair(k, v) => count_field_reads_in_expr_weighted(k, fname, loop_mult)
+                        + count_field_reads_in_expr_weighted(v, fname, loop_mult),
+                    MapElem::Spread(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+                };
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for rf in fields {
+                if let Some(v) = &rf.value {
+                    c += count_field_reads_in_expr_weighted(v, fname, loop_mult);
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { c += count_field_reads_in_expr_weighted(el, fname, loop_mult); }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { c += count_field_reads_in_expr_weighted(e, fname, loop_mult); }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            c += count_field_reads_in_expr_weighted(tag, fname, loop_mult);
+            for a in args { c += count_field_reads_in_expr_weighted(a, fname, loop_mult); }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { c += count_field_reads_in_expr_weighted(s, fname, loop_mult); }
+            if let Some(e) = end { c += count_field_reads_in_expr_weighted(e, fname, loop_mult); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            c += count_field_reads_in_expr_weighted(range, fname, loop_mult);
+            c += count_field_reads_in_expr_weighted(body, fname, loop_mult);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { c += count_field_reads_in_expr_weighted(e, fname, loop_mult); }
+        }
+        // Leaf / ignored — no descent
+        _ => {}
+    }
+    c
+}
+
+fn count_field_reads_in_stmt_weighted(s: &Stmt, fname: &str, loop_mult: usize) -> usize {
+    match s {
+        Stmt::Let(d) => count_field_reads_in_expr_weighted(&d.value, fname, loop_mult),
+        Stmt::Const(d) => count_field_reads_in_expr_weighted(&d.value, fname, loop_mult),
+        Stmt::Expr(e) => count_field_reads_in_expr_weighted(e, fname, loop_mult),
+        Stmt::Assign { target, value, .. } => {
+            let t_count = if match_self_field(target).is_some() { 0 }
+                else { count_field_reads_in_expr_weighted(target, fname, loop_mult) };
+            t_count + count_field_reads_in_expr_weighted(value, fname, loop_mult)
+        }
+        Stmt::Return { value, .. } => value.as_ref().map_or(0, |v| count_field_reads_in_expr_weighted(v, fname, loop_mult)),
+        Stmt::Throw { value, .. } => count_field_reads_in_expr_weighted(value, fname, loop_mult),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            count_field_reads_in_expr_weighted(body, fname, loop_mult)
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            count_field_reads_in_expr_weighted(init, fname, loop_mult)
+                + count_field_reads_in_block_weighted(body, fname, loop_mult)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            count_field_reads_in_expr_weighted(expr, fname, loop_mult)
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => 0,
+    }
+}
+
+fn count_field_reads_in_block_weighted(b: &Block, fname: &str, loop_mult: usize) -> usize {
+    let mut c = 0;
+    for s in &b.stmts {
+        c += count_field_reads_in_stmt_weighted(s, fname, loop_mult);
+    }
+    if let Some(t) = &b.trailing {
+        c += count_field_reads_in_expr_weighted(t, fname, loop_mult);
+    }
+    c
+}
+
 /// Plan 123.1.2 (V1.2, 2026-06-04): block-level region scanner — works on
 /// **any** `&Block`, not just the FnBody's top block. Used by V1.1
 /// (через FnBody-wrapper) AND by V1.2 nested-region recursion.
+///
+/// Plan 123.2.1 (V2.1, 2026-06-04): uses loop-weighted read counter so
+/// reads inside loop bodies (while/for/loop) influence top-level region
+/// decisions с the realistic runtime cost factor. V1.2 nested processing
+/// of the loop body itself still uses single-iteration count (those
+/// caches live for one iteration). Closes `[M-123.1.2-loop-body-licm-
+/// coordination]`.
 fn find_mut_regions_in_block(
     b: &Block,
     fname: &str,
@@ -2168,7 +2398,10 @@ fn find_mut_regions_in_block(
             region_first_span = None;
             continue;
         }
-        let in_stmt = count_field_reads_in_stmt(s, fname);
+        // Plan 123.2.1 (V2.1): weight reads inside loop bodies by
+        // `NOVA_FC_LOOP_ITERS` (default 8). Stmt's own reads weigh 1
+        // by default; nested loop body reads multiply.
+        let in_stmt = count_field_reads_in_stmt_weighted(s, fname, 1);
         if in_stmt > 0 {
             region_reads += in_stmt;
             if region_first_span.is_none() {
@@ -2193,7 +2426,8 @@ fn find_mut_regions_in_block(
         }
     } else {
         if let Some(t) = &b.trailing {
-            let trail_reads = count_field_reads_in_expr(t, fname);
+            // Plan 123.2.1 (V2.1): trailing also loop-weighted.
+            let trail_reads = count_field_reads_in_expr_weighted(t, fname, 1);
             if trail_reads > 0 {
                 region_reads += trail_reads;
                 if region_first_span.is_none() {
@@ -9346,6 +9580,178 @@ fn Buf mut @ops() -> int {
         assert!(!names.iter().any(|n| n == "_at_count_r1"),
             "no V1.1 split needed когда V7.5 makes single region; got {:?}",
             names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.2.1 (V2.1, 2026-06-04): loop-body LICM coordination.
+    // Closes [M-123.1.2-loop-body-licm-coordination]. Loop-body reads
+    // в V1.1 outer region scanner weighted by NOVA_FC_LOOP_ITERS (default 8)
+    // — top-level caching decisions reflect realistic runtime cost.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V2.1.1 positive: top-level cache emitted когда the only reads
+    /// of `@x` are inside a while body (cond + 1 read), AND threshold
+    /// is set so that single-iteration count would fail (1 < threshold=4)
+    /// but weighted count (1 × 8 = 8) passes.
+    #[test]
+    fn v2_1_loop_body_read_promotes_top_level_cache() {
+        // Threshold = 4 — single-iteration read count (=1 from body) fails.
+        // V2.1 weights body reads by 8 (default) → effective count = 8 ≥ 4 → cache.
+        let src = r#"
+module testmod.v2_1_loop_promote
+type C { mut x int }
+fn C mut @do(n int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        acc = acc + @x
+        i = i + 1
+    }
+    acc
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 4,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // V2.1: cache fires because loop-weighted count crosses threshold.
+        assert!(names.iter().any(|n| n == "_at_x"),
+            "V2.1: weighted loop-body read should promote top-level cache; got {:?}",
+            names);
+    }
+
+    /// V2.1.2 negative: top-level cache NOT emitted когда reads outside
+    /// any loop are below threshold AND no loop body reads exist.
+    #[test]
+    fn v2_1_no_loop_no_promotion() {
+        let src = r#"
+module testmod.v2_1_no_loop
+type C { mut x int }
+fn C mut @do() -> int {
+    @x  // single read, no loop
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 4,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(!names.iter().any(|n| n == "_at_x"),
+            "V2.1: single read без loop body should NOT cache; got {:?}",
+            names);
+    }
+
+    /// V2.1.3 positive: for-loop body reads weighted same as while.
+    #[test]
+    fn v2_1_for_loop_body_weighted() {
+        let src = r#"
+module testmod.v2_1_for
+type C { mut x int }
+fn C mut @sum_with(items []int) -> int {
+    mut acc = 0
+    for it in items {
+        acc = acc + @x + it
+    }
+    acc
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 5,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "sum_with");
+        let names = all_at_let_names_recursive(f);
+        assert!(names.iter().any(|n| n == "_at_x"),
+            "V2.1: for-loop body read should promote с threshold=5; got {:?}",
+            names);
+    }
+
+    /// V2.1.4 positive: nested loops compound the multiplier.
+    /// Reads in nested while-inside-while body weigh `iters_weight^2`.
+    #[test]
+    fn v2_1_nested_loops_compound_multiplier() {
+        let src = r#"
+module testmod.v2_1_nested_loops
+type C { mut x int }
+fn C mut @do(n int, m int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        mut j = 0
+        while j < m {
+            acc = acc + @x
+            j = j + 1
+        }
+        i = i + 1
+    }
+    acc
+}
+"#;
+        // Threshold high enough that single-level wouldn't fire (8 reads)
+        // but double-level would (64 reads).
+        let cfg = FieldCacheConfig {
+            threshold: 16,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(names.iter().any(|n| n == "_at_x"),
+            "V2.1: nested loop body should compound weight; got {:?}", names);
+    }
+
+    /// V2.1.5 unit: `v2_1_loop_iters_weight()` reads env var, defaults 8.
+    #[test]
+    fn v2_1_weight_helper_defaults_and_env() {
+        // Default path — assuming env is unset.
+        std::env::remove_var("NOVA_FC_LOOP_ITERS");
+        assert_eq!(v2_1_loop_iters_weight(), 8);
+        // Override via env.
+        std::env::set_var("NOVA_FC_LOOP_ITERS", "16");
+        assert_eq!(v2_1_loop_iters_weight(), 16);
+        // Invalid (=0) falls back to default.
+        std::env::set_var("NOVA_FC_LOOP_ITERS", "0");
+        assert_eq!(v2_1_loop_iters_weight(), 8);
+        // Non-numeric — default.
+        std::env::set_var("NOVA_FC_LOOP_ITERS", "abc");
+        assert_eq!(v2_1_loop_iters_weight(), 8);
+        std::env::remove_var("NOVA_FC_LOOP_ITERS");
+    }
+
+    /// V2.1.6 unit: weighted counter matches simple counter on no-loop input.
+    #[test]
+    fn v2_1_weighted_equals_simple_no_loop() {
+        // Build a simple expression: `@x + @x + @x` (3 reads, no loop).
+        let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
+        let read = || Expr {
+            kind: ExprKind::Member {
+                obj: Box::new(Expr { kind: ExprKind::SelfAccess, span }),
+                name: "x".to_string(),
+            }, span,
+        };
+        let sum = Expr {
+            kind: ExprKind::Binary {
+                op: BinOp::Add,
+                left: Box::new(Expr {
+                    kind: ExprKind::Binary {
+                        op: BinOp::Add,
+                        left: Box::new(read()),
+                        right: Box::new(read()),
+                    }, span,
+                }),
+                right: Box::new(read()),
+            }, span,
+        };
+        let simple = count_field_reads_in_expr(&sum, "x");
+        let weighted = count_field_reads_in_expr_weighted(&sum, "x", 1);
+        assert_eq!(simple, weighted, "no-loop case must match simple counter");
+        assert_eq!(simple, 3);
     }
 
     // ─────────────────────────────────────────────────────────────────
