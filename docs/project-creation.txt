@@ -31899,3 +31899,27 @@ Pattern lesson:
 - Helper pattern с Option<Vec<String>> return type cleanly handles
   variable-depth chain walking без recursive Rust function. Loop
   with accumulator + reverse at end is more efficient than recursion.
+
+=== Plan 123.2.1 — Loop-body LICM coordination (V2.1, 2026-06-04) ===
+
+Followup [M-123.1.2-loop-body-licm-coordination] closure. Third of
+umbrella 123-followups-2026-06-04. V1.1 outer region scanner under-
+promoted caching for fns с loop-body-only reads (counted reads per
+iteration, не runtime). V2.1 adds env-tunable iteration weighting
+(NOVA_FC_LOOP_ITERS default 8, matches V6.2).
+
+Implementation (~400 LOC):
+- v2_1_loop_iters_weight env-reader NEW
+- count_field_reads_in_expr_weighted family NEW (~230 LOC, mirror с
+  loop_mult multiplier)
+- find_mut_regions_in_block uses weighted variants
+- 6 unit tests v2_1_* + 1 runtime fixture
+
+Verification: 6 unit + 1 runtime PASS. Zero regressions: lib 89/89,
+all 11 plan123_* dirs (69 runtime tests).
+
+Spec: D218 amend V2.1 (~110 lines).
+Plan doc: docs/plans/123.2.1-loop-body-coord.md.
+
+Followups: [M-123.2.1-v2-licm-threshold-integration],
+[M-123.2.1-dynamic-loop-count].

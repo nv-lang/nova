@@ -5557,6 +5557,105 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D218 amend V2.1 — Loop-body LICM coordination (Plan 123.2.1)
+
+**Source:** [Plan 123.2.1](../../docs/plans/123.2.1-loop-body-coord.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.1.2-loop-body-licm-coordination]`.
+
+### 1. Scope
+
+V1.1 top-level region scanner uses single-iteration read counts when
+deciding whether `@F` cache crosses threshold. But loop bodies execute
+N times — real cost of a read inside `while`/`for`/`loop` body is
+N × syntactic_count. V1.1 без weighting under-promotes caching for
+fns где the dominant reads are inside hot loops.
+
+V2 LICM already hoists loop-invariant `@F` reads out of loop bodies
+(D218). But V2 has its own threshold + barrier rules — V1.1's outer
+region cache and V2's per-loop hoist don't share a cost model.
+
+V2.1 introduces **loop-iteration weighting** in V1.1's outer region
+scanner: reads inside loop bodies are multiplied by an estimated
+iteration count (`NOVA_FC_LOOP_ITERS`, default 8 — matches V6.2 cycle-
+estimate weight). This makes V1.1's caching decisions sensitive к
+loop-body presence без changing V2 LICM's local logic.
+
+### 2. Algorithm
+
+New env-tunable weight + parallel weighted counter family:
+
+```rust
+fn v2_1_loop_iters_weight() -> usize {
+    std::env::var("NOVA_FC_LOOP_ITERS")
+        .ok().and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0).unwrap_or(8)
+}
+
+fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -> usize {
+    if let Some(t_fname) = match_self_field(e) {
+        return if t_fname == fname { loop_mult } else { 0 };
+    }
+    match &e.kind {
+        ExprKind::While { cond, body, .. } => {
+            count_field_reads_in_expr_weighted(cond, fname, loop_mult)
+            + count_field_reads_in_block_weighted(body, fname,
+                loop_mult.saturating_mul(v2_1_loop_iters_weight()))
+        }
+        // ... For / ParallelFor / WhileLet / Loop similarly multiply.
+        // ... All other variants pass `loop_mult` unchanged.
+    }
+}
+```
+
+`count_field_reads_in_stmt_weighted` + `count_field_reads_in_block_
+weighted` round out the family. Used by `find_mut_regions_in_block`
+с `loop_mult = 1` initial seed.
+
+### 3. Multiplier composition
+
+Nested loops compound. `while { while { @x } }` body reads get
+multiplier `1 × 8 × 8 = 64`. Saturating multiplication prevents
+overflow на pathologically deep nesting.
+
+### 4. V1.2 unchanged
+
+V1.2 nested-region processing of loop bodies still uses unweighted
+counter (each iteration sees same single count). V1.2 caches live
+for one iteration; loop weighting irrelevant к its threshold
+decisions.
+
+### 5. Composition
+
+- V2 LICM (D218) still runs independently. V2.1 only changes V1.1
+  outer counting.
+- V1.2 nested-region (D217 V1.2) unaffected — uses original
+  `count_field_reads_in_*` for per-block analysis.
+- V6.2 static cycle-savings estimate uses same `NOVA_FC_LOOP_ITERS`
+  weight для LICM cost model — V2.1 brings V1.1 cost model в line.
+
+### 6. Acceptance
+
+- **V2.1.1** Top-level cache emitted когда reads are loop-body-only
+  AND weighted count crosses threshold ✅
+- **V2.1.2** No spurious cache for non-loop fn с reads below threshold ✅
+- **V2.1.3** For-loop body weighting works same as while ✅
+- **V2.1.4** Nested loops compound multiplier ✅
+- **V2.1.5** `v2_1_loop_iters_weight()` env helper accuracy ✅
+- **V2.1.6** Weighted counter equals simple counter на no-loop input ✅
+- Zero regressions: field_cache lib **89/89** PASS (83 baseline + 6 V2.1).
+- All 11 plan123_* test directories PASS (69 runtime tests).
+- Runtime fixture `nova_tests/plan123_2_1/` **1/1** PASS.
+
+### 7. Followups
+
+- **V2.2 (future):** integrate weighted counter into V2 LICM's own
+  threshold checks (currently LICM uses unweighted) — would make
+  per-loop hoist decisions also iteration-aware.
+- **V2.3 (future):** dynamic loop count detection from `for X in
+  range(N)` literal bounds — better than static weight для known-
+  bounded loops.
+
 ## D223 amend V7.7 — Chain receiver IPA extension (Plan 123.7.7)
 
 **Source:** [Plan 123.7.7](../../docs/plans/123.7.7-chain-receiver.md).
