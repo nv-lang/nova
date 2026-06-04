@@ -1,0 +1,21 @@
+// Plan 125 Ф.2: match arm panic, others int.
+
+module plan125.match_arm_panic_others_int
+
+type Tag | Lo | Hi | Bad
+
+fn rank(t Tag) -> int {
+    match t {
+        Lo  => 1
+        Hi  => 100
+        Bad => panic("invalid tag")
+    }
+}
+
+test "rank Lo" {
+    assert(rank(Tag.Lo) == 1)
+}
+
+test "rank Hi" {
+    assert(rank(Tag.Hi) == 100)
+}

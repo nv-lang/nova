@@ -1,0 +1,22 @@
+// Plan 125 Ф.1: match с двумя divergent + одной не-divergent — выбирает int.
+
+module plan125.two_branch_diverging_match_int
+
+type Sig | Halt | Quit | Go
+
+fn step(s Sig) Fail -> int {
+    match s {
+        Halt => throw "halt"
+        Quit => throw "quit"
+        Go   => 11
+    }
+}
+
+test "Go branch picks int" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro n = step(Sig.Go)
+        assert(n == 11)
+    }
+}

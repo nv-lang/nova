@@ -1,0 +1,23 @@
+// Plan 125 Ф.4: block-expression — { throw "..." } непосредственно как trailing if-then.
+// Demonstrates block-recursion в expr_diverges_125.
+
+module plan125.block_only_throw_in_let
+
+fn pick(c bool) Fail -> int {
+    if c {
+        {
+            throw "wrapped"
+        }
+    } else {
+        9
+    }
+}
+
+test "block-wrapped throw in then" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro n = pick(false)
+        assert(n == 9)
+    }
+}

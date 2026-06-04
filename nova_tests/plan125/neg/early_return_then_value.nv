@@ -1,0 +1,21 @@
+// Plan 125 negative — НЕ confusing с early `return` в stmts.
+// Помним лессон prior-attempt 24-regression: `if early-cond { return X } else { compute() }`
+// должен компилиться. Тут return стоит в then-stmts перед trailing-выражением,
+// но это валидный паттерн: trailing-of-then = unit (нет trailing), а else имеет str trailing.
+// При нашей логике: block_trailing_diverges (для then) → trailing=None → last_stmt=Stmt::Return → diverges=true,
+// тип if-expr = тип else = str. PASS expected (positive case).
+
+module plan125.neg_early_return_then_value
+
+fn classify(c bool) -> str {
+    if c {
+        return "early"
+    } else {
+        "late"
+    }
+}
+
+test "early-return idiom compiles + works" {
+    assert(classify(true) == "early")
+    assert(classify(false) == "late")
+}

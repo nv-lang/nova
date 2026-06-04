@@ -1,0 +1,36 @@
+// Plan 125 Ф.1/Ф.4: then-block содержит side-effect stmts перед throw.
+// Helper должен распознать divergence по последнему Stmt::Throw в b.stmts.
+
+module plan125.if_then_block_with_stmts_then_throw
+
+fn pick(c bool, log mut []str) Fail -> str {
+    if c {
+        log.push("before-throw")
+        throw "boom"
+    } else {
+        "ok"
+    }
+}
+
+test "stmts-then-throw still flagged divergent" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        mut log = []str{}
+        ro s = pick(false, log)
+        assert(s == "ok")
+        assert(log.len() == 0)
+    }
+}
+
+test "stmts-then-throw fires on true" {
+    mut caught = false
+    with Fail = effect Fail {
+        fail(_) { caught = true; interrupt () }
+    } {
+        mut log = []str{}
+        ro _ = pick(true, log)
+        assert(log.len() == 1)
+    }
+    assert(caught)
+}

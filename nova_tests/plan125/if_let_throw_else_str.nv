@@ -1,0 +1,20 @@
+// Plan 125 Ф.4: if-let — divergent в then.
+
+module plan125.if_let_throw_else_str
+
+fn pick(opt Option[int]) Fail -> str {
+    if let Some(_x) = opt {
+        throw "bad"
+    } else {
+        "none-ok"
+    }
+}
+
+test "if-let then-throw, else-str" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = pick(None)
+        assert(s == "none-ok")
+    }
+}
