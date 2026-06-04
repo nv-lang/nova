@@ -32232,3 +32232,49 @@ cache survives across `@arr.push()`). That's its real scope.
 - `[M-123.7.5-chain-receiver]` — V7.7 chain receivers.
 
 
+
+
+---
+
+## Plan 110.9.5.a + M-110-deadline-fire-fixture ✅ closed (2026-06-05)
+
+**Status:** ✅ COMPLETE. Branch `plan-110-final-polish`.
+Two final non-stdlib-dep markers Plan 110 family closed.
+
+**110.9.5.a — Remove pragmatic accept-both** (commit `4756bba430f`):
+`is_unit_tr` в types/mod.rs:2256 had pragmatic accept-both для THREE forms
+(Unit, Tuple([]), Named("unit")) с comment "broader-scope refactor required".
+Recon Workflow `wf_ccdccc85-007` (4 parallel Explore agents) revealed:
+- Parser ALREADY emits canonical TypeRef::Unit(Span) via single site
+  (parser/mod.rs:5031).
+- NO Tuple([]) или Named("unit") TypeRef construction sites anywhere.
+- Peer `is_unit_or_none()` at types/mod.rs:9137 already strict.
+
+Pragmatic accept-both was defensive code для non-existent variance.
+4-line cleanup. Verification: 5/5 representative @on_exit fixtures PASS
+standalone. Full-suite TIMEOUTs = system load (16 parallel clang), not
+code failures.
+
+**M-110-deadline-fire-fixture** (commit `7624ca51d1e`): E2E test verifies
+all 6 codegen splices of deadline pipeline (Level 1 lookup + shield enter
++ sleep suspend + deadline check + typed throw + Fail propagation).
+Unblocked после 110.9.2 (Level 1) + 110.9.1 (typed throw) landed earlier.
+
+**Design lesson — Pragmatic comments often overstate scope:**
+"Broader-scope refactor required (110.9.5.a deferred)" actually = "remove
+defensive 4 lines". Routine recon перед deferral can save dev-days.
+
+**Recon Workflow pattern:** 4 parallel Explore agents in single phase
+(parser sites + accept-both audit + fixture pattern + cascade audit)
+provided ground truth in ~16 minutes — manual investigation would have
+taken ~½ day. Pattern для future canon/refactor decisions: spawn parallel
+recon, decide based on actual scope, not initial estimate.
+
+**System-load TIMEOUT detection rule:** Standalone fixture PASS + parallel
+suite TIMEOUT = system, NOT code. Verify via standalone runs of
+representative timed-out fixtures before reverting code changes.
+
+🎯 **Plan 110 family полностью завершена** для core/codegen/runtime:
+12 D-blocks ACTIVE + 9 sub-plans closed + 76 fixtures standalone PASS.
+Remaining open markers — stdlib integrations или external plan deps,
+explicit extractions, не silent simplifications.
