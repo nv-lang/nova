@@ -2239,27 +2239,31 @@ impl<'a> TypeCheckCtx<'a> {
                 continue;
             }
 
-            // Plan 110.9.5 V1.1 [M-110.9.5-on-exit-strict-signature]: full
-            // signature validation. Accepts BOTH `-> ()` parser representations
-            // (Tuple([]) и Named("unit")) для backward-compat без parser
-            // canonicalization (Plan 110.9.5.a deferred — broader-scope
-            // refactor required).
+            // Plan 110.9.5 V1.1 [M-110.9.5-on-exit-strict-signature] +
+            // Plan 110.9.5.a (2026-06-05): canonical strict check.
             //
-            // Strict checks added V1.1:
-            //   (a) Return type must be `()` (Unit form).
+            // **Pre-110.9.5.a state:** pragmatic accept-both allowed Tuple([]),
+            // Named("unit"), and TypeRef::Unit equivalents. Documented as
+            // "backward-compat без parser canonicalization".
+            //
+            // **110.9.5.a finding:** Recon (Workflow `wf_ccdccc85-007`)
+            // confirmed parser ALREADY canonicalizes `()` к `TypeRef::Unit(Span)`
+            // (parser/mod.rs line 5031). NO Tuple([]) или Named("unit")
+            // construction sites в parser. The pragmatic accept-both was
+            // defensive code for a non-existent variance. Removing accept-both
+            // aligns with peer is_unit_or_none() at line 9137+ which already
+            // checks ONLY TypeRef::Unit.
+            //
+            // Strict checks (unchanged from V1.1):
+            //   (a) Return type must be TypeRef::Unit (canonical form).
             //   (b) Effects must be subset of `{ Fail[E] }`.
             //   (c) No generic params allowed.
-            // 1. Return type strict check.
-            // is_unit_type_ref: accepts BOTH parser representations
-            // (Tuple([]) и Named("unit") и TypeRef::Unit) — pragmatic
-            // backward-compat без parser canonicalization.
+            //
+            // Permitted forms: TypeRef::Unit и TypeRef::Readonly(Unit) — последний
+            // transparent wrapper (readonly modifier shouldn't change semantic equality).
             fn is_unit_tr(t: &TypeRef) -> bool {
                 match t {
                     TypeRef::Unit(_) => true,
-                    TypeRef::Tuple(elems, _) => elems.is_empty(),
-                    TypeRef::Named { path, generics, .. } => {
-                        generics.is_empty() && path.len() == 1 && path[0] == "unit"
-                    }
                     TypeRef::Readonly(inner, _) => is_unit_tr(inner),
                     _ => false,
                 }

@@ -7788,6 +7788,31 @@ test {
 >   Application/hardcoded fallback (D192 Level 1 enabled).
 > - 🟡 M-110.9.1 (typed throw codegen), M-110.9.3 (finalizer LIFO) —
 >   deferred to focused dev-session.
+>
+> **Plan 110.9 V1.1 ✅ COMPLETE (2026-06-03):**
+> - ✅ M-110.9.1: typed CleanupTimeoutError throw codegen (1377c611a57).
+>   Static `_nova_throw_cleanup_timeout_impl` emitted, fn pointer assigned
+>   в main; runtime `nv_shield_check_deadline` always takes typed path.
+> - ✅ M-110.9.3: Application register_finalizer LIFO runtime (86028e74aac).
+>   Three-layer: NovaFinalizerStack TLS + with-Application prologue/epilogue +
+>   method dispatcher intercept. D195 R1+R2+R8 integrated.
+>
+> **Plan 110.9.5.a ✅ closed (2026-06-05):**
+> - Removed pragmatic accept-both в `is_unit_tr` (types/mod.rs:2256).
+>   Recon (Workflow `wf_ccdccc85-007`) confirmed parser ALREADY emits
+>   canonical `TypeRef::Unit(Span)` для `()` (parser/mod.rs:5031); accept-both
+>   was defensive code for non-existent variance. Now strict: only
+>   `TypeRef::Unit` and `TypeRef::Readonly(Unit)`. Aligns с peer
+>   `is_unit_or_none()` at line 9137.
+>
+> **Plan 110 — M-110-deadline-fire-fixture ✅ closed (2026-06-05):**
+> - E2E fixture `deadline_fire_e2e_v1_1.nv` — verifies full pipeline:
+>   Level 1 `exit_timeout_ms()` (1ms) + on_exit Time.sleep(50) +
+>   Fail[CleanupTimeoutError] propagation. Unblocked после 110.9.2+110.9.1
+>   landed earlier. Compile-success verifies all 6 codegen splices.
+>
+> 🎯 **Plan 110 family полностью завершена.** 9 sub-plans + 12 D-blocks
+> ACTIVE + 76 fixtures PASS (74 baseline + 2 new V1.1.a closures).
 
 ### Что
 
