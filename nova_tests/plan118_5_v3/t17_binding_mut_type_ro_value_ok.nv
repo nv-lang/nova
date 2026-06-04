@@ -1,0 +1,25 @@
+// Plan 118.5 V3 Ф.6 POS T17 — `mut x ro T` binding form всегда разрешено
+// (symmetric к T16 `ro x mut T`).
+//
+// Per V3 §V3.1 amend (binding-context relaxation): `mut` (binding access)
+// и `ro` (content readonly via Readonly wrap) orthogonal. Не §V3.1
+// conflict ни для value-T, ни для ref-T.
+
+module plan118_5_v3.t17_binding_mut_type_ro_value_ok
+
+type Acc {
+    id i64
+}
+
+// mut binding + ro value-type — pre-name mut + type-level ro.
+external fn t17_p1(mut x ro int) -> ()
+
+// mut binding + ro value-type (str).
+external fn t17_p2(mut x ro str) -> ()
+
+// mut binding + ro reference-type (Acc).
+external fn t17_p3(mut x ro Acc) -> ()
+
+test "mut x ro T binding form allowed regardless of T storage class" {
+    assert(1 == 1)
+}

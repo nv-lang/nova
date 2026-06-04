@@ -9103,18 +9103,37 @@ level OR binding+content level requires storage-class qualification.
 
 **Rule:**
 
+**Distinction binding-form vs type-form (V3 amend 2026-06-05):**
+
+§V3.1 storage-class ban applies ONLY к **type-position** `ro mut T` /
+`mut ro T` (where both modifiers appear consecutively на одном уровне
+TypeRef). **Binding-position** `ro x mut T` / `mut x ro T` (modifiers
+вокруг имени параметра/локала) — orthogonal binding modifiers, ALWAYS
+allowed regardless of T's storage class. Closes
+[M-118.5-V3-binding-context-relaxation] (was V4 deferred).
+
 - For **value-type T** (storage IS value):
     - primitives (`int`, `bool`, `f64`, etc.)
     - value records (`type X value { ... }` per Plan 124.8 D228)
     - named tuples (`type Point(x f64, y f64)` per Plan 120 D215)
   
-  Conflicting combinations → **`E_MUTABILITY_CONFLICT_VALUE_TYPE`**:
+  Type-position conflicting combinations → **`E_MUTABILITY_CONFLICT_VALUE_TYPE`**:
     ```nova
-    let ro x mut int = 5             // ❌ — int is value-type
-    let mut x ro Point = ...         // ❌ — Point is named-tuple (value)
     fn f(p * ro mut int)             // ❌ — pure type-level ro+mut on value T
     fn f(p * mut ro Point)           // ❌ — same
+    fn f(p ro mut int)               // ❌ — type-form (name absent before modifiers)
+    fn f() -> mut ro str             // ❌ — return type-form
     type X { field ro mut Acc }      // ❌ if Acc is value record
+    ```
+  
+  Binding-form ALLOWED для value-T:
+    ```nova
+    fn f(ro x mut int)               // ✅ — binding-form (ro pre-name, mut post-name)
+                                     //   ro x: no rebind (binding-level)
+                                     //   mut: mut-method access (binding-level)
+    fn f(mut x ro int)               // ✅ — symmetric
+    let ro x mut int = 5             // ✅ — local-binding form (parser may flag E_LOCAL_*
+                                     //   for non-mut mutation attempts — orthogonal)
     ```
 
 - For **reference-type T** (T-as-pointer-к-data semantically):
@@ -9122,16 +9141,13 @@ level OR binding+content level requires storage-class qualification.
     - arrays `[]T`
     - heap-tracked types
   
-  Combinations VALID with specific semantics:
+  Both type-form AND binding-form VALID:
     ```nova
-    let ro acc mut Acc = ...         // ✅ Acc is heap record
-                                     //   ro acc: cannot `acc = other` (no rebind)
-                                     //   mut Acc: CAN `acc.field = ...` (mutate fields)
-                                     //   mut Acc: CAN `acc.mut_method()`
-    let mut acc ro Acc = ...         // ✅ symmetric
-                                     //   mut acc: CAN `acc = other` (rebind)
-                                     //   ro Acc:  CANNOT `acc.field = ...`
-                                     //   ro Acc:  CANNOT `acc.mut_method()`
+    fn f(ro mut Acc)                 // ✅ type-form, ref-T (Readonly(Mut(Acc)))
+                                     //   semantically: ro binding to mut content
+    fn f(ro acc mut Acc)             // ✅ binding-form
+                                     //   ro acc: no rebind / mut access on binding
+    fn f(mut acc ro Acc)             // ✅ symmetric binding-form
     ```
 
 **For-loop exception:** `for y in iter` — loop variable `y` semantically
@@ -9340,9 +9356,14 @@ re-application syntax.
 | `E_MODIFIER_ORDER` | mut/ro wrapping unsafe (safety-outer rule) | §V3.2 |
 | `E_REDUNDANT_TYPE_MODIFIER` (extended) | same-class modifier repetition (was: binding-level only; V3 extends к type-level chains) | §V3.4 |
 
-E_PARAM_MOD_CONFLICT (param has both `ro` and `mut` binding modifiers
-at param declaration syntax — `fn f(ro mut x T)`) **preserved as-is** —
-binding-level concern orthogonal к type-level §V3.1.
+E_PARAM_MOD_CONFLICT preserved для дисциплинирующих случаев:
+- `mut consume name T` / `consume mut name T` (D131 conflict)
+- `mut readonly name T` (legacy form)
+
+**§V3.1 amend (2026-06-05):** E_PARAM_MOD_CONFLICT **LIFTED** для
+`ro x mut T` (pre-name ro + post-name mut) — orthogonal binding modifiers
+per binding-context relaxation. Symmetric `mut x ro T` уже работал
+(pre-name mut + post-name unhandled — falls to type-level Readonly(T)).
 
 ### §V3.6 — Migration impact (V2 → V3)
 
@@ -9371,8 +9392,11 @@ binding-level concern orthogonal к type-level §V3.1.
 - `[M-118.5-V3-modifier-order]` — Ф.3 parser + .read() return-type
   propagation
 - `[M-118.5-V3-redundant-extension]` — Ф.4 parser ban + safe escape
-- `[M-118.5-V3-binding-context-relaxation]` — V4 followup: relax §V3.1
-  for binding-context ref-T (currently strict)
+- ✅ `[M-118.5-V3-binding-context-relaxation]` — **CLOSED 2026-06-05** —
+  binding-form `ro x mut T` (и симметричное `mut x ro T`) allowed
+  regardless of T storage class. Parser E_PARAM_MOD_CONFLICT lifted для
+  pre-name ro + post-name mut combo. Type-form §V3.1 storage-class check
+  unchanged.
 
 ### D52 amend (Plan 124.8 Ф.2)
 

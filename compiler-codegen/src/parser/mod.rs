@@ -2892,14 +2892,15 @@ impl Parser {
                     self.peek().span,
                 ));
             }
-            if has_readonly_prefix {
-                return Err(Diagnostic::new(
-                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
-                     `readonly` и `mut` (D176)."
-                        .to_string(),
-                    self.peek().span,
-                ));
-            }
+            // **Plan 118.5 V3 amend (binding-context relaxation, 2026-06-05):**
+            // `ro x mut T` — orthogonal binding modifiers. `ro` = no-rebind
+            // semantic at binding level, `mut` = mut-method access at binding.
+            // NOT mutually exclusive per user-confirmed V3 amend. Closes
+            // [M-118.5-V3-binding-context-relaxation].
+            //
+            // (Pre-name `ro` keeps wrapping type as Readonly(T) for content-
+            // readonly compatibility c существующими callers; binding-mut
+            // flag is set additionally — downstream type-checker reads both.)
             self.bump();
             is_mut = true;
         }
