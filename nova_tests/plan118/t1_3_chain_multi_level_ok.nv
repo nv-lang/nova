@@ -17,8 +17,9 @@ type Node {
 external fn p118_chain_mut_ro(pp *mut *ro Node) -> i64
 external fn p118_chain_ro_mut(pp *ro *mut Node) -> i64
 
-// Three-level chain (rare but should parse).
-external fn p118_chain_triple(ppp *mut *ro *mut Node) -> i64
+// Three-level chain (V3.4 migration: removed redundant inner *mut —
+// outer *mut propagates через *ro to innermost level per §V3.3-§V3.4).
+external fn p118_chain_triple(ppp *mut *ro Node) -> i64
 
 // Chain в return position.
 external fn p118_return_chain() -> *mut *ro Node

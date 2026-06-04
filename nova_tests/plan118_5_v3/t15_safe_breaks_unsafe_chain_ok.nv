@@ -1,0 +1,14 @@
+// Plan 118.5 V3 Ф.4 POS T15 — `safe` keyword breaks unsafe redundancy.
+//
+// Per D216 V3 §V3.4: `unsafe * safe unsafe int` — outer unsafe pointer,
+// safe-stop, inner unsafe is intentional fresh layer (e.g., FFI pattern
+// где нужно явно пометить inner T как possibly-uninit независимо от
+// outer pointer-safety).
+
+module plan118_5_v3.t15_safe_breaks_unsafe_chain_ok
+
+external fn t15_p(x unsafe * safe unsafe int) -> ()
+
+test "safe stopper allows unsafe-unsafe chain" {
+    assert(1 == 1)
+}

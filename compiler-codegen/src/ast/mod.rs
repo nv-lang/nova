@@ -1354,25 +1354,22 @@ impl TypeRef {
     /// contains inner Mut, или outer-Unsafe contains inner Unsafe — same-
     /// class repetition. Used by V3 §V3.4 redundancy check.
     pub fn contains_same_class_in_chain(&self, class: ModifierClass) -> bool {
-        match (self, class) {
-            (TypeRef::Readonly(inner, _), ModifierClass::Readonly) => {
-                matches!(inner.as_ref(), TypeRef::Readonly(..))
-                    || inner.contains_same_class_in_chain(class)
-            }
-            (TypeRef::Mut(inner, _), ModifierClass::Mut) => {
-                matches!(inner.as_ref(), TypeRef::Mut(..))
-                    || inner.contains_same_class_in_chain(class)
-            }
-            (TypeRef::Unsafe(inner, _), ModifierClass::Unsafe) => {
-                matches!(inner.as_ref(), TypeRef::Unsafe(..))
-                    || inner.contains_same_class_in_chain(class)
-            }
-            (TypeRef::Readonly(inner, _), _)
-            | (TypeRef::Mut(inner, _), _)
-            | (TypeRef::Unsafe(inner, _), _)
-            | (TypeRef::Pointer(inner, _), _) => {
-                inner.contains_same_class_in_chain(class)
-            }
+        // Direct match: self IS the class.
+        let self_matches = matches!(
+            (self, class),
+            (TypeRef::Readonly(..), ModifierClass::Readonly)
+                | (TypeRef::Mut(..), ModifierClass::Mut)
+                | (TypeRef::Unsafe(..), ModifierClass::Unsafe)
+        );
+        if self_matches {
+            return true;
+        }
+        // Recurse into wrapper inner.
+        match self {
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Pointer(inner, _) => inner.contains_same_class_in_chain(class),
             _ => false,
         }
     }

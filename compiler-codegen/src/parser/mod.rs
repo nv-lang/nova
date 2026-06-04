@@ -4978,6 +4978,24 @@ impl Parser {
                         span,
                     ));
                 }
+                // **Plan 118.5 V3 Ф.4 / §V3.4 (2026-06-04):** same-class
+                // modifier repetition в chain → E_REDUNDANT_TYPE_MODIFIER.
+                // Outer ro already propagates; inner ro redundant. Use
+                // `safe` keyword к break propagation explicitly.
+                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Readonly)
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_REDUNDANT_TYPE_MODIFIER] outer `ro` already \
+                         propagates through nested wrappers — inner `ro` \
+                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
+                         Hint: use `safe` keyword к break propagation \
+                         intentionally — e.g., `ro * safe ro T` makes inner \
+                         ro a fresh wrapper independent of outer propagation."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.1 / D216 V2 §V2.1 (2026-06-04):** universal
@@ -5006,6 +5024,19 @@ impl Parser {
                         span,
                     ));
                 }
+                // Plan 118.5 V3 Ф.4 / §V3.4: outer mut + inner mut redundant.
+                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Mut)
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_REDUNDANT_TYPE_MODIFIER] outer `mut` already \
+                         propagates through nested wrappers — inner `mut` \
+                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
+                         Hint: use `safe` keyword к break propagation."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Mut(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04):** universal
@@ -5020,6 +5051,22 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
+                // Plan 118.5 V3 Ф.4 / §V3.4: outer unsafe + inner unsafe
+                // redundant (outer already propagates через chain).
+                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Unsafe)
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_REDUNDANT_TYPE_MODIFIER] outer `unsafe` already \
+                         propagates through nested wrappers — inner `unsafe` \
+                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
+                         Hint: use `safe` keyword к break propagation \
+                         intentionally (e.g., `unsafe * safe unsafe T` makes \
+                         inner unsafe a fresh wrapper)."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Unsafe(Box::new(inner), span));
             }
             // **Plan 118.5 V3 Ф.1 / D216 V3 §V3.4 (2026-06-04):** `safe`
