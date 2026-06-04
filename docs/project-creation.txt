@@ -31733,3 +31733,51 @@ Pattern lessons:
   can extend.
 - Test ordering: V7.5 tests follow V1.2 tests (which follow V1.1).
   Each V*-series in field_cache::tests reads as a story.
+
+=== Plan 123.5.4 — Explain deep-walk (V5.4, 2026-06-04) ===
+
+Followup [M-123.1.2-explain-deep-walk] closure. V5 ExplainReport
+extended к recursively walk nested blocks + improved ro/mut
+classification via TypeDecl registry lookup.
+
+Problem: V1.2 nested cache lets `_at_<F>_n<N>` lived inside if/while/
+match arms — invisible к analyze_fn_for_explain's top-level-only
+scan. False negative в `nova check --explain-cache` / V5 LSP / V6
+telemetry — reports "0 mut caches" даже когда V1.2 had inserted
+multiple nested caches.
+
+Solution:
+- Signature change: analyze_fn_for_explain + collect_fn_caches both
+  thread &FieldRegistry. analyze_module builds it once.
+- Helper rebuild: explain_walk_block / explain_walk_stmt /
+  explain_walk_expr recursive walkers (~190 LOC), exhaustive
+  ExprKind variant coverage (If/IfLet/Match/For/ParallelFor/While/
+  WhileLet/Loop/With/Forbid/Realtime/Detach/Blocking/Supervised/
+  Block-Expr/Call с trailing). Closures excluded (V1
+  closure_captured preserved).
+- explain_classify_at_let — priority-ordered: suffix-based fixed
+  (_chain/_loop/_call) → TypeDecl lookup (ro/mut) → name-suffix
+  heuristic fallback (_r<N>/_n<N> → mut).
+
+Implementation (~280 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - analyze_module + collect_fn_caches refactored (registry thread)
+  - analyze_fn_for_explain rewrite (calls explain_walk_block)
+  - 4 new helper functions (~190 LOC)
+  - 7 unit tests v5_4_* (~90 LOC)
+- nova_tests/plan123_5_4/v5_4_explain_surfaces_nested_ok.nv
+
+Verification (release nova-cli + clang):
+- 7 V5.4 unit tests PASS
+- 1 runtime fixture PASS via nova test
+- Zero regressions: field_cache lib 77/77
+- Integration smoke: `nova check --explain-cache` теперь shows
+  "D217 mut first-region: x, x" for V1.2 fixtures (previously
+  invisible).
+
+Spec: D217 amend V5.4 (~110 lines) — V5.4.1-V5.4.7 acceptance.
+Plan doc: docs/plans/123.5.4-explain-deep-walk.md.
+
+Followup spawned:
+- [M-123.5.4-explain-region-tagging] — distinguish V1.1 r-region
+  vs V1.2 n-region tagging в report.

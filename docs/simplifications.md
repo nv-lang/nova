@@ -32231,4 +32231,52 @@ cache survives across `@arr.push()`). That's its real scope.
   types.
 - `[M-123.7.5-chain-receiver]` — V7.7 chain receivers.
 
+---
+
+## Plan 123.5.4 — Explain deep-walk (V5.4)
+
+✅ ЗАКРЫТ 2026-06-04 в worktree nova-p123, branch
+plan-123-v5-4-explain-deep-walk. ~280 LOC delta. Closes
+`[M-123.1.2-explain-deep-walk]`.
+
+**Что сделано:** V5 explain pass extended к recursive deep-walk
+всех nested blocks. V1.2 nested `_at_<F>_n<N>` cache lets теперь
+surface в `mut_caches` report. Additionally improved classification:
+TypeDecl registry lookup distinguishes ro vs mut accurately, with
+name-suffix heuristic fallback only когда registry has no info.
+
+**Принципы:**
+
+- **Registry threading:** analyze_module builds FieldRegistry once,
+  passes via collect_fn_caches → analyze_fn_for_explain. Allows
+  per-fn lookup of recv-type's field kinds.
+
+- **Exhaustive recursive walker:** explain_walk_expr covers all
+  ExprKind variants carrying nested blocks. Closures skipped (V1
+  closure_captured rule). Same pattern as V1.2's descend_expr_for_
+  nested — established design lineage.
+
+- **Classification priority:** suffix-based fixed kind (chain/loop/
+  call) → TypeDecl ro/mut lookup → name-suffix fallback. TypeDecl
+  is the source of truth; suffix only a hint when registry has no
+  entry (e.g., extracted module fragments в LSP context).
+
+- **Backward compat:** Top-level scan behavior preserved for V1 +
+  V1.1 outer caches. Deep-walk additive — only adds visibility
+  для V1.2 nested lets.
+
+**Acceptance (V5.4.1-V5.4.7 все ✅):** V1.2 nested surface, V1.1
+r-suffix as mut, deeply nested surface, ro classification correct,
+chain classification preserved, no-cache fn graceful, helper accuracy.
+
+**Verification:** 7 unit tests + 1 runtime fixture PASS via release
+nova-cli + clang. Zero regressions: field_cache lib 77/77. Integration
+smoke verified `nova check --explain-cache` now reports V1.2 nested
+caches.
+
+**Followup:** `[M-123.5.4-explain-region-tagging]` — distinguish V1.1
+r-region vs V1.2 n-region tagging в report для V6 telemetry
+granularity.
+
+
 
