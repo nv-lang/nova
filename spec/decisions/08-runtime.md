@@ -6041,12 +6041,132 @@ each `_at_<F>_r<N>` lives until end of containing block.
 
 ### 8. Followups
 
-- **V1.2 (future):** nested barriers — extend region analysis в
-  if/while/match-arm bodies (currently V1.1 covers только top-level).
+- **V1.2:** ✅ DELIVERED 2026-06-04 — см. D217 amend V1.2 ниже.
 - **V7.5 (future):** callee-non-self-mutation IPA — пометить методы
-  вроде `[]u8.push(self mut)` как НЕ пишущие в outer self's `@F`.
-  Откроет caching через WriteBuffer.@write_char chain pattern и
-  similar fluent-builder code.
+  вроде `[]u8.push(self mut)` как НЕ пишущие в outer self's
+  **sibling** fields. Полезно для caching других fields в методах,
+  которые вызывают `@F.method()`. **NOT** fixes the WriteBuffer
+  `@write_char` chain duplicate (см. Plan 123.4.4 codegen marker).
+
+## D217 amend V1.2 — Nested-region mut cache (Plan 123.1.2)
+
+**Source:** [Plan 123.1.2](../../docs/plans/123.1.2-nested-regions.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.1.1-nested-regions]`.
+
+### 1. Motivation
+
+V1.1 splits FN body's **top-level** stmts on barrier boundaries. When
+a top-level stmt itself contains a barrier (e.g. nested `if` с write
+inside its then-block), V1.1 treats the whole stmt as a barrier и
+skips it entirely. Reads inside nested then/else/while/match-arm
+bodies are NOT cached, даже когда они formed a clean ≥threshold region
+по своему own (e.g. 2 reads pre-write + 2 reads post-write inside
+nested `if`).
+
+V1.2 closes the gap via **recursive nested-region analysis**: after
+V1.1 outer pass finishes, descend into every nested `Block` reachable
+from the fn body and apply per-block multi-region caching.
+
+### 2. Algorithm
+
+```
+walk_nested_blocks_for_mut_field(top_block, fname, cfg, ipa,
+                                  local_names, seq, budget_left):
+    for stmt in top_block.stmts:
+        descend_stmt_for_nested(stmt, ...)
+    if top_block.trailing:
+        descend_expr_for_nested(trailing, ...)
+```
+
+`descend_stmt_for_nested` / `descend_expr_for_nested` exhaustively
+traverse the AST. Each `Block` encountered (in If/IfLet/While/
+WhileLet/For/ParallelFor/Loop/Match arm/With/Forbid/Realtime/Detach/
+Blocking/Supervised/Block-Expr/Trailing block) invokes:
+
+```
+process_nested_block_for_mut_field(block, fname, ...):
+    # Phase A: bottom-up — descend into nested children FIRST.
+    for stmt in block.stmts: descend_stmt_for_nested(stmt, ...)
+    if block.trailing: descend_expr_for_nested(trailing, ...)
+    # Phase B: process THIS block — region split + targets + rewrite + injection.
+    regions = find_mut_regions_in_block(block, fname, ipa)
+    targets = filter(reads >= threshold).map(allocate_unique_local).collect()
+    rewrite reads per-target
+    insert lets per-target в block.stmts at region.start positions
+```
+
+**Bottom-up order is critical:** inner caches landed BEFORE outer
+rewrites might descend over them, avoiding double-rewrite. By the
+time outer rewriter walks, inner `@F` reads have already become
+`_at_<F>_n<N>` idents — not matched by outer's `Member{SelfAccess,F}`
+pattern.
+
+### 3. Naming convention
+
+Nested cache locals use **`_at_<F>_n<N>`** где N — session-monotonic
+counter (increments per allocated nested cache). Distinct namespace
+от V1.1 outer caches (`_at_<F>` / `_at_<F>_r<N>`) — collision-safe by
+construction. Standard `_<K>` suffix added on user-local conflict.
+
+### 4. Closure handling
+
+V1.1 already excludes mut fields referenced inside closures
+(`closure_captured` set). V1.2 inherits the exclusion:
+`descend_expr_for_nested` matches `Lambda/ClosureLight/ClosureFull/
+HandlerLit/ProtocolLit` and returns без descending.
+
+### 5. Budget
+
+V1.2 shares `cfg.max_per_fn` budget с V1.1. After V1.1 allocates
+outer targets (consuming `total_caches` slots), V1.2 has
+`max_per_fn − total_caches` remaining. Per-field-then-per-nested-
+region FIFO в discovery order. Once budget == 0, V1.2 stops cleanly.
+
+### 6. Composition
+
+V1.2 runs AFTER `rewrite_fn_body_split_with_ipa` (V1.1 Phase 2).
+Already-rewritten outer regions show 0 `@F` reads when V1.2 visits
+their nested blocks → no spurious nested cache. Only **untouched**
+nested blocks (those inside V1.1 barrier stmts) produce V1.2 targets.
+
+ExplainReport `analyze_fn_for_explain` (Plan 123.1.1) already scans
+ALL top-level `_at_*` lets — V1.2 nested lets live deeper, currently
+not surfaced in V5 telemetry. Future enhancement: deep-walk
+`analyze_fn_for_explain` для V1.2 visibility. Marker
+`[M-123.1.2-explain-deep-walk]` open.
+
+### 7. Acceptance
+
+- **V1.2.1** Nested then-block with internal write (2 pre + 2 post
+  reads) → 2 cache lets `_at_<F>_n*` injected ✅
+- **V1.2.2** Else-branch caches independently когда if's then-branch
+  contains write ✅
+- **V1.2.3** While-loop body caches pre-write reads ✅
+- **V1.2.4** Match-arm body caches its own multi-region pattern ✅
+- **V1.2.5** Ro field unaffected — no nested `_at_x_n*` even with mut
+  field writes elsewhere ✅
+- **V1.2.6** Nested region < threshold reads skipped ✅
+- **V1.2.7** V1.1 outer + V1.2 nested compose (`_at_<F>` AND
+  `_at_<F>_n*` in same fn) ✅
+- **V1.2.8** Budget `cfg.max_per_fn` caps total (outer + nested) ✅
+- **V1.2.9** Deeply nested (if inside while) gets caching ✅
+- Zero regressions: field_cache lib **64/64** (55 baseline + 9 V1.2)
+  + plan123_1 **18/18** + plan123_1_1 **3/3** + plan123_2 **14/14**
+  + plan123_4 **10/10** PASS via release nova test + clang.
+- Runtime fixtures `nova_tests/plan123_1_2/` **5/5** PASS —
+  semantic preservation under then-block / else-branch / while-body /
+  match-arm / compose-outer-and-nested scenarios.
+
+### 8. Followups
+
+- `[M-123.1.2-explain-deep-walk]` — V5 telemetry doesn't surface
+  V1.2 nested lets; deep-walk `analyze_fn_for_explain` to count
+  them in `mut_caches`.
+- `[M-123.1.2-loop-body-licm-coordination]` — V1.2 can cache the
+  pre-write region inside loop body, but loop-iteration weighting
+  for read count is still unidirectional (counts each read once).
+  Compose с V2 LICM для better loop-body cost model.
 
 ## D217 amend V4.3 — Deep chain prefix sharing (Plan 123.4.3)
 

@@ -1,0 +1,31 @@
+// Plan 123.1.2 (V1.2, 2026-06-04): nested-region inside while body.
+// Outer while-stmt is a barrier (write @x = ... inside loop body).
+// V1.2 descends into the body's stmts and caches the pre-write region.
+
+module plan123_1_2.v1_2_nested_while_body_ok
+
+type Acc {
+    mut x int
+}
+
+fn Acc.new() -> Acc => { x: 0 }
+
+fn Acc mut @run(n int) -> int {
+    mut i = 0
+    while i < n {
+        // 2 reads pre-write → nested cache.
+        ro a = @x
+        ro b = @x
+        @x = a + b + 1
+        i = i + 1
+    }
+    @x
+}
+
+test "V1.2: while-body nested region preserves semantics" {
+    mut a = Acc.new()
+    // x = 1 (i=0: a=0,b=0; new=1); x = 3 (i=1: a=1,b=1; new=3);
+    // x = 7 (i=2: a=3,b=3; new=7).
+    ro r = a.run(3)
+    assert(r == 7)
+}

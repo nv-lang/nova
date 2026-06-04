@@ -31609,3 +31609,61 @@ Combined surface sufficient для idiomatic primitive-typed FFI patterns
 register volatile R/W). Plan 118.5 fully closed (V1 + V2 + design).
 Plan 118.1 Ф.1 + Ф.2 + Ф.2.3 closed; Ф.3 + Ф.4 deferred. Plan 118.3 +
 Plan 118 Ф.7 deferred. Next: bidirectional sync с main.
+
+=== Plan 123.1.2 — Nested-region mut cache (V1.2, 2026-06-04) ===
+
+Followup [M-123.1.1-nested-regions] closure. Расширяет V1.1 multi-region
+mut caching к **nested** blocks: recursively descends into if/while/
+match/for/loop bodies, applies per-block region analysis, allocates
+unique `_at_<F>_n<N>` cache locals для qualifying nested regions.
+
+Algorithm: bottom-up — process nested children FIRST (Phase A), then
+process current block (Phase B). Bottom-up prevents outer-rewriter
+double-rewrite по уже-inserted nested lets.
+
+Implementation (~600 LOC):
+- compiler-codegen/src/field_cache.rs:
+  - find_mut_regions_with_ipa refactored — delegates к новой
+    find_mut_regions_in_block(&Block, ...) (block-level extraction)
+  - alloc_nested_region_local NEW
+  - walk_nested_blocks_for_mut_field NEW
+  - process_nested_block_for_mut_field NEW (bottom-up phases A/B)
+  - descend_stmt_for_nested + descend_expr_for_nested NEW (~250 LOC,
+    exhaustive ExprKind walk skipping closures)
+  - descend_else_for_nested NEW
+  - cache_fn_with_ipa modified — Phase 2 V1.2 invocation после V1.1
+  - early-return condition refined для V1.2 path
+  - 9 unit tests v1_2_* + 100-LOC all_at_let_names_recursive helper
+- nova_tests/plan123_1_2/ — 5 runtime fixtures.
+
+Verification (release nova-cli + clang):
+- 9 V1.2 unit tests PASS
+- 5 runtime fixtures PASS
+- Zero regressions: field_cache lib 64/64 + plan123_1 18/18 +
+  plan123_1_1 3/3 + plan123_2 14/14 + plan123_4 10/10 PASS
+
+Spec: D217 amend V1.2 (~120 lines) — V1.2.1-V1.2.9 acceptance.
+Plan doc: docs/plans/123.1.2-nested-regions.md.
+
+**Workflow-driven discovery:** Plan 123 V1.2 + V7.5 multi-agent
+exploration (workflow w5dlb8t9w) подтвердил architectural insight —
+V7.5 (callee-non-self-mutation IPA) **НЕ** fixes WriteBuffer.
+@write_char chain pattern, contrary to earlier doc claims. Root cause
+= codegen recursive emit_expr(obj) propagation в emit_c.rs:19567
+(single AST @buf read multiplied by 3 chained pushes через string-
+substitution). Spawned NEW marker [M-123.4.4-codegen-fluent-chain-
+root-temp] для codegen-level fix.
+
+Followup markers spawned:
+- [M-123.1.2-explain-deep-walk] — V5 telemetry surface V1.2 lets
+- [M-123.1.2-loop-body-licm-coordination] — V2 LICM cost coord
+- [M-123.4.4-codegen-fluent-chain-root-temp] — codegen chain-root
+  temp для WriteBuffer / StringBuilder / []T fluent chain patterns
+
+Pattern lessons:
+- Bottom-up recursion safe для nested rewrites — inner lets land
+  before outer rewriter descends, no double-rewrite.
+- Sequential seq counter ensures global uniqueness без per-field
+  region_idx scheme — simpler than V1.1.
+- AST walker exhaustiveness critical — workflow agent enumerated
+  все 23+ ExprKind variants requiring descent.
