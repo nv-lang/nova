@@ -17164,10 +17164,26 @@ _cp++; \
                     self.tuple_element_types.insert(scr_tmp.clone(), elem_tys);
                 }
 
-                // Infer result type from then block
-                let result_ty = then.trailing.as_ref()
+                // Plan 125: divergence-aware result-type. If then-branch
+                // diverges (throw/panic/exit/interrupt/user-fn-never/
+                // recursive), pick else-branch's type. Symmetric с
+                // emit_if_expr / infer_If.
+                let then_diverges = self.block_trailing_diverges(then);
+                let then_ty = then.trailing.as_ref()
                     .map(|e| self.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into());
+                let result_ty = if then_diverges {
+                    match else_ {
+                        Some(ElseBranch::Block(b)) => b.trailing.as_ref()
+                            .map(|e| self.infer_expr_c_type(e))
+                            .unwrap_or_else(|| "nova_unit".into()),
+                        Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
+                        None => then_ty.clone(),
+                    }
+                } else {
+                    then_ty.clone()
+                };
+                self.debug_if_infer_125("emit_if_let", then_diverges, &then_ty, "<else>", &result_ty);
                 let result_tmp = self.fresh_tmp_named("if_let");
                 self.line(&format!("{} {};", result_ty, result_tmp));
 
@@ -17178,8 +17194,14 @@ _cp++; \
                 let then_block_id = self.enter_defer_scope(then, false);
                 for stmt in &then.stmts { self.emit_stmt(stmt)?; }
                 if let Some(trailing) = &then.trailing {
-                    let v = self.emit_expr(trailing)?;
-                    self.line(&format!("{} = {};", result_tmp, v));
+                    // Plan 125: divergent-trailing → side-effect only.
+                    if self.expr_diverges_125(trailing) {
+                        let v = self.emit_expr(trailing)?;
+                        self.line(&format!("(void)({});", v));
+                    } else {
+                        let v = self.emit_expr(trailing)?;
+                        self.line(&format!("{} = {};", result_tmp, v));
+                    }
                 }
                 self.leave_defer_scope(then_block_id);
                 self.indent -= 1;
@@ -17193,8 +17215,14 @@ _cp++; \
                         let block_id = self.enter_defer_scope(b, false);
                         for stmt in &b.stmts { self.emit_stmt(stmt)?; }
                         if let Some(trailing) = &b.trailing {
-                            let v = self.emit_expr(trailing)?;
-                            self.line(&format!("{} = {};", result_tmp, v));
+                            // Plan 125: same divergent-trailing guard.
+                            if self.expr_diverges_125(trailing) {
+                                let v = self.emit_expr(trailing)?;
+                                self.line(&format!("(void)({});", v));
+                            } else {
+                                let v = self.emit_expr(trailing)?;
+                                self.line(&format!("{} = {};", result_tmp, v));
+                            }
                         }
                         self.leave_defer_scope(block_id);
                         self.indent -= 1;
@@ -17203,8 +17231,14 @@ _cp++; \
                     Some(ElseBranch::If(e)) => {
                         self.line("} else {");
                         self.indent += 1;
-                        let v = self.emit_expr(e)?;
-                        self.line(&format!("{} = {};", result_tmp, v));
+                        // Plan 125: divergent else-if direct expression.
+                        if self.expr_diverges_125(e) {
+                            let v = self.emit_expr(e)?;
+                            self.line(&format!("(void)({});", v));
+                        } else {
+                            let v = self.emit_expr(e)?;
+                            self.line(&format!("{} = {};", result_tmp, v));
+                        }
                         self.indent -= 1;
                         self.line("}");
                     }
@@ -21931,10 +21965,16 @@ _cp++; \
             Some(ElseBranch::If(e)) => {
                 self.line("} else {");
                 self.indent += 1;
-                // target-type-aware: literal-cleanup для typed-int if-result.
-                let v = self.emit_expr_with_target_type(e, &if_ty)?;
-                let ity = if_ty.clone();
-                Self::emit_assign_typed(self, &tmp, &ity, &v);
+                // Plan 125: divergent else-if direct expression — side-effect only.
+                if self.expr_diverges_125(e) {
+                    let v = self.emit_expr(e)?;
+                    self.line(&format!("(void)({});", v));
+                } else {
+                    // target-type-aware: literal-cleanup для typed-int if-result.
+                    let v = self.emit_expr_with_target_type(e, &if_ty)?;
+                    let ity = if_ty.clone();
+                    Self::emit_assign_typed(self, &tmp, &ity, &v);
+                }
                 self.indent -= 1;
                 self.line("}");
             }
@@ -21952,10 +21992,21 @@ _cp++; \
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
-            // target-type-aware emit: для typed-integer ty литералы в Binary
-            // получают «нативный» suffix вместо ((nova_int)NLL).
-            let v = self.emit_expr_with_target_type(trailing, ty)?;
-            Self::emit_assign_typed(self, tmp, ty, &v);
+            // Plan 125: trailing expression provably divergent (throw/panic/
+            // exit/interrupt/user-fn-never/recursive). Emit ONLY side-effect
+            // — control never reaches the assignment. Without this guard,
+            // codegen emits `tmp = (nv_panic(...), 0LL)` of type nova_int
+            // and tries to assign to non-nova_int tmp (e.g. nova_str) →
+            // CC-FAIL «incompatible type».
+            if self.expr_diverges_125(trailing) {
+                let v = self.emit_expr(trailing)?;
+                self.line(&format!("(void)({});", v));
+            } else {
+                // target-type-aware emit: для typed-integer ty литералы в Binary
+                // получают «нативный» suffix вместо ((nova_int)NLL).
+                let v = self.emit_expr_with_target_type(trailing, ty)?;
+                Self::emit_assign_typed(self, tmp, ty, &v);
+            }
         } else if !diverges {
             // Plan 125: only emit dead-zero-assign when control could actually
             // reach end of block. For divergent blocks (last stmt = throw /
@@ -23002,10 +23053,16 @@ _cp++; \
         let result_ty = self.var_types.get(result_tmp).cloned().unwrap_or_default();
         match body {
             MatchArmBody::Expr(e) => {
-                let val_ty = self.infer_expr_c_type(e);
-                let v = self.emit_expr(e)?;
-                let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
-                self.line(&format!("{} = {};", result_tmp, assignment));
+                // Plan 125: divergent arm body — side-effect only, skip assign.
+                if self.expr_diverges_125(e) {
+                    let v = self.emit_expr(e)?;
+                    self.line(&format!("(void)({});", v));
+                } else {
+                    let val_ty = self.infer_expr_c_type(e);
+                    let v = self.emit_expr(e)?;
+                    let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
+                    self.line(&format!("{} = {};", result_tmp, assignment));
+                }
             }
             MatchArmBody::Block(b) => {
                 // Plan 20 Ф.4/Ф.8: match-arm body — defer scope.
@@ -23015,10 +23072,16 @@ _cp++; \
                     self.emit_stmt(stmt)?;
                 }
                 if let Some(trailing) = &b.trailing {
-                    let val_ty = self.infer_expr_c_type(trailing);
-                    let v = self.emit_expr(trailing)?;
-                    let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
-                    self.line(&format!("{} = {};", result_tmp, assignment));
+                    // Plan 125: same divergent-trailing guard as emit_block_into.
+                    if self.expr_diverges_125(trailing) {
+                        let v = self.emit_expr(trailing)?;
+                        self.line(&format!("(void)({});", v));
+                    } else {
+                        let val_ty = self.infer_expr_c_type(trailing);
+                        let v = self.emit_expr(trailing)?;
+                        let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
+                        self.line(&format!("{} = {};", result_tmp, assignment));
+                    }
                 }
                 self.leave_defer_scope(block_id);
             }

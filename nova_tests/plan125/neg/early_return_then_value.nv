@@ -5,7 +5,7 @@
 // При нашей логике: block_trailing_diverges (для then) → trailing=None → last_stmt=Stmt::Return → diverges=true,
 // тип if-expr = тип else = str. PASS expected (positive case).
 
-module plan125.neg_early_return_then_value
+module neg.early_return_then_value
 
 fn classify(c bool) -> str {
     if c {

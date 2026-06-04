@@ -3,7 +3,7 @@
 // внутри loop'а — обычный паттерн. Whitelist Plan 125 НЕ содержит
 // ExprKind::Break.
 
-module plan125.neg_break_loop_scope_only
+module neg.break_loop_scope_only
 
 fn first_even() -> int {
     mut i = 0

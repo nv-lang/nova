@@ -4,7 +4,7 @@
 // Гарантия: `let x = if c { assert(...) } else { assert(...) }` — оба
 // unit, тип x = unit. Plan 125 НЕ flip'ит.
 
-module plan125.neg_assert_not_divergent
+module neg.assert_not_divergent
 
 fn touch(c bool) -> () {
     if c {

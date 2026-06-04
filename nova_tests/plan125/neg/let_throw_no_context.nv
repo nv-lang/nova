@@ -3,7 +3,7 @@
 // сейчас компилятор скорее всего хочет explicit type annotation. Ожидаемое: CHECK-FAIL.
 // (Followup [M-125-let-never-no-context] — ужесточить error code в spec.)
 
-module plan125.neg_let_throw_no_context
+module neg.let_throw_no_context
 
 fn boom() Fail -> int {
     ro x = throw "no"

@@ -16,7 +16,7 @@ test "stmts-then-throw still flagged divergent" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        mut log = []str{}
+        mut log = []str.new()
         ro s = pick(false, log)
         assert(s == "ok")
         assert(log.len() == 0)
@@ -28,7 +28,7 @@ test "stmts-then-throw fires on true" {
     with Fail = effect Fail {
         fail(_) { caught = true; interrupt () }
     } {
-        mut log = []str{}
+        mut log = []str.new()
         ro _ = pick(true, log)
         assert(log.len() == 1)
     }

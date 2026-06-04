@@ -2,9 +2,9 @@
 
 module plan125.nested_if_throws_in_match
 
-type T | Low | Mid | Hi
+type Tier | Low | Mid | Hi
 
-fn classify(t T, fault bool) Fail -> str {
+fn classify(t Tier, fault bool) Fail -> str {
     match t {
         Low => "low"
         Mid => if fault { throw "mid-fault" } else { "mid" }
@@ -16,9 +16,9 @@ test "nested-if-throw inside match arm" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro a = classify(T.Low, false)
-        ro b = classify(T.Mid, false)
-        ro c = classify(T.Hi,  false)
+        ro a = classify(Tier.Low, false)
+        ro b = classify(Tier.Mid, false)
+        ro c = classify(Tier.Hi,  false)
         assert(a == "low")
         assert(b == "mid")
         assert(c == "hi")
@@ -30,7 +30,7 @@ test "nested-if-throw fires inside Mid" {
     with Fail = effect Fail {
         fail(_) { caught = true; interrupt () }
     } {
-        ro _ = classify(T.Mid, true)
+        ro _ = classify(Tier.Mid, true)
     }
     assert(caught)
 }
