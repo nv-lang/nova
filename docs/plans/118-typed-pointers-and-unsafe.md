@@ -2893,3 +2893,84 @@ Sub-plan files committed в `e642fc86d1e`:
 > - Open `[M-118-*]` followups
 > - Memory `project-plan118-status.md` создан
 > - D216 + D2 amend + D214 amend + D32 amend promoted в active spec (commit refs)
+
+---
+
+## 2026-06-04 (поздний вечер) — Plan 118 family closure status
+
+Cumulative state across Plan 118 family после 2026-06-03 + 2026-06-04 work:
+
+### ✅ CLOSED sub-plans
+
+- **Plan 118 V1 foundational** (2026-06-03) — usize/isize + []T as_ptr +
+  RawMem byte-level methods. Merged 5a9de2c9f40.
+- **Plan 118 Ф.4 V1 typed read/write** (2026-06-03) — `(*ro T).read()` /
+  `(*mut T).write(v)` для primitive T.
+- **Plan 118.5 V1 + V2** (2026-06-04) — universal right-binding rule +
+  first-class `unsafe T` wrapper + 5 V2 markers + 3 design followups
+  CLOSED. plan-118.5 merge pending.
+- **Plan 118.1 Ф.2 volatile** (2026-06-04) — `read_volatile()` /
+  `write_volatile(v)`.
+- **Plan 118.1 Ф.2.3 size_of-for-pointers** (2026-06-04) — const-fn
+  extension typed pointer family + Mut/Unsafe wrappers.
+
+### 🔴 DEFERRED sub-plans
+
+Each requires multi-day infrastructure work; design approval gates
+required for unblock.
+
+#### Plan 118.1 Ф.3 — `addr_of!` / `addr_of_mut!` macros
+
+**DEFERRED.** No macro system in Nova. Requires: lexer `ident!` recognition,
+parser parse_primary special-case, lvalue analysis NEW infrastructure,
+architectural decision (BuiltinMacro enum vs hardcoded per-name).
+Cross-cutting risk affects future `assert!`, `vec!`, `format!`. Workaround:
+`&x` covers most use cases.
+Marker: `[M-118.1-addr-of-macro-defer-decision]`.
+
+#### Plan 118.1 Ф.4 — CStr newtype + `cstr"..."` literal
+
+**DEFERRED.** Requires lexer prefix-literal infrastructure (no existing
+parallel), parser CStrLit AST, codegen .rodata emit с hash-uniquing,
+E_CSTR_EMBEDDED_NULL validation, std/ffi/cstr.nv newtype с D77 from/into.
+Workaround: `"hello\0".to_bytes()` + RawMem patterns.
+Marker: `[M-118.1-cstr-deferred-to-V2]`.
+
+#### Plan 118.3 — AtomicPtr[T] generic refactor
+
+**DEFERRED.** Current `int` proxy в sync.nv (14 method overloads).
+Refactor requires: generic-param threading parallel Plan 103.2, GC root
+callback integration (Plan 82 fiber arena), sync.nv API breaking change,
+C11 `_Atomic(T*)` OR MSVC Interlocked conditional. Cross-fiber safety
+analysis separate work.
+Marker: `[M-118.3-atomicptr-generic-deferred]`.
+
+#### Plan 118 Ф.7 — `DebugPrintable` + format spec :?
+
+**DEFERRED.** Requires NEW AST variant InterpStrPart::ExprWithFormat,
+lexer extension for `:?` inside `${...}`, parser FormatSpec enum, type-
+checker DebugPrintable protocol (Plan 97 framework), codegen branch.
+Affects broader format-DSL (`:hex`, `:pad-N`) design.
+Workaround: E_PTR_NO_DISPLAY_USE_DEBUG_STR diagnostic steers users.
+Marker: `[M-118.7-debug-fmt-deferred]`.
+
+### Summary
+
+Plan 118 family **partial closure 2026-06-04:**
+
+| Sub-plan | Status | Markers closed |
+|----------|--------|----------------|
+| Plan 118 V1 foundational | ✅ LANDED | 12 markers |
+| Plan 118 Ф.4 V1 typed read/write | ✅ LANDED | 1 marker |
+| Plan 118.5 V1+V2 right-binding + unsafe T | ✅ LANDED | 8 markers |
+| Plan 118.1 Ф.2 volatile | ✅ LANDED | 1 marker |
+| Plan 118.1 Ф.2.3 size_of-for-ptrs | ✅ LANDED | 1 partial marker |
+| Plan 118.1 Ф.3 addr_of! macros | 🔴 DEFERRED | needs macro framework |
+| Plan 118.1 Ф.4 CStr + cstr literal | 🔴 DEFERRED | needs lexer prefix infra |
+| Plan 118.3 AtomicPtr[T] generic | 🔴 DEFERRED | needs Plan 103.2 mono + GC |
+| Plan 118 Ф.7 DebugPrintable | 🔴 DEFERRED | needs format-DSL infra |
+
+Combined shipped surface sufficient для idiomatic primitive-typed FFI
+(libpng / sqlite / libcurl / openssl byte+typed-int buffer access + MMIO
+register volatile R/W). Struct deref + pointer arithmetic + advanced
+ergonomics remain в Plan 118 V2.
