@@ -1,0 +1,23 @@
+// Plan 118.5 V2 T8 — member access on unsafe T binding INSIDE unsafe block OK.
+//
+// Closes [M-118.5-member-index-call-broader] POS half (member).
+
+module plan118_5.t8_unsafe_t_member_in_unsafe_ok
+
+type Point {
+    x i64
+    y i64
+}
+
+fn member_in_unsafe() -> () {
+    mut p unsafe Point = Point { x: 0, y: 0 }
+    p = Point { x: 7, y: 8 }       // safe write transitions
+    unsafe {
+        ro v = p.x                  // ✅ inside unsafe block
+        assert(v == 7)
+    }
+}
+
+test "member access on unsafe T inside unsafe block allowed" {
+    member_in_unsafe()
+}

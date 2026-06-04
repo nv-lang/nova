@@ -1,0 +1,25 @@
+// Plan 118.5 V2 NEG T5 — member access on unsafe T binding requires unsafe.
+//
+// Per D216 V2 §V2.3 broader enforcement: x.field where x: unsafe Record
+// reads the binding (evaluates record value) — uninit value could leak.
+//
+// Closes [M-118.5-member-index-call-broader] member half.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_T_READ_REQUIRES_WRAP
+
+module plan118_5.t5_neg_unsafe_t_member_read
+
+type Point {
+    x i64
+    y i64
+}
+
+fn member_access_outside_unsafe() -> () {
+    mut p unsafe Point = Point { x: 0, y: 0 }
+    ro v = p.x                     // ❌ Member access reads p
+    assert(v == 0)
+}
+
+test "member access on unsafe T binding outside unsafe block rejected" {
+    member_access_outside_unsafe()
+}

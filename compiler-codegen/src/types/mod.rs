@@ -12147,6 +12147,22 @@ fn consume_join(saved: &HashMap<String, VarState>,
 /// Check args at mut-param positions for readonly-binding source.
 /// Передача readonly-binding (через `readonly_locals`) в `mut`-param
 /// → E_READONLY_COERCE с machine-applicable Suggestion.
+/// **Plan 118.5 V2 [M-118.5-member-index-call-broader] (2026-06-04):**
+/// recursively walk Member/Index chain down к the root Ident. Used by
+/// UnsafeCtx walk_expr Member/Index arms to detect access through unsafe-T
+/// bindings (e.g. `x.field.subfield` where x: unsafe T → root is `x`).
+/// Conservative: returns None for non-Ident / non-Member / non-Index roots
+/// (no false-positives on inferred types).
+fn unsafe_t_root_ident(e: &Expr) -> Option<String> {
+    use crate::ast::ExprKind;
+    match &e.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::Member { obj, .. } => unsafe_t_root_ident(obj),
+        ExprKind::Index { obj, .. } => unsafe_t_root_ident(obj),
+        _ => None,
+    }
+}
+
 /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** passing
 /// `unsafe T` binding к non-unsafe param outside unsafe context →
 /// E_UNSAFE_ARG_REQUIRES_WRAP.
@@ -16863,8 +16879,53 @@ impl UnsafeCtx {
                 }
                 self.in_call_arg = prev_in_call_arg;
             }
-            ExprKind::Member { obj, .. } => self.walk_expr(obj, errors),
+            ExprKind::Member { obj, .. } => {
+                // Plan 118.5 V2 [M-118.5-member-index-call-broader] (2026-06-04):
+                // accessing a field on an unsafe-T binding reads the binding
+                // value (to evaluate the .field/.method) — this counts as
+                // unsafe read. Conservative scope: only fire if root Ident
+                // is unambiguously в unsafe_t_vars.
+                if self.depth == 0 && !self.in_call_arg {
+                    if let Some(root) = unsafe_t_root_ident(obj) {
+                        if self.is_unsafe_t_var(&root) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_T_READ_REQUIRES_WRAP] member \
+                                     access reads `unsafe T` binding `{}` — \
+                                     requires unsafe context (Plan 118.5 V2 / \
+                                     D216 V2 §V2.3). Field access evaluates \
+                                     the binding value (possibly uninitialized). \
+                                     Wrap access site в `unsafe {{ ... }}` block.",
+                                    root,
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
+                self.walk_expr(obj, errors)
+            }
             ExprKind::Index { obj, index } => {
+                // Plan 118.5 V2 [M-118.5-member-index-call-broader]: index
+                // access on unsafe-T binding reads the slot — needs unsafe.
+                if self.depth == 0 && !self.in_call_arg {
+                    if let Some(root) = unsafe_t_root_ident(obj) {
+                        if self.is_unsafe_t_var(&root) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNSAFE_T_READ_REQUIRES_WRAP] index \
+                                     access reads `unsafe T` binding `{}` — \
+                                     requires unsafe context (Plan 118.5 V2 / \
+                                     D216 V2 §V2.3). Indexing evaluates the \
+                                     binding value (possibly uninitialized). \
+                                     Wrap в `unsafe {{ ... }}` block.",
+                                    root,
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 self.walk_expr(obj, errors);
                 self.walk_expr(index, errors);
             }
