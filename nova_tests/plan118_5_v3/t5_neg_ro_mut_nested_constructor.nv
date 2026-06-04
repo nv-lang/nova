@@ -1,0 +1,16 @@
+// Plan 118.5 V3 Ф.2 NEG T5 — `ro mut T` inside Pointer constructor → error
+// (no binding context for disambiguation).
+//
+// Per D216 V3 §V3.1: при nested constructor position (Pointer, Array, etc.),
+// no binding context — ro+mut combination invalid regardless of T's
+// storage class.
+//
+// EXPECT_COMPILE_ERROR E_MUTABILITY_CONFLICT_VALUE_TYPE
+
+module plan118_5_v3.t5_neg_ro_mut_nested_constructor
+
+type Acc {
+    id i64
+}
+
+external fn p(x * ro mut Acc) -> ()

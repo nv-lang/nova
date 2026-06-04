@@ -1,0 +1,11 @@
+// Plan 118.5 V3 Ф.2 NEG T3 — `mut ro T` for value-type T (str) → error.
+//
+// Per D216 V3 §V3.1: str is value-type; mut+ro adjacency conflict.
+// Return type position avoids parse_param's post-name `mut`-as-binding
+// consumption (D6 legacy form); ensures Mut(Readonly(T)) AST shape.
+//
+// EXPECT_COMPILE_ERROR E_MUTABILITY_CONFLICT_VALUE_TYPE
+
+module plan118_5_v3.t3_neg_mut_ro_value_type
+
+external fn p_str() -> mut ro str

@@ -1,0 +1,24 @@
+// Plan 118.5 V3 Ф.2 POS T4 — `ro x mut T` for reference-type T при binding context.
+//
+// Per D216 V3 §V3.1: reference-type T at binding top-level (param/field/let)
+// allows ro+mut combination — «binding ro (no rebind) + content mut
+// (mutate fields)».
+//
+// Acc is heap record (no `value` modifier) — reference type.
+// In param position, this is binding context (top-level) — combination OK.
+//
+// Closes [M-118.5-V3-ro-mut-storage-class] reference-type POS.
+
+module plan118_5_v3.t4_ro_mut_ref_type_ok
+
+type Acc {
+    mut name str
+    id i64
+}
+
+external fn p_acc(x ro mut Acc) -> ()
+external fn p_acc2(y mut ro Acc) -> ()
+
+test "ro+mut combination on reference type at binding position OK" {
+    assert(1 == 1)
+}

@@ -1,0 +1,13 @@
+// Plan 118.5 V3 Ф.2 NEG T2 — `ro mut T` for value-type T → error.
+//
+// Per D216 V3 §V3.1: value-type T (primitives, value records, named tuples,
+// anonymous tuples, unit) cannot have ro+mut adjacency. Storage IS value,
+// so binding-vs-content distinction meaningless.
+//
+// Closes [M-118.5-V3-ro-mut-storage-class] value-type NEG.
+//
+// EXPECT_COMPILE_ERROR E_MUTABILITY_CONFLICT_VALUE_TYPE
+
+module plan118_5_v3.t2_neg_ro_mut_value_type
+
+external fn p_int(x ro mut int) -> ()
