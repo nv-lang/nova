@@ -32280,3 +32280,24 @@ granularity.
 
 
 
+
+
+## Plan 125 — divergence-aware inference (PROPOSED 2026-06-05, extracted from Plan 91.13 followup)
+
+**Why extracted to top-level plan vs sub-plan 91.13.x:** User feedback "вопрос шире" — это implementation gap для `Ty::Never` bottom-type contract (Plan 76 + spec 08-runtime.md §«never» + D25). Не просто codegen workaround. 7 фаз, 12 acceptance, ≥23 fixtures, spec amendments. Plan 91.13 — про JSON conformance API (str.from_codepoint + roundtrip suite); Plan 125 — про type system semantics. Разный scope, разное ownership.
+
+**Why phased whitelist Ф.1→Ф.4 expansion (trailing-only → throw → panic/exit → interrupt+user-never → recursive) instead of one-shot fix:** Prior attempt 2026-06-03 был one-shot — переиспользовал `block_diverges` из types/mod.rs который walks Stmt::Return/Stmt::Throw в body. Flip'ало legitimate stdlib idiom `if early-cond { return X } else { compute() }` → 24 регрессии (silent codegen drift + silent runtime UB). Lesson: phased whitelist с full-test gate между фазами (Plan 113 / Plan 100.4 pattern). Each phase narrowly typed, regression isolatable.
+
+**Why codegen-side first, type-checker side (Ф.5) optional:** TyCat::Other escape-hatch в types/mod.rs:5455 silently passes never-typed values through assignable check сегодня. Это латентный bug — но изменение в types/mod.rs может exposed ранее-скрытые semantic issues (LSP type-on-hover regression, hover-type rendering). Ф.5 идёт ПОСЛЕ codegen-fix чтобы codegen-test served as safety-net. If Ф.5 fail'ит gate — откатывается атомарно, V1 ship'ится codegen-only. Conservative addition, не subtraction.
+
+**Why diagnostic env-var (NOVA_DEBUG_IF_INFER) обязательная инфраструктура pre-fix:** prior attempt не имел pre-fix baseline под diagnostic — корпус flipped patterns не был известен empirically до landing'а. Cannot estimate blast radius без empirical data. Ф.0 mandatory corpus collection — записано в `[feedback-one-pass-debug-investigation]`. Stays в коде post-Ф.6 (gated, zero overhead when off) — для будущих regression hunts.
+
+**Why no new D-block:** Plan 76 + spec 08-runtime.md §«never — bottom-тип» уже describe полную семантику. Plan 125 закрывает implementation gap, не вводит новое правило. Amendment D25 (implementation note) + 08-runtime.md (явный список divergent expressions) + cross-refs к D61/D88/D194 — достаточно. New D-block кандидат `[D-candidate-125]` в followup только если в Ф.5 exposed необходимость explicit "infer rule N: never-subsumption в join-context".
+
+**Why critical "trailing-only" в codegen helper (vs body-walking как в types/mod.rs):** `b.trailing` — то что фактически окажется значением блока в C-выражении. `b.stmts` walks — semantically correct для handler-body must-diverge (Plan 100.7 D165 use case), но wrong для codegen result-type inference. `if early-cond { return X; } else { compute() }` имеет then.stmts = [return], then.trailing = None — `block_diverges` flip'нул бы это, naive fix corrupt'ит C-codegen. Codegen helper МУСТ смотреть ТОЛЬКО на b.trailing. Trip-wire comment у helper'а как permanent guard.
+
+**Why 6-site helper extraction обязательное условие Ф.1:** Symmetric duplication между `emit_if_expr` ↔ `infer_expr_c_type::If`, `emit_match` ↔ `infer_expr_c_type::Match`, `emit_expr::IfLet` ↔ optional Block. Fix одной без другой = inconsistent type-info между "выберу-как-emit" и "выберу-как-infer". Helper `first_non_divergent_branch_ty(branches: &[&Block]) -> String` — единая точка истины. ВЫВОД prior_attempt_lessons L4.
+
+**Why hard cap "≥3 unexplained flip-сайтов в Ф.4 → откат":** Recursive composition (Ф.4) — riskiest шаг. Каждый рекурсивный шаг удваивает walk. Может покрыть exotic паттерн в неожиданном месте std/. Without hard cap, ползучий scope creep → repeat of 24-regression scenario. Whitelist'е Ф.1-Ф.3 (trailing-only без recursion) достаточно для JSON Ф.3 unblock (json.nv использует prosto trailing-throw в `read_unicode_escape`).
+
+**Why ф.5 (type-checker side) опциональна, не required:** codegen-only V1 закрывает Plan 91 Ф.3 (JSON conformance) — main user-facing goal. types/mod.rs change purely для semantic cleanliness + LSP correctness. Pragmatic shipping: codegen V1 production-ready, Ф.5 nice-to-have. Если Ф.5 gate fail'ит — `[M-125-type-checker-never-first-class]` followup, не блокер.

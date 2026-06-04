@@ -31781,3 +31781,80 @@ Plan doc: docs/plans/123.5.4-explain-deep-walk.md.
 Followup spawned:
 - [M-123.5.4-explain-region-tagging] — distinguish V1.1 r-region
   vs V1.2 n-region tagging в report.
+
+
+================================================================================
+2026-06-05 — Plan 125 PROPOSED: divergence-aware result-type inference
+================================================================================
+
+Plan-doc для extraction `[M-91.13-if-expr-divergence-aware-inference]` из
+followup Plan 91.13 в отдельный top-level plan. Trigger — user feedback:
+"вопрос шире" + расширение семантики `never` bottom-type.
+
+Discovery (Workflow с 6 parallel audit agents + 1 synthesis):
+
+Spec обещает полную семантику bottom-type (08-runtime.md:1008-1025 +
+D25 в 04-effects.md): subtype любого T, тип throw / return / panic /
+exit / loop / interrupt. Компилятор имплементирует ТОЛЬКО часть:
+- Ty::Never declared at types/mod.rs:24
+- Производится только при resolve type-ref `-> never` в сигнатуре
+  (ty_of_ref, единственный construction site)
+- infer_expr_type НЕ имеет cases для Throw/Interrupt/Return — fall to None
+- assignable нет правила `never <: T` — TyCat::Other silently
+  short-circuit'ит type-check (escape hatch, скрывает gap)
+- Helper infrastructure expr_diverges / block_diverges (types/mod.rs:10387)
+  ЕСТЬ — используется handler-body must-diverge (D61) + consume-flow
+  merge — НЕ для join-type инференса
+
+Существующие тесты passing'ят НЕ потому что never <: T, а потому что
+TyCat::Other silently пропускает type-check.
+
+Prior attempt 24 регрессии (2026-06-03 revert):
+- 5 plan108 readonly (silent codegen drift, ловится CC-test)
+- 8 plan83_12 tcp/udp (NET TIMEOUTs — silent runtime UB)
+- 7 concurrency (detach/sleep/select/time/mn_runtime)
+- 4 разное (effects/types/protocols/plan34/plan97)
+Root cause: переиспользование block_diverges из types/mod.rs, которое
+считает Stmt::Return/Stmt::Throw в body. flip'ало
+`if early-cond { return X } else { compute() }` идиому везде по stdlib.
+
+Plan 125 структура (7 фаз, ~36-53h total):
+- Ф.0: Discovery + baseline + diagnostic env-var NOVA_DEBUG_IF_INFER
+- Ф.1: Whitelist V1 — trailing-only throw (один паттерн)
+- Ф.2: + trailing panic / exit (prelude calls)
+- Ф.3: + interrupt + user fn -> never call
+- Ф.4: Recursive composition (nested if/match in trailing)
+- Ф.5: Type-checker side (Ty::Never first-class) — опционально
+- Ф.6: Closure (spec amendment + docs + 5 followup markers)
+
+Acceptance criteria (12):
+- Plan 91 Ф.3 unblocked (JSON conformance)
+- Zero regression vs baseline после КАЖДОЙ фазы
+- Все 24 регрессионных файла прошлой попытки PASS
+- Plan 76 fixtures (canonical never-tests) продолжают PASS
+- ≥15 positive + ≥8 negative fixtures
+- Spec amendment к D25 + 08-runtime.md (без нового D-block)
+- 5 followup markers
+- NOVA_DEBUG_IF_INFER env-var остаётся в коде
+- Plan 91.13 followup CLOSED
+- Ф.5 опциональна — если gate fail'ит, codegen-only V1 ship'ится
+
+Critical risks (8) с mitigations + 6 prior-attempt lessons:
+- НЕ переиспользовать block_diverges (codegen-local trailing-only helper)
+- Phase gate ОБЯЗАН full runtime test (silent UB class)
+- Symmetric helper extraction (6 sites)
+- Manual corpus-replay audit перед Ф.4
+- Ф.5 откатывается атомарно если gate fail'ит
+
+Spec amendments (без нового D-block):
+- 04-effects.md §D25 — implementation note
+- 08-runtime.md §«never» — явный список divergent expressions
+- Cross-refs к D61/D88/D194
+
+Plan 91.13 followup `[M-91.13-if-expr-divergence-aware-inference]` ✅
+CLOSED (migrated to Plan 125).
+
+Commits:
+- (this) docs(plan125): plan-doc создан
+- (this) docs(plan91.13): followup migrated CLOSED + cross-ref Plan 125
+- (this) docs(plan125): closure entries — project-creation + simplifications
