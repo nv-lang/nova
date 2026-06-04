@@ -1,0 +1,21 @@
+// Plan 125 negative — assert НЕ flip'нуто как divergent.
+// assert -> () unit, расходится только условно. Whitelist в
+// expr_diverges_125 НЕ содержит "assert" — нет ExprKind::Call(Ident("assert")) ветки.
+// Гарантия: `let x = if c { assert(...) } else { assert(...) }` — оба
+// unit, тип x = unit. Plan 125 НЕ flip'ит.
+
+module plan125.neg_assert_not_divergent
+
+fn touch(c bool) -> () {
+    if c {
+        assert(true)
+    } else {
+        assert(true)
+    }
+}
+
+test "assert in both branches stays unit" {
+    touch(false)
+    touch(true)
+    assert(true, "compiled + ran without flip")
+}
