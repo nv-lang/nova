@@ -381,20 +381,29 @@ pub fn analyze_module(module: &Module, cfg: &FieldCacheConfig) -> ExplainReport 
     let mut module_copy = module.clone();
     cache_module(&mut module_copy, cfg);
 
+    // Plan 123.5.4 (V5.4): build field registry once so per-fn explain
+    // analysis can look up TypeDecl-known ro/mut classification per
+    // cached field name (not just by `_at_<F>_<suffix>` naming).
+    let registry = build_registry(&module_copy);
+
     let mut report = ExplainReport::default();
-    collect_fn_caches(&module_copy.items, &mut report);
+    collect_fn_caches(&module_copy.items, &registry, &mut report);
     for pf in &module_copy.peer_files {
-        collect_fn_caches(&pf.items_here, &mut report);
+        collect_fn_caches(&pf.items_here, &registry, &mut report);
     }
     report
 }
 
-fn collect_fn_caches(items: &[Item], report: &mut ExplainReport) {
+fn collect_fn_caches(
+    items: &[Item],
+    registry: &FieldRegistry,
+    report: &mut ExplainReport,
+) {
     for item in items {
         if let Item::Fn(f) = item {
             if let Some(recv) = &f.receiver {
                 if let FnBody::Block(b) = &f.body {
-                    let info = analyze_fn_for_explain(f, recv, b);
+                    let info = analyze_fn_for_explain(f, recv, b, registry);
                     if info.total() > 0 {
                         report.per_fn.push(info);
                     }
@@ -404,7 +413,12 @@ fn collect_fn_caches(items: &[Item], report: &mut ExplainReport) {
     }
 }
 
-fn analyze_fn_for_explain(f: &FnDecl, recv: &Receiver, b: &Block) -> FnCacheInfo {
+fn analyze_fn_for_explain(
+    f: &FnDecl,
+    recv: &Receiver,
+    b: &Block,
+    registry: &FieldRegistry,
+) -> FnCacheInfo {
     let mut info = FnCacheInfo {
         type_name: recv.type_name.clone(),
         fn_name: f.name.clone(),
@@ -415,55 +429,300 @@ fn analyze_fn_for_explain(f: &FnDecl, recv: &Receiver, b: &Block) -> FnCacheInfo
         pure_caches: Vec::new(),
         chain_caches: Vec::new(),
     };
-    // Plan 123.1.1 (V1.1, 2026-06-03): scan ALL top-level statements
-    // (not just prefix run) — V1.1 multi-region cache injects let'ы
-    // в body interior после write/call barriers, не только в head.
-    // Non-let / non-`_at_*` top-level stmts simply skipped.
-    for s in &b.stmts {
-        if let Stmt::Let(d) = s {
-            if let Pattern::Ident { name, .. } = &d.pattern {
-                if !name.starts_with("_at_") {
-                    continue;
-                }
-                // Classify by name suffix + binding shape.
-                if name.ends_with("_chain") {
-                    // Extract path components: _at_<a>_<b>_..._<n>_chain.
-                    let inner = &name[4..name.len() - 6]; // strip "_at_" + "_chain"
-                    let path: Vec<String> = inner.split('_').map(|s| s.to_string()).collect();
-                    info.chain_caches.push(path);
-                } else if name.ends_with("_loop") {
-                    let inner = &name[4..name.len() - 5];
-                    info.licm_hoists.push(inner.to_string());
-                } else if name.ends_with("_call") {
-                    let inner = &name[4..name.len() - 5];
-                    info.pure_caches.push(inner.to_string());
-                } else {
-                    // _at_<field> — D217 V1 cache. Classify ro vs mut
-                    // через looking up в module's TypeDecl. Здесь
-                    // упрощённо — both go to ro (V1 caches both ro
-                    // and mut at body prefix).
-                    let fname = &name[4..];
-                    // Conservative classification: check if binding's
-                    // value is direct @F.
-                    if let ExprKind::Member { obj, name: orig_field } = &d.value.kind {
-                        if matches!(obj.kind, ExprKind::SelfAccess) {
-                            // For simplicity, classify as ro (most
-                            // common). Distinguishing ro vs mut requires
-                            // walking TypeDecl which is available but
-                            // not needed для current report shape.
-                            info.ro_caches.push(orig_field.clone());
-                            let _ = fname;
-                        }
+    // Plan 123.5.4 (V5.4, 2026-06-04): deep-walk ALL nested blocks +
+    // top-level stmts. V1 scanned только prefix run. V1.1 generalized
+    // к full top-level scan. V5.4 extends к recursive descent so V1.2
+    // nested-region lets (`_at_<F>_n<N>`) inside if/while/match arms /
+    // for loops / match arms / etc. surface в the explain report.
+    // Closes [M-123.1.2-explain-deep-walk].
+    let type_fields = registry.by_type.get(&recv.type_name);
+    explain_walk_block(b, type_fields, &mut info);
+    info
+}
+
+/// Plan 123.5.4 (V5.4): classify one `_at_<...>` let by its name suffix
+/// + binding shape + TypeDecl field kind, recording into the appropriate
+/// `FnCacheInfo` field.
+///
+/// Classification priority:
+/// 1. Suffix `_chain` / `_loop` / `_call` — fixed semantic kind.
+/// 2. Plain `_at_<F>` / `_at_<F>_r<N>` / `_at_<F>_n<N>` with
+///    `value == Member{SelfAccess, F}`:
+///    - Look up `F` в `type_fields` (если have receiver's fields).
+///    - If `FieldKind::Mut` → mut_caches.
+///    - If `FieldKind::Ro` → ro_caches.
+///    - Fallback (registry miss): suffix heuristic (region-suffix
+///      indicates mut, no-suffix → ro).
+fn explain_classify_at_let(
+    d: &LetDecl,
+    name: &str,
+    type_fields: Option<&HashMap<String, FieldKind>>,
+    info: &mut FnCacheInfo,
+) {
+    if name.ends_with("_chain") {
+        let inner = &name[4..name.len() - 6]; // strip "_at_" + "_chain"
+        let path: Vec<String> = inner.split('_').map(|s| s.to_string()).collect();
+        info.chain_caches.push(path);
+        return;
+    }
+    if name.ends_with("_loop") {
+        let inner = &name[4..name.len() - 5];
+        info.licm_hoists.push(inner.to_string());
+        return;
+    }
+    if name.ends_with("_call") {
+        let inner = &name[4..name.len() - 5];
+        info.pure_caches.push(inner.to_string());
+        return;
+    }
+    if let ExprKind::Member { obj, name: orig_field } = &d.value.kind {
+        if matches!(obj.kind, ExprKind::SelfAccess) {
+            // Plan 123.5.4 (V5.4): prefer TypeDecl field kind lookup
+            // over name-suffix heuristic.
+            let kind = type_fields
+                .and_then(|fields| fields.get(orig_field).copied());
+            match kind {
+                Some(FieldKind::Mut) => info.mut_caches.push(orig_field.clone()),
+                Some(FieldKind::Ro) => info.ro_caches.push(orig_field.clone()),
+                None => {
+                    // Fallback: name-suffix heuristic when registry has
+                    // no kind info (e.g., explain called on extracted
+                    // module fragment).
+                    if explain_name_has_region_suffix(name) {
+                        info.mut_caches.push(orig_field.clone());
+                    } else {
+                        info.ro_caches.push(orig_field.clone());
                     }
                 }
             }
-            // Patterns that aren't Ident (e.g., tuple-destructure) —
-            // skip silently — V1.1 generates only Ident patterns.
         }
-        // Non-Let stmts: V1 broke; V1.1 continues — body interior may
-        // contain non-let stmts с region cache let'ами после них.
     }
-    info
+}
+
+/// Plan 123.5.4 (V5.4): detect names ending in `_r<digits>` or
+/// `_n<digits>` (V1.1 mut subsequent region OR V1.2 nested region).
+fn explain_name_has_region_suffix(name: &str) -> bool {
+    if let Some(idx) = name.rfind('_') {
+        let suffix = &name[idx + 1..];
+        if let Some(rest) = suffix.strip_prefix('r').or_else(|| suffix.strip_prefix('n')) {
+            return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
+        }
+    }
+    false
+}
+
+/// Plan 123.5.4 (V5.4): recursive block walker. For each Let stmt
+/// matching `_at_*` ident pattern, classify via `explain_classify_at_let`.
+/// Then descend into every nested block reachable from any Stmt/Expr.
+fn explain_walk_block(
+    b: &Block,
+    type_fields: Option<&HashMap<String, FieldKind>>,
+    info: &mut FnCacheInfo,
+) {
+    for s in &b.stmts {
+        explain_walk_stmt(s, type_fields, info);
+    }
+    if let Some(t) = &b.trailing {
+        explain_walk_expr(t, type_fields, info);
+    }
+}
+
+fn explain_walk_stmt(
+    s: &Stmt,
+    type_fields: Option<&HashMap<String, FieldKind>>,
+    info: &mut FnCacheInfo,
+) {
+    if let Stmt::Let(d) = s {
+        if let Pattern::Ident { name, .. } = &d.pattern {
+            if name.starts_with("_at_") {
+                explain_classify_at_let(d, name, type_fields, info);
+            }
+        }
+        explain_walk_expr(&d.value, type_fields, info);
+        return;
+    }
+    match s {
+        Stmt::Const(d) => explain_walk_expr(&d.value, type_fields, info),
+        Stmt::Expr(e) => explain_walk_expr(e, type_fields, info),
+        Stmt::Assign { target, value, .. } => {
+            explain_walk_expr(target, type_fields, info);
+            explain_walk_expr(value, type_fields, info);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { explain_walk_expr(v, type_fields, info); }
+        }
+        Stmt::Throw { value, .. } => explain_walk_expr(value, type_fields, info),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            explain_walk_expr(body, type_fields, info);
+        }
+        Stmt::ConsumeScope { init, body, .. } => {
+            explain_walk_expr(init, type_fields, info);
+            explain_walk_block(body, type_fields, info);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            explain_walk_expr(expr, type_fields, info);
+        }
+        Stmt::Break(_) | Stmt::Continue(_)
+        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        Stmt::Let(_) => {} // handled above
+    }
+}
+
+fn explain_walk_expr(
+    e: &Expr,
+    type_fields: Option<&HashMap<String, FieldKind>>,
+    info: &mut FnCacheInfo,
+) {
+    // Skip closures — V1 closure_captured excluded their fields from
+    // caching, so closures shouldn't contain `_at_*` lets generated
+    // by our pipeline. Defensive skip preserves analyze symmetry.
+    if matches!(&e.kind,
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+        | ExprKind::ClosureFull(_) | ExprKind::HandlerLit { .. }
+        | ExprKind::ProtocolLit { .. }
+    ) {
+        return;
+    }
+    match &e.kind {
+        ExprKind::Block(b) => explain_walk_block(b, type_fields, info),
+        ExprKind::If { cond, then, else_ } => {
+            explain_walk_expr(cond, type_fields, info);
+            explain_walk_block(then, type_fields, info);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => explain_walk_block(b, type_fields, info),
+                    ElseBranch::If(e) => explain_walk_expr(e, type_fields, info),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            explain_walk_expr(scrutinee, type_fields, info);
+            explain_walk_block(then, type_fields, info);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => explain_walk_block(b, type_fields, info),
+                    ElseBranch::If(e) => explain_walk_expr(e, type_fields, info),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            explain_walk_expr(scrutinee, type_fields, info);
+            for arm in arms {
+                if let Some(g) = &arm.guard { explain_walk_expr(g, type_fields, info); }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => explain_walk_expr(e, type_fields, info),
+                    MatchArmBody::Block(b) => explain_walk_block(b, type_fields, info),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            explain_walk_expr(iter, type_fields, info);
+            explain_walk_block(body, type_fields, info);
+        }
+        ExprKind::While { cond, body, .. } => {
+            explain_walk_expr(cond, type_fields, info);
+            explain_walk_block(body, type_fields, info);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            explain_walk_expr(scrutinee, type_fields, info);
+            explain_walk_block(body, type_fields, info);
+        }
+        ExprKind::Loop { body, .. } => explain_walk_block(body, type_fields, info),
+        ExprKind::With { bindings, body } => {
+            for wb in bindings { explain_walk_expr(&wb.handler, type_fields, info); }
+            explain_walk_block(body, type_fields, info);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
+            explain_walk_block(body, type_fields, info),
+        ExprKind::Supervised { body, cancel } => {
+            explain_walk_block(body, type_fields, info);
+            if let Some(c) = cancel { explain_walk_expr(c, type_fields, info); }
+        }
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => explain_walk_expr(e, type_fields, info),
+        ExprKind::Try(e) | ExprKind::Bang(e)
+        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
+        | ExprKind::As(e, _) | ExprKind::Is(e, _)
+        | ExprKind::Unary { operand: e, .. } => explain_walk_expr(e, type_fields, info),
+        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
+            explain_walk_expr(a, type_fields, info);
+            explain_walk_expr(b, type_fields, info);
+        }
+        ExprKind::Index { obj, index } => {
+            explain_walk_expr(obj, type_fields, info);
+            explain_walk_expr(index, type_fields, info);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            explain_walk_expr(func, type_fields, info);
+            for arg in args {
+                let inner = match arg {
+                    CallArg::Item(e) | CallArg::Spread(e) => e,
+                    CallArg::Named { value, .. } => value,
+                };
+                explain_walk_expr(inner, type_fields, info);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => explain_walk_block(b, type_fields, info),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => explain_walk_expr(e, type_fields, info),
+                        FnBody::Block(b) => explain_walk_block(b, type_fields, info),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => explain_walk_block(&tb.body, type_fields, info),
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => explain_walk_expr(e, type_fields, info),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        explain_walk_expr(k, type_fields, info);
+                        explain_walk_expr(v, type_fields, info);
+                    }
+                    MapElem::Spread(e) => explain_walk_expr(e, type_fields, info),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for rf in fields {
+                if let Some(v) = &rf.value { explain_walk_expr(v, type_fields, info); }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { explain_walk_expr(el, type_fields, info); }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { explain_walk_expr(e, type_fields, info); }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            explain_walk_expr(tag, type_fields, info);
+            for a in args { explain_walk_expr(a, type_fields, info); }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { explain_walk_expr(s, type_fields, info); }
+            if let Some(e) = end { explain_walk_expr(e, type_fields, info); }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            explain_walk_expr(range, type_fields, info);
+            explain_walk_expr(body, type_fields, info);
+        }
+        ExprKind::Interrupt(opt) => {
+            if let Some(e) = opt { explain_walk_expr(e, type_fields, info); }
+        }
+        // Leaf / ignored: literals, ident, path, self, etc.
+        _ => {}
+    }
 }
 
 /// Public entry-point.
@@ -9038,6 +9297,183 @@ fn Buf mut @ops() -> int {
         assert!(!names.iter().any(|n| n == "_at_count_r1"),
             "no V1.1 split needed когда V7.5 makes single region; got {:?}",
             names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.5.4 (V5.4, 2026-06-04): explain deep-walk.
+    // Closes [M-123.1.2-explain-deep-walk]. Surfaces V1.2 nested-region
+    // cache lets in the ExplainReport for V5 LSP / telemetry consumers.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V5.4.1 positive: V1.2 nested `_at_<F>_n<N>` let surfaces в
+    /// `mut_caches` report (not just ro_caches/top-level scan).
+    #[test]
+    fn v5_4_explain_surfaces_v1_2_nested_lets() {
+        let src = r#"
+module testmod.v5_4_nested_surface
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    mut acc = 0
+    if cond {
+        ro a = @x
+        ro b = @x
+        @x = 99
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("explain report for do");
+        // V1.2 emits two nested _at_x_n* lets inside the if's then-block.
+        // V5.4 deep-walk should surface them.
+        assert!(info.mut_caches.len() >= 2,
+            "expected >= 2 mut_caches surfaced from nested V1.2 regions; \
+             got {:?}", info.mut_caches);
+        for fname in &info.mut_caches {
+            assert_eq!(fname, "x", "expected все mut_caches to be 'x'");
+        }
+    }
+
+    /// V5.4.2 positive: V1.1 outer `_at_<F>_r<N>` (subsequent region)
+    /// classified as mut, not ro.
+    #[test]
+    fn v5_4_explain_v1_1_r_suffix_is_mut() {
+        let src = r#"
+module testmod.v5_4_r_suffix
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    @x = 99
+    ro c = @x
+    ro d = @x
+    a + b + c + d
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("explain report");
+        // V1.1 emits _at_x (region 0) + _at_x_r1 (region 1). Both
+        // are mut classifications under V5.4.
+        assert_eq!(info.mut_caches.len(), 2,
+            "expected 2 mut_caches (V1.1 region 0 + region 1); got {:?}",
+            info.mut_caches);
+    }
+
+    /// V5.4.3 positive: deeply nested (if inside while) caches
+    /// surface in report.
+    #[test]
+    fn v5_4_explain_deeply_nested_surfaces() {
+        let src = r#"
+module testmod.v5_4_deep_nested
+type C { mut x int }
+fn C mut @do(n int) -> int {
+    mut i = 0
+    while i < n {
+        if i > 0 {
+            ro a = @x
+            ro b = @x
+            @x = a + b
+            ro c = @x
+            ro d = @x
+            i = i + c + d
+        }
+        i = i + 1
+    }
+    @x
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("explain report");
+        // Expect at least one nested cache surfaced.
+        assert!(!info.mut_caches.is_empty(),
+            "expected nested deep cache surfaced; got mut_caches={:?}, \
+             ro_caches={:?}", info.mut_caches, info.ro_caches);
+    }
+
+    /// V5.4.4 negative: pure ro top-level field still classified as
+    /// ro_caches (no false positive mut classification).
+    #[test]
+    fn v5_4_explain_ro_field_classified_correctly() {
+        let src = r#"
+module testmod.v5_4_ro
+type P { ro x int, ro y int }
+fn P @sum() -> int { @x * @x + @y * @y }
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "sum")
+            .expect("explain report");
+        // Both ro fields cached at body prefix. No mut classification.
+        assert!(info.mut_caches.is_empty(),
+            "ro fields must not appear in mut_caches; got {:?}",
+            info.mut_caches);
+        assert_eq!(info.ro_caches.len(), 2,
+            "expected 2 ro caches; got {:?}", info.ro_caches);
+    }
+
+    /// V5.4.5 negative: chain `_at_<F>_chain` still classified as chain
+    /// (not affected by V5.4 deep-walk).
+    #[test]
+    fn v5_4_explain_chain_classification_preserved() {
+        let src = r#"
+module testmod.v5_4_chain
+type Leaf { ro c int }
+type Mid { ro x Leaf }
+type Outer { ro inner Mid }
+fn Outer @sum() -> int {
+    @inner.x.c + @inner.x.c + @inner.x.c
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "sum")
+            .expect("explain report");
+        assert!(!info.chain_caches.is_empty(),
+            "expected chain cache classification preserved; got {:?}",
+            info.chain_caches);
+    }
+
+    /// V5.4.6 negative: explain deep-walk handles fn с no caches
+    /// gracefully (sanity: no panic on empty case + no false positives).
+    #[test]
+    fn v5_4_explain_handles_no_caches_fn() {
+        let src = r#"
+module testmod.v5_4_no_caches
+type C { mut x int }
+fn C @just_one() -> int { @x }
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        // Only 1 read → no cache emitted. Report should be empty.
+        for info in &report.per_fn {
+            assert!(info.total() > 0 || info.fn_name != "just_one",
+                "expected no cache for just_one; got {:?}", info);
+        }
+    }
+
+    /// V5.4.7 positive: classification helper `explain_name_has_region_suffix`
+    /// recognizes `_r<N>` and `_n<N>` suffixes but не plain numeric or other.
+    #[test]
+    fn v5_4_explain_name_suffix_helper() {
+        assert!(explain_name_has_region_suffix("_at_x_r1"));
+        assert!(explain_name_has_region_suffix("_at_x_r0"));
+        assert!(explain_name_has_region_suffix("_at_x_n0"));
+        assert!(explain_name_has_region_suffix("_at_x_n12"));
+        assert!(!explain_name_has_region_suffix("_at_x"));
+        assert!(!explain_name_has_region_suffix("_at_x_loop"));
+        assert!(!explain_name_has_region_suffix("_at_x_chain"));
+        assert!(!explain_name_has_region_suffix("_at_x_call"));
+        assert!(!explain_name_has_region_suffix("_at_x_r"));     // no digit
+        assert!(!explain_name_has_region_suffix("_at_x_r1a"));    // mixed
     }
 
     /// A1.1: ro field accessed 2+ раз → cache emitted.

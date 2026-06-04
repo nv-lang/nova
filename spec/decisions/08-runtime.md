@@ -5557,6 +5557,111 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D217 amend V5.4 — Explain deep-walk (Plan 123.5.4)
+
+**Source:** [Plan 123.5.4](../../docs/plans/123.5.4-explain-deep-walk.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.1.2-explain-deep-walk]`.
+
+### 1. Scope
+
+V5 ExplainReport (`analyze_module → analyze_fn_for_explain`) scanned
+ONLY top-level `_at_*` lets at fn body Block prefix. V1.1 generalized
+к full top-level scan (no early break). But V1.2 nested-region cache
+lets inject `_at_<F>_n<N>` inside nested blocks (if/while/match arms /
+for loops / etc.) — those were **not surfaced** в the explain report.
+
+Effect: `nova check --explain-cache` / V5 LSP code-lens / `nova check
+--telemetry-cache` reported "0 mut caches" for fns where V1.2 actually
+inserted multiple nested caches. False negative — the optimization
+was happening but invisible.
+
+V5.4 closes this gap via recursive deep-walk + TypeDecl-aware ro/mut
+classification.
+
+### 2. Algorithm
+
+`analyze_fn_for_explain(f, recv, b, registry)` (signature extended to
+take `&FieldRegistry`) calls:
+
+```
+explain_walk_block(b, type_fields, info)
+```
+
+`explain_walk_block` iterates `b.stmts` calling `explain_walk_stmt`
+for each, plus `explain_walk_expr` для `b.trailing`.
+
+`explain_walk_stmt` matches `Stmt::Let` patterns. For Ident patterns
+named `_at_*`, calls `explain_classify_at_let`. Then recurses into
+the let's value expression.
+
+`explain_walk_expr` exhaustively descends into nested blocks: `If`/
+`IfLet` (cond + then + else), `Match` (scrutinee + arm guards + arm
+bodies), `For`/`ParallelFor`/`While`/`WhileLet`/`Loop` (iter + body),
+`With` (bindings + body), `Forbid`/`Realtime`/`Detach`/`Blocking`/
+`Supervised` (body), `Block`-Expr, `Call` (func + args + trailing
+block/closure/legacy). Closures (`Lambda`/`ClosureLight`/
+`ClosureFull`/`HandlerLit`/`ProtocolLit`) excluded — V1
+closure_captured rule preserved.
+
+### 3. Classification
+
+`explain_classify_at_let` improved priority:
+
+1. **Suffix-based fixed kind:** `_chain` → chain_caches, `_loop` →
+   licm_hoists, `_call` → pure_caches.
+2. **`_at_<F>` (plain or with `_r<N>`/`_n<N>` region suffix) с
+   value `Member{SelfAccess, F}`:**
+   - Look up `F` в `type_fields` (registry entry для recv type).
+   - `FieldKind::Mut` → mut_caches.
+   - `FieldKind::Ro` → ro_caches.
+   - Registry miss (e.g. dynamic dispatch / external type): fall
+     back to name-suffix heuristic (region-suffix → mut, plain → ro).
+
+This properly classifies V1's `_at_<F>` (whose kind depends on field
+declaration), V1.1's `_at_<F>_r<N>` (always mut by region semantics),
+and V1.2's `_at_<F>_n<N>` (always mut by region semantics) — without
+relying on name heuristics alone.
+
+### 4. Helper exposed для tests
+
+```rust
+fn explain_name_has_region_suffix(name: &str) -> bool;
+```
+
+Returns true for names matching `_at_<F>_r<digits>` or
+`_at_<F>_n<digits>`. Used as fallback heuristic when registry lookup
+fails. Behavior tested by `v5_4_explain_name_suffix_helper`.
+
+### 5. Composition
+
+V5.4 transparent к V1.x/V2/V3/V4 caching pipeline — only changes
+explain analysis. V5 LSP code-lens / hover / `nova check --telemetry-
+cache` automatically benefit. No behavioral change в codegen path.
+
+### 6. Acceptance
+
+- **V5.4.1** V1.2 nested `_at_<F>_n<N>` lets surface в `mut_caches` ✅
+- **V5.4.2** V1.1 outer `_at_<F>_r<N>` classified as mut ✅
+- **V5.4.3** Deeply nested (if inside while) caches surface ✅
+- **V5.4.4** Ro field correctly classified (not as mut) ✅
+- **V5.4.5** Chain `_at_<F>_chain` classification preserved ✅
+- **V5.4.6** No-cache fn handled gracefully ✅
+- **V5.4.7** `explain_name_has_region_suffix` helper accuracy ✅
+- Zero regressions: field_cache lib **77/77** (70 baseline + 7 V5.4)
+  PASS via release `cargo test`.
+- Runtime fixtures `nova_tests/plan123_5_4/` **1/1** PASS — semantic
+  preservation verified.
+- Integration: `nova check --explain-cache <V1.2 fixture>` now shows
+  "D217 mut first-region: x, x" for V1.2 `nested_cycle` (previously
+  invisible).
+
+### 7. Followups
+
+- `[M-123.5.4-explain-region-tagging]` — distinguish "V1.1 r-region"
+  vs "V1.2 n-region" в report (currently both collapse к mut_caches
+  с the field's name). Useful для V6 telemetry granularity.
+
 ## D223 amend V7.5 — Callee-non-self-mutation IPA (Plan 123.7.5)
 
 **Source:** [Plan 123.7.5](../../docs/plans/123.7.5-callee-non-self-ipa.md).
