@@ -468,9 +468,20 @@ fn classify_named_leaf(
     }
     match registry.get(leaf) {
         Some(TypeKindEntry::HeapRecord) => true,   // `type X { ... }` — ptr slot
-        Some(TypeKindEntry::ValueRecord) => false, // `type X value { ... }` — inline (D228)
-        Some(TypeKindEntry::Sum) => true,          // tagged union pointer
-        Some(TypeKindEntry::NamedTuple) => false,  // D215 inline
+        // `type X value { ... }` (D228) — inline NovaValue_X slot.
+        // mut-method's `nova_self` is `NovaValue_X*` (Plan 124.8 V2 LANDED) —
+        // `@field = ...` writes propagate to caller's slot ⇒ cache invalidate.
+        Some(TypeKindEntry::ValueRecord) => false,
+        Some(TypeKindEntry::Sum) => true, // tagged union pointer
+        // D215 named tuples — Plan 124.8 §2.7 mandates pointer receiver
+        // ("Method receiver: pointer (как value-record)"), но codegen
+        // currently still emits `NovaTuple_X` by-value (followup
+        // `[M-D215-mut-receiver-pointer-codegen]`). V7.6 classifies
+        // FALSE = invalidate per spec contract — coincidentally matches
+        // current broken codegen behaviour (by-value copy = mutation
+        // lost = cache survives anyway), and remains correct when
+        // codegen fix lands (mutation propagates = cache must invalidate).
+        Some(TypeKindEntry::NamedTuple) => false,
         Some(TypeKindEntry::Newtype(inner))
         | Some(TypeKindEntry::Alias(inner)) => {
             is_reference_type_ref_with_depth(inner, registry, depth + 1)
