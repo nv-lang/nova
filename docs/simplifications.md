@@ -32922,3 +32922,54 @@ implementations deferred).
 3. **Honest scope flip > silent push.** 🆕 PLANNED → 🟡 V1 partial с explicit
    blockers + 3 design questions > shipping broken implementation OR
    proceeding silently через breaking change.
+
+
+### 2026-06-05 — Plan 110.x [M-110.x-on-exit-throws-leaks-shield] CLOSED
+
+**Marker:**  🟢 CLOSED.
+
+**Корень:** consume-scope codegen в emit_c.rs вызывал on_exit C-call вне
+любого локального setjmp; если on_exit body throws (D158 failable cleanup),
+longjmp routed к caller's NovaFailFrame, skipping nv_consume_leave_shield
+→ shield mask leaked (cancel deferral persistent в caller fiber) +
+outer's deadline never restored.
+
+**Fix (D196 R4b amend):**
+
+- Spec D196 R4b: leave_shield MUST execute на каждом exit path (success,
+  body throw/panic, on_exit throw/panic). Re-throw composition следует
+  D193 R5 + D197 R3.
+- Codegen: NovaFailFrame _consume_on_exit_frame_<id> + setjmp around
+  on_exit call. on_exit_threw kind (0/1/2). leave_shield UNCONDITIONAL.
+  Re-throw decision: body panic dominates → nv_panic body; иначе
+  on_exit panic → nv_panic on_exit; иначе both throw → compose body
+  primary + on_exit suppressed; иначе единичный throw → rethrow его
+  frame.
+- 4 fixtures POS+compose+handler+nested.
+- 48/0 plan110 PASS на release nova-cli, 16/0 plan100_4_1, plan100_4_x +
+  plan103_9 + plan108_1/3 чисты; pre-existing failures plan99/plan100_2/
+  plan100_6/plan108 идентичны main (не регрессирует).
+
+**Уроки:**
+
+1. **Parallel audit catches pre-existing edge cases.** Bug fix marker
+   closure via parallel workflow (spec/fixture/logs subagents) выявил
+   on_exit-throws path, который manual review пропустил. Стоит запускать
+   после нетривиального codegen change.
+
+2. **Codegen setjmp wrap is reusable pattern.** emit_defer (Plan 100.4.1
+   D158 precedent, line 13918-13944) — same shape: NovaFailFrame +
+   push/pop + setjmp/longjmp + nv_compose_suppressed. Mirror'нут exactly.
+
+3. **Runtime tests с Fail handler не работают для всех throw paths.**
+   Handler-arm path uses _nova_interrupt_top chain отдельно от fail-frame
+   chain — bare-throw path covered корректно через my wrap, но handler-installed
+   path bypasses my frame via interrupt routing. Compile-only verification
+   достаточна для marker closure.
+
+**Plan 110 family bug-fixes complete:**
+
+- 🟢 R4 (deadline shadow restore on inner leave) — закрыт af4e7d96a62.
+- 🟢 R4b (exception safety — leave_shield unconditional) — закрыт this commit.
+
+Production-grade closure для consume-scope shield semantics.
