@@ -32826,3 +32826,75 @@ criteria per marker, closure status, грand-total Plan 123 state.
 
 **Spec amend:** 02-types.md D228 — added «Optimizer consumer (Plan 123
 V7.6 V2 refactor, 2026-06-05)» cross-ref noting AllocKind consumption.
+
+
+================================================================================
+== 2026-06-05 — Plan 110.x: [M-110.x-on-exit-throws-leaks-shield] CLOSED
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.x-on-exit-throws-shield (off main 1ab146e2a21)
+
+Audit followup discovered durante post-fix verification (parallel workflow,
+2026-06-05) of [M-110.x-cleanup-shield-deadline-underflow]. Pre-existing
+edge case в consume-scope codegen: on_exit C-call ran outside any local
+setjmp; if on_exit body threw (D158 failable cleanup), longjmp routed к
+caller's NovaFailFrame, skipping nv_consume_leave_shield → shield mask
+leaked (cancel deferral persistent в caller fiber) + outer's deadline
+never restored.
+
+Root cause:
+  • emit_c.rs::Stmt::ConsumeScope emit pattern called on_exit C-call bare
+    после body setjmp frame popped (line ~15192).
+  • leave_shield ran AFTER on_exit (line ~15210), unreachable если on_exit
+    threw.
+  • Pre-existing: same gap existed BEFORE the R4 fix; R4 simply made the
+    no-throw path correct.
+
+Fix three-step:
+  1. Spec D196 R4b amend: leave_shield MUST execute on every exit path
+     (success, body throw/panic, on_exit throw/panic). Re-throw composition
+     follows D193 R5 + D197 R3 (body=primary, on_exit=suppressed).
+  2. Codegen wrap (emit_c.rs):
+     - New NovaFailFrame _consume_on_exit_frame_<id> around on_exit C-call.
+     - setjmp catches on_exit throw/panic; on_exit_threw kind (0/1/2).
+     - leave_shield UNCONDITIONAL.
+     - if (body panic) → nv_panic body. If (on_exit panic) → nv_panic
+       on_exit. If (body+on_exit throw) → nv_compose_suppressed + rethrow
+       body. If (body throw only) → rethrow body. If (on_exit throw
+       only) → rethrow on_exit.
+     - Cleanup observability hook fires only if on_exit succeeded.
+  3. Test fixtures (nova_tests/plan110/):
+     - on_exit_throws_shield_restored_v1_1.nv: POS — outer/inner where
+       inner.on_exit throws.
+     - on_exit_throws_compose_v1_1.nv: composition POS — body+on_exit
+       both throw → MultiError composed.
+     - on_exit_throws_handler_catches_v1_1.nv: compile-only — wrap shape.
+     - on_exit_throws_nested_deadline_restored_v1_1.nv: nested R4+R4b
+       interaction.
+
+Regression на release nova-cli:
+  • plan110: 48/0 PASS (включая 4 новых fixture'а).
+  • plan100_4_1: 16/0 PASS (D158 MultiError composition).
+  • plan100_4_2: 9/0, plan100_4_4: 13/0, plan100_4_5: 4/0.
+  • plan103_9: 20/0, plan100_3: 10/0, plan108_1: 16/0, plan108_3: 14/0.
+  • plan108, plan100_6, plan99: same FAIL count как main (pre-existing).
+
+Marker tally:
+  • 🟢 [M-110.x-on-exit-throws-leaks-shield] CLOSED.
+  • Plan 110 family bug-fixes complete: R4 (deadline shadow) + R4b
+    (exception safety) — production-grade closure для consume-scope
+    shield semantics.
+
+Lessons:
+  • Parallel completeness audit (workflow с 3 subagent'ами) caught
+    pre-existing edge case missed manual review. Worth running после
+    нетривиального codegen fix.
+  • Codegen setjmp wrap pattern reusable: emit_defer precedent (line
+    13918-13944) mirror'нут exactly для on_exit wrap. Same NovaFailFrame
+    + nova_fail_push/pop + setjmp/longjmp + nv_compose_suppressed.
+  • Runtime test с Fail handler не для всех throw paths работает (handler
+    path uses _nova_interrupt_top chain separate от fail-frame chain) —
+    standard compile-only verification pattern достаточно для marker
+    closure.
+

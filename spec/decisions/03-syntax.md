@@ -8757,6 +8757,29 @@ fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
    CleanupTimeoutError fires (appeared as i64 underflow в reports).
    Codegen threads prev_deadline через local var per consume-block.
 
+   **R4b amend (2026-06-05) [M-110.x-on-exit-throws-leaks-shield] fix:**
+   `nv_consume_leave_shield(prev_deadline)` **MUST execute on every exit
+   path** from a consume-scope — success, body throw, body panic, on_exit
+   throw, on_exit panic. Codegen wraps the on_exit C-call в own
+   `NovaFailFrame` setjmp; the catch branch sets `on_exit_threw` kind
+   (0=ok, 1=throw, 2=panic). After the wrap, `nv_consume_leave_shield`
+   is called **unconditionally** before any re-throw/re-panic decision.
+   Pre-fix bug: on_exit C-call ran outside any setjmp; if on_exit body
+   threw, longjmp routed to caller's frame, skipping leave_shield → mask
+   stuck (cancel deferral leaks into caller fiber) + deadline never
+   restored (same shadow bug as R4 but triggered via exception path).
+   Re-throw composition follows D193 R5 + D197 R3:
+   - body panic OR on_exit panic → `nv_panic` propagates (body's panic
+     wins if both panic).
+   - body throw + on_exit throw → body=primary, on_exit composed как
+     suppressed через `nv_compose_suppressed(&body_frame, on_exit_*)` →
+     `nova_rethrow_with_suppressed(&body_frame)`.
+   - only body throw → `nova_rethrow_with_suppressed(&body_frame)`.
+   - only on_exit throw → `nova_rethrow_with_suppressed(&on_exit_frame)`.
+   - both clean → fall through.
+   Cleanup observability hook (`Nova_Cleanup_on_scope_exit`) fires only
+   когда on_exit succeeded — preserves existing post-fix behavior.
+
 3. **Inner `on_exit` ошибки compose в локальный MultiError**. Если он
    throws — outer `on_exit` получает это в propagation:
    - outer.on_exit started → outcome = Failure(orig)
