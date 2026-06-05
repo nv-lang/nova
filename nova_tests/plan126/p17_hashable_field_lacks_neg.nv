@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//
+// Plan 126 — NEG F17:
+// Hashable auto-derive — field type не Hashable → error.
+// AC-126.9.
+module plan126.p17_hashable_field_lacks_neg
+
+type RawX {
+    raw int
+}
+
+#impl(Hashable)
+type NeedsHash {
+    payload RawX
+}
+
+test "Hashable field lacks protocol fails" {
+    ro h = NeedsHash { payload: RawX { raw: 1 } }
+    assert(h.payload.raw == 1)
+}

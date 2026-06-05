@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//
+// Plan 126 (D230) — NEG F18:
+// Cloneable auto-derive — field type не Cloneable → error.
+// AC-126.9.
+module plan126.p18_cloneable_field_lacks_neg
+
+type Plain {
+    v int
+}
+
+#impl(Cloneable)
+type Wrapper {
+    plain Plain
+}
+
+test "Cloneable field lacks protocol fails" {
+    ro w = Wrapper { plain: Plain { v: 0 } }
+    assert(w.plain.v == 0)
+}

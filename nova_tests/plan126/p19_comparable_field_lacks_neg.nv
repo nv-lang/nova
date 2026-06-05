@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//
+// Plan 126 — NEG F19:
+// Comparable auto-derive — field type не Comparable → error.
+// AC-126.9.
+module plan126.p19_comparable_field_lacks_neg
+
+type Bare2 {
+    n int
+}
+
+#impl(Comparable)
+type Cmp {
+    inner Bare2
+}
+
+test "Comparable field lacks protocol fails" {
+    ro c = Cmp { inner: Bare2 { n: 0 } }
+    assert(c.inner.n == 0)
+}

@@ -1,0 +1,21 @@
+// Plan 126 — POS F07:
+// Рекурсивный auto-derive — Outer содержит Inner, оба `#impl(Equatable)`.
+// Verify field-eligibility: Inner satisfies → Outer synthesis succeeds.
+// AC-126.7 (nested levels).
+module plan126.p07_nested_records_ok
+
+#impl(Equatable)
+type Inner1 {
+    n int
+}
+
+#impl(Equatable)
+type Outer1 {
+    inner Inner1
+    extra int
+}
+
+test "Nested Equatable records type-check" {
+    ro o = Outer1 { inner: Inner1 { n: 5 }, extra: 10 }
+    assert(o.extra == 10)
+}

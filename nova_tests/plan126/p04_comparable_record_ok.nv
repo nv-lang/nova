@@ -1,0 +1,14 @@
+// Plan 126 — POS F04:
+// `#impl(Comparable)` на record → auto-derive @compare() (lexicographic).
+// AC-126.5.
+module plan126.p04_comparable_record_ok
+
+#impl(Comparable)
+type Money {
+    cents int
+}
+
+test "Money type-checks with auto-derived @compare" {
+    ro m = Money { cents: 100 }
+    assert(m.cents == 100)
+}

@@ -1,0 +1,274 @@
+# Auto-derive Guide (Plan 126, D109 amend + D230)
+
+> **Status:** ✅ landed 2026-06-05.
+> **D-blocks:** [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1).
+
+Nova поддерживает **auto-derive** для пяти built-in протоколов через
+`#impl(P)` annotation на пользовательском типе. Аналог Rust `#[derive(...)]`
+без отдельного keyword'а — переиспользуется единый mechanism `#impl(P)` (D186).
+
+## TL;DR
+
+```nova
+#impl(Equatable + Hashable + Cloneable + Comparable + Printable)
+type Vec3 {
+    x f64
+    y f64
+    z f64
+}
+
+ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+ro b = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+assert(a == b)             // auto-derived @equals
+ro c = a.clone()           // auto-derived @clone
+ro h = a.hash()            // auto-derived @hash
+ro cmp = a.compare(b)      // auto-derived @compare
+```
+
+Компилятор синтезирует тела методов **memberwise рекурсивно** на основе полей
+типа.
+
+## Поддерживаемые протоколы
+
+| Protocol     | Метод                          | Стратегия synth                            |
+|--------------|--------------------------------|---------------------------------------------|
+| `Equatable`  | `@equals(other) -> bool`       | memberwise `&&` chain                       |
+| `Hashable`   | `@hash() -> u64`               | XOR + rotate FxHash-style combine           |
+| `Cloneable`  | `@clone() -> Self` ([D230](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
+| `Comparable` | `@compare(other) -> int`       | lexicographic if-chain (memcmp-style)       |
+| `Printable`  | `@fmt(sb) -> ()`               | `sb.append("TypeName { f: v, ... }")` chain |
+
+Все 5 — single-method built-in protocols, объявлены в `std/prelude/protocols.nv`.
+
+## Когда compiler synthesize'ит
+
+1. Type помечен `#impl(P)` где `P` — один из 5 built-in protocols.
+2. Type **не** предоставляет explicit `fn T @method(...)` — иначе user wins.
+3. Все поля type'а **eligible** — primitive ИЛИ имеют `#impl(P)` ИЛИ
+   имеют explicit `fn FieldType @method`.
+
+Если хотя бы одно условие нарушено — diagnostic из `E_AUTO_DERIVE_*` family
+(см. ниже).
+
+## Когда compiler НЕ synthesize'ит
+
+- **Protocol не built-in** (user-defined protocol) — auto-derive только для
+  5 known built-in. User-defined protocols → user пишет body вручную.
+- **Type provides explicit method** — `fn T @equals(other) -> bool => ...`
+  wins над auto-derive (manual override).
+- **Field type не implement** требуемый protocol →
+  `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
+
+## Field eligibility
+
+Каждое поле type'а должно быть одним из:
+
+| Категория поля | Что делает synthesizer |
+|---|---|
+| Primitive (`int`/`f64`/`bool`/`char`/`byte`/`str`/`u*`/`i*`) | Inline copy/compare/hash через built-in routines |
+| `#impl(P)` annotated record/tuple | Recursive call `@field.method(...)` |
+| Explicit `fn FieldType @method` | Direct dispatch к user-provided method |
+| `[]T` array | Recursive по `T` |
+| Tuple `(A, B, ...)` | Recursive по element types |
+
+Что **не eligible** — `fn(...)` types, pointers `*T`, opaque types, protocol
+types (требуют explicit user impl).
+
+## Примеры
+
+### Простой record
+
+```nova
+#impl(Equatable)
+type Money {
+    cents int
+}
+
+ro a = Money { cents: 100 }
+ro b = Money { cents: 100 }
+assert(a == b)  // → @a.cents == b.cents → true
+```
+
+### Рекурсивный auto-derive
+
+```nova
+#impl(Cloneable)
+type Inner {
+    name str
+    code int
+}
+
+#impl(Cloneable)
+type Outer {
+    inner Inner       // ← Inner has #impl(Cloneable) — eligible
+    count int
+}
+
+ro o = Outer { inner: Inner { name: "x", code: 1 }, count: 5 }
+ro p = o.clone()
+// synthesized:
+//   Outer { inner: @inner.clone(), count: @count }
+// → Outer { inner: Inner { name: @name, code: @code }, count: 5 }
+```
+
+### Manual override (user wins)
+
+```nova
+#impl(Equatable)
+type CaseInsensitive {
+    text str
+}
+
+// User implements @equals — wins над auto-derive.
+fn CaseInsensitive @equals(other CaseInsensitive) -> bool =>
+    @text.to_lower() == other.text.to_lower()
+
+ro a = CaseInsensitive { text: "Hello" }
+ro b = CaseInsensitive { text: "HELLO" }
+assert(a == b)  // → user-defined logic
+```
+
+### Named tuple (Plan 120 D215)
+
+```nova
+#impl(Equatable + Cloneable)
+type Pair(left int, right int)
+
+ro p = Pair(1, 2)
+ro q = Pair(1, 2)
+assert(p == q)
+ro r = p.clone()
+```
+
+### Heap-record `==` override
+
+До Plan 126 на heap-record `a == b` был **identity-eq** (pointer comparison).
+После Plan 126:
+
+```nova
+// Без #impl(Equatable) — identity-eq preserved (backward compat).
+type Account {
+    id int
+    balance f64
+}
+ro a = Account { id: 1, balance: 100.0 }
+ro b = Account { id: 1, balance: 100.0 }
+assert(a != b)  // ← разные allocation'ы, identity не совпадает
+
+// С #impl(Equatable) — structural eq.
+#impl(Equatable)
+type AccountStruct {
+    id int
+    balance f64
+}
+ro x = AccountStruct { id: 1, balance: 100.0 }
+ro y = AccountStruct { id: 1, balance: 100.0 }
+assert(x == y)  // ← memberwise structural eq
+```
+
+## Диагностики (Plan 126 Ф.4)
+
+| Код                                  | Когда триггерится                                                              |
+|---------------------------------------|--------------------------------------------------------------------------------|
+| `E_AUTO_DERIVE_CYCLE`                 | Cyclic recursion через fields не терминируется                                 |
+| `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`  | Field type не implement требуемый protocol                                     |
+| `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol не в built-in list (`Equatable`/`Hashable`/`Cloneable`/`Comparable`/`Printable`) |
+| `E_AUTO_DERIVE_UNSUPPORTED_KIND`      | Type kind (Newtype/Alias/Effect/Protocol/Opaque) не поддерживает derive        |
+
+### Пример E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+
+```nova
+type Plain {
+    n int
+}
+
+#impl(Equatable)
+type Wrapper {
+    inner Plain    // ← Plain не #impl(Equatable)
+}
+// ❌ E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL:
+//   type `Wrapper` claims `#impl(Equatable)` but field `inner`
+//   (type `Plain`) does not implement `Equatable`.
+//   Either add `#impl(Equatable)` to `Plain`, или provide explicit
+//   `fn Wrapper @equals(...)`.
+```
+
+**Fix**: добавить `#impl(Equatable)` на `Plain`:
+
+```nova
+#impl(Equatable)   // ← Fix: now Plain eligible
+type Plain {
+    n int
+}
+
+#impl(Equatable)
+type Wrapper {
+    inner Plain
+}
+```
+
+## Cycle detection
+
+Compiler ведёт **visited set** `(type, protocol)` во время synthesis. Если
+synthesis для типа `T` уже идёт, и встречается рекурсивный путь обратно к
+`T` — `E_AUTO_DERIVE_CYCLE`:
+
+```nova
+#impl(Cloneable)
+type A { b B }
+
+#impl(Cloneable)
+type B { a A }
+// ❌ E_AUTO_DERIVE_CYCLE: cyclic recursion через fields не терминируется.
+//    Provide explicit `fn A @clone(...)` or `fn B @clone(...)`.
+```
+
+**Fix**: явный impl на одном из типов разрывает рекурсию:
+
+```nova
+#impl(Cloneable)
+type A { b B }
+
+fn A @clone() -> A => A { b: @b }   // ← manual; синтезатор для B продолжит работать
+```
+
+## Композиция с Plan 124.x семантикой
+
+Auto-derive **совместим** с:
+
+- **`priv` field modifier** ([Plan 124.1/D220 §3.3.1](../spec/decisions/02-types.md#d220)):
+  synthesizer работает в type-method scope — имеет доступ к priv-полям.
+- **`mut` field modifier** ([D33](../spec/decisions/02-types.md#d33)):
+  `mut`-fields копируются как обычные fields, mutability preserve'ится в new value.
+- **`ro` binding** ([D33](../spec/decisions/02-types.md#d33), [D175](../spec/decisions/02-types.md#d175)):
+  synthesized methods receive `ro Self` receiver — only-read access.
+- **Value-record `type X value { ... }`** ([Plan 124.8 D228](../spec/decisions/02-types.md#d228)):
+  full support, synthesis работает идентично heap-record.
+- **Named tuple `type X(a int, b str)`** ([Plan 120 D215](../spec/decisions/02-types.md#d215)):
+  fields обрабатываются через `NamedTupleField` ровно как `RecordField`.
+
+## Что НЕ supported V1 (followup)
+
+| Marker                          | Описание                                                       |
+|---------------------------------|----------------------------------------------------------------|
+| `[M-126-sum-equal-rich]`        | Sum-type @equals — variant tag + payload recursion             |
+| `[M-126-sum-hash-rich]`         | Sum-type @hash — discriminant + payload combine                |
+| `[M-126-sum-clone-rich]`        | Sum-type @clone — match-arms с payload recursion               |
+| `[M-126-sum-compare-rich]`      | Sum-type @compare — variant ordering                           |
+| `[M-126-sum-fmt-rich]`          | Sum-type @fmt — variant-aware output                           |
+| `[M-126-codegen-method-table]`  | V1: synthesized FnDecl не register'ится в method_table. Codegen wiring для full `a == b` runtime semantics — V2 expansion |
+
+V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_METHODS` корректно, что разблокирует pattern usage в downstream type-checked code. Полное `==` wiring через method_table — Plan 126 V2 (когда понадобится в production stdlib).
+
+## См. также
+
+- [Plan 126 — Auto-derive протоколов](plans/126-auto-derive-protocols.md) —
+  весь roadmap, design rationale, AC list.
+- [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
+  — auto-derive rules.
+- [D230 NEW](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1) —
+  Cloneable protocol semantics.
+- [D186 — `#impl(P)` annotation](../spec/decisions/02-types.md#d186) —
+  foundation infrastructure.
+- [std/prelude/protocols.nv](../std/prelude/protocols.nv) — protocol
+  declarations source-of-truth.

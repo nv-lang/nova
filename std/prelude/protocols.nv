@@ -276,6 +276,57 @@ export type Comparable protocol {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// Plan 126 (D230) — Cloneable protocol
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Deep recursive copy (Plan 126, D230).
+///
+/// Single-method protocol для глубокой копии value-record / heap-record /
+/// named tuple / sum-type. Auto-derive через `#impl(Cloneable)` на типе:
+/// compiler synthesize'ит memberwise рекурсивную копию каждого поля.
+///
+/// **Auto-derive rules:**
+/// - Primitive types (int/f64/bool/char/byte/str): copy semantics built-in;
+///   `str` clone = новая аллокация с тем же контентом.
+/// - `[]T`: new array с recursive clone элементов.
+/// - Record/NamedTuple: memberwise `field.clone()` chain.
+/// - Sum-type: match-arms, payload рекурсивно clone'ится.
+/// - Reference fields в value-record: clone underlying (`[]T` deep copy).
+///
+/// **Cycle detection:** type `A` ссылающийся на `A` сам (через embed) →
+/// `E_AUTO_DERIVE_CYCLE` при попытке synthesize.
+///
+/// **Field eligibility:** каждое поле type'а должно implement Cloneable
+/// (либо primitive, либо `#impl(Cloneable)`). Иначе →
+/// `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
+///
+/// # Examples
+///
+/// ```nova
+/// #impl(Cloneable)
+/// type Vec3 value {
+///     x f64
+///     y f64
+///     z f64
+/// }
+///
+/// ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+/// ro b = a.clone()  // synthesized: Vec3 { x: @x.clone(), y: @y.clone(), z: @z.clone() }
+/// ```
+///
+/// Manual impl (override default):
+///
+/// ```nova
+/// fn Vec3 @clone() -> Vec3 =>
+///     Vec3 { x: @x, y: @y, z: @z }   // shallow copy (primitives)
+/// ```
+#stable(since = "0.1")
+export type Cloneable protocol {
+    clone() -> Self
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Display protocol (D109)
 // ──────────────────────────────────────────────────────────────────────────
 

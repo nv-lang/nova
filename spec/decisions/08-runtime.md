@@ -3177,15 +3177,85 @@ Codegen: `prim_builtin_method(c_ty, method)` в `emit_c.rs` перехватыв
   правды.
 - **`Ord` protocol bound** — структурный bound (`lt/le/gt/ge` методы) V2;
   для D109 достаточно auto-dispatch без формального `Ord` protocol.
-- **Хеш для пользовательских типов** — авто-derive (аналог Rust
-  `#[derive(Hash)]`) V2; требует рекурсивного обхода полей.
+
+### D109 amend (Plan 126, 2026-06-05) — auto-derive для пользовательских типов
+
+**Q-резолв «Хеш / eq / clone для пользовательских типов»** (ранее «отвергнуто
+до V2»): теперь реализован через `#impl(P)` annotation (D186) + codegen-side
+synthesis. Аналог Rust `#[derive(Hash, PartialEq, Clone, Ord, Debug)]`.
+
+**Supported built-in protocols** (auto-derive eligible, Plan 126 Ф.3):
+
+| Protocol  | Метод                          | Стратегия synth                          |
+|-----------|--------------------------------|------------------------------------------|
+| Equatable | `@equals(other) -> bool`       | memberwise `&&` chain                    |
+| Hashable  | `@hash() -> u64`               | XOR + rotate FxHash-style combine        |
+| Cloneable | `@clone() -> Self` (D230 NEW)  | record literal с `.clone()` per field    |
+| Comparable| `@compare(other) -> int`       | lexicographic if-chain                   |
+| Printable | `@fmt(sb) -> ()`               | `sb.append("Name { f: v, ... }")` chain |
+
+**Auto-derive triggers** (см. Plan 126 Ф.4 — `verify_impl_protocols`):
+- Type lists protocol в `#impl(P)` list (D186).
+- Protocol — один из known built-in (выше); `is_builtin_protocol()` filter.
+- Type **не** предоставляет explicit method (`fn T @method(...)` НЕ найден).
+- Field eligibility: каждое поле либо primitive, либо имеет `#impl(P)`,
+  либо имеет explicit `fn FieldType @method` — иначе
+  `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
+
+**Heap-record `==` override** (Plan 126 — изменение прежней семантики):
+
+До Plan 126 на heap-record'е `a == b` всегда давало identity-eq (сравнение
+pointer'ов GC-heap'а). После Plan 126:
+- Heap-record с `#impl(Equatable)` → `a == b` вызывает synthesized
+  `@equals(other)` (memberwise структурное равенство).
+- Heap-record **без** `#impl(Equatable)` → identity-eq (unchanged) —
+  обратная совместимость со всем существующим кодом.
+
+**Value-record / NamedTuple** (Plan 120/124) — тот же mechanism: `#impl(P)`
+opt-in. Tuple resolver routes `==` через synthesized `@equals` без
+identity-eq fallback'а (tuple никогда не heap-allocated).
+
+**Sum-type** — V1 placeholder: identity-comparison для `Equatable`,
+`@compare` returns `0`, `@clone` returns `@`, `@fmt` emits только type name.
+Rich variant-tag + payload recursion — followup
+[M-126-sum-{equal,hash,clone,compare,fmt}-rich].
+
+**Cycle detection** (Plan 126 Ф.2):
+- Visited set `(type_name, protocol)` в `AutoDeriveCtx`.
+- Cyclic type `type A { b B }; type B { a A }` + `#impl(Cloneable)` →
+  `E_AUTO_DERIVE_CYCLE`.
+
+**Auto-derive error codes** (registered Plan 126 Ф.4):
+
+| Code                                  | Trigger                                                              |
+|---------------------------------------|----------------------------------------------------------------------|
+| `E_AUTO_DERIVE_CYCLE`                 | Cyclic recursion через fields не терминируется                       |
+| `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`  | Field type не implement требуемый protocol                           |
+| `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol не в built-in list (auto-derive только для built-in)        |
+| `E_AUTO_DERIVE_UNSUPPORTED_KIND`      | Type kind (Newtype/Alias/Effect/Protocol/Opaque) не поддерживает derive |
+
+**Что отвергнуто (Plan 126 design)**:
+- `#derive(P)` keyword sugar — повторяет `#impl(P)` без новой семантики; всё
+  работает через единый `#impl(...)` annotation (D186).
+- Implicit auto-derive на value-record по умолчанию (Rust `Copy` analog) —
+  опасно для семантических типов (`Money`, `UserId`); explicit opt-in
+  forces awareness.
+
+**Cross-refs:**
+- [D186 — `#impl(P)` annotation](02-types.md#d186) — foundation.
+- [D230 — Cloneable protocol](02-types.md#d230) — NEW (Plan 126 Ф.1).
+- [Plan 126 Ф.3](../../docs/plans/126-auto-derive-protocols.md) —
+  per-protocol synthesizer bodies.
+- [docs/auto-derive-guide.md](../../docs/auto-derive-guide.md) — user guide.
 
 ### Связь
 
 - [D72 — Generic bounds](02-types.md#d72) — `Hashable` требует `hash() -> u64`.
 - [D26 — stdlib](08-runtime.md#d26) — примитивные методы часть runtime stdlib.
 - [docs/plans/48-closures-in-generics.md → Ф.8](../../docs/plans/48-closures-in-generics.md)
-  — реализация.
+  — реализация built-in dispatch для примитивов.
+- [Plan 126 — Auto-derive протоколов](../../docs/plans/126-auto-derive-protocols.md)
+  — auto-derive для пользовательских типов.
 
 ## D124. Edition-versioned prelude resolver
 

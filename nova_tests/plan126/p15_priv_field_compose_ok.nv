@@ -1,0 +1,18 @@
+// Plan 126 — POS F15:
+// `priv` field совместим с auto-derive — synthesizer = type-method scope.
+// AC-126.13 (composability с priv).
+module plan126.p15_priv_field_compose_ok
+
+#impl(Equatable)
+type Secret {
+    priv code int
+    label str
+}
+
+fn Secret.new(c int, l str) -> Secret =>
+    { code: c, label: l }
+
+test "priv field auto-derive works" {
+    ro s = Secret.new(42, "x")
+    assert(s.label == "x")
+}

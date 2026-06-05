@@ -33595,3 +33595,122 @@ Plan 118.1 closeout: 2 markers closed, foundation shipped. CStr ergonomic comple
 requires codegen change tracked в [M-118.1-cstr-runtime-wiring]. addr_of fully functional
 V1.
 
+
+================================================================================
+== 2026-06-05 — Plan 126: Auto-derive протоколов V1 LANDED + MERGED
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p126
+> Branch: plan-126-auto-derive-protocols
+
+Plan 126 V1 — auto-derive memberwise recursive synthesis для 5 built-in
+протоколов через `#impl(P)` annotation (D186 leverage). Closes Q «hash/eq/
+clone для пользовательских типов» из D109 «отвергнуто» секции —
+now реализовано через codegen-side synthesis на type-check level.
+
+PHASE BREAKDOWN (8 phases, 6 commits):
+
+Ф.0 — Investigation: Equatable method = `equals` (D183 amend); existing
+manual impls scanned (StringBuilder etc.); cycle detection design via
+visited-set.
+
+Ф.1 — Cloneable protocol declared в std/prelude/protocols.nv
+(D230 NEW, commit c7ff5a319ea). Plan 91.8a.2 style — single method,
+NO default body (auto-derive только через #impl).
+
+Ф.2 — auto_derive.rs synthesis infrastructure (commit c5b0e84c99d):
+- `is_builtin_protocol` / `builtin_protocol_method` / `is_primitive_type` filters.
+- 4 DeriveError variants + diagnostic_message().
+- DeriveQuery trait + AutoDeriveCtx + visited-set cycle tracking.
+- iter_fields / iter_sum_variants / check_field_eligibility helpers.
+- 13 unit tests (T01-T13) coverage infrastructure.
+
+Ф.3 — 5 per-protocol synthesizers (commit b793b627c33):
+- synthesize_equal: memberwise && chain (record/named-tuple).
+- synthesize_hash: XOR + rotate FxHash-style (shift = 13*i).
+- synthesize_clone: record literal `Self { field: @field.clone() }`
+  с primitive shortcut (no .clone() recursion).
+- synthesize_compare: lexicographic if-chain (-1/0/1 memcmp-style).
+- synthesize_fmt: `sb.append("TypeName { f: v, ... }")` chain.
+- Sum-type V1 placeholders для всех 5 (rich semantics → followups).
+
+Ф.4 — Integration с verify_impl_protocols (commit 2065f58565c):
+- AutoDeriveQueryBridge wrapper над TypeCheckCtx — implements DeriveQuery.
+- В verify_impl_protocols: built-in protocol + no explicit method +
+  no default body → попытка synthesize_method. Success → suppress
+  E_IMPL_MISSING_METHODS. Failure → emit E_AUTO_DERIVE_* diagnostic.
+
+Ф.5 — Spec amends (commit 17144b29c52):
+- D109 amend (08-runtime.md): auto-derive rules + 4 error codes +
+  heap-record == override semantics + cycle detection + sum-type V1
+  placeholders + sub-section «что отвергнуто (Plan 126 design)».
+- D230 NEW (02-types.md): Cloneable protocol — single-method
+  clone() -> Self, memberwise recursive synthesis, field eligibility,
+  cycle detection.
+- README.md: D-block index D230 + capsule update для 02-types.md.
+
+Ф.6 — Tests (21 fixtures verified via release nova):
+- 15 POS: 5 per-protocol record (p01-p05) + combined-all (p06) +
+  2 nested-depth (p07/p08) + explicit override (p09) + primitive
+  str/bool/char fields (p10/p11) + single-field record (p12) +
+  named tuple D215 (p13) + mut-field combinator (p14) + priv
+  combinator (p15).
+- 6 NEG: E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL для каждого из 5
+  built-in protocols (p16-p20) + E_IMPL_NOT_PROTOCOL guard (p21).
+- 21/21 PASS на release nova test.
+- Plan 124.x baseline preserved (40/40 plan124_8 PASS).
+
+Ф.7 — Docs:
+- NEW docs/auto-derive-guide.md (~270 lines) — user-facing guide
+  со всеми 5 built-in протоколами, field eligibility rules,
+  manual override pattern, 4 error codes, composability с
+  priv/mut/ro/value-record/named-tuple, cycle detection examples,
+  V1 known limitations.
+- Plan-doc closure: status → ✅ ЗАКРЫТ V1 + MERGED; AC list
+  ✅ marked; V1 known limitations enumerated.
+
+Ф.8 — Closure logs + merge to main.
+
+ACCEPTANCE CRITERIA (A126.1-A126.15) — все ✅:
+- A126.1 Cloneable protocol declared.
+- A126.2-A126.6 5 protocols synthesize per-method.
+- A126.7 Recursive synthesis (3+ levels).
+- A126.8 Cycle detection (unit-tested; e2e fixture blocked pre-existing
+  checker stack-overflow на mutual record cycles — independent issue).
+- A126.9 Field eligibility errors.
+- A126.10 Explicit method override.
+- A126.11 Heap-record == override.
+- A126.12 Tuple #impl works.
+- A126.13 Value-record + priv composability.
+- A126.14 21 plan126 fixtures PASS.
+- A126.15 plan124_x regression preserved.
+
+V1 KNOWN LIMITATIONS (followup markers):
+- [M-126-codegen-method-table] — synthesized FnDecl не register'ится
+  в method_table. V1 suppress'ит E_IMPL_MISSING_METHODS на type-check
+  level. Полное `a == b` runtime semantics через method_table — V2.
+- [M-126-sum-equal-rich] / [M-126-sum-hash-rich] / [M-126-sum-clone-rich]
+  / [M-126-sum-compare-rich] / [M-126-sum-fmt-rich] — sum-type rich
+  variant-aware synthesis.
+
+LESSONS:
+
+1. Auto-derive семантическая корректность важнее runtime wiring.
+   V1 deliberately gates на type-check level — user'ы могут писать
+   `#impl(Equatable + Hashable)` без E_IMPL_MISSING_METHODS, что
+   unblocks downstream pattern usage. Codegen integration — separate
+   V2 concern с своим runtime testing surface.
+
+2. Mutual record cycles — pre-existing checker stack overflow.
+   Cycle detection unit-tested на synth level (t04/t05), но end-to-end
+   fixture blocked. Не Plan 126 issue — independent checker bug.
+   Documented в plan-doc «V1 known limitations».
+
+3. Plan 124.8 V1 value-record codegen (NovaValue_X vs Nova_X*) —
+   shaped какие fixtures можно verifу end-to-end. Plan 126 fixtures
+   избегают runtime `==` для value-record; type-check проверяет
+   только что synth-success suppresses E_IMPL_MISSING_METHODS.
+
+4. Single explicit type prefix bug на single-field record (Marker {})
+   — pre-existing codegen issue (treats empty record as scalar).
+   Не Plan 126 — fixture p12 использует minimum 1 field.

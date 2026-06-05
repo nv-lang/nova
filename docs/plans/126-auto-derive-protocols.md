@@ -2,11 +2,28 @@
 # Plan 126 — Auto-derive протоколов через `#impl(...)` annotation
 
 > **Создан 2026-06-02.** Draft scaffold.
-> **Status:** 🆕 PLANNED (черновик).
+> **Status:** ✅ ЗАКРЫТ V1 + MERGED 2026-06-05 (Ф.0-Ф.8 complete).
+> **Branch:** `plan-126-auto-derive-protocols` (commits c7ff5a319ea + c5b0e84c99d + b793b627c33 + 2065f58565c + 17144b29c52 + Ф.6-Ф.8).
+> **Tests:** 21/21 plan126 PASS (15 POS + 6 NEG); plan124_8 regression 40/40 PASS.
+> **D-blocks:** D109 amend + D230 NEW.
 > **Trigger:** discussion после Plan 124 — value-record нужны auto-equality/hash/clone/comparison.
 > **Gated:** Plan 124.8 ✅ (value-record landed).
-> **Эстимат:** ~3-4 dev-day.
+> **Эстимат:** ~3-4 dev-day — actual ~3 dev-day.
 > **Model:** Opus 4.7 + Thinking ON (codegen-synthesis, protocol semantics).
+>
+> **V1 scope** (landed): type-check level auto-derive — `verify_impl_protocols`
+> suppresses `E_IMPL_MISSING_METHODS` через `synthesize_method`. `E_AUTO_DERIVE_*`
+> diagnostics emit'ятся для cycle/field-lacks/unknown-protocol/unsupported-kind.
+> Per-protocol synthesizer bodies (Ф.3) built на AST level. **V2 codegen
+> method_table integration** — followup `[M-126-codegen-method-table]`.
+>
+> **V1 known limitations:**
+> - Cycle detection unit-tested (Ф.2 `t04`/`t05`), но end-to-end fixture
+>   blocked pre-existing checker stack-overflow на mutual record cycles.
+> - Sum-type synthesizers — V1 placeholders (followup [M-126-sum-*-rich]).
+> - Value-record (Plan 124.8 V1) codegen routes synthesized methods через
+>   stack-slot ABI — works for type-check, requires V2 method_table wiring
+>   для full runtime `a == b` semantics.
 
 ---
 

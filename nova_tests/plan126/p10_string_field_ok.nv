@@ -1,0 +1,15 @@
+// Plan 126 — POS F10:
+// `str` field eligible для auto-derive Equatable (primitive).
+// AC-126.2 — primitive str.
+module plan126.p10_string_field_ok
+
+#impl(Equatable)
+type Person {
+    name str
+    age int
+}
+
+test "Person with str field type-checks" {
+    ro p = Person { name: "Alice", age: 30 }
+    assert(p.age == 30)
+}

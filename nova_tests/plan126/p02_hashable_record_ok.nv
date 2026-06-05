@@ -1,0 +1,14 @@
+// Plan 126 — POS F02:
+// `#impl(Hashable)` на record → auto-derive @hash().
+// AC-126.3.
+module plan126.p02_hashable_record_ok
+
+#impl(Hashable)
+type UserId {
+    value int
+}
+
+test "UserId type-checks with auto-derived @hash" {
+    ro u = UserId { value: 42 }
+    assert(u.value == 42)
+}
