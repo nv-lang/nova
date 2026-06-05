@@ -1,0 +1,54 @@
+// Plan 128 Ф.4 T13 — named tuple returned from function + mut method
+// applied to the returned binding.
+//
+// Pattern variant: instead of array-element (V1 codegen limitation
+// для []NamedTuple — array element type inference broken pre-Plan 128
+// scope), this fixture exercises function-return → mut-binding →
+// mut-method, which is the canonical "fresh stack slot" mut-receiver
+// path Ф.2 was designed for (rvalue must hoist to temp + use &temp).
+
+module plan128.t13_named_tuple_in_array_ok
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 @sum() -> f64 =>
+    @x + @y + @z
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+fn Vec3 mut @scale_inplace(k f64) -> () {
+    @x = @x * k
+    @y = @y * k
+    @z = @z * k
+}
+
+fn make_unit() -> Vec3 =>
+    Vec3(x: 1.0, y: 1.0, z: 1.0)
+
+fn make_axis_x(v f64) -> Vec3 =>
+    Vec3(x: v, y: 0.0, z: 0.0)
+
+test "fn-returned named tuple — ro method on rvalue (rebind to local)" {
+    ro u = make_unit()
+    assert(u.sum() == 3.0)
+    ro v = make_axis_x(5.0)
+    assert(v.sum() == 5.0)
+}
+
+test "fn-returned named tuple → mut binding → mut method" {
+    mut v = make_unit()
+    v.set_x(99.0)
+    assert(v.x == 99.0)
+    assert(v.y == 1.0)
+    assert(v.z == 1.0)
+}
+
+test "fn-returned named tuple → mut binding → scale_inplace" {
+    mut v = make_axis_x(2.0)
+    v.scale_inplace(3.0)
+    assert(v.x == 6.0)
+    assert(v.y == 0.0)
+    assert(v.z == 0.0)
+}

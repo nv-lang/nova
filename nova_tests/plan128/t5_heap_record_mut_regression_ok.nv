@@ -1,0 +1,52 @@
+// Plan 128 Ф.4 T5 — classic heap-backed record mut method regression.
+//
+// Plain `type T { ... }` records (no `value` keyword) allocate on heap
+// (D26/D52 GC). Their `mut @method` ABI receives `Nova_T*` (the GC
+// pointer itself, which is already a reference). This test ensures
+// Plan 128 changes did not break the heap-record path.
+
+module plan128.t5_heap_record_mut_regression_ok
+
+type Counter {
+    mut value int
+    mut step int
+}
+
+fn Counter.new() -> Self => { value: 0, step: 1 }
+
+fn Counter mut @inc() -> () {
+    @value = @value + @step
+}
+
+fn Counter mut @set_step(s int) -> () {
+    @step = s
+}
+
+fn Counter @get() -> int => @value
+
+test "heap record mut method — inc loop accumulates" {
+    mut c = Counter.new()
+    mut i = 0
+    while i < 5 {
+        c.inc()
+        i = i + 1
+    }
+    assert(c.get() == 5)
+}
+
+test "heap record mut method composes — step change mid-sequence" {
+    mut c = Counter.new()
+    c.inc()                 // value = 1
+    c.set_step(10)
+    c.inc()                 // value = 11
+    c.inc()                 // value = 21
+    assert(c.get() == 21)
+}
+
+test "heap record ro method preserves binding" {
+    mut c = Counter.new()
+    c.inc()
+    c.inc()
+    assert(c.get() == 2)
+    assert(c.get() == 2)
+}

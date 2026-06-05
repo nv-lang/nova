@@ -1,0 +1,52 @@
+// Plan 128 Ф.4 T12 — named tuple direct field-write + mut-method
+// composition through local rebind.
+//
+// Note: `obj.field.mut_method()` где field — named tuple — known V1
+// limitation: `prepare_method_recv` hoists field-projection rvalue to
+// temp and takes &temp, so writes lost on write-back. Workaround: copy
+// field to local, mutate, write back explicitly. This test demonstrates
+// that workaround flow + verifies direct-field writes interact cleanly
+// with mut-methods on the same binding.
+
+module plan128.t12_named_tuple_field_mut_ok
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+fn Vec3 mut @scale_inplace(k f64) -> () {
+    @x = @x * k
+    @y = @y * k
+    @z = @z * k
+}
+
+test "direct field write + subsequent mut method on binding" {
+    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    v.x = 10.0
+    v.scale_inplace(2.0)
+    assert(v.x == 20.0)
+    assert(v.y == 4.0)
+    assert(v.z == 6.0)
+}
+
+test "mut method + subsequent direct field write" {
+    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    v.set_x(100.0)
+    v.y = 200.0
+    assert(v.x == 100.0)
+    assert(v.y == 200.0)
+    assert(v.z == 3.0)
+}
+
+test "interleaved direct + method writes" {
+    mut v = Vec3(x: 1.0, y: 1.0, z: 1.0)
+    v.x = 2.0
+    v.set_x(3.0)
+    v.x = 4.0
+    v.set_x(5.0)
+    assert(v.x == 5.0)
+    assert(v.y == 1.0)
+    assert(v.z == 1.0)
+}

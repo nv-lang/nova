@@ -1,0 +1,15 @@
+// Plan 128 Ф.4 T8 — primitive `bool` cannot have mut-methods.
+//
+// EXPECT_COMPILE_ERROR E_PRIMITIVE_MUT_METHOD
+
+module plan128.t8_primitive_bool_mut_method_neg
+
+fn bool mut @flip() -> () {
+    @ = !@
+}
+
+test "should not compile: fn bool mut @flip" {
+    mut b = true
+    b.flip()
+    assert(b == false)
+}

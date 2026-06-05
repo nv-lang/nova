@@ -1,0 +1,45 @@
+// Plan 128 Ф.4 T2 — named tuple ro-method does NOT mutate caller binding.
+//
+// Verifies asymmetry of Ф.2 ABI: ro receiver still goes by-value
+// (NovaTuple_X), so a method that performs no @ = assignment cannot
+// affect the caller — but more importantly, calling a ro-method on a
+// mut binding shouldn't accidentally trigger pointer-based aliasing.
+
+module plan128.t2_named_tuple_ro_unchanged_ok
+
+type Vec3(x f64, y f64, z f64)
+
+// ro receiver (no `mut` keyword) — by-value, cannot mutate @-fields.
+fn Vec3 @sum() -> f64 =>
+    @x + @y + @z
+
+fn Vec3 @magnitude_sq() -> f64 =>
+    @x * @x + @y * @y + @z * @z
+
+test "ro method reads — caller binding unchanged after call" {
+    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro before_sum = v.sum()
+    assert(before_sum == 6.0)
+    // Re-read fields: they must still hold the original construction values.
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "ro method on ro binding works" {
+    ro v = Vec3(x: 3.0, y: 4.0, z: 0.0)
+    assert(v.magnitude_sq() == 25.0)
+    assert(v.x == 3.0)
+    assert(v.y == 4.0)
+    assert(v.z == 0.0)
+}
+
+test "multiple ro method calls — no field drift" {
+    mut v = Vec3(x: 1.0, y: 1.0, z: 1.0)
+    assert(v.sum() == 3.0)
+    assert(v.sum() == 3.0)
+    assert(v.sum() == 3.0)
+    assert(v.x == 1.0)
+    assert(v.y == 1.0)
+    assert(v.z == 1.0)
+}

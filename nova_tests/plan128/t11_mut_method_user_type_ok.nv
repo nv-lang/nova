@@ -1,0 +1,42 @@
+// Plan 128 Ф.4 T11 — user-defined (non-primitive, non-tuple) heap
+// record type with mut-method works exactly like a built-in record.
+//
+// Coverage: Ф.3 diagnostic must NOT misfire on user-defined types
+// (no `value`, no positional/named tuple syntax) — only primitives.
+
+module plan128.t11_mut_method_user_type_ok
+
+type Wallet {
+    mut balance int
+    mut tx_count int
+}
+
+fn Wallet.new() -> Self => { balance: 0, tx_count: 0 }
+
+fn Wallet mut @deposit(amount int) -> () {
+    @balance = @balance + amount
+    @tx_count = @tx_count + 1
+}
+
+fn Wallet mut @withdraw(amount int) -> () {
+    @balance = @balance - amount
+    @tx_count = @tx_count + 1
+}
+
+fn Wallet @balance_of() -> int => @balance
+fn Wallet @count() -> int => @tx_count
+
+test "user heap record mut method — deposit + withdraw flow" {
+    mut w = Wallet.new()
+    w.deposit(100)
+    w.deposit(50)
+    w.withdraw(30)
+    assert(w.balance_of() == 120)
+    assert(w.count() == 3)
+}
+
+test "user heap record mut method — empty cycle" {
+    mut w = Wallet.new()
+    assert(w.balance_of() == 0)
+    assert(w.count() == 0)
+}
