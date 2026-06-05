@@ -33039,3 +33039,28 @@ outer's deadline never restored.
 - 🟢 R4b (exception safety — leave_shield unconditional) — закрыт this commit.
 
 Production-grade closure для consume-scope shield semantics.
+
+## 2026-06-05 (later) — Plan 91.14 audit gap-fix closure (no simplifications)
+
+Post-merge audit found 13 must-fix gaps в Plan 91.14 closure. All
+13 fixed production-grade per user directive «без упрощений как для прода»:
+
+- 5 spec D-block updates (D183 banner, D216 §17 canonical update, D44
+  format-spec subsection, D229 placeholder → real summary, topical row)
+- 2 docs updates (plans-README clickable link + ✅ status, typed-pointers
+  canonical ${p:?} form)
+- 4 AC entries reconciled к landed reality (a.d / a.f / a.j / a.k) —
+  honest match вместо over-promise; deferral pointers documented
+- 2 new POS fixtures (t12 3-level nested + t13 mixed primitives) raise
+  coverage к 14/14 PASS
+
+### Lesson — stale binary trap
+
+Workflow agent reported initial t12/t13 RUN-FAIL. Root cause: agent
+tested через nova-cli/target/release/nova.exe в main repo, но binary
+не был rebuild'нут после merge plan-91.14 (codegen ships в new binary).
+После `cargo build --release` fixtures PASS.
+
+Pattern: after `git merge`, before testing — always rebuild binary if
+worktree вносил compiler changes. Workflow agents с separate context
+не знают про rebuild requirement.

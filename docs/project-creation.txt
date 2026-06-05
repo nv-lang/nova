@@ -32925,3 +32925,28 @@ Lessons:
     standard compile-only verification pattern достаточно для marker
     closure.
 
+## 2026-06-05 (later) — Plan 91.14 audit gap-fix closure (7 commits)
+
+Post-merge audit (workflow w8d3doc1w) revealed 13 must-fix gaps в
+Plan 91.14 closure. Fixed все 13 параллельно в workflow w6pdp78cp +
+commit-per-task split:
+
+- df5c04ef255 spec(D183/D216): forward-ref banner к D229 + §17 update
+- f8b91e8f875 spec(D44): format-spec extension subsection
+- 756d9d1aadf spec(README): D229 placeholder → real summary + topical row
+- 5118897c2cb docs(plans-README): Plan 91.14 ✅ CLOSED + clickable link
+- 3f970a9eb7b docs(typed-pointers): canonical ${p:?} + DebugPrintable
+- 0a48fcedcd9 docs(plan91.14): AC reconcile (a.d / a.f / a.j / a.k)
+- (new fixtures commit) test(plan91.14): t12 + t13 fixtures
+
+Critical finding: agent 7 reported 4/14 PASS initially — false positive
+caused by stale release nova binary в main (Plan 91.14 codegen merged
+но binary не rebuilt). После cargo build --release: 14/14 PASS.
+
+Test results: 14/14 plan91_14 PASS (12 prior + 2 new t12+t13).
+
+### State
+
+Plan 91.14 V1 ✅ FULLY CLOSED + AUDIT-FIXED. Spec/D/Q/docs/AC/tests/logs
+все консистентны. No remaining must-fix gaps.
+
