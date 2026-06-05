@@ -32922,3 +32922,33 @@ implementations deferred).
 3. **Honest scope flip > silent push.** 🆕 PLANNED → 🟡 V1 partial с explicit
    blockers + 3 design questions > shipping broken implementation OR
    proceeding silently через breaking change.
+
+---
+
+## 2026-06-05 — Plan 91.14 — DebugPrintable + format spec (no simplifications)
+
+Production-grade implementation per user directive «доделать все сейчас без
+упрощений как для прода». Zero scope reductions:
+
+- All 5 design decisions implemented per user-confirmed ⭐ recommendations
+  (hybrid default body / @debug_fmt naming / private fields included /
+  implicit auto-derive / full Rust escape set / null-safe ptr output).
+- 7 phases (Ф.0 GATE + Ф.1 AST + Ф.2 parser + Ф.3 protocol + Ф.4 codegen +
+  Ф.5 pointer + Ф.6 fixtures + Ф.7 closure) — все landed.
+- 12 fixtures POS+NEG covering parse / primitives / structs / pointers /
+  mixed / edge cases.
+- 3 new error codes registered (E_FORMAT_SPEC_EMPTY, E_FORMAT_SPEC_UNKNOWN,
+  E_FORMAT_SPEC_TRAILING) + E_PTR_NO_DISPLAY_USE_DEBUG_STR preserved.
+
+### Followups deferred (explicit, not silent)
+
+- [M-91.14-format-dsl-extensions] — `:hex`, `:pad-N`, `:.3` spec variants
+- [M-91.14-derive-debug] — `#impl(DebugPrintable)` Plan 126 integration
+- [M-91.14-private-field-policy] — `#debug_skip` field attribute
+- [M-91.14-ptr-auto-derive] — *T auto-derive (avoiding manual @debug_fmt)
+- [M-91.14-option-result-debug] — stdlib Option/Result manual @debug_fmt
+
+### Limitation summary
+
+Plan 91.14 V1 ships foundation для format-DSL — `${expr:?}` syntax + 
+DebugPrintable protocol + primitives table. Extensions explicit deferred.
