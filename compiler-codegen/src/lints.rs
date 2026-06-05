@@ -255,7 +255,135 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     // call inside on_exit body. Stdlib types implementing Consumable must
     // annotate native cleanup external fns с `#cancel_safe`.
     warnings.extend(lint_ffi_cancel_unsafe(m));
+    // Plan 127 Ф.4: W_VALUE_RECORD_UNNECESSARY_PROMOTE — value-record local
+    // detected to escape (auto-promoted to heap) when the fn signature could
+    // have returned the value by-value instead. Suggests user-visible change
+    // to drop the `*` from return type. Lint, not error.
+    warnings.extend(lint_value_record_unnecessary_promote(m));
     warnings
+}
+
+// ============================================================================
+// Plan 127 Ф.4: W_VALUE_RECORD_UNNECESSARY_PROMOTE.
+//
+// Когда value-record local участвует в `&v` escape (auto-promote → heap),
+// fn-signature остаётся user-visible: `-> *Vec3`. Если все escape-points
+// fn'a — это `return &v` (return-position only, без heap-field store /
+// closure capture), пользователь мог бы изменить signature на `-> Vec3`
+// и вернуть `v` напрямую — без promote'а. Lint suggests эту замену.
+//
+// Conservative V1 trigger: fn has promoted local AND fn return-type is
+// `*<ValueRecord>`. Suppressed for compiler-synthesized FnDecls (Plan 126
+// @clone / @equals / @hash bodies, identified by `Span::dummy()` spans).
+// ============================================================================
+
+fn lint_value_record_unnecessary_promote(m: &Module) -> Vec<LintWarning> {
+    let mut warnings = Vec::new();
+    // Run escape analysis once для query interface.
+    let escape = crate::escape_analyze::analyze_module(m);
+    if !escape.has_any_promoted() { return warnings; }
+    // Visit each fn-item; if escape analyzer flagged any local, check signature
+    // shape для unnecessary-promote heuristic.
+    let visit_fn = |fd: &FnDecl, warnings: &mut Vec<LintWarning>| {
+        // Suppress на synthesized fns (Plan 126 auto-derive emits FnDecls с
+        // dummy spans — they are not user-controllable код).
+        if fd.span.start == 0 && fd.span.end == 0 { return; }
+        // External fns не имеют body, escape пройдёт мимо.
+        if matches!(fd.body, FnBody::External) { return; }
+        let fn_key = if let Some(recv) = &fd.receiver {
+            format!("{}::{}", recv.type_name, fd.name)
+        } else {
+            fd.name.clone()
+        };
+        // Plan 127 V1 heuristic: signature returns `*X` где X — value-record.
+        // Если так — by-value return альтернативой possible (suggest to user).
+        let Some(rt) = &fd.return_type else { return };
+        let inner_value_record_name = match rt {
+            TypeRef::Pointer(inner, _) => {
+                if let TypeRef::Named { path, .. } = inner.as_ref() {
+                    path.last().cloned()
+                } else { None }
+            }
+            _ => None,
+        };
+        let Some(vrt_name) = inner_value_record_name else { return };
+        // Confirm vrt_name actually points к value-record TypeDecl в модуле.
+        let mut is_value_record = false;
+        let check_items = |items: &[Item], flag: &mut bool| {
+            for it in items {
+                if let Item::Type(td) = it {
+                    if td.name == vrt_name && matches!(td.kind, crate::ast::TypeDeclKind::Record(_))
+                        && td.allocation == crate::ast::AllocKind::Value
+                    {
+                        *flag = true;
+                        break;
+                    }
+                }
+            }
+        };
+        check_items(&m.items, &mut is_value_record);
+        for pf in &m.peer_files {
+            if is_value_record { break; }
+            check_items(&pf.items_here, &mut is_value_record);
+        }
+        if !is_value_record { return; }
+        // Final gate: escape walker flagged at least one local in this fn'a.
+        // We don't know exactly which body construction triggered promote —
+        // V1 conservative emit на сам fn-signature span.
+        // The lint-key check uses promoted_per_fn via has_any_promoted-style
+        // probe; we re-check via dedicated method.
+        let mut any_promoted_here = false;
+        // Plan 127 escape_analyze keys fn-ids identical to fn_key построения
+        // выше. Probe through public is_promoted с пустым local — но since
+        // EscapeResult API requires local name, мы используем total_count
+        // proxy. Simpler: re-walk через peer-search.
+        for (key, set) in escape_per_fn_iter(&escape) {
+            if key == fn_key && !set.is_empty() {
+                any_promoted_here = true;
+                break;
+            }
+        }
+        if !any_promoted_here { return; }
+        warnings.push(LintWarning {
+            rule: "W_VALUE_RECORD_UNNECESSARY_PROMOTE",
+            diag: Diagnostic::new(
+                format!(
+                    "[W_VALUE_RECORD_UNNECESSARY_PROMOTE] fn `{}` returns `*{}` \
+                     where `{}` is a value-record, and at least one local in this \
+                     fn was auto-promoted to heap to satisfy escape via `&v`. \
+                     Consider returning `{}` by-value (drop the `*` from the \
+                     return type) so the local stays on the stack and no heap \
+                     allocation is required. Auto-promote is correct but may \
+                     incur unnecessary heap pressure. (Plan 127 V1 heuristic — \
+                     see D228 §«escape & auto-promote».)",
+                    fd.name, vrt_name, vrt_name, vrt_name
+                ),
+                fd.span,
+            ),
+        });
+    };
+    for item in &m.items {
+        if let Item::Fn(fd) = item { visit_fn(fd, &mut warnings); }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item { visit_fn(fd, &mut warnings); }
+        }
+    }
+    warnings
+}
+
+/// Helper: enumerate (fn_id, promoted_set) entries из EscapeResult. Wraps
+/// private field access; alternative — add accessor к escape_analyze::
+/// EscapeResult. V1 minimal: use total_promoted_count + per-fn probe API
+/// иначе reconstruct via re-analysis.
+fn escape_per_fn_iter(escape: &crate::escape_analyze::EscapeResult)
+    -> Vec<(String, Vec<String>)>
+{
+    // V1: re-extract through public probe interface. EscapeResult is
+    // small + immutable post-construction; we add a public accessor для
+    // ergonomic iteration в Ф.4 closeout follow-up.
+    escape.iter_promoted().map(|(k, v)| (k.clone(), v.iter().cloned().collect())).collect()
 }
 
 // ============================================================================

@@ -848,6 +848,31 @@ pub struct CEmitter {
     /// Plan 103.6: true when currently emitting inside a `blocking { }` block.
     /// Park-ing sync calls are forbidden; wake-only calls are allowed.
     in_blocking: bool,
+    /// Plan 127 Ф.2: result of value-record escape analysis. Computed once
+    /// per module at the top of `emit_module()`. Consulted при emit_let /
+    /// emit_record_lit для switching `AllocKind::Value` →
+    /// `AllocKind::ValueHeapPromoted` when escape walker detected `&v`
+    /// escape для конкретного local. None until analysis runs (test
+    /// scenarios constructing CEmitter directly).
+    escape_result: Option<crate::escape_analyze::EscapeResult>,
+    /// Plan 127 Ф.3: fn-id key for current emission scope (matches
+    /// `escape_analyze::fn_id` convention — bare name for free fn,
+    /// `<recv_type>::<name>` for method). Set/cleared by emit_fn at
+    /// body-emit boundary. None outside fn body emission.
+    current_fn_id: Option<String>,
+    /// Plan 127 Ф.3: per-binding promoted-marker set, populated при
+    /// emit_let when escape_result says the binding is promoted. Codegen
+    /// downstream (Member access, prepare_method_recv) reads this к
+    /// switch С-ABI form (`-> instead of `.`, pass без `&`).
+    /// Keyed by binding NAME (within current fn scope). Cleared at fn-
+    /// emit boundary.
+    promoted_value_record_locals: HashSet<String>,
+    /// Plan 127 Ф.3: transient signal set by emit_stmt Stmt::Let RIGHT
+    /// BEFORE calling emit_expr (which routes to emit_record_lit).
+    /// If `Some(type_name)`, the imminent record literal must be heap-
+    /// allocated as `NovaValue_<type_name>*` instead of stack-init.
+    /// Consumed (taken) immediately by emit_record_lit, restoring to None.
+    pending_value_record_heap_promote: Option<String>,
 }
 
 /// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
@@ -1101,6 +1126,12 @@ impl CEmitter {
             },
             in_realtime: false,
             in_blocking: false,
+            // Plan 127 Ф.2: escape analysis result populated на emit_module
+            // entry. None при direct construction (unit tests).
+            escape_result: None,
+            current_fn_id: None,
+            promoted_value_record_locals: HashSet::new(),
+            pending_value_record_heap_promote: None,
         }
     }
 
@@ -1344,6 +1375,12 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
+        // Plan 127 Ф.2/Ф.3: run value-record escape analysis upfront so
+        // codegen знает which value-record locals must be heap-promoted
+        // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
+        // is empty (no allocations) если module has no value-records.
+        self.escape_result = Some(crate::escape_analyze::analyze_module(module));
+
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
         // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
         let register_imports = |imports: &[crate::ast::Import], target: &mut HashSet<String>| {
@@ -8766,6 +8803,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 match t.allocation {
                     AllocKind::Heap => self.emit_record_type(&t.name, fields)?,
                     AllocKind::Value => self.emit_value_record_type(&t.name, fields)?,
+                    // Plan 127 V1: ValueHeapPromoted lives только на per-binding
+                    // slots, не на TypeDecl. Type declaration аллокация всегда
+                    // {Heap, Value}. Per-binding promotion обрабатывается на
+                    // record-lit / method-recv level (Ф.3). Unreachable here.
+                    AllocKind::ValueHeapPromoted => unreachable!(
+                        "AllocKind::ValueHeapPromoted invalid on TypeDecl `{}` — \
+                         promotion is per-binding, not per-type (Plan 127 V1)",
+                        t.name
+                    ),
                 }
             }
             TypeDeclKind::Sum(variants) => {
@@ -8848,6 +8894,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 match t.allocation {
                     AllocKind::Heap => format!("Nova_{}", t.name),
                     AllocKind::Value => format!("NovaValue_{}", t.name),
+                    // Plan 127 V1: ValueHeapPromoted invalid на TypeDecl.
+                    AllocKind::ValueHeapPromoted => unreachable!(
+                        "AllocKind::ValueHeapPromoted invalid on TypeDecl `{}` \
+                         (Plan 127 V1: per-binding only)", t.name
+                    ),
                 }
             }
             TypeDeclKind::NamedTuple(_) => format!("NovaTuple_{}", t.name),
@@ -13468,6 +13519,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         if f.blocking_attr {
             self.in_blocking = true;
         }
+        // Plan 127 Ф.3: track current fn-id for escape-result lookup при
+        // emit_let / emit_record_lit. Format must match
+        // `escape_analyze::fn_id` (free fn → name; method → `<recv>::<name>`).
+        // Cleared at function-body emit end (parallel to in_realtime).
+        let prev_fn_id = self.current_fn_id.replace(if let Some(recv) = &f.receiver {
+            format!("{}::{}", recv.type_name, f.name)
+        } else {
+            f.name.clone()
+        });
+        let prev_promoted_locals = std::mem::take(&mut self.promoted_value_record_locals);
         // emit body — collect into _nova_result if ensures present
         let has_ensures = has_contracts && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
         match &f.body {
@@ -13534,6 +13595,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Plan 113 (D172): restore in_realtime / in_blocking after fn body.
         self.in_realtime = prev_in_realtime;
         self.in_blocking = prev_in_blocking;
+        // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
+        self.current_fn_id = prev_fn_id;
+        self.promoted_value_record_locals = prev_promoted_locals;
         self.expected_record_type = saved_expected;
         // Plan 72 P0: restore protocol_vars after fn body (clear param-registered entries).
         self.protocol_vars = saved_protocol_vars_fn;
@@ -14446,7 +14510,38 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 if decl.ty.is_some() && direct_typeless_record {
                     self.expected_record_type = Self::struct_name_from_c_type(&ty_c);
                 }
+                // Plan 127 Ф.3: if escape analysis flagged this binding as
+                // value-record-promoted, signal emit_record_lit to switch to
+                // heap allocation path. Resolution algorithm:
+                //   1. Need a fn-id (current_fn_id) — sanity: emit_fn sets it
+                //      before body emit; methods like main's body sets too.
+                //   2. Need escape_result populated by emit_module().
+                //   3. Compute value-record type-name from the binding's
+                //      annotation OR RHS record-lit type_name. Stamp transient
+                //      signal `pending_value_record_heap_promote` BEFORE
+                //      emit_expr_with_target_type.
+                //   4. After emit, transient signal cleared either by
+                //      emit_record_lit (consume path) или explicit reset.
+                if let (Some(fn_id), Some(esc)) = (self.current_fn_id.as_ref(), self.escape_result.as_ref()) {
+                    if esc.is_promoted(fn_id, &binding) {
+                        let type_name_opt = Self::value_record_type_name_for_let(decl, &ty_c);
+                        if let Some(type_name) = type_name_opt {
+                            // Only switch if this is actually a known value-record
+                            // declared в this module (i.e. NovaValue_<X>-style C ty).
+                            if self.value_record_names.contains(&type_name) {
+                                self.pending_value_record_heap_promote = Some(type_name.clone());
+                                self.promoted_value_record_locals.insert(binding.clone());
+                                // Override binding C-type к pointer (NovaValue_X*).
+                                ty_c = format!("NovaValue_{}*", type_name);
+                            }
+                        }
+                    }
+                }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
+                // Plan 127 Ф.3: clear the transient signal на случай если
+                // emit_record_lit не consumed его (defensive — emit_record_lit
+                // должен take() его на entry в value-record path).
+                self.pending_value_record_heap_promote = None;
                 self.expected_record_type = saved_expected;
                 // Plan 91.8a.2 followup: restore protocol-box hint after array
                 // literal emission consumed it.
@@ -16179,6 +16274,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
 
             ExprKind::Unary { op, operand } => {
+                // Plan 127 Ф.3: special-case `&IDENT` для promoted value-record
+                // local — binding уже хранит `NovaValue_X*` указатель (heap-
+                // allocated), поэтому `&v` должен эмитить просто `v`, иначе
+                // получим `NovaValue_X**` (адрес stack-слота держащего ptr)
+                // → dangling после return из escape_ref(). Эта ветка прозрачно
+                // даёт correct heap-pointer semantics для auto-promoted locals.
+                if let UnOp::AddrOf = op {
+                    if let ExprKind::Ident(name) = &operand.kind {
+                        if self.promoted_value_record_locals.contains(name) {
+                            return Ok(name.clone());
+                        }
+                    }
+                }
                 let v = self.emit_expr(operand)?;
                 let op_str = match op {
                     UnOp::Neg => "-",
@@ -24072,35 +24180,86 @@ _cp++; \
                 self.line(&format!("void* {} = NULL; /* unknown type {} */", tmp, struct_name));
                 self.var_types.insert(tmp.clone(), "void*".into());
             } else if self.value_record_names.contains(&struct_name) {
-                // Plan 124.8 V2 (D226): value-record stack init.
-                // Emit `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` — no heap alloc.
-                self.line(&format!("NovaValue_{} {};", struct_name, tmp));
-                for f in fields {
-                    if f.is_spread {
-                        if let Some(src_expr) = &f.value {
-                            let src = self.emit_expr(src_expr)?;
-                            self.line(&format!("{} = {};", tmp, src));
-                        }
-                    } else {
-                        let field_ty = self.record_schemas.get(&struct_name)
-                            .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
-                        let val = if let Some(v) = &f.value {
-                            self.emit_expr_with_target_type(v, &field_ty)?
+                // Plan 127 Ф.3: consume the transient heap-promote signal
+                // set by emit_let when escape analysis flagged the enclosing
+                // binding. If matched (signal type-name == struct_name),
+                // route to heap path instead of stack init.
+                let heap_promote = match self.pending_value_record_heap_promote.take() {
+                    Some(name) if name == struct_name => true,
+                    Some(other) => {
+                        // Mismatch — restore так чтобы downstream sibling
+                        // record-lit не lose сигнал (rare edge case).
+                        self.pending_value_record_heap_promote = Some(other);
+                        false
+                    }
+                    None => false,
+                };
+                if heap_promote {
+                    // Plan 127 Ф.3: heap allocation path для AllocKind::
+                    // ValueHeapPromoted. Layout: `NovaValue_X*` = pointer
+                    // to heap-allocated `NovaValue_X` struct (reuses
+                    // existing typedef). Same field access: `tmp->f = v;`.
+                    self.line(&format!(
+                        "NovaValue_{0}* {1} = (NovaValue_{0}*)nova_alloc(sizeof(NovaValue_{0}));",
+                        struct_name, tmp
+                    ));
+                    for f in fields {
+                        if f.is_spread {
+                            if let Some(src_expr) = &f.value {
+                                let src = self.emit_expr(src_expr)?;
+                                self.line(&format!("*{} = *{};", tmp, src));
+                            }
                         } else {
-                            f.name.clone()
-                        };
-                        if field_ty == "void*" {
-                            let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
-                            let boxed = self.box_value_as_void_ptr(&val, &val_ty);
-                            let mfn = Self::mangle_field_name(&f.name);
-                            self.line(&format!("{}.{} = {};", tmp, mfn, boxed));
-                        } else {
-                            let mfn = Self::mangle_field_name(&f.name);
-                            self.line(&format!("{}.{} = {};", tmp, mfn, val));
+                            let field_ty = self.record_schemas.get(&struct_name)
+                                .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                            let val = if let Some(v) = &f.value {
+                                self.emit_expr_with_target_type(v, &field_ty)?
+                            } else {
+                                f.name.clone()
+                            };
+                            if field_ty == "void*" {
+                                let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
+                                let boxed = self.box_value_as_void_ptr(&val, &val_ty);
+                                let mfn = Self::mangle_field_name(&f.name);
+                                self.line(&format!("{}->{} = {};", tmp, mfn, boxed));
+                            } else {
+                                let mfn = Self::mangle_field_name(&f.name);
+                                self.line(&format!("{}->{} = {};", tmp, mfn, val));
+                            }
                         }
                     }
+                    self.var_types.insert(tmp.clone(), format!("NovaValue_{}*", struct_name));
+                } else {
+                    // Plan 124.8 V2 (D226): value-record stack init.
+                    // Emit `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` — no heap alloc.
+                    self.line(&format!("NovaValue_{} {};", struct_name, tmp));
+                    for f in fields {
+                        if f.is_spread {
+                            if let Some(src_expr) = &f.value {
+                                let src = self.emit_expr(src_expr)?;
+                                self.line(&format!("{} = {};", tmp, src));
+                            }
+                        } else {
+                            let field_ty = self.record_schemas.get(&struct_name)
+                                .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                            let val = if let Some(v) = &f.value {
+                                self.emit_expr_with_target_type(v, &field_ty)?
+                            } else {
+                                f.name.clone()
+                            };
+                            if field_ty == "void*" {
+                                let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
+                                let boxed = self.box_value_as_void_ptr(&val, &val_ty);
+                                let mfn = Self::mangle_field_name(&f.name);
+                                self.line(&format!("{}.{} = {};", tmp, mfn, boxed));
+                            } else {
+                                let mfn = Self::mangle_field_name(&f.name);
+                                self.line(&format!("{}.{} = {};", tmp, mfn, val));
+                            }
+                        }
+                    }
+                    self.var_types.insert(tmp.clone(), format!("NovaValue_{}", struct_name));
                 }
-                self.var_types.insert(tmp.clone(), format!("NovaValue_{}", struct_name));
             } else {
                 // Plain record struct (heap-allocated, GC-managed)
                 self.line(&format!("Nova_{}* {} = (Nova_{}*)nova_alloc(sizeof(Nova_{}));",
@@ -26673,6 +26832,31 @@ _cp++; \
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
+    /// Plan 127 Ф.3 helper: resolve the value-record type-name for a
+    /// `let` binding so escape-promotion can switch к heap allocation.
+    ///
+    /// Priority: explicit type annotation > inferred C-type prefix > RHS
+    /// record-literal type_name. Returns None if no recognizable value-
+    /// record source.
+    fn value_record_type_name_for_let(decl: &LetDecl, inferred_c_ty: &str) -> Option<String> {
+        // 1. Explicit annotation `let v Vec3 = ...`.
+        if let Some(ty) = &decl.ty {
+            if let TypeRef::Named { path, .. } = ty {
+                if let Some(last) = path.last() {
+                    return Some(last.clone());
+                }
+            }
+        }
+        // 2. RHS record literal `Vec3 { x:1, y:2, z:3 }`.
+        if let ExprKind::RecordLit { type_name: Some(path), .. } = &decl.value.kind {
+            if let Some(last) = path.last() {
+                return Some(last.clone());
+            }
+        }
+        // 3. Inferred C-type, stripped of `NovaValue_` prefix.
+        Self::struct_name_from_c_type(inferred_c_ty)
+    }
+
     /// Plan 14 Ф.6 (D69): возвращает `regular_arity` (число
     /// non-variadic параметров) если вызываемая fn variadic,
     /// иначе None. Поддерживает:
@@ -28058,7 +28242,13 @@ _cp++; \
                         "void*".into()
                     }
                 } else if self.record_schemas.contains_key(&struct_name) {
-                    format!("Nova_{}*", struct_name)
+                    // Plan 124.8 V2 / Plan 127: value-records use stack-typedef
+                    // `NovaValue_<X>` (no pointer); heap records use `Nova_<X>*`.
+                    if self.value_record_names.contains(&struct_name) {
+                        format!("NovaValue_{}", struct_name)
+                    } else {
+                        format!("Nova_{}*", struct_name)
+                    }
                 } else {
                     "void*".into()
                 }

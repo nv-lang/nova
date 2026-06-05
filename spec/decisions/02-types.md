@@ -9770,14 +9770,132 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 **V2 known limitations (defer-able):**
 - `[]NovaValue_X` array storage — currently boxes elements (V3 followup
   for inline element storage).
-- Escape analysis для `&value` auto-heap-promote — Plan 118 coordination
-  ([M-124.8-value-heap-promote]).
+- ~~Escape analysis для `&value` auto-heap-promote~~ — **CLOSED by
+  Plan 127 (V1, 2026-06-05)** — см. §«escape & auto-promote» ниже.
 - Auto-derive methods (Equatable / Hashable / Cloneable / Comparable /
   Printable) — Plan 126 (orthogonal feature).
 - Generic value-record cross-module instantiation — works for simple
   cases; complex multi-T patterns may require V3 review.
 - `#zero_on_move` opt-in — followup attribute для security-critical
   consume value-records.
+
+### D228 amend — §«escape & auto-promote» (Plan 127, 2026-06-05)
+
+> **Trigger:** closes Plan 124.8 V2 followup `[M-124.8-value-heap-promote]`.
+> Extends Plan 118 Ф.2 escape walker на value-record locals.
+> Plan 127 phases landed (branch `plan-127-value-record-escape`):
+> Ф.1 AllocKind tri-state — `40815f7d960`;
+> Ф.2 escape_analyze walker extension — `6ce9d2a4698`;
+> Ф.3 codegen heap-allocation path — `6948d2ba9dc`;
+> Ф.4 diagnostic codes — `0a0d7e2cf65`;
+> Ф.5 fixtures (18 = 12 POS + 6 NEG) — `adb6850e7e0`.
+
+`&v` на value-record local разрешён. Compiler выбирает stack vs heap
+allocation для `v` based on escape analysis result (Go-style — без
+Rust lifetimes, без borrow checker).
+
+#### AllocKind tri-state
+
+`AllocKind` enum расширен с binary `{Heap, Value}` до tri-state:
+
+| Variant | C output | Когда |
+|---|---|---|
+| `AllocKind::Heap` | `Nova_X*` (heap, `nova_alloc`) | reference records (`type X { ... }`) |
+| `AllocKind::Value` | `NovaValue_X` (stack-inline) | value records без escape |
+| `AllocKind::ValueHeapPromoted` | `Nova_X*` (heap, `nova_alloc`) | value records с detected escape |
+
+User-visible type — Vec3 (или `*Vec3` для address-of), та же declaration
+`type Vec3 value { ... }`. Diff виден только в codegen (`emit_c.rs`).
+`prepare_method_recv` helper расширен: `ValueHeapPromoted` → obj уже
+указатель, не нужен `&` (vs `Value` где emit'ится `&v`).
+
+#### 5 escape trigger conditions (V1 OVER-promote)
+
+Local value-record `v` promote'ится на heap если **любое** из:
+
+1. **Return:** `&v` возвращается из функции — `fn f() -> *Vec3 => &v`.
+2. **Heap field store:** `&v` сохраняется в heap-аллоцированное поле —
+   `acc.field = &v` (где `acc: Nova_X*`).
+3. **Closure capture:** `&v` захватывается closure — `let cb = || &v`.
+4. **Global / module binding:** `&v` сохраняется в module-level
+   `let`/`const` — escape вне fn scope.
+5. **Fn arg sink (conservative):** `&v` передаётся в fn arg —
+   conservative assume sink escape transit (V1 OVER-promote: callee
+   analysis не делается, любой `&v → fn` triggerит promote).
+
+**Conservative fallback (V1):** если chain dataflow analysis cannot
+prove «no escape», promote. Matches Plan 118 Ф.2 V1 OVER-promote stance —
+любая uncertainty → heap. Precise mode = followup `[M-127-precise-escape]`
+(gated на Plan 118 `[M-118-escape-precise]`).
+
+Mixed branch (escape в одной ветке, no-escape в другой) — conservative
+promote. Path-sensitive analysis = `[M-127-path-sensitive-escape]`.
+
+#### Cross-ref D228 ↔ D216 §4 (Plan 118 escape machinery reuse)
+
+D228 escape rules **используют ту же walker infrastructure**, что и
+D216 §4 «`&value` operator + escape analysis с auto-promote» (Plan 118
+primitives + named tuples). Контракт reuse:
+
+- `escape_analyze` walker (`compiler-codegen/src/types/mod.rs`, Plan
+  118 Ф.2) — единая dataflow walker, value-record locals добавлены как
+  новая type category поверх существующих primitives/tuples.
+- Trigger conditions унифицированы — same 5 conditions работают
+  identically для primitives (`int`), tuples (`(a, b)`), и value-records
+  (`Vec3 value`). Different type category, same analysis.
+- AllocKind decision route — для primitives/tuples: stack vs heap-box;
+  для value-records: `Value` vs `ValueHeapPromoted`. Decision point
+  shared, codegen branches diverge.
+- V1 OVER-promote stance shared — Plan 118 и Plan 127 promote on ANY
+  uncertainty. Precise mode landings будут coordinated (V2 followups
+  обоих планов могут landed independently).
+- `E_AMP_RECORD_LITERAL` (D216 §4) применяется и к value-record
+  literals — anonymous `&Vec3 { ... }` без named binding forbidden,
+  требует pattern `ro v = Vec3 { ... }; ro p = &v`.
+
+См. также [D216 §4](#4-value-operator--escape-analysis-с-auto-promote)
+для primitive/tuple side контракта.
+
+#### Diagnostic codes (Plan 127 Ф.4)
+
+| Code | Kind | Trigger |
+|---|---|---|
+| `W_VALUE_RECORD_UNNECESSARY_PROMOTE` | Lint | Escape detected, но user мог return by-value; suggestion hint emit |
+| `E_VALUE_RECORD_ESCAPE_AFTER_CONSUME` | Error | `&v` после `consume v` — D162 violation, escape после ownership transfer |
+
+`W_VALUE_RECORD_UNNECESSARY_PROMOTE` **suppressed на synthesized
+FnDecl bodies** (Plan 126 auto-derive coordination — `compiler_generated`
+flag в FnDecl). Auto-derived `Cloneable::clone`/`Equatable::equal`/
+`Hashable::hash` bodies могут эмитить `&self` без необходимости user
+attention; lint бы создавал noise. Suppression channel прописан в
+`compiler-check/src/lints/value_record_promote.rs` — skip emit, если
+`fn.compiler_generated == true`.
+
+#### Composability (D228 amend)
+
+- `consume` value-record: `&v` после `consume v` → hard error
+  `E_VALUE_RECORD_ESCAPE_AFTER_CONSUME`. До consume — escape analysis
+  как обычно.
+- `priv` field: на promoted value-record (`Nova_X*`) field privacy
+  preserved (Nova_X имеет те же priv markers, что и NovaValue_X).
+- `readonly` binding: `ro` binding propagates через promote — `Nova_X*
+  const` в C output для ro path.
+
+#### Method receiver compatibility
+
+`@`-методы работают идентично в обоих modes via `prepare_method_recv`:
+
+```rust
+fn prepare_method_recv(obj_expr, alloc_kind) -> CExpr {
+    match alloc_kind {
+        AllocKind::Value => emit_address_of(obj_expr),     // &v
+        AllocKind::ValueHeapPromoted => obj_expr,           // already Nova_X*
+        AllocKind::Heap => obj_expr,                        // already Nova_X*
+    }
+}
+```
+
+User-side syntax не меняется — `v.method()` works в обоих modes.
 
 ### Plan 124.8 Acceptance (A8.1-A8.20) — ALL ✅
 

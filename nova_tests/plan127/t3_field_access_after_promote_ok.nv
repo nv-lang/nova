@@ -1,0 +1,19 @@
+// Plan 127 Ф.5 / A127.8 — POS: field access `.x` через promoted pointer.
+// Auto-deref works the same as stack-mode — user-visible API unchanged.
+module plan127.t3_field_access_after_promote_ok
+
+type Point value {
+    x f64
+    y f64
+}
+
+fn make_point() -> *Point {
+    ro p = Point { x: 10.0, y: 20.0 }
+    unsafe { &p }
+}
+
+test "field access through promoted heap pointer" {
+    ro ptr = make_point()
+    assert(unsafe { ptr.x } == 10.0)
+    assert(unsafe { ptr.y } == 20.0)
+}

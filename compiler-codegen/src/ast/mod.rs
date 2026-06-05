@@ -715,16 +715,96 @@ pub enum TypeAttr {
     FromPairs,
 }
 
-/// Plan 124.8 (D226 NEW): allocation contract for record types.
+/// Plan 124.8 (D226 NEW) + Plan 127 V1 (D228 amend): allocation contract.
 ///
-/// `Heap` — `type X { ... }` обычный GC-managed reference type (default,
-/// backward compat). `Value` — `type X value { ... }` stack-allocated
-/// value type с copy semantics на pass / inline storage в коллекциях.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// **Type-level** (TypeDecl.allocation, parser-set):
+/// - `Heap` — `type X { ... }` обычный GC-managed reference type (default,
+///   backward compat). C ABI: `Nova_X*`.
+/// - `Value` — `type X value { ... }` stack-allocated value type с copy
+///   semantics на pass / inline storage в коллекциях. C ABI: `NovaValue_X`
+///   (inline struct).
+///
+/// **Per-binding-level** (escape-analysis-set, Plan 127):
+/// - `ValueHeapPromoted` — местный binding объявлен на value-record, но
+///   escape analysis обнаружил escape (`&v` returned, captured, stored в
+///   heap field, etc.) → binding promoted на heap. C ABI: `Nova_X*` (как
+///   heap-record). The underlying type is STILL `AllocKind::Value` в его
+///   TypeDecl — promotion живёт только на binding site (Local / Field
+///   alloc_kind), не на type decl.
+///
+/// **Invariant:** TypeDecl.allocation ∈ {Heap, Value}. ValueHeapPromoted
+/// валиден ТОЛЬКО на per-binding alloc_kind slots. Asserted via
+/// `as_type_decl_kind()` helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum AllocKind {
     #[default]
     Heap,
     Value,
+    /// Plan 127 V1: value-record binding promoted to heap by escape analysis.
+    /// Valid only on per-binding alloc_kind slots, NEVER on TypeDecl.allocation.
+    ValueHeapPromoted,
+}
+
+impl AllocKind {
+    /// True если binding/slot аллоцируется на heap (Heap или ValueHeapPromoted).
+    /// `Value` — единственный stack-allocated case.
+    pub fn is_heap(self) -> bool {
+        matches!(self, AllocKind::Heap | AllocKind::ValueHeapPromoted)
+    }
+
+    /// True если binding/slot — stack-allocated inline value.
+    pub fn is_stack_value(self) -> bool {
+        matches!(self, AllocKind::Value)
+    }
+
+    /// True если promotion-mode (escape analysis detected escape на
+    /// value-record locale → heap). False для plain Heap / Value.
+    pub fn is_promoted(self) -> bool {
+        matches!(self, AllocKind::ValueHeapPromoted)
+    }
+
+    /// C type prefix для record-type'а given allocation mode и type name.
+    /// - `Heap` → `Nova_<name>` (heap-record struct, used as `Nova_<name>*`)
+    /// - `Value` → `NovaValue_<name>` (stack inline struct)
+    /// - `ValueHeapPromoted` → `Nova_<name>` (promoted к heap layout — same
+    ///   bit-pattern as Heap; underlying struct name = `Nova_<name>` per
+    ///   Plan 127 Ф.3 codegen contract).
+    ///
+    /// NOTE Plan 127 Ф.3: emit_value_record_type generates только
+    /// `NovaValue_<name>` struct. For promotion to work, codegen must
+    /// also emit `Nova_<name>` heap mirror — OR reuse NovaValue layout
+    /// и cast (V1 simpler: heap-promoted уses `NovaValue_<name>*`
+    /// dynamically-allocated). Final decision lives в emit_value_record_lit.
+    pub fn c_type_name(self, type_name: &str) -> String {
+        match self {
+            AllocKind::Heap => format!("Nova_{}", type_name),
+            AllocKind::Value => format!("NovaValue_{}", type_name),
+            // Plan 127 V1: promoted value-record uses NovaValue_X* (pointer to
+            // heap-allocated NovaValue_X struct) — reuses existing layout,
+            // no separate Nova_<X> heap mirror struct needed.
+            AllocKind::ValueHeapPromoted => format!("NovaValue_{}", type_name),
+        }
+    }
+
+    /// True если binding requires pointer indirection в C-uses
+    /// (field access `->`, ABI as pointer, etc.).
+    /// - `Heap` → true (`Nova_X*` ABI)
+    /// - `Value` → false (`NovaValue_X` ABI — inline value)
+    /// - `ValueHeapPromoted` → true (`NovaValue_X*` ABI — heap pointer)
+    pub fn uses_pointer_abi(self) -> bool {
+        matches!(self, AllocKind::Heap | AllocKind::ValueHeapPromoted)
+    }
+}
+
+impl std::fmt::Display for AllocKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            AllocKind::Heap => "heap",
+            AllocKind::Value => "value",
+            AllocKind::ValueHeapPromoted => "value-heap-promoted",
+        };
+        f.write_str(s)
+    }
 }
 
 /// Plan 123 baseline-fix (2026-06-02): `Default` derive — see FnDecl.

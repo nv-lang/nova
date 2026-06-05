@@ -13,6 +13,7 @@ pub mod const_fn_mono;
 pub mod const_fn_trampoline;
 pub mod desugar;
 pub mod diag;
+pub mod escape_analyze;
 pub mod doc;
 pub mod effect_surface;
 pub mod field_cache;

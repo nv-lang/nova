@@ -1,0 +1,23 @@
+// Plan 127 Ф.5 — POS: nested block escape — `&v` через nested block tail
+// position по-прежнему detected as escape (walker uses recursion).
+module plan127.t10_nested_block_escape_ok
+
+type Triple value {
+    a int
+    b int
+    c int
+}
+
+fn nested() -> *Triple {
+    ro t = Triple { a: 100, b: 200, c: 300 }
+    {
+        unsafe { &t }
+    }
+}
+
+test "nested block tail-position escape promotes" {
+    ro p = nested()
+    assert(unsafe { p.a } == 100)
+    assert(unsafe { p.b } == 200)
+    assert(unsafe { p.c } == 300)
+}

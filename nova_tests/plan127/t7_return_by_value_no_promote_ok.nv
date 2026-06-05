@@ -1,0 +1,18 @@
+// Plan 127 Ф.5 — POS: return by-value (no `&`) — escape walker не trigger'ит
+// promotion. Stack-allocated path preserved (Plan 124.8 V2 behavior).
+module plan127.t7_return_by_value_no_promote_ok
+
+type Pair value {
+    a int
+    b int
+}
+
+fn make_pair() -> Pair {
+    Pair { a: 5, b: 10 }
+}
+
+test "return by-value — no promote (Plan 124.8 path)" {
+    ro p = make_pair()
+    assert(p.a == 5)
+    assert(p.b == 10)
+}

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_VALUE_RECORD_ESCAPE_AFTER_CONSUME
+//
+// Plan 127 Ф.5 / A127.9 — NEG: `&v` после `consume v` value-record local.
+// Hard error: stack-slot drained, taking address invalid.
+module plan127.t13_neg_escape_after_consume
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn bad() -> *Vec3 {
+    consume v = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    unsafe { &v }
+}

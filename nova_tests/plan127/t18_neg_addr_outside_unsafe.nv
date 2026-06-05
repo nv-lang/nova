@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
+//
+// Plan 127 Ф.5 — NEG: `&v` без unsafe{} обёртки — Plan 118 baseline.
+// Plan 127 не отменяет unsafe-требование; lint/promote применяются ТОЛЬКО
+// внутри valid unsafe-context.
+module plan127.t18_neg_addr_outside_unsafe
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn bad() -> *Vec3 {
+    ro v = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    &v
+}

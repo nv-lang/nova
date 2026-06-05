@@ -1,0 +1,20 @@
+// Plan 127 Ф.5 — POS: mixed-type value-record (f64 + int + bool) promotes correctly.
+module plan127.t8_multiple_field_types_promote_ok
+
+type Mixed value {
+    f f64
+    i int
+    b bool
+}
+
+fn escape() -> *Mixed {
+    ro m = Mixed { f: 3.14, i: 42, b: true }
+    unsafe { &m }
+}
+
+test "mixed-field value-record promotes — все поля сохраняются" {
+    ro p = escape()
+    assert(unsafe { p.f } == 3.14)
+    assert(unsafe { p.i } == 42)
+    assert(unsafe { p.b } == true)
+}

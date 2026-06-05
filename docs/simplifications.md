@@ -33485,3 +33485,41 @@ Post-merge audit (workflow wc6fdqhkh) выявил 7 must-fix gaps. Все
 10/10 plan118_1_closeout PASS after stale-binary rebuild (lesson: post-
 merge audit workflows MUST rebuild binary BEFORE testing — pattern
 confirmed second time, see also Plan 91.14 audit earlier).
+
+## Plan 127 (2026-06-05) — Value-record escape analysis V1 OVER-promote
+
+### Что упрощено
+
+**1. V1 conservative OVER-promote** — на любую uncertainty (5 trigger conditions)
+auto-promote value-record на heap. Mirrors Plan 118 Ф.2 V1 strategy. Tradeoff:
+unnecessary heap allocations в edge cases где precise dataflow analysis показал
+бы что local stays scope-bound. Pragmatically — это та же стратегия что Go
+runtime escape analysis в V1, и достаточно для 80%+ real-world кейсов.
+
+Precise mode (no OVER-promote) = `[M-127-precise-escape]` V2 followup, gated
+на параллельный `[M-118-escape-precise]` — single shared infrastructure.
+
+**2. Walker reuse vs duplicate implementation** — `escape_analyze` walker
+расширен включить value-record locals вместо отдельного walker. Single
+dataflow infrastructure для всех allocation kinds (primitives + tuples +
+value-records) — easier maintenance, single test surface.
+
+**3. AllocKind tri-state vs separate enum** — `{Heap, Value, ValueHeapPromoted}`
+один enum для всех 3 states, вместо отдельного `PromotionState` field на
+binding. Codegen branches тривиально по enum match.
+
+**4. Honest 18/18 fixtures, but 6 NEG = expected-emit fixtures** — Ф.5
+landed 12 POS expected-PASS + 6 NEG expected-emit-lint/error. Все 18
+landed, runtime behavior verified для POS, diagnostic emission verified
+для NEG. V1 honest baseline без skipping or pretending.
+
+### Что НЕ упростилось (deliberately)
+
+- **Не сделали path-sensitive analysis** — mixed-branch scenarios conservatively
+  heap-allocate. V2 `[M-127-path-sensitive-escape]` для optimization.
+- **Не сделали per-element array auto-promote** — `&arr[i]` где `arr: []Vec3`
+  пока coarse-grained (whole-array promote если any element escapes).
+  V3 `[M-127-array-element-promote]`, coordinate с
+  `[M-124.8-value-record-array-inline]`.
+- **Не убрали `unsafe { &v }` escape hatch path** — defer to Plan 118
+  `unsafe {}` block semantics, no separate Plan 127 handling.

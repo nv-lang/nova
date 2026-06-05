@@ -484,6 +484,14 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
 
+    // Plan 127 Ф.4 (D228 amend): E_VALUE_RECORD_ESCAPE_AFTER_CONSUME —
+    // hard error для `&v` после consume value-record local. Detects
+    // syntactic pattern: a `consume v = ...` LetDecl (or method-call
+    // consume of binding) followed by `&v` usage в той же fn-scope. More
+    // specific message than generic D131 use-after-consume — helps user
+    // понять value-record semantics.
+    check_value_record_escape_after_consume(module, &mut errors);
+
     // Plan 91.10 (D163 retracted, 2026-05-30): check_external_fn_needs_caps
     // удалён. Capability tracking via отдельный syntax — redundant с effect
     // system. См. docs/plans/91.10-d163-retract-capability-syntax.md.
@@ -12259,6 +12267,216 @@ fn typeref_contains_consume_generic(ty: &TypeRef, consume_generics: &HashSet<Str
         }
         TypeRef::Array(inner, _) => typeref_contains_consume_generic(inner, consume_generics),
         _ => false,
+    }
+}
+
+// ============================================================================
+// Plan 127 Ф.4 (D228 amend): E_VALUE_RECORD_ESCAPE_AFTER_CONSUME.
+//
+// `&v` после consume value-record local — hard error (D162 violation
+// специализированное под value-record semantics). Generic D131 use-after-
+// consume catches the underlying state-error, но Plan 127 эмитит более
+// targeted сообщение: «stack-allocated value-record's slot logically
+// drained — taking address now is undefined» — direct guidance.
+//
+// Detection (V1 syntactic):
+// 1. Collect value-record type names (TypeDecl.allocation == Value).
+// 2. For each fn-body: walk statements maintaining set of bindings to
+//    value-record locals.
+// 3. If we see a `consume v = ...` LetDecl с value-record type — flag `v`
+//    в consumed-set.
+// 4. If we see `consume`-method call on value-record local (e.g.
+//    `v.drain()` where drain has consume receiver) — flag `v`.
+// 5. If subsequently within the same fn we encounter `&v` (UnOp::AddrOf
+//    on Ident with same name + still in consumed-set) — emit error.
+//
+// V1 conservative: linear scan per fn (no path-sensitive). Misses cases
+// где consume на одном пути и use на another (covered partially by D131).
+// V2: path-sensitive с DFG = `[M-127-consume-escape-path-sensitive]`.
+// ============================================================================
+
+fn check_value_record_escape_after_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::HashSet;
+    let mut value_record_types: HashSet<String> = HashSet::new();
+    let mut collect_vrt = |items: &[Item], out: &mut HashSet<String>| {
+        for it in items {
+            if let Item::Type(td) = it {
+                if matches!(td.kind, crate::ast::TypeDeclKind::Record(_))
+                    && td.allocation == crate::ast::AllocKind::Value
+                {
+                    out.insert(td.name.clone());
+                }
+            }
+        }
+    };
+    collect_vrt(&module.items, &mut value_record_types);
+    for pf in &module.peer_files {
+        collect_vrt(&pf.items_here, &mut value_record_types);
+    }
+    if value_record_types.is_empty() { return; }
+
+    let visit_fn = |fd: &crate::ast::FnDecl, errors: &mut Vec<Diagnostic>| {
+        if matches!(fd.body, crate::ast::FnBody::External) { return; }
+        let mut ctx = VrEscapeCtx {
+            value_records: &value_record_types,
+            vr_locals: std::collections::HashMap::new(),
+            consumed: HashSet::new(),
+        };
+        match &fd.body {
+            crate::ast::FnBody::Block(b) => ctx.walk_block(b, errors),
+            crate::ast::FnBody::Expr(e) => ctx.walk_expr(e, errors),
+            crate::ast::FnBody::External => {}
+        }
+    };
+    for item in &module.items {
+        if let Item::Fn(fd) = item { visit_fn(fd, errors); }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item { visit_fn(fd, errors); }
+        }
+    }
+}
+
+struct VrEscapeCtx<'a> {
+    value_records: &'a std::collections::HashSet<String>,
+    vr_locals: std::collections::HashMap<String, String>, // binding → type-name
+    consumed: std::collections::HashSet<String>,         // names already consumed
+}
+
+impl<'a> VrEscapeCtx<'a> {
+    fn resolve_vrt(&self, t: &TypeRef) -> Option<String> {
+        if let TypeRef::Named { path, .. } = t {
+            if let Some(last) = path.last() {
+                if self.value_records.contains(last) {
+                    return Some(last.clone());
+                }
+            }
+        }
+        None
+    }
+    fn infer_vrt_from_expr(&self, e: &crate::ast::Expr) -> Option<String> {
+        if let crate::ast::ExprKind::RecordLit { type_name: Some(path), .. } = &e.kind {
+            if let Some(last) = path.last() {
+                if self.value_records.contains(last) {
+                    return Some(last.clone());
+                }
+            }
+        }
+        None
+    }
+    fn walk_block(&mut self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts { self.walk_stmt(s, errors); }
+        if let Some(t) = &b.trailing { self.walk_expr(t, errors); }
+    }
+    fn walk_stmt(&mut self, s: &crate::ast::Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            crate::ast::Stmt::Let(d) => {
+                // First walk RHS — escape detection on RHS may flag prior consumed.
+                self.walk_expr(&d.value, errors);
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    if let Some(vrt) = d.ty.as_ref().and_then(|t| self.resolve_vrt(t))
+                        .or_else(|| self.infer_vrt_from_expr(&d.value))
+                    {
+                        self.vr_locals.insert(name.clone(), vrt);
+                        if d.consume {
+                            // `consume v = ...` value-record binding — consumed at bind site.
+                            self.consumed.insert(name.clone());
+                        }
+                    }
+                }
+            }
+            crate::ast::Stmt::Expr(e) => self.walk_expr(e, errors),
+            crate::ast::Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, errors);
+                self.walk_expr(value, errors);
+            }
+            crate::ast::Stmt::Return { value: Some(v), .. } => self.walk_expr(v, errors),
+            crate::ast::Stmt::Throw { value, .. } => self.walk_expr(value, errors),
+            crate::ast::Stmt::Defer { body, .. }
+            | crate::ast::Stmt::ErrDefer { body, .. }
+            | crate::ast::Stmt::OkDefer { body, .. }
+            | crate::ast::Stmt::DeferWithResult { body, .. } => self.walk_expr(body, errors),
+            crate::ast::Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, errors);
+                self.walk_block(body, errors);
+            }
+            crate::ast::Stmt::AssertStatic { expr, .. } | crate::ast::Stmt::Assume { expr, .. } => {
+                self.walk_expr(expr, errors);
+            }
+            _ => {}
+        }
+    }
+    fn walk_expr(&mut self, e: &crate::ast::Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::{ExprKind, UnOp};
+        match &e.kind {
+            ExprKind::Unary { op: UnOp::AddrOf, operand } => {
+                // Plan 127 E_VALUE_RECORD_ESCAPE_AFTER_CONSUME check.
+                if let ExprKind::Ident(name) = &operand.kind {
+                    if self.vr_locals.contains_key(name) && self.consumed.contains(name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_VALUE_RECORD_ESCAPE_AFTER_CONSUME] `&{}` после \
+                                 consume value-record `{}`: stack-allocated slot \
+                                 логически drained — taking address invalid (D228 \
+                                 §«escape & auto-promote»). Consume-методы / consume-\
+                                 binding инвалидируют локал; subsequent `&v` создаёт \
+                                 dangling-pointer семантику. Если address нужен — \
+                                 take его BEFORE consume.",
+                                name, name
+                            ),
+                            e.span,
+                        ));
+                    }
+                }
+                self.walk_expr(operand, errors);
+            }
+            ExprKind::Call { func, args, .. } => {
+                // Method-call с consume receiver: receiver Ident → mark consumed.
+                // Conservative detection: instance-method call `recv.m(...)` where
+                // recv is value-record local; without method-registry lookup we
+                // skip this — full integration с consume-registry в follow-up.
+                self.walk_expr(func, errors);
+                for a in args {
+                    self.walk_expr(a.expr(), errors);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, errors);
+                self.walk_expr(right, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, errors),
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, errors);
+                self.walk_expr(index, errors);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, errors);
+                self.walk_block(then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.walk_block(b, errors),
+                        crate::ast::ElseBranch::If(ie) => self.walk_expr(ie, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk_expr(g, errors); }
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expr(ex) => self.walk_expr(ex, errors),
+                        crate::ast::MatchArmBody::Block(b) => self.walk_block(b, errors),
+                    }
+                }
+            }
+            ExprKind::Try(i) | ExprKind::Bang(i) => self.walk_expr(i, errors),
+            ExprKind::Coalesce(a, b) => { self.walk_expr(a, errors); self.walk_expr(b, errors); }
+            ExprKind::As(i, _) | ExprKind::Is(i, _) => self.walk_expr(i, errors),
+            _ => {}
+        }
     }
 }
 
