@@ -17,6 +17,15 @@
 > **Источник:** `std/STATUS.md` — std не компилируется в exe;
 > [Plan 01](01-roadmap-v0.1.md) — roadmap релиза 0.1.
 >
+> **Coordination с Plan 110.11 (added 2026-06-05):**
+> Plan 110.11 — umbrella для stdlib types с `Consumable[E]` impls
+> ([110.11-new-stdlib-types-consumable.md](110.11-new-stdlib-types-consumable.md)).
+> Markers covered: `std/fs.File`, `std/bufio.BufReader/Writer`,
+> `std/db.Transaction`, `std/pool.ConnPool`, `std/concurrency.CancelScope`,
+> `Stream[T]`. Если Plan 91 ship'нет любой из этих types в своих фазах,
+> Plan 110.11.X sub-task scope reduces к «add Consumable impl only».
+> Pre-implementation per sub-plan: check Plan 91 roadmap для overlap.
+>
 > **Scope-decision C для 0.1 (2026-05-27):** релиз 0.1 = `std MVP` (этот план)
 > **+ `std/net` (Plan 83.12 co-planned)** **+ `std/sync` (Plan 103.x уже закрыт)**.
 > Plan 91 и Plan 83.12 запускаются параллельно (разные scope, разные worktrees),
