@@ -1,0 +1,34 @@
+// Plan 128 Ф.4 T10 — ro-method on primitive is allowed (D35 baseline).
+//
+// Verifies Ф.3 diagnostic does NOT over-trigger: only `mut @method`
+// на примитиве is rejected; pure ro-methods (`fn int @doubled`)
+// remain a normal D35 v2 feature.
+
+module plan128.t10_primitive_ro_method_ok
+
+fn int @doubled() -> int => @ * 2
+fn int @is_positive() -> bool => @ > 0
+fn bool @to_int() -> int => if @ { 1 } else { 0 }
+fn f64 @squared() -> f64 => @ * @
+
+test "ro method on int — works" {
+    ro n = 5
+    assert(n.doubled() == 10)
+    assert(n.is_positive())
+}
+
+test "ro method on int — negative input" {
+    ro n = -3
+    assert(n.doubled() == -6)
+    assert(!n.is_positive())
+}
+
+test "ro method on bool — works" {
+    assert(true.to_int() == 1)
+    assert(false.to_int() == 0)
+}
+
+test "ro method on f64 — works" {
+    ro x = 4.0
+    assert(x.squared() == 16.0)
+}

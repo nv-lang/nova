@@ -33305,3 +33305,78 @@ State:
 Status: ✅ **CLOSED 2026-06-05** (branch plan-125.1; НЕ merged, НЕ
 pushed per task brief — awaiting user review).
 
+## 2026-06-05 (later) — Plan 128 CLOSED — mut-receiver ABI hardening (4 commits + merge)
+
+Plan 128 (`docs/plans/128-mut-receiver-abi.md`) — closure-doc для 3
+ABI markers spawned by Plan 123 V7.6 V2 audit
+(`docs/plans/123-followups-2026-06-05.md`).
+
+Phases Ф.1-Ф.5 landed on branch `plan-128-mut-receiver-abi`:
+
+- 2415644d24e feat(plan128 Ф.1): wire recv.mutable through emit_c.rs
+  codegen helpers — MethodCallInfo::recv.mutable flag теперь доходит до
+  prepare_method_recv / emit_method_call_signature, value-type pointer
+  branch consolidates D215+D228 logic.
+- 50257797587 feat(plan128 Ф.2): D215 NamedTuple mut-receiver pointer
+  ABI (NovaTuple_X*) — call-site identifier `&v` shortcut + rvalue
+  hoist `NovaTuple_X __tmp_recv_<id> = expr; f(&__tmp_recv_<id>)`.
+- 8b178873461 feat(plan128 Ф.3): E_PRIMITIVE_MUT_METHOD diagnostic
+  rejects fn primitive mut @method — type-checker
+  `TypeCheckCtx::build` проверяет receiver ∈ {int, i8-i64, u8-u64,
+  f32, f64, bool, char, str, ()} + `mut @` → diagnostic с suggestion.
+- 30f57d3a797 test(plan128 Ф.4): 15 regression fixtures для
+  mut-receiver ABI — t1-t5 NamedTuple+value-record POS, t6-t9
+  primitives NEG, t10-t15 ro/heap-record sanity + composition.
+
+Ф.5 (this commit) — spec amends + plan-doc + logs + merge:
+
+- spec/decisions/02-types.md D215 §«Method receiver passing» —
+  `NovaTuple_X*` pointer ABI, identifier vs rvalue call-site rules,
+  `recv.mutable` flag wiring note.
+- spec/decisions/02-types.md D228 cross-ref note к D215 (symmetric
+  pointer pattern для value records).
+- spec/decisions/02-types.md D32 таксономия — new «Receiver mut-ABI»
+  column в value/reference table.
+- spec/decisions/08-runtime.md D26 §«Plan 128 Ф.3 amend» —
+  E_PRIMITIVE_MUT_METHOD rationale (Nova-first), enforcement note,
+  fixture coverage list, similar patterns в Rust/Kotlin/Swift.
+- docs/plans/128-mut-receiver-abi.md NEW — phases Ф.1-Ф.5 + AC
+  A128.1-A128.10 + markers closed + lessons.
+- docs/plans/README.md new row Plan 128 ✅ CLOSED.
+
+Markers closed (Plan 123 V7.6 V2 followup):
+  - 🟢 [M-codegen-recv-mutable-flag-unwired] — wired в emit_c.rs.
+  - 🟢 [M-D215-mut-receiver-pointer-codegen] — NamedTuple branch landed.
+  - 🟢 [M-D26-primitive-mut-method-diag] — diagnostic landed.
+
+Verification:
+  - lib tests (compiler-codegen): clean smoke run post-merge.
+  - nova_tests/plan128: 15/15 PASS на release nova-cli (rebuild after
+    merge per Plan 91.14 stale-binary lesson).
+  - plan99/plan100_2/plan100_6/plan108 FAIL counts идентичны main —
+    no regressions у pre-existing known-issues.
+
+### Lessons
+
+1. IR flag flow needs explicit signature thread. MethodCallInfo::recv
+   carried `mutable` flag, но teardown в emit_c.rs helpers терял её
+   тихо. Pattern: add flag в helper signature, не в TLS / not «pull
+   from current context».
+
+2. ABI symmetry pays. D215 NamedTuple `NovaTuple_X*` mut-receiver
+   wired через тот же `prepare_method_recv` helper, что и D228
+   `NovaValue_X*`. Single path = single point of truth для
+   escape/alignment/GC tracking.
+
+3. Early-reject > silent miscodegen. Primitives `fn int mut @method`
+   парсер проглатывал, codegen emit'ил valid C с unobservable mutation
+   в локальную копию — programmer думал, что мутирует receiver.
+   E_PRIMITIVE_MUT_METHOD на этапе type-check с конкретным suggestion
+   («remove mut, return new value») — drastically лучше для DX.
+
+### Worktree workflow
+
+Все 4 commits landed sequentially в nova-p128 worktree (no sub-worktrees
+per feedback-sequential-no-sub-worktree). Merge `--no-ff` в main
+preserves history; branch pushed для review.
+

@@ -1,0 +1,53 @@
+// Plan 128 Ф.4 T14 — record-record composition с named-tuple field;
+// ro-methods on the field through projection + workaround-pattern
+// for mut-method (extract field → mutate → write back).
+//
+// Direct `obj.v.mut_method()` known V1 limitation (Ф.2 hoists field
+// rvalue to temp, write-back lost). This test demonstrates the
+// canonical workaround flow.
+
+module plan128.t14_named_tuple_in_record_ok
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 @sum() -> f64 =>
+    @x + @y + @z
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+type Body {
+    mut v Vec3
+    mass f64
+}
+
+fn Body.new() -> Self => {
+    v: Vec3(x: 1.0, y: 2.0, z: 3.0),
+    mass: 10.0,
+}
+
+test "record member named tuple — direct field access" {
+    ro b = Body.new()
+    assert(b.v.x == 1.0)
+    assert(b.v.y == 2.0)
+    assert(b.v.z == 3.0)
+    assert(b.mass == 10.0)
+}
+
+test "record member named tuple — ro method via projection" {
+    ro b = Body.new()
+    assert(b.v.sum() == 6.0)
+}
+
+test "record member named tuple — mutate via extract-rebind-writeback" {
+    mut b = Body.new()
+    mut v = b.v
+    v.set_x(99.0)
+    b.v = v
+    assert(b.v.x == 99.0)
+    assert(b.v.y == 2.0)
+    assert(b.v.z == 3.0)
+    // mass field untouched.
+    assert(b.mass == 10.0)
+}
