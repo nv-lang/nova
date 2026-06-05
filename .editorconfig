@@ -1,0 +1,12 @@
+# Repo-wide encoding fixation (GitHub issue #1).
+#
+# Cyrillic comments in some sources were corrupted to mojibake because an
+# editor auto-guessed the encoding (e.g. Windows-1251) for a UTF-8 file and
+# re-saved it. Forcing UTF-8 here makes EditorConfig-aware editors (VS Code
+# with the EditorConfig extension, JetBrains, etc.) open/save as UTF-8 and
+# never guess. Charset-only on purpose: no indent/EOL rules, to avoid
+# churn or conflicts with rustfmt and the repo's mixed line endings.
+root = true
+
+[*]
+charset = utf-8
