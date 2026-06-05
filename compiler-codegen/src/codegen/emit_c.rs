@@ -22271,19 +22271,40 @@ _cp++; \
                         sb, escaped, s.len()
                     ));
                 }
-                InterpStrPart::Expr { expr: e, spec: _ } => {
+                InterpStrPart::Expr { expr: e, spec } => {
                     let arg_ty = self.infer_expr_c_type(e);
-                    // CharLit detection — char хранится как nova_int,
-                    // но семантика char→str = UTF-8 encode codepoint, а не печать числа.
                     let v = self.emit_expr(e)?;
+                    // **Plan 91.14 Ф.4 (D229):** branch on format spec.
+                    // - FormatSpec::None → Printable.@fmt (existing path).
+                    // - FormatSpec::Debug → DebugPrintable.@debug_fmt + debug
+                    //   primitives (`nova_str_to_debug_str` etc.).
+                    let is_debug = matches!(spec, crate::ast::FormatSpec::Debug);
+                    let method_name = if is_debug { "debug_fmt" } else { "fmt" };
+                    let primitive_to_str_fn: fn(&str) -> Option<&'static str> = if is_debug {
+                        |ct| match ct {
+                            "nova_str" => Some("nova_str_to_debug_str"),
+                            "nova_char" => Some("nova_char_to_debug_str"),
+                            "nova_bool" => Some("nova_bool_to_debug_str"),
+                            "nova_f64" => Some("nova_f64_to_debug_str"),
+                            "nova_int" => Some("nova_int_to_debug_str"),
+                            _ => None,
+                        }
+                    } else {
+                        |ct| match ct {
+                            // nova_str passes through identity для display.
+                            "nova_str" => Some(""),
+                            "nova_char" => Some("nova_char_to_str"),
+                            "nova_bool" => Some("nova_bool_to_str"),
+                            "nova_f64" => Some("nova_f64_to_str"),
+                            "nova_int" => Some("nova_int_to_str"),
+                            _ => None,
+                        }
+                    };
+
                     // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
                     // unified Printable.fmt routing для user types.
-                    // Explicit @fmt OR synthesizable default body → direct
-                    // `Nova_T_method_fmt(v, sb)` call (writes straight into
-                    // interp_sb, zero intermediate string). Both paths route
-                    // through `Nova_<T>_method_fmt`, which the general
-                    // synthesizer emits on-demand when T satisfies Printable
-                    // via str.from / @into chain.
+                    // Plan 91.14 (D229): same path для DebugPrintable.@debug_fmt
+                    // when spec=Debug — direct `Nova_T_method_debug_fmt(v, sb)`.
                     if !matches!(e.kind, ExprKind::CharLit(_))
                         && !matches!(arg_ty.as_str(),
                             "nova_str" | "nova_char" | "nova_bool"
@@ -22293,16 +22314,25 @@ _cp++; \
                             .trim_start_matches("Nova_")
                             .trim_end_matches('*')
                             .to_string();
-                        let has_explicit_fmt = self.all_methods
-                            .contains(&(arg_type.clone(), "fmt".to_string()));
-                        let fmt_c_fn: Option<String> = if has_explicit_fmt {
+                        let has_explicit = self.all_methods
+                            .contains(&(arg_type.clone(), method_name.to_string()));
+                        let method_c_fn: Option<String> = if has_explicit {
                             let safe = Self::sanitize_c_for_ident(&arg_type);
-                            Some(format!("Nova_{}_method_fmt", safe))
+                            Some(format!("Nova_{}_method_{}", safe, method_name))
                         } else {
-                            self.try_synthesize_default_method(
-                                &arg_type, &arg_ty, "fmt")
+                            // Plan 91.14 Ф.4 / decision #4 (implicit auto-derive):
+                            // bypass D186 #impl gate via gate_on_impl=false для
+                            // debug_fmt — zero-friction on-demand synthesis.
+                            // For fmt — preserve existing gated behavior.
+                            if is_debug {
+                                self.try_synthesize_default_method_with_gate(
+                                    &arg_type, &arg_ty, method_name, false)
+                            } else {
+                                self.try_synthesize_default_method(
+                                    &arg_type, &arg_ty, method_name)
+                            }
                         };
-                        if let Some(fn_name) = fmt_c_fn {
+                        if let Some(fn_name) = method_c_fn {
                             self.line(&format!(
                                 "{}({}, {});",
                                 fn_name, v, sb
@@ -22311,26 +22341,26 @@ _cp++; \
                         }
                     }
                     let s_expr = if matches!(e.kind, ExprKind::CharLit(_)) {
-                        format!("nova_char_to_str({})", v)
+                        if is_debug {
+                            format!("nova_char_to_debug_str({})", v)
+                        } else {
+                            format!("nova_char_to_str({})", v)
+                        }
                     } else {
-                        match arg_ty.as_str() {
-                            "nova_str" => v,
-                            // Plan 75: char variable → UTF-8 encode codepoint, not int-code.
-                            "nova_char" => format!("nova_char_to_str({})", v),
-                            "nova_bool" => format!("nova_bool_to_str({})", v),
-                            "nova_f64" => format!("nova_f64_to_str({})", v),
-                            "nova_int" => format!("nova_int_to_str({})", v),
-                            _ => {
-                                // User-type: appell-path синтез через Printable
-                                // default body (zerkalo bare-call synthesis):
-                                //   1. fn str.from(T) -> str overload — D183 canonical
-                                //   2. @into() -> str (D73)
-                                //   3. fallback (junk — будет CC-FAIL для unsupported types)
+                        match (arg_ty.as_str(), primitive_to_str_fn(arg_ty.as_str())) {
+                            // Display-path: nova_str passes through identity.
+                            ("nova_str", Some("")) => v,
+                            (_, Some(fn_name)) => format!("{}({})", fn_name, v),
+                            (_, None) => {
+                                // User-type fallback path — Printable str.from chain
+                                // (debug fallback when debug_fmt synthesis failed
+                                // earlier — caller already tried via method dispatch).
                                 let arg_type = arg_ty
                                     .trim_start_matches("Nova_")
                                     .trim_end_matches('*')
                                     .to_string();
-                                let key = ("str".to_string(), "from".to_string());
+                                let from_method = if is_debug { "from_debug" } else { "from" };
+                                let key = ("str".to_string(), from_method.to_string());
                                 let str_from_c: Option<String> = self.method_overloads
                                     .get(&key)
                                     .and_then(|sigs| sigs.iter()
@@ -22340,7 +22370,7 @@ _cp++; \
                                         .map(|s| s.c_name.clone()));
                                 if let Some(c_name) = str_from_c {
                                     format!("{}({})", c_name, v)
-                                } else if self.into_targets.get(&arg_type)
+                                } else if !is_debug && self.into_targets.get(&arg_type)
                                     .map(|t| t == "str").unwrap_or(false)
                                 {
                                     let safe = Self::sanitize_c_for_ident(&arg_type);
