@@ -32858,3 +32858,41 @@ propagation). Ниже — осознанно отложенное и узкие
 **Status:** ✅ CI GREEN + 2 codegen-бага с регрессионными тестами/criteria.
 Closure: docs/plans/110.9-v1.1-* + 123-followups-2026-06-04.md +
 project-creation.txt.
+
+## Plan 123 V*.followups (2026-06-05) — umbrella close
+
+7 markers закрыты. **Симплификаций (упрощений vs полной production-grade)
+не делалось** — все 7 sub-tasks выполнены в требуемом scope:
+
+- Spec-correctness fixes (V7.6 V2 TypeDecl-driven + value-record D228) —
+  no shortcuts, used `AllocKind` enum directly через `TypeKindRegistry`.
+- Chain-norm V2 / V3 extended root + fluent registry без heuristic
+  shortcuts.
+- V2.1 LICM / dynamic-loop-count integration use precise weighted
+  counter (`count_field_reads_in_block_weighted`) + literal AST parsing
+  (`parse_loop_iter_count`).
+- V7.6-realloc detection V1 использует heuristic «mut receiver + non-self
+  param of receiver type» — известный compromise, явно задокументировано
+  как conservative + сound (false positives → extra invalidations, never
+  incorrect). V2 will add `#realloc` attr opt-out per spec, отдельный
+  followup.
+
+**Followup markers spawned (НЕ симплификации, отдельный scope):**
+- `[M-D26-primitive-mut-method-diag]` — E_PRIMITIVE_MUT_METHOD reject
+  user `fn str/int/bool mut @...`. Target = Plan 108/91 hardening.
+- `[M-D215-mut-receiver-pointer-codegen]` — fix codegen для D215 NamedTuple
+  mut receiver passing (currently by-value, должен быть pointer per Plan
+  124.8 §2.7). Target = Plan 120/124.8 hardening.
+- `[M-codegen-recv-mutable-flag-unwired]` — root cause: thread
+  `recv.mutable` через emit_c.rs signature + call-site emission. Foundation
+  для D215 + primitives fixes.
+- (V7.6-realloc V2) — `#realloc` attr-based opt-out для conservative
+  false-positives. Follows Plan 91 §«Принцип: Nova-first» pattern.
+
+Target umbrella plan for these 4 ABI markers: **Plan 128** (IDs 125/126/
+127 already taken).
+
+**Verification:** 137/137 field_cache + 22/22 chain_norm + 11/11 runtime
+fixtures (release nova) — zero regressions. **Closure:**
+docs/plans/123-followups-2026-06-05.md + spec/decisions/02-types.md
+D228 amend + project-creation.txt.

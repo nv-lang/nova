@@ -32694,3 +32694,66 @@ Commits в branch:
 - feat(plan125 followup): [M-125-unreachable-builtin] — unreachable() prelude fn
 - feat(plan125 followup): [M-125-method-call-never-detection]
 - feat(plan125 followup): [M-125-codegen-never-cast]
+
+=== Plan 123 V*.followups (2026-06-05) — umbrella close ===
+
+7-marker umbrella работы над AST-level field-cache optimizer +
+chain-norm pre-pass, branch plan-123-followups-2026-06-05. Все 7
+markers закрыты + 11/11 runtime fixtures PASS via release nova.
+
+**Markers closed (commits):**
+1. M-123.7.6-generic-ref-types + value-record (d25a27a3805): replaced
+   hardcoded ref-type list с TypeDecl-driven classification per spec
+   D52/D215/D228. New `TypeKindEntry` enum, `TypeKindRegistry`, 32-deep
+   newtype/alias chain recursion. 13 unit + 2 runtime fixtures PASS.
+2. M-123.5.4-explain-region-tagging (35e0c76c79d): FnCacheInfo gains
+   `outer_region_caches` + `nested_region_caches` Vec<String> fields;
+   `mut_caches` retained as aggregate для backward-compat. 9 unit + 1
+   runtime fixture PASS.
+3. M-123.4.4-user-fluent-detection (ce7d3557e9d): chain_norm V2 — pre-
+   build FluentMethodRegistry from FnDecl.returns_receiver==true; union
+   с FLUENT_BUILTIN_METHODS list. User `-> @` builders теперь
+   автоматически hoisted. 6 unit + 2 runtime fixtures PASS.
+4. M-123.4.4-non-self-receivers (c1a4ec7fb24): chain_norm V3 — extend
+   root pattern к `Ident(name)` (local var) AND `Member{Ident, F}`
+   (local field). Member{SelfAccess, F} retained as V1 base. 6 unit + 1
+   runtime fixture PASS.
+5. M-123.2.1-v2-licm-threshold-integration (59fcc676133): LICM
+   eligibility check swaps к count_field_reads_in_block_weighted —
+   nested loops inside body inflate count via inner-iter weight.
+   Coordination с V1.1 outer scanner: either fires (semantic
+   equivalence). 2 unit + 1 runtime fixture PASS.
+6. M-123.2.1-dynamic-loop-count (2faaf7735d3): parse_loop_iter_count
+   handles range(N), range(lo, hi), 0..N, 0..=N, lo..=lo edge cases.
+   Non-literal → env fallback. 10 unit + 2 runtime fixtures PASS.
+7. M-123.7.6-method-realloc-flag (de0b7d67389): introduce
+   replaces_self_methods + field_type_leaf FieldRegistry slots. V1
+   heuristic — mut receiver + ≥1 non-self param of receiver type. V7.5/
+   V7.7 own-field check refined к invalidate across replace-style
+   methods. 6 unit + 2 runtime fixtures PASS.
+
+**Auxiliary commits:**
+- 842bc6e953f — V7.6 spec citations (D26 str immut + D228 mut-receiver
+  ABI) + 3 new ABI gap markers (для Plan 128 hardening).
+- 69eb1a92af5 — main → branch sync merge (8 commits мid-session).
+
+**Investigation outcomes (workflow-driven):**
+- 5-agent str-mutability audit: confirmed hard-immutable per D26
+  (08-runtime.md:658), 0 mut-methods в stdlib runtime_registry.rs.
+  Spawned [M-D26-primitive-mut-method-diag] для E_PRIMITIVE_MUT_METHOD.
+- 6-agent mut-receiver ABI audit: D228 mandates pointer receiver for
+  value types (LANDED в codegen); D215 NamedTuple unimplemented gap
+  (BROKEN — passes by value). Spawned [M-D215-mut-receiver-pointer-
+  codegen] + [M-codegen-recv-mutable-flag-unwired] для Plan 128.
+
+**Verification:**
+- 137/137 field_cache lib tests PASS (+18 vs entry baseline)
+- 22/22 chain_norm lib tests PASS (+12 vs entry baseline)
+- 11/11 runtime fixtures PASS via release nova (7 positive + 4 negative)
+- Zero regressions
+
+**Plan-doc:** docs/plans/123-followups-2026-06-05.md — full acceptance
+criteria per marker, closure status, грand-total Plan 123 state.
+
+**Spec amend:** 02-types.md D228 — added «Optimizer consumer (Plan 123
+V7.6 V2 refactor, 2026-06-05)» cross-ref noting AllocKind consumption.
