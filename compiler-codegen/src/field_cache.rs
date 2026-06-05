@@ -7418,6 +7418,30 @@ fn collect_body_writes(body: &FnBody) -> HashSet<String> {
     out
 }
 
+/// [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+/// collect set of `@method` names called anywhere in body. Used by
+/// chain-cache eligibility check: каждый self-method call ВОЗМОЖНО
+/// invalidates the chain — каждое имя метода lookupp'ится в IPA
+/// write_sets и union'ится в transitive-writes set.
+///
+/// Piggybacks on existing `collect_writes_*` walker (которое уже
+/// корректно covers все ExprKind/Stmt варианты), используя dummy
+/// recv_type и игнорируя writes/callees — нам нужны только method
+/// names called via `@<method>(args)`.
+fn collect_self_method_calls_in_body(body: &FnBody, out: &mut HashSet<String>) {
+    let mut dummy_writes: HashSet<String> = HashSet::new();
+    let mut callees: HashSet<(String, String)> = HashSet::new();
+    let dummy_recv = "__M_91_13_DUMMY__";
+    match body {
+        FnBody::Block(b) => collect_writes_block(b, dummy_recv, &mut dummy_writes, &mut callees),
+        FnBody::Expr(e) => collect_writes_expr(e, dummy_recv, &mut dummy_writes, &mut callees),
+        FnBody::External => {}
+    }
+    for (_recv, m) in callees {
+        out.insert(m);
+    }
+}
+
 fn collect_body_writes_block(b: &Block, out: &mut HashSet<String>) {
     for s in &b.stmts { collect_body_writes_stmt(s, out); }
     if let Some(t) = &b.trailing { collect_body_writes_expr(t, out); }
@@ -8445,6 +8469,38 @@ fn chain_cache_fn_impl(
         FnBody::Expr(e) => e.span,
         FnBody::External => return,
     };
+    // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+    // chain cache barrier check must include TRANSITIVE writes via
+    // self-method calls in body. Без этого chain `@cur.tok` кэшируется
+    // при function entry, остаётся stale после `@advance()` (который
+    // mutates `@cur`) — RUN-FAIL на JSON parse_array/parse_object на
+    // empty literals. IPA write_sets уже содержит SCC-closure'd writes,
+    // надо просто проверить self-method calls в body и union'нуть их
+    // write-sets с direct body_writes.
+    let mut self_method_writes: HashSet<String> = HashSet::new();
+    if let Some((ref recv_type_local, ref write_sets_local)) = chain_ipa {
+        let mut self_methods: HashSet<String> = HashSet::new();
+        collect_self_method_calls_in_body(&f.body, &mut self_methods);
+        for m in &self_methods {
+            if let Some(ws) = write_sets_local.get(&(recv_type_local.clone(), m.clone())) {
+                for fld in ws {
+                    self_method_writes.insert(fld.clone());
+                }
+            } else {
+                // Unknown callee — conservative: mark all path segments
+                // as written by adding a sentinel that won't match
+                // anything specific. Use "*" — chain segments are
+                // identifiers и не содержат '*', так что any() vs.contains
+                // на reasonable path тоже не сматчит. Но мы хотим conservative:
+                // вместо unmatchable sentinel — clear self_method_writes
+                // и outright skip chain cache below.
+                self_method_writes.insert("__UNKNOWN_CALLEE__".to_string());
+            }
+        }
+    }
+    // Conservative bail: if any self-method call had unknown write-set,
+    // skip chain caching entirely (matches V4 "any call = barrier").
+    let unknown_callee = self_method_writes.contains("__UNKNOWN_CALLEE__");
     for path in keys {
         if path.len() < 2 {
             continue;
@@ -8462,6 +8518,14 @@ fn chain_cache_fn_impl(
         // path components intersection с body_writes).
         if use_ipa_per_root {
             if path.iter().any(|seg| body_writes.contains(seg)) {
+                continue;
+            }
+            // [M-91.13-codegen-none-arm-nested-generic-mismatch]:
+            // ALSO check transitive writes via self-method calls.
+            if unknown_callee {
+                continue;
+            }
+            if path.iter().any(|seg| self_method_writes.contains(seg)) {
                 continue;
             }
         }

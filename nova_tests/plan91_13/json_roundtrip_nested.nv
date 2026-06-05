@@ -1,0 +1,65 @@
+// Plan 91.3 Ф.3 (composites conformance): JSON roundtrip — nested structures.
+//
+// 3 уровня вложенности: object → array → object внутри array.
+// Splits into focused tests — deep if-let chains триггерят codegen
+// edge case (inconsistent arm types).
+
+module plan91_13.json_roundtrip_nested
+
+import std.encoding.json.{JsonValue, Json}
+import std.collections.hashmap.{HashMap}
+
+test "parse nested — root is object" {
+    ro parsed = Json.parse("{\"arr\": [1, {\"k\": \"v\"}]}")!!
+    assert(parsed.is_object())
+}
+
+test "parse nested — arr key present" {
+    ro parsed = Json.parse("{\"arr\": [1, {\"k\": \"v\"}]}")!!
+    if let Some(root) = parsed.as_object() {
+        assert(root.contains("arr"))
+    } else {
+        assert(false)
+    }
+}
+
+test "deep array nesting roundtrip string-compare" {
+    // [[1, 2], [3, 4]] — array preserves order, byte-exact compare works.
+    ro orig = JsonValue.array([
+        JsonValue.array([JsonValue.num(1.0), JsonValue.num(2.0)]),
+        JsonValue.array([JsonValue.num(3.0), JsonValue.num(4.0)]),
+    ])
+    ro encoded = orig.into()
+    assert(encoded == "[[1,2],[3,4]]")
+    ro decoded = Json.parse(encoded)!!
+    ro re_encoded = decoded.into()
+    assert(re_encoded == encoded)
+}
+
+test "nested object encoded round-trips via re-encode" {
+    // {"arr": [1, {"k": "v"}]} — re-encode should yield same key->value
+    // mapping. HashMap iter order не гарантирован, поэтому byte compare
+    // не подходит для object level — но nested array внутри сохраняет
+    // порядок. Проверяем shape via parse-back.
+    mut inner = HashMap[str, JsonValue].new()
+    inner.insert("k", JsonValue.str("v"))
+    ro arr = JsonValue.array([
+        JsonValue.num(1.0),
+        JsonValue.object(inner),
+    ])
+    mut root = HashMap[str, JsonValue].new()
+    root.insert("arr", arr)
+    ro orig = JsonValue.object(root)
+
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    assert(decoded.is_object())
+
+    // Verify root level shape
+    if let Some(droot) = decoded.as_object() {
+        assert(droot.len() == 1)
+        assert(droot.contains("arr"))
+    } else {
+        assert(false)
+    }
+}

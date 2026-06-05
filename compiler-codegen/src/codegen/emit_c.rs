@@ -4637,6 +4637,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // record_schemas / sum_schemas / generic_types.
                             // Это означает X — type-param метода/типа,
                             // а не реальный struct.
+                            //
+                            // [M-91.13-codegen-none-arm-nested-generic-mismatch]
+                            // (2026-06-05): mono'd generic instance name
+                            // contains `____` (e.g. `Nova_HashMap____Nova_str_____Nova_JsonValue_p_p`).
+                            // Mono'd names не в generic_types но они concrete —
+                            // treat them as such, иначе `Option[HashMap[K,V]]`
+                            // falls к erased `NovaOpt_nova_int`.
                             if let Some(x) = inner_c
                                 .strip_suffix('*')
                                 .and_then(|s| s.trim().strip_prefix("Nova_"))
@@ -4644,7 +4651,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 let is_concrete_type =
                                     self.record_schemas.contains_key(x)
                                     || self.sum_schemas.contains_key(x)
-                                    || self.generic_types.contains(x);
+                                    || self.generic_types.contains(x)
+                                    || x.contains("____");
                                 if !is_concrete_type {
                                     return Ok("NovaOpt_nova_int".into());
                                 }
@@ -16214,8 +16222,22 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             if !field_types.is_empty() {
                                 let mut var_fields: Vec<String> = Vec::new();
                                 for i in 0..field_types.len() {
-                                    var_fields.push(format!("({l})->payload.{v}._{i} == ({r})->payload.{v}._{i}",
-                                        l = l, r = r, v = var_name, i = i));
+                                    // Plan 91 Ф.3 / [M-91.13-codegen-none-arm-nested-generic-mismatch]
+                                    // (2026-06-05): field-eq dispatch by C-type — `nova_str`
+                                    // не сравнивается через `==` (это struct {ptr,len}).
+                                    // Used когда sum-variant имеет StrTok(str)-like payload
+                                    // и code делает `tok == OtherVariant` — structural-eq
+                                    // обходит все variants включая Str-payload, и без
+                                    // nova_str_eq C compiler фейлит на binary `==` на struct.
+                                    let field_ty = field_types.get(i).map(|s| s.as_str()).unwrap_or("");
+                                    let cmp = if field_ty == "nova_str" {
+                                        format!("nova_str_eq(({l})->payload.{v}._{i}, ({r})->payload.{v}._{i})",
+                                            l = l, r = r, v = var_name, i = i)
+                                    } else {
+                                        format!("({l})->payload.{v}._{i} == ({r})->payload.{v}._{i}",
+                                            l = l, r = r, v = var_name, i = i)
+                                    };
+                                    var_fields.push(cmp);
                                 }
                                 field_conds.push(format!("(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
                                     l = l, ty = type_name, v = var_name,
@@ -21304,6 +21326,68 @@ _cp++; \
                 if parts.len() == 2 && parts[0] == "CancelToken" && parts[1] == "new" {
                     return Ok("nova_cancel_token_new()".to_string());
                 }
+                // Plan 91 Ф.3 / [M-91.13-codegen-none-arm-nested-generic-mismatch]
+                // (2026-06-05): `T.try_parse(s str) -> Option[T]` для numeric types
+                // (per D26 / 08-runtime.md §«f64.try_parse»). Параллельно `try_from`
+                // ниже (который возвращает Result[T, ParseError]) — `try_parse`
+                // даёт Option-форму через те же `nova_str_to_*` helper'ы из
+                // `nova_rt/conv.h`. Без этой ветки `f64.try_parse(text)` падает
+                // в legacy `nova_fn_f64_try_parse` fallback (mangled free-fn),
+                // которого нет в runtime → forward-decl отсутствует → C компилятор
+                // дефолтит return-type к `nova_int` → mismatch на `_nv_scr->tag`
+                // в Some-pattern destructure.
+                if parts.len() == 2 && parts[1] == "try_parse" {
+                    if let Some(arg) = args.first() {
+                        let arg_ty = self.infer_expr_c_type(arg.expr());
+                        if arg_ty == "nova_str" {
+                            let target = parts[0].as_str();
+                            // Tuple: (helper_name, parse_result_struct, opt_inner_c_type)
+                            let mapping: Option<(&str, &str, &str)> = match target {
+                                "int" | "i64" => Some(("nova_str_to_i64", "nova_parse_int_result", "nova_int")),
+                                "u64" | "uint" => Some(("nova_str_to_u64", "nova_parse_u64_result", "uint64_t")),
+                                "u32" => Some(("nova_str_to_u64", "nova_parse_u64_result", "uint32_t")),
+                                "u16" => Some(("nova_str_to_u64", "nova_parse_u64_result", "uint16_t")),
+                                "u8"  => Some(("nova_str_to_u64", "nova_parse_u64_result", "nova_byte")),
+                                "i32" => Some(("nova_str_to_i64", "nova_parse_int_result", "int32_t")),
+                                "i16" => Some(("nova_str_to_i64", "nova_parse_int_result", "int16_t")),
+                                "i8"  => Some(("nova_str_to_i64", "nova_parse_int_result", "int8_t")),
+                                "f64" => Some(("nova_str_to_f64", "nova_parse_f64_result", "nova_f64")),
+                                "f32" => Some(("nova_str_to_f64", "nova_parse_f64_result", "nova_f32")),
+                                "bool" => Some(("nova_str_to_bool", "nova_parse_bool_result", "nova_bool")),
+                                "char" => Some(("nova_str_to_char", "nova_char_decode_result", "nova_char")),
+                                _ => None,
+                            };
+                            if let Some((helper, result_struct_ty, opt_inner)) = mapping {
+                                let v = self.emit_expr(arg.expr())?;
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("nova_str {} = {};", tmp, v));
+                                let res_var = self.fresh_tmp();
+                                self.line(&format!("{} {} = {}({});",
+                                    result_struct_ty, res_var, helper, tmp));
+                                let sanitized = Self::sanitize_for_novaopt(opt_inner);
+                                self.register_novaopt_decl(&sanitized, opt_inner);
+                                let out = self.fresh_tmp();
+                                self.line(&format!("NovaOpt_{} {};", sanitized, out));
+                                self.line(&format!("if ({}.ok) {{", res_var));
+                                self.indent += 1;
+                                // Cast .value to the requested inner type (handles
+                                // i64 → i32/i16/i8 narrowing, u64 → u32/u16/u8, f64
+                                // → f32; identity для f64/i64/bool/char).
+                                let value_expr = format!("({}){}.value", opt_inner, res_var);
+                                self.line(&format!("{} = {};", out,
+                                    self.option_some_expr(&sanitized, &value_expr)));
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line(&format!("{} = {};", out,
+                                    self.option_none_expr(&sanitized)));
+                                self.indent -= 1;
+                                self.line("}");
+                                return Ok(out);
+                            }
+                        }
+                    }
+                }
                 // Plan 08 Ф.2: D77 try_from / D73 from для numeric/char/bool ↔ str.
                 // T.try_from(v) → Result[T, ParseError]; здесь эмитим
                 // через runtime helper'ы из nova_rt/conv.h.
@@ -23519,6 +23603,27 @@ _cp++; \
                 if t != "nova_unit" { result_ty = t; break; }
             }
         }
+        // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+        // если result_ty был выбран non-unit от первого arm'а, но другие
+        // non-divergent arms возвращают nova_unit — типы arm'ов
+        // несовместимы. Fall back на nova_unit, поскольку match используется
+        // в statement-position (значение отбрасывается) — это безопасный
+        // выбор, а не silent miscompile. Иначе coerce_for_assignment
+        // не умеет mapping nova_unit → NovaOpt_T, и C-компилятор падает
+        // на struct-assignment mismatch (json.nv read_number — match
+        // @peek() { Some('0') => { @advance() } /* Option[char] */
+        //            Some(c) => { while ... } /* unit */ ... }).
+        if result_ty != "nova_unit" && result_ty != "nova_int" {
+            let mut any_unit_arm = false;
+            for arm in arms {
+                if arm_diverges(self, arm) { continue; }
+                let t = infer_arm(self, arm);
+                if t == "nova_unit" { any_unit_arm = true; break; }
+            }
+            if any_unit_arm {
+                result_ty = "nova_unit".into();
+            }
+        }
         // Note: we intentionally don't inherit result_ty from current_fn_return_ty here,
         // because the match may be inside a for loop or other non-return context.
         // Exception: "NovaOpt_nova_int" is the erased generic fallback (inner type unknown).
@@ -23734,8 +23839,12 @@ _cp++; \
                     let v = self.emit_expr(e)?;
                     self.line(&format!("(void)({});", v));
                 } else {
+                    // [M-91.13-codegen-none-arm-nested-generic-mismatch] fix:
+                    // emit via target-type aware path so `None` / array-lit /
+                    // typed-int literals в arm body get correct mono'd type
+                    // (NovaOpt_<elem>* instead of fallback NovaOpt_nova_int).
                     let val_ty = self.infer_expr_c_type(e);
-                    let v = self.emit_expr(e)?;
+                    let v = self.emit_expr_with_target_type(e, &result_ty)?;
                     let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
                     self.line(&format!("{} = {};", result_tmp, assignment));
                 }
@@ -23753,8 +23862,10 @@ _cp++; \
                         let v = self.emit_expr(trailing)?;
                         self.line(&format!("(void)({});", v));
                     } else {
+                        // [M-91.13-codegen-none-arm-nested-generic-mismatch] fix
+                        // (block-arm form): target-type aware emit.
                         let val_ty = self.infer_expr_c_type(trailing);
-                        let v = self.emit_expr(trailing)?;
+                        let v = self.emit_expr_with_target_type(trailing, &result_ty)?;
                         let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
                         self.line(&format!("{} = {};", result_tmp, assignment));
                     }
@@ -23966,6 +24077,15 @@ _cp++; \
         // nova_str → nova_int: box to pointer
         if from_ty == "nova_str" && to_ty == "nova_int" {
             return format!("(nova_int)(intptr_t)(&({}))", val);
+        }
+        // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+        // any → nova_unit: discard value via comma operator. Used когда
+        // match-arm result_ty downgraded на unit из-за inconsistent arms
+        // (см. emit_match result_ty fallback). Эмитим `((void)(<val>), NOVA_UNIT)`
+        // чтобы preserve side-effects от arm-body expression и присвоить
+        // legitimate unit value к unit-typed slot.
+        if to_ty == "nova_unit" && from_ty != "nova_unit" {
+            return format!("((void)({}), NOVA_UNIT)", val);
         }
         val.to_string()
     }
@@ -29687,6 +29807,33 @@ _cp++; \
                         // Plan 59 Ф.7.5 D3: erased mono Result-инстанс.
                         if method_name == "try_from" {
                             return "NovaRes_nova_int_nova_str*".into();
+                        }
+                        // Plan 91 Ф.3 / [M-91.13-codegen-none-arm-nested-generic-mismatch]:
+                        // `T.try_parse(s str) -> Option[T]` для numeric/bool/char.
+                        // Mirror'ит emit_c.rs Path-form codegen ветку — здесь
+                        // отдаём concrete `NovaOpt_<inner>` чтобы downstream
+                        // (match-arm result_ty inference, Some-pattern dispatch)
+                        // увидели правильный struct-тип вместо `nova_int` fallback.
+                        if method_name == "try_parse" {
+                            let opt_inner: Option<&str> = match eff.as_str() {
+                                "int" | "i64" => Some("nova_int"),
+                                "u64" | "uint" => Some("uint64_t"),
+                                "u32" => Some("uint32_t"),
+                                "u16" => Some("uint16_t"),
+                                "u8"  => Some("nova_byte"),
+                                "i32" => Some("int32_t"),
+                                "i16" => Some("int16_t"),
+                                "i8"  => Some("int8_t"),
+                                "f64" => Some("nova_f64"),
+                                "f32" => Some("nova_f32"),
+                                "bool" => Some("nova_bool"),
+                                "char" => Some("nova_char"),
+                                _ => None,
+                            };
+                            if let Some(inner) = opt_inner {
+                                let sani = Self::sanitize_for_novaopt(inner);
+                                return format!("NovaOpt_{}", sani);
+                            }
                         }
                         // Plan 08 Ф.2: str.from(numeric/bool/char) → nova_str.
                         if eff == "str" && method_name == "from" {

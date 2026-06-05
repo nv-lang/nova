@@ -1,0 +1,48 @@
+// Plan 91.3 Ф.3 (composites conformance): JSON roundtrip — mixed-type array.
+//
+// `[1, "a", true, null]` — heterogeneous JSON array со всеми 4 примитивами.
+// Validates: format_array iter+join, parser accepts mixed types в одном
+// массиве, == определён pointwise для Array variant.
+
+module plan91_13.json_roundtrip_array_primitives
+
+import std.encoding.json.{JsonValue, Json}
+
+test "encode mixed primitives array" {
+    ro v = JsonValue.array([
+        JsonValue.num(1.0),
+        JsonValue.str("a"),
+        JsonValue.bool(true),
+        JsonValue.null(),
+    ])
+    ro encoded = v.into()
+    assert(encoded == "[1,\"a\",true,null]")
+}
+
+test "parse mixed primitives array" {
+    ro parsed = Json.parse("[1, \"a\", true, null]")!!
+    match parsed.as_array() {
+        Some(xs) => {
+            assert(xs.len() == 4)
+            assert(xs[0].as_num() == Some(1.0))
+            assert(xs[1].as_str() == Some("a"))
+            assert(xs[2].as_bool() == Some(true))
+            assert(xs[3].is_null())
+        }
+        None => assert(false)
+    }
+}
+
+test "roundtrip mixed primitives array" {
+    ro orig = JsonValue.array([
+        JsonValue.num(1.0),
+        JsonValue.str("a"),
+        JsonValue.bool(true),
+        JsonValue.null(),
+    ])
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    // Re-encode + string compare (JsonValue без structural ==).
+    ro re_encoded = decoded.into()
+    assert(re_encoded == encoded)
+}

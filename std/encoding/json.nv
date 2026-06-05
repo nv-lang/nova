@@ -65,6 +65,22 @@
 
 module encoding.json
 
+// [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+// json.nv использует HashMap[K, V] в return types и fn-body literals
+// (Object variant + Json.parse).  HashMap живёт в std/collections/hashmap.nv
+// и НЕ в std.prelude.  Без явного `import` peer_files codegen-prepass
+// не подтягивает hashmap.nv → HashMap не регистрируется в
+// `generic_type_templates` → fn-signature emission для `as_object()`
+// эмитит erased `NovaOpt_nova_int` вместо concrete `NovaOpt_Nova_HashMap_p`,
+// body-pass позже видит concrete тип → mismatch CC-FAIL.
+//
+// Fix: explicit `import` — peer_files pipeline загружает hashmap.nv,
+// и Plan 48.1 prepass (`emit_c.rs:1959-1977`) регистрирует HashMap
+// как concrete generic template.  Это правильное (а не workaround)
+// решение: json.nv действительно ИСПОЛЬЗУЕТ HashMap, поэтому ДОЛЖЕН
+// его импортировать (explicit-imports principle).
+import std.collections.hashmap.{HashMap}
+
 
 /// JsonValue — рекурсивный sum-type для произвольного JSON-документа.
 ///
@@ -717,11 +733,14 @@ fn format_array(xs []JsonValue) -> str {
 fn format_object(m HashMap[str, JsonValue]) -> str {
     mut buf = "{"
     mut first = true
-    for entry in m.iter() {
+    // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+    // HashMap.iter() yields (K, V) tuple per hashmap.nv:441 — destructure
+    // explicitly. `entry.key / .value` была wrong API assumption.
+    for (k, v) in m.iter() {
         if !first { buf = buf + "," }
-        buf = buf + format_string(entry.key)
+        buf = buf + format_string(k)
         buf = buf + ":"
-        buf = buf + entry.value.into()
+        buf = buf + v.into()
         first = false
     }
     buf + "}"
@@ -773,9 +792,12 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
     ro outer_indent = indent(depth)
     mut buf = "{\n"
     mut first = true
-    for entry in m.iter() {
+    // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
+    // HashMap.iter() yields (K, V) tuple — destructure explicitly
+    // (см. format_object выше).
+    for (k, v) in m.iter() {
         if !first { buf = buf + ",\n" }
-        buf = buf + inner_indent + format_string(entry.key) + ": " + pretty_at(entry.value, depth + 1)
+        buf = buf + inner_indent + format_string(k) + ": " + pretty_at(v, depth + 1)
         first = false
     }
     buf + "\n" + outer_indent + "}"

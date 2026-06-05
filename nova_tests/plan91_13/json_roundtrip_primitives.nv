@@ -1,0 +1,85 @@
+// Plan 91.13 (Ф.3 conformance smoke): JSON roundtrip — primitives.
+//
+// Verifies basic encode-then-decode + decode-then-encode equivalence
+// for null/bool/num/str values.
+
+module plan91_13.json_roundtrip_primitives
+
+import std.encoding.json.{JsonValue, Json}
+
+test "encode null" {
+    ro v = JsonValue.null()
+    ro encoded = v.into()
+    assert(encoded == "null")
+}
+
+test "encode bool true" {
+    ro v = JsonValue.bool(true)
+    ro encoded = v.into()
+    assert(encoded == "true")
+}
+
+test "encode bool false" {
+    ro v = JsonValue.bool(false)
+    ro encoded = v.into()
+    assert(encoded == "false")
+}
+
+test "encode num integer" {
+    ro v = JsonValue.num(42.0)
+    ro encoded = v.into()
+    assert(encoded == "42")
+}
+
+test "encode num negative" {
+    ro v = JsonValue.num(-17.0)
+    ro encoded = v.into()
+    assert(encoded == "-17")
+}
+
+test "encode str simple" {
+    ro v = JsonValue.str("hello")
+    ro encoded = v.into()
+    assert(encoded == "\"hello\"")
+}
+
+test "parse null" {
+    ro parsed = Json.parse("null")!!
+    assert(parsed.is_null())
+}
+
+test "parse bool true" {
+    ro parsed = Json.parse("true")!!
+    assert(parsed.as_bool() == Some(true))
+}
+
+test "parse num int" {
+    ro parsed = Json.parse("42")!!
+    assert(parsed.as_num() == Some(42.0))
+}
+
+test "parse str simple" {
+    ro parsed = Json.parse("\"hello\"")!!
+    assert(parsed.as_str() == Some("hello"))
+}
+
+test "roundtrip bool" {
+    ro orig = JsonValue.bool(true)
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    assert(decoded.as_bool() == Some(true))
+}
+
+test "roundtrip num" {
+    ro orig = JsonValue.num(123.0)
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    assert(decoded.as_num() == Some(123.0))
+}
+
+test "roundtrip str" {
+    ro orig = JsonValue.str("world")
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    assert(decoded.as_str() == Some("world"))
+}

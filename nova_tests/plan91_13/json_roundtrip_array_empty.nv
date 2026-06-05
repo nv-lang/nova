@@ -1,0 +1,34 @@
+// Plan 91.3 Ф.3 (composites conformance): JSON roundtrip — empty array.
+//
+// Validates encode/decode/roundtrip симметрию для пустого массива `[]`.
+// Empty-array edge: format_array должен не оставить trailing comma,
+// parser должен принять `[]` как `Array([])` (не throw).
+
+module plan91_13.json_roundtrip_array_empty
+
+import std.encoding.json.{JsonValue, Json}
+
+test "encode empty array" {
+    ro v = JsonValue.array([])
+    ro encoded = v.into()
+    assert(encoded == "[]")
+}
+
+test "parse empty array" {
+    ro parsed = Json.parse("[]")!!
+    assert(parsed.is_array())
+    match parsed.as_array() {
+        Some(xs) => assert(xs.len() == 0)
+        None     => assert(false)
+    }
+}
+
+test "roundtrip empty array" {
+    ro orig = JsonValue.array([])
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    // Re-encode и сравнение через строку — JsonValue не имеет structural `==`
+    // (D46 не покрывает sum-types per json.nv top comment).
+    ro re_encoded = decoded.into()
+    assert(re_encoded == encoded)
+}
