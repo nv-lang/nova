@@ -22197,6 +22197,15 @@ _cp++; \
             // is provably divergent (infinite loop). Conservative — if
             // body contains a reachable break (in same scope), bail.
             ExprKind::Loop { body, .. } => !self.loop_body_has_break(body),
+            // Plan 125.2 Ф.2 [M-125-while-true-divergence]:
+            // `while true { ... }` with constant-true condition AND no
+            // break targeting this loop scope is divergent. Match
+            // strictly the `BoolLit(true)` literal — any non-literal
+            // condition (even constant-fold-equivalent) falls through.
+            ExprKind::While { cond, body, .. } => {
+                matches!(&cond.kind, ExprKind::BoolLit(true))
+                    && !self.loop_body_has_break(body)
+            }
             _ => false,
         }
     }
