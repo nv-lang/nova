@@ -373,6 +373,77 @@ See [`docs/typed-pointers.md`](typed-pointers.md) для полной reference
 documentation и [`examples/typed_pointers/`](../examples/typed_pointers/)
 для minimal working samples.
 
+## Plan 118.1 — FFI intrinsics (foundation)
+
+### CStr handle (type-safe const char*)
+
+```nova
+import std.ffi.cstr.{CStr}
+
+// External fn principal pattern — typed handle вместо bare *u8
+external fn c_strlen(s CStr) -> i64
+external fn c_printf(fmt CStr) -> i32
+```
+
+CStr backing type: `*u8` (Plan 118 typed pointer). ABI marshals к
+`const char*` / `uint8_t*`. **V1 foundation only** — method bindings
+(`str.as_cstr()` etc.) deferred к [M-118.1-cstr-runtime-wiring].
+
+Workaround V1: caller wraps raw `*u8` via `CStr(ptr_value)` constructor.
+
+### addr_of / addr_of_mut (Zig-style pointer creation)
+
+```nova
+unsafe {
+    ro x = 42
+    ro p = addr_of(x)         // *T pointer к local
+    assert(p.read() == 42)
+}
+
+unsafe {
+    mut buf = 0
+    ro p = addr_of_mut(buf)   // *T (mut binding required)
+    p.write(100)               // codegen TBD per Ф.4
+}
+```
+
+Equivalent к `&x` operator (UnOp::AddrOf), rewriter-desugared.
+Use when explicit function-call syntax improves FFI readability.
+Same enforcement: unsafe context required, #realtime ban, lvalue
+validation (E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED).
+
+### RawMem intrinsics (bulk memory ops)
+
+```nova
+import std.runtime.raw_mem.{RawMem}
+
+unsafe {
+    RawMem.copy_from(src, dst, n_bytes)         // memmove-safe
+    RawMem.copy_nonoverlapping(src, dst, n)     // memcpy fast-path
+    RawMem.fill(dst, byte_value, n)             // memset
+    RawMem.write_bytes(dst, byte_value, n)      // alias
+    ro cmp = RawMem.compare(a, b, n)            // memcmp
+}
+```
+
+### Typed read/write на primitive `*T`
+
+```nova
+unsafe {
+    ro p = addr_of(some_int)
+    ro v = p.read()                  // typed primitive read
+    p.write(100)                     // typed write (на *mut T)
+    ro v_vol = p.read_volatile()     // MMIO read
+    p.write_volatile(0xDEAD)         // MMIO write
+}
+```
+
+### Cross-refs
+
+- Spec D216 (typed pointers) + §22 (CStr type) — `spec/decisions/02-types.md`
+- Spec D26 §«Nul-termination» — `spec/decisions/08-runtime.md`
+- Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`
+
 ## Followups
 
 | Marker | What | Status |
