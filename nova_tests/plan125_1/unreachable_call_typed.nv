@@ -1,0 +1,21 @@
+// Plan 125.1 Ф.2 positive — `unreachable(msg)` returns never (D13).
+// Whitelist в infer_expr_type включает panic/exit/abort/unreachable.
+// assignable(never, str) -> Ok.
+
+module plan125_1.unreachable_call_typed
+
+fn classify(c int) -> str {
+    ro s str = if c == 0 {
+        "zero"
+    } else if c > 0 {
+        "pos"
+    } else {
+        unreachable("c was not zero/pos/neg?")
+    }
+    s
+}
+
+test "unreachable in else branch with str target" {
+    assert(classify(0) == "zero")
+    assert(classify(5) == "pos")
+}

@@ -1,0 +1,27 @@
+// Plan 125.1 Ф.1+Ф.2 positive — never <: str.
+// `throw e` имеет тип never per D25; assignable() видит never и возвращает
+// Compat::Ok при expected = str (subtype-of-everything).
+//
+// Без Ф.1+Ф.2 type-checker до сих пор полагался на TyCat::Other escape-hatch.
+// Теперь это first-class: infer_expr_type(Throw) -> Some(never),
+// assignable(never, T) -> Ok.
+
+module plan125_1.never_subtype_of_str
+
+fn pick(c bool) Fail -> str {
+    // never <: str via assignable hookpoint
+    if c {
+        throw "boom"
+    } else {
+        "ok"
+    }
+}
+
+test "never subtype of str via throw branch" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = pick(false)
+        assert(s == "ok")
+    }
+}

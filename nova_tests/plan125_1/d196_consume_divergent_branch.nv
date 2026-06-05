@@ -1,0 +1,37 @@
+// Plan 125.1 Ф.4 positive — D196 detector skips divergent branch.
+// `consume X = if c { fresh() } else { throw E }` — раньше падало в
+// "Consumable type conflict between FailableResource и never" / silent abort.
+// Теперь Ф.4 распознаёт divergent ветку и возвращает None из
+// detect_divergent_consumable — нет fake-conflict.
+
+module plan125_1.d196_consume_divergent_branch
+
+type GuardR {
+    ro id int
+}
+
+fn GuardR.new(id int) -> GuardR => { id }
+
+fn GuardR consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn use_guard(c bool) Fail -> int {
+    mut result = 0
+    // if-init с divergent else — Ф.4 skip'ает throw-ветку.
+    consume g = if c {
+        GuardR.new(7)
+    } else {
+        throw "no guard"
+    } {
+        result = g.id
+    }
+    result
+}
+
+test "D196 consume with divergent else compiles + works on happy path" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro n = use_guard(true)
+        assert(n == 7)
+    }
+}
