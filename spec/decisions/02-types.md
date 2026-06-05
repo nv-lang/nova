@@ -9586,6 +9586,15 @@ Records keep type-level priv flip (D220 §3.3.1 unaffected).
 > Renumbered from D226 (2026-06-03) — D226 in main concurrently assigned
 > to «signed indexing convention» commit `8827f8ec132`. D227 taken by
 > «numeric literal inference» commit `41d4be096fa`. D228 next free.
+>
+> **Optimizer consumer (Plan 123 V7.6 V2 refactor, 2026-06-05):**
+> field-cache `is_reference_type_ref` classifier consults `AllocKind`
+> via `TypeKindRegistry`. `Record(AllocKind::Heap)` → ref-typed slot
+> (pointer); `Record(AllocKind::Value)` → inline slot (D228 — mut
+> methods write slot bits через `NovaValue_X*` pointer per §«Method
+> receiver» above) → not slot-stable for V7.5/V7.7 own-field cache
+> invalidation refinement. See `docs/plans/123-followups-2026-06-05.md`
+> §2.1 для design + acceptance.
 
 `type X value { ... }` — stack-allocated value type с copy-on-pass
 semantics. Symmetric extension D52 §«record form» через `value` keyword.
