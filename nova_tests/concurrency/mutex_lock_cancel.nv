@@ -1,0 +1,67 @@
+// Plan 83.11 §8.1 P17 — mutex_lock_cancel
+//
+// Positive_stress: fiber B parked in Mutex.lock() must wake on scope cancel
+// instead of waiting forever for the lock-holder.
+//
+// Scenario:
+//   - holder fiber acquires the mutex and sleeps long (10s) — never unlocks
+//     within the test timeline.
+//   - waiter fiber tries to acquire the mutex → parks via
+//     `nova_sched_park_with_unlock` (see sync_primitives.h ~L1052).
+//   - canceller fiber issues `tok.cancel()` after a short delay.
+//
+// Expected: cancel wakes both the holder's Time.sleep AND the waiter's
+// parked lock-attempt via `nova_sched_cancel_all_pending`. The supervised
+// scope swallows the CANCEL throws and returns quickly. If the parked
+// mutex waiter were NOT cancel-aware, the scope would hang until the
+// 10s sleep elapses, blowing the timing budget.
+//
+// External stress: run via `tools/stress_bisect.sh nova_tests/concurrency/mutex_lock_cancel.nv 30`.
+// Per Plan 83.11 §8 stress convention: ONE test body, the harness repeats
+// the .exe invocation 30× to detect stochastic SEGV/hang/UAF.
+module concurrency.mutex_lock_cancel
+
+// Generous slack for CI; cancel should wake parked waiter within ~30ms of
+// the cancel call, well under the 500ms ceiling. The 10_000ms sleep is the
+// "would-hang" baseline if cancel routing to parked lock is broken.
+const SLACK_MS int = 500
+
+test "mutex.lock() parked waiter wakes on cancel — not blocked by holder" {
+    ro tok = CancelToken.new()
+    mut m = Mutex.new()
+    ro t0 = Time.now()
+
+    supervised(cancel: tok) {
+        // Holder: takes the lock first, then sleeps long. Will be cancelled
+        // out of the sleep — does NOT reach unlock, by design.
+        spawn {
+            consume g = m.lock()
+            Time.sleep(10_000)
+            g.unlock()
+        }
+
+        // Waiter: gives the holder a moment to win the lock, then attempts
+        // to acquire it → parks. This is the parked-on-mutex.lock() path
+        // under test. Will be woken by cancel; does NOT reach unlock.
+        spawn {
+            Time.sleep(20)
+            consume g = m.lock()
+            g.unlock()
+        }
+
+        // Canceller: triggers scope cancel mid-wait. Both holder (in sleep)
+        // and waiter (parked in lock) must wake; supervised(cancel:)
+        // swallows the resulting CANCEL throws.
+        spawn {
+            Time.sleep(50)
+            tok.cancel()
+        }
+    }
+
+    ro elapsed = Time.now() - t0
+    // Cancel arrived at ~50ms; waking both fibers + scope drain should
+    // complete well within SLACK_MS. If the parked mutex waiter is NOT
+    // cancel-routed, elapsed approaches 10_000ms.
+    assert(elapsed < 50 + SLACK_MS)
+    assert(tok.is_cancelled())
+}
