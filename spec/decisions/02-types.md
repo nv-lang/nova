@@ -7439,6 +7439,28 @@ Canonical Rust grammar.
 borrow. Safety через escape analysis + auto-promote + unsafe gating (не
 lifetime checker). См. D32 amend note.
 
+#### addr_of / addr_of_mut builtins (Plan 118.1 Ф.3 closeout, 2026-06-05)
+
+`addr_of(x)` / `addr_of_mut(x)` — Zig-style builtin function aliases для `&x` (UnOp::AddrOf).
+Identical codegen path; rewriter-desugared в const_fn_eval pass. Use when explicit
+function-call syntax preferred over operator syntax (FFI patterns where addr_of(buf)
+reads more clearly than &buf).
+
+**Signatures:**
+```nova
+fn addr_of[T](x T) -> *T          // read-only pointer creation
+fn addr_of_mut[T](x T) -> *T      // requires `mut <x>` binding
+```
+
+**Enforcement (same as UnOp::AddrOf):**
+- E_UNSAFE_REQUIRED — outside unsafe {} block
+- E_REALTIME_POINTER_OP — inside #realtime fn
+- E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED — invalid lvalues
+- E_ADDR_OF_NON_LVALUE — non-Ident/Member rvalue
+- E_ADDR_OF_MUT_REQUIRES_MUT_BINDING — addr_of_mut on ro binding (NEW)
+
+Closes [M-118.1-addr-of-macros] (was: «add addr_of! macro» — macro framework not shipped, builtin-fn alternative landed).
+
 ### §5. Auto-deref
 
 ```nova
@@ -7782,6 +7804,20 @@ sentinel.
 
 V2 — research `extern "C-unwind"` (Rust 2024 model);
 `[M-118-extern-c-unwind]` followup.
+
+### §22. CStr type (Plan 118.1 Ф.4 closeout, 2026-06-05)
+
+`type CStr(*u8)` newtype declared в std/ffi/cstr.nv — FFI-compatible C-string handle.
+ABI: marshals к `const char*` / `uint8_t*` (single positional `*u8` field).
+
+**Invariant**: instances must satisfy `ptr[strlen(ptr)] == '\0'`. Per D26 §«Nul-termination»,
+full Nova `str` already ships с this invariant, enabling zero-copy conversion.
+
+**V1 foundation only** — str.as_cstr() / .to_cstr() / .as_cstr_unchecked() methods deferred
+к [M-118.1-cstr-runtime-wiring] followup (requires codegen forward-decl change для
+named-tuple-return C primitives — nova_rt headers include order issue).
+
+Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded by D26 invariant).
 
 ### Diagnostic codes (new)
 
