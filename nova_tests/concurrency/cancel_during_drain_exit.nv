@@ -1,0 +1,68 @@
+// cancel_during_drain_exit.nv — Plan 83.11 §8.1 P13 — cancel_during_drain_exit.
+//
+// Scenario: a supervised(cancel: tok) scope spawns N fibers that do quick
+// no-sleep work and exit naturally. After supervised{} has fully drained
+// (all fibers exited, scope unbound), the parent thread fires tok.cancel().
+//
+// The late cancel must be a SAFE NO-OP:
+//   - no panic / SEGV / abort,
+//   - no use-after-free on the (now unbound) NovaFiberQueue* bound_scope,
+//   - is_cancelled() flips to true (intent flag flips even when no scope
+//     is bound — first-cancel-wins applies to the token itself, §11.4),
+//   - no spurious wakeup of any fiber (there are none — scope is drained).
+//
+// This stresses the post-drain unbind path: after the supervised scope
+// returns naturally, the runtime must clear tok.bound_scope and any later
+// cancel() must NOT try to walk the (freed) parked-fibers queue or to
+// dispatch via the centralized I/O driver into a dead scope.
+//
+// The opposite-corner case to cancel_during_natural_fire.nv (P8): there the
+// cancel arrives mid-flight while fibers are still parked; here the cancel
+// arrives AFTER everyone has exited cleanly.
+//
+// Stress strategy: ONE supervised scope, then cancel. External harness
+// (tools/stress_bisect.sh) repeats the compiled binary 30x to widen the
+// drain/cancel ordering window. Do NOT loop inside the test body — keep
+// each invocation isolated so a single SEGV/UAF doesn't kill the run.
+module concurrency.cancel_during_drain_exit
+
+test "100 fibers exit naturally, then late cancel — safe no-op" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        // 100 fibers, no Time.sleep — each exits on first yield after the
+        // tight integer-loop, well before supervised{} would even need to
+        // wait. Scope drains naturally with cancel_requested still false.
+        for _ in 0..100 {
+            spawn {
+                // Tiny loop to keep the spawn payload non-empty (defeats any
+                // future "empty-body fast-path" that would skip queueing).
+                mut acc = 0
+                for k in 0..16 {
+                    acc = acc + k
+                }
+                assert(acc == 120)
+            }
+        }
+    }
+
+    // Sanity precondition: cancel was NOT fired during drain.
+    assert(!tok.is_cancelled())
+
+    // Late cancel on already-drained, unbound token: must be safe no-op.
+    // Intent flag flips (first-cancel-wins), but there is no live scope to
+    // wake — no parked fibers, no I/O-driver dispatch into dead memory.
+    tok.cancel("late")
+    assert(tok.is_cancelled())
+
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "late")
+
+    // Second late cancel: still idempotent (covers double-late-cancel
+    // corner — neither call should crash even though there is no scope).
+    tok.cancel("ignored")
+    assert(tok.is_cancelled())
+}

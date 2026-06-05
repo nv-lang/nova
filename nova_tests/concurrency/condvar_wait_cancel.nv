@@ -1,0 +1,81 @@
+// condvar_wait_cancel.nv — Plan 83.11 §8.1 P18.
+//
+// Cancel must wake a fiber parked in `Condvar.wait(mu)` early — without
+// any `notify_one` / `notify_all` from peers. Verifies that
+// `nova_scope_cancel_wake_all` (Plan 83.4.5.1) reaches the slot parked
+// via `nova_sched_park_with_unlock` from `sync_condvar.h`, clears its
+// `parked[]` flag and re-dispatches it via the M:N driver.
+//
+// On wake the fiber resumes inside `wait()`'s tail, re-acquires the
+// mutex (cheap — no one else holds it after cancel arrives) and returns
+// from `wait()` cleanly. The fiber then unlocks `mu` and exits; no later
+// yield-point throws CANCEL because the body finishes synchronously.
+//
+// Acceptance: scope drains within 300ms after `tok.cancel()` fires —
+// same Plan 22 R4 budget as `cancel_during_natural_fire.nv` (P8) and
+// `cancel_latency_bench.nv` test 2 (99+1 fibers). A regression in the
+// I/O-driver wake-before-park path would manifest as a hang past this
+// budget (the parked condvar waiter would sit indefinitely waiting for
+// a notify that never comes).
+//
+// Stress strategy: ONE supervised scope with ONE waiter + ONE cancel
+// fiber. External harness (tools/stress_bisect.sh) repeats the compiled
+// binary 30x to widen the race window. Do NOT loop inside the test body
+// — each invocation must stay isolated so a single SEGV/timeout doesn't
+// kill the whole run.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module concurrency.condvar_wait_cancel
+
+test "condvar.wait() parked fiber — cancel wakes early, no notify" {
+    ro tok = CancelToken.new()
+    mut mu = Mutex.new()
+    mut cv = Condvar.new()
+    mut waiter_in = AtomicBool.new(false)
+    mut waiter_done = AtomicBool.new(false)
+
+    ro t0 = Time.now()
+    supervised(cancel: tok) {
+        // Waiter fiber: lock + cv.wait(mu). No predicate loop — we want
+        // wait() to return exactly once (on cancel-wake) and then exit.
+        spawn {
+            mu.lock()
+            waiter_in.store(true)
+            cv.wait(mu)
+            // wait() returned (cancel-wake re-acquired mu for us).
+            waiter_done.store(true)
+            mu.unlock()
+        }
+
+        // Cancel fiber: wait until the waiter is parked, then cancel.
+        // Poll via mu — by the time we successfully lock(mu) AND see
+        // waiter_in == true, the waiter has called cv.wait(mu) (which
+        // released mu) and is parked. Releasing mu lets nothing else
+        // race; we then cancel.
+        spawn {
+            mut parked = false
+            while !parked {
+                Time.sleep(1)
+                mu.lock()
+                if waiter_in.load() {
+                    parked = true
+                }
+                mu.unlock()
+            }
+            tok.cancel()
+        }
+    }
+    ro after_scope = Time.now() - t0
+
+    // Plan 22 R4 budget for cancel-drain of a single parked waiter: <300ms.
+    // Includes the ~few-ms poll window before the cancel fiber fires.
+    assert(after_scope < 300)
+
+    // Sanity: cancel was actually observed, and the parked waiter resumed
+    // (not stuck — would fail the 300ms budget anyway, but this catches
+    // a hypothetical regression where wait() returns on cancel without
+    // re-acquiring mu and the fiber dies before setting waiter_done).
+    assert(tok.is_cancelled())
+    assert(waiter_done.load())
+}

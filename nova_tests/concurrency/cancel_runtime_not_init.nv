@@ -1,0 +1,122 @@
+// Plan 83.11 §8.2 N4 — cancel_runtime_not_init
+//
+// Проверяет, что `tok.cancel()` ДО первого `spawn` (т.е. пока fiber-pool
+// ещё не материализован для нашего scope) — корректный no-op:
+//   - intent-флаг tok.is_cancelled() становится true;
+//   - tok.reason() возвращает Some(reason);
+//   - никаких panic/SEGV/UAF;
+//   - cancel() остаётся идемпотентным (first-cancel-wins).
+//
+// До Plan 83.11 §8 негативная семантика «cancel without any bound scope /
+// without any in-flight fiber» не была явно зафиксирована тестом;
+// добавляется как guard против регрессий на пути cancel() → _nova_cancel_via_driver
+// (driver thread мог быть не запущен, или armed-list пустой).
+//
+// Этот тест НЕ создаёт supervised{} и НЕ зовёт spawn — runtime pool со
+// стороны Nova не активируется (auto-arm может произойти на main start
+// per Plan 83.4.4, но для самого cancel() это значения не имеет — путь
+// должен быть валиден в обоих режимах).
+
+module concurrency.cancel_runtime_not_init
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. cancel() без аргумента до любого spawn — intent записан, не panic
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel before any spawn — is_cancelled() становится true" {
+    ro tok = CancelToken.new()
+    assert(!tok.is_cancelled())
+    // Ни одного spawn'а — fiber-pool для нашего scope не материализован.
+    // Cancel должен корректно записать intent без обращения к armed-list.
+    tok.cancel()
+    assert(tok.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. cancel(reason) до любого spawn — reason() == Some(reason)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel(reason) before any spawn — reason переживает" {
+    ro tok = CancelToken.new()
+    tok.cancel("not-init")
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "not-init")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. cancel() без аргумента → reason() == Some("cancelled") (default)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel() before any spawn — default reason 'cancelled'" {
+    ro tok = CancelToken.new()
+    tok.cancel()
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. Идемпотентность: повторный cancel до spawn — first-cancel-wins
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel ×3 before any spawn — first reason сохраняется, no panic" {
+    ro tok = CancelToken.new()
+    tok.cancel("first")
+    tok.cancel("second")   // no-op
+    tok.cancel("third")    // no-op
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 5. Несколько независимых токенов отменены до любого spawn — нет утечек
+// ──────────────────────────────────────────────────────────────────────────
+
+test "несколько токенов cancel до spawn — все intent-флаги выставлены" {
+    ro t1 = CancelToken.new()
+    ro t2 = CancelToken.new()
+    ro t3 = CancelToken.new()
+    t1.cancel("a")
+    t2.cancel("b")
+    t3.cancel("c")
+    assert(t1.is_cancelled())
+    assert(t2.is_cancelled())
+    assert(t3.is_cancelled())
+    // независимость intent — каждый со своим reason
+    ro r1 = t1.reason()
+    ro r2 = t2.reason()
+    ro r3 = t3.reason()
+    ro g1 = match r1 {
+        Some(s) => s
+        None    => ""
+    }
+    ro g2 = match r2 {
+        Some(s) => s
+        None    => ""
+    }
+    ro g3 = match r3 {
+        Some(s) => s
+        None    => ""
+    }
+    assert(g1 == "a")
+    assert(g2 == "b")
+    assert(g3 == "c")
+}

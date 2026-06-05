@@ -1,0 +1,37 @@
+// Plan 83.11 §8.1 P10 — cancel_cascade_linked_3
+//
+// Three-level cascade chain: A → B → C.
+//   B.cancelled_by(A)
+//   C.cancelled_by(B)
+//   A.cancel() must cascade through B to C.
+//
+// Verifies that `nova_cancel_token_bind_cascade` propagates transitively:
+// when A fires, B's cancel handler (invoked via A's linked[] iteration)
+// in turn iterates B's linked[] and cancels C. After A.cancel() all three
+// tokens must report is_cancelled() = true.
+//
+// Single test{} block — external harness (tools/stress_bisect.sh) repeats
+// the binary N times for stress isolation; do not loop inside the body.
+module concurrency.cancel_cascade_linked_3
+
+test "cascade A->B->C: cancel(A) cancels B and C" {
+    ro a = CancelToken.new()
+    ro b = CancelToken.new()
+    ro c = CancelToken.new()
+
+    // Wire chain: B is cancelled by A; C is cancelled by B.
+    b.cancelled_by(a)
+    c.cancelled_by(b)
+
+    // Sanity — no implicit cancel from binding alone.
+    assert(!a.is_cancelled())
+    assert(!b.is_cancelled())
+    assert(!c.is_cancelled())
+
+    // Trigger root cancel; cascade must reach every link.
+    a.cancel("root")
+
+    assert(a.is_cancelled())
+    assert(b.is_cancelled())
+    assert(c.is_cancelled())
+}

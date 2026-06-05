@@ -1,0 +1,53 @@
+// Plan 83.11 §8.1 P19 — cancel_storm_1000
+//
+// Stress kind: positive_stress_light.
+//
+// Storm of 1000 short-lived cancel scopes in a tight loop. Each iteration:
+//   1. Allocate a fresh CancelToken on-stack-pinned via supervised(cancel:).
+//   2. Open `supervised(cancel: t)` with ONE trivial spawn { } body
+//      (single-fiber scope — enter/exit path, NO sleep, NO park).
+//   3. Cancel the (already-drained) token AFTER scope close — exercises
+//      the «cancel on a free token whose scope has already exited cleanly»
+//      path (covers nova_cancel_token_unbind → cancel_requested flip on
+//      an unbound token; first-cancel-wins on standalone).
+//
+// What this guards:
+//   - GC: 1000 CancelToken allocations + 1000 scope frames per process —
+//     several GC cycles guaranteed. ctx_pins[] must keep the live token
+//     reachable across alloc-triggered sweeps (cf. stress_iso_large.nv
+//     [M-83.11-gc-cancel-token-alias]).
+//   - Scope lifecycle: 1000 enter/exit cycles exercise scope-queue alloc,
+//     fiber-slot recycle, NovaFiberQueue free-list under churn.
+//   - Cancel after unbind: nova_cancel_token_unbind must zero bound_scope
+//     so the trailing t.cancel() finds no live scope and is a clean no-op
+//     (no SEGV on dangling NovaFiberQueue*).
+//   - No leak across iterations: 1000 token + 1000 scope + 1000 fiber
+//     allocations must fit in steady-state heap (GC reclaims between
+//     iterations); a leak would manifest as OOM / slow death.
+//
+// External stress: tools/stress_bisect.sh cancel_storm_1000.nv 3 (or more)
+// repeats the compiled .exe; per-process isolation contains any SEGV
+// to a single iteration's reported FAIL. Do NOT wrap the test body in
+// another outer for-loop — the 1000 internal iterations are the «heavy»
+// load (positive_stress_light), and the external harness multiplies that.
+//
+// Verifies: across all 1000 iterations there is no panic / SEGV / abort,
+// and the final assertion confirms the loop reached completion.
+module concurrency.cancel_storm_1000
+
+test "1000 cancel scopes in tight loop — no panic, no SEGV, no leak" {
+    mut completed = 0
+    for _ in 0..1000 {
+        ro t = CancelToken.new()
+        supervised(cancel: t) {
+            spawn { }
+        }
+        // Token is unbound (scope already drained); cancel() must be a
+        // safe no-op-on-empty-cascade and not touch the freed scope.
+        t.cancel()
+        assert(t.is_cancelled())
+        completed += 1
+    }
+    // Loop completed all 1000 iterations without aborting mid-storm.
+    assert(completed == 1000)
+}

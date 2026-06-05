@@ -1,0 +1,72 @@
+// Plan 83.11 §8.2 N5 — timer_fire_during_cancel
+//
+// NEGATIVE test: race natural-fire vs cancel.
+//
+// Scenario: a batch of sleepers parks with a duration close to the cancel
+// deadline. The driver-side timer_cb (natural fire) and the cancel job
+// handler both attempt CAS on `NovaSleepState.packed_state`:
+//   - timer_cb: ARMED -> FIRING
+//   - cancel:   ARMED -> CANCEL_REQ
+// Exactly one CAS wins per slot; loser is a no-op and the wake/close path
+// is invoked at most once. The other side observes the state has moved
+// past ARMED and simply returns. Result: no double-close on uv_timer_t,
+// no double-wake on the worker fiber, no UAF on NovaSleepState (which
+// lives on the parked fiber's stack frame and is kept alive until
+// close_cb runs).
+//
+// Test must pass cleanly under repeated stress invocation
+// (tools/stress_bisect.sh) — no SEGV (139), no abort (134), no hang.
+// Regression of the idempotent CAS would manifest as either:
+//   - double uv_close → libuv assertion abort, OR
+//   - wake-after-fiber-resume → UAF on stack-allocated NovaSleepState.
+//
+// Body is intentionally a single supervised scope: external harness
+// repeats binary execution to isolate any per-run SEGV (one failure
+// in the loop does not mask subsequent runs).
+module concurrency.timer_fire_during_cancel
+
+test "natural-fire vs cancel race — idempotent CAS, no UAF" {
+    // Sleep duration (30ms) deliberately matches the cancel deadline
+    // (30ms) so that for each sleeper the natural-fire vs cancel CAS
+    // is a true race rather than one winning by a wide margin.
+    // OS timer granularity (~15ms on Windows) + scheduling jitter
+    // guarantees a mix: some timers fire naturally, others are
+    // cancelled by the driver-side ARMED->CANCEL_REQ CAS.
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        for _ in 0..99 {
+            spawn { Time.sleep(30) }
+        }
+        spawn {
+            Time.sleep(30)
+            tok.cancel()
+        }
+    }
+    // After scope exit, cancel must be observable; whichever sleepers
+    // raced toward natural-fire must not have caused UAF/double-close.
+    assert(tok.is_cancelled())
+}
+
+test "tight race — sleep(30) with cancel(30) repeated mix" {
+    // Same race profile, smaller fanout, two back-to-back scopes
+    // to exercise scope-create/destroy + driver re-arming under the
+    // same race window. If close_cb were freed before the racing
+    // peer dereferenced NovaSleepState, the second scope would
+    // typically inherit the corruption and SEGV.
+    ro tok1 = CancelToken.new()
+    supervised(cancel: tok1) {
+        for _ in 0..32 {
+            spawn { Time.sleep(30) }
+        }
+        spawn { Time.sleep(30); tok1.cancel() }
+    }
+    ro tok2 = CancelToken.new()
+    supervised(cancel: tok2) {
+        for _ in 0..32 {
+            spawn { Time.sleep(30) }
+        }
+        spawn { Time.sleep(30); tok2.cancel() }
+    }
+    assert(tok1.is_cancelled())
+    assert(tok2.is_cancelled())
+}

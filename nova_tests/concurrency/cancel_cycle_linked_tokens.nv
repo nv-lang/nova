@@ -1,0 +1,119 @@
+// cancel_cycle_linked_tokens.nv — Plan 83.11 §8.2 N10
+//
+// Negative test: cancel cascade via linked tokens with CYCLES must
+// terminate via idempotent-cancel cycle detection (not infinite loop).
+//
+// Background. `child.cancelled_by(parent)` emits a same-type cascade link:
+// parent.linked[] contains child; parent.cancel() recursively calls
+// nova_cancel_token_cancel_reason(child, reason). The cycle-terminator is
+// the idempotent check at the top of cancel_reason: if cancel_requested
+// is already true, return immediately. Therefore:
+//
+//   A.cancelled_by(B)   // B.linked = [A]
+//   B.cancelled_by(A)   // A.linked = [B]
+//   A.cancel()
+//     → A.cancel_requested = true
+//     → walk A.linked → cancel(B)
+//        → B.cancel_requested = true
+//        → walk B.linked → cancel(A)
+//           → idempotent return (already cancelled) — CYCLE BROKEN
+//
+// If the idempotent check ever regresses (e.g. moves below the cascade
+// recursion, or somebody adds a side-effect path that skips it), this
+// test deadlocks via stack-overflow recursion — caught by EXPECT_TIMEOUT_MS.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module concurrency.cancel_cycle_linked_tokens
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N10.1 — 2-node cycle: A ↔ B
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cycle 2-node: A↔B cancel(A) terminates and cancels both" {
+    ro a = CancelToken.new()
+    ro b = CancelToken.new()
+    // Build cycle: A.linked contains B, B.linked contains A.
+    a.cancelled_by(b)   // b cancels → a cancels (b.linked += a)
+    b.cancelled_by(a)   // a cancels → b cancels (a.linked += b)
+    // Neither is cancelled yet.
+    assert(!a.is_cancelled())
+    assert(!b.is_cancelled())
+    // Time-bound the cancel call. If cycle detection regresses, this
+    // recurses infinitely and we'll either stack-overflow or time out
+    // via EXPECT_TIMEOUT_MS above.
+    ro t0 = Time.now()
+    a.cancel("trigger")
+    ro elapsed = Time.now() - t0
+    // Cycle traversal is O(nodes) so this is essentially instant.
+    // Generous bound: 5 seconds covers slow CI.
+    assert(elapsed < 5_000)
+    // Both tokens cancelled (cascade did reach B, then idempotently bounced).
+    assert(a.is_cancelled())
+    assert(b.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N10.2 — 3-node cycle: A → B → C → A
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cycle 3-node: A→B→C→A cancel(A) terminates and cancels all 3" {
+    ro a = CancelToken.new()
+    ro b = CancelToken.new()
+    ro c = CancelToken.new()
+    // Wire ring: a.cancel propagates to b, b to c, c to a (closing the loop).
+    b.cancelled_by(a)   // a.linked += b
+    c.cancelled_by(b)   // b.linked += c
+    a.cancelled_by(c)   // c.linked += a
+    ro t0 = Time.now()
+    a.cancel("ring-start")
+    ro elapsed = Time.now() - t0
+    assert(elapsed < 5_000)
+    assert(a.is_cancelled())
+    assert(b.is_cancelled())
+    assert(c.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N10.3 — Self-cycle: A linked to itself
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cycle self: A.cancelled_by(A) cancel(A) terminates" {
+    // Degenerate cycle of length 1. Same idempotent check terminates:
+    // A.cancel → A.cancel_requested=true → walk A.linked → cancel(A)
+    //          → idempotent return.
+    ro a = CancelToken.new()
+    a.cancelled_by(a)
+    assert(!a.is_cancelled())
+    ro t0 = Time.now()
+    a.cancel("self-loop")
+    ro elapsed = Time.now() - t0
+    assert(elapsed < 5_000)
+    assert(a.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N10.4 — Cycle entered from a non-cycle node: D → A↔B
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cycle entered from outside: D→A↔B cancel(D) terminates, all cancelled" {
+    // D feeds into the cycle (A↔B); cancel(D) → cancel(A) → cancel(B) →
+    // cancel(A) [idempotent]. D itself is not part of the cycle.
+    ro d = CancelToken.new()
+    ro a = CancelToken.new()
+    ro b = CancelToken.new()
+    a.cancelled_by(d)   // d.linked += a
+    a.cancelled_by(b)   // b.linked += a
+    b.cancelled_by(a)   // a.linked += b
+    ro t0 = Time.now()
+    d.cancel("from-outside")
+    ro elapsed = Time.now() - t0
+    assert(elapsed < 5_000)
+    assert(d.is_cancelled())
+    assert(a.is_cancelled())
+    assert(b.is_cancelled())
+}

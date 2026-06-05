@@ -1,0 +1,84 @@
+// Plan 83.11 §8.1 P20 — driver_thread_idle_no_cpu
+//
+// Validates that the centralized I/O driver thread does NOT busy-spin
+// when there is no I/O work pending (no fibers, no timers, just a
+// blocking Time.sleep on the main thread).
+//
+// True CPU-idle verification requires external sampling (Task Manager,
+// `ps -o %cpu`, perf, etc.) which Nova has no API for. This fixture
+// approximates idle-detection by an indirect timing assertion: if the
+// driver thread were busy-spinning, it would (a) consume a CPU core
+// and (b) contend with the main thread's sleep, potentially causing
+// jitter. We assert:
+//
+//   1. Time.sleep(100) on main with NO fibers completes in roughly
+//      ~100ms (not orders of magnitude slower, not zero).
+//   2. Repeated short sleeps don't accumulate cost (driver thread is
+//      idle between them — wakeups are bounded).
+//
+// A failing scenario (driver spins) would manifest as either:
+//   - elapsed wildly out of bounds (CPU contention),
+//   - or test passes but external `top`/Task Manager shows 100% CPU on
+//     a phantom thread (cannot detect from inside Nova).
+//
+// This is therefore a SMOKE test — the strict "no CPU burn" claim must
+// be validated manually or via [M-83.11-driver-idle-cpu-sample] external
+// harness. See plan 83.11 §8.1 P20.
+//
+// Windows timer-resolution gran ~15.6ms (see sleep_real_clock.nv) —
+// generous bounds applied. Slack accounts for `nova test --jobs 16`
+// oversubscription (LOAD_SLACK pattern from sleep_precision_bench.nv).
+
+module concurrency.driver_thread_idle_no_cpu
+
+// Lower bound: timer may fire ~15ms early on Windows.
+const UNDER_SLACK_MS int = 20
+
+// Upper bound: under --jobs 16 oversubscription, OS scheduler can
+// add 100-200ms latency. We're catching gross busy-spin (sleep stuck
+// in seconds), not precision jitter.
+const OVER_SLACK_MS int = 400
+
+test "100ms main-thread sleep, no fibers — completes near target" {
+    // No supervised{}, no spawn{} — exercise the no-fibers path
+    // specifically. The driver thread (if armed) must remain idle
+    // throughout this sleep.
+    ro t0 = Time.now()
+    Time.sleep(100)
+    ro elapsed = Time.now() - t0
+
+    // Lower bound: sleep actually waited (driver didn't short-circuit).
+    assert(elapsed >= 100 - UNDER_SLACK_MS)
+    // Upper bound: driver didn't busy-spin to the point of starving
+    // the main thread for hundreds of ms.
+    assert(elapsed < 100 + OVER_SLACK_MS)
+}
+
+test "successive idle sleeps don't accumulate driver overhead" {
+    // Each iteration leaves the driver thread with nothing to do.
+    // If it busy-spun between sleeps, wall-clock would balloon.
+    ro t0 = Time.now()
+    for _ in 0..5 {
+        Time.sleep(20)
+    }
+    ro elapsed = Time.now() - t0
+
+    // Theoretical: 5 × 20 = 100ms. Allow generous slack for Windows
+    // timer gran (×5 iterations = up to 5×15ms drift) + oversubscription.
+    assert(elapsed >= 100 - UNDER_SLACK_MS)
+    assert(elapsed < 100 + OVER_SLACK_MS)
+}
+
+test "zero-ms yield on main with no fibers — instant" {
+    // Time.sleep(0) is a fast yield; with no other fibers and an idle
+    // driver thread, this must return immediately, not park for any
+    // measurable time. If the driver were spinning, scheduler tick
+    // contention could add jitter.
+    ro t0 = Time.now()
+    for _ in 0..100 {
+        Time.sleep(0)
+    }
+    ro elapsed = Time.now() - t0
+    // 100 yields should be sub-second even under heavy oversubscription.
+    assert(elapsed < 1000)
+}
