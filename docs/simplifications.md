@@ -33630,3 +33630,23 @@ codegen-mono pipeline issue, deferred к Plan 99 V2.
    [M-codegen-local-prelude-shadow] для proper module namespacing.
 
 0 compiler changes — pure fixture migration cleanup.
+
+## 2026-06-06 — Plan 118.1 CStr runtime — 2 explicit V1 simplifications
+
+User insight unblocked CStr runtime via pure-Nova path (no C primitives,
+no codegen forward-decl). [M-118.1-cstr-runtime-wiring] CLOSED.
+
+V1 simplifications shipped с explicit followups (не silent):
+
+- **[M-118.1-cstr-nul-check]** — embedded-NUL scan deferred. cstr.nv
+  loaded via ExternalRegistry без auto-prelude; assert/panic require
+  import создающий cycle. Caller responsibility per FFI contract в V1.
+  Workaround: pre-check `s.contains('\0')` если embedded NUL possible.
+
+- **[M-118.1-cstr-to-cstr-distinct-copy]** — V1: @to_cstr alias к
+  @as_cstr (D26 invariant makes zero-copy safe). Distinct always-copy
+  для long-lived CStr нужен Nova allocator API. Deferred.
+  Workaround: keep source str alive (GC retention).
+
+Both followups — scope reductions, не bugs. Functional behaviour matches
+V1 contract; full ergonomics после followup closure.
