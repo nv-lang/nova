@@ -1,0 +1,34 @@
+// [M-125-unreachable-builtin] positive — unreachable() в match default arm.
+
+module plan125_followups.unreachable_match_default
+
+type Color | Red | Green | Blue
+
+fn rgb(c Color) -> int {
+    match c {
+        Red   => 0xFF0000
+        Green => 0x00FF00
+        Blue  => 0x0000FF
+    }
+}
+
+fn name(c Color, allow_red bool) -> str {
+    match c {
+        Red if allow_red => "red"
+        Green => "green"
+        Blue  => "blue"
+        _ => unreachable("guard excluded Red, but caller passed allow_red=false")
+    }
+}
+
+test "rgb exhaustive — no unreachable hit" {
+    assert(rgb(Color.Red) == 0xFF0000)
+    assert(rgb(Color.Green) == 0x00FF00)
+    assert(rgb(Color.Blue) == 0x0000FF)
+}
+
+test "name with guard — happy paths only" {
+    assert(name(Color.Red, true) == "red")
+    assert(name(Color.Green, false) == "green")
+    assert(name(Color.Blue, false) == "blue")
+}

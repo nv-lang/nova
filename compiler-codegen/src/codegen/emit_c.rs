@@ -21818,10 +21818,10 @@ _cp++; \
     }
 
     /// Plan 125: whitelist-driven divergence detector for expressions in
-    /// trailing position. Whitelist (Ф.1-Ф.4):
+    /// trailing position. Whitelist (Ф.1-Ф.4 + followups):
     ///   - ExprKind::Throw  (Ф.1)
     ///   - ExprKind::Interrupt  (Ф.3)
-    ///   - Call(`panic`|`exit`, ...)  (Ф.2)
+    ///   - Call(`panic`|`exit`|`unreachable`, ...) (Ф.2 + `[M-125-unreachable-builtin]`)
     ///   - Call(user fn whose return type is `never`)  (Ф.3)
     ///   - If/IfLet where both branches diverge  (Ф.4)
     ///   - Match where all arms diverge  (Ф.4)
@@ -21835,13 +21835,15 @@ _cp++; \
             // Ф.2 + Ф.3: divergent callees.
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Ident(name) = &func.kind {
-                    // Ф.2: prelude panic / exit. Whitelist exact names —
-                    // mirror types/mod.rs expr_diverges (line 10394).
-                    if name == "panic" || name == "exit" {
+                    // Ф.2: prelude panic / exit / unreachable. Whitelist exact
+                    // names. `unreachable` added в [M-125-unreachable-builtin]:
+                    // его Nova-body forward'ит к panic(), но в expr-position
+                    // нужен прямой whitelist (mono_fn_decls lookup unreliable
+                    // для prelude Nova-body fns на момент инференса).
+                    if name == "panic" || name == "exit" || name == "unreachable" {
                         return true;
                     }
-                    // Ф.3: user-defined fn -> never (direct call only —
-                    // NOT method-call, NOT lambda-call; see Plan 125 R5/M5).
+                    // Ф.3: user-defined fn -> never (direct call only).
                     if let Some(fn_decl) = self.mono_fn_decls.get(name) {
                         if let Some(ret) = &fn_decl.return_type {
                             if Self::type_ref_is_never_125(ret) {
