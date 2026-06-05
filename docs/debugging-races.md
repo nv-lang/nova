@@ -81,8 +81,8 @@ Required output: **stress-script that fails consistently** (at least
 `nova_tests/<plan>/`.
 
 ```bash
-# Canonical pattern (see tools/stress_bisect.sh):
-bash tools/stress_bisect.sh nova_tests/<plan>/<repro>.nv 30
+# Canonical pattern (see scripts/stress_bisect.sh):
+bash scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv 30
 # Exit 0 = all 30 PASS; exit 1 = ≥1 FAIL
 ```
 
@@ -111,8 +111,8 @@ Pick exactly ONE diagnostic tool based on symptom:
 | **SEGV/AV on Windows** | VEH + dbghelp `SymFromAddr`/`StackWalk64` | ~165 | New file `compiler-codegen/nova_rt/segv_diag.c` — already exists |
 | **SEGV on Linux** | gdb (Docker / WSL) or built-in signal handler | varies | `compiler-codegen/nova_rt/runtime.c` |
 | **Hang / TIMEOUT** | Programmatic state-dump (watchdog-triggered) | ~80 | `nova_runtime_dump_state()` in `runtime.c` — already exists |
-| **Stochastic intermittent FAIL** | Bisect via `tools/stress_bisect.sh` + `git bisect run` | reused | `tools/` |
-| **«It worked yesterday, fails now»** | Same — bisect first, before hypothesis | reused | `tools/` |
+| **Stochastic intermittent FAIL** | Bisect via `scripts/stress_bisect.sh` + `git bisect run` | reused | `scripts/` |
+| **«It worked yesterday, fails now»** | Same — bisect first, before hypothesis | reused | `scripts/` |
 
 **Gating:** every diagnostic MUST be `getenv("NOVA_DIAG_*")` gated.
 Default disabled. Zero overhead when unset. This is non-negotiable —
@@ -240,7 +240,7 @@ git bisect bad HEAD
 git bisect good <known-good-sha>
 
 # Use stress_bisect as bisect-run script
-git bisect run tools/stress_bisect.sh nova_tests/<plan>/<repro>.nv 30
+git bisect run scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv 30
 
 # Convergence in log2(N) steps, e.g. 184 commits → ~8 iterations
 ```
@@ -369,11 +369,11 @@ wait exceeds threshold. Single dump per scope (idempotent).
 - `armed_sleeps_head ≠ NULL` after no sleep was issued → driver state
   corruption OR scope ptr is stale (§12.31)
 
-### 3.3 Stress harness `tools/stress_bisect.sh`
+### 3.3 Stress harness `scripts/stress_bisect.sh`
 
 **Usage:**
 ```bash
-tools/stress_bisect.sh nova_tests/<plan>/<repro>.nv [stress_n=15]
+scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv [stress_n=15]
 ```
 
 **Exit codes** (git-bisect compatible):
@@ -409,7 +409,7 @@ is wrong — fix the range before bisecting.
 
 **Run:**
 ```bash
-git bisect run tools/stress_bisect.sh nova_tests/<plan>/<repro>.nv 66
+git bisect run scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv 66
 ```
 (`66` instead of default `15` for any race with `p < 0.20`.)
 
@@ -737,7 +737,7 @@ export NOVA_GC_LIB_DIR="D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
 export NOVA_GC_INCLUDE_DIR="D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
 
 # === Repro via stress harness ===
-bash tools/stress_bisect.sh nova_tests/<plan>/<repro>.nv 30
+bash scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv 30
 
 # === Diagnostic: SEGV / AV on Windows ===
 NOVA_DIAG_SEGV=1 ./nova-cli/target/release/nova.exe test nova_tests/<plan>/<repro>.nv --keep-artifacts
@@ -753,7 +753,7 @@ git bisect start
 git bisect bad HEAD
 git bisect good <known-good-sha>
 git log --graph --oneline good..bad | head -30   # verify topology FIRST
-git bisect run tools/stress_bisect.sh nova_tests/<plan>/<repro>.nv 66
+git bisect run scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv 66
 
 # === WSL Linux comparison ===
 wsl -d Ubuntu bash -c "cd /root/nova && nova test nova_tests/<plan>/<repro>.nv"
@@ -788,7 +788,7 @@ doc closure → playbook update → logs entries.
 - **Cancellation case-study article:** [nova-private/docs/articles/mn-race-stale-slot.md](../../../nova-private/docs/articles/mn-race-stale-slot.md)
 - **Spec D228 (canonical patterns):** [spec/decisions/06-concurrency.md](../spec/decisions/06-concurrency.md) §D228
 - **Tools:**
-  - [tools/stress_bisect.sh](../tools/stress_bisect.sh) — stress + bisect harness
-  - [tools/cdb_session.sh](../tools/cdb_session.sh) — optional cdb wrapper
+  - [scripts/stress_bisect.sh](../scripts/stress_bisect.sh) — stress + bisect harness
+  - [scripts/cdb_session.sh](../scripts/cdb_session.sh) — optional cdb wrapper
   - [compiler-codegen/nova_rt/segv_diag.c](../compiler-codegen/nova_rt/segv_diag.c) — VEH crash localizer
   - `nova_runtime_dump_state` in [compiler-codegen/nova_rt/runtime.c](../compiler-codegen/nova_rt/runtime.c) — state-dump
