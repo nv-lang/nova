@@ -27976,15 +27976,32 @@ pre-Plan-109 API.  Документированы в их followups.
 - 🆕 `[M-100.4.*-cleanup-family-radical-simplify]` — Plan 110 spec drafts D188-D198 + D185 + D195 written; cleanup-семейство (~20 концептов) → 5 концептов (`consume X = expr { body }` + `defer { ... }` + `Consumable[E]` protocol + `consume self` modifier + control flow). D160 retracted в spec (was: `okdefer` + `defer |result|` Plan 100.4.3); D158/D161/D162/D90 §7 amended. Implementation extracted в Plan 110.1-110.8.
 
 **OPEN markers (created by Plan 110):**
-- 🟡 `[M-110-impl-core]` — Plan 110.1 compiler pipeline implementation (parser + AST + type-checker + codegen + runtime для `consume X = expr { body }`). ~3-4 dev-day.
-- 🟡 `[M-110-impl-cancel-shield]` — Plan 110.2 cancel-shield + async cleanup + 3-level timeout resolution. ~2 dev-day.
-- 🟡 `[M-110-stdlib-fs]` — `std/fs` модуль с `File` Consumable impl (зависит от std/fs type design, который сам по себе отдельный модуль).
+
+> **Status update 2026-06-05:** 2 of 10 V1-era markers closed by Plan 110
+> umbrella sub-plans (Plan 110.1 + Plan 110.2 in main commit `874f5766ca5`).
+> Remaining 8 markers depend on external modules (stdlib types, Plan 83.4.2,
+> Plan 84, mature `any` codegen, platform signal handling) — все explicit
+> extractions, не silent simplifications.
+
+- ✅ `[M-110-impl-core]` — Plan 110.1 closed (parser + AST + type-checker +
+  codegen + runtime для `consume X = expr { body }`). Plan 110 umbrella
+  merge `874f5766ca5`.
+- ✅ `[M-110-impl-cancel-shield]` — Plan 110.2 closed (cancel-shield +
+  async cleanup + 3-level timeout resolution). Same umbrella merge.
+- 🟡 `[M-110-stdlib-fs]` — `std/fs` модуль с `File` Consumable impl
+  (зависит от std/fs type design, который сам по себе отдельный модуль).
 - 🟡 `[M-110-stdlib-db]` — `std/db` модуль с `Transaction` Consumable impl.
-- 🟡 `[M-110-stdlib-bufio]` — `std/bufio` модуль с `BufReader`/`BufWriter` Consumable impls.
+- 🟡 `[M-110-stdlib-bufio]` — `std/bufio` модуль с `BufReader`/`BufWriter`
+  Consumable impls.
 - 🟡 `[M-110-stdlib-pool]` — Connection pools (`Consumable[ConnPoolError]`).
-- 🟡 `[M-110-multierror-any]` — Миграция `MultiError.primary/suppressed` payload `str` → `any` (bootstrap continues с `str` для compat; Plan 110.4 Ф.6.2 closes когда `any` mature в codegen).
-- 🟡 `[M-110-supervised-handle]` — `JoinHandle` Consumable impl (зависит от Plan 83.4.2 supervised drain ownership).
-- 🟡 `[M-110-run-on-abort]` — `#[run_on_abort]` attribute для finalizers на abort/SIGKILL (Plan 110.4 Ф.8.9 deferred — нужно изучать platform-specific signal handling).
+- 🟡 `[M-110-multierror-any]` — Миграция `MultiError.primary/suppressed`
+  payload `str` → `any` (bootstrap continues с `str` для compat;
+  Plan 110.4 Ф.6.2 closes когда `any` mature в codegen).
+- 🟡 `[M-110-supervised-handle]` — `JoinHandle` Consumable impl (зависит
+  от Plan 83.4.2 supervised drain ownership).
+- 🟡 `[M-110-run-on-abort]` — `#[run_on_abort]` attribute для finalizers
+  на abort/SIGKILL (Plan 110.4 Ф.8.9 deferred — нужно изучать
+  platform-specific signal handling).
 - 🟡 `[M-110-stream-consumable]` — Plan 84 `Stream[T]` Consumable impl.
 
 **Why split:** Plan 110 sам в §«Возможный split на sub-plans» (lines 1245-1257) формулирует точку решения для разбиения если scope > прогноза. Ф.0 GATE audit подтвердил scope: 600-1000 LOC Rust refactor + 42 fixture migration + auto-fix tool + LSP integration + benchmarks + FFI integration > single-session feasibility. Sub-plan split сохраняет ценность Ф.0 spec foundation + предоставляет concrete next-steps для последующих агентов. **НЕ silent drop** — explicit follow-up plans с acceptance criteria, dependencies, references.
@@ -28186,15 +28203,39 @@ Production-grade final обязательство (в plan header) — все э
 
 **Remaining [M-110-*] markers extracted в independent plans, НЕ silent simplifications:**
 
-- 🟡 `[M-110-deadline-fire-fixture]` — E2E timeout fire test (gated на WithExitTimeout per-type).
-- 🟡 `[M-110-cleanup-timeout-typed-throw]` — codegen typed throw impl (currently string-fallback).
-- 🟡 `[M-110-deadline-check-yield-zero-race]` — Time.sleep(0) × multi-fiber test-runner timeout (scheduler).
-- 🟡 `[M-110.4.6-level-1-with-exit-timeout]` → Plan 110.2.5 extracted.
-- 🟡 `[M-110.4-finalizer-runtime]` → Plan 110.9 (post-V1).
-- 🟡 `[M-110.7.3-w-ffi-cancel-unsafe-lint]` → Plan 110.7.4 extracted.
-- 🟡 `[M-110.8.5-quantitative-bench]` → Plan 110.8.4 CI infra.
-- 🟡 `[M-110-on-exit-strict-sig]` — strict return-type check on on_exit.
-- 🟡 `[M-110-stdlib-cancel-scope]` / `[M-110-stdlib-channels]` / `[M-110-stdlib-tcp-udp]` — independent plans.
+> **Status update 2026-06-05:** 6 of 9 V1 followup markers closed by Plan 110.9
+> V1.1 sessions (2026-06-02 + 2026-06-03 + 2026-06-05). См. далее ниже для
+> closure log entries детально. Original 🟡 statuses preserved historically;
+> ✅ annotations added at marker level.
+
+- ✅ `[M-110-deadline-fire-fixture]` — E2E timeout fire test (closed 2026-06-05,
+  commit `7624ca51d1e`). Fixture `deadline_fire_e2e_v1_1.nv` verifies все
+  6 codegen splices.
+- ✅ `[M-110-cleanup-timeout-typed-throw]` — codegen typed throw impl
+  (closed 2026-06-03 via Plan 110.9.1, commit `1377c611a57`). Replaced
+  string-fallback с typed CleanupTimeoutError throw.
+- 🟡 `[M-110-deadline-check-yield-zero-race]` — Time.sleep(0) × multi-fiber
+  test-runner timeout (scheduler). **Still open** — scheduler-level
+  investigation, deferred indefinitely (not gating any feature).
+- ✅ `[M-110.4.6-level-1-with-exit-timeout]` → Plan 110.2.5 extracted →
+  closed 2026-06-02 via Plan 110.9.2, commit `8ff8dda820b`.
+- ✅ `[M-110.4-finalizer-runtime]` → Plan 110.9 (post-V1) → closed 2026-06-03
+  via Plan 110.9.3, commit `86028e74aac`. NovaFinalizerStack runtime +
+  with-Application prologue/epilogue + dispatcher intercept.
+- ✅ `[M-110.7.3-w-ffi-cancel-unsafe-lint]` → Plan 110.7.4 extracted →
+  closed 2026-06-02 via Plan 110.9.4, commit `35afc6565e9`.
+- 🟡 `[M-110.8.5-quantitative-bench]` → Plan 110.8.4 CI infra. **Still open** —
+  depends на external CI infra plan.
+- ✅ `[M-110-on-exit-strict-sig]` — strict return-type check on on_exit
+  (closed 2026-06-02 via Plan 110.9.5, commit `d2daf4b768e`). Plus
+  pragmatic accept-both removal 2026-06-05 via Plan 110.9.5.a, commit
+  `4756bba430f`.
+- 🟡 `[M-110-stdlib-cancel-scope]` / `[M-110-stdlib-channels]` / `[M-110-stdlib-tcp-udp]`
+  — independent plans. **Still open** — depend на stdlib design (CancelScope/Channel/TCP UDP types).
+
+**Marker tally (2026-06-05):** 6/9 closed (✅), 3/9 still open (🟡).
+Open 3 — все или scheduler investigation (yield-zero-race) или external
+plan deps (quantitative-bench CI, stdlib types).
 
 **Status:** Plan 110 umbrella merged into main. 74 commits from plan-110 branch. 36/36 plan110 fixtures PASS. syntax/ 53/1 baseline preserved. Branch plan-110 ready for archival (можно delete после CI verification).
 
