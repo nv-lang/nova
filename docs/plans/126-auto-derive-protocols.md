@@ -275,7 +275,7 @@ Auto-derive **respects** priv: если поле `priv`, eq/hash/clone всё е
 
 ### Ф.7 — Spec + docs
 - D109 amend (auto-derive rules).
-- D227 NEW (Cloneable protocol).
+- D230 NEW (Cloneable protocol).
 - `docs/auto-derive-guide.md` — user guide.
 - **Эстимат:** 0.3 dev-day.
 
@@ -310,7 +310,7 @@ Auto-derive **respects** priv: если поле `priv`, eq/hash/clone всё е
 ## 5. D-blocks impact
 
 - **D109 amend** — auto-derive rules для built-in protocols.
-- **D227 NEW** — `Cloneable` protocol.
+- **D230 NEW** — `Cloneable` protocol.
 
 ---
 
