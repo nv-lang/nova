@@ -1,0 +1,33 @@
+// Plan 128.2 Ф.2 N2 — ro binding + deep chain + mut method → reject.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Chain depth 3 (`a.b.c.mut_m()`) — chain-walking helper recursively
+// walks к root Ident `a`, видит ro binding, fires E_LOCAL_NOT_MUT.
+
+module plan128_2.n2_ro_binding_deep_chain_mut_neg
+
+type C {
+    mut value int
+}
+
+fn C mut @bump() -> () {
+    @value = @value + 1
+}
+
+type B {
+    mut c C
+}
+
+type A {
+    mut b B
+}
+
+fn A.new() -> Self => {
+    b: { c: { value: 0 } },
+}
+
+test "ro binding + deep chain + mut method → E_LOCAL_NOT_MUT" {
+    ro a = A.new()
+    a.b.c.bump()
+}

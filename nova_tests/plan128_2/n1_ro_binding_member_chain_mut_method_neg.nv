@@ -1,0 +1,28 @@
+// Plan 128.2 Ф.2 N1 — ro binding + member chain + mut method → reject.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Closes [M-128.1-ro-binding-field-chain-not-mut] (P1 safety hole):
+// chain-walking enforcement walks `b.inner` to root Ident `b`, sees
+// ro binding, fires E_LOCAL_NOT_MUT.
+
+module plan128_2.n1_ro_binding_member_chain_mut_method_neg
+
+type Vec3(x int, y int, z int)
+
+fn Vec3 mut @set_x(v int) -> () {
+    @x = v
+}
+
+type Wrapper {
+    mut inner Vec3
+}
+
+fn Wrapper.new() -> Self => {
+    inner: Vec3(x: 1, y: 2, z: 3),
+}
+
+test "ro binding + member chain + mut method → E_LOCAL_NOT_MUT" {
+    ro b = Wrapper.new()
+    b.inner.set_x(42)
+}

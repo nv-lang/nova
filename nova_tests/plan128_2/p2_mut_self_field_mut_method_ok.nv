@@ -1,0 +1,34 @@
+// Plan 128.2 Ф.2 P2 — mut self + @field.mut_method() = OK.
+//
+// `fn Outer mut @foo() { @inner.set_x(42); }` — chain через SelfAccess
+// root. SelfAccess не обрабатывается chain-walking helper'ом (это
+// non-Ident leaf), но existing mut-self / mut-field semantics в impl
+// handle correctly.
+
+module plan128_2.p2_mut_self_field_mut_method_ok
+
+type Vec3(x int, y int, z int)
+
+fn Vec3 mut @set_x(v int) -> () {
+    @x = v
+}
+
+type Outer {
+    mut inner Vec3
+}
+
+fn Outer.new() -> Self => {
+    inner: Vec3(x: 1, y: 2, z: 3),
+}
+
+fn Outer mut @foo() -> () {
+    @inner.set_x(42)
+}
+
+fn Outer @get_x() -> int => @inner.x
+
+test "mut self + @field.set_x() — OK" {
+    mut o = Outer.new()
+    o.foo()
+    assert(o.get_x() == 42)
+}
