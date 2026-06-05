@@ -32450,3 +32450,103 @@ Lessons:
    • Coordination note с Plan 91 prevents duplicate type design — если
      Plan 91 ships std/fs.File, Plan 110.11.1 becomes pure Consumable
      impl PR без full type design.
+
+
+================================================================================
+Plan 83.11 §8 tests + §9 D-block landing (session #14, 2026-06-05)
+================================================================================
+
+Followup session closes two design-debt items inside Plan 83.11
+(Centralized I/O driver): §8 test catalog (was 7/32, now 28/32) +
+§9 D-block "cancel state-machine" (was deferred from Ф.9).
+
+Workflow `wf_fdab9859-ba6` — ultracode-mode (xhigh + workflows):
+- Scout pre-stage (1 agent) — Nova fixture format conventions +
+  CancelToken/Mutex/Condvar API + D-block format reference + next
+  D-block number (D228).
+- 22 parallel pipelines (author + verify per fixture). Default workflow
+  agent (Sonnet); each pipeline = author Nova test → build/run/stress.
+- 1 Opus 4.7 + Thinking ON agent — D-block + Q-block authoring.
+
+Authored fixtures:
+
+§8.2 Negative (11/12, N8 omitted — needs Ф.8 sysmon):
+  N1  cancel_double_call           — idempotent double cancel
+  N2  cancel_unbound_token         — cancel before bind
+  N3  cancel_from_non_fiber        — cancel from main thread
+  N4  cancel_runtime_not_init      — cancel before runtime arm
+  N5  timer_fire_during_cancel     — natural-vs-cancel CAS race
+  N6  close_cb_after_fiber_dead    — no UAF on dead fiber
+  N7  cancel_with_corrupted_token  — fuzz boundary
+  N9  scope_freed_during_cancel    — REGRESSION GUARD for §12.31 fix
+  N10 cancel_cycle_linked_tokens   — cycle termination
+  N11 cancel_with_NULL_reason_ptr  — NULL-reason path
+  N12 cancel_during_runtime_shutdown — cancel + shutdown race
+
+§8.1 Positive (10/11, P14 SKIP — no OS-signal API):
+  P8  cancel_during_natural_fire
+  P9  nested_supervised_3_levels_cancel
+  P10 cancel_cascade_linked_3
+  P11 fibers_10k_sleep_cancel (current 2k pending Plan 110.x fix)
+  P12 cancel_zero_fibers_in_scope
+  P13 cancel_during_drain_exit
+  P17 mutex_lock_cancel
+  P18 condvar_wait_cancel
+  P19 cancel_storm_1000
+  P20 driver_thread_idle_no_cpu
+
+Verification (rebuild at HEAD bc5d5edc43f, post-pull from main 40
+commits):
+
+  Tier        Count   Tests
+  🟢 PASS     18/21   N1-N7, N9-N11, P8, P10, P12, P13, P17-P20
+  🔴 RUN-FAIL  3/21   P9, P11, N12 — Plan 110.x cleanup-shield blocker
+
+§9 D-block: D228 — "Centralized I/O driver — sleep cancel state-machine
++ scope-lifetime invariants (Plan 83.11)" added to
+spec/decisions/06-concurrency.md.
+
+D228 sections (15413 chars):
+  1. Sleep state machine NEW→ARMED→FIRING|CANCEL_REQ→CLOSED
+  2. CAS race resolution — оба пути converge на close_cb
+  3. expected_co identity field — STALE-slot protection (§10 Fix B)
+  4. armed_sleeps_head linked list — single-mutator (driver thread)
+  5. pending_driver_jobs lifetime counter — §12.31 fix canonicalized
+  6. ctx_pins[] GC-root anchor — §11.6 + Plan 44.5 L5 canonical
+  7. Centralized driver rationale — Tokio 1.x architectural pivot
+
+Connections: narrows D98 (per-worker libuv loop) for timer/sleep;
+related D71 D75 D93 D167. Closes [M-83.11-gc-cancel-token-alias] +
+[M-83.11-supervised-spawn-cancel-memcpy-segv].
+
+Q24-27 added к spec/open-questions.md:
+  Q24 Шардирование I/O driver thread под high-I/O workload
+  Q25 Explicit `drain-and-cancel` barrier API
+  Q26 Tunable ctx_pins[] doubling threshold (embedded)
+  Q27 Sysmon introspection: экспонировать pending_driver_jobs
+
+NEW BLOCKER discovered (orthogonal to Plan 83.11):
+[M-110.x-cleanup-shield-deadline-underflow] — nv_shield_check_deadline
+(Plan 110.2.2.a D188 R3) i64 underflow produces ~712k ms "over budget"
+on tests with armed sleeps + cancel. Same root cause as existing
+stress_iso_3e baseline 0/10. Blocks P9, P11, N12 (Plan 83.11 new tests).
+NOT Plan 83.11 zone — belongs to Plan 110.x cleanup-shield subsystem.
+
+Acceptance:
+  A1 — §8 test catalog: 21 new fixtures authored ✅
+  A2 — §8 verification: 18/21 PASS (other 3 blocked on Plan 110.x) ✅
+  A3 — §9 D-block: D228 ACTIVE in spec/decisions/06-concurrency.md ✅
+  A4 — Q24-27 open questions added к spec/open-questions.md ✅
+  A5 — Plan doc §13 closure entry committed ✅
+  A6 — branch merged into main + pushed ✅
+
+Workflow note: crashed cleanly at Summarize phase
+(TypeError on null pipeline result for P14 SKIP). All artifacts
+persisted; verification done manually. Lesson: pipeline()'s
+[stage1, stage2] destructuring needs `if (!item) return ...` guard
+against null returns. Future workflow scripts should defensive-handle.
+
+Status: ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
+§11.6 + §12.31 + §8 + §9 closed; Ф.4-Ф.9 (blocking migration, channel
+migration, perf) pending design decision. 4 commits in branch +
+1 merge commit on main (064eeef82ef).

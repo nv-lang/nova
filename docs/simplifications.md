@@ -32739,3 +32739,46 @@ Plan-docs updated с downstream followup notes pointing к новые sub-plans:
 **Total scope:** 3 new umbrella plan-docs + 6 existing plan-doc cross-refs.
 13 open `[M-110-*]` markers now have explicit owner plan assignment.
 Все markers — explicit extractions, не silent simplifications.
+
+
+---
+
+## Plan 83.11 §8 tests + §9 D-block landing (session #14, 2026-06-05)
+
+**Followup:** Session #14 closes 2 design-debt items inside Plan 83.11:
+§8 test catalog (28/32 fixtures, 87% coverage) + §9 D-block D228 ("cancel
+state-machine + scope-lifetime invariants").
+
+**Workflow:** `wf_fdab9859-ba6` — ultracode mode, 22 parallel
+author+verify pipelines + Opus 4.7 spec agent + scout pre-stage. ROI
+доказан — 22 fixtures + spec за одну сессию вместо 22 отдельных раундов.
+
+**Permanent additions:**
+- 21 new test fixtures in `nova_tests/concurrency/` (11 negative + 10 positive)
+- D228 in `spec/decisions/06-concurrency.md` (canonicalizes 2 invariants
+  introduced by §11.6 + §12.31 — `ctx_pins[]` GC-root pattern +
+  `pending_driver_jobs` lifetime counter)
+- Q24-27 in `spec/open-questions.md` (future design decisions)
+
+**Verification:** 18/21 PASS, 3 RUN-FAIL blocked by external Plan 110.x
+bug (`cleanup-timeout-exceeded` i64 underflow в `nv_shield_check_deadline`).
+
+**NEW BLOCKER:** `[M-110.x-cleanup-shield-deadline-underflow]` — same root
+cause as existing `stress_iso_3e` baseline-fail. Blocks tests with armed
+sleeps + cancel. NOT Plan 83.11 zone.
+
+**Lessons learned:**
+1. **Workflow pipeline returns nullable**: my workflow crashed at
+   Summarize on `pipeline().map(([a, v]) => ...)` when one item returned
+   null (P14 SKIP). Future scripts: `if (!item) return ...` guard or
+   `.filter(Boolean)` before destructuring. Workflow crashed cleanly,
+   all author/verify agents persisted artifacts — manually verified.
+2. **`ultracode + workflows` ROI**: 22 fixtures + 1 D-block + scout =
+   ~1 hour wall-time, mostly parallel. Single-shot equivalent would be
+   ~22 sessions × 10 min = ~3.5 hours sequential. 3-4× speedup.
+3. **Detect orthogonal blockers via tests**: 3 of 21 fixtures revealed
+   Plan 110.x cleanup-shield underflow bug — not visible from Plan 83.11
+   zone alone. Test catalogs work as cross-subsystem regression detectors.
+
+**Status:** ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
+§11.6 + §12.31 + §8 + §9 closed. Ф.4-Ф.9 pending design decision.
