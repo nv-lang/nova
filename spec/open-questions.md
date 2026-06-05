@@ -6766,3 +6766,111 @@ followup**.
 Прежде чем менять решение — **прочитай его обоснование**. Многие
 решения поддерживают друг друга. Изменение одного может потребовать
 пересмотра нескольких.
+
+## Q24. Шардирование I/O driver thread под high-I/O workload
+
+**Контекст.** [D228](decisions/06-concurrency.md#d228) фиксирует **один** centralized I/O driver thread на process. Это намеренный trade-off (single owner timer-state → cross-thread visibility races eliminated), но driver — потенциальный bottleneck при extreme timer/cancel workload'е (>1M timers/sec на worker pool из 16+ ядер).
+
+**Возможное направление.** Sharded driver pool: `driver_id = hash(scope) % N_drivers`, каждый driver — свой `uv_loop_t` + own job queue. Scope привязан к одному driver'у пожизненно (стабильный hash), все timers данного scope'а живут на одном driver loop'е. Cross-scope cancel (cascade через `cancelled_by`) — через scoped routing.
+
+**Тонкие места:**
+1. Load balancing: `hash(scope_addr) % N` может неравномерно распределить горячие scope'ы.
+2. Cross-driver cancel cascade (parent driver A → child driver B) добавляет visibility race обратно.
+3. `pending_driver_jobs` counter работает per-scope, поэтому остаётся sound при шардировании.
+4. Нужны measurements: какой % real workload'ов хотя бы упирается в driver throughput? Сейчас гипотеза, не наблюдение.
+
+**Решение когда.** Если perf-bench (Plan 83.11 Ф.8 + последующие) покажет driver throughput < 50% от theoretical при ≥8 workers — открыть Plan для sharding. Иначе оставить single driver.
+
+---
+
+---
+
+## Q25. Explicit `drain-and-cancel` barrier API
+
+**Контекст.** [D228 §6](decisions/06-concurrency.md#d228) описывает `pending_driver_jobs` counter как **internal** runtime invariant — `nova_supervised_run_impl` сам спинит на нём перед return. Но user-code, который хочет «отмени все outstanding и дождись пока driver thread обработает», сейчас не имеет API: `tok.cancel()` возвращается immediately, фактическая обработка асинхронна.
+
+**Возможное API.**
+
+```nova
+ro tok = CancelToken.new()
+supervised(cancel: tok) {
+    spawn { Time.sleep(10_000) }
+    spawn { Time.sleep(10_000) }
+    tok.cancel()
+    tok.barrier()   // дождаться, пока driver обработает CANCEL_SCOPE job
+    // теперь гарантированно: все armed timers closed, fiber'ы пробуждены
+}
+```
+
+**Use cases.**
+- Тесты, которые хотят deterministic observation "cancel fully delivered".
+- Graceful shutdown с временным окном (`tok.cancel(); tok.barrier_until(deadline)`).
+
+**Тонкие места:**
+1. Идиоматически это уже делается выходом из `supervised` блока — он сам барьер.
+2. Если открыть barrier user-коду, нужно решить семантику barrier на cascade-cancel: ждать только свой scope или всех linked-children?
+3. Может конкурировать с idea «cancel должен быть fire-and-forget» из D75.
+
+**Решение когда.** Если появится конкретный use-case в stdlib (test harness, server shutdown), вынести в Plan. Сейчас — speculative.
+
+---
+
+---
+
+## Q26. Tunable `ctx_pins[]` doubling threshold для embedded
+
+**Контекст.** `NovaFiberQueue.ctx_pins[]` — GC-root anchor array per supervised scope ([D228 §5](decisions/06-concurrency.md#d228)). Удваивается на степенях 2: `16 → 32 → 64 → ... → 1024 → 2048 → ...`. Каждое удвоение = `nova_alloc` = potential GC trigger.
+
+Для типичного Nova-кода это норм (10-100 fibers per scope). Для embedded таргетов с ограниченной памятью (target ≤256KB heap), или для micro-services с тысячами коротких scope'ов, fixed 16-cap initial может быть либо overkill (waste), либо undersized (frequent grow).
+
+**Возможные direction'ы.**
+- Env var `NOVA_SCOPE_PINS_INITIAL_CAP=<int>` — компромисс между memory и grow-frequency.
+- Compile-time `#[scope_pins_cap = N]` attribute на `supervised` блок.
+- Auto-tune via runtime statistics (Tokio approach).
+
+**Тонкие места:**
+1. Менять initial cap во время runtime опасно — race с already-allocated scopes.
+2. Embedded таргетов у Nova ещё формально нет (Plan 83.13 precise-GC в research stage).
+3. Это micro-optimization до measured benchmark'а.
+
+**Решение когда.** Когда появится первый embedded таргет или benchmark покажет ≥5% времени в `ctx_pins` realloc loop'ах.
+
+---
+
+---
+
+## Q27. Sysmon introspection: экспонировать `pending_driver_jobs`
+
+**Контекст.** [D228 §6](decisions/06-concurrency.md#d228) вводит `pending_driver_jobs` counter per scope. Сейчас он internal — нет API для observability. Long-running cancel storm может зависнуть с large counter (driver не успевает разгребать), и user не увидит этого до timeout'а.
+
+**Возможное API.**
+
+```nova
+use std.runtime
+
+// Через nova-info (CLI sysmon):
+//   $ nova runtime introspect --supervised-scopes
+//   scope#0: pending_driver_jobs=42, armed_sleeps=12
+
+// Через library:
+fn check_health() -> RuntimeStats {
+    runtime.driver_stats()  // { queue_depth, longest_pending_ms, ... }
+}
+```
+
+**Use cases.**
+- Production monitoring: alerting на driver-queue-saturation.
+- Тестирование: assertion'ы вроде `assert(runtime.driver_stats().queue_depth == 0)`.
+- Debug: какой scope генерирует cancel storm?
+
+**Тонкие места:**
+1. Atomic load counter'а cheap (relaxed read), но aggregation по всем scope'ам требует walk runtime structures — нужен read-lock или snapshot mechanism.
+2. Пересекается с Plan 76 (`Mem` effect для leak/growth тестов) — возможно один общий runtime-introspection API.
+3. Может потребовать stable spec API (`std.runtime.driver_stats()`), что добавляет surface area к 0.1 release.
+
+**Решение когда.** Если появится Plan для production observability (likely 0.2+), включить driver-queue-depth туда. Сейчас — defer.
+
+---
+
+---
+
