@@ -37,6 +37,6 @@ test "str.as_bytes: empty string gives empty slice" {
 
 test "str.as_bytes: auto-coerce to ro []u8 param" {
     ro s = "test"
-    ro view ro []u8 = s.as_bytes()
+    ro view []u8 = s.as_bytes()
     assert(view.len() == 4)
 }
