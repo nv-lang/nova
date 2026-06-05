@@ -33215,3 +33215,93 @@ Plan 110 family closure timeline:
 - THIS SESSION — R3a codegen layout invariant (supervised path).
 
 All 3 baseline issues in Plan 110 cancel-shield production-grade closed.
+=== Plan 125.1 IMPLEMENTATION (2026-06-05) ===
+> Worktree: D:/Sources/nv-lang/nova-p125-1
+> Branch: plan-125.1 (off main 7c173fb9f2d)
+> Closes: [M-125-type-checker-never-first-class] — followup Plan 125 V1.
+
+Plan 125 V1 (2026-06-05, merge d27f3341a0c) закрыл result-type inference
+на codegen-side (`emit_c.rs`). Type-checker side остался deferred —
+followup `[M-125-type-checker-never-first-class]`. Plan 125.1 закрывает
+этот gap: добавляет `Ty::Never` first-class subtype rule в `types/mod.rs`
+per spec D25 (08-runtime.md:1018).
+
+Approach (per task brief):
+- Минимальные точечные additions — никакого refactor существующего code
+- `TyCat::Other` safety-net preserved (conservative addition)
+- After каждого commit'а — targeted regression check (plan125 22/0,
+  plan125_followups 9/0)
+- При ЛЮБОЙ regression — revert commit, переосмыслить
+
+4 commits (~50 LOC total в `compiler-codegen/src/types/mod.rs`):
+
+1. cb77072a009 Ф.1: `assignable()` hookpoint
+   - `if matches!(ty_of_ref(&found_tr), Ty::Never) { return Compat::Ok }`
+   - Pure additive — fires когда infer_expr_type вернёт never (Ф.2)
+   - Gate: plan125 22/0, plan76 1/1
+
+2. 79fe82a377e Ф.2: `infer_expr_type` propagation
+   - `ExprKind::Throw(_)` → `Some(prim_ref("never"))` per D25
+   - `ExprKind::Interrupt(_)` → `Some(prim_ref("never"))` per D61
+   - `Call(panic|exit|abort|unreachable, ...)` → `Some(never)` (D13)
+   - User fn'ы где ВСЕ overloads `-> never` → `Some(never)`
+     (all-divergent guard избегает ambiguity при unresolved overload)
+   - Gate: plan125 22/0, plan125_followups 9/0, plan76 1/1
+
+3. 92fad76185e Ф.3: `infer_block_trailing_typeref` divergent trailing
+   - Helper `expr_diverges_at_top()` — top-level shape без scope
+   - Conservative: НЕ walks preceding stmts, только trailing
+   - Returns `Some(prim_ref("never"))` для trailing-divergent
+   - Gate: plan125 22/0, plan100_4_1 16/0
+
+4. 54921f1063f Ф.4: D196 detector skip divergent
+   - `detect_divergent_consumable` использует `block_diverges` для
+     early-skip обеих веток вместо `?`-propagation abort
+   - ЛЮБОЙ divergent путь → `None` (нет fake-conflict
+     «Consumable[T] vs never»)
+   - Gate: plan125 22/0, plan125_followups 9/0, plan110 48/0
+
+5. 02c08821c99 Ф.5: tests — 12 positive + 3 negative фикстуры
+   - Positive (12): never_subtype_of_{str,int,struct,list,bool},
+     throw_in_let_typed, interrupt_in_let_typed, panic_in_match_arm_typed,
+     never_arg_to_fn, never_in_return_position, d196_consume_divergent_branch,
+     unreachable_call_typed
+   - Negative (3): let_never_no_context, never_no_assignment,
+     d196_consume_required_in_live_branch
+   - plan125_1 → 15/0 PASS
+
+Final regression gate:
+  plan125            → 22/0 PASS
+  plan125_1          → 15/0 PASS (12 positive + 3 negative)
+  plan125_followups  →  9/0 PASS
+                      ─────────
+                       46/0 PASS
+
+Spec amendments:
+  • 04-effects.md §D25 — Plan 125.1 implementation note с 4-phase listing
+    + cross-ref к types/mod.rs Ф.1-Ф.4 additions
+  • 08-runtime.md §«never» — Type-checker first-class section с
+    explicit assignable hookpoint + infer_expr_type propagation rules +
+    D196 detector update
+
+Plan-doc update:
+  • docs/plans/125-divergence-aware-inference.md — new §«Plan 125.1»
+    closure section + commit chain + acceptance criteria table
+  • Followup `[M-125-type-checker-never-first-class]` marked CLOSED
+    (previously deferred to V1; now type-side first-class subtype rule
+    landed in types/mod.rs ~50 LOC additive)
+
+State:
+  • Plan 125 family complete: V1 codegen-only + 3 followups (unreachable
+    builtin, method-call detection, codegen-never-cast) + Plan 125.1
+    type-checker first-class = 5 of 7 followups closed
+  • Remaining: [M-125-loop-no-break-divergence] (backlog — over-approx
+    risk), [M-125-stmt-position-divergence] (backlog —
+    Return/Break/Continue control-flow analysis), [M-125-while-true-divergence]
+    (backlog — Rust-style const-true loop)
+  • Pure-additive nature — никакой existing test regression; subtype
+    `never <: T` теперь first-class в type-checker
+
+Status: ✅ **CLOSED 2026-06-05** (branch plan-125.1; НЕ merged, НЕ
+pushed per task brief — awaiting user review).
+

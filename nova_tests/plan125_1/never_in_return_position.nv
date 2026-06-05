@@ -1,0 +1,34 @@
+// Plan 125.1 Ф.1+Ф.2+Ф.3 positive — divergent expr через return-trailing.
+// Trailing-divergent block: type infer_block_trailing_typeref возвращает
+// never (Ф.3) → assignable(never, ReturnT) → Ok (Ф.1). Codegen target-typed
+// dummy ([M-125-codegen-never-cast] CLOSED).
+
+module plan125_1.never_in_return_position
+
+fn must_pos(n int) Fail -> int {
+    if n > 0 {
+        n
+    } else {
+        throw "non-positive"
+    }
+}
+
+fn must_str(c bool) Fail -> str {
+    // Trailing — if/else с divergent else; return-type str.
+    if c {
+        "ok"
+    } else {
+        throw "no str"
+    }
+}
+
+test "trailing-throw at fn return position" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro a = must_pos(5)
+        assert(a == 5)
+        ro b = must_str(true)
+        assert(b == "ok")
+    }
+}

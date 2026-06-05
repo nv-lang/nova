@@ -1,0 +1,25 @@
+// Plan 125.1 Ф.2 negative — divergent expression в statement-position.
+// `throw e` как statement (не assignment, не trailing) — divergent, тип
+// never; expression-statement не requires assignable check. Должен
+// компилиться + НЕ дойти до следующего statement на runtime.
+
+module neg.never_no_assignment
+
+fn check(c bool) Fail -> int {
+    if c {
+        // throw как expression-statement — Ф.2 не fires assignable
+        // (нет target type для bidirectional check).
+        throw "force"
+    }
+    // unreachable если c=true
+    42
+}
+
+test "throw stmt followed by trailing int" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro n = check(false)
+        assert(n == 42)
+    }
+}

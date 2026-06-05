@@ -1,0 +1,23 @@
+// Plan 125.1 Ф.1+Ф.2 positive — never <: []int.
+// throw e в позиции, где expected тип = []int — assignable() с never
+// возвращает Compat::Ok.
+
+module plan125_1.never_subtype_of_list
+
+fn pick_list(c bool) Fail -> []int {
+    if c {
+        throw "empty"
+    } else {
+        [1, 2, 3]
+    }
+}
+
+test "never subtype of list[int]" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro xs = pick_list(false)
+        assert(xs.len() == 3)
+        assert(xs[0] == 1)
+    }
+}

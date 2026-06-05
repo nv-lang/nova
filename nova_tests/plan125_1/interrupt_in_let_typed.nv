@@ -1,0 +1,24 @@
+// Plan 125.1 Ф.2 positive — `interrupt v?` имеет тип never per D61.
+// Type-checker видит Interrupt как never; assignable(never, int) -> Ok через
+// Ф.1 hookpoint. interrupt валиден только в handler-body — fn оборачивает
+// в effect-handler context.
+
+module plan125_1.interrupt_in_let_typed
+
+fn classify(c bool) -> int {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        // `let n int = if-expr с interrupt-в-branch` — never <: int.
+        ro n int = if c {
+            throw "force"
+        } else {
+            55
+        }
+        n
+    }
+}
+
+test "interrupt-handler with int let typed" {
+    assert(classify(false) == 55)
+}

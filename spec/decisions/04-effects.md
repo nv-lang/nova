@@ -864,6 +864,26 @@ Type-checker side (`Ty::Never` first-class subtype) — отдельный
 follow-up `[M-125-type-checker-never-first-class]`; codegen V1
 production-ready без него.
 
+**Plan 125.1 (2026-06-05) — type-checker `Ty::Never` first-class:**
+`[M-125-type-checker-never-first-class]` ✅ CLOSED. Дополнено
+codegen-fix настоящим type-side first-class subtype rule
+(`compiler-codegen/src/types/mod.rs`):
+- Ф.1 — `assignable()` hookpoint: `if matches!(ty_of_ref(&found_tr),
+  Ty::Never) { return Compat::Ok }` — pure additive,
+  `TyCat::Other` safety-net preserved
+- Ф.2 — `infer_expr_type` propagates `never` для `ExprKind::Throw` /
+  `ExprKind::Interrupt` / `Call(panic|exit|abort|unreachable, ...)` +
+  user fn'ов с return type `Ty::Never` (all-overloads-divergent guard)
+- Ф.3 — `infer_block_trailing_typeref` возвращает `Some(prim_ref("never"))`
+  когда trailing diverges (top-level shape: Throw/Interrupt/never-call);
+  conservative — не walks preceding stmts
+- Ф.4 — `detect_divergent_consumable` (D196 form 3) использует
+  `block_diverges` для early-skip обеих веток вместо `?`-propagation
+  abort; ЛЮБОЙ divergent путь → SKIP (None)
+
+Test coverage: `nova_tests/plan125_1/` — 12 positive + 3 negative
+фикстуры; full plan125 (22) + plan125_followups (9) baseline preserved.
+
 #### `throw` — операция эффекта `Fail[E]`, не магия
 
 Связь между `throw` и `Fail[E]` — **не специальная проверка

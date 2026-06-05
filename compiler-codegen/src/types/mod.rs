@@ -2696,14 +2696,36 @@ impl<'a> TypeCheckCtx<'a> {
     fn detect_divergent_consumable(&self, init: &Expr) -> Option<(String, String)> {
         use crate::ast::ExprKind;
         if let ExprKind::If { then, else_, .. } = &init.kind {
+            // Plan 125.1 D196 amend: divergent branch (`never` через любой
+            // путь — trailing throw/interrupt/panic, stmt-position
+            // throw/return, divergent call) не участвует в conflict-check —
+            // bottom type subtype of any. Используем `block_diverges`
+            // (полный stmts+trailing walk) вместо trailing-only check, и
+            // SKIP (continue к following branch / return None) вместо
+            // `?`-propagation abort.
+            let then_diverges = block_diverges(then);
+            let else_b = else_.as_ref()?;
+            let else_diverges = match else_b {
+                crate::ast::ElseBranch::Block(b) => block_diverges(b),
+                crate::ast::ElseBranch::If(ei) => expr_diverges(ei),
+            };
+            // Если ЛЮБАЯ ветка diverges — пары для conflict-check нет.
+            if then_diverges || else_diverges {
+                return None;
+            }
             // Both branches must end в expression returning Consumable.
             let then_ty = self.infer_block_trailing_typeref(then)?;
-            let else_ty = match else_.as_ref()? {
+            let else_ty = match else_b {
                 crate::ast::ElseBranch::Block(b) => self.infer_block_trailing_typeref(b)?,
                 crate::ast::ElseBranch::If(ei) => self.infer_consume_init_typeref(ei)?,
             };
             let then_name = Self::typeref_to_name(&then_ty)?;
             let else_name = Self::typeref_to_name(&else_ty)?;
+            // Plan 125.1 (Ф.3): defensive — Ф.3 уже фильтрует trailing-
+            // divergent в "never" name, оставляем guard для symmetry.
+            if then_name == "never" || else_name == "never" {
+                return None;
+            }
             if then_name != else_name {
                 return Some((then_name, else_name));
             }
@@ -2713,9 +2735,38 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn infer_block_trailing_typeref(&self, b: &crate::ast::Block) -> Option<TypeRef> {
         if let Some(t) = &b.trailing {
+            // Plan 125.1 (Ф.3): trailing-divergence detection. По спеке D25
+            // bottom-тип `never` propagates как тип блока, когда trailing
+            // expression diverges (throw / interrupt / never-returning call).
+            // Conservative: НЕ ходим по preceding stmts (только trailing).
+            // Hookpoint feeds assignable() never-subtype branch из Ф.1.
+            if Self::expr_diverges_at_top(t) {
+                return Some(prim_ref("never", t.span));
+            }
             self.infer_consume_init_typeref(t)
         } else {
             None
+        }
+    }
+
+    /// Plan 125.1 (Ф.3): top-level divergence check для trailing expression.
+    /// Возвращает true, если expression имеет тип `never` (D25 bottom):
+    /// `throw e`, `interrupt v?`, или call к never-returning builtin
+    /// (panic/exit/abort/unreachable). Conservative — не walks вложенные
+    /// statements, только распознаёт top-level shape. Mirrors detection
+    /// logic из `infer_expr_type` Ф.2 (без scope-зависимости).
+    fn expr_diverges_at_top(e: &Expr) -> bool {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Throw(_) | ExprKind::Interrupt(_) => true,
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    matches!(name.as_str(), "panic" | "exit" | "abort" | "unreachable")
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
@@ -5401,6 +5452,14 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
         };
+        // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `Ty::Never`
+        // assignable to any expected type (bottom type). Hookpoint fires
+        // once `infer_expr_type` returns `never` for Throw/Interrupt/
+        // never-returning calls in subsequent Ф.* steps. Pure additive —
+        // existing `TyCat::Other` safety-net preserved.
+        if matches!(ty_of_ref(&found_tr), Ty::Never) {
+            return Compat::Ok;
+        }
         let found_cat = self.cat_of(&found_tr, expr_gs);
         if cat_compatible(&found_cat, &exp_cat) {
             Compat::Ok
@@ -5436,11 +5495,23 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::NullPtrLit => Some(prim_ref("ptr", expr.span)),
             // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
             ExprKind::SelfAccess => scope.get("@").cloned(),
+            // Plan 125.1 (Ф.2): `throw expr` — divergent expression. По спеке
+            // D25 throw имеет тип `never` (bottom). Без этого `let x = throw e`
+            // / `f(throw e)` падают в Compat::Unknown даже при наличии
+            // never-subtype hookpoint'а из Ф.1.
+            ExprKind::Throw(_) => Some(prim_ref("never", expr.span)),
+            // Plan 125.1 (Ф.2): `interrupt v?` — D61 досрочное завершение
+            // with-блока, тип позиции = `never` (control-flow leaves enclosing
+            // expression context). Аналогично Throw — divergent.
+            ExprKind::Interrupt(_) => Some(prim_ref("never", expr.span)),
             // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` call where
             // Type is a known Newtype/Alias → infer as Named(Type). Without
             // this, `ro h = SqHandle(raw)` binds `h` без типа в scope, и
             // assignable() для `close_sqlite(h)` падает в Compat::Unknown
             // (E7301 не fires при passing PngHandle к fn(SqHandle)).
+            //
+            // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
+            // return_type resolves to `Ty::Never` → propagate `never`.
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Ident(name) = &func.kind {
                     if let Some(td) = self.types.get(name) {
@@ -5450,6 +5521,27 @@ impl<'a> TypeCheckCtx<'a> {
                                 generics: Vec::new(),
                                 span: expr.span,
                             });
+                        }
+                    }
+                    // Plan 125.1 (Ф.2): never-returning builtins (D13).
+                    // Same set as `expr_diverges` ниже + `unreachable`.
+                    if matches!(name.as_str(), "panic" | "exit" | "abort" | "unreachable") {
+                        return Some(prim_ref("never", expr.span));
+                    }
+                    // Plan 125.1 (Ф.2): propagate `never` для user fns whose
+                    // declared return_type resolves к Ty::Never. Requires ВСЕ
+                    // overloads divergent — иначе ambiguous (call resolution
+                    // ещё не выполнена на этом этапе, безопаснее fallback к
+                    // `None` чем выбрать random overload).
+                    if let Some(decls) = self.fn_decls.get(name) {
+                        if !decls.is_empty()
+                            && decls.iter().all(|d| {
+                                d.return_type
+                                    .as_ref()
+                                    .map_or(false, |tr| matches!(ty_of_ref(tr), Ty::Never))
+                            })
+                        {
+                            return Some(prim_ref("never", expr.span));
                         }
                     }
                 }

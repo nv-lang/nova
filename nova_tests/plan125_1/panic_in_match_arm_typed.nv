@@ -1,0 +1,23 @@
+// Plan 125.1 Ф.2 positive — `panic(msg)` имеет тип never per D13.
+// infer_expr_type сопоставляет Call{func: Ident("panic")} с never.
+// Match-arm divergent — never <: int via Ф.1 hookpoint.
+
+module plan125_1.panic_in_match_arm_typed
+
+type Color | Red | Green | Blue | Bad
+
+fn channel(c Color) -> int {
+    // Match с divergent arm — never <: int — каждая arm assignable к int.
+    ro v int = match c {
+        Red   => 1
+        Green => 2
+        Blue  => 3
+        Bad   => panic("invalid color")
+    }
+    v
+}
+
+test "panic in match-arm — never subtype of int" {
+    assert(channel(Color.Red) == 1)
+    assert(channel(Color.Blue) == 3)
+}

@@ -1,0 +1,30 @@
+// Plan 125.1 Ф.1+Ф.2 positive — never <: user struct.
+// Type-checker должен видеть `throw e` (тип never) как assignable к
+// `Point` через D25 bottom-rule.
+
+module plan125_1.never_subtype_of_struct
+
+type Point {
+    ro x int
+    ro y int
+}
+
+fn Point.new(x int, y int) -> Point => { x, y }
+
+fn pick_point(c bool) Fail -> Point {
+    if c {
+        throw "no point"
+    } else {
+        Point.new(3, 4)
+    }
+}
+
+test "never subtype of user struct" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro p = pick_point(false)
+        assert(p.x == 3)
+        assert(p.y == 4)
+    }
+}
