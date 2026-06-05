@@ -1,0 +1,67 @@
+// Plan 91.3 Ф.3 (composites conformance): JSON roundtrip — nested structures.
+//
+// `{"arr": [1, {"k": "v"}]}` — 3 уровня вложенности: object → array →
+// object внутри array. Validates: format_object/format_array
+// взаимная рекурсия; parser handles nested без depth-bound регрессии;
+// HashMap внутри []JsonValue корректно сравнивается через ==.
+//
+// Cross-module Option[HashMap] (Plan 48.1) — `as_object()` возвращает
+// Option[HashMap[str, JsonValue]], match-binding извлекает HashMap.
+
+module plan91_13.json_roundtrip_nested
+
+import std.encoding.json.{JsonValue, Json}
+import std.collections.hashmap.{HashMap}
+
+test "parse nested object containing array of mixed types" {
+    ro parsed = Json.parse("{\"arr\": [1, {\"k\": \"v\"}]}")!!
+    match parsed.as_object() {
+        Some(root) => match root.get("arr") {
+            Some(arr_v) => match arr_v.as_array() {
+                Some(xs) => {
+                    assert(xs.len() == 2)
+                    assert(xs[0].as_num() == Some(1.0))
+                    // xs[1] — вложенный объект {"k": "v"}
+                    match xs[1].as_object() {
+                        Some(inner) => {
+                            assert(inner.get("k") == Some(JsonValue.str("v")))
+                        }
+                        None => assert(false)
+                    }
+                }
+                None => assert(false)
+            }
+            None => assert(false)
+        }
+        None => assert(false)
+    }
+}
+
+test "roundtrip nested 3-level structure" {
+    // Построим {"arr": [1, {"k": "v"}]} программно
+    mut inner = HashMap[str, JsonValue].new()
+    inner.insert("k", JsonValue.str("v"))
+    ro arr = JsonValue.array([
+        JsonValue.num(1.0),
+        JsonValue.object(inner),
+    ])
+    mut root = HashMap[str, JsonValue].new()
+    root.insert("arr", arr)
+    ro orig = JsonValue.object(root)
+
+    ro encoded = orig.into()
+    ro decoded = Json.parse(encoded)!!
+    assert(decoded == orig)
+}
+
+test "deep array nesting (array of arrays)" {
+    // [[1, 2], [3, 4]] — array of arrays, ещё одна 3-level форма
+    ro orig = JsonValue.array([
+        JsonValue.array([JsonValue.num(1.0), JsonValue.num(2.0)]),
+        JsonValue.array([JsonValue.num(3.0), JsonValue.num(4.0)]),
+    ])
+    ro encoded = orig.into()
+    assert(encoded == "[[1,2],[3,4]]")
+    ro decoded = Json.parse(encoded)!!
+    assert(decoded == orig)
+}
