@@ -5444,11 +5444,23 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::NullPtrLit => Some(prim_ref("ptr", expr.span)),
             // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
             ExprKind::SelfAccess => scope.get("@").cloned(),
+            // Plan 125.1 (Ф.2): `throw expr` — divergent expression. По спеке
+            // D25 throw имеет тип `never` (bottom). Без этого `let x = throw e`
+            // / `f(throw e)` падают в Compat::Unknown даже при наличии
+            // never-subtype hookpoint'а из Ф.1.
+            ExprKind::Throw(_) => Some(prim_ref("never", expr.span)),
+            // Plan 125.1 (Ф.2): `interrupt v?` — D61 досрочное завершение
+            // with-блока, тип позиции = `never` (control-flow leaves enclosing
+            // expression context). Аналогично Throw — divergent.
+            ExprKind::Interrupt(_) => Some(prim_ref("never", expr.span)),
             // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` call where
             // Type is a known Newtype/Alias → infer as Named(Type). Without
             // this, `ro h = SqHandle(raw)` binds `h` без типа в scope, и
             // assignable() для `close_sqlite(h)` падает в Compat::Unknown
             // (E7301 не fires при passing PngHandle к fn(SqHandle)).
+            //
+            // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
+            // return_type resolves to `Ty::Never` → propagate `never`.
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Ident(name) = &func.kind {
                     if let Some(td) = self.types.get(name) {
@@ -5458,6 +5470,27 @@ impl<'a> TypeCheckCtx<'a> {
                                 generics: Vec::new(),
                                 span: expr.span,
                             });
+                        }
+                    }
+                    // Plan 125.1 (Ф.2): never-returning builtins (D13).
+                    // Same set as `expr_diverges` ниже + `unreachable`.
+                    if matches!(name.as_str(), "panic" | "exit" | "abort" | "unreachable") {
+                        return Some(prim_ref("never", expr.span));
+                    }
+                    // Plan 125.1 (Ф.2): propagate `never` для user fns whose
+                    // declared return_type resolves к Ty::Never. Requires ВСЕ
+                    // overloads divergent — иначе ambiguous (call resolution
+                    // ещё не выполнена на этом этапе, безопаснее fallback к
+                    // `None` чем выбрать random overload).
+                    if let Some(decls) = self.fn_decls.get(name) {
+                        if !decls.is_empty()
+                            && decls.iter().all(|d| {
+                                d.return_type
+                                    .as_ref()
+                                    .map_or(false, |tr| matches!(ty_of_ref(tr), Ty::Never))
+                            })
+                        {
+                            return Some(prim_ref("never", expr.span));
                         }
                     }
                 }
