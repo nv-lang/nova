@@ -18959,11 +18959,70 @@ _cp++; \
                                         self.current_type_subst = saved;
                                     }
                                     self.register_mono_method_instance(
-                                        &fn_decl, type_subst, &mono_name, "Option");
+                                        &fn_decl, type_subst.clone(), &mono_name, "Option");
                                     let obj_c = self.emit_expr(obj)?;
                                     let mut parts = vec![obj_c];
-                                    for a in args {
-                                        parts.push(self.emit_expr(a.expr())?);
+                                    // Plan 99 [M-str-len-closure-dispatch] fix
+                                    // (2026-06-06): for each fn-typed param, if
+                                    // arg is ClosureLight/Lambda, pre-emit с
+                                    // explicit emit_lambda + context_param_tys
+                                    // built from type-substituted fn-param sig.
+                                    // Same pattern as line 22042-22046. Otherwise
+                                    // emit_lambda receives None → defaults к
+                                    // nova_int param type, breaking str→int
+                                    // closures (Option[str].map(|s| s.byte_len())).
+                                    for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
+                                        let v = if let (crate::ast::TypeRef::Func { params: fp, return_type, .. },
+                                                        true) = (&param_decl.ty,
+                                                                 matches!(a.expr().kind,
+                                                                          crate::ast::ExprKind::ClosureLight { .. } |
+                                                                          crate::ast::ExprKind::Lambda { .. }))
+                                        {
+                                            let saved_inner = std::mem::replace(
+                                                &mut self.current_type_subst,
+                                                type_subst.iter().cloned().collect(),
+                                            );
+                                            let inner_ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "Option method closure param inner-subst",
+                                                    &e,
+                                                )))
+                                                .collect::<Result<Vec<_>, _>>()?;
+                                            let inner_ret = match return_type.as_ref() {
+                                                Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "Option method closure return inner-subst",
+                                                    &e,
+                                                ))?,
+                                                None => "nova_unit".into(),
+                                            };
+                                            self.current_type_subst = saved_inner;
+                                            let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                .map(|t| (t.clone(), inner_ret.clone()))
+                                                .collect();
+                                            // Extract closure params/body for emit_lambda.
+                                            match &a.expr().kind {
+                                                crate::ast::ExprKind::ClosureLight { params, body } => {
+                                                    let legacy_params: Vec<crate::ast::LambdaParam> = params.iter()
+                                                        .map(|p| crate::ast::LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                        .collect();
+                                                    let body_expr: crate::ast::Expr = match body {
+                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                        crate::ast::ClosureBody::Block(b) => crate::ast::Expr::new(
+                                                            crate::ast::ExprKind::Block(b.clone()),
+                                                            b.span,
+                                                        ),
+                                                    };
+                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                                }
+                                                crate::ast::ExprKind::Lambda { params, body, return_type: ret, .. } => {
+                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref())?
+                                                }
+                                                _ => unreachable!(),
+                                            }
+                                        } else {
+                                            self.emit_expr(a.expr())?
+                                        };
+                                        parts.push(v);
                                     }
                                     return Ok(format!("{}({})", mono_name, parts.join(", ")));
                                 }
@@ -19172,11 +19231,65 @@ _cp++; \
                                         self.current_type_subst = saved;
                                     }
                                     self.register_mono_method_instance(
-                                        &fn_decl, type_subst, &mono_name, "Result");
+                                        &fn_decl, type_subst.clone(), &mono_name, "Result");
                                     let obj_c = self.emit_expr(obj)?;
                                     let mut parts = vec![obj_c];
-                                    for a in args {
-                                        parts.push(self.emit_expr(a.expr())?);
+                                    // Plan 99 [M-str-len-closure-dispatch] fix
+                                    // (2026-06-06): same closure-context pre-emit
+                                    // pattern as Option dispatch above. Без него
+                                    // Result[int,str].map_err(|e| e.len()) emits
+                                    // closure body как nova_int e.
+                                    for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
+                                        let v = if let (crate::ast::TypeRef::Func { params: fp, return_type, .. },
+                                                        true) = (&param_decl.ty,
+                                                                 matches!(a.expr().kind,
+                                                                          crate::ast::ExprKind::ClosureLight { .. } |
+                                                                          crate::ast::ExprKind::Lambda { .. }))
+                                        {
+                                            let saved_inner = std::mem::replace(
+                                                &mut self.current_type_subst,
+                                                type_subst.iter().cloned().collect(),
+                                            );
+                                            let inner_ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "Result method closure param inner-subst",
+                                                    &e,
+                                                )))
+                                                .collect::<Result<Vec<_>, _>>()?;
+                                            let inner_ret = match return_type.as_ref() {
+                                                Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
+                                                    "Result method closure return inner-subst",
+                                                    &e,
+                                                ))?,
+                                                None => "nova_unit".into(),
+                                            };
+                                            self.current_type_subst = saved_inner;
+                                            let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                .map(|t| (t.clone(), inner_ret.clone()))
+                                                .collect();
+                                            match &a.expr().kind {
+                                                crate::ast::ExprKind::ClosureLight { params, body } => {
+                                                    let legacy_params: Vec<crate::ast::LambdaParam> = params.iter()
+                                                        .map(|p| crate::ast::LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                        .collect();
+                                                    let body_expr: crate::ast::Expr = match body {
+                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                        crate::ast::ClosureBody::Block(b) => crate::ast::Expr::new(
+                                                            crate::ast::ExprKind::Block(b.clone()),
+                                                            b.span,
+                                                        ),
+                                                    };
+                                                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                                }
+                                                crate::ast::ExprKind::Lambda { params, body, return_type: ret, .. } => {
+                                                    self.emit_lambda(params, body, Some(&ctx), ret.as_ref())?
+                                                }
+                                                _ => unreachable!(),
+                                            }
+                                        } else {
+                                            self.emit_expr(a.expr())?
+                                        };
+                                        parts.push(v);
                                     }
                                     return Ok(format!("{}({})", mono_name, parts.join(", ")));
                                 }
