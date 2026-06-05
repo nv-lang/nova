@@ -416,11 +416,22 @@ type, `tok.cancel()`/`is_cancelled()`/`bind()` методы. Реализова�
   - `[M-125-stmt-position-divergence]` — `stmt_diverges` для
     `Return`/`Break`/`Continue` (control-flow analysis).
   - `[M-125-while-true-divergence]` — Rust-style const-true loop.
-  - `[M-125-codegen-never-cast]` — comma-expr `(throw, 0LL)` hardcoded
-    `nova_int` — нужен context-aware cast.
-  - `[M-125-unreachable-builtin]` — `unreachable()` prelude fn.
-  - `[M-125-method-call-never-detection]` — method-calls c -> never (V1
-    only direct `Ident` calls).
+- **Закрытые followups (2026-06-05, отдельная sub-batch):**
+  - `[M-125-unreachable-builtin]` ✅ CLOSED — `fn unreachable(reason str) -> never`
+    добавлен в `std/prelude/runtime.nv` + re-export в `std/prelude.nv` +
+    `std/prelude/e2026_05.nv`. Whitelist в `expr_diverges_125` рядом с
+    panic/exit. 3 фикстуры PASS (basic / match-default / runtime-fires).
+  - `[M-125-method-call-never-detection]` ✅ CLOSED — extended
+    `expr_diverges_125` whitelist на `ExprKind::Member` calls (instance
+    method `obj.method()` + static method `Type.method()` `-> never`).
+    Registry `never_returning_methods: HashSet<(String, String)>`,
+    populated during method/free-fn scan. 3 фикстуры PASS.
+  - `[M-125-codegen-never-cast]` ✅ CLOSED — context-aware dummy для
+    comma-expr `(side_effect, dummy)` обёртки divergent expressions.
+    Replaces hardcoded `(nova_int)0LL` на target-typed zero (pointers →
+    `(T)NULL`, ints → `(T)0`, floats → `(T)0.0`, structs → C99 compound
+    literal `(T){0}`, unit → `NOVA_UNIT`). Wire site:
+    `emit_expr_with_target_type`. 3 фикстуры PASS.
 
 ### [M-result-erased-no-mono] ✅ ЗАКРЫТО (Plan 63 Fix F + Fix F+, 2026-05-17)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — Fix F base
@@ -13865,11 +13876,22 @@ type, `tok.cancel()`/`is_cancelled()`/`bind()` методы. Реализова�
   - `[M-125-stmt-position-divergence]` — `stmt_diverges` для
     `Return`/`Break`/`Continue` (control-flow analysis).
   - `[M-125-while-true-divergence]` — Rust-style const-true loop.
-  - `[M-125-codegen-never-cast]` — comma-expr `(throw, 0LL)` hardcoded
-    `nova_int` — нужен context-aware cast.
-  - `[M-125-unreachable-builtin]` — `unreachable()` prelude fn.
-  - `[M-125-method-call-never-detection]` — method-calls c -> never (V1
-    only direct `Ident` calls).
+- **Закрытые followups (2026-06-05, отдельная sub-batch):**
+  - `[M-125-unreachable-builtin]` ✅ CLOSED — `fn unreachable(reason str) -> never`
+    добавлен в `std/prelude/runtime.nv` + re-export в `std/prelude.nv` +
+    `std/prelude/e2026_05.nv`. Whitelist в `expr_diverges_125` рядом с
+    panic/exit. 3 фикстуры PASS (basic / match-default / runtime-fires).
+  - `[M-125-method-call-never-detection]` ✅ CLOSED — extended
+    `expr_diverges_125` whitelist на `ExprKind::Member` calls (instance
+    method `obj.method()` + static method `Type.method()` `-> never`).
+    Registry `never_returning_methods: HashSet<(String, String)>`,
+    populated during method/free-fn scan. 3 фикстуры PASS.
+  - `[M-125-codegen-never-cast]` ✅ CLOSED — context-aware dummy для
+    comma-expr `(side_effect, dummy)` обёртки divergent expressions.
+    Replaces hardcoded `(nova_int)0LL` на target-typed zero (pointers →
+    `(T)NULL`, ints → `(T)0`, floats → `(T)0.0`, structs → C99 compound
+    literal `(T){0}`, unit → `NOVA_UNIT`). Wire site:
+    `emit_expr_with_target_type`. 3 фикстуры PASS.
 
 ### [M-result-erased-no-mono] ✅ ЗАКРЫТО (Plan 63 Fix F + Fix F+, 2026-05-17)
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs` — Fix F base

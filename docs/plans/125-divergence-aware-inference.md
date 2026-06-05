@@ -536,11 +536,21 @@ phased Ф.1 → full test → Ф.2 → ... через ~36-53h. Обоснова�
    trailing-only)
 4. `[M-125-while-true-divergence]` — Rust-style const-true loop как
    divergent
-5. `[M-125-codegen-never-cast]` — comma-expr `(throw, 0LL)` hardcoded
-   `nova_int` — context-aware cast
-6. `[M-125-unreachable-builtin]` — `unreachable()` prelude fn с `-> never`
-7. `[M-125-method-call-never-detection]` — V1 only direct `Ident`
-   calls; method-calls c -> never — отдельный case
+5. ✅ `[M-125-codegen-never-cast]` — **CLOSED 2026-06-05** (branch
+   `plan-125-followups`) — context-aware target-typed dummy для
+   comma-expr `(side_effect, dummy)`; replaces hardcoded `(nova_int)0LL`
+   на target-typed zero (pointers/ints/floats/unit/structs). Wire site:
+   `emit_expr_with_target_type`.
+6. ✅ `[M-125-unreachable-builtin]` — **CLOSED 2026-06-05** (branch
+   `plan-125-followups`) — `fn unreachable(reason str) -> never` добавлен
+   в `std/prelude/runtime.nv` + re-export в `std/prelude.nv` и
+   `std/prelude/e2026_05.nv`. Whitelist в `expr_diverges_125` (panic/
+   exit/unreachable hardcoded names).
+7. ✅ `[M-125-method-call-never-detection]` — **CLOSED 2026-06-05**
+   (branch `plan-125-followups`) — extended `expr_diverges_125`
+   whitelist на `ExprKind::Member` calls (instance + static `-> never`).
+   Registry `never_returning_methods: HashSet<(String, String)>`,
+   populated during method/free-fn scan.
 
 ### Closing checklist
 
@@ -575,3 +585,33 @@ phased Ф.1 → full test → Ф.2 → ... через ~36-53h. Обоснова�
 - `d27f3341a0c` Merge plan-125 — Plan 125 V1 ✅ CLOSED (on main)
 
 **Status:** ✅ **CLOSED + MERGED + PUSHED 2026-06-05.**
+
+---
+
+## Followup batch — 3/7 closed (2026-06-05, branch `plan-125-followups`)
+
+Сразу после Plan 125 V1 закрытия был выполнен sub-batch followups:
+`[M-125-unreachable-builtin]` + `[M-125-method-call-never-detection]` +
+`[M-125-codegen-never-cast]`. Каждый закрыт отдельным коммитом, full
+plan125 regression 22/22 PASS после каждого, plan125_followups 9/9 PASS.
+
+### Закрытые followups (3 of 7)
+
+| # | Marker | Changes | Tests |
+|---|---|---|---|
+| 5 | `[M-125-codegen-never-cast]` | `emit_expr_with_target_type` + `emit_divergent_with_target_125` + `typed_zero_value_125` — target-typed dummy для comma-expr `(side_effect, dummy)` | 3 (let-typed, arg-position, f64-target) |
+| 6 | `[M-125-unreachable-builtin]` | `fn unreachable(reason str) -> never` в `std/prelude/runtime.nv` + re-export через `std/prelude.nv` + `std/prelude/e2026_05.nv` + whitelist в `expr_diverges_125` | 3 (basic, match-default, runtime-fires) |
+| 7 | `[M-125-method-call-never-detection]` | Registry `never_returning_methods` + helper `fn_return_is_never_125` + `ExprKind::Member` branch в `expr_diverges_125` (instance + static dispatch) | 3 (user-type instance, static, runtime-fires) |
+
+### Остающиеся followups (4 of 7)
+
+| # | Marker | Status |
+|---|---|---|
+| 1 | `[M-125-type-checker-never-first-class]` | 🟡 deferred — Ф.5 не нужен для production codegen V1 |
+| 2 | `[M-125-loop-no-break-divergence]` | 🟡 backlog — over-approx risk, требует control-flow analysis |
+| 3 | `[M-125-stmt-position-divergence]` | 🟡 backlog — control-flow analysis за пределами trailing-only |
+| 4 | `[M-125-while-true-divergence]` | 🟡 backlog — Rust-style const-true loop |
+
+### Followup batch commit chain
+
+(коммиты в branch `plan-125-followups`, см. merge статус в основной части plan-doc)
