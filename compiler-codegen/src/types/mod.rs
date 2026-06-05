@@ -2704,6 +2704,13 @@ impl<'a> TypeCheckCtx<'a> {
             };
             let then_name = Self::typeref_to_name(&then_ty)?;
             let else_name = Self::typeref_to_name(&else_ty)?;
+            // Plan 125.1 (Ф.3): divergent branch (`never`) не считается
+            // конфликтом Consumable-типов — bottom type subtype of any.
+            // Без guard'а `if cond { throw e } else { vec }` стал бы ложно
+            // диагностироваться D196-form-3 как "never vs Vec".
+            if then_name == "never" || else_name == "never" {
+                return None;
+            }
             if then_name != else_name {
                 return Some((then_name, else_name));
             }
@@ -2713,9 +2720,38 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn infer_block_trailing_typeref(&self, b: &crate::ast::Block) -> Option<TypeRef> {
         if let Some(t) = &b.trailing {
+            // Plan 125.1 (Ф.3): trailing-divergence detection. По спеке D25
+            // bottom-тип `never` propagates как тип блока, когда trailing
+            // expression diverges (throw / interrupt / never-returning call).
+            // Conservative: НЕ ходим по preceding stmts (только trailing).
+            // Hookpoint feeds assignable() never-subtype branch из Ф.1.
+            if Self::expr_diverges_at_top(t) {
+                return Some(prim_ref("never", t.span));
+            }
             self.infer_consume_init_typeref(t)
         } else {
             None
+        }
+    }
+
+    /// Plan 125.1 (Ф.3): top-level divergence check для trailing expression.
+    /// Возвращает true, если expression имеет тип `never` (D25 bottom):
+    /// `throw e`, `interrupt v?`, или call к never-returning builtin
+    /// (panic/exit/abort/unreachable). Conservative — не walks вложенные
+    /// statements, только распознаёт top-level shape. Mirrors detection
+    /// logic из `infer_expr_type` Ф.2 (без scope-зависимости).
+    fn expr_diverges_at_top(e: &Expr) -> bool {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Throw(_) | ExprKind::Interrupt(_) => true,
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    matches!(name.as_str(), "panic" | "exit" | "abort" | "unreachable")
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
