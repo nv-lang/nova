@@ -32379,3 +32379,74 @@ d27f3341a0c).
 **Unblocks:** Plan 91 Ф.3 (JSON conformance) теперь может
 использовать `if cond { throw } else { compute_str() }` идиом без
 workaround. Любые stdlib функции с same pattern — больше не CC-FAIL.
+
+
+================================================================================
+== 2026-06-05 — Plan 110 followup plans created (110.10 + 110.11 + 110.12)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110-followup-plans (off main 616967500aa)
+
+User request: «сделай новый план(ы) для реализации всех недоделанных
+моментов, если это связано со старыми планами, добавь в них информацию,
+в каком плане это будет доделано».
+
+Решение: 3 new umbrella plan-docs + 6 existing plan-doc cross-refs.
+Все 13 open [M-110-*] markers теперь имеют explicit owner plan
+assignment.
+
+Plan 110.10 — Existing-type Consumable wrappers (~1.5-2 dev-day, P2):
+   • 110.10.1 Channel (Plan 21 base ✅) — Consumable wrapper.
+   • 110.10.2 Tcp/Udp sockets (Plan 83.12 base ✅) — Consumable wrappers.
+   • 110.10.3 JoinHandle (gated Plan 83.4.2) — Consumable wrapper.
+
+Plan 110.11 — New stdlib types umbrella (~10-15 dev-day, P3):
+   • 110.11.1 std/fs.File (~2-3 day, FFI).
+   • 110.11.2 std/bufio.BufReader/Writer (~1-2 day).
+   • 110.11.3 std/db.Transaction (~2-3 day, driver design).
+   • 110.11.4 std/pool.ConnPool (~2 day).
+   • 110.11.5 std/concurrency.CancelScope (~2 day).
+   • 110.11.6 Stream[T] (~3-4 day; corrects stale «Plan 84 = Stream» ref —
+     actually Plan 84 = relative-imports).
+
+Plan 110.12 — Cross-cutting orphan markers (~3-5 dev-day, P3):
+   • 110.12.1 MultiError str→any (gated на mature any codegen).
+   • 110.12.2 #[run_on_abort] + platform signals (POSIX SIGTERM + Windows
+     CTRL_C_EVENT, async-signal-safe constraints).
+   • 110.12.3 Scheduler yield-zero-race investigation (structured 4-phase:
+     reproduce/diagnose/hypothesize/fix-or-WONTFIX).
+   • 110.12.4 Quantitative bench (builds on Plan 110.8.4 infra).
+
+Cross-references added к existing plans:
+   • Plan 21 (channels) — note Channel Consumable wrapper в Plan 110.10.1.
+   • Plan 83.12 (TCP/UDP) — note Consumable wrappers в Plan 110.10.2.
+   • Plan 83.4.2 (supervised drain) — note JoinHandle Consumable в 110.10.3
+     (gated на 83.4.2 closure).
+   • Plan 110.4 (multierror) — note MultiError str→any в Plan 110.12.1.
+   • Plan 110.8 (docs close) — note quantitative bench в Plan 110.12.4.
+   • Plan 91 (std MVP) — coordination note с Plan 110.11 umbrella (overlap
+     check per sub-task — Plan 91 type ships → 110.11.X scope reduces к
+     Consumable impl only).
+
+Marker tally pre-creation (cumulative previous audits):
+   • Plan 110 V1+V1.1: 11 markers closed (110.1-110.9 + 110.9.5.a +
+     deadline-fire-fixture).
+   • 13 markers remained open без owner plan.
+
+Marker tally post-creation:
+   • All 13 open markers now have owner plan + estimated scope + dependency
+     mapping + sub-task breakdown.
+   • Audit trail complete: simplifications.md updated с owner plan refs;
+     existing plans updated с downstream followup notes.
+
+Lessons:
+   • Stale plan references (Plan 84 ≠ Stream[T]) caught during owner
+     assignment audit. Pattern: when extracting marker, verify owner
+     plan actually contains the work — не assume by number.
+   • «Independent plans» as marker target = future-self trap. Explicit
+     sub-plan numbering (110.10/110.11/110.12) + cross-references makes
+     unblocking sequencing visible.
+   • Coordination note с Plan 91 prevents duplicate type design — если
+     Plan 91 ships std/fs.File, Plan 110.11.1 becomes pure Consumable
+     impl PR без full type design.
