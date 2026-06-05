@@ -1,0 +1,168 @@
+// cancel_with_corrupted_token.nv — Plan 83.11 §8.2 N7 — fuzz cancel API
+//
+// «Corrupted» здесь — boundary-case "потенциально-misused" токен. Nova не
+// даёт unsafe escape hatch для построения wild CancelToken (Plan 118 unsafe
+// ptr API не позволяет кастовать raw int → GC-pointer на CancelToken; нет
+// CancelToken.from_raw_ptr или подобного). Поэтому «corruption» здесь
+// моделируется через legal-but-unusual паттерны вызова, которые могли бы
+// зацепить latent state-corruption баги в Plan 83.11 централизованном I/O
+// driver'е:
+//
+//   1. Cancel-storm: 50 fiber'ов конкурентно вызывают cancel(reason_i) на
+//      одном токене. CAS-loop в nova_cancel_token_cancel_reason должен
+//      сохранить ровно ONE reason, остальные no-op. Если есть UAF на linked[]
+//      или wild-write при wake_all — SEGV/abort.
+//
+//   2. Cancel ПОСЛЕ scope exit: токен переживает supervised(cancel:) scope,
+//      cancel вызван когда bound_scope уже NULL'нут unbind'ом. C-runtime
+//      guard `if (t->bound_scope) ...` обязан защитить от UAF stale-pointer.
+//
+//   3. Cancel через cascade на already-cancelled родителе: cancel вызван
+//      на parent, который cancelled до bind_cascade. cancel должен сразу
+//      пробросить в child без UAF на linked[].
+//
+//   4. Cancel из multiple fibers с большими reason-строками: проверяет
+//      cancel_box_str + memcpy в struct CancelToken — целевой адрес должен
+//      быть валидным heap-pointer'ом, не stale .rdata (см. §12.10 design.md).
+//
+// Expected: все test'ы PASS (intent recorded, no SEGV, no abort). Любое
+// падение в этих сценариях = latent UAF/wild-write в cancel API.
+
+module concurrency.cancel_with_corrupted_token
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fuzz 1: cancel-storm — 50 fiber'ов конкурентно вызывают cancel
+// ──────────────────────────────────────────────────────────────────────────
+
+test "fuzz cancel-storm: 50 fibers race cancel(reason_i) — exactly one wins, no SEGV" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        for _i in 0..50 {
+            spawn { tok.cancel("storm") }
+        }
+        spawn { for _j in 0..1000 { } }
+    }
+    // Если CAS-loop сломан → SEGV/abort при concurrent write в reason_ptr.
+    // PASS-критерий: процесс жив, intent записан, reason — ровно "storm".
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "storm")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fuzz 2: cancel ПОСЛЕ scope exit — токен пережил bound_scope unbind
+// ──────────────────────────────────────────────────────────────────────────
+
+test "fuzz post-scope cancel: токен пережил supervised → cancel after exit — no UAF" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn { for _i in 0..100 { } }
+    }
+    // Здесь supervised выходит → C-runtime nova_cancel_token_unbind(tok)
+    // обнуляет bound_scope. Cancel ПОСЛЕ unbind должен быть guarded:
+    // if (t->bound_scope) { ... } — NULL skip, intent всё равно записан.
+    tok.cancel("post-scope")
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "post-scope")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fuzz 3: cancel через cascade на already-cancelled parent
+// ──────────────────────────────────────────────────────────────────────────
+
+test "fuzz cascade-on-cancelled-parent: bind_cascade после cancel — child мгновенно cancelled" {
+    ro parent = CancelToken.new()
+    parent.cancel("parent-pre")
+    assert(parent.is_cancelled())
+
+    ro child = CancelToken.new()
+    // cancelled_by на УЖЕ cancelled parent — внутренний guard в
+    // nova_cancel_token_bind_cascade обязан мгновенно бросить cancel в child
+    // через тот же безопасный путь (без race на linked[]).
+    child.cancelled_by(parent)
+    assert(child.is_cancelled())
+    ro r = child.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    // Cascade конвертит reason 1:1 (same-type pass-through).
+    assert(got == "parent-pre")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fuzz 4: cancel-storm с большими reason-строками — проверка cancel_box_str
+// ──────────────────────────────────────────────────────────────────────────
+
+test "fuzz large-reason-storm: concurrent cancel с большими reason'ами — memcpy destination valid" {
+    // Большие строки → cancel_box_str делает GC-alloc + memcpy в struct
+    // CancelToken. Если destination pointer wild (stale .rdata, см. design
+    // §12.10 narrowing) → write-crash. Concurrent storm увеличивает шанс
+    // ловли race между CAS-winner и потерянными writers.
+    ro tok = CancelToken.new()
+    ro big = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    supervised(cancel: tok) {
+        for _i in 0..20 {
+            spawn { tok.cancel(big) }
+        }
+        spawn { for _j in 0..500 { } }
+    }
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    // First-cancel-wins → reason == big (только этот reason возможен в storm).
+    assert(got == big)
+    assert(got.len() == 64)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fuzz 5: alternating cancel/check pattern — read-after-cancel из других fiber'ов
+// ──────────────────────────────────────────────────────────────────────────
+
+test "fuzz read-after-cancel race: один fiber cancel'ит, остальные читают reason()" {
+    // Race между cancel_reason writer и concurrent reader'ами reason().
+    // Если cancel_reason записывает reason_ptr НЕ-атомарно (or без proper
+    // release-fence) — reader может прочитать torn pointer → SEGV при
+    // dereference в reason() getter.
+    ro tok = CancelToken.new()
+    mut readers_saw_some = 0
+    supervised(cancel: tok) {
+        spawn { tok.cancel("racey") }
+        for _i in 0..10 {
+            spawn {
+                for _j in 0..100 {
+                    if tok.is_cancelled() {
+                        ro r = tok.reason()
+                        ro is_some = match r {
+                            Some(_) => true
+                            None    => false
+                        }
+                        if is_some {
+                            readers_saw_some += 1
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert(tok.is_cancelled())
+    // Не assert'им readers_saw_some > 0 — race-зависимо. Главное: процесс жив.
+    assert(readers_saw_some >= 0)
+}

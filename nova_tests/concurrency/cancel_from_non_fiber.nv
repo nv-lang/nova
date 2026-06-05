@@ -1,0 +1,106 @@
+// cancel_from_non_fiber.nv — Plan 83.11 §8.2 N3 — cancel_from_non_fiber.
+//
+// Verifies behavior when `tok.cancel()` is called from the MAIN thread —
+// i.e. NOT inside any `spawn { }` body. The runtime API contract
+// (verified empirically against compiler-codegen/nova_rt/fibers.h
+// `nova_cancel_token_cancel_reason`, lines 808-883) is:
+//
+//   - `bound_scope == NULL` path: simply atomically sets `cancel_requested`,
+//     records `reason_ptr`, and cascades through `linked[]`. No yield, no
+//     park, no fiber-context check, no panic, no abort.
+//   - `bound_scope != NULL` path (token bound to a supervised scope):
+//     additionally wakes parked fibers and submits CANCEL_SCOPE driver
+//     job. Still no fiber-context-check assertion on the CALLER.
+//
+// Therefore: cancel from main is a NO-OP at the language level — fully
+// supported, idempotent, observable via `is_cancelled()` and `reason()`.
+//
+// This test is a regression guard: if a future change introduces a
+// runtime assertion `assert(_nova_active_co != NULL)` or similar
+// fiber-context-check in `nova_cancel_token_cancel_reason`, the
+// first test below will abort the binary and fail. Existing fixture
+// `cancel_token_generic_smoke.nv` line 17 `tok.cancel("hello")` outside
+// any supervised/spawn block depends on the same invariant; this file
+// makes the contract explicit and gives §8.2 N3 a dedicated test name.
+
+module concurrency.cancel_from_non_fiber
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. cancel from main thread (unbound token) — sets flag, no panic
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel from main thread on unbound token is a clean no-op" {
+    ro tok = CancelToken.new()
+    // Direct call from main — no supervised, no spawn around it.
+    tok.cancel("from main")
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "from main")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. cancel() without reason from main → default "cancelled"
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel() no-arg from main → reason 'cancelled'" {
+    ro tok = CancelToken.new()
+    tok.cancel()
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. Idempotency on main thread — repeated cancel from main is harmless
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel from main is idempotent (first-cancel-wins)" {
+    ro tok = CancelToken.new()
+    tok.cancel("first")
+    tok.cancel("second")   // no-op (first-cancel-wins, like Go context.Cause)
+    tok.cancel("third")    // no-op
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. cancel from main AFTER supervised scope exits — still a no-op
+// ──────────────────────────────────────────────────────────────────────────
+// After `supervised(cancel: tok) { ... }` returns, the runtime unbinds the
+// token (`nova_cancel_token_unbind`) → `bound_scope` cleared. Then
+// `tok.cancel()` from main takes the same unbound-token path as test 1.
+
+test "cancel from main after supervised exits is still a no-op" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn { for _i in 0..100 { } }
+    }
+    // Scope exited cleanly — no cancel was issued inside.
+    assert(!tok.is_cancelled())
+    // Now cancel from main, post-unbind.
+    tok.cancel("post-scope")
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "post-scope")
+}

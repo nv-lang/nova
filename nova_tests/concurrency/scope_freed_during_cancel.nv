@@ -1,0 +1,62 @@
+// scope_freed_during_cancel.nv — Plan 83.11 §8.2 N9 regression guard.
+//
+// REGRESSION GUARD for §12.31 fix (`pending_driver_jobs` lifetime counter).
+//
+// Bug pattern: `tok.cancel()` invoked from inside a spawned fiber on the
+// token bound to the enclosing `supervised(cancel: tok)` scope triggers a
+// driver CANCEL_SCOPE job. Without the §12.31 fix the supervised scope's
+// stack frame can be reused (scope_freed) before the driver thread
+// dereferences scope fields → use-after-free / SEGV / WRITE-into-.rdata
+// in `_nova_driver_handle_cancel_scope` walking a stale armed-list.
+//
+// Fix (§12.31, fibers.h):
+//   - `NovaFiberQueue` field `nova_atomic_int pending_driver_jobs`
+//   - `_nova_cancel_via_driver` increments BEFORE submit_job
+//   - `_nova_driver_handle_cancel_scope` decrements at end (RELEASE)
+//   - `nova_supervised_run_impl` waits `pending_driver_jobs == 0` after
+//     scope-body returns, draining uv_run(UV_RUN_NOWAIT) + uv_sleep(1)
+//     before allowing the scope's stack frame to be released.
+//
+// Stress history (per §12.31.b table):
+//   - HEAD baseline (no fix): _min stress 1/30 PASS (29 SEGV) — BAD
+//   - With pending_driver_jobs fix: _min stress 30/30 PASS — ✅
+//   - 90× additional run: 119/120 PASS — 99.2% (single non-SEGV flake
+//     unrelated to the bug).
+//
+// External stress harness: `tools/stress_bisect.sh
+// nova_tests/concurrency/scope_freed_during_cancel.nv 30`
+// must report 30/30 PASS — that is the acceptance gate. The test body
+// runs the necessary-and-sufficient pattern ONCE per process; the harness
+// repeats the .exe to isolate SIGSEGV propagation.
+//
+// Catalogued as "negative" N9 in §8.2 — i.e. verifies the absence of
+// bad behavior (no UAF on armed list — driver detects + skips). The
+// fixture itself must exit 0 and NOT panic.
+module concurrency.scope_freed_during_cancel
+
+
+test "scope_freed_during_cancel — cancel-from-spawn UAF regression guard" {
+    // Necessary-and-sufficient pattern from §12.10:
+    //   supervised(cancel: tok) { spawn { tok.cancel() } }
+    //
+    // Without §12.31 fix this crashes with WRITE memcpy into .rdata
+    // ~26-30/30 SEGFAULT. With fix: 30/30 PASS.
+    //
+    // No reason string — §12.10 confirmed reason ptr is RED HERRING;
+    // cancel-without-reason also crashes. We keep this minimal so the
+    // test focuses tightly on the cancel-from-spawn → driver job
+    // lifetime race.
+    ro tok = CancelToken.new()
+    mut after_scope = false
+    supervised(cancel: tok) {
+        spawn {
+            tok.cancel()
+        }
+    }
+    // If supervised returned without SEGV, §12.31 fix held: driver
+    // CANCEL_SCOPE job finished dereferencing scope fields before the
+    // stack frame was released.
+    after_scope = true
+    assert(after_scope)
+    assert(tok.is_cancelled())
+}

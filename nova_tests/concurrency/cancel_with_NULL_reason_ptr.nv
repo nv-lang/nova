@@ -1,0 +1,164 @@
+// cancel_with_NULL_reason_ptr.nv — Plan 83.11 §8.2 N11
+//
+// Negative test: `tok.cancel()` (без аргумента) внутренне доходит до
+// `nova_cancel_token_cancel_reason(t, reason_ptr)`. На стороне C runtime
+// существует path где reason_ptr=NULL — в частности при каскаде через
+// `linked[]` если parent был отменён без reason (см. fibers.h:875-883:
+// `if (..converters[i] && reason_ptr) {..}` — converter применяется только
+// для не-NULL reason; иначе NULL пробрасывается дальше).
+//
+// Инвариант N11: NULL reason ptr ДОЛЖЕН быть безопасным — ни SEGV, ни
+// UAF, ни abort. reason() должен вернуть либо Some(sentinel) (codegen-side
+// emits "cancelled" для bare tok.cancel()), либо None (если reason реально
+// NULL — например после cascade NULL-propagation), но НИКОГДА не Some(
+// garbage), приводящего к crash'у на use-сайте.
+//
+// Этот тест PASS = код корректно прошёл все cancel-path'ы без crash'а.
+// Если регрессия добавит NULL-deref (например в reason_str getter, или
+// в cascade-loop, или в bound_scope wake-machinery) — тест упадёт SEGV.
+//
+// Связан: Plan 83.11 §8.2 (negative test catalog).
+// Marker: ни EXPECT_STDERR, ни EXPECT_RUNTIME_PANIC — тест должен PASS
+// чисто.
+
+module concurrency.cancel_with_NULL_reason_ptr
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N11.1: bare tok.cancel() на unbound токене — не SEGV, intent записан
+// ──────────────────────────────────────────────────────────────────────────
+
+test "N11: bare cancel() on unbound token — no SEGV" {
+    // Plan 49 Ф.1: на unbound токене (без supervised) cancel() записывает
+    // intent + reason ("cancelled" sentinel из codegen) но не пытается
+    // wake bound_scope (поле NULL → if(t->bound_scope) skip).
+    // Регрессия = SEGV в bound_scope-pointer-deref без NULL-check.
+    ro tok = CancelToken.new()
+    tok.cancel()
+    assert(tok.is_cancelled())
+    // reason() должен вернуть Some("cancelled") (codegen-emitted sentinel
+    // для bare cancel() на CancelToken[str]); НЕ Some(garbage), НЕ crash.
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N11.2: bare cancel() внутри supervised(cancel: tok) — no SEGV в wake-path
+// ──────────────────────────────────────────────────────────────────────────
+
+test "N11: bare cancel() inside supervised — wake-path safe" {
+    // Этот case упражняет полный cancel-path с reason_ptr НЕ-NULL
+    // (codegen передаёт sentinel "cancelled"), но также проверяет что
+    // wake-machinery (sched_cancel_all_pending → scope_cancel_wake_all →
+    // runtime_cancel_worker_fibers → _nova_cancel_via_driver) не падает
+    // при минимальной нагрузке (0 parked fiber'ов, 1 spawn после cancel).
+    ro tok = CancelToken.new()
+    mut after_scope = false
+    supervised(cancel: tok) {
+        spawn {
+            tok.cancel()             // bare — без reason argument
+        }
+        spawn {
+            for _i in 0..100 { }     // CPU-bound peer
+        }
+    }
+    after_scope = true
+    assert(after_scope)
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N11.3: cascade с bare cancel() — NULL-propagation в linked[] loop
+// ──────────────────────────────────────────────────────────────────────────
+
+test "N11: cascade after bare cancel() — linked loop safe" {
+    // child.cancelled_by(parent) → bind_cascade.
+    // parent.cancel() (bare) → cancel_reason(parent, "cancelled") →
+    // cascade loop в fibers.h:875-883 итерирует linked[]; для каждого
+    // child зовёт cancel_reason(child, reason_ptr). converters[i] && reason_ptr
+    // — converter применяется только при не-NULL reason. Тут reason ≠ NULL
+    // (sentinel), но same-type → converter NULL → pass-through.
+    //
+    // N11 invariant: даже при пустом linked_converters массиве (NULL pointer)
+    // loop безопасно проверяет && и не deref'ит NULL.
+    ro parent = CancelToken.new()
+    ro child = CancelToken.new()
+    child.cancelled_by(parent)
+    parent.cancel()
+    assert(parent.is_cancelled())
+    assert(child.is_cancelled())
+    // child reason — same-type pass-through от parent.
+    ro rp = parent.reason()
+    ro rc = child.reason()
+    ro got_p = match rp {
+        Some(s) => s
+        None    => ""
+    }
+    ro got_c = match rc {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got_p == "cancelled")
+    assert(got_c == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N11.4: повторный bare cancel() — idempotent path, no double-free
+// ──────────────────────────────────────────────────────────────────────────
+
+test "N11: double bare cancel() — idempotent, no SEGV" {
+    // fibers.h:810: `if (cancel_requested) return` — first-cancel-wins
+    // short-circuits сразу. Регрессия = повторное переписывание reason_ptr
+    // или повторный wake → use-after-free или double-wake panic.
+    ro tok = CancelToken.new()
+    tok.cancel()
+    tok.cancel()          // no-op
+    tok.cancel()          // no-op
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    // Первый reason должен сохраниться (first-cancel-wins).
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// N11.5: cancel() на завершённом scope — token outlives, no SEGV
+// ──────────────────────────────────────────────────────────────────────────
+
+test "N11: bare cancel() on unbound-after-scope — no SEGV" {
+    // После выхода из supervised(cancel:) bound_scope = NULL (unbind).
+    // Если регрессия не выполнит unbind корректно — cancel() будет писать
+    // в уже-освобождённый scope queue → UAF SEGV.
+    ro tok = CancelToken.new()
+    mut ran = false
+    supervised(cancel: tok) {
+        spawn { ran = true }
+    }
+    // Scope завершён, token unbound. bare cancel() → bound_scope=NULL path.
+    tok.cancel()
+    assert(ran)
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}

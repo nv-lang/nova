@@ -1,0 +1,108 @@
+// cancel_unbound_token.nv — Plan 83.11 §8.2 N2 — cancel_unbound_token.
+//
+// Negative test (в смысле "что НЕ должно происходить"): cancel() вызванный
+// на токене ДО bind в любой supervised(cancel:) scope — не panic, не SEGV.
+// Intent-флаг записывается: is_cancelled() == true, reason() == Some(reason).
+//
+// Контракт C-runtime (fibers.h nova_cancel_token_cancel_reason ~808):
+//   if (t->bound_scope) { ... wake parked fibers ... }
+// — guard на NULL bound_scope, так что cancel pre-bind = noop по части
+// scheduler-wake, но intent + reason записываются atomic'но.
+//
+// Гарантирует что Plan 83.11 централизованный I/O driver не сломал
+// pre-bind cancel path: токен может быть создан, cancel'ed, и только
+// потом передан в supervised(cancel:) — scope сразу видит intent.
+module concurrency.cancel_unbound_token
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. cancel() pre-bind — без аргумента → default reason "cancelled"
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel pre-bind: tok.cancel() до supervised — no panic, intent recorded" {
+    ro tok = CancelToken.new()
+    // Pre-condition: свежий токен — clean intent.
+    assert(!tok.is_cancelled())
+
+    // Cancel БЕЗ bind в любой scope — bound_scope == NULL.
+    // Контракт: no panic, no SEGV, intent flag atomic-set.
+    tok.cancel()
+
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. cancel(reason) pre-bind — typed reason переживает до bind'а
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel pre-bind: tok.cancel(reason) до supervised — reason сохраняется" {
+    ro tok = CancelToken.new()
+    tok.cancel("pre-bind reason")
+
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "pre-bind reason")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. Pre-bind cancel + supervised(cancel: tok) — scope видит intent сразу
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel pre-bind: токен с already-cancelled передан в supervised — fibers видят cancel" {
+    // Сценарий: cancel вызван ДО открытия scope. Токен затем передан в
+    // supervised(cancel: tok) — scope должен немедленно увидеть intent
+    // и завершиться без зависания.
+    ro tok = CancelToken.new()
+    tok.cancel("early")
+    assert(tok.is_cancelled())
+
+    mut after_scope = false
+    supervised(cancel: tok) {
+        spawn {
+            // Любая yield-point должна увидеть cancel_requested.
+            for _i in 0..100 { }
+        }
+    }
+    after_scope = true
+
+    // Scope завершился без panic / без re-throw наружу.
+    assert(after_scope)
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    // first-cancel-wins: "early" пережил scope entry/exit.
+    assert(got == "early")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. Pre-bind double-cancel — idempotent
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel pre-bind: double cancel на unbound токене — idempotent" {
+    ro tok = CancelToken.new()
+    tok.cancel("first")
+    tok.cancel("second")  // должен быть no-op
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first")
+}
