@@ -1,0 +1,16 @@
+// Plan 125.2 [M-125-while-true-divergence] regression guard:
+// `while false {}` — no-op loop, тело не выполняется ни разу, НЕ divergent.
+// Pattern strictly matches `BoolLit(true)` — `BoolLit(false)` falls through
+// to non-divergent default. Legitimate idiom: должен компилироваться,
+// while-false возвращает unit, функция возвращает значение нормально.
+
+module neg.while_false_NOT_divergent
+
+fn run() -> int {
+    while false {}
+    7
+}
+
+test "while-false is no-op, function returns normally" {
+    assert(run() == 7)
+}
