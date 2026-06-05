@@ -1,0 +1,54 @@
+// Plan 128.1 Ф.3 T13b — array element named tuple + mut-method through
+// Index projection. Lifts V1 limitation from original T13 (function-
+// return workaround). Requires both:
+//   - Ф.1 fix (is_lvalue_receiver recognises Index-of-Ident as lvalue —
+//     receiver emits as `&(arr->data[i])` not `&__tmp`).
+//   - Ф.2 fix (array literal `[Vec3(...), ...]` infers element type via
+//     TypeDeclKind::NamedTuple constructor type-producing).
+
+module plan128.t13b_array_named_tuple_mut_method_ok
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+fn Vec3 mut @scale_inplace(k f64) -> () {
+    @x = @x * k
+    @y = @y * k
+    @z = @z * k
+}
+
+test "array[i].set_x — direct mut method through Index projection" {
+    mut vs = [Vec3(x: 1.0, y: 2.0, z: 3.0), Vec3(x: 4.0, y: 5.0, z: 6.0)]
+    vs[0].set_x(99.0)
+    assert(vs[0].x == 99.0)
+    assert(vs[0].y == 2.0)
+    assert(vs[0].z == 3.0)
+    // Element 1 must remain untouched.
+    assert(vs[1].x == 4.0)
+    assert(vs[1].y == 5.0)
+    assert(vs[1].z == 6.0)
+}
+
+test "array[i].scale_inplace — direct mut method through Index" {
+    mut vs = [Vec3(x: 1.0, y: 1.0, z: 1.0), Vec3(x: 2.0, y: 2.0, z: 2.0)]
+    vs[1].scale_inplace(3.0)
+    // Element 0 untouched.
+    assert(vs[0].x == 1.0)
+    assert(vs[0].y == 1.0)
+    assert(vs[0].z == 1.0)
+    // Element 1 scaled.
+    assert(vs[1].x == 6.0)
+    assert(vs[1].y == 6.0)
+    assert(vs[1].z == 6.0)
+}
+
+test "array[i].mut_method on both elements — independent writes" {
+    mut vs = [Vec3(x: 0.0, y: 0.0, z: 0.0), Vec3(x: 0.0, y: 0.0, z: 0.0)]
+    vs[0].set_x(10.0)
+    vs[1].set_x(20.0)
+    assert(vs[0].x == 10.0)
+    assert(vs[1].x == 20.0)
+}

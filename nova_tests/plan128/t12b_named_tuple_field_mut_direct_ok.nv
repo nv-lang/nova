@@ -1,0 +1,58 @@
+// Plan 128.1 Ф.3 T12b — direct `b.v.set_x(...)` chained mut-method
+// through field projection on a record member typed as a named tuple.
+//
+// Lifts V1 limitation documented в T14 (extract-mutate-writeback
+// workaround). Plan 128.1 Ф.1 fix (AST-aware is_lvalue_receiver in
+// prepare_method_recv) makes `&(b->v)` the receiver — Member-of-Ident
+// is now recognised as an addressable lvalue, callee writes
+// `nova_self->x = v` land in the original slot.
+
+module plan128.t12b_named_tuple_field_mut_direct_ok
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+fn Vec3 mut @scale_inplace(k f64) -> () {
+    @x = @x * k
+    @y = @y * k
+    @z = @z * k
+}
+
+type Body {
+    mut v Vec3
+    mass f64
+}
+
+fn Body.new() -> Self => {
+    v: Vec3(x: 1.0, y: 2.0, z: 3.0),
+    mass: 10.0,
+}
+
+test "record.field.mut_method() — direct chain, no extract-rebind" {
+    mut b = Body.new()
+    b.v.set_x(99.0)
+    assert(b.v.x == 99.0)
+    assert(b.v.y == 2.0)
+    assert(b.v.z == 3.0)
+    assert(b.mass == 10.0)
+}
+
+test "record.field.scale_inplace() — direct chain" {
+    mut b = Body.new()
+    b.v.scale_inplace(2.0)
+    assert(b.v.x == 2.0)
+    assert(b.v.y == 4.0)
+    assert(b.v.z == 6.0)
+}
+
+test "interleaved direct field write + chained mut method" {
+    mut b = Body.new()
+    b.v.set_x(10.0)
+    b.v.scale_inplace(3.0)
+    assert(b.v.x == 30.0)
+    assert(b.v.y == 6.0)
+    assert(b.v.z == 9.0)
+}

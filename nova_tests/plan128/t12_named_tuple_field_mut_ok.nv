@@ -1,12 +1,11 @@
 // Plan 128 Ф.4 T12 — named tuple direct field-write + mut-method
 // composition through local rebind.
 //
-// Note: `obj.field.mut_method()` где field — named tuple — known V1
-// limitation: `prepare_method_recv` hoists field-projection rvalue to
-// temp and takes &temp, so writes lost on write-back. Workaround: copy
-// field to local, mutate, write back explicitly. This test demonstrates
-// that workaround flow + verifies direct-field writes interact cleanly
-// with mut-methods on the same binding.
+// Coverage: interleaved direct-field writes and mut-method calls on
+// the same named-tuple binding all land in the original slot.
+// The chained `obj.field.mut_method()` form lifted in Plan 128.1 Ф.1
+// is covered separately by T12b (this fixture keeps the local-binding
+// pattern as regression guard for the simple case).
 
 module plan128.t12_named_tuple_field_mut_ok
 

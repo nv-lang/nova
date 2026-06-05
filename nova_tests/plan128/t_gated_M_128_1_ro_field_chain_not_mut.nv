@@ -1,0 +1,53 @@
+// Plan 128.1 Ф.3 — GATED documentation fixture for latent type-checker
+// hole [M-128.1-ro-binding-field-chain-not-mut].
+//
+// Intended-semantics negative: `ro b` + `b.v.set_x(...)` (chained mut-
+// method through field projection on a non-mut binding) SHOULD trigger
+// E_LOCAL_NOT_MUT. Today it does not — Plan 108.2 D36 enforcement
+// (types/mod.rs::consume_walk_expr Call arm) only inspects the
+// receiver when `obj.kind == ExprKind::Ident(recv)`. For
+// `b.v.set_x()` the `obj` is `ExprKind::Member { obj: Ident(b),
+// name: "v" }`, and the `is_mut == false` guard is silently skipped.
+//
+// Plan 128.1 Ф.1 (is_lvalue_receiver) made chained mut-method writes
+// flow to the underlying slot — making the gap *observable*: the
+// mutation now lands on a ro binding.  Until the type-checker walks
+// the receiver chain to the root Ident, this fixture documents the
+// current behaviour (mutation accepted) instead of asserting the
+// intended error.  Removing this gate is tracked by followup
+// [M-128.1-ro-binding-field-chain-not-mut] (P1) in plan-doc §4.
+//
+// Plain `// EXPECT_COMPILE_ERROR` marker is intentionally OMITTED so
+// the harness does not enforce the diagnostic prematurely; the fixture
+// compiles as a positive test that pins the current (buggy) behaviour.
+
+module plan128.t_gated_M_128_1_ro_field_chain_not_mut
+
+type Vec3(x f64, y f64, z f64)
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+type Body {
+    mut v Vec3
+    mass f64
+}
+
+fn Body.new() -> Self => {
+    v: Vec3(x: 1.0, y: 2.0, z: 3.0),
+    mass: 10.0,
+}
+
+test "GATED: ro b + b.v.set_x() accepted (should fire E_LOCAL_NOT_MUT)" {
+    // FIXME [M-128.1-ro-binding-field-chain-not-mut]: this call should
+    // be rejected at type-check time (ro binding + mut-method through
+    // field chain).  Pinning current behaviour: the write actually
+    // lands because Plan 128.1 Ф.1 emits `&(b->v)` as the receiver.
+    ro b = Body.new()
+    b.v.set_x(99.0)
+    assert(b.v.x == 99.0)
+    assert(b.v.y == 2.0)
+    assert(b.v.z == 3.0)
+    assert(b.mass == 10.0)
+}
