@@ -32348,6 +32348,44 @@ caches.
 r-region vs V1.2 n-region tagging в report для V6 telemetry
 granularity.
 
+---
+
+## Plan 123.7.7 — Chain receiver IPA extension (V7.7)
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-v7-7-chain-receiver. ~250 LOC.
+Closes `[M-123.7.5-chain-receiver]`.
+
+**Что сделано:** V7.5 sibling-safe IPA refinement extended k chain
+receivers `@a.b.method()`, `@a.b.c.method()`, etc. By same self-type
+reasoning (callee invoked through self-chain can't reach OTHER fields),
+sibling caches survive chain calls.
+
+**Принципы:**
+
+- **`Option<Vec<String>>` helper return** — `call_recv_self_chain` walks
+  down receiver Expr accumulating Member names с loop+accumulator+reverse
+  pattern. Cleaner than recursive Rust function; depth-agnostic.
+
+- **Dispatch order matters:** V7.7 branch follows V7.5 (direct
+  `@F.method()`) so depth-1 case stays V7.5; depth-2+ catches V7.7.
+
+- **Conservative chain-root invalidation:** chain[0] == fname keeps
+  V7.5 contract — would require V7.6 ref-type integration к relax.
+
+**Acceptance (V7.7.1-V7.7.6 все ✅):** depth-2 sibling, depth-3
+sibling, chain-root invalidates, helper extracts segments, helper
+rejects non-self-rooted + plain SelfAccess.
+
+**Verification:** 6 unit + 2 runtime fixtures PASS. Zero regressions:
+field_cache lib 83/83 + plan123_* all 10 dirs.
+
+**Pre-existing codegen issue discovered:** nested record literal
+`{ inner: { sub: ... } }` mis-types inner anonymous record as Nova_C
+instead of Nova_Inner. Worked around в V7.7 fixtures using explicit
+`Inner.new()` constructors. Not introduced by V7.7 — should be tracked
+separately.
+
+
 
 
 
@@ -32371,3 +32409,185 @@ granularity.
 **Why hard cap "≥3 unexplained flip-сайтов в Ф.4 → откат":** Recursive composition (Ф.4) — riskiest шаг. Каждый рекурсивный шаг удваивает walk. Может покрыть exotic паттерн в неожиданном месте std/. Without hard cap, ползучий scope creep → repeat of 24-regression scenario. Whitelist'е Ф.1-Ф.3 (trailing-only без recursion) достаточно для JSON Ф.3 unblock (json.nv использует prosto trailing-throw в `read_unicode_escape`).
 
 **Why ф.5 (type-checker side) опциональна, не required:** codegen-only V1 закрывает Plan 91 Ф.3 (JSON conformance) — main user-facing goal. types/mod.rs change purely для semantic cleanliness + LSP correctness. Pragmatic shipping: codegen V1 production-ready, Ф.5 nice-to-have. Если Ф.5 gate fail'ит — `[M-125-type-checker-never-first-class]` followup, не блокер.
+
+---
+
+## Plan 123.2.1 — Loop-body LICM coordination (V2.1)
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-v2-1-loop-body-coord. ~400 LOC.
+Closes `[M-123.1.2-loop-body-licm-coordination]`.
+
+**Что сделано:** V1.1 outer region scanner under-promoted caching for
+loop-heavy fns. V2.1 weights loop-body reads by NOVA_FC_LOOP_ITERS
+(default 8, matches V6.2 cycle-estimate weight).
+
+**Принципы:**
+
+- **Parallel `_weighted` family** instead of refactoring existing
+  callers — keeps backward compat for V1.2 nested processing.
+- **Saturating multiplication** prevents pathological overflow.
+- **Env-tuned weight** (`NOVA_FC_LOOP_ITERS`) shares config с V6.2.
+- **V1.2 unchanged:** nested-region processing uses unweighted
+  (single-iteration semantics).
+
+**Acceptance (V2.1.1-V2.1.6 все ✅):** loop-body promotes top-level
+cache, no-loop fn no promotion, for-loop weighted, nested loops
+compound, env helper accuracy, weighted = simple на no-loop input.
+
+**Verification:** 6 unit + 1 runtime fixture PASS. Zero regressions:
+field_cache lib 89/89 + all 11 plan123_* directories.
+
+**Followups:** `[M-123.2.1-v2-licm-threshold-integration]`,
+`[M-123.2.1-dynamic-loop-count]`.
+
+---
+
+## Plan 123.7.6 — Same-field reference-type IPA (V7.6)
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-v7-6-same-field-ref-type.
+~450 LOC. Closes `[M-123.7.5-same-field-ref-type]`.
+
+**Что сделано:** V7.5/V7.7 conservatively invalidated own-field cache
+на `@F.method()`. V7.6 refines using TypeDecl: when F is reference-
+typed (Array/Pointer/Map/String/StringBuilder/HashMap/etc.), the
+cache of `@F` survives `@F.method()` because mutation reaches the
+referenced object, не the slot bits.
+
+**Принципы:**
+
+- **TypeDecl integration:** `FieldRegistry` extended с
+  `ref_typed: HashSet<(String, String)>` populated при `register_items`.
+  `IpaCtx` carries `&'a HashSet<(...)>` reference + `is_field_ref_type`
+  helper method.
+
+- **Pure classifier:** `is_reference_type_ref(t: &TypeRef) -> bool`
+  walks TypeRef variants. Array/Pointer/Readonly/Mut peel; Named
+  matches well-known reference-type leaves. Conservative для FixedArray,
+  Tuple, Func, Protocol, Unit, Unsafe, unknown Named (user records).
+
+- **Minimal invasion:** V7.5/V7.7 own-field branches consult
+  `ctx.is_field_ref_type` — single conditional add per branch. No
+  refactoring callees of `expr_contains_invalidating_call_for`.
+
+- **Backward compat:** When IPA disabled (None ctx), V1 V-baseline
+  conservative behavior preserved. Implementation purely additive
+  для value-typed fields.
+
+**Acceptance (V7.6.1-V7.6.8 все ✅):** array own cache survives push,
+value-type still conservative, V7.5 + V7.6 compose, helper recognizes
+Array/Pointer/named collections, rejects value types, peels wrappers.
+
+**Verification:** 8 V7.6 unit + 1 runtime fixture PASS. Zero standalone
+regressions on 13 plan123_* directories. Parallel-run transient test
+contention observed but standalone все pass.
+
+**Followups:** `[M-123.7.6-generic-ref-types]` (user generic wrappers),
+`[M-123.7.6-method-realloc-flag]` (distinguish swap-and-replace).
+
+---
+
+## Plan 123.4.4 — Codegen fluent-chain root-temp pre-pass
+
+✅ ЗАКРЫТ 2026-06-04. Branch plan-123-4-4-codegen-chain-root. ~700 LOC.
+Closes `[M-123.4.4-codegen-fluent-chain-root-temp]` — the marker that
+triggered the entire 5-sub-plan umbrella session.
+
+**Что сделано:** WriteBuffer.@write_char triple `nova_self->buf` issue
+fixed via AST pre-pass. Detects fluent chains of depth ≥ 2 with known-
+fluent methods on `@F` receivers and rewrites:
+
+```
+@F.m1(a).m2(b).m3(c)
+→ { let _chain_root_<N>_F = @F; _chain_root_<N>_F.m1(a);
+    _chain_root_<N>_F.m2(b); _chain_root_<N>_F.m3(c);
+    _chain_root_<N>_F }
+```
+
+**Принципы:**
+
+- **AST pre-pass adjacent к callnorm** chosen over codegen-level fix —
+  general, future-proof, transparent к downstream passes (field_cache
+  etc. see the rewritten form).
+
+- **Hard-coded fluent method list** для V1 scope. 30 entries cover all
+  known stdlib fluent builders ([]T mutators + WriteBuffer/
+  StringBuilder write-family). V2 will use FnDecl `-> @` signature
+  inspection.
+
+- **Top-down detection** — check outermost frame first, wrap whole
+  chain. Bottom-up would rewrite inner Calls first, breaking outer
+  extractor's left-deep walk.
+
+- **Reference-type safety** implicit в whitelist — these methods only
+  exist on reference types в Nova stdlib. Value-type rewrite would
+  change semantics; не handled until TypeDecl integration (V2).
+
+- **Pipeline integration** at 14 sites following each `callnorm::
+  normalize_module` call. main / test_runner / bench / nova-cli /
+  nova-lsp all updated.
+
+**Acceptance (V123.4.4.1-V123.4.4.10 все ✅):** depth-2/3 wrap, depth-1
+not wrapped, non-fluent rejected, non-self-root rejected, member reads
+count = 1 после rewrite, trailing returns receiver, fluent-method
+recognizer, nested-in-if handling, idempotency.
+
+**Verification:** 10 unit + 1 runtime fixture (2 tests) PASS via
+release nova test + clang. Pre-existing 33 lib failures (parser/
+lints/sum_schema) Plan 114 `let`-removal unrelated. Integration
+confirmed: prelude WriteBuffer/StringBuilder chains в C output now
+have `_chain_root_<N>_buf = (nova_self->buf)` once + per-push uses.
+
+**Followups:**
+- `[M-123.4.4-user-fluent-detection]` — V2 TypeDecl-driven detection.
+- `[M-123.4.4-non-self-receivers]` — extend к non-self chain roots.
+
+🎯 **Umbrella `123-followups-2026-06-04` — все 5 sub-plans CLOSED.**
+
+
+
+
+
+---
+
+## Plan 110.9.5.a + M-110-deadline-fire-fixture ✅ closed (2026-06-05)
+
+**Status:** ✅ COMPLETE. Branch `plan-110-final-polish`.
+Two final non-stdlib-dep markers Plan 110 family closed.
+
+**110.9.5.a — Remove pragmatic accept-both** (commit `4756bba430f`):
+`is_unit_tr` в types/mod.rs:2256 had pragmatic accept-both для THREE forms
+(Unit, Tuple([]), Named("unit")) с comment "broader-scope refactor required".
+Recon Workflow `wf_ccdccc85-007` (4 parallel Explore agents) revealed:
+- Parser ALREADY emits canonical TypeRef::Unit(Span) via single site
+  (parser/mod.rs:5031).
+- NO Tuple([]) или Named("unit") TypeRef construction sites anywhere.
+- Peer `is_unit_or_none()` at types/mod.rs:9137 already strict.
+
+Pragmatic accept-both was defensive code для non-existent variance.
+4-line cleanup. Verification: 5/5 representative @on_exit fixtures PASS
+standalone. Full-suite TIMEOUTs = system load (16 parallel clang), not
+code failures.
+
+**M-110-deadline-fire-fixture** (commit `7624ca51d1e`): E2E test verifies
+all 6 codegen splices of deadline pipeline (Level 1 lookup + shield enter
++ sleep suspend + deadline check + typed throw + Fail propagation).
+Unblocked после 110.9.2 (Level 1) + 110.9.1 (typed throw) landed earlier.
+
+**Design lesson — Pragmatic comments often overstate scope:**
+"Broader-scope refactor required (110.9.5.a deferred)" actually = "remove
+defensive 4 lines". Routine recon перед deferral can save dev-days.
+
+**Recon Workflow pattern:** 4 parallel Explore agents in single phase
+(parser sites + accept-both audit + fixture pattern + cascade audit)
+provided ground truth in ~16 minutes — manual investigation would have
+taken ~½ day. Pattern для future canon/refactor decisions: spawn parallel
+recon, decide based on actual scope, not initial estimate.
+
+**System-load TIMEOUT detection rule:** Standalone fixture PASS + parallel
+suite TIMEOUT = system, NOT code. Verify via standalone runs of
+representative timed-out fixtures before reverting code changes.
+
+🎯 **Plan 110 family полностью завершена** для core/codegen/runtime:
+12 D-blocks ACTIVE + 9 sub-plans closed + 76 fixtures standalone PASS.
+Remaining open markers — stdlib integrations или external plan deps,
+explicit extractions, не silent simplifications.

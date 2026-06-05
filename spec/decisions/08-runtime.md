@@ -5586,6 +5586,447 @@ with identical inputs serialize только на the brief lookup window.
 - **V7.4.3 (future):** opportunistic auto-enable когда host
   обнаруживает "LSP server" environment.
 
+## D217 amend Plan 123.4.4 — Codegen fluent-chain root-temp pre-pass
+
+**Source:** [Plan 123.4.4](../../docs/plans/123.4.4-codegen-chain-root-temp.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.4.4-codegen-fluent-chain-root-temp]`.
+
+### 1. Scope
+
+Fluent-chain expressions `@buf.push(a).push(b).push(c)` lower через
+`emit_c.rs` recursively. The `push` builtin handler emits its mutation
+statement using `obj_c = emit_expr(obj)?` (line 19567) и returns
+`Ok(obj_c)` (line 19593) per D181 fluent-`@`-return convention. Each
+chain level appends a statement using `obj_c`, и the returned string
+propagates upward. Result: `nova_self->buf` appears в C output **N
+times** для a depth-N chain — wasted memory loads.
+
+Field cache (V1 ro/mut) cannot help: the AST has only **one**
+`Member{SelfAccess, buf}` node (left-deep chain Call/Member tree). The
+duplication is purely codegen-level string substitution.
+
+### 2. Fix: AST pre-pass `chain_norm`
+
+New module `compiler-codegen/src/chain_norm.rs` running **adjacent к
+callnorm** (after `callnorm::normalize_module`). Detects fluent chains
+of depth ≥ 2 where:
+
+- Each method name appears в `FLUENT_BUILTIN_METHODS` hard-coded list
+  (push/append/extend_from/copy_from/insert/reserve/fill/clear +
+  WriteBuffer/StringBuilder write-family).
+- Root receiver is `Member{SelfAccess, F}` (the WriteBuffer/
+  StringBuilder/[]T common pattern).
+
+Rewrite:
+
+```nova
+@F.m1(a1).m2(a2).m3(a3)
+// ↓
+{
+    let _chain_root_<N>_<F> = @F;
+    _chain_root_<N>_<F>.m1(a1);
+    _chain_root_<N>_<F>.m2(a2);
+    _chain_root_<N>_<F>.m3(a3);
+    _chain_root_<N>_<F>
+}
+```
+
+The trailing `_chain_root_<N>_<F>` preserves chain's D181 receiver-
+return semantics — callers reading `e.m1().m2()` value see the
+(mutated) root binding.
+
+### 3. Safety scope
+
+Restricted к **reference-typed receivers** (`@F` где `F` is `[]T` или
+similar). `_chain_root = @F` is a pointer/handle copy; mutations
+through `_chain_root` and `@F` reach the same heap object. Semantics
+preserved.
+
+**Not handled:** value-type fields (rewrite would change semantics —
+`_chain_root` would be a copy, mutations не propagating к `@F`).
+Avoided by the hard-coded fluent-method whitelist — these methods
+only exist on reference types в Nova's stdlib (no value-type
+analogues currently exist). Future V2 will tighten with TypeDecl
+integration.
+
+### 4. Pipeline integration
+
+`normalize_chains_module(module)` invoked after `callnorm::
+normalize_module(module)` at every compilation site:
+
+- `compiler-codegen/src/main.rs:292`
+- `compiler-codegen/src/test_runner.rs:2350`
+- `compiler-codegen/src/doc/test_runner.rs:190`
+- `nova-cli/src/bench/run.rs:106` + `:367`
+- `nova-cli/src/bench/field_cache_wallclock.rs:324`
+- `nova-cli/src/main.rs:1369`, `:1477`, `:2152`, `:3891`
+- `nova-lsp/src/server.rs:586`, `:685`, `:766`, `:831`
+
+### 5. Acceptance
+
+- **123.4.4.1** Depth-2 fluent chain wraps в Block-with-temp ✅
+- **123.4.4.2** Depth-3 chain gets ONE temp (not three) ✅
+- **123.4.4.3** Depth-1 (single call) NOT wrapped ✅
+- **123.4.4.4** Non-fluent method (`len`/`get`/etc.) NOT wrapped ✅
+- **123.4.4.5** Non-self-rooted chain (`local.push().push()`) NOT
+  wrapped ✅
+- **123.4.4.6** After rewrite, `@F` Member-SelfAccess reads count = 1
+  (was N before) ✅
+- **123.4.4.7** Block trailing = `Ident(temp)` (chain value-as-receiver
+  semantics preserved) ✅
+- **123.4.4.8** `is_fluent_builtin_method` correctly recognizes
+  expected methods ✅
+- **123.4.4.9** Nested chain inside if-then wrapped correctly
+  (bottom-up handling) ✅
+- **123.4.4.10** Idempotent — second normalize pass is no-op ✅
+- Zero new regressions: field_cache lib **97/97** PASS. Pre-existing
+  33 lib failures (parser/lints/sum_schema) are Plan 114 `let`-removal
+  unrelated к this work.
+- Runtime fixture `nova_tests/plan123_4_4/v123_4_4_writebuffer_chain_
+  semantic_ok.nv` **1/1** PASS, two `test` assertions verify depth-3
+  and depth-4 semantic preservation.
+- **Integration confirmed**: WriteBuffer.@write_char chain (via
+  StringBuilder/`@buf.push().push().push()` pattern) emit `_chain_
+  root_<N>_buf = (nova_self->buf)` once + `_chain_root_<N>_buf` per
+  push instead of three `nova_self->buf` references.
+
+### 6. Followups
+
+- **V2 (future):** TypeDecl integration. Replace hard-coded fluent-
+  method list с FnDecl signature inspection (`fn -> @` ret type).
+  Covers user-defined fluent methods. Marker `[M-123.4.4-user-fluent-detection]`.
+- **V2.1 (future):** Apply chain-root к non-self receivers (Ident
+  / nested expression) where appropriate. Marker
+  `[M-123.4.4-non-self-receivers]`.
+
+## D223 amend V7.6 — Same-field reference-type IPA (Plan 123.7.6)
+
+**Source:** [Plan 123.7.6](../../docs/plans/123.7.6-same-field-ref-type.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.7.5-same-field-ref-type]`.
+
+### 1. Scope
+
+V7.5/V7.7 IPA conservatively invalidates **own-field** cache на
+`@F.method()` (and chain-root case на chain receivers). For
+**reference-type** fields (`[]T`, `*T`, `Map`, `String`, etc.) the
+field's slot holds a header/pointer; mutations через `@F.method()`
+modify the referenced object, не the slot's bits. The cache of `@F`
+therefore survives such calls.
+
+V7.6 closes the gap by integrating с TypeDecl: classifies each field's
+declared `TypeRef` and relaxes V7.5/V7.7's own-field invalidation when
+the field is reference-typed.
+
+### 2. Reference-type classification
+
+New pure helper `is_reference_type_ref(t: &TypeRef) -> bool` recognizes:
+- `TypeRef::Array(_, _)` — `[]T` slice handle (heap, mutation through
+  push/extend doesn't change handle bits).
+- `TypeRef::Pointer(_, _)` — `*T` raw pointer (Plan 118).
+- `TypeRef::Readonly(inner, _)` / `TypeRef::Mut(inner, _)` — recurse
+  into wrapped type.
+- `TypeRef::Named` whose path leaf is one of the well-known reference
+  types: `str`, `string`, `String`, `StringBuilder`, `Map`, `HashMap`,
+  `BTreeMap`, `TreeMap`, `Set`, `HashSet`, `BTreeSet`, `TreeSet`,
+  `Vec`, `List`, `Deque`, `Queue`, `WriteBuffer`, `ReadBuffer`.
+
+Conservative for:
+- `TypeRef::FixedArray` — stack-stored fixed-size array.
+- `TypeRef::Tuple` — value-typed compound.
+- `TypeRef::Func`, `TypeRef::Protocol`, `TypeRef::Unit`,
+  `TypeRef::Unsafe` — semantic ambiguity / not reference-like.
+- Unknown `Named` types (user records) — value-type by default.
+
+### 3. Registry extension
+
+`FieldRegistry` extended:
+
+```rust
+struct FieldRegistry {
+    by_type: HashMap<String, HashMap<String, FieldKind>>,
+    skip_types: HashSet<String>,
+    ref_typed: HashSet<(String, String)>,  // V7.6 NEW
+}
+```
+
+`register_items` populates `ref_typed` per field during the existing
+record-walk. No extra pass; computed at `build_registry` time.
+
+### 4. IpaCtx extension
+
+```rust
+pub(crate) struct IpaCtx<'a> {
+    ...
+    ref_typed: &'a HashSet<(String, String)>,  // V7.6 NEW
+}
+
+impl<'a> IpaCtx<'a> {
+    pub(crate) fn is_field_ref_type(&self, fname: &str) -> bool {
+        self.ref_typed.contains(&(self.recv_type.to_string(), fname.to_string()))
+    }
+}
+```
+
+All 4 IpaCtx construction sites updated to pass `&reg.ref_typed`.
+
+### 5. V7.5/V7.7 own-field refinement
+
+`expr_contains_invalidating_call_for` (V7.5 direct + V7.7 chain
+branches) updated:
+
+```rust
+if fname == recv_field {  // V7.5: own field
+    if ctx.is_field_ref_type(fname) {
+        false  // V7.6: ref-type cache safe
+    } else {
+        true   // value-type: conservative
+    }
+}
+// chain branch follows same pattern для chain root
+```
+
+### 6. Composition
+
+V7.6 transparent к V7.5/V7.7. When IPA disabled (no ctx), V1 V-baseline
+conservative-invalidate preserved. Implementation purely additive; no
+behavioral change для value-typed fields.
+
+### 7. Acceptance
+
+- **V7.6.1** Reference-typed `@arr` cache survives `@arr.push()` ✅
+- **V7.6.2** Value-typed field still conservative ✅
+- **V7.6.3** V7.6 composes с V7.5 direct (ref-type own cache) ✅
+- **V7.6.4** `is_reference_type_ref` recognizes Array ✅
+- **V7.6.5** `is_reference_type_ref` recognizes Pointer ✅
+- **V7.6.6** `is_reference_type_ref` recognizes named collections ✅
+- **V7.6.7** `is_reference_type_ref` rejects value types ✅
+- **V7.6.8** `is_reference_type_ref` peels Readonly/Mut wrappers ✅
+- Zero regressions: field_cache lib **97/97** (89 baseline + 8 V7.6)
+  PASS via release `cargo test`.
+- All 13 plan123_* test directories PASS individually (some failures
+  observed when run в parallel due к build-artifact contention, but
+  все pass standalone).
+- Runtime fixture `nova_tests/plan123_7_6/` **1/1** PASS — semantic
+  preservation verified.
+
+### 8. Followups
+
+- **V7.6.1 (future):** generic types like `Map[K, V]` currently treated
+  as reference only when path leaf is one of the recognized names;
+  doesn't handle user generic wrappers like `Container[T]`. Could be
+  refined с TypeDecl-flag.
+- **V7.6.2 (future):** distinguish "method that COULD reallocate
+  underlying buffer" from "method that just reads internals" via
+  callee signature. Currently V7.6 assumes any `@F.method()` on
+  ref-type is safe for the slot's bits — true for typical cases but
+  brittle for unusual ABI (e.g. swap-and-replace).
+
+## D218 amend V2.1 — Loop-body LICM coordination (Plan 123.2.1)
+
+**Source:** [Plan 123.2.1](../../docs/plans/123.2.1-loop-body-coord.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.1.2-loop-body-licm-coordination]`.
+
+### 1. Scope
+
+V1.1 top-level region scanner uses single-iteration read counts when
+deciding whether `@F` cache crosses threshold. But loop bodies execute
+N times — real cost of a read inside `while`/`for`/`loop` body is
+N × syntactic_count. V1.1 без weighting under-promotes caching for
+fns где the dominant reads are inside hot loops.
+
+V2 LICM already hoists loop-invariant `@F` reads out of loop bodies
+(D218). But V2 has its own threshold + barrier rules — V1.1's outer
+region cache and V2's per-loop hoist don't share a cost model.
+
+V2.1 introduces **loop-iteration weighting** in V1.1's outer region
+scanner: reads inside loop bodies are multiplied by an estimated
+iteration count (`NOVA_FC_LOOP_ITERS`, default 8 — matches V6.2 cycle-
+estimate weight). This makes V1.1's caching decisions sensitive к
+loop-body presence без changing V2 LICM's local logic.
+
+### 2. Algorithm
+
+New env-tunable weight + parallel weighted counter family:
+
+```rust
+fn v2_1_loop_iters_weight() -> usize {
+    std::env::var("NOVA_FC_LOOP_ITERS")
+        .ok().and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0).unwrap_or(8)
+}
+
+fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -> usize {
+    if let Some(t_fname) = match_self_field(e) {
+        return if t_fname == fname { loop_mult } else { 0 };
+    }
+    match &e.kind {
+        ExprKind::While { cond, body, .. } => {
+            count_field_reads_in_expr_weighted(cond, fname, loop_mult)
+            + count_field_reads_in_block_weighted(body, fname,
+                loop_mult.saturating_mul(v2_1_loop_iters_weight()))
+        }
+        // ... For / ParallelFor / WhileLet / Loop similarly multiply.
+        // ... All other variants pass `loop_mult` unchanged.
+    }
+}
+```
+
+`count_field_reads_in_stmt_weighted` + `count_field_reads_in_block_
+weighted` round out the family. Used by `find_mut_regions_in_block`
+с `loop_mult = 1` initial seed.
+
+### 3. Multiplier composition
+
+Nested loops compound. `while { while { @x } }` body reads get
+multiplier `1 × 8 × 8 = 64`. Saturating multiplication prevents
+overflow на pathologically deep nesting.
+
+### 4. V1.2 unchanged
+
+V1.2 nested-region processing of loop bodies still uses unweighted
+counter (each iteration sees same single count). V1.2 caches live
+for one iteration; loop weighting irrelevant к its threshold
+decisions.
+
+### 5. Composition
+
+- V2 LICM (D218) still runs independently. V2.1 only changes V1.1
+  outer counting.
+- V1.2 nested-region (D217 V1.2) unaffected — uses original
+  `count_field_reads_in_*` for per-block analysis.
+- V6.2 static cycle-savings estimate uses same `NOVA_FC_LOOP_ITERS`
+  weight для LICM cost model — V2.1 brings V1.1 cost model в line.
+
+### 6. Acceptance
+
+- **V2.1.1** Top-level cache emitted когда reads are loop-body-only
+  AND weighted count crosses threshold ✅
+- **V2.1.2** No spurious cache for non-loop fn с reads below threshold ✅
+- **V2.1.3** For-loop body weighting works same as while ✅
+- **V2.1.4** Nested loops compound multiplier ✅
+- **V2.1.5** `v2_1_loop_iters_weight()` env helper accuracy ✅
+- **V2.1.6** Weighted counter equals simple counter на no-loop input ✅
+- Zero regressions: field_cache lib **89/89** PASS (83 baseline + 6 V2.1).
+- All 11 plan123_* test directories PASS (69 runtime tests).
+- Runtime fixture `nova_tests/plan123_2_1/` **1/1** PASS.
+
+### 7. Followups
+
+- **V2.2 (future):** integrate weighted counter into V2 LICM's own
+  threshold checks (currently LICM uses unweighted) — would make
+  per-loop hoist decisions also iteration-aware.
+- **V2.3 (future):** dynamic loop count detection from `for X in
+  range(N)` literal bounds — better than static weight для known-
+  bounded loops.
+
+## D223 amend V7.7 — Chain receiver IPA extension (Plan 123.7.7)
+
+**Source:** [Plan 123.7.7](../../docs/plans/123.7.7-chain-receiver.md).
+**Status:** ✅ ACTIVE 2026-06-04.
+**Closes:** `[M-123.7.5-chain-receiver]`.
+
+### 1. Scope
+
+V7.5 IPA refinement detected ONLY direct `@F.method()` receivers
+(`Member{SelfAccess, F}`). Chains `@a.b.method()` /
+`@a.b.c.method()` / etc. fell through to conservative-invalidate.
+
+By the same self-type reasoning as V7.5: callees invoked through a
+self-rooted chain `@F0.F1.....Fn` operate on the chain leaf's value,
+cannot reach SIBLING fields of self (no `self` access path inside the
+callee body). So sibling caches survive these calls too.
+
+V7.7 extends V7.5 к detect chain receivers of arbitrary depth и apply
+the sibling-safe refinement.
+
+### 2. Algorithm
+
+New helper:
+
+```rust
+fn call_recv_self_chain(obj: &Expr) -> Option<Vec<String>> {
+    let mut segments = Vec::new();
+    let mut cur = obj;
+    loop {
+        match &cur.kind {
+            ExprKind::Member { obj: inner, name } => {
+                segments.push(name.clone());
+                cur = inner;
+            }
+            ExprKind::SelfAccess => break,
+            _ => return None,
+        }
+    }
+    if segments.is_empty() { return None; } // plain SelfAccess
+    segments.reverse();
+    Some(segments)
+}
+```
+
+Walks down the receiver expression, accumulating Member names. Stops
+at SelfAccess (success) or returns None when chain doesn't root at
+self.
+
+Refined dispatch в `expr_contains_invalidating_call_for`:
+
+```rust
+... else if let Some(chain) = call_recv_self_chain(obj) {
+    // V7.7: chain receiver `@F0.F1.....Fn.method()`.
+    // Chain root `chain[0]` is the immediate self-field. Same sibling
+    // rule as V7.5: only invalidate when fname matches chain root.
+    if chain.first().map(|s| s.as_str()) == Some(fname) {
+        true  // conservative: chain root cache might be stale
+    } else {
+        false // sibling-safe
+    }
+}
+```
+
+V7.7 dispatch runs AFTER V7.5's direct `@F.method()` branch — so V7.5
+keeps depth-1 case (single Member). V7.7 catches depth-2+ chains.
+
+### 3. Scope intentionally narrow
+
+V7.7 keeps the same conservative rules как V7.5:
+- Same-field/chain-root invalidation: conservative (could be relaxed
+  by V7.6 ref-type integration).
+- Non-self-rooted chains (e.g. `local.b.method()`): conservative
+  invalidate (local variable alias analysis out of scope).
+- `self.method()` syntax (plain SelfAccess receiver): не a chain;
+  not affected by V7.7.
+
+### 4. Composition
+
+V7.7 transparent к V7.1 / V7.2 / V7.3 / V7.4 / V7.5 / V7.6 IPA — only
+adds one dispatch branch. V1.x multi-region caching benefits
+implicitly когда chain-receiver method calls appear inside regions.
+
+### 5. Acceptance
+
+- **V7.7.1** Depth-2 chain `@a.b.method()` keeps sibling cache alive ✅
+- **V7.7.2** Depth-3 chain `@a.b.c.method()` keeps sibling cache ✅
+- **V7.7.3** Chain root cache (fname == chain[0]) still invalidates
+  (conservative) ✅
+- **V7.7.4** `call_recv_self_chain` unit: extracts segments correctly ✅
+- **V7.7.5** `call_recv_self_chain` unit: rejects non-self-rooted ✅
+- **V7.7.6** `call_recv_self_chain` unit: rejects plain SelfAccess ✅
+- Zero regressions: field_cache lib **83/83** PASS (77 baseline + 6
+  V7.7).
+- Runtime fixtures `nova_tests/plan123_7_7/` **2/2** PASS — depth-2
+  + depth-3 chain semantic preservation.
+- V7.5 negative test `v7_5_chain_receiver_still_invalidates` renamed
+  к `v7_5_chain_receiver_under_v7_7_sibling_safe` (positive под V7.7
+  extension).
+
+### 6. Followups
+
+- **V7.6 (open):** same-field/chain-root refinement via reference-type
+  semantics. Would relax conservative own-cache invalidation для
+  both V7.5 direct AND V7.7 chain cases. `[M-123.7.5-same-field-ref-type]`.
+
 ## D217 amend V5.4 — Explain deep-walk (Plan 123.5.4)
 
 **Source:** [Plan 123.5.4](../../docs/plans/123.5.4-explain-deep-walk.md).

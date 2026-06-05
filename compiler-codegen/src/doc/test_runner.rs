@@ -187,6 +187,7 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
 
     // 3. Execute.
     crate::callnorm::normalize_module(&mut module);
+    crate::chain_norm::normalize_chains_module(&mut module);
     let mut interp = crate::interp::Interpreter::new();
     if let Err(d) = interp.load_module(&module) {
         return DocTestOutcome::Failed(format!(

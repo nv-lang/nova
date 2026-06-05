@@ -31782,7 +31782,6 @@ Followup spawned:
 - [M-123.5.4-explain-region-tagging] — distinguish V1.1 r-region
   vs V1.2 n-region tagging в report.
 
-
 ================================================================================
 2026-06-05 — Plan 125 PROPOSED: divergence-aware result-type inference
 ================================================================================
@@ -31859,6 +31858,262 @@ Commits:
 - (this) docs(plan91.13): followup migrated CLOSED + cross-ref Plan 125
 - (this) docs(plan125): closure entries — project-creation + simplifications
 
+=== Plan 123.7.7 — Chain receiver IPA extension (V7.7, 2026-06-04) ===
+
+Followup [M-123.7.5-chain-receiver] closure. V7.5 IPA refinement
+extended к detect chain receivers `@a.b.method()` /
+`@a.b.c.method()` / arbitrary depth. By same self-type reasoning
+as V7.5, sibling field caches survive these calls.
+
+Implementation (~40 LOC core + ~210 LOC tests):
+- compiler-codegen/src/field_cache.rs:
+  - call_recv_self_chain helper NEW (~28 LOC) — walks down receiver
+    Expr accumulating Member names; stops at SelfAccess (success)
+    or returns None when chain doesn't root at self.
+  - expr_contains_invalidating_call_for dispatch refined — added
+    else-if branch для chain receivers (~12 LOC).
+  - 6 unit tests v7_7_*: depth-2/depth-3 positive, chain-root
+    negative, 3 helper unit tests covering AST construction.
+  - V7.5 negative test renamed `v7_5_chain_receiver_still_invalidates`
+    → `v7_5_chain_receiver_under_v7_7_sibling_safe` (now positive
+    under V7.7 extension).
+- nova_tests/plan123_7_7/ — 2 runtime fixtures:
+  - v7_7_chain_receiver_sibling_safe_ok.nv (depth-2)
+  - v7_7_depth_3_chain_ok.nv (depth-3)
+
+Verification (release nova-cli + clang):
+- 6 V7.7 unit + 2 runtime fixtures PASS
+- Zero regressions: field_cache lib 83/83 + plan123_* всех 10
+  directories.
+
+Spec: D223 amend V7.7 (~80 lines) — V7.7.1-V7.7.6 acceptance.
+Plan doc: docs/plans/123.7.7-chain-receiver.md.
+
+Discovered side-effect — codegen nested record literal inference
+broken: `{ inner: { sub: ... } }` (where inner field is typed Inner)
+codegen allocates Nova_C size для inner sub-literal вместо Nova_Inner.
+Worked around в fixtures using explicit Inner.new() constructors.
+Pre-existing bug, not introduced by V7.7. Should be tracked separately.
+
+Pattern lesson:
+- Helper pattern с Option<Vec<String>> return type cleanly handles
+  variable-depth chain walking без recursive Rust function. Loop
+  with accumulator + reverse at end is more efficient than recursion.
+
+=== Plan 123.2.1 — Loop-body LICM coordination (V2.1, 2026-06-04) ===
+
+Followup [M-123.1.2-loop-body-licm-coordination] closure. Third of
+umbrella 123-followups-2026-06-04. V1.1 outer region scanner under-
+promoted caching for fns с loop-body-only reads (counted reads per
+iteration, не runtime). V2.1 adds env-tunable iteration weighting
+(NOVA_FC_LOOP_ITERS default 8, matches V6.2).
+
+Implementation (~400 LOC):
+- v2_1_loop_iters_weight env-reader NEW
+- count_field_reads_in_expr_weighted family NEW (~230 LOC, mirror с
+  loop_mult multiplier)
+- find_mut_regions_in_block uses weighted variants
+- 6 unit tests v2_1_* + 1 runtime fixture
+
+Verification: 6 unit + 1 runtime PASS. Zero regressions: lib 89/89,
+all 11 plan123_* dirs (69 runtime tests).
+
+Spec: D218 amend V2.1 (~110 lines).
+Plan doc: docs/plans/123.2.1-loop-body-coord.md.
+
+Followups: [M-123.2.1-v2-licm-threshold-integration],
+[M-123.2.1-dynamic-loop-count].
+
+=== Plan 123.7.6 — Same-field reference-type IPA (V7.6, 2026-06-04) ===
+
+Followup [M-123.7.5-same-field-ref-type] closure. Fourth of umbrella
+123-followups-2026-06-04. V7.5/V7.7 conservatively invalidated own-
+field cache на @F.method(). V7.6 refines: when F is reference-type
+(Array/Pointer/Map/String/etc.), cache survives.
+
+Algorithm: TypeDecl integration. New is_reference_type_ref(t: &TypeRef)
+classifier — recognizes Array, Pointer, Readonly/Mut wrappers (peel),
+named collection types (str/String/Map/HashMap/Set/Vec/etc.).
+Conservative для FixedArray, Tuple, user records, Func, Protocol.
+
+Registry extension: FieldRegistry.ref_typed: HashSet<(String, String)>
+populated в register_items. IpaCtx extended: ref_typed reference +
+is_field_ref_type helper method. V7.5/V7.7 own-field branches consult
+ctx.is_field_ref_type(fname).
+
+Implementation (~450 LOC):
+- is_reference_type_ref NEW (~30 LOC)
+- FieldRegistry.ref_typed field + populate (~5 LOC)
+- IpaCtx.ref_typed + is_field_ref_type (~10 LOC)
+- 4 IpaCtx construction sites updated к pass &reg.ref_typed
+- V7.5/V7.7 own-field branches refined (~15 LOC)
+- 8 unit tests v7_6_* (~330 LOC)
+- nova_tests/plan123_7_6/v7_6_array_own_cache_survives_ok.nv
+
+Verification (release nova-cli + clang):
+- 8 V7.6 unit PASS + 1 runtime fixture PASS
+- Zero standalone regressions across 13 plan123_* directories
+- (Parallel-run transient test contention observed но standalone all pass)
+
+Spec: D223 amend V7.6 (~130 lines).
+Plan doc: docs/plans/123.7.6-same-field-ref-type.md.
+
+Followups:
+- [M-123.7.6-generic-ref-types] — user generic wrappers (Container[T])
+- [M-123.7.6-method-realloc-flag] — distinguish swap-and-replace methods
+
+================================================================================
+== 2026-06-05 — Plan 110.9.5.a + M-110-deadline-fire-fixture ✅ ЗАКРЫТЫ
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110-final-polish (off main bc5d5edc43f)
+
+Финальные два non-stdlib-dep markers Plan 110 family закрыты этой session.
+Plan 110 теперь полностью ✅ COMPLETE для всех markers что не зависят от
+external modules.
+
+110.9.5.a — Parser canonicalization (commit 4756bba430f)
+─────────────────────────────────────────────────────────
+
+Background: Plan 110.9.5 V1.1 pragmatically accepted THREE \`-> ()\`
+representations (TypeRef::Unit, Tuple([]), Named("unit")) в is_unit_tr
+helper (types/mod.rs:2256). Comment marked это как "broader-scope refactor
+required (110.9.5.a deferred)".
+
+Recon (Workflow wf_ccdccc85-007, 4 parallel Explore agents):
+  • Parser ALREADY emits canonical TypeRef::Unit(Span) for '()' (parser/mod.rs
+    line 5031) — single entry point in parse_type_primary.
+  • NO TypeRef::Tuple(vec![]) or Named("unit") construction sites anywhere
+    в parser/ast modules.
+  • Peer is_unit_or_none() at types/mod.rs:9137+ already checks ONLY
+    TypeRef::Unit (consistency).
+
+Pragmatic accept-both was defensive code для non-existent variance.
+Removal: simplified is_unit_tr к (Unit | Readonly(Unit)) only.
+
+Verification:
+  • Standalone @on_exit fixtures: 5/5 PASS (codegen_on_exit_throws_t2_1,
+    app_effect_basic_t8_1, shield_deadline_check_t3_2, register_finalizer_lifo_v1_1,
+    codegen_consume_panic_caught).
+  • Full-suite TIMEOUTs: 32→9 across retries — pure system load artifacts
+    (16 параллельных clang processes ≥ per-test 60s wall на загруженной
+    системе). All listed timeout fixtures PASS standalone. NOT code failures.
+
+M-110-deadline-fire-fixture — E2E pipeline test (commit 7624ca51d1e)
+──────────────────────────────────────────────────────────────────────
+
+Marker was gated на Plan 110.9.2 (Level 1 WithExitTimeout, landed 8ff8dda820b)
+и Plan 110.9.1 (typed throw codegen, landed 1377c611a57 + refined 349c59a898c).
+Both prereqs now in main → fixture writable.
+
+Fixture deadline_fire_e2e_v1_1.nv verifies all 6 codegen splices в одном
+тесте:
+  1. Nova_<T>_method_exit_timeout_ms() lookup (V1.1 Level 1).
+  2. nv_consume_enter_shield(1ms) installs shield с tight deadline.
+  3. on_exit Time.sleep(50) suspend → nv_shield_check_deadline fires.
+  4. _nova_throw_cleanup_timeout_fn invoked (typed impl emitted).
+  5. NOVA_TID_USER_CleanupTimeoutError macro defined в TU.
+  6. Function-level Fail[CleanupTimeoutError] propagates через outer fail-frame.
+
+Acceptance A110.2.2.a.a + A110.2.2.a.b verified compile-success. Runtime
+fire-path deferred until test framework gains structured catch primitive
+(currently все similar fixtures use compile-only assertion pattern).
+
+🎯 Plan 110 family полностью завершена для core/codegen/runtime:
+   • Plan 110.1-110.8 V1 ✅ (umbrella merge 874f5766ca5).
+   • Plan 110.9 V1.1 ✅ (5/5 markers closed earlier sessions).
+   • Plan 110.9.5.a ✅ (this session).
+   • M-110-deadline-fire-fixture ✅ (this session).
+   • 12 D-blocks ACTIVE (D188-D198 + D185).
+   • 76 fixtures standalone PASS (74 baseline + 2 new from this session).
+
+Remaining open markers — все stdlib integrations или зависят от external
+plans:
+   • M-110-stdlib-{fs,db,bufio,pool,cancel-scope,channels,tcp-udp} (7 markers).
+   • M-110-supervised-handle (Plan 83.4.2).
+   • M-110-multierror-any (mature \`any\` codegen).
+   • M-110-run-on-abort (platform signal handling).
+   • M-110-stream-consumable (Plan 84).
+   • M-110.8.5-quantitative-bench (Plan 110.8.4 CI infra).
+
+Lessons:
+  • Recon Workflow с 4 parallel Explore agents в 1 фазе сэкономил ~½ day —
+    confirmed parser correctness, narrowed scope от "broader-scope refactor"
+    к 4-line edit. Pattern: при подозрении на parser variance, recon
+    через independent walkers даёт ground truth быстрее manual investigation.
+  • Pragmatic comments часто overstate scope. "Broader-scope refactor required"
+    на самом деле = "remove defensive 4 lines". Recon рутина проверки
+    actual scope перед deferral.
+  • TIMEOUTs в parallel C compilation — common system-load artifact, NOT
+    code failure. Verification rule: если standalone fixture PASS, TIMEOUT
+    в parallel suite = system issue, не regression.
+
+=== Plan 123.4.4 — Codegen fluent-chain root-temp pre-pass (2026-06-04) ===
+
+Final sub-plan of umbrella 123-followups-2026-06-04. Closes
+[M-123.4.4-codegen-fluent-chain-root-temp] — the marker that started
+the whole 5-sub-plan investigation.
+
+**The fix that actually closes WriteBuffer.@write_char triple-load:**
+
+Source `@buf.push(a).push(b).push(c)` has only 1 AST `Member{SelfAccess,
+buf}` leaf. But emit_c.rs:19567 recursively propagates `obj_c` upward
+через each chain level, emitting `nova_self->buf` N times. Field
+cache cannot help — only 1 AST read.
+
+Solution: new AST pre-pass `chain_norm` adjacent k callnorm. Detects
+fluent chains of depth ≥ 2 with known-fluent methods on @F roots.
+Rewrites:
+
+  @F.m1(a).m2(b).m3(c) → { let _chain_root_<N>_F = @F;
+                          _chain_root_<N>_F.m1(a);
+                          _chain_root_<N>_F.m2(b);
+                          _chain_root_<N>_F.m3(c);
+                          _chain_root_<N>_F }
+
+In C output: `nova_self->buf` appears ONCE (let-binding), then
+`_chain_root_<N>_buf` for each push. Same semantics, 1 memory load
+instead of N.
+
+Implementation (~700 LOC):
+- compiler-codegen/src/chain_norm.rs NEW (~500 LOC)
+  - FLUENT_BUILTIN_METHODS hard-coded list (30 entries: push/append/
+    extend_from/copy_from/insert/reserve/fill/clear + write_*)
+  - normalize_chains_module entry-point + recursive walkers
+  - try_extract_outer_fluent_chain detection (top-down)
+  - build_chain_block rewrite
+- compiler-codegen/src/lib.rs: + pub mod chain_norm;
+- 14 pipeline-integration sites (all callnorm callers updated)
+- 10 unit tests
+- nova_tests/plan123_4_4/v123_4_4_writebuffer_chain_semantic_ok.nv
+  (depth-3 + depth-4 semantic preservation)
+
+Verification (release nova-cli + clang):
+- 10 chain_norm unit + 1 runtime fixture (2 tests) PASS
+- Plan 123 all 14 directories PASS (parallel-run transient
+  contention noted; standalone все pass)
+- Pre-existing 33 lib failures (parser/lints/sum_schema) are Plan 114
+  `let`-removal unrelated к this work
+- **Integration confirmed:** prelude WriteBuffer/StringBuilder chains
+  now emit `_chain_root_<N>_buf` once instead of triplicate
+  `nova_self->buf`
+
+Spec: D217 amend Plan 123.4.4 (~120 lines).
+Plan doc: docs/plans/123.4.4-codegen-chain-root-temp.md.
+
+Followups:
+- [M-123.4.4-user-fluent-detection] — V2 TypeDecl-driven fluent
+  detection (replaces hard-coded list с FnDecl `-> @` signature check)
+- [M-123.4.4-non-self-receivers] — extend к chain roots like
+  `local.push().push()`
+
+🎯 **Umbrella 123-followups-2026-06-04 — all 5 sub-plans CLOSED.**
+- Plan 123.5.4 V5.4 explain deep-walk ✅
+- Plan 123.7.7 V7.7 chain receiver IPA ✅
+- Plan 123.2.1 V2.1 loop-body LICM coord ✅
+- Plan 123.7.6 V7.6 same-field ref-type IPA ✅
+- Plan 123.4.4 codegen chain-root temp ✅ (the original trigger)
 
 === Plan 125 IMPLEMENTATION (2026-06-05, IN PROGRESS) ===
 
