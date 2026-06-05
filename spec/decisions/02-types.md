@@ -8926,6 +8926,10 @@ Status: ✅ ACTIVE since 2026-06-02 (Ф.0-Ф.5 closed).
 
 ### D33 amend §«binding propagation» (Plan 124.8 Ф.2)
 
+> ⚠️ **AMENDED by D216 V3 §V3.1** (2026-06-04, refined 2026-06-05 Ф.6) — rows «`ro x mut T`» / «`mut x ro T`» в этой таблице storage-class qualified:
+> - **Type-form** `ro mut T` / `mut ro T` (без имени между modifier'ами): forbidden когда T = value type (см. §V3.1 — primitives, value records, named/anonymous tuples, Unit). Error `E_MUTABILITY_CONFLICT_VALUE_TYPE`.
+> - **Binding-form** `ro x mut T` / `mut x ro T` (с именем между): allowed regardless of T storage class (Ф.6 relaxation, 2026-06-05).
+
 `ro`/`mut` на binding **по default распространяется** на тип справа.
 Explicit повторение модификатора — redundant error.
 
@@ -9207,12 +9211,11 @@ fn is_value_type_for_v3(ty: &TypeRef, type_decls: &TypeDeclRegistry) -> bool {
 }
 ```
 
-**Note re int/uint aliases (D226 amend, 2026-06-04 clarification):**
+**Note re int/uint aliases (clarification cross-ref D129/D130/D226 amend, 2026-06-04):**
 
-`int` is alias for `isize` (platform-pointer-width signed integer);
-`uint` is alias for `usize` (platform-pointer-width unsigned). On 64-bit
-target both are i64/u64 respectively. Both `int` и `isize` etc. recognized
-identically by storage-class check.
+`int` / `isize` / `i64` все aliases для bootstrap 64-bit signed integer
+(per D129); same для `uint` / `usize` / `u64`. V3 storage-class check
+распознаёт все формы identically.
 
 **Conflict detection** — at check_decl_type (compiler-codegen/src/types/mod.rs):
 ```rust
