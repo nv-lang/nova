@@ -460,12 +460,46 @@ fn try_extract_outer_fluent_chain(e: &Expr, registry: &FluentMethodRegistry) -> 
         }
         break;
     }
-    // cur is now the root receiver. Must be Member{SelfAccess, F}.
+    // cur is now the root receiver. Plan 123.4.4 V1 only accepted
+    // `Member{SelfAccess, F}` (i.e. `@F`). V3 (2026-06-05) extends к
+    // non-self roots: closes `[M-123.4.4-non-self-receivers]`.
+    //
+    // Accepted root patterns (safe-hoistable):
+    // - `Member{SelfAccess, F}` (V1) — `@F` self-field root.
+    // - `Ident(name)` (V3) — local var root `v.m1().m2()`. Hoisting
+    //   provides uniform-shape AST; no codegen benefit (Ident already
+    //   register-cheap) but keeps downstream-pass logic uniform.
+    // - `Member{Ident, F}` (V3) — local-field root `obj.field.m1().m2()`.
+    //   PRIMARY non-self benefit: prevents N× struct-member-access
+    //   emission. Symmetric к V1's @F case.
+    //
+    // Rejected (V3 scope, future expansion):
+    // - `Call{...}` root — already chain-flattened by earlier processing.
+    // - `Member{Member{...}, F}` (depth-2 member access) — semantics
+    //   may differ if intermediate access has side-effects; conservative
+    //   skip until use-case demands.
+    // - `Index{...}`, `Try{...}`, etc. — non-trivial intermediate
+    //   evaluation, hoisting could alter semantics.
+    //
+    // Value-type safety: same V1 limitation applies — value-type local
+    // var / field can't be safely hoisted (would copy slot bits).
+    // Practical safety: fluent methods (`push`/`write_*`/user `-> @`)
+    // overwhelmingly target ref-typed receivers; value-records don't
+    // declare such mutators.
     let (root_field, root) = match &cur.kind {
         ExprKind::Member { obj, name } if matches!(obj.kind, ExprKind::SelfAccess) => {
+            // V1: @F self-field.
             (name.clone(), cur.clone())
         }
-        _ => return None, // not safe-hoistable root pattern
+        ExprKind::Member { obj, name } if matches!(obj.kind, ExprKind::Ident(_)) => {
+            // V3: local-field `obj.field` root.
+            (name.clone(), cur.clone())
+        }
+        ExprKind::Ident(name) => {
+            // V3: pure local var `v` root.
+            (name.clone(), cur.clone())
+        }
+        _ => return None, // unsupported root pattern (Call/Index/etc.)
     };
     if frames.len() < 2 {
         return None; // single-method call — не a chain
@@ -756,16 +790,24 @@ fn Buf @count() -> int {
     /// wrapped (e.g. `local.push().push()`).
     #[test]
     fn chain_norm_non_self_root_not_wrapped() {
+        // V3 SUPERSEDED 2026-06-05: this test was V1's negative for
+        // local-var roots. Plan 123.4.4 V3 NOW SUPPORTS local-var roots
+        // via Ident root pattern (closes `[M-123.4.4-non-self-receivers]`).
+        //
+        // Originally asserted `chain_root_lets == 0` for
+        // `v.push(a).push(b)`. Now asserts EXACT OPPOSITE — that pure
+        // Ident root IS wrapped (V3 uniform-shape hoist, no codegen
+        // benefit but consistent AST shape).
         let src = r#"
-module testmod.cn_non_self_root
+module testmod.cn_non_self_root_v3
 fn process(mut v []int, a int, b int) -> () {
     v.push(a).push(b)
 }
 "#;
         let m = run(src);
         let f = find_fn(&m, "process");
-        assert_eq!(count_chain_root_lets(f), 0,
-            "non-self chain root shouldn't be wrapped");
+        assert!(count_chain_root_lets(f) >= 1,
+            "V3: pure Ident root v.push(a).push(b) MUST wrap; got 0 _chain_root_ lets");
     }
 
     /// V123.4.4.6 positive: AFTER rewrite, `@buf` Member-SelfAccess
@@ -989,6 +1031,121 @@ fn Outer mut @do() -> Outer {
         assert_eq!(chain_roots, 0,
             "user method without -> @ must NOT trigger hoist; got {} _chain_root_ lets",
             chain_roots);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.4.4 V3 (2026-06-05): non-self receiver roots. Closes
+    // [M-123.4.4-non-self-receivers]. Extends try_extract_outer_fluent_chain
+    // root pattern к Ident + Member{Ident, F}.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V3.1 positive: local-var root `v.push(a).push(b)` wraps
+    /// (Ident root pattern).
+    #[test]
+    fn v3_local_var_root_wraps() {
+        let src = r#"
+module testmod.v3_local_ident
+fn process(mut v []int, a int, b int, c int) -> () {
+    v.push(a).push(b).push(c)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        let roots = count_chain_root_lets(f);
+        assert!(roots >= 1,
+            "V3 local Ident root must wrap; got {} _chain_root_ lets",
+            roots);
+    }
+
+    /// V3.2 positive: local-field root `obj.field.push(a).push(b)`
+    /// wraps (Member{Ident, F} root pattern). PRIMARY non-self benefit.
+    #[test]
+    fn v3_local_field_root_wraps() {
+        let src = r#"
+module testmod.v3_local_field
+type Wrap { mut buf []int }
+fn process(mut w Wrap, a int, b int, c int) -> () {
+    w.buf.push(a).push(b).push(c)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        let roots = count_chain_root_lets(f);
+        assert!(roots >= 1,
+            "V3 Member{{Ident, field}} root must wrap; got {} _chain_root_ lets",
+            roots);
+    }
+
+    /// V3.3 negative: depth-1 chain (single call) on local-var root NOT
+    /// wrapped (chain depth requirement preserved).
+    #[test]
+    fn v3_local_root_depth_1_not_wrapped() {
+        let src = r#"
+module testmod.v3_local_depth1
+fn process(mut v []int, a int) -> () {
+    v.push(a)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        assert_eq!(count_chain_root_lets(f), 0,
+            "depth-1 chain on local root must NOT wrap");
+    }
+
+    /// V3.4 negative: non-fluent method on local root NOT wrapped
+    /// (method-name filter still applies).
+    #[test]
+    fn v3_local_root_non_fluent_method_not_wrapped() {
+        let src = r#"
+module testmod.v3_local_nonfluent
+fn process(ro v []int, a int, b int) -> int {
+    v.compare(a).compare(b)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        // `compare` returns int, not fluent. Even if depth ≥ 2, must
+        // not wrap. (Also semantically wrong int.compare(int) — but
+        // our pass should reject without emitting hoist.)
+        assert_eq!(count_chain_root_lets(f), 0,
+            "non-fluent method on local root must NOT wrap");
+    }
+
+    /// V3.5 negative: complex root (Index) NOT wrapped — V3 scope
+    /// excludes Call/Index/etc. intermediate evaluations.
+    #[test]
+    fn v3_index_root_not_wrapped() {
+        let src = r#"
+module testmod.v3_index_root
+fn process(mut vs [][]int, a int, b int) -> () {
+    vs[0].push(a).push(b)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        // `vs[0]` is `Index{Ident, IntLit}` — not Ident, not
+        // Member{Ident, _}, not Member{SelfAccess, _}. Skipped.
+        assert_eq!(count_chain_root_lets(f), 0,
+            "Index root must NOT wrap (V3 scope excludes Index)");
+    }
+
+    /// V3.6 positive: user fluent builder on local var combines V2 + V3.
+    #[test]
+    fn v3_user_fluent_on_local_var() {
+        let src = r#"
+module testmod.v3_user_local
+type Bldr { mut n int }
+fn Bldr mut @step() -> @ { @n = @n + 1; @ }
+fn make(mut b Bldr) -> () {
+    b.step().step().step()
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "make");
+        let roots = count_chain_root_lets(f);
+        assert!(roots >= 1,
+            "V2+V3 combined: user-fluent on local Ident must wrap; got {} _chain_root_ lets",
+            roots);
     }
 
     /// V2.6 positive: registry treats `returns_receiver` flag as
