@@ -608,10 +608,59 @@ plan125 regression 22/22 PASS после каждого, plan125_followups 9/9 P
 | # | Marker | Status |
 |---|---|---|
 | 1 | `[M-125-type-checker-never-first-class]` | 🟡 deferred — Ф.5 не нужен для production codegen V1 |
-| 2 | `[M-125-loop-no-break-divergence]` | 🟡 backlog — over-approx risk, требует control-flow analysis |
-| 3 | `[M-125-stmt-position-divergence]` | 🟡 backlog — control-flow analysis за пределами trailing-only |
-| 4 | `[M-125-while-true-divergence]` | 🟡 backlog — Rust-style const-true loop |
+| 2 | ✅ `[M-125-loop-no-break-divergence]` | **CLOSED 2026-06-05** (Plan 125.2 Ф.1) |
+| 3 | ✅ `[M-125-stmt-position-divergence]` | **CLOSED 2026-06-05** (Plan 125.2 Ф.3) |
+| 4 | ✅ `[M-125-while-true-divergence]` | **CLOSED 2026-06-05** (Plan 125.2 Ф.2) |
 
 ### Followup batch commit chain
 
 (коммиты в branch `plan-125-followups`, см. merge статус в основной части plan-doc)
+
+---
+
+## Followup batch 2 — Plan 125.2 — 3/4 remaining closed (2026-06-05, branch `plan-125.2`)
+
+После Plan 125 V1 (codegen-side trailing-only whitelist) и batch 1
+(3 followups: codegen-never-cast/unreachable-builtin/method-call-never)
+закрыт Plan 125.2 — CFA expansion в codegen helper `expr_diverges_125`
+/ `block_trailing_diverges`. Три marker'а закрыты mechanical AST pattern
+detection с conservative under-approximation.
+
+### Закрытые followups (3 of 4 remaining)
+
+| # | Marker | Changes | Tests |
+|---|---|---|---|
+| 2 | `[M-125-loop-no-break-divergence]` | `expr_diverges_125` extended на `ExprKind::Loop` — divergent если `loop_body_has_break(body) == false`. Helper рекурсивно walk'ает Block stmts + trailing, descending через If/IfLet/Match/Block/With/Forbid/Realtime/Supervised + compositional Expr. Scope stop-rules: НЕ descend в Loop/While/WhileLet/For/ParallelFor (inner scope) + Lambda/Closure/HandlerLit/ProtocolLit (different scope). Continue НЕ считается break. | 4 (loop_inf_in_then_else_value, loop_inf_in_match_arm, loop_panic_inside_NOT_diverges_via_break, neg/loop_with_break_NOT_divergent) |
+| 4 | `[M-125-while-true-divergence]` | `expr_diverges_125` extended на `ExprKind::While` — divergent если `cond.kind == BoolLit(true)` AND `loop_body_has_break(body) == false`. Strict literal match (no const-fold `1==1`). | 4 (while_true_inf_in_else, while_true_no_break_match_arm, neg/while_cond_var_NOT_divergent, neg/while_false_NOT_divergent) |
+| 3 | `[M-125-stmt-position-divergence]` | `block_trailing_diverges` extended — last-stmt `Stmt::Break` / `Stmt::Continue` теперь признаются divergent (parser+type-checker гарантируют синтаксическую валидность только внутри loop scope, поэтому extra scope-context не требуется). `Stmt::Return` уже handled в V1. | 3 (stmt_break_in_if_else_int, stmt_continue_in_if_else_int, neg/stmt_break_in_loop_last_stmt) |
+
+Negative regression guards (4):
+- `neg/loop_with_break_concrete` — loop с break в if-then must NOT be divergent
+- `neg/while_var_cond` — variable cond (not BoolLit) must NOT trigger while-true detection
+- `neg/break_in_outer_loop_only` — nested loops both with break — neither inherits divergence
+- `neg/regression_concurrency_loop_pattern` — Plan 83-style supervised worker loop must compile
+
+### Остающиеся followups (1 of 4)
+
+| # | Marker | Status |
+|---|---|---|
+| 1 | `[M-125-type-checker-never-first-class]` | 🟡 deferred — Ф.5 не нужен для production codegen V1 |
+
+### Plan 125.2 commit chain (branch `plan-125.2`, не merged)
+
+- `0ae63dc7385` feat(plan125.2 Ф.1): loop-no-break divergent in expr_diverges_125
+- `373a8bf31c9` feat(plan125.2 Ф.2): while-true const-cond divergent
+- `15f91eb3ee7` feat(plan125.2 Ф.3): stmt-position divergent (Break/Continue) at last-stmt
+- `177b9b77af5` test(plan125.2 loop_no_break): 4 fixtures
+- `09850f38639` test(plan125.2 while_true): 4 fixtures
+- `71dd70ae2a7` test(plan125.2 stmt_position): 3 fixtures
+- `fb0a5dc2421` test(plan125.2 negative): 4 regression guards for CFA expansion
+
+### Test status
+
+- plan125 22/22 PASS (V1 — no regressions)
+- plan125_followups 9/9 PASS (batch 1 — no regressions)
+- plan125_2 15/15 PASS (Plan 125.2 — 11 positive + 4 negative)
+
+**Status:** ✅ **PLAN 125.2 CLOSED 2026-06-05** — branch `plan-125.2`,
+worktree `nova-p125-2`, NOT merged to main, NOT pushed.

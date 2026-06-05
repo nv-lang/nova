@@ -32925,3 +32925,141 @@ Lessons:
     standard compile-only verification pattern достаточно для marker
     closure.
 
+
+================================================================================
+== 2026-06-05 — Plan 125.2 IMPLEMENTATION: CFA expansion (3 markers CLOSED)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p125-2
+> Branch: plan-125.2 (off main 7c173fb9f2d)
+> Status: ✅ CLOSED — NOT merged to main, NOT pushed
+
+Plan 125.2 — followup batch 2 после Plan 125 V1 (codegen-side divergence
+whitelist) + batch 1 (3 markers: codegen-never-cast / unreachable-builtin
+/ method-call-never). CFA expansion в codegen helper `expr_diverges_125` /
+`block_trailing_diverges` (emit_c.rs из Plan 125 V1). Закрывает 3 из 4
+remaining followup markers.
+
+=== Закрытые markers (3) ===
+
+1. [M-125-loop-no-break-divergence] — Ф.1 (commit 0ae63dc7385)
+   `expr_diverges_125` extended на `ExprKind::Loop` — divergent если
+   body не содержит `break` который targets THIS loop scope.
+
+   Helper `loop_body_has_break(&Block)` рекурсивно walk'ает Block stmts
+   + trailing, descending через If/IfLet/Match/Block/With/Forbid/
+   Realtime/Supervised + compositional Expr-узлы (Call/Binary/Unary/
+   Member/Index/Throw/Try/Bang/TupleLit/ArrayLit и т.п.).
+
+   Scope stop-rules:
+     • НЕ descend в Loop/While/WhileLet/For/ParallelFor — break внутри
+       таргетит inner scope, не наш.
+     • НЕ descend в Lambda/ClosureLight/ClosureFull/HandlerLit/
+       ProtocolLit — closure body — другой scope.
+     • Continue НЕ считается break (не покидает loop).
+
+   Conservative under-approximation: any expression variant не
+   expicitly traversed → `return false` (no break found, loop НЕ
+   гарантированно divergent). Safe.
+
+2. [M-125-while-true-divergence] — Ф.2 (commit 373a8bf31c9)
+   `expr_diverges_125` extended на `ExprKind::While` — divergent если
+   `cond.kind == BoolLit(true)` AND `loop_body_has_break(body) == false`.
+
+   Strict literal match — только `ExprKind::BoolLit(true)` в `cond.kind`.
+   Constant-fold-equivalent выражения (`while 1 == 1`) НЕ ловятся — это
+   codegen-syntactic check, не SMT-level analysis. Достаточно для
+   прямого Rust-style idiom `while true { body }`.
+
+   Body break-detection переиспользует `loop_body_has_break` из Ф.1.
+
+3. [M-125-stmt-position-divergence] — Ф.3 (commit 15f91eb3ee7)
+   `block_trailing_diverges` extended — last-stmt `Stmt::Break` /
+   `Stmt::Continue` теперь признаются divergent. Block никогда не
+   достигает своей value-producing позиции — control transfers в
+   enclosing loop scope.
+
+   Rationale: для codegen result-type inference важно лишь то,
+   производит ли block значение типа T или всегда выходит control-
+   flow'ом. break/continue гарантируют exit. Scope-vs-fn semantics:
+   parser+type-checker уже enforce, что break/continue syntactically
+   валидны только внутри loop, так что мы trust'им этот invariant.
+
+   `Stmt::Return` уже handled в Plan 125 V1 — оставлен как-есть.
+
+=== Test fixtures (15 total) ===
+
+Positive (11):
+  loop_inf_in_then_else_value, loop_inf_in_match_arm,
+  loop_panic_inside_NOT_diverges_via_break (Ф.1)
+  while_true_inf_in_else, while_true_no_break_match_arm (Ф.2)
+  stmt_break_in_if_else_int, stmt_continue_in_if_else_int (Ф.3)
+  (+ 4 in neg/ semantic guard fixtures — listed below)
+
+Negative regression guards (4 — neg/):
+  loop_with_break_concrete — loop с break в if-then must NOT be divergent
+  while_var_cond — variable cond (not BoolLit) must NOT trigger while-true
+  break_in_outer_loop_only — nested loops both with break — neither inherits
+  regression_concurrency_loop_pattern — Plan 83 supervised worker loop
+
+Plus orthogonal neg fixtures (already в plan125_2/neg from Ф.1/Ф.2/Ф.3 commits):
+  loop_with_break_NOT_divergent, while_cond_var_NOT_divergent,
+  while_false_NOT_divergent, stmt_break_in_loop_last_stmt.
+
+Total: 15 fixtures PASS (plan125_2 dir).
+
+=== Spec amendments ===
+
+  • spec/decisions/08-runtime.md D25 divergent-expression whitelist
+    расширен (lines ~1039-1058):
+      - `loop { ... }` без break в body
+      - `while true { ... }` const-cond literal без break в body
+      - `Stmt::Break` / `Stmt::Continue` в last-stmt позиции блока
+    Codegen ограничение updated: last-stmt also includes Break/Continue
+    (не только Throw/Return/Expr).
+
+=== Plan-doc updates ===
+
+  • docs/plans/125-divergence-aware-inference.md:
+    - Followup table: marked [M-125-loop-no-break-divergence] +
+      [M-125-while-true-divergence] + [M-125-stmt-position-divergence]
+      as ✅ CLOSED.
+    - New section «Followup batch 2 — Plan 125.2 — 3/4 remaining closed»
+      с детальным описанием реализации, fixtures, commit chain.
+
+=== Commit chain (branch plan-125.2) ===
+
+  • 0ae63dc7385 feat(plan125.2 Ф.1): loop-no-break divergent in expr_diverges_125
+  • 373a8bf31c9 feat(plan125.2 Ф.2): while-true const-cond divergent
+  • 15f91eb3ee7 feat(plan125.2 Ф.3): stmt-position divergent (Break/Continue) at last-stmt
+  • 177b9b77af5 test(plan125.2 loop_no_break): 4 fixtures
+  • 09850f38639 test(plan125.2 while_true): 4 fixtures
+  • 71dd70ae2a7 test(plan125.2 stmt_position): 3 fixtures
+  • fb0a5dc2421 test(plan125.2 negative): 4 regression guards for CFA expansion
+  • (this) docs(plan125.2): spec amendments + plan-doc closure + simplifications + project-creation
+
+=== Regression status ===
+
+  • plan125: 22/22 PASS (Plan 125 V1 — no regressions)
+  • plan125_followups: 9/9 PASS (batch 1 — no regressions)
+  • plan125_2: 15/15 PASS (Plan 125.2 — 11 positive + 4 negative)
+
+=== Remaining followup (1 of 4) ===
+
+  • [M-125-type-checker-never-first-class] — Ф.5 (`Ty::Never` first-class
+    subtype в types/mod.rs). 🟡 deferred — codegen V1 + Plan 125.2
+    production-ready без него.
+
+=== Lessons ===
+
+  • CFA expansion via codegen-local AST walker — clean separation
+    от types/mod.rs (избегает root cause 2026-06-03 24-regression revert).
+    `expr_diverges_125` остаётся single-source-of-truth для divergence
+    semantics в codegen.
+  • Conservative under-approximation — safe default: при сомнениях
+    `return false` (НЕ помечать как divergent). Тестовое покрытие через
+    neg/ fixtures проверяет, что legitimate non-divergent idioms (loop
+    с break, while var-cond, nested loops с break paths) НЕ flip'ятся.
+  • Scope-aware break detection — recursive walker с explicit stop-rules
+    для inner loops + closures. Continue ≠ break — важный edge case.
+
