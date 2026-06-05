@@ -33714,3 +33714,27 @@ LESSONS:
 4. Single explicit type prefix bug на single-field record (Marker {})
    — pre-existing codegen issue (treats empty record as scalar).
    Не Plan 126 — fixture p12 использует minimum 1 field.
+
+## 2026-06-05 (later) — Plan 118.1 audit gap-fixes (5 commits + stale-binary lesson)
+
+Post-merge audit (workflow wc6fdqhkh) выявил 7 must-fix gaps. Fixed
+in commit-per-task split:
+
+- 5be7f189950 spec(D216): diagnostic codes registry + §22 method-binding note
+- 3d32b2368ab spec(Q-cstring): ✅ ЗАКРЫТО marker (reversed 2026-05-07 variant)
+- 329545c8e2c docs(plan118.1): plans-README status + plan-doc AC entries
+- 10058ecf4b8 docs(ffi-cookbook): Plan 118.1 — FFI intrinsics section
+- (NEG fixtures commit) test(plan118.1): t7-t10 для full coverage
+
+Test results: plan118_1_closeout 10/10 PASS via release nova.
+
+### Stale-binary lesson (повторно)
+
+Workflow agent initially reported 9/10 FAIL — false negative. Root cause
+identical к Plan 91.14 audit (earlier session): main repo's
+nova-cli/target/release/nova.exe был stale (merge 15abfd7546b shipped
+addr_of codegen but binary не пересобран). После `cargo build --release`
+в main: 10/10 PASS.
+
+Pattern confirmed: post-merge audit workflows MUST instruct rebuild
+BEFORE testing new codegen behaviors. Иначе false negatives propagate.

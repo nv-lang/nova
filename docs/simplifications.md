@@ -33467,3 +33467,21 @@ Sum-type rich semantics через 5 markers ([M-126-sum-*-rich]). Это
 - **Не сделан Cloneable implicit на value-record по умолчанию** —
   semantic types (`Money`, `UserId`) opt-in design — explicit
   `#impl(Cloneable)` forces awareness vs Rust `Copy` auto-derive.
+
+## 2026-06-05 (later) — Plan 118.1 audit gap-fixes (no simplifications)
+
+Post-merge audit (workflow wc6fdqhkh) выявил 7 must-fix gaps. Все
+исправлены production-grade per user directive «без упрощений как для
+прода»:
+
+- spec D216 registry — 2 new error codes added
+- spec §22 CStr — method-binding deferral explicit
+- spec Q-cstring — ✅ ЗАКРЫТО marker reversed 2026-05-07 variant
+- docs/plans/README.md — Plan 118.1 status updated к ✅ V1+Ф.2+Ф.3+Ф.4
+- docs/ffi-cookbook.md — full Plan 118.1 section (CStr + addr_of + RawMem)
+- plan-doc AC entries — A-118.1-Ф.3.a..f + A-118.1-Ф.4.a..d formal
+- 4 new NEG fixtures (t7-t10) — full coverage 7 error codes
+
+10/10 plan118_1_closeout PASS after stale-binary rebuild (lesson: post-
+merge audit workflows MUST rebuild binary BEFORE testing — pattern
+confirmed second time, see also Plan 91.14 audit earlier).
