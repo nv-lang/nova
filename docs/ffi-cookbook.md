@@ -386,10 +386,23 @@ external fn c_printf(fmt CStr) -> i32
 ```
 
 CStr backing type: `*u8` (Plan 118 typed pointer). ABI marshals к
-`const char*` / `uint8_t*`. **V1 foundation only** — method bindings
-(`str.as_cstr()` etc.) deferred к [M-118.1-cstr-runtime-wiring].
+`const char*` / `uint8_t*`.
 
-Workaround V1: caller wraps raw `*u8` via `CStr(ptr_value)` constructor.
+**Conversion methods (Plan 118.1 closeout amend, 2026-06-06):**
+
+```nova
+ro s = "hello"
+ro c = s.as_cstr()              // zero-copy (D26 invariant)
+ro c2 = s.to_cstr()             // V1: alias к as_cstr
+ro c3 = s.as_cstr_unchecked()   // V1: alias
+
+// Direct usage в FFI call:
+ro n = c_strlen(s.as_cstr())
+```
+
+Pure-Nova реализация через `str.as_bytes().as_ptr()` (D176 + Plan 118.2
+Ф.1 builtin). V1 ships без embedded-NUL runtime scan ([M-118.1-cstr-nul-
+check] followup); caller responsibility per FFI contract.
 
 ### addr_of / addr_of_mut (Zig-style pointer creation)
 
