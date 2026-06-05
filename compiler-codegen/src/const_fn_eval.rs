@@ -2366,6 +2366,110 @@ fn walk_expr(
                 }
             }
         }
+        // Plan 118.1 closeout (2026-06-05): `addr_of(IDENT)` / `addr_of_mut(IDENT)`
+        // intrinsics — desugar к `&IDENT` (UnOp::AddrOf). Unsafe/realtime/
+        // mut-binding gating уже эмитировались pre-rewrite в UnsafeCtx /
+        // ConsumeCtx (closer к user-source AST). Здесь только syntactic
+        // lvalue validation + actual rewrite.
+        if let ExprKind::Ident(n) = &func.kind {
+            if (n == "addr_of" || n == "addr_of_mut") && args.len() == 1 {
+                let arg_expr = match &args[0] {
+                    crate::ast::CallArg::Item(ae) => ae.clone(),
+                    other => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_ADDR_OF_NON_LVALUE] `{}` accepts only positional \
+                                 lvalue argument (Ident / Member / field access). \
+                                 Named/spread args не addressable.",
+                                n,
+                            ),
+                            other.expr().span,
+                        ));
+                        return;
+                    }
+                };
+                // Lvalue validation — mirror parser/mod.rs:5965-5984 для
+                // bare `&value`. Literals не addressable; RecordLit без
+                // named binding banned; arr[i] banned (D216 §15).
+                match &arg_expr.kind {
+                    ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                    | ExprKind::BoolLit(_) | ExprKind::CharLit(_)
+                    | ExprKind::StrLit(_) => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_AMP_LITERAL] `{}(<literal>)` forbidden \
+                                 (Plan 118 D216 §15) — literals (числа, строки, \
+                                 bools, chars) не addressable; они не имеют stable \
+                                 storage. Bind в named local: `ro x = 42; ro p = {}(x)`.",
+                                n, n,
+                            ),
+                            arg_expr.span,
+                        ));
+                        return;
+                    }
+                    ExprKind::RecordLit { .. } => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_AMP_RECORD_LITERAL] `{}(Record {{ ... }})` без named \
+                                 binding запрещён (Plan 118 D216 §4 amend). Required \
+                                 pattern: `ro acc = Record {{ ... }}; ro p = {}(acc)`.",
+                                n, n,
+                            ),
+                            arg_expr.span,
+                        ));
+                        return;
+                    }
+                    ExprKind::Index { .. } => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_ARRAY_INDEX_PTR_BANNED] `{}(arr[i])` forbidden \
+                                 (Plan 118 D216 §15) — array buffer может resize \
+                                 (`.push`) или relocate via GC compaction; pointer \
+                                 становится dangling.",
+                                n,
+                            ),
+                            arg_expr.span,
+                        ));
+                        return;
+                    }
+                    // Accept Ident / Member / SelfAccess as lvalue. Anything
+                    // else (Call result, Binary expr, Block, ...) — rvalue,
+                    // not addressable.
+                    ExprKind::Ident(_) | ExprKind::Member { .. }
+                    | ExprKind::SelfAccess => {
+                        // ok — fall through to rewrite.
+                    }
+                    _ => {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_ADDR_OF_NON_LVALUE] `{}(...)` requires an lvalue \
+                                 (named binding, field access, or self) — rvalue \
+                                 expressions (call results, arithmetic, etc.) не \
+                                 addressable. Bind в named local first.",
+                                n,
+                            ),
+                            arg_expr.span,
+                        ));
+                        return;
+                    }
+                }
+                // Rewrite to `&arg_expr` (UnOp::AddrOf). Type inference dictates
+                // *T vs *mut T — `addr_of_mut` тут не оборачиваем в As cast,
+                // mutability карьерится через `mut <binding>` per D216 (V1
+                // simplification: bare AddrOf, semantic mut-ness живёт в Nova
+                // binding mut-bit). Recurse через walk_expr на operand уже не
+                // нужен — walk_children отрабатывал ДО этого rewrite.
+                let span = e.span;
+                *e = Expr {
+                    kind: ExprKind::Unary {
+                        op: crate::ast::UnOp::AddrOf,
+                        operand: Box::new(arg_expr),
+                    },
+                    span,
+                };
+                return;
+            }
+        }
         // Plan 114.4.3 Ф.4 V2: turbofish callee — unwrap base Ident.
         let raw_name_opt: Option<String> = match &func.kind {
             ExprKind::Ident(n) => Some(n.clone()),
