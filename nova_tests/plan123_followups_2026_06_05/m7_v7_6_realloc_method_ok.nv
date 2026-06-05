@@ -1,0 +1,50 @@
+// Plan 123 V*.followups 2026-06-05 marker 7 — V7.6 method-realloc-flag.
+// Closes [M-123.7.6-method-realloc-flag].
+// Positive: type с replace-style method (param of receiver type) registered
+// в replaces_self_methods set. V7.6 own-field cache analysis refines к
+// invalidate across `@F.replace_with()` calls. Semantic preservation
+// verified through observed slot replacement.
+
+module plan123_followups_2026_06_05.m7_v7_6_realloc_method_ok
+
+type Slot {
+    mut count int
+}
+
+fn Slot.new(init int) -> Slot => { count: init }
+
+// V7.6-realloc heuristic: `mut` receiver + non-self param of receiver
+// type ⇒ registered в replaces_self_methods.
+fn Slot mut @replace_with(other Slot) -> () {
+    @count = other.count
+}
+
+// `mut` receiver + non-Self param (int) ⇒ NOT marked replaces_self.
+fn Slot mut @bump(by int) -> () {
+    @count = @count + by
+}
+
+fn Slot @get() -> int => @count
+
+type Holder {
+    mut s Slot
+}
+
+fn Holder.new() -> Holder => { s: Slot.new(0) }
+
+fn Holder mut @demo_replace_then_bump() -> int {
+    @s.bump(3)
+    ro a = @s.get()         // expect 3
+    @s.replace_with(Slot.new(100))
+    ro b = @s.get()         // expect 100 — replace_with overwrites slot
+    @s.bump(1)
+    ro c = @s.get()         // expect 101
+    a + b + c               // 3 + 100 + 101 = 204
+}
+
+test "V7.6-realloc: replace-style method preserves semantic observable" {
+    mut h = Holder.new()
+    ro r = h.demo_replace_then_bump()
+    assert(r == 204)
+    assert(h.s.get() == 101)
+}

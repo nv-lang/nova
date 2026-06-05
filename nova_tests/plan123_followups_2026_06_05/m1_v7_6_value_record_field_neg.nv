@@ -1,0 +1,43 @@
+// Plan 123 V*.followups 2026-06-05 marker 1 — V7.6 V2 negative.
+// Negative semantic verification: value-record (D228) field via TypeDecl
+// classification → NOT ref-typed → mut methods writing slot must be
+// observed correctly. Without V2 (hardcoded list), value-records would
+// fall в default "unknown" bucket; V2 routes them к ValueRecord →
+// classifies as not-slot-stable. Compiler's correctness choice
+// here is conservative (cache invalidate) — observable behavior is
+// that mutations propagate. This test asserts that.
+
+module plan123_followups_2026_06_05.m1_v7_6_value_record_field_neg
+
+type Pt value {
+    x int
+    y int
+}
+
+fn Pt.new(a int, b int) -> Pt => { x: a, y: b }
+
+type Holder {
+    mut p Pt
+}
+
+fn Holder.new() -> Holder => { p: Pt.new(0, 0) }
+
+fn Holder mut @set_p(nx int, ny int) -> () {
+    // Whole-slot mutation pattern. V7.6 V2 correctly treats Pt as
+    // value-record (not ref-typed) — any cache of @p would be
+    // invalidated upon write, so subsequent reads see the new value.
+    @p = Pt.new(nx, ny)
+}
+
+fn Holder @read_x() -> int => @p.x
+fn Holder @read_y() -> int => @p.y
+
+test "V7.6 V2 value-record (D228) mutation observable to caller" {
+    mut h = Holder.new()
+    h.set_p(7, 11)
+    assert(h.read_x() == 7)
+    assert(h.read_y() == 11)
+    h.set_p(99, 100)
+    assert(h.read_x() == 99)
+    assert(h.read_y() == 100)
+}
