@@ -7922,6 +7922,34 @@ Double-invocation invariant нарушается только если programme
 Cancel остаётся pending в `fiber->cancel_pending`; доставляется после
 `nv_leave_cancel_shield()`. Если cleanup body превысил timeout — текущий
 suspend получает `CleanupTimeoutError`, дальше propagates через D161
+
+**R3b amend (2026-06-05) [M-83.11-cancel-token-bound-race-2k] fix:**
+NovaCancelToken allocation MUST use `nova_alloc_uncollectable` (not
+`nova_alloc`). Под high fiber-count (≥2k spawns в supervised(cancel:))
+ctx_pins[] GC root protection (Plan 83.11 §11.6) becomes insufficient —
+Boehm conservative scanner может потерять root под heavy GC pressure
+(frequent collections triggered by 2k+ spawn allocations + ctx GC churn).
+Token reclaim → memory reuse for new SpawnCtx → write at offset 8
+(_nova_worker_slot) overlaps с token->bound_scope offset → panic
+«token already bound to a live scope» on bind. Same defensive pattern
+as Plan 83.4.5.8 SpawnCtx uncollectable. Trade-off: ~64 bytes leak per
+token until process exit. Followup `[M-83.11-cancel-token-explicit-cleanup]`
+для adding explicit dispose API if needed.
+
+**R3c amend (2026-06-05) [M-83.11-nested-supervised-cascade-drain-hang]
+fix:** `nova_cancel_token_bind` deferred-cancel propagation (вызывается
+когда `cancel_requested=true` уже выставлен до bind) MUST run полную
+cancel-hook chain — не только `nova_sched_cancel_all_pending(q)`. Pre-fix
+bug: cascade-cancel race (outer fiber вызывает `outer_tok.cancel()` BEFORE
+main reaches outer's bind, поскольку cascade triggered by inner supervised
+которое blocks main thread first) — cancel cascades через `linked[]`
+к inner_tok который УЖЕ bound, но outer's deferred propagation на bind
+only wakes pending-slot fibers, missing armed M:N worker-parked fibers +
+ASYNC slots + driver-armed timers. Outer scope worker fibers stay parked
+→ supervised_run hangs до watchdog. Fix: bind деferred-cancel calls full
+chain — `nova_sched_cancel_all_pending` + `nova_scope_cancel_wake_all` +
+`nova_runtime_cancel_worker_fibers` + `_nova_cancel_via_driver` (same
+sequence as `nova_cancel_token_cancel_reason`).
 composition.
 
 **R3a amend (2026-06-05) [M-110.x-cleanup-shield-deadline-underflow]

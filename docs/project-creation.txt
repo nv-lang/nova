@@ -33380,3 +33380,110 @@ Verification:
 per feedback-sequential-no-sub-worktree). Merge `--no-ff` в main
 preserves history; branch pushed для review.
 
+
+
+
+================================================================================
+== 2026-06-05 — Plan 83.11 V2 cancel races CLOSED — 2 markers
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p83-11-races
+> Branch: plan-83.11-cancel-races-v2 (off main 685c3e6a06f)
+
+Closes 2 followup markers from Plan 110.x supervised-fix Session ext #6
+(2026-06-05) where shield codegen fix exposed pre-existing Plan 83.11
+races previously masked by bogus CleanupTimeoutError.
+
+MARKER #1: [M-83.11-cancel-token-bound-race-2k]
+
+Symptom: nova panic "token already bound to a live scope" при N=2k+
+fibers в supervised(cancel:) test.
+
+Root cause (verified via --gc malloc PASS pre-fix): Boehm conservative
+GC reclaims NovaCancelToken despite ctx_pins[]-based root protection
+(Plan 83.11 §11.6). Under high fiber count (2k+ spawn allocations + ctx
+GC churn) frequent GC triggers expose racy stack scanning. Token's
+memory reused by new SpawnCtx whose offset-8 write (_nova_worker_slot)
+overlaps token->bound_scope (also offset 8). Subsequent bind sees
+non-NULL bound_scope → panic.
+
+Diagnostic technique: --gc malloc switch confirmed GC reclaim theory
+(test PASSes without Boehm; FAILs с Boehm). Per playbook §5.7: "if
+more coverage doesnt reach 30/30 PASS, the bug is NOT about coverage."
+
+Fix shape (production-grade): nova_alloc_uncollectable for NovaCancelToken
+in fibers.h::nova_cancel_token_new. Same defensive pattern as Plan 83.4.5.8
+SpawnCtx uncollectable. Trade-off: ~64 bytes leak per token until
+process exit. Followup [M-83.11-cancel-token-explicit-cleanup] для
+adding explicit dispose API if needed для long-running services.
+
+Stress verification: fibers_10k_sleep_cancel @ N=10k bumped from N=2k
+production-scale → 30/30 PASS post-fix.
+
+MARKER #2: [M-83.11-nested-supervised-cascade-drain-hang]
+
+Symptom: nested_supervised_3_levels_cancel hangs до watchdog timeout
+(supervised.summary slots=0 alive=0 dead=0 null=0).
+
+Root cause (verified via state-dump): cascade race in nested
+supervised(cancel:) +inner.cancelled_by(outer). Main thread enters
+inner supervised FIRST (which blocks main on supervised_run), so outer
+is not yet bound when side fiber fires outer_tok.cancel() at ~30ms.
+Cancel cascades through linked[] to inner_tok which IS bound. Inner
+scope cancels correctly. When inner returns, main reaches outer bind,
+which has deferred-cancel propagation. Pre-fix only nova_sched_cancel_all_pending
+was called — but armed M:N workers parked в worker scopes (not supervised),
+ASYNC slots, и driver-armed timers требуют отдельных hooks. Outer
+worker-parked fibers stay parked → outer supervised_run waits forever
+→ watchdog.
+
+State-dump showed: pending_remote=1 на outer + armed sleep handle on
+INNER scope (held in outer's armed_sleeps_head linked list) + worker
+fiber parked with parent_scope=outer. Outer cancel was incomplete.
+
+Fix shape (production-grade): nova_cancel_token_bind deferred-cancel
+propagation runs full cancel-hook chain — nova_sched_cancel_all_pending
++ nova_scope_cancel_wake_all + nova_runtime_cancel_worker_fibers +
+_nova_cancel_via_driver (same sequence as nova_cancel_token_cancel_reason).
+
+Stress verification: nested_supervised_3_levels_cancel @ depth=3 (с
+middle_tok cascade chain restored) → 30/30 PASS post-fix.
+
+REGRESSION CHECK:
+
+stress_iso_3e: 30/30 sequential PASS (no regression from R3a Plan 110.x fix).
+cancel_during_runtime_shutdown: 30/30 PASS (still good).
+
+SPEC AMEND:
+
+D188 R3b: NovaCancelToken uncollectable invariant.
+D188 R3c: bind deferred-cancel must run full propagation chain.
+
+LESSONS:
+
+1. CTX_PINS[]-based GC root protection (Plan 83.11 §11.6) is NOT
+   sufficient под high fiber count. Boehm conservative scanner может
+   lose roots под GC pressure. Use nova_alloc_uncollectable defensive
+   pattern для caller-owned long-lived structs (matches Plan 83.4.5.8).
+
+2. DEFERRED-CANCEL PROPAGATION в bind must mirror cancel_reason chain
+   exactly. Partial propagation (только sched_cancel_all_pending) leaves
+   worker fibers + ASYNC slots + driver timers untouched.
+
+3. CASCADE RACE pattern: when main thread enters nested supervised before
+   outer bind, cancel through cascade may hit inner first (which is
+   already bound) and outer later via bind deferred-propagation. Both
+   paths must produce identical cancel effects.
+
+4. DEBUG TECHNIQUE: --gc malloc swap is a powerful first-line probe для
+   GC-related races. PASS pre-fix → GC reclaim theory confirmed. State-dump
+   via NOVA_WATCHDOG_DUMP_SECS shows "impossible state" combinations.
+
+MARKER TALLY:
+
+- [M-83.11-cancel-token-bound-race-2k] FULLY CLOSED.
+- [M-83.11-nested-supervised-cascade-drain-hang] FULLY CLOSED.
+- [M-83.11-cancel-token-explicit-cleanup] NEW followup (P2, optional).
+
+Plan 110.x family + Plan 83.11 V2 cancel races: production-grade closure
+для supervised(cancel:) subsystem complete.
