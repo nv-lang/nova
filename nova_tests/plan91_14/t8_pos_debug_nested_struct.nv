@@ -1,0 +1,38 @@
+// Plan 91.14 Ф.6 POS T8 — nested struct debug.
+//
+// Verify recursive @debug_fmt invocation — outer Container calls
+// inner Point's @debug_fmt via manual impl.
+
+module plan91_14.t8_pos_debug_nested_struct
+
+type Point {
+    x int
+    y int
+}
+
+fn Point @debug_fmt(mut sb StringBuilder) -> () {
+    sb.append("Point { x: ")
+    sb.append(str.from(@x))
+    sb.append(", y: ")
+    sb.append(str.from(@y))
+    sb.append(" }")
+}
+
+type Container {
+    label str
+    origin Point
+}
+
+fn Container @debug_fmt(mut sb StringBuilder) -> () {
+    sb.append("Container { label: \"")
+    sb.append(@label)
+    sb.append("\", origin: ")
+    @origin.debug_fmt(sb)
+    sb.append(" }")
+}
+
+test "nested struct debug recursion" {
+    ro c = Container { label: "main", origin: Point { x: 10, y: 20 } }
+    ro s = "${c:?}"
+    assert(s == "Container { label: \"main\", origin: Point { x: 10, y: 20 } }")
+}
