@@ -5,16 +5,16 @@
 module plan100_6.private_consume_local_use_ok
 
 // Private consume-type — нет `export`, не видна из других пакетов:
-type MutexGuard consume {
+type LocalGuard consume {
     lock_id int,
 }
 
-fn MutexGuard consume @release() -> () { () }
+fn LocalGuard consume @release() -> () { () }
 
-fn acquire_mutex(id int) -> MutexGuard => { lock_id: id }
+fn acquire_mutex(id int) -> LocalGuard => { lock_id: id }
 
 // Factory helpers (also private):
-fn do_critical_work(consume guard MutexGuard) -> () {
+fn do_critical_work(consume guard LocalGuard) -> () {
     guard.release()
 }
 
@@ -24,6 +24,6 @@ test "private consume-type — used locally, enforced correctly" {
 }
 
 test "private consume via consume-param" {
-    ro guard = acquire_mutex(2)
+    consume guard = acquire_mutex(2)
     do_critical_work(guard)                         // ✅ transfer to consume-param
 }
