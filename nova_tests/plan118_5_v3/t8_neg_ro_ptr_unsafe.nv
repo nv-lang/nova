@@ -1,0 +1,11 @@
+// Plan 118.5 V3 Ф.3 NEG T8 — `ro * unsafe T` chain → E_MODIFIER_ORDER
+// (transitive через Pointer wrapper).
+//
+// Per D216 V3 §V3.2: ro contains unsafe-in-chain → error. The chain
+// Readonly(Pointer(Unsafe(int))) is ro-wraps-unsafe violation.
+//
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+
+module plan118_5_v3.t8_neg_ro_ptr_unsafe
+
+external fn p(x ro * unsafe int) -> ()

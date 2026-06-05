@@ -1,0 +1,10 @@
+// Plan 118.5 V3 Ф.4 NEG T13 — `unsafe * unsafe T` redundant inner unsafe.
+//
+// Per D216 V3 §V3.4: outer `unsafe` propagates through nested wrappers;
+// re-applying same safety modifier within chain is redundant.
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+
+module plan118_5_v3.t13_neg_unsafe_redundant_chain
+
+external fn p(x unsafe * unsafe int) -> ()

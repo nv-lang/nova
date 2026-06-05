@@ -9084,6 +9084,320 @@ Both errors are suppressible by:
   (depth > 0 disables the checks).
 - Re-declaring the callee parameter as `unsafe T` (then arg-coerce matches).
 
+---
+
+## D216 V3 amend (Plan 118.5 V3, 2026-06-04) — 4 modifier composition rules
+
+> **Status:** 🆕 SPEC LANDED 2026-06-04. Implementation work tracked in
+> Plan 118.5 V3 phases Ф.1-Ф.5 (parser + checker + 12+ new fixtures).
+>
+> **Builds on:** D216 V1 + V2 (right-binding rule + first-class unsafe T).
+>
+> **Adds:** 4 design rules for modifier composition with `safe` keyword
+> as explicit propagation stopper.
+
+### §V3.1 — Storage-class-aware ban на `ro+mut` adjacency
+
+`ro` и `mut` — modifiers same mutability class. Their combination at type
+level OR binding+content level requires storage-class qualification.
+
+**Rule:**
+
+**Distinction binding-form vs type-form (V3 amend 2026-06-05):**
+
+§V3.1 storage-class ban applies ONLY к **type-position** `ro mut T` /
+`mut ro T` (where both modifiers appear consecutively на одном уровне
+TypeRef). **Binding-position** `ro x mut T` / `mut x ro T` (modifiers
+вокруг имени параметра/локала) — orthogonal binding modifiers, ALWAYS
+allowed regardless of T's storage class. Closes
+[M-118.5-V3-binding-context-relaxation] (was V4 deferred).
+
+- For **value-type T** (storage IS value):
+    - primitives (`int`, `bool`, `f64`, etc.)
+    - value records (`type X value { ... }` per Plan 124.8 D228)
+    - named tuples (`type Point(x f64, y f64)` per Plan 120 D215)
+  
+  Type-position conflicting combinations → **`E_MUTABILITY_CONFLICT_VALUE_TYPE`**:
+    ```nova
+    fn f(p * ro mut int)             // ❌ — pure type-level ro+mut on value T
+    fn f(p * mut ro Point)           // ❌ — same
+    fn f(p ro mut int)               // ❌ — type-form (name absent before modifiers)
+    fn f() -> mut ro str             // ❌ — return type-form
+    type X { field ro mut Acc }      // ❌ if Acc is value record
+    ```
+  
+  Binding-form ALLOWED для value-T:
+    ```nova
+    fn f(ro x mut int)               // ✅ — binding-form (ro pre-name, mut post-name)
+                                     //   ro x: no rebind (binding-level)
+                                     //   mut: mut-method access (binding-level)
+    fn f(mut x ro int)               // ✅ — symmetric
+    let ro x mut int = 5             // ✅ — local-binding form (parser may flag E_LOCAL_*
+                                     //   for non-mut mutation attempts — orthogonal)
+    ```
+
+- For **reference-type T** (T-as-pointer-к-data semantically):
+    - records (`type X { ... }` default — heap)
+    - arrays `[]T`
+    - heap-tracked types
+  
+  Both type-form AND binding-form VALID:
+    ```nova
+    fn f(ro mut Acc)                 // ✅ type-form, ref-T (Readonly(Mut(Acc)))
+                                     //   semantically: ro binding to mut content
+    fn f(ro acc mut Acc)             // ✅ binding-form
+                                     //   ro acc: no rebind / mut access on binding
+    fn f(mut acc ro Acc)             // ✅ symmetric binding-form
+    ```
+
+**For-loop exception:** `for y in iter` — loop variable `y` semantically
+ro but reassigned per iteration. Plan 108.3 loop-var rule preserves this
+behavior; V3 §V3.1 does NOT fire on loop-var-introduced rebindings.
+
+**Value types per V3 (user-confirmed 2026-06-04):**
+
+1. **Primitives** (full list):
+   - Numeric: `int` (alias `isize`), `uint` (alias `usize`), `i8`/`i16`/`i32`/`i64`,
+     `u8`/`u16`/`u32`/`u64`, `f32`, `f64`
+   - Other: `bool`, `char`, `byte` (alias `u8`), `str`, `ptr`
+2. **Value records**: `type X value { ... }` (Plan 124.8 D228)
+3. **Named tuples**: `type Point(x f64, y f64)` (Plan 120 D215)
+4. **Anonymous tuples**: `(A, B, C)` literal type syntax
+5. **Unit**: `()` (zero-size value)
+
+**Reference types per V3:**
+
+- Records (`type X { ... }` default — heap)
+- Arrays `[]T` / FixedArray `[N]T` (heap-tracked для elements)
+- Pointer (any modifier wrapping)
+- Func, Protocol
+
+**Storage class detection** (compiler-codegen/src/types/mod.rs helper):
+```rust
+fn is_value_type_for_v3(ty: &TypeRef, type_decls: &TypeDeclRegistry) -> bool {
+    use TypeRef::*;
+    match ty {
+        Named { path, .. } if path.len() == 1 => {
+            let name = path[0].as_str();
+            // Primitives (per D226 amend: int/uint aliases for isize/usize)
+            if matches!(name,
+                "int" | "uint" | "isize" | "usize"
+                | "i8" | "i16" | "i32" | "i64"
+                | "u8" | "u16" | "u32" | "u64"
+                | "f32" | "f64"
+                | "bool" | "char" | "byte" | "str" | "ptr") { return true; }
+            // User type: value record OR named tuple
+            if let Some(td) = type_decls.get(name) {
+                return td.is_value_record() || td.is_named_tuple();
+            }
+            false
+        }
+        Tuple(..) => true,    // anonymous tuples — value
+        FixedArray(..) => false,  // [N]T — heap-tracked elements
+        Array(..) => false,       // []T — heap
+        Pointer(..) => false,
+        Func { .. } => false,
+        Protocol { .. } => false,
+        Unit(..) => true,
+        // Modifier wrappers strip к inner
+        Readonly(inner, _) | Mut(inner, _) | Unsafe(inner, _) => {
+            is_value_type_for_v3(inner, type_decls)
+        }
+    }
+}
+```
+
+**Note re int/uint aliases (D226 amend, 2026-06-04 clarification):**
+
+`int` is alias for `isize` (platform-pointer-width signed integer);
+`uint` is alias for `usize` (platform-pointer-width unsigned). On 64-bit
+target both are i64/u64 respectively. Both `int` и `isize` etc. recognized
+identically by storage-class check.
+
+**Conflict detection** — at check_decl_type (compiler-codegen/src/types/mod.rs):
+```rust
+fn check_v3_ro_mut_conflict(
+    ty: &TypeRef,
+    type_decls: &TypeDeclRegistry,
+    errors: &mut Vec<Diagnostic>,
+) {
+    // Recursive walk:
+    // For each Readonly(Mut(inner)) or Mut(Readonly(inner)) AST shape found,
+    // determine inner's storage class. If value-type → error.
+    //   Pure-type-level (in pointer/array interior) — also error for
+    //   value-type T (no binding context to disambiguate).
+    //   For reference-type T, allow at binding-context (let/param/field),
+    //   disallow at nested-constructor position.
+    ...
+}
+```
+
+**Retracts D33 amend rows:** the previous unconditional «`ro x mut T` ✅»
+and «`mut x ro T` ✅» entries get storage-class qualification per §V3.1.
+
+### §V3.2 — Modifier ordering (safety-outer / mutability-inner)
+
+**Rule:** `unsafe` (safety class) outer, `ro`/`mut` (mutability class)
+inner. Reverse ordering → **`E_MODIFIER_ORDER`**.
+
+**Rationale:** safety wraps mutability conceptually — «this T's mutability
+contract is uncertain» is meaningful; «this T's safety contract is
+read-only» is not (safety is a property of access patterns, not
+mutability). Matches Rust precedent `*const T` (safety wrapper outer).
+
+| Form | AST | Status |
+|------|-----|--------|
+| `unsafe T` | `Unsafe(T)` | ✅ |
+| `unsafe ro T` | `Unsafe(Readonly(T))` | ✅ |
+| `unsafe mut T` | `Unsafe(Mut(T))` | ✅ |
+| `ro unsafe T` | `Readonly(Unsafe(T))` | ❌ E_MODIFIER_ORDER |
+| `mut unsafe T` | `Mut(Unsafe(T))` | ❌ E_MODIFIER_ORDER |
+| `ro * unsafe T` | `Readonly(Pointer(Unsafe(T)))` | ❌ E_MODIFIER_ORDER (transitive through Pointer) |
+| `unsafe * ro T` | `Unsafe(Pointer(Readonly(T)))` | ✅ |
+
+**Detection:** parser KwRo/KwMut arms check `inner.contains_unsafe_in_chain()`
+helper — recursive walk через Readonly/Mut/Pointer wrappers (stopping at
+Named/Array/Tuple/Func boundaries). If found, emit E_MODIFIER_ORDER.
+
+**§V3.2 EXCEPTION:** `safe T` keyword (V3.4) breaks the chain — safe
+explicitly opts out of outer modifier propagation, so `ro * safe unsafe T`
+is **valid** (safe stopper at boundary; inner unsafe is independent).
+
+### §V3.3 — Right-binding propagation semantics (extended)
+
+V2 §V2.1 introduced universal right-binding rule. V3 §V3.3 makes the
+semantic implication explicit:
+
+**Rule:** outer modifier semantically applies к ALL nested types of the
+same class, up к the next same-class modifier OR `safe` stopper OR explicit
+different-class modifier boundary.
+
+Worked examples:
+
+```nova
+ro * T                  // Readonly(Pointer(T))
+                        // semantic: ro applies к Pointer AND inherited
+                        // к T (т.к. T at pointee level, no inner modifier
+                        // stops propagation)
+                        // Practical: same as `ro * ro T` but inner ro is
+                        // E_REDUNDANT (V3.4 — see below)
+
+ro * mut T              // Readonly(Pointer(Mut(T))) — V3.1 forbids
+                        // (mut is different mutability class и conflicts
+                        // c outer ro в propagation chain)
+
+unsafe * T              // Unsafe(Pointer(T))
+                        // semantic: outer unsafe propagates через Pointer
+                        // к T's pointee value level — `.read()` returns
+                        // `unsafe T` (not bare T)
+
+unsafe * safe T         // Unsafe(Pointer(T)) с safe-stopper marker
+                        // semantic: outer unsafe applies к Pointer ops
+                        // (deref check), but T at pointee level is
+                        // explicitly safe (no inherited unsafe wrapper).
+                        // `.read()` returns bare T (safe value).
+```
+
+### §V3.4 — `safe` keyword + E_REDUNDANT_TYPE_MODIFIER extension
+
+**`safe` keyword** — explicit propagation stopper. Marks subsequent T as
+not inheriting outer modifier. Behavior-only marker (no AST variant; no
+codegen impact; parser tracks via `safe_stoppers: Vec<Span>` field в
+Parser struct).
+
+**Syntax:** `safe T` after an outer modifier breaks the propagation chain.
+Standalone `safe T` at top level equivalent к bare `T` (no-op).
+
+**Use cases:**
+
+```nova
+unsafe * safe T         // pointer unsafe (caller-asserted),
+                        // T pointee SAFE (deref яields safe T)
+                        // ≈ Rust `*const T` semantic
+
+ro * safe mut T         // ro pointer (cannot rebind binding),
+                        // T pointee mutability INDEPENDENT (mut OK,
+                        // ro propagation stopped by safe)
+
+unsafe * safe unsafe T  // outer unsafe propagation stopped at safe,
+                        // inner unsafe is independent fresh wrapper
+                        // (NOT V3.1 redundancy)
+```
+
+**E_REDUNDANT_TYPE_MODIFIER extension** — V2 covered only binding-level
+(`ro x ro T`). V3 extends к type-level chains:
+
+| Form | Status |
+|------|--------|
+| `ro T ro` — duplicate ro at same level | ❌ E_REDUNDANT_TYPE_MODIFIER |
+| `ro * ro T` (Readonly(Pointer(Readonly(T)))) | ❌ E_REDUNDANT (outer ro propagates; inner redundant) |
+| `mut * mut T` | ❌ E_REDUNDANT |
+| `unsafe * unsafe T` | ❌ E_REDUNDANT |
+| `ro * safe ro T` | ✅ (safe broke propagation; inner ro is fresh) |
+| `unsafe * safe unsafe T` | ✅ (same) |
+
+**Escape hatch:** inner redundant-looking modifier valid only when `safe`
+appears between outer and inner same-class modifier. Provides intentional
+re-application syntax.
+
+**Detection** (parser/mod.rs):
+```rust
+// In KwRo/KwMut/KwUnsafe arm after recursive parse_type:
+// if inner.contains_same_modifier_in_chain(class) AND
+//    !parser.is_safe_stopped_between(outer_span, inner_span)
+// → E_REDUNDANT_TYPE_MODIFIER
+```
+
+### §V3.5 — New error codes registered
+
+| Code | Description | Spec section |
+|------|-------------|--------------|
+| `E_MUTABILITY_CONFLICT_VALUE_TYPE` | ro+mut adjacency on value-type T | §V3.1 |
+| `E_MODIFIER_ORDER` | mut/ro wrapping unsafe (safety-outer rule) | §V3.2 |
+| `E_REDUNDANT_TYPE_MODIFIER` (extended) | same-class modifier repetition (was: binding-level only; V3 extends к type-level chains) | §V3.4 |
+
+E_PARAM_MOD_CONFLICT preserved для дисциплинирующих случаев:
+- `mut consume name T` / `consume mut name T` (D131 conflict)
+- `mut readonly name T` (legacy form)
+
+**§V3.1 amend (2026-06-05):** E_PARAM_MOD_CONFLICT **LIFTED** для
+`ro x mut T` (pre-name ro + post-name mut) — orthogonal binding modifiers
+per binding-context relaxation. Symmetric `mut x ro T` уже работал
+(pre-name mut + post-name unhandled — falls to type-level Readonly(T)).
+
+### §V3.6 — Migration impact (V2 → V3)
+
+**Low breakage** per discovery audit:
+
+- `nova_tests/plan108_1/readonly_mut_conflict_neg.nv` + `mut_readonly_conflict_neg.nv`
+  — already NEG tests; keep expected error code OR migrate к new
+  `E_MUTABILITY_CONFLICT_VALUE_TYPE` (binding-level distinction preserved
+  per §V3.5)
+- `nova_tests/plan118/t1_9_chain_modifiers_ok.nv:15` — `*ro mut Acc`
+  becomes `Pointer(Readonly(Mut(Acc)))` — Acc is value-vs-reference
+  context-dependent (declared `type Acc {}` → reference record). Rewrite
+  к use safe stopper OR change Acc к value-record для NEG demonstration.
+- `nova_tests/plan118_5/t2_chain_canonical_ok.nv:14` — `ro * mut * Node`
+  — Node is reference; outer ro propagates через Pointer к inner mut
+  Pointer — V3.4 redundancy applies. Rewrite к `ro * ro * Node` (let
+  V3.4 propagate uniformly) OR use safe stopper.
+- stdlib `std/runtime/raw_mem.nv` — uses bare `*u8` and `mut * u8` —
+  V3-compliant без changes.
+
+### §V3.7 — Followup markers opened
+
+- `[M-118.5-V3-safe-keyword-impl]` — Ф.1 lexer + parser implementation
+- `[M-118.5-V3-ro-mut-storage-class]` — Ф.2 type-checker storage-class
+  detection + check
+- `[M-118.5-V3-modifier-order]` — Ф.3 parser + .read() return-type
+  propagation
+- `[M-118.5-V3-redundant-extension]` — Ф.4 parser ban + safe escape
+- ✅ `[M-118.5-V3-binding-context-relaxation]` — **CLOSED 2026-06-05** —
+  binding-form `ro x mut T` (и симметричное `mut x ro T`) allowed
+  regardless of T storage class. Parser E_PARAM_MOD_CONFLICT lifted для
+  pre-name ro + post-name mut combo. Type-form §V3.1 storage-class check
+  unchanged.
+
 ### D52 amend (Plan 124.8 Ф.2)
 
 7-я форма declaration: **value record** — `type X value { ... }`. 

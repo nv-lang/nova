@@ -536,6 +536,42 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let type_check_ctx = TypeCheckCtx::build(module);
     type_check_ctx.check_module(module, &mut errors);
 
+    // **Plan 118.5 V3 Ф.2 / D216 V3 §V3.1 (2026-06-04):** ro+mut conflict
+    // check (storage-class-aware). Walks all param types, return types,
+    // and field types для each Fn/TypeDecl item; emits
+    // E_MUTABILITY_CONFLICT_VALUE_TYPE для value-T cases.
+    //
+    // Reuses TypeCheckCtx's `types` registry для storage-class detection.
+    for item in &module.items {
+        match item {
+            Item::Fn(fd) => {
+                for p in &fd.params {
+                    check_v3_ro_mut_conflict(
+                        &p.ty, &type_check_ctx.types, true, &mut errors);
+                }
+                if let Some(rt) = &fd.return_type {
+                    check_v3_ro_mut_conflict(
+                        rt, &type_check_ctx.types, true, &mut errors);
+                }
+            }
+            Item::Type(td) => {
+                if let crate::ast::TypeDeclKind::Record(fields) = &td.kind {
+                    for f in fields {
+                        check_v3_ro_mut_conflict(
+                            &f.ty, &type_check_ctx.types, true, &mut errors);
+                    }
+                }
+                if let crate::ast::TypeDeclKind::NamedTuple(fields) = &td.kind {
+                    for f in fields {
+                        check_v3_ro_mut_conflict(
+                            &f.ty, &type_check_ctx.types, true, &mut errors);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Plan 114.4.2 (D199) Ф.1 const fn body check pass.
     // 1) Collect const fn names. 2) Validate each const fn body против
     // V1 whitelist (literals/arithmetic/casts/refs to params/locals/const
@@ -1605,6 +1641,152 @@ fn validate_const_fn_closure_body(
              closure-returning const fn body (D199 V4.3).".to_string(),
             closure_expr.span,
         )),
+    }
+}
+
+/// **Plan 118.5 V3 §V3.1 (D216 V3 amend, 2026-06-04):** detect value-type
+/// classification of a TypeRef для storage-class-aware ro+mut conflict check.
+///
+/// Value types: primitives (int/uint as aliases для isize/usize, all sized
+/// ints + floats, bool/char/byte/str/ptr), value records (Plan 124.8 D228
+/// `type X value { ... }`), named tuples (Plan 120 D215), anonymous tuples,
+/// unit.
+///
+/// Reference types: heap records, arrays, pointers, func, protocol.
+fn is_value_type_for_v3(
+    ty: &TypeRef,
+    types: &HashMap<String, &TypeDecl>,
+) -> bool {
+    use TypeRef::*;
+    match ty {
+        Named { path, .. } if path.len() == 1 => {
+            let name = path[0].as_str();
+            // Primitives per V3.1 + D226 amend (int/uint aliases).
+            if matches!(name,
+                "int" | "uint" | "isize" | "usize"
+                | "i8" | "i16" | "i32" | "i64"
+                | "u8" | "u16" | "u32" | "u64"
+                | "f32" | "f64"
+                | "bool" | "char" | "byte" | "str" | "ptr"
+            ) {
+                return true;
+            }
+            // User type: value record OR named tuple.
+            if let Some(td) = types.get(name) {
+                let is_value_record = matches!(
+                    td.kind,
+                    crate::ast::TypeDeclKind::Record(_)
+                ) && td.allocation == crate::ast::AllocKind::Value;
+                let is_named_tuple = matches!(
+                    td.kind,
+                    crate::ast::TypeDeclKind::NamedTuple(_)
+                );
+                return is_value_record || is_named_tuple;
+            }
+            false
+        }
+        Tuple(..) => true,        // anonymous tuples = value
+        Unit(..) => true,
+        FixedArray(..) => false,  // [N]T heap-tracked
+        Array(..) => false,       // []T heap
+        Pointer(..) => false,
+        Func { .. } => false,
+        Protocol { .. } => false,
+        Readonly(inner, _) | Mut(inner, _) | Unsafe(inner, _) => {
+            is_value_type_for_v3(inner, types)
+        }
+        // Module-qualified Named (path.len() > 1) — out-of-module type;
+        // assume reference (conservative — won't break value semantic для
+        // local types; cross-module value records require explicit detection
+        // в future V3.1.1 followup).
+        Named { .. } => false,
+    }
+}
+
+/// **Plan 118.5 V3 §V3.1 (2026-06-04):** check binding type for ro+mut
+/// conflict. Emits `E_MUTABILITY_CONFLICT_VALUE_TYPE` для:
+/// - Readonly(Mut(T)) или Mut(Readonly(T)) AST shape WHEN
+///   T (innermost after strip) is value-type
+/// - Pure-type-level Readonly(Mut(T)) inside Pointer/Array constructor —
+///   value-T → error
+///
+/// For reference-type T at outermost binding position, the combination
+/// is allowed per §V3.1 («binding ro + content mut» semantics).
+fn check_v3_ro_mut_conflict(
+    ty: &TypeRef,
+    types: &HashMap<String, &TypeDecl>,
+    at_binding_top: bool,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use TypeRef::*;
+    match ty {
+        Readonly(inner, span) => {
+            if let Mut(_, _) = inner.as_ref() {
+                let inner_strip = inner.strip_modifiers();
+                let is_value = is_value_type_for_v3(inner_strip, types);
+                if is_value || !at_binding_top {
+                    let ctx = if is_value { "value-type T" } else { "nested-type context" };
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_MUTABILITY_CONFLICT_VALUE_TYPE] `ro` and `mut` \
+                             modifiers conflict on {} (Plan 118.5 V3 / D216 V3 \
+                             §V3.1). `ro` (cannot mutate / cannot rebind value) \
+                             contradicts `mut` (mutable). For value-type T, \
+                             storage IS value — combination not meaningful. \
+                             For reference-type T at binding top-level, the \
+                             combination expresses «ro binding к mut content» \
+                             but in nested constructor position there's no \
+                             binding context к disambiguate.",
+                            ctx,
+                        ),
+                        *span,
+                    ));
+                }
+            }
+            check_v3_ro_mut_conflict(inner, types, false, errors);
+        }
+        Mut(inner, span) => {
+            if let Readonly(_, _) = inner.as_ref() {
+                let inner_strip = inner.strip_modifiers();
+                let is_value = is_value_type_for_v3(inner_strip, types);
+                if is_value || !at_binding_top {
+                    let ctx = if is_value { "value-type T" } else { "nested-type context" };
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_MUTABILITY_CONFLICT_VALUE_TYPE] `mut` and `ro` \
+                             modifiers conflict on {} (Plan 118.5 V3 / D216 V3 \
+                             §V3.1). `mut` (mutable / can rebind) contradicts \
+                             `ro` (immutable). For value-type T, storage IS \
+                             value — combination not meaningful. For reference-\
+                             type T at binding top-level, the combination \
+                             expresses «mut binding к ro content» but in nested \
+                             constructor position there's no binding context.",
+                            ctx,
+                        ),
+                        *span,
+                    ));
+                }
+            }
+            check_v3_ro_mut_conflict(inner, types, false, errors);
+        }
+        Unsafe(inner, _) => check_v3_ro_mut_conflict(inner, types, at_binding_top, errors),
+        Pointer(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
+        Array(inner, _) | FixedArray(_, inner, _) => {
+            check_v3_ro_mut_conflict(inner, types, false, errors);
+        }
+        Tuple(elems, _) => {
+            for e in elems { check_v3_ro_mut_conflict(e, types, false, errors); }
+        }
+        Func { params, return_type, .. } => {
+            for p in params { check_v3_ro_mut_conflict(p, types, false, errors); }
+            if let Some(rt) = return_type {
+                check_v3_ro_mut_conflict(rt, types, false, errors);
+            }
+        }
+        Named { generics, .. } => {
+            for g in generics { check_v3_ro_mut_conflict(g, types, false, errors); }
+        }
+        Protocol { .. } | Unit(_) => {}
     }
 }
 

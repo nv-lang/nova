@@ -1,0 +1,15 @@
+// Plan 118.5 V3 Ф.4 NEG T11 — `ro * ro T` redundant inner ro.
+//
+// Per D216 V3 §V3.4: outer `ro` propagates через nested wrappers; writing
+// `ro` again inside same chain is redundant. Hint: use `safe` to break
+// propagation если действительно нужен независимый readonly layer.
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+
+module plan118_5_v3.t11_neg_ro_redundant_chain
+
+type Acc {
+    id i64
+}
+
+external fn p(x ro * ro Acc) -> ()

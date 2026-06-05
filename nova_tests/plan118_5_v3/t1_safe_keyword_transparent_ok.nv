@@ -1,0 +1,25 @@
+// Plan 118.5 V3 Ф.1 T1 — `safe` keyword tokenizes + parses transparently.
+//
+// Per D216 V3 §V3.4: `safe` is behavior-only marker. Standalone `safe T`
+// equivalent к bare T (no-op). Parser registers safe-stopper Span для
+// downstream V3 rule checks (V3.2 modifier order, V3.4 E_REDUNDANT
+// suppression).
+//
+// Closes Plan 118.5 V3 Ф.1 POS half.
+
+module plan118_5_v3.t1_safe_keyword_transparent_ok
+
+// Standalone `safe T` at top level — transparent, ≡ bare T
+external fn p1(x safe int) -> ()
+external fn p2(y safe Acc) -> ()
+
+// Within type construction — emits inner unchanged at AST
+external fn p3(z * safe int) -> ()
+
+type Acc {
+    id i64
+}
+
+test "safe keyword tokenizes + parses transparently" {
+    assert(1 == 1)
+}

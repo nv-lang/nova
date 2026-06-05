@@ -1,0 +1,20 @@
+// Plan 118.5 V3 Ф.4 POS T14 — `safe` keyword breaks redundancy check
+// for ro chain.
+//
+// Per D216 V3 §V3.4: with explicit `safe` stopper between outer and
+// inner same-class modifiers, the «redundant» diagnostic is suppressed.
+// User intentionally introduces independent layer.
+
+module plan118_5_v3.t14_safe_breaks_ro_chain_ok
+
+type Acc {
+    id i64
+}
+
+// `ro * safe ro Acc` — outer ro pointer, safe-stops propagation, inner
+// ro is now a fresh wrapper (intentional re-declaration after stopper).
+external fn t14_p(x ro * safe ro Acc) -> ()
+
+test "safe stopper allows ro-ro chain" {
+    assert(1 == 1)
+}

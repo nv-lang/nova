@@ -1,0 +1,17 @@
+// Plan 118.5 V3 Ф.3 POS T10 — `safe` keyword breaks modifier-order chain.
+//
+// Per D216 V3 §V3.2 + §V3.4: when `safe` stopper appears between outer
+// ro/mut and inner unsafe, the modifier-order check is suppressed. User
+// explicitly opted к break propagation; the «conflict» now treated as
+// independent layers.
+
+module plan118_5_v3.t10_safe_breaks_modifier_order_ok
+
+// `ro * safe unsafe int` — ro pointer (with safe-stopper) к unsafe int.
+// Safe broke the propagation; outer ro doesn't transitively meet inner
+// unsafe per §V3.2 enforcement.
+external fn t10_p(x ro * safe unsafe int) -> ()
+
+test "safe stopper allows ro-wrapping-unsafe chain" {
+    assert(1 == 1)
+}

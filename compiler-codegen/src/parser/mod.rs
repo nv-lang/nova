@@ -81,6 +81,12 @@ pub struct Parser {
     /// W_BREAKING_UNSAFE_PTR_MEANING for legacy pointer syntax during
     /// grace period.
     pub warnings: Vec<crate::diag::Diagnostic>,
+    /// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** spans of `safe`
+    /// keyword occurrences encountered during parse_type. Each Span covers
+    /// the `safe` token + the inner type следующий за ним. Used by V3 rules
+    /// V3.2 (modifier order) and V3.4 (E_REDUNDANT_TYPE_MODIFIER) к skip
+    /// the error when `safe` explicitly broke the propagation chain.
+    safe_stoppers: Vec<crate::diag::Span>,
 }
 
 impl Parser {
@@ -96,7 +102,23 @@ impl Parser {
             no_trailing_block: false,
             src,
             warnings: Vec::new(),
+            safe_stoppers: Vec::new(),
         }
+    }
+
+    /// **Plan 118.5 V3 §V3.4 (2026-06-04):** check if any `safe` stopper
+    /// occurred between `outer_span` (modifier emission point) and
+    /// `inner_span` (potential redundant/conflict point). Used by Ф.3/Ф.4
+    /// rule checks к suppress diagnostic when user explicitly broke
+    /// propagation via `safe`.
+    pub(crate) fn is_safe_stopped_between(
+        &self,
+        outer_span: crate::diag::Span,
+        inner_span: crate::diag::Span,
+    ) -> bool {
+        self.safe_stoppers.iter().any(|s| {
+            s.start >= outer_span.start && s.end <= inner_span.end
+        })
     }
 
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** consume the parser
@@ -2870,14 +2892,15 @@ impl Parser {
                     self.peek().span,
                 ));
             }
-            if has_readonly_prefix {
-                return Err(Diagnostic::new(
-                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
-                     `readonly` и `mut` (D176)."
-                        .to_string(),
-                    self.peek().span,
-                ));
-            }
+            // **Plan 118.5 V3 amend (binding-context relaxation, 2026-06-05):**
+            // `ro x mut T` — orthogonal binding modifiers. `ro` = no-rebind
+            // semantic at binding level, `mut` = mut-method access at binding.
+            // NOT mutually exclusive per user-confirmed V3 amend. Closes
+            // [M-118.5-V3-binding-context-relaxation].
+            //
+            // (Pre-name `ro` keeps wrapping type as Readonly(T) for content-
+            // readonly compatibility c существующими callers; binding-mut
+            // flag is set additionally — downstream type-checker reads both.)
             self.bump();
             is_mut = true;
         }
@@ -4935,6 +4958,45 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
+                // **Plan 118.5 V3 Ф.3 / §V3.2 (2026-06-04):** modifier
+                // ordering — safety modifier (`unsafe`) must wrap mutability
+                // modifier (`ro`/`mut`), NOT reverse. If inner contains
+                // `unsafe` in chain → E_MODIFIER_ORDER. Safe stopper
+                // suppresses (§V3.4 exception).
+                if inner.contains_unsafe_in_chain()
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_MODIFIER_ORDER] `ro` cannot wrap `unsafe` — \
+                         safety modifier (`unsafe`) must be outer, mutability \
+                         modifier (`ro`/`mut`) must be inner (Plan 118.5 V3 / \
+                         D216 V3 §V3.2). Write `unsafe ro T` (correct order) \
+                         instead of `ro unsafe T`. Rationale: safety wraps \
+                         mutability — «unsafe ro T» means «possibly-uninit \
+                         T that, if valid, is readonly»; the reverse \
+                         interpretation is not meaningful."
+                            .to_string(),
+                        span,
+                    ));
+                }
+                // **Plan 118.5 V3 Ф.4 / §V3.4 (2026-06-04):** same-class
+                // modifier repetition в chain → E_REDUNDANT_TYPE_MODIFIER.
+                // Outer ro already propagates; inner ro redundant. Use
+                // `safe` keyword к break propagation explicitly.
+                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Readonly)
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_REDUNDANT_TYPE_MODIFIER] outer `ro` already \
+                         propagates through nested wrappers — inner `ro` \
+                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
+                         Hint: use `safe` keyword к break propagation \
+                         intentionally — e.g., `ro * safe ro T` makes inner \
+                         ro a fresh wrapper independent of outer propagation."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.1 / D216 V2 §V2.1 (2026-06-04):** universal
@@ -4947,6 +5009,35 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
+                // **Plan 118.5 V3 Ф.3 / §V3.2 (2026-06-04):** modifier
+                // ordering — same rule as KwRo arm. `mut` cannot wrap
+                // `unsafe`; safety must be outer.
+                if inner.contains_unsafe_in_chain()
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_MODIFIER_ORDER] `mut` cannot wrap `unsafe` — \
+                         safety modifier (`unsafe`) must be outer, mutability \
+                         modifier (`ro`/`mut`) must be inner (Plan 118.5 V3 / \
+                         D216 V3 §V3.2). Write `unsafe mut T` (correct order) \
+                         instead of `mut unsafe T`."
+                            .to_string(),
+                        span,
+                    ));
+                }
+                // Plan 118.5 V3 Ф.4 / §V3.4: outer mut + inner mut redundant.
+                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Mut)
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_REDUNDANT_TYPE_MODIFIER] outer `mut` already \
+                         propagates through nested wrappers — inner `mut` \
+                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
+                         Hint: use `safe` keyword к break propagation."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Mut(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04):** universal
@@ -4961,7 +5052,46 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
+                // Plan 118.5 V3 Ф.4 / §V3.4: outer unsafe + inner unsafe
+                // redundant (outer already propagates через chain).
+                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Unsafe)
+                    && !self.is_safe_stopped_between(span, inner.span())
+                {
+                    return Err(Diagnostic::new(
+                        "[E_REDUNDANT_TYPE_MODIFIER] outer `unsafe` already \
+                         propagates through nested wrappers — inner `unsafe` \
+                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
+                         Hint: use `safe` keyword к break propagation \
+                         intentionally (e.g., `unsafe * safe unsafe T` makes \
+                         inner unsafe a fresh wrapper)."
+                            .to_string(),
+                        span,
+                    ));
+                }
                 return Ok(TypeRef::Unsafe(Box::new(inner), span));
+            }
+            // **Plan 118.5 V3 Ф.1 / D216 V3 §V3.4 (2026-06-04):** `safe`
+            // keyword as explicit propagation stopper. Behavior-only — emits
+            // inner TypeRef unchanged but records the safe-stopper span в
+            // parser state. Downstream V3 rule checks (§V3.2 modifier order +
+            // §V3.4 E_REDUNDANT_TYPE_MODIFIER) consult `is_safe_stopped_between`
+            // к suppress error при presence of safe stopper between outer
+            // modifier и inner same-class repetition.
+            //
+            // Examples:
+            //   `safe T`            → inner T transparent; safe registers stopper
+            //   `unsafe * safe T`   → Unsafe(Pointer(T)); deref pointee SAFE
+            //   `ro * safe mut T`   → Readonly(Pointer(Mut(T))); safe stops
+            //                          ro propagation, mut is independent
+            TokenKind::KwSafe => {
+                self.bump();
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                // Register safe-stopper covering the parsed inner span — V3
+                // rule checks downstream consult this register.
+                self.safe_stoppers.push(span);
+                // Emit inner unchanged (transparent at AST level).
+                return Ok(inner);
             }
             // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
             // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).

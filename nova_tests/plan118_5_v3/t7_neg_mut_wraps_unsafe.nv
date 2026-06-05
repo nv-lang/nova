@@ -1,0 +1,10 @@
+// Plan 118.5 V3 Ф.3 NEG T7 — `mut unsafe T` → E_MODIFIER_ORDER.
+//
+// Per D216 V3 §V3.2: `mut` cannot wrap `unsafe`. Use `unsafe mut T`
+// (safety-outer / mutability-inner).
+//
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+
+module plan118_5_v3.t7_neg_mut_wraps_unsafe
+
+external fn p() -> mut unsafe int
