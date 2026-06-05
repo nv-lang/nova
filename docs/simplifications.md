@@ -33386,3 +33386,60 @@ production-grade closure complete.**
 
 Все три marker'а имеют owner phase + fixture coverage + reproducible
 behavior trace в plan-doc.
+
+
+## Plan 126 (2026-06-05) — Auto-derive protocols V1 LANDED
+
+> Worktree: D:/Sources/nv-lang/nova-p126
+> Branch: plan-126-auto-derive-protocols
+
+### Что упростилось
+
+**Удалён boilerplate для standard protocols** на user-defined types.
+До Plan 126 user должен был писать `fn Vec3 @equals(other Vec3) -> bool =>
+@x == other.x && @y == other.y && @z == other.z` для каждого type ×
+каждого protocol = N×M boilerplate. После Plan 126:
+
+```nova
+#impl(Equatable + Hashable + Cloneable + Comparable + Printable)
+type Vec3 { x f64, y f64, z f64 }
+// — все 5 protocols satisfied auto-derive'ом, zero boilerplate.
+```
+
+Compiler synthesize'ит method bodies memberwise рекурсивно — same
+shape как Rust `#[derive(Hash, PartialEq, Clone, Ord, Debug)]`, но
+через единый `#impl(P)` annotation (D186) — без отдельного keyword'а.
+
+### D109 «отвергнуто» → D109 amend
+
+D109 «Что отвергнуто» секция содержала Q «Хеш / eq для пользовательских
+типов — авто-derive (аналог Rust #[derive(Hash)]) V2; требует
+рекурсивного обхода полей». **Resolved Plan 126** — auto-derive
+реализован, спецификация перенесена из «отвергнуто» в новый D109 amend
+sub-section «auto-derive для пользовательских типов».
+
+### D230 NEW — Cloneable
+
+Новый protocol (5й built-in после D109's Equatable/Hashable/Comparable
++ D183's Printable) — единственный, который не имел декларации в
+prelude до Plan 126. Single method `clone() -> Self` — completing
+family для auto-derive.
+
+### Followup discipline
+
+V1 deliberately scoped на type-check level (suppress E_IMPL_MISSING_METHODS),
+runtime method_table wiring через [M-126-codegen-method-table] V2.
+Sum-type rich semantics через 5 markers ([M-126-sum-*-rich]). Это
+ДОБАВЛЯЕТ tech debt items, но каждый имеет:
+- Specific owner phase (V2 / Plan 126.x sub-plan).
+- Defined behavior trace (V1 placeholder → V2 rich).
+- Fixture coverage gap documented в Ф.6 acceptance criteria.
+
+### Что НЕ упростилось (deliberately)
+
+- **Не убрана identity-eq для heap-record без #impl(Equatable)** —
+  backward compat preserved (D109 amend §«Heap-record == override»).
+  Без opt-in `#impl(Equatable)` всё работает как раньше.
+- **Не сделан Cloneable implicit на value-record по умолчанию** —
+  semantic types (`Money`, `UserId`) opt-in design — explicit
+  `#impl(Cloneable)` forces awareness vs Rust `Copy` auto-derive.
