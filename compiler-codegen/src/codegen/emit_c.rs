@@ -17164,10 +17164,26 @@ _cp++; \
                     self.tuple_element_types.insert(scr_tmp.clone(), elem_tys);
                 }
 
-                // Infer result type from then block
-                let result_ty = then.trailing.as_ref()
+                // Plan 125: divergence-aware result-type. If then-branch
+                // diverges (throw/panic/exit/interrupt/user-fn-never/
+                // recursive), pick else-branch's type. Symmetric с
+                // emit_if_expr / infer_If.
+                let then_diverges = self.block_trailing_diverges(then);
+                let then_ty = then.trailing.as_ref()
                     .map(|e| self.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into());
+                let result_ty = if then_diverges {
+                    match else_ {
+                        Some(ElseBranch::Block(b)) => b.trailing.as_ref()
+                            .map(|e| self.infer_expr_c_type(e))
+                            .unwrap_or_else(|| "nova_unit".into()),
+                        Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
+                        None => then_ty.clone(),
+                    }
+                } else {
+                    then_ty.clone()
+                };
+                self.debug_if_infer_125("emit_if_let", then_diverges, &then_ty, "<else>", &result_ty);
                 let result_tmp = self.fresh_tmp_named("if_let");
                 self.line(&format!("{} {};", result_ty, result_tmp));
 
@@ -17178,8 +17194,14 @@ _cp++; \
                 let then_block_id = self.enter_defer_scope(then, false);
                 for stmt in &then.stmts { self.emit_stmt(stmt)?; }
                 if let Some(trailing) = &then.trailing {
-                    let v = self.emit_expr(trailing)?;
-                    self.line(&format!("{} = {};", result_tmp, v));
+                    // Plan 125: divergent-trailing → side-effect only.
+                    if self.expr_diverges_125(trailing) {
+                        let v = self.emit_expr(trailing)?;
+                        self.line(&format!("(void)({});", v));
+                    } else {
+                        let v = self.emit_expr(trailing)?;
+                        self.line(&format!("{} = {};", result_tmp, v));
+                    }
                 }
                 self.leave_defer_scope(then_block_id);
                 self.indent -= 1;
@@ -17193,8 +17215,14 @@ _cp++; \
                         let block_id = self.enter_defer_scope(b, false);
                         for stmt in &b.stmts { self.emit_stmt(stmt)?; }
                         if let Some(trailing) = &b.trailing {
-                            let v = self.emit_expr(trailing)?;
-                            self.line(&format!("{} = {};", result_tmp, v));
+                            // Plan 125: same divergent-trailing guard.
+                            if self.expr_diverges_125(trailing) {
+                                let v = self.emit_expr(trailing)?;
+                                self.line(&format!("(void)({});", v));
+                            } else {
+                                let v = self.emit_expr(trailing)?;
+                                self.line(&format!("{} = {};", result_tmp, v));
+                            }
                         }
                         self.leave_defer_scope(block_id);
                         self.indent -= 1;
@@ -17203,8 +17231,14 @@ _cp++; \
                     Some(ElseBranch::If(e)) => {
                         self.line("} else {");
                         self.indent += 1;
-                        let v = self.emit_expr(e)?;
-                        self.line(&format!("{} = {};", result_tmp, v));
+                        // Plan 125: divergent else-if direct expression.
+                        if self.expr_diverges_125(e) {
+                            let v = self.emit_expr(e)?;
+                            self.line(&format!("(void)({});", v));
+                        } else {
+                            let v = self.emit_expr(e)?;
+                            self.line(&format!("{} = {};", result_tmp, v));
+                        }
                         self.indent -= 1;
                         self.line("}");
                     }
@@ -21735,6 +21769,135 @@ _cp++; \
 
     // ---- if expression ----
 
+    // ─── Plan 125: divergence-aware result-type inference helpers ───
+    //
+    // Helpers below are CODEGEN-LOCAL and look ONLY at `b.trailing` (never
+    // walk `b.stmts`). This is the CRITICAL design invariant — root cause of
+    // 2026-06-03 24-regression revert was reusing `block_diverges` from
+    // types/mod.rs which walks stmts (Return/Throw in body), flipping the
+    // legitimate stdlib idiom `if early-cond { return X } else { compute() }`.
+    //
+    // Phases (whitelist expansion per Plan 125 §Ф.1-Ф.4):
+    //   Ф.1: trailing == ExprKind::Throw
+    //   Ф.2: + Call(panic|exit, ...) prelude builtins
+    //   Ф.3: + ExprKind::Interrupt + Call(user fn -> never) direct call
+    //   Ф.4: + recursive composition (trailing == If/Match/Block where all
+    //        branches diverge)
+    //
+    // **TRIP-WIRE**: future contributors — DO NOT lift `block_diverges` or
+    // `expr_diverges` from types/mod.rs here. Those helpers walk stmts —
+    // semantically correct for handler-body must-diverge (D61) but WRONG
+    // for codegen if-result-type. See Plan 125 prior_attempt_lessons L1.
+
+    /// Plan 125 Ф.1-Ф.4: trailing-only divergence check for codegen result-
+    /// type inference. Returns true when block's value-producing position
+    /// (trailing expr, or last stmt if no trailing) is provably divergent.
+    ///
+    /// **CRITICAL:** Only LAST stmt is examined when trailing is absent —
+    /// NEVER scan earlier stmts. Earlier stmts could contain conditional
+    /// `if x { return Y }` whose divergence is conditional and must NOT
+    /// flip the block's join-type. Last stmt is unique because nothing
+    /// follows it — semantically equivalent to "what value/control-flow
+    /// this block contributes".
+    fn block_trailing_diverges(&self, b: &Block) -> bool {
+        match b.trailing.as_ref() {
+            Some(t) => self.expr_diverges_125(t),
+            None => match b.stmts.last() {
+                // Ф.1: `{ ... throw X }` — Stmt::Throw at last position
+                Some(Stmt::Throw { .. }) => true,
+                // Ф.3 extension: `{ ... return X }` — Stmt::Return at last
+                // position (fn-scope exit). Note: only catches LAST-stmt
+                // return, not conditional early-returns inside earlier
+                // stmts. This is the safe subset.
+                Some(Stmt::Return { .. }) => true,
+                // Recursive: trailing-equivalent expr-statement
+                Some(Stmt::Expr(e)) => self.expr_diverges_125(e),
+                _ => false,
+            }
+        }
+    }
+
+    /// Plan 125: whitelist-driven divergence detector for expressions in
+    /// trailing position. Whitelist (Ф.1-Ф.4):
+    ///   - ExprKind::Throw  (Ф.1)
+    ///   - ExprKind::Interrupt  (Ф.3)
+    ///   - Call(`panic`|`exit`, ...)  (Ф.2)
+    ///   - Call(user fn whose return type is `never`)  (Ф.3)
+    ///   - If/IfLet where both branches diverge  (Ф.4)
+    ///   - Match where all arms diverge  (Ф.4)
+    ///   - Block whose trailing diverges  (Ф.4)
+    fn expr_diverges_125(&self, e: &Expr) -> bool {
+        match &e.kind {
+            // Ф.1: direct throw expression.
+            ExprKind::Throw(_) => true,
+            // Ф.3: handler-literal interrupt (D61 escape).
+            ExprKind::Interrupt(_) => true,
+            // Ф.2 + Ф.3: divergent callees.
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    // Ф.2: prelude panic / exit. Whitelist exact names —
+                    // mirror types/mod.rs expr_diverges (line 10394).
+                    if name == "panic" || name == "exit" {
+                        return true;
+                    }
+                    // Ф.3: user-defined fn -> never (direct call only —
+                    // NOT method-call, NOT lambda-call; see Plan 125 R5/M5).
+                    if let Some(fn_decl) = self.mono_fn_decls.get(name) {
+                        if let Some(ret) = &fn_decl.return_type {
+                            if Self::type_ref_is_never_125(ret) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            // Ф.4: recursive composition. Note we recurse THROUGH expression
+            // structure, not through statements — same trailing-only invariant.
+            ExprKind::If { then, else_, .. } => {
+                self.block_trailing_diverges(then) && match else_ {
+                    Some(ElseBranch::Block(b)) => self.block_trailing_diverges(b),
+                    Some(ElseBranch::If(e)) => self.expr_diverges_125(e),
+                    None => false,
+                }
+            }
+            ExprKind::IfLet { then, else_, .. } => {
+                self.block_trailing_diverges(then) && match else_ {
+                    Some(ElseBranch::Block(b)) => self.block_trailing_diverges(b),
+                    Some(ElseBranch::If(e)) => self.expr_diverges_125(e),
+                    None => false,
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                !arms.is_empty() && arms.iter().all(|a| match &a.body {
+                    MatchArmBody::Expr(e) => self.expr_diverges_125(e),
+                    MatchArmBody::Block(b) => self.block_trailing_diverges(b),
+                })
+            }
+            ExprKind::Block(b) => self.block_trailing_diverges(b),
+            _ => false,
+        }
+    }
+
+    /// Plan 125: check if a TypeRef resolves to the bottom-type `never`.
+    /// Match by simple single-segment path (Plan 76: `never` is a primitive
+    /// keyword, never a user-defined type).
+    fn type_ref_is_never_125(ty: &TypeRef) -> bool {
+        matches!(ty, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "never")
+    }
+
+    /// Plan 125 diagnostic env-var `NOVA_DEBUG_IF_INFER=1` — dumps inference
+    /// site decisions to stderr for empirical corpus collection. Used in Ф.0
+    /// baseline + Ф.4 corpus-replay audit. Gated, zero overhead when off.
+    fn debug_if_infer_125(&self, kind: &str, then_diverges: bool, then_ty: &str, else_ty: &str, chosen_ty: &str) {
+        if std::env::var("NOVA_DEBUG_IF_INFER").is_ok() {
+            eprintln!(
+                "PLAN125 kind={} then_diverges={} then_ty={} else_ty={} chosen_ty={}",
+                kind, then_diverges, then_ty, else_ty, chosen_ty
+            );
+        }
+    }
+
     fn emit_if_expr(
         &mut self,
         cond: &Expr,
@@ -21754,13 +21917,31 @@ _cp++; \
                 self.current_type_subst.iter().collect::<Vec<_>>());
         }
         self.check_bool_condition_at(&cond_ty, "if", cond.span)?;
-        // Infer result type from then-block (if any trailing), default nova_unit
+        // Plan 125: divergence-aware result-type inference. If then-trailing
+        // is divergent (throw/panic/exit/interrupt/user-never/recursive),
+        // use else-branch's type instead. Otherwise fall back to then's type
+        // (preserves Ф.0 baseline behavior — no flip for non-divergent).
         let if_ty = if else_.is_none() {
             "nova_unit".into()
         } else {
-            then.trailing.as_ref()
+            let then_diverges = self.block_trailing_diverges(then);
+            let then_ty = then.trailing.as_ref()
                 .map(|e| self.infer_expr_c_type(e))
-                .unwrap_or_else(|| "nova_unit".into())
+                .unwrap_or_else(|| "nova_unit".into());
+            let chosen = if then_diverges {
+                // Use else-branch's inferred type.
+                match else_ {
+                    Some(ElseBranch::Block(b)) => b.trailing.as_ref()
+                        .map(|e| self.infer_expr_c_type(e))
+                        .unwrap_or_else(|| "nova_unit".into()),
+                    Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
+                    None => then_ty.clone(),
+                }
+            } else {
+                then_ty.clone()
+            };
+            self.debug_if_infer_125("emit_if_expr", then_diverges, &then_ty, "<else>", &chosen);
+            chosen
         };
         let cond_val = self.emit_expr(cond)?;
         let tmp = self.fresh_tmp_named("if");
@@ -21784,10 +21965,16 @@ _cp++; \
             Some(ElseBranch::If(e)) => {
                 self.line("} else {");
                 self.indent += 1;
-                // target-type-aware: literal-cleanup для typed-int if-result.
-                let v = self.emit_expr_with_target_type(e, &if_ty)?;
-                let ity = if_ty.clone();
-                Self::emit_assign_typed(self, &tmp, &ity, &v);
+                // Plan 125: divergent else-if direct expression — side-effect only.
+                if self.expr_diverges_125(e) {
+                    let v = self.emit_expr(e)?;
+                    self.line(&format!("(void)({});", v));
+                } else {
+                    // target-type-aware: literal-cleanup для typed-int if-result.
+                    let v = self.emit_expr_with_target_type(e, &if_ty)?;
+                    let ity = if_ty.clone();
+                    Self::emit_assign_typed(self, &tmp, &ity, &v);
+                }
                 self.indent -= 1;
                 self.line("}");
             }
@@ -21798,15 +21985,34 @@ _cp++; \
     /// Emit a block's statements and assign its trailing value (or NOVA_UNIT) into `tmp`.
     fn emit_block_into(&mut self, tmp: &str, ty: &str, block: &Block) -> Result<(), String> {
         let block_id = self.enter_defer_scope(block, false);
+        // Plan 125: detect divergence BEFORE emitting stmts (helper inspects
+        // structure, not side effects).
+        let diverges = self.block_trailing_diverges(block);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
-            // target-type-aware emit: для typed-integer ty литералы в Binary
-            // получают «нативный» suffix вместо ((nova_int)NLL).
-            let v = self.emit_expr_with_target_type(trailing, ty)?;
-            Self::emit_assign_typed(self, tmp, ty, &v);
-        } else {
+            // Plan 125: trailing expression provably divergent (throw/panic/
+            // exit/interrupt/user-fn-never/recursive). Emit ONLY side-effect
+            // — control never reaches the assignment. Without this guard,
+            // codegen emits `tmp = (nv_panic(...), 0LL)` of type nova_int
+            // and tries to assign to non-nova_int tmp (e.g. nova_str) →
+            // CC-FAIL «incompatible type».
+            if self.expr_diverges_125(trailing) {
+                let v = self.emit_expr(trailing)?;
+                self.line(&format!("(void)({});", v));
+            } else {
+                // target-type-aware emit: для typed-integer ty литералы в Binary
+                // получают «нативный» suffix вместо ((nova_int)NLL).
+                let v = self.emit_expr_with_target_type(trailing, ty)?;
+                Self::emit_assign_typed(self, tmp, ty, &v);
+            }
+        } else if !diverges {
+            // Plan 125: only emit dead-zero-assign when control could actually
+            // reach end of block. For divergent blocks (last stmt = throw /
+            // return / panic-call) the assignment is unreachable AND can
+            // cause CC-FAIL when `ty` is non-trivial (e.g. nova_str struct
+            // zero-init invalid).
             Self::emit_zero_assign(self, tmp, ty);
         }
         // Cleanup AFTER assigning result (defer should not affect tmp).
@@ -22610,17 +22816,29 @@ _cp++; \
             }
             t
         };
-        // First pass: find a non-unit, non-nova_int type
+        // Plan 125: divergence-aware arm type selection. Skip arms whose
+        // body is provably divergent (throw/panic/exit/interrupt/user-
+        // fn-never). Symmetric с emit_if_expr/infer_If.
+        let arm_diverges = |this: &Self, arm: &MatchArm| -> bool {
+            match &arm.body {
+                MatchArmBody::Expr(e) => this.expr_diverges_125(e),
+                MatchArmBody::Block(b) => this.block_trailing_diverges(b),
+            }
+        };
+        // First pass: find a non-unit, non-nova_int, non-divergent type
         'outer: for arm in arms {
+            if arm_diverges(self, arm) { continue; }
             let t = infer_arm(self, arm);
             if t != "nova_unit" && t != "nova_int" {
                 result_ty = t;
                 break 'outer;
             }
         }
-        // Second pass: settle for nova_int if no better type found
+        // Second pass: settle for nova_int if no better type found (still
+        // skipping divergent arms — they can't dictate the result type)
         if result_ty == "nova_unit" {
             for arm in arms {
+                if arm_diverges(self, arm) { continue; }
                 let t = infer_arm(self, arm);
                 if t != "nova_unit" { result_ty = t; break; }
             }
@@ -22835,10 +23053,16 @@ _cp++; \
         let result_ty = self.var_types.get(result_tmp).cloned().unwrap_or_default();
         match body {
             MatchArmBody::Expr(e) => {
-                let val_ty = self.infer_expr_c_type(e);
-                let v = self.emit_expr(e)?;
-                let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
-                self.line(&format!("{} = {};", result_tmp, assignment));
+                // Plan 125: divergent arm body — side-effect only, skip assign.
+                if self.expr_diverges_125(e) {
+                    let v = self.emit_expr(e)?;
+                    self.line(&format!("(void)({});", v));
+                } else {
+                    let val_ty = self.infer_expr_c_type(e);
+                    let v = self.emit_expr(e)?;
+                    let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
+                    self.line(&format!("{} = {};", result_tmp, assignment));
+                }
             }
             MatchArmBody::Block(b) => {
                 // Plan 20 Ф.4/Ф.8: match-arm body — defer scope.
@@ -22848,10 +23072,16 @@ _cp++; \
                     self.emit_stmt(stmt)?;
                 }
                 if let Some(trailing) = &b.trailing {
-                    let val_ty = self.infer_expr_c_type(trailing);
-                    let v = self.emit_expr(trailing)?;
-                    let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
-                    self.line(&format!("{} = {};", result_tmp, assignment));
+                    // Plan 125: same divergent-trailing guard as emit_block_into.
+                    if self.expr_diverges_125(trailing) {
+                        let v = self.emit_expr(trailing)?;
+                        self.line(&format!("(void)({});", v));
+                    } else {
+                        let val_ty = self.infer_expr_c_type(trailing);
+                        let v = self.emit_expr(trailing)?;
+                        let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
+                        self.line(&format!("{} = {};", result_tmp, assignment));
+                    }
                 }
                 self.leave_defer_scope(block_id);
             }
@@ -28644,10 +28874,26 @@ _cp++; \
                 if else_.is_none() {
                     return "nova_unit".into();
                 }
-                // if/else: infer from then-block trailing
-                then.trailing.as_ref()
+                // Plan 125: divergence-aware inference. If then-trailing
+                // diverges, use else-branch type. Critical for symmetric
+                // emit/infer (R3) — must match emit_if_expr's choice.
+                let then_diverges = self.block_trailing_diverges(then);
+                let then_ty = then.trailing.as_ref()
                     .map(|e| self.infer_expr_c_type(e))
-                    .unwrap_or_else(|| "nova_unit".into())
+                    .unwrap_or_else(|| "nova_unit".into());
+                let chosen = if then_diverges {
+                    match else_ {
+                        Some(ElseBranch::Block(b)) => b.trailing.as_ref()
+                            .map(|e| self.infer_expr_c_type(e))
+                            .unwrap_or_else(|| "nova_unit".into()),
+                        Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
+                        None => then_ty.clone(),
+                    }
+                } else {
+                    then_ty.clone()
+                };
+                self.debug_if_infer_125("infer_If", then_diverges, &then_ty, "<else>", &chosen);
+                chosen
             }
             ExprKind::Match { scrutinee, arms } => {
                 // Plan 62.D bis-1 (2026-05-18): infer arm body type WITH pattern
@@ -28686,14 +28932,30 @@ _cp++; \
                     }
                     t
                 };
-                // First pass: find a non-unit, non-nova_int type.
+                // Plan 125: divergence-aware arm selection. Skip arms whose
+                // body is provably divergent — symmetric с emit_match's
+                // first-pass loop (R3 helper extraction principle).
+                let arm_diverges = |this: &Self, arm: &MatchArm| -> bool {
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => this.expr_diverges_125(e),
+                        MatchArmBody::Block(b) => this.block_trailing_diverges(b),
+                    }
+                };
+                // First pass: find a non-unit, non-nova_int, non-divergent type.
                 for arm in arms {
+                    if arm_diverges(self, arm) { continue; }
                     let t = infer_arm(self, arm);
                     if t != "nova_unit" && t != "nova_int" {
                         return t;
                     }
                 }
-                // Second pass: settle for nova_int if no better type found.
+                // Second pass: any non-unit, still skipping divergent arms.
+                for arm in arms {
+                    if arm_diverges(self, arm) { continue; }
+                    let t = infer_arm(self, arm);
+                    if t != "nova_unit" { return t; }
+                }
+                // Third pass: settle for nova_int.
                 "nova_int".into()
             }
             ExprKind::Member { obj, name } => {

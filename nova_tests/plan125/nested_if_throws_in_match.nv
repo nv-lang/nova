@@ -1,0 +1,36 @@
+// Plan 125 Ф.4: рекурсивная композиция — match arm body содержит вложенный if.
+
+module plan125.nested_if_throws_in_match
+
+type Tier | Low | Mid | Hi
+
+fn classify(t Tier, fault bool) Fail -> str {
+    match t {
+        Low => "low"
+        Mid => if fault { throw "mid-fault" } else { "mid" }
+        Hi  => "hi"
+    }
+}
+
+test "nested-if-throw inside match arm" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro a = classify(Tier.Low, false)
+        ro b = classify(Tier.Mid, false)
+        ro c = classify(Tier.Hi,  false)
+        assert(a == "low")
+        assert(b == "mid")
+        assert(c == "hi")
+    }
+}
+
+test "nested-if-throw fires inside Mid" {
+    mut caught = false
+    with Fail = effect Fail {
+        fail(_) { caught = true; interrupt () }
+    } {
+        ro _ = classify(Tier.Mid, true)
+    }
+    assert(caught)
+}

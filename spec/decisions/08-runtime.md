@@ -1018,8 +1018,37 @@ Spread разрешён: `print(...parts)`.
 - **`never` — подтип любого типа** (bottom type ⊥). Любой контекст,
   ожидающий `T`, может принять `never`-выражение.
 - **Используется в типах не-возвращающих выражений** — `throw expr`,
-  `return expr`, `panic(...)`, `exit(...)`, бесконечный `loop`. Все
-  имеют тип `never`, поэтому совместимы с любым контекстом.
+  `return expr`, `panic(...)`, `exit(...)`, `interrupt expr` (в
+  handler-literal), бесконечный `loop`, прямой вызов `fn -> never`.
+  Все имеют тип `never`, поэтому совместимы с любым контекстом.
+
+**Result-type inference для ветвящихся выражений (Plan 125, 2026-06-05):**
+`if` / `if let` / `match` / block-trailing инферят результирующий тип,
+**пропуская** ветки, доказуемо diverge. Пример:
+
+```nova
+ro s = if c {
+    throw ParseErr.Bad     // never — ветка пропускается
+} else {
+    "hello"                 // str — выбран как тип всего выражения
+}
+// type of `s` = str (не unit, не "ошибка mismatch")
+```
+
+Полный whitelist divergent-выражений в trailing-позиции:
+- `throw expr`, `interrupt expr`
+- `panic(...)`, `exit(code, msg)` — prelude builtin'ы
+- Прямой вызов любой `fn -> never` (NOT method-call — followup
+  `[M-125-method-call-never-detection]`)
+- Рекурсивно: вложенные `if`/`if let`/`match`/`block`, у которых все
+  ветви diverge
+
+**Codegen ограничение:** detection — trailing-only (`b.trailing` или
+последний `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr(...)` в
+`b.stmts`). Условные early-returns в середине блока **не** flip'ят
+join-тип (cтdlib-идиома `if early-cond { return X } else { compute() }`
+сохраняется). Type-checker side `Ty::Never` first-class subtype —
+followup `[M-125-type-checker-never-first-class]`.
 
 Аналоги: Rust `!` (`never`-RFC), Haskell `Void`, Kotlin/Scala
 `Nothing`, TypeScript `never`. Не уникальная фича Nova.

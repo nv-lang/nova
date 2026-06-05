@@ -1,0 +1,34 @@
+// Plan 125 Ф.4: цепочка if-else-if — все ветки divergent, кроме одной.
+
+module plan125.if_chain_throws
+
+fn pick(n int) Fail -> str {
+    if n == 0 {
+        throw "zero"
+    } else if n < 0 {
+        throw "neg"
+    } else if n > 100 {
+        throw "too-big"
+    } else {
+        "ok"
+    }
+}
+
+test "if-chain: valid n returns ok" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = pick(42)
+        assert(s == "ok")
+    }
+}
+
+test "if-chain: n=0 throws" {
+    mut caught = 0
+    with Fail = effect Fail {
+        fail(_) { caught = 1; interrupt () }
+    } {
+        ro _ = pick(0)
+    }
+    assert(caught == 1)
+}

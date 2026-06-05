@@ -1,0 +1,19 @@
+// Plan 125 Ф.3: trailing — пользовательская fn -> never.
+
+module plan125.if_then_user_never_else_int
+
+fn diverge(msg str) -> never {
+    panic(msg)
+}
+
+fn rank(c bool) -> int {
+    if c {
+        diverge("bad")
+    } else {
+        42
+    }
+}
+
+test "user-never trailing in then" {
+    assert(rank(false) == 42)
+}

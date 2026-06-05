@@ -1,0 +1,19 @@
+// Plan 125 negative — `let x = throw "..."` БЕЗ внешнего контекста.
+// Tип x не определён. Должно быть E_LET_BARE_NEVER (или fallback позиция) —
+// сейчас компилятор скорее всего хочет explicit type annotation. Ожидаемое: CHECK-FAIL.
+// (Followup [M-125-let-never-no-context] — ужесточить error code в spec.)
+
+module neg.let_throw_no_context
+
+fn boom() Fail -> int {
+    ro x = throw "no"
+    x + 1
+}
+
+test "compile-only — should NOT reach runtime" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro _ = boom()
+    }
+}

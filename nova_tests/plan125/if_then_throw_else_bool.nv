@@ -1,0 +1,20 @@
+// Plan 125 Ф.1: bool тип в else, throw в then.
+
+module plan125.if_then_throw_else_bool
+
+fn pick(c bool) Fail -> bool {
+    if c {
+        throw "x"
+    } else {
+        true
+    }
+}
+
+test "bool else, throw then" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro b = pick(false)
+        assert(b)
+    }
+}

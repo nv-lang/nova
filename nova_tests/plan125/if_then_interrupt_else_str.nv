@@ -1,0 +1,21 @@
+// Plan 125 Ф.3: trailing-interrupt divergent в then.
+// interrupt разрешён только внутри handler — поэтому fn оборачивает в effect-context.
+
+module plan125.if_then_interrupt_else_str
+
+fn pick(c bool) -> str {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        if c {
+            throw "x"
+        } else {
+            "ok"
+        }
+    }
+}
+
+test "if-interrupt-via-handler: then-throw, else-str" {
+    ro s = pick(false)
+    assert(s == "ok")
+}

@@ -1,0 +1,36 @@
+// Plan 125 Ф.1 gate: trailing-throw в then, str в else — if-expr тип
+// должен инферится как str (тип не-divergent ветки), а не unit/mismatch.
+
+module plan125.if_then_throw_else_str
+
+fn pick(c bool) Fail -> str {
+    if c {
+        throw "boom"
+    } else {
+        "hello"
+    }
+}
+
+test "if-then-throw / else-str returns str" {
+    with Fail = effect Fail {
+        fail(_msg) {
+            interrupt ()
+        }
+    } {
+        ro s = pick(false)
+        assert(s == "hello")
+    }
+}
+
+test "if-then-throw fires handler on true" {
+    mut caught = false
+    with Fail = effect Fail {
+        fail(_msg) {
+            caught = true
+            interrupt ()
+        }
+    } {
+        ro _s = pick(true)
+    }
+    assert(caught)
+}

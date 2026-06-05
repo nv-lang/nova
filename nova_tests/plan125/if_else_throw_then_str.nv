@@ -1,0 +1,30 @@
+// Plan 125 Ф.1: симметричный кейс — divergent в else, не-divergent в then.
+
+module plan125.if_else_throw_then_str
+
+fn pick(c bool) Fail -> str {
+    if c {
+        "hi"
+    } else {
+        throw "boom"
+    }
+}
+
+test "if-else-throw / then-str returns str" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = pick(true)
+        assert(s == "hi")
+    }
+}
+
+test "if-else-throw fires on false" {
+    mut caught = false
+    with Fail = effect Fail {
+        fail(_) { caught = true; interrupt () }
+    } {
+        ro _s = pick(false)
+    }
+    assert(caught)
+}
