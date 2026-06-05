@@ -1,0 +1,11 @@
+// Plan 91.14 Ф.6 POS T13 — multiple primitives concat в one interp-string.
+module plan91_14.t13_pos_mixed_primitive_concat
+
+test "multi-primitive concat" {
+    ro a = 42
+    ro b = true
+    ro c = 3.14
+    ro d = "hello"
+    ro s = "a=${a:?}, b=${b:?}, c=${c:?}, d=${d:?}"
+    assert(s == "a=42, b=true, c=3.14, d=\"hello\"")
+}
