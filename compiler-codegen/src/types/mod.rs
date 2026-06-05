@@ -2696,18 +2696,33 @@ impl<'a> TypeCheckCtx<'a> {
     fn detect_divergent_consumable(&self, init: &Expr) -> Option<(String, String)> {
         use crate::ast::ExprKind;
         if let ExprKind::If { then, else_, .. } = &init.kind {
+            // Plan 125.1 D196 amend: divergent branch (`never` через любой
+            // путь — trailing throw/interrupt/panic, stmt-position
+            // throw/return, divergent call) не участвует в conflict-check —
+            // bottom type subtype of any. Используем `block_diverges`
+            // (полный stmts+trailing walk) вместо trailing-only check, и
+            // SKIP (continue к following branch / return None) вместо
+            // `?`-propagation abort.
+            let then_diverges = block_diverges(then);
+            let else_b = else_.as_ref()?;
+            let else_diverges = match else_b {
+                crate::ast::ElseBranch::Block(b) => block_diverges(b),
+                crate::ast::ElseBranch::If(ei) => expr_diverges(ei),
+            };
+            // Если ЛЮБАЯ ветка diverges — пары для conflict-check нет.
+            if then_diverges || else_diverges {
+                return None;
+            }
             // Both branches must end в expression returning Consumable.
             let then_ty = self.infer_block_trailing_typeref(then)?;
-            let else_ty = match else_.as_ref()? {
+            let else_ty = match else_b {
                 crate::ast::ElseBranch::Block(b) => self.infer_block_trailing_typeref(b)?,
                 crate::ast::ElseBranch::If(ei) => self.infer_consume_init_typeref(ei)?,
             };
             let then_name = Self::typeref_to_name(&then_ty)?;
             let else_name = Self::typeref_to_name(&else_ty)?;
-            // Plan 125.1 (Ф.3): divergent branch (`never`) не считается
-            // конфликтом Consumable-типов — bottom type subtype of any.
-            // Без guard'а `if cond { throw e } else { vec }` стал бы ложно
-            // диагностироваться D196-form-3 как "never vs Vec".
+            // Plan 125.1 (Ф.3): defensive — Ф.3 уже фильтрует trailing-
+            // divergent в "never" name, оставляем guard для symmetry.
             if then_name == "never" || else_name == "never" {
                 return None;
             }
