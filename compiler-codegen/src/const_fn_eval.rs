@@ -2467,7 +2467,7 @@ fn walk_children(
         | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let crate::ast::InterpStrPart::Expr(ex) = p {
+                if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p {
                     walk_expr(ex, ev, errors);
                 }
             }
@@ -2838,7 +2838,7 @@ impl<'a, 'b> ValidateCtx<'a, 'b> {
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let crate::ast::InterpStrPart::Expr(ex) = p { self.visit_expr(ex); }
+                    if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p { self.visit_expr(ex); }
                 }
             }
             ExprKind::ArrayLit(elems) => {

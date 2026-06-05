@@ -308,7 +308,7 @@ impl Interpreter {
                 for p in parts {
                     match p {
                         crate::ast::InterpStrPart::Lit(s) => out.push_str(s),
-                        crate::ast::InterpStrPart::Expr(e) => {
+                        crate::ast::InterpStrPart::Expr { expr: e, spec: _ } => {
                             let v = match self.eval_expr(e, env)? {
                                 Flow::Value(v) => v,
                                 other => return Ok(other),

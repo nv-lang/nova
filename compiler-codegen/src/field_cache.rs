@@ -1031,7 +1031,7 @@ fn explain_walk_expr(
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p { explain_walk_expr(e, type_fields, info); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { explain_walk_expr(e, type_fields, info); }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {
@@ -2820,7 +2820,7 @@ fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p { c += count_field_reads_in_expr_weighted(e, fname, loop_mult); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { c += count_field_reads_in_expr_weighted(e, fname, loop_mult); }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {
@@ -3253,7 +3253,7 @@ fn expr_contains_invalidating_call_for(
         }),
         ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_invalidating_call_for(el, fname, ipa)),
         ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
-            if let InterpStrPart::Expr(e) = p { expr_contains_invalidating_call_for(e, fname, ipa) } else { false }
+            if let InterpStrPart::Expr { expr: e, spec: _ } = p { expr_contains_invalidating_call_for(e, fname, ipa) } else { false }
         }),
         ExprKind::Select { .. } => true,
         ExprKind::Range { start, end, .. } => {
@@ -3442,7 +3442,7 @@ fn expr_contains_write_to(e: &Expr, fname: &str) -> bool {
         }),
         ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_write_to(el, fname)),
         ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
-            if let InterpStrPart::Expr(e) = p { expr_contains_write_to(e, fname) } else { false }
+            if let InterpStrPart::Expr { expr: e, spec: _ } = p { expr_contains_write_to(e, fname) } else { false }
         }),
         ExprKind::Select { arms } => arms.iter().any(|arm| {
             block_contains_write_to(&arm.body, fname)
@@ -3591,7 +3591,7 @@ fn expr_contains_call(e: &Expr) -> bool {
         }),
         ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_call(el)),
         ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
-            if let InterpStrPart::Expr(e) = p { expr_contains_call(e) } else { false }
+            if let InterpStrPart::Expr { expr: e, spec: _ } = p { expr_contains_call(e) } else { false }
         }),
         ExprKind::Select { .. } => true, // channel ops effectively are call/blocking
         ExprKind::Range { start, end, .. } => {
@@ -3799,7 +3799,7 @@ fn count_field_reads_in_expr(e: &Expr, fname: &str) -> usize {
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     c += count_field_reads_in_expr(e, fname);
                 }
             }
@@ -3954,7 +3954,7 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
 
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     analyze_expr(e, fields, a);
                 }
             }
@@ -4234,7 +4234,7 @@ fn scan_expr(e: &Expr, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
 
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     scan_expr(e, fields, out);
                 }
             }
@@ -4641,7 +4641,7 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
         | ExprKind::SelfAccess => {}
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     collect_locals_expr(e, out);
                 }
             }
@@ -5356,7 +5356,7 @@ fn descend_expr_for_nested(
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts.iter_mut() {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     descend_expr_for_nested(e, fname, cfg, ipa,
                         local_names, seq, budget_left);
                 }
@@ -5497,7 +5497,7 @@ fn rewrite_expr_children(e: &mut Expr, replace_map: &HashMap<String, String>) {
 
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     rewrite_expr(e, replace_map);
                 }
             }
@@ -6099,7 +6099,7 @@ fn licm_expr(
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     licm_expr(e, fields, cfg, local_names, hoist_count, ipa);
                 }
             }
@@ -6432,7 +6432,7 @@ fn collect_closures_captures_in_expr(
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     collect_closures_captures_in_expr(e, fields, out);
                 }
             }
@@ -6612,7 +6612,7 @@ fn expr_contains_spawn(e: &Expr) -> bool {
         }),
         ExprKind::TupleLit(elems) => elems.iter().any(|el| expr_contains_spawn(el)),
         ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| {
-            if let InterpStrPart::Expr(e) = p { expr_contains_spawn(e) } else { false }
+            if let InterpStrPart::Expr { expr: e, spec: _ } = p { expr_contains_spawn(e) } else { false }
         }),
         ExprKind::Select { arms } => arms.iter().any(|arm| {
             block_contains_spawn(&arm.body)
@@ -6782,7 +6782,7 @@ fn first_field_span_in_expr(e: &Expr, fname: &str) -> Option<crate::diag::Span> 
         }),
         ExprKind::TupleLit(elems) => elems.iter().find_map(|el| first_field_span_in_expr(el, fname)),
         ExprKind::InterpolatedStr { parts } => parts.iter().find_map(|p| {
-            if let InterpStrPart::Expr(e) = p { first_field_span_in_expr(e, fname) } else { None }
+            if let InterpStrPart::Expr { expr: e, spec: _ } = p { first_field_span_in_expr(e, fname) } else { None }
         }),
         ExprKind::Select { arms } => arms.iter().find_map(|arm| {
             (arm.guard.as_ref().and_then(|g| first_field_span_in_expr(g, fname)))
@@ -7556,7 +7556,7 @@ fn collect_body_writes_expr(e: &Expr, out: &mut HashSet<String>) {
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p { collect_body_writes_expr(e, out); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { collect_body_writes_expr(e, out); }
             }
         }
         ExprKind::Select { arms } => {
@@ -7911,7 +7911,7 @@ fn count_pure_in_expr(
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure);
                 }
             }
@@ -8292,7 +8292,7 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p { rewrite_pure_calls_in_expr(e, renames); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { rewrite_pure_calls_in_expr(e, renames); }
             }
         }
         ExprKind::ArrayLit(elems) => {
@@ -8973,7 +8973,7 @@ fn count_chains_in_expr(
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p {
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                     count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure);
                 }
             }
@@ -9192,7 +9192,7 @@ fn rewrite_chains_in_expr(e: &mut Expr, name_map: &HashMap<Vec<String>, String>)
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p { rewrite_chains_in_expr(e, name_map); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { rewrite_chains_in_expr(e, name_map); }
             }
         }
         ExprKind::ArrayLit(elems) => {

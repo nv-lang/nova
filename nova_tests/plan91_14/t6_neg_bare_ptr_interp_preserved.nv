@@ -1,0 +1,22 @@
+// Plan 91.14 Ф.5 NEG T6 — bare ${ptr} (no `:?`) preserved error.
+//
+// Per D229 §«Pointer integration»: spec=None для typed pointer still
+// errors `E_PTR_NO_DISPLAY_USE_DEBUG_STR` (D216 §15 preserved).
+// Explicit ${ptr:?} (spec=Debug) — opt-in path, allowed внутри unsafe.
+//
+// EXPECT_COMPILE_ERROR E_PTR_NO_DISPLAY_USE_DEBUG_STR
+
+module plan91_14.t6_neg_bare_ptr_interp_preserved
+
+type Acc {
+    id i64
+}
+
+test "bare ${ptr} still errors" {
+    ro a = Acc { id: 42 }
+    unsafe {
+        ro p = &a
+        ro s = "ptr=${p}"
+        assert(s.len > 0)
+    }
+}

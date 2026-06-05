@@ -5423,6 +5423,7 @@ type InvalidCodepoint { value int }
 - `[]T` базовые (`new`, `with_capacity`, `push`, `len`, `get`, `iter`)
 - `Buffer` (уже реализован 2026-05-07)
 - `Option`/`Result` основные методы
+- **Format spec (foundation)** — `${expr:?}` debug-format в string interpolation (Plan 91.14 2026-06-05; promoted из Tier 3). Foundation `${expr:?}` lands в Plan 91.14; extensions (`:hex`, `:pad-N`, etc.) — [M-91.14-format-dsl-extensions] followup.
 
 **Tier 2 (для production):**
 - `Random` / `Time` handler'ы (включая `seeded` / `fixed_ms`)
@@ -5432,7 +5433,7 @@ type InvalidCodepoint { value int }
 
 **Tier 3 (nice-to-have):**
 - Regex
-- Format spec
+- ~~Format spec~~ — promoted в Tier 1 (Plan 91.14, см. выше); только DSL-extensions остаются nice-to-have
 - Расширенные числовые (`f64 @atan2`, etc.)
 
 ### Что уже реализовано в bootstrap (по состоянию на 2026-05-07)

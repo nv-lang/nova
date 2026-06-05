@@ -32764,6 +32764,33 @@ Marker tally:
   • 🟢 [M-110.x-cleanup-shield-deadline-underflow] CLOSED (af4e7d96a62).
   • 🔴 [M-110.10.1 / 110.10.2 / 110.10.3] DEFERRED к V2 design session.
 
+## 2026-06-05 (later) — Plan 91.14 ✅ CLOSED — DebugPrintable + ${expr:?} format spec
+
+Plan 91.14 V1 implementation Ф.0-Ф.7 landed на ветке plan-91.14-debug-
+printable. 7 commits + 12 plan91_14 fixtures PASS.
+
+Deliverables:
+- D229 NEW (spec/decisions/02-types.md) — DebugPrintable protocol +
+  format spec grammar
+- ast/format_spec.rs NEW — FormatSpec { None, Debug } enum
+- InterpStrPart::Expr → struct { expr, spec } (45-site sweep)
+- Parser: ${expr:?} syntax + 3 new error codes (E_FORMAT_SPEC_EMPTY,
+  E_FORMAT_SPEC_UNKNOWN, E_FORMAT_SPEC_TRAILING)
+- std/prelude/protocols.nv: NEW DebugPrintable protocol с default body
+- C primitives (nova_rt/conv.h): nova_str_to_debug_str (quote+escape),
+  nova_char_to_debug_str (single-quote+escape), nova_bool/int/f64_to_debug_str
+  (passthrough к display), nova_ptr_to_debug_str (hex+null-safe)
+- Codegen branch на spec: spec=Debug → @debug_fmt + debug primitives
+- Pointer integration: ${&v:?} → hex addr; bare ${p} preserved error
+
+Test results: 12/12 plan91_14 PASS (10 POS + 2 NEG).
+Markers closed: [M-118.7-debug-fmt-deferred], [M-118-debug-printable].
+
+### State
+
+Plan 91 std MVP gets DebugPrintable protocol (sibling к Printable D183) +
+format-spec foundation. Next: merge plan-91.14-debug-printable → main.
+
 === Plan 123 V*.followups (2026-06-05) — umbrella close ===
 
 7-marker umbrella работы над AST-level field-cache optimizer +

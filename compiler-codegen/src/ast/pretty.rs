@@ -46,7 +46,7 @@ fn write_expr(out: &mut String, e: &Expr) {
             for p in parts {
                 match p {
                     InterpStrPart::Lit(s) => out.push_str(s),
-                    InterpStrPart::Expr(e) => {
+                    InterpStrPart::Expr { expr: e, spec: _ } => {
                         out.push_str("${");
                         write_expr(out, e);
                         out.push('}');

@@ -9755,3 +9755,80 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
   trigger conditions.
 - **Plan 126** — auto-derive Equatable/Hashable/Cloneable/Comparable/Printable.
 - **Plan 127** — value-record escape & auto-promote (см. выше).
+
+### D229 — DebugPrintable protocol + format spec `${expr:?}`
+
+**Plan 91.14** (2026-06-05). New protocol parallel к D183 Printable — debug-specific representation.
+
+#### Rationale
+
+1. **Debug semantics distinct from Display.** Plan 91.8a.2 (D183) shipped Printable (user-facing display) only. После Plan 118.5 V3 closure, pointer debugging via `(*T).to_debug_str()` proved inelegant — leaks unsafe context, no protocol-level extensibility, can't recursively debug struct holding pointers. DebugPrintable closes this gap.
+
+2. **Diagnostic representation ≠ user-facing display.** Default Debug output is memberwise (`TypeName { field1: value, field2: value }`) — matches Rust `#[derive(Debug)]`. Display can be user-friendly (`Point(1, 2)` или `"hello"` без escapes).
+
+3. **Pointer integration.** `*T` impls DebugPrintable (в unsafe context only) — emits `"0x7f8a..->Account"`. Bare `${p}` без `:?` остаётся E_PTR_NO_DISPLAY_USE_DEBUG_STR (per D216 §17). Only explicit `${p:?}` opt-in unlocks debug formatting.
+
+#### Protocol declaration
+
+```nova
+#stable(since = "0.1")
+export type DebugPrintable protocol {
+    @debug_fmt(sb StringBuilder) -> ()
+    // NO default body в protocol decl. Compiler synthesizes per-type
+    // via hybrid strategy (см. «Default body synthesis» ниже):
+    //   - Primitives: shortcut к `str.from_debug(@)` C-primitive
+    //   - User types: memberwise iteration через все fields (incl. private)
+}
+```
+
+**Метод name = `@debug_fmt`** (НЕ `@fmt`) — avoid collision с D183 Printable.@fmt. Distinct method names enable both protocols on same type simultaneously.
+
+**Hybrid default body strategy** (Plan 91.14 design decision #1, user-confirmed 2026-06-05):
+- Protocol decl ships БЕЗ default body — explicit synthesis в codegen.
+- Primitives (i*/u*/f*/bool/char/byte/str/ptr): codegen emits direct `str.from_debug(@)` C-primitive call.
+- User types (records, sums, tuples): codegen synthesizes memberwise iteration (incl. private fields per design decision #3).
+- This avoids the «default body fails for structs» problem (single-line shortcut couldn't handle nested types) while preserving zero-friction implicit synthesis.
+
+#### Format spec syntax
+
+Inside Nova interp-string `${expr:SPEC}`:
+- `${expr}` — calls Printable.@fmt (D183, unchanged)
+- `${expr:?}` — calls DebugPrintable.@debug_fmt (NEW)
+- `${expr:foo}` — E_FORMAT_SPEC_UNKNOWN (foundation, extensions per [M-91.14-format-dsl-extensions])
+
+#### Default body synthesis
+
+Когда user type X не implements DebugPrintable manually:
+1. Compiler synthesizes memberwise body iterating fields:
+   ```nova
+   @debug_fmt(sb StringBuilder) -> () :=
+       sb.append("X { ")
+       sb.append("field1: "); @field1.debug_fmt(sb)
+       sb.append(", field2: "); @field2.debug_fmt(sb)
+       sb.append(" }")
+   ```
+2. Recursive — каждое field вызывает .debug_fmt() — все fields must impl DebugPrintable (otherwise E_DEBUG_PRINTABLE_NOT_IMPLEMENTED).
+3. Primitives ship default impl via `str.from_debug` primitives (C function):
+   - i64/i32/etc → "-42"
+   - f64/f32 → "3.14" (round-trip format)
+   - bool → "true"/"false"
+   - char → "'A'" с escape rules
+   - str → "\"hello\\n\"" (quoted с escape rules)
+   - byte/u8 → "42u8" (with type suffix)
+
+#### Error codes registered
+
+| Code | Description | Trigger |
+|------|-------------|---------|
+| E_DEBUG_PRINTABLE_NOT_IMPLEMENTED | Type doesn't impl DebugPrintable, no auto-synthesis possible | `${x:?}` where typeof(x) lacks impl |
+| E_FORMAT_SPEC_UNKNOWN | Unknown format spec | `${x:foo}` (only `:?` valid in V1) |
+| E_PTR_NO_DISPLAY_USE_DEBUG_STR (preserved) | Bare `${p}` для pointer | unchanged from D216 §17 |
+
+#### Cross-refs
+
+- D183 — Printable protocol (sibling, distinct semantics — Display equivalent)
+- D216 §17 — Pointer Debug formatting (`(*T).to_debug_str()` method superseded by DebugPrintable.@debug_fmt + `${p:?}` syntax; E_PTR_NO_DISPLAY_USE_DEBUG_STR diagnostic preserved для bare `${p}`)
+- D73 — From/Into protocol pair (orthogonal — conversion vs formatting)
+- Plan 91.14 (this D-block's home plan)
+- Plan 91.13 — JSON conformance (sibling, just landed)
+- Plan 91.8a.2 — Printable infrastructure (foundation, ~80% mechanism reused)

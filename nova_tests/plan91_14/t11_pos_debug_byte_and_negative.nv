@@ -1,0 +1,32 @@
+// Plan 91.14 Ф.6 POS T11 — debug for negative int + byte values.
+//
+// Per D229: int debug = display (no escape). Verify negative numbers
+// и byte (u8) formatting work consistently. Byte routes как int в V1
+// (auto-promote к nova_int).
+
+module plan91_14.t11_pos_debug_byte_and_negative
+
+test "negative int debug" {
+    ro x = -42
+    ro s = "${x:?}"
+    assert(s == "-42")
+}
+
+test "zero debug" {
+    ro x = 0
+    ro s = "${x:?}"
+    assert(s == "0")
+}
+
+test "f64 negative debug" {
+    ro f = -3.14
+    ro s = "${f:?}"
+    assert(s == "-3.14")
+}
+
+test "f64 large debug" {
+    ro f = 1.5e10
+    ro s = "${f:?}"
+    // %g format → "1.5e+10"
+    assert(s.starts_with("1.5"))
+}

@@ -318,6 +318,68 @@ export type Printable protocol {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// Plan 91.14 (D229) — DebugPrintable protocol + `${expr:?}` format spec
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Protocol для отладочного представления — sibling к Printable (D183).
+///
+/// **Distinction от Printable:**
+/// - `Printable.@fmt` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
+/// - `DebugPrintable.@debug_fmt` — diagnostic representation (e.g.,
+///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` с quote-escape), matches
+///   Rust `#[derive(Debug)]` shape.
+///
+/// **Trigger:** `${expr:?}` syntax inside Nova interp-strings (Plan 91.14 Ф.2).
+/// Bare `${expr}` (no `:?`) routes к Printable.@fmt (unchanged).
+///
+/// **Hybrid default body synthesis** (Plan 91.14 Ф.4, design decision #1):
+/// Protocol decl ships БЕЗ default body — codegen synthesizes per-type:
+/// - Primitives (i*/u*/f*/bool/char/byte/str/ptr): shortcut к
+///   `str.from_debug(@)` C-primitive (Ф.4.3).
+/// - User types (records, sums, tuples): memberwise iteration через ALL
+///   fields including private (decision #3 — debug = diagnostic), output
+///   form `TypeName { field1: <debug_f1>, field2: <debug_f2> }`.
+///
+/// **Pointer integration** (Ф.5): `*T` impls DebugPrintable в unsafe
+/// context — emits `"0x7f8a..->Account"`. Bare `${p}` без `:?` остаётся
+/// `E_PTR_NO_DISPLAY_USE_DEBUG_STR` (D216 §17) — encourages explicit opt-in.
+///
+/// **Auto-derive** (Ф.4.2 default body, decision #4 implicit): synthesized
+/// on-demand при первом encounter `${x:?}` для type без manual impl.
+/// Cycle detection via Plan 91.8a.2 mechanism. Future explicit form
+/// `#impl(DebugPrintable)` — [M-91.14-derive-debug].
+///
+/// # Examples
+///
+/// ```nova
+/// type Point { x int, y int }
+/// // Auto-synthesized:
+/// //   @debug_fmt(sb) := sb.append("Point { x: ${@x:?}, y: ${@y:?} }")
+///
+/// ro p = Point { x: 1, y: 2 }
+/// println("p = ${p:?}")  // "p = Point { x: 1, y: 2 }"
+/// ```
+///
+/// Manual impl (override default):
+///
+/// ```nova
+/// fn Point @debug_fmt(sb StringBuilder) -> () {
+///     sb.append("Point(")
+///     sb.append_int(@x)
+///     sb.append(", ")
+///     sb.append_int(@y)
+///     sb.append(")")
+/// }
+/// ```
+#stable(since = "0.1")
+export type DebugPrintable protocol {
+    debug_fmt(sb StringBuilder) {
+        sb.append(str.from_debug(@))
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Plan 110 (D188 / D192 / D194) — Consumable[E] + WithExitTimeout
 // ──────────────────────────────────────────────────────────────────────────
 

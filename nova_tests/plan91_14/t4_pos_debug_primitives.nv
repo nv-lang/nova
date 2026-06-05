@@ -1,0 +1,61 @@
+// Plan 91.14 Ф.4 POS T4 — debug primitives: int/bool/f64/str/char.
+//
+// Per D229 §«Default body synthesis» primitives table:
+// - int → "42"        (same as display)
+// - bool → "true"     (same)
+// - f64 → "3.14"      (same)
+// - str → "\"hi\""    (quoted+escaped — DIFFERS от display "hi")
+// - char → "'A'"      (single-quoted — DIFFERS от display "A")
+
+module plan91_14.t4_pos_debug_primitives
+
+test "int debug = display" {
+    ro x = 42
+    ro s = "${x:?}"
+    assert(s == "42")
+}
+
+test "bool debug = display" {
+    ro b = true
+    ro s = "${b:?}"
+    assert(s == "true")
+}
+
+test "f64 debug = display" {
+    ro f = 3.14
+    ro s = "${f:?}"
+    assert(s == "3.14")
+}
+
+test "str debug — quoted + escapes" {
+    ro hi = "hi"
+    ro s = "${hi:?}"
+    assert(s == "\"hi\"")
+}
+
+test "str debug — escape newline" {
+    ro multi = "a\nb"
+    ro s = "${multi:?}"
+    assert(s == "\"a\\nb\"")
+}
+
+test "str debug — escape backslash + quote" {
+    ro tricky = "say \"hi\\there\""
+    ro s = "${tricky:?}"
+    // Source string has: «say "hi\there"» (escape interpretation):
+    //   bytes: s a y SP " h i \ t h e r e "
+    // Debug form must escape " and \: «"say \"hi\\there\""»
+    assert(s == "\"say \\\"hi\\\\there\\\"\"")
+}
+
+test "char debug — single quotes" {
+    ro c = 'A'
+    ro s = "${c:?}"
+    assert(s == "'A'")
+}
+
+test "char debug — escape newline" {
+    ro c = '\n'
+    ro s = "${c:?}"
+    assert(s == "'\\n'")
+}

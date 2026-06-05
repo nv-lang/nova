@@ -720,7 +720,7 @@ impl DesugarCtx {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts.iter_mut() {
-                    if let InterpStrPart::Expr(x) = p { self.desugar_expr(x); }
+                    if let InterpStrPart::Expr { expr: x, spec: _ } = p { self.desugar_expr(x); }
                 }
             }
             ExprKind::TaggedTemplate { args, .. } => {

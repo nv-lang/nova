@@ -5,7 +5,10 @@
 //! AST-узлы готовы; парсер/typecheck/SMT расширения — в последующих
 //! фазах [Plan 33.1](../../../docs/plans/33.1-contracts-core.md).
 
+pub mod format_spec;
 pub mod pretty;
+
+pub use format_spec::FormatSpec;
 
 use crate::diag::Span;
 
@@ -1672,12 +1675,17 @@ impl Expr {
 }
 
 /// Часть `"... ${expr} ..."` interpolated-строки (D44, Plan 17 Ф.4).
+///
+/// Plan 91.14 (D229): `Expr` variant gained `spec: FormatSpec` field.
+/// `spec: FormatSpec::None` — bare `${expr}` → Printable.@fmt (V1 default).
+/// `spec: FormatSpec::Debug` — `${expr:?}` → DebugPrintable.@debug_fmt (NEW).
 #[derive(Debug, Clone)]
 pub enum InterpStrPart {
     /// Буквальная часть строки (literal-сегмент).
     Lit(String),
-    /// Подвыражение `${expr}` — будет вычислено и приведено к str.
-    Expr(Box<Expr>),
+    /// Подвыражение `${expr}` или `${expr:?}` — будет вычислено
+    /// и приведено к str via Printable/DebugPrintable per `spec`.
+    Expr { expr: Box<Expr>, spec: FormatSpec },
 }
 
 #[derive(Debug, Clone)]

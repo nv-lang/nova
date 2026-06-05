@@ -1,0 +1,15 @@
+// Plan 91.14 Ф.6 NEG T9 — trailing tokens после format spec rejected.
+//
+// Parser enforces strict grammar: after `${expr:?}` no extra tokens
+// allowed inside braces. Captures malformed forms like `${x:? extra}`
+// или `${x:?:more}`.
+//
+// EXPECT_COMPILE_ERROR E_FORMAT_SPEC_TRAILING
+
+module plan91_14.t9_neg_trailing_tokens_after_spec
+
+test "trailing tokens after :? rejected" {
+    ro x = 42
+    ro s = "${x:? extra}"
+    assert(s == "")
+}

@@ -369,7 +369,7 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, regi
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts.iter_mut() {
-                if let InterpStrPart::Expr(e) = p { normalize_chains_expr(e, counter, registry); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { normalize_chains_expr(e, counter, registry); }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {

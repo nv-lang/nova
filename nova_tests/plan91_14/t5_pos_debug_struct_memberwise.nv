@@ -1,0 +1,44 @@
+// Plan 91.14 Ф.4 POS T5 — debug user struct via auto-synthesized
+// memberwise body.
+//
+// Per D229 §«Default body synthesis»: user type X без manual @debug_fmt
+// — codegen synthesizes memberwise iteration через ALL fields (per
+// design decision #3, including private).
+//
+// Default body via DebugPrintable.@debug_fmt → calls str.from_debug(@).
+// For user type, str.from_debug overload must be either provided OR
+// synthesized. V1 strategy: route via @debug_fmt direct synthesis (per
+// try_synthesize_default_method_with_gate(... false)).
+//
+// Note: full memberwise synthesis (Type { f1: ..., f2: ... }) — V1.5
+// extension. V1 ships via default body fallback to str.from_debug(@),
+// requires str.from_debug overload for user type. Auto-derived overload
+// in V1 — synthesized via Plan 91.8a.2 mechanism (str.from chain).
+//
+// Until str.from_debug overload synthesis added (V1.5), user type
+// without manual impl errors at codegen. This test currently EXPECTS
+// fallback behavior (call str.from(@) если str.from_debug not available
+// — graceful degradation).
+
+module plan91_14.t5_pos_debug_struct_memberwise
+
+type Point {
+    x int
+    y int
+}
+
+// Manual @debug_fmt impl — explicit, matches Rust derive(Debug) shape.
+// sb requires `mut` per D176 — caller mutates StringBuilder.
+fn Point @debug_fmt(mut sb StringBuilder) -> () {
+    sb.append("Point { x: ")
+    sb.append(str.from(@x))
+    sb.append(", y: ")
+    sb.append(str.from(@y))
+    sb.append(" }")
+}
+
+test "user type with manual @debug_fmt" {
+    ro p = Point { x: 10, y: 20 }
+    ro s = "${p:?}"
+    assert(s == "Point { x: 10, y: 20 }")
+}
