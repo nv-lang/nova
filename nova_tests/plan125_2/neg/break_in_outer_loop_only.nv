@@ -1,0 +1,43 @@
+// Plan 125.2 [M-125-loop-no-break-divergence] regression guard:
+// break внутри ВНЕШНЕГО loop НЕ должен «защищать» вложенный inner loop
+// от divergence — но в данном фикстуре внешний loop сам имеет break,
+// так что external loop НЕ divergent. Главное: нет regression при
+// nested loop structure с break в outer scope.
+//
+// Variant: внешний loop имеет break (через i counter), внутренний
+// inner loop ТОЖЕ имеет break. Оба НЕ должны быть classified как
+// divergent. Loop никогда не "наследует" break-status от sibling.
+
+module neg.break_in_outer_loop_only
+
+fn nested_count(limit int) -> int {
+    mut total = 0
+    mut i = 0
+    loop {
+        if i >= limit {
+            break
+        }
+        mut j = 0
+        loop {
+            if j >= 2 {
+                break
+            }
+            total = total + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    total
+}
+
+test "nested loops both with break — completes normally" {
+    assert(nested_count(3) == 6)
+}
+
+test "nested loops — zero outer iterations" {
+    assert(nested_count(0) == 0)
+}
+
+test "nested loops — one outer iter, two inner" {
+    assert(nested_count(1) == 2)
+}

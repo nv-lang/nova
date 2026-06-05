@@ -1,0 +1,40 @@
+// Plan 125.2 regression guard for concurrency-style supervised loops:
+// Common Plan 83 pattern — long-running worker loops с graceful shutdown
+// через break при cond=true. CFA detection НЕ должна классифицировать
+// такой loop как divergent — есть break в body, runtime может exit.
+//
+// Без этого guard'а risk: Plan 125.2 expansion ошибочно flip'ает
+// supervised worker pattern, ломая type inference в callers, которые
+// ожидают unit-returning loop с возможным graceful exit.
+
+module neg.regression_concurrency_loop_pattern
+
+fn worker(max_iters int, stop_at int) -> int {
+    mut processed = 0
+    mut iter = 0
+    loop {
+        // Graceful shutdown check (mimics supervised stop-signal)
+        if iter >= max_iters {
+            break
+        }
+        // Conditional early exit (mimics cancel-token check)
+        if iter == stop_at {
+            break
+        }
+        processed = processed + 1
+        iter = iter + 1
+    }
+    processed
+}
+
+test "supervised-style loop — max-iters exit path" {
+    assert(worker(5, 100) == 5)
+}
+
+test "supervised-style loop — stop-signal exit path" {
+    assert(worker(10, 3) == 3)
+}
+
+test "supervised-style loop — immediate stop" {
+    assert(worker(10, 0) == 0)
+}
