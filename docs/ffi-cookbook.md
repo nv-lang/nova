@@ -20,6 +20,20 @@ introduced in Plan 115.
 | External fn declaration | `external fn name(args) -> ret` | [D82](../spec/decisions/03-syntax.md#d82) |
 | Resource cleanup | `consume close()` method + `defer` | [D90 / D131](../spec/decisions/03-syntax.md#d90) |
 
+## Pointer modifier rules (V2/V3)
+
+При записи FFI-сигнатур с pointer/typed wrappers (`*T` / `ro * T` / `mut * T` / `unsafe * T`) используй V2/V3 canonical right-binding syntax (modifier ПЕРЕД `*`).
+
+Краткая шпаргалка:
+
+- `*T` — default ro pointer
+- `mut * T` — mutable pointer (caller может изменить pointee)
+- `unsafe * T` — possibly-null/dangling pointer (Rust `*const T` analog)
+- `* unsafe T` — valid pointer к possibly-uninit T (MaybeUninit analog)
+- `mut * ro * Acc` — chain (mut pointer к ro pointer к Acc)
+
+Полные правила (V3.1 storage-class, V3.2 modifier ordering, V3.4 safe keyword + redundancy) — см. [`docs/typed-pointers.md`](typed-pointers.md). Migration guide для V2→V3 — см. [`docs/migration/d216-v3-modifier-rules.md`](migration/d216-v3-modifier-rules.md).
+
 ## Layered FFI pattern
 
 ```

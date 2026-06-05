@@ -187,6 +187,7 @@ programmer writes nothing special.
 - [spec/effects.md](spec/effects.md) — effect system (introduction)
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
+- [docs/typed-pointers.md](docs/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
 - [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, treewalk interpreter, C-backend codegen
 
 ## Status

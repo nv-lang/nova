@@ -2762,6 +2762,8 @@ mut (a, b) = pair                 // ✗ E_PATTERN_GROUP_MUT
 
 ## D175. `ro field` — полный freeze (амендмент D36)
 
+> ⚠️ **См. D216 V3 §V3.1** (Plan 118.5 V3, 2026-06-04/05) для storage-class-aware rules о `ro` + `mut` adjacency: type-form `ro mut T` запрещён на value-T (E_MUTABILITY_CONFLICT_VALUE_TYPE), binding-form `ro x mut T` allowed regardless of T storage class (Ф.6 relaxation).
+
 > Status: active (Plan 108, 2026-05-28); amended Plan 114 D184 (2026-05-31):
 > `readonly` → `ro` keyword rename. Error code `E_READONLY_FIELD` сохранён
 > как stable API. Семантика freeze + транзитивность не меняется.
@@ -2802,6 +2804,8 @@ acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
 ---
 
 ## D176. `ro T` — тип-модификатор
+
+> ⚠️ **См. D216 V3 §V3.1** (Plan 118.5 V3, 2026-06-04/05) для storage-class-aware rules о `ro` + `mut` adjacency: type-form `ro mut T` запрещён на value-T (E_MUTABILITY_CONFLICT_VALUE_TYPE), binding-form `ro x mut T` allowed regardless of T storage class (Ф.6 relaxation).
 
 > Status: active (Plan 108, 2026-05-28); amended (Plan 108.1, 2026-05-30);
 > amended Plan 114 D184 (2026-05-31): `readonly` → `ro` keyword rename;
