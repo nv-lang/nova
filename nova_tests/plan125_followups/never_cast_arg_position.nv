@@ -1,0 +1,20 @@
+// [M-125-codegen-never-cast] positive — divergent expr в argument position.
+// `foo(if c { v } else { throw E })` где foo ожидает non-int type — dummy
+// должен быть target-typed.
+
+module plan125_followups.never_cast_arg_position
+
+fn take_str(s str) -> int => s.len()
+
+fn use_div(c bool) Fail -> int {
+    take_str(if c { "hello" } else { throw "bad" })
+}
+
+test "divergent if-expr passed as nova_str arg" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro n = use_div(true)
+        assert(n == 5)
+    }
+}
