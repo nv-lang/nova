@@ -1,0 +1,49 @@
+// Plan 128 Ф.4 T3 — chained / depth-2 mut method calls on named tuple.
+//
+// Each call must materialise the receiver pointer freshly за каждый
+// call-site (no stale stack-temp address reused), so a sequence of
+// mut method calls на одном binding correctly composes mutations.
+
+module plan128.t3_named_tuple_chained_mut_ok
+
+type Counter(value int, step int)
+
+fn Counter mut @inc() -> () {
+    @value = @value + @step
+}
+
+fn Counter mut @set_step(s int) -> () {
+    @step = s
+}
+
+fn Counter mut @reset() -> () {
+    @value = 0
+}
+
+fn Counter @get() -> int => @value
+
+test "depth-2 mut chain — inc twice composes" {
+    mut c = Counter(value: 0, step: 5)
+    c.inc()
+    c.inc()
+    assert(c.get() == 10)
+}
+
+test "mut chain — change step mid-sequence" {
+    mut c = Counter(value: 0, step: 1)
+    c.inc()           // value = 1
+    c.inc()           // value = 2
+    c.set_step(10)    // step = 10, value still 2
+    c.inc()           // value = 12
+    c.inc()           // value = 22
+    assert(c.get() == 22)
+}
+
+test "mut chain — reset clears accumulated state" {
+    mut c = Counter(value: 100, step: 3)
+    c.inc()           // value = 103
+    c.inc()           // value = 106
+    c.reset()         // value = 0
+    c.inc()           // value = 3
+    assert(c.get() == 3)
+}

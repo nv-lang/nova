@@ -1,0 +1,23 @@
+// Plan 125.1 Ф.2+Ф.3 positive — `let x T = if cond { value } else { throw E }`.
+// Ф.2: infer_expr_type(Throw) -> Some(never). Ф.3: infer_block_trailing_typeref
+// returns never для divergent trailing. Ф.1: assignable(never, T) -> Ok.
+
+module plan125_1.throw_in_let_typed
+
+fn pick(c bool) Fail -> str {
+    ro x str = if c {
+        "fine"
+    } else {
+        throw "broken"
+    }
+    x
+}
+
+test "typed let with throw branch" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = pick(true)
+        assert(s == "fine")
+    }
+}

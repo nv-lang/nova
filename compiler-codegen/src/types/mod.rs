@@ -471,6 +471,15 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // вернуть `@`. Делает гарантию проверяемой для consume-checker.
     check_fluent_return(module, &mut errors);
 
+    // Plan 128 Ф.3: `fn <primitive> mut @method(...)` — E_PRIMITIVE_MUT_METHOD.
+    // Primitive types (int/str/bool/f64/... + ptr/nova_ptr/()) — immutable
+    // by design (Plan 91 §«Nova-first»: scalars copy-by-value, no in-place
+    // mutation through receiver). Parser permits the form syntactically but
+    // codegen silently no-ops the mutation — caller sees no change. This
+    // pass rejects such declarations at type-check time so the misleading
+    // pattern fails fast.
+    check_primitive_mut_method(module, &mut errors);
+
     // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
@@ -2696,14 +2705,36 @@ impl<'a> TypeCheckCtx<'a> {
     fn detect_divergent_consumable(&self, init: &Expr) -> Option<(String, String)> {
         use crate::ast::ExprKind;
         if let ExprKind::If { then, else_, .. } = &init.kind {
+            // Plan 125.1 D196 amend: divergent branch (`never` через любой
+            // путь — trailing throw/interrupt/panic, stmt-position
+            // throw/return, divergent call) не участвует в conflict-check —
+            // bottom type subtype of any. Используем `block_diverges`
+            // (полный stmts+trailing walk) вместо trailing-only check, и
+            // SKIP (continue к following branch / return None) вместо
+            // `?`-propagation abort.
+            let then_diverges = block_diverges(then);
+            let else_b = else_.as_ref()?;
+            let else_diverges = match else_b {
+                crate::ast::ElseBranch::Block(b) => block_diverges(b),
+                crate::ast::ElseBranch::If(ei) => expr_diverges(ei),
+            };
+            // Если ЛЮБАЯ ветка diverges — пары для conflict-check нет.
+            if then_diverges || else_diverges {
+                return None;
+            }
             // Both branches must end в expression returning Consumable.
             let then_ty = self.infer_block_trailing_typeref(then)?;
-            let else_ty = match else_.as_ref()? {
+            let else_ty = match else_b {
                 crate::ast::ElseBranch::Block(b) => self.infer_block_trailing_typeref(b)?,
                 crate::ast::ElseBranch::If(ei) => self.infer_consume_init_typeref(ei)?,
             };
             let then_name = Self::typeref_to_name(&then_ty)?;
             let else_name = Self::typeref_to_name(&else_ty)?;
+            // Plan 125.1 (Ф.3): defensive — Ф.3 уже фильтрует trailing-
+            // divergent в "never" name, оставляем guard для symmetry.
+            if then_name == "never" || else_name == "never" {
+                return None;
+            }
             if then_name != else_name {
                 return Some((then_name, else_name));
             }
@@ -2713,9 +2744,38 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn infer_block_trailing_typeref(&self, b: &crate::ast::Block) -> Option<TypeRef> {
         if let Some(t) = &b.trailing {
+            // Plan 125.1 (Ф.3): trailing-divergence detection. По спеке D25
+            // bottom-тип `never` propagates как тип блока, когда trailing
+            // expression diverges (throw / interrupt / never-returning call).
+            // Conservative: НЕ ходим по preceding stmts (только trailing).
+            // Hookpoint feeds assignable() never-subtype branch из Ф.1.
+            if Self::expr_diverges_at_top(t) {
+                return Some(prim_ref("never", t.span));
+            }
             self.infer_consume_init_typeref(t)
         } else {
             None
+        }
+    }
+
+    /// Plan 125.1 (Ф.3): top-level divergence check для trailing expression.
+    /// Возвращает true, если expression имеет тип `never` (D25 bottom):
+    /// `throw e`, `interrupt v?`, или call к never-returning builtin
+    /// (panic/exit/abort/unreachable). Conservative — не walks вложенные
+    /// statements, только распознаёт top-level shape. Mirrors detection
+    /// logic из `infer_expr_type` Ф.2 (без scope-зависимости).
+    fn expr_diverges_at_top(e: &Expr) -> bool {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Throw(_) | ExprKind::Interrupt(_) => true,
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Ident(name) = &func.kind {
+                    matches!(name.as_str(), "panic" | "exit" | "abort" | "unreachable")
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
@@ -5401,6 +5461,14 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
         };
+        // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `Ty::Never`
+        // assignable to any expected type (bottom type). Hookpoint fires
+        // once `infer_expr_type` returns `never` for Throw/Interrupt/
+        // never-returning calls in subsequent Ф.* steps. Pure additive —
+        // existing `TyCat::Other` safety-net preserved.
+        if matches!(ty_of_ref(&found_tr), Ty::Never) {
+            return Compat::Ok;
+        }
         let found_cat = self.cat_of(&found_tr, expr_gs);
         if cat_compatible(&found_cat, &exp_cat) {
             Compat::Ok
@@ -5436,11 +5504,23 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::NullPtrLit => Some(prim_ref("ptr", expr.span)),
             // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
             ExprKind::SelfAccess => scope.get("@").cloned(),
+            // Plan 125.1 (Ф.2): `throw expr` — divergent expression. По спеке
+            // D25 throw имеет тип `never` (bottom). Без этого `let x = throw e`
+            // / `f(throw e)` падают в Compat::Unknown даже при наличии
+            // never-subtype hookpoint'а из Ф.1.
+            ExprKind::Throw(_) => Some(prim_ref("never", expr.span)),
+            // Plan 125.1 (Ф.2): `interrupt v?` — D61 досрочное завершение
+            // with-блока, тип позиции = `never` (control-flow leaves enclosing
+            // expression context). Аналогично Throw — divergent.
+            ExprKind::Interrupt(_) => Some(prim_ref("never", expr.span)),
             // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` call where
             // Type is a known Newtype/Alias → infer as Named(Type). Without
             // this, `ro h = SqHandle(raw)` binds `h` без типа в scope, и
             // assignable() для `close_sqlite(h)` падает в Compat::Unknown
             // (E7301 не fires при passing PngHandle к fn(SqHandle)).
+            //
+            // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
+            // return_type resolves to `Ty::Never` → propagate `never`.
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Ident(name) = &func.kind {
                     if let Some(td) = self.types.get(name) {
@@ -5450,6 +5530,27 @@ impl<'a> TypeCheckCtx<'a> {
                                 generics: Vec::new(),
                                 span: expr.span,
                             });
+                        }
+                    }
+                    // Plan 125.1 (Ф.2): never-returning builtins (D13).
+                    // Same set as `expr_diverges` ниже + `unreachable`.
+                    if matches!(name.as_str(), "panic" | "exit" | "abort" | "unreachable") {
+                        return Some(prim_ref("never", expr.span));
+                    }
+                    // Plan 125.1 (Ф.2): propagate `never` для user fns whose
+                    // declared return_type resolves к Ty::Never. Requires ВСЕ
+                    // overloads divergent — иначе ambiguous (call resolution
+                    // ещё не выполнена на этом этапе, безопаснее fallback к
+                    // `None` чем выбрать random overload).
+                    if let Some(decls) = self.fn_decls.get(name) {
+                        if !decls.is_empty()
+                            && decls.iter().all(|d| {
+                                d.return_type
+                                    .as_ref()
+                                    .map_or(false, |tr| matches!(ty_of_ref(tr), Ty::Never))
+                            })
+                        {
+                            return Some(prim_ref("never", expr.span));
                         }
                     }
                 }
@@ -11975,6 +12076,82 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Plan 128 Ф.3: returns `true` iff `name` is the canonical name of a
+/// Nova primitive (leaf) type — one that cannot carry mut-receiver methods.
+///
+/// Coverage mirrors the prelude primitive set: integer family
+/// (`int`, signed `i8..i64`, unsigned `u8..u64`, `isize`, `usize`,
+/// `uint`), floats (`f32`, `f64`), `bool`, `char`, `str`, raw pointers
+/// (`ptr` Plan 115 D214, `nova_ptr` Plan 115 D214), and unit (`()`,
+/// which appears as the canonical name `Unit`).
+///
+/// Used by `check_primitive_mut_method` to flag declarations like
+/// `fn str mut @hack(...)` — the parser permits the form, but codegen
+/// silently no-ops the mutation; receiver-as-value primitives have no
+/// in-place semantics by D215/D226 design.
+fn is_primitive_leaf(name: &str) -> bool {
+    matches!(name,
+        "int" | "uint"
+        | "i8" | "i16" | "i32" | "i64" | "isize"
+        | "u8" | "u16" | "u32" | "u64" | "usize"
+        | "f32" | "f64"
+        | "bool" | "char" | "str"
+        | "ptr" | "nova_ptr"
+        | "Unit"
+    )
+}
+
+/// Plan 128 Ф.3: reject `fn <primitive> mut @method(...)` declarations.
+///
+/// Primitives are immutable by design (Plan 91 §«Nova-first»). A receiver
+/// of a primitive type is passed by value — the only place where `mut` on
+/// such a receiver could have meaning is in-place mutation of the caller's
+/// binding, which Nova does not support for scalars. The parser currently
+/// accepts the syntax, and codegen silently drops the mutation, so the
+/// method LOOKS like it works but produces no observable effect. This pass
+/// turns the silent footgun into a type-check error:
+///
+///   * `fn str mut @hack() => @ = "x"`           → E_PRIMITIVE_MUT_METHOD
+///   * `fn int mut @inc(by int) => @ = @ + by`   → E_PRIMITIVE_MUT_METHOD
+///   * `fn bool mut @flip() => @ = !@`           → E_PRIMITIVE_MUT_METHOD
+///
+/// Accepted (NOT flagged here):
+///
+///   * `fn str @len() -> int`                    — read-only method, no `mut`.
+///   * `fn UserType mut @method()`               — non-primitive receiver
+///     (record/named-tuple) — D215/D226 path handles mut-receiver pointer ABI.
+///
+/// Suggestion in the error message points users to the canonical
+/// alternative: write a pure function returning a new value
+/// (`fn name(x T) -> T`).
+fn check_primitive_mut_method(module: &Module, errors: &mut Vec<Diagnostic>) {
+    for item in &module.items {
+        let Item::Fn(f) = item else { continue; };
+        let Some(recv) = &f.receiver else { continue; };
+        // Only instance methods take `@`; static methods (`.`) can't carry
+        // `mut` on the receiver in the first place. Guard anyway in case
+        // future parser changes lift that restriction.
+        if recv.kind != ReceiverKind::Instance { continue; }
+        if !recv.mutable { continue; }
+        if !is_primitive_leaf(&recv.type_name) { continue; }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_PRIMITIVE_MUT_METHOD] primitive type `{ty}` cannot have \
+                 mut-methods (`fn {ty} mut @{name}(...)`): primitives are \
+                 immutable by design — receiver is passed by value, so \
+                 in-place mutation through `@` has no observable effect \
+                 on the caller. Use a pure function returning a new value \
+                 instead, e.g. `fn {name}(x {ty}) -> {ty}` (or a method \
+                 returning a new {ty}). See Plan 91 §«Nova-first», \
+                 Plan 128 Ф.3.",
+                ty = recv.type_name,
+                name = f.name,
+            ),
+            recv.span,
+        ));
+    }
+}
+
 /// Plan 100.2 (D156): определяет, содержит ли тип параметра generic
 /// с consume_bound. Используется для авто-обязательства при entry в
 /// функцию с `[T consume]` bound.
@@ -17416,6 +17593,235 @@ impl UnsafeCtx {
             // cases. Closures + handler bodies — Ф.3.5 follow-on extension.
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod primitive_mut_method_tests {
+    //! Plan 128 Ф.3: `E_PRIMITIVE_MUT_METHOD` rejects `fn <primitive> mut
+    //! @method(...)` declarations. Parser permits the form; codegen would
+    //! silently no-op the mutation (primitive receiver passed by value).
+    //! Type-checker pass turns the silent footgun into a hard error.
+    //!
+    //! Coverage:
+    //!   1. `fn str  mut @hack`  → E_PRIMITIVE_MUT_METHOD (str).
+    //!   2. `fn int  mut @inc`   → E_PRIMITIVE_MUT_METHOD (int).
+    //!   3. `fn bool mut @flip`  → E_PRIMITIVE_MUT_METHOD (bool).
+    //!   4. `fn f64  mut @scale` → E_PRIMITIVE_MUT_METHOD (f64).
+    //!   5. `fn str      @len`        — accepted (ro method on primitive).
+    //!   6. `fn UserType mut @method` — accepted (non-primitive receiver).
+    //!
+    //! Tests work directly on the AST level via `is_primitive_leaf` +
+    //! `check_primitive_mut_method` to stay independent of parser/lexer
+    //! evolution. Receiver/FnDecl/Module are built by hand using
+    //! `Default` impls (`FnDecl: Default`, `FnBody: Default = External`),
+    //! mirroring the helper-construction pattern used by `name_res_tests`
+    //! and other in-mod test bundles.
+    use super::*;
+    use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind};
+    use crate::diag::Span;
+
+    fn dummy_span() -> Span {
+        Span { start: 0, end: 0, file_id: MAIN_FILE_ID }
+    }
+
+    fn make_recv(type_name: &str, mutable: bool, kind: ReceiverKind) -> Receiver {
+        Receiver {
+            type_name: type_name.to_string(),
+            generics: Vec::new(),
+            kind,
+            mutable,
+            consume: false,
+            span: dummy_span(),
+        }
+    }
+
+    fn make_method(name: &str, recv: Receiver) -> FnDecl {
+        FnDecl {
+            name: name.to_string(),
+            receiver: Some(recv),
+            body: FnBody::External,
+            span: dummy_span(),
+            ..Default::default()
+        }
+    }
+
+    fn make_module(fns: Vec<FnDecl>) -> Module {
+        Module {
+            name: vec!["test".to_string()],
+            imports: Vec::new(),
+            items: fns.into_iter().map(Item::Fn).collect(),
+            attrs: Vec::new(),
+            doc_attrs: Vec::new(),
+            span: dummy_span(),
+            peer_files: Vec::new(),
+            doc: None,
+        }
+    }
+
+    fn run_check(module: &Module) -> Vec<Diagnostic> {
+        let mut errors = Vec::new();
+        check_primitive_mut_method(module, &mut errors);
+        errors
+    }
+
+    fn assert_rejected(diags: &[Diagnostic], ty: &str, method: &str) {
+        assert_eq!(diags.len(), 1,
+            "expected exactly one E_PRIMITIVE_MUT_METHOD for `fn {} mut @{}`, \
+             got {} diags: {:#?}", ty, method, diags.len(), diags);
+        let msg = &diags[0].message;
+        assert!(msg.contains("E_PRIMITIVE_MUT_METHOD"),
+            "diag must carry E_PRIMITIVE_MUT_METHOD tag; got: {}", msg);
+        assert!(msg.contains(ty),
+            "diag must mention primitive name `{}`; got: {}", ty, msg);
+        assert!(msg.contains(method),
+            "diag must mention method name `{}`; got: {}", method, msg);
+        // Suggestion must point users to the pure-function alternative
+        // (`fn name(x T) -> T`), not silently leave them stuck.
+        assert!(msg.contains("pure function") || msg.contains("returning a new value"),
+            "diag must include the pure-function suggestion; got: {}", msg);
+    }
+
+    // ─── Negative cases: primitives reject mut-methods ────────────────────
+
+    #[test]
+    fn rejects_str_mut_method() {
+        let m = make_module(vec![make_method(
+            "hack",
+            make_recv("str", true, ReceiverKind::Instance),
+        )]);
+        let diags = run_check(&m);
+        assert_rejected(&diags, "str", "hack");
+    }
+
+    #[test]
+    fn rejects_int_mut_method() {
+        let m = make_module(vec![make_method(
+            "inc",
+            make_recv("int", true, ReceiverKind::Instance),
+        )]);
+        let diags = run_check(&m);
+        assert_rejected(&diags, "int", "inc");
+    }
+
+    #[test]
+    fn rejects_bool_mut_method() {
+        let m = make_module(vec![make_method(
+            "flip",
+            make_recv("bool", true, ReceiverKind::Instance),
+        )]);
+        let diags = run_check(&m);
+        assert_rejected(&diags, "bool", "flip");
+    }
+
+    #[test]
+    fn rejects_f64_mut_method() {
+        let m = make_module(vec![make_method(
+            "scale",
+            make_recv("f64", true, ReceiverKind::Instance),
+        )]);
+        let diags = run_check(&m);
+        assert_rejected(&diags, "f64", "scale");
+    }
+
+    // ─── Positive cases: legal method declarations pass through ───────────
+
+    #[test]
+    fn accepts_str_ro_method() {
+        // `fn str @len() -> int` — no `mut` on receiver, just an instance
+        // method on a primitive. Plan 91 explicitly permits this shape
+        // (see nova_tests/syntax/methods_on_primitives.nv).
+        let m = make_module(vec![make_method(
+            "len",
+            make_recv("str", false, ReceiverKind::Instance),
+        )]);
+        let diags = run_check(&m);
+        assert!(diags.is_empty(),
+            "ro instance method on primitive must NOT trigger \
+             E_PRIMITIVE_MUT_METHOD; got: {:#?}", diags);
+    }
+
+    #[test]
+    fn accepts_user_type_mut_method() {
+        // `fn UserType mut @method()` — non-primitive receiver. D215/D226
+        // path is responsible for the pointer-ABI plumbing; this pass
+        // must stay out of its way.
+        let m = make_module(vec![make_method(
+            "method",
+            make_recv("UserType", true, ReceiverKind::Instance),
+        )]);
+        let diags = run_check(&m);
+        assert!(diags.is_empty(),
+            "mut-receiver method on user-defined type must NOT trigger \
+             E_PRIMITIVE_MUT_METHOD; got: {:#?}", diags);
+    }
+
+    // ─── is_primitive_leaf classifier — coverage of the full primitive set ─
+
+    #[test]
+    fn is_primitive_leaf_covers_full_primitive_set() {
+        // Sweep the entire primitive family — any gap here = silent escape
+        // hatch for the mut-method footgun.
+        for ty in &[
+            "int", "uint",
+            "i8", "i16", "i32", "i64", "isize",
+            "u8", "u16", "u32", "u64", "usize",
+            "f32", "f64",
+            "bool", "char", "str",
+            "ptr", "nova_ptr",
+            "Unit",
+        ] {
+            assert!(is_primitive_leaf(ty),
+                "expected `{}` to be classified as primitive leaf", ty);
+        }
+    }
+
+    #[test]
+    fn is_primitive_leaf_rejects_user_and_generic_names() {
+        for ty in &["UserType", "T", "Option", "Result", "List", "Map",
+                    "INT", "Str", "Bool", ""] {
+            assert!(!is_primitive_leaf(ty),
+                "expected `{}` to NOT be classified as primitive leaf", ty);
+        }
+    }
+
+    // ─── Edge cases ───────────────────────────────────────────────────────
+
+    #[test]
+    fn ignores_static_method_even_if_mutable_flag_set() {
+        // Static methods (`fn T.foo()`) can't legitimately carry `mut` on
+        // the receiver — there's no receiver value. Guard against accidental
+        // future parser changes that might leak the flag onto Static; the
+        // check should simply not fire (other passes handle the structural
+        // error).
+        let m = make_module(vec![make_method(
+            "ctor",
+            make_recv("str", true, ReceiverKind::Static),
+        )]);
+        let diags = run_check(&m);
+        assert!(diags.is_empty(),
+            "static-kind receiver must be skipped even if `mutable` is set; \
+             got: {:#?}", diags);
+    }
+
+    #[test]
+    fn reports_each_offending_method_independently() {
+        // Two illegal methods in the same module must each get their own
+        // diagnostic — no dedup/coalesce.
+        let m = make_module(vec![
+            make_method("hack",  make_recv("str", true, ReceiverKind::Instance)),
+            make_method("inc",   make_recv("int", true, ReceiverKind::Instance)),
+            make_method("len",   make_recv("str", false, ReceiverKind::Instance)),
+        ]);
+        let diags = run_check(&m);
+        assert_eq!(diags.len(), 2,
+            "expected 2 diagnostics (str-hack + int-inc), str-len accepted; \
+             got: {:#?}", diags);
+        let joined = diags.iter().map(|d| d.message.as_str())
+            .collect::<Vec<_>>().join("\n");
+        assert!(joined.contains("hack"), "missing hack diag: {}", joined);
+        assert!(joined.contains("inc"),  "missing inc diag: {}", joined);
+        assert!(!joined.contains("len"), "len must NOT be flagged: {}", joined);
     }
 }
 

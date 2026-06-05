@@ -1044,15 +1044,47 @@ ro s = if c {
 - Прямой вызов любой `fn -> never`
 - Method-call `expr.method(...)` где method декларирован `-> never`
   (Plan 125 followup `[M-125-method-call-never-detection]`)
+- `loop { ... }` без `break` в body — бесконечный цикл (Plan 125.2
+  `[M-125-loop-no-break-divergence]`). Conservative: при наличии
+  любого `break` в body — НЕ divergent.
+- `while true { ... }` с constant-`true` cond и без `break` в body
+  (Plan 125.2 `[M-125-while-true-divergence]`). Распознаётся только
+  literal `true`/`(true)` — `while cond_var` или `while false` —
+  НЕ divergent.
+- `Stmt::Return e` / `Stmt::Break` / `Stmt::Continue` в последней
+  stmt-позиции блока (`block_trailing_diverges` — Plan 125.2
+  `[M-125-stmt-position-divergence]`). Эти statements уже завершают
+  control-flow блока, поэтому контекстная join-инференция трактует
+  блок как divergent даже без `b.trailing`.
 - Рекурсивно: вложенные `if`/`if let`/`match`/`block`, у которых все
   ветви diverge
 
 **Codegen ограничение:** detection — trailing-only (`b.trailing` или
-последний `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr(...)` в
-`b.stmts`). Условные early-returns в середине блока **не** flip'ят
-join-тип (cтdlib-идиома `if early-cond { return X } else { compute() }`
-сохраняется). Type-checker side `Ty::Never` first-class subtype —
-followup `[M-125-type-checker-never-first-class]`.
+последний `Stmt::Throw`/`Stmt::Return`/`Stmt::Break`/`Stmt::Continue`/
+`Stmt::Expr(...)` в `b.stmts`). Условные early-returns в середине
+блока **не** flip'ят join-тип (cтdlib-идиома `if early-cond { return X }
+else { compute() }` сохраняется).
+
+**Type-checker first-class (Plan 125.1, 2026-06-05):**
+`[M-125-type-checker-never-first-class]` ✅ CLOSED — codegen-fix
+дополнен настоящим type-side first-class subtype rule в
+`compiler-codegen/src/types/mod.rs`:
+- **Ф.1** `assignable()` — `if matches!(ty_of_ref(&found_tr),
+  Ty::Never) { return Compat::Ok }` — never <: T для любого T
+- **Ф.2** `infer_expr_type` returns `Some(prim_ref("never"))` для
+  `ExprKind::Throw`, `ExprKind::Interrupt`, never-returning builtin
+  calls (panic/exit/abort/unreachable), и user fn'ов где ВСЕ overloads
+  объявлены `-> never`
+- **Ф.3** `infer_block_trailing_typeref` возвращает `Some(never)` когда
+  trailing — top-level divergent shape (Throw/Interrupt/never-call);
+  conservative — не walks preceding stmts
+- **Ф.4** D196 detector `detect_divergent_consumable` использует
+  `block_diverges` для early-skip обеих веток — ЛЮБОЙ divergent путь →
+  None (нет fake-conflict «Consumable[T] vs never»)
+
+Test coverage: `nova_tests/plan125_1/` — 12 positive + 3 negative
+фикстуры. Pure-additive — существующий `TyCat::Other` safety-net
+preserved (conservative addition, не subtraction).
 
 Аналоги: Rust `!` (`never`-RFC), Haskell `Void`, Kotlin/Scala
 `Nothing`, TypeScript `never`. Не уникальная фича Nova.
@@ -1105,6 +1137,37 @@ import std.result.{Result, Ok, Err}
 Prelude **документирован**, его содержимое — фиксированный список,
 не магия. LLM знает, что доступно везде. Всё остальное — явный импорт
 ([07-modules.md → D29](07-modules.md#d29)).
+
+### Plan 128 Ф.3 amend (2026-06-05) — primitives reject `mut @method`
+
+`fn <primitive> mut @method(...)` user-объявления отвергаются с
+**`E_PRIMITIVE_MUT_METHOD`**. Список primitives: `int`, `i8`-`i64`,
+`u8`-`u64`, `f32`, `f64`, `bool`, `char`, `str`, `()`.
+
+```nova
+// ❌ ERROR — E_PRIMITIVE_MUT_METHOD
+fn int mut @increment() => @ + 1     // примитивы pass-by-value, мутация не видна
+fn str mut @upper() => "ABC"          // str — immutable reference type
+fn bool mut @toggle() => not @        // бессмысленно для primitive
+```
+
+**Rationale (Nova-first idiom, Plan 91 §«Принцип»):** примитивы передаются
+by value (D32) — `mut @` receiver не имеет наблюдаемого эффекта (мутация
+происходит в копии). Pure functional pattern — `int.add(other)` returns
+new value, не mutates self. Это symmetric с Rust (`&mut self` on `Copy`
+types — useless), Kotlin (data class copy), Swift (`mutating func` only
+для structs/enums, не Int/Bool).
+
+**Enforcement:** type-checker (`compiler-codegen/src/types/mod.rs::TypeCheckCtx::build`)
+проверяет receiver type против `is_primitive_name(name)` whitelist при
+parser-accepted `mut @method` declaration. `E_PRIMITIVE_MUT_METHOD` diag
+emitted с suggestion «remove `mut`, use immutable receiver + return new value».
+
+**Coverage:** Plan 128 Ф.3 fixtures `nova_tests/plan128/t6_primitive_str_*` /
+`t7_primitive_int_*` / `t8_primitive_bool_*` / `t9_primitive_f64_*`
+(negative regression) + `t10_primitive_ro_method_ok` (positive — ro `@`
+methods on primitives still allowed). См. D215 amend «Method receiver
+passing» (Plan 128 Ф.2) для allowed `mut @` paths (named tuples + value records).
 
 ### Что отвергнуто
 

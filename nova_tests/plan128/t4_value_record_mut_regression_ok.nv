@@ -1,0 +1,55 @@
+// Plan 128 Ф.4 T4 — D228 value-record mut method regression.
+//
+// Plan 124.8 V2 (D228) established `value { ... }` records get a
+// stack slot + `NovaValue_X*` receiver in @-methods. Plan 128's
+// NamedTuple work (Ф.2) mirrors that ABI без disturbing D228.
+// This test ensures the value-record mut method path still works
+// после Ф.1/Ф.2/Ф.3 changes.
+
+module plan128.t4_value_record_mut_regression_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn Vec3.new(a f64, b f64, c f64) -> Vec3 =>
+    { x: a, y: b, z: c }
+
+fn Vec3 mut @set_x(v f64) -> () {
+    @x = v
+}
+
+fn Vec3 mut @scale_inplace(k f64) -> () {
+    @x = @x * k
+    @y = @y * k
+    @z = @z * k
+}
+
+fn Vec3 @sum() -> f64 =>
+    @x + @y + @z
+
+test "value-record mut method writes single field" {
+    mut v = Vec3.new(1.0, 2.0, 3.0)
+    v.set_x(42.0)
+    assert(v.x == 42.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "value-record mut method writes all fields" {
+    mut v = Vec3.new(1.0, 2.0, 3.0)
+    v.scale_inplace(10.0)
+    assert(v.x == 10.0)
+    assert(v.y == 20.0)
+    assert(v.z == 30.0)
+}
+
+test "value-record ro method preserves binding" {
+    mut v = Vec3.new(2.0, 3.0, 4.0)
+    assert(v.sum() == 9.0)
+    assert(v.x == 2.0)
+    assert(v.y == 3.0)
+    assert(v.z == 4.0)
+}

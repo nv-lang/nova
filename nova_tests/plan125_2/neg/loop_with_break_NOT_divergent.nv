@@ -1,0 +1,25 @@
+// Plan 125.2 [M-125-loop-no-break-divergence] regression guard:
+// `loop { if c { break } }` содержит break — НЕ divergent.
+// Conservative pattern detection: НЕ trigger при наличии break в body.
+// Legitimate idiom — должен компилироваться, loop возвращает unit.
+
+module neg.loop_with_break_NOT_divergent
+
+fn count_to(limit int) -> int {
+    mut i = 0
+    loop {
+        if i >= limit {
+            break
+        }
+        i = i + 1
+    }
+    i
+}
+
+test "loop with break is not divergent — returns normally" {
+    assert(count_to(5) == 5)
+}
+
+test "loop with break — zero iterations" {
+    assert(count_to(0) == 0)
+}

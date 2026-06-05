@@ -1,0 +1,29 @@
+// Plan 125.2 Ф.3 regression guard:
+// `loop { ... break }` — break as the last-stmt of a loop body is the
+// canonical idiom for terminating an infinite loop. Plan 125.2 [Ф.3]
+// extended `block_trailing_diverges` to treat trailing break/continue
+// as divergent for if-expr/match result-type inference. This must NOT
+// break the plain canonical pattern.
+
+module neg.stmt_break_in_loop_last_stmt
+
+fn count_to(n int) -> int {
+    mut i = 0
+    loop {
+        if i >= n {
+            break
+        }
+        i = i + 1
+    }
+    i
+}
+
+test "loop with trailing break — counts to 5" {
+    ro r = count_to(5)
+    assert(r == 5)
+}
+
+test "loop with trailing break — zero terminates immediately" {
+    ro r = count_to(0)
+    assert(r == 0)
+}

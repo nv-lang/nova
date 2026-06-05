@@ -526,9 +526,12 @@ phased Ф.1 → full test → Ф.2 → ... через ~36-53h. Обоснова�
 
 ### Followups (7 markers)
 
-1. `[M-125-type-checker-never-first-class]` — Ф.5 (`Ty::Never` subtype
-   в `assignable`, propagation в `infer_expr_type` для Throw/Interrupt/
-   Call-with-never-return, fix Plan 110.1.3 D196 detector)
+1. ✅ `[M-125-type-checker-never-first-class]` — **CLOSED 2026-06-05**
+   (branch `plan-125.1`) — Ф.5 (`Ty::Never` subtype в `assignable` +
+   propagation в `infer_expr_type` для Throw/Interrupt/
+   Call-with-never-return + `infer_block_trailing_typeref` returns
+   `never` для divergent trailing + fix Plan 110.1.3 D196 detector).
+   See §«Plan 125.1» ниже для details.
 2. `[M-125-loop-no-break-divergence]` — Loop currently skip'нут (R3);
    Rust-style `loop {}` без break — divergent
 3. `[M-125-stmt-position-divergence]` — `stmt_diverges` для
@@ -603,15 +606,129 @@ plan125 regression 22/22 PASS после каждого, plan125_followups 9/9 P
 | 6 | `[M-125-unreachable-builtin]` | `fn unreachable(reason str) -> never` в `std/prelude/runtime.nv` + re-export через `std/prelude.nv` + `std/prelude/e2026_05.nv` + whitelist в `expr_diverges_125` | 3 (basic, match-default, runtime-fires) |
 | 7 | `[M-125-method-call-never-detection]` | Registry `never_returning_methods` + helper `fn_return_is_never_125` + `ExprKind::Member` branch в `expr_diverges_125` (instance + static dispatch) | 3 (user-type instance, static, runtime-fires) |
 
-### Остающиеся followups (4 of 7)
+### Followups — 4 of 4 CLOSED (все markers закрыты 2026-06-05)
 
 | # | Marker | Status |
 |---|---|---|
-| 1 | `[M-125-type-checker-never-first-class]` | 🟡 deferred — Ф.5 не нужен для production codegen V1 |
-| 2 | `[M-125-loop-no-break-divergence]` | 🟡 backlog — over-approx risk, требует control-flow analysis |
-| 3 | `[M-125-stmt-position-divergence]` | 🟡 backlog — control-flow analysis за пределами trailing-only |
-| 4 | `[M-125-while-true-divergence]` | 🟡 backlog — Rust-style const-true loop |
+| 1 | ✅ `[M-125-type-checker-never-first-class]` | **CLOSED 2026-06-05** (Plan 125.1) |
+| 2 | ✅ `[M-125-loop-no-break-divergence]` | **CLOSED 2026-06-05** (Plan 125.2 Ф.1) |
+| 3 | ✅ `[M-125-stmt-position-divergence]` | **CLOSED 2026-06-05** (Plan 125.2 Ф.3) |
+| 4 | ✅ `[M-125-while-true-divergence]` | **CLOSED 2026-06-05** (Plan 125.2 Ф.2) |
 
 ### Followup batch commit chain
 
 (коммиты в branch `plan-125-followups`, см. merge статус в основной части plan-doc)
+
+---
+
+## Followup batch 2 — Plan 125.2 — 3/4 remaining closed (2026-06-05, branch `plan-125.2`)
+
+После Plan 125 V1 (codegen-side trailing-only whitelist) и batch 1
+(3 followups: codegen-never-cast/unreachable-builtin/method-call-never)
+закрыт Plan 125.2 — CFA expansion в codegen helper `expr_diverges_125`
+/ `block_trailing_diverges`. Три marker'а закрыты mechanical AST pattern
+detection с conservative under-approximation.
+
+### Закрытые followups (3 of 4 remaining)
+
+| # | Marker | Changes | Tests |
+|---|---|---|---|
+| 2 | `[M-125-loop-no-break-divergence]` | `expr_diverges_125` extended на `ExprKind::Loop` — divergent если `loop_body_has_break(body) == false`. Helper рекурсивно walk'ает Block stmts + trailing, descending через If/IfLet/Match/Block/With/Forbid/Realtime/Supervised + compositional Expr. Scope stop-rules: НЕ descend в Loop/While/WhileLet/For/ParallelFor (inner scope) + Lambda/Closure/HandlerLit/ProtocolLit (different scope). Continue НЕ считается break. | 4 (loop_inf_in_then_else_value, loop_inf_in_match_arm, loop_panic_inside_NOT_diverges_via_break, neg/loop_with_break_NOT_divergent) |
+| 4 | `[M-125-while-true-divergence]` | `expr_diverges_125` extended на `ExprKind::While` — divergent если `cond.kind == BoolLit(true)` AND `loop_body_has_break(body) == false`. Strict literal match (no const-fold `1==1`). | 4 (while_true_inf_in_else, while_true_no_break_match_arm, neg/while_cond_var_NOT_divergent, neg/while_false_NOT_divergent) |
+| 3 | `[M-125-stmt-position-divergence]` | `block_trailing_diverges` extended — last-stmt `Stmt::Break` / `Stmt::Continue` теперь признаются divergent (parser+type-checker гарантируют синтаксическую валидность только внутри loop scope, поэтому extra scope-context не требуется). `Stmt::Return` уже handled в V1. | 3 (stmt_break_in_if_else_int, stmt_continue_in_if_else_int, neg/stmt_break_in_loop_last_stmt) |
+
+Negative regression guards (4):
+- `neg/loop_with_break_concrete` — loop с break в if-then must NOT be divergent
+- `neg/while_var_cond` — variable cond (not BoolLit) must NOT trigger while-true detection
+- `neg/break_in_outer_loop_only` — nested loops both with break — neither inherits divergence
+- `neg/regression_concurrency_loop_pattern` — Plan 83-style supervised worker loop must compile
+
+### Plan 125.2 commit chain (branch `plan-125.2`, не merged)
+
+- `0ae63dc7385` feat(plan125.2 Ф.1): loop-no-break divergent in expr_diverges_125
+- `373a8bf31c9` feat(plan125.2 Ф.2): while-true const-cond divergent
+- `15f91eb3ee7` feat(plan125.2 Ф.3): stmt-position divergent (Break/Continue) at last-stmt
+- `177b9b77af5` test(plan125.2 loop_no_break): 4 fixtures
+- `09850f38639` test(plan125.2 while_true): 4 fixtures
+- `71dd70ae2a7` test(plan125.2 stmt_position): 3 fixtures
+- `fb0a5dc2421` test(plan125.2 negative): 4 regression guards for CFA expansion
+
+### Test status
+
+- plan125 22/22 PASS (V1 — no regressions)
+- plan125_followups 9/9 PASS (batch 1 — no regressions)
+- plan125_2 15/15 PASS (Plan 125.2 — 11 positive + 4 negative)
+
+**Status:** ✅ **PLAN 125.2 CLOSED 2026-06-05** — merged into main `e76cbf3dde1`, pushed.
+
+---
+
+## Plan 125.1 — Type-checker `Ty::Never` first-class (2026-06-05, branch `plan-125.1`)
+
+**Closes:** `[M-125-type-checker-never-first-class]` ✅ CLOSED — Ф.5 из
+основного Plan 125, который был deferred в V1 codegen-only.
+
+**Branch:** `plan-125.1` (worktree `d:\Sources\nv-lang\nova-p125-1`, fork
+from main HEAD `7c173fb9f2d`). **НЕ merged, НЕ pushed** (per task spec).
+
+### Что и зачем
+
+Дополнить Plan 125 codegen-fix настоящим type-side first-class subtype
+rule. До Plan 125.1 type-checker полагался на `TyCat::Other` escape-hatch:
+любой `throw`/`panic` в expression position silent'но проходил
+type-check без явной subtype-rule. Теперь:
+- `assignable(Ty::Never, T) -> Compat::Ok` per spec D25
+- `infer_expr_type(Throw|Interrupt|never-call) -> Some(never)`
+- `infer_block_trailing_typeref` propagates `never` для divergent trailing
+- D196 detector skips divergent ветки
+
+### Pragmatic deviation: минимальные точечные изменения
+
+Per task brief — изменения только additive, никакого refactor существующего
+code. **`TyCat::Other` safety-net preserved** (conservative addition).
+Изменения ~50 LOC в `compiler-codegen/src/types/mod.rs`.
+
+### Реализовано (4 фазы — точечные additions в types/mod.rs)
+
+| Ф. | Commit | What |
+|---|---|---|
+| Ф.1 | `cb77072a009` | `assignable` hookpoint — `if matches!(ty_of_ref(&found_tr), Ty::Never) { return Compat::Ok }` |
+| Ф.2 | `79fe82a377e` | `infer_expr_type` — `Throw` / `Interrupt` / `Call(panic|exit|abort|unreachable)` + user-fn all-divergent overloads → `Some(prim_ref("never"))` |
+| Ф.3 | `92fad76185e` | `infer_block_trailing_typeref` — top-level shape check (`expr_diverges_at_top` helper), return `Some(never)` для trailing-divergent |
+| Ф.4 | `54921f1063f` | `detect_divergent_consumable` (D196 form 3) — `block_diverges` для early-skip; ЛЮБОЙ divergent путь → `None` |
+| Ф.5 | `02c08821c99` | Tests `nova_tests/plan125_1/` — 12 positive + 3 negative фикстуры |
+
+### Acceptance criteria — status
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `assignable(Never, T) -> Ok` per D25 | ✅ Ф.1 |
+| 2 | `Throw`/`Interrupt`/never-call propagate to `Some(Never)` | ✅ Ф.2 |
+| 3 | `infer_block_trailing_typeref` returns `never` для divergent | ✅ Ф.3 |
+| 4 | D196 detector skips divergent branches | ✅ Ф.4 |
+| 5 | ≥10 positive + ≥3 negative tests | ✅ 12 + 3 |
+| 6 | plan125 baseline (22/0) preserved | ✅ confirmed |
+| 7 | plan125_followups baseline (9/0) preserved | ✅ confirmed |
+| 8 | Spec amendment 04-effects.md §D25 + 08-runtime.md §«never» | ✅ landed |
+| 9 | `TyCat::Other` safety-net preserved | ✅ pure additive |
+
+### Final gate (plan-125.1 branch)
+
+```
+nova test nova_tests/plan125            → 22/0 PASS
+nova test nova_tests/plan125_1          → 15/0 PASS (12 pos + 3 neg)
+nova test nova_tests/plan125_followups  →  9/0 PASS
+                                       ─────────
+                                          46/0 PASS
+```
+
+### Commit chain (plan-125.1 branch)
+
+- `cb77072a009` feat(plan125.1 Ф.1): Ty::Never first-class subtype in assignable
+- `79fe82a377e` feat(plan125.1 Ф.2): infer_expr_type cases for Throw/Interrupt/Call-never
+- `92fad76185e` feat(plan125.1 Ф.3): infer_block_trailing_typeref returns Ty::Never for divergent trailing
+- `54921f1063f` feat(plan125.1 Ф.4): D196 detector skips divergent branches
+- `02c08821c99` test(plan125.1 Ф.5): positive + negative fixtures
+- `<this commit>` docs(plan125.1): spec amendments + closure
+
+**Status:** ✅ **CLOSED + MERGED 2026-06-05** (branch `plan-125.1`).

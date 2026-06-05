@@ -1,0 +1,23 @@
+// Plan 125.1 Ф.5 negative — `let x = throw E` без external type context.
+// Type-checker не может определить тип x — outer return type fn fallback.
+// Ожидается CHECK-FAIL/compile-error (или silent fallback к never).
+// Этот fixture фиксирует current behaviour — должен НЕ зайти на runtime
+// (либо CE-FAIL, либо runtime-fires при первом use).
+
+module neg.let_never_no_context
+
+fn boom() Fail -> int {
+    // `ro x = throw "no"` — без явного типа x, без external context.
+    // Plan 125.1 Ф.2 даёт x тип never; subsequent `x + 1` падает с
+    // type-error «cannot add never + int» (или silent через TyCat::Other).
+    ro x = throw "no"
+    x + 1
+}
+
+test "compile-only — should NOT reach runtime use of never-typed x" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro _ = boom()
+    }
+}

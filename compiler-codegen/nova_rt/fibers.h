@@ -713,8 +713,28 @@ typedef struct NovaCancelToken {
 
 /* Аллокация GC-managed токена. nova_alloc zero-инициализирует — все поля
  * 0/NULL/false, токен сразу валиден (unbound, не-cancelled, без каскадов). */
+/* Plan 83.11 [M-83.11-cancel-token-bound-race-2k] fix (2026-06-05):
+ * uncollectable allocation для NovaCancelToken. Под high fiber count
+ * (≥2k spawns в supervised(cancel:) scope) ctx_pins[]-based GC root
+ * protection (Plan 83.11 §11.6) becomes insufficient — Boehm GC reclaims
+ * token while it's still в use, then memory is reallocated for new
+ * SpawnCtx struct whose write at offset 8 (_nova_worker_slot) overlaps
+ * с token->bound_scope offset → panic "token already bound to a live
+ * scope" on bind.
+ *
+ * Root cause hypothesis: Plan 83.11 §11.6 ctx_pins[]-pin works in the
+ * pin-time window but Boehm conservative scanner может потерять root
+ * под heavy GC pressure (frequent collections triggered by 2k+ spawn
+ * allocations + ctx GC churn). Same defensive pattern as Plan 83.4.5.8
+ * SpawnCtx uncollectable — eliminates entire class of GC-race bugs.
+ *
+ * Trade-off: leak ~64 bytes per token until process exit. Acceptable:
+ * tokens are caller-owned, typically created once per supervised scope
+ * (not в tight loops). Followup [M-83.11-cancel-token-explicit-cleanup]
+ * для adding explicit dispose API if long-running service patterns
+ * need it. */
 static inline NovaCancelToken* nova_cancel_token_new(void) {
-    return (NovaCancelToken*)nova_alloc(sizeof(NovaCancelToken));
+    return (NovaCancelToken*)nova_alloc_uncollectable(sizeof(NovaCancelToken));
 }
 
 /* Привязать токен к scope'у (вызывается emit_supervised при входе).
@@ -732,11 +752,30 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
     q->bound_token = (void*)t;
     /* cancel-before-bind: pending intent пробрасывается в новый scope.
      * Plan 49 Ф.2: reason тоже копируется чтобы nova_fiber_yield увидел
-     * её при throw'е CANCEL. */
+     * её при throw'е CANCEL.
+     *
+     * Plan 83.11 [M-83.11-nested-supervised-cascade-drain-hang] fix
+     * (2026-06-05): полная пропагация cancel'а. Pre-fix только
+     * nova_sched_cancel_all_pending вызывался — но для armed M:N workers
+     * fibers parked в worker scopes (не supervised), и armed sleeps
+     * через driver — нужны те же пути что и в nova_cancel_token_cancel_reason:
+     * nova_scope_cancel_wake_all (ASYNC slots) + nova_runtime_cancel_worker_fibers
+     * (worker-parked fibers с parent_scope==q) + _nova_cancel_via_driver
+     * (armed timers через driver). Без них cascade-cancel (outer fires
+     * cancel BEFORE outer.bind, cascade to inner_tok hits its scope, но
+     * outer.bind LATER только частично пропагирует) leaves outer's worker
+     * fibers parked → supervised_run hangs до watchdog timeout. */
     if (nova_abool_load(&t->cancel_requested)) {
         nova_abool_store(&q->cancel_requested, true);
         q->cancel_reason_ptr = t->reason_ptr;
         nova_sched_cancel_all_pending(q);
+        nova_scope_cancel_wake_all(q);
+        {
+            extern void nova_runtime_cancel_worker_fibers(
+                struct NovaFiberQueue* scope);
+            nova_runtime_cancel_worker_fibers(q);
+        }
+        _nova_cancel_via_driver(q);
     }
 }
 

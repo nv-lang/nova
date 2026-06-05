@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] — supervised(cancel:)
+// path repro probe.
+//
+// Prior fix af4e7d96a62 covered consume{} nested case. This probe
+// exercises the supervised(cancel: tok) + Time.sleep + tok.cancel()
+// codepath which still produces "cleanup-timeout-exceeded: 7XXXXXXXX ms"
+// (i64 underflow ≈ 8.34 days "over budget" in 6s test).
+//
+// Pre-fix expected: RUN-FAIL with massive over_ms value.
+// Post-fix expected: PASS with tok.is_cancelled() == true.
+
+module concurrency._repro_p110
+
+test "supervised+cancel+sleep — deadline underflow repro" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        for _ in 0..4 {
+            spawn { Time.sleep(5_000) }
+        }
+        spawn {
+            Time.sleep(5)
+            tok.cancel()
+        }
+    }
+    assert(tok.is_cancelled())
+}

@@ -1,0 +1,28 @@
+// Plan 125.1 Ф.1+Ф.2 positive — divergent if-expr в argument position.
+// `f(if cond { v } else { throw e })` — Ф.1 hookpoint fires в argument
+// bidirectional check, Ф.3 trailing-typeref возвращает never,
+// codegen target-typed dummy ([M-125-codegen-never-cast]).
+
+module plan125_1.never_arg_to_fn
+
+fn echo(s str) -> str {
+    s
+}
+
+fn pick(c bool) Fail -> str {
+    // if-expr с divergent else в arg-position — никаких CC-FAIL.
+    echo(if c {
+        throw "no string"
+    } else {
+        "hello"
+    })
+}
+
+test "divergent if-expr in arg position" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro out = pick(false)
+        assert(out == "hello")
+    }
+}

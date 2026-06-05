@@ -1,0 +1,37 @@
+// Plan 125.2 Ф.3 [M-125-stmt-position-divergence]:
+// `Stmt::Break` at last-stmt position in if-else arm → divergent.
+// If-expr type inferred from non-divergent branch (int).
+
+module plan125_2.stmt_break_in_if_else_int
+
+fn first_positive(xs []int) -> int {
+    mut result = -1
+    mut i = 0
+    loop {
+        if i >= xs.len() {
+            break
+        }
+        ro v = xs[i]
+        ro chosen = if v > 0 {
+            v
+        } else {
+            break
+        }
+        result = chosen
+        i = i + 1
+    }
+    result
+}
+
+test "if-else-break — type infers as int from non-divergent then arm" {
+    ro xs = [3, 5, -1, 9]
+    ro r = first_positive(xs)
+    // loop breaks at -1 (else-break), but before that result = 5
+    assert(r == 5)
+}
+
+test "if-else-break — empty list breaks immediately" {
+    ro xs = ([] as []int)
+    ro r = first_positive(xs)
+    assert(r == -1)
+}

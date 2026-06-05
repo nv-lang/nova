@@ -29,6 +29,12 @@ pub struct MethodSig {
     /// Parallel to `param_c_types`; `None` = required param (no default).
     /// Used at call-site when explicit args < param count (Nova-body dispatch).
     pub param_defaults: Vec<Option<String>>,
+    /// Plan 128 Ф.1: receiver mutability flag from AST `Receiver.mutable`
+    /// (`fn Type mut @method` ⇒ `true`). Threaded into the overload registry so
+    /// call-sites (`prepare_method_recv`, future ABI dispatch) can consult it
+    /// without re-resolving the FnDecl. Ф.1: producer sites populate; consumer
+    /// sites pass it through unchanged. Ф.2/Ф.3 will switch ABI on this flag.
+    pub recv_mutable: bool,
 }
 
 /// Plan 39 Issue A: classification of `with`-block trail type for
@@ -1669,6 +1675,10 @@ impl CEmitter {
                     c_name: decl.c_name.clone(),
                     variadic_last: false,
                     param_defaults: vec![None; decl.param_c_types.len()],
+                    // Plan 128 Ф.1: external registry methods have no AST mutability
+                    // marker (FFI/runtime entries) — default false. Ф.2 can extend
+                    // ExternalDecl/ExternalRegistry to carry mutability if needed.
+                    recv_mutable: false,
                 };
                 self.method_overloads.entry(key.clone()).or_default().push(sig);
                 // Plan 83.12: register novares struct for non-trivial Result returns
@@ -2325,6 +2335,8 @@ impl CEmitter {
                         c_name,
                         variadic_last,
                         param_defaults,
+                        // Plan 128 Ф.1: free fns have no receiver — false.
+                        recv_mutable: false,
                     };
                     self.method_overloads.entry(key.clone()).or_default().push(sig);
                     // Plan 125 followup [M-125-method-call-never-detection]:
@@ -2401,7 +2413,8 @@ impl CEmitter {
                     // Plan 55 Ф.3: для `=> expr` body инфирим (см. free-fn выше).
                     let return_c_type = match &f.return_type {
                         Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
-                            self.receiver_c_type(&recv.type_name)
+                            // Plan 128 Ф.1: thread recv.mutable flag (Ф.2 consumes).
+                            self.receiver_c_type(&recv.type_name, recv.mutable)
                         }
                         Some(t) if is_generic_recv => {
                             self.erased_type_ref_c(&Some(t.clone()), &recv_type_params)
@@ -2476,6 +2489,8 @@ impl CEmitter {
                         c_name,
                         variadic_last,
                         param_defaults,
+                        // Plan 128 Ф.1: capture recv.mutable for downstream ABI dispatch.
+                        recv_mutable: recv.mutable,
                     };
                     // Plan 125 followup [M-125-method-call-never-detection]:
                     // instance/static method `-> never` registry. Captures
@@ -2587,6 +2602,11 @@ impl CEmitter {
                         // от исходного метода (тот же signature).
                         variadic_last: base_sig.variadic_last,
                         param_defaults: base_sig.param_defaults.clone(),
+                        // Plan 128 Ф.1: D39 embed proxy inherits base method's
+                        // recv.mutable flag. ABI of the proxied call must match
+                        // the original (Ф.2 will use this when shaping the
+                        // proxy's nova_self ABI).
+                        recv_mutable: base_sig.recv_mutable,
                     };
                     self.method_overloads.entry(key).or_default().push(proxy_sig);
                     // all_methods (для Plan 06 Iter[T] dispatch).
@@ -4381,6 +4401,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         c_name: canonical_c_name.to_string(),
                         variadic_last: false,
                         param_defaults: vec![None; param_c_tys.len()],
+                        // Plan 128 Ф.1: synthesized default-protocol-method body —
+                        // EffectMethod AST has no `mutable` flag yet. Default false;
+                        // Ф.2 may need to extend EffectMethod with mutability if
+                        // protocol receivers ever need mut-receiver dispatch.
+                        recv_mutable: false,
                     };
                     self.method_overloads
                         .entry((t_name.to_string(), method_name.to_string()))
@@ -4631,7 +4656,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // мапит все типы (primitives → nova_*; Option/Result →
                         // builtin_sum_receiver_c_type; user → Nova_X*).
                         if let Some(recv) = &self.current_receiver_type {
-                            Ok(self.receiver_c_type(recv))
+                            // Plan 128 Ф.1: pass false default — current_receiver_type only
+                            // tracks the name. Ф.2 will add `current_receiver_mutable` mirror
+                            // state alongside (set/cleared in same spots) so Self-as-return
+                            // honors the mutability flag. Currently no behavior change
+                            // (flag is unused in receiver_c_type body).
+                            Ok(self.receiver_c_type(recv, false))
                         } else {
                             Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
                         }
@@ -6251,12 +6281,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaEffectSnapshot* _nova_init_snapshot;");
         // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine. nova_alloc
-        // zero-init → starts as NOVA_FIBER_STATE_IDLE. Field MUST be last
-        // in NovaSpawnCtxBase prefix (must match fibers.h NovaSpawnCtxBase
-        // layout exactly — runtime.c worker loop cast'ает user_data к
-        // NovaSpawnCtxBase* и читает _nova_fiber_state по фиксированному offset).
+        // zero-init → starts as NOVA_FIBER_STATE_IDLE. Must match fibers.h
+        // NovaSpawnCtxBase layout exactly — runtime.c worker loop cast'ает
+        // user_data к NovaSpawnCtxBase* и читает _nova_fiber_state по
+        // фиксированному offset.
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_fiber_state;");
+        // Plan 83.6 (2026-05-24): allocation size — used by free path для
+        // routing ctx обратно в P-local SpawnCtx pool. Set по nova_spawn_pool_acquire.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    size_t _nova_pool_size;");
+        // Plan 110.2.1.a (D188 R3) [M-110.x-cleanup-shield-deadline-underflow]
+        // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
+        // fields. MUST be в codegen layout — иначе runtime reads past struct
+        // (Boehm GC garbage bytes) → mask=garbage > 0 → nv_shield_check_deadline
+        // enters slow path → deadline=garbage triggers bogus CleanupTimeoutError
+        // (visible как 720M+ ms "over budget" в 6s tests).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_cancel_mask_count;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int64_t _nova_cancel_deadline_ns;");
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
@@ -6926,6 +6970,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // NovaSpawnCtxBase в fibers.h. MUST match layout exactly.
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_fiber_state;");
+        // Plan 83.6 (2026-05-24): allocation size — used by free path.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    size_t _nova_pool_size;");
+        // Plan 110.2.1.a (D188 R3) [M-110.x-cleanup-shield-deadline-underflow]
+        // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
+        // fields — same as NovaSpawnCtx layout. Без них runtime reads past
+        // struct → garbage mask > 0 triggers bogus CleanupTimeoutError.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_cancel_mask_count;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int64_t _nova_cancel_deadline_ns;");
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
@@ -8026,6 +8081,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     c_name: sentinel_name,
                     variadic_last: false,
                     param_defaults: vec![],
+                    // Plan 128 Ф.1: mono-sentinel — concrete sig is generated on
+                    // demand. Inherit from FnDecl recv.mutable; concrete mono'd
+                    // emission will use this when registering the real sig.
+                    recv_mutable: recv.mutable,
                 };
                 let key = (recv.type_name.clone(), f.name.clone());
                 self.method_overloads.entry(key).or_default().push(sig);
@@ -8051,7 +8110,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
                 let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
                 let mut parts = if is_instance {
-                    vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name))]
+                    // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+                    vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable))]
                 } else {
                     vec![]
                 };
@@ -9659,7 +9719,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
     /// Returns the C type to use for `nova_self`. Primitives are passed by value;
     /// records/sums by pointer.
-    fn receiver_c_type(&self, type_name: &str) -> String {
+    ///
+    /// Plan 128 Ф.1: `recv_mutable` carries the AST `Receiver.mutable` flag
+    /// (`fn Type mut @method` vs `fn Type @method`).
+    ///
+    /// Plan 124.8 §2.7 + Plan 128 Ф.2 (D215 amend): NamedTuple receiver ABI
+    /// now branches on `recv_mutable` — `mut` methods take `NovaTuple_X*`
+    /// (pointer to caller's stack slot, in-place @field mutation propagates);
+    /// `ro` methods keep value ABI (`NovaTuple_X`, immutable copy). Mirrors
+    /// the NovaValue_X* pattern (D226). Other receivers (heap `Nova_X*`,
+    /// primitives) are unaffected — they already have a single ABI form.
+    fn receiver_c_type(&self, type_name: &str, recv_mutable: bool) -> String {
         match type_name {
             // Plan 70.5: uint = alias u64; size — usize-like. Both map to nova_int slot.
             "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" | "size" => "nova_int".to_string(),
@@ -9728,8 +9798,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 120 (D215): named tuple receiver — value type, no pointer.
                 // Plan 124.8 V2 (D226): value-record receiver — pointer to stack
                 // slot (NovaValue_X*) so @field mutations propagate to caller.
+                // Plan 124.8 §2.7 + Plan 128 Ф.2: NamedTuple `mut` receiver —
+                // pointer (NovaTuple_X*) so @field mutations через `mut` методы
+                // propagate to caller; `ro` receiver stays by-value (immutable copy).
                 if let Some(c_ty) = self.type_aliases.get(other) {
                     if c_ty.starts_with("NovaTuple_") {
+                        if recv_mutable {
+                            return format!("{}*", c_ty);
+                        }
                         return c_ty.clone();
                     }
                     if c_ty.starts_with("NovaValue_") {
@@ -9798,7 +9874,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Primitives by value (D35 v2), records/sums by pointer.
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name)));
+                // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+                parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable)));
             }
         }
         for p in &f.params {
@@ -9898,7 +9975,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
         self.current_receiver_type = prev_recv;
-        let recv_c = self.receiver_c_type(&recv.type_name);
+        // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+        let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
         // Match the same signature as the forward declaration in emit_fn_decl
         let mut parts: Vec<String> = if is_instance {
             vec![format!("{} nova_self", recv_c)]
@@ -10002,7 +10080,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // (e.g. `other Self`) тоже резолвилось правильно.
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
-        let recv_c = self.receiver_c_type(&recv.type_name);
+        // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+        let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
         // Static methods don't get nova_self; instance methods do.
         let mut parts: Vec<String> = if is_instance {
             vec![format!("{} nova_self", recv_c)]
@@ -11706,7 +11785,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             type_subst.iter().cloned().collect(),
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
-        let recv_c = self.receiver_c_type(recv_type);
+        // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
+        let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        let recv_c = self.receiver_c_type(recv_type, recv_mutable);
         // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_method_instance —
         // no return type). Strict mode: record E7001 в strict_errors.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
@@ -11775,7 +11856,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // (e.g. `other Self`, `-> Self`) резолвилось в concrete mono'd type.
         // Раньше set только перед ret_c — params получали Nova_Self fallback.
         let prev_recv_for_emit = self.current_receiver_type.replace(recv_type.to_string());
-        let recv_c = self.receiver_c_type(recv_type);
+        // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
+        let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        let recv_c = self.receiver_c_type(recv_type, recv_mutable);
         // Plan 70 PhaseA3: strict — emit_monomorphized_method param/return.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
@@ -13209,7 +13292,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         let saved_protocol_var_vtable_fn = self.protocol_var_vtable.clone();
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name));
+                // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+                self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name, recv.mutable));
             }
         }
         for p in &f.params {
@@ -19860,8 +19944,11 @@ _cp++; \
                                 let obj_c = self.emit_expr(obj)?;
                                 // Plan 124.8 V2 (D226): value-record receiver
                                 // needs `&obj` (pointer to stack slot).
+                                // Plan 128 Ф.1: thread recv.mutable from MethodSig
+                                // (registered with AST flag) — Ф.2 consumes it to
+                                // switch immutable receivers к by-value passing.
                                 let obj_ty_local = self.infer_expr_c_type(obj);
-                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local);
+                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, sig.recv_mutable);
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 // D178: fill in default values for omitted trailing params.
@@ -20893,8 +20980,16 @@ _cp++; \
                         let obj_c = self.emit_expr(obj)?;
                         // Plan 124.8 V2 (D226): value-record receiver needs `&obj`
                         // (pointer to stack-slot) so @field mutations propagate.
+                        // Plan 128 Ф.1: lookup recv.mutable из method_overloads
+                        // (registered с AST flag). Fallback false если sig
+                        // отсутствует (delegated/synthesized path).
                         let obj_ty_local = self.infer_expr_c_type(obj);
-                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local);
+                        let recv_mutable = self.method_overloads
+                            .get(&(type_name.clone(), method.to_string()))
+                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .map(|s| s.recv_mutable)
+                            .unwrap_or(false);
+                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable);
                         let mut arg_strs = vec![obj_c];
                         for a in args {
                             if is_generic_type {
@@ -21923,10 +22018,178 @@ _cp++; \
                 // return, not conditional early-returns inside earlier
                 // stmts. This is the safe subset.
                 Some(Stmt::Return { .. }) => true,
+                // Plan 125.2 Ф.3 [M-125-stmt-position-divergence]:
+                // `{ ... break }` / `{ ... continue }` at last-stmt
+                // position. Control transfers to enclosing loop scope —
+                // block never reaches its value-producing position, so
+                // for codegen result-type inference the block is
+                // divergent. Parser/type-checker enforce that
+                // break/continue are syntactically valid only inside
+                // a loop, so we trust that invariant here.
+                Some(Stmt::Break(_)) | Some(Stmt::Continue(_)) => true,
                 // Recursive: trailing-equivalent expr-statement
                 Some(Stmt::Expr(e)) => self.expr_diverges_125(e),
                 _ => false,
             }
+        }
+    }
+
+    /// Plan 125.2 Ф.1 ([M-125-loop-no-break-divergence]): walks a Block
+    /// looking for any `break` statement that targets THIS loop scope.
+    ///
+    /// **Scope rules:**
+    /// - Descend through `Stmt::Expr/Let/Const/Assign/Throw/Defer/...`
+    ///   and through control-flow `Expr` containers (If/IfLet/Match/Block).
+    /// - **DO NOT descend** into nested `Loop`/`While`/`WhileLet`/`For`/
+    ///   `ParallelFor` bodies — their `break`s target the inner scope.
+    /// - **DO NOT descend** into `Lambda`/`ClosureLight`/`ClosureFull`/
+    ///   `HandlerLit`/`ProtocolLit` bodies — their breaks belong to a
+    ///   different (or invalid) lexical loop scope.
+    ///
+    /// Conservative: any expression variant not explicitly traversed
+    /// returns `false` (no break found) — safe under-approximation.
+    fn loop_body_has_break(&self, b: &Block) -> bool {
+        for s in &b.stmts {
+            if Self::stmt_has_break_in_scope(s) {
+                return true;
+            }
+        }
+        if let Some(t) = b.trailing.as_ref() {
+            if Self::expr_has_break_in_scope(t) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn stmt_has_break_in_scope(s: &Stmt) -> bool {
+        match s {
+            Stmt::Break(_) => true,
+            Stmt::Expr(e)
+            | Stmt::Throw { value: e, .. }
+            | Stmt::Defer { body: e, .. }
+            | Stmt::ErrDefer { body: e, .. }
+            | Stmt::OkDefer { body: e, .. }
+            | Stmt::DeferWithResult { body: e, .. }
+            | Stmt::AssertStatic { expr: e, .. }
+            | Stmt::Assume { expr: e, .. } => Self::expr_has_break_in_scope(e),
+            Stmt::Let(l) => Self::expr_has_break_in_scope(&l.value),
+            Stmt::Const(c) => Self::expr_has_break_in_scope(&c.value),
+            Stmt::Assign { target, value, .. } => {
+                Self::expr_has_break_in_scope(target)
+                    || Self::expr_has_break_in_scope(value)
+            }
+            Stmt::Return { value, .. } => value.as_ref()
+                .map(Self::expr_has_break_in_scope)
+                .unwrap_or(false),
+            // Continue belongs to enclosing loop scope but does not
+            // break out — does NOT count as break.
+            Stmt::Continue(_) => false,
+            // ConsumeScope opens new block-scope but same loop scope —
+            // a break inside still targets enclosing loop.
+            Stmt::ConsumeScope { init, body, .. } => {
+                Self::expr_has_break_in_scope(init)
+                    || Self::block_has_break_in_scope(body)
+            }
+            // Ghost / unused-here statement kinds — no break possible.
+            Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        }
+    }
+
+    fn block_has_break_in_scope(b: &Block) -> bool {
+        for s in &b.stmts {
+            if Self::stmt_has_break_in_scope(s) {
+                return true;
+            }
+        }
+        if let Some(t) = b.trailing.as_ref() {
+            if Self::expr_has_break_in_scope(t) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn expr_has_break_in_scope(e: &Expr) -> bool {
+        match &e.kind {
+            // Control-flow descents within same loop scope:
+            ExprKind::If { cond, then, else_ } => {
+                if Self::expr_has_break_in_scope(cond) { return true; }
+                if Self::block_has_break_in_scope(then) { return true; }
+                match else_ {
+                    Some(ElseBranch::Block(b)) => Self::block_has_break_in_scope(b),
+                    Some(ElseBranch::If(e)) => Self::expr_has_break_in_scope(e),
+                    None => false,
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                if Self::expr_has_break_in_scope(scrutinee) { return true; }
+                if Self::block_has_break_in_scope(then) { return true; }
+                match else_ {
+                    Some(ElseBranch::Block(b)) => Self::block_has_break_in_scope(b),
+                    Some(ElseBranch::If(e)) => Self::expr_has_break_in_scope(e),
+                    None => false,
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                if Self::expr_has_break_in_scope(scrutinee) { return true; }
+                arms.iter().any(|a| match &a.body {
+                    MatchArmBody::Expr(e) => Self::expr_has_break_in_scope(e),
+                    MatchArmBody::Block(b) => Self::block_has_break_in_scope(b),
+                })
+            }
+            ExprKind::Block(b) => Self::block_has_break_in_scope(b),
+            // Same-loop-scope wrappers (do not introduce new loop):
+            ExprKind::With { body, .. }
+            | ExprKind::Forbid { body, .. }
+            | ExprKind::Realtime { body, .. }
+            | ExprKind::Supervised { body, .. } => Self::block_has_break_in_scope(body),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => Self::block_has_break_in_scope(b),
+            // Compositional expressions — recurse into sub-exprs:
+            ExprKind::Throw(inner) | ExprKind::Try(inner) | ExprKind::Bang(inner)
+            | ExprKind::Spawn(inner) => Self::expr_has_break_in_scope(inner),
+            ExprKind::Coalesce(a, b) => Self::expr_has_break_in_scope(a)
+                || Self::expr_has_break_in_scope(b),
+            ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+                Self::expr_has_break_in_scope(inner)
+            }
+            ExprKind::Binary { left, right, .. } => Self::expr_has_break_in_scope(left)
+                || Self::expr_has_break_in_scope(right),
+            ExprKind::Unary { operand, .. } => Self::expr_has_break_in_scope(operand),
+            ExprKind::Member { obj, .. } => Self::expr_has_break_in_scope(obj),
+            ExprKind::Index { obj, index } => Self::expr_has_break_in_scope(obj)
+                || Self::expr_has_break_in_scope(index),
+            ExprKind::TurboFish { base, .. } => Self::expr_has_break_in_scope(base),
+            ExprKind::Call { func, args, .. } => {
+                if Self::expr_has_break_in_scope(func) { return true; }
+                args.iter().any(|a| Self::expr_has_break_in_scope(a.expr()))
+            }
+            ExprKind::Interrupt(inner) => inner.as_ref()
+                .map(|e| Self::expr_has_break_in_scope(e))
+                .unwrap_or(false),
+            ExprKind::TupleLit(elems) => elems.iter().any(Self::expr_has_break_in_scope),
+            // ArrayLit/MapLit/RecordLit value positions — break could
+            // appear inside e.g. `[if c { break } else { x }]`, so recurse.
+            ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
+                ArrayElem::Item(e) | ArrayElem::Spread(e) => Self::expr_has_break_in_scope(e),
+            }),
+            // **STOP**: nested loop bodies — their breaks target inner
+            // scope, not ours. Conservative: do NOT descend.
+            ExprKind::Loop { .. }
+            | ExprKind::While { .. }
+            | ExprKind::WhileLet { .. }
+            | ExprKind::For { .. }
+            | ExprKind::ParallelFor { .. } => false,
+            // **STOP**: closure/handler bodies — different scope.
+            ExprKind::Lambda { .. }
+            | ExprKind::ClosureLight { .. }
+            | ExprKind::ClosureFull(_)
+            | ExprKind::HandlerLit { .. }
+            | ExprKind::ProtocolLit { .. } => false,
+            // Everything else — literals, idents, paths, range, ghost
+            // quantifiers, tagged templates, etc. — cannot contain a
+            // break targeting the enclosing loop.
+            _ => false,
         }
     }
 
@@ -21939,6 +22202,7 @@ _cp++; \
     ///   - If/IfLet where both branches diverge  (Ф.4)
     ///   - Match where all arms diverge  (Ф.4)
     ///   - Block whose trailing diverges  (Ф.4)
+    ///   - Loop { body } when body contains no break (Plan 125.2 Ф.1)
     fn expr_diverges_125(&self, e: &Expr) -> bool {
         match &e.kind {
             // Ф.1: direct throw expression.
@@ -22032,6 +22296,20 @@ _cp++; \
                 })
             }
             ExprKind::Block(b) => self.block_trailing_diverges(b),
+            // Plan 125.2 Ф.1 [M-125-loop-no-break-divergence]:
+            // `loop { ... }` without any break targeting this loop scope
+            // is provably divergent (infinite loop). Conservative — if
+            // body contains a reachable break (in same scope), bail.
+            ExprKind::Loop { body, .. } => !self.loop_body_has_break(body),
+            // Plan 125.2 Ф.2 [M-125-while-true-divergence]:
+            // `while true { ... }` with constant-true condition AND no
+            // break targeting this loop scope is divergent. Match
+            // strictly the `BoolLit(true)` literal — any non-literal
+            // condition (even constant-fold-equivalent) falls through.
+            ExprKind::While { cond, body, .. } => {
+                matches!(&cond.kind, ExprKind::BoolLit(true))
+                    && !self.loop_body_has_break(body)
+            }
             _ => false,
         }
     }
@@ -27357,7 +27635,18 @@ _cp++; \
     ///
     /// For other types (heap records `Nova_X*`, primitives, named tuples),
     /// obj_c passes through unchanged.
-    fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str) -> String {
+    ///
+    /// Plan 128 Ф.1: `recv_mutable` carries the callee's AST `Receiver.mutable`
+    /// flag (`fn Type mut @method` vs `fn Type @method`).
+    ///
+    /// Plan 124.8 §2.7 + Plan 128 Ф.2 (D215 amend): for NamedTuple receivers
+    /// (`NovaTuple_*`), `mut` methods take a pointer to the caller's slot
+    /// (`NovaTuple_X*`) — mirror the NovaValue_* adapter (D226): if `obj_c` is
+    /// already an identifier, emit `&obj`; otherwise hoist to a temp and take
+    /// `&tmp`. For `ro` methods on NamedTuple, the receiver stays by-value
+    /// (no adapter needed), matching the `receiver_c_type` choice. The
+    /// existing NovaValue_* path is unchanged (D226 always-pointer).
+    fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str, recv_mutable: bool) -> String {
         if obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*') {
             // Identifier? Direct &id.
             let trimmed = obj_c.trim();
@@ -27368,6 +27657,22 @@ _cp++; \
                 format!("&{}", trimmed)
             } else {
                 // Hoist к temp + take address.
+                let tmp = self.fresh_tmp();
+                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
+                format!("&{}", tmp)
+            }
+        } else if recv_mutable && obj_ty.starts_with("NovaTuple_") && !obj_ty.ends_with('*') {
+            // Plan 124.8 §2.7 + Plan 128 Ф.2: NamedTuple `mut` receiver — pass
+            // pointer so callee's @field writes propagate to caller. Mirror
+            // the NovaValue_* adapter shape exactly.
+            let trimmed = obj_c.trim();
+            let is_ident = !trimmed.is_empty()
+                && trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+                && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_');
+            if is_ident {
+                format!("&{}", trimmed)
+            } else {
+                // Hoist rvalue to a temp + take address.
                 let tmp = self.fresh_tmp();
                 self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                 format!("&{}", tmp)
@@ -29734,5 +30039,119 @@ mod mem_ordering_tests {
         // Different enum type — no confusion with comparison Ordering
         let e = path_expr(&["Ordering", "Less"]);
         assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
+    }
+}
+
+#[cfg(test)]
+mod named_tuple_mut_recv_abi_tests {
+    //! Plan 124.8 §2.7 + Plan 128 Ф.2 (D215 amend): NamedTuple `mut`
+    //! receiver — pointer ABI (`NovaTuple_X*`); `ro` receiver — value ABI
+    //! (`NovaTuple_X`). Mirror of NovaValue_X* pattern (D226).
+    //!
+    //! Acceptance:
+    //!   1. `receiver_c_type("Point", mut=true)` → `NovaTuple_Point*`
+    //!      когда `type_aliases["Point"] = "NovaTuple_Point"`.
+    //!   2. `receiver_c_type("Point", mut=false)` → `NovaTuple_Point`
+    //!      (ro receiver unchanged — by-value).
+    //!   3. `prepare_method_recv("p", "NovaTuple_Point", mut=true)` → `&p`
+    //!      (ident path).
+    //!   4. `prepare_method_recv("make_p()", "NovaTuple_Point", mut=true)` →
+    //!      hoists to temp, returns `&<tmp>`, AND emits a temp decl line.
+    //!   5. `prepare_method_recv("p", "NovaTuple_Point", mut=false)` → `p`
+    //!      passthrough (ro NamedTuple — no `&` adapter).
+    //!   6. NovaValue_* path не регрессирует — мут/ro оба → `&obj`
+    //!      (D226: always-pointer for value records).
+
+    use super::CEmitter;
+
+    fn emitter_with_named_tuple(alias: &str, c_ty: &str) -> CEmitter {
+        let mut e = CEmitter::new();
+        e.type_aliases.insert(alias.to_string(), c_ty.to_string());
+        e
+    }
+
+    #[test]
+    fn receiver_c_type_named_tuple_mut_returns_pointer() {
+        // Plan 128 Ф.2 — `fn Point mut @set_x` → `NovaTuple_Point*` nova_self.
+        let e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let got = e.receiver_c_type("Point", /*recv_mutable=*/ true);
+        assert_eq!(got, "NovaTuple_Point*",
+            "mut NamedTuple receiver must be pointer (Plan 124.8 §2.7)");
+    }
+
+    #[test]
+    fn receiver_c_type_named_tuple_ro_returns_value() {
+        // ro receiver — by-value (immutable copy), unchanged ABI.
+        let e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let got = e.receiver_c_type("Point", /*recv_mutable=*/ false);
+        assert_eq!(got, "NovaTuple_Point",
+            "ro NamedTuple receiver stays by-value (D215 default)");
+    }
+
+    #[test]
+    fn prepare_method_recv_named_tuple_mut_ident_takes_address() {
+        // Ident obj: emit `&p` directly, no temp.
+        let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let before_out = e.out.clone();
+        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ true);
+        assert_eq!(got, "&p", "mut NamedTuple ident receiver → &p");
+        // No temp decl emitted for ident path.
+        assert_eq!(e.out, before_out,
+            "ident path must not emit any temp decl");
+    }
+
+    #[test]
+    fn prepare_method_recv_named_tuple_mut_rvalue_hoists_to_temp() {
+        // Rvalue obj: hoist to temp, return `&<tmp>`, emit temp decl line.
+        let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let before_out = e.out.clone();
+        let got = e.prepare_method_recv("make_p()", "NovaTuple_Point", /*recv_mutable=*/ true);
+        // Must take address of a temp identifier.
+        assert!(got.starts_with("&"),
+            "rvalue path must take address: got `{}`", got);
+        assert!(!got.contains("("),
+            "rvalue path must address a temp, not the call expr itself: got `{}`", got);
+        // A temp decl must have been emitted into `out`.
+        let emitted = &e.out[before_out.len()..];
+        assert!(emitted.contains("NovaTuple_Point"),
+            "expected NovaTuple_Point temp decl; emitted = {:?}", emitted);
+        assert!(emitted.contains("= make_p();"),
+            "expected `= make_p();` initializer; emitted = {:?}", emitted);
+    }
+
+    #[test]
+    fn prepare_method_recv_named_tuple_ro_passes_through() {
+        // ro NamedTuple receiver — no adapter; obj_c passes through verbatim.
+        let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let before_out = e.out.clone();
+        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ false);
+        assert_eq!(got, "p", "ro NamedTuple receiver: no &-adapter (by-value)");
+        assert_eq!(e.out, before_out, "ro path emits nothing into out");
+    }
+
+    #[test]
+    fn prepare_method_recv_value_record_unchanged_by_recv_mutable_flag() {
+        // Regression: D226 NovaValue_* path is recv_mutable-INSENSITIVE
+        // (always-pointer, in-place mutation). Both mut=true и mut=false
+        // must still emit `&p`.
+        let mut e_mut = CEmitter::new();
+        let got_mut = e_mut.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ true);
+        assert_eq!(got_mut, "&p", "NovaValue_X mut receiver: &p (D226)");
+
+        let mut e_ro = CEmitter::new();
+        let got_ro = e_ro.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ false);
+        assert_eq!(got_ro, "&p",
+            "NovaValue_X ro receiver: still &p (D226 always-pointer)");
+    }
+
+    #[test]
+    fn receiver_c_type_heap_record_unchanged_by_recv_mutable_flag() {
+        // Regression: heap records `Nova_X*` are recv_mutable-INSENSITIVE
+        // (already pointer ABI — single form). Both mut и ro → `Nova_X*`.
+        let e = CEmitter::new();
+        let got_mut = e.receiver_c_type("Widget", /*recv_mutable=*/ true);
+        let got_ro  = e.receiver_c_type("Widget", /*recv_mutable=*/ false);
+        assert_eq!(got_mut, "Nova_Widget*");
+        assert_eq!(got_ro,  "Nova_Widget*");
     }
 }

@@ -1,0 +1,37 @@
+// Plan 125.2 [M-125-loop-no-break-divergence] regression guard (concrete form):
+// `if c { loop { if d { break } } } else { v }` — loop с break в body
+// НЕ должно flip'нуться как divergent. Conservative AST-pattern detection:
+// Loop признаётся divergent ТОЛЬКО если в body нет ни одного break.
+// Тип if-expr должен оставаться unit (loop-arm = unit, else-arm = unit).
+
+module neg.loop_with_break_concrete
+
+fn drive(c bool, d bool) -> int {
+    mut counter = 0
+    if c {
+        loop {
+            counter = counter + 1
+            if d {
+                break
+            }
+            if counter >= 5 {
+                break
+            }
+        }
+    } else {
+        counter = 42
+    }
+    counter
+}
+
+test "loop-with-break-in-if-then — d=true exits after first iter" {
+    assert(drive(true, true) == 1)
+}
+
+test "loop-with-break-in-if-then — d=false bounded by counter" {
+    assert(drive(true, false) == 5)
+}
+
+test "loop-with-break-in-if-then — else-branch path returns 42" {
+    assert(drive(false, false) == 42)
+}
