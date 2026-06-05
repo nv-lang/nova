@@ -33564,3 +33564,34 @@ returns `Ty::Named(decl_name, [])`; array-literal codegen whitelist
    NamedTuple variant пропущен в infer_expr_type::Call. Code review
    checklist для новых TypeDeclKind variants.
 
+## 2026-06-05 (later) — Plan 118.1 Ф.3 + Ф.4 closeout — addr_of + CStr foundation
+
+addr_of/addr_of_mut builtins + CStr newtype landed на ветке plan-118.1-closeout.
+5 commits + 6 fixtures PASS + merge 15abfd7546b.
+
+### Deliverables
+
+- addr_of/addr_of_mut builtins (Zig-style, NOT macros — no macro framework required):
+  - Type-checker: builtin names + lvalue validation + unsafe/realtime gating + mut-binding check
+  - Rewriter-desugar к UnOp::AddrOf (const_fn_eval.rs)
+  - 5 fixtures (2 POS + 3 NEG): outside-unsafe / mut-on-ro / literal forbidden
+  - Closes [M-118.1-addr-of-macros]
+
+- CStr foundation (std/ffi/cstr.nv):
+  - `type CStr(*u8)` newtype + ExternalRegistry integration
+  - FFI ABI: identical к const char* / uint8_t*
+  - 1 fixture verifies type + signature usability
+  - Closes [M-118.1-cstr-literal] (D26 invariant subsumes prefix-literal need)
+
+### Deferred followups (explicit markers, no silent simplifications)
+
+- [M-118.1-cstr-runtime-wiring] — str method runtime (codegen forward-decl change)
+- [M-118.1-unsafe-attr-on-external-fn] — parser support для #unsafe attr
+- [M-118.1-addr-of-chains] — deep chain operand validation
+
+### State
+
+Plan 118.1 closeout: 2 markers closed, foundation shipped. CStr ergonomic completion
+requires codegen change tracked в [M-118.1-cstr-runtime-wiring]. addr_of fully functional
+V1.
+

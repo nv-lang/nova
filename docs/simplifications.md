@@ -33386,3 +33386,28 @@ production-grade closure complete.**
 
 Все три marker'а имеют owner phase + fixture coverage + reproducible
 behavior trace в plan-doc.
+
+## 2026-06-05 — Plan 118.1 closeout: addr_of full, CStr foundation (1 simplification documented)
+
+### Production-grade (no simplifications)
+
+- addr_of/addr_of_mut builtins — full enforcement (unsafe/realtime/lvalue/mut-binding),
+  rewriter-desugar к existing UnOp::AddrOf machinery (zero code duplication),
+  5 fixtures POS+NEG, всё PASS.
+
+### V1 simplification (CStr — explicit followup [M-118.1-cstr-runtime-wiring])
+
+CStr method runtime (`str.@as_cstr()` / `@to_cstr()` / `@as_cstr_unchecked()`) deferred:
+- Foundation shipped (type CStr(*u8) declared, ExternalRegistry-integrated, FFI ABI works)
+- Method runtime would require codegen forward-decl change — nova_rt headers include BEFORE
+  generated tuple type decls, so static inline C primitives cannot reference Nova_CStr struct
+  by value. Fix path requires either (a) codegen pre-declares CStr struct, or (b) moves CStr
+  method runtime к generated .c file post-tuple-def. Out of scope for V1 closeout.
+- Workaround for FFI authors: declare `external fn c_func(CStr) -> ...` signatures using
+  CStr type; instantiate via manual `CStr(ptr_value)` constructor когда нужно (V1).
+
+### Other deferred followups (no simplification, design-explicit)
+
+- [M-118.1-unsafe-attr-on-external-fn] — D2 amend pending
+- [M-118.1-addr-of-chains] — chain validation depth
+- addr_of_mut return type — V1 returns `*T` (not `*mut T`); mut semantic via binding mut-bit
