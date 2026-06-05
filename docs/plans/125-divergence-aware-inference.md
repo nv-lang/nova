@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 125 — Divergence-aware result-type inference (`never` bottom-type subtype propagation)
 
-> **Статус:** 📋 PROPOSED 2026-06-05
+> **Статус:** ✅ V1 CLOSED + MERGED + PUSHED 2026-06-05 (merge `d27f3341a0c`)
 > **Origin:** extracted из Plan 91.13 followup `[M-91.13-if-expr-divergence-aware-inference]`
 > **Replaces:** Prior naive attempt 2026-06-03 (revert'нут после 24 регрессий —
 > см. §Risks/Prior lessons)
@@ -543,7 +543,32 @@ phased Ф.1 → full test → Ф.2 → ... через ~36-53h. Обоснова�
 
 - [x] Code + tests + spec landed в commit `e91367f98e4`
 - [x] simplifications.md + project-creation.txt updated
-- [ ] Full `nova test` zero regression (pending background run)
-- [ ] Full plan125/ fixture run after full test
-- [ ] nova-private/discussion-log.md запись
-- [ ] Merge plan-125 → main + push
+- [x] Follow-on fix commit `d628a411748` — divergent-trailing skip-assign +
+      IfLet 5th wire site + emit_match_arm_body divergent guard + neg
+      fixtures D78-fix; 22/22 plan125 PASS
+- [x] Full `nova test` (release nova, --jobs 6, sequential): **1960 PASS /
+      131 FAIL / 56 SKIP**. ZERO Plan 125 regressions: 128 unique failures,
+      0 in divergence-pattern fixtures (verified via grep `if .*throw|if
+      .*panic|if .*exit|if .*interrupt|match.*\{[^}]*throw|else *\{
+      *throw|else *\{ *panic`). Sample-compared on `main` binary: 4/4
+      "real failures" (effects/stateful_handlers, types/mut_state,
+      runtime/write_buffer, str_builder/clone) reproduce identically →
+      pre-existing baseline drift, not introduced by Plan 125.
+- [x] Full plan125/ fixture run: **22/22 PASS** (17 positive + 5 negative)
+- [x] nova-private/discussion-log.md запись (commit `e4ff5d62b7`)
+- [x] Merge plan-125 → main: commit `d27f3341a0c` (--no-ff)
+- [x] Push: github (a3bedb2c41c..d27f3341a0c) + gitverse
+      (f1cd07b15a9..d27f3341a0c)
+
+### Final commit chain (plan-125 branch)
+
+- `85e4e5c0ee0` docs(plan125): PROPOSED — divergence-aware result-type inference
+- `c0b4bb7904e` docs(plan91.13): `[M-91.13-...]` CLOSED — migrated to Plan 125
+- `62a034acf8a` docs(plan125): closure entries — project-creation + simplifications
+- `e91367f98e4` feat(plan125): divergence-aware result-type inference for if/match/block
+- `4559a00488f` docs(plan125): STATUS section + project-creation entry + 2 extra negatives
+- `d628a411748` fix(plan125): divergent-trailing skip-assign + IfLet wire + neg fixtures
+- `b182a0f6bf7` Merge main (a3bedb2c41c) into plan-125 — pre-merge sync
+- `d27f3341a0c` Merge plan-125 — Plan 125 V1 ✅ CLOSED (on main)
+
+**Status:** ✅ **CLOSED + MERGED + PUSHED 2026-06-05.**

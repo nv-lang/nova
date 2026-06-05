@@ -32203,3 +32203,49 @@ Commits в plan-125 branch:
 - c0b4bb7904e docs(plan91.13): [M-91.13-...] CLOSED — migrated to Plan 125
 - 62a034acf8a docs(plan125): closure entries — project-creation + simplifications
 - e91367f98e4 feat(plan125): divergence-aware result-type inference for if/match/block
+- 4559a00488f docs(plan125): STATUS section + project-creation entry + 2 extra negatives
+- d628a411748 fix(plan125): divergent-trailing skip-assign + IfLet wire + neg fixtures
+- b182a0f6bf7 Merge main (a3bedb2c41c) into plan-125 — pre-merge sync
+- d27f3341a0c Merge plan-125 — Plan 125 V1 ✅ CLOSED — divergence-aware result-type inference (codegen-only)
+
+
+=== Plan 125 V1 ✅ CLOSED + MERGED + PUSHED (2026-06-05) ===
+
+Plan 125 V1 финализирован — `d27f3341a0c` merged into main (--no-ff),
+pushed to github (a3bedb2c41c..d27f3341a0c) и gitverse (f1cd07b15a9..
+d27f3341a0c).
+
+**Final verification:**
+- 22/22 plan125 fixtures PASS (17 positive + 5 negative; after merge
+  rebuild also 22/22)
+- Full nova test (release nova, --jobs 6, sequential): 1960 PASS /
+  131 FAIL / 56 SKIP
+- ZERO Plan 125 regressions: 128 unique failures, 0 в divergence-
+  pattern fixtures (verified `grep -E 'if .*throw|if .*panic|...'`
+  → empty)
+- 4/4 sample "real failures" (effects/stateful_handlers,
+  types/mut_state, runtime/write_buffer, str_builder/clone)
+  reproduce identically на main binary → pre-existing baseline drift
+  (E_READONLY_FIELD/E_CONSUME_KEYWORD_MISSING/import-cycle —
+  unrelated subsystems)
+
+**Iteration deltas vs original plan estimate (~36-53h):**
+- Pragmatic deviation: all 4 whitelist tiers in one helper (vs phased
+  Ф.1 → full test → Ф.2 → ...) — design-invariant trailing-only +
+  codegen-local снял основной risk, full test gate всё равно бежит
+- 2 commits на implementation (feat + fix) + 1 docs commit + 1
+  merge — total ~6-8h wall-time (vs 36-53h estimate)
+- IfLet wire site missed в commit 1 (4 of 6 sites wired) — closed в
+  commit 2 после fixture run (5/22 → 18/22 → 22/22 in stages)
+
+**State table updated:**
+- `[M-91.13-if-expr-divergence-aware-inference]` ✅ CLOSED
+  (migrated → Plan 125 → V1 implemented)
+- 7 followups зарегистрированы в plan-doc §Followups
+- Plan 125 ✅ closed целиком (V1 ship'нут; Ф.5 type-checker side
+  deferred to followup `[M-125-type-checker-never-first-class]` —
+  не блокирует ни одного активного плана)
+
+**Unblocks:** Plan 91 Ф.3 (JSON conformance) теперь может
+использовать `if cond { throw } else { compute_str() }` идиом без
+workaround. Любые stdlib функции с same pattern — больше не CC-FAIL.
