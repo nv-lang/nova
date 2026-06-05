@@ -9913,3 +9913,117 @@ Inside Nova interp-string `${expr:SPEC}`:
 - Plan 91.14 (this D-block's home plan)
 - Plan 91.13 — JSON conformance (sibling, just landed)
 - Plan 91.8a.2 — Printable infrastructure (foundation, ~80% mechanism reused)
+
+### D230 NEW — `Cloneable` protocol (Plan 126 Ф.1)
+
+**Plan 126** (2026-06-05). New built-in protocol для deep recursive copy
+пользовательских типов. Аналог Rust `Clone` trait, completing the gap в
+D109 family (Equatable/Hashable/Comparable/Printable + Cloneable).
+
+#### Rationale
+
+1. **Value-record + heap-record нуждаются в structural deep-copy.** До
+   Plan 126 пользователь писал boilerplate `fn T.copy(other T) -> T => ...`
+   per type. После Plan 124.8 (D228 value-record) этот pattern стал
+   универсальным — auto-derive снимает boilerplate burden.
+
+2. **Memberwise recursive semantics.** Compiler synthesize'ит body
+   `Self { f1: @f1.clone(), f2: @f2.clone(), ... }` — каждое поле
+   рекурсивно clone'ится. Primitives (int/f64/bool/char/byte/str/u*/i*)
+   копируются по значению (`@field` без `.clone()`); `str` clone = новая
+   аллокация с тем же содержимым.
+
+3. **Distinct от built-in `Hashable.@hash` / `Equatable.@equals`** — clone
+   возвращает Self (not bool / not u64), требует особого synthesizer'а
+   `synthesize_clone` (Plan 126 Ф.3).
+
+#### Protocol declaration
+
+```nova
+#stable(since = "0.1")
+export type Cloneable protocol {
+    clone() -> Self
+}
+```
+
+Объявлен в `std/prelude/protocols.nv` (Plan 126 Ф.1, commit c7ff5a319ea).
+
+#### Auto-derive семантика
+
+**Record / NamedTuple** (Plan 124.8 D228 / Plan 120 D215):
+- Synthesized body: `Self { field1: <clone_expr_1>, field2: <clone_expr_2>, ... }`.
+- Per-field clone:
+  - Primitive (`int`/`f64`/`bool`/`char`/`byte`/`str`/`u*`/`i*`) →
+    shallow copy `@field` (compiler routes к built-in copy semantics).
+  - User type (record/tuple) → recursive `.clone()` method call.
+  - `[]T` → new array с recursive clone элементов (Plan 90.1
+    deep-copy infrastructure).
+
+**Sum-type** — V1 placeholder: returns `@` (self-reference). Rich
+match-arms clone (per-variant payload recursion) — followup
+[M-126-sum-clone-rich].
+
+**Field eligibility check** (`check_field_eligibility`):
+- Каждое поле либо primitive (always eligible),
+- Либо имеет `#impl(Cloneable)` annotation,
+- Либо имеет explicit `fn FieldType @clone() -> FieldType`.
+- Иначе → `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
+
+**Cycle detection** (visited set `(type, "Cloneable")` pair):
+- `type A { b B }; type B { a A }` + `#impl(Cloneable)` на обоих →
+  `E_AUTO_DERIVE_CYCLE` (unbounded synthesis non-terminating).
+- User должен переписать как explicit `fn A @clone() -> A => ...`.
+
+#### Examples
+
+```nova
+#impl(Cloneable)
+type Vec3 {
+    x f64
+    y f64
+    z f64
+}
+
+ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+ro b = a.clone()    // synthesized: Vec3 { x: @x, y: @y, z: @z }
+// (primitives → shallow copy, no .clone() recursion).
+
+#impl(Cloneable)
+type Container {
+    name str       // primitive — shallow
+    items []int    // array — recursive deep-copy
+    inner Vec3     // user type — calls Vec3.@clone()
+}
+
+ro c = Container { name: "test", items: [1,2,3], inner: a }
+ro d = c.clone()   // d.items != c.items (new allocation), но d.items[0] == 1
+```
+
+Manual impl (override default):
+
+```nova
+fn Vec3 @clone() -> Vec3 =>
+    Vec3 { x: @x, y: @y, z: @z }   // explicit, same result
+```
+
+Explicit > auto-derive — user wins resolution в `verify_impl_protocols`.
+
+#### Error codes registered
+
+| Code | Description | Trigger |
+|------|-------------|---------|
+| E_AUTO_DERIVE_CYCLE | Cyclic recursion non-terminating | type A↔B + `#impl(Cloneable)` |
+| E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL | Field type не impl Cloneable | `#impl(Cloneable) type X { y Y }` где Y не Cloneable |
+| E_AUTO_DERIVE_UNSUPPORTED_KIND | Newtype/Alias/Effect/Protocol/Opaque | `#impl(Cloneable) type Foo = newtype Bar` |
+
+#### Cross-refs
+
+- [D109 amend](../08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
+  — auto-derive rules для всех 5 built-in protocols.
+- [D186](#d186) — `#impl(P)` annotation foundation.
+- [D183](#d183) — Printable protocol (sibling, Display semantics).
+- [D229](#d229) — DebugPrintable (sibling, Debug semantics).
+- Plan 126 (this D-block's home plan).
+- Plan 124.8 — value-record D228 (primary use-case).
+- Plan 120 — NamedTuple D215 (secondary use-case).
+- Plan 90.1 — `[]T` extend/copy_from family (used для array field clone).
