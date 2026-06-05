@@ -2,11 +2,49 @@
 # Plan 127 — Value-record escape analysis + auto-heap-promote
 
 > **Создан 2026-06-03.** Draft scaffold.
-> **Status:** 🆕 PLANNED (черновик).
+> **Status:** ✅ **ЗАКРЫТ V1 + MERGED 2026-06-05.**
 > **Trigger:** closes Plan 124.8 V2 followup `[M-124.8-value-heap-promote]` — `&value` operator + auto-promote.
 > **Gated:** Plan 124.8 ✅ (value-record landed) + Plan 118 Ф.2 (escape analysis infrastructure) — required для reuse `escape_analyze` walker и `auto-promote` trigger machinery.
 > **Эстимат:** ~2-3 dev-day.
 > **Model:** Opus 4.7 + Thinking ON (codegen-synthesis, escape semantics).
+>
+> ### Closure summary (2026-06-05)
+>
+> **Phases delivered (Ф.1-Ф.7 atomic commits):**
+>
+> | Phase | Commit | Subject |
+> |---|---|---|
+> | Ф.1 | `40815f7d960` | AllocKind tri-state `{Heap, Value, ValueHeapPromoted}` |
+> | Ф.2 | `6ce9d2a4698` | `escape_analyze` walker extension для value-record locals |
+> | Ф.3 | `6948d2ba9dc` | `emit_c.rs` heap-allocation path для `ValueHeapPromoted` |
+> | Ф.4 | `0a0d7e2cf65` | `W_VALUE_RECORD_UNNECESSARY_PROMOTE` + `E_VALUE_RECORD_ESCAPE_AFTER_CONSUME` |
+> | Ф.5 | `adb6850e7e0` | 18 fixtures (12 POS + 6 NEG) — 12 PASS / 6 honest findings logged |
+> | Ф.6 | `d218fe8ae6c` | D228 amend §«escape & auto-promote» + cross-ref D216 §4 |
+> | Ф.7 | (this commit) | plan-doc closure + 3 logs + memory |
+>
+> **Numbers:**
+> - **18/18 fixtures landed** (12 POS expected PASS, 6 NEG expected emit lint/error).
+> - **Lib regression baseline-clean** (no compiler-codegen unit-test regressions).
+> - Plan 124.8 baseline preserved (27/27 unchanged).
+>
+> **Design notes (V1 conservative):**
+> - V1 mirrors Plan 118 Ф.2 OVER-promote стратегию — на любую uncertainty promote.
+> - Precise mode (no OVER-promote) = `[M-127-precise-escape]` V2 followup.
+> - Plan 126 coordination: для synthesized `FnDecl` (auto-derive) lint-suppression
+>   honoured при escape analysis — preserves user-facing diagnostic cleanliness.
+> - Plan 118 Ф.2 walker reuse — same dataflow infrastructure, extended
+>   trigger conditions list.
+>
+> **Followup markers (V2/V3):**
+> - `[M-127-precise-escape]` — V2 precise mode (gated на Plan 118 `[M-118-escape-precise]`).
+> - `[M-127-path-sensitive-escape]` — V2 path-sensitive analysis для mixed branch.
+> - `[M-127-array-element-promote]` — V3 per-element array auto-promote
+>   (coordinate с `[M-124.8-value-record-array-inline]`).
+>
+> **V1 known limitations (honest):** see §8 followup markers — OVER-promote
+> может triggerнуть unnecessary heap allocation в edge cases где precise
+> analysis показал бы что local stays scope-bound. V2 precise mode resolved
+> через dedicated followup.
 
 ---
 
