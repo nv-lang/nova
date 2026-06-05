@@ -8766,6 +8766,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 match t.allocation {
                     AllocKind::Heap => self.emit_record_type(&t.name, fields)?,
                     AllocKind::Value => self.emit_value_record_type(&t.name, fields)?,
+                    // Plan 127 V1: ValueHeapPromoted lives только на per-binding
+                    // slots, не на TypeDecl. Type declaration аллокация всегда
+                    // {Heap, Value}. Per-binding promotion обрабатывается на
+                    // record-lit / method-recv level (Ф.3). Unreachable here.
+                    AllocKind::ValueHeapPromoted => unreachable!(
+                        "AllocKind::ValueHeapPromoted invalid on TypeDecl `{}` — \
+                         promotion is per-binding, not per-type (Plan 127 V1)",
+                        t.name
+                    ),
                 }
             }
             TypeDeclKind::Sum(variants) => {
@@ -8848,6 +8857,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 match t.allocation {
                     AllocKind::Heap => format!("Nova_{}", t.name),
                     AllocKind::Value => format!("NovaValue_{}", t.name),
+                    // Plan 127 V1: ValueHeapPromoted invalid на TypeDecl.
+                    AllocKind::ValueHeapPromoted => unreachable!(
+                        "AllocKind::ValueHeapPromoted invalid on TypeDecl `{}` \
+                         (Plan 127 V1: per-binding only)", t.name
+                    ),
                 }
             }
             TypeDeclKind::NamedTuple(_) => format!("NovaTuple_{}", t.name),

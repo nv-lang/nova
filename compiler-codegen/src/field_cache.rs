@@ -339,6 +339,12 @@ fn collect_type_kinds(items: &[Item], out: &mut TypeKindRegistry) {
                 TypeDeclKind::Record(_) => match t.allocation {
                     AllocKind::Heap => TypeKindEntry::HeapRecord,
                     AllocKind::Value => TypeKindEntry::ValueRecord,
+                    // Plan 127 V1: ValueHeapPromoted lives only on per-binding
+                    // slots; TypeDecl level всегда {Heap, Value}.
+                    AllocKind::ValueHeapPromoted => unreachable!(
+                        "AllocKind::ValueHeapPromoted invalid on TypeDecl `{}` \
+                         — promotion is per-binding (Plan 127 V1)", t.name
+                    ),
                 },
                 TypeDeclKind::Sum(_) => TypeKindEntry::Sum,
                 TypeDeclKind::NamedTuple(_) => TypeKindEntry::NamedTuple,
