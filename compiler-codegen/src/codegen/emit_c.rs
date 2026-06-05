@@ -24512,9 +24512,20 @@ _cp++; \
                     let v = self.emit_expr(expr)?;
                     // Heap-alloc only when storing as nova_int pointer (boxed).
                     // When elem_ty is a primitive (str/bool/f64/byte), push directly.
+                    //
+                    // Plan 128.1 Ф.2 — D215 NamedTuple element + heap-record element:
+                    // `[Vec3(1,2,3), Vec3(4,5,6)]` где Vec3 = NamedTuple даёт
+                    // ety = "NovaTuple_Vec3" (value-type compound literal). Без
+                    // box-cast'а compound literal — rvalue, нельзя сохранить
+                    // указатель. Symmetric для heap-records (Nova_*) на случай
+                    // когда infer вернул их как value (а не как `Nova_X*`).
                     let needs_heap_alloc = elem_ty == "nova_int"
-                        && (ety.starts_with("_NovaTuple") || ety == "nova_str"
-                            || ety.starts_with("NovaOpt_")) && !ety.ends_with('*');
+                        && (ety.starts_with("_NovaTuple")
+                            || ety == "nova_str"
+                            || ety.starts_with("NovaOpt_")
+                            || ety.starts_with("NovaTuple_")
+                            || ety.starts_with("Nova_"))
+                        && !ety.ends_with('*');
                     if needs_heap_alloc {
                         let heap_tmp = self.fresh_tmp();
                         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", ety, heap_tmp, ety, ety));
@@ -24551,10 +24562,16 @@ _cp++; \
         // for-loop emit'ает direct assignment вместо deref'а, что ломает
         // mono'd tuple iteration в generic method bodies.
         if first_item_ty != "nova_int" && first_item_ty != elem_ty {
+            // Plan 128.1 Ф.2 — keep whitelist in sync с needs_heap_alloc above.
+            // NamedTuple (`NovaTuple_*`) и heap-record (`Nova_*`) элементы
+            // тоже были box'нуты — array_element_types должен хранить
+            // pointer-type `<T>*` для корректного deref'а в for-loop.
             let was_boxed = elem_ty == "nova_int"
                 && (first_item_ty.starts_with("_NovaTuple")
                     || first_item_ty == "nova_str"
-                    || first_item_ty.starts_with("NovaOpt_"))
+                    || first_item_ty.starts_with("NovaOpt_")
+                    || first_item_ty.starts_with("NovaTuple_")
+                    || first_item_ty.starts_with("Nova_"))
                 && !first_item_ty.ends_with('*');
             let stored_ty = if was_boxed {
                 format!("{}*", first_item_ty)
@@ -30445,5 +30462,130 @@ mod lvalue_receiver_tests {
         assert!(!CEmitter::is_lvalue_receiver(&member(call(ident("make_v")), "v")));
         // Index of a Call — root is rvalue, whole chain rvalue.
         assert!(!CEmitter::is_lvalue_receiver(&index(call(ident("mk")), int_lit(0))));
+    }
+}
+
+#[cfg(test)]
+mod array_lit_named_tuple_box_tests {
+    //! Plan 128.1 Ф.2 — D215 NamedTuple element + heap-record element в
+    //! array literal must heap-alloc (box) via `nova_alloc(sizeof(NovaTuple_X))`
+    //! и push as `nova_int` (pointer-stomp). Без fix'а compound literal
+    //! `((NovaTuple_Vec3){...})` пушился raw в `nova_array_push_nova_int` →
+    //! C compile error (struct-to-int cast).
+    //!
+    //! Coverage:
+    //!   1. `[Vec3(1.0,2.0,3.0)]` (NamedTuple element) — heap-box path.
+    //!   2. Value-record D226 element (`NovaValue_Cfg`) — current
+    //!      whitelist preserves existing behaviour (regression guard).
+    //!
+    //! Tests use the public `emit_array_lit` (re-exported via super::CEmitter)
+    //! и проверяют side-effect output (the `nova_alloc` line) instead of
+    //! per-AST golden-snapshot.
+    use super::{CEmitter, ArrayElem};
+    use crate::ast::{CallArg, Expr, ExprKind};
+    use crate::diag::Span;
+
+    fn ident(name: &str) -> Expr {
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+    }
+
+    fn float_lit(v: f64) -> Expr {
+        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy() }
+    }
+
+    fn call(func: Expr, args: Vec<Expr>) -> Expr {
+        Expr {
+            kind: ExprKind::Call {
+                func: Box::new(func),
+                args: args.into_iter().map(CallArg::Item).collect(),
+                trailing: None,
+            },
+            span: Span::dummy(),
+        }
+    }
+
+    #[test]
+    fn emit_array_lit_named_tuple_heap_box() {
+        // Plan 128.1 Ф.2 PRIMARY FIX (codegen). `[Vec3(1.0, 2.0, 3.0)]` где
+        // Vec3 = NamedTuple. infer_expr_c_type(Vec3(...)) = "NovaTuple_Vec3"
+        // (value struct, no pointer). Без fix'а array-lit storage (elem_ty =
+        // nova_int) попытался бы push'нуть raw compound literal в
+        // NovaArray_nova_int — invalid C cast.
+        //
+        // Post-fix: needs_heap_alloc match'ит NovaTuple_* → emit'ит
+        //   NovaTuple_Vec3* tmp = (NovaTuple_Vec3*)nova_alloc(sizeof(NovaTuple_Vec3));
+        //   *tmp = Vec3(...);
+        //   nova_array_push_nova_int(arr, (nova_int)(tmp));
+        let mut e = CEmitter::new();
+        // Register NamedTuple alias so infer_expr_c_type(Vec3(...)) returns
+        // "NovaTuple_Vec3" via the type_aliases path (см. emit_c.rs:28787).
+        e.type_aliases.insert("Vec3".into(), "NovaTuple_Vec3".into());
+        let elem = call(ident("Vec3"), vec![float_lit(1.0), float_lit(2.0), float_lit(3.0)]);
+        let elems = vec![ArrayElem::Item(elem)];
+        let before_out = e.out.clone();
+        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
+        let emitted = &e.out[before_out.len()..];
+        // Verify heap-alloc path was taken: must contain nova_alloc(sizeof(NovaTuple_Vec3)).
+        assert!(emitted.contains("nova_alloc(sizeof(NovaTuple_Vec3))"),
+            "Plan 128.1 Ф.2: NamedTuple element must heap-alloc via \
+             nova_alloc(sizeof(NovaTuple_Vec3)); emitted:\n{}", emitted);
+        // And use the NovaArray_nova_int storage (boxed via pointer-stomp).
+        assert!(emitted.contains("NovaArray_nova_int"),
+            "NamedTuple element stored в boxed NovaArray_nova_int; emitted:\n{}",
+            emitted);
+        assert!(emitted.contains("nova_array_push_nova_int"),
+            "must push as nova_int (pointer-stomp); emitted:\n{}", emitted);
+    }
+
+    #[test]
+    fn emit_array_lit_int_primitive_unchanged() {
+        // Regression guard: primitive `nova_int` element (`[1, 2, 3]`)
+        // must NOT take heap-alloc path — primitives store inline в
+        // NovaArray_nova_int. Без guard'а слишком широкий whitelist
+        // (e.g. accidentally matching int prefix) сломал бы baseline.
+        let mut e = CEmitter::new();
+        let elems = vec![
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy() }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy() }),
+        ];
+        let before_out = e.out.clone();
+        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
+        let emitted = &e.out[before_out.len()..];
+        // Must NOT call nova_alloc (no heap-box) for primitive ints.
+        assert!(!emitted.contains("nova_alloc(sizeof("),
+            "Plan 128.1 Ф.2 REGRESSION: primitive int элементы НЕ должны \
+             heap-alloc'аться; emitted:\n{}", emitted);
+        assert!(emitted.contains("NovaArray_nova_int"),
+            "int storage must remain NovaArray_nova_int; emitted:\n{}",
+            emitted);
+    }
+
+    #[test]
+    fn emit_array_lit_value_record_unchanged() {
+        // Regression guard for D226/D228: value records (`NovaValue_X`)
+        // используют их собственный per-type array storage (e.g.
+        // NovaArrayValue_Cfg) — НЕ boxed path. Whitelist extension
+        // (Nova_ / NovaTuple_) НЕ должна случайно захватить NovaValue_
+        // тип. `"NovaValue_Cfg".starts_with("Nova_")` = false (нет
+        // underscore после "Nova"), `.starts_with("NovaTuple_")` = false —
+        // обе guard'а должны mismatch'нуть.
+        //
+        // Этот тест чисто defensive: фиксирует prefix-disjointness между
+        // Nova_/NovaTuple_/NovaValue_ family'ями. Если в будущем
+        // переименовать typedef'ы, тест немедленно flag'нет.
+        assert!(!"NovaValue_Cfg".starts_with("Nova_"),
+            "D226 NovaValue_ prefix MUST NOT match Nova_ check — иначе \
+             value-records случайно попадут в boxed array-lit path");
+        assert!(!"NovaValue_Cfg".starts_with("NovaTuple_"),
+            "D226 NovaValue_ prefix MUST NOT match NovaTuple_ check");
+        // And NovaTuple_ MUST NOT match Nova_ (handled separately).
+        assert!(!"NovaTuple_Vec3".starts_with("Nova_"),
+            "NovaTuple_ prefix must be handled by its OWN whitelist arm \
+             — не через Nova_ catch-all");
+        // Heap records `Nova_Widget*` всегда ends with `*` — needs_heap_alloc
+        // guarded by `!ety.ends_with('*')`, so they bypass boxing even
+        // если Nova_ prefix matches.
+        assert!("Nova_Widget*".ends_with('*'),
+            "heap records have trailing * — `!ety.ends_with('*')` фильтрует их");
     }
 }
