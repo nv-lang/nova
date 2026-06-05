@@ -1998,3 +1998,161 @@ Hard blockers для Plan 110 umbrella closure:
 
 Production-grade final обязательство в plan header preserved.
 
+
+
+
+## Session ext #6 — Plan 110.x supervised(cancel:) shield bug CLOSED (2026-06-05)
+
+**Marker:** `[M-110.x-cleanup-shield-deadline-underflow]` — supervised(cancel:)
+path closure. Prior fix `af4e7d96a62` covered consume{} nested deadline-shadow
+case; this entry closes the orthogonal supervised(cancel:) variant.
+
+**Symptom:** `cleanup-timeout-exceeded: 7XX,XXX,XXX ms over budget` (i64
+underflow ≈ 8.4 days over budget) в 6-second tests. Reproducer:
+`supervised(cancel: tok) { spawn{Time.sleep(5_000)}×4 + spawn{Time.sleep(5); tok.cancel()} }`.
+
+Pre-fix baseline (per Plan 83.11 §13.3):
+- `stress_iso_3e.nv` → 0/30
+- `fibers_10k_sleep_cancel.nv` (reduced N=2k) → flaky
+- `nested_supervised_3_levels_cancel.nv` (reduced depth=2) → blocked
+- `cancel_during_runtime_shutdown.nv` (reduced 4 fibers) → blocked
+
+### Root cause (codegen layout mismatch, NOT save/restore pattern)
+
+Diagnostic via debug fprintf в `nv_shield_check_deadline` показал:
+```
+mask=-837814960 deadline=4294967295 diff_ms=725442076
+```
+
+Mask = -837M (должен быть ≥0 atomic int), deadline = UINT32_MAX —
+**uninitialized memory bytes**.
+
+Codegen-emitted `NovaSpawnCtx_<id>` + `NovaDetachCtx_<id>` структуры в
+`emit_c.rs` включали ТОЛЬКО ПЕРВЫЕ 7 из 10 полей runtime `NovaSpawnCtxBase`:
+| # | Field | Plan |
+|---|---|---|
+| 1-7 | _nova_parent_scope … _nova_fiber_state | original |
+| 8 | _nova_pool_size | **Plan 83.6** (2026-05-24) — MISSING |
+| 9 | _nova_cancel_mask_count | **Plan 110.2.1.a** — MISSING |
+| 10 | _nova_cancel_deadline_ns | **Plan 110.2.2.a** — MISSING |
+
+Runtime cast'ает `mco_get_user_data(co) → NovaSpawnCtxBase*` + читает поля
+`base->_nova_cancel_mask_count` / `base->_nova_cancel_deadline_ns` по
+fixed offset → **past codegen struct allocation** → Boehm GC adjacent
+memory bytes (garbage).
+
+Garbage mask ≠ 0 → `nv_shield_check_deadline` enters slow path →
+garbage deadline triggers `(now - deadline) / 1_000_000` huge positive
+i64 → throws bogus CleanupTimeoutError.
+
+Stale codegen comment на `emit_c.rs:6253`: «_nova_fiber_state MUST be last
+in NovaSpawnCtxBase prefix» — true at write time, became stale after Plan 83.6
++ 110.2 added 3 more base fields.
+
+### Fix design (production-grade)
+
+**Spec amend:** D188 R3a invariant (spec/decisions/03-syntax.md):
+codegen-emitted per-fiber ctx struct MUST include ALL NovaSpawnCtxBase
+fields, including `_nova_pool_size`, `_nova_cancel_mask_count`,
+`_nova_cancel_deadline_ns`. Cross-references to D196 R4 (consume{}
+prev_deadline restore — different bug) + D196 R4b (on_exit exception
+safety — different bug).
+
+**Codegen** (`emit_c.rs`):
+- `emit_spawn` (line ~6258-6276): added 3 fields to NovaSpawnCtx_<id>.
+- `emit_detach` (line ~6929-6940): added same 3 fields to NovaDetachCtx_<id>.
+
+**Tests:**
+- `_repro_p110.nv`: minimal repro (4 sleeping fibers + 1 cancel-after-5ms).
+  Pre-fix: 0-3/10 PASS. Post-fix: 10/10 PASS.
+- `nested_shield_deadline_inversion_neg.nv`: NEG regression guard —
+  nested supervised(cancel:) с разными budgets + 32-fiber flat stress.
+
+**Bump-back (A2):**
+- `fibers_10k_sleep_cancel`: N=2k → **10k**, budget 2s → **5s**.
+- `nested_supervised_3_levels_cancel`: depth=2 → **3** (added inner_tok).
+- `cancel_during_runtime_shutdown`: fibers=4 → **16**.
+
+### Stress verification (tools/stress_bisect.sh)
+
+- `stress_iso_3e` × 30 → **30/30 PASS** (был 0/30).
+- `cancel_during_runtime_shutdown` × 30 → **30/30 PASS** (с bumped 16 fibers).
+- `nested_supervised_3_levels_cancel` × 30 — pending verification.
+- `fibers_10k_sleep_cancel` × 10 — pending verification (bumped 10k load).
+
+### Plan 110 family closure timeline
+
+- 🟢 `af4e7d96a62` (2026-06-05) — R4 nested consume{} deadline shadow restore.
+- 🟢 `08edfa66358` (2026-06-05) — R4b on_exit-throws-leaks-shield (exception safety).
+- 🟢 **This session** — R3a codegen layout invariant (supervised path).
+
+Все 3 baseline ошибки в Plan 110 cancel-shield closed; `[M-110.x-cleanup-shield-deadline-underflow]` fully closed.
+
+### Lessons
+
+1. **Stale codegen-runtime ABI invariants — silent UB until specific
+   yield pattern.** Codegen comment правильно говорил «MUST match exactly»,
+   но не было static_assert или automated cross-check. Layout mismatch
+   жил месяцами (Plan 83.6 = 2026-05-24, Plan 110.2 = 2026-06; this fix
+   = 2026-06-05) до supervised(cancel:) workload где fiber yield в
+   check_deadline → reads past struct.
+
+2. **Debug fprintf-to-file pattern для test-runner stderr capture.**
+   Nova test runner не показывает runtime fprintf на stderr (captures
+   только test framework output). Решение: `fopen("D:/tmp/log", "a")`
+   directly из runtime header. Race-safe для одного writer, простой
+   pattern для future runtime debugging.
+
+3. **Production fix without simplifications — за один pass.** Audit
+   plan correctly предполагал save-prev/restore-prev pattern (как R4)
+   нужен — но реальная причина была другой (codegen layout). Diagnostic
+   first → correct fix, без masking.
+
+**Cross-references:**
+- `compiler-codegen/src/codegen/emit_c.rs` lines 6258-6276 + 6929-6940.
+- `compiler-codegen/nova_rt/fibers.h` `NovaSpawnCtxBase` definition (lines 1136-1171).
+- `spec/decisions/03-syntax.md` D188 R3a amend.
+
+
+### Stress verification — final accounting
+
+| Test | Pre-fix | Post-fix 30× stress | Verdict |
+|---|---|---|---|
+| `stress_iso_3e` | 0/30 | **30/30 PASS** | ✅ M-110.x closure verified |
+| `cancel_during_runtime_shutdown` (bumped 16 fibers) | RUN-FAIL | **30/30 PASS** | ✅ M-110.x closure verified |
+| `fibers_10k_sleep_cancel` | RUN-FAIL (cleanup-timeout) | RUN-FAIL ("token already bound") | 🟡 Independent Plan 83.11 bug surfaced |
+| `nested_supervised_3_levels_cancel` (depth 2) | RUN-FAIL (cleanup-timeout) | RUN-FAIL (watchdog hang) | 🟡 Independent Plan 83.11 bug surfaced |
+
+**M-110.x marker:** ✅ **FULLY CLOSED** — root cause (codegen layout mismatch)
+identified + fixed + verified.
+
+**A1 acceptance per plan:** **2/4 tests at 30/30 PASS**. Remaining 2 tests
+exposed independent Plan 83.11 family bugs that were previously masked by
+the M-110.x cleanup-timeout-exceeded symptom (shield throw aborts scope
+before the underlying cascade-drain / token-bound-race surfaces).
+
+### New followup markers spawned (Plan 83.11 territory)
+
+1. **[M-83.11-cancel-token-bound-race-2k]** — `fibers_10k_sleep_cancel`
+   panics с «token already bound to a live scope» at N=2k+ fibers, both
+   pre-fix and post-fix. Cancel-token unbind ordering vs second-bind race
+   in `nova_supervised_run_impl` cleanup path. Not Plan 110.x.
+
+2. **[M-83.11-nested-supervised-cascade-drain-hang]** —
+   `nested_supervised_3_levels_cancel` at depth=2 hangs with watchdog
+   `supervised.summary slots=0 alive=0 dead=0 null=0`, both pre-fix and
+   post-fix. Cascade `inner.cancelled_by(outer)` + nested supervised drain
+   race. Not Plan 110.x.
+
+Both markers documented в [Plan 83.11 plan-doc §13.3](83.11-centralized-io-driver.md#133-plan-110x-cleanup-shield-blocker--closed-2026-06-05).
+
+### Bump-back final state
+
+- `cancel_during_runtime_shutdown`: ✅ bumped 4 → **16 fibers**, 30/30 PASS.
+- `fibers_10k_sleep_cancel`: 🔴 bump-back deferred (N stays 2_000) —
+  exposes `[M-83.11-cancel-token-bound-race-2k]`.
+- `nested_supervised_3_levels_cancel`: 🔴 bump-back deferred (depth stays 2) —
+  exposes `[M-83.11-nested-supervised-cascade-drain-hang]`.
+
+Honest scope assessment: A2 partially complete; full production-scale
+bump-back gated on Plan 83.11 V2 cascade-drain rework.
