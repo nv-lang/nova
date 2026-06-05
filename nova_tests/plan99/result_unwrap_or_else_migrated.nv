@@ -8,13 +8,13 @@ test "Result[int,str].unwrap_or_else — Ok skip closure" {
     assert(v == 42)
 }
 
-// Plan 99 [M-str-len-closure-dispatch] — known codegen-mono bug: closure
-// param type inference defaults к nova_int даже когда E=str known via mono.
-// Test for "Err invokes f(e)" with str→int closure disabled until codegen
-// pipeline implements proper E-substitution в closure body. Other 2 tests
-// в this fixture exercise int-default closures которые work.
-//
-// test "Result[int,str].unwrap_or_else — Err invokes f(e)" — DISABLED.
+test "Result[int,str].unwrap_or_else — Err invokes f(e)" {
+    ro r Result[int, str] = Err("boom")
+    // Plan 99 [M-str-len-closure-dispatch] fix (2026-06-06): closure body
+    // emit подставляет E=str для closure param.
+    ro v = r.unwrap_or_else(|e| e.byte_len())
+    assert(v == 4)
+}
 
 test "Result[str,int].unwrap_or_else — reversed E type" {
     ro r Result[str, int] = Err(99)

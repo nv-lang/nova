@@ -2,11 +2,20 @@
 
 module plan99.result_map_err_migrated
 
-// Plan 99 [M-str-len-closure-dispatch] — known codegen-mono bug: closure
-// param type inference defaults к nova_int даже когда E=str known via mono.
-// All 3 original tests в this fixture used `|e| e.len()` over Result[int, str]
-// which exercises the broken str→int closure path. Migrated к the E==F passthrough
-// case which works (no closure-body str method dispatch).
+test "Result[int, str].map_err — Err str→int (len)" {
+    ro r Result[int, str] = Err("boom")
+    // Plan 99 [M-str-len-closure-dispatch] fix (2026-06-06): closure body
+    // emit подставляет E=str для closure param. Pre-fix CC-FAIL.
+    ro m = r.map_err(|e| e.byte_len())
+    assert(m.is_err())
+}
+
+test "Result[int, str].map_err — Ok passes through" {
+    ro r Result[int, str] = Ok(42)
+    ro m = r.map_err(|e| e.byte_len())
+    assert(m.is_ok())
+    assert(m.unwrap_or(0) == 42)
+}
 
 test "Result[int, str].map_err — E==F (str passthrough)" {
     ro r Result[int, str] = Err("bad")

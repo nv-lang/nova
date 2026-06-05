@@ -1,0 +1,11 @@
+// Repro probe для [M-str-len-closure-dispatch]
+// Closure body emit fails to substitute T-param type — defaults к nova_int.
+// Option[str].map(|s| s.byte_len()) emits closure as (nova_int s).
+
+module plan99._repro_str_closure
+
+test "Option[str].map closure str→int" {
+    ro a Option[str] = Some("hello")
+    ro len = a.map(|s| s.byte_len())
+    assert(len.unwrap_or(0) == 5)
+}
