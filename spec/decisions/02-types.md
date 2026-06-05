@@ -7813,16 +7813,34 @@ ABI: marshals к `const char*` / `uint8_t*` (single positional `*u8` field).
 **Invariant**: instances must satisfy `ptr[strlen(ptr)] == '\0'`. Per D26 §«Nul-termination»,
 full Nova `str` already ships с this invariant, enabling zero-copy conversion.
 
-**V1 foundation only** — str.as_cstr() / .to_cstr() / .as_cstr_unchecked() methods deferred
-к [M-118.1-cstr-runtime-wiring] followup (requires codegen forward-decl change для
-named-tuple-return C primitives — nova_rt headers include order issue).
+**Conversion methods (Plan 118.1 closeout amend, 2026-06-06):** str → CStr
+conversions реализованы как pure-Nova methods в `std/ffi/cstr.nv`:
 
-**Method bindings status**: V1 ships `type CStr(*u8)` foundation only; str method bindings
-(`as_cstr` / `to_cstr` / `as_cstr_unchecked`) declared в `std/runtime/string.nv` но
-runtime wiring deferred к [M-118.1-cstr-runtime-wiring] followup. Reader: methods НЕ
-callable до closure followup; type безопасно usable в external fn signatures.
+```nova
+export fn str @as_cstr() -> CStr {
+    ro bytes = @as_bytes()
+    unsafe { CStr(bytes.as_ptr()) }
+}
+export fn str @to_cstr() -> CStr { @as_cstr() }
+export fn str @as_cstr_unchecked() -> CStr { @as_cstr() }
+```
+
+Использует existing builtins: `str.as_bytes()` (D176 zero-copy view) +
+`[]u8.as_ptr()` (Plan 118.2 Ф.1, commit e80a57e54e7). C primitives НЕ
+требуются — D26 ptr[len]=='\0' invariant + Nova-side wrapping достаточно.
+
+**V1 simplifications (explicit followups, not silent):**
+
+- `[M-118.1-cstr-nul-check]` — embedded-NUL runtime scan не shipped в V1.
+  cstr.nv loaded via ExternalRegistry без auto-prelude wiring, поэтому
+  assert/panic require explicit import (creates cycle issues). Caller
+  responsibility per FFI contract («str must not contain '\0'»).
+- `[M-118.1-cstr-to-cstr-distinct-copy]` — `@to_cstr()` сейчас alias к
+  `@as_cstr()` (D26 invariant makes zero-copy safe). Distinct always-copy
+  semantic для long-lived CStr нужен allocator API (deferred).
 
 Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded by D26 invariant).
+Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova approach makes it unnecessary).
 
 ### Diagnostic codes (new)
 
