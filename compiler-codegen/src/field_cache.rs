@@ -507,8 +507,24 @@ pub struct FnCacheInfo {
     pub span: crate::diag::Span,
     /// D217 V1 ro fields decided for caching.
     pub ro_caches: Vec<String>,
-    /// D217 V1 mut fields (first-region cache).
+    /// D217 V1 mut fields (aggregate of outer + nested regions).
+    /// Backward-compat field — preserved for V5/V5.4 telemetry consumers
+    /// (CLI `--explain-cache`, LSP code-lens) that haven't migrated к the
+    /// region-tagged split. Equals
+    /// `outer_region_caches.len() + nested_region_caches.len()`
+    /// в length (entries may duplicate across regions for the same field).
     pub mut_caches: Vec<String>,
+    /// Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): V1 first-region or
+    /// V1.1 subsequent outer-region mut cache decisions. Identified by
+    /// cache-local name pattern `_at_<F>` (no suffix) or `_at_<F>_r<N>`
+    /// (numeric region index). Closes `[M-123.5.4-explain-region-tagging]`.
+    pub outer_region_caches: Vec<String>,
+    /// Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): V1.2 nested-region
+    /// mut cache decisions inside if-then/else-block, while-body,
+    /// for-body, match-arm body, etc. Identified by cache-local name
+    /// pattern `_at_<F>_n<N>` (numeric nested counter). Closes
+    /// `[M-123.5.4-explain-region-tagging]`.
+    pub nested_region_caches: Vec<String>,
     /// D218 LICM hoists по полю (per loop counted once per field).
     pub licm_hoists: Vec<String>,
     /// D219 pure-call cached methods.
@@ -663,6 +679,8 @@ fn analyze_fn_for_explain(
         span: f.span,
         ro_caches: Vec::new(),
         mut_caches: Vec::new(),
+        outer_region_caches: Vec::new(),
+        nested_region_caches: Vec::new(),
         licm_hoists: Vec::new(),
         pure_caches: Vec::new(),
         chain_caches: Vec::new(),
@@ -678,6 +696,39 @@ fn analyze_fn_for_explain(
     info
 }
 
+/// Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): region kind для mut
+/// cache decision telemetry. Closes `[M-123.5.4-explain-region-tagging]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplainRegionKind {
+    /// V1 first-region (`_at_<F>`) or V1.1 subsequent outer region
+    /// (`_at_<F>_r<N>`) at fn body's top-level after a write/call
+    /// barrier.
+    Outer,
+    /// V1.2 nested-region (`_at_<F>_n<N>`) inside an if-then/else
+    /// block, while-body, for-body, match-arm body, etc. — region
+    /// scanner descended from outer barrier stmt.
+    Nested,
+}
+
+/// Plan 123.5.4 follow-up (V5.4.1): classify cache-local name suffix
+/// into outer vs nested region. Used only for mut classifications;
+/// ro caches are always outer (V1 prefix).
+///
+/// `_at_F` → Outer (V1).
+/// `_at_F_r<digits>` → Outer (V1.1 subsequent outer region).
+/// `_at_F_n<digits>` → Nested (V1.2 inside non-top-level block).
+fn explain_region_kind(name: &str) -> ExplainRegionKind {
+    if let Some(idx) = name.rfind('_') {
+        let suffix = &name[idx + 1..];
+        if let Some(rest) = suffix.strip_prefix('n') {
+            if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+                return ExplainRegionKind::Nested;
+            }
+        }
+    }
+    ExplainRegionKind::Outer
+}
+
 /// Plan 123.5.4 (V5.4): classify one `_at_<...>` let by its name suffix
 /// + binding shape + TypeDecl field kind, recording into the appropriate
 /// `FnCacheInfo` field.
@@ -687,7 +738,8 @@ fn analyze_fn_for_explain(
 /// 2. Plain `_at_<F>` / `_at_<F>_r<N>` / `_at_<F>_n<N>` with
 ///    `value == Member{SelfAccess, F}`:
 ///    - Look up `F` в `type_fields` (если have receiver's fields).
-///    - If `FieldKind::Mut` → mut_caches.
+///    - If `FieldKind::Mut` → mut_caches **AND** outer_region_caches or
+///      nested_region_caches per `explain_region_kind(name)` (V5.4.1).
 ///    - If `FieldKind::Ro` → ro_caches.
 ///    - Fallback (registry miss): suffix heuristic (region-suffix
 ///      indicates mut, no-suffix → ro).
@@ -720,7 +772,16 @@ fn explain_classify_at_let(
             let kind = type_fields
                 .and_then(|fields| fields.get(orig_field).copied());
             match kind {
-                Some(FieldKind::Mut) => info.mut_caches.push(orig_field.clone()),
+                Some(FieldKind::Mut) => {
+                    info.mut_caches.push(orig_field.clone());
+                    // V5.4.1 (2026-06-05): also tag region kind.
+                    match explain_region_kind(name) {
+                        ExplainRegionKind::Outer =>
+                            info.outer_region_caches.push(orig_field.clone()),
+                        ExplainRegionKind::Nested =>
+                            info.nested_region_caches.push(orig_field.clone()),
+                    }
+                }
                 Some(FieldKind::Ro) => info.ro_caches.push(orig_field.clone()),
                 None => {
                     // Fallback: name-suffix heuristic when registry has
@@ -728,6 +789,14 @@ fn explain_classify_at_let(
                     // module fragment).
                     if explain_name_has_region_suffix(name) {
                         info.mut_caches.push(orig_field.clone());
+                        // V5.4.1 (2026-06-05): tag region kind for
+                        // fallback path too.
+                        match explain_region_kind(name) {
+                            ExplainRegionKind::Outer =>
+                                info.outer_region_caches.push(orig_field.clone()),
+                            ExplainRegionKind::Nested =>
+                                info.nested_region_caches.push(orig_field.clone()),
+                        }
                     } else {
                         info.ro_caches.push(orig_field.clone());
                     }
@@ -11612,6 +11681,195 @@ fn Outer @use_single() -> int {
             "no _pre let should emit when only single chain; got {:?}", names);
         assert!(names.iter().any(|n| n == "_at_a_b_c_chain"),
             "expected per-chain let; got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): outer/nested region
+    // tagging для mut cache decisions в ExplainReport. Closes
+    // [M-123.5.4-explain-region-tagging].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V5.4.1.1: explain_region_kind classifies `_at_F` as Outer.
+    #[test]
+    fn v5_4_1_region_kind_plain_outer() {
+        assert_eq!(explain_region_kind("_at_x"), ExplainRegionKind::Outer);
+    }
+
+    /// V5.4.1.2: explain_region_kind classifies `_at_F_r<N>` as Outer
+    /// (V1.1 subsequent outer region).
+    #[test]
+    fn v5_4_1_region_kind_r_suffix_outer() {
+        assert_eq!(explain_region_kind("_at_x_r1"), ExplainRegionKind::Outer);
+        assert_eq!(explain_region_kind("_at_buf_r12"), ExplainRegionKind::Outer);
+    }
+
+    /// V5.4.1.3: explain_region_kind classifies `_at_F_n<N>` as Nested.
+    #[test]
+    fn v5_4_1_region_kind_n_suffix_nested() {
+        assert_eq!(explain_region_kind("_at_x_n1"), ExplainRegionKind::Nested);
+        assert_eq!(explain_region_kind("_at_buf_n7"), ExplainRegionKind::Nested);
+    }
+
+    /// V5.4.1.4: non-numeric suffix `_at_F_nfoo` (где `foo` не digits) —
+    /// fallback Outer (no false-positive nested classification).
+    #[test]
+    fn v5_4_1_region_kind_n_non_digits_outer() {
+        assert_eq!(explain_region_kind("_at_x_nfoo"), ExplainRegionKind::Outer);
+        // edge-case: literal `_at_x_n` (no digits) → Outer fallback.
+        assert_eq!(explain_region_kind("_at_x_n"), ExplainRegionKind::Outer);
+    }
+
+    /// V5.4.1.5: V1 first-region mut cache lands в outer_region_caches.
+    #[test]
+    fn v5_4_1_v1_outer_first_region_tagged_outer() {
+        let src = r#"
+module testmod.v5_4_1_outer_first
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    a + b
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found в explain report");
+        assert!(info.outer_region_caches.contains(&"x".to_string()),
+            "V1 first-region must tag outer; got outer={:?} nested={:?}",
+            info.outer_region_caches, info.nested_region_caches);
+        assert!(info.nested_region_caches.is_empty(),
+            "V1 first-region must NOT populate nested; got {:?}",
+            info.nested_region_caches);
+    }
+
+    /// V5.4.1.6: V1.1 subsequent outer region (`_at_F_r<N>`) lands в
+    /// outer_region_caches.
+    #[test]
+    fn v5_4_1_v1_1_subsequent_outer_tagged_outer() {
+        let src = r#"
+module testmod.v5_4_1_outer_subseq
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    @x = 99
+    ro c = @x
+    ro d = @x
+    a + b + c + d
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        // Both regions tag outer (V1 prefix + V1.1 `_at_x_r1`).
+        assert!(info.outer_region_caches.iter().filter(|n| n.as_str() == "x").count() >= 2,
+            "V1.1 must tag outer for both regions; got outer={:?}",
+            info.outer_region_caches);
+        assert!(info.nested_region_caches.is_empty(),
+            "V1.1 subseq outer must NOT populate nested; got {:?}",
+            info.nested_region_caches);
+        // Backward-compat: mut_caches still aggregates.
+        assert_eq!(info.mut_caches.len(),
+            info.outer_region_caches.len() + info.nested_region_caches.len(),
+            "mut_caches backward-compat aggregate invariant");
+    }
+
+    /// V5.4.1.7: V1.2 nested-region (`_at_F_n<N>`) lands в
+    /// nested_region_caches. Uses V1.2 if-then-with-internal-write
+    /// pattern from existing v1_2_nested_then_block_with_internal_write_cached.
+    #[test]
+    fn v5_4_1_v1_2_nested_tagged_nested() {
+        let src = r#"
+module testmod.v5_4_1_nested
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    mut acc = 0
+    if cond {
+        ro a = @x
+        ro b = @x
+        @x = 99
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        assert!(!info.nested_region_caches.is_empty(),
+            "V1.2 nested must populate nested_region_caches; outer={:?} nested={:?}",
+            info.outer_region_caches, info.nested_region_caches);
+        // Backward-compat invariant.
+        assert_eq!(info.mut_caches.len(),
+            info.outer_region_caches.len() + info.nested_region_caches.len(),
+            "mut_caches backward-compat aggregate invariant");
+    }
+
+    /// V5.4.1.8: outer + nested compose — V1.1 outer region AND V1.2
+    /// nested-region на разные регионы того же fn.
+    #[test]
+    fn v5_4_1_outer_and_nested_compose() {
+        let src = r#"
+module testmod.v5_4_1_compose
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    ro a = @x
+    ro b = @x
+    if cond {
+        ro p = @x
+        ro q = @x
+        @x = 99
+        ro r = @x
+        ro s = @x
+        ro _ = a + b + p + q + r + s
+    }
+    a + b
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        assert!(!info.outer_region_caches.is_empty(),
+            "outer must populate; got {:?}", info.outer_region_caches);
+        assert!(!info.nested_region_caches.is_empty(),
+            "nested must populate; got {:?}", info.nested_region_caches);
+        // Backward-compat invariant.
+        assert_eq!(info.mut_caches.len(),
+            info.outer_region_caches.len() + info.nested_region_caches.len(),
+            "mut_caches aggregate invariant");
+    }
+
+    /// V5.4.1.9: ro field does NOT populate outer_region_caches or
+    /// nested_region_caches (those are mut-only telemetry).
+    #[test]
+    fn v5_4_1_ro_field_excluded_from_region_split() {
+        let src = r#"
+module testmod.v5_4_1_ro_field
+type C { ro y int }
+fn C @do() -> int {
+    ro a = @y
+    ro b = @y
+    a + b
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        assert!(info.ro_caches.contains(&"y".to_string()),
+            "ro field must land в ro_caches; got {:?}", info.ro_caches);
+        assert!(info.outer_region_caches.is_empty(),
+            "ro field must NOT populate outer_region_caches; got {:?}",
+            info.outer_region_caches);
+        assert!(info.nested_region_caches.is_empty(),
+            "ro field must NOT populate nested_region_caches; got {:?}",
+            info.nested_region_caches);
     }
 
     // ─────────────────────────────────────────────────────────────────
