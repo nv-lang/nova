@@ -32578,3 +32578,59 @@ Status: ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
 §11.6 + §12.31 + §8 + §9 closed; Ф.4-Ф.9 (blocking migration, channel
 migration, perf) pending design decision. 4 commits in branch +
 1 merge commit on main (064eeef82ef).
+
+=== CI recovery + accumulated-drift cleanup + 2 codegen bug fixes (2026-06-04..05) ===
+
+Триггер: красный CI на main (nova-doc, contracts-z3, contracts-crosscheck).
+Диагноз: НЕ свежая регрессия от Plan 123 V7.5 — накопленный дрейф от
+смёрженных планов, который CI копил неделями (полный `nova test` в CI не
+гоняется, только contracts/doc/bench/dco).
+
+CI ЗЕЛЁНЫЙ (подтверждено ubuntu-раннерами), 5 коммитов:
+- nova-doc: 14 doc_golden snapshots (D78 module-path + 91.9/124.5/108.x JSON
+  поля) + `let→ro`/`handler→effect` в doc:: юнит-фикстурах (Plan 114/97) +
+  prelude-инъекция в doc-test (Plan 62 file-based prelude; новая
+  run_doc_tests_with_context + resolve_imports_inline_ex) + interp пропускает
+  external fn при load вместо panic (чинит pre-existing Plan 81 баг).
+- contracts-z3: fibers.h:2356 `extern __declspec(thread) int _current_worker_id`
+  без `#ifdef _MSC_VER` guard → на Linux clang без -fdeclspec hard error,
+  ломал ВСЮ Linux-сборку (156 contracts CC-FAIL с 2026-05-28, merge cf00a37fb
+  Plan 83.11). Заменён на аксессор nova_runtime_current_worker_id().
+  Verify: WSL clang 21, -fsyntax-only, 0 declspec errors.
+- contracts-crosscheck: cvc5 install (1.2.0 бинарь на ubuntu-24.04 → 1.3.4;
+  `find | head -1` под pipefail SIGPIPE → `-print -quit`).
+
+Полный `nova test` (Windows release): 191 → 120 FAIL:
+- folder-module spec-drift миграция (52 файла): peer-декларации `folder.file`
+  → `parent.folder` (D29 rev-3 + D78 strict; внутри folder is_folder_module_peer
+  требует согласованного имени). cfg 8/0, modules 30/1, named_params 8/0,
+  plan63/plan81 peer-recur. + internal/ special-case (folder_internal.internal),
+  nested (rule_e_file.sub). НЕ трогал basics/ (независимые single-file) и
+  negative_capability (намеренно malformed).
+
+2 CODEGEN-БАГА (с регрессионными тестами + criteria приёмки):
+- CleanupTimeoutError #no_prelude gate (349c59a898c): emit_c.rs безусловно
+  регистрировал type-id → impl ссылался на Nova_CleanupTimeoutError struct,
+  под #no_prelude необъявлен → CC-FAIL. Гейт по record_schemas.contains_key.
+  Тесты: plan110_9_np/{compiles_ok, prelude_suppressed_neg}. plan110 41/0.
+- chain-cache array element-type (f1cd07b15a9): РЕГРЕССИЯ Plan 123. Field-cache
+  `ro _at_<F>_chain = @a.b.c` не регистрировал array_element_types → Set/HashMap
+  итераторы `_at_map__buckets_chain[i]` → nova_int fallback → slot->tag CC-FAIL.
+  Фикс: fallback compute_array_elem_type_for_obj(&decl.value). set_ops 1/0,
+  plan56 6/0. Тесты: plan123_chain_elem/{p1_set_ops_iter, p2_hashmap_iter}_ok.
+
+Spec/D/Q: новых D-блоков/Q не потребовалось — все фиксы codegen/tooling-
+correctness, соответствуют существующей семантике (D124/D125 no_prelude,
+Plan 123 field-cache, D29/D78 module-paths). Closure-ноты: docs/plans/
+110.9-v1.1-* + 123-followups-2026-06-04.md.
+
+Lessons:
+1. README статус-колонка дрейфует — git merge-история = source of truth.
+2. CI ловит лишь подмножество (contracts/doc); полный `nova test` копит
+   дрейф невидимо. Стоит рассмотреть full-suite job (хотя бы nightly).
+3. Регрессия chain-cache — из того же Plan 123, что и V7.5; «свежий коммит
+   виноват» был неверной гипотезой, CI-лог дал точный declspec-диагноз.
+
+Status: ✅ CI GREEN + 2 codegen-бага закрыты с тестами/criteria. Полный
+suite 191→120 (остаток: concurrency-флаки, str_builder consume-миграция,
+namеренные негативы, отдельные codegen-баги plan59-tuple/plan99-Option).

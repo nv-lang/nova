@@ -32801,3 +32801,38 @@ sleeps + cancel. NOT Plan 83.11 zone.
 
 **Status:** ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
 §11.6 + §12.31 + §8 + §9 closed. Ф.4-Ф.9 pending design decision.
+
+---
+
+## CI recovery + codegen fixes (2026-06-04..05)
+
+Сессия восстановления красного CI + 2 codegen-бага. **Сами фиксы —
+полные, без упрощений** (gate по record_schemas; fallback element-type
+propagation). Ниже — осознанно отложенное и узкие границы.
+
+**Узкие границы (не баги, осознанный scope):**
+- doc-test prelude-инъекция: single-file путь (`cmd_doc`) прокидывает
+  файл-путь; workspace/watch пути прокидывают директорию + soft-fail
+  (ошибка resolve не фатальна → fallback в isolated check). Workspace
+  doc-тесты с prelude-функциями могут не резолвиться — не в CI-джобе.
+- chain-cache element-type fix — fallback срабатывает только когда
+  lookup по C-строке RHS промахнулся И AST-compute даёт Some; не меняет
+  поведение успешных lookup'ов.
+- interp пропускает external fn при load (вместо panic) — вызов такой fn
+  в interp-контексте даст «undefined function» при обращении, а не на
+  загрузке (graceful; print/println/assert обслуживаются интринсиками).
+
+**Отложено (остаток полного `nova test`, 120 FAIL — НЕ CI-gated):**
+- `[M-cleanup]` concurrency RUN-FAIL (~16) — M:N флаки, не детерминизм.
+- `[M-cleanup]` str_builder/types/plan100_6 consume-миграция (~12) —
+  D180/D133: binding `consume sb` + обязательный consume в каждом блоке;
+  per-блок, не механически скриптуемо (попытка скриптом откатана).
+- `[M-cleanup]` negative_capability (~10) — намеренно malformed
+  (cycle/conflict/inconsistent), НЕ чинить.
+- `[M-codegen-plan59-tuple]` nested-tuple mangle (`invalid operands
+  _NovaTuple`), `[M-codegen-plan99-option]` Option/Result-on-int +
+  `Nova_str_method_len` link — отдельные codegen-баги, не тронуты.
+
+**Status:** ✅ CI GREEN + 2 codegen-бага с регрессионными тестами/criteria.
+Closure: docs/plans/110.9-v1.1-* + 123-followups-2026-06-04.md +
+project-creation.txt.
