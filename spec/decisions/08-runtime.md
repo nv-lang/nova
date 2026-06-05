@@ -1106,6 +1106,37 @@ Prelude **документирован**, его содержимое — фик
 не магия. LLM знает, что доступно везде. Всё остальное — явный импорт
 ([07-modules.md → D29](07-modules.md#d29)).
 
+### Plan 128 Ф.3 amend (2026-06-05) — primitives reject `mut @method`
+
+`fn <primitive> mut @method(...)` user-объявления отвергаются с
+**`E_PRIMITIVE_MUT_METHOD`**. Список primitives: `int`, `i8`-`i64`,
+`u8`-`u64`, `f32`, `f64`, `bool`, `char`, `str`, `()`.
+
+```nova
+// ❌ ERROR — E_PRIMITIVE_MUT_METHOD
+fn int mut @increment() => @ + 1     // примитивы pass-by-value, мутация не видна
+fn str mut @upper() => "ABC"          // str — immutable reference type
+fn bool mut @toggle() => not @        // бессмысленно для primitive
+```
+
+**Rationale (Nova-first idiom, Plan 91 §«Принцип»):** примитивы передаются
+by value (D32) — `mut @` receiver не имеет наблюдаемого эффекта (мутация
+происходит в копии). Pure functional pattern — `int.add(other)` returns
+new value, не mutates self. Это symmetric с Rust (`&mut self` on `Copy`
+types — useless), Kotlin (data class copy), Swift (`mutating func` only
+для structs/enums, не Int/Bool).
+
+**Enforcement:** type-checker (`compiler-codegen/src/types/mod.rs::TypeCheckCtx::build`)
+проверяет receiver type против `is_primitive_name(name)` whitelist при
+parser-accepted `mut @method` declaration. `E_PRIMITIVE_MUT_METHOD` diag
+emitted с suggestion «remove `mut`, use immutable receiver + return new value».
+
+**Coverage:** Plan 128 Ф.3 fixtures `nova_tests/plan128/t6_primitive_str_*` /
+`t7_primitive_int_*` / `t8_primitive_bool_*` / `t9_primitive_f64_*`
+(negative regression) + `t10_primitive_ro_method_ok` (positive — ro `@`
+methods on primitives still allowed). См. D215 amend «Method receiver
+passing» (Plan 128 Ф.2) для allowed `mut @` paths (named tuples + value records).
+
 ### Что отвергнуто
 
 - **Никакого prelude, всё через явный import** — шум, не выигрыш.

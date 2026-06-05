@@ -2406,20 +2406,32 @@ weird(n)
 // n == 5 — примитив всегда by value
 ```
 
-**Явная таксономия value vs reference типов (D215 amend, Plan 120):**
+**Явная таксономия value vs reference типов (D215 amend, Plan 120;
+Receiver mut-ABI column added Plan 128 Ф.5, 2026-06-05):**
 
-| Категория | Примеры | Размещение | Передача |
-|---|---|---|---|
-| Примитивы | `int`, `bool`, `f64`, `char`, `u8`, `()` | register/stack | by value (копия) |
-| Tuples (positional или named) | `type X(T1, T2)`, `type Vec3(x f64, ...)` | **stack** | by value (копия) |
-| Records | `type X { ... }` | **managed heap** | by reference (указатель) |
-| Sum types | `type X \| A \| B` | managed heap | by reference |
-| Arrays, strings | `[]T`, `str` | managed heap | by reference |
+| Категория | Примеры | Размещение | Передача | Receiver mut-ABI (`fn T mut @...`) |
+|---|---|---|---|---|
+| Примитивы | `int`, `bool`, `f64`, `char`, `u8`, `()` | register/stack | by value (копия) | **forbidden** — `E_PRIMITIVE_MUT_METHOD` (Plan 128 Ф.3) |
+| Tuples (positional или named) | `type X(T1, T2)`, `type Vec3(x f64, ...)` | **stack** | by value (копия) | `NovaTuple_<X>*` pointer (Plan 128 Ф.2) — `&v`/hoist+`&temp` call-site |
+| Value records | `type X value { ... }` | **stack** | by value (копия) | `NovaValue_<X>*` pointer (D228) — `&v`/hoist+`&temp` call-site |
+| Records | `type X { ... }` | **managed heap** | by reference (указатель) | `Nova_<X>*` pointer (unchanged — already by-reference) |
+| Sum types | `type X \| A \| B` | managed heap | by reference | `Nova_<X>*` pointer |
+| Arrays, strings | `[]T`, `str` | managed heap | by reference | `Nova_<X>*` pointer |
 
 Bracket choice **явно кодирует** size/lifetime semantics: `()` =
 stack, `{}` = heap. Tuple value types (D123): zero GC pressure,
 predictable lifetime — ideal для hot-path math types, FFI returns,
 iterator state.
+
+**Receiver mut-ABI rationale (Plan 128):** value categories (tuples,
+value-records) — by-value normally, **но** `mut @` receiver требует
+pointer чтобы мутации были видны caller'у. Reference categories
+(records, sum-types, arrays, strings) уже passed by pointer — no extra
+ABI flip. Primitives **никогда** mut-method (Nova-first idiom: int.add
+returns new value, не mutates self) — Plan 128 Ф.3 `E_PRIMITIVE_MUT_METHOD`
+diagnostic enforces. Threading: `MethodCallInfo::recv.mutable` flag
+консолидирует решение, propagated через `emit_c.rs::prepare_method_recv`
+(Plan 128 Ф.1).
 
 **Объекты (record / sum-type / массивы) — managed reference.**
 Указатель в managed heap, отслеживаемый GC. В синтаксисе программист
@@ -3869,6 +3881,39 @@ struct NovaTuple_Vec3 {
 Symbol prefix `NovaTuple_<Name>` distinguishes от positional
 `_NovaTuple_<arity>_...` и от records `Nova_<Name>*`. Named tuple
 = **value type** (no pointer in C signature); всегда stack-allocated.
+
+### Method receiver passing (Plan 128 Ф.2, 2026-06-05)
+
+Named tuple `@`-методы получают receiver через ABI-conditional форму:
+
+| Receiver mode | Parameter type | Call-site form |
+|---|---|---|
+| `fn NamedTuple @method(...)` (ro receiver) | `NovaTuple_<Name>` (by value, copy) | `f(v)` — copy semantics |
+| `fn NamedTuple mut @method(...)` (mut receiver) | `NovaTuple_<Name>*` (pointer) | `f(&v)` для identifier; для rvalue — hoist в temp + `&temp` |
+
+**Mutation visibility:** `mut @method` мутирует caller's slot через
+pointer; copies стека не делается. Это symmetric с D228 value-record
+`mut @method` (`NovaValue_X*`).
+
+**Call-site emission (`emit_c.rs::prepare_method_recv`):**
+
+- **Identifier receiver:** emit `&local_var` directly. Var must be `mut`
+  binding (D33 + D215 amend «binding-level mutability»); ro binding +
+  mut @method = `E_BINDING_NOT_MUT` (caught в type-checker).
+- **Rvalue receiver:** hoist в `NovaTuple_<Name> __tmp_recv_<id> = expr;`
+  и pass `&__tmp_recv_<id>`. Мутации в temp видны только внутри
+  expression chain — corresponds к D32 «mutate-by-copy для rvalue» spirit.
+- **Chained `.method()`** на trailing receiver — recurse same rule.
+
+**Symmetric правило с records (D32):** records передаются `Nova_<Name>*`
+unconditionally; named tuples — by-value кроме `mut @` receiver path,
+который промоутится к `NovaTuple_<Name>*`. Это codifies «no pointer in C
+signature **кроме mut receiver**» refinement над D215 original wording.
+
+**Wired через `recv.mutable` flag** (`MethodCallInfo::recv`) — Plan 128
+Ф.1 thread'нул flag через `emit_c.rs` helpers; Ф.2 consume'нул для
+NamedTuple codegen branch. См. также §D228 Ф.4 «Method receiver
+passing» — параллельный pointer pattern для value-records.
 
 ### Use cases (recommended patterns)
 
@@ -9628,7 +9673,9 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
 - **Pass:** copy on parameter pass (D32 amend) — C handles natively
   для value types.
 - **Method receiver `@`:** pointer на stack-slot (`NovaValue_X*`) —
-  мутации видны caller'у.
+  мутации видны caller'у. См. [D215 amend «Method receiver passing»](#d215-named-tuple-fields--valuereference-allocation-contract)
+  (Plan 128 Ф.2) — NamedTuple uses the same pointer pattern (`NovaTuple_X*`
+  для mut receiver), wired через `recv.mutable` flag в `emit_c.rs`.
 - **Reference fields:** handles inline (ptr+len+cap для `[]T`,
   ptr+len для `str`); data on heap (GC-tracked).
 - **Fixed array fields:** fully inline (`[32]u8` = 32 bytes inline).
