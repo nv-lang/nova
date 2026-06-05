@@ -386,6 +386,16 @@ pub struct CEmitter {
     /// (Ф.2). Single-key `method_receivers` остаётся для backward compat —
     /// single-overload пути ссылаются на него.
     method_overloads: HashMap<(String, String), Vec<MethodSig>>,
+    /// Plan 125 followup `[M-125-method-call-never-detection]`: set of
+    /// (receiver_c_type, method_name) pairs OR (`"<free>"`, fn_name) where
+    /// the declared AST return type is `never`. Populated during method/fn
+    /// registration (preamble pre-pass). Queried by `expr_diverges_125` для
+    /// trailing-divergence detection в Plan 125 result-type inference.
+    ///
+    /// Conservative: только AST-level `never` (TypeRef::Named{path:["never"]}).
+    /// НЕ trait'им -> nova_int placeholder для real-int returns. Соответствует
+    /// type-checker-level Ty::Never (Plan 76 bottom-type).
+    never_returning_methods: HashSet<(String, String)>,
     /// Plan 12: builtins.nv-driven external dispatch registry.
     /// Single source of truth для StringBuilder/WriteBuffer/ReadBuffer/
     /// str.from(char) — `std/runtime/builtins.nv`. Codegen читает AST
@@ -940,6 +950,7 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: HashMap::new(),
+            never_returning_methods: HashSet::new(),
             external_registry: super::external_registry::ExternalRegistry::load_builtins()
                 .expect("failed to load std/runtime/*.nv (Plan 13 Ф.8)"),
             embed_fields: HashMap::new(),
@@ -2315,7 +2326,12 @@ impl CEmitter {
                         variadic_last,
                         param_defaults,
                     };
-                    self.method_overloads.entry(key).or_default().push(sig);
+                    self.method_overloads.entry(key.clone()).or_default().push(sig);
+                    // Plan 125 followup [M-125-method-call-never-detection]:
+                    // free-fn `-> never` registry (key.0 = "" for free fns).
+                    if Self::fn_return_is_never_125(f) {
+                        self.never_returning_methods.insert(key);
+                    }
                     continue;
                 }
                 if let Some(recv) = &f.receiver {
@@ -2461,6 +2477,12 @@ impl CEmitter {
                         variadic_last,
                         param_defaults,
                     };
+                    // Plan 125 followup [M-125-method-call-never-detection]:
+                    // instance/static method `-> never` registry. Captures
+                    // both `fn T mut @method() -> never` и `fn T.method() -> never`.
+                    if Self::fn_return_is_never_125(f) {
+                        self.never_returning_methods.insert(key.clone());
+                    }
                     self.method_overloads.entry(key).or_default().push(sig);
                     // D73 v2 auto-derive registry:
                     //   - `T.from(v V)`     → from_targets[T] += V
@@ -15269,6 +15291,20 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// (trailing — известен ty блока), и `emit_if_expr` для `else if`
     /// ветки (известен if_ty).
     fn emit_expr_with_target_type(&mut self, expr: &Expr, target_ty_c: &str) -> Result<String, String> {
+        // Plan 125 followup [M-125-codegen-never-cast]: divergent expressions
+        // (throw / panic / exit / interrupt / user fn -> never / method->never
+        // / recursive composition) emit comma-expr `(side_effect, dummy)` where
+        // legacy dummy = `(nova_int)0LL`. When target_ty_c ≠ nova_int, this
+        // dummy implicit-cast fails в C (e.g. `nova_str result = (call, 0LL);`).
+        //
+        // Solution: post-process emit_expr result, substitute trailing
+        // `(nova_int)0LL` dummy with target-typed zero. Skip if target is
+        // already nova_int (legacy path unchanged) или если expr не diverge'ит.
+        if target_ty_c != "nova_int" && target_ty_c != "nova_unit"
+            && self.expr_diverges_125(expr)
+        {
+            return self.emit_divergent_with_target_125(expr, target_ty_c);
+        }
         // Plan 48: `None` initializer should match target NovaOpt_X type when target is known.
         // Otherwise None falls back to NovaOpt_nova_int (per current_fn_return_ty), which
         // breaks `let mut result NovaOpt_nova_str = None` in mono'd generic bodies.
@@ -21818,10 +21854,10 @@ _cp++; \
     }
 
     /// Plan 125: whitelist-driven divergence detector for expressions in
-    /// trailing position. Whitelist (Ф.1-Ф.4):
+    /// trailing position. Whitelist (Ф.1-Ф.4 + followups):
     ///   - ExprKind::Throw  (Ф.1)
     ///   - ExprKind::Interrupt  (Ф.3)
-    ///   - Call(`panic`|`exit`, ...)  (Ф.2)
+    ///   - Call(`panic`|`exit`|`unreachable`, ...) (Ф.2 + `[M-125-unreachable-builtin]`)
     ///   - Call(user fn whose return type is `never`)  (Ф.3)
     ///   - If/IfLet where both branches diverge  (Ф.4)
     ///   - Match where all arms diverge  (Ф.4)
@@ -21834,21 +21870,65 @@ _cp++; \
             ExprKind::Interrupt(_) => true,
             // Ф.2 + Ф.3: divergent callees.
             ExprKind::Call { func, .. } => {
-                if let ExprKind::Ident(name) = &func.kind {
-                    // Ф.2: prelude panic / exit. Whitelist exact names —
-                    // mirror types/mod.rs expr_diverges (line 10394).
-                    if name == "panic" || name == "exit" {
-                        return true;
+                match &func.kind {
+                    ExprKind::Ident(name) => {
+                        // Ф.2: prelude panic / exit / unreachable. Whitelist
+                        // exact names. `unreachable` added в
+                        // [M-125-unreachable-builtin].
+                        if name == "panic" || name == "exit" || name == "unreachable" {
+                            return true;
+                        }
+                        // Ф.3: user-defined fn -> never (direct call only).
+                        if let Some(fn_decl) = self.mono_fn_decls.get(name) {
+                            if let Some(ret) = &fn_decl.return_type {
+                                if Self::type_ref_is_never_125(ret) {
+                                    return true;
+                                }
+                            }
+                        }
+                        // [M-125-method-call-never-detection]: free-fn -> never
+                        // registry (entries keyed `("", fn_name)`).
+                        if self.never_returning_methods.contains(
+                            &(String::new(), name.clone())
+                        ) {
+                            return true;
+                        }
                     }
-                    // Ф.3: user-defined fn -> never (direct call only —
-                    // NOT method-call, NOT lambda-call; see Plan 125 R5/M5).
-                    if let Some(fn_decl) = self.mono_fn_decls.get(name) {
-                        if let Some(ret) = &fn_decl.return_type {
-                            if Self::type_ref_is_never_125(ret) {
+                    ExprKind::Member { obj, name } => {
+                        // [M-125-method-call-never-detection]: method-call
+                        // `obj.method(args)` where method declares `-> never`.
+                        // Registry key form варьируется: instance methods
+                        // регистрируются под Nova type-name (`"Logger"`), а
+                        // infer_expr_c_type возвращает C-mangled form
+                        // (`"Nova_Logger*"`). Перебираем все шесть вариантов:
+                        // C-form, stripped-pointer, Nova-form (strip `Nova_`
+                        // prefix), плюс fallback — direct ident name для static
+                        // calls `Type.method()`.
+                        let obj_c_ty = self.infer_expr_c_type(obj);
+                        let stripped = obj_c_ty.trim_end_matches('*').to_string();
+                        let nova_form = stripped
+                            .strip_prefix("Nova_")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| stripped.clone());
+                        for candidate in [stripped, nova_form] {
+                            if self.never_returning_methods.contains(
+                                &(candidate, name.clone())
+                            ) {
+                                return true;
+                            }
+                        }
+                        // Static-method form `Type.method()` parsed as
+                        // Member{obj: Ident("Type"), name}. Direct lookup
+                        // by ident — registry already stores Nova type-name.
+                        if let ExprKind::Ident(type_name) = &obj.kind {
+                            if self.never_returning_methods.contains(
+                                &(type_name.clone(), name.clone())
+                            ) {
                                 return true;
                             }
                         }
                     }
+                    _ => {}
                 }
                 false
             }
@@ -21884,6 +21964,85 @@ _cp++; \
     /// keyword, never a user-defined type).
     fn type_ref_is_never_125(ty: &TypeRef) -> bool {
         matches!(ty, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "never")
+    }
+
+    /// Plan 125 followup [M-125-method-call-never-detection]: check if an
+    /// FnDecl's declared return type is `never`. Used during preamble
+    /// registration to populate `never_returning_methods`.
+    fn fn_return_is_never_125(f: &crate::ast::FnDecl) -> bool {
+        f.return_type.as_ref()
+            .map(Self::type_ref_is_never_125)
+            .unwrap_or(false)
+    }
+
+    /// Plan 125 followup [M-125-codegen-never-cast]: emit divergent
+    /// expression in target-typed position. Post-processes the comma-expr
+    /// returned by emit_expr to substitute trailing `(nova_int)0LL` dummy
+    /// with target-typed zero.
+    ///
+    /// Patterns handled (last-suffix anchored):
+    ///   - `, (nova_int)0LL)` — throw/panic/exit/Fail.fail comma-expr trailing
+    ///   - `, NOVA_UNIT)` — interrupt comma-expr (less common)
+    /// Fallback: wrap whole expr in compound `(<expr>, <typed_zero>)`.
+    fn emit_divergent_with_target_125(
+        &mut self,
+        expr: &Expr,
+        target_ty_c: &str,
+    ) -> Result<String, String> {
+        let raw = self.emit_expr(expr)?;
+        let typed_zero = Self::typed_zero_value_125(target_ty_c);
+
+        // Substitute trailing dummy patterns in-place (preserves side-effect
+        // call exactly as emitted, only swaps the value-producing tail).
+        const DUMMY_INT: &str = ", (nova_int)0LL)";
+        const DUMMY_UNIT: &str = ", NOVA_UNIT)";
+        if raw.ends_with(DUMMY_INT) {
+            let head = &raw[..raw.len() - DUMMY_INT.len()];
+            return Ok(format!("{}, {})", head, typed_zero));
+        }
+        if raw.ends_with(DUMMY_UNIT) {
+            let head = &raw[..raw.len() - DUMMY_UNIT.len()];
+            return Ok(format!("{}, {})", head, typed_zero));
+        }
+        // Fallback: rebuild comma-expr explicitly. This still produces
+        // semantically-divergent code — control never reaches the dummy.
+        Ok(format!("(({}), {})", raw, typed_zero))
+    }
+
+    /// Plan 125 followup [M-125-codegen-never-cast]: target-typed zero
+    /// value expression. Used as the unreachable-but-type-correct value of
+    /// a comma-expression wrapping a divergent side-effect.
+    ///
+    /// - Pointers (`Nova_X*`, `NovaArray_X*`): `((T)NULL)`
+    /// - Scalar typed-ints (nova_byte, nova_char, nova_bool, nova_u32,
+    ///   nova_u64, nova_i8, etc.): `((T)0)`
+    /// - Floats (nova_f64, nova_f32, nova_double): `((T)0.0)`
+    /// - `nova_unit`: `NOVA_UNIT` macro
+    /// - Structs (incl. nova_str, NovaOpt_*, tuples, NovaRes_*): C99
+    ///   compound literal `((T){0})` zero-initializing all fields
+    fn typed_zero_value_125(target: &str) -> String {
+        if target.ends_with('*') {
+            return format!("(({})NULL)", target);
+        }
+        if target == "nova_unit" {
+            return "NOVA_UNIT".into();
+        }
+        // Integer types (signed/unsigned).
+        if matches!(
+            target,
+            "nova_int" | "nova_bool" | "nova_byte" | "nova_char"
+            | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
+        ) {
+            return format!("(({})0)", target);
+        }
+        // Float types.
+        if matches!(target, "nova_f32" | "nova_f64" | "nova_double") {
+            return format!("(({})0.0)", target);
+        }
+        // Struct types (nova_str, NovaOpt_*, tuples, NovaRes_*, user types,
+        // sum types). C99 compound literal with all-zero initializer.
+        format!("(({}){{0}})", target)
     }
 
     /// Plan 125 diagnostic env-var `NOVA_DEBUG_IF_INFER=1` — dumps inference

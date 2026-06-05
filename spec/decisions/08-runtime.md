@@ -1018,8 +1018,9 @@ Spread разрешён: `print(...parts)`.
 - **`never` — подтип любого типа** (bottom type ⊥). Любой контекст,
   ожидающий `T`, может принять `never`-выражение.
 - **Используется в типах не-возвращающих выражений** — `throw expr`,
-  `return expr`, `panic(...)`, `exit(...)`, `interrupt expr` (в
-  handler-literal), бесконечный `loop`, прямой вызов `fn -> never`.
+  `return expr`, `panic(...)`, `exit(...)`, `unreachable(reason)`
+  (Plan 125 followup `[M-125-unreachable-builtin]`), `interrupt expr`
+  (в handler-literal), бесконечный `loop`, прямой вызов `fn -> never`.
   Все имеют тип `never`, поэтому совместимы с любым контекстом.
 
 **Result-type inference для ветвящихся выражений (Plan 125, 2026-06-05):**
@@ -1037,9 +1038,12 @@ ro s = if c {
 
 Полный whitelist divergent-выражений в trailing-позиции:
 - `throw expr`, `interrupt expr`
-- `panic(...)`, `exit(code, msg)` — prelude builtin'ы
-- Прямой вызов любой `fn -> never` (NOT method-call — followup
-  `[M-125-method-call-never-detection]`)
+- `panic(...)`, `exit(code, msg)`, `unreachable(reason)` — prelude
+  builtin'ы (`unreachable` добавлен в Plan 125 followup
+  `[M-125-unreachable-builtin]`)
+- Прямой вызов любой `fn -> never`
+- Method-call `expr.method(...)` где method декларирован `-> never`
+  (Plan 125 followup `[M-125-method-call-never-detection]`)
 - Рекурсивно: вложенные `if`/`if let`/`match`/`block`, у которых все
   ветви diverge
 

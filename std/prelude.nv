@@ -56,7 +56,7 @@ export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error}
 // (2026-05-18): print / println добавлены — file-based D69 variadic +
 // `[]any` declarations в canonical D26 form. Codegen special-case
 // сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
-export import std.prelude.runtime.{panic, exit, assert, debug_assert, print, println}
+export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_assert, print, println}
 
 // Plan 91.7 (D180): canonical .new() для primitive types.
 // `int.new() => 0`, `bool.new() => false`, `f64.new() => 0.0`, etc.
