@@ -30,5 +30,7 @@ test "roundtrip empty object" {
     ro orig = JsonValue.object(m)
     ro encoded = orig.into()
     ro decoded = Json.parse(encoded)!!
-    assert(decoded == orig)
+    // Re-encode + string compare (JsonValue без structural ==).
+    ro re_encoded = decoded.into()
+    assert(re_encoded == encoded)
 }

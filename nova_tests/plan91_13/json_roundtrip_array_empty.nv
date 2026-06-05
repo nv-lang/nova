@@ -27,5 +27,8 @@ test "roundtrip empty array" {
     ro orig = JsonValue.array([])
     ro encoded = orig.into()
     ro decoded = Json.parse(encoded)!!
-    assert(decoded == orig)
+    // Re-encode и сравнение через строку — JsonValue не имеет structural `==`
+    // (D46 не покрывает sum-types per json.nv top comment).
+    ro re_encoded = decoded.into()
+    assert(re_encoded == encoded)
 }
