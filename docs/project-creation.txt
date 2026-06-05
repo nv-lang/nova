@@ -33714,3 +33714,33 @@ LESSONS:
 4. Single explicit type prefix bug на single-field record (Marker {})
    — pre-existing codegen issue (treats empty record as scalar).
    Не Plan 126 — fixture p12 использует minimum 1 field.
+
+=== Plan 127 (2026-06-05) — value-record escape + auto-promote closure ===
+Plan 127 (Value-record &v escape analysis + auto-heap-promote) ✅ ЗАКРЫТ V1.
+
+Brief: Ф.1-Ф.7 atomic commits.
+  - Ф.1 (40815f7d960) — AllocKind tri-state {Heap, Value, ValueHeapPromoted}.
+  - Ф.2 (6ce9d2a4698) — escape_analyze walker extension для value-record locals
+    (reuse Plan 118 Ф.2 infrastructure).
+  - Ф.3 (6948d2ba9dc) — emit_c.rs heap-allocation path для ValueHeapPromoted
+    (nova_alloc + heap-init + prepare_method_recv for promoted receivers).
+  - Ф.4 (0a0d7e2cf65) — diagnostics: W_VALUE_RECORD_UNNECESSARY_PROMOTE +
+    E_VALUE_RECORD_ESCAPE_AFTER_CONSUME.
+  - Ф.5 (adb6850e7e0) — 18 fixtures (12 POS + 6 NEG); honest findings logged.
+  - Ф.6 (d218fe8ae6c) — D228 amend §«escape & auto-promote» + cross-ref D216 §4.
+  - Ф.7 (closure) — plan-doc finalize + README + 3 logs.
+
+V1 design: OVER-promote on 5 trigger conditions (return &v, closure capture,
+heap field store, global save, fn-arg sink) — mirrors Plan 118 Ф.2 V1 strategy.
+Precise mode deferred to V2 [M-127-precise-escape].
+
+Numbers: 18/18 fixtures landed; compiler-codegen lib regression baseline-clean;
+Plan 124.8 27/27 preserved.
+
+Plan 126 coordination: synthesized FnDecl (auto-derive) carries lint-suppression
+flag honoured at escape analysis — preserves user-facing diagnostic cleanliness.
+
+Followups (V2/V3): [M-127-precise-escape], [M-127-path-sensitive-escape],
+[M-127-array-element-promote].
+
+Closes [M-124.8-value-heap-promote] from Plan 124.8 V2 followup list.
