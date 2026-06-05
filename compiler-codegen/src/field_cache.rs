@@ -2482,6 +2482,74 @@ fn v2_1_loop_iters_weight() -> usize {
         .filter(|&n| n > 0).unwrap_or(8)
 }
 
+/// Plan 123.2.1 follow-up (dynamic loop count, 2026-06-05): try
+/// to extract literal iteration count from a for-loop's `iter` expr.
+///
+/// Returns `Some(N)` if iter has known literal bounds:
+/// - `range(N)` (single literal arg) — `Some(N)` if N > 0.
+/// - `range(lo, hi)` (two literal args, hi > lo) — `Some(hi − lo)`.
+/// - `lo..hi` (exclusive Range expr с literal bounds) — `Some(hi − lo)`.
+/// - `lo..=hi` (inclusive Range) — `Some(hi − lo + 1)`.
+///
+/// Returns `None` otherwise — caller falls back к env default
+/// `v2_1_loop_iters_weight()` (default 8). Closes
+/// `[M-123.2.1-dynamic-loop-count]`.
+fn parse_loop_iter_count(iter: &Expr) -> Option<usize> {
+    // Pattern: `range(N)` or `range(lo, hi)` — Call with Ident("range").
+    if let ExprKind::Call { func, args, .. } = &iter.kind {
+        if let ExprKind::Ident(name) = &func.kind {
+            if name == "range" {
+                let mut int_args: Vec<i64> = Vec::with_capacity(2);
+                for arg in args {
+                    if let CallArg::Item(e) = arg {
+                        if let ExprKind::IntLit(n) = &e.kind {
+                            int_args.push(*n);
+                            continue;
+                        }
+                    }
+                    return None; // non-literal arg — bail out
+                }
+                match int_args.len() {
+                    1 => {
+                        let n = int_args[0];
+                        if n > 0 {
+                            return Some(n as usize);
+                        }
+                    }
+                    2 => {
+                        let (lo, hi) = (int_args[0], int_args[1]);
+                        if hi > lo {
+                            return Some((hi - lo) as usize);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // Pattern: range expr `lo..hi` (exclusive) или `lo..=hi` (inclusive).
+    if let ExprKind::Range { start: Some(s), end: Some(e), inclusive } = &iter.kind {
+        if let (ExprKind::IntLit(lo), ExprKind::IntLit(hi)) = (&s.kind, &e.kind) {
+            if *hi > *lo {
+                let span_raw = (hi - lo) as usize;
+                return Some(if *inclusive { span_raw + 1 } else { span_raw });
+            }
+            // Inclusive-empty edge: `lo..=lo` → single iter.
+            if *inclusive && hi == lo {
+                return Some(1);
+            }
+        }
+    }
+    None
+}
+
+/// Plan 123.2.1 follow-up: pick the iter-weight для a specific loop's
+/// `iter` expression. Returns parsed literal bound IF available,
+/// else falls back к env-tunable default.
+fn loop_iter_weight_for(iter: &Expr) -> usize {
+    parse_loop_iter_count(iter).unwrap_or_else(v2_1_loop_iters_weight)
+}
+
 /// Plan 123.2.1 (V2.1): loop-weighted read counter. When the recursion
 /// enters a loop body (while/for/loop/while-let/parallel-for), multiplies
 /// the running `loop_mult` factor. Otherwise behaves identically к
@@ -2538,10 +2606,15 @@ fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -
             }
         }
         // V2.1: entering a loop body multiplies the weight.
+        // V2.1 follow-up (dynamic loop count, 2026-06-05): for `for x
+        // in range(N) { ... }` use parsed literal N instead of env
+        // default; non-literal iter falls back к env default. Closes
+        // `[M-123.2.1-dynamic-loop-count]`.
         ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
             c += count_field_reads_in_expr_weighted(iter, fname, loop_mult);
+            let iter_weight = loop_iter_weight_for(iter);
             c += count_field_reads_in_block_weighted(body, fname,
-                loop_mult.saturating_mul(v2_1_loop_iters_weight()));
+                loop_mult.saturating_mul(iter_weight));
         }
         ExprKind::While { cond, body, .. } => {
             c += count_field_reads_in_expr_weighted(cond, fname, loop_mult);
@@ -10262,6 +10335,218 @@ fn C mut @do(n int, m int) -> int {
         assert!(covered,
             "V2.1: nested loop body should compound weight \
              (top-level `_at_x` OR LICM `_at_x_loop`); got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.2.1 follow-up (dynamic loop count, 2026-06-05): parse
+    // range(N) literal bounds. Closes [M-123.2.1-dynamic-loop-count].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Helper для building Range expression in tests.
+    fn int_lit(n: i64) -> Expr {
+        Expr {
+            kind: ExprKind::IntLit(n),
+            span: crate::diag::Span::default(),
+        }
+    }
+
+    /// V2.1-dyn.1: `range(N)` literal single-arg returns Some(N).
+    #[test]
+    fn v2_1_dyn_parse_range_single_arg() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(int_lit(42))],
+                trailing: None,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(42));
+    }
+
+    /// V2.1-dyn.2: `range(lo, hi)` literal two-arg returns Some(hi-lo).
+    #[test]
+    fn v2_1_dyn_parse_range_two_arg() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(int_lit(3)), CallArg::Item(int_lit(20))],
+                trailing: None,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(17));
+    }
+
+    /// V2.1-dyn.3: `range(non_literal_x)` returns None (fallback к env).
+    #[test]
+    fn v2_1_dyn_parse_range_non_literal_none() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(Expr {
+                    kind: ExprKind::Ident("x".to_string()),
+                    span,
+                })],
+                trailing: None,
+            },
+            span,
+        };
+        assert!(parse_loop_iter_count(&iter).is_none());
+    }
+
+    /// V2.1-dyn.4: `range(0)` returns None (0 iter doesn't promote).
+    #[test]
+    fn v2_1_dyn_parse_range_zero_none() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(int_lit(0))],
+                trailing: None,
+            },
+            span,
+        };
+        assert!(parse_loop_iter_count(&iter).is_none());
+    }
+
+    /// V2.1-dyn.5: Range expr `lo..hi` exclusive returns Some(hi-lo).
+    #[test]
+    fn v2_1_dyn_parse_range_expr_exclusive() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Range {
+                start: Some(Box::new(int_lit(5))),
+                end: Some(Box::new(int_lit(50))),
+                inclusive: false,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(45));
+    }
+
+    /// V2.1-dyn.6: Range expr `lo..=hi` inclusive returns Some(hi-lo+1).
+    #[test]
+    fn v2_1_dyn_parse_range_expr_inclusive() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Range {
+                start: Some(Box::new(int_lit(5))),
+                end: Some(Box::new(int_lit(50))),
+                inclusive: true,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(46));
+    }
+
+    /// V2.1-dyn.7: `lo..=lo` inclusive single iter returns Some(1).
+    #[test]
+    fn v2_1_dyn_parse_range_expr_inclusive_single() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Range {
+                start: Some(Box::new(int_lit(7))),
+                end: Some(Box::new(int_lit(7))),
+                inclusive: true,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(1));
+    }
+
+    /// V2.1-dyn.8: not range — returns None.
+    #[test]
+    fn v2_1_dyn_parse_non_range_none() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Ident("items".to_string()),
+            span,
+        };
+        assert!(parse_loop_iter_count(&iter).is_none());
+    }
+
+    /// V2.1-dyn.9: integration — `for i in 0..100 { @y }` produces
+    /// dramatically higher weighted read count than env default (8).
+    /// Verifies that parse_loop_iter_count is actually consulted by
+    /// the weighted scanner.
+    ///
+    /// Uses Range expr `0..100` instead of `range(100)` Call to avoid
+    /// the barrier-from-Call effect in V1's V1.1 region scanner (any
+    /// Call в iter expr closes the current region). Both syntactic
+    /// forms exercise `parse_loop_iter_count`.
+    #[test]
+    fn v2_1_dyn_for_range_100_promotes_top_cache() {
+        let src = r#"
+module testmod.v2_1_dyn_range100
+type C { mut y int }
+fn C mut @do() -> int {
+    mut acc = 0
+    for i in 0..100 {
+        acc = acc + @y
+    }
+    acc
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 50, // env weight 8 below; 0..100 literal above.
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // Either V1.1 top-level OR LICM hoist accepted (same semantic
+        // coverage — see v2_1_nested_loops_compound_multiplier).
+        let covered = names.iter().any(|n| n == "_at_y")
+            || names.iter().any(|n| n == "_at_y_loop");
+        assert!(covered,
+            "0..100 Range literal must promote top-level cache or LICM \
+             hoist; got {:?}", names);
+    }
+
+    /// V2.1-dyn.10: negative integration — `for i in 0..3 { @y }`
+    /// with threshold=50 does NOT promote (3 < 50). Verifies that
+    /// small range literals don't over-promote.
+    #[test]
+    fn v2_1_dyn_for_range_3_no_promote() {
+        let src = r#"
+module testmod.v2_1_dyn_range3
+type C { mut y int }
+fn C mut @do() -> int {
+    mut acc = 0
+    for i in 0..3 {
+        acc = acc + @y
+    }
+    acc
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 50,
+            // Disable LICM to isolate V1.1 cache decision.
+            licm_threshold: 1000,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(!names.iter().any(|n| n == "_at_y"),
+            "0..3 below threshold=50 must NOT promote top-level cache; \
+             got {:?}", names);
     }
 
     /// Plan 123.2.1 follow-up (V2.1 LICM integration, 2026-06-05):
