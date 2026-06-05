@@ -7920,6 +7920,40 @@ Cancel остаётся pending в `fiber->cancel_pending`; доставляет
 suspend получает `CleanupTimeoutError`, дальше propagates через D161
 composition.
 
+**R3a amend (2026-06-05) [M-110.x-cleanup-shield-deadline-underflow]
+codegen-layout invariant fix (supervised(cancel:) path):**
+
+Cancel-shield state — `_nova_cancel_mask_count` + `_nova_cancel_deadline_ns`
+fields — lives в `NovaSpawnCtxBase` (runtime fibers.h). Codegen-emitted
+per-fiber `NovaSpawnCtx_<id>` (spawn) и `NovaDetachCtx_<id>` (detach)
+структуры **MUST** включать ВСЕ base fields в правильном порядке (включая
+позже добавленные `_nova_pool_size` (Plan 83.6), `_nova_cancel_mask_count`
+(Plan 110.2.1.a), `_nova_cancel_deadline_ns` (Plan 110.2.2.a)).
+
+**Why:** runtime cast'ает `mco_get_user_data(co) → NovaSpawnCtxBase*` и
+читает поля по фиксированному offset. Если codegen struct emit'ит ТОЛЬКО
+первые N полей, allocation размер = `sizeof(codegen_ctx) < sizeof(NovaSpawnCtxBase)`.
+Runtime читает за пределами allocation → Boehm GC adjacent memory bytes
+(garbage) → mask=garbage > 0 → `nv_shield_check_deadline` enters slow path
+→ deadline=garbage → throws bogus `CleanupTimeoutError` с inflated
+over_ms (`720M+ ms over budget` в 6-second tests — i64 underflow symptom).
+
+**Pre-fix bug history:** codegen comment на `emit_c.rs:6253` явно
+утверждал «`_nova_fiber_state` MUST be last in NovaSpawnCtxBase prefix» —
+stale assertion. Runtime добавил `_nova_pool_size` (Plan 83.6) +
+`_nova_cancel_mask_count` + `_nova_cancel_deadline_ns` (Plan 110.2),
+codegen не обновился. Layout mismatch latent до supervised(cancel:) +
+sleep + cancel pattern — там fiber yields в check_deadline под обычным
+обстоятельством, реально читая garbage.
+
+**Acceptance invariant:** sizeof(codegen NovaSpawnCtx_<id>) >=
+sizeof(NovaSpawnCtxBase). Test enforcement (TODO Plan 110 V2):
+runtime-side static_assert + codegen sanity check.
+
+**Cross-references:** [D196](#d196) R4 (consume{} prev_deadline
+save/restore — different bug); [D196](#d196) R4b (on_exit exception
+safety — different bug); [Plan 110 plan-doc](../../docs/plans/110-scoped-resources-radical-simplification.md).
+
 #### R4 — Timeout resolution at scope-entry
 
 `exit_timeout` определяется **один раз** при scope-entry через 3-level
