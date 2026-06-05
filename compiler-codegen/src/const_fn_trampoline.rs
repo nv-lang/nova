@@ -662,7 +662,7 @@ impl<'a> CollectCtx<'a> {
                 if let Some(v) = &f.value { self.visit_expr(v); }
             },
             ExprKind::InterpolatedStr { parts } => for p in parts {
-                if let crate::ast::InterpStrPart::Expr(ex) = p { self.visit_expr(ex); }
+                if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p { self.visit_expr(ex); }
             },
             ExprKind::If { cond, then, else_ } => {
                 self.visit_expr(cond);
@@ -1785,7 +1785,7 @@ impl<'a> RewriteCtx<'a> {
                 FnBody::External => {}
             },
             ExprKind::InterpolatedStr { parts } => for p in parts {
-                if let crate::ast::InterpStrPart::Expr(ex) = p { self.rewrite_expr(ex); }
+                if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p { self.rewrite_expr(ex); }
             },
             ExprKind::Spawn(b) => self.rewrite_expr(b),
             ExprKind::Supervised { body, .. } => self.rewrite_block(body),

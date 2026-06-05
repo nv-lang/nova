@@ -311,7 +311,7 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts.iter_mut() {
-                if let InterpStrPart::Expr(x) = p { normalize_expr(x, sigs); }
+                if let InterpStrPart::Expr { expr: x, spec: _ } = p { normalize_expr(x, sigs); }
             }
         }
         ExprKind::TaggedTemplate { args, .. } => {

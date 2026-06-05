@@ -1105,7 +1105,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let crate::ast::InterpStrPart::Expr(e) = p {
+                if let crate::ast::InterpStrPart::Expr { expr: e, spec: _ } = p {
                     collect_expr(e, out);
                 }
             }
@@ -1960,7 +1960,7 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let crate::ast::InterpStrPart::Expr(x) = p { walk_expr_lints(x, out); }
+                if let crate::ast::InterpStrPart::Expr { expr: x, spec: _ } = p { walk_expr_lints(x, out); }
             }
         }
         ExprKind::TaggedTemplate { args, .. } => {

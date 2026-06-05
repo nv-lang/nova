@@ -9093,7 +9093,10 @@ impl Parser {
             .into_iter()
             .map(|p| match p {
                 InterpPart::Lit(s) => InterpStrPart::Lit(s),
-                InterpPart::Expr(e) => InterpStrPart::Expr(Box::new(e)),
+                InterpPart::Expr(e) => InterpStrPart::Expr {
+                    expr: Box::new(e),
+                    spec: crate::ast::FormatSpec::None,
+                },
             })
             .collect();
         Ok(Expr::new(

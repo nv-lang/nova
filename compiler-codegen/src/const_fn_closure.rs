@@ -843,7 +843,7 @@ fn subst_expr(e: &mut Expr, subst: &HashMap<String, ConstValue>) {
             if let Some(v) = &mut f.value { subst_expr(v, subst); }
         },
         ExprKind::InterpolatedStr { parts } => for p in parts {
-            if let crate::ast::InterpStrPart::Expr(ex) = p { subst_expr(ex, subst); }
+            if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p { subst_expr(ex, subst); }
         },
         ExprKind::If { cond, then, else_ } => {
             subst_expr(cond, subst);

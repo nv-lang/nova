@@ -22249,7 +22249,7 @@ _cp++; \
         for p in parts {
             match p {
                 InterpStrPart::Lit(s) => estimate += s.len(),
-                InterpStrPart::Expr(_) => estimate += 16,
+                InterpStrPart::Expr { expr: _, spec: _ } => estimate += 16,
             }
         }
         let sb = self.fresh_tmp_named("interp_sb");
@@ -22271,7 +22271,7 @@ _cp++; \
                         sb, escaped, s.len()
                     ));
                 }
-                InterpStrPart::Expr(e) => {
+                InterpStrPart::Expr { expr: e, spec: _ } => {
                     let arg_ty = self.infer_expr_c_type(e);
                     // CharLit detection — char хранится как nova_int,
                     // но семантика char→str = UTF-8 encode codepoint, а не печать числа.

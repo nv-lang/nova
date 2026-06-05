@@ -3610,7 +3610,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let InterpStrPart::Expr(e) = p {
+                    if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                         self.walk_expr(e, gs, errors);
                     }
                 }
@@ -4063,7 +4063,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let InterpStrPart::Expr(e) = p {
+                    if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                         self.f1_expr(e, gs, scope, errors);
                     }
                 }
@@ -6598,7 +6598,7 @@ impl<'a> BoundCtx<'a> {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let InterpStrPart::Expr(e) = p {
+                    if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                         self.walk_expr(e, scope, errors);
                     }
                 }
@@ -7981,7 +7981,7 @@ impl<'a> CapabilityCtx<'a> {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let InterpStrPart::Expr(e) = p {
+                    if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                         self.walk_expr(e, state, errors);
                     }
                 }
@@ -8826,7 +8826,7 @@ impl NameResCtx {
 
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let InterpStrPart::Expr(e) = p {
+                    if let InterpStrPart::Expr { expr: e, spec: _ } = p {
                         self.walk_expr(e, file_id, scope, errors);
                     }
                 }
@@ -10529,7 +10529,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         // Interpolated string вЂ” recurse РІ РµС‘ parts (РјРѕРіСѓС‚ СЃРѕРґРµСЂР¶Р°С‚СЊ expressions).
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e2) = p {
+                if let InterpStrPart::Expr { expr: e2, spec: _ } = p {
                     walk_expr_for_handler_lits(e2, never_ops, errors);
                 }
             }
@@ -13180,7 +13180,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         // ─── Интерполированная строка `"... ${expr} ..."` ───
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(ex) = p {
+                if let InterpStrPart::Expr { expr: ex, spec: _ } = p {
                     consume_walk_expr(ctx, ex, errors);
                 }
             }
@@ -15527,7 +15527,7 @@ impl MapLitCtx {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let crate::ast::InterpStrPart::Expr(x) = p {
+                    if let crate::ast::InterpStrPart::Expr { expr: x, spec: _ } = p {
                         self.walk_expr(x, None, errors);
                     }
                 }
@@ -16476,7 +16476,7 @@ impl MapLitAnnotator {
             }
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts.iter_mut() {
-                    if let crate::ast::InterpStrPart::Expr(x) = p {
+                    if let crate::ast::InterpStrPart::Expr { expr: x, spec: _ } = p {
                         self.walk_expr(x, None);
                     }
                 }
@@ -17270,7 +17270,7 @@ impl UnsafeCtx {
             // через `.to_debug_str()` (unsafe context — A27).
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let crate::ast::InterpStrPart::Expr(ex) = p {
+                    if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p {
                         if self.expr_is_typed_pointer(ex) {
                             errors.push(Diagnostic::new(
                                 "[E_PTR_NO_DISPLAY_USE_DEBUG_STR] typed pointer \

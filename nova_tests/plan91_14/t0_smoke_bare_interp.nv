@@ -1,0 +1,8 @@
+// Plan 91.14 Ф.1 smoke — bare ${expr} still works after AST extension.
+module plan91_14.t0_smoke_bare_interp
+
+test "bare interp still works post-Ф.1" {
+    ro x = 42
+    ro s = "x is ${x}"
+    assert(s == "x is 42")
+}
