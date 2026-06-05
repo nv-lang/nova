@@ -260,6 +260,28 @@ struct FieldRegistry {
     /// slot. Cache of `@F` survives such calls. Closes
     /// `[M-123.7.5-same-field-ref-type]`.
     ref_typed: HashSet<(String, String)>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): set
+    /// of (field_owner_type, field_name) → leaf name of field's
+    /// declared TypeRef. Used by V7.6 method-realloc check к look up
+    /// F's actual type when analyzing `@F.method()` call в outer fn.
+    field_type_leaf: HashMap<(String, String), String>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): set
+    /// of (type_name, method_name) pairs where the method is presumed
+    /// к **fully replace** the receiver slot bits (overwrite ALL fields)
+    /// rather than mutating in-place. Cache of `@F` MUST invalidate
+    /// across `@F.method()` if (F_type, method) ∈ replaces_self_methods.
+    ///
+    /// **V1 detection heuristic** (2026-06-05): method has `mut`
+    /// receiver AND takes ≥ 1 non-self param whose declared type's
+    /// leaf name matches the receiver type. Captures the canonical
+    /// `fn X mut @replace(other X) -> ()` swap pattern. False positives
+    /// (e.g., `fn Bldr @merge(other Bldr)` that appends instead of
+    /// replacing) result в conservative cache invalidation — sound but
+    /// slightly less precise than ideal. V2 will add user-tagged
+    /// `#realloc` attr support per spec §V7.6.
+    ///
+    /// Closes `[M-123.7.6-method-realloc-flag]`.
+    replaces_self_methods: HashSet<(String, String)>,
 }
 
 /// Plan 123.7.6.2 (V7.6 refactor, 2026-06-05): TypeDecl-classification
@@ -1946,7 +1968,7 @@ fn licm_fn_with_ipa(
         Some(rt) => rt,
         None => { licm_fn_impl(f, reg, cfg, None); return; }
     };
-    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     licm_fn_impl(f, reg, cfg, Some(ipa))
 }
 
@@ -1962,7 +1984,7 @@ fn pure_cache_fn_with_ipa(
         Some(rt) => rt,
         None => { pure_cache_fn_impl(f, reg, pure_methods, cfg, None); return; }
     };
-    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     pure_cache_fn_impl(f, reg, pure_methods, cfg, Some(ipa))
 }
 
@@ -1977,7 +1999,7 @@ fn chain_cache_fn_with_ipa(
         Some(rt) => rt,
         None => { chain_cache_fn_impl(f, reg, cfg, None); return; }
     };
-    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     chain_cache_fn_impl(f, reg, cfg, Some(ipa))
 }
 
@@ -2012,6 +2034,17 @@ pub(crate) struct IpaCtx<'a> {
     /// reference-typed fields' caches survive `@F.method()` calls
     /// because methods mutate the referenced object, не the slot.
     pub ref_typed: &'a HashSet<(String, String)>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): set
+    /// of methods that fully replace receiver slot bits. Refines V7.6
+    /// own-field cache survival check — if `@F.method()` is in this
+    /// set, cache MUST invalidate even though F is ref-typed.
+    /// Closes `[M-123.7.6-method-realloc-flag]`.
+    pub replaces_self_methods: &'a HashSet<(String, String)>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05):
+    /// (recv_type, field_name) → leaf name of field's declared
+    /// TypeRef. Used to resolve the field-owner's TypeDecl name when
+    /// looking up replaces_self_methods at `@F.method()` call sites.
+    pub field_type_leaf: &'a HashMap<(String, String), String>,
 }
 
 impl<'a> IpaCtx<'a> {
@@ -2031,6 +2064,26 @@ impl<'a> IpaCtx<'a> {
     /// `fname == F` — V7.5's conservative own-field invalidate relaxed.
     pub(crate) fn is_field_ref_type(&self, fname: &str) -> bool {
         self.ref_typed.contains(&(self.recv_type.to_string(), fname.to_string()))
+    }
+
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05):
+    /// true если `method_name` on field F's declared type is a
+    /// presumed-replaces-self method (e.g., `replace(other Self)`).
+    /// Lookup: `fname` → leaf type of F via `field_type_leaf` →
+    /// (leaf, method_name) lookup в `replaces_self_methods`.
+    ///
+    /// Used by V7.5/V7.7 own-field invalidation refinement: even if
+    /// F is ref-typed (cache survives in-place mutators), calling
+    /// `@F.replace(...)` MUST invalidate because field's slot bits
+    /// get overwritten. Closes `[M-123.7.6-method-realloc-flag]`.
+    pub(crate) fn is_replaces_self_call(&self, fname: &str, method_name: &str) -> bool {
+        let Some(f_leaf) = self.field_type_leaf.get(
+            &(self.recv_type.to_string(), fname.to_string())) else {
+            // Unknown field type leaf — conservative: not replaces-self.
+            return false;
+        };
+        self.replaces_self_methods.contains(
+            &(f_leaf.clone(), method_name.to_string()))
     }
 }
 
@@ -2052,7 +2105,7 @@ fn cache_fn_ipa(
         return;
     };
     let recv_type = recv.type_name.clone();
-    let ipa = IpaCtx { write_sets, recv_type: &recv_type, read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: &recv_type, read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     cache_fn_with_ipa(f, reg, cfg, Some(ipa));
 }
 
@@ -2095,7 +2148,64 @@ fn build_registry(module: &Module) -> FieldRegistry {
     for pf in &module.peer_files {
         register_items(&pf.items_here, &mut reg, &type_kinds);
     }
+    // Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): second
+    // pass to detect methods that fully replace receiver slot.
+    // Heuristic: `mut`-receiver method taking ≥ 1 non-self param of
+    // receiver type. Closes `[M-123.7.6-method-realloc-flag]`.
+    detect_replaces_self_methods(&module.items, &mut reg);
+    for pf in &module.peer_files {
+        detect_replaces_self_methods(&pf.items_here, &mut reg);
+    }
     reg
+}
+
+/// Plan 123.7.6 follow-up (2026-06-05): extract leaf name from a
+/// `TypeRef` для `field_type_leaf` registry. Returns None for
+/// FixedArray / Func / Protocol / Tuple / Unit / Range / Pointer etc.
+/// where there is no single named type leaf to attribute method calls.
+fn type_ref_leaf_name(t: &TypeRef) -> Option<String> {
+    match t {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _) => type_ref_leaf_name(inner),
+        _ => None,
+    }
+}
+
+/// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): detect
+/// methods that presumably fully replace receiver slot via parameter
+/// type heuristic. Adds (TypeName, MethodName) к
+/// `reg.replaces_self_methods` for each detected case.
+///
+/// Heuristic: method has `mut` receiver (kind = Instance) AND has at
+/// least one non-self parameter whose declared type's leaf name
+/// matches the receiver type. This captures the canonical replace
+/// pattern `fn X mut @replace(other X) -> ()` while excluding
+/// `fn X mut @push(item u8)`, `fn X mut @write_byte(v u8)`, etc.
+///
+/// False positives example: `fn Bldr mut @merge(other Bldr) -> @`
+/// (appends `other` instead of replacing) — marked as replaces_self,
+/// resulting в conservative cache invalidation. Sound but slightly
+/// less precise; V2 follow-up will add `#realloc` attr для overrides.
+fn detect_replaces_self_methods(items: &[Item], reg: &mut FieldRegistry) {
+    for item in items {
+        if let Item::Fn(f) = item {
+            let Some(recv) = &f.receiver else { continue };
+            if recv.kind != ReceiverKind::Instance { continue };
+            if !recv.mutable { continue };
+            let recv_type = &recv.type_name;
+            for p in &f.params {
+                if let Some(leaf) = type_ref_leaf_name(&p.ty) {
+                    if &leaf == recv_type {
+                        reg.replaces_self_methods.insert(
+                            (recv_type.clone(), f.name.clone()));
+                        break; // one match suffices
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn register_items(items: &[Item], reg: &mut FieldRegistry, type_kinds: &TypeKindRegistry) {
@@ -2123,6 +2233,13 @@ fn register_items(items: &[Item], reg: &mut FieldRegistry, type_kinds: &TypeKind
                         // generic wrappers via registry lookup.
                         if is_reference_type_ref(&f.ty, type_kinds) {
                             reg.ref_typed.insert((t.name.clone(), f.name.clone()));
+                        }
+                        // Plan 123.7.6 follow-up (method-realloc-flag,
+                        // 2026-06-05): record field's declared type leaf
+                        // для later replaces-self lookup at call sites.
+                        if let Some(leaf) = type_ref_leaf_name(&f.ty) {
+                            reg.field_type_leaf.insert(
+                                (t.name.clone(), f.name.clone()), leaf);
                         }
                     }
                     reg.by_type.insert(t.name.clone(), map);
@@ -2979,30 +3096,37 @@ fn expr_contains_invalidating_call_for(
                         // Plan 123.7.5 (V7.5): `@F.method()` sibling-safe.
                         // Plan 123.7.6 (V7.6, 2026-06-04): same-field
                         // refinement — when `fname == F` AND F is a
-                        // reference-type field (Array/Pointer/Map/String/
-                        // etc.), `@F.method()` mutates the referenced
-                        // object не the field's slot — `@F` cache survives.
-                        // Closes `[M-123.7.5-same-field-ref-type]`.
+                        // reference-type field, `@F.method()` mutates
+                        // the referenced object не the field's slot.
+                        // Plan 123.7.6 follow-up (method-realloc-flag,
+                        // 2026-06-05): EXCEPT when method ∈
+                        // replaces_self_methods (e.g., `@F.replace(other)`)
+                        // — those overwrite slot bits, must invalidate.
                         if fname == recv_field {
-                            if ctx.is_field_ref_type(fname) {
-                                false // V7.6: ref-type own cache safe
+                            if ctx.is_field_ref_type(fname)
+                                && !ctx.is_replaces_self_call(fname, m)
+                            {
+                                false // V7.6 + V7.6-realloc: ref-type
+                                      // + in-place method ⇒ cache safe
                             } else {
-                                true // value-type own cache: conservative
+                                true // value-type OR replaces-self ⇒ invalidate
                             }
                         } else {
                             false // V7.5 sibling refinement
                         }
                     } else if let Some(chain) = call_recv_self_chain(obj) {
                         // Plan 123.7.7 (V7.7): chain receiver sibling-safe.
-                        // Plan 123.7.6 (V7.6): chain root refinement —
-                        // when `fname == chain[0]` AND root field is
-                        // reference-typed, chain root cache survives.
-                        // Closes `[M-123.7.5-chain-receiver]`.
+                        // Plan 123.7.6 (V7.6) + realloc follow-up: chain
+                        // root refinement — when `fname == chain[0]` AND
+                        // root field is ref-typed AND method NOT в
+                        // replaces_self set, chain root cache survives.
                         if chain.first().map(|s| s.as_str()) == Some(fname) {
-                            if ctx.is_field_ref_type(fname) {
+                            if ctx.is_field_ref_type(fname)
+                                && !ctx.is_replaces_self_call(fname, m)
+                            {
                                 false // V7.6: ref-type chain root safe
                             } else {
-                                true // value-type chain root: conservative
+                                true // value-type OR replaces-self ⇒ invalidate
                             }
                         } else {
                             false // V7.7 sibling-safe
@@ -10335,6 +10459,131 @@ fn C mut @do(n int, m int) -> int {
         assert!(covered,
             "V2.1: nested loop body should compound weight \
              (top-level `_at_x` OR LICM `_at_x_loop`); got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05):
+    // detect methods that fully replace receiver slot. Closes
+    // [M-123.7.6-method-realloc-flag].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V7.6-realloc.1: `fn X mut @replace(other X)` registered as
+    /// replaces_self.
+    #[test]
+    fn v7_6_realloc_replace_method_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_replace
+type Slot { x int }
+fn Slot mut @replace(other Slot) -> () { @x = other.x }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(reg.replaces_self_methods.contains(
+            &("Slot".to_string(), "replace".to_string())),
+            "fn Slot mut @replace(other Slot) must be detected; got {:?}",
+            reg.replaces_self_methods);
+    }
+
+    /// V7.6-realloc.2: `fn X mut @push(item u8)` NOT registered (item
+    /// is not X-typed).
+    #[test]
+    fn v7_6_realloc_push_method_not_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_push
+type Bldr { mut buf []u8 }
+fn Bldr mut @push(item u8) -> () { @buf.push(item) }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(!reg.replaces_self_methods.contains(
+            &("Bldr".to_string(), "push".to_string())),
+            "fn Bldr mut @push(item u8) must NOT be detected as replaces_self; got {:?}",
+            reg.replaces_self_methods);
+    }
+
+    /// V7.6-realloc.3: ro receiver method NOT detected even with Self
+    /// param.
+    #[test]
+    fn v7_6_realloc_ro_receiver_not_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_ro
+type V { x int }
+fn V @combine(other V) -> int => @x + other.x
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(!reg.replaces_self_methods.contains(
+            &("V".to_string(), "combine".to_string())),
+            "ro receiver method must NOT be replaces_self");
+    }
+
+    /// V7.6-realloc.4: no params NOT detected (replaces_self needs ≥1
+    /// Self-typed param).
+    #[test]
+    fn v7_6_realloc_no_params_not_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_noparams
+type V { mut x int }
+fn V mut @clear() -> () { @x = 0 }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(!reg.replaces_self_methods.contains(
+            &("V".to_string(), "clear".to_string())),
+            "no-param mut method must NOT be replaces_self");
+    }
+
+    /// V7.6-realloc.5: `ro Self` param wrapper also detected (peeled).
+    #[test]
+    fn v7_6_realloc_ro_self_param_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_ro_param
+type Slot { x int }
+fn Slot mut @copy_from(ro other Slot) -> () { @x = other.x }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(reg.replaces_self_methods.contains(
+            &("Slot".to_string(), "copy_from".to_string())),
+            "ro Self-typed param must be detected via type_ref_leaf_name");
+    }
+
+    /// V7.6-realloc.6: integration — ref-typed field with replaces_self
+    /// call MUST invalidate cache (V7.6 default would've kept it).
+    #[test]
+    fn v7_6_realloc_integration_replace_invalidates_cache() {
+        // Outer fn в `Outer` calls `@b.replace(...)` where `b` is a
+        // `Bldr` field. Bldr has `replace(other Bldr)` (detected as
+        // replaces_self). Cache of @b across the @b.replace() must
+        // invalidate even though Bldr (heap-record) is ref-typed.
+        let src = r#"
+module testmod.v7_6_realloc_integration
+type Bldr { mut count int }
+fn Bldr mut @replace(other Bldr) -> () { @count = other.count }
+type Outer { mut b Bldr }
+fn Outer mut @do(other Bldr) -> () {
+    ro a = @b
+    @b.replace(other)
+    ro c = @b
+    ro _ = a
+    ro _ = c
+}
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        // Confirm Bldr.replace registered.
+        assert!(reg.replaces_self_methods.contains(
+            &("Bldr".to_string(), "replace".to_string())),
+            "Bldr.replace must be в replaces_self set");
+        // Confirm Outer.b classified as ref-typed (Bldr is heap-record).
+        assert!(reg.ref_typed.contains(
+            &("Outer".to_string(), "b".to_string())),
+            "Outer.b must be ref-typed (Bldr is heap-record)");
+        // Confirm field_type_leaf maps Outer.b → "Bldr".
+        assert_eq!(reg.field_type_leaf.get(
+            &("Outer".to_string(), "b".to_string())).map(|s| s.as_str()),
+            Some("Bldr"),
+            "Outer.b field_type_leaf must resolve к Bldr");
     }
 
     // ─────────────────────────────────────────────────────────────────
