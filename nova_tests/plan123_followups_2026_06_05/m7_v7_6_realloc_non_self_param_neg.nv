@@ -1,0 +1,34 @@
+// Plan 123 V*.followups 2026-06-05 marker 7 — V7.6 realloc negative.
+// Negative: methods on type that take non-self params are NOT marked
+// replaces_self. V7.6 lookup correctly excludes them — cache survives
+// across in-place mutator calls.
+
+module plan123_followups_2026_06_05.m7_v7_6_realloc_non_self_param_neg
+
+type Acc {
+    mut total int
+}
+
+fn Acc.new() -> Acc => { total: 0 }
+
+// `mut` receiver + only non-Self params (int) ⇒ NOT marked replaces_self.
+fn Acc mut @bump_by(by int) -> () {
+    @total = @total + by
+}
+
+// `mut` receiver + no params ⇒ NOT marked replaces_self.
+fn Acc mut @reset_to_zero() -> () {
+    @total = 0
+}
+
+fn Acc @snapshot() -> int => @total
+
+test "V7.6 realloc neg: non-self-param mut method preserves semantics" {
+    mut a = Acc.new()
+    a.bump_by(10)
+    assert(a.snapshot() == 10)
+    a.bump_by(5)
+    assert(a.snapshot() == 15)
+    a.reset_to_zero()
+    assert(a.snapshot() == 0)
+}

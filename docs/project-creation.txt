@@ -91,7 +91,7 @@ D68 — stateful handlers через closure capture или record + @method
 D69 — variadic параметры `...items []T`
 D70 — ToStr протокол + @to_str() метод
 
-2. КОМПИЛЯТОР-BOOTSTRAP (compiler-bootstrap/)
+2. КОМПИЛЯТОР—BOOTSTRAP (compiler-bootstrap/)
 
 Первая реализация: лексер, парсер, AST, type checker, treewalk-интерпретатор.
 Написан на Rust. Покрывает весь синтаксис Nova достаточно для прототипирования.
@@ -16608,55 +16608,55 @@ contracts/ suite: 239 PASS trivial / 276 PASS z3 / 0 FAIL.
 
 Семейство ядра контрактов 33.1-33.6 + 33.9 полностью закрыто.
 
-## Plan 62.A.bis вЂ” Generic schema registry РґР»СЏ sum-types (2026-05-20)
+## Plan 62.A.bis — Generic schema registry для sum-types (2026-05-20)
 
-РђСѓРґРёС‚ Рё С„РёРЅР°Р»СЊРЅРѕРµ Р·Р°РєСЂС‹С‚РёРµ РїРѕРґРїР»Р°РЅР° 62.A.bis. Р’СЃРµ С„Р°Р·С‹ СЂРµР°Р»РёР·РѕРІР°РЅС‹
-РІ РїСЂРµРґС‹РґСѓС‰РёС… СЃРµСЃСЃРёСЏС… Рё СЃРјРµСЂР¶РµРЅС‹ РІ main.
+Аудит и финальное закрытие подплана 62.A.bis. Все фазы реализованы
+в предыдущих сессиях и смержены в main.
 
-### Р§С‚Рѕ Р±С‹Р»Рѕ СЃРґРµР»Р°РЅРѕ СЂР°РЅРµРµ (Р¤.1-3)
+### Что было сделано ранее (Ф.1-3)
 
-- `SumSchemaRegistry` struct (sum_schema_registry.rs, 1783 СЃС‚СЂРѕРєРё):
+- `SumSchemaRegistry` struct (sum_schema_registry.rs, 1783 строки):
   `SumSchemaEntry` + `SumAbi` + `MethodRouting` + `SchemaSource`.
 - Layered lookup: DeclaredFromPrelude > DeclaredFromUser > HardcodedBaseline.
 - 4 hardcoded baseline entries (Option/Result/Error/RuntimeError).
-- `init_prelude_decls_from_items` вЂ” СЃРєР°РЅРёСЂСѓРµС‚ `external fn` РґРµРєР»Р°СЂР°С†РёРё
-  РёР· std/prelude/core.nv, СЂРµРіРёСЃС‚СЂРёСЂСѓРµС‚ DeclaredFromPrelude entries
-  РЅР°СЃР»РµРґСѓСЏ HardcodedBaseline method_routing (behavior-preserving).
+- `init_prelude_decls_from_items` — сканирует `external fn` декларации
+  из std/prelude/core.nv, регистрирует DeclaredFromPrelude entries
+  наследуя HardcodedBaseline method_routing (behavior-preserving).
 - `lookup_method_routing` / `lookup_sum_for_c_type` helpers.
-- 9 unit-С‚РµСЃС‚РѕРІ РІ registry (cargo test).
-- Р’СЃРµ 12 dispatch-point variant lookup СѓРЅРёС„РёС†РёСЂРѕРІР°РЅС‹ С‡РµСЂРµР·
+- 9 unit-тестов в registry (cargo test).
+- Все 12 dispatch-point variant lookup унифицированы через
   `find_variant_compat` / `lookup_sum_schema`.
-- Method routing РІ emit_c.rs (lines 13229, 13403): Option/Result РјРµС‚РѕРґС‹
-  РёРґСѓС‚ С‡РµСЂРµР· registry, HardcodedRuntimeFn в†’ trampoline, `"<inline>"`
-  sentinel в†’ fall through Рє inline emit Р±Р»РѕРєР°Рј.
+- Method routing в emit_c.rs (lines 13229, 13403): Option/Result методы
+  идут через registry, HardcodedRuntimeFn → trampoline, `"<inline>"`
+  sentinel → fall through к inline emit блокам.
 
-### Plan 62.A follow-up (2026-05-18, СЃРјРµСЂР¶РµРЅ СЂР°РЅРµРµ)
+### Plan 62.A follow-up (2026-05-18, смержен ранее)
 
-- `std/prelude/core.nv` РґРѕРїРѕР»РЅРµРЅ `external fn` РґРµРєР»Р°СЂР°С†РёСЏРјРё:
+- `std/prelude/core.nv` дополнен `external fn` декларациями:
   Option: is_some, is_none, unwrap, unwrap_or, unwrap_or_else, map,
-  ok_or, or (or вЂ” deferred, trampoline РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚).
-  Result: is_ok, is_err, ok, err (5 generic-T РјРµС‚РѕРґРѕРІ Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅС‹
-  вЂ” blocker type-checker Tв†’T mismatch).
+  ok_or, or (or — deferred, trampoline отсутствует).
+  Result: is_ok, is_err, ok, err (5 generic-T методов закомментированы
+  — blocker type-checker T→T mismatch).
 
-### РўРµСЃС‚С‹ (nova_tests/plan62/, 29 PASS / 0 FAIL)
+### Тесты (nova_tests/plan62/, 29 PASS / 0 FAIL)
 
-- option_methods_from_prelude.nv вЂ” 7 РјРµС‚РѕРґРѕРІ Option С‡РµСЂРµР· registry.
-- result_methods_from_prelude.nv вЂ” 4 РјРµС‚РѕРґР° Result С‡РµСЂРµР· registry.
-- runtime_error_from_prelude.nv вЂ” Plan 62.C acceptance (RuntimeError/ReadBufferError).
-- runtime_error_variant_mismatch.nv вЂ” negative test (variant-set mismatch в†’ compile error).
-- + 25 РґСЂСѓРіРёС… С‚РµСЃС‚РѕРІ РёР· Plan 62 (W_PRELUDE_SHADOW, partial_prelude, etc.).
+- option_methods_from_prelude.nv — 7 методов Option через registry.
+- result_methods_from_prelude.nv — 4 метода Result через registry.
+- runtime_error_from_prelude.nv — Plan 62.C acceptance (RuntimeError/ReadBufferError).
+- runtime_error_variant_mismatch.nv — negative test (variant-set mismatch → compile error).
+- + 25 других тестов из Plan 62 (W_PRELUDE_SHADOW, partial_prelude, etc.).
 
-### Р РµРіСЂРµСЃСЃРёСЏ
+### Регрессия
 
 Full suite: 855 PASS / 0 FAIL / 47 SKIP.
-(8 pre-existing plan72 failures РЅРµ РѕС‚ 62.A.bis.)
+(8 pre-existing plan72 failures не от 62.A.bis.)
 
-### Р§С‚Рѕ РЅРµ СЃРґРµР»Р°РЅРѕ / deferred
+### Что не сделано / deferred
 
-- Phase 4 (СѓРґР°Р»РµРЅРёРµ legacy sum_schemas field) вЂ” deferred РґРѕ Plan 59 per design.
-- 5 Result-РјРµС‚РѕРґРѕРІ (unwrap_or/unwrap/etc.) вЂ” blocker: type-checker T mismatch.
-- Option.or вЂ” trampoline Nova_Option_method_or_<T> РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚ РІ array.h.
-- D26 РІ 08-runtime.md РѕР±РЅРѕРІР»С’РЅ (Bootstrap-СЂР°СЃС€РёСЂРµРЅРёРµ В§62.A.bis РґРѕР±Р°РІР»РµРЅ).
+- Phase 4 (удаление legacy sum_schemas field) — deferred до Plan 59 per design.
+- 5 Result-методов (unwrap_or/unwrap/etc.) — blocker: type-checker T mismatch.
+- Option.or — trampoline Nova_Option_method_or_<T> отсутствует в array.h.
+- D26 в 08-runtime.md обновлђн (Bootstrap-расширение §62.A.bis добавлен).
 
 # Plan 33.7 BitVec theory + #nooverflow (2026-05-20)
 
@@ -18989,56 +18989,56 @@ pattern parser+type-check работают; codegen ждёт подплан Plan
 * Разблокирует capability-split factory pattern для stdlib Plan 18.
 
 ================================================================
-2026-05-23 вЂ” Plan 96 Р—РђРљР Р«Рў: sub-slice views РґР»СЏ []T Рё str
+2026-05-23 — Plan 96 ЗАКРЫТ: sub-slice views для []T и str
 ================================================================
 
-Plan 96 (rev. 2 РїРѕСЃР»Рµ production-grade Р°СѓРґРёС‚Р°) вЂ” closed Р¤.1-Р¤.7 РЅР°
-РІРµС‚РєРµ plan-96 (rebased РЅР° main РїРѕСЃР»Рµ Plan 97 merge). Sub-slice views
-СЂРµР°Р»РёР·РѕРІР°РЅС‹: arr[a..b] / str[a..b] СЃ 5 С„РѕСЂРјР°РјРё Range (Rust
-RangeBounds parity), single-type design, cap == len в†’ push-detach,
+Plan 96 (rev. 2 после production-grade аудита) — closed Ф.1-Ф.7 на
+ветке plan-96 (rebased на main после Plan 97 merge). Sub-slice views
+реализованы: arr[a..b] / str[a..b] с 5 формами Range (Rust
+RangeBounds parity), single-type design, cap == len → push-detach,
 codegen + runtime + spec.
 
-РљРѕРјРјРёС‚С‹ (РїРѕСЃР»Рµ rebase РЅР° main):
-- da6233cf75e Р¤.1 вЂ” bounds-check РґР»СЏ raw arr[i] (D27 В§1632 drift fix)
-- 468a7417189 Р¤.2 вЂ” open-ended Range AST + parser + 27-site migration
-- (e63cfdd5ca9 в†’ cherry-picked) Р¤.3+Р¤.4 вЂ” runtime nova_array_slice_<T>
+Коммиты (после rebase на main):
+- da6233cf75e Ф.1 — bounds-check для raw arr[i] (D27 §1632 drift fix)
+- 468a7417189 Ф.2 — open-ended Range AST + parser + 27-site migration
+- (e63cfdd5ca9 → cherry-picked) Ф.3+Ф.4 — runtime nova_array_slice_<T>
   + nova_str_slice_panic + codegen dispatch
-- (e4f25eee563 в†’ cherry-picked) Р¤.5+Р¤.6 вЂ” push-detach + GC stress +
-  Plan90-interop + fn-passing (6 С‚РµСЃС‚РѕРІ)
-- 09b6a78541d Р¤.7 вЂ” spec D144 + amend D6/D27/D58 + close
-  Q-array-slicing + Plan 96 Р—РђРљР Р«Рў
+- (e4f25eee563 → cherry-picked) Ф.5+Ф.6 — push-detach + GC stress +
+  Plan90-interop + fn-passing (6 тестов)
+- 09b6a78541d Ф.7 — spec D144 + amend D6/D27/D58 + close
+  Q-array-slicing + Plan 96 ЗАКРЫТ
 
-РўРµСЃС‚С‹ nova_tests/plan96/ (23):
-- Р¤.1 bounds-check: boundary_ok, neg_index_oob_read/write/negative (4)
-- Р¤.2 Range parsing: range_closed_unchanged + 2 neg (3)
-- Р¤.3+Р¤.4 slice: slice_basic, slice_mut, slice_open_ended,
+Тесты nova_tests/plan96/ (23):
+- Ф.1 bounds-check: boundary_ok, neg_index_oob_read/write/negative (4)
+- Ф.2 Range parsing: range_closed_unchanged + 2 neg (3)
+- Ф.3+Ф.4 slice: slice_basic, slice_mut, slice_open_ended,
   slice_of_slice, slice_iter_for, str_slice_basic, 4 neg-slice (10)
-- Р¤.5+Р¤.6: slice_push_detaches, slice_gc_alive, slice_array_of_ranges,
+- Ф.5+Ф.6: slice_push_detaches, slice_gc_alive, slice_array_of_ranges,
   slice_plan90_interop, slice_function_passing, slice_byte_array (6)
 
 Spec sweep:
-- РќРѕРІС‹Р№ D144 (02-types.md) вЂ” slice-view semantics + raw bounds-check
-- D27 В§1663 amended вЂ” В«РЎР»Р°Р№СЃРёРЅРі РѕС‚Р»РѕР¶РµРЅВ» в†’ СЃСЃС‹Р»РєР° РЅР° D144
-- D58 amended вЂ” open-ended С„РѕСЂРјС‹ Range РІ slice-context
-- D6 amended вЂ” stable interior pointers (РЅРѕСЂРјР°С‚РёРІРЅС‹Р№ invariant РґР»СЏ D144)
-- README D-index updated СЃ D144
-- Q-array-slicing / Q-array-api.5 closed в†’ СЃСЃС‹Р»РєРё РЅР° D144
+- Новый D144 (02-types.md) — slice-view semantics + raw bounds-check
+- D27 §1663 amended — «Слайсинг отложен» → ссылка на D144
+- D58 amended — open-ended формы Range в slice-context
+- D6 amended — stable interior pointers (нормативный invariant для D144)
+- README D-index updated с D144
+- Q-array-slicing / Q-array-api.5 closed → ссылки на D144
 
-Р РµРіСЂРµСЃСЃ worktree РґРѕ rebase: 1087 PASS / 0 FAIL / 56 SKIP.
+Регресс worktree до rebase: 1087 PASS / 0 FAIL / 56 SKIP.
 
-РЎРёРјРїР»РёС„РёРєР°С†РёРё:
-- [C7] Index Р±РµР· bounds-check вњ… RESOLVED Plan 96 Р¤.1
-- [P-plan96-lint-deferred] вЂ” W_VIEW_PUSH_DETACH lint РѕС‚Р»РѕР¶РµРЅ
-  (push-detach behavior СЂР°Р±РѕС‚Р°РµС‚, lint вЂ” warning Р±РµР· Р±Р»РѕРєРёСЂРѕРІРєРё)
-- [P-str-slice-clamp-vs-panic] вЂ” РјРµС‚РѕРґ s.slice СЃРѕС…СЂР°РЅСЏРµС‚ clamp;
-  align в†’ Plan 94
+Симплификации:
+- [C7] Index без bounds-check ✅ RESOLVED Plan 96 Ф.1
+- [P-plan96-lint-deferred] — W_VIEW_PUSH_DETACH lint отложен
+  (push-detach behavior работает, lint — warning без блокировки)
+- [P-str-slice-clamp-vs-panic] — метод s.slice сохраняет clamp;
+  align → Plan 94
 
 Decisions implemented (11):
-- D-single-type, D-cap-len, D-open-ended (5 С„РѕСЂРј Range)
+- D-single-type, D-cap-len, D-open-ended (5 форм Range)
 - D-mut-rule, D-fiber (D79 disclaimer), D-iter-snap
 - D-push-detach (lint deferred), D-neg-panic, D-empty-ok
-- D-header (24 Р±Р°Р№С‚Р°), D-str-slice
-- D-cap-pow2 (verified вЂ” РЅРµ РЅР°СЂСѓС€Р°РµС‚ doubling)
+- D-header (24 байта), D-str-slice
+- D-cap-pow2 (verified — не нарушает doubling)
 
 ═══════════════════════════════════════════════════════════════════════
 Plan 95.bis — Перенос 5 «чистых» Option/Result-методов на Nova-body
@@ -19207,37 +19207,37 @@ Status: proposed, GATED on Plan 98, P3.
 только `unwrap` — Plan 61 Fail-handler).
 
 ================================================================
-2026-05-23 вЂ” Plan 96.1 Р—РђРљР Р«Рў: lint + СѓРґР°Р»РµРЅРёРµ str.@slice
+2026-05-23 — Plan 96.1 ЗАКРЫТ: lint + удаление str.@slice
 ================================================================
 
-Followup Plan 96 Р·Р°РєСЂС‹Р» РѕР±Р° deferred-РјР°СЂРєРµСЂР° РѕРґРЅРѕР№ РёС‚РµСЂР°С†РёРµР№ РЅР°
-РІРµС‚РєРµ plan-96.1 (5 РєРѕРјРјРёС‚РѕРІ, merge 3114843a13c).
+Followup Plan 96 закрыл оба deferred-маркера одной итерацией на
+ветке plan-96.1 (5 коммитов, merge 3114843a13c).
 
-РљРѕРјРјРёС‚С‹:
-- a5917ab2c98 docs(plan96.1): СЃРѕР·РґР°РЅ РїР»Р°РЅ
-- 68bc9f70cad Р¤.1 W_VIEW_PUSH_DETACH lint + 3 С‚РµСЃС‚Р°
-- b3fc1c334bb Р¤.2+Р¤.3 audit ~60 call-sites + migration s.slice в†’ s[a..b]
-- 0a3a48c1aa0 Р¤.4 СѓРґР°Р»РёС‚СЊ runtime nova_str_slice + external fn @slice
-- 689717fff13 Р¤.5 spec D26 + simplifications RESOLVED
+Коммиты:
+- a5917ab2c98 docs(plan96.1): создан план
+- 68bc9f70cad Ф.1 W_VIEW_PUSH_DETACH lint + 3 теста
+- b3fc1c334bb Ф.2+Ф.3 audit ~60 call-sites + migration s.slice → s[a..b]
+- 0a3a48c1aa0 Ф.4 удалить runtime nova_str_slice + external fn @slice
+- 689717fff13 Ф.5 spec D26 + simplifications RESOLVED
 
-Р�Р·РјРµРЅРµРЅРёСЏ:
+Р�зменения:
 1. W_VIEW_PUSH_DETACH lint (compiler-codegen/src/lints.rs):
-   per-function walker С‚СЂРµРєР°РµС‚ Р±РёРЅРґРёРЅРіРё let X = arr[range], РїСЂРё
-   X.push(...) в†’ emit warning. 3 С‚РµСЃС‚Р° pos/neg РІ nova_tests/plan96_1/.
-2. РЈРґР°Р»С‘РЅ str.@slice РјРµС‚РѕРґ вЂ” bracket-only s[a..b]:
-   - 60 call-sites РјРёРіСЂРёСЂРѕРІР°РЅС‹ РІ 15 С„Р°Р№Р»Р°С… (std/, examples/, nova_tests/)
-   - РЈРґР°Р»РµРЅС‹: nova_str_slice (clamp) РёР· nova_rt.h; external fn @slice;
-     str_method_to_rt mapping; RuntimeFn-Р·Р°РїРёСЃСЊ
-   - Spec D26 (08-runtime.md): РѕРїРёСЃР°РЅРёРµ str-API РѕР±РЅРѕРІР»РµРЅРѕ вЂ” slice
-     С‡РµСЂРµР· bracket-form s[a..b], panic РїСЂРё OOB. D9 violation Р·Р°РєСЂС‹С‚.
+   per-function walker трекает биндинги let X = arr[range], при
+   X.push(...) → emit warning. 3 теста pos/neg в nova_tests/plan96_1/.
+2. Удалён str.@slice метод — bracket-only s[a..b]:
+   - 60 call-sites мигрированы в 15 файлах (std/, examples/, nova_tests/)
+   - Удалены: nova_str_slice (clamp) из nova_rt.h; external fn @slice;
+     str_method_to_rt mapping; RuntimeFn-запись
+   - Spec D26 (08-runtime.md): описание str-API обновлено — slice
+     через bracket-form s[a..b], panic при OOB. D9 violation закрыт.
 
-РЎРёРјРїР»РёС„РёРєР°С†РёРё:
-- [P-plan96-lint-deferred] вњ… RESOLVED Plan 96.1 Р¤.1
-- [P-str-slice-clamp-vs-panic] вњ… RESOLVED Plan 96.1 Р¤.2-Р¤.4
+Симплификации:
+- [P-plan96-lint-deferred] ✅ RESOLVED Plan 96.1 Ф.1
+- [P-str-slice-clamp-vs-panic] ✅ RESOLVED Plan 96.1 Ф.2-Ф.4
 
-Convergence СЃ Rust/Go/Swift/Python (bracket-only for str slicing).
+Convergence с Rust/Go/Swift/Python (bracket-only for str slicing).
 
-Р РµРіСЂРµСЃСЃ С„РёРЅР°Р»: 1114 PASS / 0 FAIL / 56 SKIP.
+Регресс финал: 1114 PASS / 0 FAIL / 56 SKIP.
 
 ================================================================
 [2026-05-23] Plan 97.1 ✅ ЗАКРЫТ (worktree nova-p97-1, ветка plan-97-1):
@@ -22730,34 +22730,34 @@ Results: panic_in_nested_supervised PASS armed 3/3 (directive removed).
 
 Plan 83.10.3 status: V1 IMPLEMENTED 2026-05-26.
 
-=== Plan 103.3 вЂ” Mutex / RwLock / ReentrantMutex family (2026-05-26) ===
+=== Plan 103.3 — Mutex / RwLock / ReentrantMutex family (2026-05-26) ===
 
 Implemented fiber-aware locking primitives for Nova:
 
 Mutex extensions:
-- try_lock_for(Duration) вЂ” bounded-wait via libuv uv_timer_t
-- is_locked() вЂ” best-effort observability
-- with_lock[R](fn) вЂ” closure-form preferred V1 pattern (M15)
-- new_unfair() вЂ” LIFO-leaning opt-in constructor
+- try_lock_for(Duration) — bounded-wait via libuv uv_timer_t
+- is_locked() — best-effort observability
+- with_lock[R](fn) — closure-form preferred V1 pattern (M15)
+- new_unfair() — LIFO-leaning opt-in constructor
 - unlock() invariant: unconditional runtime panic (not NOVA_SYNC_ASSERT no-op)
 
 RwLock (new):
 - read/write/try_read/try_write/try_*_for(Duration)/read_unlock/write_unlock
 - with_read[R]/with_write[R] helpers
-- Writer-priority default (write_waiting blocks new readers в†’ no starvation)
+- Writer-priority default (write_waiting blocks new readers → no starvation)
 - Reader-priority opt-in: new_reader_priority()
 - Unlock invariants: unconditional panic for mismatched unlock
 
 ReentrantMutex (new):
 - Same surface as Mutex + lock_count() + with_lock helper
-- Owner tracking via mco_coro* (mco_running() thread-local) вЂ” NULL on main thread
+- Owner tracking via mco_coro* (mco_running() thread-local) — NULL on main thread
 - Recursive same-fiber lock: incr count; full release when count reaches 0
 - unlock() by non-owner fiber: unconditional runtime panic
 
-Key bug fix вЂ” GC race under M:N on Windows (Boehm):
-- Root cause: first supervised{spawn{}} triggers _ensure_materialized() в†’
-  nova_scope_grow (7Г— nova_alloc) в†’ GC triggered в†’ Boehm misses sync primitive
-  pointer on main thread stack в†’ premature collection в†’ rm->locked = 0.
+Key bug fix — GC race under M:N on Windows (Boehm):
+- Root cause: first supervised{spawn{}} triggers _ensure_materialized() →
+  nova_scope_grow (7× nova_alloc) → GC triggered → Boehm misses sync primitive
+  pointer on main thread stack → premature collection → rm->locked = 0.
 - Fix: nova_alloc_uncollectable for Nova_Mutex, Nova_RwLock, Nova_ReentrantMutex
   static_new() functions (sync_primitives.h).
 - Pattern: same as SpawnCtx GC race (alloc_boehm.c precedent).
@@ -32790,3 +32790,138 @@ Markers closed: [M-118.7-debug-fmt-deferred], [M-118-debug-printable].
 
 Plan 91 std MVP gets DebugPrintable protocol (sibling к Printable D183) +
 format-spec foundation. Next: merge plan-91.14-debug-printable → main.
+
+=== Plan 123 V*.followups (2026-06-05) — umbrella close ===
+
+7-marker umbrella работы над AST-level field-cache optimizer +
+chain-norm pre-pass, branch plan-123-followups-2026-06-05. Все 7
+markers закрыты + 11/11 runtime fixtures PASS via release nova.
+
+**Markers closed (commits):**
+1. M-123.7.6-generic-ref-types + value-record (d25a27a3805): replaced
+   hardcoded ref-type list с TypeDecl-driven classification per spec
+   D52/D215/D228. New `TypeKindEntry` enum, `TypeKindRegistry`, 32-deep
+   newtype/alias chain recursion. 13 unit + 2 runtime fixtures PASS.
+2. M-123.5.4-explain-region-tagging (35e0c76c79d): FnCacheInfo gains
+   `outer_region_caches` + `nested_region_caches` Vec<String> fields;
+   `mut_caches` retained as aggregate для backward-compat. 9 unit + 1
+   runtime fixture PASS.
+3. M-123.4.4-user-fluent-detection (ce7d3557e9d): chain_norm V2 — pre-
+   build FluentMethodRegistry from FnDecl.returns_receiver==true; union
+   с FLUENT_BUILTIN_METHODS list. User `-> @` builders теперь
+   автоматически hoisted. 6 unit + 2 runtime fixtures PASS.
+4. M-123.4.4-non-self-receivers (c1a4ec7fb24): chain_norm V3 — extend
+   root pattern к `Ident(name)` (local var) AND `Member{Ident, F}`
+   (local field). Member{SelfAccess, F} retained as V1 base. 6 unit + 1
+   runtime fixture PASS.
+5. M-123.2.1-v2-licm-threshold-integration (59fcc676133): LICM
+   eligibility check swaps к count_field_reads_in_block_weighted —
+   nested loops inside body inflate count via inner-iter weight.
+   Coordination с V1.1 outer scanner: either fires (semantic
+   equivalence). 2 unit + 1 runtime fixture PASS.
+6. M-123.2.1-dynamic-loop-count (2faaf7735d3): parse_loop_iter_count
+   handles range(N), range(lo, hi), 0..N, 0..=N, lo..=lo edge cases.
+   Non-literal → env fallback. 10 unit + 2 runtime fixtures PASS.
+7. M-123.7.6-method-realloc-flag (de0b7d67389): introduce
+   replaces_self_methods + field_type_leaf FieldRegistry slots. V1
+   heuristic — mut receiver + ≥1 non-self param of receiver type. V7.5/
+   V7.7 own-field check refined к invalidate across replace-style
+   methods. 6 unit + 2 runtime fixtures PASS.
+
+**Auxiliary commits:**
+- 842bc6e953f — V7.6 spec citations (D26 str immut + D228 mut-receiver
+  ABI) + 3 new ABI gap markers (для Plan 128 hardening).
+- 69eb1a92af5 — main → branch sync merge (8 commits мid-session).
+
+**Investigation outcomes (workflow-driven):**
+- 5-agent str-mutability audit: confirmed hard-immutable per D26
+  (08-runtime.md:658), 0 mut-methods в stdlib runtime_registry.rs.
+  Spawned [M-D26-primitive-mut-method-diag] для E_PRIMITIVE_MUT_METHOD.
+- 6-agent mut-receiver ABI audit: D228 mandates pointer receiver for
+  value types (LANDED в codegen); D215 NamedTuple unimplemented gap
+  (BROKEN — passes by value). Spawned [M-D215-mut-receiver-pointer-
+  codegen] + [M-codegen-recv-mutable-flag-unwired] для Plan 128.
+
+**Verification:**
+- 137/137 field_cache lib tests PASS (+18 vs entry baseline)
+- 22/22 chain_norm lib tests PASS (+12 vs entry baseline)
+- 11/11 runtime fixtures PASS via release nova (7 positive + 4 negative)
+- Zero regressions
+
+**Plan-doc:** docs/plans/123-followups-2026-06-05.md — full acceptance
+criteria per marker, closure status, грand-total Plan 123 state.
+
+**Spec amend:** 02-types.md D228 — added «Optimizer consumer (Plan 123
+V7.6 V2 refactor, 2026-06-05)» cross-ref noting AllocKind consumption.
+
+
+================================================================================
+== 2026-06-05 — Plan 110.x: [M-110.x-on-exit-throws-leaks-shield] CLOSED
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.x-on-exit-throws-shield (off main 1ab146e2a21)
+
+Audit followup discovered durante post-fix verification (parallel workflow,
+2026-06-05) of [M-110.x-cleanup-shield-deadline-underflow]. Pre-existing
+edge case в consume-scope codegen: on_exit C-call ran outside any local
+setjmp; if on_exit body threw (D158 failable cleanup), longjmp routed к
+caller's NovaFailFrame, skipping nv_consume_leave_shield → shield mask
+leaked (cancel deferral persistent в caller fiber) + outer's deadline
+never restored.
+
+Root cause:
+  • emit_c.rs::Stmt::ConsumeScope emit pattern called on_exit C-call bare
+    после body setjmp frame popped (line ~15192).
+  • leave_shield ran AFTER on_exit (line ~15210), unreachable если on_exit
+    threw.
+  • Pre-existing: same gap existed BEFORE the R4 fix; R4 simply made the
+    no-throw path correct.
+
+Fix three-step:
+  1. Spec D196 R4b amend: leave_shield MUST execute on every exit path
+     (success, body throw/panic, on_exit throw/panic). Re-throw composition
+     follows D193 R5 + D197 R3 (body=primary, on_exit=suppressed).
+  2. Codegen wrap (emit_c.rs):
+     - New NovaFailFrame _consume_on_exit_frame_<id> around on_exit C-call.
+     - setjmp catches on_exit throw/panic; on_exit_threw kind (0/1/2).
+     - leave_shield UNCONDITIONAL.
+     - if (body panic) → nv_panic body. If (on_exit panic) → nv_panic
+       on_exit. If (body+on_exit throw) → nv_compose_suppressed + rethrow
+       body. If (body throw only) → rethrow body. If (on_exit throw
+       only) → rethrow on_exit.
+     - Cleanup observability hook fires only if on_exit succeeded.
+  3. Test fixtures (nova_tests/plan110/):
+     - on_exit_throws_shield_restored_v1_1.nv: POS — outer/inner where
+       inner.on_exit throws.
+     - on_exit_throws_compose_v1_1.nv: composition POS — body+on_exit
+       both throw → MultiError composed.
+     - on_exit_throws_handler_catches_v1_1.nv: compile-only — wrap shape.
+     - on_exit_throws_nested_deadline_restored_v1_1.nv: nested R4+R4b
+       interaction.
+
+Regression на release nova-cli:
+  • plan110: 48/0 PASS (включая 4 новых fixture'а).
+  • plan100_4_1: 16/0 PASS (D158 MultiError composition).
+  • plan100_4_2: 9/0, plan100_4_4: 13/0, plan100_4_5: 4/0.
+  • plan103_9: 20/0, plan100_3: 10/0, plan108_1: 16/0, plan108_3: 14/0.
+  • plan108, plan100_6, plan99: same FAIL count как main (pre-existing).
+
+Marker tally:
+  • 🟢 [M-110.x-on-exit-throws-leaks-shield] CLOSED.
+  • Plan 110 family bug-fixes complete: R4 (deadline shadow) + R4b
+    (exception safety) — production-grade closure для consume-scope
+    shield semantics.
+
+Lessons:
+  • Parallel completeness audit (workflow с 3 subagent'ами) caught
+    pre-existing edge case missed manual review. Worth running после
+    нетривиального codegen fix.
+  • Codegen setjmp wrap pattern reusable: emit_defer precedent (line
+    13918-13944) mirror'нут exactly для on_exit wrap. Same NovaFailFrame
+    + nova_fail_push/pop + setjmp/longjmp + nv_compose_suppressed.
+  • Runtime test с Fail handler не для всех throw paths работает (handler
+    path uses _nova_interrupt_top chain separate от fail-frame chain) —
+    standard compile-only verification pattern достаточно для marker
+    closure.
+

@@ -1,0 +1,31 @@
+// Plan 123 V*.followups 2026-06-05 marker 3 — chain-norm V2 negative.
+// Negative: user method WITHOUT `-> @` is NOT classified as fluent →
+// chain-norm doesn't hoist, but call expression still produces correct
+// runtime behavior. Verifies V2 registry's positive discrimination.
+
+module plan123_followups_2026_06_05.m3_chain_norm_v2_non_fluent_skip_neg
+
+type Acc {
+    mut total int
+}
+
+fn Acc.new() -> Acc => { total: 0 }
+
+// `-> int` return type — NOT fluent. V2 registry skips.
+fn Acc mut @add_and_read(by int) -> int {
+    @total = @total + by
+    @total
+}
+
+test "chain-norm V2: non-fluent method not chained but still correct" {
+    mut a = Acc.new()
+    // depth-1 single call — no chain rewrite, just call.
+    ro r = a.add_and_read(5)
+    assert(r == 5)
+    assert(a.total == 5)
+
+    // depth-1 again, additive.
+    ro r2 = a.add_and_read(3)
+    assert(r2 == 8)
+    assert(a.total == 8)
+}

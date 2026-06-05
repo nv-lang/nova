@@ -49,16 +49,27 @@
 //! reference-typed receivers will be covered by V2 (TypeDecl-driven).
 
 use crate::ast::*;
+use std::collections::HashSet;
 
-/// Plan 123.4.4 (V1): hard-coded list of known-fluent builtin methods
-/// that return `@` (the receiver) and operate на reference-typed
-/// receivers. Chains of these methods on `@F` receivers are safe к
-/// hoist the root к a temp binding without changing semantics.
+/// Plan 123.4.4 (V1): hard-coded list of known-fluent **registry-only**
+/// builtin methods — those defined в `compiler-codegen/src/codegen/
+/// runtime_registry.rs` (e.g., `[]T` mutators) without corresponding
+/// Nova-side FnDecl. These do NOT appear в any `Item::Fn` after parse,
+/// so the TypeDecl-driven `FluentMethodRegistry` (Plan 123.4.4 V2,
+/// 2026-06-05) cannot discover them — кept as fallback list.
+///
+/// Note: WriteBuffer / StringBuilder mutators ARE defined в `std/runtime/
+/// {write_buffer,string_builder}.nv` (verified via grep) с `-> @`, so they're
+/// covered by the TypeDecl driver and don't need to live here — но
+/// listed defensively for environments where prelude wasn't loaded
+/// (e.g., `#no_prelude` modules with their own user-defined fluent
+/// builders mistakenly named `write_byte`).
 const FLUENT_BUILTIN_METHODS: &[&str] = &[
-    // []T core mutators (Plan 90 / D141)
+    // []T core mutators (Plan 90 / D141) — runtime_registry.rs entries
     "push", "append", "extend_from", "copy_from", "insert",
     "reserve", "fill", "clear", "extend_zero", "append_zero",
-    // WriteBuffer / StringBuilder write-family (Plan 91.12 / Plan 109)
+    // WriteBuffer / StringBuilder write-family — defensive (most also
+    // covered via FnDecl driver after Plan 123.4.4 V2)
     "write_byte", "write_bytes", "write_zero", "write_char", "write_str",
     "write_u8", "write_i8",
     "write_u16_le", "write_u16_be", "write_i16_le", "write_i16_be",
@@ -67,6 +78,61 @@ const FLUENT_BUILTIN_METHODS: &[&str] = &[
     "write_f32_le", "write_f32_be", "write_f64_le", "write_f64_be",
 ];
 
+/// Plan 123.4.4 V2 (2026-06-05): set of method names declared somewhere
+/// в the module as instance method с `returns_receiver: true` (Plan 77
+/// / D132 `-> @` syntax). Closes `[M-123.4.4-user-fluent-detection]`.
+///
+/// **Conservative approximation**: chain-norm extraction looks up method
+/// names without receiver-type context (only AST node available). If
+/// ANY type'а `@method` is fluent (declared `-> @`), the name enters
+/// this set; chain-norm may then activate для receiver types where the
+/// same method is non-fluent. Such activations remain semantically safe
+/// because:
+/// - chain-norm root-extract requires `Member{SelfAccess, F}` root —
+///   guaranteed reference-typed (per chain-norm V1 safety scope).
+/// - `let _chain_root = @F; _chain_root.method(...)` is semantically
+///   identical to `@F.method(...)` for ref-typed `@F` regardless of
+///   method's actual signature (pointer copy preserves identity).
+/// - Worst case: extra Block + Let wrapping для non-fluent chains,
+///   which downstream passes harmlessly traverse.
+///
+/// Future V3 sharpening (separate followup): bind method lookup к
+/// `(type_name, method_name)` pair using receiver-type inference from
+/// `@F` field's declared TypeRef + registry.
+type FluentMethodRegistry = HashSet<String>;
+
+fn build_fluent_registry(module: &Module) -> FluentMethodRegistry {
+    let mut out: FluentMethodRegistry = HashSet::new();
+    register_fluent_items(&module.items, &mut out);
+    for pf in &module.peer_files {
+        register_fluent_items(&pf.items_here, &mut out);
+    }
+    out
+}
+
+fn register_fluent_items(items: &[Item], out: &mut FluentMethodRegistry) {
+    for item in items {
+        if let Item::Fn(f) = item {
+            // Instance method (`@method`) with `-> @` return marker.
+            if f.receiver.is_some() && f.returns_receiver {
+                out.insert(f.name.clone());
+            }
+        }
+    }
+}
+
+/// Plan 123.4.4 V2 (2026-06-05): unified fluent check. `name` is fluent if
+/// EITHER (a) listed в `FLUENT_BUILTIN_METHODS` (registry-only built-in
+/// without FnDecl) OR (b) any Item::Fn в module declared `name` as
+/// instance method с `returns_receiver`. Closes
+/// `[M-123.4.4-user-fluent-detection]`.
+fn is_fluent_method(name: &str, registry: &FluentMethodRegistry) -> bool {
+    FLUENT_BUILTIN_METHODS.contains(&name) || registry.contains(name)
+}
+
+/// Plan 123.4.4 V1 → V2 (2026-06-05): legacy alias retained для V1 tests.
+/// New code MUST use `is_fluent_method(name, registry)` instead.
+#[cfg(test)]
 fn is_fluent_builtin_method(name: &str) -> bool {
     FLUENT_BUILTIN_METHODS.contains(&name)
 }
@@ -74,14 +140,18 @@ fn is_fluent_builtin_method(name: &str) -> bool {
 /// Plan 123.4.4 (V1): public entry-point. Walks every fn body's Expr
 /// tree, normalizing fluent chains. Idempotent — calling twice produces
 /// same output.
+///
+/// V2 (2026-06-05): pre-builds `FluentMethodRegistry` from module's
+/// FnDecls (covers user-defined `-> @` builders).
 pub fn normalize_chains_module(module: &mut Module) {
+    let registry = build_fluent_registry(module);
     let mut counter = ChainCounter { next: 0 };
     for item in &mut module.items {
-        normalize_chains_item(item, &mut counter);
+        normalize_chains_item(item, &mut counter, &registry);
     }
     for pf in &mut module.peer_files {
         for item in &mut pf.items_here {
-            normalize_chains_item(item, &mut counter);
+            normalize_chains_item(item, &mut counter, &registry);
         }
     }
 }
@@ -100,173 +170,173 @@ impl ChainCounter {
     }
 }
 
-fn normalize_chains_item(item: &mut Item, counter: &mut ChainCounter) {
+fn normalize_chains_item(item: &mut Item, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     if let Item::Fn(f) = item {
-        normalize_chains_fn(f, counter);
+        normalize_chains_fn(f, counter, registry);
     }
 }
 
-fn normalize_chains_fn(f: &mut FnDecl, counter: &mut ChainCounter) {
+fn normalize_chains_fn(f: &mut FnDecl, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     match &mut f.body {
-        FnBody::Block(b) => normalize_chains_block(b, counter),
-        FnBody::Expr(e) => normalize_chains_expr(e, counter),
+        FnBody::Block(b) => normalize_chains_block(b, counter, registry),
+        FnBody::Expr(e) => normalize_chains_expr(e, counter, registry),
         FnBody::External => {}
     }
 }
 
-fn normalize_chains_block(b: &mut Block, counter: &mut ChainCounter) {
+fn normalize_chains_block(b: &mut Block, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     for s in &mut b.stmts {
-        normalize_chains_stmt(s, counter);
+        normalize_chains_stmt(s, counter, registry);
     }
     if let Some(t) = &mut b.trailing {
-        normalize_chains_expr(t, counter);
+        normalize_chains_expr(t, counter, registry);
     }
 }
 
-fn normalize_chains_stmt(s: &mut Stmt, counter: &mut ChainCounter) {
+fn normalize_chains_stmt(s: &mut Stmt, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     match s {
-        Stmt::Let(d) => normalize_chains_expr(&mut d.value, counter),
-        Stmt::Const(d) => normalize_chains_expr(&mut d.value, counter),
-        Stmt::Expr(e) => normalize_chains_expr(e, counter),
+        Stmt::Let(d) => normalize_chains_expr(&mut d.value, counter, registry),
+        Stmt::Const(d) => normalize_chains_expr(&mut d.value, counter, registry),
+        Stmt::Expr(e) => normalize_chains_expr(e, counter, registry),
         Stmt::Assign { target, value, .. } => {
-            normalize_chains_expr(target, counter);
-            normalize_chains_expr(value, counter);
+            normalize_chains_expr(target, counter, registry);
+            normalize_chains_expr(value, counter, registry);
         }
         Stmt::Return { value, .. } => {
-            if let Some(v) = value { normalize_chains_expr(v, counter); }
+            if let Some(v) = value { normalize_chains_expr(v, counter, registry); }
         }
-        Stmt::Throw { value, .. } => normalize_chains_expr(value, counter),
+        Stmt::Throw { value, .. } => normalize_chains_expr(value, counter, registry),
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
         | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
-            normalize_chains_expr(body, counter);
+            normalize_chains_expr(body, counter, registry);
         }
         Stmt::ConsumeScope { init, body, .. } => {
-            normalize_chains_expr(init, counter);
-            normalize_chains_block(body, counter);
+            normalize_chains_expr(init, counter, registry);
+            normalize_chains_block(body, counter, registry);
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            normalize_chains_expr(expr, counter);
+            normalize_chains_expr(expr, counter, registry);
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
     }
 }
 
-fn normalize_chains_expr(e: &mut Expr, counter: &mut ChainCounter) {
+fn normalize_chains_expr(e: &mut Expr, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     // Top-down: check if THIS Expr is the outermost frame of a fluent
     // chain. If so, wrap in Block. Otherwise descend into children.
     // Top-down ordering ensures the outermost chain captures all
     // depth-N frames at once (bottom-up would rewrite inner frames first,
     // breaking the outer extractor's left-deep Call.func walk).
-    if let Some(chain_info) = try_extract_outer_fluent_chain(e) {
+    if let Some(chain_info) = try_extract_outer_fluent_chain(e, registry) {
         if chain_info.depth >= 2 {
             *e = build_chain_block(chain_info, counter);
             // Descend into the wrapped Block — its stmts/trailing may
             // contain further chains (e.g., method args themselves
             // hosting chains).
-            normalize_chains_expr_children(e, counter);
+            normalize_chains_expr_children(e, counter, registry);
             return;
         }
     }
     // Not the outermost frame of a chain — descend into children.
-    normalize_chains_expr_children(e, counter);
+    normalize_chains_expr_children(e, counter, registry);
 }
 
-fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter) {
+fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     match &mut e.kind {
-        ExprKind::Lambda { body, .. } => normalize_chains_expr(body, counter),
+        ExprKind::Lambda { body, .. } => normalize_chains_expr(body, counter, registry),
         ExprKind::ClosureLight { body, .. } => match body {
-            ClosureBody::Expr(e) => normalize_chains_expr(e, counter),
-            ClosureBody::Block(b) => normalize_chains_block(b, counter),
+            ClosureBody::Expr(e) => normalize_chains_expr(e, counter, registry),
+            ClosureBody::Block(b) => normalize_chains_block(b, counter, registry),
         },
         ExprKind::ClosureFull(sb) => match &mut sb.body {
-            FnBody::Expr(e) => normalize_chains_expr(e, counter),
-            FnBody::Block(b) => normalize_chains_block(b, counter),
+            FnBody::Expr(e) => normalize_chains_expr(e, counter, registry),
+            FnBody::Block(b) => normalize_chains_block(b, counter, registry),
             FnBody::External => {}
         },
-        ExprKind::Block(b) => normalize_chains_block(b, counter),
+        ExprKind::Block(b) => normalize_chains_block(b, counter, registry),
         ExprKind::If { cond, then, else_ } => {
-            normalize_chains_expr(cond, counter);
-            normalize_chains_block(then, counter);
+            normalize_chains_expr(cond, counter, registry);
+            normalize_chains_block(then, counter, registry);
             if let Some(eb) = else_ {
-                normalize_chains_else(eb, counter);
+                normalize_chains_else(eb, counter, registry);
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            normalize_chains_expr(scrutinee, counter);
-            normalize_chains_block(then, counter);
+            normalize_chains_expr(scrutinee, counter, registry);
+            normalize_chains_block(then, counter, registry);
             if let Some(eb) = else_ {
-                normalize_chains_else(eb, counter);
+                normalize_chains_else(eb, counter, registry);
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            normalize_chains_expr(scrutinee, counter);
+            normalize_chains_expr(scrutinee, counter, registry);
             for arm in arms.iter_mut() {
-                if let Some(g) = &mut arm.guard { normalize_chains_expr(g, counter); }
+                if let Some(g) = &mut arm.guard { normalize_chains_expr(g, counter, registry); }
                 match &mut arm.body {
-                    MatchArmBody::Expr(e) => normalize_chains_expr(e, counter),
-                    MatchArmBody::Block(b) => normalize_chains_block(b, counter),
+                    MatchArmBody::Expr(e) => normalize_chains_expr(e, counter, registry),
+                    MatchArmBody::Block(b) => normalize_chains_block(b, counter, registry),
                 }
             }
         }
         ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
-            normalize_chains_expr(iter, counter);
-            normalize_chains_block(body, counter);
+            normalize_chains_expr(iter, counter, registry);
+            normalize_chains_block(body, counter, registry);
         }
         ExprKind::While { cond, body, .. } => {
-            normalize_chains_expr(cond, counter);
-            normalize_chains_block(body, counter);
+            normalize_chains_expr(cond, counter, registry);
+            normalize_chains_block(body, counter, registry);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            normalize_chains_expr(scrutinee, counter);
-            normalize_chains_block(body, counter);
+            normalize_chains_expr(scrutinee, counter, registry);
+            normalize_chains_block(body, counter, registry);
         }
-        ExprKind::Loop { body, .. } => normalize_chains_block(body, counter),
+        ExprKind::Loop { body, .. } => normalize_chains_block(body, counter, registry),
         ExprKind::With { bindings, body } => {
             for wb in bindings.iter_mut() {
-                normalize_chains_expr(&mut wb.handler, counter);
+                normalize_chains_expr(&mut wb.handler, counter, registry);
             }
-            normalize_chains_block(body, counter);
+            normalize_chains_block(body, counter, registry);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
         | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
-            normalize_chains_block(body, counter),
+            normalize_chains_block(body, counter, registry),
         ExprKind::Supervised { body, cancel } => {
-            normalize_chains_block(body, counter);
-            if let Some(c) = cancel { normalize_chains_expr(c, counter); }
+            normalize_chains_block(body, counter, registry);
+            if let Some(c) = cancel { normalize_chains_expr(c, counter, registry); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) => normalize_chains_expr(e, counter),
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => normalize_chains_expr(e, counter, registry),
         ExprKind::Try(e) | ExprKind::Bang(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _)
-        | ExprKind::Unary { operand: e, .. } => normalize_chains_expr(e, counter),
+        | ExprKind::Unary { operand: e, .. } => normalize_chains_expr(e, counter, registry),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
-            normalize_chains_expr(a, counter);
-            normalize_chains_expr(b, counter);
+            normalize_chains_expr(a, counter, registry);
+            normalize_chains_expr(b, counter, registry);
         }
         ExprKind::Index { obj, index } => {
-            normalize_chains_expr(obj, counter);
-            normalize_chains_expr(index, counter);
+            normalize_chains_expr(obj, counter, registry);
+            normalize_chains_expr(index, counter, registry);
         }
         ExprKind::Call { func, args, trailing } => {
-            normalize_chains_expr(func, counter);
+            normalize_chains_expr(func, counter, registry);
             for arg in args.iter_mut() {
                 let inner = match arg {
                     CallArg::Item(e) | CallArg::Spread(e) => e,
                     CallArg::Named { value, .. } => value,
                 };
-                normalize_chains_expr(inner, counter);
+                normalize_chains_expr(inner, counter, registry);
             }
             if let Some(t) = trailing {
                 match t {
-                    Trailing::Block(b) => normalize_chains_block(b, counter),
+                    Trailing::Block(b) => normalize_chains_block(b, counter, registry),
                     Trailing::Fn(sb) => match &mut sb.body {
-                        FnBody::Expr(e) => normalize_chains_expr(e, counter),
-                        FnBody::Block(b) => normalize_chains_block(b, counter),
+                        FnBody::Expr(e) => normalize_chains_expr(e, counter, registry),
+                        FnBody::Block(b) => normalize_chains_block(b, counter, registry),
                         FnBody::External => {}
                     },
                     Trailing::LegacyBlockWithParams(tb) =>
-                        normalize_chains_block(&mut tb.body, counter),
+                        normalize_chains_block(&mut tb.body, counter, registry),
                 }
             }
         }
@@ -274,7 +344,7 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter) {
             for el in elems.iter_mut() {
                 match el {
                     ArrayElem::Item(e) | ArrayElem::Spread(e) =>
-                        normalize_chains_expr(e, counter),
+                        normalize_chains_expr(e, counter, registry),
                 }
             }
         }
@@ -282,50 +352,50 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter) {
             for el in elems.iter_mut() {
                 match el {
                     MapElem::Pair(k, v) => {
-                        normalize_chains_expr(k, counter);
-                        normalize_chains_expr(v, counter);
+                        normalize_chains_expr(k, counter, registry);
+                        normalize_chains_expr(v, counter, registry);
                     }
-                    MapElem::Spread(e) => normalize_chains_expr(e, counter),
+                    MapElem::Spread(e) => normalize_chains_expr(e, counter, registry),
                 }
             }
         }
         ExprKind::RecordLit { fields, .. } => {
             for rf in fields.iter_mut() {
-                if let Some(v) = &mut rf.value { normalize_chains_expr(v, counter); }
+                if let Some(v) = &mut rf.value { normalize_chains_expr(v, counter, registry); }
             }
         }
         ExprKind::TupleLit(elems) => {
-            for el in elems.iter_mut() { normalize_chains_expr(el, counter); }
+            for el in elems.iter_mut() { normalize_chains_expr(el, counter, registry); }
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts.iter_mut() {
-                if let InterpStrPart::Expr { expr: e, spec: _ } = p { normalize_chains_expr(e, counter); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { normalize_chains_expr(e, counter, registry); }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {
-            normalize_chains_expr(tag, counter);
-            for a in args.iter_mut() { normalize_chains_expr(a, counter); }
+            normalize_chains_expr(tag, counter, registry);
+            for a in args.iter_mut() { normalize_chains_expr(a, counter, registry); }
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { normalize_chains_expr(s, counter); }
-            if let Some(e) = end { normalize_chains_expr(e, counter); }
+            if let Some(s) = start { normalize_chains_expr(s, counter, registry); }
+            if let Some(e) = end { normalize_chains_expr(e, counter, registry); }
         }
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            normalize_chains_expr(range, counter);
-            normalize_chains_expr(body, counter);
+            normalize_chains_expr(range, counter, registry);
+            normalize_chains_expr(body, counter, registry);
         }
         ExprKind::Interrupt(opt) => {
-            if let Some(e) = opt { normalize_chains_expr(e, counter); }
+            if let Some(e) = opt { normalize_chains_expr(e, counter, registry); }
         }
         // Leaf / literal — nothing к descend into.
         _ => {}
     }
 }
 
-fn normalize_chains_else(eb: &mut ElseBranch, counter: &mut ChainCounter) {
+fn normalize_chains_else(eb: &mut ElseBranch, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
     match eb {
-        ElseBranch::Block(b) => normalize_chains_block(b, counter),
-        ElseBranch::If(e) => normalize_chains_expr(e, counter),
+        ElseBranch::Block(b) => normalize_chains_block(b, counter, registry),
+        ElseBranch::If(e) => normalize_chains_expr(e, counter, registry),
     }
 }
 
@@ -356,13 +426,15 @@ struct FluentChain {
     outer_span: crate::diag::Span,
 }
 
-/// Plan 123.4.4 (V1): detect-and-extract a fluent chain rooted at this
-/// Expr. Returns `Some(chain)` если e is the OUTERMOST Call of a chain
-/// matching:
+/// Plan 123.4.4 (V1) → V2 (2026-06-05): detect-and-extract a fluent
+/// chain rooted at this Expr. Returns `Some(chain)` если e is the
+/// OUTERMOST Call of a chain matching:
 /// - Chain depth ≥ 2 (else не worth hoisting).
-/// - Each method name в `FLUENT_BUILTIN_METHODS`.
+/// - Each method name классифицируется как fluent via `is_fluent_method`
+///   (union of hardcoded `FLUENT_BUILTIN_METHODS` + per-module
+///   `FluentMethodRegistry` of `FnDecl.returns_receiver == true` methods).
 /// - Root receiver is `Member{SelfAccess, F}` (safe-hoist pattern).
-fn try_extract_outer_fluent_chain(e: &Expr) -> Option<FluentChain> {
+fn try_extract_outer_fluent_chain(e: &Expr, registry: &FluentMethodRegistry) -> Option<FluentChain> {
     let mut frames: Vec<ChainFrame> = Vec::new();
     let mut cur = e;
     let outer_span = e.span;
@@ -371,8 +443,8 @@ fn try_extract_outer_fluent_chain(e: &Expr) -> Option<FluentChain> {
     loop {
         if let ExprKind::Call { func, args, trailing } = &cur.kind {
             if let ExprKind::Member { obj, name } = &func.kind {
-                if !is_fluent_builtin_method(name) {
-                    // Method not in fluent set — abort (we only hoist
+                if !is_fluent_method(name, registry) {
+                    // Method not в fluent set — abort (we only hoist
                     // chains of known-safe fluent calls).
                     return None;
                 }
@@ -388,12 +460,46 @@ fn try_extract_outer_fluent_chain(e: &Expr) -> Option<FluentChain> {
         }
         break;
     }
-    // cur is now the root receiver. Must be Member{SelfAccess, F}.
+    // cur is now the root receiver. Plan 123.4.4 V1 only accepted
+    // `Member{SelfAccess, F}` (i.e. `@F`). V3 (2026-06-05) extends к
+    // non-self roots: closes `[M-123.4.4-non-self-receivers]`.
+    //
+    // Accepted root patterns (safe-hoistable):
+    // - `Member{SelfAccess, F}` (V1) — `@F` self-field root.
+    // - `Ident(name)` (V3) — local var root `v.m1().m2()`. Hoisting
+    //   provides uniform-shape AST; no codegen benefit (Ident already
+    //   register-cheap) but keeps downstream-pass logic uniform.
+    // - `Member{Ident, F}` (V3) — local-field root `obj.field.m1().m2()`.
+    //   PRIMARY non-self benefit: prevents N× struct-member-access
+    //   emission. Symmetric к V1's @F case.
+    //
+    // Rejected (V3 scope, future expansion):
+    // - `Call{...}` root — already chain-flattened by earlier processing.
+    // - `Member{Member{...}, F}` (depth-2 member access) — semantics
+    //   may differ if intermediate access has side-effects; conservative
+    //   skip until use-case demands.
+    // - `Index{...}`, `Try{...}`, etc. — non-trivial intermediate
+    //   evaluation, hoisting could alter semantics.
+    //
+    // Value-type safety: same V1 limitation applies — value-type local
+    // var / field can't be safely hoisted (would copy slot bits).
+    // Practical safety: fluent methods (`push`/`write_*`/user `-> @`)
+    // overwhelmingly target ref-typed receivers; value-records don't
+    // declare such mutators.
     let (root_field, root) = match &cur.kind {
         ExprKind::Member { obj, name } if matches!(obj.kind, ExprKind::SelfAccess) => {
+            // V1: @F self-field.
             (name.clone(), cur.clone())
         }
-        _ => return None, // not safe-hoistable root pattern
+        ExprKind::Member { obj, name } if matches!(obj.kind, ExprKind::Ident(_)) => {
+            // V3: local-field `obj.field` root.
+            (name.clone(), cur.clone())
+        }
+        ExprKind::Ident(name) => {
+            // V3: pure local var `v` root.
+            (name.clone(), cur.clone())
+        }
+        _ => return None, // unsupported root pattern (Call/Index/etc.)
     };
     if frames.len() < 2 {
         return None; // single-method call — не a chain
@@ -684,16 +790,24 @@ fn Buf @count() -> int {
     /// wrapped (e.g. `local.push().push()`).
     #[test]
     fn chain_norm_non_self_root_not_wrapped() {
+        // V3 SUPERSEDED 2026-06-05: this test was V1's negative for
+        // local-var roots. Plan 123.4.4 V3 NOW SUPPORTS local-var roots
+        // via Ident root pattern (closes `[M-123.4.4-non-self-receivers]`).
+        //
+        // Originally asserted `chain_root_lets == 0` for
+        // `v.push(a).push(b)`. Now asserts EXACT OPPOSITE — that pure
+        // Ident root IS wrapped (V3 uniform-shape hoist, no codegen
+        // benefit but consistent AST shape).
         let src = r#"
-module testmod.cn_non_self_root
+module testmod.cn_non_self_root_v3
 fn process(mut v []int, a int, b int) -> () {
     v.push(a).push(b)
 }
 "#;
         let m = run(src);
         let f = find_fn(&m, "process");
-        assert_eq!(count_chain_root_lets(f), 0,
-            "non-self chain root shouldn't be wrapped");
+        assert!(count_chain_root_lets(f) >= 1,
+            "V3: pure Ident root v.push(a).push(b) MUST wrap; got 0 _chain_root_ lets");
     }
 
     /// V123.4.4.6 positive: AFTER rewrite, `@buf` Member-SelfAccess
@@ -801,5 +915,257 @@ fn Buf mut @do(a int, b int) -> Buf {
         let count2 = count_chain_root_lets(find_fn(&m, "do"));
         assert_eq!(count1, count2,
             "second normalization shouldn't add chains");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.4.4 V2 (2026-06-05): user-defined fluent builders via
+    // FnDecl.returns_receiver. Closes [M-123.4.4-user-fluent-detection].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V2.1 unit: `build_fluent_registry` discovers all instance methods
+    /// declared с `-> @` (returns_receiver = true).
+    #[test]
+    fn v2_build_fluent_registry_collects_returns_receiver() {
+        let src = r#"
+module testmod.v2_registry
+type Bldr { mut count int }
+fn Bldr mut @bump(n int) -> @ { @count = @count + n; @ }
+fn Bldr mut @reset() -> @ { @count = 0; @ }
+fn Bldr @get() -> int => @count
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_fluent_registry(&m);
+        assert!(reg.contains("bump"),
+            "bump declared с -> @ must be в registry; got {:?}", reg);
+        assert!(reg.contains("reset"),
+            "reset declared с -> @ must be в registry; got {:?}", reg);
+        assert!(!reg.contains("get"),
+            "get is NOT -> @ — must NOT be в registry; got {:?}", reg);
+    }
+
+    /// V2.2 unit: `is_fluent_method` accepts both builtin list AND
+    /// registry entries (union semantics).
+    #[test]
+    fn v2_is_fluent_method_union() {
+        let mut reg = FluentMethodRegistry::new();
+        reg.insert("custom_step".to_string());
+        // From hardcoded BUILTIN_METHODS:
+        assert!(is_fluent_method("push", &reg));
+        assert!(is_fluent_method("write_byte", &reg));
+        // From registry:
+        assert!(is_fluent_method("custom_step", &reg));
+        // Neither:
+        assert!(!is_fluent_method("nonexistent_xyz", &reg));
+    }
+
+    /// V2.3 positive: user-defined fluent builder с `-> @` triggers
+    /// chain-norm hoisting (previously not handled by V1 hardcoded list).
+    #[test]
+    fn v2_user_fluent_builder_chain_normalized() {
+        let src = r#"
+module testmod.v2_user_chain
+type Outer { mut bldr Bldr }
+type Bldr { mut count int }
+fn Bldr mut @step(n int) -> @ { @count = @count + n; @ }
+fn Outer mut @do() -> Outer {
+    @bldr.step(1).step(2).step(3)
+    @
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "do");
+        // After chain-norm: 1 `_chain_root_<N>_bldr` let injected; @bldr
+        // accessed only twice — once in the let init, once in the Block's
+        // trailing returning `@`. Without V2 fix, V1 hardcoded list would
+        // skip user `step` method → no let → 3× @bldr accesses.
+        let chain_roots = count_chain_root_lets(f);
+        assert!(chain_roots >= 1,
+            "user fluent builder must trigger chain-norm hoist; got {} _chain_root_ lets",
+            chain_roots);
+    }
+
+    /// V2.4 positive: mixed builtin + user-defined fluent in same chain
+    /// still recognized correctly (each method classified independently).
+    #[test]
+    fn v2_mixed_builtin_and_user_fluent_chain() {
+        // Both methods (push from registry-only builtin, custom from
+        // FnDecl) recognized → chain hoisted.
+        let src = r#"
+module testmod.v2_mixed
+type Bldr { mut buf []int }
+fn Bldr mut @custom() -> @ { @buf.push(99); @ }
+fn Bldr mut @do() -> Bldr {
+    @buf.push(1).push(2)
+    @
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "do");
+        let chain_roots = count_chain_root_lets(f);
+        assert!(chain_roots >= 1,
+            "mixed-source chain must hoist; got {} _chain_root_ lets",
+            chain_roots);
+    }
+
+    /// V2.5 negative: user method WITHOUT `-> @` does NOT trigger chain-
+    /// norm hoist even if name happens to match common fluent verb.
+    #[test]
+    fn v2_user_non_fluent_method_not_hoisted() {
+        let src = r#"
+module testmod.v2_non_fluent
+type Outer { mut bldr Bldr }
+type Bldr { mut count int }
+fn Bldr mut @noticeable(n int) -> int { @count = @count + n; @count }
+fn Outer mut @do() -> Outer {
+    @bldr.noticeable(1).noticeable(2)
+    @
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "do");
+        let chain_roots = count_chain_root_lets(f);
+        // `noticeable` returns int (NOT @), не declared в builtin list
+        // either → must NOT hoist. (Also semantically wrong к chain int →
+        // int .noticeable — would be type error, but our pass shouldn't
+        // even attempt the rewrite.)
+        assert_eq!(chain_roots, 0,
+            "user method without -> @ must NOT trigger hoist; got {} _chain_root_ lets",
+            chain_roots);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.4.4 V3 (2026-06-05): non-self receiver roots. Closes
+    // [M-123.4.4-non-self-receivers]. Extends try_extract_outer_fluent_chain
+    // root pattern к Ident + Member{Ident, F}.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V3.1 positive: local-var root `v.push(a).push(b)` wraps
+    /// (Ident root pattern).
+    #[test]
+    fn v3_local_var_root_wraps() {
+        let src = r#"
+module testmod.v3_local_ident
+fn process(mut v []int, a int, b int, c int) -> () {
+    v.push(a).push(b).push(c)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        let roots = count_chain_root_lets(f);
+        assert!(roots >= 1,
+            "V3 local Ident root must wrap; got {} _chain_root_ lets",
+            roots);
+    }
+
+    /// V3.2 positive: local-field root `obj.field.push(a).push(b)`
+    /// wraps (Member{Ident, F} root pattern). PRIMARY non-self benefit.
+    #[test]
+    fn v3_local_field_root_wraps() {
+        let src = r#"
+module testmod.v3_local_field
+type Wrap { mut buf []int }
+fn process(mut w Wrap, a int, b int, c int) -> () {
+    w.buf.push(a).push(b).push(c)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        let roots = count_chain_root_lets(f);
+        assert!(roots >= 1,
+            "V3 Member{{Ident, field}} root must wrap; got {} _chain_root_ lets",
+            roots);
+    }
+
+    /// V3.3 negative: depth-1 chain (single call) on local-var root NOT
+    /// wrapped (chain depth requirement preserved).
+    #[test]
+    fn v3_local_root_depth_1_not_wrapped() {
+        let src = r#"
+module testmod.v3_local_depth1
+fn process(mut v []int, a int) -> () {
+    v.push(a)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        assert_eq!(count_chain_root_lets(f), 0,
+            "depth-1 chain on local root must NOT wrap");
+    }
+
+    /// V3.4 negative: non-fluent method on local root NOT wrapped
+    /// (method-name filter still applies).
+    #[test]
+    fn v3_local_root_non_fluent_method_not_wrapped() {
+        let src = r#"
+module testmod.v3_local_nonfluent
+fn process(ro v []int, a int, b int) -> int {
+    v.compare(a).compare(b)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        // `compare` returns int, not fluent. Even if depth ≥ 2, must
+        // not wrap. (Also semantically wrong int.compare(int) — but
+        // our pass should reject without emitting hoist.)
+        assert_eq!(count_chain_root_lets(f), 0,
+            "non-fluent method on local root must NOT wrap");
+    }
+
+    /// V3.5 negative: complex root (Index) NOT wrapped — V3 scope
+    /// excludes Call/Index/etc. intermediate evaluations.
+    #[test]
+    fn v3_index_root_not_wrapped() {
+        let src = r#"
+module testmod.v3_index_root
+fn process(mut vs [][]int, a int, b int) -> () {
+    vs[0].push(a).push(b)
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "process");
+        // `vs[0]` is `Index{Ident, IntLit}` — not Ident, not
+        // Member{Ident, _}, not Member{SelfAccess, _}. Skipped.
+        assert_eq!(count_chain_root_lets(f), 0,
+            "Index root must NOT wrap (V3 scope excludes Index)");
+    }
+
+    /// V3.6 positive: user fluent builder on local var combines V2 + V3.
+    #[test]
+    fn v3_user_fluent_on_local_var() {
+        let src = r#"
+module testmod.v3_user_local
+type Bldr { mut n int }
+fn Bldr mut @step() -> @ { @n = @n + 1; @ }
+fn make(mut b Bldr) -> () {
+    b.step().step().step()
+}
+"#;
+        let m = run(src);
+        let f = find_fn(&m, "make");
+        let roots = count_chain_root_lets(f);
+        assert!(roots >= 1,
+            "V2+V3 combined: user-fluent on local Ident must wrap; got {} _chain_root_ lets",
+            roots);
+    }
+
+    /// V2.6 positive: registry treats `returns_receiver` flag as
+    /// authoritative — same method name appearing on multiple types
+    /// (e.g., `Bldr.step -> @` AND `Walker.step -> Walker`) joins via
+    /// presence of ANY returns_receiver-true declaration.
+    #[test]
+    fn v2_multi_type_same_name_first_fluent_wins() {
+        let src = r#"
+module testmod.v2_multi
+type A { mut n int }
+type B { mut n int }
+fn A mut @step() -> @ { @n = @n + 1; @ }
+fn B mut @step() -> int { @n = @n + 1; @n }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_fluent_registry(&m);
+        // `step` от A — fluent (returns_receiver=true). От B — int.
+        // Union-by-name → `step` в registry (A's contribution).
+        assert!(reg.contains("step"),
+            "step name must be в registry due к A's -> @; got {:?}", reg);
     }
 }

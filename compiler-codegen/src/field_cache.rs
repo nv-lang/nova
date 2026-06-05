@@ -260,40 +260,258 @@ struct FieldRegistry {
     /// slot. Cache of `@F` survives such calls. Closes
     /// `[M-123.7.5-same-field-ref-type]`.
     ref_typed: HashSet<(String, String)>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): set
+    /// of (field_owner_type, field_name) → leaf name of field's
+    /// declared TypeRef. Used by V7.6 method-realloc check к look up
+    /// F's actual type when analyzing `@F.method()` call в outer fn.
+    field_type_leaf: HashMap<(String, String), String>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): set
+    /// of (type_name, method_name) pairs where the method is presumed
+    /// к **fully replace** the receiver slot bits (overwrite ALL fields)
+    /// rather than mutating in-place. Cache of `@F` MUST invalidate
+    /// across `@F.method()` if (F_type, method) ∈ replaces_self_methods.
+    ///
+    /// **V1 detection heuristic** (2026-06-05): method has `mut`
+    /// receiver AND takes ≥ 1 non-self param whose declared type's
+    /// leaf name matches the receiver type. Captures the canonical
+    /// `fn X mut @replace(other X) -> ()` swap pattern. False positives
+    /// (e.g., `fn Bldr @merge(other Bldr)` that appends instead of
+    /// replacing) result в conservative cache invalidation — sound but
+    /// slightly less precise than ideal. V2 will add user-tagged
+    /// `#realloc` attr support per spec §V7.6.
+    ///
+    /// Closes `[M-123.7.6-method-realloc-flag]`.
+    replaces_self_methods: HashSet<(String, String)>,
 }
 
-/// Plan 123.7.6 (V7.6, 2026-06-04): classify a `TypeRef` as reference
-/// type (heap-stored handle, mutation through methods doesn't change
-/// the holding slot's pointer/header bits).
+/// Plan 123.7.6.2 (V7.6 refactor, 2026-06-05): TypeDecl-classification
+/// entry built из user module's `Item::Type` declarations.
 ///
-/// Recognized reference types:
-/// - `[]T` (Array) — slice-handle, push/extend modify referenced array
-///   but not the handle bits.
-/// - `*T` / `Pointer` — pointer value, target mutation doesn't change ptr.
-/// - Named builtin collections / strings (Map / HashMap / BTreeMap / Set /
-///   HashSet / BTreeSet / Vec / List / String / StringBuilder / str).
-/// - Wrappers `ro T` / `mut T` — peel and recurse on inner.
+/// Per spec D52 + D215 + D228 (записано в `02-types.md`):
+/// - `Record(AllocKind::Heap)` — `type X { ... }` — slot holds `Nova_X*`
+///   pointer (8 bytes); mut-methods modify behind pointer, slot stable.
+/// - `Record(AllocKind::Value)` — `type X value { ... }` (D228) — slot
+///   holds inline NovaValue_X bytes; mut-methods modify slot directly.
+/// - `Sum` — `type X | A | B` — slot holds tagged-union pointer; stable.
+/// - `NamedTuple` — `type X(a A, b B)` (D215) — slot inline; mut writes slot.
+/// - `Newtype(inner)` / `Alias(inner)` — recurse `is_reference_type_ref`
+///   on `inner` (slot layout = inner's layout).
+/// - `Effect` / `Protocol` / `Opaque` — handle/vtable pointer; stable.
+#[derive(Debug, Clone)]
+enum TypeKindEntry {
+    HeapRecord,
+    ValueRecord,
+    Sum,
+    NamedTuple,
+    Newtype(TypeRef),
+    Alias(TypeRef),
+    Effect,
+    Protocol,
+    Opaque,
+}
+
+/// Plan 123.7.6.2 (V7.6 refactor): module-wide TypeDecl name → kind
+/// registry. Used by `is_reference_type_ref` to classify user types
+/// (closes `[M-123.7.6-generic-ref-types]`) и value-records (D228
+/// `type X value { ... }` — stack-allocated inline slot, mut-methods
+/// write through slot, **not** ref-type-equivalent).
+type TypeKindRegistry = HashMap<String, TypeKindEntry>;
+
+/// Plan 123.7.6.2 (V7.6 refactor, 2026-06-05): build module-wide type
+/// registry перед `register_items`. Includes own module + peer_files.
+/// Per spec D52 §allocation contract:
+/// - `type X { ... }` → HeapRecord (default `AllocKind::Heap`)
+/// - `type X value { ... }` → ValueRecord (D228 stack-inline)
+/// - `type X(T1, T2)` → NamedTuple if `kind == NamedTuple`, иначе fallback
+fn build_type_kind_registry(module: &Module) -> TypeKindRegistry {
+    let mut out: TypeKindRegistry = HashMap::new();
+    collect_type_kinds(&module.items, &mut out);
+    for pf in &module.peer_files {
+        collect_type_kinds(&pf.items_here, &mut out);
+    }
+    out
+}
+
+fn collect_type_kinds(items: &[Item], out: &mut TypeKindRegistry) {
+    for item in items {
+        if let Item::Type(t) = item {
+            let entry = match &t.kind {
+                TypeDeclKind::Record(_) => match t.allocation {
+                    AllocKind::Heap => TypeKindEntry::HeapRecord,
+                    AllocKind::Value => TypeKindEntry::ValueRecord,
+                },
+                TypeDeclKind::Sum(_) => TypeKindEntry::Sum,
+                TypeDeclKind::NamedTuple(_) => TypeKindEntry::NamedTuple,
+                TypeDeclKind::Newtype(inner) => TypeKindEntry::Newtype(inner.clone()),
+                TypeDeclKind::Alias(inner) => TypeKindEntry::Alias(inner.clone()),
+                TypeDeclKind::Effect(_) => TypeKindEntry::Effect,
+                TypeDeclKind::Protocol { .. } => TypeKindEntry::Protocol,
+                TypeDeclKind::Opaque => TypeKindEntry::Opaque,
+            };
+            out.insert(t.name.clone(), entry);
+        }
+    }
+}
+
+/// Plan 123.7.6 V1 (2026-06-04) → V2 refactor (2026-06-05): classify
+/// a `TypeRef` as **slot-stable** (ref-type-equivalent for V7.6 purposes).
 ///
-/// Conservative for unknown Named types и FixedArray (stack-stored),
-/// Tuple (struct of values), Func, Protocol, Unit, Unsafe wrappers
-/// (semantic ambiguity).
-fn is_reference_type_ref(t: &TypeRef) -> bool {
+/// Slot-stable means: `@F.method()` invocation **cannot rewrite the bits
+/// of field F's storage slot** in the parent struct. This is the precise
+/// criterion для V7.5/V7.7 own-field cache survival, не «heap vs stack
+/// allocation» в abstract sense.
+///
+/// **Classification per spec D32 + D52 + D215 + D216 + D228:**
+///
+/// Slot-stable = TRUE (cache survives):
+/// - `[]T` — slot holds `NovaArray*` pointer; push/extend modify
+///   `*NovaArray` (heap), pointer константен (D52).
+/// - `*T` / `ptr` — pointer value 8B inline; methods operate on
+///   pointee, не reassign slot (D216 §11).
+/// - `str` — inline `{ data ptr; len u64 }` 16B; **immutable** — no
+///   mut-methods exist that could modify slot bits (D32 §strings).
+/// - Primitives `int`/`bool`/`f64`/...— inline value; no mut-method-
+///   modify-slot pattern в Nova (`i.set(5)` не существует — assignment
+///   is statement, не method-call).
+/// - Heap-record `type X { ... }` (default `AllocKind::Heap`) — slot
+///   holds `Nova_X*` pointer; methods modify `*X`, ptr константен (D52).
+/// - Sum-type `type X | A | B` — slot holds tagged-union pointer; stable.
+/// - Effect / Protocol — handle/vtable pointer; stable.
+/// - Opaque (`external type X`) — pointer per Plan 62.D.bis (`Nova_X*`).
+/// - Func — closure handle pointer.
+///
+/// Slot-stable = FALSE (cache invalidated):
+/// - `[N]T` (FixedArray) — inline N×T bytes; mut-method modify slot.
+/// - Tuple `(A, B, C)` — inline; mut-method modify slot.
+/// - NamedTuple `type X(a A, b B)` (D215) — inline; mut-method modify slot.
+/// - Value-record `type X value { ... }` (D228) — inline `NovaValue_X`
+///   struct bytes; mut-method modify slot directly.
+///
+/// Recursive:
+/// - `ro T` / `mut T` / `unsafe T` wrappers → recurse inner.
+/// - `Newtype(inner)` / `Alias(inner)` → recurse inner (slot layout =
+///   inner's, per D52 §3).
+///
+/// Conservative fallback:
+/// - Cross-module Named type not в registry → TRUE (assume slot-stable;
+///   sound for V7.5 own-field invariant — false-positive cache
+///   survival is harmless if other heuristics keep cache from forming).
+fn is_reference_type_ref(t: &TypeRef, registry: &TypeKindRegistry) -> bool {
+    is_reference_type_ref_with_depth(t, registry, 0)
+}
+
+/// Recursion depth limit для newtype/alias chains. 32 covers any sane
+/// program; pathological deep chains conservatively classified true.
+const REF_TYPE_RECURSION_LIMIT: usize = 32;
+
+fn is_reference_type_ref_with_depth(
+    t: &TypeRef,
+    registry: &TypeKindRegistry,
+    depth: usize,
+) -> bool {
+    if depth >= REF_TYPE_RECURSION_LIMIT {
+        return true; // pathological recursion — conservative
+    }
     match t {
+        // Slot holds pointer / immutable handle — stable.
         TypeRef::Array(_, _) => true,
         TypeRef::Pointer(_, _) => true,
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) =>
-            is_reference_type_ref(inner),
+        TypeRef::Func { .. } => true,
+        TypeRef::Protocol { .. } => true,
+        // Slot inline bytes, mut-method writes them.
+        TypeRef::FixedArray(_, _, _) => false,
+        TypeRef::Tuple(_, _) => false,
+        // Unit — no @-fields possible, inert.
+        TypeRef::Unit(_) => false,
+        // Wrappers — peel and recurse.
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _) => {
+            is_reference_type_ref_with_depth(inner, registry, depth + 1)
+        }
         TypeRef::Named { path, .. } => {
             let leaf = path.last().map(|s| s.as_str()).unwrap_or("");
-            matches!(leaf,
-                "str" | "string" | "String" | "StringBuilder"
-                | "Map" | "HashMap" | "BTreeMap" | "TreeMap"
-                | "Set" | "HashSet" | "BTreeSet" | "TreeSet"
-                | "Vec" | "List" | "Deque" | "Queue"
-                | "WriteBuffer" | "ReadBuffer"
-            )
+            classify_named_leaf(leaf, registry, depth)
         }
-        _ => false, // FixedArray, Tuple, Func, Protocol, Unit, Unsafe — conservative
+    }
+}
+
+/// Primitive numeric / bool / char — no mut-method-modify-slot pattern.
+fn is_primitive_leaf(leaf: &str) -> bool {
+    matches!(leaf,
+        "int"
+        | "i8" | "i16" | "i32" | "i64"
+        | "u8" | "u16" | "u32" | "u64"
+        | "isize" | "usize"
+        | "f32" | "f64"
+        | "bool" | "char" | "Never"
+    )
+}
+
+fn classify_named_leaf(
+    leaf: &str,
+    registry: &TypeKindRegistry,
+    depth: usize,
+) -> bool {
+    if is_primitive_leaf(leaf) {
+        // Primitives (`int`, `bool`, `f64`, ...) have no slot-mutating
+        // method pattern в Nova:
+        //   - canonical assignment `n = 5` — statement, не method call
+        //     (handled by V1 region-write detection, не V7.6)
+        //   - hypothetical user `fn int mut @inc(self mut)` —
+        //     parser/checker permissive (no E_PRIMITIVE_MUT_METHOD yet),
+        //     но codegen passes primitive receivers **by value**
+        //     (`emit_c.rs::prepare_method_recv` takes `&obj` only для
+        //     `NovaValue_*`), so mutation silently no-ops — slot bits
+        //     in caller's struct stay unchanged. Cache survives.
+        // Safe ⇒ true.
+        return true;
+    }
+    // `str` — immutable inline `{ data ptr; len u64 }` handle (Plan 115
+    // §15 / `02-types.md:7060`). Immutability is a **hard spec contract**
+    // (08-runtime.md:658 D26: "str — immutable"; 08-runtime.md:823-825
+    // D73: O(n) copy at `str↔[]u8` justified because shared mutable view
+    // would "испортил бы immutability str"; Plan 91 §"Принцип: Nova-first"
+    // lines 196-199: "сознательный дизайн, как в Rust"). Stdlib `str`
+    // surface — 0 mut-methods (runtime_registry.rs::str_runtime() all
+    // `is_mut: false`). User-defined `fn str mut @hack(...)` is currently
+    // parser-permissive (missing E_PRIMITIVE_MUT_METHOD diagnostic —
+    // followup) but silently no-ops в codegen due to by-value primitive
+    // receiver passing. Cache survives in all three scenarios ⇒ true.
+    if leaf == "str" {
+        return true;
+    }
+    // `ptr` / `nova_ptr` — opaque pointer-sized integer primitive
+    // (D216 §11; `02-types.md:6907`). 8B inline value; methods operate
+    // on pointee, не reassign caller's slot. Same primitive-receiver
+    // by-value passing as above. ⇒ true.
+    if leaf == "ptr" || leaf == "nova_ptr" {
+        return true;
+    }
+    match registry.get(leaf) {
+        Some(TypeKindEntry::HeapRecord) => true,   // `type X { ... }` — ptr slot
+        // `type X value { ... }` (D228) — inline NovaValue_X slot.
+        // mut-method's `nova_self` is `NovaValue_X*` (Plan 124.8 V2 LANDED) —
+        // `@field = ...` writes propagate to caller's slot ⇒ cache invalidate.
+        Some(TypeKindEntry::ValueRecord) => false,
+        Some(TypeKindEntry::Sum) => true, // tagged union pointer
+        // D215 named tuples — Plan 124.8 §2.7 mandates pointer receiver
+        // ("Method receiver: pointer (как value-record)"), но codegen
+        // currently still emits `NovaTuple_X` by-value (followup
+        // `[M-D215-mut-receiver-pointer-codegen]`). V7.6 classifies
+        // FALSE = invalidate per spec contract — coincidentally matches
+        // current broken codegen behaviour (by-value copy = mutation
+        // lost = cache survives anyway), and remains correct when
+        // codegen fix lands (mutation propagates = cache must invalidate).
+        Some(TypeKindEntry::NamedTuple) => false,
+        Some(TypeKindEntry::Newtype(inner))
+        | Some(TypeKindEntry::Alias(inner)) => {
+            is_reference_type_ref_with_depth(inner, registry, depth + 1)
+        }
+        Some(TypeKindEntry::Effect)
+        | Some(TypeKindEntry::Protocol)
+        | Some(TypeKindEntry::Opaque) => true,
+        None => true, // unknown cross-module — conservative slot-stable
     }
 }
 
@@ -311,8 +529,24 @@ pub struct FnCacheInfo {
     pub span: crate::diag::Span,
     /// D217 V1 ro fields decided for caching.
     pub ro_caches: Vec<String>,
-    /// D217 V1 mut fields (first-region cache).
+    /// D217 V1 mut fields (aggregate of outer + nested regions).
+    /// Backward-compat field — preserved for V5/V5.4 telemetry consumers
+    /// (CLI `--explain-cache`, LSP code-lens) that haven't migrated к the
+    /// region-tagged split. Equals
+    /// `outer_region_caches.len() + nested_region_caches.len()`
+    /// в length (entries may duplicate across regions for the same field).
     pub mut_caches: Vec<String>,
+    /// Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): V1 first-region or
+    /// V1.1 subsequent outer-region mut cache decisions. Identified by
+    /// cache-local name pattern `_at_<F>` (no suffix) or `_at_<F>_r<N>`
+    /// (numeric region index). Closes `[M-123.5.4-explain-region-tagging]`.
+    pub outer_region_caches: Vec<String>,
+    /// Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): V1.2 nested-region
+    /// mut cache decisions inside if-then/else-block, while-body,
+    /// for-body, match-arm body, etc. Identified by cache-local name
+    /// pattern `_at_<F>_n<N>` (numeric nested counter). Closes
+    /// `[M-123.5.4-explain-region-tagging]`.
+    pub nested_region_caches: Vec<String>,
     /// D218 LICM hoists по полю (per loop counted once per field).
     pub licm_hoists: Vec<String>,
     /// D219 pure-call cached methods.
@@ -467,6 +701,8 @@ fn analyze_fn_for_explain(
         span: f.span,
         ro_caches: Vec::new(),
         mut_caches: Vec::new(),
+        outer_region_caches: Vec::new(),
+        nested_region_caches: Vec::new(),
         licm_hoists: Vec::new(),
         pure_caches: Vec::new(),
         chain_caches: Vec::new(),
@@ -482,6 +718,39 @@ fn analyze_fn_for_explain(
     info
 }
 
+/// Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): region kind для mut
+/// cache decision telemetry. Closes `[M-123.5.4-explain-region-tagging]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplainRegionKind {
+    /// V1 first-region (`_at_<F>`) or V1.1 subsequent outer region
+    /// (`_at_<F>_r<N>`) at fn body's top-level after a write/call
+    /// barrier.
+    Outer,
+    /// V1.2 nested-region (`_at_<F>_n<N>`) inside an if-then/else
+    /// block, while-body, for-body, match-arm body, etc. — region
+    /// scanner descended from outer barrier stmt.
+    Nested,
+}
+
+/// Plan 123.5.4 follow-up (V5.4.1): classify cache-local name suffix
+/// into outer vs nested region. Used only for mut classifications;
+/// ro caches are always outer (V1 prefix).
+///
+/// `_at_F` → Outer (V1).
+/// `_at_F_r<digits>` → Outer (V1.1 subsequent outer region).
+/// `_at_F_n<digits>` → Nested (V1.2 inside non-top-level block).
+fn explain_region_kind(name: &str) -> ExplainRegionKind {
+    if let Some(idx) = name.rfind('_') {
+        let suffix = &name[idx + 1..];
+        if let Some(rest) = suffix.strip_prefix('n') {
+            if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+                return ExplainRegionKind::Nested;
+            }
+        }
+    }
+    ExplainRegionKind::Outer
+}
+
 /// Plan 123.5.4 (V5.4): classify one `_at_<...>` let by its name suffix
 /// + binding shape + TypeDecl field kind, recording into the appropriate
 /// `FnCacheInfo` field.
@@ -491,7 +760,8 @@ fn analyze_fn_for_explain(
 /// 2. Plain `_at_<F>` / `_at_<F>_r<N>` / `_at_<F>_n<N>` with
 ///    `value == Member{SelfAccess, F}`:
 ///    - Look up `F` в `type_fields` (если have receiver's fields).
-///    - If `FieldKind::Mut` → mut_caches.
+///    - If `FieldKind::Mut` → mut_caches **AND** outer_region_caches or
+///      nested_region_caches per `explain_region_kind(name)` (V5.4.1).
 ///    - If `FieldKind::Ro` → ro_caches.
 ///    - Fallback (registry miss): suffix heuristic (region-suffix
 ///      indicates mut, no-suffix → ro).
@@ -524,7 +794,16 @@ fn explain_classify_at_let(
             let kind = type_fields
                 .and_then(|fields| fields.get(orig_field).copied());
             match kind {
-                Some(FieldKind::Mut) => info.mut_caches.push(orig_field.clone()),
+                Some(FieldKind::Mut) => {
+                    info.mut_caches.push(orig_field.clone());
+                    // V5.4.1 (2026-06-05): also tag region kind.
+                    match explain_region_kind(name) {
+                        ExplainRegionKind::Outer =>
+                            info.outer_region_caches.push(orig_field.clone()),
+                        ExplainRegionKind::Nested =>
+                            info.nested_region_caches.push(orig_field.clone()),
+                    }
+                }
                 Some(FieldKind::Ro) => info.ro_caches.push(orig_field.clone()),
                 None => {
                     // Fallback: name-suffix heuristic when registry has
@@ -532,6 +811,14 @@ fn explain_classify_at_let(
                     // module fragment).
                     if explain_name_has_region_suffix(name) {
                         info.mut_caches.push(orig_field.clone());
+                        // V5.4.1 (2026-06-05): tag region kind for
+                        // fallback path too.
+                        match explain_region_kind(name) {
+                            ExplainRegionKind::Outer =>
+                                info.outer_region_caches.push(orig_field.clone()),
+                            ExplainRegionKind::Nested =>
+                                info.nested_region_caches.push(orig_field.clone()),
+                        }
                     } else {
                         info.ro_caches.push(orig_field.clone());
                     }
@@ -1681,7 +1968,7 @@ fn licm_fn_with_ipa(
         Some(rt) => rt,
         None => { licm_fn_impl(f, reg, cfg, None); return; }
     };
-    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     licm_fn_impl(f, reg, cfg, Some(ipa))
 }
 
@@ -1697,7 +1984,7 @@ fn pure_cache_fn_with_ipa(
         Some(rt) => rt,
         None => { pure_cache_fn_impl(f, reg, pure_methods, cfg, None); return; }
     };
-    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     pure_cache_fn_impl(f, reg, pure_methods, cfg, Some(ipa))
 }
 
@@ -1712,7 +1999,7 @@ fn chain_cache_fn_with_ipa(
         Some(rt) => rt,
         None => { chain_cache_fn_impl(f, reg, cfg, None); return; }
     };
-    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: recv_type.as_str(), read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     chain_cache_fn_impl(f, reg, cfg, Some(ipa))
 }
 
@@ -1747,6 +2034,17 @@ pub(crate) struct IpaCtx<'a> {
     /// reference-typed fields' caches survive `@F.method()` calls
     /// because methods mutate the referenced object, не the slot.
     pub ref_typed: &'a HashSet<(String, String)>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): set
+    /// of methods that fully replace receiver slot bits. Refines V7.6
+    /// own-field cache survival check — if `@F.method()` is in this
+    /// set, cache MUST invalidate even though F is ref-typed.
+    /// Closes `[M-123.7.6-method-realloc-flag]`.
+    pub replaces_self_methods: &'a HashSet<(String, String)>,
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05):
+    /// (recv_type, field_name) → leaf name of field's declared
+    /// TypeRef. Used to resolve the field-owner's TypeDecl name when
+    /// looking up replaces_self_methods at `@F.method()` call sites.
+    pub field_type_leaf: &'a HashMap<(String, String), String>,
 }
 
 impl<'a> IpaCtx<'a> {
@@ -1766,6 +2064,26 @@ impl<'a> IpaCtx<'a> {
     /// `fname == F` — V7.5's conservative own-field invalidate relaxed.
     pub(crate) fn is_field_ref_type(&self, fname: &str) -> bool {
         self.ref_typed.contains(&(self.recv_type.to_string(), fname.to_string()))
+    }
+
+    /// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05):
+    /// true если `method_name` on field F's declared type is a
+    /// presumed-replaces-self method (e.g., `replace(other Self)`).
+    /// Lookup: `fname` → leaf type of F via `field_type_leaf` →
+    /// (leaf, method_name) lookup в `replaces_self_methods`.
+    ///
+    /// Used by V7.5/V7.7 own-field invalidation refinement: even if
+    /// F is ref-typed (cache survives in-place mutators), calling
+    /// `@F.replace(...)` MUST invalidate because field's slot bits
+    /// get overwritten. Closes `[M-123.7.6-method-realloc-flag]`.
+    pub(crate) fn is_replaces_self_call(&self, fname: &str, method_name: &str) -> bool {
+        let Some(f_leaf) = self.field_type_leaf.get(
+            &(self.recv_type.to_string(), fname.to_string())) else {
+            // Unknown field type leaf — conservative: not replaces-self.
+            return false;
+        };
+        self.replaces_self_methods.contains(
+            &(f_leaf.clone(), method_name.to_string()))
     }
 }
 
@@ -1787,7 +2105,7 @@ fn cache_fn_ipa(
         return;
     };
     let recv_type = recv.type_name.clone();
-    let ipa = IpaCtx { write_sets, recv_type: &recv_type, read_sets, ref_typed: &reg.ref_typed };
+    let ipa = IpaCtx { write_sets, recv_type: &recv_type, read_sets, ref_typed: &reg.ref_typed, replaces_self_methods: &reg.replaces_self_methods, field_type_leaf: &reg.field_type_leaf };
     cache_fn_with_ipa(f, reg, cfg, Some(ipa));
 }
 
@@ -1821,14 +2139,76 @@ fn register_pure_items(items: &[Item], out: &mut HashSet<(String, String)>) {
 
 fn build_registry(module: &Module) -> FieldRegistry {
     let mut reg = FieldRegistry::default();
-    register_items(&module.items, &mut reg);
+    // Plan 123.7.6.2 (V7.6 refactor, 2026-06-05): build type-kind registry
+    // once across own + peer modules, then thread it to `register_items`
+    // so per-field ref-type classification consults TypeDecl decls
+    // (closes [M-123.7.6-generic-ref-types] and adds value-record D228).
+    let type_kinds = build_type_kind_registry(module);
+    register_items(&module.items, &mut reg, &type_kinds);
     for pf in &module.peer_files {
-        register_items(&pf.items_here, &mut reg);
+        register_items(&pf.items_here, &mut reg, &type_kinds);
+    }
+    // Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): second
+    // pass to detect methods that fully replace receiver slot.
+    // Heuristic: `mut`-receiver method taking ≥ 1 non-self param of
+    // receiver type. Closes `[M-123.7.6-method-realloc-flag]`.
+    detect_replaces_self_methods(&module.items, &mut reg);
+    for pf in &module.peer_files {
+        detect_replaces_self_methods(&pf.items_here, &mut reg);
     }
     reg
 }
 
-fn register_items(items: &[Item], reg: &mut FieldRegistry) {
+/// Plan 123.7.6 follow-up (2026-06-05): extract leaf name from a
+/// `TypeRef` для `field_type_leaf` registry. Returns None for
+/// FixedArray / Func / Protocol / Tuple / Unit / Range / Pointer etc.
+/// where there is no single named type leaf to attribute method calls.
+fn type_ref_leaf_name(t: &TypeRef) -> Option<String> {
+    match t {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _) => type_ref_leaf_name(inner),
+        _ => None,
+    }
+}
+
+/// Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05): detect
+/// methods that presumably fully replace receiver slot via parameter
+/// type heuristic. Adds (TypeName, MethodName) к
+/// `reg.replaces_self_methods` for each detected case.
+///
+/// Heuristic: method has `mut` receiver (kind = Instance) AND has at
+/// least one non-self parameter whose declared type's leaf name
+/// matches the receiver type. This captures the canonical replace
+/// pattern `fn X mut @replace(other X) -> ()` while excluding
+/// `fn X mut @push(item u8)`, `fn X mut @write_byte(v u8)`, etc.
+///
+/// False positives example: `fn Bldr mut @merge(other Bldr) -> @`
+/// (appends `other` instead of replacing) — marked as replaces_self,
+/// resulting в conservative cache invalidation. Sound but slightly
+/// less precise; V2 follow-up will add `#realloc` attr для overrides.
+fn detect_replaces_self_methods(items: &[Item], reg: &mut FieldRegistry) {
+    for item in items {
+        if let Item::Fn(f) = item {
+            let Some(recv) = &f.receiver else { continue };
+            if recv.kind != ReceiverKind::Instance { continue };
+            if !recv.mutable { continue };
+            let recv_type = &recv.type_name;
+            for p in &f.params {
+                if let Some(leaf) = type_ref_leaf_name(&p.ty) {
+                    if &leaf == recv_type {
+                        reg.replaces_self_methods.insert(
+                            (recv_type.clone(), f.name.clone()));
+                        break; // one match suffices
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn register_items(items: &[Item], reg: &mut FieldRegistry, type_kinds: &TypeKindRegistry) {
     for item in items {
         if let Item::Type(t) = item {
             match &t.kind {
@@ -1846,10 +2226,20 @@ fn register_items(items: &[Item], reg: &mut FieldRegistry) {
                             FieldKind::Mut
                         };
                         map.insert(f.name.clone(), kind);
-                        // Plan 123.7.6 (V7.6, 2026-06-04): record
-                        // reference-type classification per field.
-                        if is_reference_type_ref(&f.ty) {
+                        // Plan 123.7.6 V1 (2026-06-04) → V2 (2026-06-05):
+                        // TypeDecl-aware ref-type classification per
+                        // field. Walks Newtype/Alias chains, distinguishes
+                        // heap-record vs value-record (D228), covers user
+                        // generic wrappers via registry lookup.
+                        if is_reference_type_ref(&f.ty, type_kinds) {
                             reg.ref_typed.insert((t.name.clone(), f.name.clone()));
+                        }
+                        // Plan 123.7.6 follow-up (method-realloc-flag,
+                        // 2026-06-05): record field's declared type leaf
+                        // для later replaces-self lookup at call sites.
+                        if let Some(leaf) = type_ref_leaf_name(&f.ty) {
+                            reg.field_type_leaf.insert(
+                                (t.name.clone(), f.name.clone()), leaf);
                         }
                     }
                     reg.by_type.insert(t.name.clone(), map);
@@ -2209,6 +2599,74 @@ fn v2_1_loop_iters_weight() -> usize {
         .filter(|&n| n > 0).unwrap_or(8)
 }
 
+/// Plan 123.2.1 follow-up (dynamic loop count, 2026-06-05): try
+/// to extract literal iteration count from a for-loop's `iter` expr.
+///
+/// Returns `Some(N)` if iter has known literal bounds:
+/// - `range(N)` (single literal arg) — `Some(N)` if N > 0.
+/// - `range(lo, hi)` (two literal args, hi > lo) — `Some(hi − lo)`.
+/// - `lo..hi` (exclusive Range expr с literal bounds) — `Some(hi − lo)`.
+/// - `lo..=hi` (inclusive Range) — `Some(hi − lo + 1)`.
+///
+/// Returns `None` otherwise — caller falls back к env default
+/// `v2_1_loop_iters_weight()` (default 8). Closes
+/// `[M-123.2.1-dynamic-loop-count]`.
+fn parse_loop_iter_count(iter: &Expr) -> Option<usize> {
+    // Pattern: `range(N)` or `range(lo, hi)` — Call with Ident("range").
+    if let ExprKind::Call { func, args, .. } = &iter.kind {
+        if let ExprKind::Ident(name) = &func.kind {
+            if name == "range" {
+                let mut int_args: Vec<i64> = Vec::with_capacity(2);
+                for arg in args {
+                    if let CallArg::Item(e) = arg {
+                        if let ExprKind::IntLit(n) = &e.kind {
+                            int_args.push(*n);
+                            continue;
+                        }
+                    }
+                    return None; // non-literal arg — bail out
+                }
+                match int_args.len() {
+                    1 => {
+                        let n = int_args[0];
+                        if n > 0 {
+                            return Some(n as usize);
+                        }
+                    }
+                    2 => {
+                        let (lo, hi) = (int_args[0], int_args[1]);
+                        if hi > lo {
+                            return Some((hi - lo) as usize);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // Pattern: range expr `lo..hi` (exclusive) или `lo..=hi` (inclusive).
+    if let ExprKind::Range { start: Some(s), end: Some(e), inclusive } = &iter.kind {
+        if let (ExprKind::IntLit(lo), ExprKind::IntLit(hi)) = (&s.kind, &e.kind) {
+            if *hi > *lo {
+                let span_raw = (hi - lo) as usize;
+                return Some(if *inclusive { span_raw + 1 } else { span_raw });
+            }
+            // Inclusive-empty edge: `lo..=lo` → single iter.
+            if *inclusive && hi == lo {
+                return Some(1);
+            }
+        }
+    }
+    None
+}
+
+/// Plan 123.2.1 follow-up: pick the iter-weight для a specific loop's
+/// `iter` expression. Returns parsed literal bound IF available,
+/// else falls back к env-tunable default.
+fn loop_iter_weight_for(iter: &Expr) -> usize {
+    parse_loop_iter_count(iter).unwrap_or_else(v2_1_loop_iters_weight)
+}
+
 /// Plan 123.2.1 (V2.1): loop-weighted read counter. When the recursion
 /// enters a loop body (while/for/loop/while-let/parallel-for), multiplies
 /// the running `loop_mult` factor. Otherwise behaves identically к
@@ -2265,10 +2723,15 @@ fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -
             }
         }
         // V2.1: entering a loop body multiplies the weight.
+        // V2.1 follow-up (dynamic loop count, 2026-06-05): for `for x
+        // in range(N) { ... }` use parsed literal N instead of env
+        // default; non-literal iter falls back к env default. Closes
+        // `[M-123.2.1-dynamic-loop-count]`.
         ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
             c += count_field_reads_in_expr_weighted(iter, fname, loop_mult);
+            let iter_weight = loop_iter_weight_for(iter);
             c += count_field_reads_in_block_weighted(body, fname,
-                loop_mult.saturating_mul(v2_1_loop_iters_weight()));
+                loop_mult.saturating_mul(iter_weight));
         }
         ExprKind::While { cond, body, .. } => {
             c += count_field_reads_in_expr_weighted(cond, fname, loop_mult);
@@ -2633,30 +3096,37 @@ fn expr_contains_invalidating_call_for(
                         // Plan 123.7.5 (V7.5): `@F.method()` sibling-safe.
                         // Plan 123.7.6 (V7.6, 2026-06-04): same-field
                         // refinement — when `fname == F` AND F is a
-                        // reference-type field (Array/Pointer/Map/String/
-                        // etc.), `@F.method()` mutates the referenced
-                        // object не the field's slot — `@F` cache survives.
-                        // Closes `[M-123.7.5-same-field-ref-type]`.
+                        // reference-type field, `@F.method()` mutates
+                        // the referenced object не the field's slot.
+                        // Plan 123.7.6 follow-up (method-realloc-flag,
+                        // 2026-06-05): EXCEPT when method ∈
+                        // replaces_self_methods (e.g., `@F.replace(other)`)
+                        // — those overwrite slot bits, must invalidate.
                         if fname == recv_field {
-                            if ctx.is_field_ref_type(fname) {
-                                false // V7.6: ref-type own cache safe
+                            if ctx.is_field_ref_type(fname)
+                                && !ctx.is_replaces_self_call(fname, m)
+                            {
+                                false // V7.6 + V7.6-realloc: ref-type
+                                      // + in-place method ⇒ cache safe
                             } else {
-                                true // value-type own cache: conservative
+                                true // value-type OR replaces-self ⇒ invalidate
                             }
                         } else {
                             false // V7.5 sibling refinement
                         }
                     } else if let Some(chain) = call_recv_self_chain(obj) {
                         // Plan 123.7.7 (V7.7): chain receiver sibling-safe.
-                        // Plan 123.7.6 (V7.6): chain root refinement —
-                        // when `fname == chain[0]` AND root field is
-                        // reference-typed, chain root cache survives.
-                        // Closes `[M-123.7.5-chain-receiver]`.
+                        // Plan 123.7.6 (V7.6) + realloc follow-up: chain
+                        // root refinement — when `fname == chain[0]` AND
+                        // root field is ref-typed AND method NOT в
+                        // replaces_self set, chain root cache survives.
                         if chain.first().map(|s| s.as_str()) == Some(fname) {
-                            if ctx.is_field_ref_type(fname) {
+                            if ctx.is_field_ref_type(fname)
+                                && !ctx.is_replaces_self_call(fname, m)
+                            {
                                 false // V7.6: ref-type chain root safe
                             } else {
-                                true // value-type chain root: conservative
+                                true // value-type OR replaces-self ⇒ invalidate
                             }
                         } else {
                             false // V7.7 sibling-safe
@@ -5735,7 +6205,17 @@ fn collect_loop_eligible_fields(
     let mut keys: Vec<&String> = fields.keys().collect();
     keys.sort();
     for fname in keys {
-        let count = count_field_reads_in_block(body, fname);
+        // Plan 123.2.1 follow-up (V2.1 LICM threshold integration,
+        // 2026-06-05): use weighted counter so reads inside **nested**
+        // loop bodies contribute their iter-weight-amplified cost к
+        // the current loop's eligibility decision. Seed `loop_mult = 1`
+        // because we're already inside this loop's body; nested loops
+        // (`while outer { while inner { @x } }`) inflate count by
+        // `v2_1_loop_iters_weight()²` so outer-loop hoist correctly
+        // recognizes inner-loop access amplification. Flat loop bodies
+        // (no nested loops) get count identical к non-weighted version.
+        // Closes `[M-123.2.1-v2-licm-threshold-integration]`.
+        let count = count_field_reads_in_block_weighted(body, fname, 1);
         if count < cfg.licm_threshold {
             continue;
         }
@@ -9742,6 +10222,9 @@ fn C mut @do() -> int {
     }
 
     /// V7.6.4 unit: `is_reference_type_ref` recognizes Array.
+    /// Updated 2026-06-05 (V7.6 refactor): signature now takes
+    /// `TypeKindRegistry` (`&TypeKindRegistry` param 2). Empty registry
+    /// suffices здесь — Array TypeRef variant doesn't consult registry.
     #[test]
     fn v7_6_is_ref_type_array() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
@@ -9750,7 +10233,8 @@ fn C mut @do() -> int {
             generics: vec![],
             span,
         }), span);
-        assert!(is_reference_type_ref(&arr_int));
+        let reg = TypeKindRegistry::new();
+        assert!(is_reference_type_ref(&arr_int, &reg));
     }
 
     /// V7.6.5 unit: `is_reference_type_ref` recognizes Pointer.
@@ -9762,13 +10246,19 @@ fn C mut @do() -> int {
             generics: vec![],
             span,
         }), span);
-        assert!(is_reference_type_ref(&ptr_int));
+        let reg = TypeKindRegistry::new();
+        assert!(is_reference_type_ref(&ptr_int, &reg));
     }
 
-    /// V7.6.6 unit: `is_reference_type_ref` recognizes named collections.
+    /// V7.6.6 unit: builtin `str` + unknown collections классифицируются
+    /// как ref-type (conservative). V7.6 V2 (2026-06-05): `String`/`Map`/
+    /// `Vec`/etc — больше не hardcoded; в empty registry падают в `None
+    /// => true` (conservative); в реальном module-build их TypeDecl
+    /// driver классификацию.
     #[test]
     fn v7_6_is_ref_type_named_collections() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
+        let reg = TypeKindRegistry::new();
         for name in &["str", "String", "Map", "HashMap", "Set", "Vec",
                        "StringBuilder", "WriteBuffer", "ReadBuffer"] {
             let ty = TypeRef::Named {
@@ -9776,35 +10266,51 @@ fn C mut @do() -> int {
                 generics: vec![],
                 span,
             };
-            assert!(is_reference_type_ref(&ty),
-                "expected {} to be reference type", name);
+            assert!(is_reference_type_ref(&ty, &reg),
+                "expected {} to be ref-type (str builtin OR registry-None conservative)",
+                name);
         }
     }
 
-    /// V7.6.7 unit: `is_reference_type_ref` rejects value types
-    /// (Named "int", Tuple, FixedArray).
+    /// V7.6.7 unit (V2 refactor, 2026-06-05): value-only types classify
+    /// as FALSE. Per V2 semantics:
+    /// - `int` primitive → **TRUE** (safe — no slot-mutating methods,
+    ///   primitive by-value receiver passing).
+    /// - Tuple `(int,)` → **FALSE** (inline slot, mut-method writes).
+    /// - FixedArray `[8]int` → **FALSE** (inline N×T bytes).
+    /// - Unknown Named `Counter` → **TRUE** (conservative cross-module).
     #[test]
     fn v7_6_is_ref_type_rejects_value_types() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
+        let reg = TypeKindRegistry::new();
         let int_ty = TypeRef::Named {
             path: vec!["int".to_string()],
             generics: vec![],
             span,
         };
-        assert!(!is_reference_type_ref(&int_ty), "int should not be ref-type");
+        // V2 semantic change: primitives → TRUE (no slot-mutating
+        // method pattern; even hypothetical user `fn int mut @inc()`
+        // silently no-ops in codegen — by-value receiver).
+        assert!(is_reference_type_ref(&int_ty, &reg),
+            "V2: int → TRUE (primitive safe-slot)");
         let tuple_ty = TypeRef::Tuple(vec![int_ty.clone()], span);
-        assert!(!is_reference_type_ref(&tuple_ty), "Tuple should not be ref-type");
+        assert!(!is_reference_type_ref(&tuple_ty, &reg),
+            "tuple → FALSE (inline mut-method writes slot)");
         let fixed_arr = TypeRef::FixedArray(8, Box::new(int_ty), span);
-        assert!(!is_reference_type_ref(&fixed_arr), "FixedArray should not be ref-type");
+        assert!(!is_reference_type_ref(&fixed_arr, &reg),
+            "FixedArray → FALSE (inline N×T)");
         let user_ty = TypeRef::Named {
             path: vec!["Counter".to_string()],
             generics: vec![],
             span,
         };
-        assert!(!is_reference_type_ref(&user_ty), "user record should not be ref-type");
+        // V2 semantic change: unknown Named → TRUE (conservative).
+        // Used to be FALSE under V1 hardcoded-list approach.
+        assert!(is_reference_type_ref(&user_ty, &reg),
+            "V2: unknown cross-module Named → TRUE (conservative)");
     }
 
-    /// V7.6.8 unit: `is_reference_type_ref` peels Readonly/Mut wrappers.
+    /// V7.6.8 unit: `is_reference_type_ref` peels Readonly/Mut/Unsafe wrappers.
     #[test]
     fn v7_6_is_ref_type_peels_wrappers() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
@@ -9815,8 +10321,11 @@ fn C mut @do() -> int {
         }), span);
         let ro_arr = TypeRef::Readonly(Box::new(arr_int.clone()), span);
         let mut_arr = TypeRef::Mut(Box::new(arr_int.clone()), span);
-        assert!(is_reference_type_ref(&ro_arr), "ro []int should be ref-type");
-        assert!(is_reference_type_ref(&mut_arr), "mut []int should be ref-type");
+        let unsafe_arr = TypeRef::Unsafe(Box::new(arr_int.clone()), span);
+        let reg = TypeKindRegistry::new();
+        assert!(is_reference_type_ref(&ro_arr, &reg), "ro []int should be ref-type");
+        assert!(is_reference_type_ref(&mut_arr, &reg), "mut []int should be ref-type");
+        assert!(is_reference_type_ref(&unsafe_arr, &reg), "unsafe []int should be ref-type");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -9939,8 +10448,432 @@ fn C mut @do(n int, m int) -> int {
         let m = run_pass(src, cfg);
         let f = find_fn(&m, "do");
         let names = all_at_let_names_recursive(f);
-        assert!(names.iter().any(|n| n == "_at_x"),
-            "V2.1: nested loop body should compound weight; got {:?}", names);
+        // V2.1 + V2.1-LICM-integration (2026-06-05): nested loop reads
+        // covered by either V1.1 top-level cache (`_at_x`) OR LICM hoist
+        // (`_at_x_loop`). Both semantically equivalent (cover the same
+        // nested-loop @x reads); accepting either guards against LICM-
+        // vs-V1.1 priority swings as cost model evolves. Closes
+        // `[M-123.2.1-v2-licm-threshold-integration]`.
+        let covered = names.iter().any(|n| n == "_at_x")
+            || names.iter().any(|n| n == "_at_x_loop");
+        assert!(covered,
+            "V2.1: nested loop body should compound weight \
+             (top-level `_at_x` OR LICM `_at_x_loop`); got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.7.6 follow-up (method-realloc-flag, 2026-06-05):
+    // detect methods that fully replace receiver slot. Closes
+    // [M-123.7.6-method-realloc-flag].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V7.6-realloc.1: `fn X mut @replace(other X)` registered as
+    /// replaces_self.
+    #[test]
+    fn v7_6_realloc_replace_method_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_replace
+type Slot { x int }
+fn Slot mut @replace(other Slot) -> () { @x = other.x }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(reg.replaces_self_methods.contains(
+            &("Slot".to_string(), "replace".to_string())),
+            "fn Slot mut @replace(other Slot) must be detected; got {:?}",
+            reg.replaces_self_methods);
+    }
+
+    /// V7.6-realloc.2: `fn X mut @push(item u8)` NOT registered (item
+    /// is not X-typed).
+    #[test]
+    fn v7_6_realloc_push_method_not_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_push
+type Bldr { mut buf []u8 }
+fn Bldr mut @push(item u8) -> () { @buf.push(item) }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(!reg.replaces_self_methods.contains(
+            &("Bldr".to_string(), "push".to_string())),
+            "fn Bldr mut @push(item u8) must NOT be detected as replaces_self; got {:?}",
+            reg.replaces_self_methods);
+    }
+
+    /// V7.6-realloc.3: ro receiver method NOT detected even with Self
+    /// param.
+    #[test]
+    fn v7_6_realloc_ro_receiver_not_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_ro
+type V { x int }
+fn V @combine(other V) -> int => @x + other.x
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(!reg.replaces_self_methods.contains(
+            &("V".to_string(), "combine".to_string())),
+            "ro receiver method must NOT be replaces_self");
+    }
+
+    /// V7.6-realloc.4: no params NOT detected (replaces_self needs ≥1
+    /// Self-typed param).
+    #[test]
+    fn v7_6_realloc_no_params_not_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_noparams
+type V { mut x int }
+fn V mut @clear() -> () { @x = 0 }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(!reg.replaces_self_methods.contains(
+            &("V".to_string(), "clear".to_string())),
+            "no-param mut method must NOT be replaces_self");
+    }
+
+    /// V7.6-realloc.5: `ro Self` param wrapper also detected (peeled).
+    #[test]
+    fn v7_6_realloc_ro_self_param_detected() {
+        let src = r#"
+module testmod.v7_6_realloc_ro_param
+type Slot { x int }
+fn Slot mut @copy_from(ro other Slot) -> () { @x = other.x }
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        assert!(reg.replaces_self_methods.contains(
+            &("Slot".to_string(), "copy_from".to_string())),
+            "ro Self-typed param must be detected via type_ref_leaf_name");
+    }
+
+    /// V7.6-realloc.6: integration — ref-typed field with replaces_self
+    /// call MUST invalidate cache (V7.6 default would've kept it).
+    #[test]
+    fn v7_6_realloc_integration_replace_invalidates_cache() {
+        // Outer fn в `Outer` calls `@b.replace(...)` where `b` is a
+        // `Bldr` field. Bldr has `replace(other Bldr)` (detected as
+        // replaces_self). Cache of @b across the @b.replace() must
+        // invalidate even though Bldr (heap-record) is ref-typed.
+        let src = r#"
+module testmod.v7_6_realloc_integration
+type Bldr { mut count int }
+fn Bldr mut @replace(other Bldr) -> () { @count = other.count }
+type Outer { mut b Bldr }
+fn Outer mut @do(other Bldr) -> () {
+    ro a = @b
+    @b.replace(other)
+    ro c = @b
+    ro _ = a
+    ro _ = c
+}
+"#;
+        let m = parse(src).expect("parse");
+        let reg = build_registry(&m);
+        // Confirm Bldr.replace registered.
+        assert!(reg.replaces_self_methods.contains(
+            &("Bldr".to_string(), "replace".to_string())),
+            "Bldr.replace must be в replaces_self set");
+        // Confirm Outer.b classified as ref-typed (Bldr is heap-record).
+        assert!(reg.ref_typed.contains(
+            &("Outer".to_string(), "b".to_string())),
+            "Outer.b must be ref-typed (Bldr is heap-record)");
+        // Confirm field_type_leaf maps Outer.b → "Bldr".
+        assert_eq!(reg.field_type_leaf.get(
+            &("Outer".to_string(), "b".to_string())).map(|s| s.as_str()),
+            Some("Bldr"),
+            "Outer.b field_type_leaf must resolve к Bldr");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.2.1 follow-up (dynamic loop count, 2026-06-05): parse
+    // range(N) literal bounds. Closes [M-123.2.1-dynamic-loop-count].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Helper для building Range expression in tests.
+    fn int_lit(n: i64) -> Expr {
+        Expr {
+            kind: ExprKind::IntLit(n),
+            span: crate::diag::Span::default(),
+        }
+    }
+
+    /// V2.1-dyn.1: `range(N)` literal single-arg returns Some(N).
+    #[test]
+    fn v2_1_dyn_parse_range_single_arg() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(int_lit(42))],
+                trailing: None,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(42));
+    }
+
+    /// V2.1-dyn.2: `range(lo, hi)` literal two-arg returns Some(hi-lo).
+    #[test]
+    fn v2_1_dyn_parse_range_two_arg() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(int_lit(3)), CallArg::Item(int_lit(20))],
+                trailing: None,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(17));
+    }
+
+    /// V2.1-dyn.3: `range(non_literal_x)` returns None (fallback к env).
+    #[test]
+    fn v2_1_dyn_parse_range_non_literal_none() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(Expr {
+                    kind: ExprKind::Ident("x".to_string()),
+                    span,
+                })],
+                trailing: None,
+            },
+            span,
+        };
+        assert!(parse_loop_iter_count(&iter).is_none());
+    }
+
+    /// V2.1-dyn.4: `range(0)` returns None (0 iter doesn't promote).
+    #[test]
+    fn v2_1_dyn_parse_range_zero_none() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("range".to_string()),
+                    span,
+                }),
+                args: vec![CallArg::Item(int_lit(0))],
+                trailing: None,
+            },
+            span,
+        };
+        assert!(parse_loop_iter_count(&iter).is_none());
+    }
+
+    /// V2.1-dyn.5: Range expr `lo..hi` exclusive returns Some(hi-lo).
+    #[test]
+    fn v2_1_dyn_parse_range_expr_exclusive() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Range {
+                start: Some(Box::new(int_lit(5))),
+                end: Some(Box::new(int_lit(50))),
+                inclusive: false,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(45));
+    }
+
+    /// V2.1-dyn.6: Range expr `lo..=hi` inclusive returns Some(hi-lo+1).
+    #[test]
+    fn v2_1_dyn_parse_range_expr_inclusive() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Range {
+                start: Some(Box::new(int_lit(5))),
+                end: Some(Box::new(int_lit(50))),
+                inclusive: true,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(46));
+    }
+
+    /// V2.1-dyn.7: `lo..=lo` inclusive single iter returns Some(1).
+    #[test]
+    fn v2_1_dyn_parse_range_expr_inclusive_single() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Range {
+                start: Some(Box::new(int_lit(7))),
+                end: Some(Box::new(int_lit(7))),
+                inclusive: true,
+            },
+            span,
+        };
+        assert_eq!(parse_loop_iter_count(&iter), Some(1));
+    }
+
+    /// V2.1-dyn.8: not range — returns None.
+    #[test]
+    fn v2_1_dyn_parse_non_range_none() {
+        let span = crate::diag::Span::default();
+        let iter = Expr {
+            kind: ExprKind::Ident("items".to_string()),
+            span,
+        };
+        assert!(parse_loop_iter_count(&iter).is_none());
+    }
+
+    /// V2.1-dyn.9: integration — `for i in 0..100 { @y }` produces
+    /// dramatically higher weighted read count than env default (8).
+    /// Verifies that parse_loop_iter_count is actually consulted by
+    /// the weighted scanner.
+    ///
+    /// Uses Range expr `0..100` instead of `range(100)` Call to avoid
+    /// the barrier-from-Call effect in V1's V1.1 region scanner (any
+    /// Call в iter expr closes the current region). Both syntactic
+    /// forms exercise `parse_loop_iter_count`.
+    #[test]
+    fn v2_1_dyn_for_range_100_promotes_top_cache() {
+        let src = r#"
+module testmod.v2_1_dyn_range100
+type C { mut y int }
+fn C mut @do() -> int {
+    mut acc = 0
+    for i in 0..100 {
+        acc = acc + @y
+    }
+    acc
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 50, // env weight 8 below; 0..100 literal above.
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        // Either V1.1 top-level OR LICM hoist accepted (same semantic
+        // coverage — see v2_1_nested_loops_compound_multiplier).
+        let covered = names.iter().any(|n| n == "_at_y")
+            || names.iter().any(|n| n == "_at_y_loop");
+        assert!(covered,
+            "0..100 Range literal must promote top-level cache or LICM \
+             hoist; got {:?}", names);
+    }
+
+    /// V2.1-dyn.10: negative integration — `for i in 0..3 { @y }`
+    /// with threshold=50 does NOT promote (3 < 50). Verifies that
+    /// small range literals don't over-promote.
+    #[test]
+    fn v2_1_dyn_for_range_3_no_promote() {
+        let src = r#"
+module testmod.v2_1_dyn_range3
+type C { mut y int }
+fn C mut @do() -> int {
+    mut acc = 0
+    for i in 0..3 {
+        acc = acc + @y
+    }
+    acc
+}
+"#;
+        let cfg = FieldCacheConfig {
+            threshold: 50,
+            // Disable LICM to isolate V1.1 cache decision.
+            licm_threshold: 1000,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(!names.iter().any(|n| n == "_at_y"),
+            "0..3 below threshold=50 must NOT promote top-level cache; \
+             got {:?}", names);
+    }
+
+    /// Plan 123.2.1 follow-up (V2.1 LICM integration, 2026-06-05):
+    /// LICM eligibility now uses weighted counter — nested loops inside
+    /// loop body inflate read-count via inner-loop's iter_weight even
+    /// if outer-body raw count is below threshold.
+    /// Closes `[M-123.2.1-v2-licm-threshold-integration]`.
+    #[test]
+    fn v2_1_licm_nested_loop_weighted_threshold() {
+        // Single inner-loop body read of @x: raw count = 1, below
+        // licm_threshold = 4. Weighted count = 8 (default iter weight)
+        // — above threshold ⇒ LICM hoist eligibility activated.
+        let src = r#"
+module testmod.v2_1_licm_nested_weighted
+type C { mut x int }
+fn C @do(n int, m int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        mut j = 0
+        while j < m {
+            acc = acc + @x
+            j = j + 1
+        }
+        i = i + 1
+    }
+    acc
+}
+"#;
+        // Set licm_threshold so flat (raw=1) reads wouldn't hoist but
+        // weighted (compound=8) reads do.
+        let cfg = FieldCacheConfig {
+            licm_threshold: 4,
+            // Suppress top-level V1.1 caching so we observe LICM in
+            // isolation — set baseline cache threshold high enough.
+            threshold: 1000,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(names.iter().any(|n| n == "_at_x_loop"),
+            "V2.1 LICM weighted: nested loop should compound past \
+             threshold and hoist; got {:?}", names);
+    }
+
+    /// V2.1 LICM negative: flat loop body с single read (no nested
+    /// loop) does NOT hoist when threshold > 1. Weighting matches raw
+    /// для flat case.
+    #[test]
+    fn v2_1_licm_flat_loop_single_read_no_hoist() {
+        let src = r#"
+module testmod.v2_1_licm_flat_single
+type C { mut x int }
+fn C @do(n int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        acc = acc + @x
+        i = i + 1
+    }
+    acc
+}
+"#;
+        // Threshold 2 — flat body has 1 raw read, weighted (seed=1, no
+        // nested loop) also 1 → below threshold ⇒ NOT hoisted.
+        let cfg = FieldCacheConfig {
+            licm_threshold: 2,
+            // Suppress top-level cache.
+            threshold: 1000,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(!names.iter().any(|n| n == "_at_x_loop"),
+            "flat loop single read must NOT hoist (raw=weighted=1 < threshold=2); \
+             got {:?}", names);
     }
 
     /// V2.1.5 unit: `v2_1_loop_iters_weight()` reads env var, defaults 8.
@@ -11379,6 +12312,384 @@ fn Outer @use_single() -> int {
             "no _pre let should emit when only single chain; got {:?}", names);
         assert!(names.iter().any(|n| n == "_at_a_b_c_chain"),
             "expected per-chain let; got {:?}", names);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.5.4 follow-up (V5.4.1, 2026-06-05): outer/nested region
+    // tagging для mut cache decisions в ExplainReport. Closes
+    // [M-123.5.4-explain-region-tagging].
+    // ─────────────────────────────────────────────────────────────────
+
+    /// V5.4.1.1: explain_region_kind classifies `_at_F` as Outer.
+    #[test]
+    fn v5_4_1_region_kind_plain_outer() {
+        assert_eq!(explain_region_kind("_at_x"), ExplainRegionKind::Outer);
+    }
+
+    /// V5.4.1.2: explain_region_kind classifies `_at_F_r<N>` as Outer
+    /// (V1.1 subsequent outer region).
+    #[test]
+    fn v5_4_1_region_kind_r_suffix_outer() {
+        assert_eq!(explain_region_kind("_at_x_r1"), ExplainRegionKind::Outer);
+        assert_eq!(explain_region_kind("_at_buf_r12"), ExplainRegionKind::Outer);
+    }
+
+    /// V5.4.1.3: explain_region_kind classifies `_at_F_n<N>` as Nested.
+    #[test]
+    fn v5_4_1_region_kind_n_suffix_nested() {
+        assert_eq!(explain_region_kind("_at_x_n1"), ExplainRegionKind::Nested);
+        assert_eq!(explain_region_kind("_at_buf_n7"), ExplainRegionKind::Nested);
+    }
+
+    /// V5.4.1.4: non-numeric suffix `_at_F_nfoo` (где `foo` не digits) —
+    /// fallback Outer (no false-positive nested classification).
+    #[test]
+    fn v5_4_1_region_kind_n_non_digits_outer() {
+        assert_eq!(explain_region_kind("_at_x_nfoo"), ExplainRegionKind::Outer);
+        // edge-case: literal `_at_x_n` (no digits) → Outer fallback.
+        assert_eq!(explain_region_kind("_at_x_n"), ExplainRegionKind::Outer);
+    }
+
+    /// V5.4.1.5: V1 first-region mut cache lands в outer_region_caches.
+    #[test]
+    fn v5_4_1_v1_outer_first_region_tagged_outer() {
+        let src = r#"
+module testmod.v5_4_1_outer_first
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    a + b
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found в explain report");
+        assert!(info.outer_region_caches.contains(&"x".to_string()),
+            "V1 first-region must tag outer; got outer={:?} nested={:?}",
+            info.outer_region_caches, info.nested_region_caches);
+        assert!(info.nested_region_caches.is_empty(),
+            "V1 first-region must NOT populate nested; got {:?}",
+            info.nested_region_caches);
+    }
+
+    /// V5.4.1.6: V1.1 subsequent outer region (`_at_F_r<N>`) lands в
+    /// outer_region_caches.
+    #[test]
+    fn v5_4_1_v1_1_subsequent_outer_tagged_outer() {
+        let src = r#"
+module testmod.v5_4_1_outer_subseq
+type C { mut x int }
+fn C mut @do() -> int {
+    ro a = @x
+    ro b = @x
+    @x = 99
+    ro c = @x
+    ro d = @x
+    a + b + c + d
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        // Both regions tag outer (V1 prefix + V1.1 `_at_x_r1`).
+        assert!(info.outer_region_caches.iter().filter(|n| n.as_str() == "x").count() >= 2,
+            "V1.1 must tag outer for both regions; got outer={:?}",
+            info.outer_region_caches);
+        assert!(info.nested_region_caches.is_empty(),
+            "V1.1 subseq outer must NOT populate nested; got {:?}",
+            info.nested_region_caches);
+        // Backward-compat: mut_caches still aggregates.
+        assert_eq!(info.mut_caches.len(),
+            info.outer_region_caches.len() + info.nested_region_caches.len(),
+            "mut_caches backward-compat aggregate invariant");
+    }
+
+    /// V5.4.1.7: V1.2 nested-region (`_at_F_n<N>`) lands в
+    /// nested_region_caches. Uses V1.2 if-then-with-internal-write
+    /// pattern from existing v1_2_nested_then_block_with_internal_write_cached.
+    #[test]
+    fn v5_4_1_v1_2_nested_tagged_nested() {
+        let src = r#"
+module testmod.v5_4_1_nested
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    mut acc = 0
+    if cond {
+        ro a = @x
+        ro b = @x
+        @x = 99
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        assert!(!info.nested_region_caches.is_empty(),
+            "V1.2 nested must populate nested_region_caches; outer={:?} nested={:?}",
+            info.outer_region_caches, info.nested_region_caches);
+        // Backward-compat invariant.
+        assert_eq!(info.mut_caches.len(),
+            info.outer_region_caches.len() + info.nested_region_caches.len(),
+            "mut_caches backward-compat aggregate invariant");
+    }
+
+    /// V5.4.1.8: outer + nested compose — V1.1 outer region AND V1.2
+    /// nested-region на разные регионы того же fn.
+    #[test]
+    fn v5_4_1_outer_and_nested_compose() {
+        let src = r#"
+module testmod.v5_4_1_compose
+type C { mut x int }
+fn C mut @do(cond bool) -> int {
+    ro a = @x
+    ro b = @x
+    if cond {
+        ro p = @x
+        ro q = @x
+        @x = 99
+        ro r = @x
+        ro s = @x
+        ro _ = a + b + p + q + r + s
+    }
+    a + b
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        assert!(!info.outer_region_caches.is_empty(),
+            "outer must populate; got {:?}", info.outer_region_caches);
+        assert!(!info.nested_region_caches.is_empty(),
+            "nested must populate; got {:?}", info.nested_region_caches);
+        // Backward-compat invariant.
+        assert_eq!(info.mut_caches.len(),
+            info.outer_region_caches.len() + info.nested_region_caches.len(),
+            "mut_caches aggregate invariant");
+    }
+
+    /// V5.4.1.9: ro field does NOT populate outer_region_caches or
+    /// nested_region_caches (those are mut-only telemetry).
+    #[test]
+    fn v5_4_1_ro_field_excluded_from_region_split() {
+        let src = r#"
+module testmod.v5_4_1_ro_field
+type C { ro y int }
+fn C @do() -> int {
+    ro a = @y
+    ro b = @y
+    a + b
+}
+"#;
+        let m = parse(src).expect("parse");
+        let report = analyze_module(&m, &FieldCacheConfig::default());
+        let info = report.per_fn.iter().find(|i| i.fn_name == "do")
+            .expect("@do not found");
+        assert!(info.ro_caches.contains(&"y".to_string()),
+            "ro field must land в ro_caches; got {:?}", info.ro_caches);
+        assert!(info.outer_region_caches.is_empty(),
+            "ro field must NOT populate outer_region_caches; got {:?}",
+            info.outer_region_caches);
+        assert!(info.nested_region_caches.is_empty(),
+            "ro field must NOT populate nested_region_caches; got {:?}",
+            info.nested_region_caches);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Plan 123.7.6.2 (V7.6 refactor, 2026-06-05): TypeDecl-driven
+    // ref-type classification — closes [M-123.7.6-generic-ref-types] +
+    // adds D228 value-record support.
+    //
+    // Each test parses a tiny Nova module declaring a host record `C`
+    // with a single field of the relevant TypeRef shape, then calls
+    // `build_registry` and asserts `ref_typed` membership for ("C", "f").
+    // ─────────────────────────────────────────────────────────────────
+
+    fn build_test_registry(src: &str) -> FieldRegistry {
+        let module = parse(src).expect("parse");
+        build_registry(&module)
+    }
+
+    fn is_ref(reg: &FieldRegistry, ty: &str, f: &str) -> bool {
+        reg.ref_typed.contains(&(ty.to_string(), f.to_string()))
+    }
+
+    /// Heap-record (default `AllocKind::Heap`) — slot is `Nova_X*`
+    /// pointer; mut-methods modify `*X`, slot stable ⇒ ref-typed = TRUE.
+    #[test]
+    fn v7_6_refactor_heap_record_is_ref() {
+        let src = r#"
+module testmod.v7_6_heap_record
+type Inner { v int }
+type C { mut p Inner }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "p"),
+            "heap-record field must be ref-typed (slot = pointer)");
+    }
+
+    /// Value-record D228 (`type X value { ... }`) — slot inline
+    /// NovaValue_X bytes; mut-methods modify slot directly ⇒
+    /// ref-typed = FALSE.
+    #[test]
+    fn v7_6_refactor_value_record_is_not_ref() {
+        let src = r#"
+module testmod.v7_6_value_record
+type Pt value { x f64  y f64 }
+type C { mut p Pt }
+"#;
+        let reg = build_test_registry(src);
+        assert!(!is_ref(&reg, "C", "p"),
+            "value-record D228 field must NOT be ref-typed (inline slot)");
+    }
+
+    /// Named tuple D215 — stack inline value ⇒ ref-typed = FALSE.
+    #[test]
+    fn v7_6_refactor_named_tuple_is_not_ref() {
+        let src = r#"
+module testmod.v7_6_named_tuple
+type Vec3(x f64, y f64, z f64)
+type C { mut p Vec3 }
+"#;
+        let reg = build_test_registry(src);
+        assert!(!is_ref(&reg, "C", "p"),
+            "named-tuple D215 field must NOT be ref-typed (inline slot)");
+    }
+
+    /// Sum type — tagged-union via pointer ⇒ ref-typed = TRUE.
+    #[test]
+    fn v7_6_refactor_sum_is_ref() {
+        let src = r#"
+module testmod.v7_6_sum
+type Result | Ok(int) | Err(int)
+type C { mut r Result }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "r"),
+            "sum-type field must be ref-typed");
+    }
+
+    /// Newtype around primitive — recurse → primitive (safe) ⇒ TRUE.
+    /// (Primitives can't host slot-mutating methods per `is_primitive_leaf`
+    /// rationale в classify_named_leaf.)
+    #[test]
+    fn v7_6_refactor_newtype_primitive_is_ref() {
+        let src = r#"
+module testmod.v7_6_newtype_int
+type Id u64
+type C { mut id Id }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "id"),
+            "newtype over primitive must inherit safe-slot semantics");
+    }
+
+    /// Newtype around `[]u8` — recurse → Array ⇒ TRUE.
+    #[test]
+    fn v7_6_refactor_newtype_array_is_ref() {
+        let src = r#"
+module testmod.v7_6_newtype_box
+type Bytes []u8
+type C { mut b Bytes }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "b"),
+            "newtype over array must be ref-typed via recursion");
+    }
+
+    /// `[]T` directly — slot holds `NovaArray*` ⇒ ref-typed = TRUE.
+    #[test]
+    fn v7_6_refactor_array_is_ref() {
+        let src = r#"
+module testmod.v7_6_array
+type C { mut xs []int }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "xs"),
+            "[]T field must be ref-typed (NovaArray pointer slot)");
+    }
+
+    /// Tuple type `(A, B)` — inline ⇒ ref-typed = FALSE.
+    #[test]
+    fn v7_6_refactor_anon_tuple_is_not_ref() {
+        let src = r#"
+module testmod.v7_6_anon_tuple
+type C { mut p (int, int) }
+"#;
+        let reg = build_test_registry(src);
+        assert!(!is_ref(&reg, "C", "p"),
+            "anonymous tuple field must NOT be ref-typed (inline)");
+    }
+
+    /// Cross-module unknown Named type — conservative TRUE.
+    #[test]
+    fn v7_6_refactor_unknown_type_is_ref_conservative() {
+        let src = r#"
+module testmod.v7_6_unknown
+type C { mut x SomeCrossModuleType }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "x"),
+            "unknown cross-module type must conservatively classify as ref-typed");
+    }
+
+    /// `str` — immutable per spec D26 (08-runtime.md:658) ⇒ TRUE.
+    /// Even if user added `fn str mut @hack(...)` (parser-permissive),
+    /// codegen primitive-by-value passing makes mutation silent no-op.
+    #[test]
+    fn v7_6_refactor_str_is_ref() {
+        let src = r#"
+module testmod.v7_6_str
+type C { mut s str }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "s"),
+            "str field must be ref-typed (spec-immutable + by-value receiver)");
+    }
+
+    /// `ro T` wrapper — recurse inner.
+    #[test]
+    fn v7_6_refactor_readonly_wrapper_recurses() {
+        let src = r#"
+module testmod.v7_6_ro
+type C { mut p ro []u8 }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "p"),
+            "ro []u8 must recurse и be ref-typed");
+    }
+
+    /// `[N]T` FixedArray — inline N×T bytes ⇒ ref-typed = FALSE.
+    #[test]
+    fn v7_6_refactor_fixed_array_is_not_ref() {
+        let src = r#"
+module testmod.v7_6_fixed
+type C { mut buf [16]u8 }
+"#;
+        let reg = build_test_registry(src);
+        assert!(!is_ref(&reg, "C", "buf"),
+            "[N]T fixed array field must NOT be ref-typed (inline)");
+    }
+
+    /// Alias — recurse inner.
+    #[test]
+    fn v7_6_refactor_alias_recurses() {
+        let src = r#"
+module testmod.v7_6_alias
+type ListInt alias []int
+type C { mut xs ListInt }
+"#;
+        let reg = build_test_registry(src);
+        assert!(is_ref(&reg, "C", "xs"),
+            "alias to []int must recurse и be ref-typed");
     }
 
     #[test]

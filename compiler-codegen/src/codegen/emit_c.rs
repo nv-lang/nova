@@ -15189,39 +15189,102 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 ));
                 self.indent -= 1;
                 self.line("}");
+                // Plan 110.x [M-110.x-on-exit-throws-leaks-shield] fix
+                // (2026-06-05): wrap on_exit C-call в own NovaFailFrame
+                // setjmp. If on_exit throws/panics, control returns here
+                // instead of jumping straight to caller's frame — that
+                // way nv_consume_leave_shield ALWAYS runs (deadline
+                // restored, mask decremented), and re-throw composition
+                // follows D193 R5 + D197 R3 (body=primary, on_exit=
+                // suppressed). Pre-fix bug: on_exit ran outside any local
+                // setjmp → on_exit throw skipped leave_shield → shield
+                // mask leaked + deadline never restored (same shadow
+                // class as the R4 bug but через exception path).
+                let on_exit_frame = format!("_consume_on_exit_frame_{}", scope_id);
+                let on_exit_threw = format!("_consume_on_exit_threw_{}", scope_id);
+                self.line(&format!("NovaFailFrame {};", on_exit_frame));
+                self.line(&format!("nova_fail_push(&{});", on_exit_frame));
+                self.line(&format!("{}.error_suppressed = NULL;", on_exit_frame));
+                self.line(&format!(
+                    "int {} = 0;  /* 0=ok, 1=throw, 2=panic */",
+                    on_exit_threw
+                ));
+                self.line(&format!("if (setjmp({}.jmp) == 0) {{", on_exit_frame));
+                self.indent += 1;
                 self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
+                self.line("nova_fail_pop();");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("nova_fail_pop();");
+                self.line(&format!(
+                    "{} = ({}.error_kind == NOVA_THROW_PANIC) ? 2 : 1;",
+                    on_exit_threw, on_exit_frame
+                ));
+                self.indent -= 1;
+                self.line("}");
 
                 // Plan 110.4.4.b (D185): Cleanup effect on_scope_exit
                 // dispatch. Pairs with on_scope_enter — fires after the
                 // user on_exit body has run (so observability sees the
-                // final outcome). Guarded by NULL-check; same scoping
-                // rules as enter.
+                // final outcome). Plan 110.x R4b amend: skip когда on_exit
+                // threw — observability sees only successful cleanup.
                 if self.effect_schemas.contains_key("Cleanup") {
                     self.line(&format!(
-                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
-                        type_name, outcome_val
+                        "if ({} == 0 && _nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
+                        on_exit_threw, type_name, outcome_val
                     ));
                 }
 
                 // Plan 110.2.1: leave cancel-shield before re-propagation.
                 // Pending cancel (if any) delivered после leave_shield.
-                // Plan 110.x deadline-underflow fix: pass prev_deadline для
-                // restoration outer's shield deadline (nested-shield safety).
+                // Plan 110.x deadline-underflow fix (R4): pass prev_deadline
+                // для restoration outer's shield deadline (nested-shield
+                // safety). Plan 110.x R4b: UNCONDITIONAL — runs even if
+                // on_exit threw, ensuring mask/deadline always restored.
                 self.line(&format!(
                     "nv_consume_leave_shield({});",
                     prev_deadline_var
                 ));
 
-                // 110.1.4.f: re-raise после on_exit на Failure outcome.
-                // 110.1.4.g: re-panic на Panic outcome (через nv_panic →
-                // тот же setjmp routing, но preserves PANIC kind).
-                self.line(&format!("if ({} == 1) {{", outcome_kind));
+                // Plan 110.x R4b re-throw composition (D193 R5 + D197 R3):
+                //   1. body panic dominates: nv_panic body's msg, suppress all else.
+                //   2. on_exit panic dominates (если body не panicked).
+                //   3. both throw → body=primary, on_exit=suppressed (compose).
+                //   4. only body throw → rethrow body's frame.
+                //   5. only on_exit throw → rethrow on_exit's frame.
+                //   6. both clean → fall through.
+                self.line(&format!("if ({} == 2) {{", outcome_kind));
                 self.indent += 1;
+                self.line("/* body panic dominates per D196 R3 — on_exit error/panic suppressed */");
+                self.line(&format!("nv_panic({}.error_msg);", frame));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 2) {{", on_exit_threw));
+                self.indent += 1;
+                self.line("/* on_exit panicked; body either OK or threw — panic propagates */");
+                self.line(&format!("nv_panic({}.error_msg);", on_exit_frame));
+                self.indent -= 1;
+                self.line(&format!(
+                    "}} else if ({} == 1 && {} == 1) {{",
+                    outcome_kind, on_exit_threw
+                ));
+                self.indent += 1;
+                self.line("/* D193 + D197 R3: body throw primary, on_exit throw composed как suppressed */");
+                self.line(&format!(
+                    "nv_compose_suppressed(&{}, {}.error_msg, {}.error_kind, {}.error_user_payload, {}.error_user_type_id);",
+                    frame, on_exit_frame, on_exit_frame, on_exit_frame, on_exit_frame
+                ));
                 self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
                 self.indent -= 1;
-                self.line(&format!("}} else if ({} == 2) {{", outcome_kind));
+                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
                 self.indent += 1;
-                self.line(&format!("nv_panic({}.error_msg);", frame));
+                self.line("/* body throw only; on_exit succeeded */");
+                self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({} == 1) {{", on_exit_threw));
+                self.indent += 1;
+                self.line("/* body succeeded; on_exit threw → propagate on_exit's error */");
+                self.line(&format!("nova_rethrow_with_suppressed(&{});", on_exit_frame));
                 self.indent -= 1;
                 self.line("}");
 

@@ -1,22 +1,22 @@
-﻿//! Plan 33.1 Р¤.3: Verification pipeline.
+﻿//! Plan 33.1 Ф.3: Verification pipeline.
 //!
-//! РђР»РіРѕСЂРёС‚Рј РґР»СЏ РєР°Р¶РґРѕР№ С„СѓРЅРєС†РёРё СЃ РєРѕРЅС‚СЂР°РєС‚Р°РјРё:
+//! Алгоритм для каждой функции с контрактами:
 //!
-//! 1. Encode РїР°СЂР°РјРµС‚СЂС‹ РєР°Рє Var-С‹ (SMT-IR).
-//! 2. Encode `requires` в†' assertions РІ backend.
-//! 3. Encode body: РґР»СЏ straight-line `=> expr` body = symbolic value,
-//!    РєРѕС‚РѕСЂРѕРµ Р·Р°РјРµРЅСЏРµС‚ `result` РІ ensures. Р"Р»СЏ block-body СЃ trailing вЂ"
-//!    С‚Рѕ Р¶Рµ СЃР°РјРѕРµ.
-//! 4. Р"Р»СЏ РєР°Р¶РґРѕРіРѕ `ensures Q`:
-//!    - Substitute `result` в†' encoded_body_value РІ Q.
-//!    - try_prove(Q): unsat в†' proven; sat в†' counterexample; unknown в†' fallback.
-//! 5. Р РµР·СѓР»СЊС‚Р°С‚ per-fn в†' Р°РіСЂРµРіРёСЂСѓРµС‚СЃСЏ РІ pipeline-level diagnostics.
+//! 1. Encode параметры как Var-ы (SMT-IR).
+//! 2. Encode `requires` → assertions в backend.
+//! 3. Encode body: для straight-line `=> expr` body = symbolic value,
+//!    которое заменяет `result` в ensures. Для block-body с trailing —
+//!    то же самое.
+//! 4. Для каждого `ensures Q`:
+//!    - Substitute `result` → encoded_body_value в Q.
+//!    - try_prove(Q): unsat → proven; sat → counterexample; unknown → fallback.
+//! 5. Результат per-fn → агрегируется в pipeline-level diagnostics.
 //!
-//! Plan 33.1 РѕРіСЂР°РЅРёС‡РµРЅРёСЏ:
-//! - Body РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ encodable (СЃРј. encode.rs `Unsupported` case'С‹).
-//! - Block-bodies СЃРѕ statements (let, if-stmts) РќР• encoded; РёС… РєРѕРЅС‚СЂР°РєС‚С‹
-//!   = `Unknown(NotAttempted)` (runtime fallback СЂР°Р±РѕС‚Р°РµС‚).
-//! - Function calls РІ body РќР• encoded (composition РІ 33.2).
+//! Plan 33.1 ограничения:
+//! - Body должен быть encodable (см. encode.rs `Unsupported` case'ы).
+//! - Block-bodies со statements (let, if-stmts) НЕ encoded; их контракты
+//!   = `Unknown(NotAttempted)` (runtime fallback работает).
+//! - Function calls в body НЕ encoded (composition в 33.2).
 
 use crate::ast::*;
 use crate::diag::{Diagnostic, Span};
@@ -25,29 +25,29 @@ use super::encode;
 use super::backend::{SmtBackend, try_prove};
 use super::backend::trivial::TrivialBackend;
 
-/// Р РµР·СѓР»СЊС‚Р°С‚ РІРµСЂРёС„РёРєР°С†РёРё РѕРґРЅРѕРіРѕ РєРѕРЅС‚СЂР°РєС‚Р°.
+/// Результат верификации одного контракта.
 #[derive(Debug, Clone)]
 pub enum VerifyResult {
     Proven,
-    /// РљРѕРЅС‚СЂ-РїСЂРёРјРµСЂ (С„РѕСЂРјСѓР»Р° РѕРїСЂРѕРІРµСЂР¶РµРЅР°).
+    /// Контр-пример (формула опровержена).
     Disproved(Model, String),
-    /// SMT РЅРµ СЃРїСЂР°РІРёР»СЃСЏ вЂ" fallback to runtime.
+    /// SMT не справился — fallback to runtime.
     Unknown(String),
-    /// Encoder РЅРµ СЃРјРѕРі РїРѕСЃС‚СЂРѕРёС‚СЊ SMT-IR (fall back to runtime).
+    /// Encoder не смог построить SMT-IR (fall back to runtime).
     EncodingFailed(String),
     /// Ф.6.2 (Plan 33.6): не-ошибка, пользователь должен знать [W2402].
     Warning(String),
 }
 
-/// Р'С‹Р±РѕСЂ SMT backend'Р°.
+/// Выбор SMT backend'а.
 ///
-/// Plan 33 Z3 milestone (V1 closure): РґРѕР±Р°РІР»РµРЅ `Z3`. РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+/// Plan 33 Z3 milestone (V1 closure): добавлен `Z3`. По умолчанию
 /// `Trivial` (backward-compat + no external deps). Switch:
 /// - CLI flag (nova check/test/compile): `--smt-backend=z3`.
 /// - Env var: `NOVA_SMT_BACKEND=z3`.
 ///
-/// Р•СЃР»Рё feature `z3-backend` РЅРµ compiled-in, `Z3` С‚РµСЂСЏРµС‚ СЃРјС‹СЃР» вЂ"
-/// `create_backend` РїР°РґР°РµС‚ РѕР±СЂР°С‚РЅРѕ РЅР° trivial СЃ stderr-warning.
+/// Если feature `z3-backend` не compiled-in, `Z3` теряет смысл —
+/// `create_backend` падает обратно на trivial с stderr-warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendChoice {
     Trivial,
@@ -58,7 +58,7 @@ pub enum BackendChoice {
 }
 
 impl BackendChoice {
-    /// РџР°СЂСЃРёС‚ СЃС‚СЂРѕРєСѓ, used Рё РґР»СЏ CLI Рё РґР»СЏ env-var.
+    /// Парсит строку, used и для CLI и для env-var.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "trivial" | "default" | "" => Some(BackendChoice::Trivial),
@@ -68,7 +68,7 @@ impl BackendChoice {
         }
     }
 
-    /// Backend РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ: СЃРјРѕС‚СЂРёРј `NOVA_SMT_BACKEND`, РёРЅР°С‡Рµ Trivial.
+    /// Backend по умолчанию: смотрим `NOVA_SMT_BACKEND`, иначе Trivial.
     ///
     /// Plan 33.14: `NOVA_CROSSCHECK=1` имеет приоритет над `NOVA_SMT_BACKEND`
     /// и принудительно включает cross-check режим.
@@ -123,14 +123,14 @@ impl VerificationPipeline {
         Self { timeout_ms, backend: BackendChoice::from_env() }
     }
 
-    /// Plan 33 Z3 milestone: СЏРІРЅС‹Р№ РІС‹Р±РѕСЂ backend'Р° (override env-var).
+    /// Plan 33 Z3 milestone: явный выбор backend'а (override env-var).
     pub fn with_backend(mut self, backend: BackendChoice) -> Self {
         self.backend = backend;
         self
     }
 
-    /// РЎРѕР·РґР°С‚СЊ backend instance СЃРѕРіР»Р°СЃРЅРѕ РІС‹Р±РѕСЂСѓ. Falls back to trivial
-    /// СЃ warning'РѕРј РµСЃР»Рё z3 РЅРµ compiled-in.
+    /// Создать backend instance согласно выбору. Falls back to trivial
+    /// с warning'ом если z3 не compiled-in.
     pub(super) fn create_backend(&self) -> Box<dyn SmtBackend> {
         match self.backend {
             BackendChoice::Trivial => Box::new(TrivialBackend::new()),
@@ -141,11 +141,11 @@ impl VerificationPipeline {
                 }
                 #[cfg(not(feature = "z3-backend"))]
                 {
-                    // User-friendly fallback (РЅРѕ РЅРµ silent вЂ" РїРёС€РµРј РІ stderr).
+                    // User-friendly fallback (но не silent — пишем в stderr).
                     eprintln!(
                         "warning: --smt-backend=z3 requested, but binary built without \
                          `--features z3-backend`; falling back to trivial backend. \
-                         Rebuild СЃ `cargo build --features z3-backend`."
+                         Rebuild с `cargo build --features z3-backend`."
                     );
                     Box::new(TrivialBackend::new())
                 }
@@ -172,11 +172,11 @@ impl VerificationPipeline {
         }
     }
 
-    /// Verify РѕРґРЅСѓ С„СѓРЅРєС†РёСЋ: РІРѕР·РІСЂР°С‰Р°РµС‚ list of (Contract span, VerifyResult).
-    /// Backend РІС‹Р±РёСЂР°РµС‚СЃСЏ С‡РµСЂРµР· `BackendChoice` (env-var / CLI flag).
+    /// Verify одну функцию: возвращает list of (Contract span, VerifyResult).
+    /// Backend выбирается через `BackendChoice` (env-var / CLI flag).
     ///
-    /// Plan 33.3 Р¤.9: РїСЂРёРЅРёРјР°РµС‚ `module` РґР»СЏ СЂР°Р·СЂРµС€РµРЅРёСЏ pure_view-РІС‹Р·РѕРІРѕРІ
-    /// Рё СЂРµРіРёСЃС‚СЂР°С†РёРё axioms СЌС„С„РµРєС‚РѕРІ РІ SMT-scope СЌС‚РѕР№ fn.
+    /// Plan 33.3 Ф.9: принимает `module` для разрешения pure_view-вызовов
+    /// и регистрации axioms эффектов в SMT-scope этой fn.
     pub fn verify_fn(
         &self,
         module: &Module,
@@ -187,15 +187,15 @@ impl VerificationPipeline {
 
         let mut backend = self.create_backend();
 
-        // Plan 33.3 Р¤.9: СЂРµРµСЃС‚СЂ pure_view-ops РјРѕРґСѓР»СЏ. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ
-        // encoder'РѕРј РґР»СЏ РїРµСЂРµРІРѕРґР° `balance(id)` в†' UF `_view_Db_balance(id)`.
+        // Plan 33.3 Ф.9: реестр pure_view-ops модуля. Рспользуется
+        // encoder'ом для перевода `balance(id)` → UF `_view_Db_balance(id)`.
         let pure_views = collect_pure_views(module);
         let mut pure_fns = collect_pure_fns(module, inferred_pure);
-        // Р¤.3: РїСЂРё РєРѕРґРёСЂРѕРІР°РЅРёРё С‚РµР»Р° С‚РµРєСѓС‰РµР№ fn СѓР±РёСЂР°РµРј РµС' body_expr РёР· РєРѕРЅС‚РµРєСЃС‚Р°,
-        // С‡С‚РѕР±С‹ encoder РЅРµ РїС‹С‚Р°Р»СЃСЏ РёРЅР»Р°Р№РЅРёС‚СЊ СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РІС‹Р·РѕРІ: factorial(n-1)
-        // СЃРѕРґРµСЂР¶РёС‚ factorial в†' body в†' factorial(n-1) в†' в€ћ.
-        // UF-Р°РїРїР»РёРєР°С†РёСЏ (_pure_factorial(n-1)) РѕСЃС‚Р°С'С‚СЃСЏ вЂ" РґР»СЏ soundness
-        // РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ С‚РµР»Р°-Р°РєСЃРёРѕРјС‹ (body axiom), РєРѕС‚РѕСЂСѓСЋ Z3 instantiates РїРѕ trigger.
+        // Ф.3: при кодировании тела текущей fn убираем её body_expr из контекста,
+        // чтобы encoder не пытался инлайнить рекурсивный вызов: factorial(n-1)
+        // содержит factorial → body → factorial(n-1) → ∞.
+        // UF-аппликация (_pure_factorial(n-1)) остаётся — для soundness
+        // достаточно тела-аксиомы (body axiom), которую Z3 instantiates по trigger.
         if let Some(entry) = pure_fns.get_mut(&fd.name) {
             entry.body_expr = None;
         }
@@ -204,16 +204,16 @@ impl VerificationPipeline {
         let trusted_fns = collect_trusted_fns(module);
         let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
 
-        // Plan 33.3 Р¤.9: pre-declare РІСЃРµ pure_view UFs РІ backend'Рµ.
-        // Р'РµР· СЌС‚РѕРіРѕ Z3 auto-declare'РёС‚ UF СЃ Int sorts РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ;
-        // pre-decl РґР°С'С‚ РїСЂР°РІРёР»СЊРЅС‹Рµ sorts РёР· effect-СЃРёРіРЅР°С‚СѓСЂС‹ (РІР°Р¶РЅРѕ РґР»СЏ
-        // soundness РєРѕРіРґР° args РЅРµ int'РѕРІС‹Рµ).
+        // Plan 33.3 Ф.9: pre-declare все pure_view UFs в backend'е.
+        // Вез этого Z3 auto-declare'ит UF с Int sorts по умолчанию;
+        // pre-decl даёт правильные sorts из effect-сигнатуры (важно для
+        // soundness когда args не int'овые).
         for (op_name, sig) in &pure_views {
             let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
             backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
         }
 
-        // Plan 33.4 D.0.2: pre-declare UFs РґР»СЏ #pure fns + emit body axioms.
+        // Plan 33.4 D.0.2: pre-declare UFs для #pure fns + emit body axioms.
         for (fn_name, info) in &pure_fns {
             let uf = super::encode::pure_fn_uf_name(fn_name);
             backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
@@ -321,9 +321,9 @@ impl VerificationPipeline {
             }
         }
 
-        // Plan 33.3 Р¤.9: РґР»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° РІ СЃРёРіРЅР°С‚СѓСЂРµ fn СЂРµРіРёСЃС‚СЂРёСЂСѓРµРј
-        // axioms РєР°Рє РіР»РѕР±Р°Р»СЊРЅС‹Рµ assertions (Forall'С‹). Z3 instantiate'РёС‚
-        // РёС… С‡РµСЂРµР· trigger-based heuristics; TrivialBackend С…СЂР°РЅРёС‚ as-is.
+        // Plan 33.3 Ф.9: для каждого эффекта в сигнатуре fn регистрируем
+        // axioms как глобальные assertions (Forall'ы). Z3 instantiate'ит
+        // их через trigger-based heuristics; TrivialBackend хранит as-is.
         let fn_effects: std::collections::HashSet<String> = fd.effects.iter()
             .filter_map(|tr| match tr {
                 TypeRef::Named { path, .. } => path.last().cloned(),
@@ -363,10 +363,10 @@ impl VerificationPipeline {
             }
         }
 
-        // D.1.2: frame axiom вЂ" РґР»СЏ РєР°Р¶РґРѕРіРѕ param NOT РІ modifies-СЃРїРёСЃРєРµ
-        // assert _old_<x> == <x> (frame: Р·РЅР°С‡РµРЅРёРµ РЅРµ РёР·РјРµРЅРёР»РѕСЃСЊ).
-        // Р­С‚Рѕ РїРѕР·РІРѕР»СЏРµС‚ Z3 reasoning'РѕРІР°С‚СЊ РЅР°Рґ `old(x)` РІ ensures:
-        // РµСЃР»Рё x РЅРµ РІ modifies, С‚Рѕ old(x) == x С‚СЂРёРІРёР°Р»СЊРЅРѕ РІ pre-state.
+        // D.1.2: frame axiom — для каждого param NOT в modifies-списке
+        // assert _old_<x> == <x> (frame: значение не изменилось).
+        // Это позволяет Z3 reasoning'овать над `old(x)` в ensures:
+        // если x не в modifies, то old(x) == x тривиально в pre-state.
         {
             let modifies_names: std::collections::HashSet<String> = fd.modifies.iter()
                 .filter_map(|ft| match ft {
@@ -510,8 +510,8 @@ impl VerificationPipeline {
         // Результат: SMT знает все промежуточные равенства/неравенства.
         let calc_step_results = verify_calc_stmts_in_body(&fd.body, &ctx, &mut *backend);
 
-        // 3. Encode body value. РўРѕР»СЊРєРѕ РґР»СЏ `=> expr` С„РѕСЂРј
-        // (block-bodies СЃ trailing-only С‚РѕР¶Рµ OK).
+        // 3. Encode body value. Только для `=> expr` форм
+        // (block-bodies с trailing-only тоже OK).
         // Ф.4.1: блок, содержащий только ghost `apply`-стейтменты, тоже считается
         // trailing-only -- apply стираются в runtime, не влияют на значение body.
         let body_val = match &fd.body {
@@ -544,17 +544,17 @@ impl VerificationPipeline {
                     continue;
                 }
             };
-            // Substitute result в†' body_val (РµСЃР»Рё РµСЃС‚СЊ).
+            // Substitute result → body_val (если есть).
             let goal = if let Some(bv) = &body_val {
                 encoded.substitute("result", bv)
             } else {
-                // Body РЅРµ encoded в†' fallback.
+                // Body не encoded → fallback.
                 results.push((c.span, VerifyResult::EncodingFailed(
                     "function body not encodable (use runtime check)".into())));
                 continue;
             };
-            // РўР°РєР¶Рµ РїРѕРґРјРµРЅРёРј `old(x)` в†' Р·РЅР°С‡РµРЅРёРµ `x` РЅР° entry-state.
-            // Р' 33.1 РЅРµС‚ mut params в†' СЃС‚Р°СЂС‹Рµ Р·РЅР°С‡РµРЅРёСЏ = С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ.
+            // Также подменим `old(x)` → значение `x` на entry-state.
+            // В 33.1 нет mut params → старые значения = текущие значения.
             let goal = substitute_old(&goal);
 
             // Ф.16.1 (Plan 33.6): если ensures содержит `exists`, используем
@@ -581,7 +581,7 @@ impl VerificationPipeline {
             } else {
                 try_prove(&mut *backend, goal)
             };
-            // try_prove(goal). `&mut *backend` С‡С‚РѕР±С‹ coerce Box<dyn> в†' &mut dyn.
+            // try_prove(goal). `&mut *backend` чтобы coerce Box<dyn> → &mut dyn.
             match proof_result {
                 SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
                 SatResult::Sat(model) => {
@@ -654,14 +654,14 @@ impl VerificationPipeline {
                     continue;
                 }
             };
-            // `old(x)` в†' x (entry-state, params РЅРµРёР·РјРµРЅРЅС‹ РІ V1).
+            // `old(x)` → x (entry-state, params неизменны в V1).
             let goal = substitute_old(&encoded);
             match try_prove(&mut *backend, goal) {
                 SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
                 SatResult::Sat(model) => {
                     let cex = format_counterexample(&model);
                     results.push((c.span, VerifyResult::Disproved(model,
-                        format!("ensures_fail РјРѕР¶РµС‚ РЅРµ РІС‹РїРѕР»РЅСЏС‚СЊСЃСЏ РЅР° Fail-РїСѓС‚Рё: {}", cex))));
+                        format!("ensures_fail может не выполняться на Fail-пути: {}", cex))));
                 }
                 SatResult::Unknown(reason) => {
                     results.push((c.span, VerifyResult::Unknown(
@@ -745,10 +745,10 @@ impl VerificationPipeline {
         }
 
         // Plan 33.4 D.0.3: verify loop invariants at entry.
-        // Р"Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р° СЃ `invariant <expr>` РІ С‚РµР»Рµ fn:
-        // РїС‹С‚Р°РµРјСЃСЏ РґРѕРєР°Р·Р°С‚СЊ С‡С‚Рѕ invariant РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ РїСЂРё РІС…РѕРґРµ РІ С„СѓРЅРєС†РёСЋ
-        // (РїСЂРё СѓСЃР»РѕРІРёРё requires). Р­С‚Рѕ partial check вЂ" РЅРµ РґРѕРєР°Р·С‹РІР°РµС‚
-        // preservation (РїРѕР»РЅС‹Р№ havoc-based encoding вЂ" V2).
+        // Для каждого цикла с `invariant <expr>` в теле fn:
+        // пытаемся доказать что invariant выполняется при входе в функцию
+        // (при условии requires). Это partial check — не доказывает
+        // preservation (полный havoc-based encoding — V2).
         let loop_invs = collect_loop_invariants_in_body(&fd.body);
         for (inv_span, inv_expr) in loop_invs {
             match encode::encode_expr_with_ctx(&inv_expr, &ctx) {
@@ -785,33 +785,33 @@ impl VerificationPipeline {
 
         // Ф.2 (Plan 33.5): Loop invariant preservation via havoc-based encoding.
         //
-        // РђР»РіРѕСЂРёС‚Рј (Dafny/Verus standard):
-        // 1. РЎРѕР±СЂР°С‚СЊ РІСЃРµ while-loops СЃ invariants РІ С‚РµР»Рµ fn.
-        // 2. Р"Р»СЏ РєР°Р¶РґРѕРіРѕ С†РёРєР»Р°:
-        //    a. Havoc: РґР»СЏ РєР°Р¶РґРѕР№ mutable var РІ С‚РµР»Рµ С†РёРєР»Р° вЂ" fresh SMT var
-        //       (СЃРёРјРІРѕР»РёС‡РµСЃРєРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РїРѕСЃР»Рµ N РёС‚РµСЂР°С†РёР№).
-        //    b. Assume invariant РЅР° havoc'd state + assume loop cond true.
+        // Алгоритм (Dafny/Verus standard):
+        // 1. Собрать все while-loops с invariants в теле fn.
+        // 2. Для каждого цикла:
+        //    a. Havoc: для каждой mutable var в теле цикла — fresh SMT var
+        //       (символическое состояние после N итераций).
+        //    b. Assume invariant на havoc'd state + assume loop cond true.
         //    c. Symbolic exec body (V1: straight-line assignments only).
-        //    d. Assert invariant РїРѕСЃР»Рµ body (РЅР° post-state).
-        //    e. UNSAT в†' invariant preserved; SAT в†' counterexample.
+        //    d. Assert invariant после body (на post-state).
+        //    e. UNSAT → invariant preserved; SAT → counterexample.
         let loop_pres = collect_loop_preservation_targets(&fd.body);
         for lp in loop_pres {
             let res = verify_loop_preservation(&lp, &ctx, &mut *backend);
             results.extend(res);
         }
 
-        // Р¤.1.3 (Plan 33.5): verify loop decreases.
-        // V1 scope: simple `while <cond> decreases <m> { ... }` РіРґРµ body
-        // СЃРѕРґРµСЂР¶РёС‚ РїСЂСЏРјРѕРµ decrement `var = var - 1` РёР»Рё `var = var + 1`
-        // (РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ СѓР±С‹РІР°РЅРёСЏ РёР»Рё РІРѕР·СЂР°СЃС‚Р°РЅРёСЏ). Р"РѕРєР°Р·С‹РІР°РµРј:
-        //   1. dec_pre >= 0 (non-negative РїСЂРё РІС…РѕРґРµ, РїРѕРґ requires).
-        //   2. Р' РєР°Р¶РґРѕР№ РёС‚РµСЂР°С†РёРё dec_post < dec_pre
-        //      (РёСЃРїРѕР»СЊР·СѓРµС‚ assignment-analysis: over-approx `var_post = var_pre - 1`).
+        // Ф.1.3 (Plan 33.5): verify loop decreases.
+        // V1 scope: simple `while <cond> decreases <m> { ... }` где body
+        // содержит прямое decrement `var = var - 1` или `var = var + 1`
+        // (в зависимости от убывания или возрастания). Доказываем:
+        //   1. dec_pre >= 0 (non-negative при входе, под requires).
+        //   2. В каждой итерации dec_post < dec_pre
+        //      (использует assignment-analysis: over-approx `var_post = var_pre - 1`).
         let loop_decs = collect_loop_decreases_in_body(&fd.body);
         for (dec_span, dec_expr, body_assignments) in loop_decs {
             match encode::encode_expr_with_ctx(&dec_expr, &ctx) {
                 Ok(dec_pre) => {
-                    // РџСЂРѕРІРµСЂСЏРµРј dec_pre >= 0 РїРѕРґ requires.
+                    // Проверяем dec_pre >= 0 под requires.
                     let non_neg = SmtTerm::App(">=".into(), vec![dec_pre.clone(), SmtTerm::IntLit(0)]);
                     match try_prove(&mut *backend, non_neg) {
                         SatResult::Unsat(_) => {
@@ -825,12 +825,12 @@ impl VerificationPipeline {
                         }
                         SatResult::Unknown(_) => {} // fall through to decrease check
                     }
-                    // РџСЂРѕРІРµСЂСЏРµРј С‡С‚Рѕ РјРµСЂР° СѓР±С‹РІР°РµС‚: РґР»СЏ РєР°Р¶РґРѕРіРѕ counter-assignment
-                    // `var = var - k` в†' dec_post = dec_pre[var в†' var - k] < dec_pre.
-                    // V1: С‚РѕР»СЊРєРѕ РѕРґРЅРѕ scalar decreases expression.
-                    // Р•СЃР»Рё РІ body РЅР°Р№РґРµРЅРѕ РїСЂРѕСЃС‚РѕРµ decrement в†' encode РєР°Рє fresh var.
+                    // Проверяем что мера убывает: для каждого counter-assignment
+                    // `var = var - k` → dec_post = dec_pre[var → var - k] < dec_pre.
+                    // V1: только одно scalar decreases expression.
+                    // Если в body найдено простое decrement → encode как fresh var.
                     for (var_name, delta) in &body_assignments {
-                        // dec_post: substitute var в†' (var - delta) РІ dec_expr.
+                        // dec_post: substitute var → (var - delta) в dec_expr.
                         let var_minus_delta = SmtTerm::App(
                             "-".into(),
                             vec![SmtTerm::Var(var_name.clone()), SmtTerm::IntLit(*delta)],
@@ -931,7 +931,7 @@ impl VerificationPipeline {
             }
         }
 
-        let _ = self.timeout_ms; // РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєРѕРіРґР° РґРѕР±Р°РІРёРј Z3-backend
+        let _ = self.timeout_ms; // используется когда добавим Z3-backend
         results
     }
 
@@ -1055,7 +1055,7 @@ impl VerificationPipeline {
     }
 }
 
-/// Plan 33.3 Р¤.9: СЃРѕР±СЂР°С‚СЊ РІСЃРµ pure_view'С‹ РјРѕРґСѓР»СЏ РІ СЂРµРµСЃС‚СЂ.
+/// Plan 33.3 Ф.9: собрать все pure_view'ы модуля в реестр.
 pub(super) fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, super::encode::PureViewSig> {
     use super::encode::PureViewSig;
     let mut out = std::collections::HashMap::new();
@@ -1080,9 +1080,9 @@ pub(super) fn collect_pure_views(module: &Module) -> std::collections::HashMap<S
     out
 }
 
-/// Plan 33.4 D.0.2: СЃРѕР±СЂР°С‚СЊ РІСЃРµ #pure fn'С‹ РјРѕРґСѓР»СЏ РІ СЂРµРµСЃС‚СЂ РґР»СЏ encoder'Р°.
-/// `inferred_pure` вЂ" РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕ РІС‹С‡РёСЃР»РµРЅРЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚ SCC inference
-/// (РїРµСЂРµРґР°С'С‚СЃСЏ СЃРЅР°СЂСѓР¶Рё С‡С‚РѕР±С‹ РЅРµ РїРµСЂРµСЃС‡РёС‚С‹РІР°С‚СЊ РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ).
+/// Plan 33.4 D.0.2: собрать все #pure fn'ы модуля в реестр для encoder'а.
+/// `inferred_pure` — предварительно вычисленный результат SCC inference
+/// (передаётся снаружи чтобы не пересчитывать на каждую функцию).
 pub(super) fn collect_pure_fns(
     module: &Module,
     inferred_pure: &std::collections::HashSet<String>,
@@ -1138,25 +1138,25 @@ pub(super) fn collect_trusted_fns(module: &Module) -> std::collections::HashMap<
     out
 }
 
-/// Р¤.3 (Plan 33.5): Tarjan SCC + purity inference.
+/// Ф.3 (Plan 33.5): Tarjan SCC + purity inference.
 ///
-/// РђР»РіРѕСЂРёС‚Рј:
-/// 1. РџРѕСЃС‚СЂРѕРёС‚СЊ call-graph: РґР»СЏ РєР°Р¶РґРѕР№ Fn вЂ" РЅР°Р±РѕСЂ РІС‹Р·С‹РІР°РµРјС‹С… РёРјС'РЅ (РёР· body).
-/// 2. Р--Р°РїСѓСЃС‚РёС‚СЊ Tarjan SCC.
-/// 3. Topological order SCCs. Р"Р»СЏ РєР°Р¶РґРѕР№ SCC:
-///    - Р•СЃР»Рё РІСЃРµ fn РІ SCC pure-eligible (РЅРµС‚ effects, РЅРµС‚ `with`, РЅРµС‚ IO,
-///      РІСЃРµ РІС‹Р·РѕРІС‹ вЂ" С‚РѕР»СЊРєРѕ Рє СѓР¶Рµ-proven-pure РёР»Рё Рє fn С‚РѕР№ Р¶Рµ SCC) в†'
-///      РїРѕРјРµС‚РёС‚СЊ РєР°Рє inferred-pure.
-/// 4. РЇРІРЅРѕ `@effectful` fn в†' non-pure (РїРµСЂРµРѕРїСЂРµРґРµР»СЏРµС‚ inference).
+/// Алгоритм:
+/// 1. Построить call-graph: для каждой Fn — набор вызываемых имён (из body).
+/// 2. Р—-апустить Tarjan SCC.
+/// 3. Topological order SCCs. Для каждой SCC:
+///    - Если все fn в SCC pure-eligible (нет effects, нет `with`, нет IO,
+///      все вызовы — только к уже-proven-pure или к fn той же SCC) →
+///      пометить как inferred-pure.
+/// 4. Явно `@effectful` fn → non-pure (переопределяет inference).
 ///
 /// Pure-eligibility (V1):
-/// - FnBody::Expr РёР»Рё РїСЂРѕСЃС‚РѕР№ block Р±РµР· `with`/`interrupt`/IO-stmts.
-/// - РЎРёРіРЅР°С‚СѓСЂР°: РЅРµС‚ implicit effects РїР°СЂР°РјРµС‚СЂРѕРІ (РЅРµС‚ `with E` handlers).
-/// - Р'СЃРµ РІС‹Р·РѕРІС‹ РІ body в†' Рє already-pure РёР»Рё Рє fn С‚РѕР№ Р¶Рµ SCC.
-/// - РќРµС‚ РІС‹Р·РѕРІРѕРІ Рє external fn (FnBody::External).
+/// - FnBody::Expr или простой block без `with`/`interrupt`/IO-stmts.
+/// - Сигнатура: нет implicit effects параметров (нет `with E` handlers).
+/// - Все вызовы в body → к already-pure или к fn той же SCC.
+/// - Нет вызовов к external fn (FnBody::External).
 pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> {
     use std::collections::{HashMap, HashSet};
-    // РЁР°Рі 1: build call-graph.
+    // Шаг 1: build call-graph.
     let mut fn_names: Vec<String> = Vec::new();
     let mut fn_body_map: HashMap<String, &FnBody> = HashMap::new();
     let mut fn_purity_explicit: HashMap<String, Purity> = HashMap::new();
@@ -1168,7 +1168,7 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
         fn_purity_explicit.insert(fd.name.clone(), fd.purity);
     }
 
-    // call-graph: fn_name в†' set of called fn_names (within module).
+    // call-graph: fn_name → set of called fn_names (within module).
     let mut call_graph: HashMap<String, HashSet<String>> = HashMap::new();
     for name in &fn_names {
         let body = fn_body_map[name];
@@ -1176,35 +1176,35 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
         call_graph.insert(name.clone(), calls);
     }
 
-    // РЁР°Рі 2: Tarjan SCC (iterative, С‡С‚РѕР±С‹ РЅРµ СѓРїРёСЂР°С‚СЊСЃСЏ РІ stack overflow).
+    // Шаг 2: Tarjan SCC (iterative, чтобы не упираться в stack overflow).
     let sccs = tarjan_scc(&fn_names, &call_graph);
 
-    // РЁР°Рі 3: topological order в†' РѕРїСЂРµРґРµР»СЏРµРј pure SCCs.
-    // sccs СѓР¶Рµ РІ РѕР±СЂР°С‚РЅРѕРј С‚РѕРїРѕР»РѕРіРёС‡РµСЃРєРѕРј РїРѕСЂСЏРґРєРµ (Tarjan РІС‹РґР°С'С‚ SCC РІ
-    // reverse topological order РІ СЃС‚Р°РЅРґР°СЂС‚РЅРѕР№ СЂРµР°Р»РёР·Р°С†РёРё).
-    // РС‚РµСЂРёСЂСѓРµРј РѕС‚ С…РІРѕСЃС‚Р° Рє РіРѕР»РѕРІРµ С‡С‚РѕР±С‹ РёРґС‚Рё РѕС‚ Р»РёСЃС‚СЊРµРІ Рє РєРѕСЂРЅСЏРј.
+    // Шаг 3: topological order → определяем pure SCCs.
+    // sccs уже в обратном топологическом порядке (Tarjan выдаёт SCC в
+    // reverse topological order в стандартной реализации).
+    // Ртерируем от хвоста к голове чтобы идти от листьев к корням.
     let mut proven_pure: HashSet<String> = HashSet::new();
 
-    // РЎРЅР°С‡Р°Р»Р° РґРѕР±Р°РІРёРј СЏРІРЅРѕ Effectful'РЅС‹Рµ вЂ" РѕРЅРё non-pure РЅР°РІСЃРµРіРґР°.
+    // Сначала добавим явно Effectful'ные — они non-pure навсегда.
     let explicitly_effectful: HashSet<String> = fn_purity_explicit.iter()
         .filter_map(|(name, p)| if matches!(p, Purity::Effectful) { Some(name.clone()) } else { None })
         .collect();
 
     for scc in &sccs {
-        // РџСЂРѕРІРµСЂСЏРµРј pure-eligibility РІСЃРµР№ SCC.
+        // Проверяем pure-eligibility всей SCC.
         let eligible = scc.iter().all(|name| {
-            // РЇРІРЅРѕ Effectful в†' non-pure.
+            // Явно Effectful → non-pure.
             if explicitly_effectful.contains(name) { return false; }
-            // External body в†' non-pure.
+            // External body → non-pure.
             if matches!(fn_body_map.get(name), Some(FnBody::External)) { return false; }
-            // Р'СЃРµ РІС‹Р·РѕРІС‹ вЂ" РёР»Рё Рє proven_pure, РёР»Рё Рє fn РІ СЌС‚РѕР№ SCC.
+            // Все вызовы — или к proven_pure, или к fn в этой SCC.
             let empty_calls = HashSet::new();
             let calls = call_graph.get(name).unwrap_or(&empty_calls);
             let scc_set: HashSet<&String> = scc.iter().collect();
             calls.iter().all(|called| {
                 proven_pure.contains(called) || scc_set.contains(called)
             }) &&
-            // Body РЅРµ СЃРѕРґРµСЂР¶РёС‚ with/interrupt/effect calls.
+            // Body не содержит with/interrupt/effect calls.
             !body_has_effects(fn_body_map[name]) // Ф.3
         });
 
@@ -1218,7 +1218,7 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
     proven_pure
 }
 
-/// Tarjan iterative SCC. Р'РѕР·РІСЂР°С‰Р°РµС‚ SCCs РІ РѕР±СЂР°С‚РЅРѕРј С‚РѕРїРѕР»РѕРіРёС‡РµСЃРєРѕРј РїРѕСЂСЏРґРєРµ.
+/// Tarjan iterative SCC. Возвращает SCCs в обратном топологическом порядке.
 fn tarjan_scc(
     nodes: &[String],
     graph: &std::collections::HashMap<String, std::collections::HashSet<String>>,
@@ -1232,7 +1232,7 @@ fn tarjan_scc(
     let mut lowlink: HashMap<String, usize> = HashMap::new();
     let mut sccs: Vec<Vec<String>> = Vec::new();
 
-    // Iterative DFS СЃ explicit stack frame.
+    // Iterative DFS с explicit stack frame.
     for start in nodes {
         if index_map.contains_key(start) { continue; }
         // DFS stack: (node, iterator over children, is_entry).
@@ -1299,8 +1299,8 @@ fn tarjan_scc(
     sccs
 }
 
-/// Р¤.3: РїСЂРѕРІРµСЂРєР°, СЃРѕРґРµСЂР¶РёС‚ Р»Рё С‚РµР»Рѕ С„СѓРЅРєС†РёРё РІС‹Р·РѕРІС‹ Рє effects / with / IO.
-/// V1: РёС‰РµС‚ `with`, `interrupt`, `ExprKind::With` РІ С‚РµР»Рµ.
+/// Ф.3: проверка, содержит ли тело функции вызовы к effects / with / IO.
+/// V1: ищет `with`, `interrupt`, `ExprKind::With` в теле.
 fn body_has_effects(body: &FnBody) -> bool {
     match body {
         FnBody::External => true,
@@ -1327,11 +1327,11 @@ fn stmt_has_effects(s: &Stmt) -> bool {
 
 fn expr_has_effects(e: &Expr) -> bool {
     match &e.kind {
-        // with-blocks в†' effectful.
+        // with-blocks → effectful.
         ExprKind::With { .. } => true,
-        // Interrupt в†' effectful.
+        // Interrupt → effectful.
         ExprKind::Interrupt(_) => true,
-        // Spawn/Supervised в†' effectful.
+        // Spawn/Supervised → effectful.
         ExprKind::Spawn(_) | ExprKind::Supervised { .. } => true,
         // Recurse structurally.
         ExprKind::Binary { left, right, .. } => expr_has_effects(left) || expr_has_effects(right),
@@ -1365,7 +1365,7 @@ fn expr_has_effects(e: &Expr) -> bool {
     }
 }
 
-/// Р¤.3: СЃРѕР±СЂР°С‚СЊ РІСЃРµ fn-calls РІ body, С„РёР»СЊС‚СЂСѓСЏ РїРѕ РёР·РІРµСЃС‚РЅС‹Рј РёРјРµРЅР°Рј РјРѕРґСѓР»СЏ.
+/// Ф.3: собрать все fn-calls в body, фильтруя по известным именам модуля.
 fn collect_fn_calls_in_body(body: &FnBody, known_fns: &[String]) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     match body {
@@ -1446,8 +1446,8 @@ fn collect_fn_calls_in_expr(e: &Expr, known: &[String], out: &mut std::collectio
     }
 }
 
-/// Plan 33.4 D.0.4: РЅР°Р№С‚Рё РІСЃРµ СЃР°РјРѕ-СЂРµРєСѓСЂСЃРёРІРЅС‹Рµ РІС‹Р·РѕРІС‹ РІ С‚РµР»Рµ С„СѓРЅРєС†РёРё.
-/// Р'РѕР·РІСЂР°С‰Р°РµС‚ Vec<(call_span, Vec<arg_expr>)>.
+/// Plan 33.4 D.0.4: найти все само-рекурсивные вызовы в теле функции.
+/// Возвращает Vec<(call_span, Vec<arg_expr>)>.
 fn find_recursive_calls_in_body(body: &FnBody, fn_name: &str) -> Vec<(Span, Vec<Expr>)> {
     let mut results = Vec::new();
     match body {
@@ -1924,8 +1924,8 @@ fn find_lemma_ensures(module: &Module, name: &str) -> Option<Vec<(Vec<String>, E
     None
 }
 
-/// Plan 33.4 D.0.3: СЃРѕР±СЂР°С‚СЊ РІСЃРµ loop invariant'С‹ РёР· С‚РµР»Р° С„СѓРЅРєС†РёРё.
-/// Р'РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, Expr)> вЂ" span С†РёРєР»Р° + invariant expression.
+/// Plan 33.4 D.0.3: собрать все loop invariant'ы из тела функции.
+/// Возвращает Vec<(Span, Expr)> — span цикла + invariant expression.
 fn collect_loop_invariants_in_body(body: &FnBody) -> Vec<(Span, Expr)> {
     let mut out = Vec::new();
     match body {
@@ -1999,14 +1999,14 @@ fn collect_loop_invariants_in_expr(e: &Expr, out: &mut Vec<(Span, Expr)>) {
     }
 }
 
-/// Р¤.1.3 (Plan 33.5): СЃРѕР±СЂР°С‚СЊ РІСЃРµ `decreases` claus'С‹ РёР· С†РёРєР»РѕРІ.
+/// Ф.1.3 (Plan 33.5): собрать все `decreases` claus'ы из циклов.
 ///
-/// Р'РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, decreases_expr, assignments)> РіРґРµ:
-/// - `decreases_expr` вЂ" РІС‹СЂР°Р¶РµРЅРёРµ РјРµСЂС‹ (РґРѕР»Р¶РЅРѕ СѓР±С‹РІР°С‚СЊ).
-/// - `assignments` вЂ" Vec<(var_name, delta)> вЂ" РѕР±РЅР°СЂСѓР¶РµРЅРЅС‹Рµ `var = var В± delta`
-///   РІ С‚РµР»Рµ С†РёРєР»Р° (V1: over-approximate, С‚РѕР»СЊРєРѕ straight-line assignment stmts).
-///   `delta > 0` РѕР·РЅР°С‡Р°РµС‚ `var = var - delta` (РјРµСЂР° var СѓР±С‹РІР°РµС‚),
-///   `delta < 0` вЂ" `var = var + delta` (РјРµСЂР° СЂР°СЃС‚С'С‚, delta negative в†' decrement positive).
+/// Возвращает Vec<(Span, decreases_expr, assignments)> где:
+/// - `decreases_expr` — выражение меры (должно убывать).
+/// - `assignments` — Vec<(var_name, delta)> — обнаруженные `var = var ± delta`
+///   в теле цикла (V1: over-approximate, только straight-line assignment stmts).
+///   `delta > 0` означает `var = var - delta` (мера var убывает),
+///   `delta < 0` — `var = var + delta` (мера растёт, delta negative → decrement positive).
 fn collect_loop_decreases_in_body(body: &FnBody) -> Vec<(Span, Expr, Vec<(String, i64)>)> {
     let mut out = Vec::new();
     match body {
@@ -2076,30 +2076,30 @@ fn collect_loop_decreases_in_expr(e: &Expr, out: &mut Vec<(Span, Expr, Vec<(Stri
     }
 }
 
-/// V1: РёР·РІР»РµС‡СЊ РїСЂРѕСЃС‚С‹Рµ counter-decrement assignments РёР· С‚РµР»Р° С†РёРєР»Р°.
+/// V1: извлечь простые counter-decrement assignments из тела цикла.
 ///
-/// РџР°С‚С‚РµСЂРЅС‹:
-/// - `x = x - k` (AssignOp::Assign + BinOp::Sub) в†' delta = k
-/// - `x -= k`    (AssignOp::Sub)                  в†' delta = k
-/// - `x = x + k` where k < 0 в†' delta = -k (СЂРµРґРєРёР№)
-/// Р'РѕР·РІСЂР°С‰Р°РµРј (var_name, delta) РіРґРµ delta > 0 РѕР·РЅР°С‡Р°РµС‚ СѓР±С‹РІР°РЅРёРµ РјРµСЂС‹.
+/// Паттерны:
+/// - `x = x - k` (AssignOp::Assign + BinOp::Sub) → delta = k
+/// - `x -= k`    (AssignOp::Sub)                  → delta = k
+/// - `x = x + k` where k < 0 → delta = -k (редкий)
+/// Возвращаем (var_name, delta) где delta > 0 означает убывание меры.
 fn extract_counter_assignments(body: &Block) -> Vec<(String, i64)> {
     let mut result = Vec::new();
     for s in &body.stmts {
         let Stmt::Assign { target, op: assign_op, value, .. } = s else { continue };
         let ExprKind::Ident(var_name) = &target.kind else { continue };
         let delta: i64 = match assign_op {
-            // x -= k  в†'  delta = k (positive means decreasing)
+            // x -= k  →  delta = k (positive means decreasing)
             AssignOp::Sub => {
                 let ExprKind::IntLit(k) = &value.kind else { continue };
                 *k
             }
-            // x += k  в†'  delta = -k  (positive k в†' increasing, negative delta = skip)
+            // x += k  →  delta = -k  (positive k → increasing, negative delta = skip)
             AssignOp::Add => {
                 let ExprKind::IntLit(k) = &value.kind else { continue };
                 -*k
             }
-            // x = x В± k
+            // x = x ± k
             AssignOp::Assign => {
                 let ExprKind::Binary { left, op: bin_op, right } = &value.kind else { continue };
                 let ExprKind::Ident(lvar) = &left.kind else { continue };
@@ -2120,13 +2120,13 @@ fn extract_counter_assignments(body: &Block) -> Vec<(String, i64)> {
     result
 }
 
-/// Р¤.2 (Plan 33.5): РґР°РЅРЅС‹Рµ РѕРґРЅРѕРіРѕ С†РёРєР»Р° СЃ invariants РґР»СЏ preservation check.
+/// Ф.2 (Plan 33.5): данные одного цикла с invariants для preservation check.
 struct LoopPreservationTarget {
     span: Span,
     invariants: Vec<Expr>,
-    cond: Option<Expr>,           // None РґР»СЏ `loop { }` (СѓСЃР»РѕРІРёРµ = true)
-    body_assignments: Vec<(String, Expr)>, // (var_name, value_expr) РёР· body stmts
-    havoc_vars: Vec<String>,      // vars РјСѓС‚РёСЂСѓРµРјС‹Рµ РІ С‚РµР»Рµ
+    cond: Option<Expr>,           // None для `loop { }` (условие = true)
+    body_assignments: Vec<(String, Expr)>, // (var_name, value_expr) из body stmts
+    havoc_vars: Vec<String>,      // vars мутируемые в теле
     /// Plan 33.8 Ф.2.1: тело цикла вне sound-envelope havoc-модели
     /// (составное `*=`/`/=`, присваивание во вложенном if/блоке/цикле,
     /// повторное присваивание). Если true — preservation fail-safe
@@ -2134,7 +2134,7 @@ struct LoopPreservationTarget {
     model_incomplete: bool,
 }
 
-/// Р¤.2: СЃРѕР±СЂР°С‚СЊ РІСЃРµ while/loop СЃ invariants РґР»СЏ havoc+preservation.
+/// Ф.2: собрать все while/loop с invariants для havoc+preservation.
 fn collect_loop_preservation_targets(body: &FnBody) -> Vec<LoopPreservationTarget> {
     let mut out = Vec::new();
     match body {
@@ -2222,8 +2222,8 @@ fn collect_loop_preservation_in_expr(e: &Expr, out: &mut Vec<LoopPreservationTar
     }
 }
 
-/// V1: РёР·РІР»РµС‡СЊ РїСЂСЏРјС‹Рµ assignments `Assign { target: Ident(x), op: Assign, value: e }`
-/// РёР· С‚РµР»Р° Р±Р»РѕРєР° (С‚РѕР»СЊРєРѕ РїРµСЂРІС‹Р№ СѓСЂРѕРІРµРЅСЊ stmts). Compound `+=/-=` С‚РѕР¶Рµ СЃРѕР±РёСЂР°РµРј.
+/// V1: извлечь прямые assignments `Assign { target: Ident(x), op: Assign, value: e }`
+/// из тела блока (только первый уровень stmts). Compound `+=/-=` тоже собираем.
 fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
     let mut result = Vec::new();
     for s in &body.stmts {
@@ -2231,7 +2231,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
         let ExprKind::Ident(var_name) = &target.kind else { continue };
         let synthetic_value: Expr = match assign_op {
             AssignOp::Assign => value.clone(),
-            // x += k  в†'  synthetic: x + k
+            // x += k  →  synthetic: x + k
             AssignOp::Add => Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(target.clone()),
@@ -2240,7 +2240,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
                 },
                 span: value.span,
             },
-            // x -= k  в†'  synthetic: x - k
+            // x -= k  →  synthetic: x - k
             AssignOp::Sub => Expr {
                 kind: ExprKind::Binary {
                     left: Box::new(target.clone()),
@@ -2249,7 +2249,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
                 },
                 span: value.span,
             },
-            _ => continue, // Mul/Div вЂ" skip in V1
+            _ => continue, // Mul/Div — skip in V1
         };
         result.push((var_name.clone(), synthetic_value));
     }
@@ -2385,16 +2385,16 @@ fn expr_has_assignment(e: &Expr) -> bool {
     }
 }
 
-/// Р¤.2: verify invariant preservation РґР»СЏ РѕРґРЅРѕРіРѕ С†РёРєР»Р°.
+/// Ф.2: verify invariant preservation для одного цикла.
 ///
-/// РђР»РіРѕСЂРёС‚Рј:
-/// 1. Р"Р»СЏ РєР°Р¶РґРѕР№ havoc var вЂ" declare fresh `_havoc_<var>` РІ backend.
+/// Алгоритм:
+/// 1. Для каждой havoc var — declare fresh `_havoc_<var>` в backend.
 /// 2. push() scope.
-/// 3. Assume invariants РЅР° havoc state (substitute var в†' _havoc_var).
-/// 4. Assume cond РЅР° havoc state (РµСЃР»Рё РµСЃС‚СЊ).
-/// 5. Encode body assignments: РґР»СЏ РєР°Р¶РґРѕРіРѕ `var = rhs` в†' compute `rhs` РЅР° havoc state.
-/// 6. Assert invariants РЅР° post state (substitute var в†' post_val).
-/// 7. check_sat (goal = negation of invariant в†' UNSAT = preserved).
+/// 3. Assume invariants на havoc state (substitute var → _havoc_var).
+/// 4. Assume cond на havoc state (если есть).
+/// 5. Encode body assignments: для каждого `var = rhs` → compute `rhs` на havoc state.
+/// 6. Assert invariants на post state (substitute var → post_val).
+/// 7. check_sat (goal = negation of invariant → UNSAT = preserved).
 /// 8. pop() scope.
 fn verify_loop_preservation(
     lp: &LoopPreservationTarget,
@@ -2479,7 +2479,7 @@ fn verify_loop_preservation(
     for (var, rhs_expr) in &lp.body_assignments {
         match encode::encode_expr_with_ctx(rhs_expr, ctx) {
             Ok(rhs_t) => {
-                // rhs С‡РёС‚Р°РµС‚ РёР· havoc state.
+                // rhs читает из havoc state.
                 let rhs_havoc = substitute_havoc(rhs_t);
                 post_map.insert(var.clone(), rhs_havoc);
             }
@@ -2559,7 +2559,7 @@ fn verify_loop_preservation(
     results
 }
 
-/// Plan 33.3 Р¤.9 / Plan 33.4 P1-5: РјРµС‚Р°РґР°РЅРЅС‹Рµ РѕРґРЅРѕРіРѕ axiom'Р° СЃ СЂРµРµСЃС‚СЂР°РјРё РґР»СЏ encoding.
+/// Plan 33.3 Ф.9 / Plan 33.4 P1-5: метаданные одного axiom'а с реестрами для encoding.
 pub(super) struct AxiomInfo<'a> {
     pub(super) effect_name: String,
     pub(super) axiom_name: String,
@@ -2568,7 +2568,7 @@ pub(super) struct AxiomInfo<'a> {
     pub(super) is_generic: bool,
 }
 
-/// Plan 33.3 Р¤.9: СЃРѕР±СЂР°С‚СЊ РІСЃРµ axiom'С‹ РјРѕРґСѓР»СЏ.
+/// Plan 33.3 Ф.9: собрать все axiom'ы модуля.
 fn collect_axioms(module: &Module) -> Vec<AxiomInfo<'_>> {
     let mut out = Vec::new();
     for item in &module.items {
@@ -2587,13 +2587,13 @@ fn collect_axioms(module: &Module) -> Vec<AxiomInfo<'_>> {
     out
 }
 
-/// Plan 33.3 Р¤.9: encode axiom РІ SMT-Forall.
+/// Plan 33.3 Ф.9: encode axiom в SMT-Forall.
 ///
-/// Р'РёРЅРґРµСЂС‹ РїСЂРёРѕР±СЂРµС‚Р°СЋС‚ sort РёР· РџР•Р Р'РћР"Рћ pure_view-РІС‹Р·РѕРІР° РІ С„РѕСЂРјСѓР»Рµ,
-/// РіРґРµ РѕРЅРё РёСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ РєР°Рє Р°СЂРіСѓРјРµРЅС‚. Р­С‚Рѕ СЌРІСЂРёСЃС‚РёРєР° V1; СЏРІРЅС‹Рµ type
-/// ascriptions РІ binders вЂ" future work.
-/// РљРѕРЅРІРµСЂС‚РёСЂСѓРµС‚ TypeRef РІ SortRef РґР»СЏ SMT (V1: int/bool/str в†' СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёР№ sort,
-/// РѕСЃС‚Р°Р»СЊРЅРѕРµ в†' Int РєР°Рє fallback).
+/// Виндеры приобретают sort из ПЕРВОДО pure_view-вызова в формуле,
+/// где они используются как аргумент. Это эвристика V1; явные type
+/// ascriptions в binders — future work.
+/// Конвертирует TypeRef в SortRef для SMT (V1: int/bool/str → соответствующий sort,
+/// остальное → Int как fallback).
 fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
     if let crate::ast::TypeRef::Named { path, .. } = ty {
         if let Some(name) = path.last() {
@@ -2624,20 +2624,20 @@ pub(super) fn encode_axiom(
     ax: &AxiomInfo,
     pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
 ) -> Option<SmtTerm> {
-    // Generic axioms вЂ" V2; РїРѕРєР° РЅРµ РїРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ РІ SMT encoding.
+    // Generic axioms — V2; пока не поддерживаются в SMT encoding.
     if ax.is_generic {
         return None;
     }
-    // Plan 33.4 P1-5: binders С‡РµСЂРµР· BinderDef.
+    // Plan 33.4 P1-5: binders через BinderDef.
     let binder_names: Vec<String> = ax.binders.iter().map(|bd| bd.name.clone()).collect();
     let mut binder_sorts: std::collections::HashMap<String, SortRef> = std::collections::HashMap::new();
-    // Р•СЃР»Рё Сѓ binder СЏРІРЅС‹Р№ С‚РёРї (Typed) вЂ" РёСЃРїРѕР»СЊР·СѓРµРј РµРіРѕ; Generic/Untyped вЂ" РІС‹РІРѕРґРёРј РёР· usage.
+    // Если у binder явный тип (Typed) — используем его; Generic/Untyped — выводим из usage.
     for bd in ax.binders {
         if let crate::ast::BinderType::Typed(ty) = &bd.kind {
             let sort = type_ref_to_sort(ty);
             binder_sorts.insert(bd.name.clone(), sort);
         }
-        // Generic Рё Untyped вЂ" РѕСЃС‚Р°РІР»СЏРµРј РґР»СЏ infer_binder_sorts.
+        // Generic и Untyped — оставляем для infer_binder_sorts.
     }
     infer_binder_sorts(ax.formula, &binder_names, pure_views, &mut binder_sorts);
     // Encode body.
@@ -2647,7 +2647,7 @@ pub(super) fn encode_axiom(
     let empty_trusted = EMPTY_TRUSTED.get_or_init(std::collections::HashMap::new);
     let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, trusted_fns: empty_trusted, var_sorts: std::collections::HashMap::new() };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
-    // Build binders Vec вЂ" СЏРІРЅС‹Р№ РёР»Рё inferred sort, default Int.
+    // Build binders Vec — явный или inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()
         .map(|n| (n.clone(), binder_sorts.remove(n).unwrap_or(SortRef::Int)))
         .collect();
@@ -2658,8 +2658,8 @@ pub(super) fn encode_axiom(
     }
 }
 
-/// Walks `formula` Рё РґР»СЏ РєР°Р¶РґРѕР№ СЃСЃС‹Р»РєРё РЅР° binder РІ pure_view-arg
-/// Р·Р°РїРёСЃС‹РІР°РµС‚ sort РїР°СЂР°РјРµС‚СЂР° РІ `out`.
+/// Walks `formula` и для каждой ссылки на binder в pure_view-arg
+/// записывает sort параметра в `out`.
 pub(super) fn infer_binder_sorts(
     e: &crate::ast::Expr,
     binders: &[String],
@@ -2718,18 +2718,18 @@ impl Default for VerificationPipeline {
     fn default() -> Self { Self::new() }
 }
 
-/// Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РјРѕРґСѓР»СЏ.
+/// Plan 33.3 Ф.9.5: проверка consistency axiom'ов модуля.
 ///
-/// Р"Р»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° СЃ axioms СЃРѕР·РґР°С'С‚СЃСЏ РёР·РѕР»РёСЂРѕРІР°РЅРЅС‹Р№ backend, РІ РЅС'Рј
-/// РѕР±СЉСЏРІР»СЏСЋС‚СЃСЏ РІСЃРµ pure_view UFs СЌС„С„РµРєС‚Р°, asserted РІСЃРµ axioms, Р·Р°С‚РµРј
-/// `check_sat`. Р•СЃР»Рё UNSAT вЂ" axioms together implication False в†'
-/// **compile error** В«axioms inconsistentВ».
+/// Для каждого эффекта с axioms создаётся изолированный backend, в нём
+/// объявляются все pure_view UFs эффекта, asserted все axioms, затем
+/// `check_sat`. Если UNSAT — axioms together implication False →
+/// **compile error** «axioms inconsistent».
 ///
-/// SAT РёР»Рё Unknown вЂ" OK. TrivialBackend РІСЃРµРіРґР° РґР°С'С‚ Unknown РґР»СЏ
-/// quantified-axioms (РЅРµС‚ reasoning'Р° РЅР°Рґ Forall), С‡С‚Рѕ С‚СЂР°РєС‚СѓРµС‚СЃСЏ РєР°Рє
-/// В«РЅРµ РґРѕРєР°Р·Р°РЅРѕ inconsistentВ» вЂ" silent fallback.
+/// SAT или Unknown — OK. TrivialBackend всегда даёт Unknown для
+/// quantified-axioms (нет reasoning'а над Forall), что трактуется как
+/// «не доказано inconsistent» — silent fallback.
 ///
-/// Р'РѕР·РІСЂР°С‰Р°РµС‚ diagnostic'Рё (РїСѓСЃС‚РѕР№ Vec РµСЃР»Рё РІСЃС' consistent).
+/// Возвращает diagnostic'и (пустой Vec если всё consistent).
 /// Ф.7.4 (Plan 33.6): возвращает (errors, warnings).
 /// errors — inconsistent axioms (Unsat). warnings — Unknown под Trivial (W2402).
 pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
@@ -2737,7 +2737,7 @@ pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnos
     let mut warnings: Vec<Diagnostic> = Vec::new();
     let pure_views = collect_pure_views(module);
 
-    // Р"СЂСѓРїРїРёСЂСѓРµРј axioms РїРѕ effect-name.
+    // Друппируем axioms по effect-name.
     let mut axioms_by_effect: std::collections::HashMap<String, Vec<(&crate::ast::TypeDecl, Vec<&crate::ast::EffectAxiom>)>>
         = std::collections::HashMap::new();
     for item in &module.items {
@@ -2755,15 +2755,15 @@ pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnos
         for (td, axiom_refs) in effect_group {
             let mut backend = pipeline.create_backend();
 
-            // Pre-declare Р'РЎР• pure_view UFs РјРѕРґСѓР»СЏ (РјРѕРіСѓС‚ СЃСЃС‹Р»Р°С‚СЊСЃСЏ cross-effect
-            // РІ С„РѕСЂРјСѓР»Р°С… вЂ" V1 РѕРіСЂР°РЅРёС‡РёРІР°РµС‚ one-effect-axioms, РЅРѕ Р±РµР·РѕРїР°СЃРЅРµРµ
-            // pre-decl'РёС‚СЊ РІСЃС').
+            // Pre-declare ВСЕ pure_view UFs модуля (могут ссылаться cross-effect
+            // в формулах — V1 ограничивает one-effect-axioms, но безопаснее
+            // pre-decl'ить всё).
             for (op_name, sig) in &pure_views {
                 let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
                 backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
             }
 
-            // Assert РІСЃРµ axioms СЌС„С„РµРєС‚Р°.
+            // Assert все axioms эффекта.
             let mut some_encoded = false;
             for ax in axiom_refs {
                 let info = AxiomInfo {
@@ -2782,10 +2782,10 @@ pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnos
                 }
             }
 
-            // Р•СЃР»Рё РЅРё РѕРґРёРЅ axiom РЅРµ encoded вЂ" РЅРµС‡РµРіРѕ РїСЂРѕРІРµСЂСЏС‚СЊ.
+            // Если ни один axiom не encoded — нечего проверять.
             if !some_encoded { continue; }
 
-            // check_sat. Unsat в†' inconsistent.
+            // check_sat. Unsat → inconsistent.
             match backend.check_sat() {
                 SatResult::Unsat(_) => {
                     diagnostics.push(Diagnostic::new(
@@ -2969,12 +2969,12 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
     }
 }
 
-/// Entry-point: РїСЂРѕРІРµСЂРёС‚СЊ РІСЃРµ С„СѓРЅРєС†РёРё РјРѕРґСѓР»СЏ. Р--Р°РїРѕР»РЅСЏРµС‚ diagnostics
-/// СЃ warning'Р°РјРё/errors СЃРѕРіР»Р°СЃРЅРѕ verify_mode.
+/// Entry-point: проверить все функции модуля. Р—-аполняет diagnostics
+/// с warning'ами/errors согласно verify_mode.
 ///
-/// РўР°РєР¶Рµ РІРѕР·РІСЂР°С‰Р°РµС‚ map `(fn_name в†' set of proven contract span)`,
-/// РєРѕС‚РѕСЂР°СЏ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ codegen'РѕРј РґР»СЏ **zero-cost release** вЂ"
-/// proven РєРѕРЅС‚СЂР°РєС‚С‹ РЅРµ emit'СЏС‚СЃСЏ РІ release СЃР±РѕСЂРєРµ.
+/// Также возвращает map `(fn_name → set of proven contract span)`,
+/// которая используется codegen'ом для **zero-cost release** —
+/// proven контракты не emit'ятся в release сборке.
 pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let pipeline = VerificationPipeline::new();
     let cache_dir = std::env::var("NOVA_CACHE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join("target"));
@@ -2987,10 +2987,10 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // на весь verify_module call. Stats emit'ятся в конце.
     super::subsumption_cache::reset_module_cache();
 
-    // Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РґРѕ per-fn verify.
-    // Р•СЃР»Рё axioms СЌС„С„РµРєС‚Р° inconsistent (Z3 в†' UNSAT) в†' compile-error,
-    // skip РІСЃРµС… РѕСЃС‚Р°Р»СЊРЅС‹С… verify'РµРІ (Р»СЋР±Р°СЏ formula С‚СЂРёРІРёР°Р»СЊРЅРѕ РґРѕРєР°Р·СѓРµРјР°
-    // РїРѕРґ inconsistent assumptions).
+    // Plan 33.3 Ф.9.5: проверка consistency axiom'ов до per-fn verify.
+    // Если axioms эффекта inconsistent (Z3 → UNSAT) → compile-error,
+    // skip всех остальных verify'ев (любая formula тривиально доказуема
+    // под inconsistent assumptions).
     let (inconsistency_errors, inconsistency_warnings) = check_axiom_consistency(module);
     let has_inconsistent_axioms = !inconsistency_errors.is_empty();
     for e in inconsistency_errors {
@@ -3004,7 +3004,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
         return report;
     }
 
-    // Plan 33.4 P0-1 (Р¤.9.7 V1): РІРµСЂРёС„РёРєР°С†РёСЏ `with #verify E = handler` bindings.
+    // Plan 33.4 P0-1 (Ф.9.7 V1): верификация `with #verify E = handler` bindings.
     // Ф.7.5 (Plan 33.6): verify_handlers возвращает (errors, warnings).
     let (handler_errors, handler_warnings) = super::handler_exec::verify_handlers(module);
     for diag in handler_errors {
@@ -3017,8 +3017,8 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
         return report;
     }
 
-    // Р¤.3: РІС‹С‡РёСЃР»СЏРµРј SCC purity РѕРґРёРЅ СЂР°Р· РЅР° РјРѕРґСѓР»СЊ, С‡С‚РѕР±С‹ РЅРµ РїРµСЂРµСЃС‡РёС‚С‹РІР°С‚СЊ
-    // СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РѕР±С…РѕРґ AST РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ (overhead + СЂРёСЃРє stack overflow).
+    // Ф.3: вычисляем SCC purity один раз на модуль, чтобы не пересчитывать
+    // рекурсивный обход AST на каждую функцию (overhead + риск stack overflow).
     let inferred_pure = infer_pure_fns_scc(module);
 
     // Plan 33.3 Ф.13: #must_verify_module -- все функции MustVerify.
@@ -3050,9 +3050,9 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                 report.errors.push(Diagnostic::new(msg, span));
                 continue;
             }
-            // Skip Fail-functions вЂ" ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
-            // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†' РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
-            // РѕС‚СЃСѓС‚СЃС‚РІРёРµ РІ С‚РёРїР°С….
+            // Skip Fail-functions — ContractCtx уже выдал error.
+            // Mut-параметры → пропустить (33.2). Сейчас детектим через
+            // отсутствие в типах.
             let contracts_repr: String = fd.contracts.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>().join("|");
             let body_repr = format!("{:?}", fd.body);
             let ck = super::cache::cache_key(&module_name, &fd.name, &contracts_repr, &body_repr);
@@ -3095,7 +3095,7 @@ let t0 = std::time::Instant::now();
                         report.proven.push((fd.name.clone(), span));
                     }
                     VerifyResult::Disproved(_, cex) => {
-                        // Plan 33.3 Р¤.9.10: AI-friendly format.
+                        // Plan 33.3 Ф.9.10: AI-friendly format.
                         // Ф.3.3 (Plan 33.6): pattern-aware suggested fixes из AST.
                         let pattern_suggestions = super::suggest::suggest_fixes(fd);
                         let pattern_block = if pattern_suggestions.is_empty() {
@@ -3122,14 +3122,14 @@ let t0 = std::time::Instant::now();
                         }
                     }
                     VerifyResult::Unknown(reason) => {
-                        // РџРѕ D24 / Plan 33.1: default вЂ" runtime fallback РІ debug,
-                        // РІ release РєРѕРЅС‚СЂР°РєС‚ СЃС‚РёСЂР°РµС‚СЃСЏ СЃ warning (РёР»Рё error РµСЃР»Рё
+                        // По D24 / Plan 33.1: default — runtime fallback в debug,
+                        // в release контракт стирается с warning (или error если
                         // `#verify`).
                         match effective_mode {
                             VerifyMode::MustVerify => {
-                                // Plan 33.3 Р¤.9.10: AI-friendly format СЃ
-                                // РєР°С‚РµРіРѕСЂРёР·РёСЂРѕРІР°РЅРЅС‹Рј reason + suggestions
-                                // (reason СѓР¶Рµ СЃРѕРґРµСЂР¶РёС‚ hint РёР· unknown_to_diag_message).
+                                // Plan 33.3 Ф.9.10: AI-friendly format с
+                                // категоризированным reason + suggestions
+                                // (reason уже содержит hint из unknown_to_diag_message).
                                 let msg = format!(
                                     "`#verify` failed for `{}`:\n  {}",
                                     fd.name, reason);
@@ -4261,15 +4261,15 @@ fn is_expr_bv_sorted(e: &Expr, sorts: &std::collections::HashMap<String, SortRef
     }
 }
 
-/// Aggregated РѕС‚С‡С'С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.
+/// Aggregated отчёт по верификации модуля.
 #[derive(Debug, Default)]
 pub struct ModuleVerifyReport {
-    /// Р"РѕРєР°Р·Р°РЅРЅС‹Рµ РєРѕРЅС‚СЂР°РєС‚С‹ вЂ" `(fn_name, span)`. РСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ codegen'РѕРј
-    /// РІ release-СЃР±РѕСЂРєРµ РґР»СЏ СЃС‚РёСЂР°РЅРёСЏ runtime-check'Р°.
+    /// Доказанные контракты — `(fn_name, span)`. Рспользуются codegen'ом
+    /// в release-сборке для стирания runtime-check'а.
     pub proven: Vec<(String, Span)>,
-    /// Errors вЂ" РІС‹РґР°СЋС‚СЃСЏ РїРѕСЃР»Рµ verify (РЅР°РїСЂРёРјРµСЂ `#verify` failed).
+    /// Errors — выдаются после verify (например `#verify` failed).
     pub errors: Vec<Diagnostic>,
-    /// Warnings вЂ" counterexamples РґР»СЏ РєРѕРЅС‚СЂР°РєС‚РѕРІ Р±РµР· `#verify`.
+    /// Warnings — counterexamples для контрактов без `#verify`.
     pub warnings: Vec<Diagnostic>,
 }
 

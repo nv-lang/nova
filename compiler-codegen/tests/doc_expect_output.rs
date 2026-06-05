@@ -1,9 +1,9 @@
-﻿//! Plan 45 Р¤.24.8 вЂ” integration tests for `expect_output` doc-test modifier.
+﻿//! Plan 45 Ф.24.8 — integration tests for `expect_output` doc-test modifier.
 //!
 //! Verifies that:
 //! 1. `// Output: <text>` lines are parsed from fenced blocks.
 //! 2. Runner captures stdout and diffs against expected.
-//! 3. Drift detection: wrong expected в†’ Failed with clear message.
+//! 3. Drift detection: wrong expected → Failed with clear message.
 
 use nova_codegen::doc::doctree::DocTestModifier;
 
@@ -98,7 +98,7 @@ export fn demo() -> () => ()
 
 #[test]
 fn expect_output_no_annotation_passes_normally() {
-    // expect_output without any // Output: annotations в†’ expected = None.
+    // expect_output without any // Output: annotations → expected = None.
     // Runner should still run but not check output (graceful).
     let src = r#"
 module doc_tests.expect_output_no_ann
@@ -118,7 +118,7 @@ export fn demo() -> () => ()
         &tree.doc_tests,
         Some(&source),
     );
-    // With no expected_output, runner runs normally вЂ” no output check.
+    // With no expected_output, runner runs normally — no output check.
     // The test just verifies no panic/compile error.
     assert!(summary.all_passed(), "no-annotation expect_output should pass: {:?}", summary.results[0].outcome);
 }

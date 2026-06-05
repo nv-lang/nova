@@ -1,0 +1,37 @@
+// Plan 123 V*.followups 2026-06-05 marker 5 — V2.1 LICM weighted threshold.
+// Closes [M-123.2.1-v2-licm-threshold-integration].
+// Positive: nested-loop pattern exercises V2.1 LICM eligibility check
+// via `count_field_reads_in_block_weighted`. Semantic preservation
+// verified through observed sum.
+
+module plan123_followups_2026_06_05.m5_v2_1_licm_weighted_ok
+
+type C {
+    mut x int
+}
+
+fn C.new(init int) -> C => { x: init }
+
+fn C mut @sum_nested(n int, m int) -> int {
+    // V2.1 LICM weighted: nested while bodies inflate read count.
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        mut j = 0
+        while j < m {
+            acc = acc + @x
+            j = j + 1
+        }
+        i = i + 1
+    }
+    acc
+}
+
+test "V2.1 LICM weighted: nested-loop accumulation preserves semantics" {
+    mut c = C.new(7)
+    // 3 outer × 4 inner × 7 = 84
+    ro r = c.sum_nested(3, 4)
+    assert(r == 84)
+    // @x unchanged.
+    assert(c.x == 7)
+}

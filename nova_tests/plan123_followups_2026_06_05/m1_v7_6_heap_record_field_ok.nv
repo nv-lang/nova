@@ -1,0 +1,43 @@
+// Plan 123 V*.followups 2026-06-05 marker 1 — V7.6 TypeDecl refactor.
+// Closes [M-123.7.6-generic-ref-types].
+// Positive: heap-record field via TypeDecl classification → ref-typed →
+// `@F.method()` doesn't invalidate `@F` cache when method mutates *F
+// behind pointer (V7.6 V2 spec-driven, не hardcoded list).
+
+module plan123_followups_2026_06_05.m1_v7_6_heap_record_field_ok
+
+type Inner {
+    mut count int
+}
+
+fn Inner.new() -> Inner => { count: 0 }
+fn Inner mut @bump() -> () { @count = @count + 1 }
+fn Inner @get() -> int => @count
+
+type Outer {
+    mut inner Inner
+}
+
+fn Outer.new() -> Outer => { inner: Inner.new() }
+
+fn Outer mut @sample_three_bumps() -> int {
+    // V7.6 V2: `Inner` is heap-record (default AllocKind::Heap),
+    // classified via TypeKindRegistry as HeapRecord ⇒ ref-typed.
+    // Multiple `@inner.bump()` / `@inner.get()` chain through field.
+    @inner.bump()
+    ro a = @inner.get()
+    @inner.bump()
+    ro b = @inner.get()
+    @inner.bump()
+    ro c = @inner.get()
+    a + b + c
+}
+
+test "V7.6 V2: heap-record field ref-classification preserves semantics" {
+    mut o = Outer.new()
+    ro r = o.sample_three_bumps()
+    // bumps: 0→1, 1→2, 2→3
+    // a=1, b=2, c=3 ⇒ 1+2+3 = 6
+    assert(r == 6)
+    assert(o.inner.get() == 3)
+}
