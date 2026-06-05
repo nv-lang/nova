@@ -33650,3 +33650,20 @@ V1 simplifications shipped с explicit followups (не silent):
 
 Both followups — scope reductions, не bugs. Functional behaviour matches
 V1 contract; full ergonomics после followup closure.
+
+## 2026-06-06 — Plan 128.2 — no simplifications. Production-grade safety fix.
+
+Plan 128.2 закрыл [M-128.1-ro-binding-field-chain-not-mut] P1 safety hole
+через root-walking enforcement в type-checker. Никаких упрощений,
+deferred behaviours или TODO followups не введено:
+
+- `lvalue_root_ident` helper covers все три AST shapes (Ident,
+  Member chain, IndexAccess chain) + rvalue base correctly returns None.
+- 8 fixtures cover все combinations (param/local × field/index chain +
+  mixed nested + rvalue + pure-method).
+- Spec D33 amend + D215 cross-ref landed синхронно с code.
+- Plan 128 + Plan 128.1 baseline regression — 0 deviations.
+
+Followup-free closure; обратная связь — pattern «enforcement vs codegen
+ABI independent axes» — задокументирована в Plan 128.2 §8 Lessons +
+project-creation.txt closure entry.
