@@ -1,0 +1,24 @@
+// Plan 125 Ф.1: trailing-throw в then, struct-value в else.
+// Проверяет, что zero-init structure НЕ эмитится в diverging then.
+
+module plan125.if_then_throw_else_struct
+
+type Pair { a int, b int }
+
+fn pick(c bool) Fail -> Pair {
+    if c {
+        throw "boom"
+    } else {
+        Pair { a: 1, b: 2 }
+    }
+}
+
+test "struct in else, throw in then" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro p = pick(false)
+        assert(p.a == 1)
+        assert(p.b == 2)
+    }
+}

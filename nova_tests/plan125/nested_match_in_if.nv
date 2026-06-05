@@ -1,0 +1,21 @@
+// Plan 125 Ф.4: вложенный match в then-branch — обе арки divergent.
+
+module plan125.nested_match_in_if
+
+type Outcome | Stop | Skip | Take
+
+fn process(o Outcome, c bool) -> int {
+    if c {
+        match o {
+            Stop => panic("stop")
+            Skip => panic("skip")
+            Take => panic("take")
+        }
+    } else {
+        7
+    }
+}
+
+test "all-divergent match nested in if-then" {
+    assert(process(Outcome.Take, false) == 7)
+}

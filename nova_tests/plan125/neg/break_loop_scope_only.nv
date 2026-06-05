@@ -1,0 +1,26 @@
+// Plan 125 negative — `break` НЕ должно flip'нуть как fn-scope divergence.
+// break имеет loop-scope, не fn-scope; `if c { break } else { val }`
+// внутри loop'а — обычный паттерн. Whitelist Plan 125 НЕ содержит
+// ExprKind::Break.
+
+module neg.break_loop_scope_only
+
+fn first_even() -> int {
+    mut i = 0
+    mut found = -1
+    loop {
+        if i >= 10 {
+            break
+        }
+        if i % 2 == 0 && i > 0 {
+            found = i
+            break
+        }
+        i = i + 1
+    }
+    found
+}
+
+test "break in loop scope works as normal control-flow" {
+    assert(first_even() == 2)
+}

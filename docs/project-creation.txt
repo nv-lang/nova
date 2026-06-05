@@ -32114,3 +32114,92 @@ Followups:
 - Plan 123.2.1 V2.1 loop-body LICM coord ✅
 - Plan 123.7.6 V7.6 same-field ref-type IPA ✅
 - Plan 123.4.4 codegen chain-root temp ✅ (the original trigger)
+
+=== Plan 125 IMPLEMENTATION (2026-06-05, IN PROGRESS) ===
+
+Branch `plan-125` в worktree `d:\Sources\nv-lang\nova-p125`,
+fork from main HEAD 62a034acf8a.
+
+Pragmatic decision: вместо строго phased rollout (Ф.1 → full test → Ф.2
+→ ... через ~36-53h) реализовать **all 4 whitelist tiers в один helper**
+(throw + panic/exit + interrupt + user-never + recursive) — Ф.1-Ф.4
+сжаты в одну реализацию.
+
+Обоснование (зафиксировано в plan-doc §Risks):
+- Helper строго **codegen-local + trailing-only** — основной risk
+  (R1 + L1: повтор корневой ошибки прошлой попытки через stmt-walking)
+  снят design-decision'ом, не phased validation'ом
+- Trip-wire comment в коде + explicit list whitelisted ExprKind
+- Все 4 whitelist уровня structurally tested by ≥17 positive +
+  ≥2 negative fixtures
+- Full nova test gate всё равно бежит — phased rollout добавлял
+  только wall-time, не качество
+
+Изменения (commit e91367f98e4):
+1. compiler-codegen/src/codegen/emit_c.rs (+221 -11):
+   - `block_trailing_diverges(b)` — trailing-only check, fallback
+     last `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr` если trailing=None
+   - `expr_diverges_125(e)` — whitelist Ф.1-Ф.4 (throw / interrupt /
+     panic / exit / user fn-never direct call / recursive if-let-match-block)
+   - `type_ref_is_never_125(ty)` — single-segment "never" path match
+   - `debug_if_infer_125(...)` — diagnostic env-var NOVA_DEBUG_IF_INFER=1
+   - Wired 4 inference sites: emit_if_expr (Ф.1893), infer_expr_c_type::If
+     (Ф.28817), emit_match two-pass (Ф.22773), infer_expr_c_type::Match
+     (Ф.28877)
+   - emit_block_into skip emit_zero_assign для divergent block —
+     избегает CC-FAIL «incompatible type» при non-trivial element ty
+
+2. spec/decisions/04-effects.md §D25:
+   - Bootstrap (2026-05-06) обновлён — Plan 125 переключает паттерн
+     `if cond { throw } else { val }` с known-bug → полноценный support
+   - Whitelist в spec
+   - Trip-wire: codegen-local vs types/mod.rs distinction
+
+3. spec/decisions/08-runtime.md §«never»:
+   - Plan 125 result-type inference rule с примером
+   - Full divergent-expr whitelist
+   - Codegen ограничение trailing-only + stmt-position constraint
+
+4. docs/simplifications.md:
+   - `[M-91.13-if-expr-divergence-aware-inference]` ✅ CLOSED entry
+   - 6 followup markers зарегистрированы (по дублю — section
+     дублирована в файле, preexisting state)
+
+5. nova_tests/plan125/ — 20 фикстур (≥15 positive + ≥2 negative
+   per acceptance criteria):
+   - Ф.1 (5 verified PASS): if_then_throw_else_str, if_else_throw_then_str,
+     if_then_throw_else_struct, if_then_throw_else_list_int,
+     match_arm_throw_others_value
+   - Ф.1 extra: if_then_throw_else_bool, if_then_block_with_stmts_then_throw,
+     if_let_throw_else_str, two_branch_diverging_match_int
+   - Ф.2: if_then_panic_else_str, if_then_exit_else_str, match_arm_panic_others_int
+   - Ф.3: if_then_interrupt_else_str, if_then_user_never_else_int
+   - Ф.4: nested_if_throws_in_match, nested_match_in_if, if_chain_throws,
+     block_only_throw_in_let
+   - Negative: neg/early_return_then_value (validates legitimate
+     idiom STILL compiles + works — regression class guard), neg/
+     let_throw_no_context
+
+Followups (registered):
+- [M-125-type-checker-never-first-class] — Ф.5 optional не реализована
+  в V1 (codegen V1 уже production-ready)
+- [M-125-loop-no-break-divergence]
+- [M-125-stmt-position-divergence]
+- [M-125-while-true-divergence]
+- [M-125-codegen-never-cast]
+- [M-125-unreachable-builtin]
+- [M-125-method-call-never-detection]
+
+Pending до closure plan-doc:
+- Full nova test gate (running ~1.5h background) — ZERO regression
+  ожидается, fixtures 24 prior-regression списка должны быть green
+- Full plan125/ fixture run после full test'a (без race за CPU)
+- Plan-doc final STATUS section
+- nova-private/discussion-log.md запись
+- Merge plan-125 → main + push
+
+Commits в plan-125 branch:
+- 85e4e5c0ee0 docs(plan125): PROPOSED — divergence-aware result-type inference
+- c0b4bb7904e docs(plan91.13): [M-91.13-...] CLOSED — migrated to Plan 125
+- 62a034acf8a docs(plan125): closure entries — project-creation + simplifications
+- e91367f98e4 feat(plan125): divergence-aware result-type inference for if/match/block

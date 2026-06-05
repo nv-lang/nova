@@ -1,0 +1,42 @@
+// Plan 125 Ф.1: match — одна ветка throw, остальные не-divergent.
+// Тип match должен инферится по не-divergent аркам.
+
+module plan125.match_arm_throw_others_value
+
+type Tag | A | B | C
+
+fn name(t Tag) Fail -> str {
+    match t {
+        A => "alpha"
+        B => "bravo"
+        C => throw "no charlie"
+    }
+}
+
+test "match-arm throw: A picks alpha" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = name(Tag.A)
+        assert(s == "alpha")
+    }
+}
+
+test "match-arm throw: B picks bravo" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = name(Tag.B)
+        assert(s == "bravo")
+    }
+}
+
+test "match-arm throw: C fires handler" {
+    mut caught = false
+    with Fail = effect Fail {
+        fail(_) { caught = true; interrupt () }
+    } {
+        ro _s = name(Tag.C)
+    }
+    assert(caught)
+}

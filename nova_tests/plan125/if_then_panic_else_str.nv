@@ -1,0 +1,16 @@
+// Plan 125 Ф.2: trailing-panic divergent в then.
+
+module plan125.if_then_panic_else_str
+
+fn pick(c bool) -> str {
+    if c {
+        panic("nope")
+    } else {
+        "ok"
+    }
+}
+
+test "panic in then, str in else" {
+    ro s = pick(false)
+    assert(s == "ok")
+}

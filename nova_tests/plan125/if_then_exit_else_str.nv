@@ -1,0 +1,16 @@
+// Plan 125 Ф.2: trailing-exit divergent в then.
+
+module plan125.if_then_exit_else_str
+
+fn pick(c bool) -> str {
+    if c {
+        exit(2, "nope")
+    } else {
+        "fine"
+    }
+}
+
+test "exit in then, str in else" {
+    ro s = pick(false)
+    assert(s == "fine")
+}

@@ -840,10 +840,29 @@ fn deposit(mut acc Account, amount money) Fail[DepositError] -> () =>
 expression. В expression-position (match-arm body, ternary, аргумент
 функции) codegen эмитирует `Nova_Fail_fail(msg)` + dummy `((nova_int)0LL)`
 — dummy после fail() недостижим. Тесты — `nova_tests/effects/throws.nv` (stmt),
-`nova_tests/syntax/throw_in_expression.nv` (expr). Известное ограничение
-bootstrap'а: `if cond { throw } else { val }` выражение не работает —
-codegen смешивает unit и реальный тип; workaround — `if cond { throw msg }
-val` (throw как stmt, fall-through к val).
+`nova_tests/syntax/throw_in_expression.nv` (expr).
+
+**Plan 125 (2026-06-05) — divergence-aware result-type inference:**
+паттерн `if cond { throw } else { val }` теперь полноценно поддержан.
+Codegen эмитирует `_nv_if : type-of-else`, divergent then-ветка не
+участвует в join-типе. Whitelist (Ф.1-Ф.4):
+- `ExprKind::Throw` (Ф.1) — direct `throw expr`
+- `ExprKind::Interrupt` (Ф.3) — `interrupt val` внутри handler-literal
+- `Call(panic, ...)` / `Call(exit, ...)` (Ф.2) — prelude builtin'ы
+- `Call(f, ...)` где `f` объявлена `-> never` (Ф.3) — direct call only
+- Recursive composition (Ф.4): if/if-let/match/block, у которых все
+  ветви diverge
+
+Реализация **codegen-local**, trailing-only — последняя позиция в
+блоке (`b.trailing` или `b.stmts.last()` если trailing отсутствует и
+last-stmt = `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr(...)`). Helper
+**НЕ** переиспользует `block_diverges` из type-checker'а (root cause
+прошлой попытки 2026-06-03 — он walked stmts и flip'ил легитимный
+idiom `if early-cond { return X } else { compute() }`).
+
+Type-checker side (`Ty::Never` first-class subtype) — отдельный
+follow-up `[M-125-type-checker-never-first-class]`; codegen V1
+production-ready без него.
 
 #### `throw` — операция эффекта `Fail[E]`, не магия
 

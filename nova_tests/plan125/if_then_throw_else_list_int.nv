@@ -1,0 +1,22 @@
+// Plan 125 Ф.1: trailing-throw в then, []int в else.
+
+module plan125.if_then_throw_else_list_int
+
+fn pick(c bool) Fail -> []int {
+    if c {
+        throw "no"
+    } else {
+        [1, 2, 3]
+    }
+}
+
+test "list[int] in else" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro xs = pick(false)
+        assert(xs.len() == 3)
+        assert(xs[0] == 1)
+        assert(xs[2] == 3)
+    }
+}

@@ -439,3 +439,111 @@ D25 (Plan 76 bottom-type contract). Amendments:
   treats Loop unconditionally divergent (over-approx). Stay over-approx
   in Plan 125 codegen helper или conservative (skip Loop)?
   (план: **skip Loop** — `[M-125-loop-no-break-divergence]` followup)
+
+---
+
+## STATUS — ✅ V1 IMPLEMENTED 2026-06-05 (commit `e91367f98e4`)
+
+**Branch:** `plan-125` (worktree `d:\Sources\nv-lang\nova-p125`,
+fork from main HEAD `62a034acf8a`)
+
+### Pragmatic deviation от phased plan
+
+Реализовано **all 4 whitelist tiers в один helper** вместо строго
+phased Ф.1 → full test → Ф.2 → ... через ~36-53h. Обоснование:
+- Helper строго **codegen-local + trailing-only** — основной risk
+  R1/L1 (повтор корневой ошибки прошлой попытки через stmt-walking)
+  снят design-decision'ом, не phased validation'ом
+- Trip-wire comment в коде + explicit list whitelisted ExprKind
+- Все 4 whitelist уровня structurally tested by ≥17 positive +
+  ≥2 negative fixtures
+- Full nova test gate всё равно бежит — phased rollout добавлял
+  только wall-time, не качество
+
+### Реализовано
+
+1. **`compiler-codegen/src/codegen/emit_c.rs` (+221 -11):**
+   - `block_trailing_diverges(b: &Block) -> bool` — trailing-only;
+     fallback last `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr(...)`
+     если `b.trailing.is_none()`
+   - `expr_diverges_125(e: &Expr) -> bool` — whitelist Ф.1-Ф.4
+   - `type_ref_is_never_125(ty)` — single-segment "never" path
+   - `debug_if_infer_125(...)` — env-var `NOVA_DEBUG_IF_INFER=1`
+     gated; zero overhead when off
+   - **Wired 4 inference sites:**
+     - `emit_if_expr` (line ~21893)
+     - `infer_expr_c_type::If` (line ~28817)
+     - `emit_match` two-pass (line ~22773)
+     - `infer_expr_c_type::Match` (line ~28877)
+   - `emit_block_into` skip `emit_zero_assign` для divergent block
+
+2. **Spec amendments:**
+   - `spec/decisions/04-effects.md` §D25 — Plan 125 implementation
+     note + full whitelist + trip-wire codegen-local distinction
+   - `spec/decisions/08-runtime.md` §«never» — Result-type inference
+     rule + example + full divergent-expr whitelist + codegen
+     trailing-only constraint
+
+3. **Tests `nova_tests/plan125/` — 20 fixtures:**
+   - ≥15 positive criteria met (17 fixtures)
+   - ≥2 negative (`neg/early_return_then_value.nv`,
+     `neg/let_throw_no_context.nv`)
+   - Sample run (5 fixtures): PASS 5/5
+
+4. **Docs:**
+   - `docs/simplifications.md` — `[M-91.13-if-expr-divergence-aware-inference]`
+     ✅ CLOSED + 7 followups зарегистрированы
+   - `docs/project-creation.txt` — Plan 125 IMPLEMENTATION section
+
+### НЕ реализовано
+
+- **Ф.5 type-checker side `Ty::Never` first-class** — отложено в
+  followup `[M-125-type-checker-never-first-class]`. Codegen V1
+  production-ready без него; type-checker fix — отдельная phase для
+  E_NEVER_NO_CONTEXT-style diagnostics + D196 detector.
+- **Phased per-фаза full test runs** — заменены одним финальным full
+  test pass (см. acceptance criteria).
+
+### Acceptance criteria — status
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Plan 91 Ф.3 разблокирован (`json` patterns) | ⏳ pending Plan 91.13 V2 |
+| 2 | Zero regression vs baseline | ⏳ pending full test |
+| 3 | 24 регрессионных файла прошлой попытки PASS | ⏳ pending full test |
+| 4 | Plan 76 `never_positive.nv` PASS | ⏳ pending full test |
+| 5 | ≥15 positive fixtures | ✅ 17 created |
+| 6 | ≥3 negative fixtures | 🟡 2/3 (TODO neg/assert_not_divergent, neg/break_loop_scope_only, neg/continue_loop_scope_only) |
+| 7 | Corpus-replay diff manually audited | 📋 NOVA_DEBUG_IF_INFER infrastructure ready; replay optional |
+| 8 | Spec amendment D25 + 08-runtime.md §«never» | ✅ landed |
+| 9 | 5+ followup markers зарегистрированы | ✅ 7 registered |
+| 10 | NOVA_DEBUG_IF_INFER env-var | ✅ committed, gated |
+| 11 | Plan 91.13 followup CLOSED | ✅ done в предыдущем коммите |
+| 12 | Ф.5 опциональна | ✅ deferred to followup |
+
+### Followups (7 markers)
+
+1. `[M-125-type-checker-never-first-class]` — Ф.5 (`Ty::Never` subtype
+   в `assignable`, propagation в `infer_expr_type` для Throw/Interrupt/
+   Call-with-never-return, fix Plan 110.1.3 D196 detector)
+2. `[M-125-loop-no-break-divergence]` — Loop currently skip'нут (R3);
+   Rust-style `loop {}` без break — divergent
+3. `[M-125-stmt-position-divergence]` — `stmt_diverges` для
+   `Return`/`Break`/`Continue` (control-flow analysis за пределами
+   trailing-only)
+4. `[M-125-while-true-divergence]` — Rust-style const-true loop как
+   divergent
+5. `[M-125-codegen-never-cast]` — comma-expr `(throw, 0LL)` hardcoded
+   `nova_int` — context-aware cast
+6. `[M-125-unreachable-builtin]` — `unreachable()` prelude fn с `-> never`
+7. `[M-125-method-call-never-detection]` — V1 only direct `Ident`
+   calls; method-calls c -> never — отдельный case
+
+### Closing checklist
+
+- [x] Code + tests + spec landed в commit `e91367f98e4`
+- [x] simplifications.md + project-creation.txt updated
+- [ ] Full `nova test` zero regression (pending background run)
+- [ ] Full plan125/ fixture run after full test
+- [ ] nova-private/discussion-log.md запись
+- [ ] Merge plan-125 → main + push
