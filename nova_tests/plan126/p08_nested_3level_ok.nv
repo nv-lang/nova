@@ -1,0 +1,24 @@
+// Plan 126 — POS F08:
+// 3-level рекурсивный auto-derive — Level1 → Level2 → Level3.
+// AC-126.7 (3+ levels).
+module plan126.p08_nested_3level_ok
+
+#impl(Cloneable)
+type L3 {
+    leaf int
+}
+
+#impl(Cloneable)
+type L2 {
+    inner L3
+}
+
+#impl(Cloneable)
+type L1 {
+    inner L2
+}
+
+test "3-level nesting type-checks" {
+    ro x = L1 { inner: L2 { inner: L3 { leaf: 42 } } }
+    assert(x.inner.inner.leaf == 42)
+}

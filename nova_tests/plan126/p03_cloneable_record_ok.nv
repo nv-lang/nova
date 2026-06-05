@@ -1,0 +1,15 @@
+// Plan 126 (D230) — POS F03:
+// `#impl(Cloneable)` на record с primitive fields → auto-derive @clone().
+// AC-126.4.
+module plan126.p03_cloneable_record_ok
+
+#impl(Cloneable)
+type Point2 {
+    x int
+    y int
+}
+
+test "Point2 type-checks with auto-derived @clone" {
+    ro p = Point2 { x: 1, y: 2 }
+    assert(p.x == 1)
+}

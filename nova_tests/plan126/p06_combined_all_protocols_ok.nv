@@ -1,0 +1,17 @@
+// Plan 126 — POS F06:
+// Combined auto-derive — все 5 built-in протоколов одновременно.
+// AC-126.2 + 126.3 + 126.4 + 126.5 + 126.6.
+module plan126.p06_combined_all_protocols_ok
+
+#impl(Equatable + Hashable + Cloneable + Comparable + Printable)
+type Quad {
+    a int
+    b int
+    c int
+    d int
+}
+
+test "Quad type-checks with all 5 protocols auto-derived" {
+    ro q = Quad { a: 1, b: 2, c: 3, d: 4 }
+    assert(q.a == 1)
+}

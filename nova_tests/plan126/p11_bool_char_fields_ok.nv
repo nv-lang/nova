@@ -1,0 +1,16 @@
+// Plan 126 — POS F11:
+// bool / char fields eligible (все primitives auto-derivable).
+// AC-126.2.
+module plan126.p11_bool_char_fields_ok
+
+#impl(Hashable)
+type Flag {
+    enabled bool
+    marker char
+    count int
+}
+
+test "Flag with bool/char/int eligible" {
+    ro f = Flag { enabled: true, marker: 'x', count: 7 }
+    assert(f.count == 7)
+}

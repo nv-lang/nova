@@ -1,0 +1,15 @@
+// Plan 126 — POS F05:
+// `#impl(Printable)` на record → auto-derive @fmt(sb) (memberwise format).
+// AC-126.6.
+module plan126.p05_printable_record_ok
+
+#impl(Printable)
+type Tag {
+    name str
+    code int
+}
+
+test "Tag type-checks with auto-derived @fmt" {
+    ro t = Tag { name: "info", code: 1 }
+    assert(t.code == 1)
+}

@@ -1,0 +1,14 @@
+// Plan 126 — POS F12:
+// Single-field record + `#impl(Equatable)` — minimal field-count synth.
+// AC-126.2 minimal case.
+module plan126.p12_empty_record_ok
+
+#impl(Equatable)
+type Marker {
+    id int
+}
+
+test "single-field record type-checks" {
+    ro m = Marker { id: 1 }
+    assert(m.id == 1)
+}
