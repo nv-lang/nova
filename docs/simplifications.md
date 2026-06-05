@@ -27988,21 +27988,22 @@ pre-Plan-109 API.  Документированы в их followups.
   merge `874f5766ca5`.
 - ✅ `[M-110-impl-cancel-shield]` — Plan 110.2 closed (cancel-shield +
   async cleanup + 3-level timeout resolution). Same umbrella merge.
-- 🟡 `[M-110-stdlib-fs]` — `std/fs` модуль с `File` Consumable impl
-  (зависит от std/fs type design, который сам по себе отдельный модуль).
-- 🟡 `[M-110-stdlib-db]` — `std/db` модуль с `Transaction` Consumable impl.
-- 🟡 `[M-110-stdlib-bufio]` — `std/bufio` модуль с `BufReader`/`BufWriter`
-  Consumable impls.
-- 🟡 `[M-110-stdlib-pool]` — Connection pools (`Consumable[ConnPoolError]`).
-- 🟡 `[M-110-multierror-any]` — Миграция `MultiError.primary/suppressed`
-  payload `str` → `any` (bootstrap continues с `str` для compat;
-  Plan 110.4 Ф.6.2 closes когда `any` mature в codegen).
-- 🟡 `[M-110-supervised-handle]` — `JoinHandle` Consumable impl (зависит
-  от Plan 83.4.2 supervised drain ownership).
-- 🟡 `[M-110-run-on-abort]` — `#[run_on_abort]` attribute для finalizers
-  на abort/SIGKILL (Plan 110.4 Ф.8.9 deferred — нужно изучать
-  platform-specific signal handling).
-- 🟡 `[M-110-stream-consumable]` — Plan 84 `Stream[T]` Consumable impl.
+- 🟡 `[M-110-stdlib-fs]` — `std/fs.File` Consumable impl. **Owner: Plan 110.11.1**
+  ([110.11-new-stdlib-types-consumable.md](../plans/110.11-new-stdlib-types-consumable.md)).
+- 🟡 `[M-110-stdlib-db]` — `std/db.Transaction` Consumable impl. **Owner: Plan 110.11.3**.
+- 🟡 `[M-110-stdlib-bufio]` — `std/bufio` BufReader/Writer Consumable impls.
+  **Owner: Plan 110.11.2**.
+- 🟡 `[M-110-stdlib-pool]` — ConnPool Consumable. **Owner: Plan 110.11.4**.
+- 🟡 `[M-110-multierror-any]` — `MultiError` payload `str` → `any` migration.
+  **Owner: Plan 110.12.1** ([110.12-cross-cutting-orphan-closures.md](../plans/110.12-cross-cutting-orphan-closures.md)).
+  Gated на mature `any` codegen.
+- 🟡 `[M-110-supervised-handle]` — JoinHandle Consumable impl. **Owner: Plan 110.10.3**
+  ([110.10-existing-type-consumable-wrappers.md](../plans/110.10-existing-type-consumable-wrappers.md)).
+  Gated на Plan 83.4.2 supervised drain ownership.
+- 🟡 `[M-110-run-on-abort]` — `#[run_on_abort]` attribute + platform signal
+  handling. **Owner: Plan 110.12.2**.
+- 🟡 `[M-110-stream-consumable]` — Stream[T] Consumable impl. **Owner: Plan 110.11.6**
+  (corrects earlier reference к Plan 84 — Plan 84 is relative-imports, NOT Stream).
 
 **Why split:** Plan 110 sам в §«Возможный split на sub-plans» (lines 1245-1257) формулирует точку решения для разбиения если scope > прогноза. Ф.0 GATE audit подтвердил scope: 600-1000 LOC Rust refactor + 42 fixture migration + auto-fix tool + LSP integration + benchmarks + FFI integration > single-session feasibility. Sub-plan split сохраняет ценность Ф.0 spec foundation + предоставляет concrete next-steps для последующих агентов. **НЕ silent drop** — explicit follow-up plans с acceptance criteria, dependencies, references.
 
@@ -28215,8 +28216,9 @@ Production-grade final обязательство (в plan header) — все э
   (closed 2026-06-03 via Plan 110.9.1, commit `1377c611a57`). Replaced
   string-fallback с typed CleanupTimeoutError throw.
 - 🟡 `[M-110-deadline-check-yield-zero-race]` — Time.sleep(0) × multi-fiber
-  test-runner timeout (scheduler). **Still open** — scheduler-level
-  investigation, deferred indefinitely (not gating any feature).
+  test-runner timeout (scheduler). **Owner: Plan 110.12.3**
+  ([110.12-cross-cutting-orphan-closures.md](../plans/110.12-cross-cutting-orphan-closures.md)).
+  Scheduler-level investigation; deferred indefinitely (not gating any feature).
 - ✅ `[M-110.4.6-level-1-with-exit-timeout]` → Plan 110.2.5 extracted →
   closed 2026-06-02 via Plan 110.9.2, commit `8ff8dda820b`.
 - ✅ `[M-110.4-finalizer-runtime]` → Plan 110.9 (post-V1) → closed 2026-06-03
@@ -28224,14 +28226,18 @@ Production-grade final обязательство (в plan header) — все э
   with-Application prologue/epilogue + dispatcher intercept.
 - ✅ `[M-110.7.3-w-ffi-cancel-unsafe-lint]` → Plan 110.7.4 extracted →
   closed 2026-06-02 via Plan 110.9.4, commit `35afc6565e9`.
-- 🟡 `[M-110.8.5-quantitative-bench]` → Plan 110.8.4 CI infra. **Still open** —
-  depends на external CI infra plan.
+- 🟡 `[M-110.8.5-quantitative-bench]` → quantitative bench results. **Owner: Plan 110.12.4**
+  ([110.12-cross-cutting-orphan-closures.md](../plans/110.12-cross-cutting-orphan-closures.md)).
+  Bench infra baseline from Plan 110.8.4; quantitative numbers + CI gates additive.
 - ✅ `[M-110-on-exit-strict-sig]` — strict return-type check on on_exit
   (closed 2026-06-02 via Plan 110.9.5, commit `d2daf4b768e`). Plus
   pragmatic accept-both removal 2026-06-05 via Plan 110.9.5.a, commit
   `4756bba430f`.
-- 🟡 `[M-110-stdlib-cancel-scope]` / `[M-110-stdlib-channels]` / `[M-110-stdlib-tcp-udp]`
-  — independent plans. **Still open** — depend на stdlib design (CancelScope/Channel/TCP UDP types).
+- 🟡 `[M-110-stdlib-cancel-scope]` → **Owner: Plan 110.11.5**.
+- 🟡 `[M-110-stdlib-channels]` → **Owner: Plan 110.10.1**. Channel base API
+  уже landed Plan 21; Consumable wrapper additive.
+- 🟡 `[M-110-stdlib-tcp-udp]` → **Owner: Plan 110.10.2**. Socket types уже
+  landed Plan 83.12; Consumable wrappers additive.
 
 **Marker tally (2026-06-05):** 6/9 closed (✅), 3/9 still open (🟡).
 Open 3 — все или scheduler investigation (yield-zero-race) или external
@@ -32670,3 +32676,66 @@ representative timed-out fixtures before reverting code changes.
 12 D-blocks ACTIVE + 9 sub-plans closed + 76 fixtures standalone PASS.
 Remaining open markers — stdlib integrations или external plan deps,
 explicit extractions, не silent simplifications.
+
+
+---
+
+## Plan 110 — 3 new follow-up sub-plans created (2026-06-05)
+
+**Status:** 🆕 PLANNED. Branch `plan-110-followup-plans`.
+
+Per user request «сделай новый план(ы) для реализации всех недоделанных
+моментов», created 3 plan-docs covering all open `[M-110-*]` markers с
+explicit owner assignment:
+
+### Plan 110.10 — Existing-type Consumable wrappers (3 markers, P2)
+[docs/plans/110.10-existing-type-consumable-wrappers.md](../plans/110.10-existing-type-consumable-wrappers.md)
+
+Quick wins where underlying types already shipped:
+- **110.10.1**: Channel Consumable (Plan 21 already shipped base).
+- **110.10.2**: TcpListener/TcpStream/UdpSocket Consumable (Plan 83.12).
+- **110.10.3**: JoinHandle Consumable (gated на Plan 83.4.2).
+
+~1.5-2 dev-day total. Mostly mechanical Consumable impl wrapping.
+
+### Plan 110.11 — New stdlib types + Consumable impls umbrella (6 markers, P3)
+[docs/plans/110.11-new-stdlib-types-consumable.md](../plans/110.11-new-stdlib-types-consumable.md)
+
+Each sub-task requires type design + impl + Consumable:
+- **110.11.1**: std/fs.File (~2-3 dev-day, FFI cross-platform).
+- **110.11.2**: std/bufio.BufReader/Writer (~1-2 dev-day, builds on File).
+- **110.11.3**: std/db.Transaction (~2-3 dev-day, driver abstraction).
+- **110.11.4**: std/pool.ConnPool (~2 dev-day).
+- **110.11.5**: std/concurrency.CancelScope (~2 dev-day).
+- **110.11.6**: Stream[T] + adapters (~3-4 dev-day; corrects stale «Plan 84»
+  reference — Plan 84 is relative-imports, NOT Stream).
+
+Coordination с Plan 91 (std MVP) required per sub-task — if Plan 91 ships
+a type, Plan 110.11.X scope reduces к «add Consumable impl only».
+
+### Plan 110.12 — Cross-cutting orphan markers (4 markers, P3)
+[docs/plans/110.12-cross-cutting-orphan-closures.md](../plans/110.12-cross-cutting-orphan-closures.md)
+
+Markers без natural owner plan, each with infrastructure deps:
+- **110.12.1**: MultiError payload `str` → `any` (~1-2 dev-day, gated на
+  mature `any` codegen).
+- **110.12.2**: `#[run_on_abort]` attribute + platform signal handling
+  (~2-3 dev-day, high cross-platform risk).
+- **110.12.3**: Scheduler yield-zero-race investigation (~1-4 dev-day,
+  structured investigation с deliverables).
+- **110.12.4**: Quantitative bench infra (~1-2 dev-day, builds on
+  Plan 110.8.4 CI infra).
+
+### Cross-references added к existing plans
+
+Plan-docs updated с downstream followup notes pointing к новые sub-plans:
+- Plan 21 (channels) → 110.10.1.
+- Plan 83.12 (TCP/UDP) → 110.10.2.
+- Plan 83.4.2 (supervised drain) → 110.10.3.
+- Plan 110.4 (multierror) → 110.12.1.
+- Plan 110.8 (docs close) → 110.12.4.
+- Plan 91 (std MVP) → 110.11 umbrella (coordination).
+
+**Total scope:** 3 new umbrella plan-docs + 6 existing plan-doc cross-refs.
+13 open `[M-110-*]` markers now have explicit owner plan assignment.
+Все markers — explicit extractions, не silent simplifications.

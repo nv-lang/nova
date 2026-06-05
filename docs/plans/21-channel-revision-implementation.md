@@ -4,6 +4,11 @@
 **Статус:** ✅ **ЗАКРЫТ** — D91 capability-split реализован
 (`ChanWriter`/`ChanReader`, negative-тесты sender-no-recv /
 receiver-no-send проходят; подтверждено Plan 30 §«Связь»).
+
+> **Downstream followup (added 2026-06-05):**
+> `[M-110-stdlib-channels]` (Channel Consumable wrapper для consume-scope
+> integration) → closure routed через [Plan 110.10.1](110.10-existing-type-consumable-wrappers.md).
+> Plan 21 ship'нул base API; Consumable impl — additive в follow-up plan.
 **Дата создания:** 2026-05-10.
 **Обновлён:** 2026-05-11 (production-grade rewrite после Plan 22 completion).
 **Зависимости:**
