@@ -33064,3 +33064,69 @@ tested через nova-cli/target/release/nova.exe в main repo, но binary
 Pattern: after `git merge`, before testing — always rebuild binary if
 worktree вносил compiler changes. Workflow agents с separate context
 не знают про rebuild requirement.
+
+## 2026-06-05 (later) — Plan 128 CLOSED — mut-receiver ABI hardening
+
+**Markers (3) closed:**
+
+- 🟢 [M-codegen-recv-mutable-flag-unwired] — wired `MethodCallInfo::recv.mutable`
+  через `prepare_method_recv` + `emit_method_call_signature` в emit_c.rs.
+- 🟢 [M-D215-mut-receiver-pointer-codegen] — D215 NamedTuple `mut @method`
+  параметр emit'ится как `NovaTuple_<X>*` (pointer ABI). Call-site:
+  identifier → `&v`, rvalue → hoist + `&temp`. Symmetric с D228
+  value-record `NovaValue_X*` pattern.
+- 🟢 [M-D26-primitive-mut-method-diag] — type-checker
+  `TypeCheckCtx::build` reject'ит `fn <primitive> mut @method` с
+  `E_PRIMITIVE_MUT_METHOD` (primitives ∈ {int, i8-i64, u8-u64, f32, f64,
+  bool, char, str, ()}). Diagnostic suggests «remove mut, return new value».
+
+**Spec amends:**
+
+- spec/decisions/02-types.md D215 — §«Method receiver passing»
+  subsection: parameter type table (ro=by-value, mut=`NovaTuple_X*`),
+  call-site emission rules, `recv.mutable` flag note.
+- spec/decisions/02-types.md D228 — cross-ref note pointing к D215
+  amend «параллельный pointer pattern для value-records».
+- spec/decisions/02-types.md D32 — new «Receiver mut-ABI» column в
+  таксономии table; rationale paragraph explains value-vs-reference
+  category behavior + primitive rejection.
+- spec/decisions/08-runtime.md D26 — §«Plan 128 Ф.3 amend»:
+  `E_PRIMITIVE_MUT_METHOD` rationale (Nova-first: int.add returns new
+  value), enforcement note (type-checker side), fixture coverage list,
+  symmetry с Rust (`&mut self` on Copy types — useless), Kotlin (data
+  class copy), Swift (`mutating func` not on Int/Bool).
+
+**Verification:**
+
+- lib tests (compiler-codegen): clean smoke post-merge.
+- nova_tests/plan128: 15/15 PASS — 7 POS (NamedTuple mut + ro
+  regression + chained + composition), 4 NEG (primitives str/int/
+  bool/f64), 4 sanity (heap-record mut + ro primitive + array-of-tuple
+  + record-with-tuple-field).
+- plan99/plan100_2/plan100_6/plan108 — pre-existing failure counts
+  идентичны main; no regression.
+
+**Уроки:**
+
+1. **IR flag flow needs explicit signature thread.**
+   `MethodCallInfo::recv` carried `mutable: bool` flag, но при teardown
+   в emit_c.rs helpers это thread'ом не доходило. Pattern: add `flag`
+   parameter в helper signatures explicitly, **не** «pull from current
+   context» / not TLS. Plan 128 Ф.1 commit consolidates через
+   `prepare_method_recv(obj_c, obj_ty, recv_mutable)`.
+
+2. **ABI symmetry pays.** D215 NamedTuple `NovaTuple_X*` mut-receiver
+   wired через тот же `prepare_method_recv` helper, что и D228
+   `NovaValue_X*`. Single helper = single point of truth для escape /
+   alignment / GC tracking; легко тестировать симметричные cases.
+
+3. **Early-reject > silent miscodegen.** `fn int mut @method`
+   парсер проглатывал, codegen emit'ил valid-looking C код с
+   unobservable mutation (мутация в стек-копию). Programmer thought
+   he мутировал receiver. `E_PRIMITIVE_MUT_METHOD` at type-check phase
+   с suggestion («remove mut, return new value») — drastically лучше
+   для DX. Nova-first idiom enforced: primitives → pure functional
+   pattern; references → mutation via pointer ABI.
+
+**Plan 128 family complete:** все 3 ABI markers из Plan 123 V7.6 V2
+followup закрыты в одном sub-plan. Plan 128 ✅ ЗАКРЫТ.
