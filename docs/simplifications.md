@@ -33295,3 +33295,45 @@ semantics. Plan 110 cancel-shield baseline issues complete.
 
 **Plan 128 family complete:** все 3 ABI markers из Plan 123 V7.6 V2
 followup закрыты в одном sub-plan. Plan 128 ✅ ЗАКРЫТ.
+
+## Plan 128.1 (2026-06-05) — V1 limitations fix
+
+**No simplifications applied.** Plan 128.1 расширил corner-cases
+покрытие D215 lvalue-projection без архитектурной simplification.
+
+Три followup'а documented production-grade в plan-doc §4.1 как gated:
+
+1. **`[M-128.1-ro-binding-field-chain-not-mut]`** (P1) — Plan 108.2
+   D36 enforcement walks только receiver root через Ident match; chain
+   через Member silently bypassed. Negative test
+   `t_gated_M_128_1_ro_field_chain_not_mut.nv` pin'ит current behavior
+   без `EXPECT_COMPILE_ERROR` marker. A128.1.7 acceptance criterion
+   остаётся OPEN до закрытия marker'а (fix должен walk receiver chain
+   до root Ident и применить mut-binding gate в consume_walk_expr Call
+   arm).
+
+2. **`[M-128.1-nonpure-index-key]`** (P2) — Side-effecting subscript keys
+   на pointer-ABI receiver currently evaluate key дважды — once для
+   `&(arr->data[KEY])` taken as receiver pointer, again на post-call read.
+   V1 accepts duplication для `arr[i]` (pure local `i`). V2 fix должен
+   hoist non-pure key в temp перед address-of:
+   `nova_int __idx = next_idx(); &(arr->data[__idx])`. Detection: walk
+   Index AST chain, classify subscript node как pure (Ident/IntLit/
+   Member-of-pure) или impure (Call/Bang/Try/...). Impure → hoist.
+   Scope: prepare_method_recv lvalue path только; rvalue hoist already
+   evaluates once.
+
+3. **`[M-128.1-array-namedtuple-ro-method]`** (P2) — `vs[i].ro_method()`
+   где `vs: []NamedTuple` — array элементы хранятся как pointer-cast
+   в `nova_int` slot, но ro-method signature ожидает receiver by-value
+   (`Nova_T_method_m(NovaTuple_T nova_self)`). Codegen эмитит
+   `Nova_T_method_m((NovaTuple_T*)(...))` — clang отвергает: pointer →
+   by-value mismatch. Fix: detect array-of-NamedTuple element type
+   в method-call path и emit deref `*(NovaTuple_T*)(arr->data[i])` (или
+   refactor array element slot к NamedTuple value). Mut-method path
+   (`vs[i].mut_method()`) уже работает (T13b PASS) через
+   `&(arr->data[i])` cast. T13 fixture restored к field-access-only
+   pattern; ro-method вариант gated.
+
+Все три marker'а имеют owner phase + fixture coverage + reproducible
+behavior trace в plan-doc.

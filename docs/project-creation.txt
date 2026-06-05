@@ -33380,3 +33380,82 @@ Verification:
 per feedback-sequential-no-sub-worktree). Merge `--no-ff` в main
 preserves history; branch pushed для review.
 
+=== Plan 128.1 (2026-06-05) — V1 limitations fix closure ===
+
+Sub-plan для Plan 128 закрывает 2 V1 limitations, documented как «known»
+в Plan 128 Ф.4 фикстурах T12/T13/T14 (workaround extract-rebind-writeback).
+
+### Bug 1 — lvalue-projection mut receiver
+
+V1 `prepare_method_recv` использовал string-based `is_ident` check (regex
+по `obj_c` string), что rejected projections (`b.v`, `arr[0]`). Для
+projection emit'ился hoist в temp `NovaTuple_X __tmp = b.v;
+Nova_X_method_m(&__tmp); /* writes lost */`. Field never updated.
+
+Fix (Ф.1, 316216f4d9a) — AST-aware `is_lvalue_receiver(recv: &Expr)`
+helper recursively walks Member/IndexAccess chain до root Ident.
+prepare_method_recv signature принимает `recv: &Expr` дополнительно
+к `obj_c: &str`; lvalue path emits `&{obj_c}` напрямую без hoist.
+
+### Bug 2 — `[]NamedTuple` constructor inference
+
+`infer_expr_type::Call` arm не matches `TypeDeclKind::NamedTuple` —
+`let arr = [Vec3(x: 1.0, ...), Vec3(...)]` fail'ил type-check без
+explicit annotation `let arr [Vec3] = [...]`. Constructor-call возвращал
+Unknown type, array element inference fall'ил.
+
+Fix (Ф.2, 70c9c57f5da) — NamedTuple arm в Call matches branch
+returns `Ty::Named(decl_name, [])`; array-literal codegen whitelist
+для Nova_* типов distinct от Record/Variant.
+
+### Phases + commit hashes
+
+- Ф.0 (93cef950b91) docs sub-plan + AC + branch
+- Ф.1 (316216f4d9a) AST-aware is_lvalue_receiver + prepare_method_recv
+- Ф.2 (70c9c57f5da) NamedTuple ctor + array-lit whitelist
+- Ф.3 (a09dac6d544) T12b/T13b/T14b/T_gated fixtures
+- Ф.4 (7ffd4e1000a) D215 lvalue projection spec + D228 cross-ref
+
+### Followups spawned
+
+3 markers документированы в plan-doc §4.1 как открытые:
+
+- [M-128.1-ro-binding-field-chain-not-mut] (P1) — Plan 108.2 D36
+  enforcement walks только receiver root через Ident match; chain
+  через Member silently bypassed (`ro b; b.v.set_x()` does not error).
+  Gated fixture `t_gated_M_128_1_ro_field_chain_not_mut.nv` pin'ит
+  current behavior без EXPECT_COMPILE_ERROR. A128.1.7 OPEN.
+
+- [M-128.1-nonpure-index-key] (P2) — Subscript keys evaluated twice
+  для pointer-ABI receiver (once в &(arr->data[KEY]), again на read).
+  V1 accepts pure `i` (Ident/IntLit). V2 fix — hoist impure keys
+  (`next_idx()`) в temp `nova_int __idx = ...; &(arr->data[__idx])`.
+
+- [M-128.1-array-namedtuple-ro-method] (P2) — `vs[i].ro_method()` где
+  `vs: []NamedTuple` — clang отвергает pointer-cast vs by-value
+  mismatch. Mut-method уже работает (T13b PASS) через
+  `&(arr->data[i])` cast. Ro-method gated, T13 restored к field access only.
+
+### Verification
+
+- 19/19 plan128 fixtures PASS (включая Plan 128.1 additions T12b/T13b/T14b/T_gated)
+- Lib tests: 657 passed / 33 failed (baseline-parity с pre-Plan-128 main)
+- Plan 128 regression (15/15 fixtures исходного Plan 128) unchanged
+- V1 workarounds (T12/T14 extract-rebind) lifted — direct mutation работает
+
+### Lessons
+
+1. String-based AST inspection — antipattern. `is_ident` regex
+   silently loses correctness для projections. AST-based check —
+   single source of truth.
+
+2. «Known V1 limitation» в фикстурах — load-bearing tech debt.
+   T12/T13/T14 workaround pattern был honest acknowledgment в Plan
+   128, но без followup плана — debt forever. Plan 128.1 closes
+   immediately после parent merge.
+
+3. Constructor-call inference parity. `TypeDeclKind` variants должны
+   иметь симметричные arms во всех inference paths — Plan 120
+   NamedTuple variant пропущен в infer_expr_type::Call. Code review
+   checklist для новых TypeDeclKind variants.
+
