@@ -6008,7 +6008,17 @@ fn collect_loop_eligible_fields(
     let mut keys: Vec<&String> = fields.keys().collect();
     keys.sort();
     for fname in keys {
-        let count = count_field_reads_in_block(body, fname);
+        // Plan 123.2.1 follow-up (V2.1 LICM threshold integration,
+        // 2026-06-05): use weighted counter so reads inside **nested**
+        // loop bodies contribute their iter-weight-amplified cost к
+        // the current loop's eligibility decision. Seed `loop_mult = 1`
+        // because we're already inside this loop's body; nested loops
+        // (`while outer { while inner { @x } }`) inflate count by
+        // `v2_1_loop_iters_weight()²` so outer-loop hoist correctly
+        // recognizes inner-loop access amplification. Flat loop bodies
+        // (no nested loops) get count identical к non-weighted version.
+        // Closes `[M-123.2.1-v2-licm-threshold-integration]`.
+        let count = count_field_reads_in_block_weighted(body, fname, 1);
         if count < cfg.licm_threshold {
             continue;
         }
@@ -10241,8 +10251,95 @@ fn C mut @do(n int, m int) -> int {
         let m = run_pass(src, cfg);
         let f = find_fn(&m, "do");
         let names = all_at_let_names_recursive(f);
-        assert!(names.iter().any(|n| n == "_at_x"),
-            "V2.1: nested loop body should compound weight; got {:?}", names);
+        // V2.1 + V2.1-LICM-integration (2026-06-05): nested loop reads
+        // covered by either V1.1 top-level cache (`_at_x`) OR LICM hoist
+        // (`_at_x_loop`). Both semantically equivalent (cover the same
+        // nested-loop @x reads); accepting either guards against LICM-
+        // vs-V1.1 priority swings as cost model evolves. Closes
+        // `[M-123.2.1-v2-licm-threshold-integration]`.
+        let covered = names.iter().any(|n| n == "_at_x")
+            || names.iter().any(|n| n == "_at_x_loop");
+        assert!(covered,
+            "V2.1: nested loop body should compound weight \
+             (top-level `_at_x` OR LICM `_at_x_loop`); got {:?}", names);
+    }
+
+    /// Plan 123.2.1 follow-up (V2.1 LICM integration, 2026-06-05):
+    /// LICM eligibility now uses weighted counter — nested loops inside
+    /// loop body inflate read-count via inner-loop's iter_weight even
+    /// if outer-body raw count is below threshold.
+    /// Closes `[M-123.2.1-v2-licm-threshold-integration]`.
+    #[test]
+    fn v2_1_licm_nested_loop_weighted_threshold() {
+        // Single inner-loop body read of @x: raw count = 1, below
+        // licm_threshold = 4. Weighted count = 8 (default iter weight)
+        // — above threshold ⇒ LICM hoist eligibility activated.
+        let src = r#"
+module testmod.v2_1_licm_nested_weighted
+type C { mut x int }
+fn C @do(n int, m int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        mut j = 0
+        while j < m {
+            acc = acc + @x
+            j = j + 1
+        }
+        i = i + 1
+    }
+    acc
+}
+"#;
+        // Set licm_threshold so flat (raw=1) reads wouldn't hoist but
+        // weighted (compound=8) reads do.
+        let cfg = FieldCacheConfig {
+            licm_threshold: 4,
+            // Suppress top-level V1.1 caching so we observe LICM in
+            // isolation — set baseline cache threshold high enough.
+            threshold: 1000,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(names.iter().any(|n| n == "_at_x_loop"),
+            "V2.1 LICM weighted: nested loop should compound past \
+             threshold and hoist; got {:?}", names);
+    }
+
+    /// V2.1 LICM negative: flat loop body с single read (no nested
+    /// loop) does NOT hoist when threshold > 1. Weighting matches raw
+    /// для flat case.
+    #[test]
+    fn v2_1_licm_flat_loop_single_read_no_hoist() {
+        let src = r#"
+module testmod.v2_1_licm_flat_single
+type C { mut x int }
+fn C @do(n int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        acc = acc + @x
+        i = i + 1
+    }
+    acc
+}
+"#;
+        // Threshold 2 — flat body has 1 raw read, weighted (seed=1, no
+        // nested loop) also 1 → below threshold ⇒ NOT hoisted.
+        let cfg = FieldCacheConfig {
+            licm_threshold: 2,
+            // Suppress top-level cache.
+            threshold: 1000,
+            ..FieldCacheConfig::default()
+        };
+        let m = run_pass(src, cfg);
+        let f = find_fn(&m, "do");
+        let names = all_at_let_names_recursive(f);
+        assert!(!names.iter().any(|n| n == "_at_x_loop"),
+            "flat loop single read must NOT hoist (raw=weighted=1 < threshold=2); \
+             got {:?}", names);
     }
 
     /// V2.1.5 unit: `v2_1_loop_iters_weight()` reads env var, defaults 8.
