@@ -33087,3 +33087,131 @@ Total: 15 fixtures PASS (plan125_2 dir).
     с break, while var-cond, nested loops с break paths) НЕ flip'ятся.
   • Scope-aware break detection — recursive walker с explicit stop-rules
     для inner loops + closures. Continue ≠ break — важный edge case.
+
+
+================================================================================
+== 2026-06-05 — Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] CLOSED
+                  (supervised(cancel:) path — codegen layout fix)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p110-shield
+> Branch: plan-110-shield-supervised-cancel (off main c73f472e38f)
+
+Prior fix af4e7d96a62 (2026-06-05) covered the consume{} nested deadline-
+shadow case (R4). This session closes the orthogonal supervised(cancel:) +
+Time.sleep + tok.cancel() path that produced 720M+ ms i64-underflow
+cleanup-timeout-exceeded errors in 6-second tests.
+
+ROOT CAUSE (re-diagnosis):
+
+It was NOT a save/restore pattern bug as initially hypothesized in the
+agent handoff plan. Debug fprintf-to-file (added to nv_shield_check_deadline)
+captured:
+    mask=-837814960 deadline=4294967295 diff_ms=725442076
+
+mask = -837M (atomic int should be >=0), deadline = UINT32_MAX = UNINITIALIZED
+memory bytes.
+
+Codegen-emitted NovaSpawnCtx_<id> + NovaDetachCtx_<id> structs in emit_c.rs
+included ONLY the first 7 of 10 NovaSpawnCtxBase fields. Missing:
+    _nova_pool_size           (Plan 83.6,  2026-05-24)
+    _nova_cancel_mask_count   (Plan 110.2.1.a)
+    _nova_cancel_deadline_ns  (Plan 110.2.2.a)
+
+Runtime cast'ает mco_get_user_data(co) -> NovaSpawnCtxBase* and reads
+fields by fixed offset -> reads PAST codegen struct allocation -> Boehm
+GC adjacent memory bytes (garbage) -> mask=garbage > 0 -> check_deadline
+enters slow path -> deadline=garbage triggers (now-deadline)/1M huge
+positive i64 -> throws bogus CleanupTimeoutError.
+
+Stale codegen comment at emit_c.rs:6253 ("MUST be last in NovaSpawnCtxBase
+prefix") was true at write time, became stale after Plan 83.6 + 110.2
+added the 3 base fields. Codegen was never updated.
+
+FIX (production-grade, no simplifications):
+
+1. Spec D188 R3a amend (spec/decisions/03-syntax.md): codegen layout
+   invariant — emit per-fiber ctx struct MUST include ALL NovaSpawnCtxBase
+   fields. Cross-refs to D196 R4 (consume{} different bug) + R4b (on_exit
+   different bug).
+
+2. Codegen (compiler-codegen/src/codegen/emit_c.rs):
+   - emit_spawn: added 3 fields to NovaSpawnCtx_<id> layout (line 6258-6276).
+   - emit_detach: added same 3 fields to NovaDetachCtx_<id> (line 6929-6940).
+
+3. Tests:
+   - _repro_p110.nv: minimal repro (4 sleeping fibers + 1 cancel-after-5ms).
+     Pre-fix: 0-3/10 PASS. Post-fix: 10/10 PASS.
+   - nested_shield_deadline_inversion_neg.nv: NEG regression guard —
+     supervised(cancel:) nested + 32-fiber flat stress, PASS.
+
+STRESS VERIFICATION (release nova-cli, tools/stress_bisect.sh):
+
+| Test | Pre-fix | Post-fix 30x | Verdict |
+|---|---|---|---|
+| stress_iso_3e | 0/30 | 30/30 PASS | M-110.x closed |
+| cancel_during_runtime_shutdown (bumped 16 fibers) | RUN-FAIL | 30/30 PASS | M-110.x closed |
+| fibers_10k_sleep_cancel | RUN-FAIL (timeout) | RUN-FAIL (token bound) | New marker M-83.11-cancel-token-bound-race-2k |
+| nested_supervised_3_levels_cancel (depth 2) | RUN-FAIL (timeout) | RUN-FAIL (watchdog hang) | New marker M-83.11-nested-supervised-cascade-drain-hang |
+
+A1 acceptance: 2/4 tests at 30/30 PASS (the 2 tests that ONLY had the
+M-110.x bug). Remaining 2 tests had independent Plan 83.11 family bugs
+masked by the cleanup-timeout-exceeded shield throw — now visible.
+
+A2 bump-back: cancel_during_runtime_shutdown 4 -> 16 fibers (30/30 PASS).
+Bump-backs для P9 (depth 3) + P11 (10k fibers) deferred к Plan 83.11 V2.
+
+A3-A4 spec: D188 R3a amend + cross-refs to D196 R4/R4b.
+
+A5: NEG fixture nested_shield_deadline_inversion_neg.nv PASS.
+
+A6: Plan 110 plan-doc Session ext #6 closure entry с full root-cause
+analysis + before/after metrics + lessons.
+
+A7: Plan 83.11 §13.3 updated — M-110.x marked CLOSED, original blocker
+note preserved as historical context, 2 new followup markers documented.
+
+A8: this entry + simplifications.md + nova-private/discussion-log.md
+(separate repo).
+
+A9: memory file project-plan110-shield-fix-status.md + MEMORY.md index.
+
+A10: 5-part commit split + merge to main (NO push per user authorization).
+
+LESSONS:
+
+1. Stale codegen-runtime ABI invariants — silent UB until specific
+   yield pattern. Codegen comment правильно говорил "MUST match exactly"
+   but no static_assert или automated cross-check. Layout mismatch lived
+   months (Plan 83.6 = 2026-05-24, Plan 110.2 = 2026-06; this fix =
+   2026-06-05) until supervised(cancel:) workload где fiber yields in
+   check_deadline -> reads past struct.
+
+2. Debug fprintf-to-file pattern для test-runner stderr capture. Nova
+   test runner does not expose runtime fprintf on stderr (captures only
+   test framework output). Solution: fopen("D:/tmp/log", "a") directly
+   from runtime header. Race-safe для one writer, simple pattern для
+   future runtime debugging.
+
+3. Production fix without simplifications — за один pass. Audit plan
+   correctly hypothesized save-prev/restore-prev pattern (like R4) — but
+   real cause was different (codegen layout). Diagnostic first -> correct
+   fix, без masking.
+
+4. Failure-mode masking. Original symptom (cleanup-timeout-exceeded)
+   was masking 2 independent bugs (cascade-drain-hang + token-bound-race).
+   Fix removed mask, revealed pre-existing issues. Honest scope flip:
+   2/4 tests pass full A1, 2/4 spawn new markers.
+
+MARKER TALLY:
+
+- [M-110.x-cleanup-shield-deadline-underflow] FULLY CLOSED.
+- [M-83.11-cancel-token-bound-race-2k] OPEN (new, Plan 83.11 V2 zone).
+- [M-83.11-nested-supervised-cascade-drain-hang] OPEN (new, Plan 83.11 V2 zone).
+
+Plan 110 family closure timeline:
+- af4e7d96a62 — R4 nested consume{} deadline shadow restore.
+- 08edfa66358 — R4b on_exit-throws-leaks-shield (exception safety).
+- THIS SESSION — R3a codegen layout invariant (supervised path).
+
+All 3 baseline issues in Plan 110 cancel-shield production-grade closed.

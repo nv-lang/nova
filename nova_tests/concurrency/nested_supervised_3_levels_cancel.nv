@@ -1,6 +1,6 @@
 // Plan 83.11 §8.1 P9 — nested_supervised_3_levels_cancel
 //
-// Regression guard for nested supervised(cancel:) cascade. Two supervised
+// Regression guard for nested supervised(cancel:) cascade. TWO supervised
 // scopes nested sequentially (outer wraps inner), each with parked sleeping
 // fibers; cancel the OUTER token from a side fiber. The cascade must reach
 // every level: all parked sleepers wake, every scope unwinds, the entire
@@ -10,11 +10,13 @@
 // explicit form keeps the propagation observable and exercises the
 // `nova_cancel_token_bind_cascade` path (fibers.h ~972-1046).
 //
-// CURRENT depth = 2 (outer → inner). At depth 3+ on Windows the test hits
-// the Plan 110.x `cleanup-timeout-exceeded` shield bug (orthogonal to Plan
-// 83.11 cascade) — supervised scope drains slower than the 100ms shield
-// deadline allows when waiting on 3 nested cancel jobs. Once Plan 110.x
-// is fixed, depth 3 (with 3rd `inner_tok`) can be added back.
+// **2026-06-05 Plan 110.x supervised(cancel:) shield-codegen-layout fix
+// landed.** Depth=2 still hangs с watchdog `supervised.summary slots=0`
+// — pre-existing baseline-fail with different root cause от M-110.x
+// cleanup-timeout-exceeded (codegen fix changes failure mode from
+// underflow-throw к hang). Tracked as
+// `[M-83.11-nested-supervised-cascade-drain-hang]` followup. Depth=2
+// preserved; bump-back depth=3 OR closure deferred к Plan 83.11 V2.
 //
 // Nesting structure: outer{ inner{ } } all on the main fiber — does NOT
 // wrap inner supervised in spawn{} (the spawn-of-supervised pattern is

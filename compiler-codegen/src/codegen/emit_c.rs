@@ -6251,12 +6251,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaEffectSnapshot* _nova_init_snapshot;");
         // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine. nova_alloc
-        // zero-init → starts as NOVA_FIBER_STATE_IDLE. Field MUST be last
-        // in NovaSpawnCtxBase prefix (must match fibers.h NovaSpawnCtxBase
-        // layout exactly — runtime.c worker loop cast'ает user_data к
-        // NovaSpawnCtxBase* и читает _nova_fiber_state по фиксированному offset).
+        // zero-init → starts as NOVA_FIBER_STATE_IDLE. Must match fibers.h
+        // NovaSpawnCtxBase layout exactly — runtime.c worker loop cast'ает
+        // user_data к NovaSpawnCtxBase* и читает _nova_fiber_state по
+        // фиксированному offset.
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_fiber_state;");
+        // Plan 83.6 (2026-05-24): allocation size — used by free path для
+        // routing ctx обратно в P-local SpawnCtx pool. Set по nova_spawn_pool_acquire.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    size_t _nova_pool_size;");
+        // Plan 110.2.1.a (D188 R3) [M-110.x-cleanup-shield-deadline-underflow]
+        // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
+        // fields. MUST be в codegen layout — иначе runtime reads past struct
+        // (Boehm GC garbage bytes) → mask=garbage > 0 → nv_shield_check_deadline
+        // enters slow path → deadline=garbage triggers bogus CleanupTimeoutError
+        // (visible как 720M+ ms "over budget" в 6s tests).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_cancel_mask_count;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int64_t _nova_cancel_deadline_ns;");
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
@@ -6926,6 +6940,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // NovaSpawnCtxBase в fibers.h. MUST match layout exactly.
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_fiber_state;");
+        // Plan 83.6 (2026-05-24): allocation size — used by free path.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    size_t _nova_pool_size;");
+        // Plan 110.2.1.a (D188 R3) [M-110.x-cleanup-shield-deadline-underflow]
+        // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
+        // fields — same as NovaSpawnCtx layout. Без них runtime reads past
+        // struct → garbage mask > 0 triggers bogus CleanupTimeoutError.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_cancel_mask_count;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int64_t _nova_cancel_deadline_ns;");
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);

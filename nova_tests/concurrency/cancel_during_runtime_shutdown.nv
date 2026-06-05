@@ -16,11 +16,11 @@
 //        - SIGSEGV from wake-after-close on driver async handle,
 //        - "token already bound to a live scope" if GC misses the token.
 //
-// CURRENT fiber count = 4 (not 16). At 16 fibers on Windows the test hits
-// Plan 110.x `cleanup-timeout-exceeded` shield-deadline bug (orthogonal to
-// Plan 83.11) — same baseline-fail as stress_iso_3e. 4 parked fibers
-// exercise the same cancel-shutdown race window without tripping Plan 110.x.
-// Once Plan 110.x is fixed, fiber count can be bumped back to 16.
+// **2026-06-05 bump-back (Plan 110.x supervised(cancel:) shield fix landed):**
+// Restored fiber count 4 → 16. Pre-fix codegen NovaSpawnCtx layout missing
+// _nova_cancel_mask_count / _nova_cancel_deadline_ns base fields → garbage
+// shield activation under load. Closed by codegen layout fix on
+// [emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs#L6258).
 //
 // Per Plan 83.1 Ф.4 the worker pool is one-shot per process — once
 // materialized, subsequent runtime.init() calls are no-ops (verbose stderr
@@ -38,7 +38,7 @@ test "cancel + immediate shutdown — parked fibers cancelled, runtime drains cl
 
     ro tok = CancelToken.new()
     supervised(cancel: tok) {
-        for _ in 0..4 {
+        for _ in 0..16 {
             spawn { Time.sleep(5_000) }
         }
         spawn {

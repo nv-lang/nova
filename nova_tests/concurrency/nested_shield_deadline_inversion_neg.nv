@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.x R3a [M-110.x-cleanup-shield-deadline-underflow] supervised(cancel:)
+// NEGATIVE regression guard: nested supervised(cancel:) with mixed budgets
+// must NOT trigger bogus cleanup-timeout when shield mask is properly zero
+// (no consume{} block in path).
+//
+// **Background:** The supervised(cancel:) path doesn't shadow shield
+// deadlines — supervised does NOT set cancel_mask или deadline. The pre-fix
+// bug was codegen NovaSpawnCtx struct missing _nova_cancel_mask_count +
+// _nova_cancel_deadline_ns fields, causing runtime to read garbage Boehm GC
+// adjacent memory bytes → garbage non-zero mask → check_deadline path read
+// garbage deadline → throws bogus CleanupTimeoutError.
+//
+// **Acceptance:** outer supervised(cancel: tok_outer) wraps inner supervised
+// (cancel: tok_inner) with VERY DIFFERENT budgets (outer cancels at 10ms,
+// inner sleeps would take 10s). The test must complete cleanly with NO
+// CleanupTimeoutError fires; mask/deadline fields must read as proper
+// zero from initialized codegen struct.
+
+module concurrency.nested_shield_deadline_inversion_neg
+
+test "supervised(cancel:) nested + inverted budgets — no bogus cleanup-timeout" {
+    ro tok_outer = CancelToken.new()
+    ro tok_inner = CancelToken.new()
+
+    // Mixed timing: outer cancels at 10ms; inner would sleep 5s.
+    // Pre-fix: random fiber yields would read garbage mask>0 → bogus
+    // CleanupTimeoutError. Post-fix: mask=0 always (no consume{} in path).
+    supervised(cancel: tok_outer) {
+        // Outer side: cancels after 10ms.
+        spawn {
+            Time.sleep(10)
+            tok_outer.cancel()
+        }
+
+        supervised(cancel: tok_inner) {
+            // Inner: 8 fibers sleeping 5s each. Cancel from outer propagates
+            // (via independent cancel paths since no cascade declared).
+            for _ in 0..8 {
+                spawn { Time.sleep(5_000) }
+            }
+        }
+    }
+
+    // Outer cancelled (explicit).
+    assert(tok_outer.is_cancelled())
+}
+
+test "supervised(cancel:) flat 32 fibers + cancel — no garbage shield activation" {
+    // Stress: 32 short-lived fibers + cancel. Pre-fix: under load,
+    // some fiber's NovaSpawnCtx allocation would have garbage in past-struct
+    // bytes → garbage mask read → bogus timeout.
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        for _ in 0..32 {
+            spawn { Time.sleep(1_000) }
+        }
+        spawn {
+            Time.sleep(5)
+            tok.cancel()
+        }
+    }
+    assert(tok.is_cancelled())
+}
