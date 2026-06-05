@@ -241,7 +241,13 @@ def _reverse_runs(line):
 
 
 def demojibake(text):
-    return "\n".join(_reverse_line(ln) for ln in text.split("\n"))
+    out = "\n".join(_reverse_line(ln) for ln in text.split("\n"))
+    # Editor re-corruption fixup: a save with the wrong encoding turns plain
+    # ё (U+0451) into ђ (U+0452). The mojibake ђ's that are part of a Р/С run
+    # were already consumed above, so any ђ remaining here is a corrupted ё
+    # (ђ — Serbian dje — does not occur in normal Russian comments).
+    out = out.replace(C(0x0452), C(0x0451))
+    return out
 
 
 def try_fix(path):
