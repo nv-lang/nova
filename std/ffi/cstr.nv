@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 118.1 Ф.4 closeout (2026-06-05) — CStr newtype для C-string FFI.
+//
+// Per D26 §«Nul-termination» (promoted 2026-06-03): Nova strings ship c
+// ptr[len]=='\0' invariant by allocator. Это означает full str CAN
+// directly serve as `const char*` для C FFI — `s.as_cstr()` zero-copy.
+//
+// Sub-views (`s[a..b]`) могут не иметь terminating NUL — fallback alloc.
+//
+// Lexical prefix `c"hello"` НЕ нужен — `"hello".as_cstr()` zero-alloc
+// (literal в .rodata уже null-terminated, C string pooling).
+//
+// Marker closure: [M-118.1-cstr-literal] CLOSED 2026-06-05 — research
+// confirmed D26 null-term invariant subsumes the need for prefix-literal
+// syntax. CStr API ships как str method, не как lexer extension.
+
+module std.ffi.cstr
+
+/// Opaque C-string handle. Wraps raw `*u8` pointer; instances must
+/// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`.
+///
+/// Created via `str.as_cstr()` / `str.to_cstr()` / `str.as_cstr_unchecked()`.
+/// ABI: FFI-marshalled to `const char*` (or `char*` for mutable C-string
+/// contexts via dedicated mut variant — not in V1).
+///
+/// **Lifetime warning**: instances backed by zero-copy view alive only
+/// while source `str` value alive (GC-managed). Pass directly к C-call
+/// без storing если source str может быть collected. For long-lived
+/// CStr — use `to_cstr()` (always copies + allocates own buffer).
+#stable(since = "0.1")
+export type CStr(*u8)
