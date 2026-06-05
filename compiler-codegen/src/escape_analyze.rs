@@ -64,6 +64,13 @@ impl EscapeResult {
     pub fn total_promoted_count(&self) -> usize {
         self.promoted_per_fn.values().map(|s| s.len()).sum()
     }
+
+    /// Plan 127 Ф.4: iterate over `(fn_id, promoted_locals_set)` entries.
+    /// Used by `lint_value_record_unnecessary_promote` to enumerate fns
+    /// with promoted locals для emitting per-fn warnings.
+    pub fn iter_promoted(&self) -> impl Iterator<Item = (&String, &HashSet<String>)> {
+        self.promoted_per_fn.iter()
+    }
 }
 
 /// Compute escape analysis for the entire module.

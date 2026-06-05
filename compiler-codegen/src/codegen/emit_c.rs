@@ -16274,6 +16274,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
 
             ExprKind::Unary { op, operand } => {
+                // Plan 127 Ф.3: special-case `&IDENT` для promoted value-record
+                // local — binding уже хранит `NovaValue_X*` указатель (heap-
+                // allocated), поэтому `&v` должен эмитить просто `v`, иначе
+                // получим `NovaValue_X**` (адрес stack-слота держащего ptr)
+                // → dangling после return из escape_ref(). Эта ветка прозрачно
+                // даёт correct heap-pointer semantics для auto-promoted locals.
+                if let UnOp::AddrOf = op {
+                    if let ExprKind::Ident(name) = &operand.kind {
+                        if self.promoted_value_record_locals.contains(name) {
+                            return Ok(name.clone());
+                        }
+                    }
+                }
                 let v = self.emit_expr(operand)?;
                 let op_str = match op {
                     UnOp::Neg => "-",
@@ -28229,7 +28242,13 @@ _cp++; \
                         "void*".into()
                     }
                 } else if self.record_schemas.contains_key(&struct_name) {
-                    format!("Nova_{}*", struct_name)
+                    // Plan 124.8 V2 / Plan 127: value-records use stack-typedef
+                    // `NovaValue_<X>` (no pointer); heap records use `Nova_<X>*`.
+                    if self.value_record_names.contains(&struct_name) {
+                        format!("NovaValue_{}", struct_name)
+                    } else {
+                        format!("Nova_{}*", struct_name)
+                    }
                 } else {
                     "void*".into()
                 }
