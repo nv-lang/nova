@@ -1,0 +1,9 @@
+// Plan 118.1 closeout T10 NEG — addr_of(rvalue) → E_ADDR_OF_NON_LVALUE.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_NON_LVALUE
+module plan118_1_closeout.t10_neg_addr_of_rvalue
+fn produce() -> int { 42 }
+test "addr_of(fn_call()) rvalue rejected" {
+    unsafe {
+        ro p = addr_of(produce())
+    }
+}

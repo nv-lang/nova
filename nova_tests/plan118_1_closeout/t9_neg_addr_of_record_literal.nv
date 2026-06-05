@@ -1,0 +1,9 @@
+// Plan 118.1 closeout T9 NEG — addr_of(Record { ... }) literal → E_AMP_RECORD_LITERAL.
+// EXPECT_COMPILE_ERROR E_AMP_RECORD_LITERAL
+module plan118_1_closeout.t9_neg_addr_of_record_literal
+type Acc { id i64 }
+test "addr_of(record literal) rejected" {
+    unsafe {
+        ro p = addr_of(Acc { id: 1 })
+    }
+}

@@ -1,0 +1,12 @@
+// Plan 118.1 closeout T7 NEG — addr_of inside #realtime fn → E_REALTIME_POINTER_OP.
+// EXPECT_COMPILE_ERROR E_REALTIME_POINTER_OP
+module plan118_1_closeout.t7_neg_addr_of_realtime
+#realtime fn handler() -> () {
+    ro x = 42
+    unsafe {
+        ro p = addr_of(x)
+    }
+}
+test "addr_of в #realtime rejected" {
+    handler()
+}

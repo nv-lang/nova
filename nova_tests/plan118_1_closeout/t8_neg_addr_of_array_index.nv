@@ -1,0 +1,9 @@
+// Plan 118.1 closeout T8 NEG — addr_of(arr[i]) → E_ARRAY_INDEX_PTR_BANNED.
+// EXPECT_COMPILE_ERROR E_ARRAY_INDEX_PTR_BANNED
+module plan118_1_closeout.t8_neg_addr_of_array_index
+test "addr_of(arr[i]) rejected" {
+    ro arr = [1, 2, 3]
+    unsafe {
+        ro p = addr_of(arr[0])
+    }
+}
