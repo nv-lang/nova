@@ -13,7 +13,7 @@ export type Token consume {
 }
 
 export fn Token consume @revoke() -> () { () }   // consume-method: consumes token
-export fn Token @get_value() -> int => @.value   // view-method: does NOT consume
+export fn Token @get_value() -> int => @value   // view-method: does NOT consume
 
 export fn Token_issue(v int) -> Token => { value: v }
 

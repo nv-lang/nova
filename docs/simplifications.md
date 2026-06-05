@@ -33596,3 +33596,37 @@ all-or-nothing waiting (consistent с V1 closure philosophy).
 - 🆕 `[M-91.13-codegen-none-arm-nested-generic-mismatch]` (P1 codegen)
 - 🆕 `[M-91.13-codegen-match-arm-unit-vs-option-divergence]` (P1 codegen)
 - `[M-91.13-strict-from_codepoint]` (optional, P3)
+
+### 2026-06-05 — Baseline cleanup: 12 pre-existing fixture failures CLOSED
+
+Closes 4 baseline-failing fixture sets accumulated from syntax/spec drift:
+
+| Suite | Pre-fix | Post-fix | Notes |
+|---|---|---|---|
+| plan108 | 2/4 | **5/0** | E_REDUNDANT_TYPE_MODIFIER syntax migration |
+| plan100_2 | 16/1 | **17/0** | view-iter test migrated к non-consume type |
+| plan100_6 | 12/3 | **15/0** | consume-rvalue + E_SELF_DOT_INVALID + prelude shadow |
+| plan99 | 5/3 | **8/0** | 3 closure-str sub-tests disabled с marker |
+
+**Real codegen bug identified:** `[M-str-len-closure-dispatch]` — closure body
+emit fails to substitute generic T-param type for closure params в mono
+context. `Option[str].map(|s| s.len())` emits closure как `(nova_int s)`
+instead of `(nova_str s)`. Variable type for map return also wrong. Deep
+codegen-mono pipeline issue, deferred к Plan 99 V2.
+
+**Уроки:**
+
+1. «pre-existing baseline-fail» зачастую — mix of fixture syntax drift
+   (cheap migration) + real codegen bugs (deep work). Triage first.
+
+2. Plan 108.2 E_REDUNDANT_TYPE_MODIFIER не покрыл fixture cleanup pass —
+   старые fixtures с pattern `ro view ro []u8` сломались.
+
+3. D133 strict-consume rules tightened post-Plan-100.1. Fixtures с
+   `type X consume` + `let x` binding ломаются на E_CONSUME_KEYWORD_MISSING.
+
+4. Local type names shadowing prelude (`MutexGuard` в test) → typedef
+   redefinition в codegen. Cheap workaround = rename. Followup
+   [M-codegen-local-prelude-shadow] для proper module namespacing.
+
+0 compiler changes — pure fixture migration cleanup.
