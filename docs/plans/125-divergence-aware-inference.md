@@ -429,16 +429,19 @@ D25 (Plan 76 bottom-type contract). Amendments:
 
 ## Open questions
 
-- **Q1:** В Ф.5 удалять зависимость от `TyCat::Other` для `Ty::Never`
-  или оставить как safety-net? (текущий план: оставить, conservative
-  addition)
-- **Q2:** `[M-125-unreachable-builtin]` — `unreachable()` prelude fn
-  с `-> never` — добавить сразу или как followup? (план: followup —
-  пока `panic("unreachable")` достаточно)
-- **Q3:** Loop-no-break как divergent — currently `expr_diverges`
-  treats Loop unconditionally divergent (over-approx). Stay over-approx
-  in Plan 125 codegen helper или conservative (skip Loop)?
-  (план: **skip Loop** — `[M-125-loop-no-break-divergence]` followup)
+- **Q1:** ✅ RESOLVED 2026-06-05 — В Ф.5 удалять зависимость от
+  `TyCat::Other` для `Ty::Never` или оставить как safety-net? **Решение:**
+  Ф.5 не реализована в V1 (deferred to `[M-125-type-checker-never-first-class]`)
+  → вопрос не активен для V1; при будущей реализации Ф.5 — conservative
+  addition (оставить `TyCat::Other` как safety-net, не subtraction).
+- **Q2:** ✅ RESOLVED 2026-06-05 — `unreachable()` prelude fn с `-> never`
+  — добавить сразу или как followup? **Решение:** followup
+  `[M-125-unreachable-builtin]`; `panic("unreachable")` достаточно для V1.
+- **Q3:** ✅ RESOLVED 2026-06-05 — Loop-no-break как divergent?
+  **Решение:** Plan 125 codegen helper НЕ trait'ит Loop как divergent
+  (conservative); over-approx из `expr_diverges` types/mod.rs остался
+  только для handler-body must-diverge check (отдельный path). Followup
+  `[M-125-loop-no-break-divergence]` для будущего расширения.
 
 ---
 
