@@ -1,0 +1,45 @@
+// Регрессия Plan 123 chain-cache element-type (fix f1cd07b15a9).
+//
+// Field-cache AST-pass вставляет `ro _at_<F>_chain = @a.b.c` для повторных
+// deep-chain reads (например `@map._buckets` в HashMapIter.@next). До фикса
+// этот binding НЕ регистрировал array element type → индексация кэш-temp
+// `_at_map__buckets_chain[@pos]` падала в `nova_int` fallback → сгенерённый
+// C делал `nova_int slot = ...; slot->tag` → CC-FAIL во ВСЕХ Set/HashMap-
+// итераторах.
+//
+// КРИТЕРИИ ПРИЁМКИ (positive):
+//  - Set.or/and/minus (`|`/`&`/`-`) возвращают рабочий Set (не nova_int);
+//  - `.contains()` / `.len()` на результате компилируются и дают верный ответ;
+//  - всё проходит через release `nova test` (codegen → clang → run).
+
+module plan123_chain_elem.p1_set_ops_iter_ok
+
+import std.collections.set.{Set}
+
+test "Set union — chain-cache element type resolves" {
+    mut a = Set[int].new()
+    a.insert(1)
+    a.insert(2)
+    mut b = Set[int].new()
+    b.insert(2)
+    b.insert(3)
+    ro c = a | b
+    assert(c.contains(1))
+    assert(c.contains(2))
+    assert(c.contains(3))
+    assert(c.len() == 3)
+}
+
+test "Set intersection — chain-cache element type resolves" {
+    mut a = Set[int].new()
+    a.insert(1)
+    a.insert(2)
+    mut b = Set[int].new()
+    b.insert(2)
+    b.insert(3)
+    ro c = a & b
+    assert(c.contains(1) == false)
+    assert(c.contains(2))
+    assert(c.contains(3) == false)
+    assert(c.len() == 1)
+}
