@@ -1051,8 +1051,28 @@ ro s = if c {
 последний `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr(...)` в
 `b.stmts`). Условные early-returns в середине блока **не** flip'ят
 join-тип (cтdlib-идиома `if early-cond { return X } else { compute() }`
-сохраняется). Type-checker side `Ty::Never` first-class subtype —
-followup `[M-125-type-checker-never-first-class]`.
+сохраняется).
+
+**Type-checker first-class (Plan 125.1, 2026-06-05):**
+`[M-125-type-checker-never-first-class]` ✅ CLOSED — codegen-fix
+дополнен настоящим type-side first-class subtype rule в
+`compiler-codegen/src/types/mod.rs`:
+- **Ф.1** `assignable()` — `if matches!(ty_of_ref(&found_tr),
+  Ty::Never) { return Compat::Ok }` — never <: T для любого T
+- **Ф.2** `infer_expr_type` returns `Some(prim_ref("never"))` для
+  `ExprKind::Throw`, `ExprKind::Interrupt`, never-returning builtin
+  calls (panic/exit/abort/unreachable), и user fn'ов где ВСЕ overloads
+  объявлены `-> never`
+- **Ф.3** `infer_block_trailing_typeref` возвращает `Some(never)` когда
+  trailing — top-level divergent shape (Throw/Interrupt/never-call);
+  conservative — не walks preceding stmts
+- **Ф.4** D196 detector `detect_divergent_consumable` использует
+  `block_diverges` для early-skip обеих веток — ЛЮБОЙ divergent путь →
+  None (нет fake-conflict «Consumable[T] vs never»)
+
+Test coverage: `nova_tests/plan125_1/` — 12 positive + 3 negative
+фикстуры. Pure-additive — существующий `TyCat::Other` safety-net
+preserved (conservative addition, не subtraction).
 
 Аналоги: Rust `!` (`never`-RFC), Haskell `Void`, Kotlin/Scala
 `Nothing`, TypeScript `never`. Не уникальная фича Nova.
