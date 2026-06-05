@@ -33295,3 +33295,53 @@ semantics. Plan 110 cancel-shield baseline issues complete.
 
 **Plan 128 family complete:** все 3 ABI markers из Plan 123 V7.6 V2
 followup закрыты в одном sub-plan. Plan 128 ✅ ЗАКРЫТ.
+
+
+### 2026-06-05 — Plan 83.11 V2 cancel races (2 markers) CLOSED
+
+Closes both Plan 83.11 followups spawned from Plan 110.x supervised-fix
+session (Session ext #6 same day).
+
+**Marker #1:** `[M-83.11-cancel-token-bound-race-2k]` 🟢 CLOSED.
+Root cause: Boehm GC reclaims NovaCancelToken despite ctx_pins[]-based
+pin (Plan 83.11 §11.6) under 2k+ fiber count. Memory reuse → new
+SpawnCtxs offset-8 write overlaps token bound_scope offset → panic.
+Fix: nova_alloc_uncollectable for NovaCancelToken (same defensive
+pattern as Plan 83.4.5.8 SpawnCtx). Verified via --gc malloc PASS
+pre-fix. Trade-off: small leak per token (acceptable; followup для
+explicit dispose API). Spec D188 R3b amend.
+
+**Marker #2:** `[M-83.11-nested-supervised-cascade-drain-hang]` 🟢 CLOSED.
+Root cause: cascade race + incomplete deferred-cancel propagation в
+nova_cancel_token_bind. When outer fires cancel BEFORE outer bind
+(cascade triggered by nested supervised which blocks main thread),
+cascade propagates to inner_tok (bound) — inner drains. Outer bind
+later runs deferred-cancel, but only calls nova_sched_cancel_all_pending
+— missing nova_scope_cancel_wake_all + nova_runtime_cancel_worker_fibers
++ _nova_cancel_via_driver. Outer worker fibers stay parked → hang.
+Fix: full cancel-hook chain in bind deferred-propagation (matches
+nova_cancel_token_cancel_reason sequence). Spec D188 R3c amend.
+
+**Bump-backs applied:**
+- fibers_10k_sleep_cancel: N=2k → **10_000** ✅ 30/30 stress PASS.
+- nested_supervised_3_levels_cancel: depth=2 → **3** + middle_tok cascade
+  ✅ 30/30 stress PASS.
+
+**Regression check:** stress_iso_3e 30/30 PASS sequential; cancel_during_runtime_shutdown
+30/30 PASS. No regression from Plan 110.x R3a fix.
+
+**Уроки:**
+
+1. **ctx_pins[]-based GC root protection НЕ достаточна под high fiber
+   count.** Use nova_alloc_uncollectable defensive pattern для
+   caller-owned long-lived structs.
+
+2. **Deferred-cancel propagation в bind должна mirror cancel_reason chain
+   exactly.** Partial propagation leaves worker fibers + ASYNC + driver
+   timers untouched.
+
+3. **--gc malloc swap** — мощный first-line debug technique для GC-related
+   races (per docs/debugging-races.md playbook).
+
+**Plan 110.x supervised(cancel:) family + Plan 83.11 V2 cancel races:
+production-grade closure complete.**
