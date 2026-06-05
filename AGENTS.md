@@ -109,6 +109,7 @@ Full marker reference: [docs/test-conventions.md](docs/test-conventions.md).
 - **`git add` specific files only** — never `git add .` or `git add -A`. Multiple agents may work in parallel worktrees.
 - **One commit per logical task.** Multiple tasks → multiple commits.
 - **No `Co-Authored-By: <AI tool>` trailers** in commit messages.
+- **Language convention.** Commit *subjects* use English conventional-commits (`fix(...)`, `docs(...)`). Commit *bodies* and the project's internal dev logs (`docs/project-creation.txt`, `docs/simplifications.md`, and the team's discussion log) are written in **Russian** with English technical terms inline — the house style; match the surrounding entries rather than switching to all-English prose. Public-facing docs (`README.md`, `AGENTS.md`, `CONTRIBUTING.md`) stay in English.
 - **License:** code is `MIT OR Apache-2.0`; docs are `CC-BY-4.0`. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE).
 
 ## Key reference files
