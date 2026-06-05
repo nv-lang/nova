@@ -33650,3 +33650,43 @@ V1 simplifications shipped с explicit followups (не silent):
 
 Both followups — scope reductions, не bugs. Functional behaviour matches
 V1 contract; full ergonomics после followup closure.
+
+
+### 2026-06-06 — Plan 99 [M-str-len-closure-dispatch] CLOSED
+
+**Marker:** `[M-str-len-closure-dispatch]` 🟢 CLOSED.
+
+**Корень:** Option.map / Result.map_err / Result.unwrap_or_else dispatch
+sites в emit_c.rs не имели pre-pass для closure-typed params. emit_expr
+ExprKind::ClosureLight calls emit_lambda с None context → param defaults
+к nova_int даже когда T=str known via mono.
+
+**Fix:** оба dispatch sites теперь pre-emit lambda с explicit
+context_param_tys (built from fn_decl param's TypeRef::Func + type_subst).
+Mirrors free-fn call site pattern (line 22042-22046).
+
+- 4 sub-tests re-enabled в plan99 (option_map_migrated + result_unwrap_or_else
+  + result_map_err) — discovered + documented during baseline cleanup
+  session 2026-06-05.
+- plan99: 9/0 PASS (was 8/0).
+- 0 regressions: plan100_1/2/3, plan100_4_*, plan103_9, plan108/108_1.
+
+**Acceptance (A99.M-str family):** Option[T].map / Result[T,E].map_err /
+.unwrap_or_else с closure body using T/E-typed methods emits closure с
+правильным substituted param type. 0 regressions.
+
+**Уроки:**
+
+1. **Codegen dispatch sites that build mono-method calls должны mirror
+   the same closure-context setup pattern as generic free-fn calls.**
+   Plan 99.1 Ф.2 introduced method-level mono но не synced этот pattern
+   к method-dispatch path. Followup audit pattern для future mono work.
+
+2. Closure-light context_param_tys propagation goes through 2 paths:
+   (a) call site explicit emit_lambda + ctx, (b) callee_name + hof_param_fn_sigs
+   lookup. Method-dispatch path skipped both. Default к nova_int was silent
+   bug — manifested only on str-method closures.
+
+3. Variable type for map return было правильным — only closure body wrong.
+   `infer_expr_type` correctly substitutes U via mono; emit-time closure-arg
+   handling was the missing piece.
