@@ -10,23 +10,22 @@
 // within budget via cancel_all_pending → close_cb chain (Ф.8 ASYNC + Plan
 // 83.10.2 cross-thread dispatch).
 //
-// **2026-06-05 Plan 110.x supervised(cancel:) shield-codegen-layout fix
-// landed.** Bump-back N=2k → 10k attempted, но exposed a separate
-// Plan 83.11 cancel-token race: «token already bound to a live scope»
-// при N≥10k — independent от Plan 110.x. Tracked as
-// `[M-83.11-cancel-token-bound-race-10k]` followup. N остаётся 2_000;
-// production-scale bump deferred к Plan 83.11 V2.
+// **2026-06-05 Plan 83.11 [M-83.11-cancel-token-bound-race-2k] fix.**
+// Bump-back N=2k → 10_000 restored. Closed by uncollectable token
+// allocation в fibers.h::nova_cancel_token_new (Plan 83.11 V2 cancel
+// races fix). Pre-fix Boehm GC reclaimed token under high fiber count
+// → memory reuse corrupted bound_scope → bind panic.
 //
-// Stress kind: positive_stress_light — body is heavy on its own (2k fibers,
-// 2k timer handles, 2k park/wake). External harness `tools/stress_bisect.sh`
-// repeats the binary 3-5x only.
+// Stress kind: positive_stress_heavy — 10k fibers, 10k timer handles,
+// 10k park/wake. External harness `tools/stress_bisect.sh` repeats the
+// binary 3-5x only.
 module concurrency.fibers_10k_sleep_cancel
 
-test "2000 parked fibers — cancel wakes all within 2 seconds" {
+test "10000 parked fibers — cancel wakes all within 5 seconds" {
     ro tok = CancelToken.new()
     ro t0 = Time.now()
     supervised(cancel: tok) {
-        for _ in 0..2_000 {
+        for _ in 0..10_000 {
             spawn { Time.sleep(10_000) }
         }
         spawn {
@@ -37,9 +36,9 @@ test "2000 parked fibers — cancel wakes all within 2 seconds" {
     ro elapsed = Time.now() - t0
     ro after_cancel = elapsed - 30
 
-    // Wake budget: cancel_all_pending iterates 2k handles, uv_close each;
-    // close_cb's batched в один-два uv_run pass. Measured ~0.5-1.0s on
-    // 16-CPU dev hardware. If after_cancel > 2000ms — wake-batch regression.
+    // Wake budget: cancel_all_pending iterates 10k handles, uv_close each;
+    // close_cb's batched в один-два uv_run pass. Measured ~1-3s on
+    // 16-CPU dev hardware. If after_cancel > 5000ms — wake-batch regression.
     // If TIMEOUT — hung в uv_run (cancel-dispatch race или shield regression).
-    assert(after_cancel < 2_000)
+    assert(after_cancel < 5_000)
 }
