@@ -32677,6 +32677,25 @@ representative timed-out fixtures before reverting code changes.
 Remaining open markers — stdlib integrations или external plan deps,
 explicit extractions, не silent simplifications.
 
+## 2026-06-05 (later) — Plan 118.5 V3 polish closure note
+
+5 «nice-to-have» дополнения landed как production-grade (без упрощений) per user directive «исправь это без упрощений как для прода сейчас». Полный список — см. project-creation.txt entry того же date.
+
+### Scope reduction (none — все 5 как для прода)
+
+- D175/D176 forward-ref banners — полный blockquote с 2 sub-bullets per banner (type-form vs binding-form distinction); idempotent placement (нет duplication risk).
+- ffi-cookbook V3 section — полная 5-item cheatsheet + 2 cross-refs (не stub-link).
+- README link — production-grade Contents-entry format matching existing pattern.
+- safe keyword examples — 3 purpose-driven external fn с inline use-case comments + extended module-level doc-comment с V3 §V3.4 sub-section. Compile-verified через release nova check.
+- ??commit_F4?? placeholder — replaced с verified actual SHA (c075afc0b5a) после orchestrator's context-driven correction (sub-agent initially picked wrong SHA).
+
+### Followups deferred
+
+NONE. Plan 118.5 V3 теперь ABSOLUTELY CLOSED — нет open items, нет deferred markers, нет nice-to-have leftovers.
+
+### Limitation summary
+
+Plan 118.5 reaches **complete closure**: V1 (foundational AST split) + V2 (right-binding rule + unsafe T) + V3 (4 design rules + safe keyword) + Ф.6 (binding-context relaxation) + audit gap-fixes (D-block index + plan-doc AC + typed-pointers V3 rewrite + migration guide) + polish (D175/D176 banners + ffi-cookbook + README + safe examples + SHA fix). ZERO V4 deferred markers.
 
 ---
 
