@@ -1,0 +1,33 @@
+// Plan 128.2 Ф.2 P5 — rvalue base + mut method chain compiles (no-op).
+//
+// `make_v().field.set_x(42)` — chain root is Call expression (rvalue),
+// not Ident. Chain-walking helper returns None — no mutability
+// enforcement (nothing to enforce against). Codegen hoists temp,
+// mutation lands on temp slot then discarded (semantically no-op,
+// but the code must compile cleanly).
+
+module plan128_2.p5_rvalue_base_mut_no_op
+
+type Vec3(x int, y int, z int)
+
+fn Vec3 mut @set_x(v int) -> () {
+    @x = v
+}
+
+type Wrapper {
+    mut inner Vec3
+}
+
+fn make_w() -> Wrapper => {
+    inner: Vec3(x: 1, y: 2, z: 3),
+}
+
+test "rvalue base + mut method chain — compiles (mutation discarded)" {
+    // make_w() returns a fresh Wrapper; chain through `.inner.set_x()`
+    // mutates a temp. The call must type-check (no E_LOCAL_NOT_MUT
+    // because there is no local to check) — chain root is rvalue.
+    make_w().inner.set_x(42)
+    // No assert on result — temp is discarded by design. The point
+    // is solely that the chain compiles without a spurious error.
+    assert(true)
+}

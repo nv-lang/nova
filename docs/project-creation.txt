@@ -33980,9 +33980,6 @@ User insight unblocked что выглядело как codegen-infrastructure w
 Pattern: проверять Nova-side path первым, прежде чем reaching for C
 primitive + codegen forward-decl gymnastics.
 
-
-
-
 ================================================================================
 == 2026-06-06 — Plan 99 [M-str-len-closure-dispatch] CLOSED — closure body T-subst
 ================================================================================
@@ -34069,3 +34066,70 @@ LESSONS:
 3. Variable type for map return was CORRECT — only closure body was wrong.
    Indicates `infer_expr_type` для method-mono call returns U properly via
    substitution. Only emit-time closure-arg handling needed the fix.
+
+=== Plan 128.2 (2026-06-06) — type-checker safety: ro-binding Member/Index chain mut-method check ===
+
+Brief: closes [M-128.1-ro-binding-field-chain-not-mut] P1 safety hole.
+ro binding + mut-method via field chain теперь rejected at type-check.
+
+## Контекст
+
+Plan 128.1 Ф.1 заменил string-based `is_ident` в codegen
+`prepare_method_recv` на AST-aware `is_lvalue_receiver` — теперь
+mut-method receiver `b.v.set_x()` корректно emit'ит `&(b->v)` и mutation
+landит в slot. Latent bug превратился в observable: type-checker
+(`types/mod.rs::consume_walk_expr` Call arm) проверяет mutability
+**только** для `ExprKind::Ident` receiver — `b.v.set_x()` skips guard,
+mutation через `ro b` тихо проходит. Plan 128.1 Ф.3 запиннил behaviour
+в `t_gated_M_128_1_ro_field_chain_not_mut.nv` (без EXPECT_COMPILE_ERROR
+marker, FIXME header) и открыл P1.
+
+## Fix
+
+Helper `lvalue_root_ident(obj: &Expr) -> Option<&str>` walks
+Member/IndexAccess chain до root Ident; mutability check применяется
+к root binding регардлесс глубины chain'а. Rvalue base (Call result,
+literal) — returns None — no enforcement (mutation no-op semantically
+в hoisted temp per D32).
+
+## Result
+
+8 fixtures (5 POS + 3 NEG): params/locals/nested/index/mixed/rvalue/
+pure-method variants. Gated fixture promoted в EXPECT_COMPILE_ERROR.
+0 regressions baseline.
+
+## Spec amend
+
+- **D33 amend §«Projection-chain mutability check»** (`02-types.md`) —
+  mut-method dispatch walks Member/IndexAccess chain к root binding.
+  Symmetric с D175 readonly-field freeze (independent axes).
+- **D215 cross-ref §«projection root binding mutability»** — codegen
+  pair note к D33 root-walking: D215 §«lvalue projection receivers»
+  (Plan 128.1 Ф.1) emit'ит pointer на slot; D33 root walk gate'ит
+  binding mutability. Three independent axes для `b.v.set_x()` valid:
+  `mut b` (D33) + `mut v` field (D175) + mut-receiver method target (D32).
+
+## Phase commits
+
+| Ф | Commit | Subject |
+|---|---|---|
+| Ф.0 | `eca2e07b121` | sub-plan doc + AC + branch setup |
+| Ф.1 | `7adec900c96` | type-checker Member/Index chain root binding mutability check |
+| Ф.2 | `01954104d5c` | 8 fixtures (5 POS + 3 NEG) verified via release nova |
+| Ф.3 | `e895411d000` | D33 §projection-chain mutability + D215 cross-ref |
+| Ф.3 | `df2fd9fe62d` | plan-doc closure + README sync + AC ✅ |
+| Ф.3 | `11726cea063` | log(plan128.2): project-creation + simplifications |
+
+## Closure
+
+- [M-128.1-ro-binding-field-chain-not-mut] ✅ CLOSED.
+- Plan 128.2 ✅ CLOSED 2026-06-06.
+
+## Lesson
+
+Enforcement vs codegen ABI — independent axes. Plan 128.1 Ф.1 correctly
+extended codegen lvalue-acceptance (string-based → AST-aware). Этим
+он inadvertently сделал latent type-checker mutability bug observable.
+Lesson: при расширении lvalue-acceptance в codegen — обязателен
+симметричный pass через type-checker enforcement audit (D33/D36/D175/
+D176 invariants).

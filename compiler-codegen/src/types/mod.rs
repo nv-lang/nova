@@ -13662,6 +13662,44 @@ fn consume_walk_consume_for(
     }
 }
 
+/// Plan 128.2 Ф.1 — walk Member/Index/TurboFish chain до root binding.
+///
+/// Returns:
+///  * `Some(name)` если корень chain'а — `Ident(name)` (включая псевдо-`"self"`
+///    для `SelfAccess`, который не используется в текущем check'е — self
+///    обрабатывается отдельным путём через ReceiverKind);
+///  * `None` если корень — rvalue (`Call`, `IntLit`, etc) — для таких chain'ов
+///    enforcement не применим (mutation в temp — no-op anyway).
+///
+/// Used by mut-method-on-chain check (`b.field.sub.mut_m()`) — root binding'а
+/// `b` mutability gate'ит весь chain независимо от типов промежуточных полей.
+/// Cross-ref: `is_through_ro_binding` (Plan 124.8) — symmetric для D175.
+fn lvalue_root_ident(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Ident(name) => Some(name.as_str()),
+        ExprKind::Member { obj, .. } => lvalue_root_ident(obj),
+        ExprKind::Index { obj, .. } => lvalue_root_ident(obj),
+        ExprKind::TurboFish { base, .. } => lvalue_root_ident(base),
+        _ => None,
+    }
+}
+
+/// Plan 128.2 Ф.1 — is method one of the receiver-mutating "builtin" methods
+/// for arrays/maps/sets? Used by both Ident-receiver path (line ~13690) and
+/// chain-receiver path (Member/Index chain → root binding check).
+fn is_builtin_mut_method(method: &str) -> bool {
+    matches!(
+        method,
+        "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
+        | "clear" | "truncate" | "reserve" | "swap"
+        | "sort" | "sort_by" | "set" | "extend" | "extend_from"
+        | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
+        | "drain" | "dedup" | "reverse" | "shuffle"
+        // Plan 118.2: as_mut_ptr exposes mutable internal pointer.
+        | "as_mut_ptr"
+    )
+}
+
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         // ─── Листья ───
@@ -13687,6 +13725,83 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             match &func.kind {
                 // Method call: obj.method(args).
                 ExprKind::Member { obj, name: method } => {
+                    // Plan 128.2 Ф.1 — chain-receiver mut enforcement.
+                    // `b.field.sub.mut_m()` где `b` — `ro` binding: чистый Ident
+                    // path ниже видит `obj.kind == Member`, не `Ident`, и пропускает
+                    // check. Здесь — walk chain to root и применяем те же rules.
+                    // Pure-Ident случай (`b.mut_m()`) обработается ниже existing
+                    // path'ом; этот pre-pass отрабатывает ТОЛЬКО chain receivers.
+                    if !matches!(obj.kind, ExprKind::Ident(_)) {
+                        if let Some(root) = lvalue_root_ident(obj) {
+                            let root = root.to_string();
+                            let recv_ty = ctx.var_types.get(&ctx.canonical(&root))
+                                .or_else(|| ctx.var_types.get(&root))
+                                .cloned();
+                            // Mut-method identification: ВНУТРИ chain'а тип
+                            // receiver'а method-call'а (объект сразу под `.method`)
+                            // — это `obj`, тип которого мы не знаем точно без
+                            // полноценного inference. Используем conservative
+                            // эвристику: если `method` зарегистрирован как mut на
+                            // ЛЮБОМ типе ИЛИ builtin mut-method — считаем mut.
+                            // Это может изредка дать over-rejection для chain'ов
+                            // с omonимными pure-методами, но soundness важнее.
+                            // (Plan 128.2 §1.3 — acceptable trade-off.)
+                            let is_registered_mut_any = ctx.reg.mut_methods.iter()
+                                .any(|(_, m)| m == method.as_str());
+                            let is_mut_method = is_registered_mut_any
+                                || is_builtin_mut_method(method.as_str());
+                            if is_mut_method {
+                                // (a) Param check — E_PARAM_NOT_MUT.
+                                if let Some(&is_mut) = ctx.param_mut.get(&root) {
+                                    if !is_mut {
+                                        let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PARAM_NOT_MUT] параметр `{}` не помечен `mut`, \
+                                                 но mut-метод `{}` вызван через chain `{}…`. \
+                                                 Root binding chain'а должен быть `mut` (Plan 128.2 / D33 \
+                                                 lvalue chain enforcement; тип root — `{}`).",
+                                                root, method, root, ty_str),
+                                            e.span,
+                                        ).with_note(
+                                            "добавь `mut` к параметру: `fn ...(mut <name> T)` — \
+                                             разрешит mut-method вызовы через field/index chain."
+                                                .to_string(),
+                                        ).with_suggestion(crate::diag::Suggestion {
+                                            message: format!("add `mut` to param `{}`", root),
+                                            span: e.span,
+                                            replacement: format!("mut {}", root),
+                                            applicability: crate::diag::Applicability::MaybeIncorrect,
+                                        }));
+                                    }
+                                }
+                                // (b) Local check — E_LOCAL_NOT_MUT.
+                                if let Some(&is_mut) = ctx.local_mut.get(&root) {
+                                    if !is_mut {
+                                        let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_LOCAL_NOT_MUT] local-binding `{}` не помечен `mut`, \
+                                                 но mut-метод `{}` вызван через chain `{}…`. \
+                                                 Root binding chain'а должен быть `mut` (Plan 128.2 / D33 \
+                                                 lvalue chain enforcement; тип root — `{}`).",
+                                                root, method, root, ty_str),
+                                            e.span,
+                                        ).with_note(
+                                            "добавь `mut` к binding'у: `mut <name> = ...` (Plan 114 D184) — \
+                                             разрешит mut-method вызовы через field/index chain."
+                                                .to_string(),
+                                        ).with_suggestion(crate::diag::Suggestion {
+                                            message: format!("change to `mut {}`", root),
+                                            span: e.span,
+                                            replacement: format!("mut {}", root),
+                                            applicability: crate::diag::Applicability::MaybeIncorrect,
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let ExprKind::Ident(recv) = &obj.kind {
                         // Любой вызов метода — использование receiver'а.
                         ctx.use_var(recv, obj.span, errors);
@@ -18326,6 +18441,342 @@ mod named_tuple_ctor_infer_tests {
             "Sum type name used as ctor must NOT type-produce \
              (Color = Sum, не Newtype/Alias/NamedTuple); got {:?}",
             color_inferred);
+    }
+}
+
+#[cfg(test)]
+mod chain_root_mut_check_tests {
+    //! Plan 128.2 Ф.1 — `lvalue_root_ident` + chain-receiver mut enforcement.
+    //!
+    //! Coverage matrix:
+    //!   1. `lvalue_root_ident` pure helper:
+    //!      - Ident root → Some(name).
+    //!      - Member chain → walks к корневому Ident.
+    //!      - Index chain → walks к корневому Ident.
+    //!      - Mixed chain (Member + Index) → walks к корневому Ident.
+    //!      - rvalue base (Call/Lit) → None.
+    //!      - SelfAccess → None (НЕ binding, обрабатывается отдельным path'ом).
+    //!   2. `is_builtin_mut_method`: builtin-list membership check.
+    //!   3. End-to-end через `check_module` (parser → check) — chain-aware
+    //!      receiver mut check для `ro` binding, `mut` binding, ro param,
+    //!      mut param, mixed Member+Index chain, и rvalue-chain (no enforcement).
+    //!
+    //! Pure-helper tests работают напрямую с AST (synthetic Expr). E2e
+    //! тесты используют parser + check_module — это позволяет проверять
+    //! `param_mut` / `local_mut` integration без ручной набивки ConsumeCtx.
+    use super::*;
+    use crate::ast::{Expr, ExprKind, TypeRef};
+    use crate::diag::Span;
+
+    fn dummy_span() -> Span {
+        Span { start: 0, end: 0, file_id: MAIN_FILE_ID }
+    }
+
+    fn ident(name: &str) -> Expr {
+        Expr { kind: ExprKind::Ident(name.to_string()), span: dummy_span() }
+    }
+
+    fn member(obj: Expr, field: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Member {
+                obj: Box::new(obj),
+                name: field.to_string(),
+            },
+            span: dummy_span(),
+        }
+    }
+
+    fn index(obj: Expr, idx: Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Index {
+                obj: Box::new(obj),
+                index: Box::new(idx),
+            },
+            span: dummy_span(),
+        }
+    }
+
+    fn int_lit(n: i64) -> Expr {
+        Expr { kind: ExprKind::IntLit(n), span: dummy_span() }
+    }
+
+    fn turbofish(base: Expr, args: Vec<TypeRef>) -> Expr {
+        Expr {
+            kind: ExprKind::TurboFish {
+                base: Box::new(base),
+                type_args: args,
+            },
+            span: dummy_span(),
+        }
+    }
+
+    fn self_access() -> Expr {
+        Expr { kind: ExprKind::SelfAccess, span: dummy_span() }
+    }
+
+    fn call(func: Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Call {
+                func: Box::new(func),
+                args: vec![],
+                trailing: None,
+            },
+            span: dummy_span(),
+        }
+    }
+
+    // ─── Pure-helper: lvalue_root_ident ────────────────────────────────
+
+    #[test]
+    fn pure_predicate_root_is_ident_itself() {
+        let e = ident("b");
+        assert_eq!(lvalue_root_ident(&e), Some("b"));
+    }
+
+    #[test]
+    fn pure_predicate_member_chain_walks_to_root_ident() {
+        // b.field.sub_field
+        let e = member(member(ident("b"), "field"), "sub_field");
+        assert_eq!(lvalue_root_ident(&e), Some("b"));
+    }
+
+    #[test]
+    fn pure_predicate_index_chain_walks_to_root_ident() {
+        // arr[0][1]
+        let e = index(index(ident("arr"), int_lit(0)), int_lit(1));
+        assert_eq!(lvalue_root_ident(&e), Some("arr"));
+    }
+
+    #[test]
+    fn pure_predicate_mixed_member_index_walks_to_root() {
+        // b.parts[i].v.x — Member(Member(Index(Member(Ident(b), "parts"), i), "v"), "x")
+        let e = member(
+            member(
+                index(member(ident("b"), "parts"), ident("i")),
+                "v",
+            ),
+            "x",
+        );
+        assert_eq!(lvalue_root_ident(&e), Some("b"));
+    }
+
+    #[test]
+    fn pure_predicate_turbofish_chain_walks_through() {
+        // x[T].field
+        let e = member(turbofish(ident("x"), vec![]), "field");
+        assert_eq!(lvalue_root_ident(&e), Some("x"));
+    }
+
+    #[test]
+    fn pure_predicate_rvalue_root_returns_none() {
+        // foo().field — Call root → None.
+        let e = member(call(ident("foo")), "field");
+        assert_eq!(lvalue_root_ident(&e), None);
+    }
+
+    #[test]
+    fn pure_predicate_literal_root_returns_none() {
+        // 42.something — synthetic but covers leaf rvalue case.
+        let e = member(int_lit(42), "something");
+        assert_eq!(lvalue_root_ident(&e), None);
+    }
+
+    #[test]
+    fn pure_predicate_self_access_returns_none() {
+        // @field — SelfAccess root → None (`@` обрабатывается отдельно
+        // через ReceiverKind в impl-методе; helper НЕ маппит self → "self").
+        let e = member(self_access(), "field");
+        assert_eq!(lvalue_root_ident(&e), None);
+    }
+
+    // ─── Pure-helper: is_builtin_mut_method ────────────────────────────
+
+    #[test]
+    fn builtin_mut_method_recognises_common_array_ops() {
+        for m in ["push", "pop", "clear", "insert", "remove", "sort",
+                  "extend", "copy_from", "as_mut_ptr"] {
+            assert!(is_builtin_mut_method(m),
+                "`{}` должен быть builtin mut-method", m);
+        }
+    }
+
+    #[test]
+    fn builtin_mut_method_rejects_pure_methods() {
+        for m in ["len", "is_empty", "get", "iter", "abs", "to_string"] {
+            assert!(!is_builtin_mut_method(m),
+                "`{}` НЕ должен быть builtin mut-method (pure-read)", m);
+        }
+    }
+
+    // ─── End-to-end через parser + check_module ────────────────────────
+
+    /// Helper: parse source + run check_module, return all diagnostics
+    /// (Err'ом возвращается список ошибок; Ok даёт пустой vec).
+    fn check_src(src: &str) -> Vec<Diagnostic> {
+        let module = match crate::parser::parse(src) {
+            Ok(m) => m,
+            Err(diag) => return vec![diag],
+        };
+        match check_module(&module) {
+            Ok(_) => Vec::new(),
+            Err(diags) => diags,
+        }
+    }
+
+    fn has_diag_tag(diags: &[Diagnostic], tag: &str) -> bool {
+        diags.iter().any(|d| d.message.contains(tag))
+    }
+
+    /// Stable test-only type registration trick: define a type with a
+    /// declared `mut`-method, then exercise chain receiver against it.
+    const HELPER_TYPES: &str = r#"
+module test_helpers
+
+type Vec3 {
+    mut x f64
+    mut y f64
+    mut z f64
+}
+
+fn Vec3 mut @set_x(v f64) {
+    @x = v
+}
+
+fn Vec3 @len() -> f64 {
+    return @x
+}
+
+type Body {
+    mut v Vec3
+}
+"#;
+
+    #[test]
+    fn e2e_ro_member_chain_mut_method_rejected() {
+        // `ro b = Body(...); b.v.set_x(99.0)` — должен ловиться как
+        // E_LOCAL_NOT_MUT (chain root `b` — ro local).
+        let src = format!(r#"
+{HELPER_TYPES}
+
+fn run() {{
+    ro b = Body{{ v: Vec3{{ x: 1.0, y: 2.0, z: 3.0 }} }}
+    b.v.set_x(99.0)
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(has_diag_tag(&diags, "E_LOCAL_NOT_MUT"),
+            "ro b → b.v.set_x() — должен fire E_LOCAL_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_mut_member_chain_mut_method_allowed() {
+        // `mut b = Body(...); b.v.set_x(99.0)` — НЕ должен fire
+        // E_LOCAL_NOT_MUT (chain root `b` — mut local).
+        let src = format!(r#"
+{HELPER_TYPES}
+
+fn run() {{
+    mut b = Body{{ v: Vec3{{ x: 1.0, y: 2.0, z: 3.0 }} }}
+    b.v.set_x(99.0)
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(!has_diag_tag(&diags, "E_LOCAL_NOT_MUT"),
+            "mut b → b.v.set_x() — НЕ должен fire E_LOCAL_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_ro_member_chain_pure_method_allowed() {
+        // `ro b; b.v.len()` — pure-method, НЕ должен fire E_LOCAL_NOT_MUT.
+        let src = format!(r#"
+{HELPER_TYPES}
+
+fn run() {{
+    ro b = Body{{ v: Vec3{{ x: 1.0, y: 2.0, z: 3.0 }} }}
+    let _ = b.v.len()
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(!has_diag_tag(&diags, "E_LOCAL_NOT_MUT"),
+            "ro b → b.v.len() (pure-method) — НЕ должен fire E_LOCAL_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_ro_param_member_chain_mut_method_rejected() {
+        // `fn f(b Body) { b.v.set_x(99.0) }` — param без `mut`, chain
+        // receiver — должен fire E_PARAM_NOT_MUT.
+        let src = format!(r#"
+{HELPER_TYPES}
+
+fn run(b Body) {{
+    b.v.set_x(99.0)
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(has_diag_tag(&diags, "E_PARAM_NOT_MUT"),
+            "fn(b Body) → b.v.set_x() — должен fire E_PARAM_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_mut_param_member_chain_mut_method_allowed() {
+        // `fn f(mut b Body) { b.v.set_x(99.0) }` — `mut b` param,
+        // chain receiver — НЕ должен fire.
+        let src = format!(r#"
+{HELPER_TYPES}
+
+fn run(mut b Body) {{
+    b.v.set_x(99.0)
+}}
+"#);
+        let diags = check_src(&src);
+        assert!(!has_diag_tag(&diags, "E_PARAM_NOT_MUT"),
+            "fn(mut b Body) → b.v.set_x() — НЕ должен fire E_PARAM_NOT_MUT; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_ro_ident_mut_method_still_rejected() {
+        // Regression: existing Ident-receiver path должен продолжать работать
+        // (мы добавили chain pre-pass, не сломали Ident path).
+        // `ro arr: []int; arr.push(1)` — builtin mut-method на ro local.
+        let src = r#"
+fn run() {
+    ro arr = [1, 2, 3]
+    arr.push(4)
+}
+"#;
+        let diags = check_src(src);
+        assert!(has_diag_tag(&diags, "E_LOCAL_NOT_MUT"),
+            "ro arr → arr.push(4) — должен fire E_LOCAL_NOT_MUT (Ident path); \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn e2e_ro_index_chain_builtin_mut_rejected() {
+        // `ro arr2d: [][]int; arr2d[0].push(1)` — Index chain → root arr2d
+        // ro, builtin push на []int. Должен fire E_LOCAL_NOT_MUT через
+        // chain pre-pass.
+        let src = r#"
+fn run() {
+    ro arr2d = [[1, 2], [3, 4]]
+    arr2d[0].push(99)
+}
+"#;
+        let diags = check_src(src);
+        assert!(has_diag_tag(&diags, "E_LOCAL_NOT_MUT"),
+            "ro arr2d → arr2d[0].push() — должен fire E_LOCAL_NOT_MUT \
+             (Index chain root); diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>());
     }
 }
 

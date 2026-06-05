@@ -9121,6 +9121,86 @@ rule applies only к ro/mut/unsafe. Reject Plan 118.5 V2 followup
 `[M-118.5-consume-as-type-modifier]` as **NO ACTION** — consume already
 fits its semantic-binding role correctly.
 
+### D33 amend §«Projection-chain mutability check» (Plan 128.2, 2026-06-06)
+
+> **Closes `[M-128.1-ro-binding-field-chain-not-mut]`** (P1 safety hole
+> opened в Plan 128.1 Ф.3).
+
+D33 locality-of-mutation invariant (Plan 108.2 D36 enforcement) is
+extended: mut-method dispatch проверяет mutability **root binding**'а
+lvalue projection chain, не только когда receiver — голый identifier.
+
+**Rule:**
+
+Для Call `obj.method(...)`, где `method` — mut-method (`fn T mut @method`),
+type-checker walks Member/IndexAccess chain от `obj` к root:
+
+```
+walk_root(e) =
+  | Ident(name)         → Some(name)
+  | Member { obj, .. }  → walk_root(obj)
+  | IndexAccess { obj, .. } → walk_root(obj)
+  | _                   → None
+```
+
+Если `walk_root(obj) = Some(name)`:
+- `local_mut[name] == Some(false)` (ro local) → `E_LOCAL_NOT_MUT`
+  (или `E_RECEIVER_BINDING_NOT_MUT` — chain hint в note).
+- `param_mut[name] == Some(false)` (ro param) → `E_PARAM_NOT_MUT`.
+- otherwise — OK.
+
+Если `walk_root(obj) = None` (chain начинается с rvalue base — Call
+result, literal, …): no enforcement; mutation в hoisted temp семантически
+no-op (D32 «mutate-by-copy для rvalue» — D215 amend «Method receiver
+passing» Ф.2 §rvalue receiver).
+
+**Receiver shapes table:**
+
+| Receiver shape | binding | Result |
+|---|---|---|
+| `b.set_x()` | `ro b` | `E_LOCAL_NOT_MUT` (existing) |
+| `b.v.set_x()` | `ro b` | `E_LOCAL_NOT_MUT` (NEW — chain root) |
+| `arr[0].set_x()` | `ro arr` | `E_LOCAL_NOT_MUT` (NEW — chain root) |
+| `b.parts[i].v.set_x()` | `ro b` | `E_LOCAL_NOT_MUT` (NEW — chain root) |
+| `b.v.set_x()` | `mut b`, `mut v` field | OK |
+| `make_body().v.set_x()` | rvalue base | OK (no-op semantically — temp) |
+
+**Symmetry с D175 (readonly field freeze):** projection-chain root check
+независимая ось от per-field readonly enforcement. `mut b; b.v.set_x()`
+с `ro v` field остаётся `E_FIELD_NOT_MUT` (D175 invariant); orthogonal
+к D33 root walk.
+
+**Cross-ref:** D215 amend «Method receiver passing» (Plan 128.1 Ф.1)
+implements call-site codegen (`&(b->v)`, `&(arr->data[i])`) для lvalue
+projection — это codegen pair того же chain-walking; D33 root check —
+type-checker pair. Symmetric infrastructure: оба обходят
+Member/IndexAccess chain (codegen — для emit, type-checker — для
+binding-mutability gate).
+
+**Implementation:** helper `lvalue_root_ident` в `types/mod.rs`
+вызывается из `consume_walk_expr` Call arm для receiver. Pure-read
+methods (`x.abs()`) не подпадают под gate — `registered ||
+builtin_mut_method` guard сохраняется.
+
+### D215 cross-ref §«projection root binding mutability» (Plan 128.2, 2026-06-06)
+
+> Pair note к D33 amend §«Projection-chain mutability check».
+
+D215 lvalue-projection mut-method ABI (Plan 128.1 Ф.1) — `&(b->v)` для
+`b.v.method()`, `&(arr->data[i])` для `arr[i].method()` — corresponds к
+codegen pair того же invariant'а. Type-checker side (D33 projection-chain
+root walk) проверяет, что root binding lvalue chain'а — `mut`; codegen
+side (D215 §«lvalue projection receivers») emit'ит pointer на slot.
+
+**Implication для users:** writing `b.v.set_x()` requires `mut b`
+binding **AND** `mut v` field (D175 cross-ref) **AND** mut-receiver
+target method (D32). All three axes independent; missing любой —
+distinct error code (E_LOCAL_NOT_MUT / E_FIELD_NOT_MUT / receiver-mode
+mismatch).
+
+**Plan 128.2 §Markers closure:** `[M-128.1-ro-binding-field-chain-not-mut]`
+(P1) — closed via root-walking enforcement.
+
 ### D216 V2 amend §V2.2b «mut T transparent» (Plan 118.5 V2, 2026-06-04)
 
 > **Closes [M-118.5-mut-t-vs-binding-distinction].**
