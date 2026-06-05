@@ -33039,3 +33039,61 @@ outer's deadline never restored.
 - 🟢 R4b (exception safety — leave_shield unconditional) — закрыт this commit.
 
 Production-grade closure для consume-scope shield semantics.
+
+
+### 2026-06-05 — Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] supervised(cancel:) CLOSED
+
+**Marker:** `[M-110.x-cleanup-shield-deadline-underflow]` 🟢 **FULLY CLOSED** (supervised path).
+
+**Корень:** codegen-emitted `NovaSpawnCtx_<id>` + `NovaDetachCtx_<id>`
+структуры в `emit_c.rs` включали только первые 7 из 10 полей runtime
+`NovaSpawnCtxBase`. Missing: `_nova_pool_size`, `_nova_cancel_mask_count`,
+`_nova_cancel_deadline_ns`. Runtime reads past struct -> Boehm GC garbage
+bytes -> garbage mask>0 -> `nv_shield_check_deadline` enters slow path
+-> garbage deadline -> bogus CleanupTimeoutError с 720M+ ms over-budget
+underflow.
+
+**Fix (D188 R3a amend):**
+
+- Codegen layout sync с runtime ABI на `emit_c.rs:6258-6276` + `:6929-6940`.
+- D188 R3a invariant: codegen ctx struct MUST mirror NovaSpawnCtxBase
+  layout exactly (`_nova_pool_size` + cancel-shield state included).
+- Repro probe + NEG fixture добавлены.
+- Stress: stress_iso_3e 30/30 PASS (was 0/30); cancel_during_runtime_shutdown
+  30/30 PASS (с bumped 16 fibers).
+
+**Honest scope flip:** 2/4 tests из original blocker list (A1) FULLY
+PASS post-fix. Other 2 tests (`fibers_10k_sleep_cancel`,
+`nested_supervised_3_levels_cancel`) had independent Plan 83.11 bugs
+**masked** by the cleanup-timeout-exceeded shield throw — now visible.
+New markers spawned:
+- `[M-83.11-cancel-token-bound-race-2k]` — token unbind/rebind race.
+- `[M-83.11-nested-supervised-cascade-drain-hang]` — cascade drain hang.
+
+Both Plan 83.11 V2 zone; production-scale bump-backs для P9 + P11 deferred.
+
+**Уроки:**
+
+1. **Stale codegen-runtime ABI invariants — silent UB.** Codegen
+   `_nova_fiber_state MUST be last in NovaSpawnCtxBase prefix` comment
+   was правда at write time, became stale after Plan 83.6 + 110.2
+   added 3 fields. Months of silent UB до specific yield pattern.
+   **TODO V2:** runtime-side `static_assert(sizeof(NovaSpawnCtxBase) ==
+   sizeof(_codegen_layout_marker))` or automated cross-check tool.
+
+2. **Failure-mode masking.** Original symptom (cleanup-timeout-exceeded)
+   was masking 2 independent bugs. Fix removed the mask, revealed
+   pre-existing issues. Honest accounting > false 4/4 PASS claim.
+
+3. **Debug fprintf-to-file** для test-runner stderr capture limitations.
+   Runtime fprintf на stderr невидим — `fopen("D:/tmp/log", "a")` directly
+   из runtime header works. Reusable pattern для future runtime debug.
+
+**Plan 110 family closure timeline:**
+
+- `af4e7d96a62` — R4 nested consume{} deadline shadow restore.
+- `08edfa66358` — R4b on_exit-throws-leaks-shield (exception safety).
+- 🟢 **This commit** — R3a codegen layout invariant (supervised path).
+
+Production-grade closure для consume-scope + supervised(cancel:) shield
+semantics. Plan 110 cancel-shield baseline issues complete.
