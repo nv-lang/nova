@@ -2392,6 +2392,10 @@ raw-строки `tag\`...\`` без интерполяции по такой ж
 `From`/`Into`), [08-runtime.md → D26](08-runtime.md#d26) (`str` тип
 + конкатенация).
 
+### Format spec extension (Plan 91.14 D229)
+
+`${expr:SPEC}` — Plan 91.14 D229 extension к base interp-string grammar. V1 supports `:?` (debug format via DebugPrintable.@debug_fmt). См. [D229](02-types.md#d229-debugprintable-protocol--format-spec-expr) для подробного описания + 3 новых error codes (E_FORMAT_SPEC_UNKNOWN / E_FORMAT_SPEC_EMPTY / E_FORMAT_SPEC_TRAILING). Future extensions (`:hex`, `:pad-N`, `:.3`) — [M-91.14-format-dsl-extensions] followup.
+
 ---
 
 ## D45. Inferred return type для expression-body
