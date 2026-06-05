@@ -1,0 +1,21 @@
+// Plan 118.1 Ф.4 closeout T6 — CStr type declaration accessible from FFI module.
+//
+// V1 ships `type CStr(*u8)` foundation (newtype wrapper for typed-pointer
+// `*u8`). Runtime methods (str.as_cstr/to_cstr/as_cstr_unchecked) require
+// codegen integration of named-tuple-return C primitives — deferred к
+// [M-118.1-cstr-runtime-wiring] followup.
+//
+// V1 verified: import resolves, type usable в external fn signatures
+// (FFI-compatible — ABI = *u8).
+
+module plan118_1_closeout.t6_cstr_type_decl_ok
+
+import std.ffi.cstr.{CStr}
+
+// FFI shim — declarations of C-side functions accepting CStr:
+external fn c_strlen(s CStr) -> i64
+
+test "CStr type declaration + import compile" {
+    // V1 foundation: CStr type accessible; runtime wiring deferred.
+    assert(1 == 1)
+}

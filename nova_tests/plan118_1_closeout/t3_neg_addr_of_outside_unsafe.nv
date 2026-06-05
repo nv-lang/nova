@@ -1,0 +1,11 @@
+// Plan 118.1 closeout T3 NEG — addr_of вне unsafe → E_UNSAFE_REQUIRED.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
+
+module plan118_1_closeout.t3_neg_addr_of_outside_unsafe
+
+test "addr_of outside unsafe rejected" {
+    ro x = 42
+    ro p = addr_of(x)
+    assert(p.read() == 42)
+}

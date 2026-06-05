@@ -1,0 +1,13 @@
+// Plan 118.1 closeout T4 NEG — addr_of_mut(ro binding) → E_ADDR_OF_MUT_REQUIRES_MUT_BINDING.
+//
+// EXPECT_COMPILE_ERROR E_ADDR_OF_MUT_REQUIRES_MUT_BINDING
+
+module plan118_1_closeout.t4_neg_addr_of_mut_on_ro_binding
+
+test "addr_of_mut on ro binding rejected" {
+    ro x = 42
+    unsafe {
+        ro p = addr_of_mut(x)
+        p.write(100)
+    }
+}

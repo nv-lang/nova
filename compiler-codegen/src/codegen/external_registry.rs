@@ -88,6 +88,9 @@ impl ExternalRegistry {
     // Plan 118.1 Ф.1: byte-level memory intrinsics для FFI / driver work.
     pub const RAW_MEM_SRC: &'static str =
         include_str!("../../../std/runtime/raw_mem.nv");
+    // Plan 118.1 Ф.4 closeout: CStr newtype для C-string FFI.
+    pub const FFI_CSTR_SRC: &'static str =
+        include_str!("../../../std/ffi/cstr.nv");
 
     // Plan 83.12: std/net — async TCP/UDP socket stdlib.
     pub const NET_ADDR_SRC: &'static str =
@@ -114,6 +117,8 @@ impl ExternalRegistry {
             ("sync.nv",           Self::SYNC_SRC),
             // Plan 118.1 Ф.1: RawMem intrinsics.
             ("raw_mem.nv",        Self::RAW_MEM_SRC),
+            // Plan 118.1 Ф.4 closeout: CStr.
+            ("ffi/cstr.nv",       Self::FFI_CSTR_SRC),
             // Plan 83.12: net stdlib.
             ("net/addr.nv",       Self::NET_ADDR_SRC),
             ("net/tcp.nv",        Self::NET_TCP_SRC),
