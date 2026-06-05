@@ -4,7 +4,9 @@
 > **Статус:** 📋 DRAFT 2026-06-06 (proposed, NOT scheduled)
 > **Приоритет:** P2 — нужен после shipping 0.1, не блокирует feature work
 > **Origin:** community feedback re: agent productivity tax на 28k+ line files
-> **Дата готовности к старту:** после Plan 91 Ф.6/Ф.7 closure (release-checklist)
+> **Дата готовности к старту:** строго после тега 0.1 (Plan 91 целиком).
+>   Рефактор во время активного feature-дева = merge hell (см. R1). Не
+>   стартовать пока emit_c.rs в активной работе.
 
 ## Что и зачем (одной фразой)
 
@@ -76,7 +78,8 @@ Pre-existing structural split в emit_c.rs:
    `pub(super)` boundaries.
 4. **Same for `types/mod.rs` / `parser/mod.rs` / `field_cache.rs`** —
    each gets its own decomposition map.
-5. Записать `nova-private/plan129/audit.md` с per-file map.
+5. Записать decomposition map в `docs/architecture/codegen-decomposition-audit.md`
+   (публичный — контрибьюторы видят структуру разбиения) с per-file map.
 
 **Gate:**
 - 4 decomposition map'a written + reviewed
@@ -190,8 +193,8 @@ extract в shared utility crate / module:
 2. `docs/architecture/codegen.md` (new) — describe module organization,
    adding-new-features playbook (где emit_X for ExprKind::X goes)
 3. `docs/plans/README.md` — mark Plan 129 ✅ CLOSED
-4. `nova-private/discussion-log.md` — entry с total LOC delta + agent
-   productivity expectation
+4. Internal dev log — entry с total LOC delta + agent
+   productivity expectation (до/после tool-call measurement)
 5. Optional: announcement в community channels — refactor done, no
    semantic changes
 
@@ -294,7 +297,7 @@ Expected: zero diffs (или explained diffs если intentional).
 - `compiler-codegen/src/types/` — submodule tree
 - `compiler-codegen/src/parser/` — submodule tree
 - `compiler-codegen/src/field_cache/` — submodule tree
-- `nova-private/plan129/audit.md` — decomposition map per file
+- `docs/architecture/codegen-decomposition-audit.md` — decomposition map per file
 - `docs/architecture/codegen.md` — NEW, module organization doc
 - `AGENTS.md` — updated navigation hints
 - `docs/plans/README.md` + project-creation.txt + discussion-log.md —
@@ -314,8 +317,8 @@ Expected: zero diffs (или explained diffs если intentional).
 - **Q1:** `compiler-codegen/src/codegen/emit_c.rs` → `codegen/c/mod.rs`
   или `codegen/c.rs` + `c/` submodule? (Rust supports both; mod.rs
   convention более устоявший)
-- **Q2:** Split timing — после Plan 91 Ф.6/Ф.7 (release-checklist) или
-  после Plan 91 целиком (0.1 shipped)?
+- ~~**Q2:** Split timing~~ — РЕШЕНО: строго после тега 0.1 (Plan 91
+  целиком), чтобы не конкурировать с активным feature-девом в emit_c.rs.
 - **Q3:** Дополнительно split `lints.rs`, `manifest.rs`, etc.? Или
   ограничиться 4 крупными файлами?
 - **Q4:** Agent productivity metric — measure pre-refactor baseline
@@ -332,10 +335,11 @@ Expected: zero diffs (или explained diffs если intentional).
 - Ф.5 cross-cutting (optional): 1-2d
 - Ф.6 closure: 1d
 
-**Estimate (parallel где possible):** ~5-8 dev-days
-- Ф.0 sequential
-- Ф.1-Ф.4 partially parallel (different files, low conflict risk)
-- Ф.5-Ф.6 sequential
+**Estimate (sequential, рекомендуемый):** 9-15 dev-days. Параллелить
+Ф.1-Ф.4 НЕ рекомендуется: emit_c.rs / types/mod.rs / parser/mod.rs
+связаны (codegen вызывает типы, парсер строит AST для обоих). Их
+одновременный рефактор даёт merge-конфликты в местах стыка — та же
+проблема что R1, только внутренняя. Последовательно безопаснее.
 
 **Recommended model:** Opus + Thinking ON для Ф.0 audit (decomposition
 boundaries require careful reasoning), Sonnet + High для Ф.1-Ф.4
