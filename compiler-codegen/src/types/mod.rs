@@ -1891,6 +1891,28 @@ fn arity_exempt(name: &str) -> bool {
     )
 }
 
+/// Plan 126 (D230) Ф.4: bridge между TypeCheckCtx и auto_derive::DeriveQuery.
+///
+/// Owns shared reference к TypeCheckCtx, exposes lookup_type / has-method
+/// queries по API contract auto_derive::DeriveQuery. Без этой обёртки
+/// auto_derive вынужден был бы знать про полный TypeCheckCtx (cycle через
+/// `types` модуль).
+pub(crate) struct AutoDeriveQueryBridge<'a> {
+    ctx: &'a TypeCheckCtx<'a>,
+}
+
+impl<'a> crate::protocols::auto_derive::DeriveQuery for AutoDeriveQueryBridge<'a> {
+    fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
+        // TypeCheckCtx.types: HashMap<String, &'a TypeDecl>. Dereferences
+        // outer reference twice (Option<&&'a TypeDecl> → Option<&TypeDecl>).
+        self.ctx.types.get(name).copied()
+    }
+
+    fn type_provides_method(&self, t: &str, method_name: &str) -> bool {
+        self.ctx.t_provides_method(t, method_name)
+    }
+}
+
 impl<'a> TypeCheckCtx<'a> {
     fn build(module: &'a Module) -> Self {
         let mut arity: HashMap<String, ArityInfo> = HashMap::new();
@@ -5067,6 +5089,13 @@ impl<'a> TypeCheckCtx<'a> {
     ///      для bare-call satisfiability).
     /// Missing methods → E_IMPL_MISSING_METHODS со списком и hint'ом
     /// (как реализовать).
+    /// Plan 126 (D230) Ф.4: bridge TypeCheckCtx → auto_derive::DeriveQuery.
+    /// Allows synthesize_method to query type registry and method coverage
+    /// without coupling auto_derive module к full type-checker structure.
+    fn as_derive_query(&'a self) -> AutoDeriveQueryBridge<'a> {
+        AutoDeriveQueryBridge { ctx: self }
+    }
+
     fn verify_impl_protocols(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
         for proto_name in &td.impl_protocols {
             let proto_decl = match self.types.get(proto_name.as_str()) {
@@ -5105,6 +5134,14 @@ impl<'a> TypeCheckCtx<'a> {
             // param types / return type vs protocol declaration.
             let mut missing: Vec<String> = Vec::new();
             let mut wrong_sig: Vec<(String, String, String)> = Vec::new();
+            // Plan 126 (D230) Ф.4: built-in protocol auto-derive eligibility.
+            // Если protocol auto-derive-able AND user не предоставил explicit
+            // method AND нет default body — пытаемся synthesize. Synth-success
+            // → method считается satisfied (не добавляется в `missing`).
+            // Synth-error → emit E_AUTO_DERIVE_* diagnostic.
+            let is_auto_derivable =
+                crate::protocols::auto_derive::is_builtin_protocol(proto_name);
+            let mut auto_derive_errors: Vec<crate::protocols::auto_derive::DeriveError> = Vec::new();
             for m in proto_methods {
                 let has_explicit = self.t_provides_method(&td.name, &m.name);
                 let has_default = if let Some(body) = &m.default_body {
@@ -5124,8 +5161,44 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 } else if !has_default {
-                    missing.push(render_method_sig(&m.name, &m.params, &m.return_type));
+                    // Plan 126 Ф.4: попытка auto-derive перед reporting missing.
+                    let mut synthesized_ok = false;
+                    if is_auto_derivable {
+                        // Match method name к protocol's expected method.
+                        let expected_method =
+                            crate::protocols::auto_derive::builtin_protocol_method(proto_name);
+                        if expected_method.map_or(false, |em| em == m.name.as_str()) {
+                            let bridge = self.as_derive_query();
+                            let mut derive_ctx =
+                                crate::protocols::auto_derive::AutoDeriveCtx::new(&bridge);
+                            match crate::protocols::auto_derive::synthesize_method(
+                                &mut derive_ctx, td, proto_name,
+                            ) {
+                                Ok(_fn_decl) => {
+                                    // Synthesis succeeded — method satisfied via auto-derive.
+                                    // V1: synthesized FnDecl не register'ится в method_table
+                                    // immediately — Plan 126 Ф.5+ extension покрывает codegen
+                                    // integration. Здесь только suppress'им E_IMPL_MISSING_METHODS,
+                                    // подтверждая что фактическая synthesis возможна.
+                                    synthesized_ok = true;
+                                }
+                                Err(derive_err) => {
+                                    auto_derive_errors.push(derive_err);
+                                }
+                            }
+                        }
+                    }
+                    if !synthesized_ok {
+                        missing.push(render_method_sig(&m.name, &m.params, &m.return_type));
+                    }
                 }
+            }
+            // Plan 126 Ф.4: emit auto-derive diagnostics (E_AUTO_DERIVE_*).
+            for derive_err in &auto_derive_errors {
+                errors.push(Diagnostic::new(
+                    derive_err.diagnostic_message(),
+                    td.span,
+                ));
             }
             for (name, expected, reason) in &wrong_sig {
                 errors.push(Diagnostic::new(
