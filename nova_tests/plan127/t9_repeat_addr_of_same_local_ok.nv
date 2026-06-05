@@ -1,0 +1,19 @@
+// Plan 127 Ф.5 — POS: repeated `&v` references — single promote (idempotent).
+module plan127.t9_repeat_addr_of_same_local_ok
+
+type Point value {
+    x f64
+    y f64
+}
+
+fn double_addr() -> *Point {
+    ro p = Point { x: 11.0, y: 22.0 }
+    ro _q = unsafe { &p }
+    unsafe { &p }
+}
+
+test "double `&v` — single promote" {
+    ro ptr = double_addr()
+    assert(unsafe { ptr.x } == 11.0)
+    assert(unsafe { ptr.y } == 22.0)
+}

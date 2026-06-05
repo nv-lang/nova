@@ -1,0 +1,25 @@
+// Plan 127 Ф.5 / A127.6 — POS: conditional escape — `&v` в одной if-арme.
+// Conservative V1: if any escape-path observed → promote.
+module plan127.t6_branch_one_arm_escapes_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn cond_escape(flag bool) -> *Vec3 {
+    ro v = Vec3 { x: 7.0, y: 8.0, z: 9.0 }
+    if flag {
+        unsafe { &v }
+    } else {
+        unsafe { &v }
+    }
+}
+
+test "if-branch escape — conservative promote" {
+    ro p = cond_escape(true)
+    assert(unsafe { p.y } == 8.0)
+    ro q = cond_escape(false)
+    assert(unsafe { q.y } == 8.0)
+}
