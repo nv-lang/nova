@@ -21923,6 +21923,15 @@ _cp++; \
                 // return, not conditional early-returns inside earlier
                 // stmts. This is the safe subset.
                 Some(Stmt::Return { .. }) => true,
+                // Plan 125.2 Ф.3 [M-125-stmt-position-divergence]:
+                // `{ ... break }` / `{ ... continue }` at last-stmt
+                // position. Control transfers to enclosing loop scope —
+                // block never reaches its value-producing position, so
+                // for codegen result-type inference the block is
+                // divergent. Parser/type-checker enforce that
+                // break/continue are syntactically valid only inside
+                // a loop, so we trust that invariant here.
+                Some(Stmt::Break(_)) | Some(Stmt::Continue(_)) => true,
                 // Recursive: trailing-equivalent expr-statement
                 Some(Stmt::Expr(e)) => self.expr_diverges_125(e),
                 _ => false,
