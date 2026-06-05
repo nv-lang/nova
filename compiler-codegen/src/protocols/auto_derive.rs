@@ -30,7 +30,8 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    FnDecl, NamedTupleField, RecordField, SumVariant, TypeDecl, TypeDeclKind, TypeRef,
+    BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, NamedTupleField, Param, RecordField,
+    RecordLitField, Receiver, ReceiverKind, Stmt, SumVariant, TypeDecl, TypeDeclKind, TypeRef,
 };
 use crate::diag::Span;
 
@@ -387,14 +388,471 @@ fn synthesize_method_inner<Q: DeriveQuery>(
         });
     }
 
-    // Ф.2: per-protocol synthesizers — stub. Ф.3 (next commit) реализует
-    // real synthesis bodies: synthesize_equal / hash / clone / compare / fmt.
-    // Эта ветка покрывается тестами в Ф.3 — Ф.2 покрывает infra-level
-    // (cycle / eligibility / iteration / context).
-    Err(DeriveError::UnsupportedTypeKind {
-        type_name: type_decl.name.clone(),
-        kind: format!("Ф.3-pending synthesizer for {}", protocol),
-        protocol: protocol.to_string(),
+    // Ф.3: dispatch к per-protocol synthesizer body builders.
+    match protocol {
+        EQUATABLE => synthesize_equal(_ctx, type_decl),
+        HASHABLE => synthesize_hash(_ctx, type_decl),
+        CLONEABLE => synthesize_clone(_ctx, type_decl),
+        COMPARABLE => synthesize_compare(_ctx, type_decl),
+        PRINTABLE => synthesize_fmt(_ctx, type_decl),
+        _ => unreachable!("is_builtin_protocol guarded earlier"),
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// AST builder helpers — Ф.3 синтез построен поверх этих helper'ов.
+// ────────────────────────────────────────────────────────────────────────
+
+fn span_dummy() -> Span {
+    Span::dummy()
+}
+
+fn ex(kind: ExprKind) -> Expr {
+    Expr::new(kind, span_dummy())
+}
+
+fn ident(name: &str) -> Expr {
+    ex(ExprKind::Ident(name.to_string()))
+}
+
+fn self_field(field_name: &str) -> Expr {
+    ex(ExprKind::Member {
+        obj: Box::new(ex(ExprKind::SelfAccess)),
+        name: field_name.to_string(),
+    })
+}
+
+fn ident_field(obj_name: &str, field_name: &str) -> Expr {
+    ex(ExprKind::Member {
+        obj: Box::new(ident(obj_name)),
+        name: field_name.to_string(),
+    })
+}
+
+fn call(target: Expr, args: Vec<Expr>) -> Expr {
+    ex(ExprKind::Call {
+        func: Box::new(target),
+        args: args.into_iter().map(CallArg::Item).collect(),
+        trailing: None,
+    })
+}
+
+fn member_call(obj: Expr, method: &str, args: Vec<Expr>) -> Expr {
+    let func = ex(ExprKind::Member {
+        obj: Box::new(obj),
+        name: method.to_string(),
+    });
+    call(func, args)
+}
+
+fn binop(op: BinOp, l: Expr, r: Expr) -> Expr {
+    ex(ExprKind::Binary {
+        op,
+        left: Box::new(l),
+        right: Box::new(r),
+    })
+}
+
+fn type_ref_named(name: &str) -> TypeRef {
+    TypeRef::Named {
+        path: vec![name.to_string()],
+        generics: vec![],
+        span: span_dummy(),
+    }
+}
+
+fn type_ref_self() -> TypeRef {
+    type_ref_named("Self")
+}
+
+fn block_with_trailing(stmts: Vec<Stmt>, trailing: Expr) -> Block {
+    Block {
+        stmts,
+        trailing: Some(Box::new(trailing)),
+        span: span_dummy(),
+        is_unsafe: false,
+    }
+}
+
+/// Создать FnDecl shell для synthesized method.
+fn make_synth_method(
+    type_name: &str,
+    method_name: &str,
+    params: Vec<Param>,
+    return_type: Option<TypeRef>,
+    body: FnBody,
+) -> FnDecl {
+    FnDecl {
+        name: method_name.to_string(),
+        receiver: Some(Receiver {
+            type_name: type_name.to_string(),
+            generics: vec![],
+            kind: ReceiverKind::Instance,
+            mutable: false,
+            consume: false,
+            span: span_dummy(),
+        }),
+        params,
+        effects: vec![],
+        return_type,
+        return_is_const: false,
+        returns_receiver: false,
+        body,
+        span: span_dummy(),
+        is_export: false,
+        is_external: false,
+        ..FnDecl::default()
+    }
+}
+
+fn make_param(name: &str, ty: TypeRef) -> Param {
+    Param {
+        name: name.to_string(),
+        ty,
+        span: span_dummy(),
+        is_variadic: false,
+        default: None,
+        consume: false,
+        is_mut: false,
+        is_const: false,
+    }
+}
+
+fn is_primitive_field(t: &TypeRef) -> bool {
+    matches!(t.strip_modifiers(), TypeRef::Named { path, .. }
+        if path.len() == 1 && is_primitive_type(&path[0]))
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Per-protocol synthesizers (Ф.3)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Synthesize `@equals(other Self) -> bool` — memberwise && combine.
+///
+/// Empty record/named-tuple → returns `true` (trivially equal).
+/// Sum-type → V1: identity-eq placeholder (rich match-arms — followup).
+pub fn synthesize_equal<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let body_expr = if let Some(fields) = iter_fields(type_decl) {
+        synth_equal_record_body(&fields)
+    } else if iter_sum_variants(type_decl).is_some() {
+        // Sum-type equal: V1 — defer к identity (compiler resolves через
+        // existing eq mechanism для sum). Rich match-arms — followup
+        // [M-126-sum-equal-rich].
+        binop(BinOp::Eq, ex(ExprKind::SelfAccess), ident("other"))
+    } else {
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: type_decl_kind_name(type_decl).to_string(),
+            protocol: EQUATABLE.to_string(),
+        });
+    };
+
+    Ok(make_synth_method(
+        &type_decl.name,
+        "equals",
+        vec![make_param("other", type_ref_self())],
+        Some(type_ref_named("bool")),
+        FnBody::Expr(body_expr),
+    ))
+}
+
+fn synth_equal_record_body(fields: &[DerivedField]) -> Expr {
+    if fields.is_empty() {
+        return ex(ExprKind::BoolLit(true));
+    }
+    // f1 == other.f1 && f2 == other.f2 && ...
+    let mut iter = fields.iter();
+    let first = iter.next().unwrap();
+    let mut acc = binop(BinOp::Eq, self_field(&first.name), ident_field("other", &first.name));
+    for f in iter {
+        let cmp = binop(BinOp::Eq, self_field(&f.name), ident_field("other", &f.name));
+        acc = binop(BinOp::And, acc, cmp);
+    }
+    acc
+}
+
+/// Synthesize `@hash() -> u64` — XOR + rotate combine FxHash-style.
+///
+/// Empty type-body → returns `0u64`.
+/// Combine formula: `acc ^= field_i.hash() rotate_left(13*i)`.
+pub fn synthesize_hash<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let body_expr = if let Some(fields) = iter_fields(type_decl) {
+        synth_hash_record_body(&fields)
+    } else if iter_sum_variants(type_decl).is_some() {
+        // Sum-type hash: discriminant + payload-hash combine — V1 placeholder.
+        // Followup [M-126-sum-hash-rich].
+        ex(ExprKind::IntLit(0))
+    } else {
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: type_decl_kind_name(type_decl).to_string(),
+            protocol: HASHABLE.to_string(),
+        });
+    };
+
+    Ok(make_synth_method(
+        &type_decl.name,
+        "hash",
+        vec![],
+        Some(type_ref_named("u64")),
+        FnBody::Expr(body_expr),
+    ))
+}
+
+fn synth_hash_record_body(fields: &[DerivedField]) -> Expr {
+    if fields.is_empty() {
+        return ex(ExprKind::IntLit(0));
+    }
+    // acc = f0.hash()
+    // acc = acc xor (f1.hash() rotate_left(13))
+    // acc = acc xor (f2.hash() rotate_left(26))
+    // ...
+    let mut iter = fields.iter().enumerate();
+    let (_, first) = iter.next().unwrap();
+    let mut acc = member_call(self_field(&first.name), "hash", vec![]);
+    for (i, f) in iter {
+        let h = member_call(self_field(&f.name), "hash", vec![]);
+        let shift = ex(ExprKind::IntLit(((13 * i) % 64) as i64));
+        let shifted = member_call(h, "rotate_left", vec![shift]);
+        acc = binop(BinOp::BitXor, acc, shifted);
+    }
+    acc
+}
+
+/// Synthesize `@clone() -> Self` — recursive deep clone.
+///
+/// Record / NamedTuple → record literal с `field: @field.clone()` per поле.
+/// Primitive поля копируются через `@field` без `.clone()` (compiler
+/// resolves к built-in copy semantics).
+/// Sum-type → V1: returns @ itself (shallow copy для unit variants);
+/// rich clone — followup.
+pub fn synthesize_clone<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let body_expr = if let Some(fields) = iter_fields(type_decl) {
+        synth_clone_record_body(&type_decl.name, &fields)
+    } else if iter_sum_variants(type_decl).is_some() {
+        // Sum-type clone — V1 placeholder. Followup [M-126-sum-clone-rich].
+        ex(ExprKind::SelfAccess)
+    } else {
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: type_decl_kind_name(type_decl).to_string(),
+            protocol: CLONEABLE.to_string(),
+        });
+    };
+
+    Ok(make_synth_method(
+        &type_decl.name,
+        "clone",
+        vec![],
+        Some(type_ref_self()),
+        FnBody::Expr(body_expr),
+    ))
+}
+
+fn synth_clone_record_body(type_name: &str, fields: &[DerivedField]) -> Expr {
+    let lit_fields: Vec<RecordLitField> = fields
+        .iter()
+        .map(|f| {
+            let cloned = if is_primitive_field(&f.ty) {
+                // Primitive: shallow copy via @field — no recursion.
+                self_field(&f.name)
+            } else {
+                member_call(self_field(&f.name), "clone", vec![])
+            };
+            RecordLitField {
+                name: f.name.clone(),
+                value: Some(cloned),
+                is_spread: false,
+                at_shorthand: false,
+                span: span_dummy(),
+            }
+        })
+        .collect();
+
+    ex(ExprKind::RecordLit {
+        type_name: Some(vec![type_name.to_string()]),
+        fields: lit_fields,
+        inferred_map_v: None,
+    })
+}
+
+/// Synthesize `@compare(other Self) -> int` — lexicographic if-chain.
+///
+/// Empty type-body → returns `0` (always equal).
+/// Sum-type → V1 placeholder (returns 0).
+pub fn synthesize_compare<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let body = if let Some(fields) = iter_fields(type_decl) {
+        synth_compare_record_body(&fields)
+    } else if iter_sum_variants(type_decl).is_some() {
+        // Sum-type compare — V1 placeholder. Followup [M-126-sum-compare-rich].
+        FnBody::Expr(ex(ExprKind::IntLit(0)))
+    } else {
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: type_decl_kind_name(type_decl).to_string(),
+            protocol: COMPARABLE.to_string(),
+        });
+    };
+
+    Ok(make_synth_method(
+        &type_decl.name,
+        "compare",
+        vec![make_param("other", type_ref_self())],
+        Some(type_ref_named("int")),
+        body,
+    ))
+}
+
+fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
+    if fields.is_empty() {
+        return FnBody::Expr(ex(ExprKind::IntLit(0)));
+    }
+    // Build block:
+    //   let c_0 = @f0.compare(other.f0); if c_0 != 0 { return c_0 }
+    //   let c_1 = ...
+    //   0
+    let mut stmts: Vec<Stmt> = Vec::new();
+    for (i, f) in fields.iter().enumerate() {
+        let cmp_call = member_call(
+            self_field(&f.name),
+            "compare",
+            vec![ident_field("other", &f.name)],
+        );
+        let var_name = format!("__nv_cmp_{}", i);
+        let let_decl = crate::ast::LetDecl {
+            mutable: false,
+            pattern: crate::ast::Pattern::Ident {
+                name: var_name.clone(),
+                span: span_dummy(),
+                is_mut: false,
+            },
+            ty: Some(type_ref_named("int")),
+            value: cmp_call,
+            span: span_dummy(),
+            is_ghost: false,
+            consume: false,
+        };
+        stmts.push(Stmt::Let(let_decl));
+        // if c != 0 { return c }
+        let cond = binop(BinOp::Neq, ident(&var_name), ex(ExprKind::IntLit(0)));
+        let then_block = Block {
+            stmts: vec![Stmt::Return {
+                value: Some(ident(&var_name)),
+                span: span_dummy(),
+            }],
+            trailing: None,
+            span: span_dummy(),
+            is_unsafe: false,
+        };
+        stmts.push(Stmt::Expr(ex(ExprKind::If {
+            cond: Box::new(cond),
+            then: then_block,
+            else_: None,
+        })));
+    }
+    FnBody::Block(block_with_trailing(stmts, ex(ExprKind::IntLit(0))))
+}
+
+/// Synthesize `@fmt(sb StringBuilder) -> ()` — memberwise format.
+///
+/// Output form: `TypeName { f1: <fmt_f1>, f2: <fmt_f2> }`.
+/// Empty type-body → `sb.append("TypeName")`.
+/// Sum-type → V1 placeholder (appends type name).
+pub fn synthesize_fmt<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let body = if let Some(fields) = iter_fields(type_decl) {
+        synth_fmt_record_body(&type_decl.name, &fields)
+    } else if iter_sum_variants(type_decl).is_some() {
+        // Sum-type fmt — V1 placeholder. Followup [M-126-sum-fmt-rich].
+        FnBody::Block(simple_fmt_block(&type_decl.name))
+    } else {
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: type_decl_kind_name(type_decl).to_string(),
+            protocol: PRINTABLE.to_string(),
+        });
+    };
+
+    Ok(make_synth_method(
+        &type_decl.name,
+        "fmt",
+        vec![make_param("sb", type_ref_named("StringBuilder"))],
+        Some(TypeRef::Unit(span_dummy())),
+        body,
+    ))
+}
+
+fn simple_fmt_block(type_name: &str) -> Block {
+    Block {
+        stmts: vec![Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(type_name.to_string()))],
+        ))],
+        trailing: None,
+        span: span_dummy(),
+        is_unsafe: false,
+    }
+}
+
+fn synth_fmt_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
+    let mut stmts: Vec<Stmt> = Vec::new();
+    if fields.is_empty() {
+        stmts.push(Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(type_name.to_string()))],
+        )));
+    } else {
+        // sb.append("TypeName { ")
+        stmts.push(Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
+        )));
+        for (i, f) in fields.iter().enumerate() {
+            let prefix = if i == 0 {
+                format!("{}: ", f.name)
+            } else {
+                format!(", {}: ", f.name)
+            };
+            stmts.push(Stmt::Expr(member_call(
+                ident("sb"),
+                "append",
+                vec![ex(ExprKind::StrLit(prefix))],
+            )));
+            // @field.fmt(sb)
+            stmts.push(Stmt::Expr(member_call(
+                self_field(&f.name),
+                "fmt",
+                vec![ident("sb")],
+            )));
+        }
+        stmts.push(Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(" }".to_string()))],
+        )));
+    }
+    FnBody::Block(Block {
+        stmts,
+        trailing: None,
+        span: span_dummy(),
+        is_unsafe: false,
     })
 }
 
@@ -724,19 +1182,218 @@ mod tests {
         assert_eq!(type_ref_render(&tup), "(int, str)");
     }
 
-    // ─── T20: synth stub returns sentinel error in Ф.2 ───────────────
+    // ─── T20: Ф.3 — synthesize_equal — record with primitives ────────
     #[test]
-    fn t20_synth_stub_returns_unsupported_in_f2() {
+    fn t20_synthesize_equal_record_primitives() {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
-        let td = make_record_type("Vec3", &[("x", "f64"), ("y", "f64")]);
-        let err = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap_err();
-        // Ф.2: synth stub; Ф.3 will return Ok(FnDecl).
+        let td = make_record_type("Vec3", &[("x", "f64"), ("y", "f64"), ("z", "f64")]);
+        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
+        assert_eq!(fd.name, "equals");
+        assert_eq!(fd.params.len(), 1);
+        assert_eq!(fd.params[0].name, "other");
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::Binary { op: BinOp::And, .. } => {}
+                _ => panic!("expected And-chain root for 3-field equal"),
+            },
+            _ => panic!("expected FnBody::Expr"),
+        }
+    }
+
+    // ─── T21: Ф.3 — synthesize_equal — empty record ──────────────────
+    #[test]
+    fn t21_synthesize_equal_empty_record() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Empty", &[]);
+        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::BoolLit(true) => {}
+                _ => panic!("expected BoolLit(true)"),
+            },
+            _ => panic!("expected FnBody::Expr"),
+        }
+    }
+
+    // ─── T22: Ф.3 — synthesize_equal — single-field record ───────────
+    #[test]
+    fn t22_synthesize_equal_single_field() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Wrapper", &[("v", "int")]);
+        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::Binary { op: BinOp::Eq, .. } => {}
+                _ => panic!("expected single Eq for 1-field equal"),
+            },
+            _ => panic!("expected FnBody::Expr"),
+        }
+    }
+
+    // ─── T23: Ф.3 — synthesize_hash ──────────────────────────────────
+    #[test]
+    fn t23_synthesize_hash_returns_u64() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
+        let fd = synthesize_method(&mut ctx, &td, HASHABLE).unwrap();
+        assert_eq!(fd.name, "hash");
+        assert_eq!(fd.params.len(), 0);
+        match &fd.return_type {
+            Some(TypeRef::Named { path, .. }) => assert_eq!(path.last().unwrap(), "u64"),
+            _ => panic!("expected u64 return type"),
+        }
+    }
+
+    // ─── T24: Ф.3 — synthesize_clone ─────────────────────────────────
+    #[test]
+    fn t24_synthesize_clone_returns_self() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Vec3", &[("x", "f64"), ("y", "f64"), ("z", "f64")]);
+        let fd = synthesize_method(&mut ctx, &td, CLONEABLE).unwrap();
+        assert_eq!(fd.name, "clone");
+        match &fd.return_type {
+            Some(TypeRef::Named { path, .. }) => assert_eq!(path.last().unwrap(), "Self"),
+            _ => panic!("expected Self return type"),
+        }
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::RecordLit { type_name, fields, .. } => {
+                    assert_eq!(type_name.as_ref().unwrap()[0], "Vec3");
+                    assert_eq!(fields.len(), 3);
+                }
+                _ => panic!("expected RecordLit body for clone"),
+            },
+            _ => panic!("expected FnBody::Expr"),
+        }
+    }
+
+    // ─── T25: Ф.3 — synthesize_compare ───────────────────────────────
+    #[test]
+    fn t25_synthesize_compare_returns_int_block() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Money", &[("cents", "int")]);
+        let fd = synthesize_method(&mut ctx, &td, COMPARABLE).unwrap();
+        assert_eq!(fd.name, "compare");
+        assert_eq!(fd.params.len(), 1);
+        match &fd.return_type {
+            Some(TypeRef::Named { path, .. }) => assert_eq!(path.last().unwrap(), "int"),
+            _ => panic!("expected int return type"),
+        }
+        match &fd.body {
+            FnBody::Block(_) => {}
+            _ => panic!("expected FnBody::Block for compare body"),
+        }
+    }
+
+    // ─── T26: Ф.3 — synthesize_compare empty record ──────────────────
+    #[test]
+    fn t26_synthesize_compare_empty_returns_zero() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Empty", &[]);
+        let fd = synthesize_method(&mut ctx, &td, COMPARABLE).unwrap();
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::IntLit(0) => {}
+                _ => panic!("expected 0 lit for empty compare"),
+            },
+            _ => panic!("expected FnBody::Expr"),
+        }
+    }
+
+    // ─── T27: Ф.3 — synthesize_fmt ───────────────────────────────────
+    #[test]
+    fn t27_synthesize_fmt_takes_stringbuilder() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
+        let fd = synthesize_method(&mut ctx, &td, PRINTABLE).unwrap();
+        assert_eq!(fd.name, "fmt");
+        assert_eq!(fd.params.len(), 1);
+        assert_eq!(fd.params[0].name, "sb");
+        match &fd.return_type {
+            Some(TypeRef::Unit(_)) => {}
+            _ => panic!("expected unit return type for fmt"),
+        }
+    }
+
+    // ─── T28: Ф.3 — synthesize fails when field not eligible ─────────
+    #[test]
+    fn t28_synthesize_fails_when_field_not_eligible() {
+        let mut q = MockQuery::new();
+        q.add_type(make_record_type("Inner", &[("a", "int")]));
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_type("Outer", &[("inner", "Inner")]);
+        let err = synthesize_method(&mut ctx, &td, CLONEABLE).unwrap_err();
         match err {
-            DeriveError::UnsupportedTypeKind { kind, .. } => {
-                assert!(kind.contains("Ф.3-pending"));
+            DeriveError::FieldLacksProtocol { type_name, field_name, .. } => {
+                assert_eq!(type_name, "Outer");
+                assert_eq!(field_name, "inner");
             }
-            other => panic!("expected pending-Ф.3 stub, got {:?}", other),
+            other => panic!("expected FieldLacksProtocol, got {:?}", other),
+        }
+    }
+
+    // ─── T29: Ф.3 — NamedTuple synthesis ─────────────────────────────
+    #[test]
+    fn t29_synthesize_named_tuple() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = TypeDecl {
+            name: "Pair".to_string(),
+            kind: TypeDeclKind::NamedTuple(vec![
+                NamedTupleField {
+                    name: "first".to_string(),
+                    ty: type_ref_named("int"),
+                    span: Span::dummy(),
+                    priv_field: false,
+                    visible_to: vec![],
+                },
+                NamedTupleField {
+                    name: "second".to_string(),
+                    ty: type_ref_named("int"),
+                    span: Span::dummy(),
+                    priv_field: false,
+                    visible_to: vec![],
+                },
+            ]),
+            span: Span::dummy(),
+            ..TypeDecl::default()
+        };
+        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
+        assert_eq!(fd.name, "equals");
+    }
+
+    // ─── T30: Ф.3 — clone body uses .clone() for non-primitive ──────
+    #[test]
+    fn t30_synthesize_clone_calls_clone_on_non_primitive() {
+        let mut q = MockQuery::new();
+        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Cloneable"));
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_record_with_impl("Outer", &[("inner", "Inner")], "Cloneable");
+        let fd = synthesize_method(&mut ctx, &td, CLONEABLE).unwrap();
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::RecordLit { fields, .. } => {
+                    assert_eq!(fields.len(), 1);
+                    // Non-primitive Inner field must use .clone() call.
+                    match &fields[0].value.as_ref().unwrap().kind {
+                        ExprKind::Call { func, .. } => match &func.kind {
+                            ExprKind::Member { name, .. } => assert_eq!(name, "clone"),
+                            _ => panic!("expected Member-call for non-primitive clone"),
+                        },
+                        _ => panic!("expected Call for non-primitive clone"),
+                    }
+                }
+                _ => panic!("expected RecordLit"),
+            },
+            _ => panic!("expected FnBody::Expr"),
         }
     }
 }
