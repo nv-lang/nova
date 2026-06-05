@@ -9696,13 +9696,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// records/sums by pointer.
     ///
     /// Plan 128 Ф.1: `recv_mutable` carries the AST `Receiver.mutable` flag
-    /// (`fn Type mut @method` vs `fn Type @method`). Currently NOT consumed —
-    /// shape-based dispatch still drives ABI choice. Ф.2/Ф.3 will use this
-    /// flag to switch value-record receivers from `NovaValue_X*` (in-place
-    /// mutation) to `NovaValue_X` by value (immutable copy) and adjust the
-    /// adapters in `prepare_method_recv` accordingly.
+    /// (`fn Type mut @method` vs `fn Type @method`).
+    ///
+    /// Plan 124.8 §2.7 + Plan 128 Ф.2 (D215 amend): NamedTuple receiver ABI
+    /// now branches on `recv_mutable` — `mut` methods take `NovaTuple_X*`
+    /// (pointer to caller's stack slot, in-place @field mutation propagates);
+    /// `ro` methods keep value ABI (`NovaTuple_X`, immutable copy). Mirrors
+    /// the NovaValue_X* pattern (D226). Other receivers (heap `Nova_X*`,
+    /// primitives) are unaffected — they already have a single ABI form.
     fn receiver_c_type(&self, type_name: &str, recv_mutable: bool) -> String {
-        let _ = recv_mutable; // Ф.1: threaded but not consumed (see Ф.2).
         match type_name {
             // Plan 70.5: uint = alias u64; size — usize-like. Both map to nova_int slot.
             "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" | "size" => "nova_int".to_string(),
@@ -9771,8 +9773,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 120 (D215): named tuple receiver — value type, no pointer.
                 // Plan 124.8 V2 (D226): value-record receiver — pointer to stack
                 // slot (NovaValue_X*) so @field mutations propagate to caller.
+                // Plan 124.8 §2.7 + Plan 128 Ф.2: NamedTuple `mut` receiver —
+                // pointer (NovaTuple_X*) so @field mutations через `mut` методы
+                // propagate to caller; `ro` receiver stays by-value (immutable copy).
                 if let Some(c_ty) = self.type_aliases.get(other) {
                     if c_ty.starts_with("NovaTuple_") {
+                        if recv_mutable {
+                            return format!("{}*", c_ty);
+                        }
                         return c_ty.clone();
                     }
                     if c_ty.starts_with("NovaValue_") {
@@ -27421,12 +27429,16 @@ _cp++; \
     /// obj_c passes through unchanged.
     ///
     /// Plan 128 Ф.1: `recv_mutable` carries the callee's AST `Receiver.mutable`
-    /// flag (`fn Type mut @method` vs `fn Type @method`). Currently NOT consumed
-    /// — adapter logic is still driven entirely by `obj_ty` shape. Ф.2 will use
-    /// the flag to skip the `&obj` adapter for immutable value-record receivers
-    /// and pass by value instead, matching the (Ф.2) receiver_c_type ABI choice.
+    /// flag (`fn Type mut @method` vs `fn Type @method`).
+    ///
+    /// Plan 124.8 §2.7 + Plan 128 Ф.2 (D215 amend): for NamedTuple receivers
+    /// (`NovaTuple_*`), `mut` methods take a pointer to the caller's slot
+    /// (`NovaTuple_X*`) — mirror the NovaValue_* adapter (D226): if `obj_c` is
+    /// already an identifier, emit `&obj`; otherwise hoist to a temp and take
+    /// `&tmp`. For `ro` methods on NamedTuple, the receiver stays by-value
+    /// (no adapter needed), matching the `receiver_c_type` choice. The
+    /// existing NovaValue_* path is unchanged (D226 always-pointer).
     fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str, recv_mutable: bool) -> String {
-        let _ = recv_mutable; // Ф.1: threaded but not consumed (see Ф.2).
         if obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*') {
             // Identifier? Direct &id.
             let trimmed = obj_c.trim();
@@ -27437,6 +27449,22 @@ _cp++; \
                 format!("&{}", trimmed)
             } else {
                 // Hoist к temp + take address.
+                let tmp = self.fresh_tmp();
+                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
+                format!("&{}", tmp)
+            }
+        } else if recv_mutable && obj_ty.starts_with("NovaTuple_") && !obj_ty.ends_with('*') {
+            // Plan 124.8 §2.7 + Plan 128 Ф.2: NamedTuple `mut` receiver — pass
+            // pointer so callee's @field writes propagate to caller. Mirror
+            // the NovaValue_* adapter shape exactly.
+            let trimmed = obj_c.trim();
+            let is_ident = !trimmed.is_empty()
+                && trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+                && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_');
+            if is_ident {
+                format!("&{}", trimmed)
+            } else {
+                // Hoist rvalue to a temp + take address.
                 let tmp = self.fresh_tmp();
                 self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                 format!("&{}", tmp)
@@ -29803,5 +29831,119 @@ mod mem_ordering_tests {
         // Different enum type — no confusion with comparison Ordering
         let e = path_expr(&["Ordering", "Less"]);
         assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
+    }
+}
+
+#[cfg(test)]
+mod named_tuple_mut_recv_abi_tests {
+    //! Plan 124.8 §2.7 + Plan 128 Ф.2 (D215 amend): NamedTuple `mut`
+    //! receiver — pointer ABI (`NovaTuple_X*`); `ro` receiver — value ABI
+    //! (`NovaTuple_X`). Mirror of NovaValue_X* pattern (D226).
+    //!
+    //! Acceptance:
+    //!   1. `receiver_c_type("Point", mut=true)` → `NovaTuple_Point*`
+    //!      когда `type_aliases["Point"] = "NovaTuple_Point"`.
+    //!   2. `receiver_c_type("Point", mut=false)` → `NovaTuple_Point`
+    //!      (ro receiver unchanged — by-value).
+    //!   3. `prepare_method_recv("p", "NovaTuple_Point", mut=true)` → `&p`
+    //!      (ident path).
+    //!   4. `prepare_method_recv("make_p()", "NovaTuple_Point", mut=true)` →
+    //!      hoists to temp, returns `&<tmp>`, AND emits a temp decl line.
+    //!   5. `prepare_method_recv("p", "NovaTuple_Point", mut=false)` → `p`
+    //!      passthrough (ro NamedTuple — no `&` adapter).
+    //!   6. NovaValue_* path не регрессирует — мут/ro оба → `&obj`
+    //!      (D226: always-pointer for value records).
+
+    use super::CEmitter;
+
+    fn emitter_with_named_tuple(alias: &str, c_ty: &str) -> CEmitter {
+        let mut e = CEmitter::new();
+        e.type_aliases.insert(alias.to_string(), c_ty.to_string());
+        e
+    }
+
+    #[test]
+    fn receiver_c_type_named_tuple_mut_returns_pointer() {
+        // Plan 128 Ф.2 — `fn Point mut @set_x` → `NovaTuple_Point*` nova_self.
+        let e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let got = e.receiver_c_type("Point", /*recv_mutable=*/ true);
+        assert_eq!(got, "NovaTuple_Point*",
+            "mut NamedTuple receiver must be pointer (Plan 124.8 §2.7)");
+    }
+
+    #[test]
+    fn receiver_c_type_named_tuple_ro_returns_value() {
+        // ro receiver — by-value (immutable copy), unchanged ABI.
+        let e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let got = e.receiver_c_type("Point", /*recv_mutable=*/ false);
+        assert_eq!(got, "NovaTuple_Point",
+            "ro NamedTuple receiver stays by-value (D215 default)");
+    }
+
+    #[test]
+    fn prepare_method_recv_named_tuple_mut_ident_takes_address() {
+        // Ident obj: emit `&p` directly, no temp.
+        let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let before_out = e.out.clone();
+        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ true);
+        assert_eq!(got, "&p", "mut NamedTuple ident receiver → &p");
+        // No temp decl emitted for ident path.
+        assert_eq!(e.out, before_out,
+            "ident path must not emit any temp decl");
+    }
+
+    #[test]
+    fn prepare_method_recv_named_tuple_mut_rvalue_hoists_to_temp() {
+        // Rvalue obj: hoist to temp, return `&<tmp>`, emit temp decl line.
+        let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let before_out = e.out.clone();
+        let got = e.prepare_method_recv("make_p()", "NovaTuple_Point", /*recv_mutable=*/ true);
+        // Must take address of a temp identifier.
+        assert!(got.starts_with("&"),
+            "rvalue path must take address: got `{}`", got);
+        assert!(!got.contains("("),
+            "rvalue path must address a temp, not the call expr itself: got `{}`", got);
+        // A temp decl must have been emitted into `out`.
+        let emitted = &e.out[before_out.len()..];
+        assert!(emitted.contains("NovaTuple_Point"),
+            "expected NovaTuple_Point temp decl; emitted = {:?}", emitted);
+        assert!(emitted.contains("= make_p();"),
+            "expected `= make_p();` initializer; emitted = {:?}", emitted);
+    }
+
+    #[test]
+    fn prepare_method_recv_named_tuple_ro_passes_through() {
+        // ro NamedTuple receiver — no adapter; obj_c passes through verbatim.
+        let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
+        let before_out = e.out.clone();
+        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ false);
+        assert_eq!(got, "p", "ro NamedTuple receiver: no &-adapter (by-value)");
+        assert_eq!(e.out, before_out, "ro path emits nothing into out");
+    }
+
+    #[test]
+    fn prepare_method_recv_value_record_unchanged_by_recv_mutable_flag() {
+        // Regression: D226 NovaValue_* path is recv_mutable-INSENSITIVE
+        // (always-pointer, in-place mutation). Both mut=true и mut=false
+        // must still emit `&p`.
+        let mut e_mut = CEmitter::new();
+        let got_mut = e_mut.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ true);
+        assert_eq!(got_mut, "&p", "NovaValue_X mut receiver: &p (D226)");
+
+        let mut e_ro = CEmitter::new();
+        let got_ro = e_ro.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ false);
+        assert_eq!(got_ro, "&p",
+            "NovaValue_X ro receiver: still &p (D226 always-pointer)");
+    }
+
+    #[test]
+    fn receiver_c_type_heap_record_unchanged_by_recv_mutable_flag() {
+        // Regression: heap records `Nova_X*` are recv_mutable-INSENSITIVE
+        // (already pointer ABI — single form). Both mut и ro → `Nova_X*`.
+        let e = CEmitter::new();
+        let got_mut = e.receiver_c_type("Widget", /*recv_mutable=*/ true);
+        let got_ro  = e.receiver_c_type("Widget", /*recv_mutable=*/ false);
+        assert_eq!(got_mut, "Nova_Widget*");
+        assert_eq!(got_ro,  "Nova_Widget*");
     }
 }
