@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] POSITIVE:
+// Nested consume{} shields properly restore outer's deadline on inner leave.
+//
+// **Bug history (2026-06-05):** nv_consume_leave_shield only cleared
+// deadline when mask reached 0. Nested scenario:
+//   1. Outer consume enters: deadline = t_outer + budget_outer.
+//   2. Inner consume enters (e.g., в on_exit of unrelated resource): deadline
+//      OVERWRITTEN to t_inner + budget_inner.
+//   3. Inner leaves: deadline NOT restored (mask still > 0).
+//   4. Outer body resumes — sees inner's stale (shorter) deadline.
+//   5. Outer body runs longer than inner's stale budget → suspend fires
+//      bogus CleanupTimeoutError с inflated over_ms (appeared as i64 underflow).
+//
+// **Fix:** enter returns prev_deadline; leave takes it back для restore.
+// Codegen saves в local var per consume-block.
+//
+// **Acceptance:** outer consume с реалистичным timeout (1000ms) wraps
+// inner consume с tiny timeout (5ms). Inner completes inside budget.
+// Outer continues body for ~50ms (well over inner budget, well under outer
+// budget). Outer must NOT throw CleanupTimeoutError — pre-fix it would.
+
+module plan110.nested_shield_deadline_restore_v1_1
+
+import std.prelude.errors
+
+type InnerRes { ro id int }
+fn InnerRes.new(id int) -> InnerRes => { id }
+// Inner с tiny budget 5ms.
+fn InnerRes @exit_timeout_ms() -> int => 5
+fn InnerRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+type OuterRes { ro id int }
+fn OuterRes.new(id int) -> OuterRes => { id }
+// Outer с realistic budget 1000ms.
+fn OuterRes @exit_timeout_ms() -> int => 1000
+fn OuterRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn run_nested() -> int {
+    mut result = 0
+    consume outer = OuterRes.new(100) {
+        // Inner shield enters + exits cleanly (well within 5ms budget).
+        consume inner = InnerRes.new(1) {
+            result = inner.id
+        }
+        // Inner deadline pre-fix would still be active here.
+        // Outer body now sleeps 50ms — pre-fix this would fire
+        // CleanupTimeoutError (50ms > 5ms inner's stale budget).
+        Time.sleep(50)
+        result = result + outer.id
+    }
+    return result
+}
+
+test "Plan 110.x: nested consume{} shields restore outer deadline" {
+    // Pre-fix: this would throw CleanupTimeoutError при Time.sleep(50)
+    // because deadline = t_inner + 5ms (stale from inner shield).
+    // Post-fix: outer's 1000ms deadline restored на inner leave → sleep OK.
+    ro r = run_nested()
+    assert(r == 101)  // inner.id=1 + outer.id=100
+}

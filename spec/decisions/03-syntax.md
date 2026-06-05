@@ -8747,6 +8747,16 @@ fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
 2. **Inner consume{} создаёт свой shield** с своим timeout. Cancel
    доставка остаётся **глобально pending** до выхода **outer cleanup**.
 
+   **R4 amend (2026-06-05) [M-110.x-cleanup-shield-deadline-underflow] fix:**
+   Inner shield's deadline **shadows** outer's. На inner leave outer's
+   deadline **должна быть restored** (через prev_deadline save+restore
+   pattern в `nv_consume_enter_shield` returning prev / `nv_consume_leave_shield`
+   accepting prev arg). Pre-fix bug: `nv_consume_leave_shield()` cleared
+   deadline только when mask reached 0 — left inner's stale (shorter)
+   deadline visible к outer body, producing inflated/bogus
+   CleanupTimeoutError fires (appeared as i64 underflow в reports).
+   Codegen threads prev_deadline через local var per consume-block.
+
 3. **Inner `on_exit` ошибки compose в локальный MultiError**. Если он
    throws — outer `on_exit` получает это в propagation:
    - outer.on_exit started → outcome = Failure(orig)

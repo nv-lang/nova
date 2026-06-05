@@ -15065,7 +15065,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 110.2.1 (D188 R3): enter cancel-shield для body
                 // execution + cleanup. Runtime: nova_cancel_mask_inc +
                 // deadline_ns capture (Plan 110.2.1.a + 110.2.2.a).
-                self.line(&format!("nv_consume_enter_shield({});", timeout_var));
+                //
+                // Plan 110.x [M-110.x-cleanup-shield-deadline-underflow]
+                // fix (2026-06-05): enter теперь возвращает prev deadline;
+                // codegen saves в local var per consume-block; leave принимает
+                // его back для restore (fixes nested-shield deadline shadowing).
+                let prev_deadline_var = self.fresh_tmp();
+                self.line(&format!(
+                    "int64_t {} = nv_consume_enter_shield({});",
+                    prev_deadline_var, timeout_var
+                ));
 
                 // Plan 110.4.4.a (D185): Cleanup effect on_scope_enter
                 // dispatch. Observability-only — invoked если user handler
@@ -15174,7 +15183,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
 
                 // Plan 110.2.1: leave cancel-shield before re-propagation.
                 // Pending cancel (if any) delivered после leave_shield.
-                self.line(&format!("nv_consume_leave_shield();"));
+                // Plan 110.x deadline-underflow fix: pass prev_deadline для
+                // restoration outer's shield deadline (nested-shield safety).
+                self.line(&format!(
+                    "nv_consume_leave_shield({});",
+                    prev_deadline_var
+                ));
 
                 // 110.1.4.f: re-raise после on_exit на Failure outcome.
                 // 110.1.4.g: re-panic на Panic outcome (через nv_panic →

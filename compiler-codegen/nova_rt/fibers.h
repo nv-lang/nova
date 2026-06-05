@@ -1262,9 +1262,16 @@ static inline int64_t nova_cancel_deadline_get(mco_coro* co) {
  * THEN restored by inner leave via save-on-enter/restore-on-leave
  * (deferred to 110.2.2.a). Bootstrap: simpler overwrite + restore via
  * caller's saved local — emit_c.rs handles. */
-static inline void nv_consume_enter_shield(int deadline_ms) {
+/* Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] fix (2026-06-05):
+ * enter returns previous deadline so leave can restore it. Previously nested
+ * consume{} would overwrite outer's deadline и leave only cleared when mask
+ * reached 0 — outer body resuming saw stale inner deadline, producing inflated
+ * over-budget reports (appeared as i64 underflow). D196 нормирует:
+ * inner shadows outer's deadline, outer's deadline restored на inner leave. */
+static inline int64_t nv_consume_enter_shield(int deadline_ms) {
     mco_coro* co = mco_running();
-    if (!co) return;  /* main thread / non-fiber — shield is no-op */
+    if (!co) return 0;  /* main thread / non-fiber — shield is no-op */
+    int64_t prev_deadline = nova_cancel_deadline_get(co);
     nova_cancel_mask_inc(co);
     if (deadline_ms > 0) {
         int64_t now_ns = (int64_t)uv_hrtime();
@@ -1273,17 +1280,17 @@ static inline void nv_consume_enter_shield(int deadline_ms) {
         /* #realtime bypass (D198): deadline_ms == 0 → no deadline check. */
         nova_cancel_deadline_set(co, 0);
     }
+    return prev_deadline;
 }
 
-static inline void nv_consume_leave_shield(void) {
+static inline void nv_consume_leave_shield(int64_t prev_deadline) {
     mco_coro* co = mco_running();
     if (!co) return;
     nova_cancel_mask_dec(co);
-    /* Reset deadline only when fully unshielded; nested cleanup body
-     * inside on_exit may still need outer deadline visible. */
-    if (nova_cancel_mask_load(co) == 0) {
-        nova_cancel_deadline_set(co, 0);
-    }
+    /* Plan 110.x fix: restore outer's deadline (or 0 если outermost).
+     * Previously cleared only at mask=0 — left inner's deadline visible
+     * к outer body, causing bogus cleanup-timeout fires. */
+    nova_cancel_deadline_set(co, prev_deadline);
 }
 
 /* Plan 110.2.2.a (D188 R3 + D192): deadline check called at suspend
