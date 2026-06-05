@@ -1,10 +1,10 @@
 // Plan 128 Ф.4 T14 — record-record composition с named-tuple field;
-// ro-methods on the field through projection + workaround-pattern
-// for mut-method (extract field → mutate → write back).
+// ro-methods on the field through projection + extract-rebind-writeback
+// flow as a non-chained variant.
 //
-// Direct `obj.v.mut_method()` known V1 limitation (Ф.2 hoists field
-// rvalue to temp, write-back lost). This test demonstrates the
-// canonical workaround flow.
+// The direct `obj.v.mut_method()` chained form is lifted by Plan 128.1
+// Ф.1 and covered in T12b/T14b; this fixture keeps the rebind pattern
+// as regression guard для the explicit extract-mutate-write flow.
 
 module plan128.t14_named_tuple_in_record_ok
 

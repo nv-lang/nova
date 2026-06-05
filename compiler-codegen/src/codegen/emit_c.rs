@@ -19948,7 +19948,7 @@ _cp++; \
                                 // (registered with AST flag) — Ф.2 consumes it to
                                 // switch immutable receivers к by-value passing.
                                 let obj_ty_local = self.infer_expr_c_type(obj);
-                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, sig.recv_mutable);
+                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 // D178: fill in default values for omitted trailing params.
@@ -20989,7 +20989,7 @@ _cp++; \
                             .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
                             .map(|s| s.recv_mutable)
                             .unwrap_or(false);
-                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable);
+                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable, Some(obj));
                         let mut arg_strs = vec![obj_c];
                         for a in args {
                             if is_generic_type {
@@ -24512,9 +24512,20 @@ _cp++; \
                     let v = self.emit_expr(expr)?;
                     // Heap-alloc only when storing as nova_int pointer (boxed).
                     // When elem_ty is a primitive (str/bool/f64/byte), push directly.
+                    //
+                    // Plan 128.1 Ф.2 — D215 NamedTuple element + heap-record element:
+                    // `[Vec3(1,2,3), Vec3(4,5,6)]` где Vec3 = NamedTuple даёт
+                    // ety = "NovaTuple_Vec3" (value-type compound literal). Без
+                    // box-cast'а compound literal — rvalue, нельзя сохранить
+                    // указатель. Symmetric для heap-records (Nova_*) на случай
+                    // когда infer вернул их как value (а не как `Nova_X*`).
                     let needs_heap_alloc = elem_ty == "nova_int"
-                        && (ety.starts_with("_NovaTuple") || ety == "nova_str"
-                            || ety.starts_with("NovaOpt_")) && !ety.ends_with('*');
+                        && (ety.starts_with("_NovaTuple")
+                            || ety == "nova_str"
+                            || ety.starts_with("NovaOpt_")
+                            || ety.starts_with("NovaTuple_")
+                            || ety.starts_with("Nova_"))
+                        && !ety.ends_with('*');
                     if needs_heap_alloc {
                         let heap_tmp = self.fresh_tmp();
                         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", ety, heap_tmp, ety, ety));
@@ -24551,10 +24562,16 @@ _cp++; \
         // for-loop emit'ает direct assignment вместо deref'а, что ломает
         // mono'd tuple iteration в generic method bodies.
         if first_item_ty != "nova_int" && first_item_ty != elem_ty {
+            // Plan 128.1 Ф.2 — keep whitelist in sync с needs_heap_alloc above.
+            // NamedTuple (`NovaTuple_*`) и heap-record (`Nova_*`) элементы
+            // тоже были box'нуты — array_element_types должен хранить
+            // pointer-type `<T>*` для корректного deref'а в for-loop.
             let was_boxed = elem_ty == "nova_int"
                 && (first_item_ty.starts_with("_NovaTuple")
                     || first_item_ty == "nova_str"
-                    || first_item_ty.starts_with("NovaOpt_"))
+                    || first_item_ty.starts_with("NovaOpt_")
+                    || first_item_ty.starts_with("NovaTuple_")
+                    || first_item_ty.starts_with("Nova_"))
                 && !first_item_ty.ends_with('*');
             let stored_ty = if was_boxed {
                 format!("{}*", first_item_ty)
@@ -27646,15 +27663,92 @@ _cp++; \
     /// `&tmp`. For `ro` methods on NamedTuple, the receiver stays by-value
     /// (no adapter needed), matching the `receiver_c_type` choice. The
     /// existing NovaValue_* path is unchanged (D226 always-pointer).
-    fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str, recv_mutable: bool) -> String {
+    /// Plan 128.1 Ф.1: string-based fallback used when the AST node is
+    /// unavailable (legacy/synthesized call paths). Matches the original
+    /// V1 heuristic — a bare identifier `[_A-Za-z][_A-Za-z0-9]*` may be
+    /// addressed directly via `&id`; everything else is treated as an
+    /// rvalue and hoisted to a temp.
+    ///
+    /// Prefer the AST-aware [`Self::is_lvalue_receiver`] when the receiver
+    /// `Expr` is available — it correctly recognises projection chains
+    /// (`a.b.c`, `arr[i]`, `@field`) as addressable, fixing Bug 1
+    /// (lvalue-projection mutation lost via temp hoist).
+    fn looks_like_ident_str(obj_c: &str) -> bool {
+        let trimmed = obj_c.trim();
+        !trimmed.is_empty()
+            && trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
+            && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    /// Plan 128.1 Ф.1: classify a method-call receiver `Expr` as an
+    /// addressable lvalue.
+    ///
+    /// Addressable receivers can be passed by-pointer (`&obj_c`) without
+    /// hoisting to a temporary — callee's `@field = ...` writes propagate
+    /// back to the caller's slot. Non-addressable receivers (rvalues) must
+    /// be hoisted to a temp first (the temp address is still useful for
+    /// pointer-ABI methods, but no caller-visible mutation is possible).
+    ///
+    /// Lvalue cases (recursive):
+    /// - `Ident(_)`      — local variable / parameter slot.
+    /// - `SelfAccess`    — `@field` on `nova_self`; the receiver method
+    ///   already holds an addressable `Type*` (Plan 124.8 §2.7 / D228).
+    /// - `Member { obj, .. }` — `a.b`; addressable iff `obj` is.
+    /// - `Index { obj, .. }`  — `arr[i]`; addressable iff `obj` is.
+    /// - `TurboFish { base, .. }` — type-app sugar; addressable iff `base` is.
+    ///
+    /// Rvalue cases (everything else) — `Call`, arithmetic, literals,
+    /// `Try`, `Bang`, etc. — produce a fresh temporary, must be hoisted.
+    ///
+    /// Followup `[M-128.1-nonpure-index-key]` (P2): side-effecting index
+    /// keys (`arr[next_idx()]`) currently emit `arr->data[next_idx()]`
+    /// twice if used as a pointer-ABI receiver — once for the address-of
+    /// and once for the post-call read. V1 accepts this duplication; V2
+    /// will hoist the key into a temp before taking the address.
+    fn is_lvalue_receiver(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(_) | ExprKind::SelfAccess => true,
+            ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } =>
+                Self::is_lvalue_receiver(obj),
+            ExprKind::TurboFish { base, .. } =>
+                Self::is_lvalue_receiver(base),
+            _ => false,
+        }
+    }
+
+    /// Plan 128.1 Ф.1: adapt the C-emitted receiver for a method call to
+    /// the callee's expected ABI shape.
+    ///
+    /// `obj_ast` — the receiver `Expr` node, when available. Lets us
+    /// classify projections (`a.b.c`, `arr[i]`) as addressable via
+    /// AST inspection instead of fragile string heuristics. `None`
+    /// triggers the legacy [`Self::looks_like_ident_str`] fallback,
+    /// preserving behaviour for synthesized/delegated call paths that
+    /// don't carry an AST node.
+    ///
+    /// Cases:
+    /// - `NovaValue_X` (D226 value-record) — always pointer ABI; emit
+    ///   `&obj_c` for lvalues, hoist to temp + take address for rvalues.
+    /// - `NovaTuple_X` with `recv_mutable` (D215 Ф.2 named-tuple mut
+    ///   receiver) — same address-or-hoist rule as NovaValue_X.
+    /// - Everything else — pass receiver through unchanged (by-value).
+    fn prepare_method_recv(
+        &mut self,
+        obj_c: &str,
+        obj_ty: &str,
+        recv_mutable: bool,
+        obj_ast: Option<&Expr>,
+    ) -> String {
+        let addressable = obj_ast
+            .map(|e| Self::is_lvalue_receiver(e))
+            .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
+
         if obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*') {
-            // Identifier? Direct &id.
-            let trimmed = obj_c.trim();
-            let is_ident = !trimmed.is_empty()
-                && trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
-                && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_');
-            if is_ident {
-                format!("&{}", trimmed)
+            // Plan 124.8 V2 (D226): always-pointer ABI for value records.
+            // Plan 128.1 Ф.1: AST-aware lvalue check — `r.val.mut_m()`
+            // now correctly takes `&(r->val)` instead of hoisting.
+            if addressable {
+                format!("&({})", obj_c.trim())
             } else {
                 // Hoist к temp + take address.
                 let tmp = self.fresh_tmp();
@@ -27665,12 +27759,11 @@ _cp++; \
             // Plan 124.8 §2.7 + Plan 128 Ф.2: NamedTuple `mut` receiver — pass
             // pointer so callee's @field writes propagate to caller. Mirror
             // the NovaValue_* adapter shape exactly.
-            let trimmed = obj_c.trim();
-            let is_ident = !trimmed.is_empty()
-                && trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_')
-                && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_');
-            if is_ident {
-                format!("&{}", trimmed)
+            // Plan 128.1 Ф.1: AST-aware lvalue check — `b.v.set_x()` /
+            // `arr[0].set_x()` now correctly project через `&(...)`
+            // вместо hoist-to-temp (which lost the mutation).
+            if addressable {
+                format!("&({})", obj_c.trim())
             } else {
                 // Hoist rvalue to a temp + take address.
                 let tmp = self.fresh_tmp();
@@ -30090,11 +30183,14 @@ mod named_tuple_mut_recv_abi_tests {
 
     #[test]
     fn prepare_method_recv_named_tuple_mut_ident_takes_address() {
-        // Ident obj: emit `&p` directly, no temp.
+        // Ident obj: emit `&(p)` directly, no temp.
+        // Plan 128.1 Ф.1: AST-aware path wraps the receiver in parens to
+        // be safe under projection chains (`&(b->v)`); for bare idents
+        // `&(p)` is semantically identical to `&p`.
         let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
         let before_out = e.out.clone();
-        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ true);
-        assert_eq!(got, "&p", "mut NamedTuple ident receiver → &p");
+        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ true, None);
+        assert_eq!(got, "&(p)", "mut NamedTuple ident receiver → &(p)");
         // No temp decl emitted for ident path.
         assert_eq!(e.out, before_out,
             "ident path must not emit any temp decl");
@@ -30105,7 +30201,7 @@ mod named_tuple_mut_recv_abi_tests {
         // Rvalue obj: hoist to temp, return `&<tmp>`, emit temp decl line.
         let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
         let before_out = e.out.clone();
-        let got = e.prepare_method_recv("make_p()", "NovaTuple_Point", /*recv_mutable=*/ true);
+        let got = e.prepare_method_recv("make_p()", "NovaTuple_Point", /*recv_mutable=*/ true, None);
         // Must take address of a temp identifier.
         assert!(got.starts_with("&"),
             "rvalue path must take address: got `{}`", got);
@@ -30124,7 +30220,7 @@ mod named_tuple_mut_recv_abi_tests {
         // ro NamedTuple receiver — no adapter; obj_c passes through verbatim.
         let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
         let before_out = e.out.clone();
-        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ false);
+        let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ false, None);
         assert_eq!(got, "p", "ro NamedTuple receiver: no &-adapter (by-value)");
         assert_eq!(e.out, before_out, "ro path emits nothing into out");
     }
@@ -30133,15 +30229,16 @@ mod named_tuple_mut_recv_abi_tests {
     fn prepare_method_recv_value_record_unchanged_by_recv_mutable_flag() {
         // Regression: D226 NovaValue_* path is recv_mutable-INSENSITIVE
         // (always-pointer, in-place mutation). Both mut=true и mut=false
-        // must still emit `&p`.
+        // must still emit `&(p)` (Plan 128.1: parens added for projection
+        // safety; semantically equivalent for bare idents).
         let mut e_mut = CEmitter::new();
-        let got_mut = e_mut.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ true);
-        assert_eq!(got_mut, "&p", "NovaValue_X mut receiver: &p (D226)");
+        let got_mut = e_mut.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ true, None);
+        assert_eq!(got_mut, "&(p)", "NovaValue_X mut receiver: &(p) (D226)");
 
         let mut e_ro = CEmitter::new();
-        let got_ro = e_ro.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ false);
-        assert_eq!(got_ro, "&p",
-            "NovaValue_X ro receiver: still &p (D226 always-pointer)");
+        let got_ro = e_ro.prepare_method_recv("p", "NovaValue_Cfg", /*recv_mutable=*/ false, None);
+        assert_eq!(got_ro, "&(p)",
+            "NovaValue_X ro receiver: still &(p) (D226 always-pointer)");
     }
 
     #[test]
@@ -30153,5 +30250,342 @@ mod named_tuple_mut_recv_abi_tests {
         let got_ro  = e.receiver_c_type("Widget", /*recv_mutable=*/ false);
         assert_eq!(got_mut, "Nova_Widget*");
         assert_eq!(got_ro,  "Nova_Widget*");
+    }
+}
+
+#[cfg(test)]
+mod lvalue_receiver_tests {
+    //! Plan 128.1 Ф.1: AST-aware `is_lvalue_receiver` + lvalue path в
+    //! `prepare_method_recv`. Closes Bug 1 (lvalue-projection mutation
+    //! silently lost via temp-hoist).
+    //!
+    //! Acceptance:
+    //!   1. `b.v.set_x()` (Member of Ident, NamedTuple) → `&(b->v)` —
+    //!      no temp, mutation propagates.
+    //!   2. `r.val.mut_m()` (Member of Ident, NovaValue_X) → `&(r->val)`
+    //!      — same fix benefits the value-record path.
+    //!   3. `arr[0].set_x()` (Index of Ident, NamedTuple) →
+    //!      `&(arr->data[0])`.
+    //!   4. `@field.mut_m()` (Member of SelfAccess) →
+    //!      `&(nova_self->field)`.
+    //!   5. `a.b.c.set_x()` (multi-level Member chain) → `&(a->b->c)`.
+    //!   6. `make_v().set_x()` (rvalue Call) → still hoisted to temp
+    //!      (regression guard — non-lvalue must not be mis-classified).
+    //!
+    //! Followup `[M-128.1-nonpure-index-key]` documents the V2 gap для
+    //! side-effecting subscript keys.
+    use super::CEmitter;
+    use crate::ast::{Expr, ExprKind};
+    use crate::diag::Span;
+
+    fn ident(name: &str) -> Expr {
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+    }
+
+    fn member(obj: Expr, name: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
+            span: Span::dummy(),
+        }
+    }
+
+    fn index(obj: Expr, key: Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Index { obj: Box::new(obj), index: Box::new(key) },
+            span: Span::dummy(),
+        }
+    }
+
+    fn self_access() -> Expr {
+        Expr { kind: ExprKind::SelfAccess, span: Span::dummy() }
+    }
+
+    fn call(func: Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Call { func: Box::new(func), args: vec![], trailing: None },
+            span: Span::dummy(),
+        }
+    }
+
+    fn int_lit(v: i64) -> Expr {
+        Expr { kind: ExprKind::IntLit(v), span: Span::dummy() }
+    }
+
+    #[test]
+    fn test_lvalue_member_namedtuple() {
+        // `b.v.set_x()` где `b: Body { v Vec3 }`, Vec3 — NamedTuple mut
+        // receiver. Pre-Plan-128.1: obj_c = "b->v" contains '->' →
+        // hoist → mutation lost. Post-fix: Member(Ident) lvalue →
+        // `&(b->v)` (no temp), mutation propagates.
+        let mut e = CEmitter::new();
+        let before_out = e.out.clone();
+        let recv = member(ident("b"), "v");
+        let got = e.prepare_method_recv(
+            "b->v",
+            "NovaTuple_Vec3",
+            /*recv_mutable=*/ true,
+            Some(&recv),
+        );
+        assert_eq!(got, "&(b->v)",
+            "Member-of-Ident NamedTuple mut receiver → &(b->v)");
+        assert_eq!(e.out, before_out,
+            "lvalue path must not emit a temp decl");
+    }
+
+    #[test]
+    fn test_lvalue_member_value_record() {
+        // `r.val.mut_m()` где `r: Wrap { val Cfg }`, Cfg — D226
+        // value-record. Pre-Plan-128.1: same hoist bug applied for
+        // NovaValue_X*. Post-fix: shared AST-aware lvalue check.
+        let mut e = CEmitter::new();
+        let before_out = e.out.clone();
+        let recv = member(ident("r"), "val");
+        let got = e.prepare_method_recv(
+            "r->val",
+            "NovaValue_Cfg",
+            /*recv_mutable=*/ true,
+            Some(&recv),
+        );
+        assert_eq!(got, "&(r->val)",
+            "Member-of-Ident NovaValue_X receiver → &(r->val)");
+        assert_eq!(e.out, before_out,
+            "lvalue path must not emit a temp decl (NovaValue_X)");
+    }
+
+    #[test]
+    fn test_lvalue_index_namedtuple() {
+        // `arr[0].set_x()` где `arr: []Vec3`, Vec3 — NamedTuple mut
+        // receiver. Index-of-Ident is lvalue → `&(arr->data[0])` (no
+        // temp). String-based heuristic would've rejected '->' / '[' /
+        // ']' and hoisted, losing the mutation on the array element.
+        let mut e = CEmitter::new();
+        let before_out = e.out.clone();
+        let recv = index(ident("arr"), int_lit(0));
+        let got = e.prepare_method_recv(
+            "arr->data[0]",
+            "NovaTuple_Vec3",
+            /*recv_mutable=*/ true,
+            Some(&recv),
+        );
+        assert_eq!(got, "&(arr->data[0])",
+            "Index-of-Ident NamedTuple mut receiver → &(arr->data[0])");
+        assert_eq!(e.out, before_out,
+            "lvalue path must not emit a temp decl (Index)");
+    }
+
+    #[test]
+    fn test_lvalue_self_access() {
+        // `@field.mut_m()` где field — NamedTuple/value-record. Inside
+        // a method body `nova_self` already points to an addressable
+        // slot (Plan 124.8 §2.7), so `@field` (= `nova_self->field`)
+        // is itself an lvalue: `&(nova_self->field)`.
+        let mut e = CEmitter::new();
+        let before_out = e.out.clone();
+        let recv = member(self_access(), "field");
+        let got = e.prepare_method_recv(
+            "nova_self->field",
+            "NovaTuple_Vec3",
+            /*recv_mutable=*/ true,
+            Some(&recv),
+        );
+        assert_eq!(got, "&(nova_self->field)",
+            "Member-of-SelfAccess receiver → &(nova_self->field)");
+        assert_eq!(e.out, before_out,
+            "lvalue path must not emit a temp decl (SelfAccess)");
+    }
+
+    #[test]
+    fn test_multi_level_member() {
+        // `a.b.c.set_x()` — multi-level Member chain (no Index in the
+        // way). Recursive `is_lvalue_receiver` must classify the whole
+        // chain as addressable — terminating в `Ident("a")` root.
+        let mut e = CEmitter::new();
+        let before_out = e.out.clone();
+        // Receiver expression for `a.b.c.set_x()` is `a.b.c`. The
+        // C-emit string is `a->b->c`.
+        let recv_obj = member(member(ident("a"), "b"), "c");
+        let got = e.prepare_method_recv(
+            "a->b->c",
+            "NovaTuple_Vec3",
+            /*recv_mutable=*/ true,
+            Some(&recv_obj),
+        );
+        assert_eq!(got, "&(a->b->c)",
+            "Multi-level Member chain → &(a->b->c)");
+        assert_eq!(e.out, before_out,
+            "lvalue path must not emit a temp decl (multi-Member)");
+    }
+
+    #[test]
+    fn test_rvalue_call_still_hoists() {
+        // Regression guard: `make_v().set_x()` — receiver is a Call
+        // (rvalue, no caller-visible storage). Must hoist to a temp;
+        // the post-call mutation is lost (correct V1 behaviour — there's
+        // nothing to write back to).
+        let mut e = CEmitter::new();
+        let before_out = e.out.clone();
+        let recv = call(ident("make_v"));
+        let got = e.prepare_method_recv(
+            "make_v()",
+            "NovaTuple_Vec3",
+            /*recv_mutable=*/ true,
+            Some(&recv),
+        );
+        // Must take address of a temp identifier (no parens on a Call).
+        assert!(got.starts_with("&"),
+            "rvalue path must take address: got `{}`", got);
+        assert!(!got.contains("("),
+            "rvalue path must address a temp, not `make_v()`: got `{}`", got);
+        // A temp decl must have been emitted into `out`.
+        let emitted = &e.out[before_out.len()..];
+        assert!(emitted.contains("NovaTuple_Vec3"),
+            "expected NovaTuple_Vec3 temp decl; emitted = {:?}", emitted);
+        assert!(emitted.contains("= make_v();"),
+            "expected `= make_v();` initializer; emitted = {:?}", emitted);
+    }
+
+    #[test]
+    fn test_is_lvalue_receiver_pure_predicate() {
+        // Pure-predicate sanity: bare `Ident`, `SelfAccess`, `Member`,
+        // `Index`, `TurboFish` of an Ident are lvalues; `Call`,
+        // `IntLit`, arithmetic-like nodes are not. Recursion through
+        // Member/Index unfolds correctly.
+        assert!(CEmitter::is_lvalue_receiver(&ident("x")));
+        assert!(CEmitter::is_lvalue_receiver(&self_access()));
+        assert!(CEmitter::is_lvalue_receiver(&member(ident("a"), "b")));
+        assert!(CEmitter::is_lvalue_receiver(&index(ident("a"), int_lit(0))));
+        assert!(CEmitter::is_lvalue_receiver(&member(index(ident("a"), int_lit(0)), "b")));
+
+        assert!(!CEmitter::is_lvalue_receiver(&call(ident("make_v"))));
+        assert!(!CEmitter::is_lvalue_receiver(&int_lit(42)));
+        // Member of a Call — root is rvalue, whole chain rvalue.
+        assert!(!CEmitter::is_lvalue_receiver(&member(call(ident("make_v")), "v")));
+        // Index of a Call — root is rvalue, whole chain rvalue.
+        assert!(!CEmitter::is_lvalue_receiver(&index(call(ident("mk")), int_lit(0))));
+    }
+}
+
+#[cfg(test)]
+mod array_lit_named_tuple_box_tests {
+    //! Plan 128.1 Ф.2 — D215 NamedTuple element + heap-record element в
+    //! array literal must heap-alloc (box) via `nova_alloc(sizeof(NovaTuple_X))`
+    //! и push as `nova_int` (pointer-stomp). Без fix'а compound literal
+    //! `((NovaTuple_Vec3){...})` пушился raw в `nova_array_push_nova_int` →
+    //! C compile error (struct-to-int cast).
+    //!
+    //! Coverage:
+    //!   1. `[Vec3(1.0,2.0,3.0)]` (NamedTuple element) — heap-box path.
+    //!   2. Value-record D226 element (`NovaValue_Cfg`) — current
+    //!      whitelist preserves existing behaviour (regression guard).
+    //!
+    //! Tests use the public `emit_array_lit` (re-exported via super::CEmitter)
+    //! и проверяют side-effect output (the `nova_alloc` line) instead of
+    //! per-AST golden-snapshot.
+    use super::{CEmitter, ArrayElem};
+    use crate::ast::{CallArg, Expr, ExprKind};
+    use crate::diag::Span;
+
+    fn ident(name: &str) -> Expr {
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+    }
+
+    fn float_lit(v: f64) -> Expr {
+        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy() }
+    }
+
+    fn call(func: Expr, args: Vec<Expr>) -> Expr {
+        Expr {
+            kind: ExprKind::Call {
+                func: Box::new(func),
+                args: args.into_iter().map(CallArg::Item).collect(),
+                trailing: None,
+            },
+            span: Span::dummy(),
+        }
+    }
+
+    #[test]
+    fn emit_array_lit_named_tuple_heap_box() {
+        // Plan 128.1 Ф.2 PRIMARY FIX (codegen). `[Vec3(1.0, 2.0, 3.0)]` где
+        // Vec3 = NamedTuple. infer_expr_c_type(Vec3(...)) = "NovaTuple_Vec3"
+        // (value struct, no pointer). Без fix'а array-lit storage (elem_ty =
+        // nova_int) попытался бы push'нуть raw compound literal в
+        // NovaArray_nova_int — invalid C cast.
+        //
+        // Post-fix: needs_heap_alloc match'ит NovaTuple_* → emit'ит
+        //   NovaTuple_Vec3* tmp = (NovaTuple_Vec3*)nova_alloc(sizeof(NovaTuple_Vec3));
+        //   *tmp = Vec3(...);
+        //   nova_array_push_nova_int(arr, (nova_int)(tmp));
+        let mut e = CEmitter::new();
+        // Register NamedTuple alias so infer_expr_c_type(Vec3(...)) returns
+        // "NovaTuple_Vec3" via the type_aliases path (см. emit_c.rs:28787).
+        e.type_aliases.insert("Vec3".into(), "NovaTuple_Vec3".into());
+        let elem = call(ident("Vec3"), vec![float_lit(1.0), float_lit(2.0), float_lit(3.0)]);
+        let elems = vec![ArrayElem::Item(elem)];
+        let before_out = e.out.clone();
+        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
+        let emitted = &e.out[before_out.len()..];
+        // Verify heap-alloc path was taken: must contain nova_alloc(sizeof(NovaTuple_Vec3)).
+        assert!(emitted.contains("nova_alloc(sizeof(NovaTuple_Vec3))"),
+            "Plan 128.1 Ф.2: NamedTuple element must heap-alloc via \
+             nova_alloc(sizeof(NovaTuple_Vec3)); emitted:\n{}", emitted);
+        // And use the NovaArray_nova_int storage (boxed via pointer-stomp).
+        assert!(emitted.contains("NovaArray_nova_int"),
+            "NamedTuple element stored в boxed NovaArray_nova_int; emitted:\n{}",
+            emitted);
+        assert!(emitted.contains("nova_array_push_nova_int"),
+            "must push as nova_int (pointer-stomp); emitted:\n{}", emitted);
+    }
+
+    #[test]
+    fn emit_array_lit_int_primitive_unchanged() {
+        // Regression guard: primitive `nova_int` element (`[1, 2, 3]`)
+        // must NOT take heap-alloc path — primitives store inline в
+        // NovaArray_nova_int. Без guard'а слишком широкий whitelist
+        // (e.g. accidentally matching int prefix) сломал бы baseline.
+        let mut e = CEmitter::new();
+        let elems = vec![
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy() }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy() }),
+        ];
+        let before_out = e.out.clone();
+        let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
+        let emitted = &e.out[before_out.len()..];
+        // Must NOT call nova_alloc (no heap-box) for primitive ints.
+        assert!(!emitted.contains("nova_alloc(sizeof("),
+            "Plan 128.1 Ф.2 REGRESSION: primitive int элементы НЕ должны \
+             heap-alloc'аться; emitted:\n{}", emitted);
+        assert!(emitted.contains("NovaArray_nova_int"),
+            "int storage must remain NovaArray_nova_int; emitted:\n{}",
+            emitted);
+    }
+
+    #[test]
+    fn emit_array_lit_value_record_unchanged() {
+        // Regression guard for D226/D228: value records (`NovaValue_X`)
+        // используют их собственный per-type array storage (e.g.
+        // NovaArrayValue_Cfg) — НЕ boxed path. Whitelist extension
+        // (Nova_ / NovaTuple_) НЕ должна случайно захватить NovaValue_
+        // тип. `"NovaValue_Cfg".starts_with("Nova_")` = false (нет
+        // underscore после "Nova"), `.starts_with("NovaTuple_")` = false —
+        // обе guard'а должны mismatch'нуть.
+        //
+        // Этот тест чисто defensive: фиксирует prefix-disjointness между
+        // Nova_/NovaTuple_/NovaValue_ family'ями. Если в будущем
+        // переименовать typedef'ы, тест немедленно flag'нет.
+        assert!(!"NovaValue_Cfg".starts_with("Nova_"),
+            "D226 NovaValue_ prefix MUST NOT match Nova_ check — иначе \
+             value-records случайно попадут в boxed array-lit path");
+        assert!(!"NovaValue_Cfg".starts_with("NovaTuple_"),
+            "D226 NovaValue_ prefix MUST NOT match NovaTuple_ check");
+        // And NovaTuple_ MUST NOT match Nova_ (handled separately).
+        assert!(!"NovaTuple_Vec3".starts_with("Nova_"),
+            "NovaTuple_ prefix must be handled by its OWN whitelist arm \
+             — не через Nova_ catch-all");
+        // Heap records `Nova_Widget*` всегда ends with `*` — needs_heap_alloc
+        // guarded by `!ety.ends_with('*')`, so they bypass boxing even
+        // если Nova_ prefix matches.
+        assert!("Nova_Widget*".ends_with('*'),
+            "heap records have trailing * — `!ety.ends_with('*')` фильтрует их");
     }
 }

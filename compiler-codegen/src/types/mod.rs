@@ -5524,7 +5524,22 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Ident(name) = &func.kind {
                     if let Some(td) = self.types.get(name) {
-                        if matches!(td.kind, TypeDeclKind::Newtype(_) | TypeDeclKind::Alias(_)) {
+                        // Plan 128.1 Ф.2 — D215 NamedTuple constructor (`Vec3(1,2,3)`)
+                        // is type-producing наряду с Newtype/Alias. Без этого
+                        // assignable() для NamedTuple bindings (e.g. `let v Vec3 = Vec3(...)`)
+                        // падает в default-int fallback, ломая infer элемента в
+                        // array-literals `[Vec3(1,2,3), Vec3(4,5,6)]`.
+                        //
+                        // Sum-variant constructors `Red(1)` НЕ попадают в этот arm:
+                        // sum variants хранятся внутри TypeDeclKind::Sum(...) (см.
+                        // walk_typeref @ 3082), а не как top-level types — поэтому
+                        // `self.types.get("Red")` → None, fallthrough preserved.
+                        if matches!(
+                            td.kind,
+                            TypeDeclKind::Newtype(_)
+                                | TypeDeclKind::Alias(_)
+                                | TypeDeclKind::NamedTuple(_)
+                        ) {
                             return Some(TypeRef::Named {
                                 path: vec![name.clone()],
                                 generics: Vec::new(),
@@ -17822,6 +17837,204 @@ mod primitive_mut_method_tests {
         assert!(joined.contains("hack"), "missing hack diag: {}", joined);
         assert!(joined.contains("inc"),  "missing inc diag: {}", joined);
         assert!(!joined.contains("len"), "len must NOT be flagged: {}", joined);
+    }
+}
+
+#[cfg(test)]
+mod named_tuple_ctor_infer_tests {
+    //! Plan 128.1 Ф.2 — D215 NamedTuple constructor type-producing path.
+    //!
+    //! Bug: `infer_expr_type(Call { func: Ident("Vec3"), .. })` returned
+    //! `None` для NamedTuple types because the `matches!` arm only listed
+    //! `TypeDeclKind::Newtype | TypeDeclKind::Alias`. Without inferred
+    //! type, `let v Vec3 = Vec3(1,2,3)` binding stored `Unknown` в scope,
+    //! cascading в default-int fallback при array-literal element infer.
+    //!
+    //! Coverage:
+    //!   1. NamedTuple ctor → Named(Vec3) — Бug fix.
+    //!   2. Newtype ctor — regression preserved (existing behaviour).
+    //!   3. Sum variant ctor (`Red(int)` from `type Color | Red(int) | ...`)
+    //!      — must STAY Unknown (variant names aren't top-level types).
+    //!      Сritical regression guard: без этого fix теоретически мог бы
+    //!      случайно отнести variant ctor к производному типу через
+    //!      `self.types.get(...)`.
+    use super::*;
+    use crate::ast::{
+        Expr, ExprKind, NamedTupleField, SumVariant, SumVariantKind, TypeDecl,
+        TypeDeclKind, TypeRef,
+    };
+    use crate::diag::Span;
+
+    fn dummy_span() -> Span {
+        Span { start: 0, end: 0, file_id: MAIN_FILE_ID }
+    }
+
+    fn make_named_tuple(name: &str, fields: Vec<(&str, &str)>) -> TypeDecl {
+        let nt_fields = fields.into_iter().map(|(fname, fty)| NamedTupleField {
+            name: fname.to_string(),
+            ty: TypeRef::Named {
+                path: vec![fty.to_string()],
+                generics: Vec::new(),
+                span: dummy_span(),
+            },
+            span: dummy_span(),
+            priv_field: false,
+            visible_to: Vec::new(),
+        }).collect();
+        TypeDecl {
+            name: name.to_string(),
+            kind: TypeDeclKind::NamedTuple(nt_fields),
+            span: dummy_span(),
+            ..Default::default()
+        }
+    }
+
+    fn make_newtype(name: &str, inner: &str) -> TypeDecl {
+        let inner_tr = TypeRef::Named {
+            path: vec![inner.to_string()],
+            generics: Vec::new(),
+            span: dummy_span(),
+        };
+        TypeDecl {
+            name: name.to_string(),
+            kind: TypeDeclKind::Newtype(inner_tr),
+            span: dummy_span(),
+            ..Default::default()
+        }
+    }
+
+    fn make_sum_with_tuple_variant(
+        sum_name: &str,
+        variant_name: &str,
+        payload_type: &str,
+    ) -> TypeDecl {
+        let payload = TypeRef::Named {
+            path: vec![payload_type.to_string()],
+            generics: Vec::new(),
+            span: dummy_span(),
+        };
+        let variant = SumVariant {
+            name: variant_name.to_string(),
+            kind: SumVariantKind::Tuple(vec![payload]),
+            discriminant: None,
+            span: dummy_span(),
+        };
+        TypeDecl {
+            name: sum_name.to_string(),
+            kind: TypeDeclKind::Sum(vec![variant]),
+            span: dummy_span(),
+            ..Default::default()
+        }
+    }
+
+    fn make_module_with_types(types: Vec<TypeDecl>) -> Module {
+        Module {
+            name: vec!["test".to_string()],
+            imports: Vec::new(),
+            items: types.into_iter().map(Item::Type).collect(),
+            attrs: Vec::new(),
+            doc_attrs: Vec::new(),
+            span: dummy_span(),
+            peer_files: Vec::new(),
+            doc: None,
+        }
+    }
+
+    fn make_ctor_call(ctor_name: &str) -> Expr {
+        // `Vec3(1, 2, 3)` shape — args contents don't matter для type infer
+        // (Call arm только смотрит на func identity).
+        Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident(ctor_name.to_string()),
+                    span: dummy_span(),
+                }),
+                args: Vec::new(),
+                trailing: None,
+            },
+            span: dummy_span(),
+        }
+    }
+
+    fn infer_ctor(ctx: &TypeCheckCtx<'_>, ctor_name: &str) -> Option<TypeRef> {
+        let call = make_ctor_call(ctor_name);
+        let scope = HashMap::new();
+        ctx.infer_expr_type(&call, &scope)
+    }
+
+    #[test]
+    fn infer_call_named_tuple_returns_type() {
+        // Plan 128.1 Ф.2 — PRIMARY FIX. `Vec3(1,2,3)` где Vec3 = NamedTuple
+        // должен возвращать Named(Vec3), не None.
+        let m = make_module_with_types(vec![
+            make_named_tuple("Vec3", vec![("x", "f64"), ("y", "f64"), ("z", "f64")]),
+        ]);
+        let ctx = TypeCheckCtx::build(&m);
+        let inferred = infer_ctor(&ctx, "Vec3");
+        match inferred {
+            Some(TypeRef::Named { path, .. }) => {
+                assert_eq!(path, vec!["Vec3".to_string()],
+                    "NamedTuple ctor must infer as its own Named type; got path {:?}",
+                    path);
+            }
+            other => panic!(
+                "Plan 128.1 Ф.2: expected Some(Named(Vec3)) для NamedTuple ctor; \
+                 got {:?}. Без fix'а type-производство NamedTuple ctor падало \
+                 в default-int.",
+                other,
+            ),
+        }
+    }
+
+    #[test]
+    fn infer_call_newtype_regression_preserved() {
+        // Regression guard: existing Plan 115 D214 [M-115-newtype-constructor]
+        // path не должен сломаться от добавления NamedTuple-arm'а.
+        let m = make_module_with_types(vec![
+            make_newtype("SqHandle", "ptr"),
+        ]);
+        let ctx = TypeCheckCtx::build(&m);
+        let inferred = infer_ctor(&ctx, "SqHandle");
+        match inferred {
+            Some(TypeRef::Named { path, .. }) => {
+                assert_eq!(path, vec!["SqHandle".to_string()],
+                    "Newtype ctor infer must remain Named(SqHandle)");
+            }
+            other => panic!("Newtype ctor regression: expected Named(SqHandle), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn infer_call_sum_variant_stays_unknown() {
+        // CRITICAL REGRESSION GUARD: sum variants хранятся ВНУТРИ
+        // TypeDeclKind::Sum(...), не как top-level types. `self.types.get("Red")`
+        // должен вернуть None — variant ctor НЕ попадает в matches!-arm,
+        // даже если он был extended NamedTuple-кейсом.
+        //
+        // Если этот тест ломается → variant ctor неверно отнесён к
+        // top-level type, инфер вернёт `Named(Red)` вместо None, и
+        // assignable() начнёт сравнивать `Red` (несуществующий тип) с
+        // expected `Color` → ложный E_TYPE_MISMATCH.
+        let m = make_module_with_types(vec![
+            make_sum_with_tuple_variant("Color", "Red", "int"),
+        ]);
+        let ctx = TypeCheckCtx::build(&m);
+        // `Red(1)` — variant ctor; `Red` НЕ в `ctx.types`.
+        let inferred = infer_ctor(&ctx, "Red");
+        assert!(inferred.is_none(),
+            "Sum variant ctor `Red(int)` MUST infer as None (variant name \
+             не top-level type); got Some({:?}). Plan 128.1 Ф.2 NamedTuple \
+             arm не должен случайно захватить variant ctor.",
+            inferred);
+        // Sum type itself тоже не должен инфериться через ctor-call —
+        // у sum нет positional ctor с тем же именем (Color(...) — invalid).
+        // Но `self.types.get("Color")` существует с kind = Sum;
+        // matches! arm НЕ списка Sum → fallthrough к None. Подтверждаем.
+        let color_inferred = infer_ctor(&ctx, "Color");
+        assert!(color_inferred.is_none(),
+            "Sum type name used as ctor must NOT type-produce \
+             (Color = Sum, не Newtype/Alias/NamedTuple); got {:?}",
+            color_inferred);
     }
 }
 

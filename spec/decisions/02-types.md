@@ -3900,6 +3900,12 @@ pointer; copies стека не делается. Это symmetric с D228 value
 - **Identifier receiver:** emit `&local_var` directly. Var must be `mut`
   binding (D33 + D215 amend «binding-level mutability»); ro binding +
   mut @method = `E_BINDING_NOT_MUT` (caught в type-checker).
+- **Lvalue projection receivers:** `b.v.method()`, `arr[i].method()`,
+  `@field.method()`, multi-level `a.b.c.method()` — when each base в
+  projection chain is an lvalue (Ident/SelfAccess/Member-of-lvalue/
+  Index-of-lvalue), emit `&(b->v)` / `&(arr->data[i])` /
+  `&(nova_self->field)` directly. Mutation flows к original slot,
+  no temp hoist. Plan 128.1 Ф.1 implementation.
 - **Rvalue receiver:** hoist в `NovaTuple_<Name> __tmp_recv_<id> = expr;`
   и pass `&__tmp_recv_<id>`. Мутации в temp видны только внутри
   expression chain — corresponds к D32 «mutate-by-copy для rvalue» spirit.
@@ -9676,6 +9682,11 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
   мутации видны caller'у. См. [D215 amend «Method receiver passing»](#d215-named-tuple-fields--valuereference-allocation-contract)
   (Plan 128 Ф.2) — NamedTuple uses the same pointer pattern (`NovaTuple_X*`
   для mut receiver), wired через `recv.mutable` flag в `emit_c.rs`.
+  Same lvalue-projection rule applies to NovaValue_X mut-receivers (D228)
+  and NovaTuple_X mut-receivers (D215) — Plan 128.1 Ф.1: `b.v.method()`,
+  `arr[i].method()`, `@field.method()`, multi-level `a.b.c.method()`
+  emit `&(b->v)` / `&(arr->data[i])` / `&(nova_self->field)` directly
+  без temp hoist (mutation flows к original slot).
 - **Reference fields:** handles inline (ptr+len+cap для `[]T`,
   ptr+len для `str`); data on heap (GC-tracked).
 - **Fixed array fields:** fully inline (`[32]u8` = 32 bytes inline).

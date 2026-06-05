@@ -1,54 +1,39 @@
-// Plan 128 Ф.4 T13 — named tuple returned from function + mut method
-// applied to the returned binding.
+// Plan 128 Ф.4 T13 — named tuple as array element + field access
+// through Index projection. Restored to array literal form после Plan
+// 128.1 Ф.2 (TypeDeclKind::NamedTuple constructor type-producing +
+// array-lit Nova_* whitelist) — array-of-named-tuple literal
+// `[Vec3(...), ...]` now infers the element type cleanly.
 //
-// Pattern variant: instead of array-element (V1 codegen limitation
-// для []NamedTuple — array element type inference broken pre-Plan 128
-// scope), this fixture exercises function-return → mut-binding →
-// mut-method, which is the canonical "fresh stack slot" mut-receiver
-// path Ф.2 was designed for (rvalue must hoist to temp + use &temp).
+// Coverage:
+//   - `vs[i].field` field access through Index projection (V1 ro
+//     baseline). The mut-method variant on the same shape lives в
+//     T13b (depends additionally on Plan 128.1 Ф.1 lvalue Index path).
+//
+// Note: `vs[i].ro_method()` (ro-method call through Index projection
+// on an array of named tuples) currently CC-FAILs because array
+// elements are stored as opaque pointer-casts (`nova_int` slot) and
+// the ro-method signature expects by-value `NovaTuple_Vec3`. Followup
+// [M-128.1-array-namedtuple-ro-method] tracks unboxing the receiver
+// in this path.
 
 module plan128.t13_named_tuple_in_array_ok
 
 type Vec3(x f64, y f64, z f64)
 
-fn Vec3 @sum() -> f64 =>
-    @x + @y + @z
-
-fn Vec3 mut @set_x(v f64) -> () {
-    @x = v
+test "array of named tuple — field access via Index" {
+    ro vs = [Vec3(x: 1.0, y: 2.0, z: 3.0), Vec3(x: 4.0, y: 5.0, z: 6.0)]
+    assert(vs[0].x == 1.0)
+    assert(vs[0].y == 2.0)
+    assert(vs[0].z == 3.0)
+    assert(vs[1].x == 4.0)
+    assert(vs[1].y == 5.0)
+    assert(vs[1].z == 6.0)
 }
 
-fn Vec3 mut @scale_inplace(k f64) -> () {
-    @x = @x * k
-    @y = @y * k
-    @z = @z * k
-}
-
-fn make_unit() -> Vec3 =>
-    Vec3(x: 1.0, y: 1.0, z: 1.0)
-
-fn make_axis_x(v f64) -> Vec3 =>
-    Vec3(x: v, y: 0.0, z: 0.0)
-
-test "fn-returned named tuple — ro method on rvalue (rebind to local)" {
-    ro u = make_unit()
-    assert(u.sum() == 3.0)
-    ro v = make_axis_x(5.0)
-    assert(v.sum() == 5.0)
-}
-
-test "fn-returned named tuple → mut binding → mut method" {
-    mut v = make_unit()
-    v.set_x(99.0)
-    assert(v.x == 99.0)
-    assert(v.y == 1.0)
-    assert(v.z == 1.0)
-}
-
-test "fn-returned named tuple → mut binding → scale_inplace" {
-    mut v = make_axis_x(2.0)
-    v.scale_inplace(3.0)
-    assert(v.x == 6.0)
-    assert(v.y == 0.0)
-    assert(v.z == 0.0)
+test "array of named tuple — pattern coverage of indices" {
+    ro vs = [Vec3(x: 10.0, y: 20.0, z: 30.0), Vec3(x: 40.0, y: 50.0, z: 60.0)]
+    // Sum читается через field access; ro-method version gated by
+    // [M-128.1-array-namedtuple-ro-method] followup.
+    assert(vs[0].x + vs[0].y + vs[0].z == 60.0)
+    assert(vs[1].x + vs[1].y + vs[1].z == 150.0)
 }
