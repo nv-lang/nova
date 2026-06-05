@@ -6569,6 +6569,8 @@ compatibility). Это работает но дублирует код.
 - [D77](08-runtime.md#d77-fromtryfrom-auto-derive) — From/Into 4-way auto-derive.
 - [Plan 91.8a.2](../../docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md).
 
+> ⚠️ См. [D229](#d229-debugprintable-protocol--format-spec-expr) — DebugPrintable sibling protocol с distinct debug semantics (diagnostic vs user-facing display); `${expr:?}` syntax routes к DebugPrintable.@debug_fmt vs bare `${expr}` к Printable.@fmt (Plan 91.14, 2026-06-05).
+
 ---
 
 ## D186 — `#impl(P1 + P2 + ...)` opt-in annotation для protocols
@@ -7660,10 +7662,26 @@ yield-point (await/spawn/supervised{}), string formatting which allocates,
 
 ### §17. Pointer Debug formatting
 
-- `(*T).to_debug_str() -> str` — built-in method (in unsafe context only)
-- Emits hex address + type name (`"0x7f... -> Account"`)
-- НЕ implements Display — forces explicit decision (pointer debugging =
-  deliberate; addresses non-deterministic, leak ASLR info)
+**Canonical form (Plan 91.14, D229 — 2026-06-05):**
+
+- `*T` implements **DebugPrintable** (sibling protocol — см.
+  [D229](#d229-debugprintable-protocol--format-spec-expr)) через built-in
+  `@debug_fmt(sb StringBuilder)` который emits hex address + type name
+  (`"0x7f... -> Account"`).
+- Canonical interpolation: `"${p:?}"` — routes к `DebugPrintable.@debug_fmt`
+  (debug semantics: diagnostic, machine-oriented).
+- `*T` **НЕ** implements `Printable` — bare `"${p}"` остаётся ошибкой
+  (forces explicit decision; pointer debugging = deliberate; addresses
+  non-deterministic, leak ASLR info).
+
+**Legacy alias (backwards-compat):**
+
+- `(*T).to_debug_str() -> str` — built-in method (in unsafe context only).
+  Эквивалент `let sb = StringBuilder.new(); p.@debug_fmt(sb); sb.to_str()`.
+  Сохраняется для пред-D229 кода; новый код пишет `"${p:?}"`.
+
+**Bare `${p}` enforcement:**
+
 - `"${p}"` interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR` —
   **ACTIVE 2026-06-02 (V1 syntactic, commit a9327c65d3f)** —
   closes acceptance A28 partial. V1 detects:
@@ -7672,6 +7690,11 @@ yield-point (await/spawn/supervised{}), string formatting which allocates,
     - `${var}` где var bound через `let var = AddrOf/Deref/As(*T)`
   V2 (Session 4+): full type-aware enforcement через `infer_expr_type` —
   fires на returned pointer values, field access, generic-bound `*T`.
+- Hint в диагностике после Plan 91.14: «use `${p:?}` for pointer debug
+  formatting (DebugPrintable, D229)».
+
+**См. также:** [D229](#d229-debugprintable-protocol--format-spec-expr) —
+DebugPrintable protocol + `${expr:?}` format-spec syntax.
 
 ### §18. FFI handle allocation contract
 
