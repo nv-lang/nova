@@ -363,19 +363,26 @@ Silence: `// noqa: W_UNSAFE_GC_TRIGGER` line marker.
 V1 GC = Boehm conservative → не двигает объекты → V1 безопасно warning'ом.
 Future moving GC потребует formal pin API (`[M-118-pin-api]` followup).
 
-## Pointer Debug formatting (D216 §17)
+## Pointer Debug formatting (D216 §17, Plan 91.14 D229)
+
+Canonical form — `${expr:?}` format-spec (Plan 91.14, D229):
 
 ```nova
 unsafe {
     ro p ro * Account = &acc
-    println("pointer: ${p.to_debug_str()}")   // → "pointer: 0x7f... -> Account"
+    ro s = "ptr=${&value:?}"                  // V3 canonical (Plan 91.14)
+    println("pointer: ${p:?}")                // → "pointer: 0x7f... -> Account"
 }
 ```
 
-- `(*T).to_debug_str() -> str` built-in method (in unsafe only)
-- `"${p}"` direct interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR`
+- `${p:?}` debug-format interpolation — canonical pointer rendering inside
+  `unsafe { ... }` (Plan 91.14 D229).
+- `(*T).to_debug_str() -> str` — legacy built-in alias kept for
+  backwards-compat; same semantics as `${p:?}`, allowed in unsafe only.
+- `"${p}"` direct (Display) interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR`;
+  diagnostic hint points to `${p:?}` (updated в Ф.5.3).
 - Pointer addresses non-deterministic, leak ASLR info — explicit decision
-  forced
+  forced.
 
 ## Forbidden ops (D216 §15)
 
@@ -416,7 +423,8 @@ mut p mut * u8 = undefined       // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 - `E_UNSAFE_HANDLER_BUILTIN_ONLY` — user-defined unsafe_handler attempt
 - `E_AMP_CONST_BINDING` — `&const_value`
 - `E_AMP_LITERAL` — `&42`
-- `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"` interpolation
+- `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"` interpolation; hint suggests
+  canonical `${p:?}` (Plan 91.14 D229) or legacy `p.to_debug_str()`
 - `E_VARARG_NOT_SUPPORTED` — vararg FFI call
 - `E_CAST_RAW_FN_TO_CLOSURE` — `*fn → fn` cast outside unsafe
 
