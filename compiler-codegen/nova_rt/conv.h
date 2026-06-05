@@ -249,6 +249,32 @@ static inline nova_str nova_str_to_debug_str(nova_str s) {
     return (nova_str){ buf, j };
 }
 
+/* ptr → debug str: hex address (Plan 91.14 D229 §«Pointer integration»,
+ * Ф.5). Output examples: "0x7f8a4b3c..." (16 hex chars on 64-bit) или
+ * "0x0" for null pointer. Caller wraps в "<Type @ 0x...>" form via
+ * caller-side concat для full pointer-debug shape.
+ *
+ * Note: addr disclosure is the security concern motivating
+ * E_PTR_NO_DISPLAY_USE_DEBUG_STR for bare ${ptr}. Explicit ${ptr:?}
+ * acknowledges the opt-in. */
+static inline nova_str nova_ptr_to_debug_str(const void* p) {
+    if (p == 0) {
+        return (nova_str){ "0x0 (null)", 10 };
+    }
+    char* buf = (char*)nova_alloc(20);
+    int n = snprintf(buf, 20, "0x%p", p);
+    /* %p может вывести с "0x" prefix уже — нормализуем. */
+    if (n < 0) n = 0;
+    /* On некоторых platforms snprintf(%p) уже выводит "0xADDR" prefix.
+     * Если так — выкинем дублирующий "0x" prefix. */
+    if (n >= 4 && buf[0] == '0' && buf[1] == 'x' && buf[2] == '0' && buf[3] == 'x') {
+        memmove(buf, buf + 2, n - 2);
+        n -= 2;
+        buf[n] = '\0';
+    }
+    return (nova_str){ buf, (size_t)n };
+}
+
 /* char (codepoint) → debug str: single-quoted + escaped if needed.
  * Output examples: 'A' '\n' '\\' '\'' (escaped apostrophe). */
 static inline nova_str nova_char_to_debug_str(nova_int cp) {

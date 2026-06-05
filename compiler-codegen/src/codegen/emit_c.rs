@@ -22301,6 +22301,30 @@ _cp++; \
                         }
                     };
 
+                    // **Plan 91.14 Ф.5 (D229):** pointer integration. Когда
+                    // spec=Debug AND expr is `&v` (UnOp::AddrOf) — route к
+                    // nova_ptr_to_debug_str primitive (hex address). C-type
+                    // alone (`ends_with('*')`) ambiguous между typed pointer
+                    // (`*T` Plan 118) и heap record ref (Nova_T*); проверка
+                    // expr kind narrows к explicit pointer expressions only.
+                    //
+                    // For named *T bindings (`ro p = &a`), expr is Ident — current
+                    // V1 routes через user-type method dispatch (manual `fn *T
+                    // @debug_fmt` impl required). Auto-derive *T → hex deferred
+                    // к [M-91.14-ptr-auto-derive].
+                    //
+                    // Type-checker (types/mod.rs ExprKind::InterpolatedStr) уже
+                    // banned bare ${ptr} (spec=None) via E_PTR_NO_DISPLAY.
+                    if is_debug && matches!(
+                        &e.kind,
+                        ExprKind::Unary { op: crate::ast::UnOp::AddrOf, .. }
+                    ) {
+                        self.line(&format!(
+                            "Nova_StringBuilder_method_append({}, nova_ptr_to_debug_str((const void*)({})));",
+                            sb, v,
+                        ));
+                        continue;
+                    }
                     // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
                     // unified Printable.fmt routing для user types.
                     // Plan 91.14 (D229): same path для DebugPrintable.@debug_fmt

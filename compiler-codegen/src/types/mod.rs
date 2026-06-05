@@ -17270,16 +17270,25 @@ impl UnsafeCtx {
             // через `.to_debug_str()` (unsafe context — A27).
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
-                    if let crate::ast::InterpStrPart::Expr { expr: ex, spec: _ } = p {
-                        if self.expr_is_typed_pointer(ex) {
+                    if let crate::ast::InterpStrPart::Expr { expr: ex, spec } = p {
+                        // **Plan 91.14 Ф.5 (D229):** ban only bare ${ptr}
+                        // (spec=None). Explicit ${ptr:?} (spec=Debug) is the
+                        // intended opt-in path — caller acknowledges address
+                        // disclosure через DebugPrintable invocation. Still
+                        // requires unsafe context (enforced by `*T` impl).
+                        if matches!(spec, crate::ast::FormatSpec::None)
+                            && self.expr_is_typed_pointer(ex)
+                        {
                             errors.push(Diagnostic::new(
                                 "[E_PTR_NO_DISPLAY_USE_DEBUG_STR] typed pointer \
-                                 value cannot be interpolated в str через `\"${...}\"` \
-                                 (Plan 118 D216 §15). Pointer Display не auto-emitted: \
-                                 (1) address disclosure leaks security-sensitive info; \
-                                 (2) GC mover invalidates raw address — interpolated \
-                                 value становится stale. Fix: use \
-                                 `${p.to_debug_str()}` (Plan 118 Ф.7, inside unsafe).".to_string(),
+                                 value cannot be interpolated в str через bare \
+                                 `\"${...}\"` (Plan 118 D216 §15). Pointer \
+                                 Display не auto-emitted: (1) address disclosure \
+                                 leaks security-sensitive info; (2) GC mover \
+                                 invalidates raw address — interpolated value \
+                                 становится stale. Fix: use `${p:?}` syntax \
+                                 (Plan 91.14 D229 Ф.5) внутри unsafe { } block \
+                                 — explicit opt-in для debug-formatted ptr.".to_string(),
                                 ex.span,
                             ));
                         }
