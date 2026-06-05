@@ -1,0 +1,23 @@
+// [M-125-unreachable-builtin] positive — unreachable() в expression-position.
+// Проверяет что unreachable интегрирован с divergence-aware inference Plan 125:
+// тип if-expr = тип не-unreachable ветки.
+
+module plan125_followups.unreachable_basic
+
+fn classify(n int) -> str {
+    if n == 0 {
+        "zero"
+    } else if n > 0 {
+        "pos"
+    } else if n < 0 {
+        "neg"
+    } else {
+        unreachable("int trichotomy violated")
+    }
+}
+
+test "unreachable in else picks str from other branches" {
+    assert(classify(0) == "zero")
+    assert(classify(5) == "pos")
+    assert(classify(-3) == "neg")
+}

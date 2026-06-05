@@ -32381,6 +32381,34 @@ d27f3341a0c).
 workaround. Любые stdlib функции с same pattern — больше не CC-FAIL.
 
 
+## 2026-06-05 (later) — Plan 118.5 V3 nice-to-have polish closure
+
+После V3 + audit gap-fix closure аудит выявил 5 «nice-to-have» дополнений (не блокеры). User confirmed «исправь это без упрощений как для прода сейчас» — все 5 landed parallel workflow + sequential commit-per-task split (5 commits).
+
+### Fixes
+
+1. **D175/D176 forward-ref banners** (commit `a825eb370e1`) — добавлены blockquote-banner'ы у D175 (readonly field freeze) и D176 (readonly T modifier) с указанием на D216 V3 §V3.1 storage-class semantics. Reader старого D-блока теперь видит ссылку на newer rules.
+
+2. **ffi-cookbook V3 hint** (commit `975ec2e644a`) — новая секция «Pointer modifier rules (V2/V3)» сразу после Quick reference TOC. 5-item cheatsheet (`*T` / `mut * T` / `unsafe * T` / `* unsafe T` / chain) + cross-refs к typed-pointers.md и migration guide. Discoverability для FFI authors.
+
+3. **README typed-pointers link** (commit `883338436ce`) — добавлена строка в Contents TOC top-level README.md → docs/typed-pointers.md. После V3 closure typed-pointers.md стал user-facing документом.
+
+4. **safe keyword examples** (commit `9d6da364660`) — в examples/typed_pointers/basic_pointer.nv добавлены 3 новых external fn declarations + dedicated test{}-block демонстрирующие §V3.4 safe escape:
+   - `ffi_borrow_buffer(p unsafe * safe Buffer)` — Rust `*const T` analog (outer unsafe ptr c safe pointee)
+   - `observe_readonly_view(p ro * safe ro Buffer)` — intentional ro re-application past stopper (без safe → E_REDUNDANT_TYPE_MODIFIER)
+   - `raw_alloc_slot(p unsafe * safe unsafe Buffer)` — opaque uninit-pointee handle
+   Module-level doc-comment extended с V3 §V3.4 section. **Verified via release nova check: PASS.**
+
+5. **??commit_F4?? placeholder** (commit `7b9c5f64fca`) — в docs/plans/118.5-right-binding-rule-migration.md (line 237) был unresolved placeholder в V1 commit sequence list. Replaced с реальным SHA `c075afc0b5a` (V1 Ф.4 partial: unsafe T MaybeUninit read enforcement + 6 fixtures). Sub-agent сначала ошибочно поставил V3 Ф.4 SHA — исправлено orchestrator-ом по context (line 237 это V1 sequence, line 597 — V3, который уже корректен).
+
+### Merge
+
+Merged plan-118.5 → main как commit `da1f981fd85` (Merge plan-118.5 nice-to-have polish). Без push.
+
+### State
+
+Plan 118.5 V3 ✅ **ABSOLUTELY CLOSED** — V1 + V2 + V3 + Ф.6 + audit gap-fixes + nice-to-have polish. Zero open items. plan118_5_v3 17/17 PASS + basic_pointer.nv example PASS. typed-pointers.md user-facing doc в V3 canonical form + discoverable из README. Migration guide для downstream users. D175/D176 forward-pointers к V3.1 storage-class rules.
+
 ================================================================================
 == 2026-06-05 — Plan 110 followup plans created (110.10 + 110.11 + 110.12)
 ================================================================================
@@ -32550,3 +32578,119 @@ Status: ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
 §11.6 + §12.31 + §8 + §9 closed; Ф.4-Ф.9 (blocking migration, channel
 migration, perf) pending design decision. 4 commits in branch +
 1 merge commit on main (064eeef82ef).
+
+=== CI recovery + accumulated-drift cleanup + 2 codegen bug fixes (2026-06-04..05) ===
+
+Триггер: красный CI на main (nova-doc, contracts-z3, contracts-crosscheck).
+Диагноз: НЕ свежая регрессия от Plan 123 V7.5 — накопленный дрейф от
+смёрженных планов, который CI копил неделями (полный `nova test` в CI не
+гоняется, только contracts/doc/bench/dco).
+
+CI ЗЕЛЁНЫЙ (подтверждено ubuntu-раннерами), 5 коммитов:
+- nova-doc: 14 doc_golden snapshots (D78 module-path + 91.9/124.5/108.x JSON
+  поля) + `let→ro`/`handler→effect` в doc:: юнит-фикстурах (Plan 114/97) +
+  prelude-инъекция в doc-test (Plan 62 file-based prelude; новая
+  run_doc_tests_with_context + resolve_imports_inline_ex) + interp пропускает
+  external fn при load вместо panic (чинит pre-existing Plan 81 баг).
+- contracts-z3: fibers.h:2356 `extern __declspec(thread) int _current_worker_id`
+  без `#ifdef _MSC_VER` guard → на Linux clang без -fdeclspec hard error,
+  ломал ВСЮ Linux-сборку (156 contracts CC-FAIL с 2026-05-28, merge cf00a37fb
+  Plan 83.11). Заменён на аксессор nova_runtime_current_worker_id().
+  Verify: WSL clang 21, -fsyntax-only, 0 declspec errors.
+- contracts-crosscheck: cvc5 install (1.2.0 бинарь на ubuntu-24.04 → 1.3.4;
+  `find | head -1` под pipefail SIGPIPE → `-print -quit`).
+
+Полный `nova test` (Windows release): 191 → 120 FAIL:
+- folder-module spec-drift миграция (52 файла): peer-декларации `folder.file`
+  → `parent.folder` (D29 rev-3 + D78 strict; внутри folder is_folder_module_peer
+  требует согласованного имени). cfg 8/0, modules 30/1, named_params 8/0,
+  plan63/plan81 peer-recur. + internal/ special-case (folder_internal.internal),
+  nested (rule_e_file.sub). НЕ трогал basics/ (независимые single-file) и
+  negative_capability (намеренно malformed).
+
+2 CODEGEN-БАГА (с регрессионными тестами + criteria приёмки):
+- CleanupTimeoutError #no_prelude gate (349c59a898c): emit_c.rs безусловно
+  регистрировал type-id → impl ссылался на Nova_CleanupTimeoutError struct,
+  под #no_prelude необъявлен → CC-FAIL. Гейт по record_schemas.contains_key.
+  Тесты: plan110_9_np/{compiles_ok, prelude_suppressed_neg}. plan110 41/0.
+- chain-cache array element-type (f1cd07b15a9): РЕГРЕССИЯ Plan 123. Field-cache
+  `ro _at_<F>_chain = @a.b.c` не регистрировал array_element_types → Set/HashMap
+  итераторы `_at_map__buckets_chain[i]` → nova_int fallback → slot->tag CC-FAIL.
+  Фикс: fallback compute_array_elem_type_for_obj(&decl.value). set_ops 1/0,
+  plan56 6/0. Тесты: plan123_chain_elem/{p1_set_ops_iter, p2_hashmap_iter}_ok.
+
+Spec/D/Q: новых D-блоков/Q не потребовалось — все фиксы codegen/tooling-
+correctness, соответствуют существующей семантике (D124/D125 no_prelude,
+Plan 123 field-cache, D29/D78 module-paths). Closure-ноты: docs/plans/
+110.9-v1.1-* + 123-followups-2026-06-04.md.
+
+Lessons:
+1. README статус-колонка дрейфует — git merge-история = source of truth.
+2. CI ловит лишь подмножество (contracts/doc); полный `nova test` копит
+   дрейф невидимо. Стоит рассмотреть full-suite job (хотя бы nightly).
+3. Регрессия chain-cache — из того же Plan 123, что и V7.5; «свежий коммит
+   виноват» был неверной гипотезой, CI-лог дал точный declspec-диагноз.
+
+Status: ✅ CI GREEN + 2 codegen-бага закрыты с тестами/criteria. Полный
+suite 191→120 (остаток: concurrency-флаки, str_builder consume-миграция,
+namеренные негативы, отдельные codegen-баги plan59-tuple/plan99-Option).
+
+=== Plan 125 Followup Batch — 3 markers CLOSED (2026-06-05) ===
+
+Branch `plan-125-followups` в worktree `d:\Sources\nv-lang\nova-p125`,
+fork from main HEAD `5bc4c4572ca`.
+
+Сразу после Plan 125 V1 closure был выполнен sub-batch followups:
+3 standalone markers, каждый закрыт отдельным коммитом, с positive +
+negative tests на release nova, full plan125 regression 22/22 PASS
+после каждого.
+
+**[M-125-unreachable-builtin]** ✅ CLOSED
+- `std/prelude/runtime.nv`: добавлен `fn unreachable(reason str) -> never
+  => panic("unreachable: ${reason}")` — Nova-body forward to panic.
+- `std/prelude.nv` (rolling) + `std/prelude/e2026_05.nv` (edition pin):
+  re-export selective list расширен на `unreachable`.
+- `compiler-codegen/src/codegen/emit_c.rs` `expr_diverges_125`:
+  hardcoded whitelist alongside panic/exit (mono_fn_decls lookup
+  unreliable для prelude Nova-body fns на момент инференса).
+- `spec/decisions/08-runtime.md` §«never» list updated.
+- 3 fixtures: unreachable_basic, unreachable_match_default,
+  unreachable_runtime_fires (EXPECT_RUNTIME_PANIC).
+
+**[M-125-method-call-never-detection]** ✅ CLOSED
+- New registry `never_returning_methods: HashSet<(String, String)>` в
+  emit_c.rs. Populated during method/free-fn registration scan.
+- Helper `fn_return_is_never_125(FnDecl) -> bool` — AST-level check (C
+  type erasure теряет never→nova_int information).
+- `expr_diverges_125` extended: `ExprKind::Call { func: Member { obj,
+  name } }` branch lookup'ит obj's C type + (stripped Nova_ prefix
+  form) + ident-name fallback для static-method `Type.method()`.
+- 3 fixtures: method_call_never_user_type, method_call_never_static,
+  method_call_never_runtime.
+
+**[M-125-codegen-never-cast]** ✅ CLOSED
+- New helper pair: `emit_divergent_with_target_125(expr, target)` +
+  `typed_zero_value_125(target)` в emit_c.rs.
+- `emit_expr_with_target_type` top — short-circuit когда target ≠
+  nova_int|nova_unit И expr_diverges_125(expr).
+- Post-processes comma-expr `(side_effect, (nova_int)0LL)` substituting
+  trailing dummy с target-typed zero (pointers → `(T)NULL`, ints/floats
+  → `(T)0` / `(T)0.0`, structs → C99 compound literal `(T){0}`, unit →
+  `NOVA_UNIT`).
+- 3 fixtures: never_cast_let_typed, never_cast_arg_position,
+  never_cast_f64_target.
+
+**Verification:**
+- plan125 regression: 22/22 PASS после каждого коммита.
+- plan125_followups: 9/9 PASS (3+3+3) на release nova binary.
+
+**Остающиеся 4 followups (backlog):** `[M-125-type-checker-never-first-class]`
+(Ф.5 deferred), `[M-125-loop-no-break-divergence]`,
+`[M-125-stmt-position-divergence]`, `[M-125-while-true-divergence]` —
+все требуют control-flow analysis за пределами trailing-only model;
+сейчас не блокируют ничего.
+
+Commits в branch:
+- feat(plan125 followup): [M-125-unreachable-builtin] — unreachable() prelude fn
+- feat(plan125 followup): [M-125-method-call-never-detection]
+- feat(plan125 followup): [M-125-codegen-never-cast]

@@ -87,6 +87,29 @@ external fn panic(msg str) -> never
 #stable(since = "0.1")
 external fn exit(code int, msg str) -> never
 
+/// Marker для логически недостижимого кода. Срабатывает только если
+/// invariant нарушен — компилятор сам не может доказать недостижимость
+/// (например, после exhaustive `match` с уверенностью «все варианты
+/// покрыты выше», или после `if c { return X }` ветки). Семантически
+/// идентичен `panic("unreachable: ${reason}")`, но выражает намерение:
+/// «эта точка не должна быть достигнута никогда».
+///
+/// **Когда использовать:**
+/// - После `match` по полному перечислению (когда компилятор не выводит
+///   exhaustiveness — например при guards)
+/// - В default-branch для ветки, исключённой инвариантом выше
+/// - В качестве placeholder'а для невозможной комбинации параметров
+///
+/// **Не использовать для:**
+/// - TODO-stub'а — это `todo()` (если будет добавлен) или `panic("todo")`
+/// - Validation user input — это `Fail[E]` через `throw`
+///
+/// **Plan 125 unblock (2026-06-05):** теперь работает в expression-
+/// position в любом if/match thanks to divergence-aware inference,
+/// например `let x = if cond { compute() } else { unreachable("inv broken") }`.
+#stable(since = "0.1")
+fn unreachable(reason str) -> never => panic("unreachable: ${reason}")
+
 /// Runtime-проверка условия. Падает с auto-generated сообщением
 /// (текст condition'а через display) если `cond == false`. Always-on:
 /// в release-сборке тоже срабатывает (D81).

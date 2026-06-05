@@ -1,0 +1,25 @@
+// [M-125-codegen-never-cast] positive — `let x T = throw E` где T ≠ int.
+// Раньше: codegen эмитил comma-expr `(call, (nova_int)0LL)` → CC-FAIL
+// «assigning to 'nova_str' from incompatible type 'nova_int'».
+// Теперь: dummy cast'ится в target type через compound literal.
+
+module plan125_followups.never_cast_let_typed
+
+fn maybe_str(c bool) Fail -> str {
+    // typed let — target = nova_str. Раньше CC-FAIL на (call, 0LL).
+    ro x str = if c {
+        "ok"
+    } else {
+        throw "bad"
+    }
+    x
+}
+
+test "typed let with divergent else compiles + works" {
+    with Fail = effect Fail {
+        fail(_) { interrupt () }
+    } {
+        ro s = maybe_str(true)
+        assert(s == "ok")
+    }
+}

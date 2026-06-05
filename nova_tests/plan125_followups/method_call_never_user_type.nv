@@ -1,0 +1,21 @@
+// [M-125-method-call-never-detection] positive — user-type instance
+// method с `-> never` детектится как divergent в if-expr inference.
+
+module plan125_followups.method_call_never_user_type
+
+type Logger { tag str }
+
+fn Logger @fail(msg str) -> never => panic("[${@tag}] FATAL: ${msg}")
+
+fn classify(log Logger, c bool) -> str {
+    if c {
+        "ok"
+    } else {
+        log.fail("invariant violated")
+    }
+}
+
+test "method-never in else picks str from then" {
+    ro logger = Logger { tag: "test" }
+    assert(classify(logger, true) == "ok")
+}

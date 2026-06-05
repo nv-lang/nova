@@ -26,7 +26,7 @@ module prelude.e2026_05
 // Re-export всех items из current sub-modules. Идентично rolling facade
 // на момент создания pin'а (Plan 62.F.bis 2026-05-18).
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, Ordering, Less, Equal, Greater}
-export import std.prelude.runtime.{panic, exit, assert, debug_assert}
+export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_assert}
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
 export import std.prelude.collections.{Iterable}
 export import std.collections.range.{Range, RangeIter}

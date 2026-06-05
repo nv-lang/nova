@@ -1,0 +1,26 @@
+// Регрессия Plan 110.9.1 CleanupTimeoutError #no_prelude gate (fix 349c59a898c).
+//
+// emit_c.rs безусловно регистрировал CleanupTimeoutError type-id (Plan
+// 110.9.1), из-за чего typed-throw impl `_nova_throw_cleanup_timeout_impl`
+// эмитился ВСЕГДА, ссылаясь на struct `Nova_CleanupTimeoutError`. Под
+// `#no_prelude` этот prelude-тип не инлайнится → CC-FAIL
+// "use of undeclared identifier Nova_CleanupTimeoutError".
+//
+// Фикс: регистрировать type-id только если record_schemas содержит тип
+// (т.е. prelude активен и тип реально определён).
+//
+// КРИТЕРИИ ПРИЁМКИ (positive):
+//  - `#no_prelude` модуль с `main` компилируется (codegen → clang → link → run);
+//  - в сгенерированном C НЕТ ссылок на Nova_CleanupTimeoutError;
+//  - прогон под release `nova test` → PASS.
+
+#no_prelude
+module plan110_9_np.compiles_ok
+
+fn helper(x int) -> int {
+    x * 2
+}
+
+fn main() -> () {
+    ro _ = helper(21)
+}

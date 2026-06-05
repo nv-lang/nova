@@ -1,0 +1,20 @@
+// Негатив к Plan 110.9.1 #no_prelude gate area (fix 349c59a898c).
+//
+// Подтверждает преконд бага: под `#no_prelude` prelude действительно
+// подавлён — prelude-функция `println` недоступна. Именно потому, что
+// prelude-типы/функции (включая CleanupTimeoutError) НЕ инлайнятся под
+// #no_prelude, codegen не должен спекулятивно ссылаться на их машинерию
+// (что и чинит gate-фикс: регистрация type-id только при наличии типа).
+//
+// КРИТЕРИИ ПРИЁМКИ (negative):
+//  - `println` под `#no_prelude` → compile error `undefined identifier`;
+//  - release nova помечает тест PASS как ожидаемую ошибку.
+
+// EXPECT_COMPILE_ERROR println
+
+#no_prelude
+module plan110_9_np.prelude_suppressed_neg
+
+fn bad() -> () {
+    println("unreachable")
+}
