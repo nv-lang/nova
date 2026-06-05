@@ -33981,3 +33981,92 @@ Pattern: проверять Nova-side path первым, прежде чем rea
 primitive + codegen forward-decl gymnastics.
 
 >>>>>>> Stashed changes
+
+
+
+================================================================================
+== 2026-06-06 — Plan 99 [M-str-len-closure-dispatch] CLOSED — closure body T-subst
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p99-closure
+> Branch: plan-99-str-closure-dispatch (off main 2499901c721)
+
+Closes followup marker spawned from baseline cleanup session (2026-06-05).
+
+ROOT CAUSE:
+
+Option.map / Result.map_err / Result.unwrap_or_else dispatch sites at
+emit_c.rs:18961+ и :19233+ iterated args через `self.emit_expr(a.expr())`
+без setup для closure-typed params. emit_expr ExprKind::ClosureLight
+match at line 17115 calls `emit_lambda(...None, None)` — context_param_tys
+= None → param defaults к `nova_int` instead of being substituted from
+T or E.
+
+For Option[str].map(|s| s.byte_len()):
+- method-level mono knew T=str, U=int (mono_name = `..._nova_str____nova_int`)
+- variable type was correctly `NovaOpt_nova_int len`
+- closure body was incorrectly `(void* _env_ptr, nova_int s) { return s.byte_len(); }`
+- CC-FAIL: "member reference base type 'nova_int' is not a structure"
+
+Generic free-fn call site (line 21951+) already had correct pattern:
+1. Iterate (param_decl, arg) pairs
+2. For fn-typed param: apply type_subst, compute inner_ptys/inner_ret
+3. Insert fn_param_sigs (для closure-light dispatched-by-name path)
+
+But Option/Result method dispatch skipped this pre-pass entirely.
+
+FIX:
+
+Both dispatch sites now check each (param_decl, arg) pair: if param is
+fn-typed AND arg is ClosureLight/Lambda, pre-emit lambda с explicit
+emit_lambda + context_param_tys built from fn_decl param's TypeRef::Func
+applied type_subst. Mirrors line 22042-22046 в emit_call's HOF-param
+branch.
+
+TESTS:
+
+- option_map_migrated.nv: re-enabled "Option[str].map str→int" sub-test
+- result_unwrap_or_else_migrated.nv: re-enabled "Err invokes f(e)" sub-test
+- result_map_err_migrated.nv: re-enabled 2 sub-tests (Err str→int + Ok passthrough)
+- plan99: 9/0 PASS (was 8/0).
+- _repro_str_closure.nv: minimal repro probe, PASS.
+
+REGRESSION:
+
+Closure-heavy test suites all clean post-fix:
+- plan100_1/2/3 (consume + view-iter): 23+17+10 PASS
+- plan100_4_1 (D158 MultiError composition): 16 PASS
+- plan103_9 (consume guards): 20 PASS
+- plan108/108_1 (readonly): 5+16 PASS
+- plan99: 9 PASS
+
+ACCEPTANCE (A99.M-str family):
+
+- A99.M-str.a: Option[T].map с closure body using T-typed methods emits
+  closure с правильным T-substituted parameter type.
+- A99.M-str.b: same для Result[T,E].map_err (E-substituted) and
+  unwrap_or_else (E-substituted).
+- A99.M-str.c: closure return type substitution still works для
+  `|x| str.from(x)` patterns (NovaClos_ii vs NovaClos_is properly dispatched).
+- A99.M-str.d: 0 regressions across closure-heavy test suites.
+
+SPEC:
+
+No new D-block — this is fix existing closure-arg dispatch in codegen.
+Plan 99.3 plan-doc closure entry с acceptance criteria.
+
+LESSONS:
+
+1. Codegen dispatch sites that build mono-method calls должны mirror
+   the same closure-context setup pattern as generic free-fn calls.
+   Plan 99.1 Ф.2 introduced method-level mono но не synced this pattern
+   к method-dispatch path.
+
+2. Closure-light context_param_tys propagation only happens at:
+   (a) call site explicit emit_lambda + ctx
+   (b) callee_name_for_hof + hof_param_fn_sigs lookup в emit_call (line 22030)
+   Method-dispatch path skipped both — needed pre-emit pattern (a).
+
+3. Variable type for map return was CORRECT — only closure body was wrong.
+   Indicates `infer_expr_type` для method-mono call returns U properly via
+   substitution. Only emit-time closure-arg handling needed the fix.
