@@ -10486,36 +10486,36 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — edge case; простые generic Set[int]/HashMap[str,int]
   работают корректно.
 
-## Plan 62.A.bis вЂ” Generic schema registry (2026-05-20)
+## Plan 62.A.bis — Generic schema registry (2026-05-20)
 
-### [M-result-generic-T-method-mismatch] (DEFER вЂ” Plan 62.B+)
-- **Р“РґРµ:** `std/prelude/core.nv` + `compiler-codegen/src/codegen/emit_c.rs`
+### [M-result-generic-T-method-mismatch] (DEFER — Plan 62.B+)
+- **Где:** `std/prelude/core.nv` + `compiler-codegen/src/codegen/emit_c.rs`
   (`type_of_method_call_c`, lines 18619+).
-- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** 5 РјРµС‚РѕРґРѕРІ Result РІРѕР·РІСЂР°С‰Р°СЋС‰РёС… `T` (unwrap, unwrap_or,
-  unwrap_or_else, map, map_err) РЅРµ Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅС‹ РІ `std/prelude/core.nv`
-  вЂ” Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅС‹ СЃ РѕР±СЉСЏСЃРЅРµРЅРёРµРј blocker'Р°.
-- **РџРѕС‡РµРјСѓ:** type-checker РІРёРґРёС‚ `Result[T, E] @unwrap_or(default T) -> T`
-  РєР°Рє generic signature Рё РІС‹РІРѕРґРёС‚ С‚РёРї СЂРµР·СѓР»СЊС‚Р°С‚Р° `r.unwrap_or(0)` РєР°Рє
-  `Result*` РІРјРµСЃС‚Рѕ `nova_int`. Codegen РґРµР»Р°РµС‚ tag-comparison РІРјРµСЃС‚Рѕ
-  value-equality РїСЂРё `r.unwrap_or(0) == 42`. Silent wrong output.
-- **РљР°Рє С‡РёРЅРёС‚СЊ:** per-T monomorphization Result.unwrap_or (РєР°Рє Option С‡РµСЂРµР·
-  NovaOpt_<T>), РёР»Рё type-checker special-case РїСЂРёР·РЅР°СЋС‰РёР№ concrete Ok-type
-  РёР· object'Р° Р±РµР· declared generic signature. РћР±Р° РїСѓС‚Рё вЂ” Plan 62.B+.
-- **РџСЂРёРѕСЂРёС‚РµС‚:** M вЂ” Result.unwrap_or/unwrap Р°РєС‚РёРІРЅРѕ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ; С‚РµРєСѓС‰РёР№
-  hardcoded path (emit_c.rs:11567+) СЂР°Р±РѕС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕ С‡РµСЂРµР· bootstrap mono
-  compromise. Р РµРіСЂРµСЃСЃРёРё РЅРµС‚ вЂ” С‚РѕР»СЊРєРѕ РґРµРєР»Р°СЂР°С†РёСЏ РІ core.nv РЅРµ РґРѕР±Р°РІР»РµРЅР°.
+- **Что упрощено:** 5 методов Result возвращающих `T` (unwrap, unwrap_or,
+  unwrap_or_else, map, map_err) не задекларированы в `std/prelude/core.nv`
+  — закомментированы с объяснением blocker'а.
+- **Почему:** type-checker видит `Result[T, E] @unwrap_or(default T) -> T`
+  как generic signature и выводит тип результата `r.unwrap_or(0)` как
+  `Result*` вместо `nova_int`. Codegen делает tag-comparison вместо
+  value-equality при `r.unwrap_or(0) == 42`. Silent wrong output.
+- **Как чинить:** per-T monomorphization Result.unwrap_or (как Option через
+  NovaOpt_<T>), или type-checker special-case признающий concrete Ok-type
+  из object'а без declared generic signature. Оба пути — Plan 62.B+.
+- **Приоритет:** M — Result.unwrap_or/unwrap активно используется; текущий
+  hardcoded path (emit_c.rs:11567+) работает корректно через bootstrap mono
+  compromise. Регрессии нет — только декларация в core.nv не добавлена.
 
-### [M-option-or-no-trampoline] (DEFER вЂ” Plan 62.B+)
-- **Р“РґРµ:** `nova_rt/array.h` + `std/prelude/core.nv`.
-- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** `external fn Option[T] @or(other Option[T]) -> Option[T]`
-  Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅ РІ core.nv РґР»СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёРё, РЅРѕ codegen trampoline
-  `Nova_Option_method_or_<T>` РІ array.h РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚. Р’С‹Р·РѕРІ `opt.or(other)`
-  РґР°С‘С‚ CC-FAIL.
-- **РџРѕС‡РµРјСѓ:** РґРѕР±Р°РІР»РµРЅРёРµ per-T trampoline С‚СЂРµР±СѓРµС‚ РёР·РјРµРЅРµРЅРёСЏ nova_rt/array.h
-  (NOVA_DECLARE_OPTION_T macro) вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р° РІРЅРµ scope 62.A.bis.
-- **РљР°Рє С‡РёРЅРёС‚СЊ:** РґРѕР±Р°РІРёС‚СЊ `Nova_Option_method_or_<T>(opt, other) { ... }`
-  РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
-- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.
+### [M-option-or-no-trampoline] (DEFER — Plan 62.B+)
+- **Где:** `nova_rt/array.h` + `std/prelude/core.nv`.
+- **Что упрощено:** `external fn Option[T] @or(other Option[T]) -> Option[T]`
+  задекларирован в core.nv для документации, но codegen trampoline
+  `Nova_Option_method_or_<T>` в array.h отсутствует. Вызов `opt.or(other)`
+  даёт CC-FAIL.
+- **Почему:** добавление per-T trampoline требует изменения nova_rt/array.h
+  (NOVA_DECLARE_OPTION_T macro) — отдельная задача вне scope 62.A.bis.
+- **Как чинить:** добавить `Nova_Option_method_or_<T>(opt, other) { ... }`
+  в NOVA_DECLARE_OPTION_T macro + routing entry в init_hardcoded_baseline.
+- **Приоритет:** L — or() менее используем чем unwrap_or/map.
 
 ### [M-typecheck-missing-type-compat-checks] ✅ ЗАКРЫТ 2026-05-21 (Plan 79)
 > Ранее назывался `[M-typecheck-lenient-no-p1b-p2a-negatives]`.
@@ -12514,20 +12514,20 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 5. **ARM CI для compare_exchange_weak spurious-fail paths** — тесты на x86 не проверяют spurious fails
    (нет LL/SC на x86). ARM CI — отложено до Linux ARM CI готов.
 
-## Plan 103.5: Once hardening + OnceCell[T] + Lazy[T] вЂ” D168 (2026-05-26)
+## Plan 103.5: Once hardening + OnceCell[T] + Lazy[T] — D168 (2026-05-26)
 
-### Р РµР°Р»РёР·РѕРІР°РЅРѕ
-- Once: call_once + poison semantics + realtime violation guard + deprecation warning РґР»СЏ run/done
-- OnceCell[T]: generic lazy cell СЃ get_or_init + re-entrant guard + take/set/get
-- Lazy[T]: eager-closure lazy value РїРѕРІРµСЂС… OnceCell + is_forced
-- Unconditional `Nova_Once_method_done` state check (fix: NOVA_SYNC_ASSERT no-op РІ Dev)
+### Реализовано
+- Once: call_once + poison semantics + realtime violation guard + deprecation warning для run/done
+- OnceCell[T]: generic lazy cell с get_or_init + re-entrant guard + take/set/get
+- Lazy[T]: eager-closure lazy value поверх OnceCell + is_forced
+- Unconditional `Nova_Once_method_done` state check (fix: NOVA_SYNC_ASSERT no-op в Dev)
 - 20/20 tests PASS (11 pos + 3 neg + 2 prop + 1 stress)
 
-### РЈРїСЂРѕС‰РµРЅРёСЏ vs spec D171/D168
-1. **OnceCell/Lazy вЂ” РЅРµ C static structs, Р° monomorphized РІ emit_c.rs** вЂ” РєР°Р¶РґР°СЏ
-   РёРЅСЃС‚Р°РЅС†РёСЏ `OnceCell[int]` / `Lazy[str]` РіРµРЅРµСЂРёСЂСѓРµС‚ inline C struct Рё РјРµС‚РѕРґС‹.
-   Р­С‚Рѕ РѕС‚Р»РёС‡Р°РµС‚СЃСЏ РѕС‚ Once/AtomicX, РєРѕС‚РѕСЂС‹Рµ pre-declared РІ sync_primitives.h.
-   РџСЂРёС‡РёРЅР°: generic С‚РёРїС‹ С‚СЂРµР±СѓСЋС‚ T-РєРѕРЅРєСЂРµС‚РёР·Р°С†РёСЋ.
+### Упрощения vs spec D171/D168
+1. **OnceCell/Lazy — не C static structs, а monomorphized в emit_c.rs** — каждая
+   инстанция `OnceCell[int]` / `Lazy[str]` генерирует inline C struct и методы.
+   Это отличается от Once/AtomicX, которые pre-declared в sync_primitives.h.
+   Причина: generic типы требуют T-конкретизацию.
 
 2. **Lazy fiber-arena crash с parallel for (followup 2026-05-26):**
    `parallel for + lazy.force()` как **первый и единственный** блок в тест-файле
@@ -12556,11 +12556,11 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
    Покрывает: API, poison semantics, memory ordering (Acquire/Release), realtime
    forbidden methods, отвергнутые альтернативы.
 
-4. **once.run() + done() deprecated, РЅРѕ РЅРµ removed** вЂ” РїР°СЂР° РѕСЃС‚Р°С‘С‚СЃСЏ РІ API СЃ
-   W_ONCE_RUN_DONE_DEPRECATED warning. РЈРґР°Р»РµРЅРёРµ вЂ” РІ Plan 103.9 breaking-API pass.
+4. **once.run() + done() deprecated, но не removed** — пара остаётся в API с
+   W_ONCE_RUN_DONE_DEPRECATED warning. Удаление — в Plan 103.9 breaking-API pass.
 
-5. **OnceCell.take() atomicity** вЂ” take() РїРѕРґ mutex РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚ atomic ops.
-   Р”РѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР»СЏ single-threaded take (Р·Р°РґРѕРєСѓРјРµРЅС‚РёСЂРѕРІР°РЅРѕ РІ sync.nv).
+5. **OnceCell.take() atomicity** — take() под mutex не использует atomic ops.
+   Достаточно для single-threaded take (задокументировано в sync.nv).
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
@@ -12860,7 +12860,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 ## [M-simplifications-mojibake-cp1251] simplifications.md — cyrillic mojibake от cp1251 misencoding (2026-05-26)
 
 - **Где:** `docs/simplifications.md` lines 10443+ (Plan 62.A.bis section
-  и далее) — повсеместный mojibake вида "вЂ" / "Р " / "РЎРЇ" вместо
+  и далее) — повсеместный mojibake вида "— / "Р " / "СЯ" вместо
   русских букв и em-dash.
 - **Что происходит:** один из агентов (или editor session) сохранил
   cyrillic UTF-8 byte sequences интерпретируя их как cp1251, потом
@@ -13252,28 +13252,28 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   M:N race in cancel-scope propagation (unrelated to timer hang).
 - **Last commit:** `043e7f00024 fix(plan83.10.2): GC aliasing + slot-reuse guard — cancel-timer-hang`.
 
-## Plan 103.3 вЂ” Mutex / RwLock / ReentrantMutex (2026-05-26)
+## Plan 103.3 — Mutex / RwLock / ReentrantMutex (2026-05-26)
 
-- **nova_alloc_uncollectable for sync primitives** вЂ” Boehm GC РЅР° Windows
-  РјРѕР¶РµС‚ СЃРѕР±СЂР°С‚СЊ РѕР±СЉРµРєС‚, С…СЂР°РЅСЏС‰РёР№СЃСЏ С‚РѕР»СЊРєРѕ РЅР° СЃС‚РµРєРµ main thread'Р°, РїРѕРєР° M:N
-  materializes workers (nova_scope_grow в†’ 7Г— nova_alloc в†’ GC trigger). Р’СЃРµ
-  static_new() С„СѓРЅРєС†РёРё РґР»СЏ Mutex/RwLock/ReentrantMutex РїРµСЂРµРІРµРґРµРЅС‹ РЅР°
-  GC_malloc_uncollectable. NOVA_AUTOARM=0 РѕР±С…РѕРґРёС‚ РїСЂРѕР±Р»РµРјСѓ (РЅРµС‚ worker
-  materialization), РїРѕСЌС‚РѕРјСѓ С‚РµСЃС‚С‹ РїСЂРѕС…РѕРґРёР»Рё С‚Р°Рј.
+- **nova_alloc_uncollectable for sync primitives** — Boehm GC на Windows
+  может собрать объект, хранящийся только на стеке main thread'а, пока M:N
+  materializes workers (nova_scope_grow → 7× nova_alloc → GC trigger). Все
+  static_new() функции для Mutex/RwLock/ReentrantMutex переведены на
+  GC_malloc_uncollectable. NOVA_AUTOARM=0 обходит проблему (нет worker
+  materialization), поэтому тесты проходили там.
 
-- **mco_coro* owner tracking** вЂ” ReentrantMutex С…СЂР°РЅРёС‚ owner РєР°Рє `mco_coro*
-  owner_coro = mco_running()`. NULL = main thread РёР»Рё unlocked. РЎС‚Р°Р±РёР»РµРЅ РІСЃС‘
-  РІСЂРµРјСЏ Р¶РёР·РЅРё fiber'Р° (РЅРµ РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїРѕРєР° mutex locked). Р’Р°СЂРёР°РЅС‚ С‡РµСЂРµР·
-  (scope, slot) РїР°СЂСѓ РѕС‚РєР»РѕРЅС‘РЅ: slot РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїРѕСЃР»Рµ Р·Р°РІРµСЂС€РµРЅРёСЏ fiber'Р°.
+- **mco_coro* owner tracking** — ReentrantMutex хранит owner как `mco_coro*
+  owner_coro = mco_running()`. NULL = main thread или unlocked. Стабилен всё
+  время жизни fiber'а (не переиспользуется пока mutex locked). Вариант через
+  (scope, slot) пару отклонён: slot переиспользуется после завершения fiber'а.
 
-- **Unconditional unlock invariants** вЂ” NOVA_SYNC_ASSERT = no-op РІ Dev mode
-  (С‚РѕР»СЊРєРѕ РїСЂРё NOVA_DEBUG). Р’СЃРµ invariant-РїСЂРѕРІРµСЂРєРё РїРµСЂРµРІРµРґРµРЅС‹ РЅР°
-  Nova_Fail_fail + nova_throw (independent of build mode), РєР°Рє РІ
+- **Unconditional unlock invariants** — NOVA_SYNC_ASSERT = no-op в Dev mode
+  (только при NOVA_DEBUG). Все invariant-проверки переведены на
+  Nova_Fail_fail + nova_throw (independent of build mode), как в
   Nova_Once_method_done (Plan 103.5 precedent).
 
-- **Writer-priority RwLock** вЂ” write_waiting С„Р»Р°Рі Р±Р»РѕРєРёСЂСѓРµС‚ РЅРѕРІС‹С… readers
-  РїРѕРєР° РµСЃС‚СЊ РѕР¶РёРґР°СЋС‰РёР№ writer. РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµС‚ writer starvation. Reader-priority
-  вЂ” opt-in С‡РµСЂРµР· new_reader_priority().
+- **Writer-priority RwLock** — write_waiting флаг блокирует новых readers
+  пока есть ожидающий writer. Предотвращает writer starvation. Reader-priority
+  — opt-in через new_reader_priority().
 
 ---
 
@@ -23946,36 +23946,36 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — edge case; простые generic Set[int]/HashMap[str,int]
   работают корректно.
 
-## Plan 62.A.bis вЂ” Generic schema registry (2026-05-20)
+## Plan 62.A.bis — Generic schema registry (2026-05-20)
 
-### [M-result-generic-T-method-mismatch] (DEFER вЂ” Plan 62.B+)
-- **Р“РґРµ:** `std/prelude/core.nv` + `compiler-codegen/src/codegen/emit_c.rs`
+### [M-result-generic-T-method-mismatch] (DEFER — Plan 62.B+)
+- **Где:** `std/prelude/core.nv` + `compiler-codegen/src/codegen/emit_c.rs`
   (`type_of_method_call_c`, lines 18619+).
-- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** 5 РјРµС‚РѕРґРѕРІ Result РІРѕР·РІСЂР°С‰Р°СЋС‰РёС… `T` (unwrap, unwrap_or,
-  unwrap_or_else, map, map_err) РЅРµ Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅС‹ РІ `std/prelude/core.nv`
-  вЂ” Р·Р°РєРѕРјРјРµРЅС‚РёСЂРѕРІР°РЅС‹ СЃ РѕР±СЉСЏСЃРЅРµРЅРёРµРј blocker'Р°.
-- **РџРѕС‡РµРјСѓ:** type-checker РІРёРґРёС‚ `Result[T, E] @unwrap_or(default T) -> T`
-  РєР°Рє generic signature Рё РІС‹РІРѕРґРёС‚ С‚РёРї СЂРµР·СѓР»СЊС‚Р°С‚Р° `r.unwrap_or(0)` РєР°Рє
-  `Result*` РІРјРµСЃС‚Рѕ `nova_int`. Codegen РґРµР»Р°РµС‚ tag-comparison РІРјРµСЃС‚Рѕ
-  value-equality РїСЂРё `r.unwrap_or(0) == 42`. Silent wrong output.
-- **РљР°Рє С‡РёРЅРёС‚СЊ:** per-T monomorphization Result.unwrap_or (РєР°Рє Option С‡РµСЂРµР·
-  NovaOpt_<T>), РёР»Рё type-checker special-case РїСЂРёР·РЅР°СЋС‰РёР№ concrete Ok-type
-  РёР· object'Р° Р±РµР· declared generic signature. РћР±Р° РїСѓС‚Рё вЂ” Plan 62.B+.
-- **РџСЂРёРѕСЂРёС‚РµС‚:** M вЂ” Result.unwrap_or/unwrap Р°РєС‚РёРІРЅРѕ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ; С‚РµРєСѓС‰РёР№
-  hardcoded path (emit_c.rs:11567+) СЂР°Р±РѕС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕ С‡РµСЂРµР· bootstrap mono
-  compromise. Р РµРіСЂРµСЃСЃРёРё РЅРµС‚ вЂ” С‚РѕР»СЊРєРѕ РґРµРєР»Р°СЂР°С†РёСЏ РІ core.nv РЅРµ РґРѕР±Р°РІР»РµРЅР°.
+- **Что упрощено:** 5 методов Result возвращающих `T` (unwrap, unwrap_or,
+  unwrap_or_else, map, map_err) не задекларированы в `std/prelude/core.nv`
+  — закомментированы с объяснением blocker'а.
+- **Почему:** type-checker видит `Result[T, E] @unwrap_or(default T) -> T`
+  как generic signature и выводит тип результата `r.unwrap_or(0)` как
+  `Result*` вместо `nova_int`. Codegen делает tag-comparison вместо
+  value-equality при `r.unwrap_or(0) == 42`. Silent wrong output.
+- **Как чинить:** per-T monomorphization Result.unwrap_or (как Option через
+  NovaOpt_<T>), или type-checker special-case признающий concrete Ok-type
+  из object'а без declared generic signature. Оба пути — Plan 62.B+.
+- **Приоритет:** M — Result.unwrap_or/unwrap активно используется; текущий
+  hardcoded path (emit_c.rs:11567+) работает корректно через bootstrap mono
+  compromise. Регрессии нет — только декларация в core.nv не добавлена.
 
-### [M-option-or-no-trampoline] (DEFER вЂ” Plan 62.B+)
-- **Р“РґРµ:** `nova_rt/array.h` + `std/prelude/core.nv`.
-- **Р§С‚Рѕ СѓРїСЂРѕС‰РµРЅРѕ:** `external fn Option[T] @or(other Option[T]) -> Option[T]`
-  Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅ РІ core.nv РґР»СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёРё, РЅРѕ codegen trampoline
-  `Nova_Option_method_or_<T>` РІ array.h РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚. Р’С‹Р·РѕРІ `opt.or(other)`
-  РґР°С‘С‚ CC-FAIL.
-- **РџРѕС‡РµРјСѓ:** РґРѕР±Р°РІР»РµРЅРёРµ per-T trampoline С‚СЂРµР±СѓРµС‚ РёР·РјРµРЅРµРЅРёСЏ nova_rt/array.h
-  (NOVA_DECLARE_OPTION_T macro) вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р° РІРЅРµ scope 62.A.bis.
-- **РљР°Рє С‡РёРЅРёС‚СЊ:** РґРѕР±Р°РІРёС‚СЊ `Nova_Option_method_or_<T>(opt, other) { ... }`
-  РІ NOVA_DECLARE_OPTION_T macro + routing entry РІ init_hardcoded_baseline.
-- **РџСЂРёРѕСЂРёС‚РµС‚:** L вЂ” or() РјРµРЅРµРµ РёСЃРїРѕР»СЊР·СѓРµРј С‡РµРј unwrap_or/map.
+### [M-option-or-no-trampoline] (DEFER — Plan 62.B+)
+- **Где:** `nova_rt/array.h` + `std/prelude/core.nv`.
+- **Что упрощено:** `external fn Option[T] @or(other Option[T]) -> Option[T]`
+  задекларирован в core.nv для документации, но codegen trampoline
+  `Nova_Option_method_or_<T>` в array.h отсутствует. Вызов `opt.or(other)`
+  даёт CC-FAIL.
+- **Почему:** добавление per-T trampoline требует изменения nova_rt/array.h
+  (NOVA_DECLARE_OPTION_T macro) — отдельная задача вне scope 62.A.bis.
+- **Как чинить:** добавить `Nova_Option_method_or_<T>(opt, other) { ... }`
+  в NOVA_DECLARE_OPTION_T macro + routing entry в init_hardcoded_baseline.
+- **Приоритет:** L — or() менее используем чем unwrap_or/map.
 
 ### [M-typecheck-missing-type-compat-checks] ✅ ЗАКРЫТ 2026-05-21 (Plan 79)
 > Ранее назывался `[M-typecheck-lenient-no-p1b-p2a-negatives]`.
@@ -25974,20 +25974,20 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 5. **ARM CI для compare_exchange_weak spurious-fail paths** — тесты на x86 не проверяют spurious fails
    (нет LL/SC на x86). ARM CI — отложено до Linux ARM CI готов.
 
-## Plan 103.5: Once hardening + OnceCell[T] + Lazy[T] вЂ” D168 (2026-05-26)
+## Plan 103.5: Once hardening + OnceCell[T] + Lazy[T] — D168 (2026-05-26)
 
-### Р РµР°Р»РёР·РѕРІР°РЅРѕ
-- Once: call_once + poison semantics + realtime violation guard + deprecation warning РґР»СЏ run/done
-- OnceCell[T]: generic lazy cell СЃ get_or_init + re-entrant guard + take/set/get
-- Lazy[T]: eager-closure lazy value РїРѕРІРµСЂС… OnceCell + is_forced
-- Unconditional `Nova_Once_method_done` state check (fix: NOVA_SYNC_ASSERT no-op РІ Dev)
+### Реализовано
+- Once: call_once + poison semantics + realtime violation guard + deprecation warning для run/done
+- OnceCell[T]: generic lazy cell с get_or_init + re-entrant guard + take/set/get
+- Lazy[T]: eager-closure lazy value поверх OnceCell + is_forced
+- Unconditional `Nova_Once_method_done` state check (fix: NOVA_SYNC_ASSERT no-op в Dev)
 - 20/20 tests PASS (11 pos + 3 neg + 2 prop + 1 stress)
 
-### РЈРїСЂРѕС‰РµРЅРёСЏ vs spec D171/D168
-1. **OnceCell/Lazy вЂ” РЅРµ C static structs, Р° monomorphized РІ emit_c.rs** вЂ” РєР°Р¶РґР°СЏ
-   РёРЅСЃС‚Р°РЅС†РёСЏ `OnceCell[int]` / `Lazy[str]` РіРµРЅРµСЂРёСЂСѓРµС‚ inline C struct Рё РјРµС‚РѕРґС‹.
-   Р­С‚Рѕ РѕС‚Р»РёС‡Р°РµС‚СЃСЏ РѕС‚ Once/AtomicX, РєРѕС‚РѕСЂС‹Рµ pre-declared РІ sync_primitives.h.
-   РџСЂРёС‡РёРЅР°: generic С‚РёРїС‹ С‚СЂРµР±СѓСЋС‚ T-РєРѕРЅРєСЂРµС‚РёР·Р°С†РёСЋ.
+### Упрощения vs spec D171/D168
+1. **OnceCell/Lazy — не C static structs, а monomorphized в emit_c.rs** — каждая
+   инстанция `OnceCell[int]` / `Lazy[str]` генерирует inline C struct и методы.
+   Это отличается от Once/AtomicX, которые pre-declared в sync_primitives.h.
+   Причина: generic типы требуют T-конкретизацию.
 
 2. **Lazy fiber-arena crash с parallel for (followup 2026-05-26):**
    `parallel for + lazy.force()` как **первый и единственный** блок в тест-файле
@@ -26016,11 +26016,11 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
    Покрывает: API, poison semantics, memory ordering (Acquire/Release), realtime
    forbidden methods, отвергнутые альтернативы.
 
-4. **once.run() + done() deprecated, РЅРѕ РЅРµ removed** вЂ” РїР°СЂР° РѕСЃС‚Р°С‘С‚СЃСЏ РІ API СЃ
-   W_ONCE_RUN_DONE_DEPRECATED warning. РЈРґР°Р»РµРЅРёРµ вЂ” РІ Plan 103.9 breaking-API pass.
+4. **once.run() + done() deprecated, но не removed** — пара остаётся в API с
+   W_ONCE_RUN_DONE_DEPRECATED warning. Удаление — в Plan 103.9 breaking-API pass.
 
-5. **OnceCell.take() atomicity** вЂ” take() РїРѕРґ mutex РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚ atomic ops.
-   Р”РѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР»СЏ single-threaded take (Р·Р°РґРѕРєСѓРјРµРЅС‚РёСЂРѕРІР°РЅРѕ РІ sync.nv).
+5. **OnceCell.take() atomicity** — take() под mutex не использует atomic ops.
+   Достаточно для single-threaded take (задокументировано в sync.nv).
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
@@ -26320,7 +26320,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 ## [M-simplifications-mojibake-cp1251] simplifications.md — cyrillic mojibake от cp1251 misencoding (2026-05-26)
 
 - **Где:** `docs/simplifications.md` lines 10443+ (Plan 62.A.bis section
-  и далее) — повсеместный mojibake вида "вЂ" / "Р " / "РЎРЇ" вместо
+  и далее) — повсеместный mojibake вида "— / "Р " / "СЯ" вместо
   русских букв и em-dash.
 - **Что происходит:** один из агентов (или editor session) сохранил
   cyrillic UTF-8 byte sequences интерпретируя их как cp1251, потом
@@ -26712,28 +26712,28 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
   M:N race in cancel-scope propagation (unrelated to timer hang).
 - **Last commit:** `043e7f00024 fix(plan83.10.2): GC aliasing + slot-reuse guard — cancel-timer-hang`.
 
-## Plan 103.3 вЂ” Mutex / RwLock / ReentrantMutex (2026-05-26)
+## Plan 103.3 — Mutex / RwLock / ReentrantMutex (2026-05-26)
 
-- **nova_alloc_uncollectable for sync primitives** вЂ” Boehm GC РЅР° Windows
-  РјРѕР¶РµС‚ СЃРѕР±СЂР°С‚СЊ РѕР±СЉРµРєС‚, С…СЂР°РЅСЏС‰РёР№СЃСЏ С‚РѕР»СЊРєРѕ РЅР° СЃС‚РµРєРµ main thread'Р°, РїРѕРєР° M:N
-  materializes workers (nova_scope_grow в†’ 7Г— nova_alloc в†’ GC trigger). Р’СЃРµ
-  static_new() С„СѓРЅРєС†РёРё РґР»СЏ Mutex/RwLock/ReentrantMutex РїРµСЂРµРІРµРґРµРЅС‹ РЅР°
-  GC_malloc_uncollectable. NOVA_AUTOARM=0 РѕР±С…РѕРґРёС‚ РїСЂРѕР±Р»РµРјСѓ (РЅРµС‚ worker
-  materialization), РїРѕСЌС‚РѕРјСѓ С‚РµСЃС‚С‹ РїСЂРѕС…РѕРґРёР»Рё С‚Р°Рј.
+- **nova_alloc_uncollectable for sync primitives** — Boehm GC на Windows
+  может собрать объект, хранящийся только на стеке main thread'а, пока M:N
+  materializes workers (nova_scope_grow → 7× nova_alloc → GC trigger). Все
+  static_new() функции для Mutex/RwLock/ReentrantMutex переведены на
+  GC_malloc_uncollectable. NOVA_AUTOARM=0 обходит проблему (нет worker
+  materialization), поэтому тесты проходили там.
 
-- **mco_coro* owner tracking** вЂ” ReentrantMutex С…СЂР°РЅРёС‚ owner РєР°Рє `mco_coro*
-  owner_coro = mco_running()`. NULL = main thread РёР»Рё unlocked. РЎС‚Р°Р±РёР»РµРЅ РІСЃС‘
-  РІСЂРµРјСЏ Р¶РёР·РЅРё fiber'Р° (РЅРµ РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїРѕРєР° mutex locked). Р’Р°СЂРёР°РЅС‚ С‡РµСЂРµР·
-  (scope, slot) РїР°СЂСѓ РѕС‚РєР»РѕРЅС‘РЅ: slot РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїРѕСЃР»Рµ Р·Р°РІРµСЂС€РµРЅРёСЏ fiber'Р°.
+- **mco_coro* owner tracking** — ReentrantMutex хранит owner как `mco_coro*
+  owner_coro = mco_running()`. NULL = main thread или unlocked. Стабилен всё
+  время жизни fiber'а (не переиспользуется пока mutex locked). Вариант через
+  (scope, slot) пару отклонён: slot переиспользуется после завершения fiber'а.
 
-- **Unconditional unlock invariants** вЂ” NOVA_SYNC_ASSERT = no-op РІ Dev mode
-  (С‚РѕР»СЊРєРѕ РїСЂРё NOVA_DEBUG). Р’СЃРµ invariant-РїСЂРѕРІРµСЂРєРё РїРµСЂРµРІРµРґРµРЅС‹ РЅР°
-  Nova_Fail_fail + nova_throw (independent of build mode), РєР°Рє РІ
+- **Unconditional unlock invariants** — NOVA_SYNC_ASSERT = no-op в Dev mode
+  (только при NOVA_DEBUG). Все invariant-проверки переведены на
+  Nova_Fail_fail + nova_throw (independent of build mode), как в
   Nova_Once_method_done (Plan 103.5 precedent).
 
-- **Writer-priority RwLock** вЂ” write_waiting С„Р»Р°Рі Р±Р»РѕРєРёСЂСѓРµС‚ РЅРѕРІС‹С… readers
-  РїРѕРєР° РµСЃС‚СЊ РѕР¶РёРґР°СЋС‰РёР№ writer. РџСЂРµРґРѕС‚РІСЂР°С‰Р°РµС‚ writer starvation. Reader-priority
-  вЂ” opt-in С‡РµСЂРµР· new_reader_priority().
+- **Writer-priority RwLock** — write_waiting флаг блокирует новых readers
+  пока есть ожидающий writer. Предотвращает writer starvation. Reader-priority
+  — opt-in через new_reader_priority().
 
 ---
 
