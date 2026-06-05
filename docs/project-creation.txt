@@ -32379,3 +32379,32 @@ d27f3341a0c).
 **Unblocks:** Plan 91 Ф.3 (JSON conformance) теперь может
 использовать `if cond { throw } else { compute_str() }` идиом без
 workaround. Любые stdlib функции с same pattern — больше не CC-FAIL.
+
+
+## 2026-06-05 (later) — Plan 118.5 V3 nice-to-have polish closure
+
+После V3 + audit gap-fix closure аудит выявил 5 «nice-to-have» дополнений (не блокеры). User confirmed «исправь это без упрощений как для прода сейчас» — все 5 landed parallel workflow + sequential commit-per-task split (5 commits).
+
+### Fixes
+
+1. **D175/D176 forward-ref banners** (commit `a825eb370e1`) — добавлены blockquote-banner'ы у D175 (readonly field freeze) и D176 (readonly T modifier) с указанием на D216 V3 §V3.1 storage-class semantics. Reader старого D-блока теперь видит ссылку на newer rules.
+
+2. **ffi-cookbook V3 hint** (commit `975ec2e644a`) — новая секция «Pointer modifier rules (V2/V3)» сразу после Quick reference TOC. 5-item cheatsheet (`*T` / `mut * T` / `unsafe * T` / `* unsafe T` / chain) + cross-refs к typed-pointers.md и migration guide. Discoverability для FFI authors.
+
+3. **README typed-pointers link** (commit `883338436ce`) — добавлена строка в Contents TOC top-level README.md → docs/typed-pointers.md. После V3 closure typed-pointers.md стал user-facing документом.
+
+4. **safe keyword examples** (commit `9d6da364660`) — в examples/typed_pointers/basic_pointer.nv добавлены 3 новых external fn declarations + dedicated test{}-block демонстрирующие §V3.4 safe escape:
+   - `ffi_borrow_buffer(p unsafe * safe Buffer)` — Rust `*const T` analog (outer unsafe ptr c safe pointee)
+   - `observe_readonly_view(p ro * safe ro Buffer)` — intentional ro re-application past stopper (без safe → E_REDUNDANT_TYPE_MODIFIER)
+   - `raw_alloc_slot(p unsafe * safe unsafe Buffer)` — opaque uninit-pointee handle
+   Module-level doc-comment extended с V3 §V3.4 section. **Verified via release nova check: PASS.**
+
+5. **??commit_F4?? placeholder** (commit `7b9c5f64fca`) — в docs/plans/118.5-right-binding-rule-migration.md (line 237) был unresolved placeholder в V1 commit sequence list. Replaced с реальным SHA `c075afc0b5a` (V1 Ф.4 partial: unsafe T MaybeUninit read enforcement + 6 fixtures). Sub-agent сначала ошибочно поставил V3 Ф.4 SHA — исправлено orchestrator-ом по context (line 237 это V1 sequence, line 597 — V3, который уже корректен).
+
+### Merge
+
+Merged plan-118.5 → main как commit `da1f981fd85` (Merge plan-118.5 nice-to-have polish). Без push.
+
+### State
+
+Plan 118.5 V3 ✅ **ABSOLUTELY CLOSED** — V1 + V2 + V3 + Ф.6 + audit gap-fixes + nice-to-have polish. Zero open items. plan118_5_v3 17/17 PASS + basic_pointer.nv example PASS. typed-pointers.md user-facing doc в V3 canonical form + discoverable из README. Migration guide для downstream users. D175/D176 forward-pointers к V3.1 storage-class rules.
