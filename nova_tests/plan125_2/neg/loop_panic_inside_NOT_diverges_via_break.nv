@@ -1,0 +1,30 @@
+// Plan 125.2 [M-125-loop-no-break-divergence] sanity check:
+// `loop { ... break }` с panic'ом перед break — НЕ должно быть классифицировано
+// как divergent через loop-no-break pattern (есть break). Если runtime
+// доходит до break — нормальный exit. Pattern detection — pure-AST,
+// не учитывает reachability перед break.
+
+module neg.loop_panic_inside_NOT_diverges_via_break
+
+fn maybe_exit(c bool) -> int {
+    mut x = 0
+    loop {
+        if c {
+            x = 99
+            break
+        }
+        x = x + 1
+        if x >= 3 {
+            break
+        }
+    }
+    x
+}
+
+test "loop with break — true path exits with 99" {
+    assert(maybe_exit(true) == 99)
+}
+
+test "loop with break — false path counts to 3" {
+    assert(maybe_exit(false) == 3)
+}
