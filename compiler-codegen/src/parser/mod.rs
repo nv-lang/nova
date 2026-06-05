@@ -9063,7 +9063,28 @@ impl Parser {
                         span,
                     )
                 })?;
-                parts.push(InterpPart::Expr(inner));
+                // **Plan 91.14 Ф.2 (D229):** после expr peek для `:` token.
+                // Если присутствует — parse format spec (V1: только `?` → Debug).
+                let spec = if matches!(sub.peek().kind, TokenKind::Colon) {
+                    sub.bump(); // consume `:`
+                    parse_format_spec(&mut sub, span)?
+                } else {
+                    crate::ast::FormatSpec::None
+                };
+                // Если что-то осталось после spec — syntax error (внутри ${...}
+                // не должно быть лишних tokens).
+                if !matches!(sub.peek().kind, TokenKind::Eof) {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "[E_FORMAT_SPEC_TRAILING] unexpected tokens after format spec \
+                             in `${{...}}`: expected end of expression, found `{}`. \
+                             Plan 91.14: valid syntax — `${{expr}}` or `${{expr:?}}`.",
+                            sub.peek().kind.name(),
+                        ),
+                        span,
+                    ));
+                }
+                parts.push(InterpPart::Expr(inner, spec));
                 i = j + 1;
                 continue;
             }
@@ -9093,9 +9114,9 @@ impl Parser {
             .into_iter()
             .map(|p| match p {
                 InterpPart::Lit(s) => InterpStrPart::Lit(s),
-                InterpPart::Expr(e) => InterpStrPart::Expr {
+                InterpPart::Expr(e, spec) => InterpStrPart::Expr {
                     expr: Box::new(e),
-                    spec: crate::ast::FormatSpec::None,
+                    spec,
                 },
             })
             .collect();
@@ -9108,7 +9129,57 @@ impl Parser {
 
 enum InterpPart {
     Lit(String),
-    Expr(Expr),
+    /// Plan 91.14 (D229): expr с optional format spec (`${expr}` или `${expr:?}`).
+    /// V1 specs: FormatSpec::None / FormatSpec::Debug.
+    Expr(Expr, crate::ast::FormatSpec),
+}
+
+/// **Plan 91.14 Ф.2 (D229):** parse format spec после `:` token inside `${...}`.
+///
+/// Called from `desugar_string_interpolation` после `parse_expr()` если peek = `:`.
+/// V1 grammar:
+/// - `?` → `FormatSpec::Debug` (calls DebugPrintable.@debug_fmt)
+/// - empty (after `:`) → `E_FORMAT_SPEC_EMPTY`
+/// - whitespace before spec → `E_FORMAT_SPEC_WHITESPACE` (strict, no forgiveness)
+/// - unknown ident → `E_FORMAT_SPEC_UNKNOWN` с suggestion list
+///
+/// Future extensions ([M-91.14-format-dsl-extensions]): `:hex`, `:pad-N`, `:.3`, etc.
+fn parse_format_spec(
+    sub: &mut Parser,
+    interp_span: crate::diag::Span,
+) -> Result<crate::ast::FormatSpec, Diagnostic> {
+    // After consuming `:`, peek next token:
+    match &sub.peek().kind {
+        TokenKind::Question => {
+            sub.bump();
+            Ok(crate::ast::FormatSpec::Debug)
+        }
+        TokenKind::Eof => Err(Diagnostic::new(
+            "[E_FORMAT_SPEC_EMPTY] format spec после `:` is empty in `${...}`. \
+             Expected `?` для debug-format (V1). \
+             Example: `${expr:?}`. Plan 91.14 (D229)."
+                .to_string(),
+            interp_span,
+        )),
+        TokenKind::Ident(name) => Err(Diagnostic::new(
+            format!(
+                "[E_FORMAT_SPEC_UNKNOWN] unknown format spec `{}` в `${{...}}`. \
+                 V1 supports только `?` (debug). Did you mean `${{expr:?}}`? \
+                 Future specs (`hex`, `pad-N`, `.N`) — [M-91.14-format-dsl-extensions]. \
+                 Plan 91.14 (D229).",
+                name,
+            ),
+            interp_span,
+        )),
+        other => Err(Diagnostic::new(
+            format!(
+                "[E_FORMAT_SPEC_UNKNOWN] unexpected token `{}` после `:` в `${{...}}`. \
+                 V1 supports только `?` (debug). Plan 91.14 (D229).",
+                other.name(),
+            ),
+            interp_span,
+        )),
+    }
 }
 
 fn parser_utf8_char_len(first_byte: u8) -> usize {

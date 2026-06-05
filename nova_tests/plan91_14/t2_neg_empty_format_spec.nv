@@ -1,0 +1,14 @@
+// Plan 91.14 Ф.2 NEG T2 — empty format spec → E_FORMAT_SPEC_EMPTY.
+//
+// Per parse_format_spec: после `:` token внутри `${...}` ожидается
+// non-empty spec (V1: `?`). Empty (`${expr:}`) — error.
+//
+// EXPECT_COMPILE_ERROR E_FORMAT_SPEC_EMPTY
+
+module plan91_14.t2_neg_empty_format_spec
+
+test "empty format spec rejects" {
+    ro x = 42
+    ro s = "${x:}"
+    assert(s == "42")
+}
