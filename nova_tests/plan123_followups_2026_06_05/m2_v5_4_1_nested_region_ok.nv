@@ -1,0 +1,47 @@
+// Plan 123 V*.followups 2026-06-05 marker 2 — V5.4.1 region-tagging.
+// Closes [M-123.5.4-explain-region-tagging].
+// Positive: V1.2 nested-region caching inside if-then with internal
+// write — semantic preservation through region-aware caching.
+
+module plan123_followups_2026_06_05.m2_v5_4_1_nested_region_ok
+
+type C {
+    mut x int
+}
+
+fn C.new() -> C => { x: 0 }
+
+fn C mut @nested_two_regions(cond bool) -> int {
+    // mut acc init.
+    mut acc = 0
+    if cond {
+        // V1.2 nested-region: 2 reads before internal write — Region A.
+        ro a = @x
+        ro b = @x
+        // Internal write splits nested region.
+        @x = 99
+        // 2 reads after write — Region B.
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+
+test "V5.4.1 nested region: semantic preservation with cond true" {
+    mut c = C.new()
+    c.x = 10
+    ro r = c.nested_two_regions(true)
+    // a=10, b=10, write @x=99, c=99, d=99 ⇒ 10+10+99+99 = 218
+    assert(r == 218)
+    assert(c.x == 99)
+}
+
+test "V5.4.1 nested region: cond false skips region entirely" {
+    mut c = C.new()
+    c.x = 10
+    ro r = c.nested_two_regions(false)
+    assert(r == 0)
+    // @x stays unchanged.
+    assert(c.x == 10)
+}
