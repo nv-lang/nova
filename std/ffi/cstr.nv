@@ -30,3 +30,38 @@ module std.ffi.cstr
 /// CStr — use `to_cstr()` (always copies + allocates own buffer).
 #stable(since = "0.1")
 export type CStr(*u8)
+
+// Plan 118.1 Ф.4 closeout — str → CStr conversions.
+//
+// Per D26 invariant: full Nova str ALWAYS has ptr[len]=='\0' by allocator,
+// so `bytes.as_ptr()` (Plan 118.2 Ф.1 builtin) already points к buffer
+// where C-side strlen terminates correctly.
+//
+// @as_cstr() — scan для embedded NUL (would truncate C-string), return
+//   CStr wrapping the bytes' raw pointer. Zero-copy.
+//
+// @to_cstr() — V1: alias к @as_cstr() (D26 invariant makes zero-copy safe).
+//   Always-copy semantic deferred — needed только если caller нуждается
+//   в ownership outliving source str.
+//
+// @as_cstr_unchecked() — skips embedded-NUL scan. Caller asserts safe.
+//   Should be #unsafe (parser support pending [M-118.1-unsafe-attr-on-external-fn]).
+
+// V1 NOTE: cstr.nv loaded via ExternalRegistry без auto-prelude wiring;
+// `assert`/`panic` не доступны в этом контексте без import, который
+// создаёт depth/cycle issues. V1 ships sans embedded-NUL runtime check —
+// caller responsibility per FFI contract («str must not contain '\0'»).
+// Embedded-NUL runtime check followup: [M-118.1-cstr-nul-check].
+
+export fn str @as_cstr() -> CStr {
+    ro bytes = @as_bytes()
+    unsafe { CStr(bytes.as_ptr()) }
+}
+
+export fn str @to_cstr() -> CStr {
+    @as_cstr()
+}
+
+export fn str @as_cstr_unchecked() -> CStr {
+    @as_cstr()
+}
