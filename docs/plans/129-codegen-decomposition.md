@@ -1,287 +1,295 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 129 — Codegen decomposition (split `emit_c.rs` / `types/mod.rs` / `parser/mod.rs` / `field_cache.rs`)
+# План 129 — Декомпозиция кодогенератора (разбить `emit_c.rs` / `types/mod.rs` / `parser/mod.rs` / `field_cache.rs`)
 
-> **Статус:** 📋 DRAFT 2026-06-06 (proposed, NOT scheduled)
-> **Приоритет:** P2 — нужен после shipping 0.1, не блокирует feature work
-> **Origin:** community feedback re: agent productivity tax на 28k+ line files
-> **Дата готовности к старту:** строго после тега 0.1 (Plan 91 целиком).
->   Рефактор во время активного feature-дева = merge hell (см. R1). Не
->   стартовать пока emit_c.rs в активной работе.
+> **Статус:** 📋 ЧЕРНОВИК 2026-06-06 (предложен, НЕ запланирован)
+> **Приоритет:** P2 — нужен после выпуска 0.1, не блокирует работу над фичами
+> **Источник:** обратная связь от сообщества про налог на продуктивность агента на файлах в 28k+ строк
+> **Готовность к старту:** строго после тега 0.1 (Plan 91 целиком).
+>   Рефактор во время активной работы над фичами = ад слияний (см. R1).
+>   Не стартовать пока `emit_c.rs` в активной работе.
 
 ## Что и зачем (одной фразой)
 
-Расщепить 4 monolithic файла — `emit_c.rs` (30,928 LOC), `types/mod.rs`
-(18,331 LOC), `parser/mod.rs` (10,156 LOC), `field_cache.rs` (12,790 LOC)
-— в submodule trees БЕЗ изменения семантики, сохраняя monolithic struct
-patterns (CEmitter / TypeCtx) через inherent-impl-across-files.
+Расщепить 4 монолитных файла — `emit_c.rs` (30 928 строк), `types/mod.rs`
+(18 331 строк), `parser/mod.rs` (10 156 строк), `field_cache.rs` (12 790 строк)
+— на деревья подмодулей БЕЗ изменения семантики, сохранив монолитные
+struct-ы (`CEmitter` / `TypeCtx`) через разбиение inherent-impl по файлам.
 
 Зачем:
-- **Agent productivity tax:** работа в 28k-line файлах требует 6+ Grep'ов
-  для navigation, 14+ Read'ов для full understanding, повышенный риск
-  Edit "not unique" errors. Workflow sub-agents особенно страдают — в
-  этой сессии `wjuje6jus` упал на StructuredOutput предположительно из-за
-  context-exhaustion работая в emit_c.rs.
-- **Code review fatigue:** 30k-line файл не помещается в любой review
-  tool side-by-side. Любой PR который касается emit_c.rs — paratrooper
-  reviewers видят hunks без context.
-- **Compile-time:** Rust перекомпиливает целый crate при touch одного
-  файла. Split на cohesive modules уменьшает rebuild scope при typical
-  development (touch one emit_X — rebuild only that module + dependents).
-- **Onboarding:** новый contributor видит `emit_c.rs` 30k LOC и сразу
+- **Налог на продуктивность агента:** работа в файлах на 28k строк требует
+  6+ вызовов Grep для навигации, 14+ вызовов Read для полного понимания,
+  повышен риск ошибок Edit «not unique». Особенно страдают sub-агенты
+  воркфлоу — в этой сессии `wjuje6jus` упал на StructuredOutput,
+  предположительно из-за исчерпания контекста при работе в `emit_c.rs`.
+- **Усталость от ревью:** файл на 30k строк не помещается side-by-side ни
+  в одном инструменте ревью. Любой PR, затрагивающий `emit_c.rs` — и
+  ревьюер видит куски диффа без контекста.
+- **Время компиляции:** Rust перекомпилирует целый crate при правке одного
+  файла. Разбиение на связные модули уменьшает объём пересборки при
+  типичной разработке (правишь один `emit_X` — пересобирается только этот
+  модуль и зависимые).
+- **Онбординг:** новый контрибьютор видит `emit_c.rs` на 30k строк и сразу
   закрывает.
 
-## Корневая причина (audit)
+## Корневая причина (аудит)
 
-`CEmitter` struct (line ~370+) имеет ~200 fields — shared codegen state:
-- mono worklists / instantiation caches
-- registries (NovaOpt/NovaArr/NovaRes typedefs)
+Struct `CEmitter` (строка ~370+) имеет ~200 полей — общее состояние
+кодогенератора:
+- рабочие списки мономорфизации / кэши инстанцирования
+- реестры (typedef-ы NovaOpt/NovaArr/NovaRes)
 - generic_type_templates / generic_types
-- current_fn / current_receiver / current_type_subst (traversal context)
+- current_fn / current_receiver / current_type_subst (контекст обхода)
 - type_aliases / record_schemas / sum_schemas / protocol_types
-- effect tracking / sync class / fiber state
-- emit buffer / line counter / indent
+- отслеживание эффектов / sync-класс / состояние fiber
+- буфер вывода / счётчик строк / отступ
 
-Все методы — `impl CEmitter { ... }`. Rust supports **inherent-impl
-split across files** через `mod X;` declarations в parent + `impl
-CEmitter { ... }` в child files. Семантически identical, lexically
-modular.
+Все методы — `impl CEmitter { ... }`. Rust поддерживает **разбиение
+inherent-impl по файлам** через объявления `mod X;` в родителе + блоки
+`impl CEmitter { ... }` в дочерних файлах. Семантически идентично,
+лексически модульно.
 
-Pre-existing structural split в emit_c.rs:
-- Lines ~10-100: type aliases / structs (MethodSig, MutableContext)
-- Lines ~370-1100: CEmitter struct + constructor
-- Lines ~1100-10000: pre-passes (forward decls, registration)
-- Lines ~10000-22000: main emission methods (per ExprKind)
-- Lines ~22000-28000: match-emit + helpers
-- Lines ~28000-30928: infer_expr_c_type + utility helpers
+Уже существующее структурное разбиение в `emit_c.rs`:
+- Строки ~10–100: алиасы типов / struct-ы (MethodSig, MutableContext)
+- Строки ~370–1100: struct CEmitter + конструктор
+- Строки ~1100–10000: пре-проходы (forward-декларации, регистрация)
+- Строки ~10000–22000: основные методы эмиссии (по ExprKind)
+- Строки ~22000–28000: эмиссия match + helper-ы
+- Строки ~28000–30928: infer_expr_c_type + служебные helper-ы
 
 ## Зависимости
 
-- **Не требует** новых language features — pure refactor.
-- **Требует** stable codegen (Plan 125 family closed ✅).
-- **Hard blocker:** активные feature PRs в emit_c.rs — конкуренция за
-  тот же файл порождает merge hell. Рекомендуется starting window когда
-  emit_c.rs не trogается ≥1 неделю.
+- **Не требует** новых языковых фич — чистый рефакторинг.
+- **Требует** стабильного кодогенератора (семейство Plan 125 закрыто ✅).
+- **Жёсткий блокер:** активные feature-PR в `emit_c.rs` — конкуренция за
+  тот же файл порождает ад слияний. Рекомендуется окно старта, когда
+  `emit_c.rs` не трогается ≥1 недели.
 
 ## Фазы
 
-### Ф.0 — Audit + decomposition map (1-2 days)
+### Ф.0 — Аудит + карта декомпозиции (1–2 дня)
 
-**Scope:**
-1. Сгенерировать table: каждый method в emit_c.rs → cohesion group
-   - Group examples: `emit_expressions`, `emit_statements`,
+**Что входит:**
+1. Сгенерировать таблицу: каждый метод в `emit_c.rs` → группа связности
+   - Примеры групп: `emit_expressions`, `emit_statements`,
      `emit_type_decls`, `emit_match_machinery`, `infer_types`,
      `mono_pipeline`, `helpers`
-2. Identify cross-cutting state на CEmitter — поля, к которым обращается
-   ≥3 method groups. Эти поля остаются на CEmitter (нет point splitting
-   struct itself).
-3. Build dependency graph: которые группы вызывают какие → определить
-   `pub(super)` boundaries.
-4. **Same for `types/mod.rs` / `parser/mod.rs` / `field_cache.rs`** —
-   each gets its own decomposition map.
-5. Записать decomposition map в `docs/architecture/codegen-decomposition-audit.md`
-   (публичный — контрибьюторы видят структуру разбиения) с per-file map.
+2. Выявить сквозное состояние на `CEmitter` — поля, к которым обращается
+   ≥3 групп методов. Эти поля остаются на `CEmitter` (сам struct не
+   разбиваем).
+3. Построить граф зависимостей: какие группы вызывают какие → определить
+   границы `pub(super)`.
+4. **То же для `types/mod.rs` / `parser/mod.rs` / `field_cache.rs`** —
+   у каждого своя карта декомпозиции.
+5. Записать карту декомпозиции в `docs/architecture/codegen-decomposition-audit.md`
+   (публичный — контрибьюторы видят структуру разбиения), с картой по
+   каждому файлу.
 
-**Gate:**
-- 4 decomposition map'a written + reviewed
-- No proposed cross-cutting state movement (только методы перемещаются)
-- Estimated split: emit_c.rs → ~10 модулей × 2-4k LOC each
+**Критерий приёмки:**
+- 4 карты декомпозиции написаны + проверены
+- Никакого предложенного перемещения сквозного состояния (двигаются
+  только методы)
+- Оценка разбиения: `emit_c.rs` → ~10 модулей по 2–4k строк каждый
 
-### Ф.1 — emit_c.rs split (3-5 days)
+### Ф.1 — Разбиение `emit_c.rs` (3–5 дней)
 
-**Scope:**
-Создать `compiler-codegen/src/codegen/c/` (rename `codegen/emit_c.rs`)
-→ split в submodules:
-- `codegen/c/mod.rs` — CEmitter struct definition + ctor + основной entry point
-- `codegen/c/preamble.rs` — pre-passes (forward decls, registration)
+**Что входит:**
+Создать `compiler-codegen/src/codegen/c/` (переименование `codegen/emit_c.rs`)
+→ разбить на подмодули:
+- `codegen/c/mod.rs` — определение struct CEmitter + конструктор + основная точка входа
+- `codegen/c/preamble.rs` — пре-проходы (forward-декларации, регистрация)
 - `codegen/c/types.rs` — type_ref_to_c, return_type_c, infer_expr_c_type
-- `codegen/c/expressions/mod.rs` — emit_expr dispatch
+- `codegen/c/expressions/mod.rs` — диспетчеризация emit_expr
   - `emit_call.rs`, `emit_match.rs`, `emit_if.rs`, `emit_block.rs`,
     `emit_lambda.rs`, `emit_literal.rs`, `emit_member.rs`, ...
 - `codegen/c/statements.rs` — emit_stmt
-- `codegen/c/mono.rs` — monomorphization pipeline
-- `codegen/c/registries.rs` — NovaOpt/NovaArr/NovaRes typedef emission
-- `codegen/c/effects.rs` — Fail/with-handler emission
-- `codegen/c/helpers.rs` — utilities (`coerce_for_assignment`, etc.)
-- `codegen/c/plan125.rs` — Plan 125 divergence helpers
-  (`expr_diverges_125`, `block_trailing_diverges`, etc.)
+- `codegen/c/mono.rs` — конвейер мономорфизации
+- `codegen/c/registries.rs` — эмиссия typedef-ов NovaOpt/NovaArr/NovaRes
+- `codegen/c/effects.rs` — эмиссия Fail/with-handler
+- `codegen/c/helpers.rs` — служебные (`coerce_for_assignment` и т.д.)
+- `codegen/c/plan125.rs` — helper-ы расхождения Plan 125
+  (`expr_diverges_125`, `block_trailing_diverges` и т.д.)
 
-**Migration approach:**
-1. Создать submodule scaffold (empty `.rs` files + `mod X;` declarations)
-2. **Move method-by-method** через `git mv`-style cut+paste:
-   - Cut full method body из emit_c.rs
-   - Paste в `impl CEmitter { ... }` block в target submodule
-   - Cargo check после каждой move — restore если breaks
-3. Use `pub(super) fn` для cross-module method calls. Private methods
-   на CEmitter остаются `fn`.
-4. После каждой группы move — full `cargo build` + targeted regression
-   (plan125, plan91_13).
+**Подход к переносу:**
+1. Создать каркас подмодулей (пустые `.rs` файлы + объявления `mod X;`)
+2. **Переносить метод за методом** в стиле `git mv` — вырезать+вставить:
+   - Вырезать тело метода целиком из `emit_c.rs`
+   - Вставить в блок `impl CEmitter { ... }` в целевом подмодуле
+   - `cargo check` после каждого переноса — откатить если ломается
+3. Использовать `pub(super) fn` для межмодульных вызовов методов.
+   Приватные методы на `CEmitter` остаются `fn`.
+4. После каждой группы переносов — полный `cargo build` + точечная
+   регрессия (plan125, plan91_13).
 
-**Gate per group:**
-- `cargo build --release` clean
-- Targeted regression: plan125 family 61/0 + plan91_13 8/0 PASS
-- No semantic changes detectable in C output (binary-compare emitted
-  .c files против baseline pre-refactor для sample fixtures)
+**Критерий приёмки на группу:**
+- `cargo build --release` чисто
+- Точечная регрессия: семейство plan125 61/0 + plan91_13 8/0 PASS
+- Никаких семантических изменений в C-выводе (побайтовое сравнение
+  сгенерированных `.c` файлов с baseline до рефактора для образцовых
+  фикстур)
 
-**Hard cap:** если ≥3 unexplained regressions в одной фазе → revert
-группа, переосмыслить cohesion boundary.
+**Жёсткий лимит:** если ≥3 необъяснённых регрессий в одной фазе → откатить
+группу, переосмыслить границу связности.
 
-### Ф.2 — types/mod.rs split (2-3 days)
+### Ф.2 — Разбиение `types/mod.rs` (2–3 дня)
 
-**Scope:**
-`compiler-codegen/src/types/mod.rs` (18k LOC) → split:
-- `types/mod.rs` — TypeCtx struct + Ty enum + entry points
-- `types/infer.rs` — `infer_expr_type` + sibling inference functions
-- `types/check.rs` — `assignable` / `coerce` / compatibility checks
-- `types/effects.rs` — effect inference + tracking
+**Что входит:**
+`compiler-codegen/src/types/mod.rs` (18k строк) → разбить:
+- `types/mod.rs` — struct TypeCtx + enum Ty + точки входа
+- `types/infer.rs` — `infer_expr_type` + смежные функции вывода
+- `types/check.rs` — `assignable` / `coerce` / проверки совместимости
+- `types/effects.rs` — вывод эффектов + отслеживание
 - `types/divergence.rs` — `expr_diverges` / `block_diverges` /
-  `stmt_diverges` (Plan 100.7 D165 helpers)
-- `types/consume.rs` — Plan 100 D156 consume-walk-* helpers
-- `types/mono.rs` — generic mono pipeline в type-checker
-- `types/handlers.rs` — handler-body must-diverge / interrupt validation
-- `types/plan125_1.rs` — Plan 125.1 never-first-class additions
+  `stmt_diverges` (helper-ы Plan 100.7 D165)
+- `types/consume.rs` — helper-ы consume-walk-* из Plan 100 D156
+- `types/mono.rs` — конвейер обобщённой мономорфизации в проверке типов
+- `types/handlers.rs` — must-diverge тела handler-а / валидация interrupt
+- `types/plan125_1.rs` — добавления never-first-class из Plan 125.1
 
-**Same migration approach** как Ф.1.
+**Подход к переносу тот же**, что в Ф.1.
 
-**Gate:** full nova test (целиком, not just sample) — 0 regressions.
-Type-checker changes исторически регрессируют stdlib (R7/R8 from Plan
-125).
+**Критерий приёмки:** полный `nova test` (целиком, не только образец) —
+0 регрессий. Изменения в проверке типов исторически регрессируют stdlib
+(R7/R8 из Plan 125).
 
-### Ф.3 — parser/mod.rs split (1-2 days)
+### Ф.3 — Разбиение `parser/mod.rs` (1–2 дня)
 
-**Scope:**
-`compiler-codegen/src/parser/mod.rs` (10k LOC) → split:
-- `parser/mod.rs` — Parser struct + entry points (`parse`, `parse_module`)
-- `parser/expressions.rs` — Pratt expression parser
-- `parser/statements.rs` — statement parser
-- `parser/types.rs` — type-ref parser
-- `parser/patterns.rs` — pattern parser (для match / if-let / let)
-- `parser/declarations.rs` — fn / type / import / module declarations
-- `parser/effects.rs` — effect signature parser
-- `parser/literals.rs` — literal parsing (strings, numbers, char escapes)
+**Что входит:**
+`compiler-codegen/src/parser/mod.rs` (10k строк) → разбить:
+- `parser/mod.rs` — struct Parser + точки входа (`parse`, `parse_module`)
+- `parser/expressions.rs` — парсер выражений по Пратту
+- `parser/statements.rs` — парсер инструкций
+- `parser/types.rs` — парсер ссылок на типы
+- `parser/patterns.rs` — парсер паттернов (для match / if-let / let)
+- `parser/declarations.rs` — объявления fn / type / import / module
+- `parser/effects.rs` — парсер сигнатур эффектов
+- `parser/literals.rs` — парсинг литералов (строки, числа, escape символов)
 
-Parser проще split'ить т.к. функции более локальны (recursive descent).
+Парсер проще разбивать, т.к. функции более локальны (рекурсивный спуск).
 
-**Gate:** plan125 + plan91_13 + parser-heavy syntax tests PASS.
+**Критерий приёмки:** plan125 + plan91_13 + синтаксис-нагруженные тесты PASS.
 
-### Ф.4 — field_cache.rs split (1 day)
+### Ф.4 — Разбиение `field_cache.rs` (1 день)
 
-**Scope:**
-`compiler-codegen/src/field_cache.rs` (12.7k LOC) → split:
-- `field_cache/mod.rs` — FieldCacheCtx + public API
-- `field_cache/ipa.rs` — IPA analysis (V7.x chain receiver detection)
-- `field_cache/loop_body.rs` — V2.x loop-body LICM coordination
-- `field_cache/explain.rs` — V5.x explain deep-walk
-- `field_cache/heuristics.rs` — V3-V4 various rules
+**Что входит:**
+`compiler-codegen/src/field_cache.rs` (12,7k строк) → разбить:
+- `field_cache/mod.rs` — FieldCacheCtx + публичный API
+- `field_cache/ipa.rs` — IPA-анализ (детект chain-receiver из V7.x)
+- `field_cache/loop_body.rs` — координация LICM тела цикла из V2.x
+- `field_cache/explain.rs` — explain deep-walk из V5.x
+- `field_cache/heuristics.rs` — разные правила V3–V4
 
-**Gate:** plan123 family regression (V2.1/V5.4/V7.5/V7.6/V7.7) PASS.
+**Критерий приёмки:** регрессия семейства plan123 (V2.1/V5.4/V7.5/V7.6/V7.7) PASS.
 
-### Ф.5 — Cross-cutting helpers extract (1-2 days, optional)
+### Ф.5 — Вынос сквозных helper-ов (1–2 дня, опционально)
 
-**Scope:**
-После Ф.1-Ф.4 — identify utility methods used ≥2 split modules,
-extract в shared utility crate / module:
-- C-name mangling helpers (`sanitize_for_novaopt`, etc.)
-- Diagnostic emission (`err_*` helpers)
-- AST traversal patterns (common visitor templates)
+**Что входит:**
+После Ф.1–Ф.4 — выявить служебные методы, используемые ≥2 разбитыми
+модулями, вынести в общий служебный crate / модуль:
+- helper-ы генерации C-имён (`sanitize_for_novaopt` и т.д.)
+- выдача диагностик (helper-ы `err_*`)
+- паттерны обхода AST (общие шаблоны посетителя)
 
-**Gate:** zero regression + LOC reduction в каждом split module.
+**Критерий приёмки:** ноль регрессий + сокращение строк в каждом
+разбитом модуле.
 
-### Ф.6 — Closure: docs + AGENTS.md update (1 day)
+### Ф.6 — Закрытие: документация + обновление AGENTS.md (1 день)
 
-**Scope:**
-1. `AGENTS.md` — update navigation hints для new structure
-2. `docs/architecture/codegen.md` (new) — describe module organization,
-   adding-new-features playbook (где emit_X for ExprKind::X goes)
-3. `docs/plans/README.md` — mark Plan 129 ✅ CLOSED
-4. Internal dev log — entry с total LOC delta + agent
-   productivity expectation (до/после tool-call measurement)
-5. Optional: announcement в community channels — refactor done, no
-   semantic changes
+**Что входит:**
+1. `AGENTS.md` — обновить подсказки навигации под новую структуру
+2. `docs/architecture/codegen.md` (новый) — описать организацию модулей,
+   playbook по добавлению фич (куда идёт emit_X для ExprKind::X)
+3. `docs/plans/README.md` — пометить Plan 129 ✅ ЗАКРЫТ
+4. Внутренний журнал разработки — запись с суммарной дельтой строк +
+   ожидание по продуктивности агента (замер числа вызовов инструментов
+   до/после)
+5. Опционально: анонс в каналах сообщества — рефактор сделан, семантика
+   не менялась
 
-## Acceptance criteria
+## Критерии приёмки
 
-1. **emit_c.rs** разбит на ≤12 modules, ни один > 5k LOC
-2. **types/mod.rs** разбит на ≤8 modules, ни один > 4k LOC
-3. **parser/mod.rs** разбит на ≤8 modules, ни один > 2k LOC
-4. **field_cache.rs** разбит на ≤6 modules, ни один > 3k LOC
-5. **Zero semantic regression** — full `nova test` baseline-clean после
-   каждой phase + после final
-6. **C output binary-identical** для sample fixtures (plan125,
-   plan91_13, plan100_1, plan76 — 50+ fixtures) против pre-refactor
-   baseline (или explicit diff explanation если differs)
-7. **CEmitter / TypeCtx / Parser struct shapes unchanged** — pure
-   method reorganization, не field reorg
-8. **Cargo build wall-time** не regressed (cohesive modules should
-   help, NOT hurt)
-9. **Agent productivity sanity test** — после refactor, spawn agent
-   с task "find emit_match_arm_body + understand call sites" — total
-   tool calls должен снизиться на ≥30% vs pre-refactor measurement
+1. **emit_c.rs** разбит на ≤12 модулей, ни один > 5k строк
+2. **types/mod.rs** разбит на ≤8 модулей, ни один > 4k строк
+3. **parser/mod.rs** разбит на ≤8 модулей, ни один > 2k строк
+4. **field_cache.rs** разбит на ≤6 модулей, ни один > 3k строк
+5. **Ноль семантических регрессий** — полный `nova test` чист относительно
+   baseline после каждой фазы + после финала
+6. **C-вывод побайтово идентичен** для образцовых фикстур (plan125,
+   plan91_13, plan100_1, plan76 — 50+ фикстур) относительно baseline до
+   рефактора (или явное объяснение diff-а, если отличается)
+7. **Формы struct-ов CEmitter / TypeCtx / Parser не меняются** — чистая
+   реорганизация методов, без реорганизации полей
+8. **Реальное время сборки cargo** не регрессировало (связные модули
+   должны помочь, НЕ навредить)
+9. **Контрольная проверка продуктивности агента** — после рефактора
+   запустить агента с задачей «найти emit_match_arm_body + понять места
+   вызова» — суммарное число вызовов инструментов должно снизиться на
+   ≥30% относительно замера до рефактора
 
-## Risks + Mitigations
+## Риски + меры
 
-| # | Risk | Mitigation |
+| # | Риск | Мера |
 |---|---|---|
-| R1 | Merge conflicts with concurrent feature PRs | M1: announce in advance, freeze emit_c.rs touches на refactor window |
-| R2 | Semantic drift во время cut+paste | M2: method-by-method, full build + plan125 regression после каждой group |
-| R3 | Inherent-impl-across-files Rust quirks | M3: prototype в Ф.0 — verify 2-3 methods split works pre-commitment |
-| R4 | Hidden cross-module dependencies на private state | M4: audit Ф.0 maps; если field used cross-module → keep на CEmitter via pub(super) accessor |
-| R5 | Reviewer fatigue (huge PR series) | M5: split each Ф into 2-4 commits, daily merge cadence, NOT mega-PR |
-| R6 | Regression hidden by sampling | M6: full `nova test` gate (1500+ tests) после каждой Ф |
-| R7 | Cargo build time regression | M7: measure pre-refactor baseline; abort if >10% slowdown |
-| R8 | Refactor creates more mental overhead, not less | M8: agent productivity sanity test (criterion #9) — empirical, not opinion-based |
+| R1 | Конфликты слияния с параллельными feature-PR | M1: объявить заранее, заморозить правки `emit_c.rs` на окно рефактора |
+| R2 | Семантический дрейф во время вырезать+вставить | M2: метод за методом, полная сборка + регрессия plan125 после каждой группы |
+| R3 | Особенности Rust при разбиении inherent-impl по файлам | M3: прототип в Ф.0 — проверить, что разбиение 2–3 методов работает, до начала |
+| R4 | Скрытые межмодульные зависимости на приватном состоянии | M4: аудит карт Ф.0; если поле используется межмодульно → оставить на `CEmitter` через аксессор `pub(super)` |
+| R5 | Усталость ревьюера (огромная серия PR) | M5: каждую фазу разбить на 2–4 коммита, ежедневный темп слияний, НЕ мега-PR |
+| R6 | Регрессия, скрытая выборочным тестированием | M6: барьер полного `nova test` (1500+ тестов) после каждой фазы |
+| R7 | Регрессия времени сборки cargo | M7: замерить baseline до рефактора; прервать если замедление >10% |
+| R8 | Рефактор создаёт больше ментальной нагрузки, а не меньше | M8: контрольная проверка продуктивности агента (критерий #9) — эмпирическая, не на основе мнения |
 
-## Prior lessons (от Plan 125 V1 24-regression)
+## Уроки прошлого (от 24 регрессий Plan 125 V1)
 
-1. **L1 (codegen-local invariants):** Plan 125 V1 урок — codegen helpers
-   must look ONLY at trailing/specific structural positions. Refactor
-   разбивает helpers по модулям — НЕ ломать helper-locality invariants.
-2. **L2 (regression visibility):** Plan 125 V1 24 регрессии были silent
-   runtime UB не CC-FAIL. Phase gate должен включать **runtime** test,
-   not just compile.
-3. **L3 (helper extraction pattern):** Plan 125 V1 extract'нул
-   `block_trailing_diverges` / `expr_diverges_125` cleanly. Аналогичные
-   helpers (`assignable_*`, `infer_*`, `coerce_*`) — natural extraction
-   candidates.
+1. **L1 (локальные инварианты кодогенератора):** урок Plan 125 V1 —
+   helper-ы кодогенератора должны смотреть ТОЛЬКО на конечные/специфичные
+   структурные позиции. Рефактор разбивает helper-ы по модулям — НЕ
+   ломать инварианты локальности helper-ов.
+2. **L2 (видимость регрессий):** 24 регрессии Plan 125 V1 были молчаливым
+   runtime UB, не CC-FAIL. Барьер фазы должен включать **runtime**-тест,
+   не только компиляцию.
+3. **L3 (паттерн выноса helper-ов):** Plan 125 V1 чисто вынес
+   `block_trailing_diverges` / `expr_diverges_125`. Аналогичные helper-ы
+   (`assignable_*`, `infer_*`, `coerce_*`) — естественные кандидаты на вынос.
 
-## Spec impact
+## Влияние на спецификацию
 
-**No spec change.** Pure source-tree reorganization. AGENTS.md и
-docs/architecture/ updates только.
+**Спека не меняется.** Чистая реорганизация дерева исходников. Только
+обновления `AGENTS.md` и `docs/architecture/`.
 
-## Tooling impact
+## Влияние на инструментарий
 
-- **Editor navigation:** smaller files → faster fuzzy-finder, better LSP
-  performance
-- **rust-analyzer indexing:** maybe slight speedup (cohesive modules
-  reduce dependency cascade)
-- **git blame / log:** WILL fragment — historical archaeology harder.
-  Mitigation: `git log --follow` works across renames; in commit message
-  write `Plan 129 Ф.N — moved methods from old location`
+- **Навигация в редакторе:** меньшие файлы → быстрее fuzzy-finder, лучше
+  производительность LSP
+- **Индексация rust-analyzer:** возможно небольшое ускорение (связные
+  модули уменьшают каскад зависимостей)
+- **git blame / log:** БУДУТ фрагментироваться — раскопки истории сложнее.
+  Мера: `git log --follow` работает через переименования; в сообщении
+  коммита писать `Plan 129 Ф.N — перенёс методы из старого расположения`
 
-## Test plan
+## План тестирования
 
-### Per-phase regression suite
+### Набор регрессионных тестов на фазу
 
 ```bash
-# After each module-move in Ф.1-Ф.4:
+# После каждого переноса модуля в Ф.1-Ф.4:
 cargo build --release --manifest-path nova-cli/Cargo.toml
 
-# Targeted (fast):
+# Точечно (быстро):
 ./nova-cli/target/release/nova.exe test nova_tests/plan125 nova_tests/plan91_13
 
-# Per-phase full gate:
-./nova-cli/target/release/nova.exe test  # 1500+ tests
+# Полный барьер на фазу:
+./nova-cli/target/release/nova.exe test  # 1500+ тестов
 ```
 
-### Sample C-output diff verification
+### Проверка diff-а образцового C-вывода
 
 ```bash
-# Pre-refactor — capture baselines
+# До рефактора — снять baseline-ы
 for f in nova_tests/plan125/*.nv nova_tests/plan91_13/json_*.nv; do
     cp "${f%.nv}.c" "${f%.nv}.c.baseline"
 done
 
-# Post-refactor — diff
+# После рефактора — diff
 for f in nova_tests/plan125/*.nv; do
     if ! diff -q "${f%.nv}.c" "${f%.nv}.c.baseline" > /dev/null; then
         echo "DIFF: $f"
@@ -289,58 +297,60 @@ for f in nova_tests/plan125/*.nv; do
 done
 ```
 
-Expected: zero diffs (или explained diffs если intentional).
+Ожидается: ноль diff-ов (или объяснённые diff-ы, если намеренные).
 
-## Deliverables
+## Что на выходе
 
-- `compiler-codegen/src/codegen/c/` — directory с ≤12 submodules
-- `compiler-codegen/src/types/` — submodule tree
-- `compiler-codegen/src/parser/` — submodule tree
-- `compiler-codegen/src/field_cache/` — submodule tree
-- `docs/architecture/codegen-decomposition-audit.md` — decomposition map per file
-- `docs/architecture/codegen.md` — NEW, module organization doc
-- `AGENTS.md` — updated navigation hints
-- `docs/plans/README.md` + project-creation.txt + discussion-log.md —
-  closure entries
+- `compiler-codegen/src/codegen/c/` — директория с ≤12 подмодулями
+- `compiler-codegen/src/types/` — дерево подмодулей
+- `compiler-codegen/src/parser/` — дерево подмодулей
+- `compiler-codegen/src/field_cache/` — дерево подмодулей
+- `docs/architecture/codegen-decomposition-audit.md` — карта декомпозиции по файлам
+- `docs/architecture/codegen.md` — НОВЫЙ, документ организации модулей
+- `AGENTS.md` — обновлённые подсказки навигации
+- `docs/plans/README.md` + project-creation.txt + журнал разработки —
+  записи о закрытии
 
 ## Связь с другими планами
 
-- **Dependency:** Plan 125 family closed ✅ (avoid mid-refactor codegen
-  features)
-- **Coordination:** announced freeze of emit_c.rs concurrent edits
-  во время refactor window
-- **Unblocks:** future agent productivity для любых codegen changes
-- **No language-feature dependency** — purely organizational
+- **Зависимость:** семейство Plan 125 закрыто ✅ (избегаем фич
+  кодогенератора в середине рефактора)
+- **Координация:** объявленная заморозка параллельных правок `emit_c.rs`
+  на окно рефактора
+- **Разблокирует:** будущую продуктивность агента для любых изменений
+  кодогенератора
+- **Нет зависимости от языковых фич** — чисто организационный
 
-## Open questions
+## Открытые вопросы
 
 - **Q1:** `compiler-codegen/src/codegen/emit_c.rs` → `codegen/c/mod.rs`
-  или `codegen/c.rs` + `c/` submodule? (Rust supports both; mod.rs
-  convention более устоявший)
-- ~~**Q2:** Split timing~~ — РЕШЕНО: строго после тега 0.1 (Plan 91
-  целиком), чтобы не конкурировать с активным feature-девом в emit_c.rs.
-- **Q3:** Дополнительно split `lints.rs`, `manifest.rs`, etc.? Или
-  ограничиться 4 крупными файлами?
-- **Q4:** Agent productivity metric — measure pre-refactor baseline
-  через что? Synthetic prompt + count tool calls?
+  или `codegen/c.rs` + подмодуль `c/`? (Rust поддерживает оба; конвенция
+  mod.rs более устоявшаяся)
+- ~~**Q2:** Сроки разбиения~~ — РЕШЕНО: строго после тега 0.1 (Plan 91
+  целиком), чтобы не конкурировать с активной работой над фичами в `emit_c.rs`.
+- **Q3:** Разбивать ли дополнительно `lints.rs`, `manifest.rs` и т.д.?
+  Или ограничиться 4 крупными файлами?
+- **Q4:** Метрика продуктивности агента — чем замерять baseline до
+  рефактора? Синтетический промпт + подсчёт числа вызовов инструментов?
 
-## Timing
+## Сроки
 
-**Estimate (sequential):** 9-15 dev-days
-- Ф.0 audit: 1-2d
-- Ф.1 emit_c: 3-5d (largest, highest risk)
-- Ф.2 types: 2-3d
-- Ф.3 parser: 1-2d
-- Ф.4 field_cache: 1d
-- Ф.5 cross-cutting (optional): 1-2d
-- Ф.6 closure: 1d
+**Оценка (последовательно):** 9–15 человеко-дней
+- Ф.0 аудит: 1–2д
+- Ф.1 emit_c: 3–5д (самая большая, самый высокий риск)
+- Ф.2 types: 2–3д
+- Ф.3 parser: 1–2д
+- Ф.4 field_cache: 1д
+- Ф.5 сквозные helper-ы (опционально): 1–2д
+- Ф.6 закрытие: 1д
 
-**Estimate (sequential, рекомендуемый):** 9-15 dev-days. Параллелить
-Ф.1-Ф.4 НЕ рекомендуется: emit_c.rs / types/mod.rs / parser/mod.rs
-связаны (codegen вызывает типы, парсер строит AST для обоих). Их
-одновременный рефактор даёт merge-конфликты в местах стыка — та же
-проблема что R1, только внутренняя. Последовательно безопаснее.
+**Оценка (последовательно, рекомендуемая):** 9–15 человеко-дней.
+Параллелить Ф.1–Ф.4 НЕ рекомендуется: `emit_c.rs` / `types/mod.rs` /
+`parser/mod.rs` связаны (кодогенератор вызывает типы, парсер строит AST
+для обоих). Их одновременный рефактор даёт конфликты слияния в местах
+стыка — та же проблема что R1, только внутренняя. Последовательно
+безопаснее.
 
-**Recommended model:** Opus + Thinking ON для Ф.0 audit (decomposition
-boundaries require careful reasoning), Sonnet + High для Ф.1-Ф.4
-(mechanical move + verify loops), Opus + Thinking ON для Ф.6 closure.
+**Рекомендуемая модель:** Opus + Thinking ON для аудита Ф.0 (границы
+декомпозиции требуют аккуратного рассуждения), Sonnet + High для Ф.1–Ф.4
+(механический перенос + циклы проверки), Opus + Thinking ON для закрытия Ф.6.
