@@ -191,10 +191,10 @@ impl VerificationPipeline {
         // encoder'ом для перевода `balance(id)` → UF `_view_Db_balance(id)`.
         let pure_views = collect_pure_views(module);
         let mut pure_fns = collect_pure_fns(module, inferred_pure);
-        // Ф.3: при кодировании тела текущей fn убираем еђ body_expr из контекста,
+        // Ф.3: при кодировании тела текущей fn убираем её body_expr из контекста,
         // чтобы encoder не пытался инлайнить рекурсивный вызов: factorial(n-1)
-        // содержит factorial → body → factorial(n-1) → в€ћ.
-        // UF-аппликация (_pure_factorial(n-1)) остађтся — для soundness
+        // содержит factorial → body → factorial(n-1) → ∞.
+        // UF-аппликация (_pure_factorial(n-1)) остаётся — для soundness
         // достаточно тела-аксиомы (body axiom), которую Z3 instantiates по trigger.
         if let Some(entry) = pure_fns.get_mut(&fd.name) {
             entry.body_expr = None;
@@ -206,7 +206,7 @@ impl VerificationPipeline {
 
         // Plan 33.3 Ф.9: pre-declare все pure_view UFs в backend'е.
         // Вез этого Z3 auto-declare'ит UF с Int sorts по умолчанию;
-        // pre-decl дађт правильные sorts из effect-сигнатуры (важно для
+        // pre-decl даёт правильные sorts из effect-сигнатуры (важно для
         // soundness когда args не int'овые).
         for (op_name, sig) in &pure_views {
             let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
@@ -1082,7 +1082,7 @@ pub(super) fn collect_pure_views(module: &Module) -> std::collections::HashMap<S
 
 /// Plan 33.4 D.0.2: собрать все #pure fn'ы модуля в реестр для encoder'а.
 /// `inferred_pure` — предварительно вычисленный результат SCC inference
-/// (передађтся снаружи чтобы не пересчитывать на каждую функцию).
+/// (передаётся снаружи чтобы не пересчитывать на каждую функцию).
 pub(super) fn collect_pure_fns(
     module: &Module,
     inferred_pure: &std::collections::HashSet<String>,
@@ -1141,8 +1141,8 @@ pub(super) fn collect_trusted_fns(module: &Module) -> std::collections::HashMap<
 /// Ф.3 (Plan 33.5): Tarjan SCC + purity inference.
 ///
 /// Алгоритм:
-/// 1. Построить call-graph: для каждой Fn — набор вызываемых имђн (из body).
-/// 2. Р--апустить Tarjan SCC.
+/// 1. Построить call-graph: для каждой Fn — набор вызываемых имён (из body).
+/// 2. Р—-апустить Tarjan SCC.
 /// 3. Topological order SCCs. Для каждой SCC:
 ///    - Если все fn в SCC pure-eligible (нет effects, нет `with`, нет IO,
 ///      все вызовы — только к уже-proven-pure или к fn той же SCC) →
@@ -1180,7 +1180,7 @@ pub fn infer_pure_fns_scc(module: &Module) -> std::collections::HashSet<String> 
     let sccs = tarjan_scc(&fn_names, &call_graph);
 
     // Шаг 3: topological order → определяем pure SCCs.
-    // sccs уже в обратном топологическом порядке (Tarjan выдађт SCC в
+    // sccs уже в обратном топологическом порядке (Tarjan выдаёт SCC в
     // reverse topological order в стандартной реализации).
     // Ртерируем от хвоста к голове чтобы идти от листьев к корням.
     let mut proven_pure: HashSet<String> = HashSet::new();
@@ -2006,7 +2006,7 @@ fn collect_loop_invariants_in_expr(e: &Expr, out: &mut Vec<(Span, Expr)>) {
 /// - `assignments` — Vec<(var_name, delta)> — обнаруженные `var = var ± delta`
 ///   в теле цикла (V1: over-approximate, только straight-line assignment stmts).
 ///   `delta > 0` означает `var = var - delta` (мера var убывает),
-///   `delta < 0` — `var = var + delta` (мера растђт, delta negative → decrement positive).
+///   `delta < 0` — `var = var + delta` (мера растёт, delta negative → decrement positive).
 fn collect_loop_decreases_in_body(body: &FnBody) -> Vec<(Span, Expr, Vec<(String, i64)>)> {
     let mut out = Vec::new();
     match body {
@@ -2720,16 +2720,16 @@ impl Default for VerificationPipeline {
 
 /// Plan 33.3 Ф.9.5: проверка consistency axiom'ов модуля.
 ///
-/// Для каждого эффекта с axioms создађтся изолированный backend, в нђм
+/// Для каждого эффекта с axioms создаётся изолированный backend, в нём
 /// объявляются все pure_view UFs эффекта, asserted все axioms, затем
 /// `check_sat`. Если UNSAT — axioms together implication False →
 /// **compile error** «axioms inconsistent».
 ///
-/// SAT или Unknown — OK. TrivialBackend всегда дађт Unknown для
+/// SAT или Unknown — OK. TrivialBackend всегда даёт Unknown для
 /// quantified-axioms (нет reasoning'а над Forall), что трактуется как
 /// «не доказано inconsistent» — silent fallback.
 ///
-/// Возвращает diagnostic'и (пустой Vec если всђ consistent).
+/// Возвращает diagnostic'и (пустой Vec если всё consistent).
 /// Ф.7.4 (Plan 33.6): возвращает (errors, warnings).
 /// errors — inconsistent axioms (Unsat). warnings — Unknown под Trivial (W2402).
 pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
@@ -2757,7 +2757,7 @@ pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnos
 
             // Pre-declare ВСЕ pure_view UFs модуля (могут ссылаться cross-effect
             // в формулах — V1 ограничивает one-effect-axioms, но безопаснее
-            // pre-decl'ить всђ).
+            // pre-decl'ить всё).
             for (op_name, sig) in &pure_views {
                 let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
                 backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
@@ -2969,7 +2969,7 @@ pub(super) fn unknown_to_diag_message(reason: UnknownReason) -> String {
     }
 }
 
-/// Entry-point: проверить все функции модуля. Р--аполняет diagnostics
+/// Entry-point: проверить все функции модуля. Р—-аполняет diagnostics
 /// с warning'ами/errors согласно verify_mode.
 ///
 /// Также возвращает map `(fn_name → set of proven contract span)`,
@@ -4261,7 +4261,7 @@ fn is_expr_bv_sorted(e: &Expr, sorts: &std::collections::HashMap<String, SortRef
     }
 }
 
-/// Aggregated отчђт по верификации модуля.
+/// Aggregated отчёт по верификации модуля.
 #[derive(Debug, Default)]
 pub struct ModuleVerifyReport {
     /// Доказанные контракты — `(fn_name, span)`. Рспользуются codegen'ом

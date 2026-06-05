@@ -8308,7 +8308,7 @@ impl<'a> CapabilityCtx<'a> {
 //
 // Pre-collects top-level имена (fns/types/consts/variants/built-ins) +
 // walk fn/test bodies со scope-стеком. На `ExprKind::Ident(name)`
-// проверяет, что `name` в (текущий scope в€Є top-level в€Є built-ins).
+// проверяет, что `name` в (текущий scope ∪ top-level ∪ built-ins).
 // Рначе — diagnostic «undefined identifier`.
 //
 // **Конкервативная стратегия**: лучше пропустить undefined чем
@@ -8725,7 +8725,7 @@ impl NameResCtx {
             Stmt::Throw { value, .. } => self.walk_expr(value, file_id, scope, errors),
             // D90 (Plan 20): defer/errdefer body — обычный expr в текущем
             // scope. Bindings внутри body локальны их собственным under-scope’ам;
-            // на верхнем уровне defer не вводит новых имђн.
+            // на верхнем уровне defer не вводит новых имён.
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
             | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
                 self.walk_expr(body, file_id, scope, errors);
