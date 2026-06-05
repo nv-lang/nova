@@ -386,6 +386,16 @@ pub struct CEmitter {
     /// (Ф.2). Single-key `method_receivers` остаётся для backward compat —
     /// single-overload пути ссылаются на него.
     method_overloads: HashMap<(String, String), Vec<MethodSig>>,
+    /// Plan 125 followup `[M-125-method-call-never-detection]`: set of
+    /// (receiver_c_type, method_name) pairs OR (`"<free>"`, fn_name) where
+    /// the declared AST return type is `never`. Populated during method/fn
+    /// registration (preamble pre-pass). Queried by `expr_diverges_125` для
+    /// trailing-divergence detection в Plan 125 result-type inference.
+    ///
+    /// Conservative: только AST-level `never` (TypeRef::Named{path:["never"]}).
+    /// НЕ trait'им -> nova_int placeholder для real-int returns. Соответствует
+    /// type-checker-level Ty::Never (Plan 76 bottom-type).
+    never_returning_methods: HashSet<(String, String)>,
     /// Plan 12: builtins.nv-driven external dispatch registry.
     /// Single source of truth для StringBuilder/WriteBuffer/ReadBuffer/
     /// str.from(char) — `std/runtime/builtins.nv`. Codegen читает AST
@@ -940,6 +950,7 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: HashMap::new(),
+            never_returning_methods: HashSet::new(),
             external_registry: super::external_registry::ExternalRegistry::load_builtins()
                 .expect("failed to load std/runtime/*.nv (Plan 13 Ф.8)"),
             embed_fields: HashMap::new(),
@@ -2315,7 +2326,12 @@ impl CEmitter {
                         variadic_last,
                         param_defaults,
                     };
-                    self.method_overloads.entry(key).or_default().push(sig);
+                    self.method_overloads.entry(key.clone()).or_default().push(sig);
+                    // Plan 125 followup [M-125-method-call-never-detection]:
+                    // free-fn `-> never` registry (key.0 = "" for free fns).
+                    if Self::fn_return_is_never_125(f) {
+                        self.never_returning_methods.insert(key);
+                    }
                     continue;
                 }
                 if let Some(recv) = &f.receiver {
@@ -2461,6 +2477,12 @@ impl CEmitter {
                         variadic_last,
                         param_defaults,
                     };
+                    // Plan 125 followup [M-125-method-call-never-detection]:
+                    // instance/static method `-> never` registry. Captures
+                    // both `fn T mut @method() -> never` и `fn T.method() -> never`.
+                    if Self::fn_return_is_never_125(f) {
+                        self.never_returning_methods.insert(key.clone());
+                    }
                     self.method_overloads.entry(key).or_default().push(sig);
                     // D73 v2 auto-derive registry:
                     //   - `T.from(v V)`     → from_targets[T] += V
@@ -21834,23 +21856,65 @@ _cp++; \
             ExprKind::Interrupt(_) => true,
             // Ф.2 + Ф.3: divergent callees.
             ExprKind::Call { func, .. } => {
-                if let ExprKind::Ident(name) = &func.kind {
-                    // Ф.2: prelude panic / exit / unreachable. Whitelist exact
-                    // names. `unreachable` added в [M-125-unreachable-builtin]:
-                    // его Nova-body forward'ит к panic(), но в expr-position
-                    // нужен прямой whitelist (mono_fn_decls lookup unreliable
-                    // для prelude Nova-body fns на момент инференса).
-                    if name == "panic" || name == "exit" || name == "unreachable" {
-                        return true;
+                match &func.kind {
+                    ExprKind::Ident(name) => {
+                        // Ф.2: prelude panic / exit / unreachable. Whitelist
+                        // exact names. `unreachable` added в
+                        // [M-125-unreachable-builtin].
+                        if name == "panic" || name == "exit" || name == "unreachable" {
+                            return true;
+                        }
+                        // Ф.3: user-defined fn -> never (direct call only).
+                        if let Some(fn_decl) = self.mono_fn_decls.get(name) {
+                            if let Some(ret) = &fn_decl.return_type {
+                                if Self::type_ref_is_never_125(ret) {
+                                    return true;
+                                }
+                            }
+                        }
+                        // [M-125-method-call-never-detection]: free-fn -> never
+                        // registry (entries keyed `("", fn_name)`).
+                        if self.never_returning_methods.contains(
+                            &(String::new(), name.clone())
+                        ) {
+                            return true;
+                        }
                     }
-                    // Ф.3: user-defined fn -> never (direct call only).
-                    if let Some(fn_decl) = self.mono_fn_decls.get(name) {
-                        if let Some(ret) = &fn_decl.return_type {
-                            if Self::type_ref_is_never_125(ret) {
+                    ExprKind::Member { obj, name } => {
+                        // [M-125-method-call-never-detection]: method-call
+                        // `obj.method(args)` where method declares `-> never`.
+                        // Registry key form варьируется: instance methods
+                        // регистрируются под Nova type-name (`"Logger"`), а
+                        // infer_expr_c_type возвращает C-mangled form
+                        // (`"Nova_Logger*"`). Перебираем все шесть вариантов:
+                        // C-form, stripped-pointer, Nova-form (strip `Nova_`
+                        // prefix), плюс fallback — direct ident name для static
+                        // calls `Type.method()`.
+                        let obj_c_ty = self.infer_expr_c_type(obj);
+                        let stripped = obj_c_ty.trim_end_matches('*').to_string();
+                        let nova_form = stripped
+                            .strip_prefix("Nova_")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| stripped.clone());
+                        for candidate in [stripped, nova_form] {
+                            if self.never_returning_methods.contains(
+                                &(candidate, name.clone())
+                            ) {
+                                return true;
+                            }
+                        }
+                        // Static-method form `Type.method()` parsed as
+                        // Member{obj: Ident("Type"), name}. Direct lookup
+                        // by ident — registry already stores Nova type-name.
+                        if let ExprKind::Ident(type_name) = &obj.kind {
+                            if self.never_returning_methods.contains(
+                                &(type_name.clone(), name.clone())
+                            ) {
                                 return true;
                             }
                         }
                     }
+                    _ => {}
                 }
                 false
             }
@@ -21886,6 +21950,15 @@ _cp++; \
     /// keyword, never a user-defined type).
     fn type_ref_is_never_125(ty: &TypeRef) -> bool {
         matches!(ty, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "never")
+    }
+
+    /// Plan 125 followup [M-125-method-call-never-detection]: check if an
+    /// FnDecl's declared return type is `never`. Used during preamble
+    /// registration to populate `never_returning_methods`.
+    fn fn_return_is_never_125(f: &crate::ast::FnDecl) -> bool {
+        f.return_type.as_ref()
+            .map(Self::type_ref_is_never_125)
+            .unwrap_or(false)
     }
 
     /// Plan 125 diagnostic env-var `NOVA_DEBUG_IF_INFER=1` — dumps inference
