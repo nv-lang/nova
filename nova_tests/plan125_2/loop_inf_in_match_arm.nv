@@ -1,0 +1,22 @@
+// Plan 125.2 [M-125-loop-no-break-divergence]: match-arm с `loop {}` — divergent.
+// Остальные ветки контрибутируют тип. Тип match = str.
+
+module plan125_2.loop_inf_in_match_arm
+
+type Tag | Lo | Hi | Stuck
+
+fn label(t Tag) -> str {
+    match t {
+        Lo    => "low"
+        Hi    => "high"
+        Stuck => loop {}
+    }
+}
+
+test "match-arm loop-inf: Lo picks low" {
+    assert(label(Tag.Lo) == "low")
+}
+
+test "match-arm loop-inf: Hi picks high" {
+    assert(label(Tag.Hi) == "high")
+}

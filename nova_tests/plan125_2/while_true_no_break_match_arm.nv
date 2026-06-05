@@ -1,0 +1,23 @@
+// Plan 125.2 Ф.2 [M-125-while-true-divergence]:
+// match-arm с `while true {}` (без break) — divergent.
+// Остальные ветки контрибутируют тип. Тип match = int.
+
+module plan125_2.while_true_no_break_match_arm
+
+type Tag | Lo | Hi | Stuck
+
+fn score(t Tag) -> int {
+    match t {
+        Lo    => 1
+        Hi    => 99
+        Stuck => while true {}
+    }
+}
+
+test "match-arm while-true: Lo picks 1" {
+    assert(score(Tag.Lo) == 1)
+}
+
+test "match-arm while-true: Hi picks 99" {
+    assert(score(Tag.Hi) == 99)
+}

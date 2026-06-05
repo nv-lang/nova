@@ -1,0 +1,32 @@
+// Plan 125.2 [M-125-while-true-divergence] regression guard:
+// `while x { ... }` где cond — variable (НЕ BoolLit(true)) — НЕ divergent.
+// Pattern detection строго matches на ExprKind::BoolLit(true), variables
+// и любые runtime-выражения остаются conservative (потенциально terminate).
+// Идиом — `if c { while x { } } else { v }` — должен компилироваться,
+// while-arm = unit, else-arm = unit, if-expr type = unit.
+
+module neg.while_var_cond
+
+fn drain(c bool, n int) -> int {
+    mut i = n
+    if c {
+        while i > 0 {
+            i = i - 1
+        }
+    } else {
+        i = -1
+    }
+    i
+}
+
+test "while with var cond — c=true drains to zero" {
+    assert(drain(true, 3) == 0)
+}
+
+test "while with var cond — c=true with n=0 stays zero" {
+    assert(drain(true, 0) == 0)
+}
+
+test "while with var cond — c=false enters else-branch" {
+    assert(drain(false, 10) == -1)
+}

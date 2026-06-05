@@ -1,0 +1,20 @@
+// Plan 125.2 Ф.2 [M-125-while-true-divergence]:
+// `while true {}` без break — divergent (const-cond + no-break).
+// `if c { v } else { while true {} }` — else-arm divergent,
+// тип if-expr = тип then-arm (str). Mechanical CFA expansion в
+// expr_diverges_125 / block_trailing_diverges.
+
+module plan125_2.while_true_inf_in_else
+
+fn pick(c bool) -> str {
+    if c {
+        "ok"
+    } else {
+        while true {}
+    }
+}
+
+test "while-true in else, str in then — returns str" {
+    ro s = pick(true)
+    assert(s == "ok")
+}

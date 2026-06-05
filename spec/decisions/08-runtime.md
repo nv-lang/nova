@@ -1044,15 +1044,27 @@ ro s = if c {
 - Прямой вызов любой `fn -> never`
 - Method-call `expr.method(...)` где method декларирован `-> never`
   (Plan 125 followup `[M-125-method-call-never-detection]`)
+- `loop { ... }` без `break` в body — бесконечный цикл (Plan 125.2
+  `[M-125-loop-no-break-divergence]`). Conservative: при наличии
+  любого `break` в body — НЕ divergent.
+- `while true { ... }` с constant-`true` cond и без `break` в body
+  (Plan 125.2 `[M-125-while-true-divergence]`). Распознаётся только
+  literal `true`/`(true)` — `while cond_var` или `while false` —
+  НЕ divergent.
+- `Stmt::Return e` / `Stmt::Break` / `Stmt::Continue` в последней
+  stmt-позиции блока (`block_trailing_diverges` — Plan 125.2
+  `[M-125-stmt-position-divergence]`). Эти statements уже завершают
+  control-flow блока, поэтому контекстная join-инференция трактует
+  блок как divergent даже без `b.trailing`.
 - Рекурсивно: вложенные `if`/`if let`/`match`/`block`, у которых все
   ветви diverge
 
 **Codegen ограничение:** detection — trailing-only (`b.trailing` или
-последний `Stmt::Throw`/`Stmt::Return`/`Stmt::Expr(...)` в
-`b.stmts`). Условные early-returns в середине блока **не** flip'ят
-join-тип (cтdlib-идиома `if early-cond { return X } else { compute() }`
-сохраняется). Type-checker side `Ty::Never` first-class subtype —
-followup `[M-125-type-checker-never-first-class]`.
+последний `Stmt::Throw`/`Stmt::Return`/`Stmt::Break`/`Stmt::Continue`/
+`Stmt::Expr(...)` в `b.stmts`). Условные early-returns в середине
+блока **не** flip'ят join-тип (cтdlib-идиома `if early-cond { return X }
+else { compute() }` сохраняется). Type-checker side `Ty::Never`
+first-class subtype — followup `[M-125-type-checker-never-first-class]`.
 
 Аналоги: Rust `!` (`never`-RFC), Haskell `Void`, Kotlin/Scala
 `Nothing`, TypeScript `never`. Не уникальная фича Nova.

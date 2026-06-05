@@ -1,0 +1,29 @@
+// Plan 125.2 [M-125-while-true-divergence] regression guard:
+// `while x { ... }` где cond — переменная, не литерал — НЕ divergent.
+// Pattern strictly matches `BoolLit(true)` — любой non-literal condition
+// (даже constant-fold-equivalent) falls through. Legitimate idiom:
+// `while running { ... }` — должен компилироваться, цикл нормально
+// завершается, функция возвращает значение.
+
+module neg.while_cond_var_NOT_divergent
+
+fn count_down(start int) -> int {
+    mut i = start
+    mut running = true
+    while running {
+        if i <= 0 {
+            running = false
+        } else {
+            i = i - 1
+        }
+    }
+    i
+}
+
+test "while with var-cond runs to natural completion" {
+    assert(count_down(5) == 0)
+}
+
+test "while with var-cond — zero start" {
+    assert(count_down(0) == 0)
+}
