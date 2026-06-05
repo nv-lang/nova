@@ -1,0 +1,12 @@
+// Plan 118.1 closeout T5 NEG — addr_of(literal) → E_AMP_LITERAL.
+//
+// EXPECT_COMPILE_ERROR E_AMP_LITERAL
+
+module plan118_1_closeout.t5_neg_addr_of_literal
+
+test "addr_of(literal) rejected" {
+    unsafe {
+        ro p = addr_of(42)
+        assert(p.read() == 42)
+    }
+}
