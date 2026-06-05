@@ -7817,6 +7817,11 @@ full Nova `str` already ships с this invariant, enabling zero-copy conversion.
 к [M-118.1-cstr-runtime-wiring] followup (requires codegen forward-decl change для
 named-tuple-return C primitives — nova_rt headers include order issue).
 
+**Method bindings status**: V1 ships `type CStr(*u8)` foundation only; str method bindings
+(`as_cstr` / `to_cstr` / `as_cstr_unchecked`) declared в `std/runtime/string.nv` но
+runtime wiring deferred к [M-118.1-cstr-runtime-wiring] followup. Reader: methods НЕ
+callable до closure followup; type безопасно usable в external fn signatures.
+
 Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded by D26 invariant).
 
 ### Diagnostic codes (new)
@@ -7852,6 +7857,12 @@ Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded 
 - `E_AMP_CONST_BINDING` — `&const_value`
 - `E_AMP_LITERAL` — `&42`
 - `E_AMP_RECORD_LITERAL` — `&Record { ... }` без named binding (Plan 118 §4 amend)
+- `E_ADDR_OF_NON_LVALUE` — `addr_of` / `addr_of_mut` applied к non-Ident /
+  Member / SelfAccess expression (rvalue / temporary). Mirrors Rust's
+  «cannot take address of a temporary». Plan 118.1 closeout 2026-06-05.
+- `E_ADDR_OF_MUT_REQUIRES_MUT_BINDING` — `addr_of_mut` applied к ro binding
+  (let без `mut`, ro parameter, ro field). Mirrors `E_PARAM_NOT_MUT` /
+  `E_LOCAL_NOT_MUT` pattern (D108.1 / D108.2). Plan 118.1 closeout 2026-06-05.
 - `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"`
 - `E_VARARG_NOT_SUPPORTED` — vararg FFI call
 - `E_CAST_RAW_FN_TO_CLOSURE` — `*fn → fn` cast outside unsafe
