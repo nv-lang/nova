@@ -1,0 +1,110 @@
+// cancel_double_call.nv — Plan 83.11 §8.2 N1 — cancel_double_call
+//
+// Negative test: tok.cancel() called twice MUST be idempotent.
+//   - second call is a no-op (does not panic / abort / SEGV)
+//   - first reason wins (§11.4 precedence: first-cancel-wins, paritet Go ctx)
+//   - is_cancelled() remains true after both calls
+//
+// Scenario differs from cancel_semantics_test.nv «повторный cancel(reason2)»
+// in that we exercise double-cancel both OUTSIDE a supervised(cancel:)-scope
+// (pure idempotency of the token itself) AND from two different fibers within
+// a bound scope (race between two cancel() callers — first wins, second no-op).
+module concurrency.cancel_double_call
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. Standalone token (no supervised binding): двойной cancel() — no-op
+// ──────────────────────────────────────────────────────────────────────────
+
+test "double cancel(reason) на свободном токене — first reason wins, no panic" {
+    ro tok = CancelToken.new()
+    assert(!tok.is_cancelled())
+
+    tok.cancel("first")
+    assert(tok.is_cancelled())
+
+    // Второй вызов с другим reason'ом обязан быть полным no-op:
+    // - не паниковать
+    // - не перезаписывать первый reason
+    // - is_cancelled() остаётся true
+    tok.cancel("second")
+    assert(tok.is_cancelled())
+
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. Двойной no-arg cancel() на свободном токене — default reason устойчив
+// ──────────────────────────────────────────────────────────────────────────
+
+test "double cancel() без аргумента — повторный вызов no-op, reason='cancelled'" {
+    ro tok = CancelToken.new()
+    tok.cancel()
+    tok.cancel()
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. Двойной cancel() из одного fiber'а в bound scope: precedence
+// ──────────────────────────────────────────────────────────────────────────
+
+test "double cancel в supervised(cancel:) из одного fiber'а — first reason wins" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn {
+            tok.cancel("first reason")
+            // peer-fiber мог уже увидеть cancel_requested и throw'нуть CANCEL;
+            // повторный вызов обязан быть no-op (не паниковать).
+            tok.cancel("second reason")
+        }
+        spawn { for _i in 0..1000 { } }
+    }
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first reason")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. Race: два разных fiber'а вызывают cancel() с разными reason'ами
+// ──────────────────────────────────────────────────────────────────────────
+
+test "race: два fiber'а cancel(reason) — exactly one reason wins, оба вызова не паникуют" {
+    // Гарантия §11.4: cancel_reason атомарен — один из двух fiber'ов
+    // выиграет CAS, второй увидит cancel_requested==true и no-op'нет.
+    // Оба варианта winner'а допустимы — проверяем что:
+    //   (a) программа не упала (двойной cancel не panic'ит),
+    //   (b) is_cancelled() == true,
+    //   (c) reason — один из двух кандидатов (а не garbage / None / mix).
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn { tok.cancel("A") }
+        spawn { tok.cancel("B") }
+        spawn { for _i in 0..1000 { } }
+    }
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    // First-cancel-wins: ровно одна из двух строк, и точно не пусто/смешано.
+    assert(got == "A" || got == "B")
+}

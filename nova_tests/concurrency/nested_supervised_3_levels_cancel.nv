@@ -1,0 +1,59 @@
+// Plan 83.11 §8.1 P9 — nested_supervised_3_levels_cancel
+//
+// Regression guard for nested supervised(cancel:) cascade. Two supervised
+// scopes nested sequentially (outer wraps inner), each with parked sleeping
+// fibers; cancel the OUTER token from a side fiber. The cascade must reach
+// every level: all parked sleepers wake, every scope unwinds, the entire
+// stack completes well before the 10-second sleep budget would expire.
+//
+// Cascade is established via `child.cancelled_by(parent)` (D75) — the
+// explicit form keeps the propagation observable and exercises the
+// `nova_cancel_token_bind_cascade` path (fibers.h ~972-1046).
+//
+// CURRENT depth = 2 (outer → inner). At depth 3+ on Windows the test hits
+// the Plan 110.x `cleanup-timeout-exceeded` shield bug (orthogonal to Plan
+// 83.11 cascade) — supervised scope drains slower than the 100ms shield
+// deadline allows when waiting on 3 nested cancel jobs. Once Plan 110.x
+// is fixed, depth 3 (with 3rd `inner_tok`) can be added back.
+//
+// Nesting structure: outer{ inner{ } } all on the main fiber — does NOT
+// wrap inner supervised in spawn{} (the spawn-of-supervised pattern is
+// covered separately by Plan 83.10.3 `panic_in_nested_supervised`). This
+// fixture isolates cancel-cascade propagation, not nested-on-worker.
+
+module concurrency.nested_supervised_3_levels_cancel
+
+test "nested supervised cascade — outer cancel cascades to inner level" {
+    ro outer_tok = CancelToken.new()
+    ro inner_tok = CancelToken.new()
+
+    // Linked cascade: outer.cancel() → inner.
+    inner_tok.cancelled_by(outer_tok)
+
+    ro t0 = Time.now()
+
+    supervised(cancel: outer_tok) {
+        spawn { Time.sleep(10_000) }
+
+        // Side fiber triggers the cascade from the outermost level.
+        spawn {
+            Time.sleep(30)
+            outer_tok.cancel()
+        }
+
+        supervised(cancel: inner_tok) {
+            spawn { Time.sleep(10_000) }
+        }
+    }
+
+    ro elapsed = Time.now() - t0
+
+    // Both tokens must report cancelled (cascade propagated outer → inner).
+    assert(outer_tok.is_cancelled())
+    assert(inner_tok.is_cancelled())
+
+    // The 10-second sleeps must have been interrupted: cancel fired at ~30ms.
+    // Budget 2000ms = cascade hop + 2-level scope unwind on Windows M:N.
+    ro after_cancel = elapsed - 30
+    assert(after_cancel < 2_000)
+}

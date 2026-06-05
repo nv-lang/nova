@@ -1,0 +1,123 @@
+// Plan 83.11 §8.1 P12 — cancel_zero_fibers_in_scope
+//
+// Positive test: `supervised(cancel: tok) { /* no spawns */ }` — токен
+// bind'нут в scope, но НИ ОДНОГО spawn'а в теле нет. Scope обязан:
+//   - войти в supervised_run_impl, забиндить tok в scope,
+//   - сразу же увидеть «нет дочерних fiber'ов» в join-loop,
+//   - выйти из scope, отвязать tok (nova_cancel_token_unbind),
+//   - НЕ зависнуть и НЕ паниковать.
+//
+// Edge case: tok.cancel() ПОСЛЕ выхода из scope — токен уже unbind'нут
+// (bound_scope == NULL), wake-цикл no-op'ит (см. контракт fibers.h
+// nova_cancel_token_cancel_reason: `if (t->bound_scope) { ... wake ... }`).
+// Cancel должен записать intent + reason atomic'но и НЕ паниковать.
+//
+// Связано с [M-83.11-empty-scope-join-hang] — централизованный I/O driver
+// Plan 83.11 не должен ломать happy-path пустого scope (если join-loop
+// ошибочно ждёт driver event'а вместо «zero children → ready», zero-fibers
+// scope зависнет навсегда).
+module concurrency.cancel_zero_fibers_in_scope
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. Пустой supervised(cancel: tok) — exit без spawn'ов
+// ──────────────────────────────────────────────────────────────────────────
+
+test "supervised(cancel: tok) с нулём spawn'ов — exit без hang" {
+    ro tok = CancelToken.new()
+    mut after_scope = false
+
+    // Пустое тело. Scope обязан мгновенно дойти до join-loop, увидеть
+    // 0 дочерних fiber'ов, и закрыться. Если зависнет — внешний test-
+    // runner убьёт по timeout'у (FAIL).
+    supervised(cancel: tok) { }
+    after_scope = true
+
+    assert(after_scope)
+    // Токен не отменялся — intent-флаг чист, reason пуст.
+    assert(!tok.is_cancelled())
+    ro r = tok.reason()
+    ro is_none = match r {
+        Some(_) => false
+        None    => true
+    }
+    assert(is_none)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. tok.cancel() ПОСЛЕ выхода из пустого scope — no-op edge case
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel после exit пустого supervised — no-op, intent + reason записаны" {
+    ro tok = CancelToken.new()
+
+    supervised(cancel: tok) { }
+    // Scope закрылся → nova_cancel_token_unbind очистил bound_scope.
+    // Контракт: tok.cancel() теперь работает как pre-bind cancel —
+    // intent + reason пишутся atomic'но, wake-цикл no-op (NULL guard).
+    tok.cancel("post-scope cancel")
+
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "post-scope cancel")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. Уже-отменённый токен → пустой supervised — без зависания
+// ──────────────────────────────────────────────────────────────────────────
+
+test "pre-cancelled tok → пустой supervised(cancel: tok) — exit без hang" {
+    // Edge: токен уже cancelled ДО входа в scope, плюс тело пустое.
+    // Ни одного fiber'а wake'ать не надо — join-loop сразу видит
+    // «zero children» и выходит. Intent был установлен заранее и
+    // переживает entry/exit.
+    ro tok = CancelToken.new()
+    tok.cancel("pre-empty-scope")
+    assert(tok.is_cancelled())
+
+    mut after_scope = false
+    supervised(cancel: tok) { }
+    after_scope = true
+
+    assert(after_scope)
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "pre-empty-scope")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. Двойной cancel вокруг пустого scope — idempotent через bind/unbind
+// ──────────────────────────────────────────────────────────────────────────
+
+test "cancel до + cancel после пустого supervised — first wins, без panic" {
+    // Гарантия §11.4 first-cancel-wins работает поверх bind/unbind:
+    // первый cancel (pre-bind) фиксирует reason, scope открывается и
+    // закрывается (пусто), второй cancel (post-unbind) — полный no-op.
+    ro tok = CancelToken.new()
+    tok.cancel("first")
+
+    supervised(cancel: tok) { }
+
+    // bound_scope снова NULL после exit — но cancel_requested уже true,
+    // CAS в cancel_reason проиграет, второй reason не запишется.
+    tok.cancel("second")
+
+    assert(tok.is_cancelled())
+    ro r = tok.reason()
+    ro got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "first")
+}

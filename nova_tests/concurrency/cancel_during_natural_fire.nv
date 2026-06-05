@@ -1,0 +1,51 @@
+// cancel_during_natural_fire.nv — Plan 83.11 §8.1 P8.
+//
+// Mixed mid-flight scenario: 50 fibers sleep with staggered durations
+// (10ms .. 255ms in 5ms increments). A cancel-fiber fires at ~80ms,
+// so roughly the first ~14 timers have already fired naturally (their
+// close_cb's already drained through the I/O driver) while the remaining
+// ~36 are still parked and must be cancelled mid-park. This exercises the
+// path where natural-fire close callbacks and cancel-driven close callbacks
+// race through the centralized I/O driver simultaneously — the scenario
+// most likely to expose wake-before-park / generational-waker bugs
+// (see [M-83.11-driver-race]).
+//
+// Acceptance: scope drains within 300ms after cancel (Plan 22 R4 budget),
+// matching cancel_latency_bench.nv test 2 (99+1 fibers, same SLA).
+//
+// Stress strategy: ONE supervised scope; external harness
+// (tools/stress_bisect.sh) repeats the compiled binary 30x to widen the
+// race window. Do NOT loop inside the test body — each invocation must
+// stay isolated so a single SEGV/timeout doesn't kill the run.
+module concurrency.cancel_during_natural_fire
+
+test "50 fibers mixed durations + mid-flight cancel — drain <300ms" {
+    ro tok = CancelToken.new()
+    ro t0 = Time.now()
+    supervised(cancel: tok) {
+        // 50 fibers, durations 10ms, 15ms, 20ms, ..., 255ms.
+        // At cancel time (~80ms) the first ~14 (10..75ms) have already
+        // fired naturally; the remaining ~36 are parked and get cancelled.
+        for i in 0..50 {
+            spawn {
+                Time.sleep(10 + i * 5)
+            }
+        }
+        // Cancel fiber: arrives mid-flight, after some timers have
+        // already fired but most are still parked.
+        spawn {
+            Time.sleep(80)
+            tok.cancel()
+        }
+    }
+    ro elapsed = Time.now() - t0
+    ro after_cancel = elapsed - 80
+
+    // Plan 22 R4 budget for cancel-drain of ~36 parked timers: <300ms p99.
+    // Matches cancel_latency_bench.nv test 2 SLA (99+1 fibers, 300ms).
+    assert(after_cancel < 300)
+
+    // Cancel must have been observed (sanity: scope did not exit purely
+    // via natural fire — longest sleep 255ms > cancel 80ms + budget).
+    assert(tok.is_cancelled())
+}

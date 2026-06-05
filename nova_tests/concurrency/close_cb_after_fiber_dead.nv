@@ -1,0 +1,48 @@
+// Plan 83.11 §8.2 N6 — close_cb_after_fiber_dead
+//
+// Negative test: a fiber arms a Time.sleep (libuv timer handle), gets
+// cancelled and exits while the timer's uv_close path is still in-flight.
+// The driver's close_cb for the timer must fire as a NO-OP — it must not
+// touch the fiber's coroutine state (which has been freed by minicoro)
+// and must not cause UAF / SEGV.
+//
+// Scenario:
+//   1. supervised(cancel: tok) opens a scope.
+//   2. Worker fiber enters Time.sleep(N) → driver enrols a uv_timer_t and
+//      records the (NovaSleepState* → fiber) link; fiber parks.
+//   3. Canceller fiber fires tok.cancel() almost immediately.
+//   4. Driver's cancel_scope handler iterates armed sleeps → uv_close()
+//      every timer for fibers in this scope → wakes parked fibers with
+//      CANCEL kind. Fiber unwinds, scope drains, fiber memory (mco stack)
+//      freed.
+//   5. The libuv close_cb for the freed timer handle fires AFTER the
+//      fiber is dead. It must read st->packed_state, mark NOVA_SLEEP_CLOSED,
+//      and return without touching the fiber. Any access to the dead
+//      fiber's stack would SEGV / corrupt heap.
+//
+// Pass criterion: the test exits 0 (no SEGV / no UAF). External harness
+// (tools/stress_bisect.sh) repeats the binary to expose intermittent UAF.
+//
+// Test pattern: very short sleep + immediate cancel maximises the window
+// where close_cb lands after the fiber has unwound. Many parallel sleepers
+// give the driver many close_cb's to fire post-mortem.
+
+module concurrency.close_cb_after_fiber_dead
+
+
+test "close_cb fires after sleeper exits — must be no-op, no UAF" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        for _ in 0..50 {
+            spawn { Time.sleep(10_000) }   // armed timer, never natural-fires
+        }
+        spawn {
+            Time.sleep(1)                  // tiny delay so sleepers park
+            tok.cancel()                   // close_cb's fire after fibers die
+        }
+    }
+    // Reaching here means: all close_cb's fired without touching dead
+    // fibers. If close_cb dereferenced a freed mco stack we would have
+    // SEGV'd (exit 139 / 134), aborting the binary before this assert.
+    assert(tok.is_cancelled())
+}

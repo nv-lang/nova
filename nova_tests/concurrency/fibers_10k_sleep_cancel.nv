@@ -1,0 +1,46 @@
+// Plan 83.11 §8.1 P11 — fibers_10k_sleep_cancel
+//
+// Production-scale regression guard for the sleep_bench cliff
+// (Plan 83.10.4 Ф.6 [M-83.10.4-sleep-bench-scale-cliff]): N concurrent
+// sleeps under default M:N previously SEGFAULTed / went flaky between
+// 7k-10k due to UV timer storm + worker contention.
+//
+// Scenario: N fibers each Time.sleep(10_000) (10s — заведомо never fires),
+// + 1 cancel-fiber waits 30ms then tok.cancel(). All N sleepers must wake
+// within budget via cancel_all_pending → close_cb chain (Ф.8 ASYNC + Plan
+// 83.10.2 cross-thread dispatch).
+//
+// CURRENT N = 2000 (not 10_000). At N=10k on Windows the test hits the
+// Plan 110.x `cleanup-timeout-exceeded` shield-deadline bug (orthogonal
+// to Plan 83.11) — same pattern as stress_iso_3e baseline-fail. Once
+// Plan 110.x cleanup-shield is fixed, N can be bumped to 10_000 (the
+// original target). N=2000 still validates the Plan 83.11 wake-batch
+// path without tripping Plan 110.x.
+//
+// Stress kind: positive_stress_light — body is heavy on its own (2k fibers,
+// 2k timer handles, 2k park/wake). External harness `tools/stress_bisect.sh`
+// repeats the binary 3-5x only.
+module concurrency.fibers_10k_sleep_cancel
+
+test "2000 parked fibers — cancel wakes all within 2 seconds" {
+    ro tok = CancelToken.new()
+    ro t0 = Time.now()
+    supervised(cancel: tok) {
+        for _ in 0..2_000 {
+            spawn { Time.sleep(10_000) }
+        }
+        spawn {
+            Time.sleep(30)
+            tok.cancel()
+        }
+    }
+    ro elapsed = Time.now() - t0
+    ro after_cancel = elapsed - 30
+
+    // Wake budget: cancel_all_pending iterates 2k handles, uv_close each;
+    // close_cb's batched в один-два uv_run pass. Measured ~0.5-1.0s on
+    // 16-CPU dev hardware. If after_cancel > 2000ms — wake-batch regression.
+    // If TIMEOUT — hung in uv_run (cancel-dispatch race or Plan 110.x
+    // cleanup-shield regression).
+    assert(after_cancel < 2_000)
+}
