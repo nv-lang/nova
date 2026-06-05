@@ -29,6 +29,12 @@ pub struct MethodSig {
     /// Parallel to `param_c_types`; `None` = required param (no default).
     /// Used at call-site when explicit args < param count (Nova-body dispatch).
     pub param_defaults: Vec<Option<String>>,
+    /// Plan 128 Ф.1: receiver mutability flag from AST `Receiver.mutable`
+    /// (`fn Type mut @method` ⇒ `true`). Threaded into the overload registry so
+    /// call-sites (`prepare_method_recv`, future ABI dispatch) can consult it
+    /// without re-resolving the FnDecl. Ф.1: producer sites populate; consumer
+    /// sites pass it through unchanged. Ф.2/Ф.3 will switch ABI on this flag.
+    pub recv_mutable: bool,
 }
 
 /// Plan 39 Issue A: classification of `with`-block trail type for
@@ -1669,6 +1675,10 @@ impl CEmitter {
                     c_name: decl.c_name.clone(),
                     variadic_last: false,
                     param_defaults: vec![None; decl.param_c_types.len()],
+                    // Plan 128 Ф.1: external registry methods have no AST mutability
+                    // marker (FFI/runtime entries) — default false. Ф.2 can extend
+                    // ExternalDecl/ExternalRegistry to carry mutability if needed.
+                    recv_mutable: false,
                 };
                 self.method_overloads.entry(key.clone()).or_default().push(sig);
                 // Plan 83.12: register novares struct for non-trivial Result returns
@@ -2325,6 +2335,8 @@ impl CEmitter {
                         c_name,
                         variadic_last,
                         param_defaults,
+                        // Plan 128 Ф.1: free fns have no receiver — false.
+                        recv_mutable: false,
                     };
                     self.method_overloads.entry(key.clone()).or_default().push(sig);
                     // Plan 125 followup [M-125-method-call-never-detection]:
@@ -2401,7 +2413,8 @@ impl CEmitter {
                     // Plan 55 Ф.3: для `=> expr` body инфирим (см. free-fn выше).
                     let return_c_type = match &f.return_type {
                         Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
-                            self.receiver_c_type(&recv.type_name)
+                            // Plan 128 Ф.1: thread recv.mutable flag (Ф.2 consumes).
+                            self.receiver_c_type(&recv.type_name, recv.mutable)
                         }
                         Some(t) if is_generic_recv => {
                             self.erased_type_ref_c(&Some(t.clone()), &recv_type_params)
@@ -2476,6 +2489,8 @@ impl CEmitter {
                         c_name,
                         variadic_last,
                         param_defaults,
+                        // Plan 128 Ф.1: capture recv.mutable for downstream ABI dispatch.
+                        recv_mutable: recv.mutable,
                     };
                     // Plan 125 followup [M-125-method-call-never-detection]:
                     // instance/static method `-> never` registry. Captures
@@ -2587,6 +2602,11 @@ impl CEmitter {
                         // от исходного метода (тот же signature).
                         variadic_last: base_sig.variadic_last,
                         param_defaults: base_sig.param_defaults.clone(),
+                        // Plan 128 Ф.1: D39 embed proxy inherits base method's
+                        // recv.mutable flag. ABI of the proxied call must match
+                        // the original (Ф.2 will use this when shaping the
+                        // proxy's nova_self ABI).
+                        recv_mutable: base_sig.recv_mutable,
                     };
                     self.method_overloads.entry(key).or_default().push(proxy_sig);
                     // all_methods (для Plan 06 Iter[T] dispatch).
@@ -4381,6 +4401,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         c_name: canonical_c_name.to_string(),
                         variadic_last: false,
                         param_defaults: vec![None; param_c_tys.len()],
+                        // Plan 128 Ф.1: synthesized default-protocol-method body —
+                        // EffectMethod AST has no `mutable` flag yet. Default false;
+                        // Ф.2 may need to extend EffectMethod with mutability if
+                        // protocol receivers ever need mut-receiver dispatch.
+                        recv_mutable: false,
                     };
                     self.method_overloads
                         .entry((t_name.to_string(), method_name.to_string()))
@@ -4631,7 +4656,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // мапит все типы (primitives → nova_*; Option/Result →
                         // builtin_sum_receiver_c_type; user → Nova_X*).
                         if let Some(recv) = &self.current_receiver_type {
-                            Ok(self.receiver_c_type(recv))
+                            // Plan 128 Ф.1: pass false default — current_receiver_type only
+                            // tracks the name. Ф.2 will add `current_receiver_mutable` mirror
+                            // state alongside (set/cleared in same spots) so Self-as-return
+                            // honors the mutability flag. Currently no behavior change
+                            // (flag is unused in receiver_c_type body).
+                            Ok(self.receiver_c_type(recv, false))
                         } else {
                             Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
                         }
@@ -8026,6 +8056,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     c_name: sentinel_name,
                     variadic_last: false,
                     param_defaults: vec![],
+                    // Plan 128 Ф.1: mono-sentinel — concrete sig is generated on
+                    // demand. Inherit from FnDecl recv.mutable; concrete mono'd
+                    // emission will use this when registering the real sig.
+                    recv_mutable: recv.mutable,
                 };
                 let key = (recv.type_name.clone(), f.name.clone());
                 self.method_overloads.entry(key).or_default().push(sig);
@@ -8051,7 +8085,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
                 let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
                 let mut parts = if is_instance {
-                    vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name))]
+                    // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+                    vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable))]
                 } else {
                     vec![]
                 };
@@ -9659,7 +9694,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
     /// Returns the C type to use for `nova_self`. Primitives are passed by value;
     /// records/sums by pointer.
-    fn receiver_c_type(&self, type_name: &str) -> String {
+    ///
+    /// Plan 128 Ф.1: `recv_mutable` carries the AST `Receiver.mutable` flag
+    /// (`fn Type mut @method` vs `fn Type @method`). Currently NOT consumed —
+    /// shape-based dispatch still drives ABI choice. Ф.2/Ф.3 will use this
+    /// flag to switch value-record receivers from `NovaValue_X*` (in-place
+    /// mutation) to `NovaValue_X` by value (immutable copy) and adjust the
+    /// adapters in `prepare_method_recv` accordingly.
+    fn receiver_c_type(&self, type_name: &str, recv_mutable: bool) -> String {
+        let _ = recv_mutable; // Ф.1: threaded but not consumed (see Ф.2).
         match type_name {
             // Plan 70.5: uint = alias u64; size — usize-like. Both map to nova_int slot.
             "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" | "size" => "nova_int".to_string(),
@@ -9798,7 +9841,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Primitives by value (D35 v2), records/sums by pointer.
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name)));
+                // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+                parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable)));
             }
         }
         for p in &f.params {
@@ -9898,7 +9942,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
         self.current_receiver_type = prev_recv;
-        let recv_c = self.receiver_c_type(&recv.type_name);
+        // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+        let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
         // Match the same signature as the forward declaration in emit_fn_decl
         let mut parts: Vec<String> = if is_instance {
             vec![format!("{} nova_self", recv_c)]
@@ -10002,7 +10047,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // (e.g. `other Self`) тоже резолвилось правильно.
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
-        let recv_c = self.receiver_c_type(&recv.type_name);
+        // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+        let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
         // Static methods don't get nova_self; instance methods do.
         let mut parts: Vec<String> = if is_instance {
             vec![format!("{} nova_self", recv_c)]
@@ -11706,7 +11752,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             type_subst.iter().cloned().collect(),
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
-        let recv_c = self.receiver_c_type(recv_type);
+        // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
+        let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        let recv_c = self.receiver_c_type(recv_type, recv_mutable);
         // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_method_instance —
         // no return type). Strict mode: record E7001 в strict_errors.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
@@ -11775,7 +11823,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // (e.g. `other Self`, `-> Self`) резолвилось в concrete mono'd type.
         // Раньше set только перед ret_c — params получали Nova_Self fallback.
         let prev_recv_for_emit = self.current_receiver_type.replace(recv_type.to_string());
-        let recv_c = self.receiver_c_type(recv_type);
+        // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
+        let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        let recv_c = self.receiver_c_type(recv_type, recv_mutable);
         // Plan 70 PhaseA3: strict — emit_monomorphized_method param/return.
         let param_c_tys: Vec<String> = fn_decl.params.iter()
             .map(|p| self.type_ref_to_c(&p.ty).map_err(|e| self.err_no_int_fallback(
@@ -13209,7 +13259,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         let saved_protocol_var_vtable_fn = self.protocol_var_vtable.clone();
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name));
+                // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
+                self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name, recv.mutable));
             }
         }
         for p in &f.params {
@@ -19860,8 +19911,11 @@ _cp++; \
                                 let obj_c = self.emit_expr(obj)?;
                                 // Plan 124.8 V2 (D226): value-record receiver
                                 // needs `&obj` (pointer to stack slot).
+                                // Plan 128 Ф.1: thread recv.mutable from MethodSig
+                                // (registered with AST flag) — Ф.2 consumes it to
+                                // switch immutable receivers к by-value passing.
                                 let obj_ty_local = self.infer_expr_c_type(obj);
-                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local);
+                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, sig.recv_mutable);
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 // D178: fill in default values for omitted trailing params.
@@ -20893,8 +20947,16 @@ _cp++; \
                         let obj_c = self.emit_expr(obj)?;
                         // Plan 124.8 V2 (D226): value-record receiver needs `&obj`
                         // (pointer to stack-slot) so @field mutations propagate.
+                        // Plan 128 Ф.1: lookup recv.mutable из method_overloads
+                        // (registered с AST flag). Fallback false если sig
+                        // отсутствует (delegated/synthesized path).
                         let obj_ty_local = self.infer_expr_c_type(obj);
-                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local);
+                        let recv_mutable = self.method_overloads
+                            .get(&(type_name.clone(), method.to_string()))
+                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .map(|s| s.recv_mutable)
+                            .unwrap_or(false);
+                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable);
                         let mut arg_strs = vec![obj_c];
                         for a in args {
                             if is_generic_type {
@@ -27357,7 +27419,14 @@ _cp++; \
     ///
     /// For other types (heap records `Nova_X*`, primitives, named tuples),
     /// obj_c passes through unchanged.
-    fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str) -> String {
+    ///
+    /// Plan 128 Ф.1: `recv_mutable` carries the callee's AST `Receiver.mutable`
+    /// flag (`fn Type mut @method` vs `fn Type @method`). Currently NOT consumed
+    /// — adapter logic is still driven entirely by `obj_ty` shape. Ф.2 will use
+    /// the flag to skip the `&obj` adapter for immutable value-record receivers
+    /// and pass by value instead, matching the (Ф.2) receiver_c_type ABI choice.
+    fn prepare_method_recv(&mut self, obj_c: &str, obj_ty: &str, recv_mutable: bool) -> String {
+        let _ = recv_mutable; // Ф.1: threaded but not consumed (see Ф.2).
         if obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*') {
             // Identifier? Direct &id.
             let trimmed = obj_c.trim();
