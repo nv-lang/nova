@@ -4024,6 +4024,13 @@ parser char-литералы **не поддерживает** — это бло
 
 ## Q-cstring. Гарантия nul-termination для `nova_str.ptr`
 
+✅ **ЗАКРЫТО 2026-06-03** — Plan 118.1 / D26 amend
+([spec/decisions/08-runtime.md §«Nul-termination»](decisions/08-runtime.md#d26)
+rule 3). **Reversed 2026-05-07 «variant 2».** Canonical: full `str`
+invariant + `str.as_cstr()` method (foundation shipped 2026-06-05
+commit 15abfd7546b; method runtime followup
+[M-118.1-cstr-runtime-wiring]).
+
 **Контекст.** Bootstrap-runtime сейчас:
 - `nova_str_concat` — аллоцирует `len + 1`, кладёт `\0` после данных.
 - Литералы (`(nova_str){.ptr="...", .len=N}`) — nul-terminated (C `.rodata`).
@@ -4045,15 +4052,29 @@ parser char-литералы **не поддерживает** — это бло
    литералов и concat, но не slice. Программист сам знает контекст.
    *Не рекомендуется* — путает.
 
-**Решение (2026-05-07): вариант 2** — Rust-style. Согласуется с
+**Решение (2026-05-07): вариант 2** — Rust-style. ~~Согласуется с
 принципом «нет скрытых аллокаций» и упрощает `nova_str_slice` (zero-
 copy). C-interop через явный `Buffer.from(s).add_byte(0).into()` (или
 будущий `s.as_cstring() -> []byte` если станет частым use-case).
 Текущий bootstrap всё ещё inconsistent (concat/литералы — terminated,
-slice — нет); fix — отдельная задача рантайма.
+slice — нет); fix — отдельная задача рантайма.~~
 
-**Связь:** [D26](decisions/08-runtime.md#d26), Q-ffi (FFI-механизм
-ещё не зафиксирован), Q-buffer (Buffer.add_byte для явного `\0`).
+**Финальное решение (2026-06-03): вариант 1 (с уточнением)** —
+**full `str` ALWAYS nul-terminated**, инвариант `ptr[len] == 0`
+держится для всех путей конструкции (литералы, concat, slice,
+runtime). C-interop через явный метод `str.as_cstr() -> *const c_char`
+с runtime-check инварианта (zero-copy если уже terminated, иначе
+defensive copy / panic в debug). Slice копирует с `\0` — O(n) ценой
+гарантии. Reversed 2026-05-07 reasoning: «нет скрытых аллокаций»
+**проигрывает** simplicity + zero-friction FFI (Plan 115 ptr / Plan
+118 typed pointers / Plan 91.12 std.ffi.cstr — все три зависят от
+этого инварианта). Прецедент: Zig (`[*:0]u8` встроен в язык).
+
+**Связь:** [D26 §«Nul-termination»](decisions/08-runtime.md#d26)
+(amended 2026-06-03 rule 3), Plan 118.1
+([project-plan118-status](../../README.md)), [D214](decisions/D214-ptr-and-tuple-ffi.md)
+(Plan 115 ptr), [D216](decisions/D216-typed-pointers.md) (Plan 118
+typed pointers), Q-ffi §22 «CStr / nul-terminated views».
 
 ---
 
