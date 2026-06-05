@@ -33980,7 +33980,6 @@ User insight unblocked что выглядело как codegen-infrastructure w
 Pattern: проверять Nova-side path первым, прежде чем reaching for C
 primitive + codegen forward-decl gymnastics.
 
->>>>>>> Stashed changes
 
 
 
