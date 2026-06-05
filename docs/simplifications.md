@@ -32912,7 +32912,7 @@ implementations deferred).
 
 1. **External-agent bug reports — критично triage immediately.** Bug в Plan
    110.x subsystem actively breaking other agents' tests > my planned 110.10
-   work. Right call: pivot pivot to bug fix.
+   work. Right call: pivot to bug fix.
 
 2. **Plan-docs based on recon estimates can undersize architectural scope.**
    110.10 plan-doc said «mostly mechanical Consumable wrapping»; implementation
