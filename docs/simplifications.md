@@ -32782,3 +32782,67 @@ sleeps + cancel. NOT Plan 83.11 zone.
 
 **Status:** ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
 §11.6 + §12.31 + §8 + §9 closed. Ф.4-Ф.9 pending design decision.
+
+
+---
+
+## [M-110.x-cleanup-shield-deadline-underflow] CLOSED + Plan 110.10 DEFERRED (2026-06-05)
+
+**Status:** 🟢 Bug fix LANDED; 🔴 Plan 110.10 V1 DEFERRED to V2 design.
+Branch `plan-110.10-existing-type-consumable`.
+
+### Critical bug fix (commit `af4e7d96a62`)
+
+External agent reported nv_shield_check_deadline producing 712392ms over
+budget для 11s test. Root cause: `nv_consume_leave_shield()` only cleared
+deadline on mask=0, NOT restoring outer's deadline в nested consume scenario.
+Inner's tiny budget shadowed outer's; outer body resuming saw stale
+inner deadline → bogus CleanupTimeoutError fires.
+
+Fix three-step:
+- Runtime: `nv_consume_enter_shield(int) -> int64_t` returns prev;
+  `nv_consume_leave_shield(int64_t)` restores prev.
+- Codegen: threads prev_deadline через fresh local var per consume-block.
+- Spec: D196 R4 amend documents shadow-and-restore.
+
+Test: `nested_shield_deadline_restore_v1_1.nv` POS — outer 1000ms wraps
+inner 5ms, outer sleeps 50ms post-inner. Pre-fix throws; post-fix succeeds.
+5/5 key Plan 110 fixtures PASS regression.
+
+### Plan 110.10 V1 DEFERRED
+
+Implementation attempt revealed architectural blocker. Original plan-doc
+assumed adding `external fn ChanWriter[T] consume @on_exit(...)` к
+existing built-in types would work. Exemplar `MutexGuard`:
+```nova
+export type MutexGuard consume { ptr int }
+export external fn MutexGuard consume @on_exit(...) -> ()
+```
+
+Type MUST be declared `consume`. Making ChanWriter / TcpListener /
+TcpStream / UdpSocket / JoinHandle consume types = **breaking change**
+for existing Plan 21 / Plan 83.12 users.
+
+**Design questions deferred к V2:**
+1. Migration strategy: opt-in via separate constructor / hard-flip + auto-fix /
+   type system enhancement для non-consume types implementing Consumable.
+2. Pre-implementation audit of nova_tests/ usage для impact assessment.
+3. Coordination с Plan 91 (std MVP) на std/concurrency module organization.
+
+Plan-doc 110.10 status flipped 🆕 PLANNED → 🟡 V1 partial (bug fix landed,
+implementations deferred).
+
+### Lessons
+
+1. **External-agent bug reports — критично triage immediately.** Bug в Plan
+   110.x subsystem actively breaking other agents' tests > my planned 110.10
+   work. Right call: pivot pivot to bug fix.
+
+2. **Plan-docs based on recon estimates can undersize architectural scope.**
+   110.10 plan-doc said «mostly mechanical Consumable wrapping»; implementation
+   revealed consume-type modifier requirement = breaking change. Routine
+   pre-implementation audit catches this.
+
+3. **Honest scope flip > silent push.** 🆕 PLANNED → 🟡 V1 partial с explicit
+   blockers + 3 design questions > shipping broken implementation OR
+   proceeding silently через breaking change.

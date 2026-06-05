@@ -32550,3 +32550,72 @@ Status: ✅ V1 CLOSED 2026-06-05. Plan 83.11 progress: Ф.0-Ф.3 in main;
 §11.6 + §12.31 + §8 + §9 closed; Ф.4-Ф.9 (blocking migration, channel
 migration, perf) pending design decision. 4 commits in branch +
 1 merge commit on main (064eeef82ef).
+
+
+================================================================================
+== 2026-06-05 — Plan 110: CRITICAL bug fix [M-110.x-cleanup-shield-deadline-underflow]
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p114-4
+> Branch: plan-110.10-existing-type-consumable (off main fb81c46d8fd)
+
+External agent reported bug durante test catalog work: nv_shield_check_deadline
+producing 712392ms over budget для 11s test, breaking P9/P11/N12 + existing
+stress_iso_3e baseline. Reported в моей Plan 110.x subsystem.
+
+Pivoted from planned 110.10 (Channel/socket Consumable) to urgent bug fix.
+
+Root cause:
+  • nv_consume_enter_shield(int deadline_ms) overwrote cancel_deadline_ns
+    с new value БЕЗ saving prev. Nested consume{} blocks: inner's tiny budget
+    shadowed outer's larger budget.
+  • nv_consume_leave_shield() cleared deadline ТОЛЬКО когда mask=0 (fully
+    unshielded). Nested case: inner leaves but mask still > 0; outer body
+    resumes seeing inner's stale (shorter) deadline.
+  • Outer body running longer than inner's stale budget → suspend point fires
+    bogus CleanupTimeoutError. Cumulative нагрузка appeared as huge over_ms
+    "underflow" в reports.
+
+Fix three-step (commit af4e7d96a62):
+  1. Runtime (fibers.h):
+     - nv_consume_enter_shield(int deadline_ms) -> int64_t: returns prev
+       deadline before set.
+     - nv_consume_leave_shield(int64_t prev_deadline): restores prev (instead
+       of conditional clear-on-mask-zero).
+  2. Codegen (emit_c.rs::emit_consume_scope): saves enter's return value в
+     fresh local int64_t per consume-block; passes saved prev к leave call.
+  3. Spec D196 R4 amend: documents shadow-and-restore semantics для nested
+     shield deadlines.
+
+Test added: nested_shield_deadline_restore_v1_1.nv — outer 1000ms wraps
+inner 5ms; outer body sleeps 50ms post-inner-exit. Pre-fix would fire
+CleanupTimeoutError; post-fix sleep succeeds.
+
+Regression: 5/5 key Plan 110 fixtures PASS на release nova-cli
+(deadline_fire_e2e_v1_1, typed_cleanup_timeout_v1_1, shield_deadline_check_t3_2,
+codegen_consume_throw_caught, register_finalizer_lifo_v1_1).
+
+Plan 110.10 (Channel/socket Consumable wrappers) — DEFERRED durante
+implementation attempt. Discovered architectural blocker:
+  • Existing exemplar (MutexGuard) requires type declared `consume`.
+  • Making ChanWriter/socket types consume = breaking change for existing
+    Plan 21 / Plan 83.12 users.
+  • Original plan-doc undersized: assumed simple @on_exit method addition
+    к existing built-in types would work. Not the case.
+
+Plan 110.10 status flipped 🆕 PLANNED → 🟡 V1 partial (bug fix landed,
+implementations deferred). Plan-doc updated с 3 design questions для V2
+reopen + recommendation list.
+
+Lessons:
+  • External-agent bug reports — critical to triage immediately, не defer.
+    Bug in Plan 110.x subsystem actively breaking other agents' tests.
+  • Plan-docs based on recon estimates can undersize architectural scope.
+    110.10 plan-doc said «mostly mechanical»; implementation revealed
+    consume-type modifier requirement (breaking change).
+  • Honest scope flip > silent push: 🆕 PLANNED к V1 partial с explicit
+    blockers > shipping broken implementation OR proceeding silently.
+
+Marker tally:
+  • 🟢 [M-110.x-cleanup-shield-deadline-underflow] CLOSED (af4e7d96a62).
+  • 🔴 [M-110.10.1 / 110.10.2 / 110.10.3] DEFERRED к V2 design session.
