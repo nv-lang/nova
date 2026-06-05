@@ -18,7 +18,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "path": "real_attrs.sample",
       "peers": [
 
       ],
@@ -44,6 +44,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -57,9 +61,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.real_attrs.sample::add",
+      "id": "real_attrs.sample::add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "module_path": "real_attrs.sample",
       "name": "add",
       "reexport_from": null,
       "scraped_examples": [
@@ -148,6 +152,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -161,9 +169,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.real_attrs.sample::maybe_add",
+      "id": "real_attrs.sample::maybe_add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "module_path": "real_attrs.sample",
       "name": "maybe_add",
       "reexport_from": null,
       "scraped_examples": [
@@ -252,6 +260,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -265,9 +277,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.real_attrs.sample::override_demo",
+      "id": "real_attrs.sample::override_demo",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "module_path": "real_attrs.sample",
       "name": "override_demo",
       "reexport_from": null,
       "scraped_examples": [
@@ -330,6 +342,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -347,9 +363,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.real_attrs.sample::plus",
+      "id": "real_attrs.sample::plus",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "module_path": "real_attrs.sample",
       "name": "plus",
       "reexport_from": null,
       "scraped_examples": [
@@ -433,6 +449,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -446,9 +466,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.real_attrs.sample::select_channel",
+      "id": "real_attrs.sample::select_channel",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "module_path": "real_attrs.sample",
       "name": "select_channel",
       "reexport_from": null,
       "scraped_examples": [

@@ -1,0 +1,43 @@
+// Plan 123.5.4 (V5.4, 2026-06-04): explain deep-walk runtime smoke.
+// Closes [M-123.1.2-explain-deep-walk].
+//
+// Verifies semantic preservation when V1.2 nested-region caches
+// surface через V5.4 explain deep-walk. The runtime check ensures
+// the nested-region rewrite doesn't change behavior — V5.4 only
+// affects the EXPLAIN REPORT (not the runtime path).
+
+module plan123_5_4.v5_4_explain_surfaces_nested_ok
+
+type Counter {
+    mut x int
+}
+
+fn Counter.new(start int) -> Counter => { x: start }
+
+fn Counter mut @nested(cond bool, target int) -> int {
+    mut acc = 0
+    if cond {
+        // V1.2 nested region A → V5.4 should surface this _at_x_n*
+        ro a = @x
+        ro b = @x
+        @x = target
+        // V1.2 nested region B → second _at_x_n*
+        ro c = @x
+        ro d = @x
+        acc = a + b + c + d
+    }
+    acc
+}
+
+test "V5.4: nested cache reporting preserves runtime semantics" {
+    mut c = Counter.new(7)
+    ro r = c.nested(true, 30)
+    // (7+7) + (30+30) = 74
+    assert(r == 74)
+    // Verify mutation happened.
+    assert(c.x == 30)
+    mut c2 = Counter.new(99)
+    ro r2 = c2.nested(false, 1)
+    assert(r2 == 0)
+    assert(c2.x == 99)
+}

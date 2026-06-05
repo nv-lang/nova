@@ -1,4 +1,4 @@
-module cm_box.lib
+module plan63.cm_box
 
 export type Box[T] { v T }
 

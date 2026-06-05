@@ -20,6 +20,7 @@
 //! чтобы оставить `fn main` доступной для wrapped test body.
 
 use super::doctree::*;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocTestOutcome {
@@ -63,7 +64,7 @@ impl DocTestSummary {
 }
 
 pub fn run_doc_tests(tests: &[DocTest]) -> DocTestSummary {
-    run_doc_tests_with_source(tests, None)
+    run_doc_tests_with_context(tests, None, None)
 }
 
 /// Plan 45 Ф.21.1: prod-grade entry — каждый test получает crate-scope
@@ -72,9 +73,23 @@ pub fn run_doc_tests_with_source(
     tests: &[DocTest],
     original_source: Option<&str>,
 ) -> DocTestSummary {
+    run_doc_tests_with_context(tests, original_source, None)
+}
+
+/// Как `run_doc_tests_with_source`, но дополнительно принимает путь к
+/// документируемому файлу. Если задан, doc-test резолвит импорты + prelude
+/// (`resolve_imports_inline_ex`) перед type-check — иначе prelude-функции
+/// (`assert`/`println`/...) не определены (после Plan 62 prelude — file-based
+/// `std/prelude.nv`, а не hardcode в чекере). Soft-fail: ошибка резолва не
+/// фатальна — падаем обратно в isolated check (как раньше).
+pub fn run_doc_tests_with_context(
+    tests: &[DocTest],
+    original_source: Option<&str>,
+    entry_path: Option<&Path>,
+) -> DocTestSummary {
     let mut results = Vec::with_capacity(tests.len());
     for t in tests {
-        let outcome = run_one(t, original_source);
+        let outcome = run_one(t, original_source, entry_path);
         results.push(DocTestResult {
             id: t.id.clone(),
             outcome,
@@ -83,7 +98,7 @@ pub fn run_doc_tests_with_source(
     DocTestSummary { results }
 }
 
-fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
+fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>) -> DocTestOutcome {
     let modifiers = &t.modifiers;
     if modifiers.contains(&DocTestModifier::Ignore) {
         return DocTestOutcome::Skipped("ignore modifier".to_string());
@@ -109,6 +124,19 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
             ));
         }
     };
+
+    // Plan 45 / Plan 62: inject prelude + imports так, чтобы prelude-функции
+    // (`assert`/`println`/...) и items документируемого модуля резолвились в
+    // type-check. После Plan 62 prelude — file-based `std/prelude.nv` (не
+    // hardcode в чекере), поэтому isolated `check_module` без инъекции даёт
+    // `undefined identifier assert`. Soft-fail: ошибка резолва не фатальна —
+    // проваливаемся в обычный check (поведение как до фикса).
+    if let Some(ep) = entry_path {
+        if let Some(repo) = crate::test_runner::find_repo_root_from(ep) {
+            let stdlib = repo.join("std");
+            let _ = crate::imports::resolve_imports_inline_ex(ep, &mut module, &repo, &stdlib, false);
+        }
+    }
 
     // 2. Type-check.
     if let Err(errs) = crate::types::check_module(&module) {
@@ -159,6 +187,7 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
 
     // 3. Execute.
     crate::callnorm::normalize_module(&mut module);
+    crate::chain_norm::normalize_chains_module(&mut module);
     let mut interp = crate::interp::Interpreter::new();
     if let Err(d) = interp.load_module(&module) {
         return DocTestOutcome::Failed(format!(
@@ -313,7 +342,7 @@ mod tests {
 
     #[test]
     fn passes_trivial_body() {
-        let t = make_test("let _ = 1\n", vec![]);
+        let t = make_test("ro _ = 1\n", vec![]);
         let s = run_doc_tests(std::slice::from_ref(&t));
         assert_eq!(s.results[0].outcome, DocTestOutcome::Passed, "{:?}", s.results[0].outcome);
     }
@@ -327,7 +356,7 @@ mod tests {
 
     #[test]
     fn no_run_passes_when_compiles() {
-        let t = make_test("let x = 1\n", vec![DocTestModifier::NoRun]);
+        let t = make_test("ro x = 1\n", vec![DocTestModifier::NoRun]);
         let s = run_doc_tests(std::slice::from_ref(&t));
         assert_eq!(s.results[0].outcome, DocTestOutcome::Passed);
     }
@@ -335,7 +364,7 @@ mod tests {
     #[test]
     fn compile_fail_passes_when_fails() {
         let t = make_test(
-            "let x: int = \"not an int\"\n",
+            "ro x int = \"not an int\"\n",
             vec![DocTestModifier::CompileFail],
         );
         let s = run_doc_tests(std::slice::from_ref(&t));
@@ -344,7 +373,7 @@ mod tests {
 
     #[test]
     fn compile_fail_fails_when_compiles() {
-        let t = make_test("let x = 1\n", vec![DocTestModifier::CompileFail]);
+        let t = make_test("ro x = 1\n", vec![DocTestModifier::CompileFail]);
         let s = run_doc_tests(std::slice::from_ref(&t));
         assert!(matches!(s.results[0].outcome, DocTestOutcome::Failed(_)));
     }
@@ -353,7 +382,7 @@ mod tests {
     fn must_verify_passes_trivial() {
         // Ф.21.4: must_verify wiring к Plan 33 SMT. Trivial-test без
         // контрактов → verify_module не возвращает errors → Passed.
-        let t = make_test("let x = 1\n", vec![DocTestModifier::MustVerify]);
+        let t = make_test("ro x = 1\n", vec![DocTestModifier::MustVerify]);
         let s = run_doc_tests(std::slice::from_ref(&t));
         assert_eq!(s.results[0].outcome, DocTestOutcome::Passed,
             "must_verify on trivial test should pass (no contracts → no SMT failures): {:?}",
@@ -362,9 +391,9 @@ mod tests {
 
     #[test]
     fn wraps_body_correctly() {
-        let wrapped = wrap_source("let x = 1\n", None, None);
+        let wrapped = wrap_source("ro x = 1\n", None, None);
         assert!(wrapped.contains("fn main"));
-        assert!(wrapped.contains("let x = 1"));
+        assert!(wrapped.contains("ro x = 1"));
     }
 
     #[test]
@@ -378,11 +407,11 @@ mod tests {
     #[test]
     fn wrap_with_original_source_injects_module() {
         let orig = "module my.mod\n\nexport fn double(x int) -> int => x * 2\n";
-        let wrapped = wrap_source("let r = double(3)\n", Some(orig), None);
+        let wrapped = wrap_source("ro r = double(3)\n", Some(orig), None);
         assert!(wrapped.contains("module my.mod"));
         assert!(wrapped.contains("fn double"));
         assert!(wrapped.contains("fn main"));
-        assert!(wrapped.contains("let r = double(3)"));
+        assert!(wrapped.contains("ro r = double(3)"));
     }
 
     #[test]

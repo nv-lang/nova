@@ -289,6 +289,7 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(&mut module);
         let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
         emit_explain_report(&report);

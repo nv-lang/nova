@@ -1,6 +1,6 @@
 // Plan 42.09: source folder-module с item для re-import под другим именем.
 
-module rename_import_source.core
+module modules.rename_import_source
 
 export fn calculate(x int) -> int =>
     x * 2 + 1

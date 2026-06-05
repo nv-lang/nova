@@ -9,7 +9,7 @@ module must_verify.sample
 /// Гарантии: результат всегда неотрицателен.
 ///
 /// ```nova,must_verify
-/// let x = abs(-3)
+/// ro x = abs(-3)
 /// assert(x >= 0)
 /// ```
 export fn abs(x int) -> int

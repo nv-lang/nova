@@ -7,13 +7,13 @@
   "links": [
     {
       "from_id": null,
-      "target_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "target_id": "links.sample::Point",
       "target_url": null,
       "text": "Point"
     },
     {
       "from_id": null,
-      "target_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "target_id": "links.sample::translate",
       "target_url": null,
       "text": "translate"
     },
@@ -24,14 +24,14 @@
       "text": "unknown_link"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.links.sample::Point",
-      "target_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "from_id": "links.sample::Point",
+      "target_id": "links.sample::translate",
       "target_url": null,
       "text": "translate"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.links.sample::translate",
-      "target_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "from_id": "links.sample::translate",
+      "target_id": "links.sample::Point",
       "target_url": null,
       "text": "Point"
     }
@@ -47,7 +47,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.links.sample",
+      "path": "links.sample",
       "peers": [
 
       ],
@@ -72,6 +72,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -85,12 +89,12 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.links.sample::Point",
+      "id": "links.sample::Point",
       "kind": "type",
       "linked_from": [
-        "nova_tests.doc.fixtures.links.sample::translate"
+        "links.sample::translate"
       ],
-      "module_path": "nova_tests.doc.fixtures.links.sample",
+      "module_path": "links.sample",
       "name": "Point",
       "reexport_from": null,
       "scraped_examples": [
@@ -111,11 +115,13 @@
           {
             "mutable": false,
             "name": "x",
+            "priv_field": false,
             "type": "int"
           },
           {
             "mutable": false,
             "name": "y",
+            "priv_field": false,
             "type": "int"
           }
         ],
@@ -128,6 +134,10 @@
       ],
       "capabilities": {
         "allow_transit": [
+
+        ],
+        "consume": false,
+        "impl_protocols": [
 
         ],
         "forbid": [
@@ -143,12 +153,12 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.links.sample::translate",
+      "id": "links.sample::translate",
       "kind": "fn",
       "linked_from": [
-        "nova_tests.doc.fixtures.links.sample::Point"
+        "links.sample::Point"
       ],
-      "module_path": "nova_tests.doc.fixtures.links.sample",
+      "module_path": "links.sample",
       "name": "translate",
       "reexport_from": null,
       "scraped_examples": [

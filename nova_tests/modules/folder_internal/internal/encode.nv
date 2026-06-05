@@ -4,7 +4,7 @@
 //
 // parent.X = folder_internal.internal.
 
-module folder_internal.internal.encode
+module folder_internal.internal
 
 export fn encode_value(v int) -> int =>
     v * 2 + 1

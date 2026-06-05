@@ -2954,12 +2954,20 @@ impl CEmitter {
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
 
-        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: unconditionally
-        // register CleanupTimeoutError type id (prelude type used by runtime
+        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: register
+        // CleanupTimeoutError type id (prelude type used by runtime
         // cleanup-deadline path). Ensures NOVA_TID_USER_CleanupTimeoutError
         // macro defined + typed throw impl emitted (см. splice ниже).
-        // Cost: ~30 bytes binary if otherwise unused (acceptable).
-        self.register_type_id("CleanupTimeoutError");
+        //
+        // ВАЖНО: гейтим по реальному определению типа. Под `#no_prelude`
+        // prelude не инлайнится → struct `Nova_CleanupTimeoutError` НЕ
+        // объявлен; безусловная регистрация заставляла эмитить impl
+        // (`_nova_throw_cleanup_timeout_impl`), ссылающийся на необъявленный
+        // тип → CC-FAIL (plan107/plan62 no_prelude). record_schemas на этой
+        // стадии заполнен всеми defined record-типами.
+        if self.record_schemas.contains_key("CleanupTimeoutError") {
+            self.register_type_id("CleanupTimeoutError");
+        }
 
         // Plan 61 Ф.1: splice TypeId defines + overriding nova_typeid_to_name.
         // Каждый registered user-type получает `#define NOVA_TID_USER_<X> N`;
@@ -14444,6 +14452,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
+                    self.array_element_types.insert(binding.clone(), arr_elem_ty);
+                } else if let Some(arr_elem_ty) = self.compute_array_elem_type_for_obj(&decl.value) {
+                    // Plan 123 chain-cache fix: RHS — field/chain access
+                    // (`@map._buckets` → `_at_map__buckets_chain`). `val` —
+                    // C-строка field-access, не ключ в array_element_types,
+                    // поэтому lookup выше промахивается. Вычисляем element type
+                    // из AST поля напрямую (через template+subst для generic
+                    // полей вроде `_buckets []Slot[K,V]`), иначе индексация
+                    // кэш-temp `_at_..._chain[i]` падает в nova_int fallback
+                    // → `slot->tag` на nova_int (CC-FAIL: set/hashmap iter).
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
                 }
                 // Plan 63 Fix F+ [M-result-erased-no-mono]: production-grade

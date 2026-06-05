@@ -1,6 +1,6 @@
 // Plan 42.14 Ф.1: core peer для #cfg(all(...)) test.
 
-module predicate_all.core
+module cfg.predicate_all
 
 export fn base() -> int =>
     gated_value() + 1

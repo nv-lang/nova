@@ -3,9 +3,9 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.basic.sample::abs",
+      "from_id": "basic.sample::abs",
       "full_source": "assert(abs(-5) == 5)",
-      "id": "nova_tests.doc.fixtures.basic.sample::doc_test_1",
+      "id": "basic.sample::doc_test_1",
       "index": 1,
       "modifiers": [
 
@@ -27,7 +27,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.basic.sample",
+      "path": "basic.sample",
       "peers": [
 
       ],
@@ -52,6 +52,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -65,9 +69,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.basic.sample::MAX_BUF",
+      "id": "basic.sample::MAX_BUF",
       "kind": "const",
-      "module_path": "nova_tests.doc.fixtures.basic.sample",
+      "module_path": "basic.sample",
       "name": "MAX_BUF",
       "reexport_from": null,
       "scraped_examples": [
@@ -99,6 +103,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -112,9 +120,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.basic.sample::Point",
+      "id": "basic.sample::Point",
       "kind": "type",
-      "module_path": "nova_tests.doc.fixtures.basic.sample",
+      "module_path": "basic.sample",
       "name": "Point",
       "reexport_from": null,
       "scraped_examples": [
@@ -140,11 +148,13 @@
           {
             "mutable": false,
             "name": "x",
+            "priv_field": false,
             "type": "int"
           },
           {
             "mutable": false,
             "name": "y",
+            "priv_field": false,
             "type": "int"
           }
         ],
@@ -157,6 +167,10 @@
       ],
       "capabilities": {
         "allow_transit": [
+
+        ],
+        "consume": false,
+        "impl_protocols": [
 
         ],
         "forbid": [
@@ -172,9 +186,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.basic.sample::abs",
+      "id": "basic.sample::abs",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.basic.sample",
+      "module_path": "basic.sample",
       "name": "abs",
       "reexport_from": null,
       "scraped_examples": [

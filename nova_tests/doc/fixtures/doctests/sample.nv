@@ -9,8 +9,8 @@ module doctests.sample
 /// Тривиальный пример:
 ///
 /// ```nova
-/// let x = 21
-/// let y = x * 2
+/// ro x = 21
+/// ro y = x * 2
 /// ```
 ///
 /// Crate-scope (Ф.21.1): вызов документируемой функции:
@@ -22,7 +22,7 @@ module doctests.sample
 /// Не запускаем (compile-only):
 ///
 /// ```nova,no_run
-/// let big = 1_000_000 * 2
+/// ro big = 1_000_000 * 2
 /// ```
 ///
 /// Игнорируем (показано, но не запускается):
@@ -34,13 +34,13 @@ module doctests.sample
 /// Compile-fail тест (ожидаемая ошибка типа):
 ///
 /// ```nova,compile_fail
-/// let x: int = "not an int"
+/// ro x int = "not an int"
 /// ```
 ///
 /// SMT-verified (Ф.21.4): без contracts → trivially verifies.
 ///
 /// ```nova,must_verify
-/// let _ = 1
+/// ro _ = 1
 /// ```
 export fn double(x int) -> int =>
     x * 2

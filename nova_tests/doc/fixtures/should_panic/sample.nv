@@ -12,14 +12,14 @@ module should_panic.sample
 /// Нормальный доступ:
 ///
 /// ```nova
-/// let mut arr = [10, 20, 30]
+/// mut arr = [10, 20, 30]
 /// assert(arr[1] == 20)
 /// ```
 ///
 /// Доступ за границы → panic (ожидаемое поведение):
 ///
 /// ```nova,should_panic
-/// let mut arr = [1, 2, 3]
-/// let _ = arr[99]
+/// mut arr = [1, 2, 3]
+/// ro _ = arr[99]
 /// ```
 export fn get(arr []int, i int) -> int => arr[i]

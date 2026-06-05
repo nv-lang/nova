@@ -1,0 +1,35 @@
+// Plan 123.1.2 (V1.2, 2026-06-04): nested-region inside match arm body.
+
+module plan123_1_2.v1_2_match_arm_nested_ok
+
+type State {
+    mut x int
+}
+
+fn State.new() -> State => { x: 10 }
+
+fn State mut @dispatch(tag int) -> int {
+    match tag {
+        0 => {
+            // 2 reads pre-write → nested cache.
+            ro a = @x
+            ro b = @x
+            @x = 100
+            // 2 reads post-write → nested cache.
+            ro c = @x
+            ro d = @x
+            a + b + c + d
+        }
+        _ => 0
+    }
+}
+
+test "V1.2: match-arm nested region preserves semantics" {
+    mut s = State.new()
+    ro r = s.dispatch(0)
+    // (10+10) + (100+100) = 220
+    assert(r == 220)
+    mut s2 = State.new()
+    ro r2 = s2.dispatch(1)
+    assert(r2 == 0)
+}

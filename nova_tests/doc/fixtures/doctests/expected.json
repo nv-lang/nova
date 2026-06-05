@@ -3,19 +3,19 @@
   "nova_version": "0.1.0",
   "doc_tests": [
     {
-      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
-      "full_source": "let x = 21\nlet y = x * 2",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_1",
+      "from_id": "doctests.sample::double",
+      "full_source": "ro x = 21\nro y = x * 2",
+      "id": "doctests.sample::doc_test_1",
       "index": 1,
       "modifiers": [
 
       ],
-      "visible_source": "let x = 21\nlet y = x * 2"
+      "visible_source": "ro x = 21\nro y = x * 2"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "from_id": "doctests.sample::double",
       "full_source": "assert(double(3) == 6)",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_2",
+      "id": "doctests.sample::doc_test_2",
       "index": 2,
       "modifiers": [
 
@@ -23,19 +23,19 @@
       "visible_source": "assert(double(3) == 6)"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
-      "full_source": "let big = 1_000_000 * 2",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_3",
+      "from_id": "doctests.sample::double",
+      "full_source": "ro big = 1_000_000 * 2",
+      "id": "doctests.sample::doc_test_3",
       "index": 3,
       "modifiers": [
         "no_run"
       ],
-      "visible_source": "let big = 1_000_000 * 2"
+      "visible_source": "ro big = 1_000_000 * 2"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "from_id": "doctests.sample::double",
       "full_source": "undefined_symbol()",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_4",
+      "id": "doctests.sample::doc_test_4",
       "index": 4,
       "modifiers": [
         "ignore"
@@ -43,24 +43,24 @@
       "visible_source": "undefined_symbol()"
     },
     {
-      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
-      "full_source": "let x: int = \"not an int\"",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_5",
+      "from_id": "doctests.sample::double",
+      "full_source": "ro x int = \"not an int\"",
+      "id": "doctests.sample::doc_test_5",
       "index": 5,
       "modifiers": [
         "compile_fail"
       ],
-      "visible_source": "let x: int = \"not an int\""
+      "visible_source": "ro x int = \"not an int\""
     },
     {
-      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
-      "full_source": "let _ = 1",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_6",
+      "from_id": "doctests.sample::double",
+      "full_source": "ro _ = 1",
+      "id": "doctests.sample::doc_test_6",
       "index": 6,
       "modifiers": [
         "must_verify"
       ],
-      "visible_source": "let _ = 1"
+      "visible_source": "ro _ = 1"
     }
   ],
   "links": [
@@ -77,7 +77,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.doctests.sample",
+      "path": "doctests.sample",
       "peers": [
 
       ],
@@ -102,6 +102,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -115,16 +119,16 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "id": "doctests.sample::double",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.doctests.sample",
+      "module_path": "doctests.sample",
       "name": "double",
       "reexport_from": null,
       "scraped_examples": [
 
       ],
       "sections": {
-        "examples": "Тривиальный пример:\n\n```nova\nlet x = 21\nlet y = x * 2\n```\n\nCrate-scope (Ф.21.1): вызов документируемой функции:\n\n```nova\nassert(double(3) == 6)\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nlet big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nlet x: int = \"not an int\"\n```\n\nSMT-verified (Ф.21.4): без contracts → trivially verifies.\n\n```nova,must_verify\nlet _ = 1\n```"
+        "examples": "Тривиальный пример:\n\n```nova\nro x = 21\nro y = x * 2\n```\n\nCrate-scope (Ф.21.1): вызов документируемой функции:\n\n```nova\nassert(double(3) == 6)\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nro big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nro x int = \"not an int\"\n```\n\nSMT-verified (Ф.21.4): без contracts → trivially verifies.\n\n```nova,must_verify\nro _ = 1\n```"
       },
       "source": {
         "file_id": 0,

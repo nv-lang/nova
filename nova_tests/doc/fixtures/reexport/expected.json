@@ -18,7 +18,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.reexport.sample",
+      "path": "reexport.sample",
       "peers": [
 
       ],
@@ -43,6 +43,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -57,9 +61,9 @@
       ],
       "doc_inline": false,
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.reexport.sample::helper",
+      "id": "reexport.sample::helper",
       "kind": "reexport",
-      "module_path": "nova_tests.doc.fixtures.reexport.sample",
+      "module_path": "reexport.sample",
       "name": "helper",
       "reexport_from": "nova_tests.doc.fixtures.reexport.other::helper",
       "scraped_examples": [
@@ -84,6 +88,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -98,9 +106,9 @@
       ],
       "doc_inline": true,
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.reexport.sample::helper_two",
+      "id": "reexport.sample::helper_two",
       "kind": "reexport",
-      "module_path": "nova_tests.doc.fixtures.reexport.sample",
+      "module_path": "reexport.sample",
       "name": "helper_two",
       "reexport_from": "nova_tests.doc.fixtures.reexport.other::helper_two",
       "scraped_examples": [
@@ -125,6 +133,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -138,9 +150,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.reexport.sample::square",
+      "id": "reexport.sample::square",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.reexport.sample",
+      "module_path": "reexport.sample",
       "name": "square",
       "reexport_from": null,
       "scraped_examples": [

@@ -1,6 +1,6 @@
 // Plan 42.14 Ф.1: core peer для all()-off test.
 
-module predicate_all_off.core
+module cfg.predicate_all_off
 
 export fn always_here() -> int =>
     5

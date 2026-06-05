@@ -2,7 +2,7 @@
 // `is_even` из соседнего peer-файла `even.nv` — обратное направление
 // взаимной рекурсии.
 
-module peer_recur.odd
+module plan81.peer_recur
 
 export fn is_odd(n int) -> bool {
     if n == 0 { false } else { is_even(n - 1) }

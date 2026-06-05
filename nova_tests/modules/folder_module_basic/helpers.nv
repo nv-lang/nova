@@ -6,7 +6,7 @@
 // module. Извне `import modules.folder_module_basic` показывает
 // только exported items (User, create_user, create_audited_user).
 
-module folder_module_basic.helpers
+module modules.folder_module_basic
 
 // Internal helper — module-private.
 fn compute_audit_id(base_id int) -> int =>

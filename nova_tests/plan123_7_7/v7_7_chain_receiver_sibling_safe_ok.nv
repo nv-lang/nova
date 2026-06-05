@@ -1,0 +1,42 @@
+// Plan 123.7.7 (V7.7, 2026-06-04): chain receiver IPA refinement.
+// Closes [M-123.7.5-chain-receiver].
+//
+// Extends V7.5 sibling-safe rule k chains: `@F0.F1.....Fn.method()`
+// preserves caches of fields outside the chain root.
+
+module plan123_7_7.v7_7_chain_receiver_sibling_safe_ok
+
+type Inner {
+    mut sub []int
+}
+
+type C {
+    mut counter int
+    mut inner Inner
+}
+
+fn Inner.new() -> Inner => { sub: []int.new() }
+
+fn C.new() -> C => { counter: 0, inner: Inner.new() }
+
+fn C mut @sample_and_grow(v int) -> int {
+    // V7.7: chain `@inner.sub.push(v)` doesn't invalidate sibling
+    // `@counter` cache. Read counter twice before и twice after.
+    ro c1 = @counter
+    ro c2 = @counter
+    @inner.sub.push(v)
+    ro c3 = @counter
+    ro c4 = @counter
+    c1 + c2 + c3 + c4
+}
+
+test "V7.7: chain receiver doesn't invalidate sibling cache" {
+    mut c = C.new()
+    c.counter = 13
+    ro r = c.sample_and_grow(42)
+    // counter = 13 throughout — 13*4 = 52
+    assert(r == 52)
+    // Verify chain mutation:
+    assert(c.inner.sub.len() == 1)
+    assert(c.inner.sub[0] == 42)
+}

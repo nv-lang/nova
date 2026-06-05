@@ -18,7 +18,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.capability_forbid.sample",
+      "path": "capability_forbid.sample",
       "peers": [
 
       ],
@@ -43,6 +43,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
           "Io"
         ],
@@ -56,9 +60,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.capability_forbid.sample::add",
+      "id": "capability_forbid.sample::add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.capability_forbid.sample",
+      "module_path": "capability_forbid.sample",
       "name": "add",
       "reexport_from": null,
       "scraped_examples": [

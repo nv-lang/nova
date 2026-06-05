@@ -18,7 +18,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.orphan.sample",
+      "path": "orphan.sample",
       "peers": [
 
       ],
@@ -43,6 +43,10 @@
         "allow_transit": [
 
         ],
+        "consume": false,
+        "impl_protocols": [
+
+        ],
         "forbid": [
 
         ],
@@ -56,9 +60,9 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.orphan.sample::id",
+      "id": "orphan.sample::id",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.orphan.sample",
+      "module_path": "orphan.sample",
       "name": "id",
       "reexport_from": null,
       "scraped_examples": [

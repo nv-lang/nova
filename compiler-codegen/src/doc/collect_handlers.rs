@@ -264,14 +264,14 @@ mod tests {
 
     #[test]
     fn find_inline_handler() {
-        let src = "fn main() { with x = handler Store { Set(v) { } get() => 0 } { Store.Set(1) } }";
+        let src = "fn main() { with x = effect Store { Set(v) { } get() => 0 } { Store.Set(1) } }";
         let names = find_handler_literals(src);
         assert_eq!(names, vec!["Store".to_string()]);
     }
 
     #[test]
     fn find_qualified_handler() {
-        let src = "fn main() { with x = handler std.io.Fs { open() => 0 } { } }";
+        let src = "fn main() { with x = effect std.io.Fs { open() => 0 } { } }";
         let names = find_handler_literals(src);
         assert_eq!(names, vec!["std.io.Fs".to_string()]);
     }
@@ -297,8 +297,8 @@ mod tests {
     fn multiple_handlers() {
         let src = "
             fn f() {
-                with a = handler Store { } { }
-                with b = handler Logger { } { }
+                with a = effect Store { } { }
+                with b = effect Logger { } { }
             }
         ";
         let names = find_handler_literals(src);
