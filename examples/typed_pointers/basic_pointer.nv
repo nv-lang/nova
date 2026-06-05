@@ -1,4 +1,4 @@
-// Plan 118 / 118.5 D216 V2 — typed pointer family basic example.
+// Plan 118 / 118.5 D216 V2+V3 — typed pointer family basic example.
 //
 // V2 canonical right-binding forms:
 //   *T          — readonly pointer (default canonical)
@@ -6,6 +6,12 @@
 //   mut * T     — mutable pointer (can be rebound + deref-store)
 //   unsafe * T  — possibly-null/dangling pointer (escape hatch)
 //   * unsafe T  — valid pointer к possibly-uninit T (MaybeUninit semantic)
+//
+// V3 §V3.4 — `safe` keyword as propagation stopper:
+//   unsafe * safe T   — outer unsafe applies к pointer ops only; pointee T
+//                       is explicitly safe (≈ Rust `*const T` semantic)
+//   ro * safe ro T    — intentional re-application of ro after safe stopper
+//                       (would be E_REDUNDANT_TYPE_MODIFIER without `safe`)
 //
 // V1 scope: type-system distinction enabled; pointer ops + auto-deref
 // + unsafe context enforcement landing per Plan 118 + 118.5 Ф.4.
@@ -29,9 +35,41 @@ external fn buffer_at_offset(buf unsafe * Buffer, idx i64) -> i64
 // Returning typed pointer.
 external fn allocate_buffer(size i64) -> * Buffer
 
+// ─── V3.4 safe escape hatch examples ────────────────────────────────────
+//
+// FFI pattern: caller-asserted pointer validity, but pointee is a regular
+// safe value (deref yields bare Buffer, not `unsafe Buffer`). The outer
+// `unsafe` propagation is explicitly stopped at the `safe` boundary —
+// matches Rust `*const T` semantic where unsafety attaches к the deref
+// operation, not к the resulting value.
+external fn ffi_borrow_buffer(handle unsafe * safe Buffer) -> i64
+
+// Independent-layers pattern: outer readonly pointer (cannot rebind the
+// binding), but pointee mutability is intentionally re-declared after the
+// `safe` stopper. Без `safe` это было бы E_REDUNDANT_TYPE_MODIFIER
+// (V3.4 — outer ro propagates через chain). С `safe` — fresh inner ro
+// wrapper, useful когда API contract documents the inner layer as
+// independent from caller's outer guarantee.
+external fn observe_readonly_view(view ro * safe ro Buffer) -> i64
+
+// Opaque-handle pattern: outer unsafe pointer to possibly-uninit storage
+// where the inner `unsafe` layer is intentional (not redundancy). The
+// `safe` stopper breaks the V3.1 redundancy rule так что inner unsafe
+// represents a separate semantic concern (here: uninitialized pointee
+// inside an unsafe pointer slot, e.g., raw allocator output before
+// init).
+external fn raw_alloc_slot(slot unsafe * safe unsafe Buffer) -> ()
+
 test "typed pointer family — declarations parse + type-check" {
     // V1 limit: pointer creation (&) + deref (*) + auto-deref require
     // unsafe context — proper enforcement landing в Ф.3.3-3.5.
     // Declarations alone exercise parser + type-checker.
+    assert(1 == 1)
+}
+
+test "V3.4 safe escape hatch — declarations parse" {
+    // `safe` keyword breaks modifier propagation per D216 V3 §V3.4.
+    // Declarations alone exercise parser handling of safe-token within
+    // pointer chains. Runtime semantics covered в Plan 118 Ф.4.
     assert(1 == 1)
 }
