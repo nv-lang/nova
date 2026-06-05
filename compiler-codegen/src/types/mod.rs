@@ -5401,6 +5401,14 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
         };
+        // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `Ty::Never`
+        // assignable to any expected type (bottom type). Hookpoint fires
+        // once `infer_expr_type` returns `never` for Throw/Interrupt/
+        // never-returning calls in subsequent Ф.* steps. Pure additive —
+        // existing `TyCat::Other` safety-net preserved.
+        if matches!(ty_of_ref(&found_tr), Ty::Never) {
+            return Compat::Ok;
+        }
         let found_cat = self.cat_of(&found_tr, expr_gs);
         if cat_compatible(&found_cat, &exp_cat) {
             Compat::Ok
