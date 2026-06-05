@@ -21930,6 +21930,165 @@ _cp++; \
         }
     }
 
+    /// Plan 125.2 Ф.1 ([M-125-loop-no-break-divergence]): walks a Block
+    /// looking for any `break` statement that targets THIS loop scope.
+    ///
+    /// **Scope rules:**
+    /// - Descend through `Stmt::Expr/Let/Const/Assign/Throw/Defer/...`
+    ///   and through control-flow `Expr` containers (If/IfLet/Match/Block).
+    /// - **DO NOT descend** into nested `Loop`/`While`/`WhileLet`/`For`/
+    ///   `ParallelFor` bodies — their `break`s target the inner scope.
+    /// - **DO NOT descend** into `Lambda`/`ClosureLight`/`ClosureFull`/
+    ///   `HandlerLit`/`ProtocolLit` bodies — their breaks belong to a
+    ///   different (or invalid) lexical loop scope.
+    ///
+    /// Conservative: any expression variant not explicitly traversed
+    /// returns `false` (no break found) — safe under-approximation.
+    fn loop_body_has_break(&self, b: &Block) -> bool {
+        for s in &b.stmts {
+            if Self::stmt_has_break_in_scope(s) {
+                return true;
+            }
+        }
+        if let Some(t) = b.trailing.as_ref() {
+            if Self::expr_has_break_in_scope(t) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn stmt_has_break_in_scope(s: &Stmt) -> bool {
+        match s {
+            Stmt::Break(_) => true,
+            Stmt::Expr(e)
+            | Stmt::Throw { value: e, .. }
+            | Stmt::Defer { body: e, .. }
+            | Stmt::ErrDefer { body: e, .. }
+            | Stmt::OkDefer { body: e, .. }
+            | Stmt::DeferWithResult { body: e, .. }
+            | Stmt::AssertStatic { expr: e, .. }
+            | Stmt::Assume { expr: e, .. } => Self::expr_has_break_in_scope(e),
+            Stmt::Let(l) => Self::expr_has_break_in_scope(&l.value),
+            Stmt::Const(c) => Self::expr_has_break_in_scope(&c.value),
+            Stmt::Assign { target, value, .. } => {
+                Self::expr_has_break_in_scope(target)
+                    || Self::expr_has_break_in_scope(value)
+            }
+            Stmt::Return { value, .. } => value.as_ref()
+                .map(Self::expr_has_break_in_scope)
+                .unwrap_or(false),
+            // Continue belongs to enclosing loop scope but does not
+            // break out — does NOT count as break.
+            Stmt::Continue(_) => false,
+            // ConsumeScope opens new block-scope but same loop scope —
+            // a break inside still targets enclosing loop.
+            Stmt::ConsumeScope { init, body, .. } => {
+                Self::expr_has_break_in_scope(init)
+                    || Self::block_has_break_in_scope(body)
+            }
+            // Ghost / unused-here statement kinds — no break possible.
+            Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        }
+    }
+
+    fn block_has_break_in_scope(b: &Block) -> bool {
+        for s in &b.stmts {
+            if Self::stmt_has_break_in_scope(s) {
+                return true;
+            }
+        }
+        if let Some(t) = b.trailing.as_ref() {
+            if Self::expr_has_break_in_scope(t) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn expr_has_break_in_scope(e: &Expr) -> bool {
+        match &e.kind {
+            // Control-flow descents within same loop scope:
+            ExprKind::If { cond, then, else_ } => {
+                if Self::expr_has_break_in_scope(cond) { return true; }
+                if Self::block_has_break_in_scope(then) { return true; }
+                match else_ {
+                    Some(ElseBranch::Block(b)) => Self::block_has_break_in_scope(b),
+                    Some(ElseBranch::If(e)) => Self::expr_has_break_in_scope(e),
+                    None => false,
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                if Self::expr_has_break_in_scope(scrutinee) { return true; }
+                if Self::block_has_break_in_scope(then) { return true; }
+                match else_ {
+                    Some(ElseBranch::Block(b)) => Self::block_has_break_in_scope(b),
+                    Some(ElseBranch::If(e)) => Self::expr_has_break_in_scope(e),
+                    None => false,
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                if Self::expr_has_break_in_scope(scrutinee) { return true; }
+                arms.iter().any(|a| match &a.body {
+                    MatchArmBody::Expr(e) => Self::expr_has_break_in_scope(e),
+                    MatchArmBody::Block(b) => Self::block_has_break_in_scope(b),
+                })
+            }
+            ExprKind::Block(b) => Self::block_has_break_in_scope(b),
+            // Same-loop-scope wrappers (do not introduce new loop):
+            ExprKind::With { body, .. }
+            | ExprKind::Forbid { body, .. }
+            | ExprKind::Realtime { body, .. }
+            | ExprKind::Supervised { body, .. } => Self::block_has_break_in_scope(body),
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => Self::block_has_break_in_scope(b),
+            // Compositional expressions — recurse into sub-exprs:
+            ExprKind::Throw(inner) | ExprKind::Try(inner) | ExprKind::Bang(inner)
+            | ExprKind::Spawn(inner) => Self::expr_has_break_in_scope(inner),
+            ExprKind::Coalesce(a, b) => Self::expr_has_break_in_scope(a)
+                || Self::expr_has_break_in_scope(b),
+            ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+                Self::expr_has_break_in_scope(inner)
+            }
+            ExprKind::Binary { left, right, .. } => Self::expr_has_break_in_scope(left)
+                || Self::expr_has_break_in_scope(right),
+            ExprKind::Unary { operand, .. } => Self::expr_has_break_in_scope(operand),
+            ExprKind::Member { obj, .. } => Self::expr_has_break_in_scope(obj),
+            ExprKind::Index { obj, index } => Self::expr_has_break_in_scope(obj)
+                || Self::expr_has_break_in_scope(index),
+            ExprKind::TurboFish { base, .. } => Self::expr_has_break_in_scope(base),
+            ExprKind::Call { func, args, .. } => {
+                if Self::expr_has_break_in_scope(func) { return true; }
+                args.iter().any(|a| Self::expr_has_break_in_scope(a.expr()))
+            }
+            ExprKind::Interrupt(inner) => inner.as_ref()
+                .map(|e| Self::expr_has_break_in_scope(e))
+                .unwrap_or(false),
+            ExprKind::TupleLit(elems) => elems.iter().any(Self::expr_has_break_in_scope),
+            // ArrayLit/MapLit/RecordLit value positions — break could
+            // appear inside e.g. `[if c { break } else { x }]`, so recurse.
+            ExprKind::ArrayLit(elems) => elems.iter().any(|el| match el {
+                ArrayElem::Item(e) | ArrayElem::Spread(e) => Self::expr_has_break_in_scope(e),
+            }),
+            // **STOP**: nested loop bodies — their breaks target inner
+            // scope, not ours. Conservative: do NOT descend.
+            ExprKind::Loop { .. }
+            | ExprKind::While { .. }
+            | ExprKind::WhileLet { .. }
+            | ExprKind::For { .. }
+            | ExprKind::ParallelFor { .. } => false,
+            // **STOP**: closure/handler bodies — different scope.
+            ExprKind::Lambda { .. }
+            | ExprKind::ClosureLight { .. }
+            | ExprKind::ClosureFull(_)
+            | ExprKind::HandlerLit { .. }
+            | ExprKind::ProtocolLit { .. } => false,
+            // Everything else — literals, idents, paths, range, ghost
+            // quantifiers, tagged templates, etc. — cannot contain a
+            // break targeting the enclosing loop.
+            _ => false,
+        }
+    }
+
     /// Plan 125: whitelist-driven divergence detector for expressions in
     /// trailing position. Whitelist (Ф.1-Ф.4 + followups):
     ///   - ExprKind::Throw  (Ф.1)
@@ -21939,6 +22098,7 @@ _cp++; \
     ///   - If/IfLet where both branches diverge  (Ф.4)
     ///   - Match where all arms diverge  (Ф.4)
     ///   - Block whose trailing diverges  (Ф.4)
+    ///   - Loop { body } when body contains no break (Plan 125.2 Ф.1)
     fn expr_diverges_125(&self, e: &Expr) -> bool {
         match &e.kind {
             // Ф.1: direct throw expression.
@@ -22032,6 +22192,11 @@ _cp++; \
                 })
             }
             ExprKind::Block(b) => self.block_trailing_diverges(b),
+            // Plan 125.2 Ф.1 [M-125-loop-no-break-divergence]:
+            // `loop { ... }` without any break targeting this loop scope
+            // is provably divergent (infinite loop). Conservative — if
+            // body contains a reachable break (in same scope), bail.
+            ExprKind::Loop { body, .. } => !self.loop_body_has_break(body),
             _ => false,
         }
     }
