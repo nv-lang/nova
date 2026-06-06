@@ -45,7 +45,8 @@ export type CStr(*u8)
 //   в ownership outliving source str.
 //
 // @as_cstr_unchecked() — skips embedded-NUL scan. Caller asserts safe.
-//   Should be #unsafe (parser support pending [M-118.1-unsafe-attr-on-external-fn]).
+//   Marked #unsafe per [M-118.1-unsafe-attr-on-external-fn] (Plan 118.1):
+//   callers must wrap invocations in `unsafe { ... }` block.
 
 // V1 NOTE: cstr.nv loaded via ExternalRegistry без auto-prelude wiring;
 // `assert`/`panic` не доступны в этом контексте без import, который
@@ -62,6 +63,6 @@ export fn str @to_cstr() -> CStr {
     @as_cstr()
 }
 
-export fn str @as_cstr_unchecked() -> CStr {
+export #unsafe fn str @as_cstr_unchecked() -> CStr {
     @as_cstr()
 }
