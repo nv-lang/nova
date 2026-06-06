@@ -33706,3 +33706,13 @@ deferred behaviours или TODO followups не введено:
 Followup-free closure; обратная связь — pattern «enforcement vs codegen
 ABI independent axes» — задокументирована в Plan 128.2 §8 Lessons +
 project-creation.txt closure entry.
+
+## 2026-06-06 — Plan 118.1.5 — no simplifications (rolled back V1 simplification)
+
+Plan 118.1.5 closes [M-118.1-unsafe-attr-on-external-fn] production-grade.
+
+Side benefit: V1 Plan 118.1 simplification «as_cstr_unchecked #unsafe attr
+pending» NOW RESOLVED — str.@as_cstr_unchecked() requires unsafe {} call
+context per FFI safety contract.
+
+Zero new simplifications introduced.

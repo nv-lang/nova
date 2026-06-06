@@ -34133,3 +34133,22 @@ extended codegen lvalue-acceptance (string-based → AST-aware). Этим
 Lesson: при расширении lvalue-acceptance в codegen — обязателен
 симметричный pass через type-checker enforcement audit (D33/D36/D175/
 D176 invariants).
+
+## 2026-06-06 — Plan 118.1.5 ✅ CLOSED — #unsafe attr на external fn
+
+Closes [M-118.1-unsafe-attr-on-external-fn]. Parser whitelist extended +
+checker enforcement applied к external fn. str.@as_cstr_unchecked re-annotated
+с #unsafe (V1 simplification rolled back).
+
+### Deliverables
+- Parser: #unsafe в whitelist для external fn position
+- Type-checker: unsafe_fns HashSet picks up external fn-marked #unsafe
+- std/ffi/cstr.nv: str.@as_cstr_unchecked now requires unsafe {} call context
+- 5 fixtures plan118_1_unsafe_extern_fn (3 POS + 2 NEG)
+- D2 amend в spec/decisions/02-types.md
+
+### Acceptance criteria (5/5 ✅)
+
+A-118.1.5.a-e all verified.
+
+No simplifications — production-grade per user directive.

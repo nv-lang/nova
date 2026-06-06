@@ -1271,13 +1271,18 @@ impl Parser {
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `external fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted` / `#unsafe`) are only valid before `fn` or `external fn`",
                 span,
             ));
         }
         // Plan 33.3 Ф.13: #trusted external fn — парсим `external` здесь,
         // если contract_attrs содержат #trusted.
-        let is_external = if contract_attrs.is_trusted && matches!(self.peek().kind, TokenKind::KwExternal) {
+        // Plan 118.1 [M-118.1-unsafe-attr-on-external-fn]: #unsafe external fn —
+        // тот же re-consume path, чтобы `#unsafe external fn` (атрибут перед
+        // `external`) парсился симметрично с `external #unsafe fn`.
+        let is_external = if (contract_attrs.is_trusted || contract_attrs.unsafe_attr)
+            && matches!(self.peek().kind, TokenKind::KwExternal)
+        {
             self.bump(); // external
             if !matches!(self.peek().kind, TokenKind::KwFn) {
                 let span = self.peek().span;

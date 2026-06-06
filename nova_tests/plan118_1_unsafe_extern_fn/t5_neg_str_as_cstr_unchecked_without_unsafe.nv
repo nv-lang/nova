@@ -1,0 +1,14 @@
+// Plan 118.1.5 T5 NEG — str.as_cstr_unchecked() без unsafe {} rejected.
+// stdlib `export #unsafe fn str @as_cstr_unchecked()` enforces wrap.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+
+module plan118_1_unsafe_extern_fn.t5_neg_str_as_cstr_unchecked_without_unsafe
+
+import std.ffi.cstr.{CStr}
+
+test "as_cstr_unchecked without unsafe rejected" {
+    ro s = "hello"
+    ro c = s.as_cstr_unchecked()
+    assert(s.len() == 5)
+}
