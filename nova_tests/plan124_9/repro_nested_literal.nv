@@ -1,0 +1,27 @@
+// Plan 124.9 Ф.0 — bug repro: 4-level nested record literal.
+// Expected: each level allocates its own declared field type (B, C, D),
+// not the outermost type A four times.
+module plan124_9.repro_nested_literal
+
+type D {
+    mut value int
+}
+
+type C {
+    mut d D
+}
+
+type B {
+    mut c C
+}
+
+type A {
+    mut b B
+}
+
+test "4-level nested record literal allocates correct types" {
+    mut a = A { b: B { c: C { d: D { value: 0 } } } }
+    assert(a.b.c.d.value == 0)
+    a.b.c.d.value = 42
+    assert(a.b.c.d.value == 42)
+}
