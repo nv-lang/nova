@@ -10302,10 +10302,33 @@ Explicit > auto-derive — user wins resolution в `verify_impl_protocols`.
 | E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL | Field type не impl Cloneable | `#impl(Cloneable) type X { y Y }` где Y не Cloneable |
 | E_AUTO_DERIVE_UNSUPPORTED_KIND | Newtype/Alias/Effect/Protocol/Opaque | `#impl(Cloneable) type Foo = newtype Bar` |
 
+#### Runtime codegen (Plan 126.2 Ф.1/Ф.2)
+
+Plan 126 V1 (2026-06-05) синтезировал `@clone` body и проверял field
+eligibility на type-check уровне, но synthesized FnDecl **не достигал**
+runtime dispatch — method call `a.clone()` не находил эмитнутую функцию.
+
+**Plan 126.2** (2026-06-06) закрывает этот gap:
+
+- **Ф.1 — method_table registration.** Synthesized `@clone` FnDecl
+  регистрируется в `method_table` наравне с user-declared методами, так что
+  resolver видит его при разрешении `a.clone()` / operator dispatch.
+- **Ф.2 — C codegen emit.** Synthesized body эмитится как C-функция
+  `Nova_<T>_method_clone(<T> self) -> <T>` с deep-copy семантикой:
+  primitive поля копируются по значению, user-type / array поля рекурсивно
+  через `Nova_<FieldType>_method_clone`. Recursive `.clone()` вызовы
+  резолвятся через ту же method_table запись.
+
+Result: `a.clone()` теперь runtime-dispatched, completing Plan 126 V1
+promise. То же codegen применяется к остальным auto-derived методам
+(`@equals`/`@hash`/`@compare`/`@fmt`).
+
 #### Cross-refs
 
 - [D109 amend](../08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
   — auto-derive rules для всех 5 built-in protocols.
+- [D109 method_table dispatch note](../08-runtime.md#d109) — Plan 126.2
+  runtime dispatch via method_table.
 - [D186](#d186) — `#impl(P)` annotation foundation.
 - [D183](#d183) — Printable protocol (sibling, Display semantics).
 - [D229](#d229) — DebugPrintable (sibling, Debug semantics).
