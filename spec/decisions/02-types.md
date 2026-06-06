@@ -10018,6 +10018,37 @@ helper из D228 Method receiver compatibility section. Closes
 
 Plan 127 regression: **12/6 → 15/3** (t3 + t8 + t9 now PASS).
 
+#### Nested record-literal per-field type resolution (Plan 124.9 Ф.1)
+
+> **Trigger:** discovered Plan 128.2 Ф.2 — nested record literal
+> `A { b: B { c: C { d: D { value: 0 } } } }` (4-level) сообщённо
+> аллоцировал `Nova_A` на каждом уровне вместо declared field types
+> `B`/`C`/`D`; workaround был explicit `.new()` constructors. Plan 124.9
+> closes `[M-124.9-nested-record-literal-codegen]`.
+
+Record-literal field-value codegen (`emit_record_lit`,
+`compiler-codegen/src/codegen/emit_c.rs`) резолвит тип каждого
+field-value по **declared field type из record schema**
+(`record_schemas[struct_name][field]`), а НЕ по outer/expected record
+type родителя. Вложенный `RecordLit` с собственным `type_name`
+(`B { ... }`) всегда аллоцирует свой declared field-type, независимо от
+контекста окружающего литерала:
+
+```c
+/* mut a = A { b: B { c: C { d: D { value: 0 } } } } */
+Nova_A* _t1 = nova_alloc(sizeof(Nova_A));   /* outer */
+Nova_B* _t2 = nova_alloc(sizeof(Nova_B));   /* field b's declared type B */
+Nova_C* _t3 = nova_alloc(sizeof(Nova_C));   /* field c's declared type C */
+Nova_D* _t4 = nova_alloc(sizeof(Nova_D));   /* field d's declared type D */
+```
+
+Каждый уровень аллоцирует свой declared field-type — outer type НЕ
+leak'ится во вложенные typed литералы. Правило применяется к reference
+records, value records (D228), и generic nested literals; nested literal
+в fn-arg / return-position резолвится идентично. Empty-context fallback
+(top-level binding без expected type) не переопределяет inner
+`type_name`. Lifts Plan 128.2 explicit-`.new()` workaround.
+
 ### Plan 124.8 Acceptance (A8.1-A8.20) — ALL ✅
 
 - A8.1 ✅ Multi-line tuple `type X(\n a, \n b\n)` parses.

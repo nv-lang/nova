@@ -1,0 +1,18 @@
+// Plan 124.9 Ф.2 — positive: 2-level nested record literal.
+// Each level allocates its own declared field type (B), not A twice.
+module plan124_9.p1_two_level_nested_literal_ok
+
+type B {
+    mut x int
+}
+
+type A {
+    mut b B
+}
+
+test "2-level nested record literal" {
+    mut a = A { b: B { x: 1 } }
+    assert(a.b.x == 1)
+    a.b.x = 7
+    assert(a.b.x == 7)
+}

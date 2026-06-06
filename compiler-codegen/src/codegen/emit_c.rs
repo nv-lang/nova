@@ -24312,6 +24312,37 @@ _cp++; \
         Ok(tmp)
     }
 
+    /// Plan 124.9 Ф.1 ([M-124.9-nested-record-literal-codegen]): emit a
+    /// record-literal field value with the field's declared struct type as the
+    /// nested record-literal context.
+    ///
+    /// Root cause of the nested-literal type-leak bug: when a field value is
+    /// itself a record literal — either anonymous (`{ ... }`, resolved via
+    /// `expected_record_type`) or a typed literal that internally re-derives a
+    /// nested anonymous literal — the parent emitter's `expected_record_type`
+    /// (the OUTER struct, e.g. `A`) was still in effect. An anonymous nested
+    /// literal therefore allocated the outer type (`Nova_A`) instead of the
+    /// field's declared type (`B`/`C`/`D`).
+    ///
+    /// Fix: scope `expected_record_type` to the field's declared struct type
+    /// (derived from `field_ty_c`) for the duration of the field-value emit,
+    /// then restore. Typed nested literals (`B { ... }`) are unaffected — they
+    /// carry their own `type_name` and ignore `expected_record_type` — but this
+    /// guarantees no outer-type leak across every nesting level.
+    fn emit_record_field_value(
+        &mut self,
+        value: &Expr,
+        field_ty_c: &str,
+    ) -> Result<String, String> {
+        let saved_expected = self.expected_record_type.clone();
+        if let Some(field_struct) = Self::struct_name_from_c_type(field_ty_c) {
+            self.expected_record_type = Some(field_struct);
+        }
+        let result = self.emit_expr_with_target_type(value, field_ty_c);
+        self.expected_record_type = saved_expected;
+        result
+    }
+
     fn emit_record_lit(
         &mut self,
         type_name: Option<&[String]>,
@@ -24490,7 +24521,7 @@ _cp++; \
                             let field_ty = self.record_schemas.get(&struct_name)
                                 .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
                             let val = if let Some(v) = &f.value {
-                                self.emit_expr_with_target_type(v, &field_ty)?
+                                self.emit_record_field_value(v, &field_ty)?
                             } else {
                                 f.name.clone()
                             };
@@ -24520,7 +24551,7 @@ _cp++; \
                             let field_ty = self.record_schemas.get(&struct_name)
                                 .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
                             let val = if let Some(v) = &f.value {
-                                self.emit_expr_with_target_type(v, &field_ty)?
+                                self.emit_record_field_value(v, &field_ty)?
                             } else {
                                 f.name.clone()
                             };
@@ -24552,7 +24583,7 @@ _cp++; \
                         let field_ty = self.record_schemas.get(&struct_name)
                             .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
                         let val = if let Some(v) = &f.value {
-                            self.emit_expr_with_target_type(v, &field_ty)?
+                            self.emit_record_field_value(v, &field_ty)?
                         } else {
                             f.name.clone() // field punning
                         };
@@ -24605,7 +24636,7 @@ _cp++; \
                 let field_ty = self.record_schemas.get(&struct_name)
                     .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
                 let val = if let Some(v) = &f.value {
-                    self.emit_expr_with_target_type(v, &field_ty)?
+                    self.emit_record_field_value(v, &field_ty)?
                 } else {
                     f.name.clone()
                 };
@@ -31299,5 +31330,172 @@ mod plan127_promoted_member_access_tests {
         assert_eq!(got, "Point_ORIGIN",
             "PascalCase `Type.NAME` assoc const must emit mangled symbol \
              even if Type also in var_types; got `{}`", got);
+    }
+}
+
+#[cfg(test)]
+mod nested_record_lit_tests {
+    //! Plan 124.9 F.1 ([M-124.9-nested-record-literal-codegen]): nested
+    //! record-literal per-field type inference.
+    //!
+    //! Root cause guarded here: when a field value is itself an anonymous
+    //! record literal, the parent emitter's `expected_record_type` (the OUTER
+    //! struct) leaked into the nested literal, allocating the outer type
+    //! instead of the field's declared type. `emit_record_field_value` now
+    //! scopes `expected_record_type` to the field's declared struct type.
+    use super::CEmitter;
+    use crate::ast::{Expr, ExprKind, RecordLitField};
+    use crate::diag::Span;
+    use std::collections::HashMap;
+
+    fn span() -> Span { Span::dummy() }
+
+    fn int_lit(n: i64) -> Expr {
+        Expr::new(ExprKind::IntLit(n), span())
+    }
+
+    fn typed_lit(name: &str, fields: Vec<RecordLitField>) -> Expr {
+        Expr::new(
+            ExprKind::RecordLit {
+                type_name: Some(vec![name.to_string()]),
+                fields,
+                inferred_map_v: None,
+            },
+            span(),
+        )
+    }
+
+    fn anon_lit(fields: Vec<RecordLitField>) -> Expr {
+        Expr::new(
+            ExprKind::RecordLit {
+                type_name: None,
+                fields,
+                inferred_map_v: None,
+            },
+            span(),
+        )
+    }
+
+    fn field(name: &str, value: Expr) -> RecordLitField {
+        RecordLitField {
+            name: name.to_string(),
+            value: Some(value),
+            is_spread: false,
+            at_shorthand: false,
+            span: span(),
+        }
+    }
+
+    fn add_schema(e: &mut CEmitter, name: &str, fields: &[(&str, &str)]) {
+        let mut schema = HashMap::new();
+        for (f, ty) in fields {
+            schema.insert(f.to_string(), ty.to_string());
+        }
+        e.record_schemas.insert(name.to_string(), schema);
+    }
+
+    fn emitter_4level() -> CEmitter {
+        let mut e = CEmitter::new();
+        add_schema(&mut e, "D", &[("value", "nova_int")]);
+        add_schema(&mut e, "C", &[("d", "Nova_D*")]);
+        add_schema(&mut e, "B", &[("c", "Nova_C*")]);
+        add_schema(&mut e, "A", &[("b", "Nova_B*")]);
+        e
+    }
+
+    fn fields_d(n: i64) -> Vec<RecordLitField> {
+        vec![field("value", int_lit(n))]
+    }
+
+    #[test]
+    fn two_level_typed_allocates_per_field_type() {
+        let mut e = emitter_4level();
+        let fields = vec![field("c",
+            typed_lit("C", vec![field("d",
+                typed_lit("D", fields_d(0)))]))];
+        let tmp = e.emit_record_lit(Some(&["B".to_string()]), &fields)
+            .expect("emit ok");
+        assert!(e.out.contains("Nova_B*"), "must alloc Nova_B: {}", e.out);
+        assert!(e.out.contains("Nova_C*"), "must alloc Nova_C: {}", e.out);
+        assert!(e.out.contains("Nova_D*"), "must alloc Nova_D: {}", e.out);
+        assert_eq!(e.var_types.get(&tmp).map(|s| s.as_str()), Some("Nova_B*"));
+    }
+
+    #[test]
+    fn three_level_typed_allocates_per_field_type() {
+        let mut e = emitter_4level();
+        let fields = vec![field("b",
+            typed_lit("B", vec![field("c",
+                typed_lit("C", vec![field("d",
+                    typed_lit("D", fields_d(7)))]))]))];
+        let _ = e.emit_record_lit(Some(&["A".to_string()]), &fields)
+            .expect("emit ok");
+        for t in ["Nova_A*", "Nova_B*", "Nova_C*", "Nova_D*"] {
+            assert!(e.out.contains(t), "must alloc {}: {}", t, e.out);
+        }
+        let a_allocs = e.out.matches("(Nova_A*)nova_alloc").count();
+        assert_eq!(a_allocs, 1, "Nova_A allocated exactly once: {}", e.out);
+    }
+
+    #[test]
+    fn four_level_typed_no_outer_type_duplication() {
+        let mut e = emitter_4level();
+        let fields = vec![field("b",
+            typed_lit("B", vec![field("c",
+                typed_lit("C", vec![field("d",
+                    typed_lit("D", fields_d(42)))]))]))];
+        let _ = e.emit_record_lit(Some(&["A".to_string()]), &fields)
+            .expect("emit ok");
+        for t in ["Nova_A*", "Nova_B*", "Nova_C*", "Nova_D*"] {
+            let n = e.out.matches(&format!("({})nova_alloc", t)).count();
+            assert_eq!(n, 1, "{} must alloc exactly once, got {}: {}", t, n, e.out);
+        }
+        assert!(e.out.contains("->value = ((nova_int)42LL)"),
+            "innermost value=42 must be written: {}", e.out);
+    }
+
+    #[test]
+    fn anonymous_nested_literal_uses_field_type_not_outer() {
+        let mut e = emitter_4level();
+        let fields = vec![field("c",
+            anon_lit(vec![field("d",
+                anon_lit(vec![field("value", int_lit(0))]))]))];
+        let _ = e.emit_record_lit(Some(&["B".to_string()]), &fields)
+            .expect("emit ok");
+        assert_eq!(e.out.matches("(Nova_B*)nova_alloc").count(), 1,
+            "Nova_B allocated exactly once (no outer-type leak): {}", e.out);
+        assert!(e.out.contains("(Nova_C*)nova_alloc"),
+            "anonymous nested literal resolves to field type Nova_C: {}", e.out);
+        assert!(e.out.contains("(Nova_D*)nova_alloc"),
+            "deeper anonymous literal resolves to field type Nova_D: {}", e.out);
+    }
+
+    #[test]
+    fn field_name_collides_with_outer_type_name() {
+        let mut e = CEmitter::new();
+        add_schema(&mut e, "Inner", &[("value", "nova_int")]);
+        add_schema(&mut e, "B", &[("b", "Nova_Inner*")]);
+        let fields = vec![field("b",
+            anon_lit(vec![field("value", int_lit(5))]))];
+        let _ = e.emit_record_lit(Some(&["B".to_string()]), &fields)
+            .expect("emit ok");
+        assert_eq!(e.out.matches("(Nova_B*)nova_alloc").count(), 1,
+            "outer Nova_B once: {}", e.out);
+        assert_eq!(e.out.matches("(Nova_Inner*)nova_alloc").count(), 1,
+            "nested anonymous literal resolves to field type Nova_Inner: {}", e.out);
+    }
+
+    #[test]
+    fn expected_record_type_restored_after_field_emit() {
+        let mut e = emitter_4level();
+        assert!(e.expected_record_type.is_none());
+        let fields = vec![field("b",
+            typed_lit("B", vec![field("c",
+                typed_lit("C", vec![field("d",
+                    typed_lit("D", fields_d(1)))]))]))];
+        let _ = e.emit_record_lit(Some(&["A".to_string()]), &fields)
+            .expect("emit ok");
+        assert!(e.expected_record_type.is_none(),
+            "expected_record_type restored after nested emit");
     }
 }

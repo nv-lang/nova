@@ -1,0 +1,28 @@
+// Plan 124.9 Ф.2 — positive: 4-level nested record literal.
+// The original failing pattern A{b:B{c:C{d:D{value:0}}}}.
+// Before the fix this CC-FAILed because nested literals allocated the
+// outermost type A repeatedly instead of each declared field type.
+module plan124_9.p3_four_level_nested_literal_ok
+
+type D {
+    mut value int
+}
+
+type C {
+    mut d D
+}
+
+type B {
+    mut c C
+}
+
+type A {
+    mut b B
+}
+
+test "4-level nested record literal allocates correct types" {
+    mut a = A { b: B { c: C { d: D { value: 0 } } } }
+    assert(a.b.c.d.value == 0)
+    a.b.c.d.value = 42
+    assert(a.b.c.d.value == 42)
+}
