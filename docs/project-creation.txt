@@ -34133,3 +34133,7 @@ extended codegen lvalue-acceptance (string-based → AST-aware). Этим
 Lesson: при расширении lvalue-acceptance в codegen — обязателен
 симметричный pass через type-checker enforcement audit (D33/D36/D175/
 D176 invariants).
+
+=== Plan 127.1 (2026-06-06) — codegen ValueHeapPromoted field-access fix ===
+Brief: closes [M-127-codegen-field-access-promoted-ptr] P1 runtime bug.
+3 Plan 127 fixtures (t3/t8/t9) now PASS (15/3 vs 12/6).

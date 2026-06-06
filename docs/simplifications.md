@@ -33706,3 +33706,5 @@ deferred behaviours или TODO followups не введено:
 Followup-free closure; обратная связь — pattern «enforcement vs codegen
 ABI independent axes» — задокументирована в Plan 128.2 §8 Lessons +
 project-creation.txt closure entry.
+
+Plan 127.1 — no simplifications. Production-grade codegen fix. Lifts Plan 127 V1 limitation.
