@@ -1,0 +1,30 @@
+// Plan 127.1 Ф.2 — regression guard: multi-field access cascade через
+// promoted pointer. Гарантирует что emit_expr::Path early-out для
+// var_types-зарегистрированных локалов корректно обрабатывает >1 field
+// access в одном test-блоке, и infer_expr_c_type::Member strip
+// `NovaValue_` prefix работает для всех 4 типов полей подряд.
+module plan127_1.p2_value_promoted_chained_field_access_ok
+
+type Quad value {
+    a f64
+    b int
+    c bool
+    d f64
+}
+
+fn make_quad() -> *Quad {
+    ro q = Quad { a: 1.0, b: 7, c: true, d: 9.5 }
+    unsafe { &q }
+}
+
+test "chained multi-field access after promote" {
+    ro ptr = make_quad()
+    assert(unsafe { ptr.a } == 1.0)
+    assert(unsafe { ptr.b } == 7)
+    assert(unsafe { ptr.c } == true)
+    assert(unsafe { ptr.d } == 9.5)
+
+    // Use в expression context (binary ops, не только assertions).
+    ro sum = unsafe { ptr.a } + unsafe { ptr.d }
+    assert(sum == 10.5)
+}
