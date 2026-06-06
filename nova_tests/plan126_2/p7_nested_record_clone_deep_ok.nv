@@ -1,0 +1,28 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p7:
+// Recursive synthesis: nested record clone calls inner synthesized `@clone`.
+// Mutating the deep-copied inner field of the clone must not affect the
+// original's inner record. AC-126.2.8.
+module plan126_2.p7_nested_record_clone_deep_ok
+
+#impl(Cloneable + Equatable)
+type Inner {
+    mut v int
+}
+
+#impl(Cloneable + Equatable)
+type Outer {
+    mut inner Inner
+    mut tag int
+}
+
+test "nested clone is deep — inner mutation isolated" {
+    ro a = Outer { inner: Inner { v: 10 }, tag: 1 }
+    mut c = a.clone()
+    assert(c == a)
+    // Mutate the clone's nested inner record.
+    c.inner.v = 999
+    // Original's inner must remain untouched (recursive deep copy).
+    assert(a.inner.v == 10)
+    assert(c.inner.v == 999)
+    assert(a != c)
+}

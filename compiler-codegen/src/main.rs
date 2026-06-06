@@ -438,6 +438,11 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
+    // Plan 126.2 Ф.2: inject synthesized built-in protocol methods (Equatable/
+    // Hashable/Cloneable/Comparable/Printable) into module.items so codegen
+    // emits C bodies + operator dispatch resolves them. After check_module,
+    // before desugar/codegen. User-explicit methods always win.
+    nova_codegen::protocols::auto_derive::inject_synthesized_methods(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     // D28: effect inference для private fn — добавить `Fail` если throw

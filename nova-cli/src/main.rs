@@ -2140,6 +2140,11 @@ fn cmd_run(path: &Path) -> Result<()> {
             .collect();
         anyhow!("{}", msgs.join("\n"))
     })?;
+    // Plan 126.2 Ф.2: inject synthesized built-in protocol methods so the
+    // interpreter (nova run) resolves auto-derived @equals/@hash/@clone/
+    // @compare/@fmt the same way codegen does. After type-check, before
+    // desugar/callnorm/interp.
+    nova_codegen::protocols::auto_derive::inject_synthesized_methods(&mut module);
     // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check, ДО callnorm/interp.
     // Plan 52 Ф.7: аннотация inferred K/V для turbofish в десугаринге.

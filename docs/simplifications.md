@@ -33718,3 +33718,8 @@ context per FFI safety contract.
 Zero new simplifications introduced.
 
 Plan 127.1 — no simplifications. Production-grade codegen fix. Lifts Plan 127 V1 limitation.
+
+Plan 126.2 — completes Plan 126 V1 promise (runtime dispatch via method_table).
+No simplifications. Production-grade: synthesized auto-derived methods теперь
+действительно резолвятся и исполняются на runtime, не только проверяются
+type-checker'ом.

@@ -1,0 +1,24 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p2:
+// `#impl(Hashable)` auto-derive synthesizes `@hash() -> u64` (XOR+rotate
+// combine). Equal objects must produce equal hashes; differing objects
+// (very likely) differ. AC-126.2.5.
+module plan126_2.p2_hashable_runtime_ok
+
+#impl(Hashable + Equatable)
+type Key {
+    a int
+    b int
+}
+
+test "equal objects produce equal hashes" {
+    ro a = Key { a: 10, b: 20 }
+    ro b = Key { a: 10, b: 20 }
+    assert(a == b)
+    assert(a.hash() == b.hash())
+}
+
+test "differing objects produce differing hashes" {
+    ro a = Key { a: 10, b: 20 }
+    ro c = Key { a: 99, b: 20 }
+    assert(a.hash() != c.hash())
+}

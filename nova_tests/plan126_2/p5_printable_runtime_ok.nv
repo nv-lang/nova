@@ -1,0 +1,19 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p5:
+// `#impl(Printable)` auto-derive synthesizes `@fmt(sb) -> ()` producing
+// `TypeName { field: value, ... }`. Verify rendered string via StringBuilder.
+// AC-126.2.7.
+module plan126_2.p5_printable_runtime_ok
+
+#impl(Printable)
+type Vec3 {
+    x int
+    y int
+    z int
+}
+
+test "auto-derived fmt renders TypeName { fields }" {
+    ro v = Vec3 { x: 1, y: 2, z: 3 }
+    consume sb = StringBuilder.new()
+    v.fmt(sb)
+    assert(sb.as_str() == "Vec3 { x: 1, y: 2, z: 3 }")
+}

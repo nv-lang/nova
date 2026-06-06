@@ -3234,6 +3234,18 @@ Rich variant-tag + payload recursion — followup
 | `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol не в built-in list (auto-derive только для built-in)        |
 | `E_AUTO_DERIVE_UNSUPPORTED_KIND`      | Type kind (Newtype/Alias/Effect/Protocol/Opaque) не поддерживает derive |
 
+**Runtime dispatch via method_table (Plan 126.2, 2026-06-06)**:
+
+Plan 126 V1 (выше) синтезировал auto-derived методы и проверял их на
+type-check уровне, но **runtime dispatch не был замкнут** — emitted body не
+регистрировался для method resolution. **Plan 126.2** закрывает это:
+synthesized методы (`@clone`/`@equals`/`@hash`/`@compare`/`@fmt`)
+регистрируются в `method_table` (Ф.1) и эмитятся как C-функции
+`Nova_<T>_method_<name>` (Ф.2). Теперь `a.clone()` / `a == b` / etc.
+действительно резолвятся в synthesized body на runtime, а не только
+проверяются type-checker'ом. Подробности — [D230 §Runtime
+codegen](02-types.md#d230).
+
 **Что отвергнуто (Plan 126 design)**:
 - `#derive(P)` keyword sugar — повторяет `#impl(P)` без новой семантики; всё
   работает через единый `#impl(...)` annotation (D186).

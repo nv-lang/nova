@@ -449,6 +449,14 @@ pub struct FnDecl {
     /// hatch для unit tests + sibling helper fns). Empty = no extra
     /// access. Backward-compat: default empty Vec.
     pub test_access_for: Vec<String>,
+    /// Plan 126.2 Ф.1: `true` если этот FnDecl был synthesized компилятором
+    /// (auto-derive `#impl(P)` default-protocol-method synthesis), а не написан
+    /// пользователем в исходнике. Используется (a) для регистрации synthesized
+    /// методов в method_table наравне с user-методами, (b) для downstream-проходов
+    /// (Plan 127 lint-suppression W_VALUE_RECORD_UNNECESSARY_PROMOTE),
+    /// которым нужно отличать compiler-generated методы от user-кода.
+    /// Default `false` (backward-compat — все распарсенные fns не synthesized).
+    pub compiler_generated: bool,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.
