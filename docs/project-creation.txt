@@ -34167,3 +34167,19 @@ method_table; (Ф.2) codegen emit C-fns Nova_T_method_* + operator dispatch
 (8 POS + 2 NEG) PASS via release nova; (Ф.4) D230 §Runtime codegen + D109
 method_table dispatch note + closure. Plan 126 V1 promise (runtime dispatch)
 теперь fulfilled. Completes Plan 126 family.
+
+=== Plan 124.9 (2026-06-06) — nested record-literal codegen fix ===
+Sub-plan Plan 124.8. Discovered Plan 128.2 Ф.2: вложенный record-литерал
+A { b: B { c: C { d: D { value: 0 } } } } (4-level) сообщённо аллоцировал
+Nova_A на каждом уровне вместо declared field-types B/C/D (workaround был
+explicit .new() constructors). Ф.0 repro (post-126.2 baseline) показал, что
+bug-as-reported частично побочно правился; Ф.1 (58de0d0b9bb) закрепил fix:
+emit_record_lit field-value path резолвит тип по declared field type из
+record schema (record_schemas[struct][field]), НЕ по outer/expected record
+type родителя — вложенный RecordLit с собственным type_name всегда аллоцирует
+свой declared field-type. Ф.2 (4f68eeda108): 6 nested-literal fixtures
+(reference + value-record + generic + fn-arg/return + corner-case field-name
+== outer type) PASS via release nova, 0 regressions. Ф.3: spec amend
+D228 §«Nested record-literal per-field type resolution» + plan-doc closure +
+README sync + logs. AC A124.9.1–A124.9.6 ✅. Lifts Plan 128.2 explicit-.new()
+workaround. [M-124.9-nested-record-literal-codegen] ✅ closed.
