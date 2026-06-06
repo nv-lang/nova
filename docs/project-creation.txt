@@ -34156,3 +34156,14 @@ No simplifications — production-grade per user directive.
 === Plan 127.1 (2026-06-06) — codegen ValueHeapPromoted field-access fix ===
 Brief: closes [M-127-codegen-field-access-promoted-ptr] P1 runtime bug.
 3 Plan 127 fixtures (t3/t8/t9) now PASS (15/3 vs 12/6).
+
+=== Plan 126.2 (2026-06-06) — auto-derive runtime method_table integration ===
+Brief: closes [M-126-codegen-method-table] P2-high. Plan 126 V1 синтезировал
+auto-derived методы (@clone/@equals/@hash/@compare/@fmt) и проверял их на
+type-check уровне, но synthesized FnDecl выбрасывался — runtime dispatch был
+broken. Plan 126.2 замыкает gap: (Ф.1) register synthesized FnDecls в
+method_table; (Ф.2) codegen emit C-fns Nova_T_method_* + operator dispatch
+(leverage Plan 127.1 promoted receiver ABI); (Ф.3) 10 runtime fixtures
+(8 POS + 2 NEG) PASS via release nova; (Ф.4) D230 §Runtime codegen + D109
+method_table dispatch note + closure. Plan 126 V1 promise (runtime dispatch)
+теперь fulfilled. Completes Plan 126 family.
