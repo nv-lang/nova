@@ -1,0 +1,20 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p1:
+// `#impl(Equatable)` auto-derive synthesizes memberwise `@equals`, и operator
+// `==` dispatches к нему at runtime. Equal objects compare true, unequal false.
+// AC-126.2.2 / AC-126.2.3.
+module plan126_2.p1_equatable_runtime_ok
+
+#impl(Equatable)
+type Vec3 {
+    x int
+    y int
+    z int
+}
+
+test "memberwise == true for equal, != for unequal" {
+    ro a = Vec3 { x: 1, y: 2, z: 3 }
+    ro b = Vec3 { x: 1, y: 2, z: 3 }
+    ro c = Vec3 { x: 1, y: 2, z: 99 }
+    assert(a == b)
+    assert(a != c)
+}

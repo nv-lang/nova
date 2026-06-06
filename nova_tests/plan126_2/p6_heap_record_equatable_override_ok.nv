@@ -1,0 +1,21 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p6:
+// Heap-record (default allocation) with `#impl(Equatable)` — synthesized
+// memberwise `@equals` OVERRIDES default identity-eq. Two distinct heap
+// instances with equal fields compare true. D109 amend / AC-126.2.3.
+module plan126_2.p6_heap_record_equatable_override_ok
+
+#impl(Equatable)
+type Node {
+    id int
+    weight int
+}
+
+test "memberwise eq overrides heap identity" {
+    // Two separately-allocated heap records with identical fields.
+    ro a = Node { id: 7, weight: 100 }
+    ro b = Node { id: 7, weight: 100 }
+    // Without auto-derive this would be identity-false; memberwise → true.
+    assert(a == b)
+    ro c = Node { id: 7, weight: 101 }
+    assert(a != c)
+}

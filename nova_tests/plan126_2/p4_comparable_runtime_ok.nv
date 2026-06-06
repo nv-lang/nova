@@ -1,0 +1,25 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p4:
+// `#impl(Comparable)` auto-derive synthesizes `@compare(other) -> int`
+// (lexicographic if-chain). Returns <0, 0, >0 per field-order. AC-126.2.6.
+module plan126_2.p4_comparable_runtime_ok
+
+#impl(Comparable + Equatable)
+type Ver {
+    major int
+    minor int
+}
+
+test "lexicographic compare orders by major then minor" {
+    ro a = Ver { major: 1, minor: 5 }
+    ro b = Ver { major: 1, minor: 5 }
+    ro c = Ver { major: 1, minor: 9 }
+    ro d = Ver { major: 2, minor: 0 }
+    // equal
+    assert(a.compare(b) == 0)
+    // first field equal, second smaller → negative
+    assert(a.compare(c) < 0)
+    assert(c.compare(a) > 0)
+    // first field decides → negative regardless of second
+    assert(a.compare(d) < 0)
+    assert(d.compare(a) > 0)
+}

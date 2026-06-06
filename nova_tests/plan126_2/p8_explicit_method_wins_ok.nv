@@ -1,0 +1,26 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p8:
+// User explicit `fn T @equals(...)` WINS over auto-derive. The synthesized
+// memberwise body must NOT be generated/registered when a user method exists.
+// Verified at runtime: explicit body compares only `a`, ignoring `b`, so
+// objects differing only in `b` still compare equal. AC-126.2.9.
+module plan126_2.p8_explicit_method_wins_ok
+
+#impl(Equatable)
+type Custom {
+    a int
+    b int
+}
+
+// Explicit equals — intentionally ignores field `b`. If auto-derive were used
+// instead, objects differing in `b` would compare unequal.
+fn Custom @equals(other Custom) -> bool =>
+    @a == other.a
+
+test "explicit @equals wins over memberwise auto-derive" {
+    ro x = Custom { a: 5, b: 1 }
+    ro y = Custom { a: 5, b: 2 }
+    // Differ in b — memberwise would be false; explicit ignores b → true.
+    assert(x == y)
+    ro z = Custom { a: 6, b: 1 }
+    assert(x != z)
+}

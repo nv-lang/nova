@@ -614,17 +614,26 @@ fn synth_hash_record_body(fields: &[DerivedField]) -> Expr {
         return ex(ExprKind::IntLit(0));
     }
     // acc = f0.hash()
-    // acc = acc xor (f1.hash() rotate_left(13))
-    // acc = acc xor (f2.hash() rotate_left(26))
+    // acc = acc xor rotl(f1.hash(), 13)
+    // acc = acc xor rotl(f2.hash(), 26)
     // ...
+    // Rotate-and-XOR combine. `rotate_left` has no scalar codegen builtin, so
+    // it is emulated purely with bit-ops on the u64 hash — `(h << s) | (h >>
+    // (64 - s))` — which never trip the checked-arithmetic overflow guard that
+    // multiplication does. Distinct shifts per field decorrelate field order so
+    // swapped fields hash differently.
+    let rotl = |h: Expr, s: i64| -> Expr {
+        let left = binop(BinOp::Shl, h.clone(), ex(ExprKind::IntLit(s)));
+        let right = binop(BinOp::Shr, h, ex(ExprKind::IntLit(64 - s)));
+        binop(BinOp::BitOr, left, right)
+    };
     let mut iter = fields.iter().enumerate();
     let (_, first) = iter.next().unwrap();
     let mut acc = member_call(self_field(&first.name), "hash", vec![]);
     for (i, f) in iter {
         let h = member_call(self_field(&f.name), "hash", vec![]);
-        let shift = ex(ExprKind::IntLit(((13 * i) % 64) as i64));
-        let shifted = member_call(h, "rotate_left", vec![shift]);
-        acc = binop(BinOp::BitXor, acc, shifted);
+        let s = (((13 * i) % 63) + 1) as i64; // 1..=63 — avoid 0 and 64 shifts
+        acc = binop(BinOp::BitXor, acc, rotl(h, s));
     }
     acc
 }
@@ -839,12 +848,22 @@ fn synth_fmt_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
                 "append",
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
-            // @field.fmt(sb)
-            stmts.push(Stmt::Expr(member_call(
-                self_field(&f.name),
-                "fmt",
-                vec![ident("sb")],
-            )));
+            if is_primitive_field(&f.ty) {
+                // Primitive field: no `.fmt()` method on scalars — route via
+                // `sb.append(str.from(@field))` (Display path).
+                stmts.push(Stmt::Expr(member_call(
+                    ident("sb"),
+                    "append",
+                    vec![member_call(ident("str"), "from", vec![self_field(&f.name)])],
+                )));
+            } else {
+                // Record / nested field: recurse into its synthesized @fmt.
+                stmts.push(Stmt::Expr(member_call(
+                    self_field(&f.name),
+                    "fmt",
+                    vec![ident("sb")],
+                )));
+            }
         }
         stmts.push(Stmt::Expr(member_call(
             ident("sb"),

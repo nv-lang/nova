@@ -1,0 +1,22 @@
+// Plan 126.2 Ф.3 — RUNTIME POS p3:
+// `#impl(Cloneable)` auto-derive synthesizes `@clone() -> Self` (deep copy).
+// Clone equals original; mutating the clone leaves original unchanged.
+// AC-126.2.4.
+module plan126_2.p3_cloneable_runtime_ok
+
+#impl(Cloneable + Equatable)
+type Point2 {
+    mut x int
+    mut y int
+}
+
+test "clone equals original, mutation does not alias" {
+    ro a = Point2 { x: 1, y: 2 }
+    mut c = a.clone()
+    assert(c == a)
+    c.x = 999
+    // original must be unaffected by mutation of the clone (deep copy)
+    assert(a.x == 1)
+    assert(c.x == 999)
+    assert(a != c)
+}
