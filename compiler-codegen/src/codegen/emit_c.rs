@@ -15834,6 +15834,50 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(parts) {
                     return Ok(c_expr.to_string());
                 }
+                // Plan 127.1 Ф.1: local-var shadow of primitive-type token.
+                // Parser greedily consumes `<ident>.<field>` into Path when
+                // `<ident>` matches a primitive-type name (`int`, `str`, `ptr`,
+                // …) — see parser/mod.rs ≈line 6488. When the user declares a
+                // local variable that collides with such a primitive name
+                // (most commonly `ptr` after Plan 115 D214 added it for FFI),
+                // `obj.field` slips into the Path branch и emit'ится как
+                // `obj_field` (legacy `parts.join("_")` fallback) — undefined
+                // identifier при компиляции C. Symptom видим в Plan 127 Ф.5
+                // фикстурах t3/t8/t9, где `ro ptr = make_point()` затем
+                // `ptr.x` → `ptr_x` instead of `ptr->x`. Fix: если `parts[0]`
+                // — известная локальная переменная (зарегистрирована в
+                // `var_types` БЕЗ assoc-const префикса), пересобираем
+                // Path как Member-chain и делегируем в существующую
+                // Member-access ветку. Это корректно учитывает D226
+                // (`NovaValue_X` — `.`), ValueHeapPromoted (`NovaValue_X*` —
+                // `->`), heap records (`Nova_X*` — `->`), и D216 §5
+                // double-pointer auto-deref. Гейт `!assoc_const_symbol`
+                // защищает случай `Type.NAME` (associated const) от
+                // ошибочного treat-as-local.
+                if parts.len() >= 2 && self.var_types.contains_key(&parts[0]) {
+                    // Exclude associated const lookup (`Type.NAME` →
+                    // mangled `Type_NAME` symbol present in `var_types`).
+                    let assoc_const_symbol = format!("{}_{}", parts[0], parts[1]);
+                    let is_assoc_const = self.var_types.contains_key(&assoc_const_symbol)
+                        && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+                    if !is_assoc_const {
+                        // Synthesize Member chain: Ident(parts[0]).parts[1].parts[2]…
+                        let mut acc = Expr::new(
+                            ExprKind::Ident(parts[0].clone()),
+                            expr.span,
+                        );
+                        for p in &parts[1..] {
+                            acc = Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(acc),
+                                    name: p.clone(),
+                                },
+                                expr.span,
+                            );
+                        }
+                        return self.emit_expr(&acc);
+                    }
+                }
                 // Plan 114.4.1 (D200): associated constants — `Type.NAME`
                 // emitted as `Type_NAME` C-symbol. Symbol present в var_types
                 // если emit_type_decl уже emitted assoc const declaration.
@@ -28311,6 +28355,33 @@ _cp++; \
             if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
                 return c_ty.to_string();
             }
+            // Plan 127.1 Ф.1: mirror emit_expr Path branch — when parser
+            // greedily consumed a `<local>.field` chain into Path because
+            // `<local>` shadows a primitive-type token (`ptr`, `int`, …),
+            // infer type by treating Path как synthesized Member chain.
+            // Same exclusion as emit_expr: skip if it's an associated const
+            // symbol (`Type.NAME` registered в `var_types`).
+            if parts.len() >= 2 && self.var_types.contains_key(&parts[0]) {
+                let assoc_const_symbol = format!("{}_{}", parts[0], parts[1]);
+                let is_assoc_const = self.var_types.contains_key(&assoc_const_symbol)
+                    && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+                if !is_assoc_const {
+                    let mut acc = Expr::new(
+                        ExprKind::Ident(parts[0].clone()),
+                        expr.span,
+                    );
+                    for p in &parts[1..] {
+                        acc = Expr::new(
+                            ExprKind::Member {
+                                obj: Box::new(acc),
+                                name: p.clone(),
+                            },
+                            expr.span,
+                        );
+                    }
+                    return self.infer_expr_c_type(&acc);
+                }
+            }
         }
         match &expr.kind {
             ExprKind::IntLit(_) => "nova_int".into(),
@@ -30159,8 +30230,19 @@ _cp++; \
                     };
                 }
                 // Field type lookup from record schema
-                let struct_name = obj_ty
+                // Plan 127.1 Ф.1: strip `const ` qualifier (return-types from
+                // fn — `const NovaValue_X*` / `const Nova_X*`) и `NovaValue_`
+                // prefix (D226 value-records — schema registered под bare
+                // type name `Point`, не `NovaValue_Point`). Без NovaValue_
+                // strip, ValueHeapPromoted-binding field-access cascaded to
+                // `nova_int` fallback, breaking type-checked branch dispatch
+                // (e.g. `(nova_int)(ptr_x)` instead of `(nova_f64)(ptr->x)`).
+                let stripped_const = obj_ty
+                    .trim_start_matches("const ")
+                    .trim();
+                let struct_name = stripped_const
                     .strip_prefix("Nova_")
+                    .or_else(|| stripped_const.strip_prefix("NovaValue_"))
                     .unwrap_or("")
                     .trim_end_matches('*')
                     .trim()
@@ -31037,5 +31119,185 @@ mod array_lit_named_tuple_box_tests {
         // если Nova_ prefix matches.
         assert!("Nova_Widget*".ends_with('*'),
             "heap records have trailing * — `!ety.ends_with('*')` фильтрует их");
+    }
+}
+
+#[cfg(test)]
+mod plan127_promoted_member_access_tests {
+    //! Plan 127.1 Ф.1 — codegen Member-access для D228 ValueHeapPromoted
+    //! (`AllocKind::ValueHeapPromoted` → C-type `NovaValue_X*`).
+    //!
+    //! Bug: parser греедли consume'ил `<local>.<field>` в Path-ноду, когда
+    //! `<local>` shadow'ил primitive-type token (e.g. `ptr` — D214 FFI
+    //! primitive). Codegen Path-fallback (`parts.join("_")`) → `ptr_x`
+    //! вместо `ptr->x`. Plan 127 Ф.5 zafiksирована регрессия в фикстурах
+    //! t3/t8/t9.
+    //!
+    //! Fix: emit_expr::Path и infer_expr_c_type::Path — если parts[0] —
+    //! known local var (var_types contains_key), synthesize Member-chain
+    //! и делегируем существующей Member-ветке. Member-ветка корректно
+    //! выбирает accessor: `.` для `NovaValue_X` (D226 stack), `->` для
+    //! `NovaValue_X*` (D228 promoted) / `Nova_X*` (heap) / `const T*`
+    //! (fn-returns), и handles D216 §5 double-pointer.
+    //!
+    //! Acceptance:
+    //!   1. ValueHeapPromoted member-access → `->` (e.g. `(ptr->x)`).
+    //!   2. Plain value-record (stack) member-access → `.` (D226).
+    //!   3. Heap-record `Nova_X*` member-access → `->` (regression guard).
+    //!   4. Chained promoted member-access → `((ptr->inner)->field)`.
+    //!   5. After method-call returning `NovaValue_X*` — bound to local var,
+    //!      member-access uses `->`.
+    use super::CEmitter;
+    use crate::ast::{Expr, ExprKind};
+    use crate::diag::Span;
+
+    fn ident(name: &str) -> Expr {
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+    }
+
+    fn member(obj: Expr, name: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
+            span: Span::dummy(),
+        }
+    }
+
+    fn path(parts: &[&str]) -> Expr {
+        Expr {
+            kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
+            span: Span::dummy(),
+        }
+    }
+
+    #[test]
+    fn test_member_access_value_promoted_emits_arrow() {
+        // ValueHeapPromoted local: `ptr: NovaValue_Point*`. Member access
+        // `ptr.x` must emit `(ptr->x)` (pointer deref), not `ptr.x` (struct
+        // member) or `ptr_x` (Path fallback).
+        let mut e = CEmitter::new();
+        e.var_types.insert("ptr".into(), "NovaValue_Point*".into());
+        // Register schema so type inference resolves field type properly.
+        let mut schema = std::collections::HashMap::new();
+        schema.insert("x".to_string(), "nova_f64".to_string());
+        schema.insert("y".to_string(), "nova_f64".to_string());
+        e.record_schemas.insert("Point".into(), schema);
+        e.value_record_names.insert("Point".into());
+
+        let got = e.emit_expr(&member(ident("ptr"), "x"))
+            .expect("emit must succeed");
+        assert_eq!(got, "(ptr->x)",
+            "ValueHeapPromoted (NovaValue_X*) member-access must use `->`; got `{}`", got);
+    }
+
+    #[test]
+    fn test_member_access_value_stack_emits_dot() {
+        // Plain value-record (D226 stack): `p: NovaValue_Point` (no `*`).
+        // Member access `p.x` must emit `(p.x)` (struct member access).
+        let mut e = CEmitter::new();
+        e.var_types.insert("p".into(), "NovaValue_Point".into());
+        e.value_record_names.insert("Point".into());
+
+        let got = e.emit_expr(&member(ident("p"), "x"))
+            .expect("emit must succeed");
+        assert_eq!(got, "(p.x)",
+            "D226 stack value-record (NovaValue_X) member-access must use `.`; got `{}`", got);
+    }
+
+    #[test]
+    fn test_member_access_heap_record_emits_arrow_regression() {
+        // Regression guard: heap record `w: Nova_Widget*` — pre-existing
+        // behaviour. `w.name` → `(w->name)`. Our Path-rewrite must not
+        // affect this path (Member-ветка уже корректно работает).
+        let mut e = CEmitter::new();
+        e.var_types.insert("w".into(), "Nova_Widget*".into());
+        let mut schema = std::collections::HashMap::new();
+        schema.insert("name".to_string(), "nova_str".to_string());
+        e.record_schemas.insert("Widget".into(), schema);
+
+        let got = e.emit_expr(&member(ident("w"), "name"))
+            .expect("emit must succeed");
+        assert_eq!(got, "(w->name)",
+            "heap-record (Nova_X*) member-access regression: must use `->`; got `{}`", got);
+    }
+
+    #[test]
+    fn test_chained_member_access_promoted() {
+        // Chained access through ValueHeapPromoted: `outer.inner.field`.
+        // Each segment uses `->` because both `outer` and `outer->inner`
+        // are pointer-typed value records.
+        let mut e = CEmitter::new();
+        e.var_types.insert("outer".into(), "NovaValue_Outer*".into());
+        let mut outer_schema = std::collections::HashMap::new();
+        outer_schema.insert("inner".to_string(), "NovaValue_Inner*".to_string());
+        e.record_schemas.insert("Outer".into(), outer_schema);
+        let mut inner_schema = std::collections::HashMap::new();
+        inner_schema.insert("field".to_string(), "nova_int".to_string());
+        e.record_schemas.insert("Inner".into(), inner_schema);
+        e.value_record_names.insert("Outer".into());
+        e.value_record_names.insert("Inner".into());
+
+        let chain = member(member(ident("outer"), "inner"), "field");
+        let got = e.emit_expr(&chain).expect("emit must succeed");
+        assert_eq!(got, "((outer->inner)->field)",
+            "chained ValueHeapPromoted member-access must use `->` at each \
+             level; got `{}`", got);
+    }
+
+    #[test]
+    fn test_member_access_value_promoted_after_method_call() {
+        // After fn-call binding: `ro ptr = make_point()` where make_point
+        // returns `const NovaValue_Point*`. Member-access still must
+        // resolve через Member-branch и emit `->`. The `const ` prefix
+        // is stripped before is_value_type check.
+        let mut e = CEmitter::new();
+        e.var_types.insert("ptr".into(), "const NovaValue_Point*".into());
+        let mut schema = std::collections::HashMap::new();
+        schema.insert("x".to_string(), "nova_f64".to_string());
+        e.record_schemas.insert("Point".into(), schema);
+        e.value_record_names.insert("Point".into());
+
+        let got = e.emit_expr(&member(ident("ptr"), "x"))
+            .expect("emit must succeed");
+        assert_eq!(got, "(ptr->x)",
+            "`const NovaValue_X*` (fn-return) member-access must use `->`; got `{}`", got);
+    }
+
+    #[test]
+    fn test_path_local_var_shadow_routes_to_member() {
+        // Parser-greedy artifact: `ptr.x` becomes `Path(["ptr", "x"])`
+        // because `ptr` is a primitive-type token (D214 FFI). emit_expr
+        // Path-branch detects local-var shadow и rewrites to Member chain
+        // → emits `(ptr->x)`. Without this Plan 127.1 Ф.1 fix, fallback
+        // `parts.join("_")` would emit `ptr_x` (undefined identifier).
+        let mut e = CEmitter::new();
+        e.var_types.insert("ptr".into(), "NovaValue_Point*".into());
+        let mut schema = std::collections::HashMap::new();
+        schema.insert("x".to_string(), "nova_f64".to_string());
+        e.record_schemas.insert("Point".into(), schema);
+        e.value_record_names.insert("Point".into());
+
+        let got = e.emit_expr(&path(&["ptr", "x"]))
+            .expect("emit must succeed");
+        assert_eq!(got, "(ptr->x)",
+            "Path[<local-var>, <field>] must route к Member-branch; got `{}`", got);
+    }
+
+    #[test]
+    fn test_path_assoc_const_not_shadowed_by_local() {
+        // Regression guard: associated const `Type.NAME` (PascalCase Type)
+        // emits `Type_NAME` (mangled C symbol). Even if `Type` is somehow
+        // registered as a local var, the assoc-const symbol takes
+        // precedence когда `Type_NAME` уже в var_types (e.g. emit_type_decl
+        // already emitted assoc const declaration). Plan 114.4.1 D200.
+        let mut e = CEmitter::new();
+        // Simulate: assoc const `Point.ORIGIN` registered as C symbol.
+        e.var_types.insert("Point".into(), "void*".into());  // type-as-value (rare)
+        e.var_types.insert("Point_ORIGIN".into(), "NovaValue_Point".into());
+
+        let got = e.emit_expr(&path(&["Point", "ORIGIN"]))
+            .expect("emit must succeed");
+        assert_eq!(got, "Point_ORIGIN",
+            "PascalCase `Type.NAME` assoc const must emit mangled symbol \
+             even if Type also in var_types; got `{}`", got);
     }
 }

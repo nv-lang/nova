@@ -1,0 +1,21 @@
+// Plan 127.1 Ф.2 — regression guard: single field access через
+// addr-of-promoted local (D228). Reproduce точный паттерн bug'а из t3:
+// локал `v` shadow'ит NO primitive token, но codegen Member→Path-fallback
+// должен выбрать `->` (NovaValue_X*) а не точку или underscore-join.
+module plan127_1.p1_value_promoted_single_field_access_ok
+
+type ValueRecord value {
+    x f64
+    y f64
+}
+
+fn make_record() -> *ValueRecord {
+    ro v = ValueRecord { x: 1.5, y: 2.5 }
+    unsafe { &v }
+}
+
+test "single field access after addr-of-promote" {
+    ro ptr = make_record()
+    assert(unsafe { ptr.x } == 1.5)
+    assert(unsafe { ptr.y } == 2.5)
+}

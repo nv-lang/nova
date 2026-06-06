@@ -34152,3 +34152,7 @@ checker enforcement applied к external fn. str.@as_cstr_unchecked re-annotated
 A-118.1.5.a-e all verified.
 
 No simplifications — production-grade per user directive.
+
+=== Plan 127.1 (2026-06-06) — codegen ValueHeapPromoted field-access fix ===
+Brief: closes [M-127-codegen-field-access-promoted-ptr] P1 runtime bug.
+3 Plan 127 fixtures (t3/t8/t9) now PASS (15/3 vs 12/6).

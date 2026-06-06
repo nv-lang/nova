@@ -33716,3 +33716,5 @@ pending» NOW RESOLVED — str.@as_cstr_unchecked() requires unsafe {} call
 context per FFI safety contract.
 
 Zero new simplifications introduced.
+
+Plan 127.1 — no simplifications. Production-grade codegen fix. Lifts Plan 127 V1 limitation.

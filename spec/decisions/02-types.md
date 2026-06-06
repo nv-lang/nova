@@ -9995,6 +9995,29 @@ fn prepare_method_recv(obj_expr, alloc_kind) -> CExpr {
 
 User-side syntax не меняется — `v.method()` works в обоих modes.
 
+#### Field-access codegen для ValueHeapPromoted (Plan 127.1 Ф.1)
+
+Member-access на value-record local выбирает `.` vs `->` operator based
+on `AllocKind`:
+
+| AllocKind | C output | Reason |
+|---|---|---|
+| `AllocKind::Value` | `obj_c.field` | stack struct member access |
+| `AllocKind::ValueHeapPromoted` | `obj_c->field` | heap pointer dereference (Nova_X*) |
+| `AllocKind::Heap` | `obj_c->field` | existing reference-record behavior |
+
+До Plan 127.1: Member-access path в codegen всегда emit'ил `.field` для
+value records, что давало invalid C code (`Nova_Vec3* obj; obj.x`)
+после Plan 127 Ф.3 heap-promote — runtime miscompile (3 Plan 127
+fixtures broke: t3/t8/t9).
+
+Plan 127.1 Ф.1 (commit `a2b6f9c9518`) добавил `AllocKind::ValueHeapPromoted`
+branch в Member-access emit path — symmetric с `prepare_method_recv`
+helper из D228 Method receiver compatibility section. Closes
+`[M-127-codegen-field-access-promoted-ptr]` P1 runtime bug.
+
+Plan 127 regression: **12/6 → 15/3** (t3 + t8 + t9 now PASS).
+
 ### Plan 124.8 Acceptance (A8.1-A8.20) — ALL ✅
 
 - A8.1 ✅ Multi-line tuple `type X(\n a, \n b\n)` parses.

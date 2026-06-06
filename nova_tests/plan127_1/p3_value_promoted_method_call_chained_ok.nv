@@ -1,0 +1,44 @@
+// Plan 127.1 Ф.2 — regression guard: combines auto-deref для field
+// access на promoted pointer (Plan 127 Ф.5 codegen fix) с method
+// dispatch на stack-value-record (Plan 128.1 Ф.1 lvalue projection).
+//
+// Pattern: (1) make_vec3() возвращает *Vec3 promoted pointer,
+//          (2) поля читаются через `unsafe { ptr.x }` (Plan 127.1 fix),
+//          (3) copy-out в local stack-`mut` slot для method dispatch
+//              (D228 stack mode — proven path для @methods).
+// Покрывает интеракцию двух codegen path'ов без зависимости от
+// future method-on-promoted-pointer codegen (out of scope для 127.1).
+module plan127_1.p3_value_promoted_method_call_chained_ok
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn Vec3 @magnitude_sq() -> f64 =>
+    @x * @x + @y * @y + @z * @z
+
+fn Vec3 @double_x() -> f64 =>
+    @x * 2.0
+
+fn make_vec3() -> *Vec3 {
+    ro v = Vec3 { x: 1.0, y: 2.0, z: 2.0 }
+    unsafe { &v }
+}
+
+test "promoted pointer fields + method on copy-out stack value" {
+    ro ptr = make_vec3()
+
+    // Field access через promoted pointer (Plan 127 Ф.5 codegen).
+    assert(unsafe { ptr.x } == 1.0)
+    assert(unsafe { ptr.y } == 2.0)
+    assert(unsafe { ptr.z } == 2.0)
+
+    // Copy-out в stack value-record (Vec3 value type → копируется по
+    // значению). Method call на stack slot — proven D228 path.
+    ro v = Vec3 { x: unsafe { ptr.x }, y: unsafe { ptr.y }, z: unsafe { ptr.z } }
+    // 1*1 + 2*2 + 2*2 = 9.0
+    assert(v.magnitude_sq() == 9.0)
+    assert(v.double_x() == 2.0)
+}
