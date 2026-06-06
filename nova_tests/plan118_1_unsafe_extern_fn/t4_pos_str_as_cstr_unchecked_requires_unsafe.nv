@@ -1,0 +1,14 @@
+// Plan 118.1.5 T4 POS — str.as_cstr_unchecked() inside unsafe {} OK.
+// stdlib std/ffi/cstr.nv: `export #unsafe fn str @as_cstr_unchecked()`.
+
+module plan118_1_unsafe_extern_fn.t4_pos_str_as_cstr_unchecked_requires_unsafe
+
+import std.ffi.cstr.{CStr}
+
+test "as_cstr_unchecked requires unsafe" {
+    ro s = "hello"
+    unsafe {
+        ro c = s.as_cstr_unchecked()
+    }
+    assert(s.len() == 5)
+}
