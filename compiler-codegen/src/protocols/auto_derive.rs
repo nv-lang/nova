@@ -501,6 +501,10 @@ fn make_synth_method(
         span: span_dummy(),
         is_export: false,
         is_external: false,
+        // Plan 126.2 Ф.1: mark synthesized auto-derive method so downstream
+        // passes (method_table registration + Plan 127 lint-suppression) can
+        // distinguish compiler-generated bodies from user source.
+        compiler_generated: true,
         ..FnDecl::default()
     }
 }

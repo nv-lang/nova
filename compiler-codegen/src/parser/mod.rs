@@ -2740,6 +2740,8 @@ impl Parser {
             unsafe_attr: contract_attrs.unsafe_attr,
             fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
             test_access_for: contract_attrs.test_access_for.clone(),
+            // Plan 126.2 Ф.1: user-written fns никогда не compiler-generated.
+            compiler_generated: false,
         })
     }
 

@@ -550,7 +550,11 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // Plan 79: type-checker hardening — «no silent fallback» на уровне
     // типов. Отдельный проход (паттерн NameResCtx / MapLitCtx): доводит
     // type-checker до типовой полноты. Ф.2 — арность type-аргументов.
-    let type_check_ctx = TypeCheckCtx::build(module);
+    // Plan 126.2 Ф.1: arena for synthesized auto-derive FnDecls. Created here
+    // (in the caller) so it outlives `TypeCheckCtx`, allowing synthesized
+    // methods to be registered in `method_table` as `&'a FnDecl`.
+    let synth_arena = FnDeclArena::new();
+    let type_check_ctx = TypeCheckCtx::build(module, &synth_arena);
     type_check_ctx.check_module(module, &mut errors);
 
     // **Plan 118.5 V3 Ф.2 / D216 V3 §V3.1 (2026-06-04):** ro+mut conflict
@@ -1807,6 +1811,47 @@ fn check_v3_ro_mut_conflict(
     }
 }
 
+/// Plan 126.2 Ф.1: owned arena для synthesized auto-derive `FnDecl`s.
+///
+/// Проблема: `TypeCheckCtx.method_table` хранит `&'a FnDecl` — заимствования
+/// из AST модуля. Synthesized auto-derive методы (Plan 126 V1
+/// `auto_derive::synthesize_method`) — **owned** `FnDecl`, их негде заимствовать
+/// в исходном AST. Чтобы зарегистрировать их в `method_table` тем же путём,
+/// что и user-методы, нужен arena, который живёт не меньше `'a`.
+///
+/// Реализация без внешних зависимостей (bootstrap-ethos — пустой lockfile):
+/// каждый `FnDecl` лежит в собственном `Box`, а боксы складываются в `Vec`.
+/// Содержимое `Box` стабильно по адресу: рост `Vec` перемещает только
+/// box-указатели, heap-аллокация самого `FnDecl` не двигается. Поэтому
+/// `&'arena FnDecl`, полученный из `&**boxed`, остаётся валидным даже после
+/// последующих `alloc`. Это стандартный safe-by-invariant arena-паттерн
+/// (тот же, что внутри `typed-arena`).
+#[derive(Default)]
+pub(crate) struct FnDeclArena {
+    items: std::cell::RefCell<Vec<Box<FnDecl>>>,
+}
+
+impl FnDeclArena {
+    fn new() -> Self {
+        FnDeclArena { items: std::cell::RefCell::new(Vec::new()) }
+    }
+
+    /// Аллоцирует `fd` в arena, возвращает стабильную ссылку с lifetime arena.
+    ///
+    /// SAFETY: `fd` помещается в `Box`, чей heap-storage неподвижен на всё
+    /// время жизни arena. Мы храним `Box` в `Vec` (под `RefCell`) — arena
+    /// никогда не освобождает и не перемещает содержимое `Box` до своего
+    /// собственного drop'а. Возвращаемая ссылка живёт `'arena` (привязана к
+    /// `&'arena self`), что не дольше времени жизни arena. Aliasing: мы
+    /// раздаём только shared (`&`) ссылки, мутаций содержимого нет.
+    fn alloc<'arena>(&'arena self, fd: FnDecl) -> &'arena FnDecl {
+        let boxed = Box::new(fd);
+        let ptr: *const FnDecl = &*boxed;
+        self.items.borrow_mut().push(boxed);
+        unsafe { &*ptr }
+    }
+}
+
 /// Plan 79: проход типовой полноты type-checker'а.
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
@@ -1909,6 +1954,27 @@ pub(crate) struct AutoDeriveQueryBridge<'a> {
     ctx: &'a TypeCheckCtx<'a>,
 }
 
+/// Plan 126.2 Ф.1: build-time `DeriveQuery` над уже-построенными `types` +
+/// `method_table` (до конструирования `TypeCheckCtx`). Используется
+/// `register_synthesized_methods` для синтеза auto-derive методов на этапе
+/// `build`.
+pub(crate) struct BuildTimeDeriveQuery<'a, 'b> {
+    types: &'b HashMap<String, &'a TypeDecl>,
+    method_table: &'b HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+}
+
+impl<'a, 'b> crate::protocols::auto_derive::DeriveQuery for BuildTimeDeriveQuery<'a, 'b> {
+    fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
+        self.types.get(name).copied()
+    }
+
+    fn type_provides_method(&self, t: &str, method_name: &str) -> bool {
+        self.method_table.get(t).map_or(false, |m| {
+            m.keys().any(|k| k.trim_start_matches('@') == method_name)
+        })
+    }
+}
+
 impl<'a> crate::protocols::auto_derive::DeriveQuery for AutoDeriveQueryBridge<'a> {
     fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
         // TypeCheckCtx.types: HashMap<String, &'a TypeDecl>. Dereferences
@@ -1922,7 +1988,7 @@ impl<'a> crate::protocols::auto_derive::DeriveQuery for AutoDeriveQueryBridge<'a
 }
 
 impl<'a> TypeCheckCtx<'a> {
-    fn build(module: &'a Module) -> Self {
+    fn build(module: &'a Module, synth_arena: &'a FnDeclArena) -> Self {
         let mut arity: HashMap<String, ArityInfo> = HashMap::new();
         let mut fn_decls: HashMap<String, Vec<&'a FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>> =
@@ -2044,11 +2110,100 @@ impl<'a> TypeCheckCtx<'a> {
             }
             if !added { break; }
         }
+        // Plan 126.2 Ф.1: register synthesized auto-derive methods into
+        // `method_table` alongside user-written methods, so codegen
+        // method-dispatch (and the type-checker's own resolution) finds them.
+        //
+        // For each type T с `#impl(P1 + P2 + ...)`, for each built-in
+        // auto-derivable protocol P, if T does NOT already provide the
+        // protocol's method explicitly, synthesize the FnDecl и insert
+        // `&'a FnDecl` (allocated in `synth_arena`) into
+        // `method_table[T][@method]`. Synthesis failures (ineligible fields,
+        // unsupported kind, cycles) are silently skipped here — the dedicated
+        // `verify_impl_protocols` pass re-runs synthesis и emits the
+        // E_AUTO_DERIVE_* / E_IMPL_MISSING_METHODS diagnostics. This pass is
+        // registration-only.
+        Self::register_synthesized_methods(
+            module, synth_arena, &types, &mut method_table,
+        );
+
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
+    }
+
+    /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
+    /// `method_table`. See call site in `build` for rationale.
+    ///
+    /// Idempotent w.r.t. user methods: a protocol method that T already
+    /// provides explicitly (present in `method_table`) is never synthesized
+    /// (user code wins). Synthesized `FnDecl`s carry `compiler_generated = true`
+    /// (set by `auto_derive::make_synth_method`) so downstream passes can
+    /// distinguish them.
+    fn register_synthesized_methods(
+        module: &'a Module,
+        synth_arena: &'a FnDeclArena,
+        types: &HashMap<String, &'a TypeDecl>,
+        method_table: &mut HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    ) {
+        use crate::protocols::auto_derive::DeriveQuery as _;
+        // Two-phase to avoid a borrow conflict: phase 1 synthesizes against an
+        // immutable `&method_table` (the DeriveQuery reads it for field
+        // eligibility + user-method coverage); phase 2 inserts the resulting
+        // `&'a FnDecl`s into `&mut method_table`.
+        let mut pending: Vec<(String, &'a FnDecl)> = Vec::new();
+        {
+            // Local DeriveQuery over the already-built `types` + `method_table`.
+            // Decouples synthesis from the not-yet-constructed `TypeCheckCtx`.
+            let query = BuildTimeDeriveQuery { types, method_table: &*method_table };
+            for item in &module.items {
+                let Item::Type(td) = item else { continue; };
+                if td.impl_protocols.is_empty() { continue; }
+                for proto_name in &td.impl_protocols {
+                    if !crate::protocols::auto_derive::is_builtin_protocol(proto_name) {
+                        continue;
+                    }
+                    let Some(method_name) =
+                        crate::protocols::auto_derive::builtin_protocol_method(proto_name)
+                    else { continue; };
+                    // User wins: skip if T already provides method explicitly.
+                    if query.type_provides_method(&td.name, method_name) {
+                        continue;
+                    }
+                    let mut derive_ctx =
+                        crate::protocols::auto_derive::AutoDeriveCtx::new(&query);
+                    let synthesized = match crate::protocols::auto_derive::synthesize_method(
+                        &mut derive_ctx, td, proto_name,
+                    ) {
+                        Ok(fd) => fd,
+                        // Registration-only: diagnostics emitted by
+                        // verify_impl_protocols. Skip failures silently.
+                        Err(_) => continue,
+                    };
+                    let fd_ref: &'a FnDecl = synth_arena.alloc(synthesized);
+                    pending.push((td.name.clone(), fd_ref));
+                }
+            }
+        }
+        // Phase 2: insert. Same key convention as user instance methods:
+        // f.name (the protocol method bare name, e.g. "equals"/"hash").
+        for (type_name, fd_ref) in pending {
+            let entry = method_table
+                .entry(type_name)
+                .or_default()
+                .entry(fd_ref.name.clone())
+                .or_default();
+            // Guard против дубля: не вставляем второй synthesized FnDecl
+            // с тем же именем.
+            let already = entry.iter().any(|f| {
+                f.compiler_generated && f.name == fd_ref.name
+            });
+            if !already {
+                entry.push(fd_ref);
+            }
+        }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -18387,7 +18542,8 @@ mod named_tuple_ctor_infer_tests {
         let m = make_module_with_types(vec![
             make_named_tuple("Vec3", vec![("x", "f64"), ("y", "f64"), ("z", "f64")]),
         ]);
-        let ctx = TypeCheckCtx::build(&m);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
         let inferred = infer_ctor(&ctx, "Vec3");
         match inferred {
             Some(TypeRef::Named { path, .. }) => {
@@ -18411,7 +18567,8 @@ mod named_tuple_ctor_infer_tests {
         let m = make_module_with_types(vec![
             make_newtype("SqHandle", "ptr"),
         ]);
-        let ctx = TypeCheckCtx::build(&m);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
         let inferred = infer_ctor(&ctx, "SqHandle");
         match inferred {
             Some(TypeRef::Named { path, .. }) => {
@@ -18436,7 +18593,8 @@ mod named_tuple_ctor_infer_tests {
         let m = make_module_with_types(vec![
             make_sum_with_tuple_variant("Color", "Red", "int"),
         ]);
-        let ctx = TypeCheckCtx::build(&m);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
         // `Red(1)` — variant ctor; `Red` НЕ в `ctx.types`.
         let inferred = infer_ctor(&ctx, "Red");
         assert!(inferred.is_none(),
@@ -18453,6 +18611,189 @@ mod named_tuple_ctor_infer_tests {
             "Sum type name used as ctor must NOT type-produce \
              (Color = Sum, не Newtype/Alias/NamedTuple); got {:?}",
             color_inferred);
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Plan 126.2 Ф.1: synthesized auto-derive methods registered in
+    // method_table.
+    // ────────────────────────────────────────────────────────────────────
+
+    /// NamedTuple of primitive fields with `#impl(<protocols>)`.
+    fn make_named_tuple_impl(
+        name: &str,
+        fields: Vec<(&str, &str)>,
+        protocols: &[&str],
+    ) -> TypeDecl {
+        let mut td = make_named_tuple(name, fields);
+        td.impl_protocols = protocols.iter().map(|p| p.to_string()).collect();
+        td
+    }
+
+    /// Helper: true если method_table[type] содержит method с данным именем.
+    fn mt_has(ctx: &TypeCheckCtx<'_>, ty: &str, method: &str) -> bool {
+        ctx.method_table
+            .get(ty)
+            .map_or(false, |m| m.keys().any(|k| k.trim_start_matches('@') == method))
+    }
+
+    /// Helper: первый FnDecl method_table[type][method].
+    fn mt_fn<'c>(ctx: &'c TypeCheckCtx<'_>, ty: &str, method: &str) -> Option<&'c FnDecl> {
+        let methods = ctx.method_table.get(ty)?;
+        for (k, fns) in methods {
+            if k.trim_start_matches('@') == method {
+                return fns.first().copied();
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn synth_equatable_registered_in_method_table() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl("P", vec![("x", "int"), ("y", "int")], &["Equatable"]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        assert!(mt_has(&ctx, "P", "equals"),
+            "synthesized Equatable.equals must be registered in method_table[P]");
+    }
+
+    #[test]
+    fn synth_hashable_registered_in_method_table() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl("P", vec![("x", "int")], &["Hashable"]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        assert!(mt_has(&ctx, "P", "hash"),
+            "synthesized Hashable.hash must be registered in method_table[P]");
+    }
+
+    #[test]
+    fn synth_cloneable_registered_in_method_table() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl("P", vec![("x", "int")], &["Cloneable"]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        assert!(mt_has(&ctx, "P", "clone"),
+            "synthesized Cloneable.clone must be registered in method_table[P]");
+    }
+
+    #[test]
+    fn synth_comparable_registered_in_method_table() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl("P", vec![("x", "int")], &["Comparable"]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        assert!(mt_has(&ctx, "P", "compare"),
+            "synthesized Comparable.compare must be registered in method_table[P]");
+    }
+
+    #[test]
+    fn synth_printable_registered_in_method_table() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl("P", vec![("x", "int")], &["Printable"]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        assert!(mt_has(&ctx, "P", "fmt"),
+            "synthesized Printable.fmt must be registered in method_table[P]");
+    }
+
+    #[test]
+    fn synth_all_five_protocols_registered_together() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl(
+                "P",
+                vec![("x", "int"), ("y", "int")],
+                &["Equatable", "Hashable", "Cloneable", "Comparable", "Printable"],
+            ),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        for method in ["equals", "hash", "clone", "compare", "fmt"] {
+            assert!(mt_has(&ctx, "P", method),
+                "synthesized method `{}` must be registered in method_table[P]",
+                method);
+        }
+    }
+
+    #[test]
+    fn synth_methods_marked_compiler_generated() {
+        let m = make_module_with_types(vec![
+            make_named_tuple_impl("P", vec![("x", "int")], &["Equatable", "Hashable"]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        for method in ["equals", "hash"] {
+            let fd = mt_fn(&ctx, "P", method)
+                .unwrap_or_else(|| panic!("method `{}` not registered", method));
+            assert!(fd.compiler_generated,
+                "synthesized method `{}` must carry compiler_generated = true",
+                method);
+            assert_eq!(fd.name, method);
+            assert!(fd.receiver.as_ref().map_or(false, |r| r.type_name == "P"),
+                "synthesized method receiver must target type P");
+        }
+    }
+
+    #[test]
+    fn no_synth_without_impl_annotation() {
+        // Type без `#impl(...)` — никаких synthesized методов.
+        let m = make_module_with_types(vec![
+            make_named_tuple("P", vec![("x", "int")]),
+        ]);
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        assert!(!mt_has(&ctx, "P", "equals"),
+            "no `#impl` annotation → no synthesized methods in method_table");
+        assert!(ctx.method_table.get("P").map_or(true, |m| m.is_empty()),
+            "method_table[P] must be empty/absent without #impl");
+    }
+
+    #[test]
+    fn no_synth_when_user_provides_explicit_method() {
+        // User wins: explicit `fn P @equals(...)` → synthesis skipped, no
+        // duplicate. We register the user fn manually via an Item::Fn.
+        let p = make_named_tuple_impl("P", vec![("x", "int")], &["Equatable"]);
+        let user_equals = FnDecl {
+            name: "equals".to_string(),
+            receiver: Some(Receiver {
+                type_name: "P".to_string(),
+                generics: vec![],
+                kind: ReceiverKind::Instance,
+                mutable: false,
+                consume: false,
+                span: dummy_span(),
+            }),
+            params: vec![],
+            body: FnBody::External,
+            span: dummy_span(),
+            compiler_generated: false,
+            ..FnDecl::default()
+        };
+        let m = Module {
+            name: vec!["test".to_string()],
+            imports: Vec::new(),
+            items: vec![Item::Type(p), Item::Fn(user_equals)],
+            attrs: Vec::new(),
+            doc_attrs: Vec::new(),
+            span: dummy_span(),
+            peer_files: Vec::new(),
+            doc: None,
+        };
+        let arena = FnDeclArena::new();
+        let ctx = TypeCheckCtx::build(&m, &arena);
+        let fns = ctx.method_table.get("P").and_then(|m| {
+            m.iter().find(|(k, _)| k.trim_start_matches('@') == "equals").map(|(_, v)| v)
+        }).expect("equals must be registered (user-provided)");
+        assert_eq!(fns.len(), 1,
+            "user-provided equals must not be duplicated by synthesis");
+        assert!(!fns[0].compiler_generated,
+            "registered equals must be the USER fn (compiler_generated = false), \
+             synthesis must be skipped when user provides explicit method");
     }
 }
 
