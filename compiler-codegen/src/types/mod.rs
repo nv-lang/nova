@@ -17711,26 +17711,38 @@ impl UnsafeCtx {
                     }
                 }
                 // Plan 118 A11 enforcement: detect call к #unsafe fn outside
-                // unsafe context. Callee identification: Ident (free fn) — look
-                // up в unsafe_fns. Method calls (Member receiver) — Ф.3.5
-                // followup (method-level #unsafe attribute).
+                // unsafe context. Callee identification:
+                //   - Ident (free fn) — lookup в unsafe_fns
+                //   - Member receiver (method call) — Plan 118.1.5 closeout
+                //     (2026-06-06): lookup method name в unsafe_fns. Note:
+                //     unsafe_fns HashSet stores ВСЕ #unsafe fn names, including
+                //     methods (parser stores в fd.unsafe_attr uniformly). Name
+                //     collision risk acceptable for V1 — sharper precision
+                //     (Ф.3.5: receiver-type-aware lookup) followup.
                 if self.depth == 0 {
-                    if let ExprKind::Ident(fname) = &func.kind {
-                        if self.unsafe_fns.contains(fname) {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_UNSAFE_CALL_REQUIRES_WRAP] calling \
-                                     `#unsafe fn {}` requires `unsafe {{ ... }}` \
-                                     block wrap (Plan 118 D216 §9). #unsafe fn \
-                                     body содержит pointer ops без unsafe-block \
-                                     gating; callers must explicitly opt-in \
-                                     к unsafe context (Rust pattern — no \
-                                     effect propagation up the call stack).",
-                                    fname,
-                                ),
-                                func.span,
-                            ));
+                    let unsafe_callee_name: Option<String> = match &func.kind {
+                        ExprKind::Ident(fname) if self.unsafe_fns.contains(fname) => {
+                            Some(fname.clone())
                         }
+                        ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
+                            Some(mname.clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(fname) = unsafe_callee_name {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_UNSAFE_CALL_REQUIRES_WRAP] calling \
+                                 `#unsafe fn {}` requires `unsafe {{ ... }}` \
+                                 block wrap (Plan 118 D216 §9). #unsafe fn \
+                                 body содержит pointer ops без unsafe-block \
+                                 gating; callers must explicitly opt-in \
+                                 к unsafe context (Rust pattern — no \
+                                 effect propagation up the call stack).",
+                                fname,
+                            ),
+                            func.span,
+                        ));
                     }
                 }
                 self.walk_expr(func, errors);
