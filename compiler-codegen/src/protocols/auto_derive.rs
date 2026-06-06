@@ -861,6 +861,145 @@ fn synth_fmt_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Plan 126.2 Ф.2 — codegen-bound AST injection pass.
+//
+// Ф.1 registered synthesized `FnDecl`s в TypeCheckCtx.method_table — но это
+// type-check-local структура, она НЕ доживает до codegen (`check_module`
+// берёт `&Module`, не мутирует его; `emit_module(&Module)` запускается
+// отдельно). Codegen строит свой method_overloads / all_methods из
+// `module.items` + `peer_files[].items_here`, поэтому synthesized методы
+// должны физически попасть в AST как `Item::Fn`.
+//
+// `inject_synthesized_methods` — AST→AST pass, запускается ПОСЛЕ
+// `check_module` (типы validated, impl_protocols проверены) и ДО `desugar`/
+// codegen. Для каждого type-decl с `#impl(P)` (built-in P) и без explicit
+// метода — синтезирует FnDecl и append'ит как `Item::Fn` в `module.items`.
+//
+// Operator dispatch (`a == b` → `Nova_T_method_equals`, `<`/`compare` etc.)
+// УЖЕ существует в emit_c.rs (D183 amendment, Plan 91.8a.2) — он резолвит
+// через method_overloads / all_methods, которые теперь содержат synthesized
+// методы. Никаких изменений в operator dispatch не требуется: synthesized
+// методам достаточно просто БЫТЬ в module.items как обычные user-методы.
+// ────────────────────────────────────────────────────────────────────────
+
+use crate::ast::{Item, Module};
+
+/// Query backend над `Module` — собирает типы + explicit-method coverage
+/// прямо из AST items (включая peer_files). Используется injection pass'ом.
+struct ModuleDeriveQuery {
+    types: std::collections::HashMap<String, TypeDecl>,
+    /// (type_name, method_name) пары для explicit instance методов.
+    methods: HashSet<(String, String)>,
+}
+
+impl ModuleDeriveQuery {
+    fn build(module: &Module) -> Self {
+        let mut types = std::collections::HashMap::new();
+        let mut methods = HashSet::new();
+        let mut collect = |items: &[Item]| {
+            for item in items {
+                match item {
+                    Item::Type(td) => {
+                        types.insert(td.name.clone(), td.clone());
+                    }
+                    Item::Fn(fd) => {
+                        if let Some(recv) = &fd.receiver {
+                            // Instance-метод: ключ (receiver type, method name).
+                            // Включая compiler_generated — так повторный запуск
+                            // pass'а (defensive idempotency) видит уже-injected
+                            // метод как "provided" и НЕ дублирует его. User-vs-
+                            // synthesized приоритет уже обеспечен порядком: user
+                            // методы в исходном AST, synthesized append'ятся
+                            // ПОСЛЕ, и для single-run user-метод присутствует
+                            // ДО synthesis-проверки.
+                            methods.insert((recv.type_name.clone(), fd.name.clone()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        };
+        collect(&module.items);
+        for pf in &module.peer_files {
+            collect(&pf.items_here);
+        }
+        Self { types, methods }
+    }
+}
+
+impl DeriveQuery for ModuleDeriveQuery {
+    fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
+        self.types.get(name)
+    }
+    fn type_provides_method(&self, t: &str, method_name: &str) -> bool {
+        self.methods.contains(&(t.to_string(), method_name.to_string()))
+    }
+}
+
+/// Plan 126.2 Ф.2: synthesize built-in protocol methods for `#impl(P)` types
+/// and inject them as `Item::Fn` into `module.items`, so codegen emits C
+/// bodies and operator dispatch resolves through method_overloads.
+///
+/// Idempotent w.r.t. explicit user methods (user always wins — skipped via
+/// `type_provides_method`) and w.r.t. previously-injected synthesized methods
+/// (guarded by `compiler_generated` already present in `methods` exclusion +
+/// per-run dedup set). Returns count of injected methods (for diagnostics/tests).
+pub fn inject_synthesized_methods(module: &mut Module) -> usize {
+    let query = ModuleDeriveQuery::build(module);
+
+    // Collect target (type_decl, protocol) pairs first — borrow of module
+    // ends before we mutate module.items.
+    let mut synthesized: Vec<FnDecl> = Vec::new();
+    // Dedup guard: avoid re-injecting if this pass somehow runs twice, or two
+    // protocols map to the same method name (they don't today, but be safe).
+    let mut already_injected: HashSet<(String, String)> = HashSet::new();
+
+    // Iterate over a snapshot of type decls (query owns clones).
+    let mut type_decls: Vec<TypeDecl> = query.types.values().cloned().collect();
+    // Deterministic order — stable codegen output.
+    type_decls.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for td in &type_decls {
+        if td.impl_protocols.is_empty() {
+            continue;
+        }
+        for proto_name in &td.impl_protocols {
+            if !is_builtin_protocol(proto_name) {
+                continue;
+            }
+            let Some(method_name) = builtin_protocol_method(proto_name) else {
+                continue;
+            };
+            // User-explicit method wins — never synthesize over it.
+            if query.type_provides_method(&td.name, method_name) {
+                continue;
+            }
+            let key = (td.name.clone(), method_name.to_string());
+            if already_injected.contains(&key) {
+                continue;
+            }
+            let mut ctx = AutoDeriveCtx::new(&query);
+            match synthesize_method(&mut ctx, td, proto_name) {
+                Ok(fd) => {
+                    already_injected.insert(key);
+                    synthesized.push(fd);
+                }
+                // Synthesis failures already surfaced as diagnostics during
+                // type-check (verify_impl_protocols). Skip silently here —
+                // injecting an error'd body would produce invalid C.
+                Err(_) => {}
+            }
+        }
+    }
+
+    let count = synthesized.len();
+    for fd in synthesized {
+        module.items.push(Item::Fn(fd));
+    }
+    count
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Plan 126 Ф.2 unit tests — infrastructure coverage.
 // Per-protocol synthesizer tests — в Ф.3 (next commit).
 // ────────────────────────────────────────────────────────────────────────
@@ -1399,5 +1538,149 @@ mod tests {
             },
             _ => panic!("expected FnBody::Expr"),
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Plan 126.2 Ф.2 — injection pass tests (codegen-bound AST rewrite).
+    // ────────────────────────────────────────────────────────────────────
+
+    use crate::ast::{Item, Module};
+
+    fn module_with(items: Vec<Item>) -> Module {
+        Module {
+            name: vec![],
+            imports: vec![],
+            items,
+            attrs: vec![],
+            doc_attrs: vec![],
+            span: Span::dummy(),
+            peer_files: vec![],
+            doc: None,
+        }
+    }
+
+    /// Helper: collect names of injected (compiler_generated) instance
+    /// methods present in module.items, keyed by (receiver type, method).
+    fn injected_methods(m: &Module) -> Vec<(String, String)> {
+        m.items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Fn(fd) if fd.compiler_generated => fd
+                    .receiver
+                    .as_ref()
+                    .map(|r| (r.type_name.clone(), fd.name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Build an explicit (user) instance method FnDecl for `type @method`.
+    fn user_method(type_name: &str, method: &str) -> FnDecl {
+        FnDecl {
+            name: method.to_string(),
+            receiver: Some(Receiver {
+                type_name: type_name.to_string(),
+                generics: vec![],
+                kind: ReceiverKind::Instance,
+                mutable: false,
+                consume: false,
+                span: Span::dummy(),
+            }),
+            params: vec![],
+            body: FnBody::Expr(ex(ExprKind::BoolLit(true))),
+            compiler_generated: false,
+            ..FnDecl::default()
+        }
+    }
+
+    // ─── T31: inject emits Nova_T_method_equals for #impl(Equatable) ──
+    #[test]
+    fn t31_inject_equatable_record() {
+        let td = make_record_with_impl("Vec3", &[("x", "f64"), ("y", "f64")], EQUATABLE);
+        let mut m = module_with(vec![Item::Type(td)]);
+        let n = inject_synthesized_methods(&mut m);
+        assert_eq!(n, 1, "exactly one method synthesized for Equatable");
+        let injected = injected_methods(&m);
+        assert!(injected.contains(&("Vec3".to_string(), "equals".to_string())),
+            "expected synthesized Vec3.equals, got {:?}", injected);
+    }
+
+    // ─── T32: inject all five built-in protocols ─────────────────────
+    #[test]
+    fn t32_inject_all_protocols() {
+        let mut td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
+        for p in [EQUATABLE, HASHABLE, CLONEABLE, COMPARABLE, PRINTABLE] {
+            td.impl_protocols.push(p.to_string());
+        }
+        let mut m = module_with(vec![Item::Type(td)]);
+        let n = inject_synthesized_methods(&mut m);
+        assert_eq!(n, 5, "five built-in protocols → five methods");
+        let injected = injected_methods(&m);
+        for meth in ["equals", "hash", "clone", "compare", "fmt"] {
+            assert!(injected.contains(&("Point".to_string(), meth.to_string())),
+                "missing synthesized Point.{}, got {:?}", meth, injected);
+        }
+    }
+
+    // ─── T33: user-explicit method wins — no synthesis ───────────────
+    #[test]
+    fn t33_inject_user_method_wins() {
+        let td = make_record_with_impl("Money", &[("cents", "int")], EQUATABLE);
+        let mut m = module_with(vec![
+            Item::Type(td),
+            Item::Fn(user_method("Money", "equals")),
+        ]);
+        let n = inject_synthesized_methods(&mut m);
+        assert_eq!(n, 0, "user-provided equals suppresses synthesis");
+        assert!(injected_methods(&m).is_empty(),
+            "no compiler_generated method should be injected");
+    }
+
+    // ─── T34: non-builtin protocol ignored ───────────────────────────
+    #[test]
+    fn t34_inject_ignores_non_builtin() {
+        let td = make_record_with_impl("Widget", &[("id", "int")], "Drawable");
+        let mut m = module_with(vec![Item::Type(td)]);
+        let n = inject_synthesized_methods(&mut m);
+        assert_eq!(n, 0, "non-builtin protocol → no synthesis");
+    }
+
+    // ─── T35: field lacks protocol → synthesis skipped (diag elsewhere) ─
+    #[test]
+    fn t35_inject_skips_when_field_ineligible() {
+        // Outer #impl(Cloneable) with Inner field that lacks Cloneable.
+        let inner = make_record_type("Inner", &[("a", "int")]);
+        let outer = make_record_with_impl("Outer", &[("inner", "Inner")], CLONEABLE);
+        let mut m = module_with(vec![Item::Type(inner), Item::Type(outer)]);
+        let n = inject_synthesized_methods(&mut m);
+        assert_eq!(n, 0, "ineligible field → synthesis skipped (no invalid C)");
+    }
+
+    // ─── T36: nested eligible field → both synthesize ────────────────
+    #[test]
+    fn t36_inject_nested_eligible() {
+        let inner = make_record_with_impl("Inner", &[("a", "int")], CLONEABLE);
+        let outer = make_record_with_impl("Outer", &[("inner", "Inner")], CLONEABLE);
+        let mut m = module_with(vec![Item::Type(inner), Item::Type(outer)]);
+        let n = inject_synthesized_methods(&mut m);
+        assert_eq!(n, 2, "both Inner and Outer synthesize clone");
+        let injected = injected_methods(&m);
+        assert!(injected.contains(&("Inner".to_string(), "clone".to_string())));
+        assert!(injected.contains(&("Outer".to_string(), "clone".to_string())));
+    }
+
+    // ─── T37: idempotent — second run does not double-inject ─────────
+    #[test]
+    fn t37_inject_idempotent_via_compiler_generated_guard() {
+        let td = make_record_with_impl("Vec3", &[("x", "f64")], EQUATABLE);
+        let mut m = module_with(vec![Item::Type(td)]);
+        let n1 = inject_synthesized_methods(&mut m);
+        assert_eq!(n1, 1);
+        // Defensive idempotency: the already-injected compiler_generated method
+        // is now seen as "provided" by ModuleDeriveQuery, so a second run does
+        // not re-synthesize it.
+        let n2 = inject_synthesized_methods(&mut m);
+        assert_eq!(n2, 0, "second run must be a no-op (idempotent)");
+        assert_eq!(injected_methods(&m).len(), 1, "no duplicate injected");
     }
 }

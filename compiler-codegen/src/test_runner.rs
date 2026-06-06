@@ -2333,6 +2333,16 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
         }
     }
     {
+        // Plan 126.2 Ф.2: synthesize built-in protocol methods (Equatable/
+        // Hashable/Cloneable/Comparable/Printable) for `#impl(P)` types and
+        // inject them into module.items as Item::Fn, so codegen emits C bodies
+        // and operator dispatch (`==`/`<`/`.clone()`/...) resolves them.
+        // Runs AFTER check_module (impl_protocols validated), BEFORE desugar/
+        // codegen. User-explicit methods always win (never overwritten).
+        let _t = crate::perf_timer::PerfTimer::new("auto-derive-inject");
+        crate::protocols::auto_derive::inject_synthesized_methods(&mut module);
+    }
+    {
         let _t = crate::perf_timer::PerfTimer::new("annotate-maps");
         types::annotate_map_literals(&mut module);
     }
