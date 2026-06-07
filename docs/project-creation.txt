@@ -34183,3 +34183,35 @@ type родителя — вложенный RecordLit с собственным
 D228 §«Nested record-literal per-field type resolution» + plan-doc closure +
 README sync + logs. AC A124.9.1–A124.9.6 ✅. Lifts Plan 128.2 explicit-.new()
 workaround. [M-124.9-nested-record-literal-codegen] ✅ closed.
+
+=== Issue #1 (кодировка) + housekeeping + language-convention (2026-06-04..06) ===
+
+Триггер: GitHub issue #1 — порча кириллицы (cp1251 mojibake) в комментариях и
+русских строках-диагностиках. Корень: UTF-8 файл редактор авто-угадывал как
+Windows-1251 и пересохранял (double mojibake); часть ё→ђ повторно портилась уже
+ПОСЛЕ починки (активный источник, не разовая история).
+
+Сделано (кодировка):
+- Восстановление: scripts/demojibake.py (cp1251-reverse + ё/ђ post-pass) прогнан
+  по src + docs. Commits 1ab146e (source), cde3c52 (docs), 4264ab0 (re-repair ё→ђ),
+  d2c942f (close #1). Issue #1 закрыт через «Closes #1».
+- Профилактика: .editorconfig (root=true, charset=utf-8) — commit c73f472; редактор
+  больше не угадывает кодировку.
+- Корень (активный редактор): удалено расширение Lingma (alibaba-cloud.tongyi-lingma),
+  поставлено «EditorConfig for VS Code» v0.18.2.
+- Инструмент задокументирован + перенесён в scripts/ — commit 5cd6990.
+
+Housekeeping:
+- Удалены 23 *-artifacts черновых каталога планов (C-пробники, бенчмарки) — 9d02f34.
+- tools/ влита в scripts/ (cdb_session.sh + stress_bisect.sh; пути в docs/plans/83.11
+  обновлены) — единая папка dev-скриптов; commit 14b9909.
+
+Конвенция:
+- AGENTS.md → Contribution rules: зафиксирована language-convention (subject коммита —
+  английский conventional-commits; тело + dev-логи — русский каркас + англ. термины;
+  публичные доки — английский) — commit 685c3e6 (первый коммит уже с DCO -s). Триггер:
+  доказательный аудит сессии (parallel workflow, 4 источника) показал точечный дрейф
+  тел encoding-коммитов в чистый английский.
+
+Spec/D/Q: не требовалось (кодировка/housekeeping/конвенция — без семантики).
+Всё в main + github + gitverse.

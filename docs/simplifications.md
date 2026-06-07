@@ -33727,3 +33727,19 @@ type-checker'ом.
 Plan 124.9 — no simplifications. Production-grade codegen fix: nested
 record-literal field-value type резолвится по declared field type из record
 schema, не по outer/expected type. Lifts Plan 128.2 explicit-.new() workaround.
+
+## Issue #1 кодировка + housekeeping + language-convention (2026-06-04..06)
+
+**Упрощений в починке кодировки НЕТ** — восстановление полное (cp1251-reverse без
+потерь для recoverable-случаев; нерекаверабельные U+FFFD — pre-existing, вне scope).
+
+**Убрана сложность (dedup):** каталог `tools/` (2 диагностических хелпера) влит в
+`scripts/`, где уже лежал `tsan_concurrency.sh` такого же рода — произвольная граница
+«scripts vs tools» устранена, осталась одна папка dev-скриптов (commit 14b9909).
+Также удалены 23 `*-artifacts` черновых каталога планов (commit 9d02f34).
+
+**Конвенция (не упрощение, для записи):** `AGENTS.md` зафиксировал language-convention
+(commit 685c3e6) — чтобы не было дрейфа лог-файлов и тел коммитов в английский.
+
+Профилактика mojibake: `.editorconfig charset=utf-8` (c73f472) + удалён Lingma +
+поставлен EditorConfig ext.
