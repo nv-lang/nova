@@ -33811,3 +33811,25 @@ scope until process exit. Significantly smaller than V1 per-token leak
 - open-questions.md обновлён: ParseIntError исправлен record→sum type (Empty|InvalidDigit|Overflow|InvalidRadix),
   try_parse_int отмечен реализованным в Tier 1; followup marker [M-91.fe2-parse-int-error-payload]
 - Plan-doc acceptance criteria расширен: Ф.2 + Ф.5 конкретные чекбоксы добавлены
+
+### [Plan 83.11 Ф.4 followup] ✅ tests + hardening (2026-06-08)
+- Что закрыто: позитивные тесты для blocking-offload-via-driver (Ф.4) +
+  hardening до паритета со sleep-путём + spec D50 amend + acceptance criteria.
+- Что УПРОЩЕНО (намеренно, с обоснованием):
+  - **Тест-профиль ≤3 fiber/scope.** blocking_driver_test.nv держит каждый
+    supervised-scope на ≤3 fiber'ах. Причина: обнаружена pre-existing M:N гонка
+    [M-83.11-grow-vs-wake-race] (НЕ Ф.4-регрессия — висит на main и на чистом
+    Time.sleep), которая hang'ает при РОСТЕ per-worker scope между блоками.
+    Стабильный счётчик → нет grow → нет гонки → детерминированный тест. Это
+    допустимое load-reduction по docs/debugging-races.md §5.4: документировано
+    в заголовке теста + orthogonal баг + маркер заведён. Broader varying-count
+    stress живёт с маркером до фикса планировщика.
+  - **Гонку НЕ чиню в рамках Ф.4.** 3 фикс-попытки (pre-init, pending_wake reset,
+    sleep unregister) не закрыли её → по плейбуку §5.1 «после 2 попыток — стоп»;
+    реальный механизм (torn array swap в grow vs driver wake) требует careful
+    concurrent-data-structure фикса + n≥66 stress → отдельная сессия/sub-plan.
+- Что ОСТАВЛЕНО как корректное упрочнение: pre-init nova_sched_get_state +
+  reset pending_wake в unregister_pending (закрывают реальные lost-wake окна
+  blocking-пути, паритет со sleep; low-risk).
+- Followups:
+  - [M-83.11-grow-vs-wake-race] — pre-existing M:N park/wake гонка (см. plan §13.6.1)
