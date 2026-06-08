@@ -207,10 +207,10 @@ log.log(2, "ok")          // → @log(int, str) — arity 2
 ```
 
 При ambiguity (≥2 кандидатов после фильтрации) — compile error
-с suggestion'ом disambiguate через `as fn(...)` annotation:
+с suggestion'ом disambiguate через lambda с явными типами аргументов:
 
 ```nova
-ro f = t.@m as fn(str) -> int
+ro f = fn(s str) -> int => t.m(s)
 ```
 
 #### Дисамбигуация программистом

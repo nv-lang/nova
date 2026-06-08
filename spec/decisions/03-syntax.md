@@ -1576,10 +1576,9 @@ fn Account @add(n int) -> int => @balance + n
 
 ro acc = Account.new(42)
 
-// 1. Bound method value: захватывает obj как self.
-//    Тип: fn(<remaining-params>) -> R
-ro f = acc.@get          // тип: fn() -> int
-ro g = acc.@add          // тип: fn(int) -> int
+// 1. Closure capturing receiver (replaces bound method value removed in Plan 132).
+ro f = || acc.get()                     // тип: fn() -> int
+ro g = fn(n int) -> int => acc.add(n)  // тип: fn(int) -> int
 ro v = f()               // 42
 ro r = g(10)             // 52
 
@@ -1596,8 +1595,8 @@ ro acc2 = mk(7)
 
 #### Семантика
 
-- **Bound** копирует / захватывает receiver внутрь closure-структуры.
-  Subsequent calls используют captured self.
+- **Lambda capturing receiver** — lambda closes over the receiver variable.
+  Subsequent calls use the captured variable.
 - **Unbound** — fn pointer без env'а. Caller обязан передать receiver
   как первый аргумент.
 - **Static** — fn pointer без receiver'а вообще.
@@ -1606,26 +1605,24 @@ ro acc2 = mk(7)
 
 ```nova
 ro nums = [1, 2, 3]
-ro negated = nums.map(int.@neg)    // unbound: применяет @neg к каждому
-ro total = nums.fold(0, acc.@add)  // bound: добавляет каждый num к acc
+ro negated = nums.map(int.@neg)          // unbound: применяет @neg к каждому
+ro total = nums.fold(0, |n| acc.add(n))  // closure-light: добавляет каждый num к acc
 ```
 
-#### Disambiguation для overloaded methods (Ф.5)
+#### Disambiguation для overloaded methods
 
-Если у метода несколько overload'ов, нужна type annotation:
+Если у метода несколько overload'ов, используется lambda с явными типами аргументов:
 
 ```nova
 fn Buffer mut @write(s str) -> ()
 fn Buffer mut @write(b []u8) -> ()
 
 ro buf = Buffer.new()
-ro f1 = buf.@write as fn(str) -> ()      // выбор по annotation
-ro f2 = buf.@write as fn([]u8) -> ()
+ro f1 = fn(s str) -> () => buf.write(s)      // выбор по типу аргумента
+ro f2 = fn(b []u8) -> () => buf.write(b)
 ```
 
-Без annotation — compile error «ambiguous method value». Annotation
-либо на cast (`as fn(...)`), либо на let-binding type
-(`let f fn(str) -> () = buf.@write` — также работает).
+Тип аргумента в lambda однозначно определяет overload.
 
 #### C-runtime представление
 

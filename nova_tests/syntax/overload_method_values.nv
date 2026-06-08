@@ -1,7 +1,8 @@
-// Plan 11 Ф.5: as fn(...) disambiguation для overloaded method values.
+// Plan 11 Ф.5 → Plan 132 migration: overloaded method values.
 //
-// Когда у метода несколько overload'ов, без annotation нельзя выбрать —
-// используем `as fn(P...) -> R` для disambiguation.
+// Bound method value `obj.@method as fn(...)` removed in Plan 132.
+// Replaced by lambdas that capture the receiver.
+// Unbound `Type.@method as fn(Type, ...)` still works.
 
 module syntax.overload_method_values
 
@@ -13,16 +14,16 @@ fn Buf.new() -> Self => { items: [] }
 fn Buf mut @push(n int) -> int => @items.len()
 fn Buf mut @push(b bool) -> int => if b { 1 } else { 0 }
 
-test "Ф.5: bound method value disambiguation through as-fn" {
+test "Ф.5: bound method value via closure-full (int overload)" {
     mut buf = Buf.new()
-    ro f = buf.@push as fn(int) -> int
+    ro f = fn(n int) -> int => buf.push(n)
     ro r = f(42)
     assert(r == 0)   // empty before push (наша заглушка возвращает len без push)
 }
 
-test "Ф.5: bound method value, bool overload" {
+test "Ф.5: bound method value via closure-full (bool overload)" {
     mut buf = Buf.new()
-    ro g = buf.@push as fn(bool) -> int
+    ro g = fn(b bool) -> int => buf.push(b)
     ro r = g(true)
     assert(r == 1)
 }
