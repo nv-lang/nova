@@ -2,7 +2,7 @@
 //
 // acquire_n(3) / release_n(3); verify atomicity and correct permit accounting.
 //
-// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
 //
 // EXPECT_TIMEOUT_MS 30000
 

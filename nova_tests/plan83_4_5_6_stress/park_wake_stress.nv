@@ -1,7 +1,6 @@
 // Plan 83.4.5.6 Ф.5 (2026-05-24): park/wake stress harness.
 //
-// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
-// 1000-fiber × Time.sleep no longer stalls; [M-83.10.1-armed-cancel-timer-hang] closed.
+// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
 //
 // Acceptance per Plan 83.4.5.7 §6.4: 10⁵ park/wake без leak/crash/
 // deadlock. Реализация V1: 1000 (= 10³) fibers × 1 sleep — балансирует
