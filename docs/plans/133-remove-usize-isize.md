@@ -68,12 +68,9 @@ Scope зафиксирован:
   ```c
   // БЫЛО
   typedef int64_t nova_int;
-  // СТАЛО
-  typedef intptr_t nova_int;
-  ```
-  Добавить:
-  ```c
-  typedef uintptr_t nova_uint;
+  // СТАЛО (аналог Go intgo / GoInt из C-эры Go до 1.5)
+  typedef intptr_t  nova_int;   // int  — signed address-sized
+  typedef uintptr_t nova_uint;  // uint — unsigned address-sized
   ```
 
 - **Ф.1.0.2** `external_registry.rs`: разделить `int` и `i64` маппинги:
@@ -83,8 +80,9 @@ Scope зафиксирован:
   "uint"        => "uint64_t".into(),
   // СТАЛО
   "int"  => "nova_int".into(),    // intptr_t
-  "i64"  => "int64_t".into(),     // фиксированный
+  "i64"  => "int64_t".into(),     // фиксированный 64-bit
   "uint" => "nova_uint".into(),   // uintptr_t
+  "u64"  => "uint64_t".into(),    // фиксированный 64-bit (уже был)
   ```
 
 - **Ф.1.0.3** `emit_c.rs`: аналогичное разделение в C-type lookup.
@@ -177,11 +175,11 @@ sed -i 's/ as usize//g; s/: usize/: int/g; s/ usize)/) /g; ...'
 
 ## C-кодогенерация
 
-После Plan 133:
-- `int` (Nova) → `nova_int` = `intptr_t` (адресный, 64-bit на 64-bit таргете)
-- `i64` (Nova) → `int64_t` (фиксированный)
-- `uint` (Nova) → `nova_uint` = `uintptr_t`
-- `u64` (Nova) → `uint64_t` (фиксированный)
+После Plan 133 (аналог Go C-era `intgo`/`uintgo`):
+- `int`  → `nova_int`  = `intptr_t`  (signed address-sized)
+- `uint` → `nova_uint` = `uintptr_t` (unsigned address-sized)
+- `i64`  → `int64_t`   (фиксированный, отдельный от `int`)
+- `u64`  → `uint64_t`  (фиксированный)
 - `RawMem.alloc(n int)` → C-call `nova_alloc((size_t)n)` — `intptr_t`→`size_t` cast внутри
 
 Это безопасно: `n ≥ 0` инвариант вызывающей стороны; Nova не добавляет runtime-проверок
