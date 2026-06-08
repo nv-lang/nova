@@ -1,0 +1,49 @@
+// Plan 91 Ф.1 — [M-91.1-method-turbofish-dispatch] regression.
+//
+// `obj.method[U,...](args)` (method-level turbofish) parses as
+// Call{func:TurboFish{base:Member,..}} but emit_call had no arm for it, so it
+// fell to the wildcard and emitted a plain field access `(obj->method)`,
+// dropping the explicit type-args (CC-FAIL `no member named 'method'`). Now
+// emit_call intercepts TurboFish{base:Member}, stashes the type-args, recurses
+// on the Member base, and resolve_method_level_subst seeds the slots — the
+// turbofish form lands on the same mono as the inferred form.
+module plan91_fe1.method_turbofish_pos
+
+fn[T] []T @mymap[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ {
+        out.push(f(x))
+    }
+    out
+}
+
+fn[T] []T @myfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+    mut acc Acc = init
+    for x in @ {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+test "turbofish map int -> int + inferred share one mono" {
+    ro v []int = [1, 2, 3]
+    ro d = v.mymap[int](|x| x * 2)
+    assert(d.len() == 3)
+    assert(d.get(0) == Some(2))
+    assert(d.get(2) == Some(6))
+    ro e = v.mymap(|x| x * 2)
+    assert(e.len() == 3)
+}
+
+test "turbofish cross-type int -> str" {
+    ro v []int = [7]
+    ro s = v.mymap[str](|x| str.from(x))
+    assert(s.len() == 1)
+    assert(s.get(0) == Some("7"))
+}
+
+test "turbofish fold[int]" {
+    ro v []int = [1, 2, 3, 4]
+    ro s = v.myfold[int](0, |a, x| a + x)
+    assert(s == 10)
+}

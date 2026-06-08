@@ -731,6 +731,13 @@ pub struct CEmitter {
     /// Plan 48: active type substitution during monomorphized fn emission.
     /// Maps type_param_name → concrete C type. Set/cleared around emit_monomorphized_fn.
     current_type_subst: HashMap<String, String>,
+    /// [M-91.1-method-turbofish-dispatch] Plan 91 Ф.1: transient explicit
+    /// method-level type-args from `obj.method[U,...](args)` (parsed as
+    /// `Call{func: TurboFish{base: Member, type_args}}`). Set by emit_call
+    /// right before recursing on the Member base; consumed (mem::take) by
+    /// resolve_method_level_subst to SEED subst_slots before arg-inference.
+    /// Empty otherwise; taken (not borrowed) so nested calls don't inherit.
+    current_method_turbofish: Vec<crate::ast::TypeRef>,
     /// Plan 48: forward declarations for monomorphized functions.
     /// Spliced into output via /*__MONO_FWD_DECLS__*/ marker.
     mono_fwd_decls: String,
@@ -1090,6 +1097,7 @@ impl CEmitter {
             mono_worklist: Vec::new(),
             mono_instantiated: HashSet::new(),
             current_type_subst: HashMap::new(),
+            current_method_turbofish: Vec::new(),
             mono_fwd_decls: String::new(),
             generic_type_templates: HashMap::new(),
             generic_type_worklist: std::cell::RefCell::new(Vec::new()),
@@ -11366,6 +11374,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             fn_decl.generics.iter()
                 .map(|g| (g.name.clone(), None))
                 .collect();
+        // [M-91.1-method-turbofish-dispatch] Seed slots from explicit
+        // method-level type-args (`obj.method[U,...]`). Positional map onto
+        // fn_decl.generics. mem::take so nested method calls don't inherit the
+        // seed. Resolved in the receiver_subst context (current_type_subst set
+        // above). Inference (Steps 1/2) still runs and, for same-type call
+        // sites, re-derives the identical binding — explicit + inferred converge.
+        let explicit_tf = std::mem::take(&mut self.current_method_turbofish);
+        if !explicit_tf.is_empty() {
+            for (slot, tr) in subst_slots.iter_mut().zip(explicit_tf.iter()) {
+                if slot.1.is_none() {
+                    if let Ok(c) = self.type_ref_to_c(tr) {
+                        if !c.is_empty() && c != "void*" {
+                            slot.1 = Some(c);
+                        }
+                    }
+                }
+            }
+        }
         // Step 1: non-closure args через standard inference (Plan 98 +
         // user-generic existing behavior).
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
@@ -17958,6 +17984,23 @@ _cp++; \
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg]) -> Result<String, String> {
+        // [M-91.1-method-turbofish-dispatch] Plan 91 Ф.1: method-level turbofish.
+        // `obj.method[U,...](args)` parses as Call{func:TurboFish{base:Member,..}}.
+        // The func_c match below has no TurboFish{base:Member} arm, so it falls to
+        // the wildcard emit_expr(func) → plain field access `(obj->method)`,
+        // silently dropping type_args. Stash the type_args, recurse on the Member
+        // base so the normal Member dispatch fires, and let resolve_method_level_subst
+        // seed the slots. Save/restore mirrors current_type_subst idiom. Only fires
+        // for base:Member — the TurboFish{base:Ident} free-fn form is handled downstream.
+        if let ExprKind::TurboFish { base, type_args } = &func.kind {
+            if matches!(base.kind, ExprKind::Member { .. }) {
+                let saved_tf = std::mem::replace(
+                    &mut self.current_method_turbofish, type_args.clone());
+                let r = self.emit_call(base, args);
+                self.current_method_turbofish = saved_tf;
+                return r;
+            }
+        }
         // Plan 62.B.bis Ф.1 (2026-05-18): print/println special-case
         // intercept ДОЛЖЕН fire'ить ДО variadic routing. После Ф.2 этого
         // же плана `std/prelude/runtime.nv` содержит
