@@ -1,0 +1,46 @@
+// Plan 83.11 Ф.3 — cancel-path edge/negative guards (NEG).
+//
+// Edge-тайминги cancel-пути: no-op cancel (sleeper уже завершился) +
+// double cancel (идемпотентность). Канонический паттерн без with-Fail обёртки
+// (см. driver_cancel_sleep_basic.nv).
+//
+// ⚠ GATED ПОД NOVA_AUTOARM=0 — armed-M:N покрытие заблокировано открытым
+// race [M-83.11-grow-vs-wake-race] (§13.6.1). См. шапку driver_cancel_sleep_basic.nv.
+//
+// ПРИМЕЧАНИЕ: «immediate cancel» (cancel БЕЗ задержки, racing park длинного
+// sleep) сюда НЕ включён намеренно — этот паттерн racey даже кооперативно
+// (close_cb таймера vs завершение park'а — wall-clock тайминг; canonical
+// cancel_stress.nv его тоже избегает). Все cancel здесь — delayed.
+//
+// ENV NOVA_AUTOARM=0
+// EXPECT_TIMEOUT_MS 15000
+
+module plan83_11.driver_cancel_edge
+
+test "cancel after sleeper already finished — no-op, no hang" {
+    // Первый fiber завершается естественно (~5ms), cancel прилетает позже,
+    // когда отменять уже нечего. is_cancelled() == true, без hang.
+    mut i = 0
+    while i < 10 {
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            spawn { Time.sleep(5) }                  // завершается сам
+            spawn { Time.sleep(40); tok.cancel() }   // cancel — no-op
+        }
+        assert(tok.is_cancelled())
+        i += 1
+    }
+}
+
+test "double cancel is idempotent — no hang" {
+    mut i = 0
+    while i < 10 {
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            spawn { Time.sleep(60_000) }
+            spawn { Time.sleep(20); tok.cancel(); tok.cancel() }
+        }
+        assert(tok.is_cancelled())
+        i += 1
+    }
+}
