@@ -7923,18 +7923,34 @@ Cancel остаётся pending в `fiber->cancel_pending`; доставляет
 `nv_leave_cancel_shield()`. Если cleanup body превысил timeout — текущий
 suspend получает `CleanupTimeoutError`, дальше propagates через D161
 
-**R3b amend (2026-06-05) [M-83.11-cancel-token-bound-race-2k] fix:**
-NovaCancelToken allocation MUST use `nova_alloc_uncollectable` (not
-`nova_alloc`). Под high fiber-count (≥2k spawns в supervised(cancel:))
-ctx_pins[] GC root protection (Plan 83.11 §11.6) becomes insufficient —
-Boehm conservative scanner может потерять root под heavy GC pressure
-(frequent collections triggered by 2k+ spawn allocations + ctx GC churn).
-Token reclaim → memory reuse for new SpawnCtx → write at offset 8
-(_nova_worker_slot) overlaps с token->bound_scope offset → panic
-«token already bound to a live scope» on bind. Same defensive pattern
-as Plan 83.4.5.8 SpawnCtx uncollectable. Trade-off: ~64 bytes leak per
-token until process exit. Followup `[M-83.11-cancel-token-explicit-cleanup]`
-для adding explicit dispose API if needed.
+**R3b amend (2026-06-08, V2 refinement) [M-83.11-cancel-token-bound-race-2k]
+proper fix:** Plan 83.11 §11.6 ctx_pins[] **ARRAY** (not the token itself)
+must be allocated uncollectable. Под high fiber-count (≥2k spawns в
+supervised(cancel:)) ctx_pins[] array growth (16→32→64→...→1024+) triggers
+many GC cycles. Pre-fix nova_alloc'd array lost root coverage под heavy
+allocation pressure — Boehm conservative scanner could miss the pointer-
+chain `stack-scope → ctx_pins → tokens` during Mark phase, reclaiming
+tokens. Result: token memory reused for SpawnCtx, struct overlap at
+offset 8 (_nova_worker_slot vs bound_scope) → panic «token already bound
+to a live scope» on bind.
+
+**Fix shape:**
+- `nova_scope_pin_ctx` allocates `ctx_pins[]` via `nova_alloc_uncollectable`
+  (fibers.h:639).
+- On array growth, OLD array `nova_free_uncollectable`d (tokens already
+  copied to NEW array — no leak).
+- NovaCancelToken stays `nova_alloc` (collectable) — array always alive
+  keeps tokens reachable through standard Boehm pointer-chain scan.
+
+**Pre-V2 workaround (2026-06-05, now superseded):** initially `nova_cancel_token_new`
+itself switched к `nova_alloc_uncollectable` — что fixed crash но создавало
+per-token leak. V2 V refinement moves uncollectable-ness к ctx_pins array
+which is per-scope (~16-1024 entries × 8 bytes), and token stays collectable.
+
+**Trade-off:** ctx_pins array stays alive until process exit (per supervised
+scope). Acceptable: scopes finite + not in tight loops. Followup
+`[M-83.11-ctx-pins-scope-cleanup]` для array nova_free_uncollectable hook
+на scope exit if long-running service patterns need it.
 
 **R3c amend (2026-06-05) [M-83.11-nested-supervised-cascade-drain-hang]
 fix:** `nova_cancel_token_bind` deferred-cancel propagation (вызывается
