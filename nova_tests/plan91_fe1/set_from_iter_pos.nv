@@ -1,0 +1,26 @@
+// Plan 91 Ф.1 — [M-91.1-set-from-iter-iterable-param] regression.
+//
+// `Set[T].from_iter(it Iterable[T])` CC-FAILed: the generic protocol param
+// erased to `void*` at the mono instance and for-in could not recover the
+// iterator C-type ("for-in: cannot resolve iterator type ... 'void*'"). The
+// signature now takes a concrete `[]T` (mirroring HashMap.from([](K,V))) —
+// for-in over a generic []T mono param is a fully working codegen path.
+module plan91_fe1.set_from_iter_pos
+
+import std.collections.set.{Set}
+
+test "from_iter dedups (int element)" {
+    ro s = Set[int].from_iter([1, 2, 3, 2, 1])
+    assert(s.len() == 3)
+    assert(s.contains(1))
+    assert(s.contains(2))
+    assert(s.contains(3))
+    assert(!s.contains(9))
+}
+
+test "from_iter (str element)" {
+    ro s = Set[str].from_iter(["a", "b", "a"])
+    assert(s.len() == 2)
+    assert(s.contains("a"))
+    assert(s.contains("b"))
+}

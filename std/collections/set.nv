@@ -60,11 +60,24 @@ export fn Set[T].with_capacity(cap int) -> Self
 =>
     { map: HashMap[T, ()].with_capacity(cap) }
 
-/// Построить множество из итератора.
+/// Построить множество из массива элементов.
+///
+/// Принимает конкретный `[]T` (зеркало `HashMap.from([](K,V))`): generic-протокол
+/// `Iterable[T]` в mono-контексте стирался в `void*`, и for-in не мог восстановить
+/// C-тип итератора на mono-инстансе ([M-91.1-set-from-iter-iterable-param]).
+/// Массив итерируется корректно для любого типа элемента.
+///
+/// # Examples
+///
+/// ```nova
+/// mut s = Set[int].from_iter([1, 2, 3, 2])
+/// assert(s.len() == 3)   // дубликат 2 схлопнут
+/// assert(s.contains(2))
+/// ```
 #stable(since = "0.1")
-export fn Set[T].from_iter(it Iterable[T]) -> Self {
-    mut s = Self.new()
-    for x in it {
+export fn Set[T].from_iter(items []T) -> Self {
+    mut s = Self.with_capacity(items.len() * 2)
+    for x in items {
         s.insert(x)
     }
     s
@@ -180,8 +193,26 @@ test "contains works after insert/remove" {
     assert(s.contains("bob"))
 }
 
-// NOTE: from_iter([T].iter()) tests removed — Iter[T] param in mono context
-// emits for-in on unresolved 'Iter' type. Use insert() directly instead.
+// from_iter теперь принимает конкретный []T (зеркало HashMap.from([](K,V))) —
+// generic-протокол Iterable[T] стирался в void*, и for-in не мог восстановить
+// C-тип итератора на mono-инстансе ([M-91.1-set-from-iter-iterable-param]).
+// Array-параметр итерируется корректно для любого типа элемента.
+
+test "from_iter dedups and preserves membership (int)" {
+    ro s = Set[int].from_iter([1, 2, 3, 2, 1])
+    assert(s.len() == 3)
+    assert(s.contains(1))
+    assert(s.contains(2))
+    assert(s.contains(3))
+    assert(!s.contains(9))
+}
+
+test "from_iter works for str element type" {
+    ro s = Set[str].from_iter(["a", "b", "a"])
+    assert(s.len() == 2)
+    assert(s.contains("a"))
+    assert(s.contains("b"))
+}
 
 test "basic insert and contains" {
     mut s = Set[int].new()
