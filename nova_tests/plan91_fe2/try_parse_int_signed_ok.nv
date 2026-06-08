@@ -1,0 +1,32 @@
+module plan91_fe2.try_parse_int_signed_ok
+
+import std.runtime.string.{ParseIntError}
+
+test "positive prefix" {
+    match "+42".try_parse_int() {
+        Ok(n) => assert(n == 42)
+        Err(_) => assert(false, "expected Ok(42)")
+    }
+    match "+0".try_parse_int() {
+        Ok(n) => assert(n == 0)
+        Err(_) => assert(false, "expected Ok(0)")
+    }
+}
+
+test "negative zero and small" {
+    match "-0".try_parse_int() {
+        Ok(n) => assert(n == 0)
+        Err(_) => assert(false, "expected Ok(0)")
+    }
+    match "-1".try_parse_int() {
+        Ok(n) => assert(n == -1)
+        Err(_) => assert(false, "expected Ok(-1)")
+    }
+}
+
+test "i64 min (overflow guard: -9223372036854775808 is tricky)" {
+    match "-9223372036854775807".try_parse_int() {
+        Ok(n) => assert(n == -9223372036854775807)
+        Err(_) => assert(false, "expected Ok")
+    }
+}

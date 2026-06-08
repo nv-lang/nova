@@ -1,0 +1,29 @@
+module plan91_fe2.try_parse_int_binary_ok
+
+import std.runtime.string.{ParseIntError}
+
+test "binary basic" {
+    match "1010".try_parse_int(radix: 2) {
+        Ok(n) => assert(n == 10)
+        Err(_) => assert(false, "expected Ok(10)")
+    }
+    match "0".try_parse_int(radix: 2) {
+        Ok(n) => assert(n == 0)
+        Err(_) => assert(false, "expected Ok(0)")
+    }
+    match "1".try_parse_int(radix: 2) {
+        Ok(n) => assert(n == 1)
+        Err(_) => assert(false, "expected Ok(1)")
+    }
+}
+
+test "binary all ones" {
+    match "11111111".try_parse_int(radix: 2) {
+        Ok(n) => assert(n == 255)
+        Err(_) => assert(false, "expected Ok(255)")
+    }
+    match "100000000".try_parse_int(radix: 2) {
+        Ok(n) => assert(n == 256)
+        Err(_) => assert(false, "expected Ok(256)")
+    }
+}

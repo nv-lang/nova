@@ -1,0 +1,50 @@
+module plan91_fe2.try_parse_int_consistent_with_parse_int_ok
+
+import std.runtime.string.{ParseIntError}
+
+// For valid inputs: if parse_int returns Some(n), try_parse_int returns Ok(n).
+// For invalid inputs: if parse_int returns None, try_parse_int returns Err.
+
+test "decimal values agree" {
+    // "42": both should give 42
+    mut pi_val int = -1
+    mut tpi_val int = -2
+    match "42".parse_int() {
+        Some(n) => { pi_val = n }
+        None => assert(false, "parse_int returned None for 42")
+    }
+    match "42".try_parse_int() {
+        Ok(n) => { tpi_val = n }
+        Err(_) => assert(false, "try_parse_int returned Err for 42")
+    }
+    assert(pi_val == tpi_val, "parse_int and try_parse_int disagree on 42")
+}
+
+test "hex values agree" {
+    mut pi_val int = -1
+    mut tpi_val int = -2
+    match "ff".parse_int(radix: 16) {
+        Some(n) => { pi_val = n }
+        None => assert(false, "parse_int returned None for ff")
+    }
+    match "ff".try_parse_int(radix: 16) {
+        Ok(n) => { tpi_val = n }
+        Err(_) => assert(false, "try_parse_int returned Err for ff")
+    }
+    assert(pi_val == tpi_val, "parse_int and try_parse_int disagree on ff")
+}
+
+test "error cases both fail for invalid input" {
+    mut pi_none = true
+    mut tpi_err = true
+    match "abc".parse_int() {
+        Some(_) => { pi_none = false }
+        None => {}
+    }
+    match "abc".try_parse_int() {
+        Ok(_) => { tpi_err = false }
+        Err(_) => {}
+    }
+    assert(pi_none, "parse_int should return None for abc")
+    assert(tpi_err, "try_parse_int should return Err for abc")
+}

@@ -1,0 +1,40 @@
+module plan91_fe2.try_parse_int_radix36_ok
+
+import std.runtime.string.{ParseIntError}
+
+test "radix 36 single chars" {
+    match "z".try_parse_int(radix: 36) {
+        Ok(n) => assert(n == 35)
+        Err(_) => assert(false, "expected Ok(35)")
+    }
+    match "a".try_parse_int(radix: 36) {
+        Ok(n) => assert(n == 10)
+        Err(_) => assert(false, "expected Ok(10)")
+    }
+    match "0".try_parse_int(radix: 36) {
+        Ok(n) => assert(n == 0)
+        Err(_) => assert(false, "expected Ok(0)")
+    }
+}
+
+test "radix 36 multi-char" {
+    match "10".try_parse_int(radix: 36) {
+        Ok(n) => assert(n == 36)
+        Err(_) => assert(false, "expected Ok(36)")
+    }
+    match "Z".try_parse_int(radix: 36) {
+        Ok(n) => assert(n == 35)
+        Err(_) => assert(false, "expected Ok(35)")
+    }
+}
+
+test "radix 8 octal" {
+    match "777".try_parse_int(radix: 8) {
+        Ok(n) => assert(n == 511)
+        Err(_) => assert(false, "expected Ok(511)")
+    }
+    match "10".try_parse_int(radix: 8) {
+        Ok(n) => assert(n == 8)
+        Err(_) => assert(false, "expected Ok(8)")
+    }
+}

@@ -1,0 +1,30 @@
+module neg.try_parse_int_invalid_digit_err
+
+import std.runtime.string.{ParseIntError}
+
+fn assert_invalid_digit(s str, radix int) {
+    match s.try_parse_int(radix: radix) {
+        Ok(_) => assert(false, "expected Err(InvalidDigit)")
+        Err(e) => match e {
+            InvalidDigit => {}
+            _ => assert(false, "expected InvalidDigit variant")
+        }
+    }
+}
+
+test "invalid digit decimal" {
+    assert_invalid_digit("12x", 10)
+    assert_invalid_digit("abc", 10)
+    assert_invalid_digit("1!", 10)
+}
+
+test "invalid digit hex" {
+    assert_invalid_digit("g", 16)
+    assert_invalid_digit("GG", 16)
+    assert_invalid_digit("1z", 16)
+}
+
+test "invalid digit binary" {
+    assert_invalid_digit("2", 2)
+    assert_invalid_digit("102", 2)
+}

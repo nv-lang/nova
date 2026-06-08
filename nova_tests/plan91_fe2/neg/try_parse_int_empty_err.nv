@@ -1,0 +1,44 @@
+module neg.try_parse_int_empty_err
+
+import std.runtime.string.{ParseIntError}
+
+test "empty string is Err" {
+    ro r = "".try_parse_int()
+    assert(r.is_err(), "expected Err for empty string")
+    match r {
+        Err(e) => match e {
+            Empty => {}
+            _ => assert(false, "expected Empty variant for empty string")
+        }
+        Ok(_) => {}
+    }
+}
+
+test "sign only is Err(Empty)" {
+    ro r1 = "-".try_parse_int()
+    assert(r1.is_err(), "expected Err for -")
+    match r1 {
+        Err(e) => match e {
+            Empty => {}
+            _ => assert(false, "expected Empty for -")
+        }
+        Ok(_) => {}
+    }
+
+    ro r2 = "+".try_parse_int()
+    assert(r2.is_err(), "expected Err for +")
+    match r2 {
+        Err(e) => match e {
+            Empty => {}
+            _ => assert(false, "expected Empty for +")
+        }
+        Ok(_) => {}
+    }
+}
+
+test "empty with explicit radix" {
+    ro r3 = "".try_parse_int(radix: 16)
+    assert(r3.is_err(), "expected Err for empty hex")
+    ro r4 = "-".try_parse_int(radix: 2)
+    assert(r4.is_err(), "expected Err for - in binary")
+}
