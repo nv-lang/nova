@@ -3840,7 +3840,7 @@ v.y     // 2.0
 
 // Methods — identical to records
 fn Vec3 @add(other Vec3) -> Vec3 =>
-    Vec3(x: @.x + other.x, y: @.y + other.y, z: @.z + other.z)
+    Vec3(x: @x + other.x, y: @y + other.y, z: @z + other.z)
 ```
 
 ### Грамматика (extends D52)
@@ -5966,7 +5966,7 @@ Generic-параметры функции в receiver-position декларир�
    brackets**: bare T, `[]T`, tuple `(T, U)`, composite без carrier:
    - `fn[T] T @identity() -> T => @` — bare typevar.
    - `fn[T] []T @map[U](f fn(T) -> U) -> []U => ...` — array.
-   - `fn[T, U] (T, U) @swap() -> (U, T) => (@.1, @.0)` — tuple.
+   - `fn[T, U] (T, U) @swap() -> (U, T) => (@1, @0)` — tuple.
    - `fn[T Hashable] []T @dedup() -> []T => ...` — bounds через D72.
    - `fn[T A + B] []T @method() => ...` — multi-bound через `+` (Plan 101.3).
 

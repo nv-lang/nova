@@ -655,10 +655,10 @@ pattern match с `Fail[InvalidVariant]`. Конфликт значений за�
 > const EXECUTE Permission = Permission(4)
 >
 > fn Permission @or(other Permission) -> Permission =>
->     Permission(@.0 | other.0)
+>     Permission(@0 | other.0)
 >
 > fn Permission @and(other Permission) -> Permission =>
->     Permission(@.0 & other.0)
+>     Permission(@0 & other.0)
 >
 > fn Permission @contains(flag Permission) =>
 >     (@ & flag).0 != 0
