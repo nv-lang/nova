@@ -30190,13 +30190,18 @@ _cp++; \
                     }
                 }
                 // Second pass: any non-unit, still skipping divergent arms.
+                let mut all_unit = true;
                 for arm in arms {
                     if arm_diverges(self, arm) { continue; }
                     let t = infer_arm(self, arm);
-                    if t != "nova_unit" { return t; }
+                    if t != "nova_unit" {
+                        all_unit = false;
+                        return t;
+                    }
                 }
-                // Third pass: settle for nova_int.
-                "nova_int".into()
+                // All non-divergent arms are nova_unit → match is unit (statement-position).
+                // Fall back to nova_int only if there are NO non-divergent arms at all.
+                if all_unit { "nova_unit".into() } else { "nova_int".into() }
             }
             ExprKind::Member { obj, name } => {
                 // Plan 11 Ф.4: method value `@`-prefix → closure (void*).
