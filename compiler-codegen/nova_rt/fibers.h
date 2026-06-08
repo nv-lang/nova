@@ -2369,6 +2369,17 @@ static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
     nova_abool_init(&st.done, false);
     st.work.data = &st;
 
+    /* Plan 83.11 Ф.4 fix: pre-init SchedState BEFORE submitting the driver job.
+     * Under Ф.4 the after_work_cb (and thus nova_sched_wake) runs on the DRIVER
+     * thread, so it can fire between job-submission and register_pending — while
+     * scope->sched_state is still NULL. nova_sched_wake would then call
+     * nova_sched_find_state → NULL → silently drop BOTH the pending_wake delivery
+     * AND the parked CAS, risking a lost wakeup. Allocating the state here
+     * guarantees a cross-thread wake always lands. Same rationale and contract as
+     * _nova_sleep_via_driver, which pre-inits via nova_sched_get_state for the
+     * identical Ф.3 race. Harmless for the legacy worker-loop branch. */
+    nova_sched_get_state(scope);
+
     if (nova_driver_is_started()) {
         /* Plan 83.11 Ф.4: route via centralized driver UV loop. */
         NovaDriverJob* job = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
