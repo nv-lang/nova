@@ -1,0 +1,176 @@
+// blocking_driver_test.nv — Plan 83.11 Ф.4: #blocking offload → centralized driver UV loop.
+//
+// Ф.4 changed nova_blocking_offload to submit a NOVA_DRV_JOB_ARM_BLOCKING job to
+// the centralized driver thread (driver.c:_nova_driver_handle_arm_blocking)
+// instead of calling uv_queue_work(nova_current_loop()) on the worker's own loop.
+// after_work_cb now fires on the DRIVER thread → sets done=true + nova_sched_wake;
+// the offloading fiber is parked via park_until (done-predicate) and resumed by
+// that cross-thread wake. The wake-before-park window is covered by the
+// park_until fast-path predicate plus pending_wake[] (Plan 83.11 Ф.3.A) and the
+// pre-init of sched_state added for the driver path (parity with sleep).
+//
+// Acceptance criteria (see docs/plans/83.11-centralized-io-driver.md §13.6):
+//   A1  Fast/trivial work completes via driver, no hang (wake-before-park).
+//   A2  Sequential blocking calls in one fiber return correct results.
+//   A3  Concurrent blocking offloads on multiple fibers all complete.
+//   A4  Worker is freed during offload — sibling fiber progresses; blocking
+//       interleaves correctly with driver-routed Time.sleep in one scope.
+//   A5  On the main thread (no fiber) #blocking runs inline, not via driver.
+//
+// NOTE on scope sizing (deliberate, do NOT "scale up" without reading this):
+//   Every supervised scope here uses ≤ 3 fibers ON PURPOSE. There is a
+//   PRE-EXISTING, Ф.4-independent M:N scheduler race — a torn read of the
+//   sched_state arrays in nova_sched_grow_state racing the driver thread's
+//   nova_sched_wake — that hangs when the long-lived per-worker scope GROWS
+//   (a later supervised block spawns MORE fibers than any earlier block) while
+//   a driver wake is in flight. It reproduces on `main` too, and with pure
+//   Time.sleep (no #blocking), so it is NOT a Ф.4 regression. Tracked as
+//   [M-83.11-grow-vs-wake-race]. Keeping every scope at the same small fiber
+//   count keeps worker-scope capacity stable after the first block (no grow →
+//   no race), so these Ф.4 tests are deterministic. Broader varying-count
+//   stress lives with that marker until the scheduler race is fixed.
+
+module concurrency.blocking_driver_test
+
+// Trivially fast leaf — exercises the wake-before-park fast-path.
+#blocking fn _drv_fast(n int) -> int {
+    n + 1
+}
+
+fn drv_fast(n int) -> int {
+    _drv_fast(n)
+}
+
+// Moderate CPU leaf — exercises the normal driver path:
+// submit → threadpool work_cb → driver after_cb → done=true → cross-thread wake.
+#blocking fn _drv_work(upto int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < upto {
+        acc = acc + 1
+        i = i + 1
+    }
+    acc
+}
+
+fn drv_work(upto int) -> int {
+    _drv_work(upto)
+}
+
+// ================================================================
+// A1 — fast-path: trivial work finishes ~immediately (wake-before-park)
+// ================================================================
+
+test "blocking/driver A1: trivial fast-path, 3 concurrent, no hang" {
+    mut r0 = 0
+    mut r1 = 0
+    mut r2 = 0
+    supervised {
+        spawn { r0 = drv_fast(0) }
+        spawn { r1 = drv_fast(10) }
+        spawn { r2 = drv_fast(100) }
+    }
+    assert(r0 == 1)
+    assert(r1 == 11)
+    assert(r2 == 101)
+}
+
+// ================================================================
+// A2 — sequential blocking calls in one fiber
+// ================================================================
+
+test "blocking/driver A2: sequential calls, correct results" {
+    mut out = 0
+    supervised {
+        spawn {
+            ro a = drv_work(100)
+            ro b = drv_work(200)
+            ro c = drv_work(300)
+            out = a + b + c
+        }
+    }
+    assert(out == 600)
+}
+
+test "blocking/driver A2: sequential fast-path chain x5" {
+    mut chain = 0
+    supervised {
+        spawn {
+            chain = drv_fast(chain)
+            chain = drv_fast(chain)
+            chain = drv_fast(chain)
+            chain = drv_fast(chain)
+            chain = drv_fast(chain)
+        }
+    }
+    assert(chain == 5)
+}
+
+// ================================================================
+// A3 — concurrent blocking offloads (3 fibers — stable scope size)
+// ================================================================
+
+test "blocking/driver A3: concurrent offloads all complete" {
+    mut t0 = 0
+    mut t1 = 0
+    mut t2 = 0
+    supervised {
+        spawn { t0 = drv_work(1000) }
+        spawn { t1 = drv_work(2000) }
+        spawn { t2 = drv_work(3000) }
+    }
+    assert(t0 == 1000)
+    assert(t1 == 2000)
+    assert(t2 == 3000)
+}
+
+// ================================================================
+// A4 — worker freed during offload; interplay with driver-routed sleep
+// ================================================================
+
+test "blocking/driver A4: worker freed — sibling progresses during offload" {
+    mut marker = 0
+    mut a_saw = -1
+    supervised {
+        spawn {
+            // Fiber A offloads heavy work to the driver/threadpool and parks.
+            ro _ = drv_work(2000000)
+            a_saw = marker
+        }
+        spawn {
+            // Fiber B is light: must progress while A is parked on the offload.
+            marker = 1
+        }
+    }
+    assert(a_saw == 1)
+    assert(marker == 1)
+}
+
+test "blocking/driver A4: blocking interleaved with driver-routed sleep" {
+    mut order = 0
+    supervised {
+        spawn {
+            ro _ = drv_work(500)
+            order = order + 1
+        }
+        spawn {
+            Time.sleep(1)
+            order = order + 10
+        }
+    }
+    assert(order == 11)
+}
+
+// ================================================================
+// A5 — main thread (no fiber): #blocking runs inline, not via driver
+// ================================================================
+
+test "blocking/driver A5: main thread inline (work)" {
+    ro r = drv_work(1000)
+    assert(r == 1000)
+}
+
+test "blocking/driver A5: main thread inline (fast)" {
+    ro r = drv_fast(41)
+    assert(r == 42)
+}

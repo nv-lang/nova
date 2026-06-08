@@ -425,6 +425,21 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
         NovaSchedStopCb _null_cb = NULL;
         __atomic_store(&st->pending_stop_cb[slot], &_null_cb, __ATOMIC_RELEASE);
         st->pending_handle[slot] = NULL;
+        /* Plan 83.11 Ф.4 fix: reset pending_wake at the canonical end-of-wait
+         * choke point. A cross-thread wake (driver thread, Ф.3/Ф.4) can set
+         * pending_wake[slot]=1 AFTER the worker satisfied the done-predicate and
+         * returned via the park_until fast-path (nova_sched_park_until:360),
+         * which never enters nova_sched_park and therefore never consumes it.
+         * A leftover 1 would make the NEXT park on this slot (same fiber's next
+         * chained blocking/sleep call, or another fiber after slot reuse) see a
+         * spurious pre-park wake (nova_sched_park:139-146). Clearing here makes
+         * pending_wake slot-reuse-safe for all register_pending callers
+         * (blocking offload + sleep). The fiber is already running past its park
+         * by the time unregister runs, so a wake arriving concurrently with this
+         * clear is for a wait that already completed — dropping it is correct. */
+        if (st->pending_wake) {
+            __atomic_store_n(&st->pending_wake[slot], 0, __ATOMIC_RELEASE);
+        }
     }
 }
 

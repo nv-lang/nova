@@ -467,6 +467,38 @@ Bootstrap-runtime реализует `blocking { }` через **libuv threadpoo
 `UV_THREADPOOL_SIZE` в runtime-прологе (`nova_evloop_init`); явный
 пользовательский `UV_THREADPOOL_SIZE` уважается.
 
+##### Аменд: Plan 83.11 Ф.4 (2026-06-08) — offload через centralized driver
+
+После [D228](#d228) (centralized I/O driver) шаг 1 выше уточнён: когда
+driver-thread запущен (production M:N), `nova_blocking_offload` **не**
+вызывает `uv_queue_work(nova_current_loop())` на loop'е home-worker'а, а
+submit'ит job `NOVA_DRV_JOB_ARM_BLOCKING` в driver queue. Driver thread в
+`_nova_driver_handle_arm_blocking` вызывает `uv_queue_work` на **своём**
+loop'е (`&_nova_driver.loop`). Соответственно шаг 4 (`after_work_cb`)
+исполняется на **driver thread**, а не на home-worker'е, и будит fiber
+кросс-потоково через `nova_sched_wake` (тот же dispatch-путь, что
+driver-routed `Time.sleep` из [D228](#d228)). Legacy per-worker путь
+сохранён для bootstrap/single-thread режима (`nova_driver_is_started()`
+== false).
+
+Cross-thread wake-before-park закрывается тем же механизмом, что у sleep:
+(а) `park_until` fast-path проверяет done-predicate до yield; (б) перед
+submit'ом job'а делается pre-init `nova_sched_get_state(scope)` — чтобы
+wake с driver-потока, прилетевший до `register_pending`, не потерялся на
+`find_state == NULL`; (в) `pending_wake[]`-counter (Plan 83.11 Ф.3.A).
+`uv_cancel(&st->work)` thread-safe для work-request'ов на обоих loop'ах,
+так что cancel-путь (`_nova_blocking_stop_cb`) работает без изменений.
+
+> **Известное ограничение (НЕ Ф.4-специфичное).** Существует pre-existing
+> M:N race в общей park/wake машинерии: torn-чтение массивов `sched_state`
+> в `nova_sched_grow_state` при росте долгоживущего per-worker scope,
+> гонка с `nova_sched_wake` driver-потока. Воспроизводится на `main`, в
+> т.ч. на чистом `Time.sleep` (без `blocking`) — затрагивает обе
+> driver-routed операции одинаково. Тригер: последовательные
+> `supervised`-блоки с **возрастающим** числом fiber'ов в одном процессе.
+> Трекается как `[M-83.11-grow-vs-wake-race]` (см. plan doc §13.6.1);
+> driver-routing blocking-offload корректен сам по себе.
+
 **`blocking { }` — примитив, не handler-эффект.** В отличие от `detach`
 (`with Detach = SyncDetach`), `blocking { }` не диспетчеризуется через
 handler: контекст-чувствительный codegen всегда либо offload'ит (в
