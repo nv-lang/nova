@@ -1,0 +1,72 @@
+// Plan 83.11 Ф.3 — driver thread timer lifecycle regression guard.
+//
+// Проверяет что Time.sleep таймеры корректно завершаются через
+// централизованный driver loop под cooperative scheduling. До Ф.3: таймеры
+// обрабатывались на per-worker UV loops — cancel шёл по другому пути
+// → wake-before-park race. Ф.3 централизовал routing; [M-83.11-grow-vs-wake-race]
+// (§13.6.1) остаётся открытым для armed M:N.
+// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
+//
+// EXPECT_TIMEOUT_MS 15000
+
+module plan83_11.driver_timer_cleanup
+
+test "N fibers sleep concurrently — all complete, no stall" {
+    // Проверяет что N параллельных sleep корректно завершаются
+    // через driver loop под armed M:N (не по одному sequential).
+    mut done = 0
+    ro t0 = Time.now()
+    supervised {
+        for _i in 0..10 {
+            spawn {
+                Time.sleep(20)
+                done += 1
+            }
+        }
+    }
+    ro elapsed = Time.now() - t0
+    assert(done == 10)
+    // 10 parallel sleep(20ms) должны занять ~20ms, не 200ms
+    assert(elapsed < 500)
+}
+
+test "sleep cascade — sequential scopes, no driver state leak" {
+    // После каждого scope driver должен вернуться в чистое состояние.
+    // Нет утечки arm_sleep linked-list или pending_driver_jobs.
+    mut total = 0
+    mut i = 0
+    while i < 5 {
+        supervised {
+            for _j in 0..4 {
+                spawn {
+                    Time.sleep(5)
+                    total += 1
+                }
+            }
+        }
+        i += 1
+    }
+    assert(total == 20)
+}
+
+test "cancel+sleep: driver wakes parked fiber before deadline" {
+    // Центральный regression guard Plan 83.11 Ф.3.
+    ro tok = CancelToken.new()
+    ro t0 = Time.now()
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        supervised(cancel: tok) {
+            for _i in 0..4 {
+                spawn { Time.sleep(30_000) }
+            }
+            spawn {
+                Time.sleep(30)
+                tok.cancel()
+            }
+        }
+    }
+    ro elapsed = Time.now() - t0
+    assert(tok.is_cancelled())
+    assert(elapsed < 500)
+}

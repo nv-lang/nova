@@ -1,0 +1,59 @@
+// Plan 83.11 Ф.3 — stress: многократный cancel+sleep под cooperative scheduling.
+//
+// Stress-проверка что driver thread не имеет state-leaks при repeated
+// cancel cycles. 20 iterations × (8 fibers + 1 canceller) = нет дедлока/
+// зависания. До Ф.3 этот паттерн давал TIMEOUT ~50% runs из-за close_cb
+// race на per-worker UV loop.
+// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module plan83_11.driver_stress_cancel
+
+test "20 cancel-sleep cycles — no deadlock, no timeout" {
+    mut completions = 0
+    mut i = 0
+    while i < 20 {
+        ro tok = CancelToken.new()
+        with Fail = effect Fail {
+            fail(_msg) { interrupt () }
+        } {
+            supervised(cancel: tok) {
+                for _j in 0..8 {
+                    spawn { Time.sleep(5_000) }
+                }
+                spawn {
+                    Time.sleep(5)
+                    tok.cancel()
+                }
+            }
+        }
+        assert(tok.is_cancelled())
+        completions += 1
+        i += 1
+    }
+    assert(completions == 20)
+}
+
+test "cancel immediately after sleep start — no wake-before-park race" {
+    // Паттерн максимально близкий к wake-before-park race:
+    // cancel отправляется сразу после spawn, до того как fiber успевает
+    // войти в park. Driver должен обработать оба случая идемпотентно.
+    mut completions = 0
+    mut i = 0
+    while i < 50 {
+        ro tok = CancelToken.new()
+        with Fail = effect Fail {
+            fail(_msg) { interrupt () }
+        } {
+            supervised(cancel: tok) {
+                spawn { Time.sleep(10_000) }
+                // Нет sleep перед cancel — race window максимальный
+                tok.cancel()
+            }
+        }
+        completions += 1
+        i += 1
+    }
+    assert(completions == 50)
+}

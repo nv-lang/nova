@@ -1,0 +1,84 @@
+// Plan 83.11 Ф.3 — централизованный driver thread regression guard.
+//
+// Acceptance: cancel+sleep под cooperative scheduling завершается быстро (< 500ms).
+// До Plan 83.11 Ф.3 тест TIMEOUT из-за wake-before-park race:
+// close_cb шёл на per-worker UV loop ≠ driver loop, где ждал parked fiber.
+// Ф.3 централизовал таймеры через единый driver loop — исправил close_cb
+// routing, но [M-83.11-grow-vs-wake-race] (§13.6.1) остаётся открытым.
+// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
+//
+// EXPECT_TIMEOUT_MS 10000
+
+module plan83_11.driver_cancel_sleep_basic
+
+test "cancel+sleep: parked fiber woken by cancel in < 500ms" {
+    ro tok = CancelToken.new()
+    ro t0 = Time.now()
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        supervised(cancel: tok) {
+            spawn {
+                Time.sleep(60_000)   // 60 sec — должен быть прерван
+            }
+            spawn {
+                Time.sleep(50)       // 50ms → cancel
+                tok.cancel()
+            }
+        }
+    }
+    ro elapsed = Time.now() - t0
+    assert(tok.is_cancelled())
+    assert(elapsed < 500)
+}
+
+test "cancel+sleep: 10 parked fibers all wake on cancel" {
+    ro tok = CancelToken.new()
+    mut woken = AtomicInt.new(0)
+    ro t0 = Time.now()
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        supervised(cancel: tok) {
+            for _i in 0..10 {
+                spawn {
+                    Time.sleep(30_000)
+                    woken.fetch_add(1)
+                }
+            }
+            spawn {
+                Time.sleep(80)
+                tok.cancel()
+            }
+        }
+    }
+    ro elapsed = Time.now() - t0
+    assert(tok.is_cancelled())
+    // Все 10 fiber'ов должны проснуться быстро — не зависнуть
+    assert(elapsed < 500)
+}
+
+test "cancel+sleep: sequential scopes — no driver state leak" {
+    // 5 последовательных supervised(cancel:) scope — каждый создаёт
+    // и уничтожает driver-side timer resources. Нет утечки состояния.
+    mut i = 0
+    while i < 5 {
+        ro tok = CancelToken.new()
+        ro t0 = Time.now()
+        with Fail = effect Fail {
+            fail(_msg) { interrupt () }
+        } {
+            supervised(cancel: tok) {
+                spawn { Time.sleep(5_000) }
+                spawn {
+                    Time.sleep(10)
+                    tok.cancel()
+                }
+            }
+        }
+        ro elapsed = Time.now() - t0
+        assert(tok.is_cancelled())
+        assert(elapsed < 300)
+        i += 1
+    }
+}
