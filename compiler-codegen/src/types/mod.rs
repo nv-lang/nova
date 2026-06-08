@@ -4914,6 +4914,45 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // Plan 132 Ф.1: bound method value `obj.@method` removed (D-block Plan 11).
+        // `Type.@method` (unbound fn-pointer) is still allowed.
+        // Heuristic identical to emit_c.rs emit_method_value_typed: a bare Ident
+        // that starts with uppercase OR is a primitive type name = unbound (keep).
+        // Everything else = bound (E_BOUND_METHOD_REMOVED).
+        if name.starts_with('@') {
+            let is_type_name = match &obj.kind {
+                ExprKind::Ident(n) => {
+                    n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                        || matches!(
+                            n.as_str(),
+                            "int" | "i8" | "i16" | "i32" | "i64"
+                                | "u8" | "u16" | "u32" | "u64"
+                                | "f32" | "f64" | "bool" | "char" | "str"
+                        )
+                }
+                ExprKind::Path(parts) if parts.len() == 1 => true,
+                _ => false,
+            };
+            if !is_type_name {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_BOUND_METHOD_REMOVED] bound method value `obj.{}` \
+                         removed (Plan 132). Bound method values that capture \
+                         receiver were removed because they conflicted with \
+                         field/method same-name design. Migration: \
+                         use a lambda `|| obj.{}(...)` for a captured call, \
+                         or use unbound `Type.{}` for an fn-pointer.",
+                        name,
+                        &name[1..], // strip leading @
+                        name,
+                    ),
+                    span,
+                ));
+                return;
+            }
+            // Unbound Type.@method — fall through, normal checks apply.
+            return;
+        }
         let Some(obj_tr) = self.infer_expr_type(obj, scope) else { return; };
         // Plan 118 D216 §5: auto-deref one level для typed pointer `*T` —
         // permissive в type-checker (skip f3 not-found error so codegen может
