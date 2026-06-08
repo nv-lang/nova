@@ -34367,3 +34367,18 @@ Commits:
 - test(plan91 Ф.2): try_parse_int ≥10 fixtures (6 positive + 4 negative)
 - test(plan91 Ф.5): vec / hashmap / hashset / text / sort realistic
 - docs(plan91 Ф.2+Ф.5): closure — STATUS + plan-doc + simplifications
+
+=== Plan 91 Ф.2 + Ф.5 spec/doc update (2026-06-08) ===
+
+Spec additions:
+- spec/decisions/08-runtime.md: D178 amend V2 — str @try_parse_int(radix int = 10) -> Result[int, ParseIntError]
+  ParseIntError sum type definition, consistency invariant, codegen fix note, C mapping, links
+- spec/open-questions.md: ParseIntError record placeholder → sum type; try_parse_int Tier 1 ✅ marked
+  Tier 1 list updated; followup [M-91.fe2-parse-int-error-payload]
+
+Plan-doc additions:
+- docs/plans/91-stdlib-mvp-for-0.1.md: Acceptance criteria §Ф.2 + §Ф.5 concrete checklists (all ✅)
+
+Tests verified (2026-06-08):
+- nova_tests/plan91_fe2: 10/0 PASS (with NOVA_GC_LIB_DIR + INCLUDE_DIR correctly set)
+- nova_tests/plan91_fe5: 5/0 PASS

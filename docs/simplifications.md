@@ -33804,3 +33804,10 @@ scope until process exit. Significantly smaller than V1 per-token leak
   - [M-91.fe2-parse-f64] — parse_f64 Result variant
   - [M-91.fe2-text-utils] — join/trim/pad если потребуются для Ф.6 examples
   - [M-91.fe5-math-time-conformance] — math/time API conformance (sqrt/ln работают, Instant/Duration — pending)
+
+### [Plan 91 Ф.2 + Ф.5 spec] ✅ CLOSED spec update (2026-06-08)
+- D178 amend V2 записан в spec/decisions/08-runtime.md — описывает try_parse_int API,
+  ParseIntError sum type, invariant консистентности с parse_int, сопутствующий codegen fix
+- open-questions.md обновлён: ParseIntError исправлен record→sum type (Empty|InvalidDigit|Overflow|InvalidRadix),
+  try_parse_int отмечен реализованным в Tier 1; followup marker [M-91.fe2-parse-int-error-payload]
+- Plan-doc acceptance criteria расширен: Ф.2 + Ф.5 конкретные чекбоксы добавлены
