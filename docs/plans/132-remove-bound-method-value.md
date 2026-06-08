@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 132 — Убрать bound method value `obj.@method`; разрешить field/method одного имени
 
-> **Создан:** 2026-06-09.  **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-09.  **Статус:** ✅ ЗАКРЫТ 2026-06-09.
 > **Эстимат:** ~1 dev-day.  **Model:** Sonnet 4.6.
 
 ---
@@ -149,3 +149,23 @@ Unbound `Type.@method` не создаёт аналогичных проблем
   `fn(Counter, int) -> int`; проверить что inference работает корректно.
 - `[M-132-as-disambiguation-alternative]` — если overload disambiguation через
   `as fn(...)` нужна для unbound, документировать синтаксис отдельно.
+
+---
+
+## Итог
+
+Plan 132 закрыт полностью (2026-06-09).
+
+- **Ф.1:** E_BOUND_METHOD_REMOVED добавлен в parser/checker. `Type.@method` (unbound) оставлен. Коллизия field/method снята на уровне checker.
+- **Ф.2:** Миграция: spec, nova_tests/syntax/method_values.nv, examples/ffi/sqlite_mini.nv — перемигрированы на лямбды/прямые вызовы.
+- **Ф.3:** POS fixtures: `pos_field_method_same_name.nv` + `pos_at_name_disambiguation.nv` — оба PASS.
+- **Ф.4:** Spec обновлён: D35 «Bound vs unbound» переписан, C-runtime раздел исправлен, D117 диагностика скорректирована. docs/simplifications.md, docs/project-creation.txt, nova-private/discussion-log.md, этот файл.
+
+Acceptance criteria:
+- A-132.a ✅ `obj.@method` (без args) → E_BOUND_METHOD_REMOVED
+- A-132.b ✅ `obj.@method(args)` → E_BOUND_METHOD_REMOVED с hint
+- A-132.c ✅ `Type.@method` (unbound) → компилируется, fn-pointer
+- A-132.d ✅ поле `len` и метод `@len()` на одном типе → PASS
+- A-132.e ✅ `@len` в теле = поле; `@len()` = метод
+- A-132.f ✅ nova_tests/syntax/method_values.nv — PASS
+- A-132.g ✅ 0 regressions

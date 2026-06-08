@@ -34137,3 +34137,13 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
   когда field name совпадает с self-field — Nova shorthand form обязателен.
 - **Принцип** — generic-протокол тест должен вызывать метод напрямую, не через interp-bridge,
   пока vtable-dispatch для generic types не проверен в suite.
+
+## [2026-06-09] Plan 132 — Removed bound method value `obj.@method`
+
+**What:** Removed bound method value syntax `obj.@method` (without parens) and `obj.@method(args)` (call via bound). Unbound `Type.@method` (fn-pointer) is kept.
+
+**Why:** Bound method values carry closure overhead (struct {fn_ptr, self}) and created pressure to invent disambiguation forms like `@@len` or `@.@len` when field and method share a name. Lambdas `|| obj.method()` are the explicit replacement.
+
+**Side effect:** Field and method with the same name on a type are now legal (no ambiguity: `@name` = field, `@name()` = method call).
+
+**Error code:** `E_BOUND_METHOD_REMOVED` with hints for migration.
