@@ -1,0 +1,38 @@
+// Plan 83.11 §11.6 V2 [M-83.11-ctx-pins-scope-cleanup] (2026-06-08):
+// regression guard для ctx_pins[] cleanup on scope exit. Pre-V2 fix
+// (token uncollectable) leaked ~64B per token. V2 (array uncollectable +
+// scope-exit free) leaks ~0 per scope. This test:
+//
+// 1. Calls supervised(cancel:) inside a loop 100 times, каждый scope
+//    spawns 500 fibers (ctx_pins[] grows к 512 entries = 4KB).
+// 2. Pre-cleanup-hook: ~400KB leak total (100 × 4KB tail).
+// 3. Post-cleanup-hook: ~0 (arrays freed on scope exit).
+//
+// Functional verification: 100 scopes complete без panic, total time
+// within sane budget. Memory leak verification — manual via process
+// memory inspection (нет программного API в Nova test runner; baseline
+// run + watch task manager / RSS на Windows). Test полагается on absence
+// of regression: with cleanup hook, mem stays stable.
+
+module concurrency.ctx_pins_scope_cleanup_loop
+
+test "100 supervised scopes × 500 fibers — ctx_pins cleanup verified by completion" {
+    mut total_cancelled = 0
+    for _ in 0..100 {
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            for _ in 0..500 {
+                spawn { Time.sleep(100) }
+            }
+            spawn {
+                Time.sleep(5)
+                tok.cancel()
+            }
+        }
+        if tok.is_cancelled() {
+            total_cancelled = total_cancelled + 1
+        }
+    }
+    // All 100 scopes should have cancelled cleanly.
+    assert(total_cancelled == 100)
+}

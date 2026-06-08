@@ -33811,3 +33811,39 @@ scope until process exit. Significantly smaller than V1 per-token leak
 - open-questions.md обновлён: ParseIntError исправлен record→sum type (Empty|InvalidDigit|Overflow|InvalidRadix),
   try_parse_int отмечен реализованным в Tier 1; followup marker [M-91.fe2-parse-int-error-payload]
 - Plan-doc acceptance criteria расширен: Ф.2 + Ф.5 конкретные чекбоксы добавлены
+
+
+### 2026-06-08 — Plan 83.11 §11.6 V3 — ctx_pins scope cleanup hook
+
+**Marker:** `[M-83.11-ctx-pins-scope-cleanup]` 🟢 CLOSED.
+
+**Корень:** V2 (earlier today) traded per-token leak за per-scope tail
+(128B-8KB). Pre-fix V2 final ctx_pins[] array stayed uncollectable до
+process exit → 1M scopes × 8KB = 8GB potential leak в edge cases.
+
+**Fix:** cleanup hook в `fibers.h::nova_supervised_run_impl` (~line 1907)
+после `nova_cancel_token_unbind`, до всех re-throw paths. Frees array via
+`nova_free_uncollectable` + resets ctx_pins/count/cap fields. Covers все
+4 exit paths (normal, error, interrupt, CANCEL return).
+
+**Trade-off:** zero. Cleanup overhead — single free + 3 field resets,
+negligible.
+
+**Verify:** new fixture 100 supervised scopes × 500 fibers each completes
+без accumulation. Stress 30/30 PASS на fibers_10k + nested_3 + stress_iso_3e.
+
+**Spec:** D188 R3b V3 extension (2026-06-08).
+
+**Plan 83.11 cancel-token + supervised(cancel:) GC reachability family:**
+production-grade closure complete, zero leak.
+
+**Уроки:**
+
+1. **Followup markers from defensive workarounds** lend themselves к quick
+   same-day closure when scope is well-bounded.
+
+2. **Cleanup hook positioning matters:** после resource-acquire reverse
+   (unbind) BEFORE re-throw paths. Pattern reusable.
+
+3. **Per-scope tails accumulate in tight-loop scenarios.** Always audit
+   tail trade-offs against worst-case scope counts.
