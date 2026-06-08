@@ -5,7 +5,7 @@
 // before the deferred uv_close request is enqueued. So the very next call
 // to write() sees stage == CLOSING and returns Err immediately.
 //
-// ENV NOVA_AUTOARM=0
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 // EXPECT_TIMEOUT_MS 30000
 
 module plan83_12.tcp_write_after_close_test

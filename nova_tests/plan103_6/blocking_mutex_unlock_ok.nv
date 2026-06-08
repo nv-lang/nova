@@ -1,8 +1,9 @@
 // Plan 103.6 — Mutex.unlock is #wakes; allowed in #blocking fn (leaf wake).
 // Plan 113 migration: blocking { } → #blocking fn.
 //
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+//
 // EXPECT_TIMEOUT_MS 60000
-// ENV NOVA_AUTOARM=0
 
 module plan103_6.blocking_mutex_unlock_ok
 

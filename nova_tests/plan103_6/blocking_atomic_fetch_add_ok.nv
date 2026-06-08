@@ -1,8 +1,9 @@
 // Plan 103.6 — AtomicI64.fetch_add is #realtime; allowed in #blocking fn.
 // Plan 113 migration: blocking { } → #blocking fn.
 //
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+//
 // EXPECT_TIMEOUT_MS 60000
-// ENV NOVA_AUTOARM=0
 
 module plan103_6.blocking_atomic_fetch_add_ok
 

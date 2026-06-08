@@ -1904,6 +1904,22 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * / повторный bind безопасны; `tok` (caller-owned, GC) переживает
      * unwind. На normal-пути (нет err/pending) unbind тоже здесь. */
     if (tok) nova_cancel_token_unbind(tok);
+    /* Plan 83.11 §11.6 V2 [M-83.11-ctx-pins-scope-cleanup] (2026-06-08):
+     * free uncollectable ctx_pins[] array on scope exit. Без этого array
+     * (~128B-8KB tail) leaks per supervised scope until process exit.
+     * Token остаётся reachable через caller's stack ref (Boehm scans stack
+     * roots) даже после free — array нужен был только для cross-worker
+     * pointer-chain reachability (Plan 83.11 §11.6), который заканчивается
+     * на scope exit. SpawnCtx entries also already cleaned up via their
+     * own nova_spawn_pool_release lifecycle. Runs before ALL exit paths
+     * (re-throw at line ~1958, interrupt at ~1911, CANCEL return at ~1937,
+     * normal fall-through). */
+    if (q->ctx_pins) {
+        nova_free_uncollectable(q->ctx_pins);
+        q->ctx_pins       = NULL;
+        q->ctx_pins_count = 0;
+        q->ctx_pins_cap   = 0;
+    }
     /* Pending interrupt from a fiber's handler-method takes priority over
      * fiber-throw error: handler ran successfully, decided to interrupt
      * the with-block. Re-issue on main-flow where the with-frame is reachable.

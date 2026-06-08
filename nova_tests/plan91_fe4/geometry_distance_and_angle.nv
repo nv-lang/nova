@@ -1,0 +1,67 @@
+// geometry_distance_and_angle.nv — Plan 91 Ф.4 conformance fixture.
+//
+// Realistic 2D-geometry use-case exercising std.runtime.math f64 methods:
+//   - Euclidean distance two ways: (dx*dx+dy*dy).sqrt() vs dx.hypot(dy)
+//   - polar angle two ways: dy.atan2(dx) vs (dy/dx).atan() (first quadrant)
+//   - square two ways: x.pow(2.0) vs x*x
+//   - f64.PI built-in sanity (angle of a 45° vector ≈ PI/4)
+//
+// All float comparisons use a tolerance window (never `==` on floats).
+
+module plan91_fe4.geometry_distance_and_angle
+
+import std.runtime.math
+
+test "Euclidean distance: sqrt(dx^2+dy^2) agrees with hypot within 1e-9" {
+    // Two points P1=(1.0, 2.0), P2=(4.0, 6.0) → dx=3, dy=4 → dist=5.
+    ro dx = 4.0 - 1.0
+    ro dy = 6.0 - 2.0
+
+    ro dist_sqrt = (dx * dx + dy * dy).sqrt()
+    ro dist_hypot = dx.hypot(dy)
+
+    // Both methods must agree.
+    ro agree = dist_sqrt - dist_hypot
+    assert(agree > -1e-9 && agree < 1e-9, "sqrt and hypot distance disagree")
+
+    // And both must equal the known answer 5.0.
+    ro err5 = dist_hypot - 5.0
+    assert(err5 > -1e-9 && err5 < 1e-9, "3-4-5 distance is not 5.0")
+}
+
+test "polar angle: atan2(dy,dx) cross-checks atan(dy/dx) in first quadrant" {
+    // First-quadrant vector (dx>0, dy>0): atan2 and atan(dy/dx) coincide.
+    ro dx = 3.0
+    ro dy = 4.0
+
+    ro angle_atan2 = dy.atan2(dx)
+    ro angle_atan = (dy / dx).atan()
+
+    ro diff = angle_atan2 - angle_atan
+    assert(diff > -1e-9 && diff < 1e-9, "atan2 and atan angle disagree in Q1")
+
+    // The angle must be in (0, PI/2) for a first-quadrant vector.
+    ro half_pi = f64.PI / 2.0
+    assert(angle_atan2 > 0.0 && angle_atan2 < half_pi, "Q1 angle out of (0, PI/2)")
+}
+
+test "45-degree vector angle ≈ PI/4 via atan2" {
+    // Unit-ish vector (1,1): atan2(1,1) = PI/4.
+    ro angle = (1.0).atan2(1.0)
+    ro quarter_pi = f64.PI / 4.0
+    ro d = angle - quarter_pi
+    assert(d > -1e-9 && d < 1e-9, "atan2(1,1) is not PI/4")
+}
+
+test "square via pow(2.0) agrees with x*x within epsilon" {
+    ro x = 2.5
+    ro sq_pow = x.pow(2.0)
+    ro sq_mul = x * x
+
+    ro diff = sq_pow - sq_mul
+    assert(diff > -1e-9 && diff < 1e-9, "pow(2.0) and x*x disagree")
+
+    // Known value: 2.5^2 = 6.25.
+    ro err = sq_mul - 6.25
+    assert(err > -1e-9 && err < 1e-9, "2.5 squared is not 6.25")
+}

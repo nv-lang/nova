@@ -7,7 +7,7 @@
 //   - stream.local_addr().is_v4() == true
 //   - stream.peer_addr().port() == listener port
 //
-// ENV NOVA_AUTOARM=0
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 // EXPECT_TIMEOUT_MS 30000
 
 module plan83_12.tcp_stream_addr_test

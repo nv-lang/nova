@@ -2,8 +2,9 @@
 //
 // acquire_n(3) / release_n(3); verify atomicity and correct permit accounting.
 //
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+//
 // EXPECT_TIMEOUT_MS 30000
-// ENV NOVA_AUTOARM=0
 
 module plan103_4.semaphore_batch_n
 

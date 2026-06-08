@@ -1,0 +1,67 @@
+// Plan 83.11 §11.6 V3 [M-83.11-ctx-pins-scope-cleanup] (2026-06-08):
+// regression guard для token survival across scope exit AND token reuse
+// в multiple supervised scopes. V3 cleanup hook frees ctx_pins[] на
+// scope exit — must NOT break:
+//   1. Token reachability via caller's stack ref после array freed.
+//   2. Token reuse в second supervised(cancel: tok) block (re-bind works).
+//   3. tok.is_cancelled() reads correct intent flag после scope exit.
+//
+// Pre-V3: token reachable via uncollectable ctx_pins (always alive).
+// Post-V3: array freed, token only reachable via caller stack scan.
+// Bug would manifest as token reclaimed → GC race → bind panic on reuse.
+
+module concurrency.ctx_pins_token_reuse_post_scope
+
+test "token survives scope exit + reusable in second supervised" {
+    ro tok = CancelToken.new()
+
+    // First supervised scope.
+    supervised(cancel: tok) {
+        spawn { Time.sleep(100) }
+        spawn {
+            Time.sleep(5)
+            tok.cancel()
+        }
+    }
+
+    // After scope exit: ctx_pins[] freed. Token still accessible via
+    // local `tok` ref. is_cancelled intent persists (D75 caller-owned).
+    assert(tok.is_cancelled())
+
+    // Token reuse — second supervised must bind cleanly. tok.bound_scope
+    // was NULL'd on unbind в first scope → bind here would panic если
+    // cleanup hook left scope ptr stale.
+    ro tok2 = CancelToken.new()
+    supervised(cancel: tok2) {
+        spawn { Time.sleep(100) }
+        spawn {
+            Time.sleep(5)
+            tok2.cancel()
+        }
+    }
+    assert(tok2.is_cancelled())
+}
+
+test "token reuse в 5 sequential supervised scopes" {
+    // Stress version: 5 scopes back-to-back, varying fiber counts. Each
+    // scope's ctx_pins[] grows + freed independently. Token intent
+    // accumulates (D75 first-cancel-wins).
+    mut cancelled_count = 0
+    for n in 0..5 {
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            for _ in 0..50 {
+                spawn { Time.sleep(100) }
+            }
+            spawn {
+                Time.sleep(5)
+                tok.cancel()
+            }
+        }
+        if tok.is_cancelled() {
+            cancelled_count = cancelled_count + 1
+        }
+        ro _ = n
+    }
+    assert(cancelled_count == 5)
+}

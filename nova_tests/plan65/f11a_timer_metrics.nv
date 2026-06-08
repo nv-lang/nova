@@ -6,16 +6,8 @@
 // _cancelled / _longest_pending_ms are maintained per close_after
 // allocation and per fire/cancel cleanup path.
 
-// Plan 83.4.5.1 (2026-05-23): cooperative timer-metrics test — armed
-// multi-worker double-resume race blocks Time.sleep+cancel semantics.
-//
-// Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
-// cooperative-dependent (ordering / handler-scoping / timing semantics).
-// Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed: "timer_cancelled
-// increments on cancel-token cleanup" fails. Under armed M:N cancel_resource_cb
-// doesn't execute before scope exit — cancel counter not incremented.
-// Root cause: [M-83.10.1-armed-cancel-timer-hang].
-// ENV NOVA_AUTOARM=0
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+// cancel_resource_cb now executes reliably before scope exit under armed M:N.
 
 module plan65.f11a_timer_metrics
 

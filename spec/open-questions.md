@@ -2189,6 +2189,16 @@ v1.0).
 > ([D180](decisions/02-types.md#d180-canonical-new-constructors-convention)).
 > Generic `[T Ord] @sort()` / `@min` / `@max` / `@binary_search` —
 > followup `[M-91.7-sort-generic]`.
+>
+> **Update 2026-06-08 (Plan 91 Ф.4+Ф.6 CLOSED):** time/math/sort conformance
+> (`nova_tests/plan91_fe4/` 10/0 — 8 pos + guard + neg) + getting-started
+> (`examples/getting_started.nv`). `Instant` — НЕ отдельный тип: ships как
+> `Monotonic` ([D124](decisions/06-concurrency.md)). Handler-lit capture
+> codegen-фикс (`emit_c.rs`) — sort+duration CC-FAIL устранён. Новых D/Q нет.
+> 5 pre-existing codegen followup-маркеров — в [plan-91 Ф.4/Ф.6 closure](../docs/plans/91-stdlib-mvp-for-0.1.md):
+> `[M-91.6-spawn-global-const-capture]`, `[M-91.6-time-now-schema-mismatch]`,
+> `[M-91.6-duration-zero-cross-module-const]`, `[M-91.6-parallel-for-value-typing]`,
+> `[M-91.6-sqlite-ffi-codegen]`.
 
 **Контекст.** `[]T` — встроенная конструкция языка ([D27](decisions/03-syntax.md#d27)).
 По [D32](decisions/02-types.md#d32) runtime-представление —

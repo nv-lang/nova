@@ -7947,10 +7947,18 @@ itself switched к `nova_alloc_uncollectable` — что fixed crash но соз
 per-token leak. V2 V refinement moves uncollectable-ness к ctx_pins array
 which is per-scope (~16-1024 entries × 8 bytes), and token stays collectable.
 
-**Trade-off:** ctx_pins array stays alive until process exit (per supervised
-scope). Acceptable: scopes finite + not in tight loops. Followup
-`[M-83.11-ctx-pins-scope-cleanup]` для array nova_free_uncollectable hook
-на scope exit if long-running service patterns need it.
+**V3 refinement (2026-06-08) [M-83.11-ctx-pins-scope-cleanup] fix:**
+Cleanup hook added в `nova_supervised_run_impl` (~line 1907) после
+`nova_cancel_token_unbind`, перед всеми re-throw paths. Frees ctx_pins[]
+array via `nova_free_uncollectable` + resets ctx_pins/count/cap fields.
+Runs on all exit paths (normal, error, interrupt, CANCEL). Token остаётся
+reachable через caller's stack ref (Boehm scans stack roots) даже после
+free — array нужен был только для cross-worker pointer-chain reachability
+which ends at scope exit. SpawnCtx entries уже cleaned up через their own
+nova_spawn_pool_release lifecycle.
+
+**V3 trade-off:** zero per-scope leak (was 128B-8KB tail в V2). Cleanup
+overhead = single nova_free_uncollectable + 3 field resets — negligible.
 
 **R3c amend (2026-06-05) [M-83.11-nested-supervised-cascade-drain-hang]
 fix:** `nova_cancel_token_bind` deferred-cancel propagation (вызывается

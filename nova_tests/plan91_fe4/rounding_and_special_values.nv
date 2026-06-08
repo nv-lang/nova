@@ -1,0 +1,51 @@
+// Plan 91 Ф.4 conformance: f64 rounding family + special-value predicates.
+// Realistic quantization + numeric-guard scenario.
+// Rounding results are integer-valued floats; compared with a tolerance window.
+module plan91_fe4.rounding_and_special_values
+
+import std.runtime.math
+
+test "rounding family: ceil / floor / round / trunc / cbrt / abs" {
+    ro c = (2.3).ceil() - 3.0
+    assert(c > -1e-9 && c < 1e-9, "ceil(2.3) != 3")
+
+    ro f = (2.9).floor() - 2.0
+    assert(f > -1e-9 && f < 1e-9, "floor(2.9) != 2")
+
+    ro r = (2.5).round() - 3.0
+    assert(r > -1e-9 && r < 1e-9, "round(2.5) != 3")
+
+    // trunc toward zero: -2.9 -> -2.0
+    ro t = (-2.9).trunc() - (-2.0)
+    assert(t > -1e-9 && t < 1e-9, "trunc(-2.9) != -2")
+
+    // cube root of 27 == 3
+    ro cb = (27.0).cbrt() - 3.0
+    assert(cb > -1e-9 && cb < 1e-9, "cbrt(27) != 3")
+
+    // absolute value
+    ro a = (-5.5).abs() - 5.5
+    assert(a > -1e-12 && a < 1e-12, "abs(-5.5) != 5.5")
+}
+
+test "special-value predicates: is_nan / is_finite / is_infinite" {
+    assert((f64.NAN).is_nan(), "NAN should be is_nan")
+    assert(!(42.0).is_nan(), "42 should not be is_nan")
+
+    assert((42.0).is_finite(), "42 should be finite")
+    assert(!(f64.INFINITY).is_finite(), "INFINITY should not be finite")
+
+    assert((f64.INFINITY).is_infinite(), "INFINITY should be is_infinite")
+    assert((f64.NEG_INFINITY).is_infinite(), "NEG_INFINITY should be is_infinite")
+    assert(!(1.0).is_infinite(), "1.0 should not be is_infinite")
+}
+
+test "quantization guard: round a price then verify it is finite" {
+    // Practical: round a computed price to whole cents and guard against NaN/Inf.
+    ro raw = 19.99 * 3.0
+    ro cents = (raw * 100.0).round()
+    ro d = cents - 5997.0
+    assert(d > -1e-6 && d < 1e-6, "rounded cents wrong")
+    assert(cents.is_finite(), "price must be finite")
+    assert(!cents.is_nan(), "price must not be NaN")
+}

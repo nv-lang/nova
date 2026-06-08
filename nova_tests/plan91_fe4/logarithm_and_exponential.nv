@@ -1,0 +1,52 @@
+// Plan 91 Ф.4 conformance: f64 logarithms + exponentials, realistic scenario.
+// Information-theory / scientific computations with ln/log2/log10/exp/exp2.
+// All float comparisons use a tolerance window (never == on floats).
+module plan91_fe4.logarithm_and_exponential
+
+import std.runtime.math
+
+// Tolerance helper inlined per-assert: |a - b| < eps.
+
+test "natural log / exp are inverses" {
+    // ln(E) == 1
+    ro a = (f64.E).ln()
+    ro da = a - 1.0
+    assert(da > -1e-12 && da < 1e-12, "ln(E) != 1")
+
+    // exp(1) == E
+    ro b = (1.0).exp()
+    ro db = b - f64.E
+    assert(db > -1e-12 && db < 1e-12, "exp(1) != E")
+
+    // exp(ln(x)) round-trips for x = 42
+    ro x = 42.0
+    ro rt = (x.ln()).exp()
+    ro drt = rt - x
+    assert(drt > -1e-9 && drt < 1e-9, "exp(ln(42)) != 42")
+}
+
+test "base-2 and base-10 logarithms" {
+    // log2(1024) == 10
+    ro l2 = (1024.0).log2()
+    ro d2 = l2 - 10.0
+    assert(d2 > -1e-9 && d2 < 1e-9, "log2(1024) != 10")
+
+    // log10(1000) == 3
+    ro l10 = (1000.0).log10()
+    ro d10 = l10 - 3.0
+    assert(d10 > -1e-9 && d10 < 1e-9, "log10(1000) != 3")
+
+    // exp2(10) == 1024
+    ro e2 = (10.0).exp2()
+    ro de2 = e2 - 1024.0
+    assert(de2 > -1e-6 && de2 < 1e-6, "exp2(10) != 1024")
+}
+
+test "log identity: log2(x) == ln(x) / ln(2)" {
+    // Cross-check base-conversion identity for a non-power-of-two value.
+    ro x = 37.0
+    ro lhs = x.log2()
+    ro rhs = x.ln() / (2.0).ln()
+    ro d = lhs - rhs
+    assert(d > -1e-9 && d < 1e-9, "log2 base-conversion identity broken")
+}
