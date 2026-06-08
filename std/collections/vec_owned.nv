@@ -376,6 +376,139 @@ export fn Vec[T] @as_slice() -> []T {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Protocols — Iterable[T] / Equatable / Cloneable / Printable / DebugPrintable
+// ──────────────────────────────────────────────────────────────────────────
+
+// ─── Iterable[T] ─────────────────────────────────────────────────────────
+
+/// Index-cursor iterator over a `Vec[T]`.
+///
+/// Holds a copy of the buffer pointer (`data`) and the element count at the
+/// moment `iter()` was called; the GC sees the data pointer through this
+/// record and keeps the buffer alive. Concurrent mutation of the originating
+/// `Vec` during iteration is *not* checked — the caller is responsible for
+/// not pushing/removing while iterating.
+export type VecIter[T] {
+    priv data *mut T
+    priv mut idx int
+    priv len int
+}
+
+/// Return an iterator that yields each element in insertion order.
+///
+/// # Examples
+///
+/// ```nova
+/// let v = Vec[int].from([10, 20, 30])
+/// for x in v { println(x) }  // 10, 20, 30
+/// ```
+export fn Vec[T] @iter() -> VecIter[T] =>
+    { @data, idx: 0, @len }
+
+/// Advance the iterator. Returns `Some(T)` while elements remain, `None`
+/// once the vector is exhausted (subsequent calls keep returning `None`).
+export fn VecIter[T] mut @next() -> Option[T] {
+    if @idx >= @len { return None }
+    ro v = unsafe { *(@data + @idx) }
+    @idx = @idx + 1
+    Some(v)
+}
+
+
+// ─── Equatable ───────────────────────────────────────────────────────────
+
+/// Element-wise equality — `true` iff both vectors have the same length and
+/// every pair of corresponding elements compares equal via `==`.
+///
+/// This works for any element type `T` for which `==` is defined (all
+/// primitives and types that implement `Equatable`). For unknown/opaque
+/// element types the comparison degrades to reference identity (same C
+/// pointer), which may give surprising results — declare `@equals` on the
+/// element type to override.
+///
+/// # Examples
+///
+/// ```nova
+/// let a = Vec[int].from([1, 2, 3])
+/// let b = Vec[int].from([1, 2, 3])
+/// let c = Vec[int].from([1, 2, 4])
+/// assert(a.equals(b))
+/// assert(!a.equals(c))
+/// ```
+export fn Vec[T] @equals(other Vec[T]) -> bool =>
+    @as_slice() == other.as_slice()
+
+
+// ─── Cloneable ────────────────────────────────────────────────────────────
+
+/// Deep copy — allocate a new `Vec[T]` and copy every element.
+///
+/// For element types that are themselves heap-allocated values (records,
+/// sum-types, arrays) the GC ensures the originals stay alive; the copy
+/// shares the same element values (shallow copy of pointers). For primitive
+/// element types this is a true value copy.
+///
+/// # Examples
+///
+/// ```nova
+/// let a = Vec[int].from([1, 2, 3])
+/// let mut b = a.clone()
+/// b.push(4)
+/// assert(a.len() == 3)   // original unchanged
+/// assert(b.len() == 4)
+/// ```
+export fn Vec[T] @clone() -> Vec[T] =>
+    Vec[T].from(@as_slice())
+
+
+// ─── Printable / DebugPrintable ───────────────────────────────────────────
+
+/// Append a human-readable representation of `self` to `sb`.
+///
+/// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
+/// `str.from(element)`. For the format to produce meaningful output the
+/// element type must have a `str.from` overload; for opaque/generic element
+/// types without an overload the element representation will degrade to an
+/// integer (the raw C value).
+///
+/// # Examples
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3])
+/// consume sb = StringBuilder.new()
+/// v.fmt(sb)
+/// assert(sb.as_str() == "Vec[1, 2, 3]")
+/// ```
+export fn Vec[T] @fmt(mut sb StringBuilder) -> () {
+    sb.append("Vec[")
+    mut i = 0
+    while i < @len {
+        if i > 0 { sb.append(", ") }
+        ro elem = unsafe { *(@data + i) }
+        sb.append(str.from(elem))
+        i = i + 1
+    }
+    sb.append("]")
+}
+
+/// Append a debug representation of `self` to `sb`.
+///
+/// Identical to `@fmt` in format; provided so that `${v:?}` interp-string
+/// syntax works for `Vec[T]`.
+export fn Vec[T] @debug_fmt(mut sb StringBuilder) -> () {
+    sb.append("Vec[")
+    mut i = 0
+    while i < @len {
+        if i > 0 { sb.append(", ") }
+        ro elem = unsafe { *(@data + i) }
+        sb.append(str.from(elem))
+        i = i + 1
+    }
+    sb.append("]")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Free helpers — buffer allocation
 // ──────────────────────────────────────────────────────────────────────────
 
