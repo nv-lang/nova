@@ -5899,9 +5899,11 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
   sysmon introspection.
 - Closes [M-83.11-gc-cancel-token-alias] (§11.6).
 - Closes [M-83.11-supervised-spawn-cancel-memcpy-segv] (§12.31).
-- Closes [M-83.10.1-armed-cancel-timer-hang] V2 sweep (2026-06-08): 17 тестов с
-  `// ENV NOVA_AUTOARM=0` удалены — cancel+sleep путь корректен под armed M:N.
-  Подтверждает централизованный driver thread как корень fix'а.
+- Closes [M-83.10.1-armed-cancel-timer-hang] V2 sweep PARTIAL (2026-06-08): 15 тестов с
+  `// ENV NOVA_AUTOARM=0` убраны — cancel+sleep корректен под armed M:N. 2 теста
+  re-gated (park_wake_stress, semaphore_batch_n) — stress-верификация выявила TIMEOUT
+  под armed M:N; причина — open [M-83.11-grow-vs-wake-race] (§13.6.1), не закрыт Plan 83.11 Ф.3.
+  [M-83.10.1-armed-cancel-timer-hang] остаётся 🟡 PARTIAL до fix [M-83.11-grow-vs-wake-race].
 
 ### Открытые вопросы
 
