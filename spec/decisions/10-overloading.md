@@ -171,8 +171,8 @@ param-types suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
   arg-types и разным return-type возникает ambiguity error. Реализация
   требует context-driven resolve через let-аннотации, return-position,
   argument-types вызывающей функции. Отложено как Q-overload-result-type.
-- ✅ **Method values** как first-class (`let f = obj.@m`, `Type.@m`) —
-  Plan 11 Ф.4. См. D35 «Method values».
+- ✅ **Method values** как first-class (`Type.@m` unbound, lambda `|| obj.m()`) —
+  Plan 11 Ф.4 + Plan 132 (bound `obj.@m` removed). См. D35 «Method values».
 - ✅ **Disambiguation через `as fn(...)`** для overloaded method values —
   Plan 11 Ф.5. Annotation на cast или на let-binding type определяет,
   какой overload выбрать.
