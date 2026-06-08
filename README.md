@@ -6,7 +6,7 @@
   <p><strong>A programming language for the AI era</strong></p>
 
   <p>
-    <a href="https://nv-lang.github.io">Website</a> |
+    <a href="https://nv-lang.org">Website</a> |
     <a href="#getting-started">Getting started</a> |
     <a href="spec/overview.md">Documentation</a> |
     <a href="CONTRIBUTING.md">Contributing</a>
