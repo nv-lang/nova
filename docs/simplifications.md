@@ -33795,3 +33795,12 @@ scope until process exit. Significantly smaller than V1 per-token leak
 
 3. **ctx_pins[] pinning design (Plan 83.11 §11.6) is sound** — just needs
    uncollectable backing under high-pressure cases.
+
+### [Plan 91 Ф.2 + Ф.5] ✅ CLOSED (2026-06-08)
+- Что закрыто: try_parse_int (Result variant) + ParseIntError sum type + 5 realistic conformance fixtures
+- Что упрощено: split/join/trim/pad из Ф.2 — split external уже, join/trim/pad deferred (не блокер 0.1 release — minimal stdlib без них работоспособен); conformance fixtures в plan91_fe2/ + plan91_fe5/ вместо plan91/ (независимая namespace)
+- Codegen fix: infer_expr_c_type Match third-pass теперь возвращает nova_unit когда все non-divergent arms — unit, вместо nova_int fallback (closes CC-FAIL на nested match с unit-arm bodies)
+- Followups:
+  - [M-91.fe2-parse-f64] — parse_f64 Result variant
+  - [M-91.fe2-text-utils] — join/trim/pad если потребуются для Ф.6 examples
+  - [M-91.fe5-math-time-conformance] — math/time API conformance (sqrt/ln работают, Instant/Duration — pending)
