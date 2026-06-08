@@ -1,0 +1,46 @@
+// Plan 91 Ф.5 conformance: text/string realistic use-cases.
+// CSV-like parsing with split + try_parse_int.
+module plan91_fe5.text_realistic
+
+import std.runtime.string.{ParseIntError}
+
+test "csv parsing — count rows" {
+    ro csv = "alice,30\nbob,25\ncharlie,42"
+    ro lines = csv.split("\n")
+    assert(lines.len() == 3, "3 rows")
+}
+
+test "csv parsing — extract fields" {
+    ro line = "alice,30"
+    ro fields = line.split(",")
+    assert(fields.len() == 2)
+    assert(fields[0] == "alice")
+    match fields[1].try_parse_int() {
+        Ok(age) => assert(age == 30)
+        Err(_) => assert(false, "age should parse")
+    }
+}
+
+test "csv parsing — all rows valid" {
+    ro csv = "alice,30\nbob,25\ncharlie,42"
+    ro lines = csv.split("\n")
+    ro expected_names = ["alice", "bob", "charlie"]
+    ro expected_ages = [30, 25, 42]
+    mut i = 0
+    for line in lines {
+        ro fields = line.split(",")
+        assert(fields[0] == expected_names[i])
+        match fields[1].try_parse_int() {
+            Ok(age) => assert(age == expected_ages[i])
+            Err(_) => assert(false, "age parse failed")
+        }
+        i = i + 1
+    }
+}
+
+test "csv malformed age returns Err" {
+    ro line = "dave,notanumber"
+    ro fields = line.split(",")
+    ro r = fields[1].try_parse_int()
+    assert(r.is_err(), "non-numeric age should be Err")
+}
