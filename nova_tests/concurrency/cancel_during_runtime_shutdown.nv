@@ -28,7 +28,7 @@
 // semantics, not the cancel/shutdown race; for race coverage the external
 // `tools/stress_bisect.sh` harness re-runs the binary many times.
 //
-// ENV NOVA_AUTOARM=0
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
 module concurrency.cancel_during_runtime_shutdown
 

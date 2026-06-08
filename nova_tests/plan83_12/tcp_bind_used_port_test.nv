@@ -4,7 +4,7 @@
 // Bind listener A on OS port, read the port number, then attempt to bind
 // listener B on the same port → must return Err.
 //
-// ENV NOVA_AUTOARM=0
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
 module plan83_12.tcp_bind_used_port_test
 

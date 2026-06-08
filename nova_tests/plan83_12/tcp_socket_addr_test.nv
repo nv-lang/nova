@@ -4,7 +4,7 @@
 // Verifies SocketAddr.loopback, SocketAddr.v4, port(), host_str(),
 // is_v4(), is_v6(), to_str() without any async I/O.
 //
-// ENV NOVA_AUTOARM=0
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
 module plan83_12.tcp_socket_addr_test
 
