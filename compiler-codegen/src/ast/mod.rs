@@ -2535,6 +2535,73 @@ pub enum UnOp {
     Deref,
 }
 
+/// Plan 118.1 [M-118.1-addr-of-chains]: classification of an `addr_of(...)` /
+/// `&value` operand's field-access chain by its ROOT. The lvalue check must
+/// walk the `Member.obj` / `(*p)` chain to its base — a field path rooted in a
+/// temporary (call result, arithmetic, …) would yield a dangling pointer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AddrChainRoot {
+    /// Chain roots in a named binding (`Some(name)`) or `self` (`None`).
+    /// Addressable — stable storage.
+    Lvalue(Option<String>),
+    /// Some link in the chain is an array index (`arr[i].field`) — unstable
+    /// base (buffer resize / GC compaction). Maps to E_ARRAY_INDEX_PTR_BANNED.
+    IndexInChain,
+    /// Chain roots in an rvalue (call result, arithmetic, record literal, …).
+    /// Maps to E_ADDR_OF_NON_LVALUE.
+    Rvalue,
+}
+
+/// Walk an `addr_of` / `&` operand to its field-access-chain root and classify
+/// it. `Member` / `TurboFish` links are descended; an explicit `(*p)` deref is
+/// descended too — so `(*p).field` is treated identically to the auto-deref
+/// sugar `p.field` (both root in `p`; the pointee is stable storage, the C
+/// `&(p->field)` pattern). An `Index` link short-circuits to `IndexInChain`;
+/// anything else is an `Rvalue` base.
+pub fn addr_of_chain_root(mut k: &ExprKind) -> AddrChainRoot {
+    loop {
+        match k {
+            ExprKind::Ident(n) => return AddrChainRoot::Lvalue(Some(n.clone())),
+            ExprKind::SelfAccess => return AddrChainRoot::Lvalue(None),
+            // A `Member` whose name starts with '@' is a bound method VALUE
+            // (`obj.@method`), an rvalue — not an addressable field. (The
+            // `@field` self-access form parses to `Member{obj:SelfAccess,
+            // name:"field"}` — no '@' prefix — so it is unaffected.)
+            ExprKind::Member { obj, name } => {
+                if name.starts_with('@') {
+                    return AddrChainRoot::Rvalue;
+                }
+                k = &obj.kind;
+            }
+            ExprKind::TurboFish { base, .. } => k = &base.kind,
+            ExprKind::Unary { op: UnOp::Deref, operand } => k = &operand.kind,
+            ExprKind::Index { .. } => return AddrChainRoot::IndexInChain,
+            _ => return AddrChainRoot::Rvalue,
+        }
+    }
+}
+
+/// Plan 118.1 [M-118.1-addr-of-chains]: root binding name of a PURE value
+/// field-access chain (`x`, `s.field`, `a.b.c`) — `Some(name)`. Returns `None`
+/// if the operand passes through a deref / index / `self` / any non-(Member|
+/// Ident) node, so the `addr_of_mut` mut-binding requirement applies only to
+/// value-field chains (pointer-deref mutability is governed by `*mut T` typing).
+pub fn addr_of_mut_root_ident(mut k: &ExprKind) -> Option<&str> {
+    loop {
+        match k {
+            ExprKind::Ident(n) => return Some(n.as_str()),
+            // Bound method value (`obj.@method`) is not a field — bail.
+            ExprKind::Member { obj, name } => {
+                if name.starts_with('@') {
+                    return None;
+                }
+                k = &obj.kind;
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Pattern для match / let / if-let.
 #[derive(Debug, Clone)]
 pub enum Pattern {

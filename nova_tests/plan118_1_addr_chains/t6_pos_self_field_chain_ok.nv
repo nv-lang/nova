@@ -1,0 +1,23 @@
+// Plan 118.1 [M-118.1-addr-of-chains] — addr_of(@a.b): a field chain rooted in
+// `self` (SelfAccess) is a valid lvalue → accepted.
+module plan118_1_addr_chains.t6_pos_self_field_chain_ok
+
+type Inner {
+    ro z i64
+}
+
+type Holder {
+    ro inner Inner
+}
+
+fn Holder @peek() -> i64 {
+    unsafe {
+        ro p = addr_of(@inner.z)
+        p.read()
+    }
+}
+
+test "addr_of of a self-rooted field chain is accepted" {
+    ro h = Holder { inner: Inner { z: 9 } }
+    assert(h.peek() == 9)
+}

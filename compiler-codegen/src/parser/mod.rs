@@ -5989,6 +5989,36 @@ impl Parser {
                         start,
                     ));
                 }
+                // Plan 118.1 [M-118.1-addr-of-chains]: `&value` must root in a
+                // named lvalue — the SAME chain-root rule as `addr_of(...)`
+                // (which desugars to this very UnOp::AddrOf). Reject a field path
+                // rooted in a call result / arithmetic (dangling temporary) or
+                // passing through an array index (D216 §15). The top-level
+                // RecordLit / Index / literal cases are already handled above
+                // with their dedicated codes; this catches the chained forms
+                // (`&make().f`, `&arr[i].f`, `&produce()`).
+                match crate::ast::addr_of_chain_root(&operand.kind) {
+                    crate::ast::AddrChainRoot::Lvalue(_) => {}
+                    crate::ast::AddrChainRoot::IndexInChain => {
+                        return Err(Diagnostic::new(
+                            "[E_ARRAY_INDEX_PTR_BANNED] `&(...arr[i]...)` forbidden \
+                             (Plan 118 D216 §15) — a field path through an array \
+                             index has an unstable base (buffer resize via `.push` \
+                             / GC compaction) → dangling pointer. Bind the element \
+                             to a named local first.".to_string(),
+                            start,
+                        ));
+                    }
+                    crate::ast::AddrChainRoot::Rvalue => {
+                        return Err(Diagnostic::new(
+                            "[E_ADDR_OF_NON_LVALUE] `&value` requires an lvalue \
+                             (named binding, field access, or self) — rvalue \
+                             expressions (call results, arithmetic, etc.) are not \
+                             addressable. Bind in a named local first.".to_string(),
+                            start,
+                        ));
+                    }
+                }
                 let span = start.merge(operand.span);
                 Ok(Expr::new(
                     ExprKind::Unary {

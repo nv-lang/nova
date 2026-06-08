@@ -14218,7 +14218,19 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     // args[0] is bare Ident. Lookup в param_mut + local_mut;
                     // missing/false → E_ADDR_OF_MUT_REQUIRES_MUT_BINDING.
                     if fname == "addr_of_mut" && args.len() == 1 {
-                        if let ExprKind::Ident(target) = &args[0].expr().kind {
+                        // Plan 118.1 [M-118.1-addr-of-chains]: enforce the mut
+                        // binding on the ROOT of a pure value field-access chain,
+                        // not just a bare Ident — `addr_of_mut(s.field)` must
+                        // require `mut s` (otherwise a *mut into readonly
+                        // storage). Deref/index/self roots → None, so the check is
+                        // skipped: `addr_of_mut((*p).f)` is NOT yet gated on `p`
+                        // being a `*mut`/mut-bound pointer (V1 accepted gap — the
+                        // desugar is a bare UnOp::AddrOf with no *mut cast;
+                        // tracked for a follow-up), and array-index roots are
+                        // already banned upstream (E_ARRAY_INDEX_PTR_BANNED).
+                        if let Some(target) =
+                            crate::ast::addr_of_mut_root_ident(&args[0].expr().kind)
+                        {
                             let is_mut = ctx.param_mut.get(target).copied()
                                 .or_else(|| ctx.local_mut.get(target).copied())
                                 .unwrap_or(false);
