@@ -404,6 +404,39 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     nova_sched_wake(st->scope, st->slot);
 }
 
+/* ── Plan 83.11 Ф.4: blocking offload via driver UV loop ──────────
+ *
+ * ARM_BLOCKING job handler — driver thread.
+ *
+ * Worker submits this job instead of calling uv_queue_work(nova_current_loop())
+ * directly. Driver calls uv_queue_work on its own loop so the threadpool
+ * work_cb / after_cb are anchored to the single driver UV loop.
+ *
+ * after_work_cb (_nova_blocking_after_cb in fibers.h) runs on driver thread:
+ *   done = true (RELEASE)
+ *   nova_sched_wake(scope, slot) → cross-thread dispatch to worker
+ *
+ * Wake-before-park race: if after_work_cb fires before worker reaches
+ * nova_sched_park_until, the park_until fast-path predicate check
+ * (_nova_blocking_is_done) returns true immediately → no yield needed.
+ * For the case when nova_sched_find_state returns NULL (state not yet
+ * created by nova_sched_register_pending): the RELEASE store to st->done
+ * is still visible to the worker's ACQUIRE load in the park_until fast-path,
+ * so the predicate returns true and the fiber skips parking entirely. */
+static void _nova_driver_handle_arm_blocking(NovaBlockingState* st) {
+    if (!st) return;
+    int rc = uv_queue_work(&_nova_driver.loop, &st->work,
+                           _nova_blocking_work_cb, _nova_blocking_after_cb);
+    if (rc != 0) {
+        fprintf(stderr, "nova: driver uv_queue_work(ARM_BLOCKING) failed: %s\n",
+                uv_strerror(rc));
+        /* Wake fiber so it doesn't park forever. done=true lets park_until
+         * predicate return true and unblock the caller. */
+        nova_abool_store(&st->done, true);
+        nova_sched_wake(st->scope, st->slot);
+    }
+}
+
 /* ── Job dispatch ────────────────────────────────────────────────── */
 
 static void _nova_driver_process_job(NovaDriverJob* job) {
@@ -418,7 +451,7 @@ static void _nova_driver_process_job(NovaDriverJob* job) {
         _nova_driver_handle_cancel_timer(job->u.cancel_timer.st);
         break;
     case NOVA_DRV_JOB_ARM_BLOCKING:
-        fprintf(stderr, "nova: driver ARM_BLOCKING job — Ф.4 NOT YET IMPLEMENTED\n");
+        _nova_driver_handle_arm_blocking(job->u.arm_blocking.st);
         break;
     default:
         fprintf(stderr, "nova: driver unknown job kind %d\n", (int)job->kind);

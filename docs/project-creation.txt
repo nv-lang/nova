@@ -34383,6 +34383,52 @@ Tests verified (2026-06-08):
 - nova_tests/plan91_fe2: 10/0 PASS (with NOVA_GC_LIB_DIR + INCLUDE_DIR correctly set)
 - nova_tests/plan91_fe5: 5/0 PASS
 
+=== Plan 83.11 Ф.4 followup — tests + hardening + spec/doc (2026-06-08) ===
+
+Контекст: Ф.4 (blocking offload → centralized driver UV loop) реализован и
+закоммичен ранее (480305e5cc1). Этот followup: позитивные тесты, hardening до
+паритета со sleep-путём, спека, критерии приёмки + обнаружение pre-existing M:N
+гонки.
+
+Tests:
+- nova_tests/concurrency/blocking_driver_test.nv — 9 тестов (A1-A5), все scope
+  ≤3 fiber'а (детерминированно: 3× прогона PASS/PASS/PASS). Покрывает
+  wake-before-park fast-path, sequential, concurrent, worker-freed + interplay с
+  driver-routed Time.sleep, main-thread inline.
+
+Hardening (fibers.h + nova_sched.h, parity со sleep driver path):
+- pre-init nova_sched_get_state(scope) перед submit'ом ARM_BLOCKING job'а —
+  закрывает NULL-state lost-wake окно (driver-thread wake до register_pending).
+- reset pending_wake[slot] в nova_sched_unregister_pending — enforce'ит
+  free-slot инвариант (Lesson 5).
+
+Spec:
+- spec/decisions/06-concurrency.md D50 §4: аменд Plan 83.11 Ф.4 — routing через
+  driver, wake-before-park закрытие, известное ограничение.
+
+Plan-doc:
+- docs/plans/83.11-centralized-io-driver.md §13.6: hardening + acceptance
+  criteria A1-A5 + verification; §13.6.1 [M-83.11-grow-vs-wake-race] полный
+  post-mortem (symptom + state-dump + root cause + fix ideas).
+
+ОБНАРУЖЕНО (НЕ Ф.4-регрессия): [M-83.11-grow-vs-wake-race] — pre-existing M:N
+park/wake гонка. Несколько supervised-блоков с возрастающим числом fiber'ов в
+одном процессе → hang. Воспроизводится на main и на чистом Time.sleep (без
+blocking). Root cause: torn-чтение sched_state массивов в nova_sched_grow_state,
+гонка с nova_sched_wake driver-потока (per-worker scope не ресетится между
+блоками, capacity растёт монотонно). Диагностировано через state-dump
+(NOVA_WATCHDOG_DUMP_SECS=5) + 2 параллельных code-аудита (ultracode workflow).
+Кандидат на отдельный sub-plan; требует careful design + n≥66 stress.
+
+Methodology: следовал docs/debugging-races.md (state-dump §3.2, bisect, ONE
+point-probe). Ultracode workflow'ы: probe-isolation (8 probes ∥), bug-analysis
+(2 ∥), characterization (cross-version main repro + minimal repro + 2 code audits).
+
+Commits:
+- (existing) feat(plan83.11 Ф.4): blocking offload → driver UV loop
+- fix(plan83.11 Ф.4): pre-init sched_state + reset pending_wake (sleep parity)
+- test(plan83.11 Ф.4): blocking_driver_test A1-A5 (≤3-fiber stable profile)
+- docs(plan83.11 Ф.4): spec D50 amend + acceptance criteria + grow-vs-wake marker
 
 
 ================================================================================
