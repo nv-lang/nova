@@ -16656,7 +16656,7 @@ Full suite: 855 PASS / 0 FAIL / 47 SKIP.
 - Phase 4 (удаление legacy sum_schemas field) — deferred до Plan 59 per design.
 - 5 Result-методов (unwrap_or/unwrap/etc.) — blocker: type-checker T mismatch.
 - Option.or — trampoline Nova_Option_method_or_<T> отсутствует в array.h.
-- D26 в 08-runtime.md обновлђн (Bootstrap-расширение §62.A.bis добавлен).
+- D26 в 08-runtime.md обновлён (Bootstrap-расширение §62.A.bis добавлен).
 
 # Plan 33.7 BitVec theory + #nooverflow (2026-05-20)
 
