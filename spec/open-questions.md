@@ -5256,6 +5256,9 @@ fn system_clock() -> Effect[Time]            // реальные часы OS
 
 ### Парсинг чисел из строки
 
+**Реализовано (2026-06-08):** `str @try_parse_int(radix int = 10) -> Result[int, ParseIntError]`
+в `std/runtime/string.nv` (D178 amend V2). Тестируется в `nova_tests/plan91_fe2/`.
+
 ```nova
 fn int.try_from(s str) -> Result[int, ParseIntError]
 fn u64.try_from(s str) -> Result[u64, ParseIntError]
@@ -5422,11 +5425,18 @@ int.MAX / int.MIN
 По D30 convention `Parse<TypeName>Error`:
 
 ```nova
-type ParseIntError { value str, reason str }
+// Реализовано (2026-06-08) как sum type (не record):
+type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
+
+// Placeholder (ещё не реализованы — структура может измениться):
 type ParseFloatError { value str, reason str }
 type Utf8Error { position int, byte byte }
 type InvalidCodepoint { value int }
 ```
+
+Примечание: `ParseIntError` изначально планировался как record `{ value str, reason str }`
+(для structured payload), но для MVP реализован как sum type с четырьмя вариантами.
+Payload (какой символ невалидный, на какой позиции) — followup [M-91.fe2-parse-int-error-payload].
 
 ### Что отсутствует (намеренно — не для MVP)
 
@@ -5439,6 +5449,7 @@ type InvalidCodepoint { value int }
 ### Приоритеты реализации
 
 **Tier 1 (без них stdlib не пишется):**
+- `str @try_parse_int(radix=10) -> Result[int, ParseIntError]` ✅ реализовано (D178 amend V2, 2026-06-08)
 - `int.try_from(s)` / `u64.try_from(s)` / `f64.try_from(s)`
 - `str` методы (`@len`, `@char_at`, `@chars`, `@slice`, `@find`, `@contains`, `@starts_with`)
 - `[]T` базовые (`new`, `with_capacity`, `push`, `len`, `get`, `iter`)

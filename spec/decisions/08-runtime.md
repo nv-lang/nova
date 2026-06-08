@@ -20,6 +20,7 @@ static-состояния.
 | [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) | Примитивы доступа к памяти — `byte_at` / bulk slice-операции |
 | [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) | `str` Nova-body dispatch — Plan 54 Ф.2 extension |
 | [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) | `str` API cleanup и расширения — Plan 91 Ф.2.6 |
+| [D178 amend V2](#d178-amend-v2--str-try_parse_int--parseiniterror-sum-type--plan-91-ф2) | `str @try_parse_int` + `ParseIntError` sum type — Plan 91 Ф.2 |
 | [D179](#d179-stringbuilder--pure-nova-consume-type--plan-91-ф26) | `StringBuilder` — pure Nova consume type — Plan 91 Ф.2.6 |
 
 ---
@@ -4161,6 +4162,89 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 - [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` parameter modifier.
 - [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.from_bytes_*` helpers.
 - [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md) — sub-plan Ф.2.6 sub-phase D179.
+
+---
+
+## D178 amend V2 — `str @try_parse_int` + `ParseIntError` sum type — Plan 91 Ф.2
+
+**Статус:** закрыт (Plan 91 Ф.2-remainders, 2026-06-08).
+
+### Что
+
+Добавлен `try_parse_int` — Result-возвращающий вариант `parse_int` (D178 V1),
+и `ParseIntError` sum type с четырьмя вариантами:
+
+```nova
+export type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
+```
+
+Это **sum type**, не record (design correction от Q-doc placeholder
+`{ value str, reason str }` который предполагал structured payload).
+Для MVP variantы достаточны; payload добавится в followup.
+
+### API
+
+```nova
+// Добавлено к str API (D178):
+#stable(since = "0.1")
+export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] { ... }
+```
+
+Семантика:
+- `radix < 2 || radix > 36` → `Err(InvalidRadix)`
+- пустая строка / строка из одного знака → `Err(Empty)`
+- символ вне алфавита для данного radix → `Err(InvalidDigit)`
+- значение выходит за пределы `int` (i64) → `Err(Overflow)`
+- успех → `Ok(n)` где `n` корректное знаковое i64
+
+Prefix `+` разрешён (ведёт себя как без prefix). Prefix `-` инвертирует знак.
+
+### Инвариант консистентности
+
+Для любой строки `s` и radix `r ∈ 2..=36`:
+
+```
+s.parse_int(radix: r) == Some(n)  ⟺  s.try_parse_int(radix: r) == Ok(n)
+s.parse_int(radix: r) == None     ⟺  s.try_parse_int(radix: r).is_err()
+```
+
+Этот инвариант проверяется в `nova_tests/plan91_fe2/try_parse_int_consistent_with_parse_int_ok.nv`.
+
+### C codegen mapping
+
+`try_parse_int` реализована как Nova-body (не external C function) в
+`std/runtime/string.nv`, аналогично `parse_int`. Codegen компилирует тело
+Nova → C через обычный Nova dispatch (D177).
+
+```nova
+// Реализация в std/runtime/string.nv (сокращено):
+export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
+    if radix < 2 || radix > 36 { return Err(InvalidRadix) }
+    ro bytes = @as_bytes()
+    ro n = @byte_len()
+    if n == 0 { return Err(Empty) }
+    // ... digit loop с Overflow guard ...
+    Ok(if neg { -acc } else { acc })
+}
+```
+
+### Codegen fix (сопутствующий)
+
+При реализации обнаружен баг в `emit_c.rs` `infer_expr_c_type` для
+`ExprKind::Match`: третий проход возвращал `"nova_int"` даже когда все
+non-divergent arms возвращали `nova_unit`. Это вызывало CC-FAIL на вложенных
+match-выражениях с unit-arm bodies типа `match e { Empty => {} _ => ... }`.
+
+Исправление: добавлен `all_unit` флаг — если все non-divergent arms
+unit-typed, возвращается `"nova_unit"` вместо `"nova_int"` fallback.
+
+### Связь
+
+- [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — V1 `parse_int` API.
+- [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) — Nova-body dispatch механизм.
+- `nova_tests/plan91_fe2/` — 10 fixtures (6 positive + 4 negative).
+
+---
 
 ## D217. Method-local receiver field caching — Plan 123.1
 
