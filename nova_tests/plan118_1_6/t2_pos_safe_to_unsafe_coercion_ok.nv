@@ -1,0 +1,17 @@
+// Plan 118.1.6 Ф.4 T2 POS — safe fn → *unsafe fn pointer (covariant widening).
+//
+// Per Plan 118.1.6 covariance rule «safe → unsafe widening only».
+// Bare safe fn assigned к *unsafe fn(...) binding — allowed (caller
+// obligations strictly increase: callsite must wrap в unsafe { }).
+
+module plan118_1_6.t2_pos_safe_to_unsafe_coercion_ok
+
+fn safe_id(x i64) -> i64 {
+    x
+}
+
+test "safe fn coerces к *unsafe fn pointer (widening)" {
+    ro p *unsafe fn(i64) -> i64 = safe_id
+    ro v = unsafe { p(7) }
+    assert(v == 7)
+}

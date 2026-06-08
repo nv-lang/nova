@@ -1,0 +1,17 @@
+// Plan 118.1.6 Ф.4 T3 POS — #unsafe fn → *unsafe fn pointer direct assignment.
+//
+// Bare #unsafe fn name yields *unsafe fn(...) — matches binding annotation
+// exactly. Indirect call must wrap в unsafe { }.
+
+module plan118_1_6.t3_pos_unsafe_fn_ptr_direct_ok
+
+#unsafe
+fn risky(x i64) -> i64 {
+    x + 100
+}
+
+test "#unsafe fn → *unsafe fn pointer + indirect call inside unsafe" {
+    ro p *unsafe fn(i64) -> i64 = risky
+    ro v = unsafe { p(42) }
+    assert(v == 142)
+}
