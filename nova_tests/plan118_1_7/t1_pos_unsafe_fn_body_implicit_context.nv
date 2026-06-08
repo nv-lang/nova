@@ -1,0 +1,27 @@
+// Plan 118.1.7 Ф.4 T1 POS — unsafe fn body is implicit unsafe context.
+// D216 §9: body of `unsafe fn` allows pointer ops without extra `unsafe {}` wrap.
+//
+// A-118.1.7.d: pointer deref inside unsafe fn body — checker accepts.
+
+module plan118_1_7.t1_pos_unsafe_fn_body_implicit_context
+
+// unsafe fn body is implicitly an unsafe context — *p and &x are allowed
+// without an explicit `unsafe {}` block inside.
+unsafe fn double_via_ptr(x i64) -> i64 {
+    // Inline addr-of + deref: both pointer ops are allowed in body
+    // because unsafe fn body is implicitly unsafe context (D216 §9).
+    ro p = &x
+    *p * 2
+}
+
+test "unsafe fn body — implicit unsafe context, pointer ops ok" {
+    ro result = unsafe { double_via_ptr(21) }
+    assert(result == 42)
+}
+
+test "unsafe fn body — multiple pointer ops without inner wrap" {
+    ro a = unsafe { double_via_ptr(5) }
+    ro b = unsafe { double_via_ptr(10) }
+    assert(a == 10)
+    assert(b == 20)
+}
