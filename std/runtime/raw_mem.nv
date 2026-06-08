@@ -78,3 +78,36 @@ export external fn RawMem.write_bytes(dst mut * u8, val u8, n usize) -> ()
 ///   - Returns `-1` если first differing byte в `a` is less than в `b`
 ///   - Returns `+1` если first differing byte в `a` is greater than в `b`
 export external fn RawMem.compare(a *u8, b *u8, n usize) -> int
+
+/// Allocate `n` bytes of GC-tracked zeroed memory. Returns raw `mut * u8`.
+///
+/// Backed by `nova_alloc(n)` from `nova_rt/alloc.h`. Memory is
+/// GC-collectable — do NOT store pointer in static/global without GC-root
+/// registration (use `RawMem.alloc_uncollectable` for long-lived buffers).
+///
+/// CONTRACT: returns zeroed memory (all bytes = 0x00).
+/// Alignment: 8-byte (nova_alloc guarantee).
+/// Size: `n > 0` recommended; behaviour with `n = 0` is implementation-defined.
+///
+/// Must be called inside `unsafe {}` block (E_UNSAFE_CALL_REQUIRES_WRAP).
+export #unsafe external fn RawMem.alloc(n usize) -> mut * u8
+
+/// Allocate `n` bytes NOT GC-tracked. Caller must call `RawMem.free_uncollectable`.
+///
+/// Backed by `nova_alloc_uncollectable(n)`. Memory persists until explicit
+/// `RawMem.free_uncollectable` call — GC will NOT collect it. Use for
+/// long-lived buffers that must not be collected between cross-thread
+/// write and read (avoids conservative-scan miss on Windows fiber arena).
+///
+/// CONTRACT: returns zeroed memory (all bytes = 0x00).
+/// Alignment: 8-byte.
+///
+/// Must be called inside `unsafe {}` block.
+export #unsafe external fn RawMem.alloc_uncollectable(n usize) -> mut * u8
+
+/// Free a pointer allocated with `RawMem.alloc_uncollectable`.
+///
+/// Backed by `nova_free_uncollectable(ptr)`. UB if called on a GC-tracked
+/// pointer (from `RawMem.alloc`) — use GC-tracked memory only with GC.
+/// Double-free is UB. Must be called inside `unsafe {}` block.
+export #unsafe external fn RawMem.free_uncollectable(ptr mut * u8) -> ()

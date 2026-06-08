@@ -526,4 +526,27 @@ static inline nova_int Nova_RawMem_static_compare(const void* a, const void* b, 
     return (nova_int)(r > 0 ? 1 : (r < 0 ? -1 : 0));
 }
 
+/* Plan 131 Ф.1: GC-allocation intrinsics exposed to Nova.
+ *
+ * Nova naming: RawMem.alloc / RawMem.alloc_uncollectable /
+ *              RawMem.free_uncollectable.
+ * Codegen mangles static-method external fn as
+ *   Nova_<Type>_static_<method> (ExternalRegistry convention).
+ *
+ * Return type `nova_byte*` matches Nova `*mut u8` → C `nova_byte*`
+ * mapping in external_registry.rs (TypeRef::Mut(TypeRef::Pointer(u8))).
+ *
+ * CONTRACT: both alloc functions return zeroed memory (alloc.h guarantee).
+ * nova_free_uncollectable signature: `void nova_free_uncollectable(void*)`.
+ */
+static inline nova_byte* Nova_RawMem_static_alloc(uint64_t n) {
+    return (nova_byte*)nova_alloc((size_t)n);
+}
+static inline nova_byte* Nova_RawMem_static_alloc_uncollectable(uint64_t n) {
+    return (nova_byte*)nova_alloc_uncollectable((size_t)n);
+}
+static inline void Nova_RawMem_static_free_uncollectable(nova_byte* ptr) {
+    nova_free_uncollectable((void*)ptr);
+}
+
 #endif /* NOVA_RT_H */
