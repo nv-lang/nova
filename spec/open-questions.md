@@ -6945,3 +6945,57 @@ fn check_health() -> RuntimeStats {
 
 ---
 
+## Q-vec-vs-slice — Vec[T] vs []T: which to use?
+
+**Status:** Answered (Plan 131, 2026-06-08)
+
+### Короткий ответ
+
+Используй `[]T` по умолчанию. Переключайся на `Vec[T]` только когда T —
+это value-struct (Option[U], named tuple, value-record >8 bytes) и тебе
+нужно typed storage без int64-slot erasure.
+
+### []T (built-in slice, NOVA_ARRAY_DECL macro)
+
+- **Default** — весь существующий код использует `[]T`.
+- Primitives (int, f64, bool, char, str, u8…): полное typed storage
+  (native C type per element).
+- Records / sum-types: указатель в int64-slot — reference semantics,
+  GC-tracked. Работает корректно для heap-allocated T.
+- **Не работает** для value-struct элементов (Option[T], tuple >8 bytes,
+  value-record >8 bytes): int64-slot не вмещает структуру, side-channel
+  readback покрывает только pointer-элементы (D141).
+- Compiler magic required: `NOVA_ARRAY_DECL(T)` macro.
+
+### Vec[T] (Nova-native, std.collections.vec_owned)
+
+- Generic record с `priv mut data *mut T` + `len` + `cap`.
+- Элементы хранятся по РЕАЛЬНОМУ C-типу T в contiguous buffer.
+- `Vec[Option[int]]` хранит `NovaOpt_nova_int` inline (16 bytes/element).
+- `Vec[MyValueRecord]` хранит `NovaValue_MyValueRecord` inline.
+- Работает для ЛЮБОГО T включая Option[U], tuple, value-record.
+- Pure Nova реализация — compiler magic не нужен.
+- Та же производительность (те же alloc и ptr arithmetic).
+
+### Decision table
+
+| T | `[]T` | `Vec[T]` |
+|---|-------|----------|
+| `int`, `f64`, `bool`, `str`, `u8` | ✅ | ✅ |
+| Record (heap pointer) | ✅ | ✅ |
+| `Option[int]` (value-struct) | ❌ int64-erasure | ✅ |
+| Named tuple >8 bytes | ❌ | ✅ |
+| Value-record (D228) | ❌ | ✅ |
+
+### Путь миграции
+
+В будущем `[]T` может стать сахаром над `Vec[T]`, когда typed-storage gap
+будет закрыт для всех T. Пока — используй `Vec[T]` только там где это
+необходимо (см. D141 для текущего статуса `[]T` value-struct gap).
+
+### Cross-refs
+
+- [D232](decisions/02-types.md#d232-vect--nova-native-generic-growable-array) — Vec[T] spec.
+- [D141](decisions/08-runtime.md#d141) — `[]T` bulk slice API + value-struct limitation.
+- [M-91.1-value-struct-array-elem] — исходный gap marker (закрыт через Vec[T] Plan 131).
+

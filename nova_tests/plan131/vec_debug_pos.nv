@@ -1,0 +1,36 @@
+// Plan 131 Ф.4 — Vec[T] Printable/DebugPrintable: fmt and debug_fmt produce output.
+// Verify that @fmt and @debug_fmt methods compile and produce "Vec[...]" output.
+// Note: "${v:?}" interp-string syntax routes through the protocol vtable synthesis path
+// which has a known limitation for generic types — covered by direct method calls here.
+
+module plan131.vec_debug_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "fmt produces Vec[...] representation" {
+    ro v = Vec[int].from([1, 2, 3])
+    consume sb = StringBuilder.new()
+    v.fmt(sb)
+    assert(sb.as_str() == "Vec[1, 2, 3]")
+}
+
+test "fmt on empty Vec" {
+    ro v = Vec[int].new()
+    consume sb = StringBuilder.new()
+    v.fmt(sb)
+    assert(sb.as_str() == "Vec[]")
+}
+
+test "debug_fmt produces Vec[...] representation" {
+    ro v = Vec[int].from([10, 20, 30])
+    consume sb = StringBuilder.new()
+    v.debug_fmt(sb)
+    assert(sb.as_str() == "Vec[10, 20, 30]")
+}
+
+test "fmt single-element Vec" {
+    ro v = Vec[int].from([42])
+    consume sb = StringBuilder.new()
+    v.fmt(sb)
+    assert(sb.as_str() == "Vec[42]")
+}

@@ -1,0 +1,33 @@
+// Plan 131 Ф.3 — stress growth: push 1000 elements, verify len + correctness
+// across many reallocations (×2 strategy from initial cap 8).
+
+module plan131.vec_grow_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "push 1000 ints, verify len and every value" {
+    mut v = Vec[int].new()
+    for i in 0..1000 { v.push(i * 2) }
+    assert(v.len() == 1000)
+    assert(v.cap() >= 1000)
+
+    mut i = 0
+    mut ok = true
+    while i < 1000 {
+        if v.get(i) != Some(i * 2) { ok = false }
+        i = i + 1
+    }
+    assert(ok)
+    assert(v.get(0) == Some(0))
+    assert(v.get(999) == Some(1998))
+}
+
+test "grow then shrink_to_fit keeps data" {
+    mut v = Vec[int].new()
+    for i in 0..500 { v.push(i) }
+    v.shrink_to_fit()
+    assert(v.cap() == 500)
+    assert(v.len() == 500)
+    assert(v.get(250) == Some(250))
+    assert(v.get(499) == Some(499))
+}

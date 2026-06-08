@@ -4937,9 +4937,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Canonical ro pointer = Pointer(T) → `const T*`. Mut(Pointer(T)) /
             // Unsafe(Pointer(T)) emit `T*` без const. Non-Pointer inner
             // transparently recurses (Mut/Unsafe used elsewhere as modifiers).
+            //
+            // Plan 131 Ф.2: Nova V2 syntax `*mut T` = Pointer(Mut(T)) — "pointer
+            // to mutable T". In C, this maps to `T*` (non-const, writable pointer).
+            // Without this: Pointer(Mut(T)) → "const " + type_ref_to_c(Mut(T)) + "*"
+            //   = "const nova_int*" (CC-FAIL when used as lvalue for deref-write).
+            // Fix: when inner has Mut/Unsafe wrapper, strip it for const decision —
+            // emit `T*` (mutable pointer) instead of `const T*`.
             TypeRef::Pointer(inner, _) => {
-                let inner_c = self.type_ref_to_c(inner)?;
-                Ok(format!("const {}*", inner_c))
+                let (is_mutable_ptr, base_inner) = match inner.as_ref() {
+                    TypeRef::Mut(ti, _) | TypeRef::Unsafe(ti, _) => (true, ti.as_ref()),
+                    _ => (false, inner.as_ref()),
+                };
+                let inner_c = self.type_ref_to_c(base_inner)?;
+                if is_mutable_ptr {
+                    Ok(format!("{}*", inner_c))
+                } else {
+                    Ok(format!("const {}*", inner_c))
+                }
             }
             TypeRef::Mut(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
@@ -10107,6 +10122,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             use crate::ast::TypeDeclKind;
             if let TypeDeclKind::Record(fields) = &template.kind {
                 fields.iter().any(|fld| {
+                    // Plan 131 Ф.3: typed-pointer field `*mut T` / `*T` over a
+                    // type param (e.g. `Vec[T] { data *mut T }`). The erased
+                    // body lowers `*(@data + @n)` к broken pointer arithmetic on
+                    // an erased element type — emit a stub instead; the
+                    // caller-side mono pass produces a correct concrete instance
+                    // (`Nova_Vec____nova_int` with `nova_int* data`).
+                    if matches!(&fld.ty,
+                        TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Unsafe(..))
+                        && Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
+                    {
+                        return true;
+                    }
                     // Same condition as emit_type_decl erased field → void* arm (lines 3666-3670)
                     if let TypeRef::Named { path, generics, .. } = &fld.ty {
                         path.len() >= 1
@@ -11780,6 +11807,30 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 }
                 Some(Self::compute_mono_tuple_c_name(&elem_cs))
             }
+            // Plan 131 Ф.3: typed pointer family `*T` / `*mut T` / `*unsafe T`
+            // (parsed as `Pointer(inner)` where inner may itself be `Mut`/
+            // `Unsafe`). Resolve the pointee via subst и append `*` so a
+            // generic free fn returning `*mut T` (e.g. `alloc_buf[T] -> *mut T`)
+            // infers a concrete `nova_int*` / `NovaOpt_nova_int*` / `Nova_Pt**`
+            // at the call site, не erased `void*`. Mirror of `type_ref_to_c`
+            // `Pointer`/`Mut`/`Unsafe` arms (sans const-ness, irrelevant for the
+            // inferred binding C type).
+            crate::ast::TypeRef::Pointer(inner, _) => {
+                let base = match inner.as_ref() {
+                    crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Unsafe(ti, _) => ti.as_ref(),
+                    other => other,
+                };
+                let inner_c = Self::apply_type_subst_to_ref(base, subst)?;
+                Some(format!("{}*", inner_c))
+            }
+            crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Unsafe(inner, _) => {
+                if let crate::ast::TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    let inner_c = Self::apply_type_subst_to_ref(p_inner, subst)?;
+                    Some(format!("{}*", inner_c))
+                } else {
+                    Self::apply_type_subst_to_ref(inner, subst)
+                }
+            }
             _ => None,
         }
     }
@@ -11800,6 +11851,28 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     "unit"          => "nova_unit".to_string(),
                     other           => format!("Nova_{}*", other),
                 }
+            }
+            // Plan 131 Ф.3: Option[T] / Result[T,E] must mangle к their
+            // canonical C names (`NovaOpt_<T>` / `NovaRes_<T>_<E>*`), mirroring
+            // `apply_type_subst_to_ref` / `type_ref_to_c`. Without this, a
+            // user generic over `Option[int]` (e.g. `Vec[Option[int]]`)
+            // produced the call-site type `Nova_Box____Nova_Option____nova_int_p`
+            // while the definition emitted `Nova_Box____NovaOpt_nova_int` —
+            // CC-FAIL «unknown type name».
+            TypeRef::Named { path, generics, .. }
+                if path.last().map(|s| s.as_str()) == Some("Option") && generics.len() == 1 =>
+            {
+                let inner_c = Self::simple_type_ref_to_c(&generics[0]);
+                format!("NovaOpt_{}", Self::sanitize_for_novaopt(&inner_c))
+            }
+            TypeRef::Named { path, generics, .. }
+                if path.last().map(|s| s.as_str()) == Some("Result") && generics.len() == 2 =>
+            {
+                let ok_c = Self::simple_type_ref_to_c(&generics[0]);
+                let err_c = Self::simple_type_ref_to_c(&generics[1]);
+                format!("NovaRes_{}_{}*",
+                    Self::sanitize_for_novaopt(&ok_c),
+                    Self::sanitize_for_novaopt(&err_c))
             }
             TypeRef::Named { path, generics, .. } => {
                 let base = path.last().cloned().unwrap_or_default();
@@ -12446,10 +12519,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     )))
                     .collect::<Result<Vec<_>, _>>()?;
                 for c_ty in &field_ctys {
-                    if let Some(inner) = c_ty.strip_suffix('*') {
-                        let inner = inner.trim();
-                        if inner.starts_with("Nova_") {
-                            self.line(&format!("typedef struct {0} {0};", inner));
+                    if c_ty.ends_with('*') {
+                        // Plan 131 Ф.3: strip ALL trailing `*` so pointer-to-
+                        // pointer fields (`*mut T` over a record T → `Nova_Pt**`)
+                        // forward-declare the base struct (`Nova_Pt`), not the
+                        // invalid `typedef struct Nova_Pt* Nova_Pt*;`.
+                        let base = c_ty.trim_end_matches(|ch| ch == '*' || ch == ' ');
+                        if base.starts_with("Nova_") {
+                            self.line(&format!("typedef struct {0} {0};", base));
                         }
                     }
                 }
@@ -16158,8 +16235,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         _ => Err(format!("unsupported operator {:?} on array", op)),
                     };
                 }
-                // NovaOpt_T is a struct — can't use == directly
-                if lty.starts_with("NovaOpt_") || rty.starts_with("NovaOpt_") {
+                // NovaOpt_T is a struct — can't use == directly.
+                // Plan 131 Ф.3: a *pointer* to an option (`NovaOpt_<T>*`, from a
+                // `*mut Option[T]` Vec element store) is NOT an option value —
+                // `data + n` must fall through to the typed pointer-arithmetic
+                // handler below, not the option-equality arm (которое раньше
+                // выдавало «unsupported operator Add on option»).
+                if (lty.starts_with("NovaOpt_") && !lty.ends_with('*'))
+                    || (rty.starts_with("NovaOpt_") && !rty.ends_with('*')) {
                     // Plan 39 Issue A: bare `None` on one side эмитируется как
                     // `NovaOpt_nova_int` (fallback `current_fn_return_ty`).
                     // Если другая сторона — конкретный `NovaOpt_<X>` где X !=
@@ -16202,9 +16285,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         _ => Err(format!("unsupported operator {:?} on tuple", op)),
                     };
                 }
-                // Nova_T* sum type pointer equality: compare tag + payload fields
-                let sum_ty = if lty.starts_with("Nova_") && lty.ends_with('*') { Some(lty.clone()) }
-                    else if rty.starts_with("Nova_") && rty.ends_with('*') { Some(rty.clone()) }
+                // Nova_T* sum type pointer equality: compare tag + payload fields.
+                // Plan 131 Ф.3: a sum/record *value* is a single pointer
+                // `Nova_X*`. A `*mut T` over a record T is a *double* pointer
+                // `Nova_X**` — that is a typed raw pointer, not a sum value, so
+                // `data + n` / `data - q` must route к typed pointer arithmetic
+                // below (иначе emit'ило `Nova_X_method_plus` на double-ptr →
+                // CC-FAIL «indirection requires pointer operand»).
+                let is_single_nova_ptr = |t: &str| {
+                    t.starts_with("Nova_") && t.ends_with('*') && !t.ends_with("**")
+                };
+                let sum_ty = if is_single_nova_ptr(&lty) { Some(lty.clone()) }
+                    else if is_single_nova_ptr(&rty) { Some(rty.clone()) }
                     else { None };
                 if let Some(sty) = sum_ty {
                     // Plan 65 Ф.12 fix: use the FULL C type prefix (Nova_X) for
@@ -16414,6 +16506,30 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
                     _ => {}
                 }
+                // Plan 131 Ф.2: typed pointer arithmetic.
+                // `*T + int` — C already scales by sizeof(T), emit `(ptr + n)`.
+                // `*T - *T` — pointer subtraction yields ptrdiff_t (element count);
+                // wrap in `(ptrdiff_t)` cast to ensure correct C integer type and
+                // prevent the result variable from being declared as pointer type.
+                // Plan 131 Ф.3: a `*mut T` over a record/sum maps к a *double*
+                // Nova pointer (`Nova_X**`) — that IS a typed C pointer для
+                // arithmetic purposes (`data + n` over `Vec[Record]` storage).
+                // Single `Nova_X*` (a sum/record value) is excluded — handled by
+                // the sum-plus dispatch above.
+                let lty_is_cptr = lty.ends_with('*') && lty != "void*"
+                    && !lty.starts_with("NovaArray_")
+                    && (!lty.starts_with("Nova_") || lty.ends_with("**"));
+                let rty_is_cptr = rty.ends_with('*') && rty != "void*"
+                    && !rty.starts_with("NovaArray_")
+                    && (!rty.starts_with("Nova_") || rty.ends_with("**"));
+                if lty_is_cptr {
+                    match op {
+                        BinOp::Add => return Ok(format!("({} + {})", l, r)),
+                        BinOp::Sub if rty_is_cptr =>
+                            return Ok(format!("((ptrdiff_t)({} - {}))", l, r)),
+                        _ => {}
+                    }
+                }
                 // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
                 // (паника при переполнении, spec 04-effects.md). Только для
                 // безграничного `nova_int`; sized-типы (wrap, Plan 33.7) и
@@ -16483,6 +16599,28 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
 
             ExprKind::Call { func, args, trailing } => {
+                // Plan 131 Ф.3: residual `size_of[T]()` / `align_of[T]()` left
+                // intact by const_fn_eval when `T` is an unresolved generic
+                // param (E_CONST_FN_GENERIC_NEEDS_T_REFLECTION suppressed для
+                // generic-param case). At mono-emission `current_type_subst`
+                // binds `T` к concrete C type — emit a C `sizeof(...)` /
+                // `_Alignof(...)` expression so the C compiler computes the
+                // exact layout. Always correct (no Rust-side size table to
+                // drift), and the only place a generic-T size is needed is
+                // `RawMem.alloc` byte counts where over-/exact-alloc is sound.
+                if let ExprKind::TurboFish { base, type_args } = &func.kind {
+                    if let ExprKind::Ident(n) = &base.kind {
+                        if (n == "size_of" || n == "align_of")
+                            && args.is_empty()
+                            && type_args.len() == 1
+                            && trailing.is_none()
+                        {
+                            let c_ty = self.type_ref_to_c(&type_args[0])?;
+                            let op = if n == "align_of" { "_Alignof" } else { "sizeof" };
+                            return Ok(format!("((nova_int){}({}))", op, c_ty));
+                        }
+                    }
+                }
                 // Plan 33.1 Ф.4 (D24): `old(expr)` — special-case в контрактах.
                 // В 33.1 нет mut state, поэтому old(expr) — это просто expr
                 // (значение не меняется между entry и exit). Snapshot для mut —
@@ -24120,9 +24258,15 @@ _cp++; \
                     // scr_ty = "NovaOpt_<inner_id>" — recover real inner C-type
                     // via novaopt_value_types (handles pointer-sanitization).
                     if let Some(inner_id) = scr_ty.strip_prefix("NovaOpt_") {
+                        // Plan 131 Ф.3: when `novaopt_value_types` has no entry
+                        // yet (inference may run before the NovaOpt decl is
+                        // emitted), recover the real C type by *desanitising*
+                        // the element id (`Nova_Point_p` → `Nova_Point*`) rather
+                        // than leaking the sanitized name as a bogus typedef
+                        // (`Nova_Point_p p1;` → CC-FAIL «unknown type name»).
                         let inner_c = this.novaopt_value_types.borrow()
                             .get(inner_id).cloned()
-                            .unwrap_or_else(|| inner_id.to_string());
+                            .unwrap_or_else(|| Self::desanitize_c_from_ident(inner_id));
                         return Self::collect_pattern_inner_bindings(&patterns[0], &inner_c, this);
                     }
                     return vec![];
@@ -28710,6 +28854,33 @@ _cp++; \
                 _ => {
                     let lt = self.infer_expr_c_type(left);
                     let rt = self.infer_expr_c_type(right);
+                    // Plan 131 Ф.2: pointer - pointer → ptrdiff_t (isize-equivalent).
+                    // C pointer subtraction yields ptrdiff_t (element count), not
+                    // a pointer. Without this fix, `let d = p - q` declared `uint8_t* d`
+                    // causing CC-FAIL when used as integer (e.g. `d > 0`).
+                    //
+                    // Plan 131 Ф.3 fix: only *raw* C pointers participate in
+                    // pointer arithmetic inference. A managed handle (sum/record
+                    // value `Nova_X*`, `NovaArray_*`, `NovaOpt_*`, `NovaRes_*`)
+                    // is NOT a raw pointer — `a - b` / `a + b` over such types is
+                    // operator-overload dispatch (`Set____nova_int_method_minus`),
+                    // whose result is the managed type itself, not `int64_t`.
+                    // Double-Nova-pointers (`Nova_X**` = `*mut Record`) ARE raw.
+                    // Mirrors the emission-side `lty_is_cptr` predicate.
+                    let is_raw_cptr = |t: &str| {
+                        t.ends_with('*') && t != "void*"
+                            && !t.starts_with("NovaArray_")
+                            && (!t.starts_with("Nova_") || t.ends_with("**"))
+                    };
+                    let lt_is_cptr = is_raw_cptr(&lt);
+                    let rt_is_cptr = is_raw_cptr(&rt);
+                    if *op == BinOp::Sub && lt_is_cptr && rt_is_cptr {
+                        return "int64_t".into();
+                    }
+                    // pointer + int → same pointer type (C scales by sizeof).
+                    if *op == BinOp::Add && lt_is_cptr {
+                        return lt;
+                    }
                     // f64 побеждает: float-арифметика — результат f64.
                     if lt == "nova_f64" || rt == "nova_f64" {
                         return "nova_f64".into();

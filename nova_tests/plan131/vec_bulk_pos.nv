@@ -1,0 +1,32 @@
+// Plan 131 Ф.3 — bulk operations: extend/append/retain.
+
+module plan131.vec_bulk_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "extend appends a slice" {
+    mut v = Vec[int].from([1, 2, 3])
+    v.extend([4, 5, 6])
+    assert(v.as_slice() == [1, 2, 3, 4, 5, 6])
+    v.extend([])
+    assert(v.len() == 6)
+}
+
+test "append consumes other into self" {
+    mut a = Vec[int].from([1, 2, 3])
+    mut b = Vec[int].from([4, 5])
+    a.append(b)
+    assert(a.as_slice() == [1, 2, 3, 4, 5])
+    assert(b.is_empty())
+    assert(b.len() == 0)
+}
+
+test "retain keeps matching elements in order" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    v.retain(|x| x % 2 == 0)
+    assert(v.as_slice() == [2, 4, 6])
+
+    mut all = Vec[int].from([1, 2, 3])
+    all.retain(|_| false)
+    assert(all.is_empty())
+}

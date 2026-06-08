@@ -1,0 +1,12 @@
+// Plan 131 Ф.3 NEG — insert() beyond len panics (i > len is invalid; i == len
+// is a valid append).
+// EXPECT_RUNTIME_PANIC Vec.insert: index out of bounds
+
+module neg.vec_insert_oob_neg
+
+import std.collections.vec_owned.{Vec}
+
+test "insert at index past len panics" {
+    mut v = Vec[int].from([1, 2, 3])
+    v.insert(10, 99)
+}

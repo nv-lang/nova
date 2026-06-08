@@ -1,0 +1,15 @@
+// Plan 131 Ф.2 — deref write: *ptr = v via typed *mut int pointer.
+// Allocate int, write 42 via deref, read back.
+// EXPECT_OUTPUT: 42
+
+module plan131.ptr_deref_write_pos
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        ro p = RawMem.alloc(size_of[int]() as usize) as *mut int
+        *p = 42
+        println(*p)
+    }
+}
