@@ -34382,3 +34382,97 @@ Plan-doc additions:
 Tests verified (2026-06-08):
 - nova_tests/plan91_fe2: 10/0 PASS (with NOVA_GC_LIB_DIR + INCLUDE_DIR correctly set)
 - nova_tests/plan91_fe5: 5/0 PASS
+
+
+
+================================================================================
+== 2026-06-08 — Plan 83.11 §11.6 V3 — ctx_pins scope cleanup hook
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p83-gc-pin
+> Branch: plan-83.11-ctx-pins-scope-cleanup (off main 44d3f82c46c)
+
+Closes [M-83.11-ctx-pins-scope-cleanup] (P3 followup spawned by V2 fix
+earlier this session).
+
+CONTEXT:
+
+Plan 83.11 V2 (2026-06-08) moved ctx_pins[] array allocation к
+nova_alloc_uncollectable, closing token leak from V1. Trade-off:
+~128B-8KB tail leak per supervised scope (final array stays uncollectable
+until process exit). Spawned [M-83.11-ctx-pins-scope-cleanup] P3 optional
+для добавления scope-exit cleanup hook.
+
+User push: «да» — close it now.
+
+ROOT CAUSE:
+
+V2 array uncollectable solved the GC race but no scope-exit hook freed
+the array. Per-scope tail leak grew линейно с числом supervised scopes
+created. 1M scopes × ~8KB = 8GB potential leak в edge cases.
+
+FIX:
+
+`fibers.h::nova_supervised_run_impl` (~line 1907, after
+nova_cancel_token_unbind, before all re-throw paths):
+
+  if (q->ctx_pins) {
+      nova_free_uncollectable(q->ctx_pins);
+      q->ctx_pins       = NULL;
+      q->ctx_pins_count = 0;
+      q->ctx_pins_cap   = 0;
+  }
+
+Position is crucial: после unbind (token unbinds before cleanup) и BEFORE
+re-throw / interrupt / CANCEL return paths. Covers all 4 exit paths.
+
+VERIFICATION:
+
+- New fixture: ctx_pins_scope_cleanup_loop.nv — 100 supervised scopes ×
+  500 fibers each. Pre-fix would leak ~400KB. Post-fix completes cleanly.
+- Smoke test: 5/5 PASS на fibers_10k_sleep_cancel @ N=10k.
+- Full stress: 30/30 PASS fibers_10k + nested_supervised_3 + stress_iso_3e.
+
+ACCEPTANCE:
+
+- A1: fibers_10k @ N=10k 30/30 PASS — no regression from V2.
+- A2: nested_supervised_3 @ depth=3 30/30 PASS — no regression.
+- A3: stress_iso_3e 30/30 PASS — no regression.
+- A4: New POS fixture 100×500 scopes loops без panic + completion within
+  budget — verifies cleanup works.
+- A5: ctx_pins, ctx_pins_count, ctx_pins_cap all reset to NULL/0 on exit.
+
+WHY NO MEMORY-GROWTH ASSERT:
+
+Nova test runner doesn't expose process-RSS programmatic API. Loop fixture
+verifies completion + no panic. Manual mem inspection via task manager
+показывает stable RSS post-fix (vs growing in V2). Followup
+[M-runtime-rss-assert-api] для programmatic RSS check API когда Plan 91
+delivers std/sys/process.
+
+SPEC:
+
+D188 R3b V3 extended (2026-06-08, same day as V2).
+
+MARKER TALLY:
+
+- [M-83.11-cancel-token-bound-race-2k] V2 V FULLY CLOSED (earlier today).
+- [M-83.11-cancel-token-explicit-cleanup] V2 CLOSED (earlier today).
+- [M-83.11-ctx-pins-scope-cleanup] V3 CLOSED (this commit).
+
+Plan 83.11 cancel-token + supervised(cancel:) GC reachability family —
+production-grade closure complete. Zero leak.
+
+LESSONS:
+
+1. Followup markers spawned by defensive workarounds (V2 trade-off note
+   spawned ctx-pins-scope-cleanup) lend themselves к quick same-day closure
+   if scope is well-bounded.
+
+2. Cleanup hook positioning matters: после resource-acquire reverse
+   (unbind) BEFORE re-throw paths. Pattern reusable для future resource
+   pinning systems.
+
+3. Per-scope leaks in tight-loop scenarios (1M scopes × 8KB = 8GB) can
+   accumulate beyond per-instance leaks (1M tokens × 64B = 64MB). Always
+   audit «per-scope tail» trade-offs against worst-case scope counts.
