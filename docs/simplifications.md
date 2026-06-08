@@ -33893,3 +33893,93 @@ real owned-buffer copy needs a malloc/free allocator (RawMem has none) → Plan
 3. **`include_str!`'d stdlib = rebuild-to-test.** cstr.nv is embedded in the
    compiler binary; comment-only edits are inert, but any behavioral edit needs
    a rebuild — and a running `nova test` locks the binary against it.
+
+---
+
+## Plan 91 Ф.4 (time/math/sort conformance) + Ф.6 (getting-started/examples) — 2026-06-08
+
+**Codegen-фикс (НЕ упрощение — production):** `emit_handler_lit` (emit_c.rs) теперь
+вычитает op-body-bound имена из handler-literal capture-set, как уже делают
+`emit_spawn`/`emit_detach`/`emit_blocking` через `collect_bound_names_*`. Устраняет
+CC-FAIL `undeclared identifier 'i'` при `import std.sort` + `import std.time.duration`
+вместе (stale `i` от sort-функций в flat-`var_types` ⇒ op-body-локал `i` Random-handler'а
+из `std/testing/handlers.nv` ошибочно захватывался). Per-method bound-set, low-risk.
+
+**Verify:** repro PASS; 8/8 `nova_tests/plan91_fe4/` PASS; full `nova test` 1637/16
+(все 16 pre-existing, 0 регрессий от фикса). Ф.6: `examples/getting_started.nv`
+`nova run`+`nova test` GREEN; README quick-start.
+
+**Сознательные упрощения / отложенное (pre-existing, маркеры в plan-91 doc):**
+
+1. **`Instant` НЕ добавляли** — ships как `Monotonic` (D124), работает as-is. Не
+   упрощение, а факт: отдельный тип не нужен.
+
+2. **`examples/effect_density/` + `real_world/` оставлены read-only didactic** — они
+   используют аспирационный синтаксис (glob-import `X.*`, плейсхолдеры `...`,
+   undefined-символы; oxsar_port.nv явно «для чтения»). Module-paths нормализованы
+   (hyphen→underscore), но компилировать НЕ пытались (потребовался бы полный rewrite).
+   Ф.6.2 удовлетворён basics/effects/ffi/getting_started (≫5-7).
+
+3. **Time-effect conformance fixture обойдён explicit Timestamp** —
+   `[M-91.6-time-now-schema-mismatch]`: `Time.now()` wire-typed как int. Pre-existing.
+
+4. **`Duration.ZERO` → `Duration.from_nanos(0)`** в фикстуре —
+   `[M-91.6-duration-zero-cross-module-const]`: Path-form const cross-module CC-FAIL.
+
+5. **global-const-capture в spawn** (`[M-91.6-spawn-global-const-capture]`) — родственно
+   фиксу Ф.4 (var_types pollution), но в `emit_spawn`-path; baseline-fails
+   sleep_real_clock/const_ref_const_ok/neg_addr_of_const. Отдельный план.
+
+**Уроки:**
+
+1. **Audit-workflow → review → implement-workflow** окупается: аудит точно локализовал
+   codegen-баг (file:line + trigger-matrix sort+duration vs math+duration), фикс
+   оказался trivial по precedent'у.
+
+2. **Адверсариальный verify-агент поймал mischaracterization** (echo_client: первый
+   сбой — missing import, не const-capture) и read-only didactic-классификацию examples.
+   Честные агенты > оптимистичные.
+
+3. **flat `var_types` без scope-cleanup** — латентная ловушка: любой collision между
+   stdlib-локалом и handler-op-локалом всплывает как miscompile. Hardening (scoped
+   var_types) — отдельный followup.
+
+**Update 2026-06-08 (Ф.4 tests завершены):** добавлены regression-guard
+`sort_duration_handler_guard.nv` (sort+duration в одном модуле — точный триггер
+codegen-бага; ни одна per-module fixture не ловила) + негативный
+`neg/edge_and_error_paths.nv` (empty min/max→None, binary_search miss, Duration
+is_negative/abs/is_zero, is_nan/is_infinite, sqrt(-1)→NaN). plan91_fe4 10/0 PASS.
+Критерии приёмки Ф.4/Ф.6 явно прописаны в plan-91; Q-doc синхронизирован.
+
+---
+
+## [M-83.10.1-armed-cancel-timer-hang] V2 sweep (Plan 83.11 Ф.3 ungate) — 2026-06-08
+
+Механический sweep: убраны `// ENV NOVA_AUTOARM=0` из тестов, которые теперь
+работают под armed M:N — Plan 83.11 Ф.3 (централизованный driver thread)
+устранил cancel-timer race архитектурно.
+
+**Убрано (17 файлов, все PASS под armed M:N):**
+- `concurrency/cancel_during_runtime_shutdown`
+- `plan103_4/semaphore_batch_n`, `semaphore_try_acquire_for_timeout`
+- `plan103_6/blocking_atomic_fetch_add_ok`, `blocking_condvar_notify_warn`, `blocking_mutex_unlock_ok`
+- `plan65/f11a_timer_metrics`
+- `plan83_12/tcp_bind_used_port`, `tcp_connect_refused`, `tcp_multi_accept`, `tcp_read_eof`,
+  `tcp_socket_addr`, `tcp_stream_addr`, `tcp_write_after_close`
+- `plan83_4_5_6_stress/cancel_stress`, `park_wake_stress`
+- `plan83_7/runnext_displaced_to_deque`
+
+**Оставлено с AUTOARM=0 (разные причины, не cancel-timer race):**
+- `cooperative_interleave`, `main_yield`, `supervised_errors` — семантически кооперативные
+  (FIFO ordering assertions: `assert(log == 142536)` и т.д. — non-deterministic под M:N)
+- `mn_maxprocs_getter`, `mn_runtime_smoke` — lifecycle тесты
+  (проверяют `!runtime.is_initialized()` до auto-arm)
+- `plan65/f7_cancel_via_token`, `f10_select_cancel_propagation` — CC-FAIL
+  (pre-existing bug: `TIMEOUT_MS`/`SLACK_MS` undeclared в generated C)
+- `concurrency/sleep_real_clock` — CC-FAIL (pre-existing: `SLACK_MS` undeclared)
+- `plan103_4/semaphore_no_overcommit_prop` — TIMEOUT
+  (`parallel for` + semaphore под armed M:N deadlock; отдельный gap)
+- `plan83_4_5_6_stress/spawn_stress_10k` — TIMEOUT
+  (per-spawn overhead на Windows armed, не cancel race)
+- `plan83_12/tcp_echo_server_test`, `tcp_cancel_accept_test` — TIMEOUT
+  (accept + cancel interaction под armed M:N — отдельный gap)

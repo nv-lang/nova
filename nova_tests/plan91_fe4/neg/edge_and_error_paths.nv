@@ -1,0 +1,62 @@
+// Plan 91 Ф.4 NEGATIVE conformance: failure / empty / special-value paths.
+// Exercises the error-return and edge-case behaviour of sort/time/math
+// (None on empty, search miss, NaN/Inf guards, signed-duration classification).
+module neg.edge_and_error_paths
+
+import std.sort
+import std.time.duration
+import std.runtime.math
+
+test "sort: empty and miss return None / empty aggregates" {
+    mut empty []int = []
+    // min/max on empty collection -> None (no element)
+    match empty.min() {
+        Some(_) => assert(false, "empty min must be None")
+        None => assert(true)
+    }
+    match empty.max() {
+        Some(_) => assert(false, "empty max must be None")
+        None => assert(true)
+    }
+    // sum/product identity on empty
+    assert(empty.sum() == 0, "empty sum is 0")
+
+    // binary_search miss -> None
+    mut xs = [2, 4, 6, 8]
+    xs.sort()
+    match xs.binary_search(5) {
+        Some(_) => assert(false, "5 absent -> None")
+        None => assert(true)
+    }
+    match xs.binary_search(100) {
+        Some(_) => assert(false, "100 absent -> None")
+        None => assert(true)
+    }
+}
+
+test "duration: negative / zero classification (failure-ish states)" {
+    ro neg = (Duration.from_secs(5)).neg()
+    assert(neg.is_negative(), "neg must be is_negative")
+    assert(!neg.is_positive(), "neg must not be is_positive")
+    // abs of a negative recovers the magnitude
+    assert(neg.abs().as_secs() == 5, "abs(neg 5s) == 5s")
+
+    ro zero = Duration.from_nanos(0)
+    assert(zero.is_zero(), "zero must be is_zero")
+    assert(!zero.is_negative(), "zero is not negative")
+    assert(!zero.is_positive(), "zero is not positive")
+}
+
+test "math: NaN / Inf special-value guards" {
+    // detection path for non-finite results
+    assert((f64.NAN).is_nan(), "NAN is_nan")
+    assert(!(0.0).is_nan(), "0 is not NaN")
+
+    assert((f64.INFINITY).is_infinite(), "INF is_infinite")
+    assert((f64.NEG_INFINITY).is_infinite(), "-INF is_infinite")
+    assert(!(f64.INFINITY).is_finite(), "INF not finite")
+    assert((1.0).is_finite(), "1.0 finite")
+
+    // sqrt of a negative is NaN (domain error surfaced as NaN, not a crash)
+    assert(((-1.0).sqrt()).is_nan(), "sqrt(-1) is NaN")
+}

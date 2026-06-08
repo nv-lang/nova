@@ -7,10 +7,10 @@
 // сделать что-то СВЕРХ того, что делает service, добавлялись бы только
 // эти лишние эффекты.
 
-module effect-density.http
+module effect_density.http
 
-import examples.effect_density.domain.*
-import examples.effect_density.service as svc
+import effect_density.domain.*
+import effect_density.service as svc
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@
 //   3. Multi-value return через tuple-by-value ABI (Plan 115 D214 §2).
 //   4. consume close() для resource ownership.
 
-module examples.ffi.sqlite_mini
+module ffi.sqlite_mini
 
 // Typed handles (V1 record form).
 type Db { ro value ptr }
@@ -47,7 +47,7 @@ external fn nova_fn_sqlite3_finalize(stmt ptr) -> int
 fn Db.open(path str) Fail[DbError] -> Db {
     ro (raw, rc) = nova_fn_sqlite3_open(path)
     if rc != SQLITE_OK {
-        Fail.throw(DbError.OpenFailed(rc))
+        throw DbError.OpenFailed(rc)
     }
     Db { value: raw }
 }
@@ -55,14 +55,14 @@ fn Db.open(path str) Fail[DbError] -> Db {
 fn Db @exec(sql str) Fail[DbError] -> () {
     ro rc = nova_fn_sqlite3_exec(self.value, sql)
     if rc != SQLITE_OK {
-        Fail.throw(DbError.ExecFailed(rc))
+        throw DbError.ExecFailed(rc)
     }
 }
 
 fn Db @prepare(sql str) Fail[DbError] -> Stmt {
     ro (raw, rc) = nova_fn_sqlite3_prepare(self.value, sql)
     if rc != SQLITE_OK {
-        Fail.throw(DbError.PrepareFailed(rc))
+        throw DbError.PrepareFailed(rc)
     }
     Stmt { value: raw }
 }
@@ -75,8 +75,8 @@ fn Db consume @close() -> () {
 
 fn Stmt @step_to_int(col int) Fail[DbError] -> int {
     ro rc = nova_fn_sqlite3_step(self.value)
-    if rc != SQLITE_ROW and rc != SQLITE_DONE {
-        Fail.throw(DbError.StepFailed(rc))
+    if rc != SQLITE_ROW && rc != SQLITE_DONE {
+        throw DbError.StepFailed(rc)
     }
     nova_fn_sqlite3_column_int(self.value, col)
 }

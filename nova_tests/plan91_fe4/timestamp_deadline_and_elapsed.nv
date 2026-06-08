@@ -1,0 +1,72 @@
+// Plan 91 Ф.4 conformance: Timestamp deadline + elapsed realistic scenario.
+//
+// Request-deadline use-case (pure Timestamp/Duration arithmetic):
+//   * a request arrives at a known Unix time,
+//   * we compute a deadline by adding a timeout Duration,
+//   * we measure how long the request took by subtracting two Timestamps,
+//   * and we verify the deadline ordering and remaining-budget math.
+//
+// This models a server's per-request deadline tracking the way real handlers
+// do it: capture `arrived`, derive `deadline = arrived + timeout`, then on
+// completion compute `elapsed = completed - arrived` and `remaining =
+// deadline - completed`. All values are explicit Timestamps so the test is
+// deterministic without needing the ambient `Time` effect.
+module plan91_fe4.timestamp_deadline_and_elapsed
+
+import std.time.duration
+
+
+// A request arrives, gets a deadline, completes within budget; we measure
+// elapsed time and remaining budget via Timestamp subtraction.
+test "request deadline, elapsed, and remaining budget" {
+    // Request arrives at Unix second 1_700_000_000.
+    ro arrived = Timestamp.from_unix_secs(1_700_000_000)
+
+    // Server policy: 30-second timeout → compute the deadline.
+    ro timeout = 30.seconds()
+    ro deadline = arrived + timeout
+
+    // Deadline must be strictly after arrival (Comparable `>` via @compare).
+    assert(deadline > arrived, "deadline must be after arrival")
+    assert(deadline.as_unix_secs() == 1_700_000_030, "deadline = arrived + 30s")
+
+    // Request completes 12 seconds after arrival.
+    ro completed = Timestamp.from_unix_secs(1_700_000_012)
+
+    // Elapsed = completed - arrived  → a Duration (Timestamp - Timestamp).
+    ro elapsed = completed - arrived
+    assert(elapsed.as_secs() == 12, "elapsed should be 12 whole seconds")
+    assert(elapsed.as_millis() == 12_000, "elapsed in milliseconds")
+    assert(elapsed.is_positive(), "elapsed must be positive")
+
+    // Finished before the deadline; remaining budget is positive (~18s).
+    assert(completed < deadline, "request finished before deadline")
+    ro remaining = deadline - completed          // Timestamp - Timestamp
+    assert(remaining.as_secs() == 18, "18s of budget left at completion")
+    assert(remaining.is_positive(), "remaining budget must be positive")
+}
+
+
+// A second request blows past its deadline: elapsed exceeds the timeout and
+// the overshoot (completed - deadline) is a positive Duration.
+test "request that overruns its deadline" {
+    ro arrived = Timestamp.from_unix_millis(1_700_000_000_000)
+    ro timeout = 250.millis()
+    ro deadline = arrived + timeout
+
+    // Completes 400ms after arrival → 150ms past the deadline.
+    ro completed = arrived + 400.millis()
+
+    ro elapsed = completed - arrived
+    assert(elapsed.as_millis() == 400, "400ms elapsed")
+    assert(completed > deadline, "completion is after the deadline")
+
+    ro overshoot = completed - deadline          // Duration past deadline
+    assert(overshoot.as_millis() == 150, "150ms over budget")
+    assert(overshoot.is_positive(), "overshoot is positive")
+
+    // Fractional-seconds view with a float tolerance check (never == on floats).
+    ro secs_f = elapsed.as_secs_f64()
+    ro d = secs_f - 0.4
+    assert(d > -1e-9 && d < 1e-9, "elapsed as_secs_f64 ~= 0.4")
+}

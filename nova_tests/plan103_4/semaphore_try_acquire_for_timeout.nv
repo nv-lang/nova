@@ -3,8 +3,9 @@
 // All permits taken; try_acquire_for(60ms) returns false after timeout.
 // Tests fiber path (both acquirer and releaser are fibers).
 //
+// Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
+//
 // EXPECT_TIMEOUT_MS 60000
-// ENV NOVA_AUTOARM=0
 
 module plan103_4.semaphore_try_acquire_for_timeout
 

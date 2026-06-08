@@ -1,0 +1,71 @@
+// Plan 91 Ф.4 conformance — std.sort aggregate/ranking pipeline.
+//
+// Realistic scenario: a leaderboard scoring pipeline over []int.
+// Raw scores arrive unsorted; we rank them (descending), inspect the
+// podium (top / bottom), cross-check min/max against the sorted
+// boundaries, compute aggregate stats (total via sum, a small
+// multiplicative weight via product), and finally look players up by
+// score using binary_search on an ascending copy.
+module plan91_fe4.sort_aggregate_pipeline
+
+import std.sort
+
+test "leaderboard ranking + aggregate pipeline" {
+    // Raw, unsorted match scores.
+    ro raw []int = [42, 17, 99, 8, 64, 23, 99, 5, 71]
+
+    // --- Aggregates on the UNSORTED slice ----------------------------
+    // min()/max() must not depend on ordering.
+    ro lo = raw.min()
+    ro hi = raw.max()
+    assert(lo == Some(5),  "min of raw scores should be 5")
+    assert(hi == Some(99), "max of raw scores should be 99")
+
+    // Total points scored across the board (manual cross-check).
+    ro total = raw.sum()
+    ro manual = 42 + 17 + 99 + 8 + 64 + 23 + 99 + 5 + 71
+    assert(total == manual, "sum must equal manual total")
+    assert(total == 428,    "sum of raw scores should be 428")
+
+    // --- Rank DESCENDING (leaderboard order) -------------------------
+    mut ranked = raw
+    ranked.sort_by(|a, b| b - a)   // descending (D183 int convention)
+    assert(ranked.len() == 9,          "ranking preserves element count")
+    assert(ranked[0] == 99,            "first place is the top score")
+    assert(ranked[ranked.len() - 1] == 5, "last place is the bottom score")
+
+    // Podium boundaries must agree with min()/max() of the raw slice.
+    assert(ranked[0] == 99,            "leader matches max()")
+    assert(ranked[ranked.len() - 1] == 5, "tail matches min()")
+
+    // Verify the whole ranking is monotonically non-increasing.
+    mut i = 0
+    mut descending_ok = true
+    while i < ranked.len() - 1 {
+        if ranked[i] < ranked[i + 1] {
+            descending_ok = false
+        }
+        i = i + 1
+    }
+    assert(descending_ok, "ranked scores must be non-increasing")
+
+    // --- Multiplicative weight on a small top-3 slice ----------------
+    // product() of the three medal-position scores (99 * 99 * 71).
+    ro top3 []int = [ranked[0], ranked[1], ranked[2]]
+    ro weight = top3.product()
+    assert(weight == 99 * 99 * 71, "top-3 product weight mismatch")
+
+    // --- Lookups via binary_search on an ASCENDING copy --------------
+    mut asc = raw
+    asc.sort()   // ascending
+    assert(asc[0] == 5,                "ascending sort min boundary")
+    assert(asc[asc.len() - 1] == 99,   "ascending sort max boundary")
+
+    // A present score is found...
+    match asc.binary_search(64) {
+        Some(pos) => assert(asc[pos] == 64, "binary_search returned wrong index")
+        None      => assert(false, "64 should be present")
+    }
+    // ...and an absent score is not.
+    assert(asc.binary_search(100) == None, "100 was never scored")
+}

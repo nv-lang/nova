@@ -5502,9 +5502,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         for m in methods {
             let method_param_names: std::collections::HashSet<String> =
                 m.params.iter().map(|p| p.name.clone()).collect();
+            // Plan 91 Ф.4: names bound *inside* this op body (let/mut, for-pattern,
+            // match-arm, if-let, while-let) are locals of the op, NOT free variables of
+            // the enclosing factory fn — they must not be captured. Without this, a stale
+            // entry in the flat `var_types` map (e.g. `i` left behind by a previously-emitted
+            // std.sort fn) makes an op-body local wrongly captured, producing both a dangling
+            // `ctx->i = &i` (no such local in the factory) and a `#define i (*_c->i)` that
+            // collides with the genuine op-body `nova_int i`. Mirror emit_spawn/detach/blocking,
+            // which already subtract bound names via collect_bound_names_*. PER-method: a name
+            // bound-local in one op may legitimately be an enclosing capture used by another op.
+            let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+            match &m.body {
+                HandlerMethodBody::Expr(e) => Self::collect_bound_names_expr(e, &mut bound),
+                HandlerMethodBody::Block(b) => Self::collect_bound_names_block(b, &mut bound),
+            }
             let refs = Self::collect_idents_in_handler_method(m);
             for name in refs {
                 if method_param_names.contains(&name) {
+                    continue;
+                }
+                if bound.contains(&name) {
                     continue;
                 }
                 if all_captures.iter().any(|(n, _)| n == &name) {

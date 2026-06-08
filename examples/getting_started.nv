@@ -1,0 +1,148 @@
+// getting_started.nv — a single self-contained tour of Nova's core ideas.
+//
+// Run it:        nova-cli/target/release/nova run    examples/getting_started.nv
+// Test it:       nova-cli/target/release/nova test   examples/getting_started.nv
+// Type-check it: nova-cli/target/release/nova check   examples/getting_started.nv
+//
+// This file demonstrates, end to end and without any network / FFI / unsafe:
+//   1. fn main + println        — the classic "hello" baseline
+//   2. a plain record type      — named fields and field access
+//   3. a sum type + match       — exhaustive pattern matching
+//   4. a for-loop accumulator   — building a result over a range
+//   5. an algebraic effect      — `with`-block supplies an IN-MEMORY handler,
+//      and a `test {}` swaps in a different handler with ZERO changes to the
+//      business logic. That is Nova's headline trick: handlers are swappable,
+//      so tests need no mocks.
+
+// Files directly under examples/ live in the `nova_examples` package root
+// (subdirectories like examples/effects/ use their folder name instead).
+module nova_examples.getting_started
+
+// ---------------------------------------------------------------------------
+// 2. A plain record type — a product of named fields.
+// ---------------------------------------------------------------------------
+
+type Item {
+    name  str
+    price int   // price in cents, to keep the demo integer-only
+    qty   int
+}
+
+// A small helper used by the loop below. Pure function, no effects.
+fn line_total(it Item) -> int => it.price * it.qty
+
+// ---------------------------------------------------------------------------
+// 3. A sum type — a value that is exactly one of several shapes.
+// ---------------------------------------------------------------------------
+
+type Discount
+    | None_              // no discount
+    | Flat(int)          // subtract a fixed number of cents
+    | Percent(int)       // subtract a percentage (0..100)
+
+// `match` is exhaustive: every variant must be handled.
+fn apply_discount(d Discount, subtotal int) -> int => match d {
+    None_       => subtotal
+    Flat(off)   => subtotal - off
+    Percent(p)  => subtotal - (subtotal * p / 100)
+}
+
+// ---------------------------------------------------------------------------
+// 5. An algebraic effect — an interface of operations with no implementation.
+// ---------------------------------------------------------------------------
+//
+// `Audit` describes WHAT can happen (a line can be recorded) but never HOW.
+// Code that uses `Audit` stays the same in production and in tests; only the
+// handler installed by `with` changes.
+
+type Audit effect {
+    record(amount int) -> ()
+}
+
+// ---------------------------------------------------------------------------
+// 4. A for-loop that accumulates a result — and emits an audit event per item.
+// ---------------------------------------------------------------------------
+//
+// `Audit` appears in the signature, so a reader knows this function records
+// something — without reading its body or any handler.
+fn checkout(items []Item, d Discount) Audit -> int {
+    mut subtotal = 0
+    for it in items {
+        ro lt = line_total(it)
+        Audit.record(lt)          // effect call — dispatched to the handler
+        subtotal += lt
+    }
+    apply_discount(d, subtotal)   // sum type drives the final adjustment
+}
+
+// ---------------------------------------------------------------------------
+// 1. fn main — wires everything together with a real in-memory handler.
+// ---------------------------------------------------------------------------
+
+fn main() {
+    println("Nova — getting started")
+
+    // Build a small cart (records).
+    ro cart = [
+        Item { name: "Coffee", price: 450, qty: 2 },
+        Item { name: "Bagel",  price: 320, qty: 1 },
+        Item { name: "Water",  price: 120, qty: 3 },
+    ]
+
+    // Production handler: an in-memory audit log. The closure captures mutable
+    // state, so each `Audit.record(..)` updates `events` and `logged`.
+    mut events = 0
+    mut logged = 0
+    with Audit = effect Audit {
+        record(amount) {
+            events += 1
+            logged += amount
+            return ()
+        }
+    } {
+        ro total = checkout(cart, Percent(10))
+        println("items audited = ", events)        // 3
+        println("audited sum   = ", logged)        // 900 + 320 + 360 = 1580
+        println("total (cents) = ", total)         // 1580 - 10% = 1422
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Handler-swap in tests: same `checkout`, a DIFFERENT in-memory handler.
+// No mocking framework — the effect system is the seam.
+// ---------------------------------------------------------------------------
+
+test "checkout records one audit event per item and sums line totals" {
+    ro cart = [
+        Item { name: "A", price: 100, qty: 2 },   // 200
+        Item { name: "B", price: 300, qty: 1 },   // 300
+    ]
+
+    // Test handler counts calls and remembers the last amount it saw.
+    mut count = 0
+    mut last  = -1
+    with Audit = effect Audit {
+        record(amount) {
+            count += 1
+            last = amount
+            return ()
+        }
+    } {
+        ro total = checkout(cart, None_)
+        assert(total == 500, "subtotal 200 + 300 with no discount")
+    }
+    assert(count == 2, "one audit event per cart item")
+    assert(last == 300, "last recorded line total is item B")
+}
+
+test "discounts: flat and percent apply correctly" {
+    assert(apply_discount(None_, 1000) == 1000, "no discount keeps subtotal")
+    assert(apply_discount(Flat(250), 1000) == 750, "flat subtracts cents")
+    assert(apply_discount(Percent(20), 1000) == 800, "percent subtracts a fraction")
+}
+
+test "record field access and the pure helper" {
+    ro it = Item { name: "X", price: 199, qty: 4 }
+    assert(it.name == "X", "field access by name")
+    assert(line_total(it) == 796, "price * qty")
+}

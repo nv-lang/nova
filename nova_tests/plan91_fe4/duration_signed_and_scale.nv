@@ -1,0 +1,89 @@
+// Plan 91 Ф.4 conformance: signed Duration semantics + scaling.
+// Realistic use-case: a scheduler computes a drift (how far a tick landed
+// relative to its target). The drift can be negative (early) or positive
+// (late). We normalize the sign, classify it, scale a budget up/down, and
+// clamp it between bounds — exercising neg/abs/is_*/times/div/min/max/ZERO.
+module plan91_fe4.duration_signed_and_scale
+
+import std.time.duration
+
+test "signed drift: neg / predicates / abs round-trip" {
+    // A tick fired 250ms before its target → drift is "early" = negative.
+    ro early = 250.millis().neg()
+    assert(early.is_negative(), "neg() of a positive duration must be negative")
+    assert(!early.is_positive(), "an early (negative) drift is not positive")
+    assert(!early.is_zero(), "250ms early is not zero")
+
+    // abs() strips the sign and must equal the original positive magnitude.
+    assert(early.abs() == 250.millis(), "abs of -250ms must be +250ms")
+
+    // A perfectly on-time tick has zero drift.
+    ro ontime = 0.millis()
+    assert(ontime.is_zero(), "on-time drift must be zero")
+    assert(!ontime.is_positive() && !ontime.is_negative(), "zero is neither sign")
+
+    // A late tick is positive.
+    ro late = 250.millis()
+    assert(late.is_positive(), "a late drift must be positive")
+}
+
+test "scaling a retry budget: times / div (int and f64)" {
+    // Base retry budget of 2s.
+    ro base = 2.seconds()
+
+    // Triple it for an aggressive retry policy (i64 overload).
+    assert(base.times(3) == 6.seconds(), "2s * 3 must be 6s")
+
+    // Halve it (i64 division) for a tight policy.
+    assert(base.div(2) == 1.second(), "2s / 2 must be 1s")
+
+    // Apply a 1.5x backoff factor (f64 overload).
+    ro backed_off = base.times(1.5)
+    // Compare in fractional seconds with tolerance — never == on floats.
+    ro got = backed_off.as_secs_f64()
+    ro want = 3.0
+    ro d = got - want
+    assert(d > -1e-9 && d < 1e-9, "2s * 1.5 must be ~3.0s")
+
+    // Scale down by a fractional divisor (f64 overload): 2s / 4.0 = 0.5s.
+    ro shrunk = base.div(4.0)
+    ro gs = shrunk.as_secs_f64()
+    ro ds = gs - 0.5
+    assert(ds > -1e-9 && ds < 1e-9, "2s / 4.0 must be ~0.5s")
+}
+
+test "clamping a deadline budget: min / max" {
+    // We have a computed timeout and want to clamp it into [1s, 10s].
+    ro lower = 1.second()
+    ro upper = 10.seconds()
+
+    // A 30s request must be capped at the upper bound.
+    ro too_long = 30.seconds()
+    assert(too_long.min(upper) == upper, "min(30s, 10s) must be 10s")
+
+    // A 200ms request must be raised to the lower bound.
+    ro too_short = 200.millis()
+    assert(too_short.max(lower) == lower, "max(200ms, 1s) must be 1s")
+
+    // A 5s request sits inside the window and stays put.
+    ro ok = 5.seconds()
+    ro clamped = ok.min(upper).max(lower)
+    assert(clamped == ok, "5s clamped to [1s,10s] must stay 5s")
+}
+
+test "the zero Duration is the additive identity and is_zero" {
+    // NOTE: use Duration.from_nanos(0) rather than the Duration.ZERO const —
+    // const-access through Path-form does not currently inherit the record
+    // type in infer_expr_c_type (orthogonal codegen limitation, see
+    // nova_tests/plan65/f4_zero_duration.nv). from_nanos(0) is the documented
+    // equivalent and exercises the same is_zero/identity semantics.
+    ro zero = Duration.from_nanos(0)
+    assert(zero.is_zero(), "the zero duration must report is_zero")
+
+    // Zero scaled by anything stays zero.
+    assert(zero.times(1000) == zero, "0 * 1000 is 0")
+
+    // A duration minus itself is zero (signed arithmetic closes the loop).
+    ro d = 7.seconds()
+    assert((d - d) == zero, "d - d must be the zero duration")
+}

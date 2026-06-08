@@ -6,7 +6,7 @@
 #
 #   basics/         Hello, arithmetic, match, records, strings
 #   effects/        Эффекты и handler'ы (D61, D63, D64)
-#   real-world/     Полноразмерные примеры (audit, orm, oxsar_port)
+#   real_world/     Полноразмерные примеры (audit, orm, oxsar_port)
 #   effect-density/ Микросервис-сценарий для измерения «плотности
 #                   эффектов» в реальном коде
 #

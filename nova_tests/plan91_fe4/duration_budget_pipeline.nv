@@ -1,0 +1,67 @@
+// Plan 91 Ф.4 conformance: Duration multi-phase task-budget pipeline.
+//
+// Realistic use-case: a job scheduler builds a total time budget out of
+// several phases expressed in different units (hours / minutes / seconds),
+// composes them with `.plus()`, then decomposes the result with `.parts()`
+// for display and cross-checks the flat `.as_millis()` / `.as_secs()` totals
+// plus the human-readable rendering.
+module plan91_fe4.duration_budget_pipeline
+
+import std.time.duration
+
+test "multi-phase budget compose + decompose + totals + render" {
+    // Three phases of a build/deploy pipeline, each natural in its own unit.
+    ro compile  = Duration.from_hours(2)   // long compile phase
+    ro testing  = Duration.from_mins(45)   // test suite
+    ro deploy   = Duration.from_secs(30)   // quick deploy
+
+    // Compose the total budget via `.plus()`.
+    ro budget = compile.plus(testing).plus(deploy)
+
+    // ── Decompose into human components via `.parts()` ──
+    ro p = budget.parts()
+    assert(p.days == 0, "budget under a day -> 0 days")
+    assert(p.hours == 2, "2h compile phase")
+    assert(p.minutes == 45, "45min test phase")
+    assert(p.seconds == 30, "30s deploy phase")
+    assert(p.millis == 0, "no sub-second remainder")
+
+    // ── Flat totals ──
+    // 2h45m30s = 7200 + 2700 + 30 = 9930 seconds.
+    assert(budget.as_secs() == 9930, "total whole seconds")
+    assert(budget.as_millis() == 9_930_000, "total milliseconds")
+    assert(budget.as_mins() == 165, "9930s / 60 = 165 whole minutes")
+
+    // ── Fractional total (f64) with tolerance ──
+    // 9930 s -> 2.7583... hours.
+    ro hours_f = budget.as_secs_f64() / 3600.0
+    ro dh = hours_f - 2.7583333333
+    assert(dh > -1e-6 && dh < 1e-6, "fractional hours within tolerance")
+
+    // ── Human rendering ──
+    ro human = budget.into_human()
+    assert(human.contains("2h"), "human render mentions hours")
+    assert(human.contains("45min"), "human render mentions minutes")
+    assert(human.contains("30s"), "human render mentions seconds")
+}
+
+test "budget is order-independent and matches direct construction" {
+    ro a = Duration.from_hours(2).plus(Duration.from_mins(45)).plus(Duration.from_secs(30))
+    ro b = Duration.from_secs(30).plus(Duration.from_hours(2)).plus(Duration.from_mins(45))
+    assert(a == b, "plus is commutative across phases")
+    assert(a == Duration.from_secs(9930), "matches direct from_secs total")
+}
+
+test "extending the budget keeps parts consistent" {
+    // Add a final 90-minute soak-test phase, which rolls minutes past an hour.
+    ro base = Duration.from_hours(2).plus(Duration.from_mins(45)).plus(Duration.from_secs(30))
+    ro soak = Duration.from_mins(90)
+    ro total = base.plus(soak)
+
+    // 2h45m30s + 1h30m = 4h15m30s.
+    ro p = total.parts()
+    assert(p.hours == 4, "carried into 4 hours")
+    assert(p.minutes == 15, "45 + 30 (carry) = 15 leftover minutes")
+    assert(p.seconds == 30, "seconds unchanged")
+    assert(total.as_secs() == 9930 + 5400, "total grows by 90 minutes")
+}

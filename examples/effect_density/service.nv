@@ -5,10 +5,10 @@
 // Это и есть главная проверка тезиса «десятки эффектов в каждой функции».
 // Считайте перед чтением. После — сравните.
 
-module effect-density.service
+module effect_density.service
 
-import examples.effect_density.domain.*
-import examples.effect_density.repository as repo
+import effect_density.domain.*
+import effect_density.repository as repo
 
 
 // ──────────────────────────────────────────────────────────────────────────

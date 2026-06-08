@@ -8,7 +8,7 @@
 //   - equality / null check
 //   - Distinct typed handle via record wrapper
 
-module examples.ffi.ptr_basics
+module ffi.ptr_basics
 
 // Record-form typed handle (Plan 115 V1 — tuple newtype constructor
 // в Plan 115.1 followup).

@@ -1,0 +1,42 @@
+// Plan 91 Ф.4 REGRESSION GUARD for the handler-lit capture codegen fix.
+//
+// `import std.sort` + `import std.time.duration` in the SAME module used to
+// CC-FAIL with `use of undeclared identifier 'i'`: std.sort fns leave `i`
+// locals in the flat var_types map, and std.time.duration transitively pulls
+// in the Random `seeded` handler (std/testing/handlers.nv) whose op-body local
+// `i` was then wrongly captured by emit_handler_lit. None of the per-module
+// fe4 fixtures import BOTH, so this file is the dedicated guard — it must
+// keep compiling. See plan-91 Ф.4 closure.
+module plan91_fe4.sort_duration_handler_guard
+
+import std.sort
+import std.time.duration
+
+test "sort and duration coexist in one compilation unit" {
+    // sort path — emits the `i`-local fns that polluted var_types
+    mut xs = [5, 3, 8, 1, 9, 2, 7, 4, 6]
+    xs.sort()
+    mut k = 0
+    while k < xs.len() - 1 {
+        assert(xs[k] <= xs[k + 1], "not sorted")
+        k = k + 1
+    }
+    assert(xs[0] == 1 && xs[xs.len() - 1] == 9, "sort boundaries")
+
+    // duration path — pulls testing.handlers (seeded Random handler) transitively
+    ro a = Duration.from_secs(2)
+    ro b = Duration.from_millis(500)
+    assert(a.plus(b).as_millis() == 2500, "2.5s")
+
+    // interleave both so a single fn body declares an `i`-like local AND
+    // duration values — the exact shape that triggered the miscompile
+    mut total = 0
+    mut i = 0
+    while i < xs.len() {
+        total = total + xs[i]
+        i = i + 1
+    }
+    assert(total == 45, "sum 1..9")
+    ro budget = Duration.from_mins(1)
+    assert(budget.as_secs() == 60, "1 min")
+}

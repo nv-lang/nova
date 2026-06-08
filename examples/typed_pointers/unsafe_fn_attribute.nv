@@ -20,7 +20,9 @@ fn opaque_init() -> i64 {
 }
 
 test "#unsafe fn — declarable + callable" {
-    ro r = risky_compute(7, 6)
+    ro r = unsafe {
+        risky_compute(7, 6)
+    }
     assert(r == 142)
 }
 
