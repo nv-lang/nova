@@ -7455,9 +7455,23 @@ fn addr_of_mut[T](x T) -> *T      // requires `mut <x>` binding
 **Enforcement (same as UnOp::AddrOf):**
 - E_UNSAFE_REQUIRED — outside unsafe {} block
 - E_REALTIME_POINTER_OP — inside #realtime fn
-- E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED — invalid lvalues
-- E_ADDR_OF_NON_LVALUE — non-Ident/Member rvalue
-- E_ADDR_OF_MUT_REQUIRES_MUT_BINDING — addr_of_mut on ro binding (NEW)
+- E_AMP_LITERAL / E_AMP_RECORD_LITERAL — invalid lvalues (literal / record literal)
+- E_ARRAY_INDEX_PTR_BANNED — operand is, or its field-access chain passes through,
+  an array index (`arr[i]` / `arr[i].field`) — unstable base (buffer resize / GC
+  compaction), D216 §15
+- E_ADDR_OF_NON_LVALUE — the operand's field-access chain roots in an rvalue
+  (call result, arithmetic, …). **The lvalue check walks the WHOLE chain to its
+  root** (Plan 118.1 [M-118.1-addr-of-chains], amended 2026-06-08): `a.b.c` /
+  `(*p).f` / `self.x.y` rooted in a named local or `self` are accepted, while
+  `make().f` / `arr[i].f` / `(x+1).f` are rejected (previously only the top operand
+  node was inspected, so chains rooted in temporaries were wrongly accepted — a
+  dangling-pointer gap). `addr_of(x)` and `&x` share one walker
+  (`ast::addr_of_chain_root`), so the intrinsic and operator forms agree, and
+  `addr_of(*p)` ≡ `&(*p)` (the walker descends an explicit deref to the pointer
+  root, matching the `p.f` auto-deref sugar).
+- E_ADDR_OF_MUT_REQUIRES_MUT_BINDING — `addr_of_mut` on a binding whose root is not
+  `mut`; the mut-check also walks the field-chain root (`addr_of_mut(s.field)`
+  requires `mut s`), not just a bare Ident (NEW).
 
 Closes [M-118.1-addr-of-macros] (was: «add addr_of! macro» — macro framework not shipped, builtin-fn alternative landed).
 

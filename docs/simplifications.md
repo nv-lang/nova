@@ -33847,3 +33847,49 @@ production-grade closure complete, zero leak.
 
 3. **Per-scope tails accumulate in tight-loop scenarios.** Always audit
    tail trade-offs against worst-case scope counts.
+
+### 2026-06-08 — Plan 118.1 deferred markers (addr-of-chains + cstr-nul-check)
+
+**Markers:** `[M-118.1-addr-of-chains]` 🟢 CLOSED, `[M-118.1-cstr-nul-check]`
+🟢 CLOSED, `[M-118.1-cstr-to-cstr-distinct-copy]` ⏸ DEFERRED (sharpened → Plan
+118.2).
+
+**addr-of-chains (soundness).** The addr_of / `&` lvalue check inspected only
+the TOP operand node, so `addr_of(make().f)` / `addr_of(arr[i].f)` were wrongly
+accepted → dangling pointer into a temporary. Fix: a shared
+`ast::addr_of_chain_root` walker descends the whole Member/Deref/TurboFish chain
+to its root (call/arith root → `E_ADDR_OF_NON_LVALUE`; index-in-chain →
+`E_ARRAY_INDEX_PTR_BANNED`). Applied to BOTH the addr_of intrinsic
+(const_fn_eval) and the bare-`&` parser path so they agree, and `addr_of_mut`'s
+mut-binding requirement now walks the root (`addr_of_mut(s.field)` needs
+`mut s`). **Simplification:** one walker, two call sites — no duplicated
+chain logic; `addr_of(x)` and `&x` are guaranteed identical because both route
+through it (incl. `addr_of(*p)` ≡ `&(*p)`).
+
+**cstr-nul-check.** `@as_cstr()` scans for an embedded NUL and panics;
+`@as_cstr_unchecked` is the inlined scan-free hatch. The "panic needs an
+import → cycle" deferral was wrong — but a plain `import std.prelude.{panic}`
+is *worse* (trips the R27 auto-import opt-out → strips assert/print from every
+cstr-importer). **Simplest correct mechanism:** a module-private
+`external fn panic` decl — dead at codegen (panic is special-cased to
+`nv_panic` by name) but satisfies the type-checker, with zero blast radius.
+
+**cstr distinct-copy (deferred).** `@to_cstr` stays a V1 zero-copy alias — a
+real owned-buffer copy needs a malloc/free allocator (RawMem has none) → Plan
+118.2. UAF doc-warning added (don't store a CStr past the source str's life).
+
+**Spec:** D216 §4 amend.
+
+**Уроки:**
+
+1. **Walk the chain, not the top node.** A top-node-only "is this an lvalue?"
+   check silently blesses `make().field` (rvalue root). Route every form
+   through one shared walker so they can't drift apart.
+
+2. **Adversarial review pays for itself.** A design agent's "panic auto-resolves
+   here" claim (from a doc-stub precedent) was empirically false; the same
+   harness later caught a top-level-deref asymmetry the targeted fixtures missed.
+
+3. **`include_str!`'d stdlib = rebuild-to-test.** cstr.nv is embedded in the
+   compiler binary; comment-only edits are inert, but any behavioral edit needs
+   a rebuild — and a running `nova test` locks the binary against it.

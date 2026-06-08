@@ -34476,3 +34476,81 @@ LESSONS:
 3. Per-scope leaks in tight-loop scenarios (1M scopes × 8KB = 8GB) can
    accumulate beyond per-instance leaks (1M tokens × 64B = 64MB). Always
    audit «per-scope tail» trade-offs against worst-case scope counts.
+
+
+================================================================================
+2026-06-08 — Plan 118.1 deferred-markers pass (addr-of-chains + cstr-nul-check)
+================================================================================
+
+Closed 2 of the 3 remaining Plan 118.1 followup markers; sharpened the 3rd's
+deferral. Driven by a multi-agent design + adversarial-review harness — the
+design pass over-promised on cstr panic resolution, the adversarial pass caught
+it plus two addr_of soundness/consistency gaps before landing.
+
+[M-118.1-addr-of-chains] — CLOSED. The addr_of / `&`-operand lvalue validation
+now walks the WHOLE field-access chain to its root via a shared
+`ast::addr_of_chain_root` walker (Member/TurboFish/Deref descend; Index →
+IndexInChain; else → Rvalue).
+- Soundness fix: previously only the TOP operand node was inspected, so
+  `addr_of(make().f)`, `addr_of(arr[i].f)`, `addr_of((x+1).f)` were wrongly
+  accepted → dangling pointer into a temporary. Now: call/arith-rooted chain →
+  E_ADDR_OF_NON_LVALUE; index-in-chain → E_ARRAY_INDEX_PTR_BANNED (D216 §15).
+- Consistency: the SAME walker is applied to the bare-`&` parser path, so
+  `&make().f` (also wrongly accepted before) is now rejected; and `(*p).f`,
+  `p.f` auto-deref sugar, `addr_of(*p)`, `&(*p)` all get ONE verdict (walker
+  descends an explicit deref to the pointer root).
+- addr_of_mut: the mut-binding requirement now walks the chain root, so
+  `addr_of_mut(s.field)` requires `mut s` (was only checked for a bare Ident).
+- Files: compiler-codegen/src/{ast/mod.rs (walker + AddrChainRoot enum +
+  addr_of_mut_root_ident), const_fn_eval.rs (addr_of path), types/mod.rs
+  (mut-check), parser/mod.rs (& path)}. 12 fixtures plan118_1_addr_chains.
+
+[M-118.1-cstr-nul-check] — CLOSED. std/ffi/cstr.nv @as_cstr() scans the str
+bytes for an embedded NUL (interior 0x00 truncates a C-string) and panics;
+@to_cstr inherits the scan; @as_cstr_unchecked is the inlined scan-free #unsafe
+O(1) hatch. The original "panic needs an import → cycle" deferral was wrong:
+panic is codegen-special-cased by name, declared module-privately as
+`external fn panic` (a plain `import std.prelude.*` trips the R27 auto-import
+opt-out and strips assert/print from EVERY cstr-importer — a real regression
+seen when first attempted). cstr.nv is ExternalRegistry-loaded → no
+auto-prelude. 3 fixtures plan118_1_cstr_nul (2× EXPECT_RUNTIME_PANIC + 1 POS).
+
+[M-118.1-cstr-to-cstr-distinct-copy] — DEFERRED (sharpened). @to_cstr is a V1
+zero-copy alias; a distinct always-copy CStr needs an owned malloc/free
+allocator + Drop. RawMem exposes only copy/fill/compare (no alloc/free), no
+allocator API exists → folded into Plan 118.2 (MaybeUninit/ManuallyDrop). UAF
+doc-warning added to cstr.nv (storing a CStr past the source str's GC lifetime).
+
+SPEC:
+
+D216 §4 amend (addr_of/& chain-root validation + error-code semantics,
+spec/decisions/02-types.md).
+
+MARKER TALLY:
+
+- [M-118.1-addr-of-chains] V CLOSED.
+- [M-118.1-cstr-nul-check] V CLOSED.
+- [M-118.1-cstr-to-cstr-distinct-copy] DEFERRED → Plan 118.2 (sharpened).
+- Plan 118.1 family: 11/12 markers closed; 1 deferred to Plan 118.2.
+
+Verify: 15 marker fixtures PASS (12 plan118_1_addr_chains + 3 plan118_1_cstr_nul);
+0 regressions across plan118* family + plan127 (baseline-identical 15/3).
+
+LESSONS:
+
+1. Design-agent optimism needs adversarial grounding. The design pass claimed
+   panic auto-resolves in cstr.nv (citing timer.nv) — but timer.nv is a doc-stub
+   whose panic is never codegen'd. Empirical test (undefined-panic codegen
+   error) refuted it; the local `external fn panic` decl is the fix that
+   sidesteps the R27 auto-import opt-out trap.
+
+2. Soundness of "lvalue" checks must walk the chain, not the top node — a
+   top-node-only check silently blesses `addr_of(make().f)`. Routing the
+   intrinsic AND operator forms through ONE shared walker keeps them consistent
+   and avoids re-introducing the asymmetry the adversarial pass caught
+   (`addr_of(*p)` ≠ `&(*p)` when the two paths diverged).
+
+3. Stale-binary trap (4th encounter in this family): cstr.nv is include_str!'d
+   into the binary → every cstr.nv edit needs a rebuild before tests reflect it.
+   A running background `nova test` also LOCKS nova.exe → the rebuild fails
+   «access denied» until the test task is stopped (TaskStop) first.
