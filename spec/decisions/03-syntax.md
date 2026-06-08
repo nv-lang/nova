@@ -1510,12 +1510,24 @@ acc.deposit(100)
 ro bal = acc.balance()         // getter, обязательные ()
 ```
 
-Bound vs unbound:
+Unbound method value и lambda (bound method value удалён в Plan 132):
 
 ```nova
-ro f = acc.balance              // bound: fn() -> money
+// Unbound: fn-pointer, self передаётся явно.
 ro g = Account.@balance         // unbound: fn(Account) -> money
+ro v = g(acc)                   // 100
+
+// Closure захватывает receiver — замена bound-форме.
+ro f = || acc.balance()         // lambda: fn() -> money
+ro v2 = f()                     // 100
 ```
+
+> **Правило `@name` в теле метода:**
+> `@name` без `()` = поле `name`; `@name()` = вызов метода `name`.
+> Поле и метод с одним именем на одном типе — легально (нет коллизии).
+>
+> **REMOVED (Plan 132, 2026-06-09):** `obj.@method` (bound method value).
+> Замена: лямбда `|| obj.method()` или unbound `Type.@method`.
 
 Generic'и: `[T]` после имени типа (`fn Vec[T] @len()`) и/или после
 `@name` (`fn Vec[T] @map[U](f T -> U)`).
@@ -1576,10 +1588,9 @@ fn Account @add(n int) -> int => @balance + n
 
 ro acc = Account.new(42)
 
-// 1. Bound method value: захватывает obj как self.
-//    Тип: fn(<remaining-params>) -> R
-ro f = acc.@get          // тип: fn() -> int
-ro g = acc.@add          // тип: fn(int) -> int
+// 1. Closure capturing receiver (replaces bound method value removed in Plan 132).
+ro f = || acc.get()                     // тип: fn() -> int
+ro g = fn(n int) -> int => acc.add(n)  // тип: fn(int) -> int
 ro v = f()               // 42
 ro r = g(10)             // 52
 
@@ -1596,8 +1607,8 @@ ro acc2 = mk(7)
 
 #### Семантика
 
-- **Bound** копирует / захватывает receiver внутрь closure-структуры.
-  Subsequent calls используют captured self.
+- **Lambda capturing receiver** — lambda closes over the receiver variable.
+  Subsequent calls use the captured variable.
 - **Unbound** — fn pointer без env'а. Caller обязан передать receiver
   как первый аргумент.
 - **Static** — fn pointer без receiver'а вообще.
@@ -1606,40 +1617,41 @@ ro acc2 = mk(7)
 
 ```nova
 ro nums = [1, 2, 3]
-ro negated = nums.map(int.@neg)    // unbound: применяет @neg к каждому
-ro total = nums.fold(0, acc.@add)  // bound: добавляет каждый num к acc
+ro negated = nums.map(int.@neg)          // unbound: применяет @neg к каждому
+ro total = nums.fold(0, |n| acc.add(n))  // closure-light: добавляет каждый num к acc
 ```
 
-#### Disambiguation для overloaded methods (Ф.5)
+#### Disambiguation для overloaded methods
 
-Если у метода несколько overload'ов, нужна type annotation:
+Если у метода несколько overload'ов, используется lambda с явными типами аргументов:
 
 ```nova
 fn Buffer mut @write(s str) -> ()
 fn Buffer mut @write(b []u8) -> ()
 
 ro buf = Buffer.new()
-ro f1 = buf.@write as fn(str) -> ()      // выбор по annotation
-ro f2 = buf.@write as fn([]u8) -> ()
+ro f1 = fn(s str) -> () => buf.write(s)      // выбор по типу аргумента
+ro f2 = fn(b []u8) -> () => buf.write(b)
 ```
 
-Без annotation — compile error «ambiguous method value». Annotation
-либо на cast (`as fn(...)`), либо на let-binding type
-(`let f fn(str) -> () = buf.@write` — также работает).
+Тип аргумента в lambda однозначно определяет overload.
 
 #### C-runtime представление
 
-Bound и unbound — оба используют generic `NovaClosBase` layout:
+Lambda (closure) и unbound — оба используют generic `NovaClosBase` layout:
 ```c
 typedef struct { void* fn; void* env; } NovaClosBase;
 ```
 
 `fn` указывает на сгенерированный wrapper, `env` — указатель на
-struct с captured receiver (для bound) или dummy struct (для unbound).
+struct с captured receiver (для lambda) или dummy struct (для unbound).
 Call-site: cast `fn` к нужной сигнатуре, передача `env` + args.
 
 Static method values — bare fn pointer (без env'а) — но в bootstrap
 для единообразия тоже оборачиваются в NovaClosBase.
+
+> **Note:** Bound method value (`obj.@method`) removed in Plan 132.
+> Lambda `|| obj.method()` is the explicit replacement.
 
 ### Self в expression position (D66 расширение, Plan 11 Ф.4.5)
 
@@ -5482,10 +5494,12 @@ capacity (`len`, `capacity`, `byte_len`, `is_empty`, плюс будущие
 `count`, `size` если они появятся как built-in convention), вызываются
 **только** через method-call с круглыми скобками: `t.method()`.
 
-Запись `t.method` (без скобок) — это **bound method value** типа
-`fn() -> T`, и компилятор отдельно её обрабатывает (D-block method-
-values, [Plan 11](../../docs/plans/11-method-values-and-overload.md)).
-В подавляющем большинстве случаев это user error.
+Запись `t.method` (без скобок, без `@`) — это обращение к **полю**
+(если поле public), либо compile error если поле не существует.
+**Bound method value (`t.@method`) удалён в Plan 132** — используй
+лямбду `|| t.method()` или unbound `Type.@method`.
+В подавляющем большинстве случаев голое `v.len` — user error
+(забытые скобки).
 
 ### Правило
 
@@ -5520,8 +5534,8 @@ error[E_SIZE_ACCESSOR_FIELD]: size-like accessor `len` is method-only
 42 |     println("${vec.len}")
    |                    ^^^ help: append `()` — use `.len()` method call
    |
-   = note: bare `.len` is bound method value `fn() -> int`,
-           rarely intended in argument position
+   = note: bare `.len` without `()` — missing parens (bound method value
+           syntax was removed in Plan 132; use `.len()` to call)
 ```
 
 Для `.cap`:
@@ -5591,8 +5605,8 @@ convention без compiler enforcement).
 - [D38](#d38-создание-массивов-и-turbofish-для-дженериков) — built-in
   API для `[]T`; D117 amend'ит таблицу (раздел "Built-in API").
 - [Plan 11](../../docs/plans/11-method-values-and-overload.md) —
-  method-value semantics (`let f = x.@len` legitimate; bare `x.len`
-  error).
+  method-value semantics; bound form (`x.@len`) removed in Plan 132;
+  unbound `Type.@method` and lambda remain.
 - [Plan 37](../../docs/plans/37-typecheck-semantic-parity.md) — refine
   arg-position vs non-arg method-value disambiguation (post-Plan 60
   follow-up).

@@ -839,8 +839,9 @@ fn Account @send_to(ch Channel[Account]) => ch.send(@)
 
 ```nova
 acc.balance()              // вызов метода
-acc.balance                // bound method value (не вызов!), тип: fn() -> money
+// acc.@balance            // REMOVED (Plan 132): bound method value
 Account.@balance           // unbound method value, тип: fn(Account) -> money
+|| acc.balance()           // lambda (замена bound): тип fn() -> money
 Account.new                // static-функция как значение, тип: fn(str) -> Account
 ```
 

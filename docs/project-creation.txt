@@ -34858,3 +34858,30 @@ Plan 131 — Vec[T] in Nova (CLOSED) — 2026-06-08
 protocols -> spec. Полная регрессия 0 новых FAIL.
 
 2026-06-09: Plan 118.1.7 — unsafe fn keyword syntax. Migrated #unsafe fn attribute to unsafe fn type keyword. 17+ files. E_UNSAFE_ATTR_DEPRECATED hard error. D2 + D216 §9 amend.
+================================================================================
+Plan 132 — Remove bound method value obj.@method (CLOSED) — 2026-06-09
+================================================================================
+
+МОТИВАЦИЯ: Bound method value (`obj.@method`) несёт closure-overhead и создаёт
+давление на изобретение форм вроде `@@len` / `@.@len` при коллизии поля и
+метода с одним именем. Лямбда `|| obj.method()` — явная замена без
+специальной семантики.
+
+СДЕЛАНО:
+Ф.1 Parser/Checker: E_BOUND_METHOD_REMOVED для `obj.@method` и `obj.@method(args)`.
+  `Type.@method` (unbound) оставлен. Checker: field+method одного имени легальны.
+Ф.2 Migration: spec/decisions/03-syntax.md, spec/syntax.md, nova_tests/syntax/
+  method_values.nv, examples/ffi/sqlite_mini.nv — всё перемигрировано на
+  лямбды / прямые вызовы.
+Ф.3 POS fixtures: pos_field_method_same_name.nv + pos_at_name_disambiguation.nv
+  (оба PASS). Probe-файл удалён.
+Ф.4 Spec/docs: D35 «Bound vs unbound» переписан, C-runtime представление
+  обновлено, D117 диагностика скорректирована. simplifications.md + project-
+  creation.txt + discussion-log + plan file closed.
+
+КЛЮЧЕВОЕ РЕШЕНИЕ: Тактическое удаление (не редизайн). Unbound `Type.@method`
+оставлен — это просто fn-pointer на объявленную функцию, никакого self-binding.
+Побочный эффект: поле и метод с одним именем на типе теперь легальны.
+
+ТЕСТЫ: plan132/ — 4 PASS (2 NEG + 1 POS unbound + 2 POS field-method-same-name
++ 1 POS disambiguation). nova_tests/syntax/method_values.nv — PASS.

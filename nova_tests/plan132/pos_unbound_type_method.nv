@@ -1,0 +1,16 @@
+// Plan 132 Ф.1.7 (POS): unbound method value `Type.@method` still works.
+// `Counter.@add` takes (Counter, int) as explicit args (no capture).
+
+module plan132.pos_unbound_type_method
+
+type Counter { value int }
+
+fn Counter.new() -> Self => { value: 0 }
+fn Counter @add(n int) -> int => @value + n
+
+test "unbound Type.@method: explicit self pass" {
+    ro c = Counter.new()
+    ro f = Counter.@add
+    ro r = f(c, 5)
+    assert(r == 5)
+}

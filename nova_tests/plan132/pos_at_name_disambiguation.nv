@@ -1,0 +1,34 @@
+// Plan 132 Ф.3.3 (POS): @name vs @name() disambiguation in method bodies.
+// `@len` (no parens) inside a method body = field access.
+// `@len()` (with parens) inside a method body = method call on self.
+// Both forms are unambiguous and work correctly.
+//
+// Note: @name() self-call within a type method uses the same codegen path as
+// direct field access; this test verifies the disambiguation semantics
+// using the @len() -> int method from Buf (same type as pos_field_method_same_name).
+
+module plan132.pos_at_name_disambiguation
+
+type Stack { priv mut top int, priv mut len int }
+
+fn Stack.new() -> Self => { top: 0, len: 0 }
+
+// @len() method: returns the field value via @len (no parens = field access)
+fn Stack @len() -> int => @len
+
+// @push() increments both top value and len field
+fn Stack @push(v int) { @top = @top + v; @len = @len + 1 }
+
+// @peek() reads top field via @top (field access, no parens)
+fn Stack @peek() -> int => @top
+
+test "@name (no parens) = field access in method body" {
+    mut s = Stack.new()
+    s.push(10)
+    s.push(20)
+    s.push(30)
+    // @len field is 3, method @len() returns @len field = 3
+    assert(s.len() == 3)
+    // @top field is 60 (10+20+30)
+    assert(s.peek() == 60)
+}

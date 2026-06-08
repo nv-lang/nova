@@ -90,7 +90,7 @@ fn Stmt consume @close() -> () {
 // EXPECT_COMPILE_ERROR в test fixtures когда shim не linked).
 fn open_and_close_demo(path str) Fail[DbError] -> int {
     ro db = Db.open(path)
-    db.@exec("CREATE TABLE IF NOT EXISTS users (id INT, name TEXT)")
-    db.@close()
+    db.exec("CREATE TABLE IF NOT EXISTS users (id INT, name TEXT)")
+    db.close()
     0
 }

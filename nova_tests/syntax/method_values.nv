@@ -1,7 +1,7 @@
-// Method values тесты (Plan 11 Ф.4).
-// `obj.@method` — bound method value (struct {fn_ptr, self}).
+// Method values тесты (Plan 11 Ф.4 → Plan 132 migration).
 // `Type.@method` — unbound method value (fn pointer берёт self явно).
 // `Type.method`  — static method value (fn pointer без self).
+// Note: bound method value `obj.@method` removed in Plan 132 — use lambdas instead.
 
 module syntax.method_values
 
@@ -14,21 +14,21 @@ fn Counter @add_two(a int, b int) -> int => @value + a + b
 
 test "bound method value: no args" {
     ro c = Counter.new()
-    ro f = c.@get
+    ro f = || c.get()
     ro v = f()
     assert(v == 0)
 }
 
 test "bound method value: one arg" {
     ro c = Counter.new()
-    ro f = c.@add
+    ro f = fn(n int) -> int => c.add(n)
     ro r = f(7)
     assert(r == 7)
 }
 
 test "bound method value: two args" {
     ro c = Counter.new()
-    ro f = c.@add_two
+    ro f = fn(a int, b int) -> int => c.add_two(a, b)
     ro r = f(3, 4)
     assert(r == 7)
 }
@@ -43,9 +43,9 @@ test "unbound method value: explicit self pass" {
 test "bound method value: разные обращения" {
     ro a = Counter.new()
     ro b = Counter.new()
-    // Каждый bound несёт свой self.
-    ro fa = a.@get
-    ro fb = b.@get
+    // Каждый lambda несёт свой capture.
+    ro fa = || a.get()
+    ro fb = || b.get()
     assert(fa() == 0)
     assert(fb() == 0)
 }
@@ -56,12 +56,10 @@ test "bound method value: разные обращения" {
 // через ExternalRegistry. Future work. Пока method values работают
 // только на user-defined типах.
 
-// Plan 11 Ф.5: as fn(...) disambiguation.
-// Сейчас @add единственный overload, поэтому disambiguation тривиальная,
-// но annotation должна compile + работать.
-test "Ф.5: as fn type annotation" {
+// Plan 132: disambiguation через closure-full вместо as fn(...).
+test "disambiguation через closure-full" {
     ro c = Counter.new()
-    ro f = c.@add as fn(int) -> int
+    ro f = fn(n int) -> int => c.add(n)
     ro r = f(11)
     assert(r == 11)
 }

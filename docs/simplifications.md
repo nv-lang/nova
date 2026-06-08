@@ -34138,10 +34138,19 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
 - **Принцип** — generic-протокол тест должен вызывать метод напрямую, не через interp-bridge,
   пока vtable-dispatch для generic types не проверен в suite.
 
-
 ## Plan 118.1.7 — unsafe fn keyword syntax (2026-06-09)
 
 ### Что упрощено / отложено
 - `unsafe fn` синтаксис — keyword-only, нет grace period для `#unsafe fn` (hard error сразу)
 - `extern "C" { unsafe fn ... }` block синтаксис — не реализован (followup [M-118.1.7-extern-block])
 - type-inference для `let p = risky_fn` где `risky_fn: unsafe fn(...)` — через Plan 118.1.6 addr_of (verify followup [M-118.1.7-unsafe-fn-type-inference])
+
+## [2026-06-09] Plan 132 — Removed bound method value `obj.@method`
+
+**What:** Removed bound method value syntax `obj.@method` (without parens) and `obj.@method(args)` (call via bound). Unbound `Type.@method` (fn-pointer) is kept.
+
+**Why:** Bound method values carry closure overhead (struct {fn_ptr, self}) and created pressure to invent disambiguation forms like `@@len` or `@.@len` when field and method share a name. Lambdas `|| obj.method()` are the explicit replacement.
+
+**Side effect:** Field and method with the same name on a type are now legal (no ambiguity: `@name` = field, `@name()` = method call).
+
+**Error code:** `E_BOUND_METHOD_REMOVED` with hints for migration.
