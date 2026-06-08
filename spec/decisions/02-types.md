@@ -7473,6 +7473,13 @@ fn addr_of_mut[T](x T) -> *T      // requires `mut <x>` binding
   `mut`; the mut-check also walks the field-chain root (`addr_of_mut(s.field)`
   requires `mut s`), not just a bare Ident (NEW).
 
+**Known V1 gaps (2026-06-08 followups):** (1) `addr_of_mut((*p).field)` is not yet
+gated on `p` being `*mut`/mut-bound — the mut-check skips deref roots and the
+desugar is a bare `UnOp::AddrOf` with no `*mut` cast ([M-118.1-addr-of-mut-deref-ptr-mut]).
+(2) The `addr_of(...)` intrinsic chain-check runs in the const-fn rewrite pass, so
+`nova check`/LSP does not surface it (the bare-`&` operator path is check-time)
+([M-118.1-addr-of-chains-checktime]).
+
 Closes [M-118.1-addr-of-macros] (was: «add addr_of! macro» — macro framework not shipped, builtin-fn alternative landed).
 
 ### §5. Auto-deref
