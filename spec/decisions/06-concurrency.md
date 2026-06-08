@@ -5867,6 +5867,9 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
   sysmon introspection.
 - Closes [M-83.11-gc-cancel-token-alias] (§11.6).
 - Closes [M-83.11-supervised-spawn-cancel-memcpy-segv] (§12.31).
+- Closes [M-83.10.1-armed-cancel-timer-hang] V2 sweep (2026-06-08): 17 тестов с
+  `// ENV NOVA_AUTOARM=0` удалены — cancel+sleep путь корректен под armed M:N.
+  Подтверждает централизованный driver thread как корень fix'а.
 
 ### Открытые вопросы
 
