@@ -34726,3 +34726,15 @@ fix, ребилд после каждого шага.
 
 ТЕСТЫ: plan91_fe1/composite_array_map_pos.nv (7), neg/composite_array_edge.nv (3),
 method_turbofish_pos.nv, set_from_iter_pos.nv. Full nova test 0 blast radius.
+
+================================================================================
+Plan 91 Ф.1 dead-arrayext probe — 2026-06-08
+================================================================================
+
+[M-91.1-dead-arrayext-mono-path] WON'T FIX — путь ЖИВОЙ. Добавил probe panic!
+в начало ветки `if type_name.starts_with("[]") && is_instance` (~21335).
+Полный nova test прогон -> panic сработал на plan100_4_5:
+  type_name="[]T" method="my_filter"
+Пользовательские fn[T] []T @method не регистрируются в external_registry,
+live sentinel (~20710) не перехватывает -> путь обязателен.
+Panic откатан, маркер закрыт как WON'T FIX во всех доках.

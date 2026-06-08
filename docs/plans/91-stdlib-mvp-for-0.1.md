@@ -500,8 +500,10 @@ closure-параметра. Фикс: split ClosureLight-ветки в fn-typed-
 - ✅ **`[M-91.1-set-from-iter-iterable-param]`** (P2) — ЗАКРЫТ. `Set.from_iter` принимает конкретный `[]T` (зеркало
   `HashMap.from([](K,V))`); generic-протокол `Iterable[T]` стирался в `void*` на mono-инстансе → for-in не мог
   восстановить C-тип итератора. Array-параметр итерируется корректно для любого элемента.
-- 🟡 **`[M-91.1-dead-arrayext-mono-path]`** (P3 cleanup) — остаётся; мёртвый путь `emit_c.rs` (sentinel-путь
-  `~20710` wins+returns first). Удалить/задокументировать.
+- ❌ **`[M-91.1-dead-arrayext-mono-path]`** (WON'T FIX) — путь ЖИВОЙ, не мёртвый. Probe (`panic!`) сработал
+  на `type_name="[]T" method="my_filter"` (plan100_4_5): пользовательские generic методы на `[]T` не
+  регистрируются в `external_registry`, поэтому live sentinel не перехватывает их — они приходят сюда.
+  Удалять нельзя. Маркер закрыт как WON'T FIX.
 - 🟡 **NEW `[M-91.1-value-struct-array-elem]`** (P2) — `[]Option[T]`/`[]tuple`-by-value (value-struct элементы,
   не pointer): int64-slot erasure не вмещает >8 байт, side-channel readback покрывает только pointer-элементы.
   Pre-existing лимит (CC-FAIL и на baseline, не регрессия). Требует typed-storage **именно** для value-struct

@@ -2221,7 +2221,9 @@ v1.0).
 >   через generic map/filter в `array_element_types`; (3) `.get()`/infer перепаковывают `NovaOpt_nova_int`→
 >   `NovaOpt_<elem>` (NPO); (4) composite-receiver: closure-param re-type. `[]record`/`[]sum` теперь полностью
 >   годны через index/for-in/get. 0 blast radius (доказано baseline diff). Обобщает `[M-59.1-array-of-mono-tuple]`.
-> - 🟡 `[M-91.1-dead-arrayext-mono-path]` (P3) — остаётся; cleanup мёртвого пути.
+> - ❌ `[M-91.1-dead-arrayext-mono-path]` (WON'T FIX) — путь ЖИВОЙ. Probe-panic сработал на
+>   `type_name="[]T" method="my_filter"` (plan100_4_5): пользовательские `fn[T] []T @method` не
+>   регистрируются в `external_registry` → live sentinel не перехватывает. Удалять нельзя.
 > - 🟡 NEW `[M-91.1-value-struct-array-elem]` (P2) — `[]Option[T]`/`[]tuple`-by-value (value-struct элементы, не
 >   pointer): erasure не вмещает >8 байт, side-channel readback не покрывает. Требует typed-storage именно для
 >   value-struct (узкий случай) ИЛИ box-to-pointer. Pre-existing лимит (падал и на baseline), не регрессия.

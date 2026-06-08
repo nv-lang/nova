@@ -34039,7 +34039,9 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
 2. `[M-91.1-method-turbofish-dispatch]` (P2) — `xs.map[int]`: codegen дропает TurboFish{base:Member}
    type_args. Inference-форма работает — эргономика.
 3. `[M-91.1-set-from-iter-iterable-param]` (P2) — Set.from_iter(Iterable[T]) → void* iterator.
-4. `[M-91.1-dead-arrayext-mono-path]` (P3) — cleanup недостижимого пути 21135-21269.
+4. `[M-91.1-dead-arrayext-mono-path]` (WON'T FIX) — путь ЖИВОЙ. Probe-panic сработал на
+   `type_name="[]T" method="my_filter"` (plan100_4_5): пользовательские `fn[T] []T @method`
+   не регистрируются в `external_registry`, live sentinel не перехватывает. Удалять нельзя.
 
 **Уроки:**
 
