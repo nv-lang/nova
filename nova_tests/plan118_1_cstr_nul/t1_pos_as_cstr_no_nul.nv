@@ -1,6 +1,6 @@
 // Plan 118.1 [M-118.1-cstr-nul-check] — as_cstr succeeds on NUL-free strings
 // (the scan falls through), and as_cstr_unchecked stays scan-free (no panic
-// even when the str DOES contain an embedded NUL — the #unsafe escape hatch
+// even when the str DOES contain an embedded NUL — the unsafe escape hatch
 // must not inherit the scan).
 module plan118_1_cstr_nul.t1_pos_as_cstr_no_nul
 

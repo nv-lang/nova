@@ -1,15 +1,14 @@
 // Plan 118.1.6 Ф.4 T6 NEG — call *unsafe fn pointer из safe context rejected.
 //
-// Indirection через pointer var adds no safety — pointee #unsafe fn body
+// Indirection через pointer var adds no safety — pointee unsafe fn body
 // may contain unguarded pointer ops; callsite must opt-in к unsafe context.
-// Same rule as direct #unsafe fn call (Plan 118.1.5).
+// Same rule as direct unsafe fn call (Plan 118.1.5).
 //
 // EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
 
 module plan118_1_6.t6_neg_call_unsafe_ptr_outside_unsafe
 
-#unsafe
-fn risky_inc(x i64) -> i64 {
+unsafe fn risky_inc(x i64) -> i64 {
     x + 1
 }
 

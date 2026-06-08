@@ -5,8 +5,7 @@
 
 module plan118_1_6.t7_pos_call_unsafe_ptr_inside_unsafe_ok
 
-#unsafe
-fn risky_dec(x i64) -> i64 {
+unsafe fn risky_dec(x i64) -> i64 {
     x - 1
 }
 
