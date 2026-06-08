@@ -65,7 +65,7 @@ export type CStr(*u8)
 //   use `as_cstr()` (valid only while the source str is alive).
 //
 // @as_cstr_unchecked() — skips embedded-NUL scan. Caller asserts safe.
-//   Marked #unsafe per [M-118.1-unsafe-attr-on-external-fn] (Plan 118.1):
+//   Marked unsafe per [M-118.1-unsafe-attr-on-external-fn] (Plan 118.1):
 //   callers must wrap invocations in `unsafe { ... }` block.
 
 // Embedded-NUL scan: @as_cstr() panics on the first byte==0 (an interior NUL
@@ -77,7 +77,7 @@ export type CStr(*u8)
 // the cycle, but right that a plain prelude import is unusable here (it trips
 // the R27 auto-import opt-out for importers — see the note above).
 // [M-118.1-cstr-nul-check] CLOSED.
-// @as_cstr_unchecked() — #unsafe escape hatch, scan-free (O(1)).
+// @as_cstr_unchecked() — unsafe escape hatch, scan-free (O(1)).
 
 export fn str @as_cstr() -> CStr {
     ro bytes = @as_bytes()
@@ -89,7 +89,7 @@ export fn str @as_cstr() -> CStr {
     unsafe { CStr(bytes.as_ptr()) }
 }
 
-export #unsafe fn str @as_cstr_unchecked() -> CStr {
+export unsafe fn str @as_cstr_unchecked() -> CStr {
     // Scan-free O(1) hatch — caller asserts no embedded NUL. Does NOT delegate
     // to @as_cstr() (that would re-introduce the scan it exists to skip).
     ro bytes = @as_bytes()

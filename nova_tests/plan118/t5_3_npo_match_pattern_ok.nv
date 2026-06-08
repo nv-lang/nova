@@ -11,8 +11,7 @@ type Item {
 }
 
 // Returns Option[*Item] — None to test match None arm dispatch.
-#unsafe
-fn maybe_item() -> Option[*u8] {
+unsafe fn maybe_item() -> Option[*u8] {
     None
 }
 

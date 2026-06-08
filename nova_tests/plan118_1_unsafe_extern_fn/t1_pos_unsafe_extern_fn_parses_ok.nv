@@ -1,11 +1,11 @@
-// Plan 118.1.5 T1 POS — `#unsafe export external fn` parses successfully.
-// D2 amend: #unsafe attribute extended к external fn declarations.
+// Plan 118.1.5 T1 POS — `export external unsafe fn` parses successfully.
+// D2 amend: unsafe keyword extended к external fn declarations.
 
 module plan118_1_unsafe_extern_fn.t1_pos_unsafe_extern_fn_parses_ok
 
-export #unsafe external fn foo(x int) -> ()
+export external unsafe fn foo(x int) -> ()
 
 test "unsafe extern fn declaration parses" {
-    // Declaration only — no call. Verifies parser accepts attribute.
+    // Declaration only — no call. Verifies parser accepts keyword.
     assert(1 == 1)
 }

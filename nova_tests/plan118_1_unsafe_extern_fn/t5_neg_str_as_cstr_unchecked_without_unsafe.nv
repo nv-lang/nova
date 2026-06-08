@@ -1,5 +1,5 @@
 // Plan 118.1.5 T5 NEG — str.as_cstr_unchecked() без unsafe {} rejected.
-// stdlib `export #unsafe fn str @as_cstr_unchecked()` enforces wrap.
+// stdlib `export unsafe fn str @as_cstr_unchecked()` enforces wrap.
 //
 // EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
 

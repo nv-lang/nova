@@ -34856,3 +34856,5 @@ Plan 131 — Vec[T] in Nova (CLOSED) — 2026-06-08
 
 МЕТОД: 6-phase sequential workflow. Probe -> alloc -> codegen fix -> Nova impl ->
 protocols -> spec. Полная регрессия 0 новых FAIL.
+
+2026-06-09: Plan 118.1.7 — unsafe fn keyword syntax. Migrated #unsafe fn attribute to unsafe fn type keyword. 17+ files. E_UNSAFE_ATTR_DEPRECATED hard error. D2 + D216 §9 amend.

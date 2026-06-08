@@ -457,6 +457,60 @@ unsafe {
 - Spec D26 §«Nul-termination» — `spec/decisions/08-runtime.md`
 - Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`
 
+## unsafe fn — declaring and calling unsafe functions (Plan 118.1.7)
+
+> Plan 118.1.7 migrates from `#unsafe fn` attribute to `unsafe fn` keyword (type-consistent
+> with TypeRef::Unsafe from Plan 118.5 and `*unsafe fn(...)` fn-ptr type from Plan 118.1.6).
+> `#unsafe fn` is now a hard error (`E_UNSAFE_ATTR_DEPRECATED`).
+
+### Declaring an unsafe Nova function
+
+```nova
+// unsafe fn — body has implicit unsafe context (pointer ops allowed without unsafe {})
+export unsafe fn str @as_cstr_unchecked() -> CStr {
+    ro bytes = @as_bytes()
+    // No `unsafe { }` needed here — body of unsafe fn is implicitly unsafe
+    CStr(bytes.as_ptr())
+}
+```
+
+### Declaring an unsafe external (C) function
+
+```nova
+// external unsafe fn — requires unsafe {} at call site
+external unsafe fn RawMem.copy(src *u8, dst mut *u8, n usize) -> ()
+external unsafe fn RawMem.fill(dst mut *u8, byte_value u8, n usize) -> ()
+```
+
+### Calling an unsafe function
+
+```nova
+// Caller MUST wrap in unsafe {}  — E_UNSAFE_CALL_REQUIRES_WRAP otherwise
+unsafe {
+    RawMem.copy(src_ptr, dst_ptr, n)
+    ro c = s.as_cstr_unchecked()
+}
+```
+
+### unsafe fn as function pointer type
+
+```nova
+// addr_of(unsafe fn) propagates unsafe to fn-ptr type: *unsafe fn(...)
+unsafe fn risky(p *u8) -> () { /* ... */ }
+ro fn_ptr = addr_of(risky)   // type: *unsafe fn(p *u8) -> ()
+
+// Calling via unsafe fn pointer also requires unsafe {}
+unsafe { fn_ptr(some_ptr) }
+```
+
+### Cross-refs
+
+- D216 §9 (unsafe fn keyword syntax) — `spec/decisions/02-types.md`
+- D2 (unsafe effect model, Plan 118.1.7 amend) — `spec/decisions/04-effects.md`
+- Plan-doc — `docs/plans/118.1.7-unsafe-fn-keyword-syntax.md`
+
+---
+
 ## Followups
 
 | Marker | What | Status |

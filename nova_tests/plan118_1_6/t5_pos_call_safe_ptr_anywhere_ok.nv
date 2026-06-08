@@ -1,6 +1,6 @@
 // Plan 118.1.6 Ф.4 T5 POS — call *fn pointer из safe context works.
 //
-// Safe fn pointer (*fn(Args) -> Ret) carries no #unsafe obligation;
+// Safe fn pointer (*fn(Args) -> Ret) carries no unsafe obligation;
 // indirect call позволен в любом контексте, аналогично direct safe fn call.
 
 module plan118_1_6.t5_pos_call_safe_ptr_anywhere_ok

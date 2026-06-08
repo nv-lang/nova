@@ -1,4 +1,4 @@
-// Plan 118.1.6 Ф.4 T9 NEG — bare #unsafe fn → *fn coercion round-trip rejected.
+// Plan 118.1.6 Ф.4 T9 NEG — bare unsafe fn → *fn coercion round-trip rejected.
 //
 // Verifies нельзя «launder» unsafe-ness через bare fn-name coercion в safe
 // pointer binding. Covariance permits ONLY safe → unsafe widening. Reverse
@@ -9,12 +9,11 @@
 
 module plan118_1_6.t9_neg_round_trip_via_addr_of
 
-#unsafe
-fn risky_neg(x i64) -> i64 {
+unsafe fn risky_neg(x i64) -> i64 {
     -x
 }
 
-test "rejects round-trip addr_of(#unsafe fn) → *fn binding" {
+test "rejects round-trip addr_of(unsafe fn) → *fn binding" {
     // addr_of yields *unsafe fn(i64) -> i64.
     // LHS *fn(i64) -> i64 strips safety — must error.
     ro p *fn(i64) -> i64 = unsafe { addr_of(risky_neg) }

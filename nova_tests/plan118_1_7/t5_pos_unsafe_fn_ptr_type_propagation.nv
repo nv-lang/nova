@@ -1,0 +1,26 @@
+// Plan 118.1.7 Ф.4 T5 POS — `unsafe fn` → `*unsafe fn(...)` type propagation.
+// Verifies Plan 118.1.6 compatibility: bare unsafe fn name coerces to
+// `*unsafe fn(...)` type when used as first-class value.
+//
+// A-118.1.7.f: addr_of unsafe fn propagates safety bit to fn-ptr type.
+
+module plan118_1_7.t5_pos_unsafe_fn_ptr_type_propagation
+
+unsafe fn triple(x i64) -> i64 {
+    x * 3
+}
+
+test "unsafe fn → *unsafe fn type propagation — exact-match annotation" {
+    // Bind bare fn name to *unsafe fn(...) annotation.
+    // If safety bit dropped, assignment would be *fn(...) — type mismatch.
+    ro p *unsafe fn(i64) -> i64 = triple
+    ro v = unsafe { p(14) }
+    assert(v == 42)
+}
+
+test "unsafe fn ptr — indirect call still requires unsafe wrap" {
+    ro fp *unsafe fn(i64) -> i64 = triple
+    // Indirect call via unsafe fn-ptr must also be wrapped in unsafe {}.
+    ro result = unsafe { fp(7) }
+    assert(result == 21)
+}

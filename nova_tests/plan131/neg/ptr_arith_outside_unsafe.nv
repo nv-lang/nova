@@ -11,7 +11,7 @@ fn main() -> () {
         ro p = RawMem.alloc(8 as usize) as *mut int
     }
     // Pointer deref/arith outside unsafe block — should fail with E_UNSAFE_REQUIRED.
-    // Note: we need p in scope, so use a local #unsafe-fn style to get a pointer.
+    // Note: we need p in scope, so use a local unsafe fn style to get a pointer.
     mut x int = 0
     ro q = unsafe { &x }
     // Deref arithmetic outside unsafe — E_UNSAFE_REQUIRED.

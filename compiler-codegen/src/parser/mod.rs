@@ -27,10 +27,11 @@ pub(crate) struct ContractAttrs {
     pub no_overflow: bool,
     /// Plan 103.6 / Plan 113: sync interaction class from #realtime/#parks/#wakes.
     pub sync_class: Option<crate::ast::SyncClass>,
-    /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
-    /// Body implicitly в unsafe context; callers must `unsafe { }` wrap.
-    /// V1 Ф.3.2: parsed + stored в FnDecl.unsafe_attr; checker enforcement
-    /// E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
+    /// Plan 118.1.7 (D2 amend): `unsafe fn` keyword modifier. Set by parse_item
+    /// when `unsafe` keyword is seen before `fn` (not via parse_contract_attrs —
+    /// `#unsafe fn` now emits E_UNSAFE_ATTR_DEPRECATED hard error). Body
+    /// implicitly in unsafe context; callers must `unsafe { }` wrap.
+    /// Checker enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
     pub unsafe_attr: bool,
     /// Plan 114.4.4 Ф.1 (D199 V3): `#fn_eval_max_depth(N)` — per-fn override
     /// const fn evaluator recursion depth (default 256). For deep recursion
@@ -1180,8 +1181,17 @@ impl Parser {
         // (opaque type, реализация в runtime). См. spec/decisions/03-syntax.md
         // §D126 + types/mod.rs::check_module whitelist enforcement.
         let is_external = self.eat(&TokenKind::KwExternal).is_some();
+        // Plan 118.1.7 (D2 amend): `external unsafe fn` — `unsafe` keyword
+        // directly before `fn` as part of the fn type. Consumed here after
+        // `external` so `external unsafe fn foo()` sets unsafe_kw = true.
+        let mut unsafe_kw = false;
         if is_external {
-            // Только `fn` либо `type` допустимы после `external`.
+            // Allow `unsafe` keyword between `external` and `fn`.
+            if matches!(self.peek().kind, TokenKind::KwUnsafe) {
+                unsafe_kw = true;
+                self.bump(); // unsafe
+            }
+            // Только `fn` либо `type` допустимы после `external` (+ optional `unsafe`).
             if !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwType) {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
@@ -1267,20 +1277,19 @@ impl Parser {
             realtime_attr
         };
         if !contract_attrs.is_empty()
-            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal)
+            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal | TokenKind::KwUnsafe)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted` / `#unsafe`) are only valid before `fn` or `external fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `external fn`",
                 span,
             ));
         }
         // Plan 33.3 Ф.13: #trusted external fn — парсим `external` здесь,
         // если contract_attrs содержат #trusted.
-        // Plan 118.1 [M-118.1-unsafe-attr-on-external-fn]: #unsafe external fn —
-        // тот же re-consume path, чтобы `#unsafe external fn` (атрибут перед
-        // `external`) парсился симметрично с `external #unsafe fn`.
-        let is_external = if (contract_attrs.is_trusted || contract_attrs.unsafe_attr)
+        // Note: `contract_attrs.unsafe_attr` can no longer be set by parse_contract_attrs
+        // (Plan 118.1.7: `#unsafe` is now a hard error E_UNSAFE_ATTR_DEPRECATED).
+        let is_external = if contract_attrs.is_trusted
             && matches!(self.peek().kind, TokenKind::KwExternal)
         {
             self.bump(); // external
@@ -1292,6 +1301,17 @@ impl Parser {
         } else {
             is_external
         };
+        // Plan 118.1.7 (D2 amend): `unsafe fn` keyword syntax — `unsafe` keyword
+        // directly before `fn` (non-external path). Consumed here so plain
+        // `unsafe fn foo()` sets unsafe_kw = true.
+        if matches!(self.peek().kind, TokenKind::KwUnsafe) {
+            unsafe_kw = true;
+            self.bump(); // unsafe
+        }
+        // Propagate unsafe keyword into contract_attrs so parse_fn receives it.
+        if unsafe_kw {
+            contract_attrs.unsafe_attr = true;
+        }
         // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
         // Plan 91.9 (D186): `#impl(...)` тоже только перед `type`.
         // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
@@ -1851,19 +1871,17 @@ impl Parser {
             // или KwUnsafe (Plan 118 Ф.3.2 — `#unsafe` keyword-attribute).
             // KwUnsafe handled inline ниже; others via Ident branch.
             if matches!(self.peek_at(1).kind, TokenKind::KwUnsafe) {
-                // Plan 118 (D216 §9, D2 amend): #unsafe attribute on fn.
-                if attrs.unsafe_attr {
-                    let span = self.peek().span;
-                    return Err(Diagnostic::new(
-                        "duplicate `#unsafe` attribute",
-                        span,
-                    ));
-                }
-                self.bump(); // #
-                self.bump(); // unsafe
-                attrs.unsafe_attr = true;
-                self.skip_newlines(); // align с parse_sync_class_attr pattern
-                continue;
+                // Plan 118.1.7 (D2 amend): `#unsafe` attribute on fn declarations
+                // is DEPRECATED — hard error E_UNSAFE_ATTR_DEPRECATED.
+                // Use `unsafe fn` keyword syntax instead (Plan 118.1.7 Ф.1.3).
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_UNSAFE_ATTR_DEPRECATED] `#unsafe fn` attribute syntax is removed. \
+                     Use `unsafe fn` keyword syntax instead: \
+                     `unsafe fn foo()` / `external unsafe fn foo()` \
+                     (D2 amend, Plan 118.1.7)",
+                    span,
+                ));
             }
             let next_name = match &self.peek_at(1).kind {
                 TokenKind::Ident(n) => n.clone(),
@@ -2734,9 +2752,10 @@ impl Parser {
             sync_class: contract_attrs.sync_class,
             // Plan 100.5 (D163): capability requirements for external fn.
             needs_caps,
-            // Plan 118 (D216 §9, D2 amend): #unsafe attribute parsed в
-            // parse_contract_attrs (handles KwUnsafe inline). Type-checker
-            // enforcement E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
+            // Plan 118.1.7 (D2 amend): `unsafe fn` keyword syntax. unsafe_attr
+            // is set via contract_attrs.unsafe_attr by parse_item when `unsafe`
+            // keyword is consumed before `fn`. Type-checker enforcement
+            // E_UNSAFE_CALL_REQUIRES_WRAP — Ф.3.3-3.5 followup.
             unsafe_attr: contract_attrs.unsafe_attr,
             fn_eval_max_depth: contract_attrs.fn_eval_max_depth,
             test_access_for: contract_attrs.test_access_for.clone(),

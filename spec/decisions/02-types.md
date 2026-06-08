@@ -7647,19 +7647,26 @@ unsafe {
 
 **Inside unsafe разрешено:** `&value`, `*p`, `p.field`, `p.method()`,
 `p.field = v`, pointer arith, `usize as *T`, `<`/`>` compare, `&record.field`,
-calling `#unsafe` fn, newtype construction wrapping pointer.
+calling `unsafe fn`, newtype construction wrapping pointer.
 
 **Outside unsafe safe:** type declarations `*T`, `external fn` declarations,
 field read `acc.next` (where `next *T`), pattern match `Option[*T]`,
 `==`/`!=` compare, newtype declarations, `p as usize` (hash hazard warning).
 
-### §9. `#unsafe` attribute
+### §9. `unsafe fn` keyword syntax (Plan 118.1.7 amend, 2026-06-09)
 
-- `#unsafe fn` body — implicit unsafe context (pointer ops без `unsafe { }`
-  wrap)
-- Call `#unsafe` fn — requires `unsafe { ... }` wrap у caller (visual
+> **Plan 118.1.7 migrates from `#unsafe` attribute to `unsafe fn` keyword
+> (type-consistent, per Plan 118.5 TypeRef::Unsafe + Plan 118.1.6 `*unsafe fn` ptr type).
+> `#unsafe fn` → hard error `E_UNSAFE_ATTR_DEPRECATED`.**
+
+- `unsafe fn foo(...)` — declares function of unsafe fn type
+- `external unsafe fn foo(...)` — external fn of unsafe type
+- Body of `unsafe fn` — implicit unsafe context (pointer ops без `unsafe { }` wrap)
+- Call `unsafe fn` — requires `unsafe { ... }` wrap у caller (visual
   marker) — `E_UNSAFE_CALL_REQUIRES_WRAP` иначе
+- Type: `unsafe fn(Args) -> Ret` (consistent with `*unsafe fn(...)` fn-ptr type, Plan 118.1.6)
 - No propagation up — каждая fn decides encapsulate or propagate
+- `#unsafe fn` / `#unsafe external fn` → `E_UNSAFE_ATTR_DEPRECATED` (hard error)
 
 ### §10. `*fn(...)` function pointers
 
@@ -7675,9 +7682,9 @@ field read `acc.next` (where `next *T`), pattern match `Option[*T]`,
   stdcall/vectorcall — `[M-118-stdcall-fn-ptr]` followup)
 - Vararg — `E_VARARG_NOT_SUPPORTED` (`[M-118-vararg-ffi]` followup)
 
-#### #unsafe as part of fn-ptr type (Plan 118.1.6 closeout, 2026-06-08)
+#### `unsafe fn` as part of fn-ptr type (Plan 118.1.6 closeout, 2026-06-08; amend Plan 118.1.7, 2026-06-09)
 
-Function pointer тип encodes #unsafe attribute:
+Function pointer тип encodes unsafe fn keyword:
 - `*fn(...)` — safe function pointer
 - `*unsafe fn(...)` — unsafe function pointer (или equivalently `unsafe * fn(...)` per V3.2 ordering)
 
@@ -7686,11 +7693,11 @@ Coercion rules:
 - `*unsafe fn → *fn`: ❌ E_UNSAFE_FN_PTR_COERCION (нельзя «забыть» unsafe)
 
 Call-site:
-- Call через *unsafe fn ptr без unsafe { } → E_UNSAFE_CALL_REQUIRES_WRAP (mirrors direct #unsafe fn call).
+- Call через *unsafe fn ptr без unsafe { } → E_UNSAFE_CALL_REQUIRES_WRAP (mirrors direct `unsafe fn` call).
 
 addr_of propagation:
 - addr_of(safe_fn) → *fn(...)
-- addr_of(#unsafe fn) → *unsafe fn(...) (тип propagated из FnDecl.unsafe_attr)
+- addr_of(unsafe fn) → *unsafe fn(...) (тип propagated из FnDecl.unsafe_attr)
 
 Rust precedent: fn() ≠ unsafe fn() — same model.
 
@@ -7885,7 +7892,7 @@ export fn str @as_cstr() -> CStr {
     }
     unsafe { CStr(bytes.as_ptr()) }
 }
-export #unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
+export unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
     ro bytes = @as_bytes()
     unsafe { CStr(bytes.as_ptr()) }
 }
@@ -7900,7 +7907,7 @@ export #unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
 
 - `[M-118.1-cstr-nul-check]` — ✅ CLOSED 2026-06-08. `@as_cstr()` scans the str
   bytes for an embedded NUL and panics (interior `0x00` would truncate the
-  C-string at that byte); `@as_cstr_unchecked()` is the scan-free `#unsafe`
+  C-string at that byte); `@as_cstr_unchecked()` is the scan-free `unsafe fn`
   hatch. `panic` is reachable via a module-private `external fn panic` decl —
   cstr.nv is ExternalRegistry-loaded and gets no auto-prelude, and a plain
   `import std.prelude.*` would trip the R27 auto-import opt-out for importers.
@@ -7917,13 +7924,15 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 
 **Errors:**
 - `E_UNSAFE_REQUIRED` — pointer op (`&value` AddrOf / `*expr` Deref) outside
-  unsafe context (block.is_unsafe = false AND not в `#unsafe fn` body).
+  unsafe context (block.is_unsafe = false AND not в `unsafe fn` body).
   Active enforcement через `check_unsafe_context_in_module` walker pass с
   depth counter — D216 §8 V1 ENFORCED 2026-06-02
-- `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn без `unsafe { }`
+- `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `unsafe fn` без `unsafe { }`
   wrap. Active enforcement через `check_unsafe_context_in_module` walker
   с pre-collected unsafe_fns: HashSet<String>. D216 §9 V1 ENFORCED
   2026-06-02 (commit abd4be4603b)
+- `E_UNSAFE_ATTR_DEPRECATED` — `#unsafe fn` / `#unsafe external fn` syntax;
+  use `unsafe fn` / `external unsafe fn` instead (Plan 118.1.7)
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — `null` literal (general)
 - `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` (Plan 115 V1) retracted
@@ -7972,7 +7981,7 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 | D | `T*` / `ref T` / `scope T*` | `@safe`/`@trusted`/`@system` | `Nullable!T` | `p.field` auto | `@system` only |
 | Go | `*T` (managed); `unsafe.Pointer` | `unsafe` package | Nil runtime | `p.field` auto | `unsafe.Pointer` only |
 | **Nova V1** (Plan 115) | `ptr` only | (нет) | `null ptr` | (нет) | banned |
-| **Nova V2** (Plan 118) | **`*T` family** + `unsafe` | `unsafe { }` + `#unsafe` (D2 amend) | `Option[*T]` + NPO | `p.field`/`p.method()` one-level | gated unsafe → `*unsafe T` |
+| **Nova V2** (Plan 118) | **`*T` family** + `unsafe` | `unsafe { }` + `unsafe fn` (D2 amend) | `Option[*T]` + NPO | `p.field`/`p.method()` one-level | gated unsafe → `*unsafe T` |
 
 ### Use cases
 
@@ -10486,7 +10495,7 @@ data structures (Vec[T], custom allocators, FFI).
 ### Что
 
 Three extern C functions wrapped as `RawMem` static methods in
-`std/runtime/raw_mem.nv`, all gated behind `#unsafe` (E_UNSAFE_CALL_REQUIRES_WRAP
+`std/runtime/raw_mem.nv`, all gated behind `unsafe fn` (E_UNSAFE_CALL_REQUIRES_WRAP
 per D216 §9).
 
 ### API
@@ -10494,16 +10503,13 @@ per D216 §9).
 ```nova
 // GC-tracked allocation. Memory zeroed. 8-byte aligned.
 // Must be called inside unsafe {} block.
-#unsafe
-export external fn RawMem.alloc(n usize) -> *mut u8
+export external unsafe fn RawMem.alloc(n usize) -> *mut u8
 
 // Not GC-tracked. Caller must call RawMem.free_uncollectable.
-#unsafe
-export external fn RawMem.alloc_uncollectable(n usize) -> *mut u8
+export external unsafe fn RawMem.alloc_uncollectable(n usize) -> *mut u8
 
 // Free pointer from alloc_uncollectable. UB on GC-tracked pointer.
-#unsafe
-export external fn RawMem.free_uncollectable(ptr *mut u8) -> ()
+export external unsafe fn RawMem.free_uncollectable(ptr *mut u8) -> ()
 ```
 
 ### C mapping
@@ -10520,7 +10526,7 @@ export external fn RawMem.free_uncollectable(ptr *mut u8) -> ()
 2. Do NOT call `nova_free` on GC-tracked pointers — Boehm GC handles collection.
 3. `alloc_uncollectable` for long-lived buffers not visible to the conservative
    GC scanner (e.g. Windows fiber arena buffers where fiber stacks shadow heap).
-4. Every call must be inside `unsafe {}` — `#unsafe` attribute enforced
+4. Every call must be inside `unsafe {}` — `unsafe fn` keyword enforced
    (E_UNSAFE_CALL_REQUIRES_WRAP from D216 §9, ACTIVE 2026-06-02).
 5. `n = 0` is implementation-defined; use `n > 0` in practice.
 

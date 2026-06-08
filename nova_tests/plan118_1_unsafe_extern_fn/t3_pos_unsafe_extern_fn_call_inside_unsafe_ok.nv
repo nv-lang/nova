@@ -1,12 +1,12 @@
-// Plan 118.1.5 T3 POS — call к `#unsafe extern fn` inside unsafe {} type-checks.
+// Plan 118.1.5 T3 POS — call к `external unsafe fn` inside unsafe {} type-checks.
 // D2 amend: unsafe wrap satisfies E_UNSAFE_CALL_REQUIRES_WRAP enforcement.
 //
 // V1 NOTE: extern fn body provided via stdlib `std.ffi.cstr.str.as_cstr_unchecked`
-// (export #unsafe fn) — same call-site semantics as `#unsafe external fn`.
-// Direct `#unsafe external fn foo()` declared in test file cannot be CALLED
+// (export unsafe fn) — same call-site semantics as `external unsafe fn`.
+// Direct `external unsafe fn foo()` declared in test file cannot be CALLED
 // здесь без C-shim (linker symbol missing). Instead this fixture exercises
-// the same checker path через stdlib `#unsafe fn` (Nova-body):
-//   * #unsafe attribute marks callee
+// the same checker path через stdlib `unsafe fn` (Nova-body):
+//   * unsafe keyword marks callee
 //   * caller MUST wrap call в unsafe {} block
 //   * inside unsafe — call passes E_UNSAFE_CALL_REQUIRES_WRAP check
 
@@ -15,9 +15,9 @@ module plan118_1_unsafe_extern_fn.t3_pos_unsafe_extern_fn_call_inside_unsafe_ok
 import std.ffi.cstr.{CStr}
 
 // Declaration parse smoke (no call — linker would need C shim).
-export #unsafe external fn safe_when_wrapped(x int) -> ()
+export external unsafe fn safe_when_wrapped(x int) -> ()
 
-test "call #unsafe fn inside unsafe block (same call-site rule)" {
+test "call unsafe fn inside unsafe block (same call-site rule)" {
     ro s = "ffi"
     unsafe {
         ro c = s.as_cstr_unchecked()
