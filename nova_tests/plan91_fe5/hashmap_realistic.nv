@@ -1,0 +1,62 @@
+// Plan 91 Ф.5 conformance: HashMap realistic use-cases.
+// word-frequency counter pattern.
+module plan91_fe5.hashmap_realistic
+
+import std.collections.hashmap.{HashMap}
+
+fn count_words(words []str) -> HashMap[str, int] {
+    mut counts = HashMap[str, int].new()
+    for w in words {
+        match counts.get(w) {
+            Some(n) => { counts.insert(w, n + 1) }
+            None => { counts.insert(w, 1) }
+        }
+    }
+    counts
+}
+
+test "word frequency build and lookup" {
+    ro words = ["the", "cat", "sat", "on", "the", "mat", "the", "cat"]
+    ro counts = count_words(words)
+    assert(counts.len() == 5, "5 unique words")
+    match counts.get("the") {
+        Some(n) => assert(n == 3, "the appears 3 times")
+        None => assert(false, "the should be in map")
+    }
+    match counts.get("cat") {
+        Some(n) => assert(n == 2, "cat appears 2 times")
+        None => assert(false, "cat should be in map")
+    }
+    match counts.get("sat") {
+        Some(n) => assert(n == 1, "sat appears 1 time")
+        None => assert(false, "sat should be in map")
+    }
+}
+
+test "missing key returns None" {
+    ro words = ["hello", "world"]
+    ro counts = count_words(words)
+    match counts.get("missing") {
+        Some(_) => assert(false, "should return None")
+        None => assert(true)
+    }
+}
+
+test "accumulation — total word count" {
+    ro words = ["a", "b", "a", "c", "b", "a"]
+    ro counts = count_words(words)
+    mut total = 0
+    match counts.get("a") {
+        Some(n) => { total = total + n }
+        None => {}
+    }
+    match counts.get("b") {
+        Some(n) => { total = total + n }
+        None => {}
+    }
+    match counts.get("c") {
+        Some(n) => { total = total + n }
+        None => {}
+    }
+    assert(total == 6, "a=3 + b=2 + c=1 = 6")
+}
