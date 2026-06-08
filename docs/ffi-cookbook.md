@@ -392,9 +392,9 @@ CStr backing type: `*u8` (Plan 118 typed pointer). ABI marshals к
 
 ```nova
 ro s = "hello"
-ro c = s.as_cstr()              // zero-copy (D26 invariant)
-ro c2 = s.to_cstr()             // V1: alias к as_cstr
-ro c3 = s.as_cstr_unchecked()   // V1: alias
+ro c = s.as_cstr()              // zero-copy view (panics on embedded NUL)
+ro c3 = unsafe { s.as_cstr_unchecked() }   // scan-free O(1) hatch
+// s.to_cstr() (owning copy) — NOT in V1; deferred to Plan 118.2 (needs allocator)
 
 // Direct usage в FFI call:
 ro n = c_strlen(s.as_cstr())

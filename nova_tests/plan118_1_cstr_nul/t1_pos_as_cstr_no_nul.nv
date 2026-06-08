@@ -1,15 +1,14 @@
-// Plan 118.1 [M-118.1-cstr-nul-check] — as_cstr / to_cstr succeed on NUL-free
-// strings (the scan falls through), and as_cstr_unchecked stays scan-free (no
-// panic even when the str DOES contain an embedded NUL — the #unsafe escape
-// hatch must not inherit the scan).
+// Plan 118.1 [M-118.1-cstr-nul-check] — as_cstr succeeds on NUL-free strings
+// (the scan falls through), and as_cstr_unchecked stays scan-free (no panic
+// even when the str DOES contain an embedded NUL — the #unsafe escape hatch
+// must not inherit the scan).
 module plan118_1_cstr_nul.t1_pos_as_cstr_no_nul
 
 import std.ffi.cstr.{CStr}
 
-test "as_cstr / to_cstr on NUL-free strings succeed (no panic)" {
+test "as_cstr on NUL-free strings succeeds (no panic)" {
     ro a = "hello".as_cstr()
     ro b = "".as_cstr()
-    ro c = "world".to_cstr()
     assert("hello".len() == 5)
 }
 

@@ -33,17 +33,17 @@ external fn panic(msg str) -> never
 /// Opaque C-string handle. Wraps raw `*u8` pointer; instances must
 /// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`.
 ///
-/// Created via `str.as_cstr()` / `str.to_cstr()` / `str.as_cstr_unchecked()`.
+/// Created via `str.as_cstr()` / `str.as_cstr_unchecked()`.
 /// ABI: FFI-marshalled to `const char*` (or `char*` for mutable C-string
 /// contexts via dedicated mut variant — not in V1).
 ///
-/// **Lifetime warning**: every CStr (incl. `to_cstr()` in V1) wraps a
-/// zero-copy view into the source `str`'s GC-managed buffer — valid only
-/// while that `str` value is alive. Pass directly к C-call без storing если
-/// source str может быть collected; storing a CStr past the source str's
-/// lifetime is a use-after-free. A distinct always-copy `to_cstr()` (owned
-/// buffer outliving the source) needs an allocator/free API — deferred to
-/// Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]).
+/// **Lifetime warning**: a CStr wraps a zero-copy view into the source
+/// `str`'s GC-managed buffer — valid only while that `str` value is alive.
+/// Pass directly к C-call без storing если source str может быть collected;
+/// storing a CStr past the source str's lifetime is a use-after-free. An
+/// owning always-copy constructor (`to_cstr()`, buffer outliving the source)
+/// needs an allocator/free API and is deferred to Plan 118.2
+/// ([M-118.1-cstr-to-cstr-distinct-copy]) — it is NOT provided in V1.
 #stable(since = "0.1")
 export type CStr(*u8)
 
@@ -57,12 +57,12 @@ export type CStr(*u8)
 //   C-string) and panics if found, then wraps the bytes' raw pointer
 //   (zero-copy after the O(n) scan).
 //
-// @to_cstr() — ⚠ V1 does NOT yet copy. By the std `as_X`/`to_X` convention
-//   `to_cstr` SHOULD materialise an owned buffer, but V1 aliases @as_cstr()
-//   (inherits the NUL scan; D26 invariant makes the zero-copy wrap safe). The
-//   name is forward-compat — do NOT rely on owned-buffer / outlives-source
-//   semantics yet. The distinct always-copy form needs an allocator/free API
-//   and is deferred to Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]).
+// @to_cstr() — NOT provided in V1. By the std `as_X`/`to_X` convention
+//   `to_cstr` must materialise an OWNED copy (a buffer outliving the source
+//   str), which needs an allocator/free API. Rather than ship a
+//   misleadingly-named zero-copy alias, the owning `to_cstr()` is deferred to
+//   Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]). For the zero-copy view
+//   use `as_cstr()` (valid only while the source str is alive).
 //
 // @as_cstr_unchecked() — skips embedded-NUL scan. Caller asserts safe.
 //   Marked #unsafe per [M-118.1-unsafe-attr-on-external-fn] (Plan 118.1):
@@ -87,10 +87,6 @@ export fn str @as_cstr() -> CStr {
         }
     }
     unsafe { CStr(bytes.as_ptr()) }
-}
-
-export fn str @to_cstr() -> CStr {
-    @as_cstr()
 }
 
 export #unsafe fn str @as_cstr_unchecked() -> CStr {

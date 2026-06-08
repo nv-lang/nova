@@ -859,8 +859,8 @@ Nova str storage invariant — formal rules:
      - FALSE → allocate `len + 1`, copy + NUL (fallback к `@to_cstr` semantics)
    - SAFE primitive (no `#unsafe` attribute):
      ```nova
-     fn str @as_cstr() -> CStr      // zero-copy or copy fallback
-     fn str @to_cstr() -> CStr      // always allocates + copy + NUL
+     fn str @as_cstr() -> CStr      // zero-copy view + embedded-NUL scan (V1)
+     // fn str @to_cstr() -> CStr   // always-copy — DEFERRED to Plan 118.2 (needs allocator)
      ```
    - Both validate против embedded NUL в str body (panic если найден —
      C-side truncation prevention; `@as_cstr_unchecked` skips validation

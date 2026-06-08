@@ -34555,6 +34555,15 @@ LESSONS:
    A running background `nova test` also LOCKS nova.exe → the rebuild fails
    «access denied» until the test task is stopped (TaskStop) first.
 
+UPDATE 2026-06-08 (user decision): `@to_cstr()` REMOVED from cstr.nv entirely
+(was a V1 zero-copy alias). Reason: by the std `to_X`=copy convention `to_cstr`
+must own a copy (needs an allocator) — shipping a misleadingly-named alias is
+worse than not shipping it. It is re-introduced (copying) in Plan 118.2.
+Removed the method + its docs, the t3_neg_to_cstr fixture, and to_cstr usages in
+t1/t11; updated spec (02-types §CStr, 08-runtime), plan-doc AC + deferral,
+ffi-cookbook. cstr API now: `as_cstr` (scan+wrap) + `as_cstr_unchecked` (O(1)).
+Re-verified: cstr_nul 2/2, closeout 11/11, addr_chains 12/12.
+
 
 ================================================================================
 Plan 91 Ф.4 (time/math/sort conformance) + Ф.6 (getting-started) — 2026-06-08

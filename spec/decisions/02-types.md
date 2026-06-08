@@ -7861,10 +7861,16 @@ conversions реализованы как pure-Nova methods в `std/ffi/cstr.nv`
 ```nova
 export fn str @as_cstr() -> CStr {
     ro bytes = @as_bytes()
+    for b in bytes {
+        if b == 0 { panic("as_cstr: embedded NUL byte in str (would truncate C-string)") }
+    }
     unsafe { CStr(bytes.as_ptr()) }
 }
-export fn str @to_cstr() -> CStr { @as_cstr() }
-export fn str @as_cstr_unchecked() -> CStr { @as_cstr() }
+export #unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
+    ro bytes = @as_bytes()
+    unsafe { CStr(bytes.as_ptr()) }
+}
+// @to_cstr() — owning always-copy form; NOT in V1, deferred to Plan 118.2.
 ```
 
 Использует existing builtins: `str.as_bytes()` (D176 zero-copy view) +
@@ -7873,13 +7879,17 @@ export fn str @as_cstr_unchecked() -> CStr { @as_cstr() }
 
 **V1 simplifications (explicit followups, not silent):**
 
-- `[M-118.1-cstr-nul-check]` — embedded-NUL runtime scan не shipped в V1.
-  cstr.nv loaded via ExternalRegistry без auto-prelude wiring, поэтому
-  assert/panic require explicit import (creates cycle issues). Caller
-  responsibility per FFI contract («str must not contain '\0'»).
-- `[M-118.1-cstr-to-cstr-distinct-copy]` — `@to_cstr()` сейчас alias к
-  `@as_cstr()` (D26 invariant makes zero-copy safe). Distinct always-copy
-  semantic для long-lived CStr нужен allocator API (deferred).
+- `[M-118.1-cstr-nul-check]` — ✅ CLOSED 2026-06-08. `@as_cstr()` scans the str
+  bytes for an embedded NUL and panics (interior `0x00` would truncate the
+  C-string at that byte); `@as_cstr_unchecked()` is the scan-free `#unsafe`
+  hatch. `panic` is reachable via a module-private `external fn panic` decl —
+  cstr.nv is ExternalRegistry-loaded and gets no auto-prelude, and a plain
+  `import std.prelude.*` would trip the R27 auto-import opt-out for importers.
+- `[M-118.1-cstr-to-cstr-distinct-copy]` — DEFERRED → Plan 118.2. `@to_cstr()`
+  is NOT shipped in V1: the `as_X`/`to_X` convention makes `to_cstr` an OWNED
+  copy (buffer outliving the source str), which needs an allocator/free API.
+  Rather than ship a misleadingly-named zero-copy alias, the method was removed
+  (2026-06-08); the owning copy lands in Plan 118.2.
 
 Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded by D26 invariant).
 Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova approach makes it unnecessary).

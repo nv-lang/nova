@@ -33874,9 +33874,15 @@ cstr-importer). **Simplest correct mechanism:** a module-private
 `external fn panic` decl — dead at codegen (panic is special-cased to
 `nv_panic` by name) but satisfies the type-checker, with zero blast radius.
 
-**cstr distinct-copy (deferred).** `@to_cstr` stays a V1 zero-copy alias — a
-real owned-buffer copy needs a malloc/free allocator (RawMem has none) → Plan
-118.2. UAF doc-warning added (don't store a CStr past the source str's life).
+**cstr distinct-copy (deferred + to_cstr REMOVED).** `@to_cstr` was removed
+entirely — NOT shipped as a V1 zero-copy alias. By the `as_X`/`to_X` convention
+`to_cstr` must own a copy (buffer outliving the source str), which needs a
+malloc/free allocator RawMem doesn't have. Shipping a misleadingly-named alias
+is worse than not shipping it; the owning copy is re-introduced in Plan 118.2.
+cstr API now = `as_cstr` (scan+wrap) + `as_cstr_unchecked` (O(1)). UAF
+doc-warning kept on `as_cstr` (don't store a CStr past the source str's life).
+**Урок:** не лепи метод с именем, которое врёт про контракт — лучше его не
+иметь, пока нет инфраструктуры для честной реализации.
 
 **Spec:** D216 §4 amend.
 
