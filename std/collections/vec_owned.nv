@@ -1,0 +1,486 @@
+// std.collections.vec_owned — `Vec[T]`, a fully Nova-implemented generic
+// growable array backed by a raw `*mut T` heap buffer (Plan 131 Ф.3).
+//
+// Контекст. `[]T` ([D27](../../spec/decisions/03-syntax.md#d27)) is the
+// built-in slice/dynamic-array primitive. `Vec[T]` here is a *library* type
+// implemented entirely in Nova on top of `std.runtime.raw_mem.RawMem` —
+// demonstrating that a production growable collection needs no compiler magic
+// beyond typed pointers (D216), `size_of[T]()` (D199) and pointer arithmetic
+// (Plan 131 Ф.2).
+//
+// Key property: elements are stored *typed* in a contiguous `*mut T` buffer.
+// `Vec[Option[int]]`, `Vec[MyRecord]`, `Vec[Vec[int]]` all work with their
+// natural per-element C representation — no int64-slot erasure. Pointer
+// arithmetic `data + i` is scaled by `sizeof(T)` automatically by the C
+// backend (the buffer pointer carries the element stride).
+//
+// Allocation. `RawMem.alloc(n)` returns 8-byte-aligned zeroed GC-tracked
+// memory. The buffer is GC-tracked, so it stays alive while the `Vec`
+// (and thus the `data` pointer field) is reachable. Element T values that are
+// themselves heap pointers (records / sum-types / arrays) are kept alive by
+// the conservative scan over the buffer.
+//
+// Unsafe model (D216 §8). Every raw-pointer operation (alloc, `data + i`,
+// deref read/write) is wrapped in an `unsafe { }` block. The *public* API is
+// fully safe — no `unsafe`, no `*mut T`, no pointer escapes to callers
+// (`get_mut` returns `Option[*mut T]`, the single intentional raw-pointer
+// surface, behind `unsafe` at the call site).
+
+module collections.vec_owned
+
+import std.runtime.raw_mem.{RawMem}
+
+// Module-private `panic` declaration (same signature as
+// `std/prelude/runtime.nv`). Mirrors `std/ffi/cstr.nv`: a module that is
+// imported by user code cannot rely on the prelude `panic` being visible in
+// the *consuming* module when its bodies are inlined cross-module, and a plain
+// `import std.prelude.*` would trip the R27 auto-import opt-out for every
+// importer (stripping their assert/print/… prelude). A local external-fn decl
+// perturbs nothing; codegen lowers it to `nv_panic` by name.
+external fn panic(msg str) -> never
+
+// ──────────────────────────────────────────────────────────────────────────
+// Type
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A contiguous growable array of `T`, heap-backed via a raw `*mut T` buffer.
+///
+/// Amortised O(1) `push`, O(1) indexed `get`, ×2 growth. Empty `Vec[T].new()`
+/// allocates nothing until the first `push` (cap = 0).
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].new()
+/// v.push(1); v.push(2); v.push(3)
+/// assert(v.len() == 3)
+/// assert(v.get(1) == Some(2))
+/// ```
+export type Vec[T] {
+    // Raw element buffer. `cap` elements wide; first `len` are live.
+    // Never read/written outside `unsafe` blocks in this module.
+    priv mut data *mut T
+    // Number of live (initialised) elements.
+    priv mut len int
+    // Number of allocated element slots (`data` capacity).
+    priv mut cap int
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Constructors
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Create an empty `Vec[T]` — no allocation, cap = 0.
+export fn Vec[T].new() -> Vec[T] {
+    Vec { data: null_buf[T](), len: 0, cap: 0 }
+}
+
+/// Create an empty `Vec[T]` pre-allocated to hold at least `n` elements
+/// without reallocating.
+export fn Vec[T].with_capacity(n int) -> Vec[T] {
+    if n <= 0 {
+        return Vec[T].new()
+    }
+    Vec { data: alloc_buf[T](n), len: 0, cap: n }
+}
+
+/// Build a `Vec[T]` by copying every element of a built-in `[]T` slice.
+export fn Vec[T].from(items []T) -> Vec[T] {
+    mut v = Vec[T].with_capacity(items.len())
+    for x in items {
+        v.push(x)
+    }
+    v
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Size / introspection
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Number of live elements.
+export fn Vec[T] @len() -> int => @len
+
+/// Number of allocated element slots.
+export fn Vec[T] @cap() -> int => @cap
+
+/// `true` if the vector has no live elements.
+export fn Vec[T] @is_empty() -> bool => @len == 0
+
+// ──────────────────────────────────────────────────────────────────────────
+// Capacity management
+// ──────────────────────────────────────────────────────────────────────────
+
+// Grow so that at least `len + additional` slots exist. ×2 strategy with an
+// initial capacity of 8. No-op when capacity already suffices.
+fn Vec[T] mut @ensure_capacity(additional int) -> () {
+    ro needed = @len + additional
+    if needed <= @cap {
+        return
+    }
+    mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
+    while new_cap < needed {
+        new_cap = new_cap * 2
+    }
+    @realloc_to(new_cap)
+}
+
+// Reallocate the buffer to exactly `new_cap` slots (must be >= len), copying
+// the live prefix. `new_cap == 0` frees down to the null buffer.
+fn Vec[T] mut @realloc_to(new_cap int) -> () {
+    if new_cap == 0 {
+        @data = null_buf[T]()
+        @cap = 0
+        return
+    }
+    ro dst = alloc_buf[T](new_cap)
+    unsafe {
+        mut i = 0
+        while i < @len {
+            *(dst + i) = *(@data + i)
+            i = i + 1
+        }
+    }
+    @data = dst
+    @cap = new_cap
+}
+
+/// Ensure room for `additional` more elements beyond the current length.
+export fn Vec[T] mut @reserve(additional int) -> () {
+    if additional > 0 {
+        @ensure_capacity(additional)
+    }
+}
+
+/// Reduce capacity to `max(len, min_cap)`. Never drops live elements.
+export fn Vec[T] mut @shrink_to(min_cap int) -> () {
+    mut target = if min_cap < @len { @len } else { min_cap }
+    if target < 0 {
+        target = 0
+    }
+    if target < @cap {
+        @realloc_to(target)
+    }
+}
+
+/// Reduce capacity to exactly the current length.
+export fn Vec[T] mut @shrink_to_fit() -> () {
+    if @len < @cap {
+        @realloc_to(@len)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Element operations
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Append `v` to the end, growing if necessary.
+export fn Vec[T] mut @push(v T) -> () {
+    @ensure_capacity(1)
+    unsafe {
+        *(@data + @len) = v
+    }
+    @len = @len + 1
+}
+
+/// Remove and return the last element, or `None` if empty.
+export fn Vec[T] mut @pop() -> Option[T] {
+    if @len == 0 {
+        return None
+    }
+    @len = @len - 1
+    ro v = unsafe { *(@data + @len) }
+    Some(v)
+}
+
+/// Insert `v` at index `i`, shifting later elements right. Panics if
+/// `i > len` (i == len is an append).
+export fn Vec[T] mut @insert(i int, v T) -> () {
+    if i < 0 || i > @len {
+        panic("Vec.insert: index out of bounds")
+    }
+    @ensure_capacity(1)
+    unsafe {
+        mut j = @len
+        while j > i {
+            *(@data + j) = *(@data + (j - 1))
+            j = j - 1
+        }
+        *(@data + i) = v
+    }
+    @len = @len + 1
+}
+
+/// Remove and return the element at `i`, shifting later elements left.
+/// Panics if `i` is out of bounds.
+export fn Vec[T] mut @remove(i int) -> T {
+    if i < 0 || i >= @len {
+        panic("Vec.remove: index out of bounds")
+    }
+    ro removed = unsafe { *(@data + i) }
+    unsafe {
+        mut j = i
+        while j < @len - 1 {
+            *(@data + j) = *(@data + (j + 1))
+            j = j + 1
+        }
+    }
+    @len = @len - 1
+    removed
+}
+
+/// Remove the element at `i` in O(1) by swapping it with the last element,
+/// then popping. Does not preserve order. Panics if `i` is out of bounds.
+export fn Vec[T] mut @swap_remove(i int) -> T {
+    if i < 0 || i >= @len {
+        panic("Vec.swap_remove: index out of bounds")
+    }
+    ro removed = unsafe { *(@data + i) }
+    ro last = @len - 1
+    if i != last {
+        unsafe {
+            *(@data + i) = *(@data + last)
+        }
+    }
+    @len = @len - 1
+    removed
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Access
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Element at `i` by value, or `None` if out of bounds.
+export fn Vec[T] @get(i int) -> Option[T] {
+    if i < 0 || i >= @len {
+        return None
+    }
+    ro v = unsafe { *(@data + i) }
+    Some(v)
+}
+
+/// Raw mutable pointer to the slot at `i`, or `None` if out of bounds.
+///
+/// The returned `*mut T` is the single intentional raw-pointer surface — the
+/// caller must deref it inside an `unsafe { }` block. It is valid only until
+/// the next operation that may reallocate the buffer (`push`, `insert`,
+/// `reserve`, …).
+export fn Vec[T] mut @get_mut(i int) -> Option[*mut T] {
+    if i < 0 || i >= @len {
+        return None
+    }
+    ro p = unsafe { @data + i }
+    Some(p)
+}
+
+/// First element by value, or `None` if empty.
+export fn Vec[T] @first() -> Option[T] => @get(0)
+
+/// Last element by value, or `None` if empty.
+export fn Vec[T] @last() -> Option[T] {
+    if @len == 0 {
+        return None
+    }
+    @get(@len - 1)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Mutation
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Drop all elements (set len = 0). The buffer is retained for reuse.
+export fn Vec[T] mut @clear() -> () {
+    @len = 0
+}
+
+/// If `n < len`, shorten to exactly `n` elements. Larger `n` is a no-op.
+export fn Vec[T] mut @truncate(n int) -> () {
+    if n >= 0 && n < @len {
+        @len = n
+    }
+}
+
+/// Reverse the live elements in place.
+export fn Vec[T] mut @reverse() -> () {
+    mut lo = 0
+    mut hi = @len - 1
+    while lo < hi {
+        unsafe {
+            ro tmp = *(@data + lo)
+            *(@data + lo) = *(@data + hi)
+            *(@data + hi) = tmp
+        }
+        lo = lo + 1
+        hi = hi - 1
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Bulk operations
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Append every element of a built-in `[]T` slice.
+export fn Vec[T] mut @extend(items []T) -> () {
+    @reserve(items.len())
+    for x in items {
+        @push(x)
+    }
+}
+
+/// Move every element of `other` onto the end of `self`, leaving `other`
+/// empty.
+export fn Vec[T] mut @append(mut other Vec[T]) -> () {
+    @reserve(other.len())
+    mut i = 0
+    while i < other.len() {
+        ro v = unsafe { *(other.data + i) }
+        @push(v)
+        i = i + 1
+    }
+    other.clear()
+}
+
+/// Keep only the elements for which `pred(elem)` returns `true`, preserving
+/// relative order. O(n).
+export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
+    mut write = 0
+    mut read = 0
+    while read < @len {
+        ro v = unsafe { *(@data + read) }
+        if pred(v) {
+            if write != read {
+                unsafe {
+                    *(@data + write) = v
+                }
+            }
+            write = write + 1
+        }
+        read = read + 1
+    }
+    @len = write
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Conversion
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Copy the live elements into a freshly-allocated built-in `[]T`.
+export fn Vec[T] @as_slice() -> []T {
+    mut out []T = []T.with_capacity(@len)
+    mut i = 0
+    while i < @len {
+        ro v = unsafe { *(@data + i) }
+        out.push(v)
+        i = i + 1
+    }
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Free helpers — buffer allocation
+// ──────────────────────────────────────────────────────────────────────────
+
+// Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
+fn alloc_buf[T](n int) -> *mut T {
+    unsafe {
+        RawMem.alloc((n as usize) * (size_of[T]() as usize)) as *mut T
+    }
+}
+
+// The empty (capacity-0) buffer. A 1-slot allocation acts as a non-null,
+// never-dereferenced placeholder so that `data` always has a valid `*mut T`
+// value; `len`/`cap` guard every access.
+fn null_buf[T]() -> *mut T {
+    unsafe {
+        RawMem.alloc(size_of[T]() as usize) as *mut T
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "push / pop / len / is_empty" {
+    mut v = Vec[int].new()
+    assert(v.is_empty())
+    v.push(1); v.push(2); v.push(3)
+    assert(v.len() == 3)
+    assert(!v.is_empty())
+    assert(v.pop() == Some(3))
+    assert(v.pop() == Some(2))
+    assert(v.len() == 1)
+    v.clear()
+    assert(v.is_empty())
+    assert(v.pop() == None)
+}
+
+test "with_capacity / reserve / shrink_to_fit" {
+    mut v = Vec[int].with_capacity(16)
+    assert(v.cap() >= 16)
+    assert(v.len() == 0)
+    for i in 0..10 { v.push(i) }
+    v.shrink_to_fit()
+    assert(v.cap() == 10)
+    v.reserve(20)
+    assert(v.cap() >= 30)
+}
+
+test "get / first / last" {
+    mut v = Vec[int].from([10, 20, 30])
+    assert(v.get(0) == Some(10))
+    assert(v.get(2) == Some(30))
+    assert(v.get(3) == None)
+    assert(v.first() == Some(10))
+    assert(v.last() == Some(30))
+
+    ro empty = Vec[int].new()
+    assert(empty.first() == None)
+    assert(empty.last() == None)
+}
+
+test "insert / remove / swap_remove / reverse" {
+    mut v = Vec[int].from([1, 2, 4])
+    v.insert(2, 3)
+    assert(v.as_slice() == [1, 2, 3, 4])
+    assert(v.remove(0) == 1)
+    assert(v.as_slice() == [2, 3, 4])
+    ro sr = v.swap_remove(0)
+    assert(sr == 2)
+    // After swap_remove(0): last (4) moved into slot 0 → [4, 3]
+    assert(v.len() == 2)
+    v.reverse()
+    assert(v.as_slice() == [3, 4])
+}
+
+test "extend / append / retain" {
+    mut v = Vec[int].from([1, 2, 3])
+    v.extend([4, 5])
+    assert(v.as_slice() == [1, 2, 3, 4, 5])
+
+    mut other = Vec[int].from([6, 7])
+    v.append(other)
+    assert(v.len() == 7)
+    assert(other.is_empty())
+
+    v.retain(|x| x % 2 == 0)
+    assert(v.as_slice() == [2, 4, 6])
+}
+
+test "Vec[Option[int]] stores value-struct elements typed" {
+    mut v = Vec[Option[int]].new()
+    v.push(Some(1))
+    v.push(None)
+    v.push(Some(3))
+    assert(v.get(0) == Some(Some(1)))
+    assert(v.get(1) == Some(None))
+    assert(v.get(2) == Some(Some(3)))
+    assert(v.len() == 3)
+}
+
+test "grow — 1000 pushes preserve order" {
+    mut v = Vec[int].new()
+    for i in 0..1000 { v.push(i) }
+    assert(v.len() == 1000)
+    assert(v.get(0) == Some(0))
+    assert(v.get(500) == Some(500))
+    assert(v.get(999) == Some(999))
+}

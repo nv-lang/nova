@@ -1,0 +1,39 @@
+// Plan 131 Ф.3 — KEY TEST: Vec[Option[int]] stores value-struct elements
+// with their natural typed C representation (NovaOpt_nova_int), NOT
+// int64-slot erasure. Proves typed pointer storage for sum/value elements.
+
+module plan131.vec_option_elem_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "Vec[Option[int]] push Some/None/Some and read back" {
+    mut v = Vec[Option[int]].new()
+    v.push(Some(1))
+    v.push(None)
+    v.push(Some(3))
+    assert(v.len() == 3)
+    assert(v.get(0) == Some(Some(1)))
+    assert(v.get(1) == Some(None))
+    assert(v.get(2) == Some(Some(3)))
+}
+
+test "Vec[Option[int]] pop preserves Option payload" {
+    mut v = Vec[Option[int]].new()
+    v.push(Some(42))
+    v.push(None)
+    assert(v.pop() == Some(None))
+    assert(v.pop() == Some(Some(42)))
+    assert(v.pop() == None)
+}
+
+test "Vec[Option[int]] survives growth" {
+    mut v = Vec[Option[int]].new()
+    for i in 0..50 {
+        if i % 2 == 0 { v.push(Some(i)) } else { v.push(None) }
+    }
+    assert(v.len() == 50)
+    assert(v.get(0) == Some(Some(0)))
+    assert(v.get(1) == Some(None))
+    assert(v.get(48) == Some(Some(48)))
+    assert(v.get(49) == Some(None))
+}

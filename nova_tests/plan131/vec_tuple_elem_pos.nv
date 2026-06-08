@@ -1,0 +1,40 @@
+// Plan 131 Ф.3 — Vec over a pair element type.
+//
+// Nova named-tuple value types (`type Pair(int, str)`) as a *generic argument*
+// to a user collection are not yet first-class for typed `*mut T` storage —
+// the value-type-by-value monomorphization of `Vec[NamedTuple]` is out of
+// scope for Ф.3 (tracked separately). Per the plan's documented fallback,
+// this test uses a record wrapper holding the two fields (records are heap
+// pointers → stored via typed `*mut Pair` = `Nova_Pair**`), which fully
+// exercises the multi-field-per-element storage path.
+
+module plan131.vec_tuple_elem_pos
+
+import std.collections.vec_owned.{Vec}
+
+type Pair { first int, second str }
+
+test "Vec[Pair] stores pair (int, str) elements" {
+    mut v = Vec[Pair].new()
+    v.push(Pair { first: 1, second: "a" })
+    v.push(Pair { first: 2, second: "b" })
+    v.push(Pair { first: 3, second: "c" })
+    assert(v.len() == 3)
+
+    ro p0 = match v.get(0) { Some(p) => p, None => Pair { first: 0, second: "" } }
+    assert(p0.first == 1)
+    assert(p0.second == "a")
+
+    ro p2 = match v.get(2) { Some(p) => p, None => Pair { first: 0, second: "" } }
+    assert(p2.first == 3)
+    assert(p2.second == "c")
+}
+
+test "Vec[Pair] grows and preserves elements" {
+    mut v = Vec[Pair].new()
+    for i in 0..20 { v.push(Pair { first: i, second: "x" }) }
+    assert(v.len() == 20)
+    ro p = match v.get(19) { Some(p) => p, None => Pair { first: -1, second: "" } }
+    assert(p.first == 19)
+    assert(p.second == "x")
+}

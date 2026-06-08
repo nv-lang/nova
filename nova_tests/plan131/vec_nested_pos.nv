@@ -1,0 +1,33 @@
+// Plan 131 Ф.3 — Vec[Vec[int]] (nested). The outer Vec stores inner Vec[int]
+// values (each a record → heap pointer) via typed `*mut Vec[int]` storage.
+
+module plan131.vec_nested_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "Vec[Vec[int]] push inner vectors and read back" {
+    mut outer = Vec[Vec[int]].new()
+    outer.push(Vec[int].from([1, 2, 3]))
+    outer.push(Vec[int].from([4, 5]))
+    outer.push(Vec[int].new())
+    assert(outer.len() == 3)
+
+    ro inner0 = match outer.get(0) { Some(v) => v, None => Vec[int].new() }
+    assert(inner0.as_slice() == [1, 2, 3])
+
+    ro inner1 = match outer.get(1) { Some(v) => v, None => Vec[int].new() }
+    assert(inner1.as_slice() == [4, 5])
+
+    ro inner2 = match outer.get(2) { Some(v) => v, None => Vec[int].from([9]) }
+    assert(inner2.is_empty())
+}
+
+test "Vec[Vec[int]] grows preserving inner contents" {
+    mut outer = Vec[Vec[int]].new()
+    for i in 0..16 {
+        outer.push(Vec[int].from([i, i + 1]))
+    }
+    assert(outer.len() == 16)
+    ro last = match outer.get(15) { Some(v) => v, None => Vec[int].new() }
+    assert(last.as_slice() == [15, 16])
+}

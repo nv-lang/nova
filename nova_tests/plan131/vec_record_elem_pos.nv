@@ -1,0 +1,41 @@
+// Plan 131 Ф.3 — Vec[MyRecord] where MyRecord has fields. Record elements
+// are heap pointers (Nova_Point*); the Vec stores them via `*mut Point`
+// (Nova_Point** buffer) — typed, not erased.
+
+module plan131.vec_record_elem_pos
+
+import std.collections.vec_owned.{Vec}
+
+type Point { x int, y int }
+
+test "Vec[Point] push and field access" {
+    mut v = Vec[Point].new()
+    v.push(Point { x: 1, y: 2 })
+    v.push(Point { x: 3, y: 4 })
+    v.push(Point { x: 5, y: 6 })
+    assert(v.len() == 3)
+
+    ro p1 = match v.get(1) { Some(p) => p, None => Point { x: 0, y: 0 } }
+    assert(p1.x == 3)
+    assert(p1.y == 4)
+}
+
+test "Vec[Point] remove and swap_remove keep records intact" {
+    mut v = Vec[Point].new()
+    for i in 0..6 { v.push(Point { x: i, y: i * 10 }) }
+    ro removed = v.remove(0)
+    assert(removed.x == 0)
+    ro now0 = match v.get(0) { Some(p) => p, None => Point { x: -1, y: -1 } }
+    assert(now0.x == 1)
+    assert(now0.y == 10)
+    assert(v.len() == 5)
+}
+
+test "Vec[Point] reverse preserves record identity" {
+    mut v = Vec[Point].new()
+    v.push(Point { x: 1, y: 1 })
+    v.push(Point { x: 2, y: 2 })
+    v.reverse()
+    ro p0 = match v.get(0) { Some(p) => p, None => Point { x: 0, y: 0 } }
+    assert(p0.x == 2)
+}

@@ -1,0 +1,12 @@
+// Plan 131 Ф.3 NEG — remove() out of bounds panics (unrecoverable contract
+// violation: caller asked for a definite element that does not exist).
+// EXPECT_RUNTIME_PANIC Vec.remove: index out of bounds
+
+module neg.vec_remove_oob_neg
+
+import std.collections.vec_owned.{Vec}
+
+test "remove(0) on empty panics" {
+    mut v = Vec[int].new()
+    ro _ = v.remove(0)
+}

@@ -986,6 +986,35 @@ pub fn simple_type_name_str(t: &crate::ast::TypeRef) -> Option<String> {
     }
 }
 
+/// Plan 131 Ф.3: detect an *unresolved generic type parameter* — a
+/// single-segment Named type (`T`, `K`, `V`, …) with no generic args that
+/// is neither a primitive nor a registered user TypeDecl. Such `size_of[T]()`
+/// calls cannot be evaluated at const-fold time (T is a template variable);
+/// they are left intact for the monomorphizer to lower к `sizeof(<concrete C
+/// type>)` once `T` is bound (see emit_c Plan 131 Ф.3 size_of интерсепт).
+fn is_unresolved_generic_param(t: &crate::ast::TypeRef) -> bool {
+    let name = match t {
+        crate::ast::TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 =>
+        {
+            &path[0]
+        }
+        _ => return false,
+    };
+    let is_primitive = matches!(
+        name.as_str(),
+        "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
+            | "i8" | "u8" | "bool" | "char" | "str" | "usize" | "isize" | "uint"
+            | "ptr" | "never" | "byte"
+    );
+    if is_primitive {
+        return false;
+    }
+    // Known user type → not a generic param (const-fold can compute layout).
+    let known = TYPE_DECL_REGISTRY.with(|r| r.borrow().contains_key(name));
+    !known
+}
+
 /// Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1: size_of[T]()/align_of[T]() — type layout.
 ///
 /// V4.0 supported только primitives (hardcoded 64-bit ABI).
@@ -2349,6 +2378,14 @@ fn walk_expr(
                             return;
                         }
                         None => {
+                            // Plan 131 Ф.3: `size_of[T]()` over an unresolved
+                            // generic parameter — leave the call intact so the
+                            // monomorphizer lowers it к `sizeof(<concrete C>)`
+                            // once `T` binds (emit_c size_of интерсепт). Only a
+                            // genuinely unsupported *concrete* type still errors.
+                            if is_unresolved_generic_param(&type_args[0]) {
+                                return;
+                            }
                             errors.push(Diagnostic::new(
                                 format!(
                                     "[E_CONST_FN_GENERIC_NEEDS_T_REFLECTION] `{}[T]()` для \

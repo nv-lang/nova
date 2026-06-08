@@ -1,0 +1,31 @@
+// Plan 131 Ф.3 — conversion: Vec[T].from([]T slice) / as_slice round-trip.
+
+module plan131.vec_from_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "from slice copies elements" {
+    ro v = Vec[int].from([5, 10, 15, 20])
+    assert(v.len() == 4)
+    assert(v.get(0) == Some(5))
+    assert(v.get(3) == Some(20))
+}
+
+test "from empty slice" {
+    ro v = Vec[int].from([])
+    assert(v.is_empty())
+}
+
+test "as_slice round-trips" {
+    mut v = Vec[int].new()
+    for i in 0..5 { v.push(i * i) }
+    assert(v.as_slice() == [0, 1, 4, 9, 16])
+}
+
+test "from then mutate is independent of source" {
+    ro src = [1, 2, 3]
+    mut v = Vec[int].from(src)
+    v.push(4)
+    assert(v.as_slice() == [1, 2, 3, 4])
+    assert(src == [1, 2, 3])
+}
