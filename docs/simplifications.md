@@ -34137,3 +34137,11 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
   когда field name совпадает с self-field — Nova shorthand form обязателен.
 - **Принцип** — generic-протокол тест должен вызывать метод напрямую, не через interp-bridge,
   пока vtable-dispatch для generic types не проверен в suite.
+
+
+## Plan 118.1.7 — unsafe fn keyword syntax (2026-06-09)
+
+### Что упрощено / отложено
+- `unsafe fn` синтаксис — keyword-only, нет grace period для `#unsafe fn` (hard error сразу)
+- `extern "C" { unsafe fn ... }` block синтаксис — не реализован (followup [M-118.1.7-extern-block])
+- type-inference для `let p = risky_fn` где `risky_fn: unsafe fn(...)` — через Plan 118.1.6 addr_of (verify followup [M-118.1.7-unsafe-fn-type-inference])
