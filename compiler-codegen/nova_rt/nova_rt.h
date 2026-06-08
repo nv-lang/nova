@@ -498,7 +498,7 @@ typedef struct { char _dummy; } nova_unit;
  * intrinsics. Underlying C primitives для FFI / driver / embedded work.
  *
  * Naming convention: `Nova_RawMem_static_*` matches Nova's static-method
- * external-fn binding `RawMem.copy_from` → C `Nova_RawMem_static_copy_from`
+ * external-fn binding `RawMem.copy` → C `Nova_RawMem_static_copy`
  * (codegen mangles static methods as `Nova_<Type>_static_<method>`). Plain
  * wrappers around libc memmove/memcpy/memset/memcmp.
  *
@@ -506,7 +506,7 @@ typedef struct { char _dummy; } nova_unit;
  * or *T as appropriate; codegen handles ABI mapping). usize for byte
  * count (D226 §3 amend — usize = u64 alias, ABI-compatible с C size_t).
  */
-static inline void Nova_RawMem_static_copy_from(const void* src, void* dst, uint64_t n) {
+static inline void Nova_RawMem_static_copy(const void* src, void* dst, uint64_t n) {
     memmove(dst, src, (size_t)n);
 }
 static inline void Nova_RawMem_static_copy_nonoverlapping(const void* src, void* dst, uint64_t n) {

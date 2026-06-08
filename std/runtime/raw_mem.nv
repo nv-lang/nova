@@ -10,7 +10,7 @@
 //
 // V1 scope (this file): byte-level untyped operations. User responsible
 // for size calculations (`count * sizeof(T)` patterns). Generic typed
-// variants (`RawMem.copy_from[T]`) — V2 follow-on, require `sizeof[T]()`
+// variants (`RawMem.copy[T]`) — V2 follow-on, require `sizeof[T]()`
 // const fn intrinsic propagation.
 //
 // Pointer types: `*u8` (default ro per D216 §1) для src,
@@ -18,7 +18,7 @@
 // `usize` для byte count (D226 alias, C size_t ABI).
 //
 // Rust precedents:
-//   - ptr::copy (memmove)              -> RawMem.copy_from
+//   - ptr::copy (memmove)              -> RawMem.copy
 //   - ptr::copy_nonoverlapping (memcpy) -> RawMem.copy_nonoverlapping
 //   - ptr::write_bytes (memset)        -> RawMem.write_bytes / RawMem.fill
 //
@@ -45,7 +45,7 @@ export type RawMem
 ///
 /// V1 contract: caller wraps в `unsafe { }` block for clarity (parser
 /// does not yet support `#unsafe` attribute on `external fn`).
-export external fn RawMem.copy_from(src *u8, dst mut * u8, n usize) -> ()
+export external fn RawMem.copy(src *u8, dst mut * u8, n usize) -> ()
 
 /// memcpy — copy `n` bytes from `src` к `dst`. UB при overlap.
 ///

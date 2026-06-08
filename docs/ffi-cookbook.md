@@ -431,7 +431,7 @@ validation (E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED).
 import std.runtime.raw_mem.{RawMem}
 
 unsafe {
-    RawMem.copy_from(src, dst, n_bytes)         // memmove-safe
+    RawMem.copy(src, dst, n_bytes)              // memmove-safe
     RawMem.copy_nonoverlapping(src, dst, n)     // memcpy fast-path
     RawMem.fill(dst, byte_value, n)             // memset
     RawMem.write_bytes(dst, byte_value, n)      // alias

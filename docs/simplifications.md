@@ -31557,7 +31557,7 @@ Java Valhalla (incoming).
 
 #### S118-1: RawMem byte-level only, no typed `(*T).read()`/`.write()`
 
-Shipped: `RawMem.copy_from / copy_nonoverlapping / fill / write_bytes /
+Shipped: `RawMem.copy / copy_nonoverlapping / fill / write_bytes /
 compare` operating на `*u8` / `*mut u8` + `usize` byte counts. Caller
 computes `count * sizeof(T)` manually.
 
