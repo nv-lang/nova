@@ -2355,24 +2355,53 @@ static NovaStopMode _nova_blocking_stop_cb(void* handle) {
 
 /* Fiber-context blocking offload. Уводит leaf-блокирующую `fn` на libuv
  * threadpool, паркует fiber, освобождает worker до завершения работы.
- * PRECONDITION: вызывается из fiber-контекста (scope/slot валидны). */
+ * PRECONDITION: вызывается из fiber-контекста (scope/slot валидны).
+ *
+ * Plan 83.11 Ф.4: routes via driver UV loop when driver is started.
+ * Driver receives ARM_BLOCKING job, calls uv_queue_work on its own loop.
+ * after_work_cb fires on driver thread → done=true + nova_sched_wake.
+ *
+ * Wake-before-park race covered by park_until fast-path predicate check:
+ * if done=true before park_until is reached, returns immediately. */
 static inline void nova_blocking_offload(NovaFiberQueue* scope, int slot,
                                           void (*fn)(void*), void* arg) {
     NovaBlockingState st = { .scope = scope, .slot = slot, .fn = fn, .arg = arg };
     nova_abool_init(&st.done, false);
     st.work.data = &st;
-    int rc = uv_queue_work(nova_current_loop(), &st.work,
-                           _nova_blocking_work_cb, _nova_blocking_after_cb);
-    if (rc != 0) {
-        fprintf(stderr, "nova: FATAL uv_queue_work failed: %s\n",
-                uv_strerror(rc));
-        abort();
+
+    if (nova_driver_is_started()) {
+        /* Plan 83.11 Ф.4: route via centralized driver UV loop. */
+        NovaDriverJob* job = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
+        if (!job) {
+            fprintf(stderr, "nova: FATAL nova_blocking_offload: malloc job failed\n");
+            abort();
+        }
+        job->kind = NOVA_DRV_JOB_ARM_BLOCKING;
+        job->u.arm_blocking.st   = &st;
+        job->u.arm_blocking.work = fn;
+        job->u.arm_blocking.arg  = arg;
+        if (nova_driver_submit_job(job) != 0) {
+            free(job);
+            fprintf(stderr, "nova: FATAL nova_blocking_offload: submit_job failed\n");
+            abort();
+        }
+    } else {
+        /* Legacy path: worker's UV loop (bootstrap / pre-driver). */
+        int rc = uv_queue_work(nova_current_loop(), &st.work,
+                               _nova_blocking_work_cb, _nova_blocking_after_cb);
+        if (rc != 0) {
+            fprintf(stderr, "nova: FATAL uv_queue_work failed: %s\n",
+                    uv_strerror(rc));
+            abort();
+        }
     }
-    /* Register для cancel-wake (D93). */
+
+    /* Register для cancel-wake (D93). uv_cancel is thread-safe for work
+     * requests; works for both driver-loop and worker-loop paths. */
     nova_sched_register_pending(scope, slot, &st.work, _nova_blocking_stop_cb);
     /* Plan 83.4.1: park-until — возвращается только когда after_work_cb
-     * установил done=true. Никакого FATAL-check'а больше не нужно —
-     * spurious wake re-park'ится автоматически by construction. */
+     * установил done=true. Fast-path predicate check handles wake-before-park
+     * race (if done=true already, returns immediately without yielding). */
     nova_sched_park_until(scope, slot, _nova_blocking_is_done, &st);
     nova_sched_unregister_pending(scope, slot);
 }
