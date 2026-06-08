@@ -1,0 +1,80 @@
+// trig_unit_circle.nv — Plan 91 Ф.4 conformance fixture.
+//
+// Realistic trigonometry use-case exercising std.runtime.math f64 methods
+// against the unit circle. Validates the classic identities that a
+// numeric/graphics codebase relies on:
+//   - exact-ish anchors: sin(0)=0, cos(0)=1, sin(PI/2)=1, cos(PI)=-1
+//   - the Pythagorean identity sin²x + cos²x = 1 at several angles
+//   - inverse round-trips: asin(sin x) = x and acos(cos x) = x on-domain
+//   - tan(PI/4) = 1
+//
+// All float comparisons use a tolerance window (never `==` on floats).
+
+module plan91_fe4.trig_unit_circle
+
+import std.runtime.math
+
+test "unit-circle anchors: sin(0), cos(0), sin(PI/2), cos(PI)" {
+    ro pi = f64.PI
+
+    ro s0 = (0.0).sin()
+    assert(s0 > -1e-9 && s0 < 1e-9, "sin(0) is not 0")
+
+    ro c0 = (0.0).cos()
+    ro c0e = c0 - 1.0
+    assert(c0e > -1e-9 && c0e < 1e-9, "cos(0) is not 1")
+
+    ro sHalf = (pi / 2.0).sin()
+    ro sHalfE = sHalf - 1.0
+    assert(sHalfE > -1e-9 && sHalfE < 1e-9, "sin(PI/2) is not 1")
+
+    ro cPi = pi.cos()
+    ro cPiE = cPi + 1.0
+    assert(cPiE > -1e-9 && cPiE < 1e-9, "cos(PI) is not -1")
+}
+
+test "Pythagorean identity sin^2 + cos^2 = 1 across several angles" {
+    ro pi = f64.PI
+
+    // angle a = PI/6 (30°)
+    ro a = pi / 6.0
+    ro sa = a.sin()
+    ro ca = a.cos()
+    ro ida = sa * sa + ca * ca - 1.0
+    assert(ida > -1e-9 && ida < 1e-9, "sin^2+cos^2 != 1 at PI/6")
+
+    // angle b = PI/3 (60°)
+    ro b = pi / 3.0
+    ro sb = b.sin()
+    ro cb = b.cos()
+    ro idb = sb * sb + cb * cb - 1.0
+    assert(idb > -1e-9 && idb < 1e-9, "sin^2+cos^2 != 1 at PI/3")
+
+    // angle c = 1.234 rad (arbitrary, off the special-angle grid)
+    ro c = 1.234
+    ro sc = c.sin()
+    ro cc = c.cos()
+    ro idc = sc * sc + cc * cc - 1.0
+    assert(idc > -1e-9 && idc < 1e-9, "sin^2+cos^2 != 1 at 1.234 rad")
+}
+
+test "inverse round-trips: asin(sin x) = x and acos(cos x) = x on-domain" {
+    // asin domain image is [-PI/2, PI/2]; pick x = 0.5 rad inside it.
+    ro x = 0.5
+    ro asinRt = x.sin().asin()
+    ro asinE = asinRt - x
+    assert(asinE > -1e-9 && asinE < 1e-9, "asin(sin(0.5)) did not round-trip")
+
+    // acos domain image is [0, PI]; pick y = 1.0 rad inside it.
+    ro y = 1.0
+    ro acosRt = y.cos().acos()
+    ro acosE = acosRt - y
+    assert(acosE > -1e-9 && acosE < 1e-9, "acos(cos(1.0)) did not round-trip")
+}
+
+test "tan(PI/4) = 1" {
+    ro pi = f64.PI
+    ro t = (pi / 4.0).tan()
+    ro te = t - 1.0
+    assert(te > -1e-9 && te < 1e-9, "tan(PI/4) is not 1")
+}
