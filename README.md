@@ -266,6 +266,33 @@ gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
 Full guide, options, known limitations:
 [compiler-codegen/README.md](compiler-codegen/README.md).
 
+## Getting started
+
+Once `nova` is built, run the guided tour program — one self-contained
+file that compiles, runs, and tests with no setup:
+
+```sh
+# run it (prints the cart totals)
+nova-cli/target/release/nova run examples/getting_started.nv
+
+# run its in-file tests (handler-swapped, no mocks)
+nova-cli/target/release/nova test examples/getting_started.nv
+```
+
+[`examples/getting_started.nv`](examples/getting_started.nv) walks
+through the core 0.1 standard library in ~150 commented lines:
+
+- `fn main` + `println` — the hello baseline;
+- a **record** type with named-field access;
+- a **sum type** + exhaustive `match`;
+- a `for`-loop accumulating a result over a range;
+- an **algebraic effect** supplied by a `with`-block handler in
+  `main`, then **swapped for a different in-memory handler** inside a
+  `test {}` — the same business logic verified without any mocks.
+
+That last point is Nova's headline: handlers are the test seam, so
+tests need no mocking framework.
+
 ## Running tests
 
 Build `nova` CLI, then run the full test suite:

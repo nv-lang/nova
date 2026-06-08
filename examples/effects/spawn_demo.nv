@@ -1,11 +1,11 @@
-// spawn.nv — D50: spawn внутри structured-scope (supervised/parallel for).
+// spawn_demo.nv — D50: spawn внутри structured-scope (supervised/parallel for).
 //
 // По D50 (06-concurrency.md): `spawn body` — fire-and-forget, возвращает
 // unit. Результаты concurrent-вычислений — через mut-захваты или
 // `parallel for` (homogeneous results). `let r = spawn { expr }` —
 // compile-error (spawn не возвращает значение).
 
-module effects.spawn
+module effects.spawn_demo
 
 fn main() {
     // Простое spawn внутри supervised: fiber вычисляет, результат через
@@ -38,9 +38,20 @@ fn main() {
     }
     println("a + b = ", a + b)           // 30
 
-    // Гомогенный fan-out: parallel for возвращает массив результатов.
-    ro results = parallel for i in 0..5 {
-        i * i
+    // Гомогенный fan-out: `parallel for` исполняет тело конкурентно для
+    // каждого элемента. Здесь собираем результат через mut-аккумулятор
+    // внутри supervised-scope.
+    //
+    // NB: forma `ro results = parallel for ... { expr }` (массив результатов
+    // по D71) пока корректно типизируется только в `test {}`-блоках; в теле
+    // обычной `fn` value-typing `parallel for` даёт `()` — pre-existing
+    // compiler gap, см. отчёт Plan 91 Ф.6. Поэтому пример использует
+    // statement-форму + mut-захват.
+    mut sum_sq = 0
+    supervised {
+        parallel for i in 0..5 {
+            sum_sq = sum_sq + i * i
+        }
     }
-    println("squares = ", results.len())   // 5
+    println("sum of squares 0..5 = ", sum_sq)   // 30
 }
