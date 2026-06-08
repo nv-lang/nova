@@ -34215,3 +34215,103 @@ Housekeeping:
 
 Spec/D/Q: не требовалось (кодировка/housekeeping/конвенция — без семантики).
 Всё в main + github + gitverse.
+
+
+
+================================================================================
+== 2026-06-08 — Plan 83.11 §11.6 V2 — REAL fix для GC pin race (no token leak)
+================================================================================
+
+> Worktree: D:/Sources/nv-lang/nova-p83-gc-pin
+> Branch: plan-83.11-gc-pin-fix (off main 1d0932e3f51)
+
+Replaces V1 workaround (2026-06-05) with proper fix. Closes BOTH original
+markers AND the leak-followup spawned by V1.
+
+CONTEXT:
+
+Plan 83.11 V1 fix (2026-06-05) для [M-83.11-cancel-token-bound-race-2k]
+switched NovaCancelToken allocation от nova_alloc к nova_alloc_uncollectable.
+Worked, но создавал ~64-byte leak per token. Spawned followup
+[M-83.11-cancel-token-explicit-cleanup] для possible dispose API.
+
+User push: «fix it properly» — закрыть и leak followup тоже. Recon
+parallel workflow (4 agents) исследовал ctx_pins[] code, Boehm GC
+integration, diagnostic patterns, Plan 83.11 §11.4-§11.6 historical
+reasoning.
+
+ROOT CAUSE (V2 diagnosis):
+
+Issue is NOT token allocation, but ctx_pins[] ARRAY (which Plan 83.11
+§11.6 fix introduced для pinning tokens). Under N≥2k fiber count:
+1. ctx_pins[] array doubles 16→32→64→...→1024+ via nova_alloc.
+2. Each doubling triggers GC under heavy allocation pressure.
+3. Boehm conservative scanner sometimes loses pointer-chain
+   `stack-scope → ctx_pins → tokens` during Mark phase.
+4. ctx_pins[] array itself becomes unreachable, taking tokens с собой.
+5. Token memory reused for next SpawnCtx (allocated at same address).
+6. SpawnCtx writes at offset 8 (_nova_worker_slot, but actually a
+   prior _nova_parent_scope pointer if structs align) overlaps
+   token bound_scope offset.
+7. bind() sees non-NULL bound_scope → panic.
+
+V1 fix workaround: make TOKEN uncollectable → array still might lose
+coverage but token doesn't get reclaimed. ~64 bytes leak per token.
+
+V2 proper fix: make CTX_PINS[] ARRAY uncollectable. Array always
+reachable → tokens reachable through standard scan chain. Token stays
+nova_alloc (collectable). On array growth, OLD array nova_free_uncollectable'd
+(tokens already copied к NEW array). Per-scope tail ~16-1024 pointers ×
+8 bytes = 128B-8KB tail until process exit. Acceptable: scopes finite +
+not in tight loops.
+
+FIX:
+
+`fibers.h::nova_scope_pin_ctx` (~line 639):
+- `nova_alloc(...)` → `nova_alloc_uncollectable(...)` для new_pins.
+- After copy от old к new, `nova_free_uncollectable(scope->ctx_pins)`.
+
+`fibers.h::nova_cancel_token_new`:
+- Reverted к `nova_alloc(sizeof(NovaCancelToken))` (collectable). Tokens
+  reachable через ctx_pins[] (always alive) — standard scan chain works.
+
+STRESS VERIFICATION (release nova-cli):
+
+- fibers_10k_sleep_cancel @ N=10k: 30/30 PASS sequential.
+- nested_supervised_3_levels_cancel @ depth=3: 30/30 PASS (regression
+  check — V2 ctx_pins fix shouldn't affect cascade behavior).
+- stress_iso_3e: 30/30 PASS (regression check — no GC fix should affect
+  baseline).
+- cancel_during_runtime_shutdown @ 16 fibers: 30/30 PASS.
+
+MARKER TALLY:
+
+- 🟢 [M-83.11-cancel-token-bound-race-2k] V2 FULLY CLOSED via proper
+  GC pin fix (not workaround).
+- 🟢 [M-83.11-cancel-token-explicit-cleanup] V2 CLOSED — no per-token
+  leak any more. Token returns к standard GC-managed allocation.
+- 🟡 New followup `[M-83.11-ctx-pins-scope-cleanup]` (P3 optional) —
+  scope-exit hook к free ctx_pins[] array if long-running service patterns
+  need to avoid per-scope tail.
+
+SPEC AMEND:
+
+D188 R3b updated (2026-06-08): switched description от «token
+uncollectable» к «ctx_pins[] array uncollectable». R3c (bind deferred-
+cancel) unaffected.
+
+LESSONS:
+
+1. Workaround vs root-fix: V1 fixed wrong thing — token. Worked but
+   created leak. Recon V2 found that array was the issue.
+
+2. Parallel recon workflow + multiple hypothesis exploration пришёл к
+   правильному fix shape. Single-agent investigation could miss что
+   token leak is the SYMPTOM of array leak.
+
+3. ctx_pins[] pinning pattern (Plan 83.11 §11.6) — sound design but
+   under heavy GC pressure conservative scanner had hidden race. Now
+   uncollectable array hardens the pin.
+
+4. Per-scope tail acceptable trade: scopes are finite, not in tight
+   loops. Significantly smaller than per-token leak (V1).
