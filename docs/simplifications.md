@@ -33847,3 +33847,53 @@ production-grade closure complete, zero leak.
 
 3. **Per-scope tails accumulate in tight-loop scenarios.** Always audit
    tail trade-offs against worst-case scope counts.
+
+---
+
+## Plan 91 Ф.4 (time/math/sort conformance) + Ф.6 (getting-started/examples) — 2026-06-08
+
+**Codegen-фикс (НЕ упрощение — production):** `emit_handler_lit` (emit_c.rs) теперь
+вычитает op-body-bound имена из handler-literal capture-set, как уже делают
+`emit_spawn`/`emit_detach`/`emit_blocking` через `collect_bound_names_*`. Устраняет
+CC-FAIL `undeclared identifier 'i'` при `import std.sort` + `import std.time.duration`
+вместе (stale `i` от sort-функций в flat-`var_types` ⇒ op-body-локал `i` Random-handler'а
+из `std/testing/handlers.nv` ошибочно захватывался). Per-method bound-set, low-risk.
+
+**Verify:** repro PASS; 8/8 `nova_tests/plan91_fe4/` PASS; full `nova test` 1637/16
+(все 16 pre-existing, 0 регрессий от фикса). Ф.6: `examples/getting_started.nv`
+`nova run`+`nova test` GREEN; README quick-start.
+
+**Сознательные упрощения / отложенное (pre-existing, маркеры в plan-91 doc):**
+
+1. **`Instant` НЕ добавляли** — ships как `Monotonic` (D124), работает as-is. Не
+   упрощение, а факт: отдельный тип не нужен.
+
+2. **`examples/effect_density/` + `real_world/` оставлены read-only didactic** — они
+   используют аспирационный синтаксис (glob-import `X.*`, плейсхолдеры `...`,
+   undefined-символы; oxsar_port.nv явно «для чтения»). Module-paths нормализованы
+   (hyphen→underscore), но компилировать НЕ пытались (потребовался бы полный rewrite).
+   Ф.6.2 удовлетворён basics/effects/ffi/getting_started (≫5-7).
+
+3. **Time-effect conformance fixture обойдён explicit Timestamp** —
+   `[M-91.6-time-now-schema-mismatch]`: `Time.now()` wire-typed как int. Pre-existing.
+
+4. **`Duration.ZERO` → `Duration.from_nanos(0)`** в фикстуре —
+   `[M-91.6-duration-zero-cross-module-const]`: Path-form const cross-module CC-FAIL.
+
+5. **global-const-capture в spawn** (`[M-91.6-spawn-global-const-capture]`) — родственно
+   фиксу Ф.4 (var_types pollution), но в `emit_spawn`-path; baseline-fails
+   sleep_real_clock/const_ref_const_ok/neg_addr_of_const. Отдельный план.
+
+**Уроки:**
+
+1. **Audit-workflow → review → implement-workflow** окупается: аудит точно локализовал
+   codegen-баг (file:line + trigger-matrix sort+duration vs math+duration), фикс
+   оказался trivial по precedent'у.
+
+2. **Адверсариальный verify-агент поймал mischaracterization** (echo_client: первый
+   сбой — missing import, не const-capture) и read-only didactic-классификацию examples.
+   Честные агенты > оптимистичные.
+
+3. **flat `var_types` без scope-cleanup** — латентная ловушка: любой collision между
+   stdlib-локалом и handler-op-локалом всплывает как miscompile. Hardening (scoped
+   var_types) — отдельный followup.

@@ -34476,3 +34476,35 @@ LESSONS:
 3. Per-scope leaks in tight-loop scenarios (1M scopes × 8KB = 8GB) can
    accumulate beyond per-instance leaks (1M tokens × 64B = 64MB). Always
    audit «per-scope tail» trade-offs against worst-case scope counts.
+
+================================================================================
+Plan 91 Ф.4 (time/math/sort conformance) + Ф.6 (getting-started) — 2026-06-08
+================================================================================
+
+Закрыл Ф.4-доводку и Ф.6 умбреллы Plan 91 (std MVP для 0.1).
+
+CODEGEN-ФИКС: import std.sort + import std.time.duration вместе давали CC-FAIL
+'undeclared identifier i'. emit_handler_lit не вычитал op-body-bound имена из
+capture-set (в отличие от emit_spawn/detach/blocking). Stale i от sort-функций
+в flat var_types -> op-body-локал i Random-handler'а (std/testing/handlers.nv,
+транзитивно через std.time.duration) ошибочно захватывался. Фикс: per-method
+bound-set через collect_bound_names_*, skip. Low-risk, строго сужает captures.
+
+ТЕСТЫ: 8 realistic conformance fixtures nova_tests/plan91_fe4/ (time/math/sort),
+8/0 PASS. Full nova test 1637/16 (все 16 pre-existing, 0 регрессий).
+
+Ф.6: examples/getting_started.nv — self-contained teaching-программа (record,
+sum-type+match, for-loop, алгебраический эффект Audit через in-memory with-handler
++ test{} с handler-swap). nova run + nova test GREEN. README quick-start (EN).
+Migrate: effect-density->effect_density, real-world->real_world, spawn.nv->
+spawn_demo.nv, ptr_basics/sqlite_mini/unsafe_fn_attribute syntax fixes.
+
+ОТЛОЖЕНО (pre-existing маркеры): Instant=Monotonic (D124, не нужен); read-only
+didactic examples effect_density/real_world (аспирационный синтаксис); spawn
+global-const-capture; Time.now schema-mismatch; Duration.ZERO cross-module const;
+parallel-for value-typing; sqlite FFI codegen. Все задокументированы в plan-91.
+
+ИНСТРУМЕНТ: audit-workflow (4 параллельных разведчика) -> review -> implement-
+workflow (13 агентов + adversarial verify). 2 фикстуры допил inline (упали на
+сетевых API-ошибках). Pattern: serial codegen-fix inline (под ревью) + parallel
+bulk через workflow.
