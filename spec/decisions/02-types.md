@@ -7552,6 +7552,12 @@ ro same = p == q                     // OK outside unsafe — identity check
   `infer_expr_type`.
 - **Equality** `==`/`!=` — safe everywhere (identity check; OK outside unsafe).
 
+> **Nova codegen note (Plan 131, 2026-06-08):** For typed pointer `*mut T`,
+> the expression `ptr + n` emits `(ptr + n)` in C — the C compiler scales by
+> `sizeof(T)` automatically (standard C pointer arithmetic). `*(ptr + n) = v`
+> emits an lvalue deref-write. `p as *mut T` emits `(T*)(p)` reinterpret cast.
+> This is the foundation Vec[T] uses for its element buffer (see D232).
+
 ### §7. Null safety: `Option[*T]` + NPO codegen
 
 `*T` — non-null guaranteed. `Option[*T]` — nullable через **NPO codegen**.
@@ -10467,3 +10473,181 @@ promise. То же codegen применяется к остальным auto-der
 - Plan 124.8 — value-record D228 (primary use-case).
 - Plan 120 — NamedTuple D215 (secondary use-case).
 - Plan 90.1 — `[]T` extend/copy_from family (used для array field clone).
+
+---
+
+## D231. RawMem allocator API — nova_alloc / nova_alloc_uncollectable / nova_free_uncollectable
+
+**Status:** ACTIVE (Plan 131, 2026-06-08)
+
+Low-level GC-tracked allocation exposed to Nova for implementing Nova-native
+data structures (Vec[T], custom allocators, FFI).
+
+### Что
+
+Three extern C functions wrapped as `RawMem` static methods in
+`std/runtime/raw_mem.nv`, all gated behind `#unsafe` (E_UNSAFE_CALL_REQUIRES_WRAP
+per D216 §9).
+
+### API
+
+```nova
+// GC-tracked allocation. Memory zeroed. 8-byte aligned.
+// Must be called inside unsafe {} block.
+#unsafe
+export external fn RawMem.alloc(n usize) -> *mut u8
+
+// Not GC-tracked. Caller must call RawMem.free_uncollectable.
+#unsafe
+export external fn RawMem.alloc_uncollectable(n usize) -> *mut u8
+
+// Free pointer from alloc_uncollectable. UB on GC-tracked pointer.
+#unsafe
+export external fn RawMem.free_uncollectable(ptr *mut u8) -> ()
+```
+
+### C mapping
+
+| Nova | C (nova_rt/alloc.h) |
+|------|---------------------|
+| `RawMem.alloc(n)` | `nova_alloc(n)` |
+| `RawMem.alloc_uncollectable(n)` | `nova_alloc_uncollectable(n)` |
+| `RawMem.free_uncollectable(ptr)` | `nova_free_uncollectable(ptr)` |
+
+### Safety rules
+
+1. `nova_alloc` returns zeroed, GC-collectable, 8-byte aligned memory.
+2. Do NOT call `nova_free` on GC-tracked pointers — Boehm GC handles collection.
+3. `alloc_uncollectable` for long-lived buffers not visible to the conservative
+   GC scanner (e.g. Windows fiber arena buffers where fiber stacks shadow heap).
+4. Every call must be inside `unsafe {}` — `#unsafe` attribute enforced
+   (E_UNSAFE_CALL_REQUIRES_WRAP from D216 §9, ACTIVE 2026-06-02).
+5. `n = 0` is implementation-defined; use `n > 0` in practice.
+
+### Типичный use case
+
+```nova
+// Allocate a typed buffer of n elements of T:
+fn alloc_buf[T](n int) -> *mut T {
+    unsafe {
+        RawMem.alloc((n as usize) * (size_of[T]() as usize)) as *mut T
+    }
+}
+```
+
+### Cross-refs
+
+- [D216 §8](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — unsafe gating model.
+- [D216 §6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — pointer arithmetic (ptr + N scaled by sizeof(T)).
+- [D232](#d232-vect--nova-native-generic-growable-array) — Vec[T] built on D231.
+- `std/runtime/raw_mem.nv` — implementation.
+
+---
+
+## D232. Vec[T] — Nova-native generic growable array
+
+**Status:** ACTIVE (Plan 131, 2026-06-08)
+
+A production-grade growable array implemented *entirely in Nova* on top of
+D231 (RawMem.alloc), D199 (size_of[T]()), and D216 pointer arithmetic.
+Demonstrates that a collection with correct typed storage needs no compiler
+magic beyond what Plans 118/114.4 provide.
+
+### Layout
+
+```nova
+export type Vec[T] {
+    priv mut data *mut T   // raw element buffer, cap slots wide
+    priv mut len  int      // number of live (initialised) elements
+    priv mut cap  int      // number of allocated element slots
+}
+```
+
+### Construction
+
+| Call | Effect |
+|------|--------|
+| `Vec[T].new()` | empty, no allocation (cap = 0) |
+| `Vec[T].with_capacity(n)` | empty, pre-allocated n slots |
+| `Vec[T].from(items []T)` | copy from built-in slice |
+
+### Key methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `push` | `mut @push(v T) -> ()` | Append element, grow if needed |
+| `pop` | `mut @pop() -> Option[T]` | Remove and return last |
+| `get` | `@get(i int) -> Option[T]` | Element by index, bounds-checked |
+| `get_mut` | `mut @get_mut(i int) -> Option[*mut T]` | Raw mutable pointer (unsafe) |
+| `insert` | `mut @insert(i int, v T) -> ()` | Shift-insert at index |
+| `remove` | `mut @remove(i int) -> T` | Shift-remove at index |
+| `swap_remove` | `mut @swap_remove(i int) -> T` | O(1) order-disrupting remove |
+| `len` | `@len() -> int` | Live element count |
+| `cap` | `@cap() -> int` | Allocated slot count |
+| `is_empty` | `@is_empty() -> bool` | True if len = 0 |
+| `clear` | `mut @clear() -> ()` | Set len = 0 (retains buffer) |
+| `truncate` | `mut @truncate(n int) -> ()` | Shorten to n elements |
+| `reserve` | `mut @reserve(additional int) -> ()` | Ensure room for more elements |
+| `shrink_to_fit` | `mut @shrink_to_fit() -> ()` | Cap → len |
+| `shrink_to` | `mut @shrink_to(min_cap int) -> ()` | Cap → max(len, min_cap) |
+| `reverse` | `mut @reverse() -> ()` | Reverse in place |
+| `extend` | `mut @extend(items []T) -> ()` | Append all from slice |
+| `append` | `mut @append(mut other Vec[T]) -> ()` | Move all from other |
+| `retain` | `mut @retain(pred fn(T) -> bool) -> ()` | Keep matching elements |
+| `first` | `@first() -> Option[T]` | First element |
+| `last` | `@last() -> Option[T]` | Last element |
+| `as_slice` | `@as_slice() -> []T` | Copy into built-in slice |
+| `iter` | `@iter() -> VecIter[T]` | Index-cursor iterator |
+| `clone` | `@clone() -> Vec[T]` | Deep copy (Cloneable) |
+| `equals` | `@equals(other Vec[T]) -> bool` | Element-wise equality |
+| `fmt` | `@fmt(mut sb StringBuilder) -> ()` | Printable (format: `Vec[e0, e1, ...]`) |
+| `debug_fmt` | `@debug_fmt(mut sb StringBuilder) -> ()` | DebugPrintable |
+
+### Growth strategy
+
+- Initial capacity: **8** slots on first push into an empty Vec.
+- Doubling: `new_cap = current_cap * 2` until `new_cap >= needed`.
+- Amortised O(1) push. Realloc copies live prefix via typed pointer loop.
+
+### Typed storage (key property)
+
+Elements are stored at the *real* C type of `T` in a `T*` buffer.
+Pointer arithmetic `data + i` is C-scaled by `sizeof(T)` automatically by
+the C backend. This means:
+
+- `Vec[Option[int]]` stores each `NovaOpt_nova_int` struct inline (16 bytes/element).
+- `Vec[MyRecord]` stores record pointers (`Nova_MyRecord*` 8 bytes/element).
+- **No int64-slot erasure** — unlike `[]T` built-in slice which uses
+  `NOVA_ARRAY_DECL(T)` macro with int64 element slots.
+
+### When to use Vec[T] vs []T
+
+| Criterion | `[]T` (built-in) | `Vec[T]` (library) |
+|-----------|------------------|--------------------|
+| Default choice | ✅ yes | ❌ not by default |
+| Primitives (int, f64, str, …) | ✅ typed | ✅ typed |
+| Records (heap pointer) | ✅ pointer-in-slot | ✅ pointer-in-slot |
+| Value-struct T (Option[U], tuple, >8-byte value-record) | ❌ int64-erasure | ✅ typed |
+| `for x in` loop | ✅ built-in | ✅ via VecIter |
+| Compiler magic needed | yes (NOVA_ARRAY_DECL) | no (pure Nova) |
+
+**Migration path:** In a future language version, `[]T` may become sugar
+over `Vec[T]` once the typed-storage gap is closed for all T.
+
+### Protocols implemented
+
+- `Iterable[T]` (via `VecIter[T]` — `@iter()` / `@next()`)
+- `Equatable` (element-wise via `@equals`)
+- `Cloneable` (deep copy via `@clone`)
+- `Printable` (via `@fmt`)
+- `DebugPrintable` (via `@debug_fmt`)
+
+### Cross-refs
+
+- [D231](#d231-rawmem-allocator-api--nova_alloc--nova_alloc_uncollectable--nova_free_uncollectable) — allocator used by Vec[T].
+- [D199](09-tooling.md) — `size_of[T]()` const fn used in buffer size calc.
+- [D216 §6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — ptr arithmetic (`data + i` C-scaled).
+- [D226](#d226-signed-indexing-convention) — `int` for len/cap/index.
+- [D228](#d228-value-record-allocation-contract) — value-records are valid T (stored by value in buffer).
+- `std/collections/vec_owned.nv` — implementation.
+- Plan 131 — home plan.

@@ -504,10 +504,10 @@ closure-параметра. Фикс: split ClosureLight-ветки в fn-typed-
   на `type_name="[]T" method="my_filter"` (plan100_4_5): пользовательские generic методы на `[]T` не
   регистрируются в `external_registry`, поэтому live sentinel не перехватывает их — они приходят сюда.
   Удалять нельзя. Маркер закрыт как WON'T FIX.
-- 🟡 **NEW `[M-91.1-value-struct-array-elem]`** (P2) — `[]Option[T]`/`[]tuple`-by-value (value-struct элементы,
-  не pointer): int64-slot erasure не вмещает >8 байт, side-channel readback покрывает только pointer-элементы.
-  Pre-existing лимит (CC-FAIL и на baseline, не регрессия). Требует typed-storage **именно** для value-struct
-  (узкий случай, без 47-blast-radius) ИЛИ box-to-pointer элементов.
+- ✅ **`[M-91.1-value-struct-array-elem]`** CLOSED by Plan 131 (2026-06-08) — `Vec[Option[T]]` и
+  `Vec[tuple]` корректно хранят value-struct элементы с typed storage (D232). `[]T` int64-slot
+  erasure gap остаётся для обратной совместимости, но пользователь может использовать `Vec[T]`
+  как drop-in solution для value-struct элементов. Fixture: `plan131_vec_option_typed_storage`.
 
 **Критерии приёмки Ф.1-followups** (2026-06-08, все ✅ через release `nova test`):
 
