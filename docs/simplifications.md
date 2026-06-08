@@ -34071,6 +34071,9 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
   с NOEQ + nested-NovaOpt), НЕ трогая pointer-путь (узкий случай, без 47-blast-radius) — ИЛИ box value-struct
   элементы в указатель (heap-alloc на push, deref на read). Отдельный план.
 - **Приоритет** — M (эргономика; в stdlib не используется — там for-in + pattern-match, не `[]Option`/`[]tuple`).
+- **✅ CLOSED by Plan 131 (2026-06-08):** `Vec[T]` implements typed storage for value-struct elements.
+  `Vec[Option[int]]`, `Vec[Record]`, `Vec[Vec[int]]` work without int64-erasure.
+  See `std/collections/vec_owned.nv` + `docs/plans/131-vec-in-nova.md`.
 
 ## Plan 91 Ф.1 — уроки (composite-array)
 
@@ -34121,3 +34124,16 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
   prelude panic не виден в consuming-модуле cross-module, explicit import тригерит R27 opt-out.
 - **Принцип** — generic тип с raw-pointer полем выявляет каждый codepath, где «T → C-тип»
   расходится между erased / mono / inference. 7 фиксов = выравнивание этих путей, не новый механизм.
+
+## Plan 131 — Vec[T] protocols + VecIter[T]
+
+- **Что** — `VecIter[T]` (data pointer + cursor + len) реализует `Iterable[T]` для `for x in vec`.
+  `Vec[T].equals()` → pairwise `as_slice()` сравнение. `Vec[T].clone()` → `Vec[T].from(as_slice())`.
+  `Vec[T].fmt(sb)` → строковое представление через `str.from(elem)` per element.
+- **`${v:?}` interp-routing не достигает user-defined generic body.** Для generic типов Nova
+  синтезирует vtable-функцию (Nova_Vec___nova_int_method_debug_fmt) независимо от user body →
+  тесты используют прямой вызов метода, не interp-string с `:?`.
+- **Record literal shorthand:** `{ @data, idx: 0, @len }` (not `{ data: @data, idx: 0, len: @len }`)
+  когда field name совпадает с self-field — Nova shorthand form обязателен.
+- **Принцип** — generic-протокол тест должен вызывать метод напрямую, не через interp-bridge,
+  пока vtable-dispatch для generic types не проверен в suite.

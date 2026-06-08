@@ -409,14 +409,41 @@ Vec[T] @[](i int) -> T     // panic on OOB (как Rust [])
 
 ---
 
-## Probe results (заполнить в Ф.0)
+## Probe results (Ф.0)
 
-_TODO после Ф.0_
+Все 4 probe-механизма требовали codegen-исправлений (найдено в Ф.2):
+
+| Probe | Результат | Fix |
+|-------|-----------|-----|
+| `ptr + n` | ❌ BinOp::Add на *T не routing к ptr-arith | Ф.2: добавлен pointer-arith dispatch |
+| `*ptr = v` | ❌ Assign{target:Deref} эмитился как lvalue-error | Ф.2: emit_assign Deref arm |
+| `p as *mut T` | ❌ As-cast к pointer type missing | Ф.2: emit_expr As arm для Pointer types |
+| `unsafe {}` | ✅ уже работало | — |
+
+Дополнительно 7 generic-codegen фиксов найдено при Ф.3 (size_of generic, typedef**, simple_type_ref_to_c, binop dispatch, apply_type_subst_to_ref, match desanitize fallback, has_void_ptr_fields).
 
 ---
 
 ## Status
 
-📋 **PLANNED 2026-06-08**. Не начат.
+✅ **CLOSED 2026-06-08.** All 6 phases complete.
 
-Следующий шаг: **Ф.0 — Probe** (проверить ptr arithmetic + deref write в codegen).
+### Acceptance Criteria
+- [x] A1: RawMem.alloc works from Nova unsafe block
+- [x] A2: ptr+n, ptr-ptr, *ptr=v work in codegen
+- [x] A3: Vec[int] — push 1000 + pop all correct
+- [x] A4: Vec[Option[int]] — push Some/None + get correct
+- [x] A5: Vec[(int,str)] — covered via record wrapper (vec_tuple_elem_pos); NamedTuple erasure tracked as [M-131.3-namedtuple-vec-elem]
+- [x] A6: Vec[MyRecord] — value-struct correct (vec_record_elem_pos)
+- [x] A7: for x in vec works (Iterable protocol, VecIter[T])
+- [x] A8: Full regression 0 new FAIL
+- [x] A9: All tests via release nova.exe
+- [x] A10: D231 RawMem.alloc + D232 Vec[T] + D216 amend + Q-vec-vs-slice spec
+- [x] A11: [M-91.1-value-struct-array-elem] closed
+
+### Commits (branch plan-131-vec-in-nova)
+- `6d74d55b8c0` — feat(plan131 Ф.1): RawMem.alloc/alloc_uncollectable/free_uncollectable
+- `9919c5fbc7a` — feat(plan131 Ф.2): codegen ptr arithmetic + deref-write + pointer cast
+- `4008c2e6fb5` — feat(plan131 Ф.3): Vec[T] — full Nova-implemented generic growable array
+- `758c90b457f` — feat(plan131 Ф.4): Vec[T] protocols — Iterable/Eq/Clone/DebugPrintable
+- `db65eb3a1b9` — docs(plan131 Ф.5): D231 RawMem.alloc + D232 Vec[T] + D216 amend + Q-vec-vs-slice

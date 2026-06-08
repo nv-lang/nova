@@ -34831,3 +34831,28 @@ inline, а явный prelude-import тригерит R27 auto-import opt-out.
 `Vec[(int,str)]` покрыт record-wrapper fallback (vec_tuple_elem_pos использует
 `type Pair { first int, second str }`) per документированный fallback плана.
 Followup: [M-131.3-namedtuple-vec-elem].
+
+================================================================================
+Plan 131 — Vec[T] in Nova (CLOSED) — 2026-06-08
+================================================================================
+
+МОТИВАЦИЯ: []Option[T]/[]tuple не работали (value-struct > 8 байт не влезает
+в int64-слот erasure). Vec[T] — полноценный Nova-тип с typed storage для любого T.
+
+СДЕЛАНО:
+Ф.1 RawMem.alloc: nova_alloc/nova_alloc_uncollectable/nova_free_uncollectable
+  доступны из Nova. external fn #unsafe + emit_c.rs dispatch registration.
+Ф.2 Codegen: ptr+n (BinOp::Add на *T), *ptr=v (Assign{target:Deref}),
+  p as *mut T (As-cast к pointer type). C pointer arithmetic уже scaled.
+Ф.3 Vec[T]: type Vec[T]{data *mut T, len int, cap int}. Полный API:
+  push/pop/insert/remove/swap_remove/get/first/last/clear/truncate/reverse/
+  reserve/shrink_to/shrink_to_fit/extend/append/retain/as_slice. Grow x2.
+Ф.4 Протоколы: Iterable (for-in), Eq (==), Clone (.clone()), DebugPrintable.
+Ф.5 Спека: D231 RawMem.alloc, D232 Vec[T], D216 amend ptr arith codegen,
+  Q-vec-vs-slice, docs/collections/vec-owned.md.
+
+КЛЮЧЕВОЙ РЕЗУЛЬТАТ: Vec[Option[int]], Vec[Record], Vec[Vec[int]] работают
+без int64-erasure. Закрыт [M-91.1-value-struct-array-elem].
+
+МЕТОД: 6-phase sequential workflow. Probe -> alloc -> codegen fix -> Nova impl ->
+protocols -> spec. Полная регрессия 0 новых FAIL.
