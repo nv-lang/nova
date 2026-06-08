@@ -2199,6 +2199,14 @@ v1.0).
 > `[M-91.6-spawn-global-const-capture]`, `[M-91.6-time-now-schema-mismatch]`,
 > `[M-91.6-duration-zero-cross-module-const]`, `[M-91.6-parallel-for-value-typing]`,
 > `[M-91.6-sqlite-ffi-codegen]`.
+>
+> **Update 2026-06-08 (Plan 91 Ф.1 CLOSED — все MVP-фазы закрыты):** HashMap/Set/vec-combinators
+> работают; codegen-фикс `fold`/HOF с method-level-generic accumulator ≠ типу элемента
+> (`fold int→str`/`int→bool` — ClosureLight-arg не получал substituted param-типы; `emit_c.rs`
+> instance `~20675` + static `~21949`). `nova_tests/plan91_fe1/` 10/0. Новых D/Q нет. 4 followup-маркера
+> в [plan-91 Ф.1 closure](../docs/plans/91-stdlib-mvp-for-0.1.md): `[M-91.1-composite-array-storage]` (P1,
+> map int→record/Option — `[]U` хардкод NovaArray_nova_int), `[M-91.1-method-turbofish-dispatch]` (P2,
+> `xs.map[int]` codegen drop), `[M-91.1-set-from-iter-iterable-param]` (P2), `[M-91.1-dead-arrayext-mono-path]` (P3).
 
 **Контекст.** `[]T` — встроенная конструкция языка ([D27](decisions/03-syntax.md#d27)).
 По [D32](decisions/02-types.md#d32) runtime-представление —

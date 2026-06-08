@@ -34010,3 +34010,45 @@ is_negative/abs/is_zero, is_nan/is_infinite, sqrt(-1)→NaN). plan91_fe4 10/0 PA
   (per-spawn overhead на Windows armed, не cancel race)
 - `plan83_12/tcp_echo_server_test`, `tcp_cancel_accept_test` — TIMEOUT
   (accept + cancel interaction под armed M:N — отдельный gap)
+
+---
+
+## Plan 91 Ф.1 (collections: HashMap/Set/vec-combinators) — 2026-06-08 — все MVP-фазы закрыты
+
+**Re-baseline:** список блокеров плана (2026-05-27) устарел — HashMap (mixed-type, iter (K,V),
+ops), Set (or/and/minus), vec filter/any/all/first/last, map (int→int и int→str), fold (int→int)
+УЖЕ работают (закрыто планами 95/99/101/103/125). Единственный реальный блокер — `fold`/HOF с
+method-level-generic accumulator ≠ типу элемента.
+
+**Codegen-фикс (production, НЕ упрощение):** `fold int→str`/`int→bool` давал CC-FAIL `passing
+'nova_int' to incompatible type`. Root-cause (diagnose-workflow, 4 параллельных агента + adversarial
+synth): в array-ext mono dispatch (emit_c.rs:20583-path) closure-arg эмитился через `emit_expr`, но
+ClosureLight-ветка `emit_expr` не читает `fn_param_sigs` → closure-параметр `acc` дефолтил в nova_int.
+Метод-тело монорфизировалось верно. Фикс: split ClosureLight-ветки → `emit_lambda` с ctx из inner_ptys
+(пустой return-slot сохраняет body-inferred map int→str). По precedent'у sibling-пути emit_c.rs:21229.
+Instance (~20675) + static-twin (~21949).
+
+**Verify:** plan91_fe1 10/0; full nova test 2355/86 — 0 новых от фикса (diff vs baseline;
+plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — доказано revert+rebuild: 5/5 fail
+и без фикса). Таргетно plan101_1 18/0, plan90_1 20/0, plan99 9/0, plan91_8c 6/0.
+
+**Сознательно отложено маркерами (отдельные крупные баги, diagnose-validated):**
+
+1. `[M-91.1-composite-array-storage]` (P1) — `map int→record/Option/tuple`: type_ref_to_c(Array)
+   хардкодит `[]U → NovaArray_nova_int*` для non-primitive (bootstrap-лимит). Фича, не патч.
+2. `[M-91.1-method-turbofish-dispatch]` (P2) — `xs.map[int]`: codegen дропает TurboFish{base:Member}
+   type_args. Inference-форма работает — эргономика.
+3. `[M-91.1-set-from-iter-iterable-param]` (P2) — Set.from_iter(Iterable[T]) → void* iterator.
+4. `[M-91.1-dead-arrayext-mono-path]` (P3) — cleanup недостижимого пути 21135-21269.
+
+**Уроки:**
+
+1. **Re-baseline ОБЯЗАТЕЛЕН перед оценкой scope.** План оценивал Ф.1 как «самый тяжёлый codegen-блок»
+   (Opus+Thinking), а реально ~90% уже работало — остался один точечный closure-context баг.
+2. **Adversarial synth поймал mis-scoping:** type-change агент думал «один баг U-erasure», synth
+   доказал что map int→str работает, главный баг — fold (Acc≠element), а map→record — ОТДЕЛЬНЫЙ
+   глубокий storage-баг. Без adversarial-прохода фикс был бы нацелен не туда.
+3. **Per-method isolation в один файл маскирует:** бандл map+filter+fold+any+all в одном fixture
+   падал «на fold», но я сначала решил «все vec ломаются». Чистая per-метод изоляция = точный scope.
+4. **f11a flaky-vs-regression:** revert+rebuild — единственный надёжный способ отличить свою регрессию
+   от pre-existing гонки. RUN-FAIL (не CC-FAIL) на supervised-тесте = почти всегда гонка, не codegen.

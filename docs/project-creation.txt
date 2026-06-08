@@ -34650,3 +34650,33 @@ is_nan/is_infinite, sqrt(-1)→NaN, Duration is_negative/abs). plan91_fe4 10/0.
 Критерии приёмки Ф.4/Ф.6 прописаны; open-questions.md синхронизирован. Spec/D —
 без изменений (codegen-фикс не language-decision).
 2026-06-08 [M-83.10.1] V2 sweep: убрано AUTOARM=0 из 17 тестов (Plan 83.11 Ф.3 ungate); оставлено 10 — семантически кооперативные/CC-FAIL/TIMEOUT (разные причины).
+
+================================================================================
+Plan 91 Ф.1 (collections HashMap/Set/vec-combinators) — 2026-06-08
+ВСЕ MVP-ФАЗЫ PLAN 91 ЗАКРЫТЫ
+================================================================================
+
+Re-baseline: список блокеров плана устарел (2026-05-27). HashMap (mixed-type,
+iter K,V, ops), Set (or/and/minus), vec filter/any/all/first/last/map(int->int,
+int->str)/fold(int->int) УЖЕ работают. Единственный блокер: fold/HOF с method-
+level-generic accumulator != типу элемента.
+
+CODEGEN-ФИКС: fold int->str/int->bool давал CC-FAIL 'passing nova_int to
+incompatible type'. Root-cause (diagnose-workflow 4 агента + adversarial synth):
+array-ext mono dispatch (emit_c.rs:20583) эмитил closure-arg через emit_expr, но
+ClosureLight-ветка не читает fn_param_sigs -> closure-param acc дефолтил в
+nova_int. Метод-тело монорфизировалось верно. Фикс: split ClosureLight ->
+emit_lambda с ctx из inner_ptys (пустой return-slot). Instance ~20675 + static
+twin ~21949. По precedent'у sibling 21229.
+
+ТЕСТЫ: plan91_fe1 10/0 (combinators/fold str+bool+empty/chains/HashMap mixed+
+iter/Set algebra/negative edge). Full nova test 2355/86, 0 новых от фикса
+(f11a_timer_metrics pre-existing supervised-гонка, доказано revert+rebuild 5/5).
+
+ОТЛОЖЕНО (маркеры, отдельные крупные баги): composite-array-storage (map->record,
+хардкод []U=NovaArray_nova_int), method-turbofish-dispatch (xs.map[int]),
+set-from-iter-iterable-param, dead-arrayext-mono-path.
+
+ИНСТРУМЕНТ: ultracode diagnose-workflow (3 параллельных трассировки + adversarial
+synth) -> review -> inline codegen-фикс под контролем + rebuild. Synth скорректи-
+ровал scope (map int->str работает; fold главный; map->record отдельный).

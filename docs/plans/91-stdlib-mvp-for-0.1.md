@@ -6,8 +6,9 @@
 > **Ф.2-remainders** (try_parse_int) ✅ CLOSED 2026-06-08;
 > **Ф.5** (conformance MVP) ✅ CLOSED 2026-06-08;
 > **Ф.4 conformance** (time/math/sort fixtures + handler-lit capture codegen fix) ✅ CLOSED 2026-06-08;
-> **Ф.6** (getting-started + examples) ✅ CLOSED 2026-06-08.
-> Остаётся Ф.1 (collections cross-product) + Ф.7 (release checklist — отложен).
+> **Ф.6** (getting-started + examples) ✅ CLOSED 2026-06-08;
+> **Ф.1 collections** (HashMap/Set/vec-combinators + fold non-int-Acc codegen fix) ✅ CLOSED 2026-06-08.
+> Остаётся только Ф.7 (release checklist — отложен). **Все MVP-фазы Plan 91 закрыты.**
 > Branch `plan-91-stdmvp`, worktree `nova-p91`. См. секции
 > «Ф.0 closure», «Ф.7.1 closure», «Ф.4 closure», «Ф.2.5 closure» в конце документа.
 > **Приоритет:** P0 — блокер публичного релиза 0.1
@@ -449,6 +450,51 @@ pre-existing, 0 регрессий).
   double-prefix `nova_fn_nova_fn_*`, `@`-method на record (`self` undeclared, литеральный `@` в C),
   tuple-FFI return. Связан с `[M-115-ffi-build-pipeline]`.
 
+### Ф.1 — Коллекции (HashMap/Set/vec-combinators) — ✅ CLOSED 2026-06-08
+
+**Re-baseline (список блокеров плана 2026-05-27 устарел — закрыты планами 95/99/101/103/125):**
+большинство кандидат-блокеров уже работают. Проверено через release `nova test`:
+
+- 🟢 `HashMap[K,V]` — mixed-type (`str→int`, `int→str`), `iter()` (K,V)-destructure, `get`/`insert`/
+  `contains`/`remove`/`clone`/`keys`/`values`/`filter`/`from`/`get_or_insert` — D72 dispatch + tuple-types OK.
+- 🟢 `Set[T]` (int/str) — `insert`/`contains`/`remove`/`len` + `or`/`and`/`minus`.
+- 🟢 `vec` combinators: `filter`/`any`/`all`/`first`/`last`, `map` (int→int **и** int→str), `fold` (int→int).
+
+**Codegen-фикс (единственный реальный блокер):** `fold`/HOF с **method-level-generic accumulator
+≠ типу элемента** (`fold int→str`, `int→bool`) давал CC-FAIL `passing 'nova_int' to incompatible type`.
+Root-cause (diagnose-workflow, 4 агента): в array-ext mono dispatch (`emit_c.rs:20583`-path) closure-arg
+эмитился через `emit_expr`, а ClosureLight-ветка `emit_expr` НЕ читает `fn_param_sigs` → closure-параметр
+`acc` дефолтил в `nova_int` вместо `nova_str`. Метод-тело монорфизировалось **верно** — ломался только тип
+closure-параметра. Фикс: split ClosureLight-ветки в fn-typed-arg loop → `emit_lambda` с ctx из `inner_ptys`
+(пустой return-slot сохраняет body-inferred `map int→str`). По precedent'у sibling-пути `emit_c.rs:21229`.
+Применён к instance-path (`~20675`) + static-twin (`~21949`).
+
+**Критерии приёмки Ф.1** (все ✅, release `nova test`):
+
+- [x] HashMap/Set компилируются + проходят realistic conformance (cross-type, iter, algebra)
+- [x] vec map/filter/fold/any/all/first/last компилируются (inference-форма)
+- [x] **`fold` non-int-Acc codegen-фикс** — `fold int→str`/`int→bool` PASS (был CC-FAIL)
+- [x] **10 conformance fixtures `nova_tests/plan91_fe1/` — 10/0 PASS** (combinators / fold str+bool+empty /
+      chains filter.map+map.fold / HashMap mixed+iter / Set algebra / негативный edge-paths)
+- [x] Регрессия: full `nova test` 2355/86 — **0 новых** от фикса (diff vs baseline; `plan65/f11a_timer_metrics`
+      RUN-FAIL — pre-existing supervised-гонка, доказано revert+rebuild: падает и без фикса 5/5);
+      таргетно plan101_1 18/0, plan90_1 20/0, plan99 9/0, plan91_8c 6/0
+- [x] Spec/D/Q: новых D/Q не требуется (codegen-correctness fix); Q-doc синхронизирован
+
+**Followup-маркеры (отдельные крупные баги, НЕ упрощения — diagnose-workflow validated):**
+
+- `[M-91.1-composite-array-storage]` (P1) — `map int→record/Option/tuple` CC-FAIL: `type_ref_to_c(TypeRef::Array)`
+  (`emit_c.rs:~4836/4861`) хардкодит `[]U → NovaArray_nova_int*` для non-primitive element (bootstrap-лимит);
+  call-site инференс эмитит `NovaArray_<Composite>*` + `nova_array_get_<Composite>` (never declared) → undeclared.
+  Требует генерации real per-composite `NovaArray_<T>` storage (struct + new/push/get/len) — **фича, не патч.**
+- `[M-91.1-method-turbofish-dispatch]` (P2) — `xs.map[int](...)` CC-FAIL: парсер строит `TurboFish{base:Member}`
+  верно, но codegen дропает type_args через wildcard `_ => emit_expr(func)` (`emit_c.rs:~22044`) → `(xs->map)(...)`.
+  Inference-форма (идиоматичная) работает — чистая эргономика. Parser/AST менять не нужно.
+- `[M-91.1-set-from-iter-iterable-param]` (P2) — `Set.from_iter(it Iterable[T])`: `for x in it` над `Iterable[T]`-
+  параметром эрейзится в `void*` → `cannot resolve iterator type`. Нужна монорфизация `Iterable[T]`-параметра.
+- `[M-91.1-dead-arrayext-mono-path]` (P3 cleanup) — путь `emit_c.rs:~21135-21269` недостижим для `[]T`
+  sentinel-методов (20583 wins+returns first); его `____<c>`-mangling не появляется в C. Удалить или задокументировать.
+
 ## Non-scope
 
 - `fs`/`io`/`http`/`os` — Plan 18, релизы 0.2–0.4 (требуют libuv,
@@ -512,7 +558,7 @@ roadmap'ом, подпланы — историей закрытых фаз.
 |---|---|---|
 | Ф.3 conformance smoke | JSON encode/decode round-trip; HashMap codegen блокеры (forward decl, tuple destructuring) | ✅ **CLOSED 2026-06-05 — see Plan 91.13 V2** |
 | Ф.2 text methods remainders | `try_parse_int` Result variant + ParseIntError sum; split/join/trim/pad — split external, join/trim/pad deferred | ✅ **CLOSED 2026-06-08** — `try_parse_int(radix=10)` + ParseIntError + ≥10 fixtures (nova_tests/plan91_fe2/) |
-| Ф.1 collections conformance | cross-product тесты Vec/HashMap/Set | pending |
+| Ф.1 collections conformance | cross-product тесты Vec/HashMap/Set + fold non-int-Acc codegen fix | ✅ **CLOSED 2026-06-08** — `nova_tests/plan91_fe1/` 10/0; emit_c.rs ClosureLight-ctx fix (fold int→str); 4 followup markers |
 | Ф.4 conformance | time/math/sort fixtures + handler-lit capture codegen fix | ✅ **CLOSED 2026-06-08** — `nova_tests/plan91_fe4/` 8/0; emit_c.rs handler-lit capture fix |
 | Ф.5 | conformance integration в `nova_tests/plan91_fe5/` + property tests | ✅ **CLOSED 2026-06-08** — 5 realistic fixtures: vec/hashmap/hashset/text(CSV)/sort; json closed Plan 91.13 V2 |
 | Ф.6 | getting-started + 5-7 examples; Ф.6.1 decision (in-memory default vs TCP-echo) | ✅ **CLOSED 2026-06-08** — `examples/getting_started.nv` (in-memory `Audit` effect) + README quick-start; aspirational didactic examples read-only by-design |
