@@ -34738,3 +34738,39 @@ Plan 91 Ф.1 dead-arrayext probe — 2026-06-08
 Пользовательские fn[T] []T @method не регистрируются в external_registry,
 live sentinel (~20710) не перехватывает -> путь обязателен.
 Panic откатан, маркер закрыт как WON'T FIX во всех доках.
+
+================================================================================
+Plan 83.10.1 de-risk — stress-verify V2 sweep — 2026-06-08
+================================================================================
+
+ЗАДАЧА: V2 sweep (commit 2c260ff11b9) убрал AUTOARM=0 из 17 файлов на основании
+Plan 83.11 Ф.3 «race устранён». Стресс-верификация показала: [M-83.11-grow-vs-wake-race]
+§13.6.1 ещё открыт. 2 файла FLAKY под armed M:N → AUTOARM=0 восстановлен.
+
+МЕТОД: worktree `plan-83.10.1-sweep-fix` (чистый бинарь без WIP emit_c.rs),
+50 итераций каждого файла без NOVA_AUTOARM / NOVA_WATCHDOG_DUMP_SECS.
+Классификация: TIMEOUT → FLAKY; PASS=50 → STABLE; OTHER (TIMEOUT=0) → CC-FAIL pre-existing.
+
+РЕЗУЛЬТАТ:
+  FLAKY (→ AUTOARM=0 восстановлен):
+    park_wake_stress.nv   — TIMEOUT=1/1 (1000×Time.sleep triggers grow-vs-wake race)
+    semaphore_batch_n.nv  — TIMEOUT=1/4 parallel + TIMEOUT=1/1 sequential
+  STABLE (13 файлов): cancel_during_runtime_shutdown, cancel_stress, все blocking_*,
+    semaphore_try_acquire_for_timeout, все tcp_* (7 из 9)
+  OTHER/CC-FAIL pre-existing (2): runnext_displaced_to_deque, f11a_timer_metrics
+    (OTHER=50/50 TIMEOUT=0 — не race; AUTOARM=0 не восстанавливается)
+
+ФИКС: commit a8332bf1dc9 (re-gate) + a9d6fb72262 (doc corrections).
+
+УРОКИ:
+  1. 1 запуск != верификация для race-чувствительных тестов. Sweep верифицировал
+     каждый файл 1 раз → ошибочно classифицировал flaky как stable.
+  2. Grow-vs-wake race: park_wake_stress даёт TIMEOUT=1/1 при первом запуске.
+     NOVA_WATCHDOG_DUMP_SECS маскирует race (Heisenbug) — не использовать при стресс-тесте.
+  3. OTHER=50/50 TIMEOUT=0 ≠ race. Это систематическая ошибка (CC-FAIL или assert).
+     Важно различать flaky (TIMEOUT) и pre-existing failure (OTHER, TIMEOUT=0).
+  4. Параллельный clang искусственно даёт TIMEOUT в первом файле батча
+     (CPU contention → artефакт, не race). Sequential re-verify стабилизирует.
+
+ДОПОЛНИТЕЛЬНО: plan83_11 regression guard fixtures (3 .nv) добавлены с AUTOARM=0.
+Plan 91 Ф.1 test suite (10/10 PASS) верифицирована через release binary.

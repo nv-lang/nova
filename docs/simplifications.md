@@ -34083,3 +34083,15 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
    на erasure. Правильный фикс — **завершить существующий механизм**, а не вводить новый.
 3. **int64-слот держит биты указателя.** Re-type closure-параметра composite-receiver'а с `nova_int` на
    `Nova_<X>*` корректен — тот же 8-байтный ABI, каст восстанавливает указатель.
+
+## Plan 83.10.1 — стресс-верификация AUTOARM sweep
+
+- **Что** — V2 sweep убрал AUTOARM=0 из 17 файлов с предположением "race устранён".
+  Стресс (50 итераций) выявил 2 flaky: park_wake_stress (TIMEOUT=1/1), semaphore_batch_n (TIMEOUT=1/4).
+- **Почему FLAKY** — [M-83.11-grow-vs-wake-race] ещё открыт: lost-wake между driver thread и worker
+  во время nova_sched_grow. Проявляется при Time.sleep → supervisor cancel под armed M:N.
+- **Различение flaky vs CC-FAIL** — TIMEOUT=race; OTHER (TIMEOUT=0)=CC-FAIL pre-existing (2 файла:
+  runnext_displaced, f11a_timer_metrics). Не восстанавливаем AUTOARM=0 для CC-FAIL.
+- **Параллельный стресс-тест** — первый файл в батче даёт ложный TIMEOUT из CPU contention
+  (все 4 батча компилируют одновременно через clang). Sequential re-verify устраняет артефакт.
+- **Принцип** — 1 запуск ≠ верификация race-чувствительного теста. Минимум 20-50 итераций sequential.
