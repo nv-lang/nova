@@ -34515,3 +34515,4 @@ UPDATE 2026-06-08 (Ф.4 tests): regression-guard sort_duration_handler_guard.nv
 is_nan/is_infinite, sqrt(-1)→NaN, Duration is_negative/abs). plan91_fe4 10/0.
 Критерии приёмки Ф.4/Ф.6 прописаны; open-questions.md синхронизирован. Spec/D —
 без изменений (codegen-фикс не language-decision).
+2026-06-08 [M-83.10.1] V2 sweep: убрано AUTOARM=0 из 17 тестов (Plan 83.11 Ф.3 ungate); оставлено 10 — семантически кооперативные/CC-FAIL/TIMEOUT (разные причины).

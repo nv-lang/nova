@@ -33904,3 +33904,36 @@ codegen-бага; ни одна per-module fixture не ловила) + нега
 `neg/edge_and_error_paths.nv` (empty min/max→None, binary_search miss, Duration
 is_negative/abs/is_zero, is_nan/is_infinite, sqrt(-1)→NaN). plan91_fe4 10/0 PASS.
 Критерии приёмки Ф.4/Ф.6 явно прописаны в plan-91; Q-doc синхронизирован.
+
+---
+
+## [M-83.10.1-armed-cancel-timer-hang] V2 sweep (Plan 83.11 Ф.3 ungate) — 2026-06-08
+
+Механический sweep: убраны `// ENV NOVA_AUTOARM=0` из тестов, которые теперь
+работают под armed M:N — Plan 83.11 Ф.3 (централизованный driver thread)
+устранил cancel-timer race архитектурно.
+
+**Убрано (17 файлов, все PASS под armed M:N):**
+- `concurrency/cancel_during_runtime_shutdown`
+- `plan103_4/semaphore_batch_n`, `semaphore_try_acquire_for_timeout`
+- `plan103_6/blocking_atomic_fetch_add_ok`, `blocking_condvar_notify_warn`, `blocking_mutex_unlock_ok`
+- `plan65/f11a_timer_metrics`
+- `plan83_12/tcp_bind_used_port`, `tcp_connect_refused`, `tcp_multi_accept`, `tcp_read_eof`,
+  `tcp_socket_addr`, `tcp_stream_addr`, `tcp_write_after_close`
+- `plan83_4_5_6_stress/cancel_stress`, `park_wake_stress`
+- `plan83_7/runnext_displaced_to_deque`
+
+**Оставлено с AUTOARM=0 (разные причины, не cancel-timer race):**
+- `cooperative_interleave`, `main_yield`, `supervised_errors` — семантически кооперативные
+  (FIFO ordering assertions: `assert(log == 142536)` и т.д. — non-deterministic под M:N)
+- `mn_maxprocs_getter`, `mn_runtime_smoke` — lifecycle тесты
+  (проверяют `!runtime.is_initialized()` до auto-arm)
+- `plan65/f7_cancel_via_token`, `f10_select_cancel_propagation` — CC-FAIL
+  (pre-existing bug: `TIMEOUT_MS`/`SLACK_MS` undeclared в generated C)
+- `concurrency/sleep_real_clock` — CC-FAIL (pre-existing: `SLACK_MS` undeclared)
+- `plan103_4/semaphore_no_overcommit_prop` — TIMEOUT
+  (`parallel for` + semaphore под armed M:N deadlock; отдельный gap)
+- `plan83_4_5_6_stress/spawn_stress_10k` — TIMEOUT
+  (per-spawn overhead на Windows armed, не cancel race)
+- `plan83_12/tcp_echo_server_test`, `tcp_cancel_accept_test` — TIMEOUT
+  (accept + cancel interaction под armed M:N — отдельный gap)
