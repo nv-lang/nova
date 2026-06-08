@@ -7635,6 +7635,27 @@ field read `acc.next` (where `next *T`), pattern match `Option[*T]`,
   stdcall/vectorcall — `[M-118-stdcall-fn-ptr]` followup)
 - Vararg — `E_VARARG_NOT_SUPPORTED` (`[M-118-vararg-ffi]` followup)
 
+#### #unsafe as part of fn-ptr type (Plan 118.1.6 closeout, 2026-06-08)
+
+Function pointer тип encodes #unsafe attribute:
+- `*fn(...)` — safe function pointer
+- `*unsafe fn(...)` — unsafe function pointer (или equivalently `unsafe * fn(...)` per V3.2 ordering)
+
+Coercion rules:
+- `*fn → *unsafe fn`: ✅ allowed (covariant — safe это «подмножество» unsafe)
+- `*unsafe fn → *fn`: ❌ E_UNSAFE_FN_PTR_COERCION (нельзя «забыть» unsafe)
+
+Call-site:
+- Call через *unsafe fn ptr без unsafe { } → E_UNSAFE_CALL_REQUIRES_WRAP (mirrors direct #unsafe fn call).
+
+addr_of propagation:
+- addr_of(safe_fn) → *fn(...)
+- addr_of(#unsafe fn) → *unsafe fn(...) (тип propagated из FnDecl.unsafe_attr)
+
+Rust precedent: fn() ≠ unsafe fn() — same model.
+
+Закрывает [M-118.1.5-unsafe-fn-pointer-type].
+
 ### §11. `ptr` redefine (D214 amend cross-ref)
 
 ```nova
