@@ -1,0 +1,37 @@
+// Plan 91 Ф.5 conformance: HashSet (Set[T]) realistic use-cases.
+// unique-elements pattern.
+module plan91_fe5.hashset_realistic
+
+import std.collections.set.{Set}
+
+test "deduplicate list via Set" {
+    ro input = [1, 2, 3, 2, 4, 1, 5, 3]
+    mut s = Set[int].new()
+    for x in input {
+        s.insert(x)
+    }
+    assert(s.len() == 5, "5 unique elements")
+    assert(s.len() < input.len(), "set smaller than input with duplicates")
+}
+
+test "contains known and unknown" {
+    mut s = Set[int].new()
+    s.insert(10)
+    s.insert(20)
+    s.insert(30)
+    assert(s.contains(10))
+    assert(s.contains(20))
+    assert(s.contains(30))
+    assert(!s.contains(99), "99 not in set")
+    assert(!s.contains(0), "0 not in set")
+}
+
+test "insert duplicate does not grow set" {
+    mut s = Set[int].new()
+    s.insert(42)
+    assert(s.len() == 1)
+    s.insert(42)
+    assert(s.len() == 1, "len unchanged after duplicate insert")
+    s.insert(43)
+    assert(s.len() == 2)
+}
