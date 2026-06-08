@@ -1,0 +1,16 @@
+// Plan 131 Ф.2 — pointer cast: alloc as *mut u8, write 255, read back.
+// EXPECT_OUTPUT: 255
+
+module plan131.ptr_cast_pos
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        // Alloc returns mut * u8 — cast to *mut u8 (same type, no-op).
+        ro p = RawMem.alloc(1 as usize) as *mut u8
+        *p = 255 as u8
+        ro v = *p
+        println(v as int)
+    }
+}

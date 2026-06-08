@@ -4937,9 +4937,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Canonical ro pointer = Pointer(T) → `const T*`. Mut(Pointer(T)) /
             // Unsafe(Pointer(T)) emit `T*` без const. Non-Pointer inner
             // transparently recurses (Mut/Unsafe used elsewhere as modifiers).
+            //
+            // Plan 131 Ф.2: Nova V2 syntax `*mut T` = Pointer(Mut(T)) — "pointer
+            // to mutable T". In C, this maps to `T*` (non-const, writable pointer).
+            // Without this: Pointer(Mut(T)) → "const " + type_ref_to_c(Mut(T)) + "*"
+            //   = "const nova_int*" (CC-FAIL when used as lvalue for deref-write).
+            // Fix: when inner has Mut/Unsafe wrapper, strip it for const decision —
+            // emit `T*` (mutable pointer) instead of `const T*`.
             TypeRef::Pointer(inner, _) => {
-                let inner_c = self.type_ref_to_c(inner)?;
-                Ok(format!("const {}*", inner_c))
+                let (is_mutable_ptr, base_inner) = match inner.as_ref() {
+                    TypeRef::Mut(ti, _) | TypeRef::Unsafe(ti, _) => (true, ti.as_ref()),
+                    _ => (false, inner.as_ref()),
+                };
+                let inner_c = self.type_ref_to_c(base_inner)?;
+                if is_mutable_ptr {
+                    Ok(format!("{}*", inner_c))
+                } else {
+                    Ok(format!("const {}*", inner_c))
+                }
             }
             TypeRef::Mut(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
@@ -16413,6 +16428,23 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     BinOp::Implies => return Ok(format!("((!({})) || ({}))", l, r)),
                     BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
                     _ => {}
+                }
+                // Plan 131 Ф.2: typed pointer arithmetic.
+                // `*T + int` — C already scales by sizeof(T), emit `(ptr + n)`.
+                // `*T - *T` — pointer subtraction yields ptrdiff_t (element count);
+                // wrap in `(ptrdiff_t)` cast to ensure correct C integer type and
+                // prevent the result variable from being declared as pointer type.
+                let lty_is_cptr = lty.ends_with('*') && lty != "void*"
+                    && !lty.starts_with("Nova_") && !lty.starts_with("NovaArray_");
+                let rty_is_cptr = rty.ends_with('*') && rty != "void*"
+                    && !rty.starts_with("Nova_") && !rty.starts_with("NovaArray_");
+                if lty_is_cptr {
+                    match op {
+                        BinOp::Add => return Ok(format!("({} + {})", l, r)),
+                        BinOp::Sub if rty_is_cptr =>
+                            return Ok(format!("((ptrdiff_t)({} - {}))", l, r)),
+                        _ => {}
+                    }
                 }
                 // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
                 // (паника при переполнении, spec 04-effects.md). Только для
@@ -28710,6 +28742,19 @@ _cp++; \
                 _ => {
                     let lt = self.infer_expr_c_type(left);
                     let rt = self.infer_expr_c_type(right);
+                    // Plan 131 Ф.2: pointer - pointer → ptrdiff_t (isize-equivalent).
+                    // C pointer subtraction yields ptrdiff_t (element count), not
+                    // a pointer. Without this fix, `let d = p - q` declared `uint8_t* d`
+                    // causing CC-FAIL when used as integer (e.g. `d > 0`).
+                    let lt_is_cptr = lt.ends_with('*') && lt != "void*";
+                    let rt_is_cptr = rt.ends_with('*') && rt != "void*";
+                    if *op == BinOp::Sub && lt_is_cptr && rt_is_cptr {
+                        return "int64_t".into();
+                    }
+                    // pointer + int → same pointer type (C scales by sizeof).
+                    if *op == BinOp::Add && lt_is_cptr {
+                        return lt;
+                    }
                     // f64 побеждает: float-арифметика — результат f64.
                     if lt == "nova_f64" || rt == "nova_f64" {
                         return "nova_f64".into();
