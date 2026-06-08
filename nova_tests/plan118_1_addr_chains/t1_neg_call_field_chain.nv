@@ -1,0 +1,19 @@
+// Plan 118.1 [M-118.1-addr-of-chains] — addr_of(call().field): a field path
+// rooted in a call result is an rvalue temporary → dangling pointer. Rejected.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_NON_LVALUE
+module plan118_1_addr_chains.t1_neg_call_field_chain
+
+type S {
+    ro v i64
+}
+
+fn make() -> S {
+    ro s = S { v: 1 }
+    s
+}
+
+test "addr_of of a field on a call result is rejected" {
+    unsafe {
+        ro p = addr_of(make().v)
+    }
+}

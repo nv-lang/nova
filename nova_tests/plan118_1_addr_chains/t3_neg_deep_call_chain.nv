@@ -1,0 +1,24 @@
+// Plan 118.1 [M-118.1-addr-of-chains] — addr_of(call().a.b): a multi-level
+// field path whose ROOT is a call result is rejected (walker descends the
+// whole Member chain, not just the top node).
+// EXPECT_COMPILE_ERROR E_ADDR_OF_NON_LVALUE
+module plan118_1_addr_chains.t3_neg_deep_call_chain
+
+type Inner {
+    ro z i64
+}
+
+type Outer {
+    ro inner Inner
+}
+
+fn build() -> Outer {
+    ro o = Outer { inner: Inner { z: 7 } }
+    o
+}
+
+test "addr_of of a deep field path rooted in a call result is rejected" {
+    unsafe {
+        ro p = addr_of(build().inner.z)
+    }
+}

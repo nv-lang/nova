@@ -1,0 +1,16 @@
+// Plan 118.1 [M-118.1-addr-of-chains] — addr_of(arr[i].field): a field path
+// passing through an array index has an unstable base (buffer resize / GC
+// compaction). Rejected with the same code as bare `&arr[i]` (D216 §15).
+// EXPECT_COMPILE_ERROR E_ARRAY_INDEX_PTR_BANNED
+module plan118_1_addr_chains.t2_neg_index_field_chain
+
+type S {
+    ro v i64
+}
+
+test "addr_of of a field reached through an array index is rejected" {
+    ro arr = [S { v: 10 }, S { v: 20 }]
+    unsafe {
+        ro p = addr_of(arr[0].v)
+    }
+}

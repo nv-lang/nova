@@ -7455,9 +7455,30 @@ fn addr_of_mut[T](x T) -> *T      // requires `mut <x>` binding
 **Enforcement (same as UnOp::AddrOf):**
 - E_UNSAFE_REQUIRED — outside unsafe {} block
 - E_REALTIME_POINTER_OP — inside #realtime fn
-- E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED — invalid lvalues
-- E_ADDR_OF_NON_LVALUE — non-Ident/Member rvalue
-- E_ADDR_OF_MUT_REQUIRES_MUT_BINDING — addr_of_mut on ro binding (NEW)
+- E_AMP_LITERAL / E_AMP_RECORD_LITERAL — invalid lvalues (literal / record literal)
+- E_ARRAY_INDEX_PTR_BANNED — operand is, or its field-access chain passes through,
+  an array index (`arr[i]` / `arr[i].field`) — unstable base (buffer resize / GC
+  compaction), D216 §15
+- E_ADDR_OF_NON_LVALUE — the operand's field-access chain roots in an rvalue
+  (call result, arithmetic, …). **The lvalue check walks the WHOLE chain to its
+  root** (Plan 118.1 [M-118.1-addr-of-chains], amended 2026-06-08): `a.b.c` /
+  `(*p).f` / `self.x.y` rooted in a named local or `self` are accepted, while
+  `make().f` / `arr[i].f` / `(x+1).f` are rejected (previously only the top operand
+  node was inspected, so chains rooted in temporaries were wrongly accepted — a
+  dangling-pointer gap). `addr_of(x)` and `&x` share one walker
+  (`ast::addr_of_chain_root`), so the intrinsic and operator forms agree, and
+  `addr_of(*p)` ≡ `&(*p)` (the walker descends an explicit deref to the pointer
+  root, matching the `p.f` auto-deref sugar).
+- E_ADDR_OF_MUT_REQUIRES_MUT_BINDING — `addr_of_mut` on a binding whose root is not
+  `mut`; the mut-check also walks the field-chain root (`addr_of_mut(s.field)`
+  requires `mut s`), not just a bare Ident (NEW).
+
+**Known V1 gaps (2026-06-08 followups):** (1) `addr_of_mut((*p).field)` is not yet
+gated on `p` being `*mut`/mut-bound — the mut-check skips deref roots and the
+desugar is a bare `UnOp::AddrOf` with no `*mut` cast ([M-118.1-addr-of-mut-deref-ptr-mut]).
+(2) The `addr_of(...)` intrinsic chain-check runs in the const-fn rewrite pass, so
+`nova check`/LSP does not surface it (the bare-`&` operator path is check-time)
+([M-118.1-addr-of-chains-checktime]).
 
 Closes [M-118.1-addr-of-macros] (was: «add addr_of! macro» — macro framework not shipped, builtin-fn alternative landed).
 
@@ -7840,10 +7861,16 @@ conversions реализованы как pure-Nova methods в `std/ffi/cstr.nv`
 ```nova
 export fn str @as_cstr() -> CStr {
     ro bytes = @as_bytes()
+    for b in bytes {
+        if b == 0 { panic("as_cstr: embedded NUL byte in str (would truncate C-string)") }
+    }
     unsafe { CStr(bytes.as_ptr()) }
 }
-export fn str @to_cstr() -> CStr { @as_cstr() }
-export fn str @as_cstr_unchecked() -> CStr { @as_cstr() }
+export #unsafe fn str @as_cstr_unchecked() -> CStr {  // scan-free O(1) hatch
+    ro bytes = @as_bytes()
+    unsafe { CStr(bytes.as_ptr()) }
+}
+// @to_cstr() — owning always-copy form; NOT in V1, deferred to Plan 118.2.
 ```
 
 Использует existing builtins: `str.as_bytes()` (D176 zero-copy view) +
@@ -7852,13 +7879,17 @@ export fn str @as_cstr_unchecked() -> CStr { @as_cstr() }
 
 **V1 simplifications (explicit followups, not silent):**
 
-- `[M-118.1-cstr-nul-check]` — embedded-NUL runtime scan не shipped в V1.
-  cstr.nv loaded via ExternalRegistry без auto-prelude wiring, поэтому
-  assert/panic require explicit import (creates cycle issues). Caller
-  responsibility per FFI contract («str must not contain '\0'»).
-- `[M-118.1-cstr-to-cstr-distinct-copy]` — `@to_cstr()` сейчас alias к
-  `@as_cstr()` (D26 invariant makes zero-copy safe). Distinct always-copy
-  semantic для long-lived CStr нужен allocator API (deferred).
+- `[M-118.1-cstr-nul-check]` — ✅ CLOSED 2026-06-08. `@as_cstr()` scans the str
+  bytes for an embedded NUL and panics (interior `0x00` would truncate the
+  C-string at that byte); `@as_cstr_unchecked()` is the scan-free `#unsafe`
+  hatch. `panic` is reachable via a module-private `external fn panic` decl —
+  cstr.nv is ExternalRegistry-loaded and gets no auto-prelude, and a plain
+  `import std.prelude.*` would trip the R27 auto-import opt-out for importers.
+- `[M-118.1-cstr-to-cstr-distinct-copy]` — DEFERRED → Plan 118.2. `@to_cstr()`
+  is NOT shipped in V1: the `as_X`/`to_X` convention makes `to_cstr` an OWNED
+  copy (buffer outliving the source str), which needs an allocator/free API.
+  Rather than ship a misleadingly-named zero-copy alias, the method was removed
+  (2026-06-08); the owning copy lands in Plan 118.2.
 
 Closes [M-118.1-cstr-literal] (was: «add c"hello" prefix-literal»; superseded by D26 invariant).
 Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova approach makes it unnecessary).

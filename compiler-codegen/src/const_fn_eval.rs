@@ -2432,25 +2432,50 @@ fn walk_expr(
                         ));
                         return;
                     }
-                    // Accept Ident / Member / SelfAccess as lvalue. Anything
-                    // else (Call result, Binary expr, Block, ...) — rvalue,
-                    // not addressable.
-                    ExprKind::Ident(_) | ExprKind::Member { .. }
-                    | ExprKind::SelfAccess => {
-                        // ok — fall through to rewrite.
-                    }
+                    // Everything else — Ident / SelfAccess (named lvalue roots),
+                    // Member field-access chains, `(*p)` derefs, and turbofish —
+                    // is routed through the shared chain-root walker, IDENTICALLY
+                    // to the bare `&value` parser path (Plan 118.1
+                    // [M-118.1-addr-of-chains]). A chain is addressable only if
+                    // its ROOT is a named lvalue; reject if it roots in a call
+                    // result / arithmetic (dangling temporary) or passes through
+                    // an array index (unstable buffer, D216 §15). Routing the
+                    // WHOLE operand (incl. top-level `(*p)` / turbofish) keeps
+                    // `addr_of(*p)` and `&(*p)` consistent.
                     _ => {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_ADDR_OF_NON_LVALUE] `{}(...)` requires an lvalue \
-                                 (named binding, field access, or self) — rvalue \
-                                 expressions (call results, arithmetic, etc.) не \
-                                 addressable. Bind в named local first.",
-                                n,
-                            ),
-                            arg_expr.span,
-                        ));
-                        return;
+                        match crate::ast::addr_of_chain_root(&arg_expr.kind) {
+                            crate::ast::AddrChainRoot::Lvalue(_) => {
+                                // ok — fall through to rewrite.
+                            }
+                            crate::ast::AddrChainRoot::IndexInChain => {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_ARRAY_INDEX_PTR_BANNED] `{}(...arr[i]...)` forbidden \
+                                         (Plan 118 D216 §15) — a field path through an array index \
+                                         has an unstable base (buffer resize via `.push` / GC \
+                                         compaction) → dangling pointer. Bind the element to a \
+                                         named local first.",
+                                        n,
+                                    ),
+                                    arg_expr.span,
+                                ));
+                                return;
+                            }
+                            crate::ast::AddrChainRoot::Rvalue => {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_ADDR_OF_NON_LVALUE] `{}(...)` requires an lvalue — a \
+                                         named binding, field access, self, or a deref of one. \
+                                         Rvalue operands (call results, arithmetic, …) are \
+                                         temporaries, so the pointer would dangle. Bind the base in \
+                                         a named local first.",
+                                        n,
+                                    ),
+                                    arg_expr.span,
+                                ));
+                                return;
+                            }
+                        }
                     }
                 }
                 // Rewrite to `&arg_expr` (UnOp::AddrOf). Type inference dictates
