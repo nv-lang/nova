@@ -10098,6 +10098,15 @@ fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
         (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
         // D176 (Plan 108): readonly T == readonly T if inner equal.
         (TypeRef::Readonly(ia, _), TypeRef::Readonly(ib, _)) => typeref_equal(ia, ib),
+        // Plan 118.1.6: V2 modifier wrappers — Pointer/Mut/Unsafe must compare
+        // structurally with their inner types. Без этих арм две одинаковые
+        // подписи с *T / mut T / unsafe T силкомо не считаются равными,
+        // ломая duplicate-signature detection и breaking coercion checks
+        // (E_UNSAFE_FN_PTR_COERCION ниже полагается на структурное сравнение
+        // outer Unsafe wrapper).
+        (TypeRef::Pointer(ia, _), TypeRef::Pointer(ib, _)) => typeref_equal(ia, ib),
+        (TypeRef::Mut(ia, _), TypeRef::Mut(ib, _)) => typeref_equal(ia, ib),
+        (TypeRef::Unsafe(ia, _), TypeRef::Unsafe(ib, _)) => typeref_equal(ia, ib),
         _ => false,
     }
 }
@@ -17526,6 +17535,10 @@ pub(crate) fn check_unsafe_context_in_module(
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
         unsafe_t_vars: vec![HashSet::new()],
+        // Plan 118.1.6 (2026-06-08): track locals/params bound к
+        // *unsafe fn(...) pointer type. Used by E_UNSAFE_CALL_REQUIRES_WRAP
+        // to fire on indirect call `ufp()` outside `unsafe { }` block.
+        unsafe_fn_ptr_vars: vec![HashSet::new()],
         in_call_arg: false,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
@@ -17554,9 +17567,16 @@ pub(crate) fn check_unsafe_context_in_module(
             // params bound к unsafe T types fire E_UNSAFE_T_READ_REQUIRES_WRAP
             // on safe-context reads inside body.
             state.unsafe_t_vars.push(HashSet::new());
+            // Plan 118.1.6: push fresh fn-scope unsafe-fn-ptr frame parallel
+            // к unsafe_t_vars. Register fn params типа `*unsafe fn(...)` so
+            // calling those params без `unsafe { }` wrap → E_UNSAFE_CALL_REQUIRES_WRAP.
+            state.unsafe_fn_ptr_vars.push(HashSet::new());
             for p in &fd.params {
                 if p.ty.outer_unsafe_before_pointer() {
                     state.register_unsafe_t_var(&p.name);
+                }
+                if p.ty.is_unsafe_fn_pointer() {
+                    state.register_unsafe_fn_ptr_var(&p.name);
                 }
             }
             if let FnBody::Block(b) = &fd.body {
@@ -17564,6 +17584,7 @@ pub(crate) fn check_unsafe_context_in_module(
             } else if let FnBody::Expr(e) = &fd.body {
                 state.walk_expr(e, errors);
             }
+            state.unsafe_fn_ptr_vars.pop();
             state.unsafe_t_vars.pop();
             state.in_realtime = prev_realtime;
             if entered_unsafe_fn { state.depth -= 1; }
@@ -17597,6 +17618,18 @@ struct UnsafeCtx {
     /// `E_UNSAFE_T_READ_REQUIRES_WRAP`. Write safe (transitions к valid).
     /// Stack of scope-frames mirrors ptr_vars structure.
     unsafe_t_vars: Vec<HashSet<String>>,
+    /// **Plan 118.1.6 (2026-06-08):** locals/params bound к `*unsafe fn(...)`
+    /// type. Calling such a binding outside `unsafe { }` block at depth==0 →
+    /// `E_UNSAFE_CALL_REQUIRES_WRAP` (the C ABI fn body может invoke pointer
+    /// ops без gating; callsite должен explicitly opt-in к unsafe context).
+    /// Stack of scope-frames mirrors `ptr_vars` structure для shadowing.
+    ///
+    /// Registration sources:
+    ///   - `let x: *unsafe fn(...) = ...` (type annotation has unsafe-fn-ptr shape);
+    ///   - `let x = addr_of(unsafe_fn_name)` (RHS resolves к #unsafe fn ident);
+    ///   - `let x = &unsafe_fn_name` (same — UnOp::AddrOf shape);
+    ///   - fn params типа `*unsafe fn(...)` (params binding registration).
+    unsafe_fn_ptr_vars: Vec<HashSet<String>>,
     /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** when true,
     /// the Ident read check для unsafe_t_vars is suppressed — defer к the
     /// precise `check_unsafe_coerce_args` pass which knows callee param
@@ -17612,12 +17645,15 @@ impl UnsafeCtx {
         self.ptr_vars.push(HashSet::new());
         // Plan 118.5 Ф.4: push fresh unsafe-T scope frame (parallel к ptr_vars).
         self.unsafe_t_vars.push(HashSet::new());
+        // Plan 118.1.6: push fresh unsafe-fn-ptr scope frame.
+        self.unsafe_fn_ptr_vars.push(HashSet::new());
         for stmt in &b.stmts {
             self.walk_stmt(stmt, errors);
         }
         if let Some(t) = &b.trailing {
             self.walk_expr(t, errors);
         }
+        self.unsafe_fn_ptr_vars.pop();
         self.unsafe_t_vars.pop();
         self.ptr_vars.pop();
         if b.is_unsafe { self.depth -= 1; }
@@ -17635,6 +17671,50 @@ impl UnsafeCtx {
     fn register_unsafe_t_var(&mut self, name: &str) {
         if let Some(frame) = self.unsafe_t_vars.last_mut() {
             frame.insert(name.to_string());
+        }
+    }
+
+    /// **Plan 118.1.6 (2026-06-08):** check if `name` resolves к local/param
+    /// bound к `*unsafe fn(...)` type. Walks scope frames outer-most-last
+    /// (latest binding wins — handles shadowing).
+    fn is_unsafe_fn_ptr_var(&self, name: &str) -> bool {
+        self.unsafe_fn_ptr_vars.iter().rev().any(|f| f.contains(name))
+    }
+
+    /// **Plan 118.1.6 (2026-06-08):** register `name` as bound к
+    /// `*unsafe fn(...)` type в innermost scope.
+    fn register_unsafe_fn_ptr_var(&mut self, name: &str) {
+        if let Some(frame) = self.unsafe_fn_ptr_vars.last_mut() {
+            frame.insert(name.to_string());
+        }
+    }
+
+    /// **Plan 118.1.6 (2026-06-08):** detect whether the RHS expression of
+    /// a `let` binding evaluates к `*unsafe fn(...)` value. Conservative —
+    /// fires when syntactic shape is one of:
+    ///   - `addr_of(IDENT)` где IDENT ∈ self.unsafe_fns (Call form);
+    ///   - `&IDENT` где IDENT ∈ self.unsafe_fns (UnOp::AddrOf form);
+    ///   - bare Ident name ∈ self.unsafe_fn_ptr_vars (forwarding through
+    ///     another let-binding или fn param).
+    /// Block trailing-expression inherits (handles `unsafe { addr_of(uf) }`).
+    fn expr_produces_unsafe_fn_ptr(&self, e: &Expr) -> bool {
+        use crate::ast::{ExprKind, UnOp};
+        match &e.kind {
+            ExprKind::Unary { op: UnOp::AddrOf, operand } => {
+                matches!(&operand.kind, ExprKind::Ident(n) if self.unsafe_fns.contains(n))
+            }
+            ExprKind::Call { func, args, .. } if args.len() == 1 => {
+                let is_addr_of = matches!(
+                    &func.kind,
+                    ExprKind::Ident(n) if n == "addr_of" || n == "addr_of_mut"
+                );
+                if !is_addr_of { return false; }
+                matches!(&args[0].expr().kind, ExprKind::Ident(n) if self.unsafe_fns.contains(n))
+            }
+            ExprKind::Ident(name) => self.is_unsafe_fn_ptr_var(name),
+            ExprKind::Block(b) => b.trailing.as_ref()
+                .map_or(false, |t| self.expr_produces_unsafe_fn_ptr(t)),
+            _ => false,
         }
     }
 
@@ -17708,6 +17788,53 @@ impl UnsafeCtx {
                         if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
                             self.register_unsafe_t_var(name);
                         }
+                    }
+                }
+                // Plan 118.1.6 (2026-06-08): track *unsafe fn(...) bindings +
+                // E_UNSAFE_FN_PTR_COERCION enforcement.
+                //
+                // Three cases by combining (RHS-shape, type-annotation):
+                //   (a) RHS produces *unsafe fn(...), ann ∈ {None, *unsafe fn(...)}:
+                //       binding inherits unsafe-fn-ptr — register.
+                //   (b) RHS produces *unsafe fn(...), ann = *fn(...) (safe):
+                //       COVARIANCE VIOLATION — emit E_UNSAFE_FN_PTR_COERCION.
+                //       Annotation overrides — do NOT register as unsafe-fn-ptr
+                //       (let user proceed with broken assumption surfacing as
+                //       call-site error).
+                //   (c) RHS is non-unsafe-fn-ptr, ann = *unsafe fn(...):
+                //       safe→unsafe widening — register (covariant; valid).
+                //
+                // Pattern restricted к simple Ident — destructure NOT supported
+                // (fn pointers don't destructure meaningfully).
+                let rhs_is_unsafe_fn_ptr = self.expr_produces_unsafe_fn_ptr(&d.value);
+                let ann_is_unsafe_fn_ptr =
+                    d.ty.as_ref().map_or(false, |t| t.is_unsafe_fn_pointer());
+                let ann_is_safe_fn_ptr =
+                    d.ty.as_ref().map_or(false, |t| t.is_safe_fn_pointer());
+                if rhs_is_unsafe_fn_ptr && ann_is_safe_fn_ptr {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_FN_PTR_COERCION] cannot coerce \
+                         `*unsafe fn(...)` value into `*fn(...)` binding — \
+                         safety attribute would be silently dropped (Plan 118.1.6 \
+                         D216 amend). `#unsafe fn` body contains pointer ops \
+                         без gating: callsite needs to know it must wrap call \
+                         в `unsafe {{ ... }}`. Allowed direction: `*fn(...)` \
+                         → `*unsafe fn(...)` (covariant widening — safe fn is \
+                         always usable where unsafe fn expected). Fix: change \
+                         binding annotation к `*unsafe fn(...)`, или extract \
+                         non-#unsafe wrapper fn and take its address.".to_string(),
+                        d.value.span,
+                    ));
+                }
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    // Annotation-driven registration: explicit `*unsafe fn(...)`
+                    // (case (a) + (c)). Skip when annotation is safe-fn-ptr
+                    // (case (b)) — error already emitted; downgrade RHS effect.
+                    if ann_is_unsafe_fn_ptr {
+                        self.register_unsafe_fn_ptr_var(name);
+                    } else if rhs_is_unsafe_fn_ptr && !ann_is_safe_fn_ptr {
+                        // Inference: RHS shape leaks unsafe-fn-ptr — register.
+                        self.register_unsafe_fn_ptr_var(name);
                     }
                 }
             }
@@ -17881,6 +18008,14 @@ impl UnsafeCtx {
                         }
                         ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
                             Some(mname.clone())
+                        }
+                        // Plan 118.1.6 (2026-06-08): indirect call через
+                        // *unsafe fn(...) binding — same gating as direct call.
+                        // Callee shape `Ident(local)` where local ∈
+                        // unsafe_fn_ptr_vars. Indirection adds no safety —
+                        // pointee fn body still has unguarded pointer ops.
+                        ExprKind::Ident(fname) if self.is_unsafe_fn_ptr_var(fname) => {
+                            Some(fname.clone())
                         }
                         _ => None,
                     };

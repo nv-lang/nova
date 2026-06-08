@@ -1491,6 +1491,68 @@ impl TypeRef {
         matches!(self.strip_modifiers(), TypeRef::Pointer(..))
     }
 
+    /// **Plan 118.1.6 (2026-06-08):** detect an "unsafe fn-pointer" type
+    /// shape — semantic identity «pointer к #unsafe fn signature».
+    ///
+    /// Per spec D216 V2/V3 + Plan 118.5 universal modifier model, two AST
+    /// shapes are accepted as semantically-equivalent encodings of
+    /// `* unsafe fn(...)`:
+    ///   - `Pointer(Unsafe(Func{...}))` — `*unsafe fn(...) -> T` form
+    ///     (D216 V2 §V2.3 «valid ptr to possibly-uninit T»; here T = Func).
+    ///   - `Unsafe(Pointer(Func{...}))` — `unsafe * fn(...) -> T` form
+    ///     (D216 V2 §V2.4 outer-unsafe wrapper around safe pointer).
+    /// Plus chains через outer Readonly/Mut wrappers that don't change
+    /// safety semantics (V3 §V3.2 restricts these, but they still pass).
+    ///
+    /// Used by Plan 118.1.6 enforcement:
+    ///   (1) addr_of(unsafe_fn) result type carries Unsafe wrapper;
+    ///   (2) E_UNSAFE_FN_PTR_COERCION fires when assigning unsafe-fn-ptr
+    ///       к non-unsafe-fn-ptr binding;
+    ///   (3) E_UNSAFE_CALL_REQUIRES_WRAP fires when calling через unsafe-fn-ptr
+    ///       binding without `unsafe { }` wrap (depth == 0).
+    ///
+    /// Returns true ONLY when both Pointer AND Unsafe wrappers appear
+    /// somewhere in the chain wrapping a Func payload. Bare `* fn(...)` —
+    /// false (no Unsafe). Bare `unsafe fn(...)` (no Pointer) — false
+    /// (not yet a pointer; will surface for builders/value-level uses).
+    pub fn is_unsafe_fn_pointer(&self) -> bool {
+        // Walk chain, tracking whether we've seen Pointer and Unsafe.
+        fn walk(t: &TypeRef, saw_ptr: bool, saw_unsafe: bool) -> bool {
+            match t {
+                TypeRef::Pointer(inner, _) => walk(inner, true, saw_unsafe),
+                TypeRef::Unsafe(inner, _) => walk(inner, saw_ptr, true),
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => {
+                    walk(inner, saw_ptr, saw_unsafe)
+                }
+                TypeRef::Func { .. } => saw_ptr && saw_unsafe,
+                _ => false,
+            }
+        }
+        walk(self, false, false)
+    }
+
+    /// **Plan 118.1.6 (2026-06-08):** detect a "safe fn-pointer" type shape —
+    /// `Pointer(Func{...})` (with optional outer Readonly/Mut wrappers, but
+    /// WITHOUT any Unsafe wrapper). Used by E_UNSAFE_FN_PTR_COERCION to
+    /// distinguish: assignment of `*unsafe fn(...)` value к binding annotated
+    /// `*fn(...)` (banned) vs assignment к binding annotated `*unsafe fn(...)`
+    /// (allowed). Returns true for `*fn(...)`, `ro * fn(...)`, `mut * fn(...)`;
+    /// false for `*unsafe fn(...)`, `unsafe * fn(...)`, non-fn-pointer types.
+    pub fn is_safe_fn_pointer(&self) -> bool {
+        fn walk(t: &TypeRef, saw_ptr: bool, saw_unsafe: bool) -> bool {
+            match t {
+                TypeRef::Pointer(inner, _) => walk(inner, true, saw_unsafe),
+                TypeRef::Unsafe(inner, _) => walk(inner, saw_ptr, true),
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => {
+                    walk(inner, saw_ptr, saw_unsafe)
+                }
+                TypeRef::Func { .. } => saw_ptr && !saw_unsafe,
+                _ => false,
+            }
+        }
+        walk(self, false, false)
+    }
+
     /// Plan 91.12 V2 followup #3 (2026-06-02): рекурсивная проверка
     /// использует ли TypeRef один из generic type-параметров из set'а.
     ///

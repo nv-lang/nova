@@ -33743,3 +33743,10 @@ schema, не по outer/expected type. Lifts Plan 128.2 explicit-.new() workarou
 
 Профилактика mojibake: `.editorconfig charset=utf-8` (c73f472) + удалён Lingma +
 поставлен EditorConfig ext.
+
+## 2026-06-08 — Plan 118.1.6 — no simplifications
+
+Plan 118.1.6 closes [M-118.1.5-unsafe-fn-pointer-type] production-grade.
+Side bug fix: typeref_equal Pointer/Mut/Unsafe arms — был silent gap (returned
+false для Pointer/Mut/Unsafe equality). Plan 118.1.6 fix resolves.
+Zero new simplifications introduced.

@@ -34215,3 +34215,22 @@ Housekeeping:
 
 Spec/D/Q: не требовалось (кодировка/housekeeping/конвенция — без семантики).
 Всё в main + github + gitverse.
+
+## 2026-06-08 — Plan 118.1.6 ✅ CLOSED — #unsafe как часть типа fn pointer
+
+Closes [M-118.1.5-unsafe-fn-pointer-type] (opened из обсуждения Plan 118.1.5).
+Rust-style coercion rules: safe → unsafe ✅, reverse ❌ (E_UNSAFE_FN_PTR_COERCION).
+Call через *unsafe fn ptr требует unsafe { } block.
+
+### Deliverables
+- typeref_equal fix для Pointer/Mut/Unsafe arms (side bug fix — был silent gap)
+- addr_of propagation (FnDecl.unsafe_attr → *unsafe fn(...) result type)
+- Coercion E_UNSAFE_FN_PTR_COERCION (NEW error code)
+- Call-site enforcement E_UNSAFE_CALL_REQUIRES_WRAP extended к fn ptr dispatch
+- 9 fixtures plan118_1_6 (5 POS + 4 NEG)
+- Spec D216 §10 amend
+
+### Plan 118.1 family progress
+
+9/12 markers closed. Deferred: [M-118.1-addr-of-chains], [M-118.1-cstr-nul-check],
+[M-118.1-cstr-to-cstr-distinct-copy].
