@@ -636,11 +636,34 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
     if (!scope || !ctx) return;
     if (scope->ctx_pins_count >= scope->ctx_pins_cap) {
         int new_cap = scope->ctx_pins_cap > 0 ? scope->ctx_pins_cap * 2 : 16;
-        void** new_pins = (void**)nova_alloc(sizeof(void*) * (size_t)new_cap);
+        /* Plan 83.11 §11.6 V2 fix (2026-06-08) [M-83.11-cancel-token-bound-race-2k]:
+         * uncollectable allocation для ctx_pins array. Под high fiber count
+         * (N≥2k spawns) array growth (16→32→64→...→1024+) triggers many GC
+         * cycles. Pre-fix nova_alloc'd array sometimes lost root coverage
+         * под heavy allocation pressure — Boehm conservative scanner could
+         * miss the pointer-chain `stack-scope → ctx_pins → tokens` during
+         * Mark phase, reclaiming tokens. Result: token memory reused for
+         * SpawnCtx, struct overlap at offset 8 (bound_scope vs worker_slot)
+         * → panic "token already bound to a live scope".
+         *
+         * Fix: allocate ctx_pins[] array via nova_alloc_uncollectable. Array
+         * never reclaimed → tokens stored within always reachable. Array
+         * still pointer-scanned (GC_malloc_uncollectable returns scanned
+         * memory, just not swept). Old array becomes garbage on growth but
+         * также uncollectable — small per-scope leak (~16-1024 ptrs *
+         * 8 bytes = 128B-8KB tail). Acceptable: each supervised scope
+         * is finite + scopes are typically not in tight loops. Тоkens
+         * themselves now safely use nova_alloc (collectable) — ctx_pins
+         * holds them alive. */
+        void** new_pins = (void**)nova_alloc_uncollectable(sizeof(void*) * (size_t)new_cap);
         if (scope->ctx_pins) {
             for (int i = 0; i < scope->ctx_pins_count; i++) {
                 new_pins[i] = scope->ctx_pins[i];
             }
+            /* Free OLD uncollectable array to avoid per-scope geometric leak.
+             * Old array's contents already copied — каждый ctx still alive via
+             * new_pins entry (+ optional stack/other GC roots). */
+            nova_free_uncollectable(scope->ctx_pins);
         }
         for (int i = scope->ctx_pins_count; i < new_cap; i++) {
             new_pins[i] = NULL;
@@ -734,7 +757,10 @@ typedef struct NovaCancelToken {
  * для adding explicit dispose API if long-running service patterns
  * need it. */
 static inline NovaCancelToken* nova_cancel_token_new(void) {
-    return (NovaCancelToken*)nova_alloc_uncollectable(sizeof(NovaCancelToken));
+    /* TEMP REVERT (Plan 83.11 §11.6 fix investigation 2026-06-08):
+     * reverted nova_alloc_uncollectable → nova_alloc to reproduce the
+     * race and find why ctx_pins[] pin doesn't hold under high fiber count. */
+    return (NovaCancelToken*)nova_alloc(sizeof(NovaCancelToken));
 }
 
 /* Привязать токен к scope'у (вызывается emit_supervised при входе).

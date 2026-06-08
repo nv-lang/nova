@@ -33750,3 +33750,48 @@ Plan 118.1.6 closes [M-118.1.5-unsafe-fn-pointer-type] production-grade.
 Side bug fix: typeref_equal Pointer/Mut/Unsafe arms — был silent gap (returned
 false для Pointer/Mut/Unsafe equality). Plan 118.1.6 fix resolves.
 Zero new simplifications introduced.
+
+
+### 2026-06-08 — Plan 83.11 §11.6 V2 — proper GC pin fix (no token leak)
+
+**Markers:**
+- `[M-83.11-cancel-token-bound-race-2k]` 🟢 V2 FULLY CLOSED (real fix, not workaround).
+- `[M-83.11-cancel-token-explicit-cleanup]` 🟢 V2 CLOSED — no per-token leak anymore.
+
+**Корень (V2 diagnosis):** проблема не в token allocation, а в ctx_pins[]
+ARRAY (Plan 83.11 §11.6 fix). Under N≥2k fiber count array growth
+(16→32→...→1024+) triggers many GC cycles; Boehm conservative scanner
+loses pointer-chain `stack-scope → ctx_pins → tokens` под heavy alloc
+pressure. Array unreachable → tokens unreachable → reclaimed → memory
+reused → bind panic.
+
+**Fix (V2):**
+- `fibers.h::nova_scope_pin_ctx` — ctx_pins[] array allocated via
+  `nova_alloc_uncollectable` (was `nova_alloc`).
+- Old array `nova_free_uncollectable`d on growth (no per-scope leak,
+  только tail of final array).
+- Token reverted к `nova_alloc` (collectable) — reachable через always-
+  alive ctx_pins[].
+
+**Trade-off:** ctx_pins[] array (~128B-8KB final tail) leaks per supervised
+scope until process exit. Significantly smaller than V1 per-token leak
+(~64 bytes × millions tokens = 64MB on million-token workload). Followup
+`[M-83.11-ctx-pins-scope-cleanup]` P3 optional для scope-exit cleanup hook.
+
+**Stress 30/30 production scale:** fibers_10k @ N=10k + nested @ depth=3
++ stress_iso_3e + cancel_during_shutdown @ 16 — all PASS.
+
+**Spec D188 R3b** updated к V2 description.
+
+**Уроки:**
+
+1. **Workaround vs root-fix.** V1 fixed token allocation (symptom). V2
+   recon parallel workflow обнаружил, что array itself was the issue
+   (cause). Original fix shape preserved (uncollectable defensive pattern)
+   но moved к correct layer.
+
+2. **Parallel recon workflow** разрешил multi-hypothesis investigation.
+   Single-agent could miss array vs token distinction.
+
+3. **ctx_pins[] pinning design (Plan 83.11 §11.6) is sound** — just needs
+   uncollectable backing under high-pressure cases.
