@@ -4,9 +4,7 @@
 // FFI / driver / embedded scenarios (Plan 118.1 D-block — see plan-doc).
 //
 // **RawMem namespace** (`type RawMem`) groups raw memory operations.
-// All methods conceptually unsafe — caller wraps в `unsafe { ... }` block
-// per E_UNSAFE_REQUIRED (Plan 118 D216 §8). V1 limitation: `#unsafe` is
-// not yet enforced on `external fn`; caller discipline is by convention.
+// All methods operate on raw pointers — caller wraps calls in `unsafe { }` block.
 //
 // V1 scope (this file): byte-level untyped operations. User responsible
 // for size calculations (`count * sizeof(T)` patterns). Generic typed
@@ -43,8 +41,7 @@ export type RawMem
 /// Use cases: generic memory copy where overlap possible (slice
 /// rotation, buffer scrolling).
 ///
-/// V1 contract: caller wraps в `unsafe { }` block for clarity (parser
-/// does not yet support `#unsafe` attribute on `external fn`).
+/// Caller wraps in `unsafe { }` block — raw pointer operation.
 export external fn RawMem.copy(src *u8, dst mut * u8, n usize) -> ()
 
 /// memcpy — copy `n` bytes from `src` к `dst`. UB при overlap.
@@ -89,8 +86,8 @@ export external fn RawMem.compare(a *u8, b *u8, n usize) -> int
 /// Alignment: 8-byte (nova_alloc guarantee).
 /// Size: `n > 0` recommended; behaviour with `n = 0` is implementation-defined.
 ///
-/// Must be called inside `unsafe {}` block (E_UNSAFE_CALL_REQUIRES_WRAP).
-export #unsafe external fn RawMem.alloc(n usize) -> mut * u8
+/// Caller wraps in `unsafe {}` block — raw pointer returned.
+export external fn RawMem.alloc(n usize) -> mut * u8
 
 /// Allocate `n` bytes NOT GC-tracked. Caller must call `RawMem.free_uncollectable`.
 ///
@@ -102,12 +99,12 @@ export #unsafe external fn RawMem.alloc(n usize) -> mut * u8
 /// CONTRACT: returns zeroed memory (all bytes = 0x00).
 /// Alignment: 8-byte.
 ///
-/// Must be called inside `unsafe {}` block.
-export #unsafe external fn RawMem.alloc_uncollectable(n usize) -> mut * u8
+/// Caller wraps in `unsafe {}` block.
+export external fn RawMem.alloc_uncollectable(n usize) -> mut * u8
 
 /// Free a pointer allocated with `RawMem.alloc_uncollectable`.
 ///
 /// Backed by `nova_free_uncollectable(ptr)`. UB if called on a GC-tracked
 /// pointer (from `RawMem.alloc`) — use GC-tracked memory only with GC.
-/// Double-free is UB. Must be called inside `unsafe {}` block.
-export #unsafe external fn RawMem.free_uncollectable(ptr mut * u8) -> ()
+/// Double-free is UB. Caller wraps in `unsafe {}` block.
+export external fn RawMem.free_uncollectable(ptr mut * u8) -> ()
