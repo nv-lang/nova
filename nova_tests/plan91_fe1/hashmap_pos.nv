@@ -1,0 +1,30 @@
+// Plan 91 Ф.1 conformance: HashMap mixed types + core ops.
+module plan91_fe1.hashmap_pos
+import std.collections.hashmap.{HashMap}
+
+test "str->int build, get, contains, remove" {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("a", 10)
+    assert(m.len() == 2, "len 2 after dup key")
+    match m.get("a") { Some(v) => assert(v == 10, "a=10") None => assert(false, "a") }
+    assert(m.contains("b"), "has b")
+    assert(!m.contains("z"), "no z")
+    m.remove("a")
+    assert(!m.contains("a"), "a removed")
+}
+test "int->str + iter (k,v) destructure" {
+    mut m = HashMap[int, str].new()
+    m.insert(1, "one")
+    m.insert(2, "two")
+    m.insert(3, "three")
+    mut ksum = 0
+    mut vlen = 0
+    for (k, v) in m.iter() {
+        ksum = ksum + k
+        vlen = vlen + v.len()
+    }
+    assert(ksum == 6, "key sum")
+    assert(vlen == 11, "value len total")
+}

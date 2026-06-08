@@ -1,0 +1,27 @@
+// Plan 91 Ф.1 conformance: vec combinators (map/filter/any/all/first/last).
+module plan91_fe1.vec_combinators_pos
+import std.collections.vec
+
+test "map same-type and type-change" {
+    ro xs = [1, 2, 3, 4]
+    ro doubled = xs.map(|x| x * 2)
+    assert(doubled[0] == 2 && doubled[3] == 8, "map int->int")
+    ro strs = xs.map(|x| str.from(x))
+    assert(strs[0] == "1" && strs[3] == "4", "map int->str")
+}
+test "filter / any / all" {
+    ro xs = [1, 2, 3, 4, 5, 6]
+    ro evens = xs.filter(|x| x % 2 == 0)
+    assert(evens.len() == 3 && evens[0] == 2, "filter evens")
+    assert(xs.any(|x| x > 5), "any >5")
+    assert(!xs.any(|x| x > 100), "any none")
+    assert(xs.all(|x| x > 0), "all >0")
+    assert(!xs.all(|x| x > 3), "all not >3")
+}
+test "first / last including empty" {
+    ro xs = [10, 20, 30]
+    match xs.first() { Some(v) => assert(v == 10, "first") None => assert(false, "f") }
+    match xs.last() { Some(v) => assert(v == 30, "last") None => assert(false, "l") }
+    ro empty []int = []
+    match empty.first() { Some(_) => assert(false, "empty first") None => assert(true) }
+}

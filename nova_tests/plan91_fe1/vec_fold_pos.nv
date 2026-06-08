@@ -1,0 +1,25 @@
+// Plan 91 Ф.1 conformance: fold with int/str/bool accumulators (non-int Acc = THE FIX).
+module plan91_fe1.vec_fold_pos
+import std.collections.vec
+
+test "fold int accumulator (sum/product)" {
+    ro xs = [1, 2, 3, 4]
+    assert(xs.fold(0, |acc, x| acc + x) == 10, "sum")
+    assert(xs.fold(1, |acc, x| acc * x) == 24, "product")
+}
+test "fold into str accumulator (method-level generic != element)" {
+    ro xs = [1, 2, 3]
+    ro joined = xs.fold("", |acc, x| acc + str.from(x))
+    assert(joined == "123", "fold str-build")
+    ro csv = xs.fold("nums:", |acc, x| acc + " " + str.from(x))
+    assert(csv == "nums: 1 2 3", "fold csv")
+}
+test "fold into bool accumulator" {
+    ro xs = [2, 4, 6, 8]
+    assert(xs.fold(true, |acc, x| acc && (x % 2 == 0)), "all even via fold")
+    assert(!xs.fold(false, |acc, x| acc || (x > 100)), "none >100 via fold")
+}
+test "fold over empty returns init" {
+    ro empty []int = []
+    assert(empty.fold(42, |acc, x| acc + x) == 42, "empty fold init")
+}

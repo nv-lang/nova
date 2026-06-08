@@ -1,0 +1,19 @@
+// Plan 91 Ф.1 conformance: chained combinators.
+module plan91_fe1.vec_chain_pos
+import std.collections.vec
+
+test "filter then map" {
+    ro xs = [1, 2, 3, 4, 5, 6]
+    ro r = xs.filter(|x| x % 2 == 0).map(|x| x * 10)
+    assert(r.len() == 3 && r[0] == 20 && r[2] == 60, "filter.map")
+}
+test "map then fold" {
+    ro xs = [1, 2, 3, 4]
+    ro sum_sq = xs.map(|x| x * x).fold(0, |acc, x| acc + x)
+    assert(sum_sq == 30, "1+4+9+16")
+}
+test "map to str then fold to str" {
+    ro xs = [1, 2, 3]
+    ro joined = xs.map(|x| str.from(x)).fold("", |acc, s| acc + s)
+    assert(joined == "123", "map-str then fold-str")
+}

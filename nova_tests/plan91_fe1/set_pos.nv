@@ -1,0 +1,21 @@
+// Plan 91 Ф.1 conformance: Set int/str + algebra.
+module plan91_fe1.set_pos
+import std.collections.set.{Set}
+
+test "Set[int] dedup + ops" {
+    mut a = Set[int].new()
+    a.insert(1); a.insert(2); a.insert(3); a.insert(2)
+    assert(a.len() == 3, "dedup")
+    assert(a.contains(2) && !a.contains(9), "contains")
+    mut b = Set[int].new()
+    b.insert(2); b.insert(3); b.insert(4)
+    assert(a.or(b).len() == 4, "union")
+    assert(a.and(b).len() == 2, "intersect")
+    assert(a.minus(b).len() == 1, "diff")
+}
+test "Set[str]" {
+    mut s = Set[str].new()
+    s.insert("x"); s.insert("y"); s.insert("x")
+    assert(s.len() == 2, "str dedup")
+    assert(s.contains("y"), "has y")
+}
