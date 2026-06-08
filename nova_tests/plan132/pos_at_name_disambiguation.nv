@@ -1,0 +1,37 @@
+// Plan 132 Ф.3.3 (POS): @name vs @name() disambiguation in method bodies.
+// `@len` (no parens) inside a method body = field access.
+// `@len()` (with parens) inside a method body = method call on self.
+// Both forms are unambiguous and work correctly.
+
+module plan132.pos_at_name_disambiguation
+
+type Counter { priv mut n int, priv mut len int }
+
+fn Counter.new() -> Self => { n: 0, len: 0 }
+
+// @len() method — returns field value via @len (no parens = field)
+fn Counter @len() -> int => @len
+
+// @inc() uses @len (no parens) to read the field directly
+fn Counter @inc() { @n = @n + 1; @len = @len + 1 }
+
+// @call_len() uses @len() (with parens) to call the method
+fn Counter @call_len() -> int => @len()
+
+// @double_len() shows both: read field + call method
+fn Counter @double_len() -> int {
+    ro field_val = @len          // @len (no parens) = field access
+    ro method_val = @len()       // @len() (with parens) = method call
+    assert(field_val == method_val)
+    field_val + method_val
+}
+
+test "@name (no parens) = field; @name() (parens) = method call" {
+    mut c = Counter.new()
+    c.inc()
+    c.inc()
+    c.inc()
+    assert(c.len() == 3)
+    assert(c.call_len() == 3)
+    assert(c.double_len() == 6)
+}

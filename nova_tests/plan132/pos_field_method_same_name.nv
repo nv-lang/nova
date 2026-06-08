@@ -1,0 +1,21 @@
+// Plan 132 Ф.3.2 (POS): type with field `len int` and method `@len() -> int`
+// both co-exist on the same type — no collision error.
+// `@len` in method body (no parens) = field access.
+// `@len()` in method body (with parens) = method call.
+
+module plan132.pos_field_method_same_name
+
+type Buf { priv mut data int, priv mut len int }
+
+fn Buf.new() -> Self => { data: 0, len: 0 }
+fn Buf @push(v int) { @data = @data + v; @len = @len + 1 }
+// @len() returns the field value — @len (no parens) = field
+fn Buf @len() -> int => @len
+
+test "field and method with same name coexist" {
+    mut b = Buf.new()
+    b.push(10)
+    b.push(20)
+    b.push(30)
+    assert(b.len() == 3)
+}
