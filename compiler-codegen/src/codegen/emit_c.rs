@@ -20673,14 +20673,43 @@ _cp++; \
                                                     None => "nova_unit".to_string(),
                                                 };
                                                 self.current_type_subst = saved_inner;
-                                                let prev_sig = self.fn_param_sigs.insert(
-                                                    param_decl.name.clone(), (inner_ptys, inner_ret));
-                                                let v = self.emit_expr(a.expr())?;
-                                                match prev_sig {
-                                                    Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
-                                                    None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                                // Plan 91 Ф.1: inline closure (ClosureLight) — emit via
+                                                // emit_lambda with the substituted param-type context so
+                                                // method-level-generic closure params (e.g. fold's
+                                                // `acc: Acc` resolving to nova_str) are typed correctly
+                                                // instead of defaulting to nova_int. The ClosureLight arm
+                                                // of emit_expr ignores fn_param_sigs, so the variable-closure
+                                                // path below silently dropped these types. Mirror of the
+                                                // sibling array-ext path (~21229). Empty return slot keeps
+                                                // the return body-inferred (preserves map int->str). Variable
+                                                // closures keep the fn_param_sigs path (chained-call inference).
+                                                if let crate::ast::ExprKind::ClosureLight { params: cl_params, body } = &a.expr().kind {
+                                                    let legacy_params: Vec<LambdaParam> = cl_params
+                                                        .iter()
+                                                        .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                        .collect();
+                                                    let body_expr: Expr = match body {
+                                                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                            crate::ast::ExprKind::Block(b.clone()),
+                                                            b.span,
+                                                        ),
+                                                    };
+                                                    let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                        .map(|t| (t.clone(), String::new()))
+                                                        .collect();
+                                                    let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                                    arg_strs.push(v);
+                                                } else {
+                                                    let prev_sig = self.fn_param_sigs.insert(
+                                                        param_decl.name.clone(), (inner_ptys, inner_ret));
+                                                    let v = self.emit_expr(a.expr())?;
+                                                    match prev_sig {
+                                                        Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
+                                                        None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                                    }
+                                                    arg_strs.push(v);
                                                 }
-                                                arg_strs.push(v);
                                             } else {
                                                 arg_strs.push(self.emit_expr(a.expr())?);
                                             }
@@ -21917,14 +21946,37 @@ _cp++; \
                                                 None => "nova_unit".into(),
                                             };
                                             self.current_type_subst = saved_inner;
-                                            let prev_sig = self.fn_param_sigs.insert(
-                                                param_decl.name.clone(), (inner_ptys, inner_ret));
-                                            let v = self.emit_expr(a.expr())?;
-                                            match prev_sig {
-                                                Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
-                                                None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                            // Plan 91 Ф.1 (static HOF twin of the instance fix at ~20675):
+                                            // inline closures must thread the substituted param types so a
+                                            // method-level-generic closure param ≠ element-type is typed
+                                            // correctly. Mirror of ~21229. Empty return slot → body-inferred.
+                                            if let crate::ast::ExprKind::ClosureLight { params: cl_params, body } = &a.expr().kind {
+                                                let legacy_params: Vec<LambdaParam> = cl_params
+                                                    .iter()
+                                                    .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                                                    .collect();
+                                                let body_expr: Expr = match body {
+                                                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                        crate::ast::ExprKind::Block(b.clone()),
+                                                        b.span,
+                                                    ),
+                                                };
+                                                let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                                    .map(|t| (t.clone(), String::new()))
+                                                    .collect();
+                                                let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                                                arg_strs.push(v);
+                                            } else {
+                                                let prev_sig = self.fn_param_sigs.insert(
+                                                    param_decl.name.clone(), (inner_ptys, inner_ret));
+                                                let v = self.emit_expr(a.expr())?;
+                                                match prev_sig {
+                                                    Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
+                                                    None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                                }
+                                                arg_strs.push(v);
                                             }
-                                            arg_strs.push(v);
                                         } else {
                                             arg_strs.push(self.emit_expr(a.expr())?);
                                         }
