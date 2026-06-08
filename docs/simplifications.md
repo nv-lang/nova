@@ -33897,3 +33897,10 @@ CC-FAIL `undeclared identifier 'i'` при `import std.sort` + `import std.time.
 3. **flat `var_types` без scope-cleanup** — латентная ловушка: любой collision между
    stdlib-локалом и handler-op-локалом всплывает как miscompile. Hardening (scoped
    var_types) — отдельный followup.
+
+**Update 2026-06-08 (Ф.4 tests завершены):** добавлены regression-guard
+`sort_duration_handler_guard.nv` (sort+duration в одном модуле — точный триггер
+codegen-бага; ни одна per-module fixture не ловила) + негативный
+`neg/edge_and_error_paths.nv` (empty min/max→None, binary_search miss, Duration
+is_negative/abs/is_zero, is_nan/is_infinite, sqrt(-1)→NaN). plan91_fe4 10/0 PASS.
+Критерии приёмки Ф.4/Ф.6 явно прописаны в plan-91; Q-doc синхронизирован.

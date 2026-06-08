@@ -34508,3 +34508,10 @@ parallel-for value-typing; sqlite FFI codegen. Все задокументиро
 workflow (13 агентов + adversarial verify). 2 фикстуры допил inline (упали на
 сетевых API-ошибках). Pattern: serial codegen-fix inline (под ревью) + parallel
 bulk через workflow.
+
+UPDATE 2026-06-08 (Ф.4 tests): regression-guard sort_duration_handler_guard.nv
+(sort+duration в одном модуле — точный триггер бага, ни одна per-module fixture
+не ловила) + негативный neg/edge_and_error_paths.nv (empty→None, search miss,
+is_nan/is_infinite, sqrt(-1)→NaN, Duration is_negative/abs). plan91_fe4 10/0.
+Критерии приёмки Ф.4/Ф.6 прописаны; open-questions.md синхронизирован. Spec/D —
+без изменений (codegen-фикс не language-decision).
