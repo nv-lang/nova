@@ -4,18 +4,31 @@
 //
 // Per D26 §«Nul-termination» (promoted 2026-06-03): Nova strings ship c
 // ptr[len]=='\0' invariant by allocator. Это означает full str CAN
-// directly serve as `const char*` для C FFI — `s.as_cstr()` zero-copy.
+// directly serve as `const char*` для C FFI — `s.as_cstr()` wraps the
+// buffer pointer after an O(n) embedded-NUL scan (no copy); the scan-free
+// O(1) hatch is `s.as_cstr_unchecked()`.
 //
 // Sub-views (`s[a..b]`) могут не иметь terminating NUL — fallback alloc.
 //
 // Lexical prefix `c"hello"` НЕ нужен — `"hello".as_cstr()` zero-alloc
-// (literal в .rodata уже null-terminated, C string pooling).
+// (literal в .rodata уже null-terminated, C string pooling) — modulo the
+// O(n) embedded-NUL scan noted above; `as_cstr_unchecked()` is the O(1) path.
 //
 // Marker closure: [M-118.1-cstr-literal] CLOSED 2026-06-05 — research
 // confirmed D26 null-term invariant subsumes the need for prefix-literal
 // syntax. CStr API ships как str method, не как lexer extension.
 
 module std.ffi.cstr
+
+// `panic` is codegen-special-cased (emit_c lowers it to `nv_panic` by name,
+// regardless of where it's declared). cstr.nv is loaded via ExternalRegistry,
+// which does NOT auto-inject the prelude facade — so the embedded-NUL scan
+// needs `panic` in scope here. We declare it LOCALLY (module-private, same
+// signature as std/prelude/runtime.nv) rather than `import std.prelude.*`:
+// an explicit prelude import would trip the R27 auto-import opt-out
+// (imports.rs) for EVERY module that imports cstr, stripping their
+// assert/print/... prelude. A local external-fn decl perturbs nothing.
+external fn panic(msg str) -> never
 
 /// Opaque C-string handle. Wraps raw `*u8` pointer; instances must
 /// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`.
@@ -24,10 +37,13 @@ module std.ffi.cstr
 /// ABI: FFI-marshalled to `const char*` (or `char*` for mutable C-string
 /// contexts via dedicated mut variant — not in V1).
 ///
-/// **Lifetime warning**: instances backed by zero-copy view alive only
-/// while source `str` value alive (GC-managed). Pass directly к C-call
-/// без storing если source str может быть collected. For long-lived
-/// CStr — use `to_cstr()` (always copies + allocates own buffer).
+/// **Lifetime warning**: every CStr (incl. `to_cstr()` in V1) wraps a
+/// zero-copy view into the source `str`'s GC-managed buffer — valid only
+/// while that `str` value is alive. Pass directly к C-call без storing если
+/// source str может быть collected; storing a CStr past the source str's
+/// lifetime is a use-after-free. A distinct always-copy `to_cstr()` (owned
+/// buffer outliving the source) needs an allocator/free API — deferred to
+/// Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]).
 #stable(since = "0.1")
 export type CStr(*u8)
 
@@ -37,25 +53,39 @@ export type CStr(*u8)
 // so `bytes.as_ptr()` (Plan 118.2 Ф.1 builtin) already points к buffer
 // where C-side strlen terminates correctly.
 //
-// @as_cstr() — scan для embedded NUL (would truncate C-string), return
-//   CStr wrapping the bytes' raw pointer. Zero-copy.
+// @as_cstr() — scans bytes for an embedded NUL (which would truncate the
+//   C-string) and panics if found, then wraps the bytes' raw pointer
+//   (zero-copy after the O(n) scan).
 //
-// @to_cstr() — V1: alias к @as_cstr() (D26 invariant makes zero-copy safe).
-//   Always-copy semantic deferred — needed только если caller нуждается
-//   в ownership outliving source str.
+// @to_cstr() — ⚠ V1 does NOT yet copy. By the std `as_X`/`to_X` convention
+//   `to_cstr` SHOULD materialise an owned buffer, but V1 aliases @as_cstr()
+//   (inherits the NUL scan; D26 invariant makes the zero-copy wrap safe). The
+//   name is forward-compat — do NOT rely on owned-buffer / outlives-source
+//   semantics yet. The distinct always-copy form needs an allocator/free API
+//   and is deferred to Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]).
 //
 // @as_cstr_unchecked() — skips embedded-NUL scan. Caller asserts safe.
 //   Marked #unsafe per [M-118.1-unsafe-attr-on-external-fn] (Plan 118.1):
 //   callers must wrap invocations in `unsafe { ... }` block.
 
-// V1 NOTE: cstr.nv loaded via ExternalRegistry без auto-prelude wiring;
-// `assert`/`panic` не доступны в этом контексте без import, который
-// создаёт depth/cycle issues. V1 ships sans embedded-NUL runtime check —
-// caller responsibility per FFI contract («str must not contain '\0'»).
-// Embedded-NUL runtime check followup: [M-118.1-cstr-nul-check].
+// Embedded-NUL scan: @as_cstr() panics on the first byte==0 (an interior NUL
+// would silently truncate the C-string). `panic` is in scope via the
+// module-private `external fn panic` declared at the top of this module
+// (cstr.nv is ExternalRegistry-loaded and gets NO auto-prelude, so the prelude
+// `panic` is not visible here); codegen lowers it to `nv_panic` by name. The
+// earlier "panic needs an import which creates a cycle" deferral was wrong on
+// the cycle, but right that a plain prelude import is unusable here (it trips
+// the R27 auto-import opt-out for importers — see the note above).
+// [M-118.1-cstr-nul-check] CLOSED.
+// @as_cstr_unchecked() — #unsafe escape hatch, scan-free (O(1)).
 
 export fn str @as_cstr() -> CStr {
     ro bytes = @as_bytes()
+    for b in bytes {
+        if b == 0 {
+            panic("as_cstr: embedded NUL byte in str (would truncate C-string)")
+        }
+    }
     unsafe { CStr(bytes.as_ptr()) }
 }
 
@@ -64,5 +94,8 @@ export fn str @to_cstr() -> CStr {
 }
 
 export #unsafe fn str @as_cstr_unchecked() -> CStr {
-    @as_cstr()
+    // Scan-free O(1) hatch — caller asserts no embedded NUL. Does NOT delegate
+    // to @as_cstr() (that would re-introduce the scan it exists to skip).
+    ro bytes = @as_bytes()
+    unsafe { CStr(bytes.as_ptr()) }
 }

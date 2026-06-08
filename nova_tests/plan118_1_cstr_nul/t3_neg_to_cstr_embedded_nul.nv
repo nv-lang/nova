@@ -1,0 +1,13 @@
+// Plan 118.1 [M-118.1-cstr-nul-check] — to_cstr() is a V1 alias of as_cstr() so
+// it INHERITS the embedded-NUL scan; it must panic on the same input. This
+// locks the alias-delegation (a future change that makes to_cstr stop
+// delegating would skip the scan and fail this test).
+// EXPECT_RUNTIME_PANIC as_cstr: embedded NUL
+module plan118_1_cstr_nul.t3_neg_to_cstr_embedded_nul
+
+import std.ffi.cstr.{CStr}
+
+fn main() Io -> () {
+    ro s = str.from_bytes_unchecked([97, 0, 98])
+    ro c = s.to_cstr()
+}

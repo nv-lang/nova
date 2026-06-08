@@ -1,0 +1,14 @@
+// Plan 118.1 [M-118.1-cstr-nul-check] — as_cstr() panics at runtime when the
+// str contains an embedded NUL byte (which would silently truncate the
+// C-string). Constructed via from_bytes_unchecked so the interior 0x00 byte
+// survives verbatim (a string LITERAL with \0 must NOT be used — the C source
+// literal would be truncated, leaving an out-of-bounds read).
+// EXPECT_RUNTIME_PANIC as_cstr: embedded NUL
+module plan118_1_cstr_nul.t2_neg_as_cstr_embedded_nul
+
+import std.ffi.cstr.{CStr}
+
+fn main() Io -> () {
+    ro s = str.from_bytes_unchecked([104, 101, 0, 108, 108, 111])
+    ro c = s.as_cstr()
+}
