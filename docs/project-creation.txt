@@ -34680,3 +34680,49 @@ set-from-iter-iterable-param, dead-arrayext-mono-path.
 ИНСТРУМЕНТ: ultracode diagnose-workflow (3 параллельных трассировки + adversarial
 synth) -> review -> inline codegen-фикс под контролем + rebuild. Synth скорректи-
 ровал scope (map int->str работает; fold главный; map->record отдельный).
+
+================================================================================
+Plan 91 Ф.1 followups (3 из 4 маркеров закрыты) — 2026-06-08
+================================================================================
+
+turbofish [M-91.1-method-turbofish-dispatch]: obj.method[U](...) парсится как
+Call{TurboFish{base:Member}}, но func_c-match не имел арма -> wildcard emit_expr
+дропал type_args -> (obj->method)(...). Фикс: перехват в начале emit_call —
+stash type_args в поле current_method_turbofish -> recurse на Member base ->
+resolve_method_level_subst сидирует слоты до arg-inference. Turbofish и inferred
+сходятся на один mono. Free-fn TurboFish{base:Ident} не тронут.
+
+set-from-iter [M-91.1-set-from-iter-iterable-param]: Set.from_iter(it Iterable[T])
+стирался в void* на mono-инстансе -> for-in не мог восстановить итератор. Фикс:
+сигнатура -> from_iter(items []T) (зеркало HashMap.from([](K,V))). Stdlib-only.
+
+composite-array [M-91.1-composite-array-storage]: ВАЖНЫЙ УРОК — дизайн в плане был
+НЕВЕРЕН. Гипотеза "real per-composite NovaArray_<T> storage" при реализации
+сломала 47 тестов: весь stdlib (HashMap-бакеты []Slot[K,V], tuple, JSON
+[]JsonValue) держится на int64-erasure + side-channel array_element_types
+(var->real elem C-type). Менять storage = воевать с архитектурой. Доказано:
+typed-storage прогон 2246/133 vs baseline 2267/112; откат -> 2272/110, 0 новых
+(diff vs true-baseline = только флака protocols/conversion + concurrency races).
+
+ПРАВИЛЬНЫЙ ФИКС = завершить side-channel (хирургично, 0 blast radius):
+ 1. name-alignment apply_type_subst_to_ref call-site<->body (убрал
+    'unknown type name NovaArray_Nova_Wrap');
+ 2. propagation реального elem-типа через generic map/filter в
+    array_element_types (хелпер register_array_result_elem; для filter []T
+    берётся recv_elem, т.к. T стёрт в nova_int);
+ 3. .get() + infer_expr_c_type перепаковывают NovaOpt_nova_int->NovaOpt_<elem>
+    (NPO, NULL=None) с кастом — через statement-expression;
+ 4. composite-receiver: closure-param re-type на реальный pointer (int64-слот
+    держит биты указателя, тот же 8-байтный ABI) — filter с field-читающим
+    предикатом |w| w.n.
+[]record/[]sum теперь годны через [i]/for-in/.get()+match. Обобщает
+[M-59.1-array-of-mono-tuple]. Value-struct ([]Option/[]tuple) -> новый маркер
+[M-91.1-value-struct-array-elem] (pre-existing лимит, не покрыт erasure).
+
+МЕТОД: design-workflow (3 Explore-агента: read/write/stdlib-usage codegen) дал
+ключевой инсайт про side-channel-архитектуру, перевернувший "multi-day
+typed-storage" в хирургический фикс. Итеративно: probe -> emit C -> inspect ->
+fix, ребилд после каждого шага.
+
+ТЕСТЫ: plan91_fe1/composite_array_map_pos.nv (7), neg/composite_array_edge.nv (3),
+method_turbofish_pos.nv, set_from_iter_pos.nv. Full nova test 0 blast radius.

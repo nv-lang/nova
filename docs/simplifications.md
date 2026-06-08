@@ -34052,3 +34052,32 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
    падал «на fold», но я сначала решил «все vec ломаются». Чистая per-метод изоляция = точный scope.
 4. **f11a flaky-vs-regression:** revert+rebuild — единственный надёжный способ отличить свою регрессию
    от pre-existing гонки. RUN-FAIL (не CC-FAIL) на supervised-тесте = почти всегда гонка, не codegen.
+
+---
+
+## Plan 91 Ф.1 — `[]Option[T]` / `[]tuple`-by-value (value-struct array elements)
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (composite-array side-channel), маркер `[M-91.1-value-struct-array-elem]`.
+- **Что упрощено** — массивы с **value-struct** элементами (`[]Option[int]`, `[]( a, b )`-by-value tuple)
+  не получают field/element-readback. Pointer-элементы (record/sum `Nova_<X>*`) — **полностью** работают
+  (map/filter/index/for-in/get), это закрыто в Ф.1 followups.
+- **Почему** — выбранная архитектура хранения composite-массивов — int64-slot erasure + side-channel
+  `array_element_types`. Она вмещает только **указатель** (8 байт). Value-struct >8 байт (NovaOpt_nova_int =
+  16 байт, tuple — N×8) в int64-слот не лезет. Полный typed-storage для ВСЕХ composite ломает 47 тестов stdlib
+  (HashMap/tuple/JSON держатся на erasure) — доказано и откатано. Это pre-existing лимит (CC-FAIL и на baseline).
+- **Как чинить** — typed-storage **точечно** для value-struct (real `NovaArray_<NovaOpt_x>` / `NovaArray_<tuple>`
+  с NOEQ + nested-NovaOpt), НЕ трогая pointer-путь (узкий случай, без 47-blast-radius) — ИЛИ box value-struct
+  элементы в указатель (heap-alloc на push, deref на read). Отдельный план.
+- **Приоритет** — M (эргономика; в stdlib не используется — там for-in + pattern-match, не `[]Option`/`[]tuple`).
+
+## Plan 91 Ф.1 — уроки (composite-array)
+
+1. **Дизайн «из коробки» может быть неверен — проверяй реализацией+регрессией.** Design-workflow рекомендовал
+   typed-storage как «правильный» фикс; реализация дала 47 регрессий. Полная регрессия + true-baseline diff
+   (stash→rebuild→regress) — единственный надёжный арбитр pre-existing/regression. Числа PASS/FAIL без diff
+   списков обманывают (другие агенты двигают fixtures; baseline-число устаревает).
+2. **Storage и access связаны.** Нельзя менять представление массива, не мигрировав весь access-код. Stdlib
+   читает composite-элементы через `arr[i]`+pattern-match (side-channel cast), а не `.get(i)` — поэтому работал
+   на erasure. Правильный фикс — **завершить существующий механизм**, а не вводить новый.
+3. **int64-слот держит биты указателя.** Re-type closure-параметра composite-receiver'а с `nova_int` на
+   `Nova_<X>*` корректен — тот же 8-байтный ABI, каст восстанавливает указатель.

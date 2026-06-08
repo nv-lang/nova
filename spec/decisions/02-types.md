@@ -4080,6 +4080,19 @@ heap-allocated независимо.
   `NovaArray_<mono_tuple>` typedef + element retrieval cast. Низкий
   приоритет — workaround через explicit Nova_<Pair> record type.
 
+  > **Update 2026-06-08 (Plan 91 Ф.1, `[M-91.1-composite-array-storage]`):**
+  > Для **pointer-элементов** (record/sum `Nova_<Name>*`) этот класс
+  > РЕШЁН выбранным здесь подходом «align infer с body fallback» +
+  > завершением side-channel `array_element_types`. Контракт хранения
+  > composite-массивов: элементы record/sum — boxed-pointer в `nova_int`
+  > слоте (`NovaArray_nova_int*`), а **реальный** elem C-тип проносится
+  > через `array_element_types` (var→`Nova_<X>*`) и проставляется на
+  > результат generic `map`/`filter` (`register_array_result_elem`),
+  > так что `[i]`, `for-in` и `.get()` кастят слот назад к указателю.
+  > **Tuple-by-value** (`[]((T,T))` — value-struct >8 байт) НЕ покрыт
+  > erasure-подходом и остаётся открытым как `[M-91.1-value-struct-array-elem]`
+  > (тот же класс, что и `[]Option[T]`). Подробности — plan-91 Ф.1 closure.
+
 - 🟡 **`[M-59.1-tuple-field-oob-nova-diag]`:** `pair.5` на arity-2 tuple
   leaks к C-level error «no member named 'f5'». Should be Nova-level
   diagnostic в type-checker. Cosmetic — error caught, но not optimal UX.

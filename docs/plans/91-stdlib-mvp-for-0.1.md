@@ -481,19 +481,46 @@ closure-параметра. Фикс: split ClosureLight-ветки в fn-typed-
       таргетно plan101_1 18/0, plan90_1 20/0, plan99 9/0, plan91_8c 6/0
 - [x] Spec/D/Q: новых D/Q не требуется (codegen-correctness fix); Q-doc синхронизирован
 
-**Followup-маркеры (отдельные крупные баги, НЕ упрощения — diagnose-workflow validated):**
+**Followup-маркеры — статус 2026-06-08 (3 из 4 ✅ ЗАКРЫТЫ, release `nova test`):**
 
-- `[M-91.1-composite-array-storage]` (P1) — `map int→record/Option/tuple` CC-FAIL: `type_ref_to_c(TypeRef::Array)`
-  (`emit_c.rs:~4836/4861`) хардкодит `[]U → NovaArray_nova_int*` для non-primitive element (bootstrap-лимит);
-  call-site инференс эмитит `NovaArray_<Composite>*` + `nova_array_get_<Composite>` (never declared) → undeclared.
-  Требует генерации real per-composite `NovaArray_<T>` storage (struct + new/push/get/len) — **фича, не патч.**
-- `[M-91.1-method-turbofish-dispatch]` (P2) — `xs.map[int](...)` CC-FAIL: парсер строит `TurboFish{base:Member}`
-  верно, но codegen дропает type_args через wildcard `_ => emit_expr(func)` (`emit_c.rs:~22044`) → `(xs->map)(...)`.
-  Inference-форма (идиоматичная) работает — чистая эргономика. Parser/AST менять не нужно.
-- `[M-91.1-set-from-iter-iterable-param]` (P2) — `Set.from_iter(it Iterable[T])`: `for x in it` над `Iterable[T]`-
-  параметром эрейзится в `void*` → `cannot resolve iterator type`. Нужна монорфизация `Iterable[T]`-параметра.
-- `[M-91.1-dead-arrayext-mono-path]` (P3 cleanup) — путь `emit_c.rs:~21135-21269` недостижим для `[]T`
-  sentinel-методов (20583 wins+returns first); его `____<c>`-mangling не появляется в C. Удалить или задокументировать.
+- ✅ **`[M-91.1-composite-array-storage]`** (P1) — ЗАКРЫТ через **side-channel completion** (НЕ typed-storage).
+  **Важно: исходный дизайн-вывод был неверен.** Гипотеза «нужен real per-composite `NovaArray_<T>` storage» при
+  реализации сломала **47 тестов**: весь stdlib (HashMap-бакеты `[]Slot[K,V]`, tuple-массивы, JSON `[]JsonValue`)
+  держится на int64-erasure + side-channel `array_element_types` (var→real elem C-type), и смена storage воюет с
+  этой архитектурой. Корректный фикс — **завершить side-channel**: (1) name-alignment `apply_type_subst_to_ref`
+  call-site↔body (убирает `unknown type name NovaArray_Nova_Wrap`); (2) propagation реального элемент-типа через
+  generic map/filter в `array_element_types` (хелпер `register_array_result_elem`); (3) `.get()` + `infer` пере­
+  паковывают `NovaOpt_nova_int`→`NovaOpt_<elem>` (NPO, NULL=None) с кастом; (4) composite-receiver: closure-param
+  re-type на реальный pointer (filter с field-читающим предикатом). `[]record`/`[]sum` теперь полностью годны
+  через `[i]`/`for-in`/`.get()`. **0 blast radius** (доказано diff vs true-baseline). Обобщает `[M-59.1-array-of-mono-tuple]`.
+- ✅ **`[M-91.1-method-turbofish-dispatch]`** (P2) — ЗАКРЫТ. `obj.method[U,...](...)` парсится как
+  `Call{TurboFish{base:Member}}`; добавлен перехват в начале `emit_call`: stash type_args в поле
+  `current_method_turbofish` → recurse на Member base (срабатывает обычный Member-dispatch) → `resolve_method_level_subst`
+  сидирует subst-слоты до arg-inference. Turbofish и inferred сходятся на один mono. Free-fn `TurboFish{base:Ident}` не тронут.
+- ✅ **`[M-91.1-set-from-iter-iterable-param]`** (P2) — ЗАКРЫТ. `Set.from_iter` принимает конкретный `[]T` (зеркало
+  `HashMap.from([](K,V))`); generic-протокол `Iterable[T]` стирался в `void*` на mono-инстансе → for-in не мог
+  восстановить C-тип итератора. Array-параметр итерируется корректно для любого элемента.
+- 🟡 **`[M-91.1-dead-arrayext-mono-path]`** (P3 cleanup) — остаётся; мёртвый путь `emit_c.rs` (sentinel-путь
+  `~20710` wins+returns first). Удалить/задокументировать.
+- 🟡 **NEW `[M-91.1-value-struct-array-elem]`** (P2) — `[]Option[T]`/`[]tuple`-by-value (value-struct элементы,
+  не pointer): int64-slot erasure не вмещает >8 байт, side-channel readback покрывает только pointer-элементы.
+  Pre-existing лимит (CC-FAIL и на baseline, не регрессия). Требует typed-storage **именно** для value-struct
+  (узкий случай, без 47-blast-radius) ИЛИ box-to-pointer элементов.
+
+**Критерии приёмки Ф.1-followups** (2026-06-08, все ✅ через release `nova test`):
+
+- [x] **turbofish** — `v.mymap[int](|x| x*2)`, `v.myfold[int](0, |a,x| a+x)`, `v.mymap[str](|x| str.from(x))`
+      компилируются и проходят; inferred-форма даёт тот же mono. Fixture `plan91_fe1/method_turbofish_pos.nv`.
+- [x] **set-from-iter** — `Set[int].from_iter([1,2,3,2])` dedup + `Set[str].from_iter([...])` PASS. Fixture
+      `plan91_fe1/set_from_iter_pos.nv` + встроенные тесты `std/collections/set.nv`.
+- [x] **composite-array** — `map int→[]record`/`[]sum`, `filter` по composite-receiver, chained map; readback
+      поля через `[i]` / `for-in` / `.get()` (+ match на sum). Positive `plan91_fe1/composite_array_map_pos.nv`
+      (7 тестов), edge/neg `plan91_fe1/neg/composite_array_edge.nv` (empty map / filter→empty / get OOB→None).
+- [x] **no-regress guard** — `map int→str` (scalar) и `map int→int` остаются зелёными в том же fixture.
+- [x] **0 blast radius** — full `nova test`: список фейлов идентичен true-baseline (diff = только флака
+      `protocols/conversion/*` + `concurrency/*` races). typed-storage-попытка (47 новых фейлов) откатана.
+- [x] **Spec/D/Q** — open-questions.md обновлён (3/4 закрыты + value-struct followup); 02-types.md amend
+      (`[M-59.1-array-of-mono-tuple]` обобщён); новых D/Q не требуется (codegen-correctness).
 
 ## Non-scope
 

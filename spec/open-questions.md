@@ -2207,6 +2207,24 @@ v1.0).
 > в [plan-91 Ф.1 closure](../docs/plans/91-stdlib-mvp-for-0.1.md): `[M-91.1-composite-array-storage]` (P1,
 > map int→record/Option — `[]U` хардкод NovaArray_nova_int), `[M-91.1-method-turbofish-dispatch]` (P2,
 > `xs.map[int]` codegen drop), `[M-91.1-set-from-iter-iterable-param]` (P2), `[M-91.1-dead-arrayext-mono-path]` (P3).
+>
+> **Update 2026-06-08 (Ф.1 followups — 3 из 4 ЗАКРЫТЫ):** Новых D/Q не требуется (всё — codegen-correctness).
+> - ✅ `[M-91.1-method-turbofish-dispatch]` — `obj.method[U](...)` (`Call{TurboFish{base:Member}}`) теперь
+>   перехватывается в начале `emit_call`: stash type_args → recurse на Member base → `resolve_method_level_subst`
+>   сидирует слоты. Turbofish и inferred сходятся на один mono. Поле `current_method_turbofish`.
+> - ✅ `[M-91.1-set-from-iter-iterable-param]` — `Set.from_iter` теперь принимает конкретный `[]T` (зеркало
+>   `HashMap.from([](K,V))`); generic-протокол `Iterable[T]` стирался в `void*`, for-in не мог восстановить итератор.
+> - ✅ `[M-91.1-composite-array-storage]` — **ВАЖНО: дизайн в плане был неверен.** «typed-storage» (real
+>   `NovaArray_<Composite>` struct) ломает 47 тестов: весь stdlib (HashMap-бакеты, tuple, JSON) держится на
+>   int64-erasure + side-channel `array_element_types` (var→real elem C-type). Правильный фикс — **завершить
+>   side-channel**, а не менять storage: (1) name-alignment call-site↔body; (2) propagation реального элемент-типа
+>   через generic map/filter в `array_element_types`; (3) `.get()`/infer перепаковывают `NovaOpt_nova_int`→
+>   `NovaOpt_<elem>` (NPO); (4) composite-receiver: closure-param re-type. `[]record`/`[]sum` теперь полностью
+>   годны через index/for-in/get. 0 blast radius (доказано baseline diff). Обобщает `[M-59.1-array-of-mono-tuple]`.
+> - 🟡 `[M-91.1-dead-arrayext-mono-path]` (P3) — остаётся; cleanup мёртвого пути.
+> - 🟡 NEW `[M-91.1-value-struct-array-elem]` (P2) — `[]Option[T]`/`[]tuple`-by-value (value-struct элементы, не
+>   pointer): erasure не вмещает >8 байт, side-channel readback не покрывает. Требует typed-storage именно для
+>   value-struct (узкий случай) ИЛИ box-to-pointer. Pre-existing лимит (падал и на baseline), не регрессия.
 
 **Контекст.** `[]T` — встроенная конструкция языка ([D27](decisions/03-syntax.md#d27)).
 По [D32](decisions/02-types.md#d32) runtime-представление —
