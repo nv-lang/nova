@@ -58,28 +58,54 @@ Scope зафиксирован:
 - `expr as usize` → убрать каст (если тип уже `int`)
 - `expr as isize` → убрать каст
 
-### Ф.1 — Compiler: убрать type alias `usize`/`isize` (~1h)
+### Ф.1 — Compiler: правильные C-типы для `int`/`uint` + убрать `usize`/`isize` (~2h)
 
-- **Ф.1.1** `compiler-codegen/src/codegen/emit_c.rs` ~line 1827:
-  убрать `"usize"` и `"isize"` из списка known primitive types.
-  Добавить E_TYPE_UNKNOWN для `usize`/`isize` с hint:
+#### Ф.1.0 — `nova_int` = `intptr_t`, `nova_uint` = `uintptr_t`
+
+Сейчас `nova_int = int64_t` и `uint → uint64_t` (фиксированные). Нужно:
+
+- **Ф.1.0.1** `compiler-codegen/nova_rt/nova_rt.h`:
+  ```c
+  // БЫЛО
+  typedef int64_t nova_int;
+  // СТАЛО
+  typedef intptr_t nova_int;
   ```
-  error: type `usize` is removed — use `int` (D-133)
+  Добавить:
+  ```c
+  typedef uintptr_t nova_uint;
   ```
 
-- **Ф.1.2** `compiler-codegen/src/codegen/emit_c.rs` ~lines 4597-4598:
-  убрать маппинги `"usize" => "uint64_t"` и `"isize" => "nova_int"`.
+- **Ф.1.0.2** `external_registry.rs`: разделить `int` и `i64` маппинги:
+  ```rust
+  // БЫЛО
+  "int" | "i64" => "nova_int".into(),
+  "uint"        => "uint64_t".into(),
+  // СТАЛО
+  "int"  => "nova_int".into(),    // intptr_t
+  "i64"  => "int64_t".into(),     // фиксированный
+  "uint" => "nova_uint".into(),   // uintptr_t
+  ```
 
-- **Ф.1.3** `compiler-codegen/src/codegen/external_registry.rs` ~lines 344-345:
-  убрать маппинги `"usize" => "uint64_t"` и `"isize" => "nova_int"`.
+- **Ф.1.0.3** `emit_c.rs`: аналогичное разделение в C-type lookup.
 
-- **Ф.1.4** `size_of[T]()` return type: убедиться что возвращает `int`
-  (не `usize`). Найти где `size_of` типизируется в compiler — исправить.
+На 64-bit `intptr_t` = `int64_t` — поведение не меняется. Семантически корректно.
+
+#### Ф.1.1 — Убрать `usize`/`isize`
+
+- **Ф.1.1** `emit_c.rs` ~line 1827: убрать `"usize"` и `"isize"` из known primitive types.
+  E_TYPE_UNKNOWN с hint: `type \`usize\` is removed — use \`int\` (Plan 133)`
+
+- **Ф.1.2** `emit_c.rs` ~lines 4597-4598: убрать маппинги `"usize"`/`"isize"`.
+
+- **Ф.1.3** `external_registry.rs` ~lines 344-345: убрать маппинги `"usize"`/`"isize"`.
+
+- **Ф.1.4** `size_of[T]()` return type → `int` (не `usize`).
 
 - **Ф.1.5** NEG fixture: `let x usize = 5` → error «type `usize` removed, use `int`»
 - **Ф.1.6** NEG fixture: `let x isize = 5` → error «type `isize` removed, use `int`»
 
-**Commit:** `feat(plan133 Ф.1): remove usize/isize type aliases from compiler`
+**Commit:** `feat(plan133 Ф.1): nova_int=intptr_t, nova_uint=uintptr_t; remove usize/isize`
 
 ### Ф.2 — stdlib: `std/runtime/raw_mem.nv` (~30 min)
 
@@ -151,9 +177,12 @@ sed -i 's/ as usize//g; s/: usize/: int/g; s/ usize)/) /g; ...'
 
 ## C-кодогенерация
 
-Внутри compiler при генерации C-кода:
-- `int` (Nova) → `nova_int` (`int64_t`) — без изменений
-- `RawMem.alloc(n int)` → C-call `nova_alloc((size_t)n)` — implicit cast на C стороне
+После Plan 133:
+- `int` (Nova) → `nova_int` = `intptr_t` (адресный, 64-bit на 64-bit таргете)
+- `i64` (Nova) → `int64_t` (фиксированный)
+- `uint` (Nova) → `nova_uint` = `uintptr_t`
+- `u64` (Nova) → `uint64_t` (фиксированный)
+- `RawMem.alloc(n int)` → C-call `nova_alloc((size_t)n)` — `intptr_t`→`size_t` cast внутри
 
 Это безопасно: `n ≥ 0` инвариант вызывающей стороны; Nova не добавляет runtime-проверок
 (та же политика что у Go с `len()`).
