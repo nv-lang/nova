@@ -1,0 +1,36 @@
+module plan91_fe2.try_parse_int_hex_ok
+
+import std.runtime.string.{ParseIntError}
+
+test "hex uppercase" {
+    match "FF".try_parse_int(radix: 16) {
+        Ok(n) => assert(n == 255)
+        Err(_) => assert(false, "expected Ok(255)")
+    }
+    match "1A".try_parse_int(radix: 16) {
+        Ok(n) => assert(n == 26)
+        Err(_) => assert(false, "expected Ok(26)")
+    }
+}
+
+test "hex lowercase" {
+    match "ff".try_parse_int(radix: 16) {
+        Ok(n) => assert(n == 255)
+        Err(_) => assert(false, "expected Ok(255)")
+    }
+    match "1a".try_parse_int(radix: 16) {
+        Ok(n) => assert(n == 26)
+        Err(_) => assert(false, "expected Ok(26)")
+    }
+}
+
+test "hex mixed case and longer" {
+    match "deadbeef".try_parse_int(radix: 16) {
+        Ok(n) => assert(n == 3735928559)
+        Err(_) => assert(false, "expected Ok(3735928559)")
+    }
+    match "10".try_parse_int(radix: 16) {
+        Ok(n) => assert(n == 16)
+        Err(_) => assert(false, "expected Ok(16)")
+    }
+}

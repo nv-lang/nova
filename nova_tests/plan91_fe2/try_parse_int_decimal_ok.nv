@@ -1,0 +1,40 @@
+module plan91_fe2.try_parse_int_decimal_ok
+
+import std.runtime.string.{ParseIntError}
+
+test "decimal positive" {
+    match "42".try_parse_int() {
+        Ok(n) => assert(n == 42)
+        Err(_) => assert(false, "expected Ok(42)")
+    }
+    match "-17".try_parse_int() {
+        Ok(n) => assert(n == -17)
+        Err(_) => assert(false, "expected Ok(-17)")
+    }
+    match "0".try_parse_int() {
+        Ok(n) => assert(n == 0)
+        Err(_) => assert(false, "expected Ok(0)")
+    }
+}
+
+test "decimal i64 max" {
+    match "9223372036854775807".try_parse_int() {
+        Ok(n) => assert(n == 9223372036854775807)
+        Err(_) => assert(false, "expected Ok(i64::MAX)")
+    }
+}
+
+test "decimal explicit radix 10" {
+    match "100".try_parse_int(radix: 10) {
+        Ok(n) => assert(n == 100)
+        Err(_) => assert(false, "expected Ok(100)")
+    }
+    match "-100".try_parse_int(radix: 10) {
+        Ok(n) => assert(n == -100)
+        Err(_) => assert(false, "expected Ok(-100)")
+    }
+    match "1".try_parse_int(radix: 10) {
+        Ok(n) => assert(n == 1)
+        Err(_) => assert(false, "expected Ok(1)")
+    }
+}

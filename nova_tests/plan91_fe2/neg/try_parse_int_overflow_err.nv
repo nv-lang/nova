@@ -1,0 +1,34 @@
+module neg.try_parse_int_overflow_err
+
+import std.runtime.string.{ParseIntError}
+
+fn assert_overflow(s str) {
+    match s.try_parse_int() {
+        Ok(_) => assert(false, "expected Err(Overflow)")
+        Err(e) => match e {
+            Overflow => {}
+            _ => assert(false, "expected Overflow variant")
+        }
+    }
+}
+
+test "obvious overflow" {
+    assert_overflow("99999999999999999999")
+    assert_overflow("99999999999999999999999")
+}
+
+test "i64 max plus one" {
+    // 9223372036854775807 + 1 = overflow
+    assert_overflow("9223372036854775808")
+}
+
+test "negative overflow" {
+    // -9223372036854775809 overflows
+    match "-99999999999999999999".try_parse_int() {
+        Ok(_) => assert(false, "expected Err(Overflow)")
+        Err(e) => match e {
+            Overflow => {}
+            _ => assert(false, "expected Overflow variant")
+        }
+    }
+}

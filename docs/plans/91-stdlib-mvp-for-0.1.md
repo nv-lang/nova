@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 91 — std MVP для релиза 0.1
 
-> **Статус:** 🟢 Ф.0 + Ф.7.1 + Ф.4 ЗАКРЫТЫ 2026-05-27; Ф.2.5 (D177) ЗАКРЫТ 2026-05-28;
-> Ф.3 D52 source fix закрыт попутно в Ф.7.1, **Ф.3 conformance smoke
-> ✅ CLOSED 2026-06-05 — see [Plan 91.13 V2](91.13-json-conformance-smoke.md)**.
-> Остаётся Ф.2-remainders/Ф.1/Ф.5/Ф.6.
+> **Статус:** 🟢 Ф.0+Ф.7.1+Ф.4 ЗАКРЫТЫ 2026-05-27; Ф.2.5 (D177) ЗАКРЫТ 2026-05-28;
+> Ф.3 conformance smoke ✅ CLOSED 2026-06-05 (Plan 91.13 V2);
+> **Ф.2-remainders** (try_parse_int) ✅ CLOSED 2026-06-08;
+> **Ф.5** (conformance MVP) ✅ CLOSED 2026-06-08.
+> Остаётся Ф.1 (collections cross-product) + Ф.6 (getting-started).
 > Branch `plan-91-stdmvp`, worktree `nova-p91`. См. секции
 > «Ф.0 closure», «Ф.7.1 closure», «Ф.4 closure», «Ф.2.5 closure» в конце документа.
 > **Приоритет:** P0 — блокер публичного релиза 0.1
@@ -428,8 +429,8 @@ roadmap'ом, подпланы — историей закрытых фаз.
 | Фаза | Что | Статус |
 |---|---|---|
 | Ф.3 conformance smoke | JSON encode/decode round-trip; HashMap codegen блокеры (forward decl, tuple destructuring) | ✅ **CLOSED 2026-06-05 — see Plan 91.13 V2** |
-| Ф.2 text methods remainders | оставшиеся методы из Группы D Ф.0.2 (если есть) | pending |
+| Ф.2 text methods remainders | `try_parse_int` Result variant + ParseIntError sum; split/join/trim/pad — split external, join/trim/pad deferred | ✅ **CLOSED 2026-06-08** — `try_parse_int(radix=10)` + ParseIntError + ≥10 fixtures (nova_tests/plan91_fe2/) |
 | Ф.1 collections conformance | cross-product тесты Vec/HashMap/Set | pending |
-| Ф.5 | conformance integration в `nova_tests/plan91/` + property tests | pending |
+| Ф.5 | conformance integration в `nova_tests/plan91_fe5/` + property tests | ✅ **CLOSED 2026-06-08** — 5 realistic fixtures: vec/hashmap/hashset/text(CSV)/sort; json closed Plan 91.13 V2 |
 | Ф.6 | getting-started + 5-7 examples; Ф.6.1 decision (in-memory default vs TCP-echo) | pending |
 | Ф.7.2-Ф.7.4 | release checklist, STATUS.md final, docs/plans README | pending |

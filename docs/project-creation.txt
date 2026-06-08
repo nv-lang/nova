@@ -34334,3 +34334,36 @@ LESSONS:
 
 4. Per-scope tail acceptable trade: scopes are finite, not in tight
    loops. Significantly smaller than per-token leak (V1).
+
+=== Plan 91 Ф.2 + Ф.5 CLOSED (2026-06-08) ===
+
+Ф.2 (try_parse_int Result variant):
+- `std/runtime/string.nv`: ParseIntError sum type (Empty/InvalidDigit/Overflow/InvalidRadix)
+  + @try_parse_int(radix int = 10) -> Result[int, ParseIntError] Nova-body
+- Added import Result/Ok/Err from std.prelude.core
+- 6 positive + 4 negative fixtures in nova_tests/plan91_fe2/ — 10/0 PASS
+- Existing @parse_int(radix) Option variant НЕ изменён
+- Codegen fix: emit_c.rs infer_expr_c_type Match — all-unit arms now return nova_unit
+  (not nova_int fallback) — fixes CC-FAIL on nested match with unit arms
+
+Ф.5 (conformance MVP):
+- 5 realistic-use-case fixtures in nova_tests/plan91_fe5/ — 5/0 PASS
+  vec_realistic (filter+sum, map, fold, push/pop)
+  hashmap_realistic (word-frequency counter, lookup, accumulation)
+  hashset_realistic (dedup, contains, grow)
+  text_realistic (CSV split + try_parse_int integration)
+  sort_realistic (sort + binary_search property: all elements found after sort)
+- json conformance — closed earlier via Plan 91.13 V2 (8 fixtures)
+- Each fixture ≥3 test cases — NOT micro-checks
+
+Plan 91 progress: Ф.0+Ф.7.1+Ф.4+Ф.2.5+Ф.3+Ф.2-remainders+Ф.5 closed;
+remaining: Ф.1 (collections cross-product) + Ф.6 (getting-started) + Ф.7 (release-checklist)
+
+Regression: plan125 22/0, plan125_followups 9/0, plan125_1 15/0, plan125_2 15/0,
+plan91_13 8/0 — all green.
+
+Commits:
+- feat(plan91 Ф.2): try_parse_int — Result[int, ParseIntError] variant
+- test(plan91 Ф.2): try_parse_int ≥10 fixtures (6 positive + 4 negative)
+- test(plan91 Ф.5): vec / hashmap / hashset / text / sort realistic
+- docs(plan91 Ф.2+Ф.5): closure — STATUS + plan-doc + simplifications

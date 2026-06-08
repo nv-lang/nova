@@ -1,0 +1,36 @@
+module neg.try_parse_int_invalid_radix_err
+
+import std.runtime.string.{ParseIntError}
+
+fn assert_invalid_radix(radix int) {
+    match "42".try_parse_int(radix: radix) {
+        Ok(_) => assert(false, "expected Err(InvalidRadix)")
+        Err(e) => match e {
+            InvalidRadix => {}
+            _ => assert(false, "expected InvalidRadix variant")
+        }
+    }
+}
+
+test "radix too low" {
+    assert_invalid_radix(0)
+    assert_invalid_radix(1)
+    assert_invalid_radix(-1)
+}
+
+test "radix too high" {
+    assert_invalid_radix(37)
+    assert_invalid_radix(100)
+}
+
+test "radix boundary valid" {
+    // 2 and 36 are valid
+    match "1".try_parse_int(radix: 2) {
+        Ok(n) => assert(n == 1)
+        Err(_) => assert(false, "radix 2 should be valid")
+    }
+    match "z".try_parse_int(radix: 36) {
+        Ok(n) => assert(n == 35)
+        Err(_) => assert(false, "radix 36 should be valid")
+    }
+}
