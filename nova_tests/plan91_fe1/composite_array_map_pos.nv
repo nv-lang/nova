@@ -1,0 +1,101 @@
+// Plan 91 Ф.1 — [M-91.1-composite-array-storage] POSITIVE.
+//
+// Mapping/filtering arrays to COMPOSITE element types (record / sum) and
+// reading the elements back. Previously CC-FAILed with
+// `unknown type name 'NovaArray_Nova_Wrap'` (call-site/body name divergence)
+// and, once that was aligned, field-readback hit `nova_int`.
+//
+// Fix = side-channel completion (NOT typed storage): composite elements stay
+// int64-slot-erased (`NovaArray_nova_int*`, boxed pointer), and the real
+// element C-type is propagated into `array_element_types` so index `[i]`,
+// `for x in`, and `.get(i)` all cast the slot back to the real element.
+//
+// Covered: map int→record, map int→sum, filter over a composite receiver
+// (predicate reads element fields), chained map, and all three read idioms.
+module plan91_fe1.composite_array_map_pos
+
+type Wrap {
+    n i64
+}
+
+type Shape
+    | Circle { r i64 }
+    | Square { s i64 }
+
+fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ {
+        out.push(f(x))
+    }
+    out
+}
+
+fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
+    mut out []T = []T.with_capacity(@len())
+    for x in @ {
+        if pred(x) {
+            out.push(x)
+        }
+    }
+    out
+}
+
+test "map int to record, read field via index" {
+    ro v []int = [1, 2, 3]
+    ro ws = v.my_map(|x| Wrap { n: x * 2 })
+    assert(ws.len() == 3)
+    assert(ws[0].n == 2)
+    assert(ws[2].n == 6)
+}
+
+test "map int to record, read field via for-in" {
+    ro v []int = [1, 2, 3]
+    ro ws = v.my_map(|x| Wrap { n: x })
+    mut sum = 0
+    for w in ws {
+        sum = sum + w.n
+    }
+    assert(sum == 6)
+}
+
+test "map int to record, read via get" {
+    ro v []int = [10, 20]
+    ro ws = v.my_map(|x| Wrap { n: x })
+    match ws.get(0) {
+        Some(w) => assert(w.n == 10)
+        None    => assert(false, "expected Some")
+    }
+    assert(ws.get(0) != None)
+}
+
+test "map int to sum, match on indexed element" {
+    ro v []int = [1, 2]
+    ro shapes = v.my_map(|x| Circle { r: x })
+    assert(shapes.len() == 2)
+    match shapes[1] {
+        Circle { r } => assert(r == 2)
+        Square { s } => assert(false, "expected Circle")
+    }
+}
+
+test "filter over composite receiver reads element field" {
+    ro ws = [Wrap { n: 1 }, Wrap { n: 5 }, Wrap { n: 3 }]
+    ro big = ws.my_filter(|w| w.n >= 3)
+    assert(big.len() == 2)
+    assert(big[0].n == 5)
+    assert(big[1].n == 3)
+}
+
+test "chained map int to int then int to record" {
+    ro v []int = [1, 2, 3]
+    ro ws = v.my_map(|x| x * 10).my_map(|y| Wrap { n: y })
+    assert(ws.len() == 3)
+    assert(ws[2].n == 30)
+}
+
+test "map int to str scalar still works (no-regress guard)" {
+    ro v []int = [1, 2, 3]
+    ro s = v.my_map(|x| str.from(x))
+    assert(s.len() == 3)
+    assert(s.get(0) == Some("1"))
+}

@@ -1,0 +1,54 @@
+// Plan 91 Ф.1 — [M-91.1-composite-array-storage] NEGATIVE / edge behaviour.
+//
+// Edge cases of composite-element arrays: empty map, filter-to-empty,
+// out-of-bounds get → None, all-filtered-out. The element type must still
+// be propagated even when the result is empty (so `.get`/`[i]` stay typed).
+module neg.composite_array_edge
+
+type Wrap {
+    n i64
+}
+
+fn[T] []T @my_map[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ {
+        out.push(f(x))
+    }
+    out
+}
+
+fn[T] []T @my_filter(pred fn(T) -> bool) -> []T {
+    mut out []T = []T.with_capacity(@len())
+    for x in @ {
+        if pred(x) {
+            out.push(x)
+        }
+    }
+    out
+}
+
+test "map empty int array to empty record array" {
+    ro empty []int = []
+    ro ws = empty.my_map(|x| Wrap { n: x })
+    assert(ws.len() == 0)
+    match ws.get(0) {
+        Some(_) => assert(false, "empty has no element 0")
+        None    => assert(true)
+    }
+}
+
+test "filter composite receiver down to empty" {
+    ro ws = [Wrap { n: 1 }, Wrap { n: 2 }]
+    ro none_big = ws.my_filter(|w| w.n > 100)
+    assert(none_big.len() == 0)
+    assert(none_big.get(0) == None)
+}
+
+test "get out of bounds on composite array is None" {
+    ro v []int = [1, 2]
+    ro ws = v.my_map(|x| Wrap { n: x })
+    match ws.get(5) {
+        Some(_) => assert(false, "index 5 is OOB")
+        None    => assert(true)
+    }
+}

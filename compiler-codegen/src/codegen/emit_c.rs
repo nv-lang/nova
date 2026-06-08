@@ -11577,6 +11577,54 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// [M-91.1-composite-array-storage] Plan 91 Ф.1: if a generic array-ext
+    /// method (`fn[T] []T @map[U](...) -> []U`) returns `[]U` and U substitutes
+    /// to a COMPOSITE pointer C-type (record/sum `Nova_<Name>*`, mono'd
+    /// `Nova_X____...*`), register that element type in `array_element_types`
+    /// keyed by the emitted call string `result_str`. The let-binding
+    /// propagation (search `array_element_types.get(&val)`) then copies it onto
+    /// the result variable, so `result[i].field`, `for x in result`, and
+    /// `result.get(i)` cast the int64-erased slot back to the real element
+    /// pointer instead of failing on `nova_int`. Primitive U is left alone
+    /// (handled by the C-type-name path). No-op when U is unresolved/erased.
+    fn register_array_result_elem(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: &[(String, String)],
+        result_str: &str,
+        recv_elem: Option<&str>,
+    ) {
+        if let Some(crate::ast::TypeRef::Array(inner, _)) = &fn_decl.return_type {
+            if let crate::ast::TypeRef::Named { path, generics, .. } = inner.as_ref() {
+                if path.len() == 1 && generics.is_empty() {
+                    let uname = &path[0];
+                    // Resolve the result element C-type. `map`→`[]U`: U comes
+                    // from closure-return inference (e.g. "Nova_Wrap*"). But
+                    // `filter`→`[]T` returns the RECEIVER element type-param,
+                    // which type_subst resolves to the ERASED "nova_int" (the
+                    // receiver C-name carries no composite info). In that case
+                    // prefer the receiver's real element type (recv_elem from
+                    // array_element_types) so filtered `[]Record` keeps casting.
+                    let mut elem = type_subst.iter()
+                        .find(|(n, _)| n == uname)
+                        .map(|(_, c)| c.clone());
+                    if elem.as_deref() == Some("nova_int") {
+                        if let Some(re) = recv_elem {
+                            if re.ends_with('*') && re != "nova_int*" {
+                                elem = Some(re.to_string());
+                            }
+                        }
+                    }
+                    if let Some(c) = elem {
+                        if !Self::is_primitive_array_elem_c(&c) && c.ends_with('*') {
+                            self.array_element_types.insert(result_str.to_string(), c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Plan 48: apply a type param substitution to a TypeRef, returning a C type string.
     /// Used in infer_expr_c_type for resolving the return type of generic fn calls.
     /// Returns None if type cannot be resolved from the subst alone (e.g. non-named types).
@@ -11677,9 +11725,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 Some(format!("NovaRes_{}_{}*", ok_s, err_s))
             }
             crate::ast::TypeRef::Array(inner, _) => {
-                // []T → NovaArray_<inner_c>*
+                // [M-91.1-composite-array-storage] Plan 91 Ф.1: `[]T` element
+                // storage. Primitive elements get distinct packed storage
+                // (NovaArray_nova_str* / _nova_byte* / ...). NON-primitive
+                // elements (record/sum/Option/tuple/array) are stored via the
+                // int64-slot erasure `NovaArray_nova_int*` (boxed pointer) —
+                // the bootstrap limitation already used by `type_ref_to_c`.
+                // Emitting `NovaArray_<inner_c>*` here (e.g. inner_c=`Nova_Wrap*`
+                // → `NovaArray_Nova_Wrap**`) DIVERGED from the body lowering
+                // (which erases to `NovaArray_nova_int*`) and crashed the C
+                // compiler with `unknown type name 'NovaArray_Nova_Wrap'`. This
+                // is the actual marker bug: align the call-site to the body so
+                // both sides agree on the erased name.
                 let inner_c = Self::apply_type_subst_to_ref(inner, subst)?;
-                Some(format!("NovaArray_{}*", inner_c))
+                if Self::is_primitive_array_elem_c(&inner_c) {
+                    Some(format!("NovaArray_{}*", inner_c))
+                } else {
+                    Some("NovaArray_nova_int*".to_string())
+                }
             }
             // Generic user-defined type e.g. Pair[B, A] → Nova_Pair____T1__T2*
             crate::ast::TypeRef::Named { path, generics, .. }
@@ -20157,6 +20220,31 @@ _cp++; \
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                            // [M-91.1-composite-array-storage] Plan 91 Ф.1: when
+                            // the array carries a real composite element type
+                            // (array_element_types — a `Nova_<Name>*` pointer
+                            // boxed into the int64 slot), `nova_array_get_nova_int`
+                            // returns a TAGGED NovaOpt_nova_int. Repackage it into
+                            // the consumer's `NovaOpt_<sani>` (NPO layout: single
+                            // pointer field, NULL = None — register_novaopt_decl
+                            // NPO's pointer elems), casting the value back to the
+                            // real element pointer. Mirrors the index/for-in
+                            // unboxing so `arr.get(i)` field-readback works instead
+                            // of returning a bare `nova_int`.
+                            if elem_ty == "nova_int" {
+                                if let Some(ec) = self.compute_array_elem_type_for_obj(obj) {
+                                    if ec.ends_with('*') && ec != "nova_int*" {
+                                        let sani = Self::sanitize_for_novaopt(&ec);
+                                        self.register_novaopt_decl(&sani, &ec);
+                                        let t = self.fresh_tmp();
+                                        let r = self.fresh_tmp();
+                                        return Ok(format!(
+                                            "({{ NovaOpt_nova_int {t} = nova_array_get_nova_int({}); \
+                                             NovaOpt_{sani} {r}; {r}.value = {t}.tag ? ({ec}){t}.value : ({ec})0; {r}; }})",
+                                            arg_strs.join(", "), t = t, r = r, sani = sani, ec = ec));
+                                    }
+                                }
+                            }
                             return Ok(format!("nova_array_get_{}({})", elem_ty, arg_strs.join(", ")));
                         }
                         "push" => {
@@ -20694,6 +20782,12 @@ _cp++; \
                                         };
                                         self.register_mono_method_instance(
                                             &fn_decl.clone(), type_subst.clone(), &mono_name.clone(), &recv_type_for_reg);
+                                        // [M-91.1-composite-array-storage] real composite
+                                        // element type of the receiver (e.g. filter on
+                                        // []Record) — used to re-type receiver-typevar
+                                        // closure params and to propagate the result elem.
+                                        let recv_elem_real = self.compute_array_elem_type_for_obj(obj);
+                                        let recv_tvar = fn_decl.generics.first().map(|g| g.name.clone());
                                         let mut arg_strs = Vec::new();
                                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
@@ -20702,12 +20796,35 @@ _cp++; \
                                                     type_subst.iter().cloned().collect(),
                                                 );
                                                 // Plan 70 PhaseA2: strict — fn-typed param resolution через mono subst.
-                                                let inner_ptys: Vec<String> = fp.iter()
+                                                let mut inner_ptys: Vec<String> = fp.iter()
                                                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                                                         "fn-typed call param через mono subst",
                                                         &e,
                                                     )))
                                                     .collect::<Result<Vec<_>, _>>()?;
+                                                // [M-91.1-composite-array-storage] For a COMPOSITE
+                                                // receiver (filter on []Record), the receiver
+                                                // typevar T erases to nova_int, so a closure param
+                                                // of type T (`pred: fn(T)->bool`) would type the
+                                                // element as nova_int and field-reads fail. The
+                                                // int64 slot holds the boxed pointer, so re-type
+                                                // T-typed closure params to the real receiver
+                                                // element C-type — the closure recovers the pointer
+                                                // (same 8-byte ABI) and `w.field` works.
+                                                if let Some(ref re) = recv_elem_real {
+                                                    if re.ends_with('*') && re != "nova_int*" {
+                                                        for (i, t) in fp.iter().enumerate() {
+                                                            if let crate::ast::TypeRef::Named { path, generics, .. } = t {
+                                                                if generics.is_empty() && path.len() == 1
+                                                                    && Some(&path[0]) == recv_tvar.as_ref()
+                                                                    && inner_ptys.get(i).map(|s| s == "nova_int").unwrap_or(false)
+                                                                {
+                                                                    inner_ptys[i] = re.clone();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                                 let inner_ret = match return_type.as_ref() {
                                                     Some(t) => self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                                                         "fn-typed call return через mono subst",
@@ -20764,9 +20881,16 @@ _cp++; \
                                             let obj_c = self.emit_expr(obj)?;
                                             let mut full = vec![obj_c];
                                             full.extend(arg_strs);
-                                            return Ok(format!("{}({})", mono_name, full.join(", ")));
+                                            let result_str = format!("{}({})", mono_name, full.join(", "));
+                                            // [M-91.1-composite-array-storage] propagate `[]U`/`[]T`
+                                            // composite element type to the result var (recv_elem
+                                            // covers filter's `[]T` = receiver-element case).
+                                            self.register_array_result_elem(&fn_decl, &type_subst, &result_str, recv_elem_real.as_deref());
+                                            return Ok(result_str);
                                         } else {
-                                            return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                                            let result_str = format!("{}({})", mono_name, arg_strs.join(", "));
+                                            self.register_array_result_elem(&fn_decl, &type_subst, &result_str, None);
+                                            return Ok(result_str);
                                         }
                                     }
                                 }
@@ -21335,7 +21459,13 @@ _cp++; \
                                     arg_strs.push(self.emit_expr(a.expr())?);
                                 }
                                 self.current_type_subst = saved_subst;
-                                return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                                let recv_elem = self.compute_array_elem_type_for_obj(obj);
+                                let result_str = format!("{}({})", mono_name, arg_strs.join(", "));
+                                // [M-91.1-composite-array-storage] propagate `[]U`/`[]T`
+                                // composite element type to the result var (same
+                                // as the live sentinel path).
+                                self.register_array_result_elem(&fn_decl, &type_subst, &result_str, recv_elem.as_deref());
+                                return Ok(result_str);
                             }
                         }
                     }
@@ -27354,6 +27484,20 @@ _cp++; \
     /// `NovaOpt_<sanitized>` / `_NovaTuple<...>` / etc.
     ///
     /// `*` → `_p`, ` ` → `_`, `[` → `_arr_`, `]` → empty.
+    /// [M-91.1-composite-array-storage] True if `elem_c` is a runtime primitive
+    /// array element C-type — array.h pre-instantiates `NovaArray_<it>` with
+    /// real packed storage. Composite (non-primitive) elements fall back to the
+    /// `NovaArray_nova_int*` int64-slot erasure (bootstrap limitation). Used by
+    /// `apply_type_subst_to_ref` to mirror `type_ref_to_c`'s Array lowering so
+    /// the call-site and body agree on the array C-name.
+    fn is_primitive_array_elem_c(elem_c: &str) -> bool {
+        matches!(elem_c,
+            "nova_int" | "nova_char" | "nova_byte" | "nova_bool" | "nova_str"
+            | "nova_f64" | "nova_f32" | "void_p"
+            | "int32_t" | "int16_t" | "int8_t"
+            | "uint32_t" | "uint16_t" | "uint64_t")
+    }
+
     fn sanitize_for_novaopt(c_ty: &str) -> String {
         c_ty.replace('*', "_p")
             .replace(' ', "_")
@@ -29896,7 +30040,23 @@ _cp++; \
                         let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
                             .trim_end_matches('*').trim();
                         match method.as_str() {
-                            "get" | "pop" => return format!("NovaOpt_{}", elem_ty),
+                            // [M-91.1-composite-array-storage] Plan 91 Ф.1: when
+                            // the array carries a real composite element type,
+                            // `.get(i)` is repackaged (in emit) to NovaOpt_<sani>
+                            // (the real element pointer). infer MUST agree so the
+                            // result var / match destructure see the same type.
+                            // (pop emit is not yet repackaged → keep nova_int.)
+                            "get" => {
+                                if elem_ty == "nova_int" {
+                                    if let Some(ec) = self.compute_array_elem_type_for_obj(obj) {
+                                        if ec.ends_with('*') && ec != "nova_int*" {
+                                            return format!("NovaOpt_{}", Self::sanitize_for_novaopt(&ec));
+                                        }
+                                    }
+                                }
+                                return format!("NovaOpt_{}", elem_ty);
+                            }
+                            "pop" => return format!("NovaOpt_{}", elem_ty),
                             // Plan 91.7 (D181): mut методы возвращают `@` (D131
                             // fluent), чтобы поддерживать chain: arr.push(1).push(2).
                             // Type-check: return type = receiver type (NovaArray_T*).
