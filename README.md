@@ -1,6 +1,22 @@
-**English** | [Русский](README.ru.md)
+<div align="center">
+  <img src="img/nova-logo.png" alt="Nova" width="120" />
 
-# Nova
+  <h1>Nova</h1>
+
+  <p><strong>A programming language for the AI era</strong></p>
+
+  <p>
+    <a href="https://nv-lang.github.io">Website</a> |
+    <a href="#getting-started">Getting started</a> |
+    <a href="spec/overview.md">Documentation</a> |
+    <a href="CONTRIBUTING.md">Contributing</a>
+  </p>
+
+  <p><strong>English</strong> | <a href="README.ru.md">Русский</a></p>
+</div>
+
+---
+
 
 ```nova
 fn process_order(o Order) Db Net Time Fail -> Receipt
