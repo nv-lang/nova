@@ -152,6 +152,111 @@ Unbound `Type.@method` не создаёт аналогичных проблем
 
 ---
 
+## Plan 132.1 — Codegen bug: `@name()` self-call when field/method share name
+
+> **Создан:** 2026-06-09. **Статус:** 📋 PLANNED.
+> **Эстимат:** ~0.5 dev-day. **Model:** Sonnet 4.6.
+
+### Проблема
+
+При вызове `@len()` внутри метода того же типа, где одновременно есть **поле** `len` и **метод** `@len()`, компилятор генерирует неверный C-символ `nova_fn__at_len` вместо правильного `Nova_Counter_method_len`.
+
+Конкретный кейс из теста `pos_at_name_disambiguation`:
+```nova
+type Counter { priv mut n int, priv mut len int }
+fn Counter @len() -> int => @len        // @len без () = поле ✓
+fn Counter @call_len() -> int => @len() // @len() = вызов метода ← ПАДАЕТ
+```
+
+Линкер-ошибка: `undefined symbol: nova_fn__at_len`.
+
+### Диагностика
+
+Путь исполнения в `emit_c.rs` при emit `@len()` (= `Method { obj: SelfAccess, name: "len" }`):
+
+1. `infer_expr_c_type(SelfAccess)` → `Nova_Counter*` (из `var_types["nova_self"]`)
+2. Ветка `obj_ty.starts_with("Nova_") && ends_with('*')` → пробует `external_registry.lookup("Counter", "len")` → пусто (пользовательский метод)
+3. Пробует `method_overloads.get(("Counter", "len"))` — **здесь проблема**:
+   - Метод `fn Counter @len()` хранится в AST как `FnDecl { name: "len", receiver: Counter }` (без `@`)
+   - Но `method_overloads` для конкретных (non-generic) non-external методов регистрируется в `emit_fn_decl` с ключом `(recv.type_name, f.name)`
+   - Конкретно: при наличии поля `len` в типе, при регистрации метода происходит **коллизия** — поле занимает слот lookup'а раньше метода, либо метод регистрируется под иным ключом
+4. Все ветки не нашли → финальный fallback: `free_fn_c_name("len")` → `nova_fn__at_len` (потому что внутреннее имя метода с @ → `_at_len`)
+
+### Три пути решения
+
+#### Вариант A — Patch emit_fn_decl: приоритет instance-метода при field-name коллизии
+Когда `method_overloads.entry(("Counter", "len"))` уже содержит field-driven запись,
+**перезаписать** её записью метода. Либо добавить флаг `is_field_collision = true` чтобы
+call-site мог различить.
+
+- **+** Минимальный патч (~10 строк)
+- **−** Хрупко: зависит от порядка регистрации; может поломать обратный случай (обращение к полю через method_overloads)
+- **−** Не устраняет корень — неправильный fallback path
+
+#### Вариант B — Специальный путь для `Method { obj: SelfAccess, name }` (рекомендуется)
+В `emit_call` добавить ветку **до** всех остальных, специфически для `obj = SelfAccess`:
+
+```rust
+if matches!(obj.kind, ExprKind::SelfAccess) {
+    // current_receiver_type содержит тип self внутри метода
+    if let Some(recv_type) = &self.current_receiver_type.borrow().clone() {
+        let key = (recv_type.clone(), method.trim_start_matches('@').to_string());
+        if let Some(sigs) = self.method_overloads.get(&key) {
+            // найти instance-sig и вызвать Nova_{recv}_method_{name}(nova_self, args)
+        }
+    }
+}
+```
+
+- **+** Явный, понятный путь для self-call
+- **+** Не нарушает существующие пути
+- **+** `current_receiver_type` уже хранит правильный тип self в контексте метода
+- **−** Нужно убедиться что `current_receiver_type` установлен корректно в emit_fn_body
+
+#### Вариант C — Patch infer_expr_c_type для SelfAccess + method_overloads lookup
+Когда `infer_expr_c_type(SelfAccess)` возвращает `Nova_Counter*`, убедиться что дальнейший lookup `method_overloads` игнорирует field-записи и находит instance-метод. Добавить в lookup фильтр `sig.is_instance && !sig.is_field`.
+
+- **+** Локальный патч в lookup-логике
+- **−** Требует пометить поля в method_overloads (сейчас поля там не регистрируются напрямую, так что надо разобраться точнее)
+
+### Декомпозиция
+
+#### Ф.0 — Воспроизвести и точно локализовать (~30min)
+- **Ф.0.1** Написать минимальный failing fixture:
+  ```nova
+  type T { priv x int }
+  fn T @x() -> int => @x   // метод x() + поле x
+  fn T @call_x() -> int => @x()  // вызов метода из другого метода — CC-FAIL
+  ```
+- **Ф.0.2** Добавить debug-print в emit_c: что возвращает `infer_expr_c_type(SelfAccess)` и что находит `method_overloads.get(...)` в данном контексте
+- **Ф.0.3** Убедиться в диагнозе: выяснить точно, какой ключ используется при регистрации метода в `method_overloads` и есть ли там запись
+
+#### Ф.1 — Реализовать Вариант B (~1h)
+- **Ф.1.1** В `emit_call` (ветка `ExprKind::Member { obj, method, args }`), добавить **первую** проверку:
+  ```
+  if obj == SelfAccess → lookup method в method_overloads по (current_receiver_type, method_stripped) → emit Nova_{recv}_method_{name}(nova_self, args)
+  ```
+- **Ф.1.2** Убедиться что `current_receiver_type` содержит правильный тип в теле каждого метода (проверить `emit_fn_body` / `emit_fn_decl`)
+- **Ф.1.3** Если `method_overloads` не имеет записи (не-generic non-external method) → fallback на `Nova_{recv_c}_method_{name}` через `var_types["nova_self"]` тип
+
+#### Ф.2 — Тесты (~30min)
+- **Ф.2.1** NEG fixture не нужен (это POS-сценарий)
+- **Ф.2.2** Восстановить полный `pos_at_name_disambiguation.nv` с `@call_len()` и `@double_len()` — теперь должен PASS
+- **Ф.2.3** Убедиться что `pos_field_method_same_name` всё ещё PASS
+- **Ф.2.4** Regression: `nova test plan132/` — все 5 PASS
+
+#### Ф.3 — Обновить план и acceptance criteria (~15min)
+- Обновить A-132.e: добавить что `@name()` из другого метода того же типа корректно
+- Закрыть этот sub-план
+
+### Acceptance criteria для 132.1
+
+- **A-132.1.a** — `@name()` self-call когда поле и метод имеют одно имя → корректный C-символ `Nova_T_method_name`
+- **A-132.1.b** — `pos_at_name_disambiguation.nv` с `@call_len()` и `@double_len()` → PASS
+- **A-132.1.c** — 0 regressions в `nova test plan132/`
+
+---
+
 ## Итог
 
 Plan 132 закрыт полностью (2026-06-09).
