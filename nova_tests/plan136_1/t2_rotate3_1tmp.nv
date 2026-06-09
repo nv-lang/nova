@@ -1,0 +1,25 @@
+// Plan 136.1 F2 T2 (POS): rotate-3 (a,b,c)=(b,c,a) correct.
+// Single 3-cycle needs 1 tmp in cycle-decomp.
+// A2: rotate-left and rotate-right.
+
+module plan136_1.t2_rotate3_1tmp
+
+test "rotate left 1,2,3 -> a=2,b=3,c=1" {
+    mut a = 1
+    mut b = 2
+    mut c = 3
+    (a, b, c) = (b, c, a)
+    assert(a == 2)
+    assert(b == 3)
+    assert(c == 1)
+}
+
+test "rotate right (c,a,b) from 7,8,9 -> a=8,b=9,c=7" {
+    mut a = 7
+    mut b = 8
+    mut c = 9
+    (c, a, b) = (a, b, c)
+    assert(a == 8)
+    assert(b == 9)
+    assert(c == 7)
+}
