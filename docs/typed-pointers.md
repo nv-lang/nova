@@ -285,7 +285,7 @@ fn safe_user_code() {
 | Pointer deref | `*p` | reads/writes pointee |
 | Pointer index | `p[i]` | `≡ *(p + i)` — no bounds check |
 | Address-of | `&value` | produces typed pointer |
-| Unsafe fn call | `ffi_write(...)` | `unsafe fn` or `#unsafe fn` |
+| Unsafe fn call | `ffi_write(...)` | `unsafe fn` body |
 | Order compare | `p < q` | address ordering |
 
 **`ptr[i]` pointer index** (D216 §8, closed `[M-118-ptr-index-unsafe]` 2026-06-09):
