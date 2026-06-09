@@ -13,6 +13,8 @@
   </p>
 
   <p><strong>English</strong> | <a href="README.ru.md">Русский</a></p>
+
+  <img src="img/og-image.png" alt="Nova — A language for the AI era" width="600" />
 </div>
 
 ---
