@@ -34258,3 +34258,10 @@ by `E_UNSAFE_REQUIRED` — same gap as `*ptr` deref which was already gated (D21
 
 **A36 closed:** `ptr[i]` gated (D216 §8). plan118: 37/40 PASS (3 pre-existing
 NPO runtime failures unchanged).
+
+### typed-pointers.md doc update (2026-06-09)
+
+Updated user-facing `docs/typed-pointers.md`:
+- `## unsafe { } block` section: added `p[i]` to code example, table of ops
+  required inside unsafe, and `ptr[i]` explanation paragraph.
+- `E_UNSAFE_REQUIRED` in diagnostics section: now explicitly lists `p[i]`.

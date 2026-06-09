@@ -34976,3 +34976,11 @@ stdlib migration (std/collections/vec_owned.nv):
 
 Tests: t4_ptr_index_in_unsafe_ok (4 PASS) + t4_neg_ptr_index_outside_unsafe (PASS).
 A36 closed. D216 §8 amend. plan118: 37/40 PASS.
+
+=== typed-pointers.md doc update: ptr[i] unsafe block section — 2026-06-09 ===
+
+Updated docs/typed-pointers.md:
+- §unsafe block: added ptr[i] to example, "Ops required inside unsafe{}" table,
+  and dedicated ptr[i] paragraph with migration note.
+- Diagnostics: E_UNSAFE_REQUIRED description now lists ptr[i] explicitly.
+

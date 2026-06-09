@@ -268,12 +268,35 @@ unsafe {
 ```nova
 fn safe_user_code() {
     // ro x = *p                    ← ERROR E_UNSAFE_REQUIRED
+    // ro v = buf[2]                ← ERROR E_UNSAFE_REQUIRED (ptr[i] ≡ *(ptr+i))
 
     unsafe {
-        ro x = *p                    // ✓
+        ro x = *p                    // ✓ pointer deref
+        ro v = buf[2]                // ✓ pointer index (ptr[i] syntax, [M-118-ptr-index-unsafe])
         ro y = malloc(1024)          // ✓ external fn returning pointer
     }
 }
+```
+
+**Ops required inside `unsafe { }`:**
+
+| Op | Example | Notes |
+|---|---|---|
+| Pointer deref | `*p` | reads/writes pointee |
+| Pointer index | `p[i]` | `≡ *(p + i)` — no bounds check |
+| Address-of | `&value` | produces typed pointer |
+| Unsafe fn call | `ffi_write(...)` | `unsafe fn` or `#unsafe fn` |
+| Order compare | `p < q` | address ordering |
+
+**`ptr[i]` pointer index** (D216 §8, closed `[M-118-ptr-index-unsafe]` 2026-06-09):
+`ptr[i]` is syntactic sugar for `*(ptr + i)` — raw pointer arithmetic с offset,
+no bounds check, pointer must be valid. Requires `unsafe { }` or `unsafe fn` body.
+
+```nova
+unsafe fn read_at(p *u8, i int) -> u8 { p[i] }   // ✓ inside unsafe fn
+
+// Outside unsafe — compile error:
+// ro v = buf[0]                 ← E_UNSAFE_REQUIRED
 ```
 
 **Implementation:** sugar над built-in `unsafe_handler` effect handler.
@@ -401,7 +424,7 @@ mut p mut * u8 = undefined       // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 
 ### Errors
 
-- `E_UNSAFE_REQUIRED` — pointer op outside unsafe context
+- `E_UNSAFE_REQUIRED` — pointer op outside unsafe context (`*p`, `p[i]`, `&v`, order-compare)
 - `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn без unsafe wrap
 - `E_UNSAFE_T_READ_REQUIRES_WRAP` — `unsafe T` value read без `unsafe { }` block (V2 §V2.3)
 - `E_UNSAFE_ARG_REQUIRES_WRAP` — `unsafe T` argument passed без unsafe wrap (V2 §V2.3b)
