@@ -34154,3 +34154,19 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
 **Side effect:** Field and method with the same name on a type are now legal (no ambiguity: `@name` = field, `@name()` = method call).
 
 **Error code:** `E_BOUND_METHOD_REMOVED` with hints for migration.
+
+## [2026-06-09] Plan 132.1 — Fix @name() self-call codegen bug (field/method same name)
+
+**Bug:** When a type T has both field `x` and method `@x()`, calling `@x()` from
+another method of T generated wrong C symbol `nova_fn__at_len` (link error) instead
+of correct `Nova_T_method_x(nova_self, ...)`.
+
+**Root cause:** `emit_call` for `Method { obj: SelfAccess, name }` had no dedicated
+path — fell through to free-function fallback which mangled the name incorrectly.
+
+**Fix (Variant B):** Added early SelfAccess guard in `emit_call`: when obj=SelfAccess,
+look up `(recv_type, method_stripped)` in `method_overloads` (or fallback to
+`Nova_{recv}_method_{name}`), always passing `nova_self` as first arg.
+
+**Impact:** @name() self-calls from within same-type methods now work correctly.
+Field access (@name without parens) completely unaffected — different code path.

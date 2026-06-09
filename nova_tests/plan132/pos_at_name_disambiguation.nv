@@ -1,34 +1,39 @@
-// Plan 132 Ф.3.3 (POS): @name vs @name() disambiguation in method bodies.
-// `@len` (no parens) inside a method body = field access.
-// `@len()` (with parens) inside a method body = method call on self.
-// Both forms are unambiguous and work correctly.
-//
-// Note: @name() self-call within a type method uses the same codegen path as
-// direct field access; this test verifies the disambiguation semantics
-// using the @len() -> int method from Buf (same type as pos_field_method_same_name).
+// Plan 132 Ф.3.3 + Plan 132.1 (POS): @name vs @name() disambiguation in method bodies.
+// @name (no parens) inside a method body = field access.
+// @name() (with parens) inside a method body = method call on self.
+// Both forms are unambiguous and work correctly even when field and method share a name.
+// Plan 132.1 fix: @name() self-call now generates correct Nova_T_method_name(nova_self, ...).
 
 module plan132.pos_at_name_disambiguation
 
-type Stack { priv mut top int, priv mut len int }
+type Counter { priv mut n int, priv mut len int }
 
-fn Stack.new() -> Self => { top: 0, len: 0 }
+fn Counter.new() -> Self => { n: 0, len: 0 }
 
-// @len() method: returns the field value via @len (no parens = field access)
-fn Stack @len() -> int => @len
+// @len() method: returns field value via @len (no parens = field access)
+fn Counter @len() -> int => @len
 
-// @push() increments both top value and len field
-fn Stack @push(v int) { @top = @top + v; @len = @len + 1 }
+// @inc(): increments both n and len fields using @field (no parens = field)
+fn Counter @inc() { @n = @n + 1; @len = @len + 1 }
 
-// @peek() reads top field via @top (field access, no parens)
-fn Stack @peek() -> int => @top
+// @call_len(): calls method @len() using @len() (WITH parens = method call)
+// This was the bug site: generated nova_fn__at_len instead of Nova_Counter_method_len
+fn Counter @call_len() -> int => @len()
 
-test "@name (no parens) = field access in method body" {
-    mut s = Stack.new()
-    s.push(10)
-    s.push(20)
-    s.push(30)
-    // @len field is 3, method @len() returns @len field = 3
-    assert(s.len() == 3)
-    // @top field is 60 (10+20+30)
-    assert(s.peek() == 60)
+// @double_len(): uses BOTH @len (field) and @len() (method) in the same body
+fn Counter @double_len() -> int {
+    ro field_val = @len          // @len (no parens) = field access
+    ro method_val = @len()       // @len() (with parens) = method call
+    assert(field_val == method_val)
+    field_val + method_val
+}
+
+test "@name (no parens) = field; @name() (parens) = method call" {
+    mut c = Counter.new()
+    c.inc()
+    c.inc()
+    c.inc()
+    assert(c.len() == 3)         // method call from outside
+    assert(c.call_len() == 3)    // method call via @len() inside another method
+    assert(c.double_len() == 6)  // both @len (field) and @len() (method) in same body
 }
