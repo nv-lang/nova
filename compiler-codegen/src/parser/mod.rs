@@ -2425,11 +2425,14 @@ impl Parser {
                 self.bump();
                 ReceiverKind::Static
             };
-            // Receiver — instantiation context, bounds запрещены.
-            let recv_generics = Self::generic_params_to_type_refs(generics_first_decl)?;
+            // Receiver: bounds in carrier position (e.g. `Vec[T Printable]`)
+            // are extracted into carrier_bounds for future enforcement.
+            let (recv_generics, carrier_bounds) =
+                Self::generic_params_to_type_refs(generics_first_decl)?;
             receiver = Some(Receiver {
                 type_name: first_ident.clone(),
                 generics: recv_generics,
+                carrier_bounds,
                 kind,
                 mutable: receiver_mut,
                 consume: receiver_consume,
@@ -5382,28 +5385,27 @@ impl Parser {
     /// Plan 15 (D72): convert `Vec<GenericParam>` → `Vec<TypeRef>` для
     /// receiver / instantiation context. Все params обязаны быть простыми
     /// именами без bound (bound допустим только в declaration).
-    fn generic_params_to_type_refs(params: Vec<GenericParam>) -> Result<Vec<TypeRef>, Diagnostic> {
+    /// Convert receiver carrier params to `(type_refs, carrier_bounds)`.
+    /// Bounds in carrier position (e.g. `Vec[T Printable]`) are allowed and
+    /// stored in `carrier_bounds` for future enforcement. Defaults remain
+    /// an error (not meaningful in receiver context).
+    fn generic_params_to_type_refs(
+        params: Vec<GenericParam>,
+    ) -> Result<(Vec<TypeRef>, Vec<GenericParam>), Diagnostic> {
         let mut out = Vec::with_capacity(params.len());
+        let mut carrier_bounds: Vec<GenericParam> = Vec::new();
         for p in params {
-            if let Some(b) = p.bounds.first() {
-                return Err(Diagnostic::new(
-                    format!(
-                        "generic bound `{}` не разрешён в receiver/instantiation context — \
-                         bounds допустимы только в declaration `[T Bound]`",
-                        match b {
-                            TypeRef::Named { path, .. } => path.join("."),
-                            _ => "<complex>".to_string(),
-                        }
-                    ),
-                    b.span(),
-                ));
-            }
-            if let Some(d) = p.default {
+            if let Some(d) = &p.default {
                 return Err(Diagnostic::new(
                     "generic default не разрешён в receiver/instantiation context — \
                      defaults допустимы только в declaration `[T = Default]` (D88)".to_string(),
                     d.span(),
                 ));
+            }
+            if !p.bounds.is_empty() || p.consume_bound {
+                // Bound in carrier: `fn Vec[T Printable] @method()`.
+                // Store for informational / future enforcement; don't error.
+                carrier_bounds.push(p.clone());
             }
             out.push(TypeRef::Named {
                 path: vec![p.name],
@@ -5411,7 +5413,7 @@ impl Parser {
                 span: p.span,
             });
         }
-        Ok(out)
+        Ok((out, carrier_bounds))
     }
 
     /// D38 turbofish disambiguation в expression-position. Caller — на токене

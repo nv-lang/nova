@@ -18418,6 +18418,7 @@ mod primitive_mut_method_tests {
         Receiver {
             type_name: type_name.to_string(),
             generics: Vec::new(),
+            carrier_bounds: Vec::new(),
             kind,
             mutable,
             consume: false,
@@ -18965,6 +18966,7 @@ mod named_tuple_ctor_infer_tests {
             receiver: Some(Receiver {
                 type_name: "P".to_string(),
                 generics: vec![],
+                carrier_bounds: vec![],
                 kind: ReceiverKind::Instance,
                 mutable: false,
                 consume: false,

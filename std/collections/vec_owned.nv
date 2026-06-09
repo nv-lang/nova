@@ -466,10 +466,7 @@ export fn Vec[T] @clone() -> Vec[T] =>
 /// Append a human-readable representation of `self` to `sb`.
 ///
 /// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
-/// `str.from(element)`. For the format to produce meaningful output the
-/// element type must have a `str.from` overload; for opaque/generic element
-/// types without an overload the element representation will degrade to an
-/// integer (the raw C value).
+/// `elem.fmt(sb)` directly (no intermediate string allocation).
 ///
 /// # Examples
 ///
@@ -479,13 +476,13 @@ export fn Vec[T] @clone() -> Vec[T] =>
 /// v.fmt(sb)
 /// assert(sb.as_str() == "Vec[1, 2, 3]")
 /// ```
-export fn Vec[T] @fmt(mut sb StringBuilder) -> () {
+export fn Vec[T Printable] @fmt(mut sb StringBuilder) -> () {
     sb.append("Vec[")
     mut i = 0
     while i < @len {
         if i > 0 { sb.append(", ") }
         ro elem = unsafe { *(@data + i) }
-        sb.append(str.from(elem))
+        elem.fmt(sb)
         i = i + 1
     }
     sb.append("]")
@@ -493,15 +490,14 @@ export fn Vec[T] @fmt(mut sb StringBuilder) -> () {
 
 /// Append a debug representation of `self` to `sb`.
 ///
-/// Identical to `@fmt` in format; provided so that `${v:?}` interp-string
-/// syntax works for `Vec[T]`.
-export fn Vec[T] @debug_fmt(mut sb StringBuilder) -> () {
+/// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
+export fn Vec[T DebugPrintable] @debug_fmt(mut sb StringBuilder) -> () {
     sb.append("Vec[")
     mut i = 0
     while i < @len {
         if i > 0 { sb.append(", ") }
         ro elem = unsafe { *(@data + i) }
-        sb.append(str.from(elem))
+        elem.debug_fmt(sb)
         i = i + 1
     }
     sb.append("]")

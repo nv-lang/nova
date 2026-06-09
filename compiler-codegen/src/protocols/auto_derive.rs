@@ -487,6 +487,7 @@ fn make_synth_method(
         receiver: Some(Receiver {
             type_name: type_name.to_string(),
             generics: vec![],
+            carrier_bounds: vec![],
             kind: ReceiverKind::Instance,
             mutable: false,
             consume: false,
@@ -1600,6 +1601,7 @@ mod tests {
             receiver: Some(Receiver {
                 type_name: type_name.to_string(),
                 generics: vec![],
+                carrier_bounds: vec![],
                 kind: ReceiverKind::Instance,
                 mutable: false,
                 consume: false,

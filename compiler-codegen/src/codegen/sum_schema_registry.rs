@@ -1397,6 +1397,7 @@ mod tests {
             receiver: Some(Receiver {
                 type_name: "Option".to_string(),
                 generics: vec![],
+                carrier_bounds: vec![],
                 kind: ReceiverKind::Instance,
                 mutable: false,
                 consume: false,
@@ -1457,6 +1458,7 @@ mod tests {
             receiver: Some(Receiver {
                 type_name: "Result".to_string(),
                 generics: vec![],
+                carrier_bounds: vec![],
                 kind: ReceiverKind::Instance,
                 mutable: false,
                 consume: false,
@@ -1499,6 +1501,7 @@ mod tests {
             receiver: Some(Receiver {
                 type_name: recv_type.to_string(),
                 generics: vec![],
+                carrier_bounds: vec![],
                 kind: ReceiverKind::Instance,
                 mutable: false, consume: false,
                 span: Span::default(),
@@ -1567,6 +1570,7 @@ mod tests {
             receiver: Some(Receiver {
                 type_name: "Result".to_string(),
                 generics: vec![],
+                carrier_bounds: vec![],
                 kind: ReceiverKind::Instance,
                 mutable: false, consume: false,
                 span: Span::default(),
@@ -1823,7 +1827,9 @@ mod tests {
             name: "render".to_string(),
             receiver: Some(Receiver {
                 type_name: "Error".to_string(),
-                generics: vec![], kind: ReceiverKind::Instance,
+                generics: vec![],
+                carrier_bounds: vec![],
+                kind: ReceiverKind::Instance,
                 mutable: false, consume: false, span: Span::default(),
             }),
             ..Default::default()

@@ -587,6 +587,9 @@ pub enum SyncClass {
 pub struct Receiver {
     pub type_name: String,
     pub generics: Vec<TypeRef>,    // Repo[T] — generics типа
+    /// Bounds declared in carrier brackets: `fn Vec[T Printable] @m()`.
+    /// Stored for future enforcement; currently informational only.
+    pub carrier_bounds: Vec<GenericParam>,
     pub kind: ReceiverKind,
     pub mutable: bool,             // `fn Type mut @method`
     /// Plan 73 (D131): `fn Type consume @method` — consuming receiver.
