@@ -22,10 +22,10 @@
 
 module plan91_12.v3_user_generic_newtype_ok
 
-type MyHandle[T](ptr)
-type MultiParam[T, U](ptr)
+type MyHandle[T](*())
+type MultiParam[T, U](*())
 
-external fn p115_int_to_ptr(value int) -> ptr
+external fn p115_int_to_ptr(value int) -> *()
 
 test "generic newtype — construct + .0 для int" {
     ro raw = p115_int_to_ptr(42)
@@ -48,15 +48,15 @@ test "generic newtype — distinct T'ы share same C ABI (nova_ptr)" {
     assert(hi.0 == hs.0)  // same underlying ptr value
 }
 
-test "multi-param generic newtype — `type X[T, U](ptr)`" {
+test "multi-param generic newtype — `type X[T, U](*())`" {
     ro raw = p115_int_to_ptr(7)
     ro h = MultiParam[int, str](raw)
     assert(h.0 == raw)
 }
 
-test "generic newtype + (0 as ptr)" {
-    ro h = MyHandle[int]((0 as ptr))
-    assert(h.0 == (0 as ptr))
+test "generic newtype + (0 as *())" {
+    ro h = MyHandle[int]((0 as *()))
+    assert(h.0 == (0 as *()))
 }
 
 test "multiple instances — independent values" {

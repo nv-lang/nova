@@ -9,11 +9,11 @@
 
 module plan115.t3_handle_pattern_ok
 
-type SqHandle(ptr)
-type PngHandle(ptr)
-type CurlHandle(ptr)
+type SqHandle(*())
+type PngHandle(*())
+type CurlHandle(*())
 
-external fn p115_int_to_ptr(value int) -> ptr
+external fn p115_int_to_ptr(value int) -> *()
 
 test "tuple newtype — constructor + .0 destructure" {
     ro raw = p115_int_to_ptr(42)
@@ -22,17 +22,17 @@ test "tuple newtype — constructor + .0 destructure" {
     assert(back == raw)
 }
 
-test "distinct handle types — same underlying ptr, different Nova type" {
+test "distinct handle types — same underlying *(), different Nova type" {
     ro raw = p115_int_to_ptr(100)
     ro sq = SqHandle(raw)
     ro png = PngHandle(raw)
-    // Inner ptr is the same, but the wrapping types are nominally distinct.
+    // Inner *() is the same, but the wrapping types are nominally distinct.
     assert(sq.0 == png.0)
 }
 
-test "handle construction from (0 as ptr)" {
-    ro h = SqHandle((0 as ptr))
-    assert(h.0 == (0 as ptr))
+test "handle construction from (0 as *())" {
+    ro h = SqHandle((0 as *()))
+    assert(h.0 == (0 as *()))
 }
 
 test "multiple handles — independent values" {

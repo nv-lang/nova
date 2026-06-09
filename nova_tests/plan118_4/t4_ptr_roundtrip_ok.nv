@@ -19,7 +19,7 @@ test "write then read recovers value" {
 test "RawMem.fill then read returns filled byte" {
     mut buf []u8 = [0, 0, 0, 0]
     unsafe {
-        RawMem.fill(buf.as_mut_ptr(), 0x55 as u8, 4 as usize)
+        RawMem.fill(buf.as_mut_ptr(), 0x55 as u8, 4)
         ro v = buf.as_ptr().read()
         assert(v == (0x55 as u8))
     }

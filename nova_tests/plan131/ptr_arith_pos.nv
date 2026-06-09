@@ -8,7 +8,7 @@ import std.runtime.raw_mem.{RawMem}
 
 fn main() -> () {
     unsafe {
-        ro p = RawMem.alloc(3 * size_of[int]() as usize) as *mut int
+        ro p = RawMem.alloc(3 * size_of[int]()) as *mut int
         *(p + 0) = 10
         *(p + 1) = 20
         *(p + 2) = 30

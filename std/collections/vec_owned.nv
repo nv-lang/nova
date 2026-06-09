@@ -515,7 +515,7 @@ export fn Vec[T] @debug_fmt(mut sb StringBuilder) -> () {
 // Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
 fn alloc_buf[T](n int) -> *mut T {
     unsafe {
-        RawMem.alloc((n as usize) * (size_of[T]() as usize)) as *mut T
+        RawMem.alloc(n * size_of[T]()) as *mut T
     }
 }
 
@@ -524,7 +524,7 @@ fn alloc_buf[T](n int) -> *mut T {
 // value; `len`/`cap` guard every access.
 fn null_buf[T]() -> *mut T {
     unsafe {
-        RawMem.alloc(size_of[T]() as usize) as *mut T
+        RawMem.alloc(size_of[T]()) as *mut T
     }
 }
 

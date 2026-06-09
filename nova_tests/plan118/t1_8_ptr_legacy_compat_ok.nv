@@ -12,7 +12,7 @@
 module plan118.t1_8_ptr_legacy_compat_ok
 
 // Plan 115 V1 opaque handle pattern — continues работать.
-type LegacyHandle(ptr)
+type LegacyHandle(*())
 
 // Plan 118 typed handle — recommended canonical.
 type TypedBuffer {

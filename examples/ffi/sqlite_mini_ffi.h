@@ -150,44 +150,46 @@ static inline int mini_sqlite_parse_and_exec(mini_sqlite_db_t* db, nova_str sql)
 
 /* ─── Plan 115 Ф.3 FFI surface — nova_fn_<name> convention. ─── */
 
-/* Forward-declare mono'd tuple typedefs (matching Nova codegen). */
-#ifndef NOVA_TUPLE_TYPEDEF__NovaTuple_2_8_nova_ptr_8_nova_int
-#define NOVA_TUPLE_TYPEDEF__NovaTuple_2_8_nova_ptr_8_nova_int
-typedef struct _NovaTuple_2_8_nova_ptr_8_nova_int {
-    nova_ptr f0;
+/* Forward-declare mono'd tuple typedefs (matching Nova codegen).
+ * Plan 134: nova_ptr removed — use void* directly.
+ * Mangled name updated: nova_ptr (8 chars) → void_p (6 chars). */
+#ifndef NOVA_TUPLE_TYPEDEF__NovaTuple_2_6_void_p_8_nova_int
+#define NOVA_TUPLE_TYPEDEF__NovaTuple_2_6_void_p_8_nova_int
+typedef struct _NovaTuple_2_6_void_p_8_nova_int {
+    void* f0;
     nova_int f1;
-} _NovaTuple_2_8_nova_ptr_8_nova_int;
+} _NovaTuple_2_6_void_p_8_nova_int;
 #endif
 
 /* Open: returns (db_handle, rc). Path argument ignored (in-memory). */
-static inline _NovaTuple_2_8_nova_ptr_8_nova_int
+static inline _NovaTuple_2_6_void_p_8_nova_int
 nova_fn_mini_sqlite_open(nova_str path) {
     (void)path;  /* in-memory, path ignored */
-    _NovaTuple_2_8_nova_ptr_8_nova_int r;
+    _NovaTuple_2_6_void_p_8_nova_int r;
     mini_sqlite_db_t* db = mini_sqlite_alloc_db();
-    r.f0 = (nova_ptr)db;
+    r.f0 = (void*)db;
     r.f1 = db ? MINI_SQLITE_OK : MINI_SQLITE_ERR;
     return r;
 }
 
 /* Execute SQL (INSERT/DELETE/CREATE). Returns rc. */
-static inline nova_int nova_fn_mini_sqlite_exec(nova_ptr db, nova_str sql) {
+static inline nova_int nova_fn_mini_sqlite_exec(void* db, nova_str sql) {
     return (nova_int)mini_sqlite_parse_and_exec((mini_sqlite_db_t*)db, sql);
 }
 
 /* Prepare SELECT statement. Returns (stmt_handle, rc). */
-static inline _NovaTuple_2_8_nova_ptr_8_nova_int
-nova_fn_mini_sqlite_prepare(nova_ptr db, nova_str sql) {
-    _NovaTuple_2_8_nova_ptr_8_nova_int r;
+static inline _NovaTuple_2_6_void_p_8_nova_int
+nova_fn_mini_sqlite_prepare(void* db, nova_str sql) {
+    _NovaTuple_2_6_void_p_8_nova_int r;
     (void)sql;  /* parser stub — only SELECT supported */
     mini_sqlite_stmt_t* stmt = mini_sqlite_alloc_stmt((mini_sqlite_db_t*)db);
-    r.f0 = (nova_ptr)stmt;
+    r.f0 = (void*)stmt;
     r.f1 = stmt ? MINI_SQLITE_OK : MINI_SQLITE_ERR;
     return r;
 }
 
 /* Step: advance cursor. Returns SQLITE_ROW if more rows, SQLITE_DONE otherwise. */
-static inline nova_int nova_fn_mini_sqlite_step(nova_ptr stmt) {
+static inline nova_int nova_fn_mini_sqlite_step(void* stmt) {
     mini_sqlite_stmt_t* s = (mini_sqlite_stmt_t*)stmt;
     if (!s) return MINI_SQLITE_ERR;
     while (s->cursor < MINI_SQLITE_MAX_KV) {
@@ -202,21 +204,21 @@ static inline nova_int nova_fn_mini_sqlite_step(nova_ptr stmt) {
 }
 
 /* Get column int value of current row. */
-static inline nova_int nova_fn_mini_sqlite_column_int(nova_ptr stmt, nova_int col) {
+static inline nova_int nova_fn_mini_sqlite_column_int(void* stmt, nova_int col) {
     (void)col;  /* mini-sqlite only has 1 column (value) */
     mini_sqlite_stmt_t* s = (mini_sqlite_stmt_t*)stmt;
     return s ? (nova_int)s->last_value : (nova_int)0;
 }
 
 /* Finalize statement. */
-static inline nova_int nova_fn_mini_sqlite_finalize(nova_ptr stmt) {
+static inline nova_int nova_fn_mini_sqlite_finalize(void* stmt) {
     mini_sqlite_stmt_t* s = (mini_sqlite_stmt_t*)stmt;
     if (s) { s->db = NULL; }
     return MINI_SQLITE_OK;
 }
 
 /* Close DB. */
-static inline nova_int nova_fn_mini_sqlite_close(nova_ptr db) {
+static inline nova_int nova_fn_mini_sqlite_close(void* db) {
     mini_sqlite_db_t* d = (mini_sqlite_db_t*)db;
     if (d) { d->opened = 0; }
     return MINI_SQLITE_OK;

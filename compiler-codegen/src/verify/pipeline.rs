@@ -2608,7 +2608,8 @@ fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
                 "i16"          => SortRef::BitVec { width: 16, signed: true },
                 "u32"          => SortRef::BitVec { width: 32, signed: false },
                 "i32"          => SortRef::BitVec { width: 32, signed: true },
-                "u64" | "i32u" | "usize" => SortRef::BitVec { width: 64, signed: false },
+                // Plan 133: usize removed; uint = uintptr_t (64-bit on 64-bit targets).
+                "u64" | "i32u" | "uint" => SortRef::BitVec { width: 64, signed: false },
                 "bool" => SortRef::Bool,
                 "str"  => SortRef::Str,
                 "f32"  => SortRef::F32,
@@ -2888,7 +2889,8 @@ pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
             "i16"          => SortRef::BitVec { width: 16, signed: true },
             "u32"          => SortRef::BitVec { width: 32, signed: false },
             "i32"          => SortRef::BitVec { width: 32, signed: true },
-            "u64" | "usize"            => SortRef::BitVec { width: 64, signed: false },
+            // Plan 133: usize removed; uint = uintptr_t (64-bit on 64-bit targets).
+            "u64" | "uint"             => SortRef::BitVec { width: 64, signed: false },
             "bool" => SortRef::Bool,
             "str"  => SortRef::Str,
             "f32"  => SortRef::F32,

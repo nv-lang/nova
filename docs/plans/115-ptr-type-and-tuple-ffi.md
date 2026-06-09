@@ -189,6 +189,12 @@ Nova V2 будет на уровне Rust/Zig (typed wrappers с zero overhead).
 
 ### 1. `ptr` built-in type
 
+> **NOTE: `ptr` type superseded by Plan 134 (2026-06-09).** Use `*()` (pointer
+> to unit = `void*` in C). `ptr` in type position now produces compile error
+> `E_TYPE_REMOVED_PTR_USE_UNIT_PTR`. Migration: `ptr` → `*()`; `type X(ptr)` →
+> `type X(*)()`. The `*()` syntax fits naturally into the `*T` pointer family
+> (Plan 118 D216) without a compiler special-case.
+
 ```nova
 // Built-in primitive type
 // - Size: usize (8 bytes на 64-bit, 4 на 32-bit; bootstrap = 64-bit only)

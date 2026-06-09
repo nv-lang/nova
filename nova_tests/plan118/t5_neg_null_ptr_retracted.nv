@@ -11,7 +11,7 @@
 
 module plan118.t5_neg_null_ptr_retracted
 
-test "null ptr literal hard-retracted (Plan 118 D214 amend)" {
-    ro p ptr = null ptr
+test "null *() literal hard-retracted (Plan 118 D214 amend)" {
+    ro p *() = null *()
     assert(1 == 1)
 }

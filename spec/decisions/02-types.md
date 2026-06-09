@@ -6938,6 +6938,20 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 
 > **Plan 115** (foundational FFI). **Status:** ✅ V1 closed 2026-06-01.
 >
+> ⚠️ **SUPERSEDED by Plan 134 (2026-06-09)** — `ptr` built-in primitive type
+> **removed**. Replace all occurrences with `*()` (pointer to unit type =
+> `void*` in C). `*()` is the idiomatic expression of an opaque pointer in
+> the `*T` type system (Plan 118 D216) — no compiler special-case required.
+> Migration: `ptr` → `*()`; `0 as ptr` → `0 as *()`; `type X(ptr)` →
+> `type X(*)()`. Compiler emits `E_TYPE_REMOVED_PTR_USE_UNIT_PTR` on `ptr`
+> in type position.
+>
+> **Pointer types after Plan 134:**
+> - `*()` — opaque pointer (pointer to unit type = `void*` in C)
+> - `*T` — typed pointer to T (read-only by default, D216)
+> - `*mut T` — mutable typed pointer
+> - `*unsafe T` — possibly-null/dangling pointer
+>
 > ⚠️ **AMENDED by Plan 118 (D216)** — `ptr` redefined as
 > `type ptr Option[*unsafe ()]` newtype над nullable unsafe void pointer
 > (D216 §11). ABI preserved (single `void*`); semantics formalized as
@@ -6989,9 +7003,9 @@ ro back_to_ptr = (0x1000 as ptr)             // explicit cast int → ptr
 
 #### Семантика
 
-- **Size.** `usize` (8 bytes на 64-bit, 4 bytes на 32-bit). Bootstrap
+- **Size.** `int` / `intptr_t` (8 bytes на 64-bit). Bootstrap
   таргетит только 64-bit платформы (Linux x86_64, Windows x64, macOS
-  ARM64/x86_64).
+  ARM64/x86_64). Note: `usize` удалён (Plan 133) — pointer-sized = `int`.
 - **ABI.** `void*` в C. Передаётся в registers по платформенному ABI;
   identity при passing через external fn boundary.
 - **Opaque.** Nova не имеет `*p` deref-операции (никогда не было), нет
@@ -7529,7 +7543,7 @@ Pattern match `Option[*T]` — safe outside unsafe (inspection, не deref).
 unsafe {
     ro p1 = some_ptr + 1            // *unsafe T (degraded)
     ro p2 = some_ptr + offset
-    ro diff = p2 - p1               // isize (element count)
+    ro diff = p2 - p1               // int (element count, signed)
     unsafe { *p1 }                   // *unsafe T deref требует ещё unsafe layer
     ro lt = p1 < p2                  // order-compare allowed inside unsafe
 }
@@ -7541,7 +7555,7 @@ ro same = p == q                     // OK outside unsafe — identity check
 ```
 
 - `+`/`-`/`+=`/`-=` only в `unsafe { }` block
-- Result `*unsafe T` для `ptr ± int`; `isize` для `ptr - ptr`
+- Result `*unsafe T` для `ptr ± int`; `int` для `ptr - ptr` (signed element count)
 - Units: sizeof(T)-scaled (C/Rust convention)
 - `*`/`/`/etc. — `E_PTR_ARITHMETIC_INVALID` (не математически осмыслено)
 - **Order compare** `<`, `<=`, `>`, `>=` — require unsafe context —
@@ -7615,8 +7629,8 @@ A22 ✅, A23 ✅.
   14 fixtures migrated к `(0 as ptr)`. Closes `[M-115-null-ptr-to-option-after-npo]`.
 
 ```nova
-external fn malloc(sz usize) -> Option[*u8]
-// → C: uint8_t* malloc(size_t);
+external fn malloc(sz int) -> Option[*u8]
+// → C: uint8_t* malloc(size_t); (codegen casts intptr_t→size_t)
 
 unsafe {
     match malloc(1024) {
@@ -7646,12 +7660,12 @@ unsafe {
 - Effect не propagates up (encapsulates per fn — canonical Rust pattern)
 
 **Inside unsafe разрешено:** `&value`, `*p`, `p.field`, `p.method()`,
-`p.field = v`, pointer arith, `usize as *T`, `<`/`>` compare, `&record.field`,
+`p.field = v`, pointer arith, `int as *T`, `<`/`>` compare, `&record.field`,
 calling `unsafe fn`, newtype construction wrapping pointer.
 
 **Outside unsafe safe:** type declarations `*T`, `external fn` declarations,
 field read `acc.next` (where `next *T`), pattern match `Option[*T]`,
-`==`/`!=` compare, newtype declarations, `p as usize` (hash hazard warning).
+`==`/`!=` compare, newtype declarations, `p as int` (hash hazard warning).
 
 ### §9. `unsafe fn` keyword syntax (Plan 118.1.7 amend, 2026-06-09)
 
@@ -7751,8 +7765,8 @@ Closes followup `[M-118.1-typed-pointer-instance-methods]` для primitive
 
 | From | To | Safe? |
 |---|---|---|
-| `*T` | `usize` | ✓ (см. hash hazard) |
-| `usize` | `*T` | unsafe |
+| `*T` | `int` | ✓ (см. hash hazard) |
+| `int` | `*T` | unsafe |
 | `*ro T` | `*mut T` | unsafe |
 | `*mut T` | `*ro T` / `*T` | ✓ |
 | `*T` | `*unsafe T` | ✓ |
@@ -7762,8 +7776,9 @@ Closes followup `[M-118.1-typed-pointer-instance-methods]` для primitive
 | `*fn → fn` | unsafe | wraps |
 | `*T` | `bool` / `f64` / etc. | ❌ `E_PTR_CAST_INVALID_TARGET` |
 
-**Hash hazard:** `p as usize` для GC-tracked objects + HashMap key →
-`W_PTR_AS_USIZE_GC_HASH_HAZARD` (address can change via GC compaction).
+**Hash hazard:** `p as int` для GC-tracked objects + HashMap key →
+`W_PTR_AS_INT_GC_HASH_HAZARD` (address can change via GC compaction).
+Note: `usize`/`isize` removed (Plan 133) — use `int` for pointer-as-integer casts.
 
 ### §13. Comparison
 
@@ -7967,7 +7982,7 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 
 **Warnings:**
 - `W_UNSAFE_GC_TRIGGER` — GC trigger внутри unsafe с pointer in scope
-- `W_PTR_AS_USIZE_GC_HASH_HAZARD` — `p as usize` как HashMap key
+- `W_PTR_AS_INT_GC_HASH_HAZARD` — `p as int` как HashMap key
 - `W_OPTION_DOUBLE_NESTED` — `Option[Option[*T]]` NPO fallback
 
 ### Mainstream comparison
@@ -8077,7 +8092,7 @@ ro p mut * unsafe T // binding `p`: ro; type: Mut(Pointer(Unsafe(T)))
 
 Канонический пример FFI out-param:
 ```nova
-external fn os_read(fd int, buf mut * unsafe u8, n usize) -> int
+external fn os_read(fd int, buf mut * unsafe u8, n int) -> int
 //                     binding mut  ptr (uninit) byte
 // buf: mut-pointer; pointee initially uninit; OS fills, returns count.
 ```
@@ -8940,6 +8955,11 @@ ALL closed 2026-06-02:
 
 ## D226. Signed indexing convention — `int` для `len` / `capacity` / index
 
+> **D226 RETIRED (Plan 133, 2026-06-09):** `usize` alias удалён. `int` = address-sized
+> signed integer на 64-bit Nova target. Используй `int` для размеров, индексов, счётчиков байт.
+> `usize`/`isize` больше не являются допустимыми Nova-типами — компилятор выдаёт ошибку
+> с подсказкой «use `int`».
+
 > **Принято 2026-06-03.** Формализует существующую практику: extracts из
 > [D130](#d130) Q3 (2026-05-19, «Indexing → Keep `int`, no change»),
 > поднимает в самостоятельный D-блок.
@@ -8976,38 +8996,33 @@ ALL closed 2026-06-02:
    `xs.len() - 1` даёт `-1`, что валидно как loop-guard вход
    (`for j in 0..-1` — пустой range).
 
-5. **`uint`/`u64`/`usize` — только для bit-twiddling, FFI и pointer
-   bridge.** Hash-значения, битовые маски, raw memory addresses,
-   sized-integer аргументы C-API — это `u64`/`uint`. **`usize`** —
-   ABI-bridge тип в FFI signatures (`external fn malloc(sz usize)`,
-   matches C `size_t`) и в pointer-integer casts (`p as usize`,
-   `usize as *T`) для opaque handle storage / hash-key extraction
-   ([D214](#d214) §casts, [D216](#d216) §casts). На bootstrap
-   `usize`/`isize` — implicit aliases `u64`/`i64` (см. spec-drift
-   followup `[M-D226-isize-usize-alias-D-block]`). Cross в `int`
-   через `as` (saturation, D54).
+5. **`uint`/`u64` — только для bit-twiddling, FFI и pointer bridge.** Hash-значения,
+   битовые маски, raw memory addresses, sized-integer аргументы C-API — это `u64`/`uint`.
+   **`usize`/`isize` удалены (Plan 133, 2026-06-09)** — используй `int` для address-sized
+   операций и FFI size parameters. FFI-сигнатуры теперь пишут `n int`, C-codegen кастит
+   `intptr_t`→`size_t` внутри.
 
 6. **Future-arch path.** При миграции Nova на multi-arch (32-bit / WASM)
-   `int` становится platform-pointer-width signed (= Rust `isize`),
+   `int` = platform-pointer-width signed (= `intptr_t`),
    `i64` остаётся fixed-64. Index API не меняется — auto-scale без
    breaking change. См. [D129](#d129) migration note.
 
 7. **Pointer interactions.** Pointer arithmetic и pointer-integer
    bridges имеют свою numeric matrix, ортогональную stdlib index-API
    (Rule 1). Все signed для offset/diff (в духе Rule 4 «разности
-   естественно signed»), `usize` только на ABI-границе.
+   естественно signed»). `usize`/`isize` удалены — FFI-ABI через `int`.
 
    | Операция | Тип | Где |
    |---|---|---|
    | `coll.len()` / `coll[i]` | `int` | stdlib index-API (Rule 1) |
    | `arr[a..b]` slice bounds | `int` | sub-slice views ([D144](#d144)) |
    | `ptr + N` / `*T + N` offset | `int` | pointer arith ([D216](#d216) §6) — scaled by `sizeof(T)` |
-   | `ptr - ptr` / `*T - *T` diff | `isize` | element count ([D216](#d216) §6) — signed |
-   | `external fn(..., sz usize)` | `usize` | FFI ABI ([D214](#d214), [D216](#d216) FFI) — matches C `size_t` |
-   | `p as usize` / `usize as *T` | `usize` | explicit address cast — opaque handle, hash key, GC-hazard ([D214](#d214) §casts) |
+   | `ptr - ptr` / `*T - *T` diff | `int` | element count ([D216](#d216) §6) — signed |
+   | `external fn(..., sz int)` | `int` | FFI ABI ([D214](#d214), [D216](#d216) FFI) — codegen casts `intptr_t`→`size_t` |
+   | `p as int` / `int as *T` | `int` | explicit address cast — opaque handle, hash key, GC-hazard ([D214](#d214) §casts) |
    | `ptr as u64` / `i64 as ptr` | `u64`/`i64` | opaque handle storage ([D214](#d214) §casts) |
 
-   **Правило:** stdlib API никогда не использует `usize`/`u64` для
+   **Правило:** stdlib API никогда не использует `uint`/`u64` для
    index/len/capacity (Rule 1); FFI / pointer arithmetic / cast bridges
    — единственные легальные exemptions.
 
@@ -9043,10 +9058,10 @@ ALL closed 2026-06-02:
 3. **Разности и diff-логика.** `a.len() - b.len()` валидно signed;
    sorting comparators, position deltas, scroll offsets — все естественны.
 
-4. **Mixed arithmetic без ceremony.** Никакого `(x as usize) + i`,
-   `(len as isize) - 1`. AI-first killer-use ([D10](../01-philosophy.md#d10)):
+4. **Mixed arithmetic без ceremony.** Никакого `(x as int) + i`,
+   `(len as int) - 1`. AI-first killer-use ([D10](../01-philosophy.md#d10)):
    LLM пишет signed-индексацию правильно чаще, чем балансирует
-   `usize`/`i64` касты.
+   `uint`/`i64` касты.
 
 5. **Bit-width аргумент мёртв на 64-bit.** Signed-`int` (= `i64`) даёт
    `2⁶³ − 1` ≈ 9.2 × 10¹⁸ элементов — никакая коллекция в адресном
@@ -9091,8 +9106,8 @@ ALL closed 2026-06-02:
 - [D109](../08-runtime.md#d109) — встроенные методы примитивов (включая `int`).
 - [D141](../08-runtime.md#d141) — `byte_at`/bulk slice API использует `int` индексы.
 - [D144](#d144) — sub-slice views `arr[a..b]` — границы `int`.
-- [D214](#d214) — `ptr` opaque type + `usize` ABI bridge + cast rules.
-- [D216](#d216) — `*T` typed pointer family + arithmetic (`int` offset, `isize` diff) + FFI.
+- [D214](#d214) — `ptr` opaque type + cast rules (usize removed, use int for ABI bridge).
+- [D216](#d216) — `*T` typed pointer family + arithmetic (`int` offset + diff) + FFI.
 - [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) — `int` overflow → panic (soundness).
 
 ### Эволюция
@@ -9107,6 +9122,9 @@ ALL closed 2026-06-02:
   `usize` ABI bridge + pointer-integer casts; §7 «Pointer interactions»
   с numeric matrix для всех ptr ops; cross-refs на [D214](#d214) +
   [D216](#d216). Закрывает gap research'а §3 ([docs/research/08](../../docs/research/08-int-width-and-literal-inference.md)).
+- **2026-06-09** (Plan 133): `usize`/`isize` удалены из Nova. `int` = address-sized
+  signed integer (`intptr_t` на 64-bit). FFI-сигнатуры используют `int`, codegen кастит
+  `intptr_t`→`size_t` внутри. D226 RETIRED в части `usize`/`isize` alias-semantics.
 
 ### Acceptance criteria
 
@@ -9121,15 +9139,18 @@ ALL closed 2026-06-02:
   при literal-args (без Z3) — followup `[M-D226-negative-literal-lint]`
 - [ ] `_experimental/` capacity APIs (`Queue.with_capacity`) — sweep после
   promotion в stable.
-- [ ] `isize` / `usize` explicit D-блок aliasing для `i64`/`u64` —
-  followup `[M-D226-isize-usize-alias-D-block]` (spec-drift cleanup,
-  не в scope D226 amend).
+- [x] `isize` / `usize` удалены (Plan 133, 2026-06-09) — closes
+  `[M-D226-isize-usize-alias-D-block]`.
 
 ### Amend 2026-06-03 — `usize` / `isize` formal alias D-block
 
+> **RETIRED (Plan 133, 2026-06-09):** `usize` и `isize` удалены как Nova-типы.
+> Используй `int` для размеров, индексов и address-sized операций. `uint` остаётся
+> для беззнаковых битовых операций и FFI. Раздел оставлен как исторический контекст.
+
 Closes followup `[M-D226-isize-usize-alias-D-block]`.
 
-**Definition:**
+**Definition (HISTORICAL — типы удалены в Plan 133):**
 
 | Alias | Bootstrap (64-bit) | Future arch |
 |---|---|---|
@@ -9138,17 +9159,19 @@ Closes followup `[M-D226-isize-usize-alias-D-block]`.
 
 **Use cases:**
 
-1. **FFI ABI bridge** (primary use) — C `size_t` / `ptrdiff_t`:
+1. **FFI ABI bridge** (primary use) — C `size_t` / `ptrdiff_t` (HISTORICAL, до Plan 133):
    ```nova
-   external fn malloc(sz usize) -> Option[*u8]            // C: size_t
-   external fn read(fd int, buf *mut u8, n usize) -> isize  // C: size_t, ssize_t
+   // БЫЛО (до Plan 133):
+   external fn malloc(sz usize) -> Option[*u8]             // C: size_t
+   external fn read(fd int, buf *mut u8, n usize) -> isize // C: size_t, ssize_t
+   // СТАЛО (Plan 133):
+   external fn malloc(sz int) -> Option[*u8]              // C: size_t — codegen casts intptr_t→size_t
+   external fn read(fd int, buf *mut u8, n int) -> int    // C: size_t, ssize_t
    ```
 
-2. **Pointer differences** (D216 §6) — `ptr - ptr → isize`, signed semantically.
+2. **Pointer differences** (D216 §6) — `ptr - ptr → int`, signed semantically.
 
-3. **Platform-pointer-width** future arch — currently bootstrap 64-bit only,
-   но aliases reserve the semantic meaning for future 32-bit ARM/RISC-V
-   targets where `usize = u32`.
+3. **Platform-pointer-width** — `int` = `intptr_t` на текущих 64-bit targets (Plan 133).
 
 **НЕ для:**
 
@@ -9157,14 +9180,13 @@ Closes followup `[M-D226-isize-usize-alias-D-block]`.
 - General-purpose unsigned arithmetic — используют `uint` (= `u64` alias)
   per Plan 70.5.
 
-**Casts:**
+**Casts (после Plan 133):**
 
-- `int as usize` / `usize as int` — explicit (D226 §3, no implicit coercion).
-- `usize as ptr` / `ptr as usize` — explicit, allowed для opaque handles +
+- `ptr as int` / `int as *T` — explicit, allowed для opaque handles +
   address-as-integer (D216 §6, D214).
 
 **Spec drift fix:** `isize`/`usize` использовались в D216/D214 examples и
-Plan 118 FFI без formal D-block aliasing. This amend formalizes.
+Plan 118 FFI без formal D-block aliasing. Plan 133 удаляет эти типы целиком.
 
 **Implementation:** `compiler-codegen/src/codegen/emit_c.rs` + `types/mod.rs`
 type_ref_to_c + TyCat::Int + BUILTIN_TYPE_NAMES registry updated 2026-06-03.
@@ -9499,9 +9521,10 @@ behavior; V3 §V3.1 does NOT fire on loop-var-introduced rebindings.
 **Value types per V3 (user-confirmed 2026-06-04):**
 
 1. **Primitives** (full list):
-   - Numeric: `int` (alias `isize`), `uint` (alias `usize`), `i8`/`i16`/`i32`/`i64`,
+   - Numeric: `int` (address-sized, = i64 on 64-bit; use for sizes, indices, counts), `uint`, `i8`/`i16`/`i32`/`i64`,
      `u8`/`u16`/`u32`/`u64`, `f32`, `f64`
    - Other: `bool`, `char`, `byte` (alias `u8`), `str`, `ptr`
+   - Note: `usize`/`isize` **removed** (Plan 133, 2026-06-09) — use `int`.
 2. **Value records**: `type X value { ... }` (Plan 124.8 D228)
 3. **Named tuples**: `type Point(x f64, y f64)` (Plan 120 D215)
 4. **Anonymous tuples**: `(A, B, C)` literal type syntax
@@ -9521,9 +9544,9 @@ fn is_value_type_for_v3(ty: &TypeRef, type_decls: &TypeDeclRegistry) -> bool {
     match ty {
         Named { path, .. } if path.len() == 1 => {
             let name = path[0].as_str();
-            // Primitives (per D226 amend: int/uint aliases for isize/usize)
+            // Primitives (Plan 133: isize/usize removed; int = address-sized)
             if matches!(name,
-                "int" | "uint" | "isize" | "usize"
+                "int" | "uint"
                 | "i8" | "i16" | "i32" | "i64"
                 | "u8" | "u16" | "u32" | "u64"
                 | "f32" | "f64"
@@ -9549,11 +9572,11 @@ fn is_value_type_for_v3(ty: &TypeRef, type_decls: &TypeDeclRegistry) -> bool {
 }
 ```
 
-**Note re int/uint aliases (clarification cross-ref D129/D130/D226 amend, 2026-06-04):**
+**Note re int (Plan 133 amend, 2026-06-09):**
 
-`int` / `isize` / `i64` все aliases для bootstrap 64-bit signed integer
-(per D129); same для `uint` / `usize` / `u64`. V3 storage-class check
-распознаёт все формы identically.
+`int` = address-sized signed integer (= `i64` on 64-bit); `isize` и `usize` удалены.
+`uint` = address-sized unsigned (= `u64` on 64-bit). V3 storage-class check
+распознаёт `int`/`i64` как одно и то же value type.
 
 **Conflict detection** — at check_decl_type (compiler-codegen/src/types/mod.rs):
 ```rust

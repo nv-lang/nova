@@ -9,7 +9,7 @@ import std.runtime.raw_mem.{RawMem}
 fn main() -> () {
     unsafe {
         // Allocate 16 bytes outside GC tracking.
-        mut p = RawMem.alloc_uncollectable(16 as usize)
+        mut p = RawMem.alloc_uncollectable(16)
         // Verify zero-init: first byte should be 0.
         ro first = *p
         assert(first as int == 0)

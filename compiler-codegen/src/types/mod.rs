@@ -472,9 +472,9 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     check_fluent_return(module, &mut errors);
 
     // Plan 128 Ф.3: `fn <primitive> mut @method(...)` — E_PRIMITIVE_MUT_METHOD.
-    // Primitive types (int/str/bool/f64/... + ptr/nova_ptr/()) — immutable
-    // by design (Plan 91 §«Nova-first»: scalars copy-by-value, no in-place
-    // mutation through receiver). Parser permits the form syntactically but
+    // Primitive types (int/str/bool/f64/...) — immutable by design
+    // (Plan 91 §«Nova-first»: scalars copy-by-value, no in-place
+    // mutation through receiver). Plan 134: ptr removed; *() = TypeRef::Pointer. Parser permits the form syntactically but
     // codegen silently no-ops the mutation — caller sees no change. This
     // pass rejects such declarations at type-check time so the misleading
     // pattern fails fast.
@@ -1682,13 +1682,14 @@ fn is_value_type_for_v3(
     match ty {
         Named { path, .. } if path.len() == 1 => {
             let name = path[0].as_str();
-            // Primitives per V3.1 + D226 amend (int/uint aliases).
+            // Primitives per V3.1 + Plan 133 (int=intptr_t, uint=uintptr_t; usize/isize removed).
+            // Plan 134: `ptr` removed; *() = TypeRef::Pointer(Unit) is handled below.
             if matches!(name,
-                "int" | "uint" | "isize" | "usize"
+                "int" | "uint"
                 | "i8" | "i16" | "i32" | "i64"
                 | "u8" | "u16" | "u32" | "u64"
                 | "f32" | "f64"
-                | "bool" | "char" | "byte" | "str" | "ptr"
+                | "bool" | "char" | "byte" | "str"
             ) {
                 return true;
             }
@@ -5720,14 +5721,13 @@ impl<'a> TypeCheckCtx<'a> {
                     Compat::Bad { found: "()".to_string() }
                 };
             }
-            // Plan 115 D214: null ptr literal — only assignable к ptr или
-            // tuple newtype wrapping ptr (handle types). Mismatch flagged as
-            // ptr-not-X.
+            // Plan 134: null ptr literal — only assignable к *() or pointer types
+            // (TyCat::Ptr). Mismatch flagged as *()-not-X.
             ExprKind::NullPtrLit => {
                 return if exp_cat == TyCat::Ptr {
                     Compat::Ok
                 } else {
-                    Compat::Bad { found: "ptr".to_string() }
+                    Compat::Bad { found: "*()".to_string() }
                 };
             }
             _ => {}
@@ -5775,8 +5775,11 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(prim_ref("str", expr.span))
             }
             ExprKind::CharLit(_) => Some(prim_ref("char", expr.span)),
-            // Plan 115 D214: null ptr literal → Ty::Ptr.
-            ExprKind::NullPtrLit => Some(prim_ref("ptr", expr.span)),
+            // Plan 134: null ptr literal → *() = TypeRef::Pointer(TypeRef::Unit).
+            ExprKind::NullPtrLit => Some(TypeRef::Pointer(
+                Box::new(TypeRef::Unit(expr.span)),
+                expr.span,
+            )),
             // D176 (Plan 108): SelfAccess → look up "@" in scope (injected by f1_check_fn).
             ExprKind::SelfAccess => scope.get("@").cloned(),
             // Plan 125.1 (Ф.2): `throw expr` — divergent expression. По спеке
@@ -6022,12 +6025,14 @@ impl<'a> TypeCheckCtx<'a> {
                 match name.as_str() {
                     "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
                     | "u32" | "u64" | "uint"
-                    // Plan 118.1: usize/isize platform-pointer-width aliases
-                    | "usize" | "isize" => TyCat::Int,
+                    // Plan 133: usize/isize removed — int/uint are address-sized.
+                    => TyCat::Int,
                     "f32" | "f64" => TyCat::Float,
                     "bool" => TyCat::Bool,
                     "str" => TyCat::Str,
                     "char" => TyCat::Char,
+                    // Plan 134: `ptr` removed — but keep as Ptr for legacy compat
+                    // during transition; produces error in codegen type_ref_to_c.
                     "ptr" => TyCat::Ptr,
                     "any" | "never" | "Self" => TyCat::Other,
                     other => match self.types.get(other) {
@@ -6176,23 +6181,28 @@ fn is_intrinsic_namespace(name: &str) -> bool {
     )
 }
 
-/// Ф.1: TypeRef примитива по имени.
-/// Plan 115 D214: syntactic ptr-detection для arithmetic-ban check в
+/// Ф.1: syntactic ptr-detection для arithmetic-ban check в
 /// BoundCtx::walk_expr (где нет full type-inference). Покрывает literal
-/// (`null ptr`), explicit cast (`x as ptr`), scope-binding с typed ptr.
+/// (`null ptr`), explicit cast (`x as *()` or `x as ptr` legacy),
+/// scope-binding с typed ptr.
+/// Plan 134: `*()` = TypeRef::Pointer(TypeRef::Unit); legacy "ptr" Named still
+/// matched for transition period until all call-sites migrated.
 /// Recursion в Ident lookup безопасна — scope содержит resolved TypeRef'ы.
 fn expr_is_ptr_typed(e: &Expr, scope: &HashMap<String, TypeRef>) -> bool {
+    fn typeref_is_ptr(ty: &TypeRef) -> bool {
+        match ty {
+            // Plan 134: *() = TypeRef::Pointer(TypeRef::Unit) = void*.
+            TypeRef::Pointer(inner, _) => matches!(inner.as_ref(), TypeRef::Unit(_)),
+            // Legacy "ptr" named type (transition period).
+            TypeRef::Named { path, .. } => path.last().map_or(false, |s| s == "ptr"),
+            _ => false,
+        }
+    }
     match &e.kind {
         ExprKind::NullPtrLit => true,
-        ExprKind::As(_, ty) => matches!(ty,
-            TypeRef::Named { path, .. }
-                if path.last().map_or(false, |s| s == "ptr")),
-        ExprKind::Ident(name) => matches!(scope.get(name),
-            Some(TypeRef::Named { path, .. })
-                if path.last().map_or(false, |s| s == "ptr")),
-        ExprKind::SelfAccess => matches!(scope.get("@"),
-            Some(TypeRef::Named { path, .. })
-                if path.last().map_or(false, |s| s == "ptr")),
+        ExprKind::As(_, ty) => typeref_is_ptr(ty),
+        ExprKind::Ident(name) => scope.get(name).map_or(false, typeref_is_ptr),
+        ExprKind::SelfAccess => scope.get("@").map_or(false, typeref_is_ptr),
         _ => false,
     }
 }
@@ -10020,7 +10030,8 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
             Some("bool") => Ty::Bool,
             // Plan 76: bottom-тип `never` — строчный встроенный примитив.
             Some("never") => Ty::Never,
-            // Plan 115 D214: `ptr` — opaque pointer primitive type.
+            // Plan 134: `ptr` removed; kept for legacy compat during transition.
+            // Actual pointer type is TypeRef::Pointer(TypeRef::Unit) → handled below.
             Some("ptr") => Ty::Ptr,
             Some(name) => Ty::Named(name.to_string()),
             None => Ty::Any,
@@ -12379,23 +12390,27 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
 /// Nova primitive (leaf) type — one that cannot carry mut-receiver methods.
 ///
 /// Coverage mirrors the prelude primitive set: integer family
-/// (`int`, signed `i8..i64`, unsigned `u8..u64`, `isize`, `usize`,
-/// `uint`), floats (`f32`, `f64`), `bool`, `char`, `str`, raw pointers
-/// (`ptr` Plan 115 D214, `nova_ptr` Plan 115 D214), and unit (`()`,
-/// which appears as the canonical name `Unit`).
+/// (`int`, signed `i8..i64`, unsigned `u8..u64`, `uint`), floats (`f32`,
+/// `f64`), `bool`, `char`, `str`, and unit (`()`, which appears as the
+/// canonical name `Unit`).
+///
+/// Plan 134: `ptr` removed from primitives — use `*()` (TypeRef::Pointer(Unit)).
+/// `*()` receivers are TypeRef::Pointer, not Named, so check_primitive_mut_method
+/// handles them via the TypeRef::Pointer arm, not via this leaf check.
 ///
 /// Used by `check_primitive_mut_method` to flag declarations like
 /// `fn str mut @hack(...)` — the parser permits the form, but codegen
 /// silently no-ops the mutation; receiver-as-value primitives have no
 /// in-place semantics by D215/D226 design.
 fn is_primitive_leaf(name: &str) -> bool {
+    // Plan 133: usize/isize removed from primitives.
+    // Plan 134: ptr/nova_ptr removed — *() is TypeRef::Pointer, not Named leaf.
     matches!(name,
         "int" | "uint"
-        | "i8" | "i16" | "i32" | "i64" | "isize"
-        | "u8" | "u16" | "u32" | "u64" | "usize"
+        | "i8" | "i16" | "i32" | "i64"
+        | "u8" | "u16" | "u32" | "u64"
         | "f32" | "f64"
         | "bool" | "char" | "str"
-        | "ptr" | "nova_ptr"
         | "Unit"
     )
 }
@@ -18536,13 +18551,14 @@ mod primitive_mut_method_tests {
     fn is_primitive_leaf_covers_full_primitive_set() {
         // Sweep the entire primitive family — any gap here = silent escape
         // hatch for the mut-method footgun.
+        // Plan 133: usize/isize removed from primitives.
+        // Plan 134: "ptr" and "nova_ptr" removed from primitive leaf set.
         for ty in &[
             "int", "uint",
-            "i8", "i16", "i32", "i64", "isize",
-            "u8", "u16", "u32", "u64", "usize",
+            "i8", "i16", "i32", "i64",
+            "u8", "u16", "u32", "u64",
             "f32", "f64",
             "bool", "char", "str",
-            "ptr", "nova_ptr",
             "Unit",
         ] {
             assert!(is_primitive_leaf(ty),

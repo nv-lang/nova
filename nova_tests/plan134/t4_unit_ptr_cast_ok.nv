@@ -1,0 +1,41 @@
+// Plan 134 POS — casts between `*()` and integer types (int / u64 / i64).
+//
+// Verifies the full cast matrix: int ↔ *(), u64 ↔ *(), i64 ↔ *().
+// Mirrors plan115 t1_ptr_casts_ok but framed as a Plan 134 regression guard
+// confirming `*()` works now that the `ptr` builtin is removed.
+
+module plan134.t4_unit_ptr_cast_ok
+
+test "int to *() and back" {
+    ro original int = 42
+    ro p *() = original as *()
+    ro back int = p as int
+    assert(back == original)
+}
+
+test "u64 to *() and back" {
+    ro original u64 = 0x1234ABCD
+    ro p *() = original as *()
+    ro back u64 = p as u64
+    assert(back == original)
+}
+
+test "i64 to *() and back" {
+    ro original i64 = 0x5678
+    ro p *() = original as *()
+    ro back i64 = p as i64
+    assert(back == original)
+}
+
+test "(0 as *()) cast to int equals zero" {
+    ro p *() = (0 as *())
+    ro n int = p as int
+    assert(n == 0)
+}
+
+test "large u64 address round-trip preserves bits" {
+    ro addr u64 = 0xDEADBEEF00000000
+    ro p *() = addr as *()
+    ro back u64 = p as u64
+    assert(back == addr)
+}

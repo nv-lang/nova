@@ -7,7 +7,13 @@
 > D126 hard retract.
 >
 > **Status of D126:** 🔴 RETRACTED 2026-06-01 (plain form). See
-> [spec/decisions/03-syntax.md §D126](../../spec/decisions/03-syntax.md#d126-external-type--opaque-типы-без-body).
+> [spec/decisions/03-syntax.md §D126](../../spec/decisions/03-syntax.md#d126-external-type--опaque-типы-без-body).
+>
+> ⚠️ **Plan 134 (2026-06-09): `ptr` built-in type removed.** All `type X(ptr)`
+> patterns should now use `type X(*)()` (pointer to unit = `void*`). The
+> `ptr` identifier in type position produces `E_TYPE_REMOVED_PTR_USE_UNIT_PTR`.
+> This doc remains valid for D126 migration history; update target form to
+> `type X(*)()` in new code.
 
 ## TL;DR
 

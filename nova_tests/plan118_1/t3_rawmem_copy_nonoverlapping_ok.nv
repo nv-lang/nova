@@ -10,7 +10,7 @@ test "RawMem.copy_nonoverlapping copies bytes between distinct buffers" {
     ro src []u8 = [100, 101, 102, 103]
     mut dst []u8 = [0, 0, 0, 0]
     unsafe {
-        RawMem.copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 4 as usize)
+        RawMem.copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 4)
     }
     assert(dst[0] == (100 as u8))
     assert(dst[1] == (101 as u8))
@@ -22,7 +22,7 @@ test "RawMem.copy_nonoverlapping zero-length is no-op" {
     ro src []u8 = [1, 2, 3]
     mut dst []u8 = [99, 99, 99]
     unsafe {
-        RawMem.copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 0 as usize)
+        RawMem.copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), 0)
     }
     assert(dst[0] == (99 as u8))
     assert(dst[1] == (99 as u8))

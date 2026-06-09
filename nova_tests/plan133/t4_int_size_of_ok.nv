@@ -1,0 +1,35 @@
+// Plan 133 POS — size_of[T]() result used as `int`; arithmetic works.
+//
+// size_of returns a compile-time const int value (address-sized).
+// Verifies that the result is compatible with int and can be used in
+// multiplication / comparison without usize/isize.
+
+module plan133.t4_int_size_of_ok
+
+const S_I64 = size_of[i64]()
+const S_I32 = size_of[i32]()
+const S_I8  = size_of[i8]()
+
+test "size_of[i64]() equals 8" {
+    ro s int = S_I64
+    assert(s == 8)
+}
+
+test "size_of[i32]() equals 4" {
+    ro s int = S_I32
+    assert(s == 4)
+}
+
+test "size_of[i8]() equals 1" {
+    ro s int = S_I8
+    assert(s == 1)
+}
+
+test "size_of result * count gives total bytes" {
+    ro total int = S_I64 * 10
+    assert(total == 80)
+}
+
+test "size_of[i64] > size_of[i32]" {
+    assert(S_I64 > S_I32)
+}

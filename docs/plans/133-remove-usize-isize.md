@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 133 — Удалить `usize`/`isize`; `int` = адресное целое везде
 
-> **Создан:** 2026-06-09.  **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-09.  **Статус:** ✅ CLOSED 2026-06-09.
 > **Эстимат:** ~1 dev-day.  **Model:** Sonnet 4.6.
 
 ---

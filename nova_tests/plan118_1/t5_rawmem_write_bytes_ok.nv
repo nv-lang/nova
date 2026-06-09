@@ -10,8 +10,8 @@ test "RawMem.write_bytes is identical к RawMem.fill" {
     mut a []u8 = [0, 0, 0, 0]
     mut b []u8 = [0, 0, 0, 0]
     unsafe {
-        RawMem.fill(a.as_mut_ptr(), 0x42 as u8, 4 as usize)
-        RawMem.write_bytes(b.as_mut_ptr(), 0x42 as u8, 4 as usize)
+        RawMem.fill(a.as_mut_ptr(), 0x42 as u8, 4)
+        RawMem.write_bytes(b.as_mut_ptr(), 0x42 as u8, 4)
     }
     assert(a[0] == b[0])
     assert(a[1] == b[1])

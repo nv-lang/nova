@@ -1,0 +1,33 @@
+// Plan 133 POS — `int` as address-sized integer for sizes and indices.
+//
+// Verifies that `int` (= intptr_t, address-sized) can be used everywhere
+// usize/isize were previously used: array length, byte counts, offsets.
+
+module plan133.t3_int_as_size_ok
+
+test "int for byte count arithmetic" {
+    ro n int = 4
+    ro arr_size int = n * 8
+    assert(arr_size == 32)
+}
+
+test "int for index arithmetic" {
+    ro base int = 100
+    ro stride int = 16
+    ro offset int = base + stride * 3
+    assert(offset == 148)
+}
+
+test "int supports negative offsets (signed address-sized)" {
+    ro pos int = 200
+    ro delta int = -8
+    ro result int = pos + delta
+    assert(result == 192)
+}
+
+test "int comparison for size guards" {
+    ro capacity int = 1024
+    ro used int = 512
+    assert(used < capacity)
+    assert(capacity - used == 512)
+}

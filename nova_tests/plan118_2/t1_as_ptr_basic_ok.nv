@@ -36,7 +36,7 @@ test "as_ptr() + len() pair for FFI signature" {
     ro p = arr.as_ptr()
     ro n = arr.len()
     assert(n == 3)
-    // Pattern для FFI: pass p + (n as usize) к C function.
-    ro n_usize = n as usize
+    // Pattern для FFI: pass p + (n) к C function.
+    ro n_usize = n
     assert(n_usize == 3)
 }

@@ -1,0 +1,38 @@
+// Plan 134 POS — null cast to `*()` via `(0 as *())` idiom.
+//
+// Verifies that `(0 as *())` is the canonical null pointer literal,
+// equality comparison works, and a fn accepting *() handles it correctly.
+
+module plan134.t3_null_unit_ptr_ok
+
+fn is_null_ptr(p *()) -> bool {
+    p == (0 as *())
+}
+
+fn ptr_or_default(p *(), fallback int) -> int {
+    if is_null_ptr(p) {
+        fallback
+    } else {
+        p as int
+    }
+}
+
+test "(0 as *()) is null" {
+    ro p *() = (0 as *())
+    assert(is_null_ptr(p))
+}
+
+test "non-zero *() is not null" {
+    ro p *() = 99 as *()
+    assert(!is_null_ptr(p))
+}
+
+test "ptr_or_default returns fallback for null" {
+    ro p *() = (0 as *())
+    assert(ptr_or_default(p, 7) == 7)
+}
+
+test "ptr_or_default returns value for non-null" {
+    ro p *() = 55 as *()
+    assert(ptr_or_default(p, 7) == 55)
+}

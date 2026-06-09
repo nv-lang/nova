@@ -808,7 +808,8 @@ fn type_ref_name_to_bv(ty: &crate::ast::TypeRef) -> Option<(u32, bool)> {
                 "i16" => Some((16, true)),
                 "u32" => Some((32, false)),
                 "i32" => Some((32, true)),
-                "u64" | "usize" | "uint" => Some((64, false)),
+                // Plan 133: usize removed; uint = uintptr_t (64-bit on 64-bit targets).
+                "u64" | "uint" => Some((64, false)),
                 _ => None,
             };
         }
