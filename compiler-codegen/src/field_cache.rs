@@ -4002,7 +4002,16 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
         }
         ExprKind::TurboFish { base, .. } => analyze_expr(base, fields, a),
         ExprKind::Call { func, args, trailing } => {
-            analyze_expr(func, fields, a);
+            // Plan 132.1: when `func` is `Member { SelfAccess, name }` this is
+            // a self-method call `@name(args)`, NOT a field read. Do NOT analyze
+            // `func` as a field access — that would incorrectly increment
+            // read_counts[name] and cause the field-cache to hoist and rewrite
+            // `@name()` into a local `_at_name` variable call, breaking dispatch.
+            if !matches!(func.kind, ExprKind::Member { ref obj, .. }
+                if matches!(obj.kind, ExprKind::SelfAccess))
+            {
+                analyze_expr(func, fields, a);
+            }
             for arg in args {
                 match arg {
                     CallArg::Item(e) | CallArg::Spread(e) => analyze_expr(e, fields, a),
@@ -5545,7 +5554,15 @@ fn rewrite_expr_children(e: &mut Expr, replace_map: &HashMap<String, String>) {
         }
         ExprKind::TurboFish { base, .. } => rewrite_expr(base, replace_map),
         ExprKind::Call { func, args, trailing } => {
-            rewrite_expr(func, replace_map);
+            // Plan 132.1: do NOT rewrite `func` when it is `Member { SelfAccess,
+            // name }` — that is a self-method call `@name(args)`, not a field
+            // read.  Rewriting it to `Ident("_at_name")` would turn the method
+            // call into a call to a non-existent local function.
+            if !matches!(func.kind, ExprKind::Member { ref obj, .. }
+                if matches!(obj.kind, ExprKind::SelfAccess))
+            {
+                rewrite_expr(func, replace_map);
+            }
             for arg in args {
                 match arg {
                     CallArg::Item(e) | CallArg::Spread(e) => rewrite_expr(e, replace_map),

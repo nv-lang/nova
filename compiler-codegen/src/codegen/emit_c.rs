@@ -18688,6 +18688,85 @@ _cp++; \
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 132.1 Ф.1: SelfAccess self-method call — `@name(args)`.
+                // obj = SelfAccess means the call is `@name(...)` inside an
+                // instance method body. field_cache.rs may have already rewritten
+                // duplicate `@name()` calls into `Ident("_at_name")`, but when
+                // field_cache is NOT active or the call appears only once we land
+                // here with obj=SelfAccess in a Call position.
+                //
+                // Early dispatch: look up (RecvType, method_stripped) in
+                // method_overloads → emit Nova_{T}_method_{m}(nova_self, args).
+                // This must fire BEFORE the module-alias rewrite (which only
+                // handles Ident prefixes) and before Self.method() dispatch
+                // (which handles ExprKind::Ident("Self")), so that a field and
+                // method sharing the same name never collide.
+                //
+                // Key derivation: prefer current_receiver_type (holds the Nova
+                // type name exactly, e.g. "Counter", "str", "int") over parsing
+                // var_types["nova_self"] (holds C type "Nova_T*" / "nova_str").
+                // Fallback: parse "Nova_{T}*" → "{T}" from C type for struct
+                // pointer receivers when current_receiver_type is not set (e.g.
+                // inside a closure that captures self from an outer method).
+                if matches!(obj.kind, ExprKind::SelfAccess) {
+                    // Determine the Nova type name used as the method_overloads key.
+                    // Prefer current_receiver_type (holds the Nova type name exactly,
+                    // e.g. "Counter", "str", "int") over parsing var_types["nova_self"]
+                    // (holds the C type "Nova_T*" / "nova_str").
+                    // Only fall back to C-type parsing for struct pointer receivers
+                    // ("Nova_{T}*") — primitive/value types (nova_str, nova_int, …)
+                    // are handled by specialised downstream dispatch.
+                    let recv_key: Option<String> =
+                        self.current_receiver_type.clone().or_else(|| {
+                            self.var_types.get("nova_self").and_then(|c_ty| {
+                                let s = c_ty.as_str();
+                                if s.starts_with("Nova_") && s.ends_with('*') {
+                                    Some(
+                                        s.trim_start_matches("Nova_")
+                                            .trim_end_matches('*')
+                                            .trim()
+                                            .to_string(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                    if let Some(recv_type) = recv_key {
+                        let method_stripped = method.trim_start_matches('@').to_string();
+                        // Only take the early path if method_overloads has a real
+                        // non-external instance entry (a Nova-body method). External
+                        // methods (registered via ExternalRegistry / external_registry,
+                        // e.g. str.concat → nova_str_concat) already have specialised
+                        // downstream dispatch (str_method_to_rt, CancelToken, etc.) —
+                        // fall through for those so they are handled correctly.
+                        let c_fn_opt = self.method_overloads
+                            .get(&(recv_type.clone(), method_stripped.clone()))
+                            .and_then(|sigs| {
+                                // Own (non-delegated, non-external) instance method wins.
+                                sigs.iter()
+                                    .filter(|s| s.is_instance && !s.is_delegated && !s.is_external)
+                                    .map(|s| s.c_name.clone())
+                                    .next()
+                                    .or_else(|| {
+                                        // Fallback: delegated proxy (also non-external).
+                                        sigs.iter()
+                                            .filter(|s| s.is_instance && !s.is_external)
+                                            .map(|s| s.c_name.clone())
+                                            .next()
+                                    })
+                            });
+                        if let Some(c_fn) = c_fn_opt {
+                            let mut arg_strs = Vec::new();
+                            for a in args {
+                                arg_strs.push(self.emit_expr(a.expr())?);
+                            }
+                            let mut full_args = vec!["nova_self".to_string()];
+                            full_args.extend(arg_strs);
+                            return Ok(format!("{}({})", c_fn, full_args.join(", ")));
+                        }
+                    }
+                }
                 // Plan 70.1: module-alias rewrite. `<alias>.func(args)` →
                 // bare `func(args)` (imported fns доступны через bare name).
                 // Без этого rewrite codegen эмитит `th.func(...)` → undeclared
