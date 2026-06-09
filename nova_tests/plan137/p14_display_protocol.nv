@@ -1,0 +1,22 @@
+// Plan 137 (D237) — POS P14:
+// `@display` method works in string interpolation.
+module plan137.p14_display_protocol
+
+type Point {
+    x int
+    y int
+}
+
+fn Point @display(mut sb StringBuilder) -> () {
+    sb.append("Point(")
+    sb.append(str.from(@x))
+    sb.append(", ")
+    sb.append(str.from(@y))
+    sb.append(")")
+}
+
+test "Display @display works in interpolation" {
+    ro p = Point { x: 3, y: 4 }
+    ro s = "${p}"
+    assert(s == "Point(3, 4)")
+}

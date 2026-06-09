@@ -1,0 +1,17 @@
+// Plan 137 (D237) — POS P12:
+// `#impl(Compare)` на record → auto-derive @compare; ordering operators.
+module plan137.p12_compare_protocol
+
+#impl(Compare)
+type Score {
+    val int
+}
+
+fn Score @compare(other Score) -> int => @val - other.val
+
+test "Compare auto-derive works" {
+    ro a = Score { val: 10 }
+    ro b = Score { val: 20 }
+    assert(a < b)
+    assert(b > a)
+}

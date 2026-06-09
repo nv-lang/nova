@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_PROTOCOL_RENAMED
+//
+// Plan 137 (D237) — NEG P02:
+// `#impl(Equatable)` → E_PROTOCOL_RENAMED: use `#impl(Equal)`.
+module plan137.p02_neg_protocol_renamed_equatable
+
+#impl(Equatable)
+type Bar {
+    x int
+}
+
+test "Equatable is renamed to Equal" {
+    ro b = Bar { x: 2 }
+    assert(b.x == 2)
+}

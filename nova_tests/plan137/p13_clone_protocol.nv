@@ -1,0 +1,18 @@
+// Plan 137 (D237) — POS P13:
+// `#impl(Clone)` на record → auto-derive @clone.
+module plan137.p13_clone_protocol
+
+#impl(Clone)
+type Vec3 {
+    x f64
+    y f64
+    z f64
+}
+
+test "Clone auto-derive works" {
+    ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    ro b = a.clone()
+    assert(b.x == 1.0)
+    assert(b.y == 2.0)
+    assert(b.z == 3.0)
+}

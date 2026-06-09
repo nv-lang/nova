@@ -1,0 +1,22 @@
+// Plan 137 (D237) — POS P15:
+// `@debug` method works in `${expr:?}` interpolation.
+module plan137.p15_debug_protocol
+
+type Pair {
+    a int
+    b int
+}
+
+fn Pair @debug(mut sb StringBuilder) -> () {
+    sb.append("Pair { a: ")
+    sb.append(str.from(@a))
+    sb.append(", b: ")
+    sb.append(str.from(@b))
+    sb.append(" }")
+}
+
+test "Debug @debug works in :? interpolation" {
+    ro p = Pair { a: 1, b: 2 }
+    ro s = "${p:?}"
+    assert(s == "Pair { a: 1, b: 2 }")
+}

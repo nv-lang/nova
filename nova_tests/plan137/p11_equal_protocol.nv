@@ -1,0 +1,18 @@
+// Plan 137 (D237) — POS P11:
+// `#impl(Equal)` на record → auto-derive @equal; == / != operators.
+module plan137.p11_equal_protocol
+
+#impl(Equal)
+type Money {
+    cents int
+}
+
+fn Money @compare(other Money) -> int => @cents - other.cents
+
+test "Equal auto-derive works via compare" {
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 100 }
+    ro c = Money { cents: 200 }
+    assert(a == b)
+    assert(a != c)
+}

@@ -1,0 +1,13 @@
+// Plan 137 (D237) — POS P10:
+// `#impl(Hash)` на record → auto-derive @hash.
+module plan137.p10_hash_protocol
+
+#impl(Hash)
+type UserId {
+    value u64
+}
+
+test "Hash auto-derive works" {
+    ro id = UserId { value: 42 }
+    assert(id.value == 42)
+}
