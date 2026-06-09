@@ -6999,3 +6999,45 @@ fn check_health() -> RuntimeStats {
 - [D141](decisions/08-runtime.md#d141) — `[]T` bulk slice API + value-struct limitation.
 - [M-91.1-value-struct-array-elem] — исходный gap marker (закрыт через Vec[T] Plan 131).
 
+---
+
+## Q28. Postfix dereference syntax: `p.*` vs `*p`
+
+**Вопрос:** заменить ли prefix dereference `*p` на postfix `p.*` (Zig-стиль)?
+
+### Мотивация
+
+Postfix читается слева направо при цепочках:
+```nova
+p.*         // vs *p
+p.*.field   // vs (*p).field
+arr[i].*.method()  // vs (*arr[i]).method()
+p.* = v     // vs *p = v
+```
+
+### Варианты
+
+**A. `p.*` (postfix с точкой, Zig-стиль)**
+- Однозначно: `.` после выражения не бывает умножением → parser без ambiguity
+- Прецедент: Zig использует именно `ptr.*`
+- Читается как «доступ к dereferenced значению» — согласуется с `obj.field`
+- Минус: добавляет `.` в deref-синтаксис, который иначе используется только для member access
+
+**B. `p*` (чистый postfix без точки)**
+- Минималистично, но парсер сложнее: `p* + 1` — `(p*) + 1` или `p * (+1)`?
+- Pratt-parser трактует `*` после выражения как binary если за ним идёт начало expr → `p* + 1` = `p * (+1)` (неверно)
+- Требует whitespace-чувствительности или особых правил
+
+**C. Оставить `*p` (prefix, C/Rust-стиль)**
+- Привычно, без изменений
+- Минус: при цепочках нужны скобки `(*p).field`
+
+### Текущий статус
+
+`*p` — реализован. `p.*` / `p*` — не реализованы. Вопрос открыт.
+
+### Cross-refs
+
+- Plan 118 — типизированные указатели `*T` / `*mut T`
+- Q-ptr-deref: если принять `p.*`, то `*T` type syntax остаётся prefix (тип vs выражение — разные позиции)
+
