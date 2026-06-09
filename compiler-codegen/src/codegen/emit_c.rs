@@ -29297,6 +29297,20 @@ _cp++; \
                     let elem = elem.trim_end_matches('*').trim();
                     return elem.to_string();
                 }
+                // [M-118-ptr-index-unsafe] Plan 118 D216 §8: typed pointer
+                // `*mut T` / `*T` — ptr[i] ≡ *(ptr+i). Element type = pointee
+                // (C type obtained by stripping trailing `*` from pointer type).
+                // Mirror exact logic as UnOp::Deref inference (line ~29113).
+                // Must come AFTER NovaArray_ check to avoid false-firing on
+                // `NovaArray_nova_int*` (those use the NovaArray_ path above).
+                if obj_ty_pre.ends_with('*') && !obj_ty_pre.starts_with("NovaArray_") {
+                    if let Some(pointee) = obj_ty_pre.strip_suffix('*') {
+                        let pointee = pointee.trim();
+                        if !pointee.is_empty() {
+                            return pointee.to_string();
+                        }
+                    }
+                }
                 "nova_int".into()
             }
             ExprKind::SelfAccess => {
