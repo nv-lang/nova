@@ -9,7 +9,7 @@ multi-bound, mixed, forward-dependency и compile-error на use-site при
 `[T Protocol]` синтаксис.
 
 > **Reality-check 2026-05-09:** изначальный план утверждал что «парсер
-> принимает `[T Hashable]` синтаксис, type-checker не проверяет». На
+> принимает `[T Hash]` синтаксис, type-checker не проверяет». На
 > практике **парсер не принимает** этот синтаксис вообще
 > (`error: expected ']', got identifier`). `FnDecl.generics` хранится
 > как `Vec<String>` без места под bound. Поэтому первая фаза — **AST +
@@ -23,7 +23,7 @@ multi-bound, mixed, forward-dependency и compile-error на use-site при
 через protocol:
 
 ```nova
-fn dedup[T Hashable](xs []T) -> []T => ...
+fn dedup[T Hash](xs []T) -> []T => ...
 fn fold[T, Acc Numeric](xs Iter[T], init Acc) -> Acc => ...
 ```
 
@@ -54,17 +54,17 @@ bounds — контракт», LLM полагается на сигнатуру;
 На use-site generic-вызова (`dedup[User](xs)` или после inference) —
 проверить, что concrete type `T` структурно удовлетворяет bound'у:
 
-1. Извлечь `Protocol` из bound'а (например `Hashable`).
+1. Извлечь `Protocol` из bound'а (например `Hash`).
 2. Из protocol-декларации получить список required-методов с
    сигнатурами.
 3. Для concrete type'а `T` — проверить наличие каждого метода с
    совпадающей сигнатурой (после substitution `Self → T`).
 4. При отсутствии — **внятная ошибка на месте вызова**:
    ```
-   error E0143: type `User` does not satisfy `Hashable` bound
-     in call to `dedup[T Hashable]` at src/main.nv:42
+   error E0143: type `User` does not satisfy `Hash` bound
+     in call to `dedup[T Hash]` at src/main.nv:42
 
-     `Hashable` requires:
+     `Hash` requires:
        hash() -> u64
        eq(other Self) -> bool
 
@@ -88,7 +88,7 @@ Vec<String>`, `Receiver.generics: Vec<TypeRef>` — нет места под bou
 ```rust
 pub struct GenericParam {
     pub name: String,
-    pub bound: Option<TypeRef>,    // None для `[T]`, Some(Hashable) для `[T Hashable]`
+    pub bound: Option<TypeRef>,    // None для `[T]`, Some(Hash) для `[T Hash]`
     pub span: Span,
 }
 ```
@@ -137,10 +137,10 @@ inference):
 4. На mismatch — структурированный diagnostic
    ([R5.3](../../spec/revolutionary.md#r5-3)):
    ```
-   error E0143: type `User` does not satisfy `Hashable` bound
-     in call to `dedup[T Hashable]` at src/main.nv:42
+   error E0143: type `User` does not satisfy `Hash` bound
+     in call to `dedup[T Hash]` at src/main.nv:42
 
-     `Hashable` requires:
+     `Hash` requires:
        hash() -> u64
        eq(other Self) -> bool
 

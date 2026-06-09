@@ -44,7 +44,7 @@ type (`Option[T]`, `HashMap[K, V]`). Для `[]T` / bare T / tuple — нет
 
 Ввести `fn[T]` префикс — **обязателен** для каждого receiver-typevar,
 не покрытого carrier-brackets. Plus интегрировать:
-- existing D72 bound syntax (`fn[T Hashable]`).
+- existing D72 bound syntax (`fn[T Hash]`).
 - multi-bound `+` (закрывает Q-multi-bound).
 - protocol composition `use Foo` (закрывает D53 open question).
 
@@ -58,7 +58,7 @@ type (`Option[T]`, `HashMap[K, V]`). Для `[]T` / bare T / tuple — нет
 | Aspect | Nova post-101 | Industry |
 |---|---|---|
 | Receiver-method syntax | `fn[T] []T @map[U]` (1 line) | Rust `impl<T> Vec<T> { fn map<U> }` (2 nested) |
-| Bound syntax | `[T Hashable]` (no `:`) | Rust `<T: Hashable>` |
+| Bound syntax | `[T Hash]` (no `:`) | Rust `<T: Hash>` |
 | Multi-bound | `[T A + B]` (Rust-style) | Rust `+`, TS `&`, Kotlin `where`, Go `\|` (union) |
 | Protocol composition | `use Foo` inside `protocol { }` | Go interface embed, Java `extends A, B` |
 | Loud disambiguation | `E_BARE_TYPEVAR_NEEDS_PREFIX` | silent infer (most langs) |
@@ -70,7 +70,7 @@ type (`Option[T]`, `HashMap[K, V]`). Для `[]T` / bare T / tuple — нет
 | # | Sub-plan | Что | Приоритет | Eval | GATED |
 |---|---|---|---|---|---|
 | **101.1** | [`fn[T]` core grammar + codegen + vec.nv migration](101.1-fn-prefix-core.md) | Parser/type-check/codegen для `fn[T] []T @method`, `fn[T] T @method`, `fn[T, U] (T, U) @method`. **Includes vec.nv migration** (7 методов). Disambiguation matrix (bare T vs named T) + 4 error codes. | **P1** (blocker Plan 91) | ~2.5 dev-day | — |
-| **101.2** | [Bound integration `fn[T Hashable]`](101.2-bound-integration.md) | Reuse existing D72 bound syntax в `fn[…]` prefix position. | P2 | ~0.5 dev-day | 101.1 |
+| **101.2** | [Bound integration `fn[T Hash]`](101.2-bound-integration.md) | Reuse existing D72 bound syntax в `fn[…]` prefix position. | P2 | ~0.5 dev-day | 101.1 |
 | **101.3** | [Multi-bound `[T A + B]`](101.3-multi-bound.md) | Закрывает [Q-multi-bound](../../spec/open-questions.md#q-multi-bound). Применим везде где D72 bound допустим (free fn, type-decl, fn[T] prefix). | P3 | ~1 dev-day | 101.2 |
 | **101.4** | [Protocol composition `use Foo`](101.4-protocol-composition.md) | Закрывает open question в D53 §«Открытые вопросы». Embed protocols через `use` keyword (параллель D39). | P2 | ~1 dev-day | — (independent) |
 | **101.5** | [Stdlib audit + LSP + close](101.5-stdlib-audit-close.md) | Sweep std/ на похожие patterns, LSP quick-fixes (Plan 50 D102), vec.nv tests в `nova test` baseline, close Plan 101 + D145 + markers. | **P1** (closing) | ~1 dev-day | ALL 101.1-4 |
@@ -86,7 +86,7 @@ type (`Option[T]`, `HashMap[K, V]`). Для `[]T` / bare T / tuple — нет
 Plan 101 = ✅ ЗАКРЫТ когда:
 
 - [ ] **101.1 ✅** — vec.nv (7 методов) компилируется в exe, все тесты PASS.
-- [ ] **101.2 ✅** — `fn[T Hashable] []T @dedup()` работает.
+- [ ] **101.2 ✅** — `fn[T Hash] []T @dedup()` работает.
 - [ ] **101.3 ✅** — `[T A + B]` multi-bound работает; Q-multi-bound closed.
 - [ ] **101.4 ✅** — `type X protocol { use A; use B }` работает; D53 open question closed.
 - [ ] **101.5 ✅** — std audit + LSP quick-fixes для 4 error codes + vec.nv в baseline.
@@ -153,4 +153,4 @@ Plan 101 = ✅ ЗАКРЫТ когда:
 - **Plan 102** — representation/structural bounds на concrete types.
 - **Higher-kinded receiver** — `fn[F[_]] F[T] @method`. Требует HK-type-checker.
 - **Implicit T** — отвергнуто (Ред. 2 misinterpretation).
-- **`where T: Hashable` clause** — отвергнуто; `[T Hashable]` + multi-bound покрывают.
+- **`where T: Hash` clause** — отвергнуто; `[T Hash]` + multi-bound покрывают.

@@ -306,8 +306,8 @@ Vec[T] @[](i int) -> T     // panic on OOB (как Rust [])
 // Clone — .clone() (если T: Clone)  
 // impl(Clone) for Vec[T] where T: Clone
 
-// DebugPrintable — println/fmt
-// impl(DebugPrintable) for Vec[T] where T: DebugPrintable
+// Debug — println/fmt
+// impl(Debug) for Vec[T] where T: Debug
 ```
 
 Проверить что `for x in my_vec { ... }` работает.
@@ -445,5 +445,5 @@ Vec[T] @[](i int) -> T     // panic on OOB (как Rust [])
 - `6d74d55b8c0` — feat(plan131 Ф.1): RawMem.alloc/alloc_uncollectable/free_uncollectable
 - `9919c5fbc7a` — feat(plan131 Ф.2): codegen ptr arithmetic + deref-write + pointer cast
 - `4008c2e6fb5` — feat(plan131 Ф.3): Vec[T] — full Nova-implemented generic growable array
-- `758c90b457f` — feat(plan131 Ф.4): Vec[T] protocols — Iterable/Eq/Clone/DebugPrintable
+- `758c90b457f` — feat(plan131 Ф.4): Vec[T] protocols — Iterable/Eq/Clone/Debug
 - `db65eb3a1b9` — docs(plan131 Ф.5): D231 RawMem.alloc + D232 Vec[T] + D216 amend + Q-vec-vs-slice

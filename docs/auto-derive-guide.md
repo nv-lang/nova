@@ -10,7 +10,7 @@ Nova поддерживает **auto-derive** для пяти built-in прот�
 ## TL;DR
 
 ```nova
-#impl(Equatable + Hashable + Cloneable + Comparable + Printable)
+#impl(Equal + Hash + Clone + Compare + Display)
 type Vec3 {
     x f64
     y f64
@@ -19,7 +19,7 @@ type Vec3 {
 
 ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
 ro b = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
-assert(a == b)             // auto-derived @equals
+assert(a == b)             // auto-derived @equal
 ro c = a.clone()           // auto-derived @clone
 ro h = a.hash()            // auto-derived @hash
 ro cmp = a.compare(b)      // auto-derived @compare
@@ -32,11 +32,11 @@ ro cmp = a.compare(b)      // auto-derived @compare
 
 | Protocol     | Метод                          | Стратегия synth                            |
 |--------------|--------------------------------|---------------------------------------------|
-| `Equatable`  | `@equals(other) -> bool`       | memberwise `&&` chain                       |
-| `Hashable`   | `@hash() -> u64`               | XOR + rotate FxHash-style combine           |
-| `Cloneable`  | `@clone() -> Self` ([D230](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
-| `Comparable` | `@compare(other) -> int`       | lexicographic if-chain (memcmp-style)       |
-| `Printable`  | `@fmt(sb) -> ()`               | `sb.append("TypeName { f: v, ... }")` chain |
+| `Equal`  | `@equal(other) -> bool`       | memberwise `&&` chain                       |
+| `Hash`   | `@hash() -> u64`               | XOR + rotate FxHash-style combine           |
+| `Clone`  | `@clone() -> Self` ([D230](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
+| `Compare` | `@compare(other) -> int`       | lexicographic if-chain (memcmp-style)       |
+| `Display`  | `@display(sb) -> ()`               | `sb.append("TypeName { f: v, ... }")` chain |
 
 Все 5 — single-method built-in protocols, объявлены в `std/prelude/protocols.nv`.
 
@@ -54,7 +54,7 @@ ro cmp = a.compare(b)      // auto-derived @compare
 
 - **Protocol не built-in** (user-defined protocol) — auto-derive только для
   5 known built-in. User-defined protocols → user пишет body вручную.
-- **Type provides explicit method** — `fn T @equals(other) -> bool => ...`
+- **Type provides explicit method** — `fn T @equal(other) -> bool => ...`
   wins над auto-derive (manual override).
 - **Field type не implement** требуемый protocol →
   `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
@@ -79,7 +79,7 @@ types (требуют explicit user impl).
 ### Простой record
 
 ```nova
-#impl(Equatable)
+#impl(Equal)
 type Money {
     cents int
 }
@@ -92,15 +92,15 @@ assert(a == b)  // → @a.cents == b.cents → true
 ### Рекурсивный auto-derive
 
 ```nova
-#impl(Cloneable)
+#impl(Clone)
 type Inner {
     name str
     code int
 }
 
-#impl(Cloneable)
+#impl(Clone)
 type Outer {
-    inner Inner       // ← Inner has #impl(Cloneable) — eligible
+    inner Inner       // ← Inner has #impl(Clone) — eligible
     count int
 }
 
@@ -114,13 +114,13 @@ ro p = o.clone()
 ### Manual override (user wins)
 
 ```nova
-#impl(Equatable)
+#impl(Equal)
 type CaseInsensitive {
     text str
 }
 
-// User implements @equals — wins над auto-derive.
-fn CaseInsensitive @equals(other CaseInsensitive) -> bool =>
+// User implements @equal — wins над auto-derive.
+fn CaseInsensitive @equal(other CaseInsensitive) -> bool =>
     @text.to_lower() == other.text.to_lower()
 
 ro a = CaseInsensitive { text: "Hello" }
@@ -131,7 +131,7 @@ assert(a == b)  // → user-defined logic
 ### Named tuple (Plan 120 D215)
 
 ```nova
-#impl(Equatable + Cloneable)
+#impl(Equal + Clone)
 type Pair(left int, right int)
 
 ro p = Pair(1, 2)
@@ -146,7 +146,7 @@ ro r = p.clone()
 После Plan 126:
 
 ```nova
-// Без #impl(Equatable) — identity-eq preserved (backward compat).
+// Без #impl(Equal) — identity-eq preserved (backward compat).
 type Account {
     id int
     balance f64
@@ -155,8 +155,8 @@ ro a = Account { id: 1, balance: 100.0 }
 ro b = Account { id: 1, balance: 100.0 }
 assert(a != b)  // ← разные allocation'ы, identity не совпадает
 
-// С #impl(Equatable) — structural eq.
-#impl(Equatable)
+// С #impl(Equal) — structural eq.
+#impl(Equal)
 type AccountStruct {
     id int
     balance f64
@@ -172,7 +172,7 @@ assert(x == y)  // ← memberwise structural eq
 |---------------------------------------|--------------------------------------------------------------------------------|
 | `E_AUTO_DERIVE_CYCLE`                 | Cyclic recursion через fields не терминируется                                 |
 | `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`  | Field type не implement требуемый protocol                                     |
-| `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol не в built-in list (`Equatable`/`Hashable`/`Cloneable`/`Comparable`/`Printable`) |
+| `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol не в built-in list (`Equal`/`Hash`/`Clone`/`Compare`/`Display`) |
 | `E_AUTO_DERIVE_UNSUPPORTED_KIND`      | Type kind (Newtype/Alias/Effect/Protocol/Opaque) не поддерживает derive        |
 
 ### Пример E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
@@ -182,26 +182,26 @@ type Plain {
     n int
 }
 
-#impl(Equatable)
+#impl(Equal)
 type Wrapper {
-    inner Plain    // ← Plain не #impl(Equatable)
+    inner Plain    // ← Plain не #impl(Equal)
 }
 // ❌ E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL:
-//   type `Wrapper` claims `#impl(Equatable)` but field `inner`
-//   (type `Plain`) does not implement `Equatable`.
-//   Either add `#impl(Equatable)` to `Plain`, или provide explicit
-//   `fn Wrapper @equals(...)`.
+//   type `Wrapper` claims `#impl(Equal)` but field `inner`
+//   (type `Plain`) does not implement `Equal`.
+//   Either add `#impl(Equal)` to `Plain`, или provide explicit
+//   `fn Wrapper @equal(...)`.
 ```
 
-**Fix**: добавить `#impl(Equatable)` на `Plain`:
+**Fix**: добавить `#impl(Equal)` на `Plain`:
 
 ```nova
-#impl(Equatable)   // ← Fix: now Plain eligible
+#impl(Equal)   // ← Fix: now Plain eligible
 type Plain {
     n int
 }
 
-#impl(Equatable)
+#impl(Equal)
 type Wrapper {
     inner Plain
 }
@@ -214,10 +214,10 @@ synthesis для типа `T` уже идёт, и встречается рек�
 `T` — `E_AUTO_DERIVE_CYCLE`:
 
 ```nova
-#impl(Cloneable)
+#impl(Clone)
 type A { b B }
 
-#impl(Cloneable)
+#impl(Clone)
 type B { a A }
 // ❌ E_AUTO_DERIVE_CYCLE: cyclic recursion через fields не терминируется.
 //    Provide explicit `fn A @clone(...)` or `fn B @clone(...)`.
@@ -226,7 +226,7 @@ type B { a A }
 **Fix**: явный impl на одном из типов разрывает рекурсию:
 
 ```nova
-#impl(Cloneable)
+#impl(Clone)
 type A { b B }
 
 fn A @clone() -> A => A { b: @b }   // ← manual; синтезатор для B продолжит работать
@@ -251,11 +251,11 @@ Auto-derive **совместим** с:
 
 | Marker                          | Описание                                                       |
 |---------------------------------|----------------------------------------------------------------|
-| `[M-126-sum-equal-rich]`        | Sum-type @equals — variant tag + payload recursion             |
+| `[M-126-sum-equal-rich]`        | Sum-type @equal — variant tag + payload recursion             |
 | `[M-126-sum-hash-rich]`         | Sum-type @hash — discriminant + payload combine                |
 | `[M-126-sum-clone-rich]`        | Sum-type @clone — match-arms с payload recursion               |
 | `[M-126-sum-compare-rich]`      | Sum-type @compare — variant ordering                           |
-| `[M-126-sum-fmt-rich]`          | Sum-type @fmt — variant-aware output                           |
+| `[M-126-sum-fmt-rich]`          | Sum-type @display — variant-aware output                           |
 | `[M-126-codegen-method-table]`  | V1: synthesized FnDecl не register'ится в method_table. Codegen wiring для full `a == b` runtime semantics — V2 expansion |
 
 V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_METHODS` корректно, что разблокирует pattern usage в downstream type-checked code. Полное `==` wiring через method_table — Plan 126 V2 (когда понадобится в production stdlib).
@@ -267,7 +267,7 @@ V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_
 - [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
   — auto-derive rules.
 - [D230 NEW](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1) —
-  Cloneable protocol semantics.
+  Clone protocol semantics.
 - [D186 — `#impl(P)` annotation](../spec/decisions/02-types.md#d186) —
   foundation infrastructure.
 - [std/prelude/protocols.nv](../std/prelude/protocols.nv) — protocol

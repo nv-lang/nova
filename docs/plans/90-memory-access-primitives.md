@@ -156,7 +156,7 @@ TS — полноценный язык **без сырых указателей*
   Зафиксировать в «Итог Ф.0».
 - **Ф.0.4** Контракт: OOB → `panic` или эффект `Fail`? `byte_at` —
   bounds-checked + inline-требование. `compare` возвращает `int`
-  (-1/0/1) или sum `Less|Equal|Greater` (есть протокол `Comparable`,
+  (-1/0/1) или sum `Less|Equal|Greater` (есть протокол `Compare`,
   Plan 85.4)? Длина при mismatch у `copy_*` — `panic` (Rust) или
   min-копирование (Go)?
 
@@ -333,7 +333,7 @@ Plan 90 закрыт по варианту **A (safe-only)** — `unsafe`-keywor
 - `byte_at` — `-> u8` с `panic` на OOB (без per-call Option-оверхеда)
   vs `-> Option[u8]`. Рекомендация: `-> u8` + `panic` (как индексация).
 - `compare` возвращает `int` (-1/0/1, модель Go) или sum
-  `Less|Equal|Greater` (модель Rust; есть `Comparable`, Plan 85.4)?
+  `Less|Equal|Greater` (модель Rust; есть `Compare`, Plan 85.4)?
 - `[]T` для произвольного `T` сразу или сначала `[]u8` + numeric
   (`[]T` с GC-ссылками — копирование ссылок sound при non-moving GC)?
 - `copy_*` границы: `panic` (Rust) vs min-копирование (Go).

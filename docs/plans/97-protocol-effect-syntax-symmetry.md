@@ -49,7 +49,7 @@ effect. Раздельные планы 97 и 98 объединены 2026-05-23
 
 `From[T] protocol { from(t T) -> Self }` — `from` это **статический**
 метод по D35 (`Celsius.from(f)`), но в теле записан «голо»,
-неотличимо от instance-методов (`Hashable.hash()`). Это:
+неотличимо от instance-методов (`Hash.hash()`). Это:
 - Делает декларацию неточной (теряется «static vs instance»).
 - Делает doc-comment `protocols.nv` противоречивым (показано
   `fn Celsius @from(...)` — instance, противоречит D35).
@@ -176,7 +176,7 @@ fn Lock.new() -> (Locker, Unlocker) {
 - Type-checker: static матчится против `fn Type.method`, instance —
   против `fn Type @method`.
 - Backwards-compat: bare-имена = instance (ничего не ломается;
-  `Iter`/`Hashable`/`Equatable`/`Comparable`/`Display`/`Into`/`TryInto`
+  `Iter`/`Hash`/`Equal`/`Compare`/`Display`/`Into`/`TryInto`
   без правок).
 - Update `protocols.nv`: `From`/`TryFrom` под новый синтаксис; destale
   комментариев 101-108 + `@from` doc-comment.
@@ -343,7 +343,7 @@ symmetry + Q-static-method-protocol закрыты со ссылками.
 - **Ф.5.2** `protocol_static_try_from.nv` — pos: `TryFrom[T, E]` +
   bound dispatch.
 - **Ф.5.3** `protocol_instance_unchanged.nv` — regress-pos:
-  `Hashable.hash`/`Iter.next` работают как instance.
+  `Hash.hash`/`Iter.next` работают как instance.
 - **Ф.5.4** `neg_static_vs_instance_mismatch.nv` — тип `fn T @method`
   когда протокол требует `.method` → compile error.
 - **Ф.5.5** `neg_instance_vs_static_mismatch.nv` — обратное.
@@ -469,7 +469,7 @@ symmetry + Q-static-method-protocol закрыты со ссылками.
 - Изменение D77 auto-derive — не трогаем.
 - Перевод `TryFrom`/`TryInto` на `Fail` — `try_`-prefix convention
   диктует `Result`.
-- Полная сверка протокол-методов stdlib (`Iter`/`Hashable`/…) — уже
+- Полная сверка протокол-методов stdlib (`Iter`/`Hash`/…) — уже
   корректно bare-instance, правок не нужно.
 
 ## Связь

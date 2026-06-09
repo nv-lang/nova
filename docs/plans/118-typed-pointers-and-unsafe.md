@@ -2947,11 +2947,11 @@ C11 `_Atomic(T*)` OR MSVC Interlocked conditional. Cross-fiber safety
 analysis separate work.
 Marker: `[M-118.3-atomicptr-generic-deferred]`.
 
-#### Plan 118 Ф.7 — `DebugPrintable` + format spec :?
+#### Plan 118 Ф.7 — `Debug` + format spec :?
 
 **DEFERRED.** Requires NEW AST variant InterpStrPart::ExprWithFormat,
 lexer extension for `:?` inside `${...}`, parser FormatSpec enum, type-
-checker DebugPrintable protocol (Plan 97 framework), codegen branch.
+checker Debug protocol (Plan 97 framework), codegen branch.
 Affects broader format-DSL (`:hex`, `:pad-N`) design.
 Workaround: E_PTR_NO_DISPLAY_USE_DEBUG_STR diagnostic steers users.
 Marker: `[M-118.7-debug-fmt-deferred]`.
@@ -2970,7 +2970,7 @@ Plan 118 family **partial closure 2026-06-04:**
 | Plan 118.1 Ф.3 addr_of! macros | 🔴 DEFERRED | needs macro framework |
 | Plan 118.1 Ф.4 CStr + cstr literal | 🔴 DEFERRED | needs lexer prefix infra |
 | Plan 118.3 AtomicPtr[T] generic | 🔴 DEFERRED | needs Plan 103.2 mono + GC |
-| Plan 118 Ф.7 DebugPrintable | 🔴 DEFERRED | needs format-DSL infra |
+| Plan 118 Ф.7 Debug | 🔴 DEFERRED | needs format-DSL infra |
 
 Combined shipped surface sufficient для idiomatic primitive-typed FFI
 (libpng / sqlite / libcurl / openssl byte+typed-int buffer access + MMIO

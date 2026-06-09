@@ -379,8 +379,8 @@ explicit decision "no — `export` is binary, `internal/` convention enough".
 
 ### Advanced / future [35.C-E + R30]
 
-**R29. [35.C] Cross-file generic bounds** (N08, R15-Rust). `[T Hashable]`
-где Hashable cross-file. Monomorphization stays per-module (Plan 14
+**R29. [35.C] Cross-file generic bounds** (N08, R15-Rust). `[T Hash]`
+где Hash cross-file. Monomorphization stays per-module (Plan 14
 followup).
 
 **R30. [deferred]** Hot-reload (watch-mode), `internal/` convention,

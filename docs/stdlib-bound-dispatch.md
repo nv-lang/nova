@@ -7,11 +7,11 @@
 
 ```nova
 // ✅ Используй bound когда method works через protocol contract:
-fn unique[T Hashable](items []T) -> []T { ... }
-type HashMap[K Hashable, V] { ... }
+fn unique[T Hash](items []T) -> []T { ... }
+type HashMap[K Hash, V] { ... }
 
 // ✅ Bound methods обязаны быть pure (no Io/Fail/Db):
-type Hashable protocol {
+type Hash protocol {
     hash() -> u64    // pure, OK
     eq(other Self) -> bool    // pure, OK
 }
@@ -26,10 +26,10 @@ type BadBound protocol {
 
 | Use case | Подход |
 |---|---|
-| Collection требует hash/eq на K | `K Hashable` |
-| Sorted collection / sort algorithm | `K Comparable` |
+| Collection требует hash/eq на K | `K Hash` |
+| Sorted collection / sort algorithm | `K Compare` |
 | Display / debug formatting | `T Display` |
-| Multiple operations | `T Hashable + Display` |
+| Multiple operations | `T Hash + Display` |
 | Just need polymorphism (no contract) | bare `[T]` (structural) |
 
 ## When NOT to use bound
@@ -74,12 +74,12 @@ Vtable — fallback для erased context (Plan 56 Ф.1 vtable infra).
 
 ## Examples из stdlib
 
-### HashMap (uses Hashable + structural V)
+### HashMap (uses Hash + structural V)
 
 ```nova
-type Hashable protocol { hash() -> u64; eq(other Self) -> bool }
+type Hash protocol { hash() -> u64; eq(other Self) -> bool }
 
-type HashMap[K Hashable, V] { ... }
+type HashMap[K Hash, V] { ... }
 
 // Methods use bound K methods через mono path (concrete K на use site):
 fn HashMap[K, V] @get(key K) -> Option[V] {
@@ -104,7 +104,7 @@ fn HashMap[K, V] @clone() -> HashMap[K, V] {
 ### Free function (no bound)
 
 ```nova
-// Compiler делает structural check на use site (не обязан Hashable).
+// Compiler делает structural check на use site (не обязан Hash).
 fn first[T](xs []T) -> Option[T] => xs.get(0)
 ```
 

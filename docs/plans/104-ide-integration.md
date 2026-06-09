@@ -244,7 +244,7 @@ General (5+):
 - `missing import` — auto-add import suggestion.
 - Typo in identifier — suggest closest match.
 - `prefer let over var` (style).
-- Auto-derive `Display`/`Hashable` для record/sum types.
+- Auto-derive `Display`/`Hash` для record/sum types.
 
 **Sub-decomposition:**
 - 104.5.1 Quick-fix framework + machine-applicable infrastructure (~1 dev-day)

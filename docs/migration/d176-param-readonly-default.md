@@ -42,13 +42,13 @@ fn append(mut b []int, v int) { b.push(v) }
 
 ```nova
 // Before
-fn Point @fmt(sb StringBuilder) {
+fn Point @display(sb StringBuilder) {
     sb.append("(")
     // ...
 }
 
 // After
-fn Point @fmt(mut sb StringBuilder) {
+fn Point @display(mut sb StringBuilder) {
     sb.append("(")
     // ...
 }

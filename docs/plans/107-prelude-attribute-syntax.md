@@ -877,7 +877,7 @@ module my.dsl
 // Видимо: Option/Result/Some/None/Ok/Err/Error/Ordering (core)
 // + panic/exit/assert/debug_assert (runtime).
 // НЕ видимо: RuntimeError (errors), Iter (collections),
-//            From/Hashable/… (protocols), Fail[E]/Time/Mem (effects).
+//            From/Hash/… (protocols), Fail[E]/Time/Mem (effects).
 ```
 
 Валидные имена (`names`):
@@ -888,7 +888,7 @@ module my.dsl
 | `runtime` | `panic`/`exit`/`assert`/`debug_assert`/`print`/`println` |
 | `errors` | `RuntimeError` (6 variants) + `ReadBufferError` |
 | `collections` | `Iter[T]` protocol |
-| `protocols` | `From`/`Into`/`Hashable`/`Equatable`/`Comparable`/`Display` |
+| `protocols` | `From`/`Into`/`Hash`/`Equal`/`Compare`/`Display` |
 | `effects` | `Fail[E]` + `Time` + `Mem` |
 
 Имена валидируются resolver'ом — `#prelude(badname)` → compile error со

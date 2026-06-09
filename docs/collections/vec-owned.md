@@ -112,10 +112,10 @@ fn main() -> () {
 | Protocol | Method | Notes |
 |----------|--------|-------|
 | `Iterable[T]` | `@iter() / VecIter[T].@next()` | `for x in v` syntax |
-| `Equatable` | `@equals(other Vec[T]) -> bool` | Element-wise, via `as_slice` comparison |
-| `Cloneable` | `@clone() -> Vec[T]` | Allocates new buffer, copies all elements |
-| `Printable` | `@fmt(mut sb StringBuilder) -> ()` | Format: `Vec[e0, e1, ..., eN-1]` |
-| `DebugPrintable` | `@debug_fmt(mut sb StringBuilder) -> ()` | Same format, for `${v:?}` |
+| `Equal` | `@equal(other Vec[T]) -> bool` | Element-wise, via `as_slice` comparison |
+| `Clone` | `@clone() -> Vec[T]` | Allocates new buffer, copies all elements |
+| `Display` | `@display(mut sb StringBuilder) -> ()` | Format: `Vec[e0, e1, ..., eN-1]` |
+| `Debug` | `@debug(mut sb StringBuilder) -> ()` | Same format, for `${v:?}` |
 
 ## Examples
 

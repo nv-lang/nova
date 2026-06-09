@@ -30,7 +30,7 @@
 | [85.1](85.1-stringbuilder-coverage.md) | StringBuilder | `nova_tests/str_builder/` |
 | [85.2](85.2-buffers-coverage.md) | ReadBuffer + WriteBuffer | `nova_tests/buffers/` |
 | [85.3](85.3-conversion-protocols.md) | From / Into / TryFrom / TryInto | `nova_tests/protocols/conversion/` |
-| [85.4](85.4-comparison-protocols.md) | Hashable / Equatable / Comparable / Display | `nova_tests/protocols/comparison/` |
+| [85.4](85.4-comparison-protocols.md) | Hash / Equal / Compare / Display | `nova_tests/protocols/comparison/` |
 | [85.5](85.5-iter-protocol.md) | Iter[T] | `nova_tests/protocols/iter/` |
 
 ## Методология (из Plan 75)
