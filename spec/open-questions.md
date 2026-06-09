@@ -7041,3 +7041,55 @@ p.* = v     // vs *p = v
 - Plan 118 — типизированные указатели `*T` / `*mut T`
 - Q-ptr-deref: если принять `p.*`, то `*T` type syntax остаётся prefix (тип vs выражение — разные позиции)
 
+---
+
+## Q29. Safe references: `ref T` / `ref mut T` — нужны ли?
+
+**Вопрос:** вводить ли safe reference тип (`ref T`, `ref mut T`) как альтернативу raw pointer для in-place мутации и передачи больших стековых значений?
+
+### Мотивация
+
+```nova
+ro r = a[1]    // r: int       — копия
+ref r = a[1]   // r: ref int   — ссылка на элемент (без копии)
+
+fn process(x ref BigStruct) -> int   // передача без копии, без unsafe
+fn mutate(x ref mut BigStruct)       // мутация caller-значения
+```
+
+`ref` vs `&`: `&x` занят как `addr_of` (Plan 118.1) → ключевое слово `ref`.
+
+### Соответствие
+
+| Nova | C++ | Rust |
+|------|-----|------|
+| `ref int` | `const int&` | `&i32` |
+| `ref mut int` | `int&` | `&mut i32` |
+| `*int` | `const int*` | `*const i32` |
+| `*mut int` | `int*` | `*mut i32` |
+
+### Аргументы ЗА
+
+- `get_mut() -> ref mut T` вместо `*mut T` — без `unsafe`, чище API
+- Большие named tuples на стеке без heap-промоции
+- `a[1]` как `ref int` — единая семантика вместо lvalue-магии
+
+### Аргументы ПРОТИВ
+
+- Heap-типы (records, `[]T`, `str`) уже передаются как GC-pointer — references ничего не добавляют
+- Value records автопромотируются в heap (Plan 127) — большинство кейсов покрыто
+- `a[1] = 5` lvalue-синтаксис покрывает мутацию элементов
+- Lifetime tracking — дополнительная сложность в checker даже без аннотаций
+- Go обходится без references; Nova с GC нуждается ещё меньше
+
+### Текущий статус
+
+Не реализовано. Отложено — добавить проще чем убрать. Вернуться после Plan 118 / Plan 127 / Plan 120 stable.
+
+### Cross-refs
+
+- Plan 118 — `*T` / `*mut T` raw pointers
+- Plan 127 — value record heap promotion
+- Plan 120 — named tuples (stack allocation)
+- Q28 — postfix deref `p.*`
+
