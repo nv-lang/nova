@@ -24,6 +24,11 @@ Conservative tmp-per-dependent-rhs codegen (V1). Cycle-decomposition deferred to
 Nested tuple lhs `((a,b),c)=...` deferred to [M-136-nested-tuple-lhs]. Consume-types in tuple-assign deferred to [M-136-consume-tuple-assign].
 stdlib: std/collections/vec_owned.nv reverse() swap migrated to tuple-assign.
 
+### Plan 136.1 -- Tuple assign V2 cycle-decomp codegen (2026-06-09)
+V1 conservative: (a,b)=(b,a) used 2 tmps. V2 cycle-decomposition: pure permutations
+use 1 tmp/cycle. swap -> 1 tmp, rotate-3 -> 1 tmp, identity -> 0 tmps. Mixed (non-pure)
+falls back to V1. Closes [M-136-cycle-decomp]. Followup: [M-136.1-mixed-partial-cycles].
+
 ### Plan 133 — Remove usize/isize (2026-06-09)
 int = intptr_t (address-sized signed integer) everywhere. Replaced usize/isize throughout.
 ~44 nova_tests sites + std/raw_mem.nv (7 params) + std/vec_owned.nv (2 casts) migrated.
