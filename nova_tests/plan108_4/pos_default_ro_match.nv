@@ -1,0 +1,19 @@
+// Plan 108.4 Ф.4: POS — protocol @len() (no prefix = ro) + fn T @len() (ro) → OK
+// Verifies that the default read-only receiver (bare @ prefix) works in both
+// protocol declaration and implementation.
+
+module plan108_4.pos_default_ro_match
+
+type Sized108 protocol {
+    @len() -> int
+}
+
+#impl(Sized108)
+type MyBuf { size int }
+
+fn MyBuf @len() -> int => @size
+
+test "ro @len protocol impl compiles and returns value" {
+    ro b = MyBuf { size: 7 }
+    assert(b.len() == 7)
+}
