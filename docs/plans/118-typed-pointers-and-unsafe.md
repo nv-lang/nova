@@ -2022,6 +2022,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 | `[M-118-amp-heap-safe]` | `&record` outside unsafe (since heap already) | V2 — needs careful safety analysis |
 | `[M-118-optional-shorthand]` | `?T` syntax sugar for `Option[T]` (Zig/Kotlin/Swift style) | Followup ergonomics; bigger design decision |
 | `[M-118-handle-migration]` | Plan 115 V1 ffi-cookbook examples: `type X { value ptr }` (record) → `type X(ptr)` (tuple) | Tracked в Ф.9.4 + R5 |
+| `[M-118-ptr-index-unsafe]` | `ptr[i]` on `*T`/`*mut T` должен требовать `unsafe {}` так же как `*ptr` deref — сейчас `ExprKind::Index` на pointer type не gated (gap в Plan 118 D216 §8). Файл: `types/mod.rs` walk_expr `ExprKind::Index` arm (≈18178) — проверить `obj` тип через `infer_expr_type`; если `TypeRef::Pointer` → fire `E_UNSAFE_REQUIRED`. Также мигрировать `unsafe { *(@data + i) }` → `unsafe { @data[i] }` в `std/collections/vec_owned.nv`. | Small — ½ дня |
 
 ---
 
