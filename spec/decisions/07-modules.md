@@ -1,4 +1,4 @@
-# Modules — модули, импорты, видимость
+﻿# Modules — модули, импорты, видимость
 
 Решения этой группы определяют, как код Nova организован в файлы и
 как видимость деклараций контролируется между модулями.
@@ -711,7 +711,7 @@ fn Account @validate_amount(amount money) Fail =>          // приватный
     if amount <= 0 || amount >= money.MAX { throw InvalidAmount }
 
 // ── Протоколы ─────────────────────────────────────────────────────
-export type Hashable protocol {
+export type Hash protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
@@ -1199,7 +1199,7 @@ module collections.range
 - `runtime` — `panic`/`exit`/`assert`/`debug_assert`/`print`/`println`.
 - `errors` — `RuntimeError` (6 variants) + `ReadBufferError`.
 - `collections` — `Iter[T]` protocol.
-- `protocols` — `From`/`Into`/`Hashable`/`Equatable`/`Comparable`/`Display`.
+- `protocols` — `From`/`Into`/`Hash`/`Equal`/`Compare`/`Display`.
 - `effects` — `Fail[E]` + `Time` + `Mem`.
 
 Имена валидируются resolver'ом — `#prelude(badname)` → compile error.
@@ -1720,7 +1720,7 @@ module my.dsl
 // Видимо: Option/Result/Some/None/Ok/Err/Error/Ordering (core)
 // + panic/exit/assert/debug_assert/print/println (runtime).
 // НЕ видимо: RuntimeError (errors), Iter (collections),
-//            From/Hashable/… (protocols), Fail[E]/Time/Mem (effects).
+//            From/Hash/… (protocols), Fail[E]/Time/Mem (effects).
 ```
 
 Валидные имена `prelude-name`:
@@ -1731,7 +1731,7 @@ module my.dsl
 | `runtime` | `panic`/`exit`/`assert`/`debug_assert`/`print`/`println` |
 | `errors` | `RuntimeError` (6 variants) + `ReadBufferError` |
 | `collections` | `Iter[T]` protocol |
-| `protocols` | `From`/`Into`/`Hashable`/`Equatable`/`Comparable`/`Display` |
+| `protocols` | `From`/`Into`/`Hash`/`Equal`/`Compare`/`Display` |
 | `effects` | `Fail[E]` + `Time` + `Mem` |
 
 Имена валидируются resolver'ом — `#prelude(badname)` → compile error со

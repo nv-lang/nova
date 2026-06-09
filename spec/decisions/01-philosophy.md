@@ -1,4 +1,4 @@
-# Philosophy — цели, парадигма, AI-first
+﻿# Philosophy — цели, парадигма, AI-first
 
 Решения этой группы задают рамку всех остальных: зачем нужна Nova, на
 какой комбинации идей она строится, чем оптимизируется. Конкретные
@@ -42,7 +42,7 @@ fn Account mut @deposit(amount money) {
 }
 
 // 4) Структурный контракт через protocol
-type Hashable protocol {
+type Hash protocol {
     hash() -> u64
     eq(other Self) -> bool
 }

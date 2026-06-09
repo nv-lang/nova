@@ -1,4 +1,4 @@
-# Tooling — компилятор, верификация, диагностика
+﻿# Tooling — компилятор, верификация, диагностика
 
 Решения этой группы определяют, как **инструменты** Nova работают с
 программами: какие проверки выполняются на этапе компиляции, какие —
@@ -1375,7 +1375,7 @@ lowercase-именем секции.
   "effects": ["Net", "Db"],
   "raises": ["NotFound", "Timeout"],
   "generics": [
-    { "name": "T", "bound": "Hashable", "default": null }
+    { "name": "T", "bound": "Hash", "default": null }
   ],
   "receiver": null,
   "contracts": {

@@ -1,4 +1,4 @@
-# Эволюция решений Nova
+﻿# Эволюция решений Nova
 
 История пересмотров: что менялось, почему, какие решения были отменены
 или заменены последующими.
@@ -263,7 +263,7 @@ type User { id u64, name str }
 скобками методов:
 
 ```nova
-type Hashable = {
+type Hash = {
     hash() -> u64
     eq(other Self) -> bool
 }
@@ -272,7 +272,7 @@ type Hashable = {
 **Что стало:** отдельный keyword `protocol`:
 
 ```nova
-protocol Hashable {
+protocol Hash {
     hash() -> u64
     eq(other Self) -> bool
 }
@@ -385,7 +385,7 @@ mapping.
 Несколько решений всё ещё могут эволюционировать:
 
 - **Default методы протоколов** — пока запрещены, могут быть введены.
-- **Generic bounds** (`HashMap[K: Hashable, V]`) — нужны для
+- **Generic bounds** (`HashMap[K: Hash, V]`) — нужны для
   type-safety, нужно отдельное D-решение.
 - **Per-field видимость** — сейчас MVP-компромисс (все поля
   публичны), может расшириться.
@@ -444,7 +444,7 @@ type User { id u64, name str }           // record без = (как было)
 **Что было:** `protocol` — отдельный keyword, рядом с `type`:
 
 ```nova
-protocol Hashable {
+protocol Hash {
     hash() -> u64
     eq(other Self) -> bool
 }
@@ -457,7 +457,7 @@ protocol Hashable {
 **kind-токеном** в системе D52 (наряду с `alias`):
 
 ```nova
-type Hashable protocol {
+type Hash protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
