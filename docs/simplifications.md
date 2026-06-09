@@ -34161,12 +34161,16 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
 another method of T generated wrong C symbol `nova_fn__at_len` (link error) instead
 of correct `Nova_T_method_x(nova_self, ...)`.
 
-**Root cause:** `emit_call` for `Method { obj: SelfAccess, name }` had no dedicated
-path — fell through to free-function fallback which mangled the name incorrectly.
+**Root cause (two-part):**
+1. `field_cache.rs` `analyze_expr_children` treated `func = Member{SelfAccess,"x"}` in a Call
+   as a field read, incrementing `read_counts["x"]`. At threshold≥2 the field was hoisted to a
+   local `_at_x`, and `rewrite_expr_children` turned `@x()` into `_at_x()` → codegen produced
+   `nova_fn__at_x` (undefined symbol).
+2. `emit_call` for `Member { obj: SelfAccess, name }` also had no dedicated path and fell
+   through to `free_fn_c_name` fallback which could mangle the name incorrectly.
 
-**Fix (Variant B):** Added early SelfAccess guard in `emit_call`: when obj=SelfAccess,
-look up `(recv_type, method_stripped)` in `method_overloads` (or fallback to
-`Nova_{recv}_method_{name}`), always passing `nova_self` as first arg.
+**Fix (two locations):**
+- `field_cache.rs`: skip analyze+rewrite of `func` when it is `Member{SelfAccess,..}` (self-method call, not a field read).
+- `emit_c.rs`: added early SelfAccess guard in `emit_call` Member arm — emit `Nova_{T}_method_{name}(nova_self, args)` directly.
 
-**Impact:** @name() self-calls from within same-type methods now work correctly.
-Field access (@name without parens) completely unaffected — different code path.
+**Tests:** `pos_at_name_disambiguation.nv` fully restored with `@call_len()` + `@double_len()` — 8/8 PASS.
