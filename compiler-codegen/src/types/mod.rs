@@ -13746,8 +13746,78 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::Calc { steps, .. } => {
             for st in steps { consume_walk_expr(ctx, &st.expr, errors); }
         }
-        // Plan 136: tuple destructuring assignment.
-        Stmt::TupleAssign { lhs, rhs, .. } => {
+        // Plan 136 Ф.2: tuple destructuring assignment — semantic validation.
+        Stmt::TupleAssign { lhs, rhs, span } => {
+            // 1. Arity check.
+            if lhs.len() != rhs.len() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_ASSIGN_ARITY_MISMATCH] tuple assign: {} lhs elements \
+                         but {} rhs elements — counts must match (Plan 136 D236).",
+                        lhs.len(), rhs.len()
+                    ),
+                    *span,
+                ));
+                // Still walk sub-expressions for further diagnostics.
+                for e in lhs { consume_walk_expr(ctx, e, errors); }
+                for e in rhs { consume_walk_expr(ctx, e, errors); }
+                return;
+            }
+            // 2. Per-lhs-element checks: mutability + consume-type ban.
+            for (i, lhs_expr) in lhs.iter().enumerate() {
+                if let Some(root) = lvalue_root_ident(lhs_expr) {
+                    let root = root.to_string();
+                    // (a) Mutability check via param_mut / local_mut.
+                    let is_param = ctx.param_mut.contains_key(&root);
+                    let is_local = ctx.local_mut.contains_key(&root);
+                    if is_param {
+                        let is_mut = ctx.param_mut[&root];
+                        if !is_mut {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_ASSIGN_LHS_NOT_MUT] tuple assign: lhs element {} \
+                                     (`{}`) is a param not marked `mut` — cannot assign \
+                                     (Plan 136 D236; D176 amend default-readonly params).",
+                                    i, root
+                                ),
+                                lhs_expr.span,
+                            ));
+                        }
+                    } else if is_local {
+                        let is_mut = ctx.local_mut[&root];
+                        if !is_mut {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_ASSIGN_LHS_NOT_MUT] tuple assign: lhs element {} \
+                                     (`{}`) is a local binding not marked `mut` — cannot assign \
+                                     (Plan 136 D236; D36 locals readonly by default).",
+                                    i, root
+                                ),
+                                lhs_expr.span,
+                            ));
+                        }
+                    }
+                    // (b) Consume-type ban: type of lhs element must not be consume.
+                    let ty_str = ctx.var_types.get(&ctx.canonical(&root))
+                        .or_else(|| ctx.var_types.get(&root))
+                        .cloned();
+                    if let Some(ref ty) = ty_str {
+                        if ctx.lin_reg.consume_types.contains(ty) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_ASSIGN_CONSUME_TYPE] tuple assign: lhs element {} \
+                                     (`{}`) has consume type `{}` — tuple destructuring assignment \
+                                     of consume types is not supported in V1 (Plan 136 D236). \
+                                     Use explicit consume binding or consume-method.",
+                                    i, root, ty
+                                ),
+                                lhs_expr.span,
+                            ));
+                        }
+                    }
+                }
+            }
+            // 3. Walk all sub-expressions (consume tracking, use-after-consume, etc).
             for e in lhs { consume_walk_expr(ctx, e, errors); }
             for e in rhs { consume_walk_expr(ctx, e, errors); }
         }
