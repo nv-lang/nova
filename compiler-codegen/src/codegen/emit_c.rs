@@ -497,6 +497,10 @@ pub struct CEmitter {
     str_box_arrays: HashSet<String>,
     /// C type of the current method receiver (e.g. "Nova_Box"), for resolving `Self`.
     current_receiver_type: Option<String>,
+    /// Plan 135 Ф.2: whether the currently-emitting method has a `mut` receiver
+    /// (`fn Type mut @method`).  Used at call-sites to tiebreak overloads when
+    /// the receiver is `SelfAccess` (i.e. `@other_method()` inside the body).
+    current_receiver_is_mut: bool,
     /// Expected struct type для anonymous record literal `=> { ... }` —
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
@@ -1015,6 +1019,7 @@ impl CEmitter {
             fn_result_ok_inner_types: HashMap::new(),
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
+            current_receiver_is_mut: false,
             expected_record_type: None,
             current_array_elem_hint: None,
             current_array_protocol_box: None,
@@ -2512,7 +2517,14 @@ impl CEmitter {
                             .collect::<Vec<_>>()
                             .join("_");
                         if suffix.is_empty() {
-                            base_c_name
+                            // Plan 135 Ф.1: params identical — tiebreak by receiver mutability.
+                            // ro overload (first registered, existing_count==0): keeps base_c_name.
+                            // mut overload: __mut suffix.  ro-as-second: __ro suffix.
+                            if recv.mutable {
+                                format!("{base_c_name}__mut")
+                            } else {
+                                format!("{base_c_name}__ro")
+                            }
                         } else {
                             format!("{}__{}", base_c_name, suffix)
                         }
@@ -9528,6 +9540,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
 
     // ---- function emission ----
 
+    /// Plan 135 Ф.2: detect whether a receiver expression is mutable at the
+    /// call-site, so we can tiebreak `__mut` vs `__ro` overloads.
+    ///
+    /// - `Ident(name)` → check `var_mutable` set (covers `let mut x`).
+    /// - `SelfAccess`  → use `current_receiver_is_mut` (set when entering the
+    ///   enclosing method body).
+    /// - anything else → `false` (conservative / no tiebreak).
+    fn is_obj_mutable(&self, obj: &Expr) -> bool {
+        match &obj.kind {
+            ExprKind::Ident(name) => self.var_mutable.contains(name.as_str()),
+            ExprKind::SelfAccess => self.current_receiver_is_mut,
+            _ => false,
+        }
+    }
+
     fn mangle_fn(&self, f: &FnDecl) -> String {
         if let Some(recv) = &f.receiver {
             // Plan 11 Ф.3: если есть multi-overload registry для (type, name),
@@ -9540,7 +9567,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         .map(|p| self.type_ref_to_c(&p.ty)
                             .unwrap_or_else(|_| "nova_int".into()))
                         .collect();
-                    for sig in overloads {
+                    // Plan 135 Ф.1: tiebreak по recv_mutable когда params совпадают.
+                    let want_recv_mut = recv.mutable;
+                    // First pass: exact match on both params + recv_mutable.
+                    for sig in overloads.iter() {
+                        if sig.param_c_types == want_params && sig.recv_mutable == want_recv_mut {
+                            return sig.c_name.clone();
+                        }
+                    }
+                    // Second pass (fallback): params only (for non-mut-overload case).
+                    for sig in overloads.iter() {
                         if sig.param_c_types == want_params {
                             return sig.c_name.clone();
                         }
@@ -13486,8 +13522,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Set receiver type FIRST so Self resolves correctly in return_type_c/params_c
         if let Some(recv) = &f.receiver {
             self.current_receiver_type = Some(recv.type_name.clone());
+            // Plan 135 Ф.2: track whether current method has a mut receiver
+            // so that SelfAccess call-sites can tiebreak __mut/__ro overloads.
+            self.current_receiver_is_mut = recv.mutable;
         } else {
             self.current_receiver_type = None;
+            self.current_receiver_is_mut = false;
         }
         let mut ret = self.return_type_c(f)?;
         // Plan 72 P3-B return: protocol return type (`-> Iter[int]`) → the C
@@ -18740,21 +18780,32 @@ _cp++; \
                         // e.g. str.concat → nova_str_concat) already have specialised
                         // downstream dispatch (str_method_to_rt, CancelToken, etc.) —
                         // fall through for those so they are handled correctly.
+                        let self_is_mut = self.current_receiver_is_mut;
                         let c_fn_opt = self.method_overloads
                             .get(&(recv_type.clone(), method_stripped.clone()))
                             .and_then(|sigs| {
                                 // Own (non-delegated, non-external) instance method wins.
-                                sigs.iter()
+                                // Plan 135 Ф.2: tiebreak by recv_mutable when multiple
+                                // overloads exist (e.g. `@kind()` ro vs mut inside a
+                                // mut-receiver body calls mut overload).
+                                let own_inst: Vec<_> = sigs.iter()
                                     .filter(|s| s.is_instance && !s.is_delegated && !s.is_external)
-                                    .map(|s| s.c_name.clone())
-                                    .next()
-                                    .or_else(|| {
-                                        // Fallback: delegated proxy (also non-external).
-                                        sigs.iter()
-                                            .filter(|s| s.is_instance && !s.is_external)
-                                            .map(|s| s.c_name.clone())
-                                            .next()
-                                    })
+                                    .collect();
+                                if own_inst.len() > 1 {
+                                    own_inst.iter()
+                                        .find(|s| s.recv_mutable == self_is_mut)
+                                        .or_else(|| own_inst.first())
+                                        .map(|s| s.c_name.clone())
+                                } else {
+                                    own_inst.into_iter().map(|s| s.c_name.clone()).next()
+                                }
+                                .or_else(|| {
+                                    // Fallback: delegated proxy (also non-external).
+                                    sigs.iter()
+                                        .filter(|s| s.is_instance && !s.is_external)
+                                        .map(|s| s.c_name.clone())
+                                        .next()
+                                })
                             });
                         if let Some(c_fn) = c_fn_opt {
                             let mut arg_strs = Vec::new();
@@ -20592,7 +20643,13 @@ _cp++; \
                                 // get dispatched here as Nova_str_method_X. (Plan 91 Ф.2.5 D177)
                                 .filter(|s| s.is_instance && !s.is_external)
                                 .collect();
-                            if let Some(sig) = inst_overloads.first() {
+                            // Plan 135 Ф.2: tiebreak by receiver mutability when
+                            // multiple primitive extension overloads are registered.
+                            let caller_prim_is_mut = self.is_obj_mutable(obj);
+                            let sig_opt = inst_overloads.iter()
+                                .find(|s| s.recv_mutable == caller_prim_is_mut)
+                                .or_else(|| inst_overloads.first());
+                            if let Some(sig) = sig_opt {
                                 let obj_c = self.emit_expr(obj)?;
                                 // Plan 124.8 V2 (D226): value-record receiver
                                 // needs `&obj` (pointer to stack slot).
@@ -21158,6 +21215,27 @@ _cp++; \
                                         .cloned().collect();
                                     if !owns.is_empty() { owns } else { strict }
                                 };
+                                // Plan 135 Ф.2: recv-mutable tiebreak for
+                                // user-defined struct instance methods.
+                                // When pool has ≥2 entries that differ only by
+                                // recv_mutable (ro vs mut overloads), pick the
+                                // one whose recv_mutable matches caller mutability.
+                                // Fallback: first entry (preserves pre-135 behaviour
+                                // for single-overload methods).
+                                let pool: Vec<MethodSig> = if want_instance && pool.len() > 1 {
+                                    let caller_is_mut = self.is_obj_mutable(obj);
+                                    let exact_mut: Vec<MethodSig> = pool.iter()
+                                        .filter(|s| s.recv_mutable == caller_is_mut)
+                                        .cloned()
+                                        .collect();
+                                    if !exact_mut.is_empty() {
+                                        exact_mut
+                                    } else {
+                                        pool
+                                    }
+                                } else {
+                                    pool
+                                };
                                 // Plan 103.2: arity-based fallback for external-registry
                                 // methods. Nova integer literals always have type `nova_int`
                                 // but typed atomics use `int32_t`/`uint64_t`/etc. — strict
@@ -21707,9 +21785,18 @@ _cp++; \
                         // (registered с AST flag). Fallback false если sig
                         // отсутствует (delegated/synthesized path).
                         let obj_ty_local = self.infer_expr_c_type(obj);
+                        // Plan 135 Ф.2: tiebreak recv.mutable by actual receiver
+                        // mutability at call-site when multiple overloads are present.
+                        let caller_obj_is_mut = self.is_obj_mutable(obj);
                         let recv_mutable = self.method_overloads
                             .get(&(type_name.clone(), method.to_string()))
-                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .and_then(|sigs| {
+                                // First pass: exact match on recv_mutable.
+                                let exact = sigs.iter()
+                                    .find(|s| s.is_instance && s.recv_mutable == caller_obj_is_mut);
+                                // Fallback: any instance sig.
+                                exact.or_else(|| sigs.iter().find(|s| s.is_instance))
+                            })
                             .map(|s| s.recv_mutable)
                             .unwrap_or(false);
                         let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable, Some(obj));
@@ -21736,12 +21823,22 @@ _cp++; \
                         // Plan 100.7 (D165): prefer c_name from method_overloads
                         // (which has the correct _consume_ / _method_ prefix) over
                         // the legacy fallback that always uses _method_.
+                        // Plan 135 Ф.2: tiebreak by recv_mutable when multiple
+                        // instance overloads exist (first pass exact, then fallback).
+                        let mo_key = (type_name.clone(), method.to_string());
                         let c_fn = self.method_overloads
-                            .get(&(type_name.clone(), method.to_string()))
-                            .and_then(|sigs| sigs.iter()
-                                .filter(|s| s.is_instance && !s.is_delegated)
-                                .map(|s| s.c_name.clone())
-                                .next())
+                            .get(&mo_key)
+                            .and_then(|sigs| {
+                                let inst: Vec<_> = sigs.iter()
+                                    .filter(|s| s.is_instance && !s.is_delegated)
+                                    .collect();
+                                // Plan 135 Ф.2: tiebreak by recv_mutable when multiple
+                                // instance overloads exist (first pass exact, then fallback).
+                                inst.iter()
+                                    .find(|s| s.recv_mutable == caller_obj_is_mut)
+                                    .or_else(|| inst.first())
+                                    .map(|s| s.c_name.clone())
+                            })
                             .unwrap_or_else(|| format!("Nova_{}_method_{}", safe_type, method));
                         return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     } else {

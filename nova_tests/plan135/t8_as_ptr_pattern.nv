@@ -1,0 +1,46 @@
+// Plan 135 Ф.3 T8 (POS): canonical as_ptr() ro/mut dispatch pattern from §"Что".
+// Uses int return (0=ro, 1=mut) to verify dispatch without pointer complexity.
+// Verifies the end-to-end A-135.a..d acceptance criteria.
+//
+// Target pattern from spec:
+//   fn Value @as_ptr()     -> int  { 0 }   // ro overload
+//   fn Value mut @as_ptr() -> int  { 1 }   // mut overload
+//   ro a Value = ...; a.as_ptr()  -> 0
+//   mut b Value = ...; b.as_ptr() -> 1
+
+module plan135.t8_as_ptr_pattern
+
+type Value { priv mut data int }
+
+fn Value.new(d int) -> Self => { data: d }
+
+// ro overload — represents ro *u8 (returns marker 0)
+fn Value @as_ptr() -> int => 0
+
+// mut overload — represents mut *u8 (returns marker 1)
+fn Value mut @as_ptr() -> int => 1
+
+test "ro binding a.as_ptr() → ro overload (0)" {
+    ro a = Value.new(42)
+    assert(a.as_ptr() == 0)
+}
+
+test "mut binding b.as_ptr() → mut overload (1)" {
+    mut b = Value.new(42)
+    assert(b.as_ptr() == 1)
+}
+
+test "both in same scope — correct dispatch" {
+    ro a = Value.new(10)
+    mut b = Value.new(20)
+    assert(a.as_ptr() == 0)
+    assert(b.as_ptr() == 1)
+    assert(a.as_ptr() != b.as_ptr())
+}
+
+test "re-binding mut to ro — dispatches to ro" {
+    mut b = Value.new(5)
+    assert(b.as_ptr() == 1)   // mut binding → mut overload
+    ro a = Value.new(5)
+    assert(a.as_ptr() == 0)   // ro binding → ro overload
+}

@@ -1,0 +1,25 @@
+// Plan 135 Ф.3 T3 (POS): mut binding calling a method with both ro and mut overloads.
+// Must dispatch to the mut overload (returns 1).
+// Verifies A-135.c.
+
+module plan135.t3_mut_receiver_picks_mut_overload
+
+type Actuator { priv mut level int }
+
+fn Actuator.new(v int) -> Self => { level: v }
+
+fn Actuator mut @bump() { @level = @level + 1 }
+
+fn Actuator @mode() -> int => 0         // ro overload: marker 0
+fn Actuator mut @mode() -> int => 1     // mut overload: marker 1
+
+test "mut binding dispatches to mut overload" {
+    mut a = Actuator.new(7)
+    assert(a.mode() == 1)
+}
+
+test "mut binding — mut overload after mutation" {
+    mut a = Actuator.new(0)
+    a.bump()
+    assert(a.mode() == 1)
+}

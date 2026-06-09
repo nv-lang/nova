@@ -1,0 +1,35 @@
+// Plan 135 Ф.3 T7 (POS): both ro and mut overloads compile to different C names.
+// Verifies no CC-FAIL when both overloads exist (A-135.a, A-135.d).
+// Focused on compilation success: Nova_T_method_m vs Nova_T_method_m__mut.
+
+module plan135.t7_no_cc_fail
+
+type Counter { priv mut count int }
+
+fn Counter.new() -> Self => { count: 0 }
+
+fn Counter mut @inc() { @count = @count + 1 }
+
+// Both overloads of @value: ro → 0, mut → @count
+fn Counter @value() -> int => @count           // ro overload
+fn Counter mut @value() -> int => @count * 2   // mut overload (returns doubled)
+
+test "both overloads compile and produce different results" {
+    ro a = Counter.new()
+    mut b = Counter.new()
+    b.inc()
+    b.inc()
+    b.inc()
+    // ro binding: ro overload — returns count as-is
+    assert(a.value() == 0)
+    // mut binding: mut overload — returns count * 2
+    assert(b.value() == 6)
+}
+
+test "compilation produces distinct C names — verified by no cc-fail" {
+    mut c = Counter.new()
+    c.inc()
+    ro d = Counter.new()
+    assert(c.value() == 2)   // mut: 1 * 2 = 2
+    assert(d.value() == 0)   // ro: 0 * 1 = 0
+}
