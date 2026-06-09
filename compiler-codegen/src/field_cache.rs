@@ -444,11 +444,11 @@ fn is_reference_type_ref_with_depth(
 
 /// Primitive numeric / bool / char — no mut-method-modify-slot pattern.
 fn is_primitive_leaf(leaf: &str) -> bool {
+    // Plan 133: usize/isize removed; uint added.
     matches!(leaf,
-        "int"
+        "int" | "uint"
         | "i8" | "i16" | "i32" | "i64"
         | "u8" | "u16" | "u32" | "u64"
-        | "isize" | "usize"
         | "f32" | "f64"
         | "bool" | "char" | "Never"
     )
@@ -487,13 +487,10 @@ fn classify_named_leaf(
     if leaf == "str" {
         return true;
     }
-    // `ptr` / `nova_ptr` — opaque pointer-sized integer primitive
-    // (D216 §11; `02-types.md:6907`). 8B inline value; methods operate
-    // on pointee, не reassign caller's slot. Same primitive-receiver
-    // by-value passing as above. ⇒ true.
-    if leaf == "ptr" || leaf == "nova_ptr" {
-        return true;
-    }
+    // Plan 134: `ptr` builtin removed; `*()` = void* is TypeRef::Pointer(Unit),
+    // not a Named leaf — field_cache never sees it here. "nova_ptr" gone too.
+    // Note: if a newtype over *() is used as receiver leaf, it's a user type
+    // that resolves via registry.get(leaf) below.
     match registry.get(leaf) {
         Some(TypeKindEntry::HeapRecord) => true,   // `type X { ... }` — ptr slot
         // `type X value { ... }` (D228) — inline NovaValue_X slot.

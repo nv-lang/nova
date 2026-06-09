@@ -33,7 +33,8 @@
 
 /* Forward declarations of primitive types (defined in nova_rt.h). */
 #ifndef NOVA_RT_H
-typedef int64_t  nova_int;
+/* Plan 133: nova_int = intptr_t (address-sized, was int64_t). */
+typedef intptr_t nova_int;
 typedef double   nova_f64;
 typedef bool     nova_bool;
 typedef uint8_t  nova_byte;

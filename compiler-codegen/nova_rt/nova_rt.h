@@ -14,7 +14,8 @@
 /* conv.h подключается в array.h (после nova_alloc и определения nova_str). */
 
 /* ---- Primitive types ---- */
-typedef int64_t  nova_int;
+typedef intptr_t  nova_int;   /* int  — signed address-sized (Go C-era intgo, Plan 133) */
+typedef uintptr_t nova_uint;  /* uint — unsigned address-sized (Plan 133) */
 /* Plan 70.3: distinct typedef для char — same underlying int64_t storage,
  * но distinct C type для generic mangling. Без этого `Option[char]` и
  * `Option[int]` оба mangle'ятся в `NovaOpt_nova_int` → silent type collapse
@@ -25,13 +26,9 @@ typedef int64_t  nova_char;
 typedef double   nova_f64;
 typedef float    nova_f32;
 typedef bool     nova_bool;
-/* Plan 115 D214: distinct typedef для `ptr` — same underlying `void*` storage,
- * но distinct C type. Mirrors Plan 70.3 nova_char rationale: `Option[ptr]` и
- * other generics не должны silent-stomp'ить в erased `void*` mono mangling.
- * Также explicit `ptr` value distinguishable от erased generic-T placeholder
- * на codegen уровне (TupleLit + infer_expr_c_type решают mono'd vs legacy
- * fallback). Zero ABI cost — typedef alias `void*`. */
-typedef void*    nova_ptr;
+/* Plan 134: nova_ptr typedef REMOVED — use *() (pointer-to-unit = void*).
+ * `ptr` builtin type replaced with typed pointer syntax `*()` at Nova level;
+ * C codegen emits `void*` directly. */
 
 /* ---- Closure representation ---- */
 /* Closures are stored as void* pointing to a struct { fn_ptr; void* env }. */

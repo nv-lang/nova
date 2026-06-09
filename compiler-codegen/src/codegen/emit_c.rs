@@ -1820,11 +1820,9 @@ impl CEmitter {
                 }
             }
             const BUILTIN_TYPE_NAMES: &[&str] = &[
-                "int", "i64", "i32", "i16", "i8",
+                "int", "uint", "i64", "i32", "i16", "i8",
                 "u64", "u32", "u16", "u8",
-                // Plan 118.1: platform-pointer-width aliases (usize = u64,
-                // isize = i64 на bootstrap 64-bit; ABI bridge для C size_t).
-                "usize", "isize",
+                // Plan 133: usize/isize removed — int/uint are address-sized.
                 "f64", "f32", "bool", "str", "char",
                 // Plan 97 Ф.3 (D142): `Handler` → `Effect`.
                 "Option", "Result", "Self", "Effect", "CancelToken",
@@ -4582,20 +4580,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             TypeRef::Named { path, generics, .. } => {
                 let name = path.join("_");
                 match name.as_str() {
+                    // Plan 133: int = intptr_t (address-sized signed), i64 = fixed 64-bit.
                     "int"  => Ok("nova_int".into()),
-                    "i64"  => Ok("nova_int".into()),
+                    "i64"  => Ok("int64_t".into()),
                     "i32"  => Ok("int32_t".into()),
                     "i16"  => Ok("int16_t".into()),
                     "i8"   => Ok("int8_t".into()),
+                    // Plan 133: uint = uintptr_t (address-sized unsigned), u64 = fixed 64-bit.
                     "u64"  => Ok("uint64_t".into()),
-                    // Plan 70.5: uint = alias u64 (bootstrap, mirror int = i64).
-                    "uint" => Ok("uint64_t".into()),
-                    // Plan 118.1 (D-block [M-D226-isize-usize-alias-D-block]):
-                    // usize/isize — platform-pointer-width aliases. Bootstrap
-                    // 64-bit only: usize = u64, isize = i64. ABI bridge для
-                    // C `size_t` / `ptrdiff_t` в FFI signatures (D226 §5).
-                    "usize" => Ok("uint64_t".into()),
-                    "isize" => Ok("nova_int".into()),
+                    "uint" => Ok("nova_uint".into()),
+                    // Plan 133: usize/isize removed — use int/uint instead.
+                    "usize" => Err("type `usize` is removed — use `int` (Plan 133)".into()),
+                    "isize" => Err("type `isize` is removed — use `int` (Plan 133)".into()),
                     "u32"  => Ok("uint32_t".into()),
                     "u16"  => Ok("uint16_t".into()),
                     // Plan 70.4 Ф.4: u8 → nova_byte (same as byte). Both are
@@ -4616,15 +4612,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // `nova_int` — консистентно с empty-sum (`typedef
                     // int64_t Nova_X`); слот никогда не читается/пишется.
                     "never" => Ok("nova_int".into()),
-                    // Plan 115 D214: `ptr` — opaque pointer primitive.
-                    // Distinct typedef `nova_ptr` (= void*) — mirrors
-                    // Plan 70.3 nova_char rationale: distinguishable от
-                    // erased generic-T void* placeholder в codegen logic
-                    // (TupleLit + infer_expr_c_type решают mono'd vs
-                    // legacy fallback по this distinction). ABI = void*,
-                    // zero cost. FFI-domain — GC ignores (conservative
-                    // collector scans pointer-sized slots regardless).
-                    "ptr" => Ok("nova_ptr".into()),
+                    // Plan 134: `ptr` builtin type REMOVED — use `*()` (Plan 134).
+                    // *() = TypeRef::Pointer(TypeRef::Unit) → emits "void*"
+                    // via the TypeRef::Pointer arm above.
+                    "ptr" => Err("type `ptr` is removed — use `*()` (Plan 134)".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -4949,6 +4940,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     TypeRef::Mut(ti, _) | TypeRef::Unsafe(ti, _) => (true, ti.as_ref()),
                     _ => (false, inner.as_ref()),
                 };
+                // Plan 134: *() = pointer-to-unit = void* (replaces `ptr` builtin).
+                if matches!(base_inner, TypeRef::Unit(_)) {
+                    return Ok("void*".into());
+                }
                 let inner_c = self.type_ref_to_c(base_inner)?;
                 if is_mutable_ptr {
                     Ok(format!("{}*", inner_c))
@@ -4958,6 +4953,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
             TypeRef::Mut(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    // Plan 134: *mut () = void*.
+                    if matches!(p_inner.as_ref(), TypeRef::Unit(_)) {
+                        return Ok("void*".into());
+                    }
                     let inner_c = self.type_ref_to_c(p_inner)?;
                     Ok(format!("{}*", inner_c))
                 } else {
@@ -4966,6 +4965,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
             TypeRef::Unsafe(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    // Plan 134: *unsafe () = void*.
+                    if matches!(p_inner.as_ref(), TypeRef::Unit(_)) {
+                        return Ok("void*".into());
+                    }
                     let inner_c = self.type_ref_to_c(p_inner)?;
                     Ok(format!("{}*", inner_c))
                 } else {
@@ -8805,12 +8808,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 const RUNTIME_BACKED_NEWTYPES: &[&str] =
                     &["OnceCell", "Lazy", "Condvar"];
                 if !RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
-                    // Use type_ref_to_c с unwrap_or — для inner = ptr это
-                    // даст "nova_ptr"; для других primitives тоже work'нёт.
+                    // Use type_ref_to_c — для inner = *() это даст "void*";
+                    // для других pointer types — "*T" form. Primitives work too.
                     // Generic type params (T) in inner — fail; гард: emit
                     // только если inner_c не пустой.
                     if let Ok(inner_c) = self.type_ref_to_c(inner) {
                         if !inner_c.is_empty() {
+                            // Plan 134: inner *() → "void*"; inner *T → "const T*"; etc.
                             self.line(&format!(
                                 "typedef {} Nova_{};",
                                 inner_c, t.name
@@ -8871,12 +8875,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // lives either in nova_rt/*.h (non-generic: Condvar in
                 // sync_condvar.h) or is emitted per-T by emit_generic_type_instance
                 // (generic: OnceCell/Lazy via emit_oncecell_instance /
-                // emit_lazy_instance). Emitting `typedef nova_ptr Nova_X` here
+                // emit_lazy_instance). Emitting `typedef void* Nova_X` here
                 // would conflict with the actual struct typedef.
                 //
                 // List parallels Plan 91.12 V2 §«D126 retract — sync types»:
                 // ровно те 3 типа, что мигрировали с `external type` (Opaque)
-                // на `type X(ptr)` / `type X[T](ptr)`.
+                // на `type X(*())` / `type X[T](*())`.
                 const RUNTIME_BACKED_NEWTYPES: &[&str] =
                     &["OnceCell", "Lazy", "Condvar"];
                 if RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
@@ -11713,15 +11717,16 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // отличить `Ordering` (user-тип) от unresolved type-param `U`
                 // без registry, поэтому только примитивы.
                 let c = match name.as_str() {
-                    "int" | "i64" => "nova_int",
-                    // Plan 118.1: isize platform alias
-                    "isize" => "nova_int",
+                    // Plan 133: int = nova_int (intptr_t), i64 = int64_t (fixed).
+                    "int" => "nova_int",
+                    "i64" => "int64_t",
+                    // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
+                    "uint" => "nova_uint",
                     "f64" => "nova_f64",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
                     "u8" => "nova_byte",
-                    // Plan 118.1: usize platform alias
-                    "usize" => "uint64_t",
+                    // Plan 133: usize/isize removed — not matched here.
                     _ => return None,
                 };
                 Some(c.to_string())
@@ -11815,16 +11820,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // at the call site, не erased `void*`. Mirror of `type_ref_to_c`
             // `Pointer`/`Mut`/`Unsafe` arms (sans const-ness, irrelevant for the
             // inferred binding C type).
+            // Plan 134: *() = pointer-to-unit = void* (replaces `ptr` builtin).
             crate::ast::TypeRef::Pointer(inner, _) => {
                 let base = match inner.as_ref() {
                     crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Unsafe(ti, _) => ti.as_ref(),
                     other => other,
                 };
+                // *() = void*.
+                if matches!(base, crate::ast::TypeRef::Unit(_)) {
+                    return Some("void*".to_string());
+                }
                 let inner_c = Self::apply_type_subst_to_ref(base, subst)?;
                 Some(format!("{}*", inner_c))
             }
             crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Unsafe(inner, _) => {
                 if let crate::ast::TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    // *mut () = void*.
+                    if matches!(p_inner.as_ref(), crate::ast::TypeRef::Unit(_)) {
+                        return Some("void*".to_string());
+                    }
                     let inner_c = Self::apply_type_subst_to_ref(p_inner, subst)?;
                     Some(format!("{}*", inner_c))
                 } else {
@@ -15884,8 +15898,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             }
             ExprKind::BoolLit(b)  => Ok(if *b { "true".into() } else { "false".into() }),
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
-            // Plan 115 D214: `null ptr` literal → C `((nova_ptr)0)`.
-            ExprKind::NullPtrLit  => Ok("((nova_ptr)0)".into()),
+            // Plan 134: `null ptr` literal → C `((void*)0)` (*() = void*).
+            ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
             ExprKind::StrLit(s)   => {
                 let escaped = Self::escape_c_str(s);
                 Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
@@ -16729,7 +16743,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 }
                             }
                         }
-                        // Unknown void* tuple access — emit NULL
+                        // Plan 134: void* with no tuple_element_types entry is a scalar
+                        // newtype `type X(*())` — `.0` is identity (returns the ptr itself).
+                        // Previously emitted NULL which caused assert failures at runtime.
+                        if idx == 0 {
+                            return Ok(o);
+                        }
+                        // Unknown void* tuple access for idx > 0 — emit NULL
                         return Ok("NULL".into());
                     }
                     let accessor = if Self::is_value_type(&obj_ty) { "." } else { "->" };
@@ -16967,10 +16987,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // для struct elements (nova_str fits directly).
                 // Legacy fallback на `_NovaTupleN` — для erased generic contexts.
                 //
-                // Plan 115 D214: `ptr` primitive имеет distinct typedef
-                // `nova_ptr` (= void*) — distinguishable от erased generic-T
-                // `void*` placeholder. `void*` остаётся erased indicator;
-                // `nova_ptr` — legitimate ptr-typed element для mono path.
+                // Plan 134: `ptr` builtin removed. `*()` = void* IS concrete.
+                // sanitize_c_for_ident("void*") → "void_p" → produces proper
+                // mono'd name _NovaTuple_2_6_void_p_8_nova_int etc.
+                // Only empty ety (truly unresolved generic) falls back to _NovaTupleN.
                 let n = elems.len();
                 let mut emitted_vals: Vec<String> = Vec::new();
                 let mut emitted_types: Vec<String> = Vec::new();
@@ -16980,9 +17000,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let v = self.emit_expr(e)?;
                     emitted_vals.push(v);
                     emitted_types.push(ety.clone());
-                    // "void*" or empty type — erased generic placeholder.
-                    // `nova_ptr` (Plan 115 D214) — explicit ptr, мelt mono path.
-                    if ety.is_empty() || ety == "void*" {
+                    // Empty type = unresolved generic placeholder → fallback.
+                    if ety.is_empty() {
                         all_concrete = false;
                     }
                 }
@@ -17324,6 +17343,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     "int32_t"              => Some("i32"),
                     "int16_t"              => Some("i16"),
                     "int8_t"               => Some("i8"),
+                    // Plan 133: nova_uint = uintptr_t; u64 stays fixed 64-bit.
+                    "nova_uint"            => Some("u64"),  // saturation helper re-uses u64 bounds
                     "uint64_t"             => Some("u64"),
                     "uint32_t"             => Some("u32"),
                     "uint16_t"             => Some("u16"),
@@ -18470,7 +18491,7 @@ _cp++; \
         }
 
         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)` newtype
-        // constructor. `type SqHandle(ptr)` → `typedef nova_ptr Nova_SqHandle;`
+        // constructor. `type SqHandle(*())` → `typedef void* Nova_SqHandle;`
         // (см. emit_type_decl TypeDeclKind::Newtype branch). Constructor call
         // `SqHandle(raw_ptr)` is identity (newtype = transparent typedef). Без
         // этого intercept'а codegen падал в general dispatch → undefined
@@ -20545,8 +20566,10 @@ _cp++; \
                 // `(*mut T).write(v T)`     → `((*p) = v, NOVA_UNIT)` (deref store)
                 // Detection: obj_ty ends с `*` и НЕ известный typedef
                 // (Nova_*, NovaArray_*, NovaOpt_*, NovaRes_*, NovaBox_*,
-                // NovaValue_*, void*, nova_ptr). Caller wraps в `unsafe { }`
+                // NovaValue_*, void*). Caller wraps в `unsafe { }`
                 // (parser не enforces; см. [M-118.1-unsafe-attr-on-external-fn]).
+                // Plan 134: nova_ptr removed; void* = erased generic placeholder,
+                // excluded as before.
                 if obj_ty.ends_with('*')
                     && !obj_ty.starts_with("Nova_")
                     && !obj_ty.starts_with("NovaArray_")
@@ -20555,7 +20578,6 @@ _cp++; \
                     && !obj_ty.starts_with("NovaBox_")
                     && !obj_ty.starts_with("NovaValue_")
                     && obj_ty != "void*"
-                    && obj_ty != "nova_ptr"
                 {
                     let is_const = obj_ty.starts_with("const ");
                     if method == "read" && args.is_empty() {
@@ -27040,17 +27062,18 @@ _cp++; \
         // Determine receiver C-type. Для primitive — value; для record —
         // pointer Nova_<T>*.
         let recv_c_ty = match type_name.as_str() {
-            "int" | "i64" => "nova_int".to_string(),
-            // Plan 118.1: isize alias = nova_int
-            "isize" => "nova_int".to_string(),
+            // Plan 133: int = nova_int (intptr_t), i64 = int64_t (fixed).
+            "int" => "nova_int".to_string(),
+            "i64" => "int64_t".to_string(),
+            // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
+            "uint" => "nova_uint".to_string(),
             "f64" => "nova_f64".to_string(),
             "f32" => "nova_f32".to_string(),
             "str" => "nova_str".to_string(),
-            "char" => "nova_int".to_string(),
+            "char" => "nova_char".to_string(),
             "u8" => "nova_byte".to_string(),
             "bool" => "nova_bool".to_string(),
-            // Plan 118.1: usize alias = uint64_t
-            "usize" => "uint64_t".to_string(),
+            // Plan 133: usize/isize removed — use int/uint.
             _ => format!("Nova_{}*", type_name),
         };
 
@@ -27864,7 +27887,8 @@ _cp++; \
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
             | "nova_f32" | "nova_f64");
-        let is_pointer = c_ty.ends_with('*') || c_ty == "nova_ptr";
+        // Plan 134: nova_ptr removed; void* already ends_with('*').
+        let is_pointer = c_ty.ends_with('*');
         let cmp_body = if is_scalar || is_pointer {
             "a.value == b.value".to_string()
         } else {
@@ -27924,10 +27948,10 @@ _cp++; \
         //
         // NPO-eligible (Plan 118 Ф.5/Ф.5.4/Ф.5.8):
         //   - V1: c_ty ends with '*' covers `*T` family (T*/const T*/void*)
-        //   - V2 (A21 partial): `nova_ptr` typedef (= void*) — Plan 115 D214
-        //   - V3 (A20): newtype-over-pointer — `type X(*T)` / `type X(ptr)`
+        //   - Plan 134: nova_ptr removed; *() → void* (ends with '*'), covered by V1
+        //   - V3 (A20): newtype-over-pointer — `type X(*T)` / `type X(*()`
         //     transparent typedef alias. Lookup `Nova_X` в type_aliases →
-        //     underlying c_ty; recurse-check для pointer/nova_ptr.
+        //     underlying c_ty; recurse-check для pointer.
         //   - V4 deferred: `*fn(...)` function pointers (structural)
         //
         // NPO НЕ применяется к: nested `Option[Option[*T]]` — outer Option's
@@ -27935,12 +27959,12 @@ _cp++; \
         // через в tagged branch automatically (W_OPTION_DOUBLE_NESTED
         // warning — A22, type-checker level diagnostic).
         let is_pointer = c_ty.ends_with('*');
-        let is_nova_ptr = c_ty == "nova_ptr";
+        // Plan 134: nova_ptr removed; void* already covered by ends_with('*').
         // A20: newtype transparent typedef-to-pointer.
         let is_newtype_ptr = c_ty.strip_prefix("Nova_")
             .and_then(|user_name| self.type_aliases.get(user_name))
-            .map_or(false, |alias_c| alias_c.ends_with('*') || alias_c == "nova_ptr");
-        let is_npo = is_pointer || is_nova_ptr || is_newtype_ptr;
+            .map_or(false, |alias_c| alias_c.ends_with('*'));
+        let is_npo = is_pointer || is_newtype_ptr;
         let line = if is_npo {
             // NPO layout: single-pointer struct (sizeof = sizeof(c_ty) = 8).
             // No tag field — NULL = None, !NULL = Some.
@@ -27963,7 +27987,7 @@ _cp++; \
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
             | "nova_f32" | "nova_f64");
-        let cmp_body = if is_scalar || is_pointer || is_nova_ptr || is_newtype_ptr {
+        let cmp_body = if is_scalar || is_pointer || is_newtype_ptr {
             "a.value == b.value".to_string()
         } else {
             format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
@@ -27999,13 +28023,11 @@ _cp++; \
     /// Plan 118 Ф.5 (D216 §7): determine whether sanitized NovaOpt name is
     /// NPO-eligible (pointer-typed inner — single-pointer layout без tag).
     /// V1 detection: c_ty ends_with('*') — covers `*T` family (T*/const T*/void*).
-    /// V2 extension (Plan 118 Ф.5.4): `nova_ptr` typedef (= void*) — Plan 115
-    /// D214 opaque pointer; semantically pointer-sized, ABI-equivalent to void*.
-    /// Option[ptr] now NPO-eligible (A21 partial).
+    /// Plan 134: nova_ptr removed; *() = void* already covered by V1.
     /// V3 extension (Plan 118 Ф.5.8 A20): newtype-over-pointer detection —
-    /// `type X(*T)` / `type X(ptr)` typedef'd as transparent alias.
+    /// `type X(*T)` / `type X(*()`  typedef'd as transparent alias.
     /// Lookup в type_aliases: "Nova_X" → underlying C type; если ends '*'
-    /// или == "nova_ptr" — NPO-eligible. Enables `Option[Sqlite3Handle]`,
+    /// — NPO-eligible. Enables `Option[Sqlite3Handle]`,
     /// `Option[FileDescriptor]` и similar canonical FFI handle patterns.
     /// V4 (deferred): `*fn(...)` function pointers (structural detection).
     fn is_novaopt_npo(&self, sanitized: &str) -> bool {
@@ -28014,8 +28036,6 @@ _cp++; \
             .map_or(false, |c_ty| {
                 // V1: direct pointer C type (T* / const T* / void*).
                 if c_ty.ends_with('*') { return true; }
-                // V2 (Ф.5.4, A21 partial): nova_ptr typedef'd as void*.
-                if c_ty == "nova_ptr" { return true; }
                 // V3 (Ф.5.8, A20): newtype-over-pointer transparent typedef.
                 // c_ty form: "Nova_<UserTypeName>" — strip prefix, lookup
                 // в type_aliases (registered в emit_type_decl line 8476):
@@ -28024,7 +28044,7 @@ _cp++; \
                 //     c_ty при Option[Sqlite3Handle] = "Nova_Sqlite3Handle"
                 if let Some(user_name) = c_ty.strip_prefix("Nova_") {
                     if let Some(alias_c) = self.type_aliases.get(user_name) {
-                        if alias_c.ends_with('*') || alias_c == "nova_ptr" {
+                        if alias_c.ends_with('*') {
                             return true;
                         }
                     }
@@ -28366,25 +28386,22 @@ _cp++; \
             ("f64",  "str",  "use `str.from(f)`"),
             ("bool", "str",  "use `str.from(b)`"),
             ("char", "str",  "use `str.from(c)` (UTF-8 encode)"),
-            // Plan 115 D214: ptr cast restrictions.
-            // Allowed: ptr ↔ {u64, i64, int} (для integer-storage).
-            // Banned: ptr ↔ {str, bool, f32, f64, char}.
-            ("ptr",  "str",  "[E_PTR_CAST_INVALID_TARGET] `ptr as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
-            ("ptr",  "bool", "[E_PTR_CAST_INVALID_TARGET] `ptr as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
-            ("ptr",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `ptr as f64` запрещён: pointer→float не имеет semantic meaning"),
-            ("ptr",  "f32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as f32` запрещён"),
-            ("ptr",  "char", "[E_PTR_CAST_INVALID_TARGET] `ptr as char` запрещён"),
-            ("ptr",  "i8",   "[E_PTR_CAST_INVALID_TARGET] `ptr as i8` запрещён: narrows pointer; используйте `as i64` или `as u64`"),
-            ("ptr",  "i16",  "[E_PTR_CAST_INVALID_TARGET] `ptr as i16` запрещён"),
-            ("ptr",  "i32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as i32` запрещён"),
-            ("ptr",  "u8",   "[E_PTR_CAST_INVALID_TARGET] `ptr as u8` запрещён"),
-            ("ptr",  "u16",  "[E_PTR_CAST_INVALID_TARGET] `ptr as u16` запрещён"),
-            ("ptr",  "u32",  "[E_PTR_CAST_INVALID_TARGET] `ptr as u32` запрещён"),
-            ("str",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `str as ptr` запрещён: используйте `s.as_bytes().as_ptr()` (future FFI API)"),
-            ("bool", "ptr",  "[E_PTR_CAST_INVALID_TARGET] `bool as ptr` запрещён"),
-            ("f64",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `f64 as ptr` запрещён"),
-            ("f32",  "ptr",  "[E_PTR_CAST_INVALID_TARGET] `f32 as ptr` запрещён"),
-            ("char", "ptr",  "[E_PTR_CAST_INVALID_TARGET] `char as ptr` запрещён"),
+            // Plan 134: *() cast restrictions (replaces `ptr` — Plan 134).
+            // Allowed: *() ↔ {u64, i64, int} (для integer-storage).
+            // Banned: *() ↔ {str, bool, f32, f64, char}.
+            // NOTE: target_nova for *() = TypeRef::Pointer(Unit) → target_nova=None
+            // so these only fire when src_nova="*()" (from nova_type_name_from_c("void*")).
+            ("*()",  "str",  "[E_PTR_CAST_INVALID_TARGET] `*() as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
+            ("*()",  "bool", "[E_PTR_CAST_INVALID_TARGET] `*() as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
+            ("*()",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `*() as f64` запрещён: pointer→float не имеет semantic meaning"),
+            ("*()",  "f32",  "[E_PTR_CAST_INVALID_TARGET] `*() as f32` запрещён"),
+            ("*()",  "char", "[E_PTR_CAST_INVALID_TARGET] `*() as char` запрещён"),
+            ("*()",  "i8",   "[E_PTR_CAST_INVALID_TARGET] `*() as i8` запрещён: narrows pointer; используйте `as i64` или `as u64`"),
+            ("*()",  "i16",  "[E_PTR_CAST_INVALID_TARGET] `*() as i16` запрещён"),
+            ("*()",  "i32",  "[E_PTR_CAST_INVALID_TARGET] `*() as i32` запрещён"),
+            ("*()",  "u8",   "[E_PTR_CAST_INVALID_TARGET] `*() as u8` запрещён"),
+            ("*()",  "u16",  "[E_PTR_CAST_INVALID_TARGET] `*() as u16` запрещён"),
+            ("*()",  "u32",  "[E_PTR_CAST_INVALID_TARGET] `*() as u32` запрещён"),
         ];
         for (s, t, hint) in banned {
             if &src == s && &tgt_nova == t {
@@ -28432,13 +28449,12 @@ _cp++; \
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
     /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
     fn nova_type_name_from_c(c_ty: &str) -> String {
-        // Plan 115 D214: `nova_ptr` (typedef void*) ↔ Nova `ptr`. Distinct
-        // от `void*` (erased generic-T placeholder) на codegen уровне.
-        // External fn API tools (как-`s as ptr`) могут вернуть raw `void*`
-        // через C library — treat both as Nova ptr для cast/check purposes.
+        // Plan 134: `nova_ptr` typedef removed. `void*` = Nova `*()`.
+        // cast-check table uses "*()"; но для as-cast источника void*
+        // это erased generic placeholder — conservative, skip check.
         let t = c_ty.trim();
-        if t == "nova_ptr" || t == "void*" {
-            return "ptr".into();
+        if t == "void*" {
+            return "*()".into();
         }
         let trimmed = c_ty.trim_end_matches('*').trim();
         match trimmed {
@@ -28686,8 +28702,7 @@ _cp++; \
             "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t" |
             // Plan 70.3 distinct typedef.
             "nova_char" |
-            // Plan 115 D214: nova_ptr (typedef void*) — value type.
-            "nova_ptr" |
+            // Plan 134: nova_ptr removed; void* pointer type handled by ends_with('*').
             "Nova_ChannelPair"
         )
     }
@@ -28823,18 +28838,18 @@ _cp++; \
             ExprKind::StrLit(_) => "nova_str".into(),
             ExprKind::InterpolatedStr { .. } => "nova_str".into(),
             ExprKind::UnitLit => "nova_unit".into(),
-            // Plan 115 D214: ptr inference — `null ptr` literal as `nova_ptr`
-            // (distinct typedef = void*; distinguishable от erased generic-T
-            // void* placeholder в TupleLit mono detection).
-            ExprKind::NullPtrLit => "nova_ptr".into(),
+            // Plan 134: `null ptr` literal → *() = void*.
+            ExprKind::NullPtrLit => "void*".into(),
             ExprKind::TupleLit(elems) => {
                 // Plan 59: prefer mono'd tuple struct если все element types
                 // concrete. Параллель с emit_expr::TupleLit decision.
+                // Plan 134: void* (from *()) IS concrete — do not treat as
+                // erased; sanitize_c_for_ident("void*") → "void_p".
                 let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
                 let mut all_concrete = true;
                 for e in elems {
                     let ety = self.infer_expr_c_type(e);
-                    if ety.is_empty() || ety == "void*" {
+                    if ety.is_empty() {
                         all_concrete = false;
                         break;
                     }
@@ -29805,6 +29820,7 @@ _cp++; \
                     // Plan 118 Ф.4 V1: typed pointer (*T).read() -> T,
                     // (*mut T).write(v T) -> nova_unit. Match obj_ty pattern
                     // `T*` или `const T*`, NOT Nova_*/NovaArray_*/etc.
+                    // Plan 134: nova_ptr removed; void* = erased placeholder excluded.
                     if obj_ty.ends_with('*')
                         && !obj_ty.starts_with("Nova_")
                         && !obj_ty.starts_with("NovaArray_")
@@ -29813,7 +29829,6 @@ _cp++; \
                         && !obj_ty.starts_with("NovaBox_")
                         && !obj_ty.starts_with("NovaValue_")
                         && obj_ty != "void*"
-                        && obj_ty != "nova_ptr"
                     {
                         if method == "read" && args.is_empty() {
                             // pointee = strip "const " prefix + trailing '*'

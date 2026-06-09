@@ -65,10 +65,10 @@ pub fn builtin_protocol_method(proto_name: &str) -> Option<&'static str> {
 
 /// Имена примитивных типов Nova bootstrap. Используются для
 /// field-eligibility check'а — primitive поля всегда eligible.
+// Plan 133: usize/isize removed; int=intptr_t, uint=uintptr_t.
 pub const NOVA_PRIMITIVES: &[&str] = &[
-    "int", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+    "int", "uint", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
     "f32", "f64", "bool", "char", "byte", "str", "u128", "i128",
-    "isize", "usize",
 ];
 
 /// True если type-name — primitive.

@@ -332,17 +332,18 @@ impl ExternalRegistry {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.join("_");
                 Ok(match name.as_str() {
-                    "int" | "i64" => "nova_int".into(),
+                    // Plan 133: int = nova_int (intptr_t), i64 = int64_t (fixed).
+                    "int" => "nova_int".into(),
+                    "i64" => "int64_t".into(),
                     "i32" => "int32_t".into(),
                     "i16" => "int16_t".into(),
                     "i8"  => "int8_t".into(),
+                    // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
                     "u64" => "uint64_t".into(),
-                    // Plan 70.5: uint = alias u64.
-                    "uint" => "uint64_t".into(),
-                    // Plan 118 / D226 amend: usize = u64 alias (platform
-                    // pointer width on 64-bit), isize = i64 alias.
-                    "usize" => "uint64_t".into(),
-                    "isize" => "nova_int".into(),
+                    "uint" => "nova_uint".into(),
+                    // Plan 133: usize/isize removed — use int/uint instead.
+                    "usize" => return Err("type `usize` is removed — use `int` (Plan 133)".into()),
+                    "isize" => return Err("type `isize` is removed — use `int` (Plan 133)".into()),
                     "u32" => "uint32_t".into(),
                     "u16" => "uint16_t".into(),
                     // Plan 70.4 Ф.4: u8 → nova_byte (unified with byte).
@@ -353,10 +354,9 @@ impl ExternalRegistry {
                     "str" => "nova_str".into(),
                     // Plan 70.3: distinct nova_char typedef (mirror emit_c.rs:2680).
                     "char" => "nova_char".into(),
-                    // Plan 115 D214: nova_ptr distinct typedef (mirror
-                    // emit_c.rs type_ref_to_c). External fn use this для
-                    // ptr-parameter/return ABI.
-                    "ptr" => "nova_ptr".into(),
+                    // Plan 134: `ptr` builtin type REMOVED — use `*()` (Plan 134).
+                    // *() parsed as TypeRef::Pointer(TypeRef::Unit) → handled below.
+                    "ptr" => return Err("type `ptr` is removed — use `*()` (Plan 134)".into()),
                     "Self" => match recv {
                         Some("str") => "nova_str".into(),
                         Some(t) => format!("Nova_{}*", t),
@@ -458,8 +458,11 @@ impl ExternalRegistry {
                 for el in elems {
                     match Self::type_ref_to_c(el, recv) {
                         Ok(c) => {
-                            // void* / empty — erased fallback. nova_ptr ОК.
-                            if c.is_empty() || c == "void*" {
+                            // Empty string = unresolved/erased type → fallback.
+                            // Plan 134: void* (from *()) IS concrete — do not
+                            // treat as erased; sanitize_c_for_ident("void*")
+                            // → "void_p" matching the shim header's mangled name.
+                            if c.is_empty() {
                                 all_concrete = false;
                                 break;
                             }
@@ -503,12 +506,20 @@ impl ExternalRegistry {
             // read-only — emit C `const T*`. `mut`/`unsafe` are first-class
             // wrappers; when they wrap a Pointer they strip the `const`
             // (→ `T*`); otherwise they are transparent for codegen.
+            // Plan 134: *() = pointer-to-unit = void* (replaces `ptr` builtin).
             TypeRef::Pointer(inner, _) => {
+                if matches!(inner.as_ref(), TypeRef::Unit(_)) {
+                    return Ok("void*".into());
+                }
                 let inner_c = Self::type_ref_to_c(inner, recv)?;
                 Ok(format!("const {}*", inner_c))
             }
             TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    // Plan 134: *mut () = void*.
+                    if matches!(p_inner.as_ref(), TypeRef::Unit(_)) {
+                        return Ok("void*".into());
+                    }
                     let p_inner_c = Self::type_ref_to_c(p_inner, recv)?;
                     Ok(format!("{}*", p_inner_c))
                 } else {

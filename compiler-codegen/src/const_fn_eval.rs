@@ -1003,8 +1003,9 @@ fn is_unresolved_generic_param(t: &crate::ast::TypeRef) -> bool {
     };
     let is_primitive = matches!(
         name.as_str(),
+        // Plan 133: usize/isize removed; int/uint are address-sized.
         "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
-            | "i8" | "u8" | "bool" | "char" | "str" | "usize" | "isize" | "uint"
+            | "i8" | "u8" | "bool" | "char" | "str" | "uint"
             | "ptr" | "never" | "byte"
     );
     if is_primitive {
