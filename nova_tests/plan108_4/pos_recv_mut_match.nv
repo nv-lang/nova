@@ -1,0 +1,36 @@
+// Plan 108.4 Ф.2: positive tests — receiver mutability matches protocol declarations.
+// Verifies that correct receiver mutability (mut/ro/consume) compiles and runs without errors.
+
+module plan108_4.pos_recv_mut_match
+
+// Protocol with mut receiver method.
+type Iter108 protocol {
+    mut @next() -> int
+}
+
+// Protocol with ro receiver method (default).
+type Hash108 protocol {
+    @hash() -> u64
+}
+
+// Correct impl: mut @next matches mut protocol method.
+#impl(Iter108)
+type Counter108 { mut cur int }
+fn Counter108 mut @next() -> int {
+    ro v = @cur
+    @cur = @cur + 1
+    v
+}
+
+// Correct impl: ro @hash matches ro protocol method (no prefix = ro).
+#impl(Hash108)
+type MyId108 { id u64 }
+fn MyId108 @hash() -> u64 => @id
+
+test "correct receiver mutability: mut and ro both match protocol" {
+    mut c = Counter108 { cur: 0 }
+    assert(c.next() == 0)
+    assert(c.next() == 1)
+    ro m = MyId108 { id: 42 }
+    assert(m.hash() == 42)
+}

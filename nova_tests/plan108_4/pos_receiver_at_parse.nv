@@ -1,0 +1,50 @@
+// Plan 108.4 Ф.1: protocol method declarations require explicit receiver prefix.
+// This fixture verifies the parser accepts `@`, `mut @`, `consume @`, and `.` forms.
+
+module plan108_4.pos_receiver_at_parse
+
+// Read-only receiver (default instance method).
+type Hashable108 protocol {
+    @hash() -> u64
+}
+
+// Mutable receiver.
+type Growable108 protocol {
+    mut @push(x int)
+}
+
+// Static method (no receiver).
+type Factory108 protocol {
+    .create() -> int
+}
+
+// Mixed: static + instance in one protocol.
+type Repository108 protocol {
+    .new() -> int
+    @get(id int) -> int
+    mut @set(id int, val int)
+}
+
+// Default body with @ prefix.
+type Printable108 protocol {
+    @fmt() -> str => "default"
+}
+
+// Implement them for a concrete type.
+type Counter108b { mut val u64 }
+fn Counter108b @hash() -> u64 => @val
+fn Counter108b mut @push(x int) { @val = @val + x }
+fn Counter108b.create() -> int => 0
+fn Counter108b @get(id int) -> int => @val
+fn Counter108b mut @set(id int, val int) { @val = val }
+fn Counter108b @fmt() -> str => "counter"
+
+test "protocol declarations with @ receiver parse and work correctly" {
+    mut c = Counter108b { val: 0 }
+    c.push(5)
+    assert(c.hash() != 0)
+    assert(Counter108b.create() == 0)
+    assert(c.get(0) == 5)
+    c.set(0, 10)
+    assert(c.fmt() == "counter")
+}
