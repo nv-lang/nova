@@ -4108,12 +4108,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         type_args: &[String],
     ) -> Option<String> {
         // Plan 97.1 Ф.3 (D142): skip protocols, vtable struct которых
-        // уже определён в `nova_rt/vtables.h` (`Hashable`, `Comparable`,
-        // `Display`). Эмиссия typedef'а второй раз → C redefinition.
+        // уже определён в `nova_rt/vtables.h` (`Hash`, `Compare`).
+        // D237: Hashable→Hash, Comparable→Compare.
+        // Эмиссия typedef'а второй раз → C redefinition.
         // Эти protocol'ы ВСЁ РАВНО получают NovaBox_<X> typedef (одно
         // определение в generic_type_defs_buf — runtime даёт только
         // NovaVtable_<X>, не NovaBox).
-        const RT_VTABLE_PROTOCOLS: &[&str] = &["Hashable", "Comparable", "Display"];
+        const RT_VTABLE_PROTOCOLS: &[&str] = &["Hash", "Compare", "Display"];
         let rt_has_vtable = type_args.is_empty()
             && RT_VTABLE_PROTOCOLS.contains(&proto_name);
 
@@ -16586,10 +16587,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // этого record-типы (у них нет `->tag`) давали невалидный
                     // C, а sum-типы с кастомным `@eq` его игнорировали.
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        // Plan 91.8a.2 part 3 (D183 amendment): try @equals first,
-                        // then legacy @eq (для compatibility до stdlib миграции),
+                        // Plan 91.8a.2 part 3 (D183 amendment): try @equal first (D237),
+                        // then legacy @eq (для compatibility),
                         // then synthesis via @compare.
-                        for method_name in &["equals", "eq"] {
+                        for method_name in &["equal", "eq"] {
                             let key = (type_name_sum.clone(), method_name.to_string());
                             if let Some(sigs) = self.method_overloads.get(&key) {
                                 if let Some(sig) = sigs.iter()
@@ -16604,8 +16605,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 }
                             }
                         }
-                        // Synthesis через @compare если type не имеет @equals/@eq но имеет @compare.
-                        // Equatable.equals default body = @compare(other) == 0.
+                        // Synthesis через @compare если type не имеет @equal/@eq но имеет @compare.
+                        // Equal.equal default body = @compare(other) == 0 (D237).
                         let has_compare = self.all_methods
                             .contains(&(type_name_sum.clone(), "compare".to_string()));
                         if has_compare {
@@ -23677,11 +23678,10 @@ _cp++; \
                     let arg_ty = self.infer_expr_c_type(e);
                     let v = self.emit_expr(e)?;
                     // **Plan 91.14 Ф.4 (D229):** branch on format spec.
-                    // - FormatSpec::None → Printable.@fmt (existing path).
-                    // - FormatSpec::Debug → DebugPrintable.@debug_fmt + debug
-                    //   primitives (`nova_str_to_debug_str` etc.).
+                    // - FormatSpec::None → Display.@display (D237 rename from Printable.@fmt).
+                    // - FormatSpec::Debug → Debug.@debug (D237 rename from DebugPrintable.@debug_fmt).
                     let is_debug = matches!(spec, crate::ast::FormatSpec::Debug);
-                    let method_name = if is_debug { "debug_fmt" } else { "fmt" };
+                    let method_name = if is_debug { "debug" } else { "display" };
                     let primitive_to_str_fn: fn(&str) -> Option<&'static str> = if is_debug {
                         |ct| match ct {
                             "nova_str" => Some("nova_str_to_debug_str"),
@@ -23728,9 +23728,9 @@ _cp++; \
                         continue;
                     }
                     // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
-                    // unified Printable.fmt routing для user types.
-                    // Plan 91.14 (D229): same path для DebugPrintable.@debug_fmt
-                    // when spec=Debug — direct `Nova_T_method_debug_fmt(v, sb)`.
+                    // unified Display.display routing для user types (D237).
+                    // Plan 91.14 (D229): same path для Debug.@debug
+                    // when spec=Debug — direct `Nova_T_method_debug(v, sb)`.
                     if !matches!(e.kind, ExprKind::CharLit(_))
                         && !matches!(arg_ty.as_str(),
                             "nova_str" | "nova_char" | "nova_bool"
@@ -23748,8 +23748,8 @@ _cp++; \
                         } else {
                             // Plan 91.14 Ф.4 / decision #4 (implicit auto-derive):
                             // bypass D186 #impl gate via gate_on_impl=false для
-                            // debug_fmt — zero-friction on-demand synthesis.
-                            // For fmt — preserve existing gated behavior.
+                            // debug (D237) — zero-friction on-demand synthesis.
+                            // For display — preserve existing gated behavior.
                             if is_debug {
                                 self.try_synthesize_default_method_with_gate(
                                     &arg_type, &arg_ty, method_name, false)
@@ -23778,8 +23778,8 @@ _cp++; \
                             ("nova_str", Some("")) => v,
                             (_, Some(fn_name)) => format!("{}({})", fn_name, v),
                             (_, None) => {
-                                // User-type fallback path — Printable str.from chain
-                                // (debug fallback when debug_fmt synthesis failed
+                                // User-type fallback path — Display str.from chain (D237).
+                                // (debug fallback when debug synthesis failed
                                 // earlier — caller already tried via method dispatch).
                                 let arg_type = arg_ty
                                     .trim_start_matches("Nova_")

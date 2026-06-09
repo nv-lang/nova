@@ -5331,8 +5331,32 @@ impl<'a> TypeCheckCtx<'a> {
         AutoDeriveQueryBridge { ctx: self }
     }
 
+    /// Plan 137 (D237): protocols renamed; emit helpful E_PROTOCOL_RENAMED.
+    const RENAMED_PROTOCOLS: &'static [(&'static str, &'static str)] = &[
+        ("Hashable",       "Hash"),
+        ("Equatable",      "Equal"),
+        ("Comparable",     "Compare"),
+        ("Cloneable",      "Clone"),
+        ("Printable",      "Display"),
+        ("DebugPrintable", "Debug"),
+    ];
+
     fn verify_impl_protocols(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
         for proto_name in &td.impl_protocols {
+            // Plan 137 (D237): check for renamed protocols first, emit helpful message.
+            if let Some((_, new_name)) = Self::RENAMED_PROTOCOLS.iter()
+                .find(|(old, _)| *old == proto_name.as_str())
+            {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_RENAMED] protocol `{}` was renamed to `{}` (D237). \
+                         Use `#impl({})` instead.",
+                        proto_name, new_name, new_name,
+                    ),
+                    td.span,
+                ));
+                continue;
+            }
             let proto_decl = match self.types.get(proto_name.as_str()) {
                 Some(td) => td,
                 None => {
@@ -6603,11 +6627,12 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
             type_kinds.insert(t.name.clone(), kind_name);
         }
     }
-    // Well-known stdlib alias names (legacy + Plan 62.E migrated).
-    // Plan 91.8a (D183): Iter→Iterable, Display→Printable.
+    // Well-known stdlib alias names (D237: renamed + new protocols).
+    // D237: Hashable→Hash, Equatable→Equal, Comparable→Compare, Cloneable→Clone,
+    //       Printable→Display, DebugPrintable→Debug.
     let stdlib_aliases: &[&str] = &[
         "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
-        "Hashable", "Printable", "Equatable", "Comparable",
+        "Hash", "Display", "Equal", "Compare", "Clone", "Debug",
         "Iterable", "From", "Into",
     ];
     // Primitive-имена (Q-representation-bound future):
@@ -19181,72 +19206,72 @@ mod named_tuple_ctor_infer_tests {
     }
 
     #[test]
-    fn synth_equatable_registered_in_method_table() {
+    fn synth_equal_registered_in_method_table() {
         let m = make_module_with_types(vec![
-            make_named_tuple_impl("P", vec![("x", "int"), ("y", "int")], &["Equatable"]),
+            make_named_tuple_impl("P", vec![("x", "int"), ("y", "int")], &["Equal"]),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
-        assert!(mt_has(&ctx, "P", "equals"),
-            "synthesized Equatable.equals must be registered in method_table[P]");
+        assert!(mt_has(&ctx, "P", "equal"),
+            "synthesized Equal.equal must be registered in method_table[P]");
     }
 
     #[test]
-    fn synth_hashable_registered_in_method_table() {
+    fn synth_hash_registered_in_method_table() {
         let m = make_module_with_types(vec![
-            make_named_tuple_impl("P", vec![("x", "int")], &["Hashable"]),
+            make_named_tuple_impl("P", vec![("x", "int")], &["Hash"]),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
         assert!(mt_has(&ctx, "P", "hash"),
-            "synthesized Hashable.hash must be registered in method_table[P]");
+            "synthesized Hash.hash must be registered in method_table[P]");
     }
 
     #[test]
-    fn synth_cloneable_registered_in_method_table() {
+    fn synth_clone_registered_in_method_table() {
         let m = make_module_with_types(vec![
-            make_named_tuple_impl("P", vec![("x", "int")], &["Cloneable"]),
+            make_named_tuple_impl("P", vec![("x", "int")], &["Clone"]),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
         assert!(mt_has(&ctx, "P", "clone"),
-            "synthesized Cloneable.clone must be registered in method_table[P]");
+            "synthesized Clone.clone must be registered in method_table[P]");
     }
 
     #[test]
-    fn synth_comparable_registered_in_method_table() {
+    fn synth_compare_registered_in_method_table() {
         let m = make_module_with_types(vec![
-            make_named_tuple_impl("P", vec![("x", "int")], &["Comparable"]),
+            make_named_tuple_impl("P", vec![("x", "int")], &["Compare"]),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
         assert!(mt_has(&ctx, "P", "compare"),
-            "synthesized Comparable.compare must be registered in method_table[P]");
+            "synthesized Compare.compare must be registered in method_table[P]");
     }
 
     #[test]
-    fn synth_printable_registered_in_method_table() {
+    fn synth_display_registered_in_method_table() {
         let m = make_module_with_types(vec![
-            make_named_tuple_impl("P", vec![("x", "int")], &["Printable"]),
+            make_named_tuple_impl("P", vec![("x", "int")], &["Display"]),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
-        assert!(mt_has(&ctx, "P", "fmt"),
-            "synthesized Printable.fmt must be registered in method_table[P]");
+        assert!(mt_has(&ctx, "P", "display"),
+            "synthesized Display.display must be registered in method_table[P]");
     }
 
     #[test]
-    fn synth_all_five_protocols_registered_together() {
+    fn synth_all_six_protocols_registered_together() {
         let m = make_module_with_types(vec![
             make_named_tuple_impl(
                 "P",
                 vec![("x", "int"), ("y", "int")],
-                &["Equatable", "Hashable", "Cloneable", "Comparable", "Printable"],
+                &["Equal", "Hash", "Clone", "Compare", "Display", "Debug"],
             ),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
-        for method in ["equals", "hash", "clone", "compare", "fmt"] {
+        for method in ["equal", "hash", "clone", "compare", "display", "debug"] {
             assert!(mt_has(&ctx, "P", method),
                 "synthesized method `{}` must be registered in method_table[P]",
                 method);
@@ -19256,11 +19281,11 @@ mod named_tuple_ctor_infer_tests {
     #[test]
     fn synth_methods_marked_compiler_generated() {
         let m = make_module_with_types(vec![
-            make_named_tuple_impl("P", vec![("x", "int")], &["Equatable", "Hashable"]),
+            make_named_tuple_impl("P", vec![("x", "int")], &["Equal", "Hash"]),
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
-        for method in ["equals", "hash"] {
+        for method in ["equal", "hash"] {
             let fd = mt_fn(&ctx, "P", method)
                 .unwrap_or_else(|| panic!("method `{}` not registered", method));
             assert!(fd.compiler_generated,
@@ -19280,7 +19305,7 @@ mod named_tuple_ctor_infer_tests {
         ]);
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
-        assert!(!mt_has(&ctx, "P", "equals"),
+        assert!(!mt_has(&ctx, "P", "equal"),
             "no `#impl` annotation → no synthesized methods in method_table");
         assert!(ctx.method_table.get("P").map_or(true, |m| m.is_empty()),
             "method_table[P] must be empty/absent without #impl");
@@ -19288,11 +19313,11 @@ mod named_tuple_ctor_infer_tests {
 
     #[test]
     fn no_synth_when_user_provides_explicit_method() {
-        // User wins: explicit `fn P @equals(...)` → synthesis skipped, no
+        // User wins: explicit `fn P @equal(...)` → synthesis skipped, no
         // duplicate. We register the user fn manually via an Item::Fn.
-        let p = make_named_tuple_impl("P", vec![("x", "int")], &["Equatable"]);
-        let user_equals = FnDecl {
-            name: "equals".to_string(),
+        let p = make_named_tuple_impl("P", vec![("x", "int")], &["Equal"]);
+        let user_equal = FnDecl {
+            name: "equal".to_string(),
             receiver: Some(Receiver {
                 type_name: "P".to_string(),
                 generics: vec![],
@@ -19311,7 +19336,7 @@ mod named_tuple_ctor_infer_tests {
         let m = Module {
             name: vec!["test".to_string()],
             imports: Vec::new(),
-            items: vec![Item::Type(p), Item::Fn(user_equals)],
+            items: vec![Item::Type(p), Item::Fn(user_equal)],
             attrs: Vec::new(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
@@ -19321,12 +19346,12 @@ mod named_tuple_ctor_infer_tests {
         let arena = FnDeclArena::new();
         let ctx = TypeCheckCtx::build(&m, &arena);
         let fns = ctx.method_table.get("P").and_then(|m| {
-            m.iter().find(|(k, _)| k.trim_start_matches('@') == "equals").map(|(_, v)| v)
-        }).expect("equals must be registered (user-provided)");
+            m.iter().find(|(k, _)| k.trim_start_matches('@') == "equal").map(|(_, v)| v)
+        }).expect("equal must be registered (user-provided)");
         assert_eq!(fns.len(), 1,
-            "user-provided equals must not be duplicated by synthesis");
+            "user-provided equal must not be duplicated by synthesis");
         assert!(!fns[0].compiler_generated,
-            "registered equals must be the USER fn (compiler_generated = false), \
+            "registered equal must be the USER fn (compiler_generated = false), \
              synthesis must be skipped when user provides explicit method");
     }
 }

@@ -22,16 +22,17 @@
  *   1. NovaVtable_Hashable — hash + eq (HashMap / HashSet bound).
  *   2. NovaVtable_Comparable — lt + le + gt + ge + ne (default) + eq.
  *      Используется sorted collections (future BTreeMap).
- *   3. NovaVtable_Display — to_str (debugging, error formatting).
+ *   3. NovaVtable_Display — display(sb) (D237: renamed from to_str/fmt).
  *
  * Multi-bound: caller передаёт несколько vtables как hidden ABI params.
- * Например, `fn f[T Hashable + Display](x T)` принимает скрытые
- * `_vt_T_h: const NovaVtable_Hashable*` и `_vt_T_d: const NovaVtable_Display*`.
+ * Например, `fn f[T Hash + Display](x T)` принимает скрытые
+ * `_vt_T_h: const NovaVtable_Hash*` и `_vt_T_d: const NovaVtable_Display*`.
  */
 
 #include <stdint.h>
 
 /* Forward declarations of primitive types (defined in nova_rt.h). */
+struct Nova_StringBuilder;  /* forward decl for NovaVtable_Display */
 #ifndef NOVA_RT_H
 /* Plan 133: nova_int = intptr_t (address-sized, was int64_t). */
 typedef intptr_t nova_int;
@@ -72,10 +73,10 @@ typedef struct NovaVtable_Comparable {
 /* ============================================================
  * NovaVtable_Display — для error formatting / debug.
  *
- * Required: to_str.
+ * Required: display (D237: renamed from to_str / fmt).
  * ============================================================ */
 typedef struct NovaVtable_Display {
-    nova_str (*to_str)(const void* self);
+    nova_unit (*display)(const void* self, struct Nova_StringBuilder* sb);
 } NovaVtable_Display;
 
 /* ============================================================
@@ -255,6 +256,27 @@ static const NovaVtable_Comparable _vt_Comparable_nova_str = {
     .eq = _vt_nova_str_eq,
     .ne = _vt_nova_str_ne,
 };
+
+/* ============================================================
+ * Plan 137 (D237): protocol name aliases.
+ * Hashable → Hash, Comparable → Compare (Nova protocol rename).
+ * Typedef aliases ensure both old generated C and new generated C compile.
+ * ============================================================ */
+typedef NovaVtable_Hashable  NovaVtable_Hash;
+typedef NovaVtable_Comparable NovaVtable_Compare;
+
+/* Hash vtable instances for primitives (same data as Hashable). */
+#define _vt_Hash_nova_int  _vt_Hashable_nova_int
+#define _vt_Hash_nova_bool _vt_Hashable_nova_bool
+#define _vt_Hash_nova_byte _vt_Hashable_nova_byte
+#define _vt_Hash_nova_f64  _vt_Hashable_nova_f64
+#define _vt_Hash_nova_str  _vt_Hashable_nova_str
+
+/* Compare vtable instances for primitives (same data as Comparable). */
+#define _vt_Compare_nova_int  _vt_Comparable_nova_int
+#define _vt_Compare_nova_byte _vt_Comparable_nova_byte
+#define _vt_Compare_nova_f64  _vt_Comparable_nova_f64
+#define _vt_Compare_nova_str  _vt_Comparable_nova_str
 
 /* ============================================================
  * Generic helpers — call через vtable safe casts.
