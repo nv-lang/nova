@@ -5677,3 +5677,131 @@ safety).
 - [D198](03-syntax.md#d198) — realtime bypass этого Level-2.
 - [Plan 100.4.1](../../docs/plans/100.4.1-failable-cleanup-body.md) — handler cleanup mechanism.
 - [Plan 110 Ф.8](../../docs/plans/110-scoped-resources-radical-simplification.md).
+
+---
+
+## D209 — Protocol method `@` syntax + receiver mutability (Plan 108.4, 2026-06-09)
+
+**Plan:** [108.4-protocol-method-receiver-mut.md](../../docs/plans/108.4-protocol-method-receiver-mut.md).
+**Status:** ACTIVE.
+**Depends on:** [D58](03-syntax.md#d58-range-литерал-itert-protocol-for-x-in-c-implicit-iter) (structural protocols), [D72](02-types.md#d72-generic-bounds-через-t-protocol--protocol-как-тип) (generic bounds), [D186](02-types.md#d186--impip1--p2---opt-in-annotation-для-protocols) (`#impl` annotation), Plan 108.1/108.2/108.3 (default-ro family).
+
+### Что
+
+Protocol instance-methods требуют `@` перед именем метода. Receiver
+mutability prefix (`mut`/`ro`/`consume`) опционален перед `@`.
+Default = `ro` (consistent с Plan 108.1/108.2/108.3 default-ro paradigm
+для params/locals/loops/patterns).
+
+**Visual distinction — protocols vs effects:**
+
+```nova
+// Effect — набор функций (нет receiver, нет @):
+type Logger effect {
+    log(msg str) -> ()
+}
+
+// Protocol — набор методов (есть receiver = @):
+type Closeable protocol {
+    consume @close() -> Result[(), Error]
+}
+```
+
+### Правило
+
+**`@` обязателен** перед именем instance-метода в `type X protocol { }` declaration.
+Static methods используют `.method()` (leading dot, без изменений).
+Effect `effect { }` blocks — без изменений, нет `@`.
+
+```nova
+type Iterable[T] protocol {
+    mut @next() -> Option[T]               // mut receiver
+    @len() -> int                           // ro receiver (default, no prefix)
+}
+
+type Closeable protocol {
+    consume @close() -> Result[(), Error]  // consume receiver
+}
+
+type Comparable[T] protocol {
+    @compare(other ro T) -> int            // ro receiver, ro param
+}
+
+type Hashable protocol {
+    @hash() -> u64                          // ro — детерминированный hash
+}
+```
+
+### Грамматика
+
+```ebnf
+// Protocol — @ обязателен для instance; . для static (без изменений)
+proto_method_decl  ::= ("mut" | "ro" | "consume")? "@" IDENT "(" param_list? ")"
+                       effect_list? ("->" type)?
+proto_static_decl  ::= "." IDENT "(" param_list? ")" effect_list? ("->" type)?
+
+// Effect — без изменений (функции без receiver)
+effect_method_decl ::= IDENT "(" param_list? ")" effect_list? ("->" type)?
+```
+
+Default receiver: `ro` (без prefix'а). `ro @method()` ≡ `@method()` (explicit, но redundant).
+
+### Enforcement
+
+**Parse-time errors:**
+- `E_PROTO_METHOD_NEEDS_AT` — instance-метод без `@` (bare `method()`) в protocol declaration.
+  Hint: «add `@` before method name: `@method()`».
+- `E_PROTO_METHOD_MOD_CONFLICT` — multiple modifiers (`mut ro @foo()`, `mut consume @bar()`).
+
+**Type-checker errors (impl mismatch):**
+- `E_PROTO_IMPL_RO_FOR_MUT` — protocol `mut @m()`, impl ro.
+- `E_PROTO_IMPL_MUT_FOR_RO` — protocol `@m()` (ro), impl mut.
+- `E_PROTO_IMPL_MUT_FOR_CONSUME` — protocol `consume @m()`, impl mut/ro.
+- `E_PROTO_IMPL_CONSUME_FOR_MUT` — protocol `mut @m()`, impl consume.
+
+Enforcement paths:
+1. **`#impl(P)` annotation** (D186) — declares-conformance: type-checker matches every
+   method's `receiver_mut` at type-declaration site.
+2. **Structural conformance** (D58) — at use-site (for-in / generic bound `[T Protocol]`).
+
+### Сравнение с mainstream
+
+| Язык | Receiver mutability в protocol/trait/interface |
+|---|---|
+| Rust | `trait Iterator { fn next(&mut self) -> Option<Self::Item> }` — explicit `&mut self` |
+| Swift | `protocol IteratorProtocol { mutating func next() -> Element? }` — `mutating` keyword |
+| Go | `interface { Next() *T }` — implicit pointer mut |
+| Kotlin/Java | нет static mutability tracking |
+| **Nova (Plan 108.4)** | `protocol { mut @next() -> Option[T] }` — `@` обязателен + `mut`/`ro`/`consume`, enforced |
+
+### Stdlib migration (Ф.3)
+
+All existing protocol declarations updated (Plan 108.4 Ф.3 sweep):
+
+| Protocol | Старый метод | Новый метод |
+|---|---|---|
+| `Iterable[T]` | `next() -> Option[T]` | `mut @next() -> Option[T]` |
+| `Hashable` | `hash() -> u64` | `@hash() -> u64` |
+| `Equatable` | `equals(other Self) -> bool` | `@equals(other Self) -> bool` |
+| `Comparable[T]` | `compare(other Self) -> int` | `@compare(other Self) -> int` |
+| `Cloneable` | `clone() -> Self` | `@clone() -> Self` |
+| `Printable` | `fmt(sb StringBuilder)` | `@fmt(sb StringBuilder)` |
+| `DebugPrintable` | `debug_fmt(sb StringBuilder)` | `@debug_fmt(sb StringBuilder)` |
+| `Consumable[E]` | `on_exit(...)` | `consume @on_exit(outcome ScopeOutcome) Fail[E] -> ()` |
+| `WithExitTimeout` | `exit_timeout_ms() -> int` | `@exit_timeout_ms() -> int` |
+| `Into[U]` | `into() -> U` | `@into() -> U` |
+| `TryInto[U,E]` | `try_into() -> Result[U,E]` | `@try_into() -> Result[U, E]` |
+| `Generator[T]` (testing) | `generate() -> T`, `shrink(...) -> Iter[T]` | `@generate() -> T`, `@shrink(...) -> Iter[T]` |
+
+Bootstrap comment in `std/prelude/collections.nv` (explaining why `@` wasn't used)
+has been removed — parser now fully supports `@`-prefix.
+
+### Связь
+
+- [D58 amend](03-syntax.md#d58-range-литерал-itert-protocol-for-x-in-c-implicit-iter) —
+  Iterable signature → `mut @next()` (explicit receiver).
+- [D72 amend](02-types.md#d72-generic-bounds-через-t-protocol--protocol-как-тип) —
+  `[T Iterable[U]]` bound: mut consistency check at use-site.
+- [D186 amend](02-types.md#d186--impip1--p2---opt-in-annotation-для-protocols) —
+  `#impl(P)` annotation now checks receiver_mut in addition to method signature.
+- Plan 108.1/108.2/108.3 — consistency story (default-ro everywhere).

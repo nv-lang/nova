@@ -3495,17 +3495,26 @@ for x in it { ... }                  // it уже Iter[T], без двойног
   bound'ов (Q-bounds) и static-method-protocol. Q-collect-mechanism.
 - **Type-as-value** (передача типа как значения, `xs.collect([]int)`)
   — отдельный вопрос Q-type-as-value.
-- **`@`-префикс в protocol-методах** (симметрия с реализацией) —
-  Q-protocol-method-prefix.
+- ~~**`@`-префикс в protocol-методах**~~ —
+  ✅ **RESOLVED** Plan 108.4 (2026-06-09). `@` обязателен перед instance-методами
+  в protocol declarations. `ro`/`mut`/`consume` prefix перед `@` для receiver
+  mutability. Default = `ro`. Type-checker enforces impl match. См. [D209](04-effects.md#d209--protocol-method--syntax--receiver-mutability-plan-1084-2026-06-09).
 - ~~**Static-метод в protocol через `.method()`-префикс**~~ —
   ✅ **RESOLVED** Plan 97 (2026-05-23). Leading-точка `.method(args) -> Ret`
   в `protocol {}` теле помечает метод **статическим** (симметрично D35
   `fn Type.name`); реализация ожидается через `fn Type.method(...)`.
-  Bare-имя `method(args)` остаётся **instance** (backwards-compat: все
-  существующие протоколы `Iter`/`Hashable`/`Equatable`/`Comparable`/
-  `Display`/`Into`/`TryInto` без изменений). `From`/`TryFrom` обновлены
-  под новый синтаксис (`.from(t T) -> Self`/`.try_from(t T) ->
-  Result[Self,E]`). Hard-enforcement static↔instance mismatch — followup.
+  `From`/`TryFrom` обновлены под новый синтаксис (`.from(t T) -> Self`/
+  `.try_from(t T) -> Result[Self,E]`). Hard-enforcement static↔instance
+  mismatch — followup.
+
+> ⚠️ **D58 AMENDED by Plan 108.4 (2026-06-09)** — Protocol declaration of
+> `Iter[T]` / `Iterable[T]` now uses `mut @next() -> Option[T]` (explicit `@`
+> + `mut` receiver). The `@`-prefix is required for all protocol instance-methods
+> (D209). Use-site structural conformance (for-in loop, `[T Iterable[U]]` bound)
+> checks receiver_mut: a type that declares `@next()` (ro) does NOT satisfy
+> `Iterable[T]`. Bootstrap parser limitation comment in `std/prelude/collections.nv`
+> has been removed. All existing implementers (`Counter`, `RangeIter`, `VecIter`,
+> etc.) already used `mut @next()` — no implementer changes required.
 
 ---
 
