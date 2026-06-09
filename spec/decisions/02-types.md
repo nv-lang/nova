@@ -7676,9 +7676,21 @@ unsafe {
   (`E_UNSAFE_HANDLER_BUILTIN_ONLY`)
 - Effect не propagates up (encapsulates per fn — canonical Rust pattern)
 
-**Inside unsafe разрешено:** `&value`, `*p`, `p.field`, `p.method()`,
-`p.field = v`, pointer arith, `int as *T`, `<`/`>` compare, `&record.field`,
-calling `unsafe fn`, newtype construction wrapping pointer.
+**Inside unsafe разрешено:** `&value`, `*p`, `p[i]` (pointer index),
+`p.field`, `p.method()`, `p.field = v`, pointer arith, `int as *T`,
+`<`/`>` compare, `&record.field`, calling `unsafe fn`, newtype construction
+wrapping pointer.
+
+**`ptr[i]` pointer index (D216 §8, [M-118-ptr-index-unsafe], 2026-06-09):**
+`ptr[i]` ≡ `*(ptr + i)` — derefs the pointer without bounds guarantee.
+Semantically identical к explicit `*ptr` deref, hence requires the same
+unsafe context. `E_UNSAFE_REQUIRED` fired when `ptr[i]` is used outside
+`unsafe { }` block or `unsafe fn` body. Detection: syntactic —
+`expr_is_typed_pointer(obj)` (covers `*T`/`*mut T`/`*unsafe T` bindings via
+`ptr_vars` frame OR explicit type-annotation `*T` on binding). Example
+migration: `unsafe { *(@data + i) }` → `unsafe { @data[i] }` (more
+ergonomic; enables C `(data)[i]` pointer-arithmetic emission which the C
+compiler scales automatically by `sizeof(T)`).
 
 **Outside unsafe safe:** type declarations `*T`, `external fn` declarations,
 field read `acc.next` (where `next *T`), pattern match `Option[*T]`,

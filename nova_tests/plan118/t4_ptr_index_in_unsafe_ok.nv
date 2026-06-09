@@ -1,0 +1,73 @@
+// Plan 118 [M-118-ptr-index-unsafe] positive — `ptr[i]` pointer index inside
+// unsafe context passes checker (D216 §8).
+//
+// ptr[i] ≡ *(ptr + i) semantically — requires unsafe context just like
+// explicit `*ptr` deref. When inside `unsafe { }` block (depth > 0),
+// the E_UNSAFE_REQUIRED diagnostic must NOT fire.
+//
+// Tests:
+//   1. `mut_ptr[i]` inside unsafe — write + read (round-trip).
+//   2. `ro_ptr[i]` inside unsafe — read-only (from alloc'd buffer).
+//   3. Nested unsafe — ptr[i] at depth > 1 — still allowed.
+//   4. unsafe fn body — ptr[i] without explicit unsafe { } wrap.
+
+module plan118.t4_ptr_index_in_unsafe_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+// 4. unsafe fn body — ptr[i] implicitly unsafe context (D216 §9).
+unsafe fn read_ptr_index(p *u8, i int) -> u8 {
+    p[i]
+}
+
+test "mut_ptr[i] write + read inside unsafe — round-trip" {
+    // Allocate a 4-byte buffer and write/read via pointer index.
+    mut buf = unsafe { RawMem.alloc(4) }
+    unsafe {
+        // Write via ptr[i] — equivalently *(buf + i) = v
+        buf[0] = 10
+        buf[1] = 20
+        buf[2] = 30
+        buf[3] = 40
+        // Read back via ptr[i]
+        assert(buf[0] == 10)
+        assert(buf[1] == 20)
+        assert(buf[2] == 30)
+        assert(buf[3] == 40)
+    }
+}
+
+test "ro_ptr[i] read inside unsafe — passes checker" {
+    mut buf = unsafe { RawMem.alloc(3) }
+    unsafe {
+        buf[0] = 7
+        buf[1] = 8
+        buf[2] = 9
+        // Read via ro pointer — cast *mut u8 to *u8 (downgrade)
+        ro p = buf as *u8
+        assert(p[0] == 7)
+        assert(p[1] == 8)
+        assert(p[2] == 9)
+    }
+}
+
+test "nested unsafe — ptr[i] at depth > 1" {
+    mut buf = unsafe { RawMem.alloc(2) }
+    unsafe {
+        buf[0] = 99
+        unsafe {
+            // depth == 2: still allowed — no diagnostic
+            assert(buf[0] == 99)
+        }
+    }
+}
+
+test "unsafe fn ptr[i] — implicit unsafe context" {
+    mut buf = unsafe { RawMem.alloc(2) }
+    unsafe {
+        buf[0] = 42
+    }
+    // Call unsafe fn — call site must be in unsafe { } (A11)
+    ro v = unsafe { read_ptr_index(buf as *u8, 0) }
+    assert(v == 42)
+}

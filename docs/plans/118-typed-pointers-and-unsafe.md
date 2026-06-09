@@ -1909,6 +1909,7 @@ fixtures + ABI snapshots. Naming convention: `tests/fixtures/plan118/tN_M_<name>
 | A33 | Plan 113 `#realtime` interaction enforced: E_REALTIME_POINTER_OP | NEG-T8.6 |
 | A34 | FFI handle canonical pattern (tuple newtype) documented в ffi-cookbook; migration applied | Ф.9.4 + R5 |
 | A35 | Examples `examples/typed_pointers/01-06_*.nv` все PASS | Ф.9.5 |
+| A36 ✅ 2026-06-09 | `ptr[i]` pointer index on `*T`/`*mut T`/`*unsafe T` gated by E_UNSAFE_REQUIRED (D216 §8 close); `E_REALTIME_POINTER_OP` also fired in `#realtime fn` body; `vec_owned.nv` stdlib migrated to `@data[i]` style; codegen `infer_expr_c_type` pointer-index element type correct | t4_ptr_index_in_unsafe_ok + t4_neg_ptr_index_outside_unsafe |
 
 ---
 
@@ -2022,7 +2023,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 | `[M-118-amp-heap-safe]` | `&record` outside unsafe (since heap already) | V2 — needs careful safety analysis |
 | `[M-118-optional-shorthand]` | `?T` syntax sugar for `Option[T]` (Zig/Kotlin/Swift style) | Followup ergonomics; bigger design decision |
 | `[M-118-handle-migration]` | Plan 115 V1 ffi-cookbook examples: `type X { value ptr }` (record) → `type X(ptr)` (tuple) | Tracked в Ф.9.4 + R5 |
-| `[M-118-ptr-index-unsafe]` | `ptr[i]` on `*T`/`*mut T` должен требовать `unsafe {}` так же как `*ptr` deref — сейчас `ExprKind::Index` на pointer type не gated (gap в Plan 118 D216 §8). Файл: `types/mod.rs` walk_expr `ExprKind::Index` arm (≈18178) — проверить `obj` тип через `infer_expr_type`; если `TypeRef::Pointer` → fire `E_UNSAFE_REQUIRED`. Также мигрировать `unsafe { *(@data + i) }` → `unsafe { @data[i] }` в `std/collections/vec_owned.nv`. | Small — ½ дня |
+| ~~`[M-118-ptr-index-unsafe]`~~ ✅ **CLOSED 2026-06-09** | `ptr[i]` на pointer type теперь gated через `E_UNSAFE_REQUIRED` (D216 §8). Impl: `UnsafeCtx::walk_expr ExprKind::Index` arm в `types/mod.rs` + annotation-based `ptr_vars` registration (binding `*T` type-annotation → register). Codegen fix: `infer_expr_c_type ExprKind::Index` — pointer type strips `*` для element type (mirrors `UnOp::Deref`). Migration: `std/collections/vec_owned.nv` полностью мигрирован на `@data[i]` (14 sites). Tests: `t4_ptr_index_in_unsafe_ok.nv` (4 positive) + `t4_neg_ptr_index_outside_unsafe.nv` (1 negative). | ✅ DONE |
 
 ---
 
@@ -2975,3 +2976,24 @@ Combined shipped surface sufficient для idiomatic primitive-typed FFI
 (libpng / sqlite / libcurl / openssl byte+typed-int buffer access + MMIO
 register volatile R/W). Struct deref + pointer arithmetic + advanced
 ergonomics remain в Plan 118 V2.
+
+## Status — [M-118-ptr-index-unsafe] closure (2026-06-09)
+
+### ✅ CLOSED
+
+Gap in D216 §8 enforcement closed: `ptr[i]` pointer index на typed pointer types
+(`*T`/`*mut T`/`*unsafe T`) теперь требует unsafe context — `E_UNSAFE_REQUIRED`.
+Identical enforcement как у `*ptr` explicit deref.
+
+**Changes:**
+- `compiler-codegen/src/types/mod.rs` — UnsafeCtx walk_expr ExprKind::Index + annotation ptr_vars
+- `compiler-codegen/src/codegen/emit_c.rs` — infer_expr_c_type pointer element type fix
+- `std/collections/vec_owned.nv` — 14 sites migrated `*(@data + i)` → `@data[i]`
+- `nova_tests/plan118/t4_ptr_index_in_unsafe_ok.nv` — 4 positive tests (PASS)
+- `nova_tests/plan118/t4_neg_ptr_index_outside_unsafe.nv` — 1 negative test (PASS)
+- `spec/decisions/02-types.md` — D216 §8 amend: ptr[i] added to "Inside unsafe разрешено" list
+- A36 closed в acceptance criteria
+
+**Test baseline after:** plan118 37/40 PASS (3 pre-existing NPO runtime failures unchanged).
+**A36 criteria:** ptr[i] gated E_UNSAFE_REQUIRED ✅ + E_REALTIME_POINTER_OP ✅ +
+  vec_owned migration ✅ + codegen element type correct ✅.

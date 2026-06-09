@@ -34955,3 +34955,24 @@ COMMITS: e620a09d94a (Ф.1) + e7cdbd8f83c (Ф.2 + Ф.3 migration) +
 
 SPEC: D209 NEW (04-effects.md); D58 amend (03-syntax.md); D72 amend (02-types.md);
       D186 amend (02-types.md). Plan 108 family complete: 108→108.1→108.2→108.3→108.4.
+
+=== [M-118-ptr-index-unsafe] ptr[i] requires unsafe gate — 2026-06-09 ===
+
+Gap closed in Plan 118 D216 §8: `ptr[i]` on typed pointer (`*T`/`*mut T`/`*unsafe T`)
+now requires `unsafe { }` context — identical to `*ptr` explicit deref.
+
+Checker changes (types/mod.rs):
+- UnsafeCtx::walk_expr ExprKind::Index: fire E_UNSAFE_REQUIRED when depth==0
+  and obj is typed pointer; fire E_REALTIME_POINTER_OP when in_realtime.
+- walk_stmt::Let: annotation-based ptr_vars registration — binding with
+  explicit `*T`-family type annotation registers in ptr_vars frame.
+
+Codegen fix (emit_c.rs):
+- infer_expr_c_type ExprKind::Index: pointer type → strip trailing `*` for
+  element type (matches UnOp::Deref). Fixes Vec[Option[int]] element type.
+
+stdlib migration (std/collections/vec_owned.nv):
+- 14 `*(@data + i)` sites → `@data[i]` within unsafe blocks.
+
+Tests: t4_ptr_index_in_unsafe_ok (4 PASS) + t4_neg_ptr_index_outside_unsafe (PASS).
+A36 closed. D216 §8 amend. plan118: 37/40 PASS.

@@ -17979,7 +17979,19 @@ impl UnsafeCtx {
                 self.walk_expr(&d.value, errors);
                 // Plan 118 A28: track typed-pointer locals для interpolation
                 // diagnostic. Match только simple-ident pattern (no destructure).
-                if self.expr_is_typed_pointer(&d.value) {
+                // Two registration sources:
+                //   (a) RHS expression is syntactically a typed pointer
+                //       (&v, *p, e as *T, addr_of(v), Ident in ptr_vars, block
+                //       trailing к pointer shape).
+                //   (b) Type annotation is a pointer type (TypeRef::Pointer /
+                //       Mut / Unsafe чей strip_modifiers → Pointer). Covers the
+                //       common `mut buf: *mut u8 = expr_returning_ptr` pattern
+                //       where RHS is a fn Call (e.g. RawMem.alloc) — syntactically
+                //       opaque, but annotation makes pointer-ness explicit.
+                //       [M-118-ptr-index-unsafe] fix.
+                let is_ptr_rhs = self.expr_is_typed_pointer(&d.value);
+                let is_ptr_ann = d.ty.as_ref().map_or(false, |ty| ty.is_pointer());
+                if is_ptr_rhs || is_ptr_ann {
                     if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
                         self.register_ptr_var(name);
                     }
@@ -18281,6 +18293,41 @@ impl UnsafeCtx {
                 self.walk_expr(obj, errors)
             }
             ExprKind::Index { obj, index } => {
+                // Plan 118 [M-118-ptr-index-unsafe] D216 §8: `ptr[i]` on a
+                // typed pointer (`*T` / `*mut T` / `*unsafe T`) requires
+                // `unsafe { }` context — identical semantics к `*ptr` deref
+                // (unsafe { *(ptr + i) } → unsafe { ptr[i] }).
+                //
+                // Detection: syntactic `expr_is_typed_pointer(obj)` (covers
+                // `&x`, `*p`, `e as *T`, Ident ∈ ptr_vars). `in_call_arg`
+                // suppressed for the same reason as the Ident arm — precise
+                // coerce pass handles ptr args to typed-ptr params without
+                // false-positive gating.
+                if self.expr_is_typed_pointer(obj) {
+                    if self.depth == 0 {
+                        errors.push(Diagnostic::new(
+                            "[E_UNSAFE_REQUIRED] `ptr[i]` pointer index requires \
+                             unsafe context (Plan 118 D216 §8, [M-118-ptr-index-unsafe]). \
+                             Pointer index `ptr[i]` ≡ `*(ptr + i)` — derefs the \
+                             pointer without bounds guarantee; semantically identical \
+                             к explicit `*ptr` deref. Wrap в `unsafe {{ ... }}` block, \
+                             или mark enclosing fn `#unsafe`. \
+                             Example: `unsafe {{ @data[i] }}` instead of \
+                             `*(@data + i)`.".to_string(),
+                            e.span,
+                        ));
+                    }
+                    if self.in_realtime {
+                        errors.push(Diagnostic::new(
+                            "[E_REALTIME_POINTER_OP] `ptr[i]` pointer index \
+                             forbidden в `#realtime fn` body (Plan 118 D216 §20 \
+                             + Plan 113 D172). Pointer index ≡ `*(ptr + i)` — \
+                             deref может GC trigger, violates realtime \
+                             no-GC-pause guarantee.".to_string(),
+                            e.span,
+                        ));
+                    }
+                }
                 // Plan 118.5 V2 [M-118.5-member-index-call-broader]: index
                 // access on unsafe-T binding reads the slot — needs unsafe.
                 if self.depth == 0 && !self.in_call_arg {

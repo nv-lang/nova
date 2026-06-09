@@ -34224,3 +34224,37 @@ Type-checker: receiver_mut mismatch → `E_PROTO_IMPL_*` errors.
 Stdlib migration: 3 std/ files + 57 nova_tests/ files migrated.
 13/13 plan108_4 fixtures PASS. D209 NEW + D58/D72/D186 amends.
 Plan 108 family complete: 108 → 108.1 → 108.2 → 108.3 → 108.4.
+
+## Plan 118 [M-118-ptr-index-unsafe] — ptr[i] requires unsafe gate (2026-06-09)
+
+### What was implemented
+
+**Gap closed:** `ptr[i]` on typed pointer (`*T`/`*mut T`/`*unsafe T`) was not gated
+by `E_UNSAFE_REQUIRED` — same gap as `*ptr` deref which was already gated (D216 §8).
+
+**Checker (`types/mod.rs`):**
+- `UnsafeCtx::walk_expr ExprKind::Index` arm: calls `expr_is_typed_pointer(obj)`;
+  if true AND `depth == 0` → `E_UNSAFE_REQUIRED`; if `in_realtime` → `E_REALTIME_POINTER_OP`.
+- `walk_stmt::Let` — annotation-based ptr_vars registration: if binding has explicit
+  `*T`-family type annotation (`TypeRef::is_pointer()` = true), register binding name
+  in `ptr_vars` frame. Enables gating on `mut buf *mut u8 = method_call(); buf[i]`.
+
+**Codegen (`emit_c.rs`):**
+- `infer_expr_c_type ExprKind::Index` — added pointer-type element inference: if
+  `obj_ty` ends with `*` and is not `NovaArray_*`, strip `*` to get pointee type
+  (mirrors `UnOp::Deref` inference). Fixes `Vec[Option[int]]` element C type.
+
+**stdlib migration (`std/collections/vec_owned.nv`):**
+- 14 sites `*(@data + i)` / `*(dst + i)` / `*(other.data + i)` → `@data[i]` /
+  `dst[i]` / `other.data[i]` within existing `unsafe { }` blocks.
+
+**Tests:**
+- `nova_tests/plan118/t4_ptr_index_in_unsafe_ok.nv` — 4 positive tests (round-trip
+  write/read, ro ptr, nested unsafe, `unsafe fn` body). PASS.
+- `nova_tests/plan118/t4_neg_ptr_index_outside_unsafe.nv` — 1 negative test (`buf[0]`
+  outside unsafe with `*mut u8` annotation → E_UNSAFE_REQUIRED). PASS.
+
+**D216 amend:** §8 "Inside unsafe" list + ptr[i] safety rationale added.
+
+**A36 closed:** `ptr[i]` gated (D216 §8). plan118: 37/40 PASS (3 pre-existing
+NPO runtime failures unchanged).
