@@ -207,7 +207,7 @@ export fn Uuid @gt(other Uuid) -> bool => other.lt(@)
 #stable(since = "0.1")
 export fn Uuid @ge(other Uuid) -> bool => @gt(other) || @eq(other)
 
-/// Hash — XOR двух u64 половин. Подходит для HashMap key (Hashable protocol).
+/// Hash — XOR двух u64 половин. Подходит для HashMap key (Hash protocol).
 #stable(since = "0.1")
 export fn Uuid @hash() -> u64 => @hi ^ @lo
 

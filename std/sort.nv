@@ -170,14 +170,14 @@ export fn []int @max() -> Option[int] {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 91.8c: Generic [T Comparable] versions (D185)
+// Plan 91.8c: Generic [T Compare] versions (D185)
 //
-// Любой тип satisfying Comparable (имеет @compare(other Self) -> int)
+// Любой тип satisfying Compare (имеет @compare(other Self) -> int)
 // автоматически получает min_of/max_of через mono pass + synthesis.
 // Concrete []int @min/@max выше остаются как fast-path для int (без mono overhead).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Generic min для любого `[T Comparable]`. `None` для empty.
+/// Generic min для любого `[T Compare]`. `None` для empty.
 ///
 /// # Examples
 /// ```nova
@@ -185,7 +185,7 @@ export fn []int @max() -> Option[int] {
 /// assert(["zebra", "apple", "mango"].min_of() == Some("apple"))
 /// ```
 #stable(since = "0.1")
-export fn[T Comparable] []T @min_of() -> Option[T] {
+export fn[T Compare] []T @min_of() -> Option[T] {
     ro n = @len()
     if n == 0 { return None }
     mut m = @[0]
@@ -198,9 +198,9 @@ export fn[T Comparable] []T @min_of() -> Option[T] {
     Some(m)
 }
 
-/// Generic max для любого `[T Comparable]`. `None` для empty.
+/// Generic max для любого `[T Compare]`. `None` для empty.
 #stable(since = "0.1")
-export fn[T Comparable] []T @max_of() -> Option[T] {
+export fn[T Compare] []T @max_of() -> Option[T] {
     ro n = @len()
     if n == 0 { return None }
     mut m = @[0]
@@ -213,7 +213,7 @@ export fn[T Comparable] []T @max_of() -> Option[T] {
     Some(m)
 }
 
-/// Generic insertion sort для `[T Comparable]` (stable, O(n²)).
+/// Generic insertion sort для `[T Compare]` (stable, O(n²)).
 ///
 /// # Examples
 /// ```nova
@@ -222,7 +222,7 @@ export fn[T Comparable] []T @max_of() -> Option[T] {
 /// assert(xs == ["apple", "mango", "zebra"])
 /// ```
 #stable(since = "0.1")
-export fn[T Comparable] []T mut @sort_of() -> @ {
+export fn[T Compare] []T mut @sort_of() -> @ {
     ro n = @len()
     mut i = 1
     while i < n {
@@ -242,7 +242,7 @@ export fn[T Comparable] []T mut @sort_of() -> @ {
     @
 }
 
-/// Generic min_by с custom comparator. T не обязан satisfying Comparable.
+/// Generic min_by с custom comparator. T не обязан satisfying Compare.
 /// `None` для empty.
 ///
 /// # Examples
@@ -399,7 +399,7 @@ export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
     None
 }
 
-/// Generic sort_by с custom comparator. T не обязан satisfying Comparable —
+/// Generic sort_by с custom comparator. T не обязан satisfying Compare —
 /// порядок задаётся через `cmp(a, b) -> int` (negative/0/positive convention).
 ///
 /// # Examples
@@ -426,10 +426,10 @@ export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
     @
 }
 
-/// Generic binary_search для отсортированного `[T Comparable]`.
+/// Generic binary_search для отсортированного `[T Compare]`.
 /// Возвращает `Some(idx)` где `@[idx] == target` (через @compare == 0), или `None`.
 #stable(since = "0.1")
-export fn[T Comparable] []T @binary_search_of(target T) -> Option[int] {
+export fn[T Compare] []T @binary_search_of(target T) -> Option[int] {
     mut lo = 0
     mut hi = @len() - 1
     while lo <= hi {

@@ -97,7 +97,7 @@ export type Option[T] | Some(T) | None
 #stable(since = "0.1")
 export type Result[T, E] | Ok(T) | Err(E)
 
-// Plan 91.8a (D183): `Ordering` sum-type удалён. Comparable.compare
+// Plan 91.8a (D183): `Ordering` sum-type удалён. Compare.compare
 // теперь возвращает int (memcmp-style: < 0 / 0 / > 0). Тривиальное
 // rationale в D183 — single canonical path для comparison aligned с
 // str.compare (D178). Less/Equal/Greater также удалены из exports.

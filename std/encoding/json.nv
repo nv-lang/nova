@@ -32,7 +32,7 @@
 //   - D52 sum-type JsonValue с unary-вариантами (поддерживает D55 coercion)
 //   - D55 record-coercion: { "key": value } → JsonValue.Object
 //   - D67 `?` на Option (для лексера: char_at -> Option[char])
-//   - D72 generic bounds (HashMap[str, JsonValue] — str уже Hashable)
+//   - D72 generic bounds (HashMap[str, JsonValue] — str уже Hash)
 //   - D73 `Json.from(s str)` парсинг + `@into() -> str` сериализация;
 //     компилятор даёт обе формы вызова автоматически.
 //

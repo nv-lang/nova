@@ -324,11 +324,11 @@ export fn Duration @max(other Duration) -> Duration =>
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Comparable (D183 amendment, Plan 91.8a.2 part 3): @compare даёт ==/!=/<>/etc
+// Compare (D183 amendment, Plan 91.8a.2 part 3): @compare даёт ==/!=/<>/etc
 // через synthesis. Magic methods @eq/@lt/@le/@gt/@ge удалены.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Comparable.compare — memcmp-style int return (D183).
+/// Compare.compare — memcmp-style int return (D183).
 /// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
 #stable(since = "0.1")
 export fn Duration @compare(other Duration) -> int =>
@@ -490,7 +490,7 @@ export fn Timestamp @minus(other Timestamp) -> Duration =>
     { nanos: @nanos - other.nanos }
 
 
-/// Comparable.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
+/// Compare.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
 /// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
 /// `self < other` означает `self` раньше чем `other`.
 #stable(since = "0.1")
@@ -922,12 +922,12 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
     { nanos: @nanos - other.nanos }
 
 
-// ── Comparable (D183 amendment, Plan 91.8a.2 part 3) ──
+// ── Compare (D183 amendment, Plan 91.8a.2 part 3) ──
 //
 // @compare single source — operators ==/!=/</<=/>/>= synthesized.
 // Magic methods @eq/@lt/@le/@gt/@ge удалены.
 
-/// Comparable.compare для Monotonic. Только внутри одного процесса.
+/// Compare.compare для Monotonic. Только внутри одного процесса.
 #stable(since = "0.6")
 export fn Monotonic @compare(other Monotonic) -> int =>
     if @nanos < other.nanos { -1 }

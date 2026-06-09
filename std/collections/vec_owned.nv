@@ -1,16 +1,16 @@
-// std.collections.vec_owned — `Vec[T]`, a fully Nova-implemented generic
-// growable array backed by a raw `*mut T` heap buffer (Plan 131 Ф.3).
+// std.collections.vec_owned вЂ” `Vec[T]`, a fully Nova-implemented generic
+// growable array backed by a raw `*mut T` heap buffer (Plan 131 Р¤.3).
 //
-// Контекст. `[]T` ([D27](../../spec/decisions/03-syntax.md#d27)) is the
+// РљРѕРЅС‚РµРєСЃС‚. `[]T` ([D27](../../spec/decisions/03-syntax.md#d27)) is the
 // built-in slice/dynamic-array primitive. `Vec[T]` here is a *library* type
-// implemented entirely in Nova on top of `std.runtime.raw_mem.RawMem` —
+// implemented entirely in Nova on top of `std.runtime.raw_mem.RawMem` вЂ”
 // demonstrating that a production growable collection needs no compiler magic
 // beyond typed pointers (D216), `size_of[T]()` (D199) and pointer arithmetic
-// (Plan 131 Ф.2).
+// (Plan 131 Р¤.2).
 //
 // Key property: elements are stored *typed* in a contiguous `*mut T` buffer.
 // `Vec[Option[int]]`, `Vec[MyRecord]`, `Vec[Vec[int]]` all work with their
-// natural per-element C representation — no int64-slot erasure. Pointer
+// natural per-element C representation вЂ” no int64-slot erasure. Pointer
 // arithmetic `data + i` is scaled by `sizeof(T)` automatically by the C
 // backend (the buffer pointer carries the element stride).
 //
@@ -20,9 +20,9 @@
 // themselves heap pointers (records / sum-types / arrays) are kept alive by
 // the conservative scan over the buffer.
 //
-// Unsafe model (D216 §8). Every raw-pointer operation (alloc, `data + i`,
+// Unsafe model (D216 В§8). Every raw-pointer operation (alloc, `data + i`,
 // deref read/write) is wrapped in an `unsafe { }` block. The *public* API is
-// fully safe — no `unsafe`, no `*mut T`, no pointer escapes to callers
+// fully safe вЂ” no `unsafe`, no `*mut T`, no pointer escapes to callers
 // (`get_mut` returns `Option[*mut T]`, the single intentional raw-pointer
 // surface, behind `unsafe` at the call site).
 
@@ -35,17 +35,17 @@ import std.runtime.raw_mem.{RawMem}
 // imported by user code cannot rely on the prelude `panic` being visible in
 // the *consuming* module when its bodies are inlined cross-module, and a plain
 // `import std.prelude.*` would trip the R27 auto-import opt-out for every
-// importer (stripping their assert/print/… prelude). A local external-fn decl
+// importer (stripping their assert/print/вЂ¦ prelude). A local external-fn decl
 // perturbs nothing; codegen lowers it to `nv_panic` by name.
 external fn panic(msg str) -> never
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Type
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// A contiguous growable array of `T`, heap-backed via a raw `*mut T` buffer.
 ///
-/// Amortised O(1) `push`, O(1) indexed `get`, ×2 growth. Empty `Vec[T].new()`
+/// Amortised O(1) `push`, O(1) indexed `get`, Г—2 growth. Empty `Vec[T].new()`
 /// allocates nothing until the first `push` (cap = 0).
 ///
 /// # Examples
@@ -66,11 +66,11 @@ export type Vec[T] {
     priv mut cap int
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Constructors
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Create an empty `Vec[T]` — no allocation, cap = 0.
+/// Create an empty `Vec[T]` вЂ” no allocation, cap = 0.
 export fn Vec[T].new() -> Vec[T] {
     Vec { data: null_buf[T](), len: 0, cap: 0 }
 }
@@ -93,9 +93,9 @@ export fn Vec[T].from(items []T) -> Vec[T] {
     v
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Size / introspection
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Number of live elements.
 export fn Vec[T] @len() -> int => @len
@@ -106,11 +106,11 @@ export fn Vec[T] @cap() -> int => @cap
 /// `true` if the vector has no live elements.
 export fn Vec[T] @is_empty() -> bool => @len == 0
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Capacity management
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-// Grow so that at least `len + additional` slots exist. ×2 strategy with an
+// Grow so that at least `len + additional` slots exist. Г—2 strategy with an
 // initial capacity of 8. No-op when capacity already suffices.
 fn Vec[T] mut @ensure_capacity(additional int) -> () {
     ro needed = @len + additional
@@ -169,9 +169,9 @@ export fn Vec[T] mut @shrink_to_fit() -> () {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Element operations
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Append `v` to the end, growing if necessary.
 export fn Vec[T] mut @push(v T) -> () {
@@ -245,9 +245,9 @@ export fn Vec[T] mut @swap_remove(i int) -> T {
     removed
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Access
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Element at `i` by value, or `None` if out of bounds.
 export fn Vec[T] @get(i int) -> Option[T] {
@@ -260,10 +260,10 @@ export fn Vec[T] @get(i int) -> Option[T] {
 
 /// Raw mutable pointer to the slot at `i`, or `None` if out of bounds.
 ///
-/// The returned `*mut T` is the single intentional raw-pointer surface — the
+/// The returned `*mut T` is the single intentional raw-pointer surface вЂ” the
 /// caller must deref it inside an `unsafe { }` block. It is valid only until
 /// the next operation that may reallocate the buffer (`push`, `insert`,
-/// `reserve`, …).
+/// `reserve`, вЂ¦).
 export fn Vec[T] mut @get_mut(i int) -> Option[*mut T] {
     if i < 0 || i >= @len {
         return None
@@ -283,9 +283,9 @@ export fn Vec[T] @last() -> Option[T] {
     @get(@len - 1)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Mutation
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Drop all elements (set len = 0). The buffer is retained for reuse.
 export fn Vec[T] mut @clear() -> () {
@@ -312,9 +312,9 @@ export fn Vec[T] mut @reverse() -> () {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Bulk operations
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Append every element of a built-in `[]T` slice.
 export fn Vec[T] mut @extend(items []T) -> () {
@@ -357,9 +357,9 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
     @len = write
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Conversion
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Copy the live elements into a freshly-allocated built-in `[]T`.
 export fn Vec[T] @as_slice() -> []T {
@@ -373,18 +373,18 @@ export fn Vec[T] @as_slice() -> []T {
     out
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Protocols — Iterable[T] / Equatable / Cloneable / Printable / DebugPrintable
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Protocols вЂ” Iterable[T] / Equal / Clone / Display / Debug
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-// ─── Iterable[T] ─────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Iterable[T] в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Index-cursor iterator over a `Vec[T]`.
 ///
 /// Holds a copy of the buffer pointer (`data`) and the element count at the
 /// moment `iter()` was called; the GC sees the data pointer through this
 /// record and keeps the buffer alive. Concurrent mutation of the originating
-/// `Vec` during iteration is *not* checked — the caller is responsible for
+/// `Vec` during iteration is *not* checked вЂ” the caller is responsible for
 /// not pushing/removing while iterating.
 export type VecIter[T] {
     priv data *mut T
@@ -413,15 +413,15 @@ export fn VecIter[T] mut @next() -> Option[T] {
 }
 
 
-// ─── Equatable ───────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Equal в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Element-wise equality — `true` iff both vectors have the same length and
+/// Element-wise equality вЂ” `true` iff both vectors have the same length and
 /// every pair of corresponding elements compares equal via `==`.
 ///
 /// This works for any element type `T` for which `==` is defined (all
-/// primitives and types that implement `Equatable`). For unknown/opaque
+/// primitives and types that implement `Equal`). For unknown/opaque
 /// element types the comparison degrades to reference identity (same C
-/// pointer), which may give surprising results — declare `@equals` on the
+/// pointer), which may give surprising results вЂ” declare `@equal` on the
 /// element type to override.
 ///
 /// # Examples
@@ -430,16 +430,16 @@ export fn VecIter[T] mut @next() -> Option[T] {
 /// let a = Vec[int].from([1, 2, 3])
 /// let b = Vec[int].from([1, 2, 3])
 /// let c = Vec[int].from([1, 2, 4])
-/// assert(a.equals(b))
-/// assert(!a.equals(c))
+/// assert(a.equal(b))
+/// assert(!a.equal(c))
 /// ```
-export fn Vec[T] @equals(other Vec[T]) -> bool =>
+export fn Vec[T] @equal(other Vec[T]) -> bool =>
     @as_slice() == other.as_slice()
 
 
-// ─── Cloneable ────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Clone в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Deep copy — allocate a new `Vec[T]` and copy every element.
+/// Deep copy вЂ” allocate a new `Vec[T]` and copy every element.
 ///
 /// For element types that are themselves heap-allocated values (records,
 /// sum-types, arrays) the GC ensures the originals stay alive; the copy
@@ -459,28 +459,28 @@ export fn Vec[T] @clone() -> Vec[T] =>
     Vec[T].from(@as_slice())
 
 
-// ─── Printable / DebugPrintable ───────────────────────────────────────────
+// в”Ђв”Ђв”Ђ Display / Debug в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Append a human-readable representation of `self` to `sb`.
 ///
 /// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
-/// `elem.fmt(sb)` directly (no intermediate string allocation).
+/// `elem.display(sb)` directly (no intermediate string allocation).
 ///
 /// # Examples
 ///
 /// ```nova
 /// let v = Vec[int].from([1, 2, 3])
 /// consume sb = StringBuilder.new()
-/// v.fmt(sb)
+/// v.display(sb)
 /// assert(sb.as_str() == "Vec[1, 2, 3]")
 /// ```
-export fn Vec[T Printable] @fmt(mut sb StringBuilder) -> () {
+export fn Vec[T Display] @display(mut sb StringBuilder) -> () {
     sb.append("Vec[")
     mut i = 0
     while i < @len {
         if i > 0 { sb.append(", ") }
         ro elem = unsafe { @data[i] }
-        elem.fmt(sb)
+        elem.display(sb)
         i = i + 1
     }
     sb.append("]")
@@ -489,22 +489,22 @@ export fn Vec[T Printable] @fmt(mut sb StringBuilder) -> () {
 /// Append a debug representation of `self` to `sb`.
 ///
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
-export fn Vec[T DebugPrintable] @debug_fmt(mut sb StringBuilder) -> () {
+export fn Vec[T Debug] @debug(mut sb StringBuilder) -> () {
     sb.append("Vec[")
     mut i = 0
     while i < @len {
         if i > 0 { sb.append(", ") }
         ro elem = unsafe { @data[i] }
-        elem.debug_fmt(sb)
+        elem.debug(sb)
         i = i + 1
     }
     sb.append("]")
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Free helpers — buffer allocation
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Free helpers вЂ” buffer allocation
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 // Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
 fn alloc_buf[T](n int) -> *mut T {
@@ -522,9 +522,9 @@ fn null_buf[T]() -> *mut T {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Tests
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 test "push / pop / len / is_empty" {
     mut v = Vec[int].new()
@@ -572,7 +572,7 @@ test "insert / remove / swap_remove / reverse" {
     assert(v.as_slice() == [2, 3, 4])
     ro sr = v.swap_remove(0)
     assert(sr == 2)
-    // After swap_remove(0): last (4) moved into slot 0 → [4, 3]
+    // After swap_remove(0): last (4) moved into slot 0 в†’ [4, 3]
     assert(v.len() == 2)
     v.reverse()
     assert(v.as_slice() == [3, 4])
@@ -603,7 +603,7 @@ test "Vec[Option[int]] stores value-struct elements typed" {
     assert(v.len() == 3)
 }
 
-test "grow — 1000 pushes preserve order" {
+test "grow вЂ” 1000 pushes preserve order" {
     mut v = Vec[int].new()
     for i in 0..1000 { v.push(i) }
     assert(v.len() == 1000)

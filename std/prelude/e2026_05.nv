@@ -30,7 +30,7 @@ export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_asser
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
 export import std.prelude.collections.{Iterable}
 export import std.collections.range.{Range, RangeIter}
-export import std.prelude.protocols.{From, Into, Hashable, Equatable, Comparable, Printable}
+export import std.prelude.protocols.{From, Into, Hash, Equal, Compare, Display}
 export import std.prelude.effects.{Fail, Time, Mem}
 
 /// Edition pin marker для verification что resolver выбрал edition vs

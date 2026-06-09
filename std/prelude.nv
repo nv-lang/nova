@@ -23,8 +23,8 @@
 //     for_in_range_iter, см. std/prelude/collections.nv DEFER comment).
 //     DEFERRED (Plan 62.D.bis): StringBuilder / WriteBuffer / ReadBuffer —
 //     opaque runtime types, требуют `external type` D-block в spec.
-//   - 62.E complete: 8 protocols (From/Into/TryFrom/TryInto/Hashable/
-//     Equatable/Comparable/Display) в std/prelude/protocols.nv,
+//   - 62.E complete: 8 protocols (From/Into/TryFrom/TryInto/Hash/
+//     Equal/Compare/Display) в std/prelude/protocols.nv,
 //     re-export через facade. TryFrom/TryInto добавлены 62.E.bis
 //     (2026-05-20) после снятия effect-блокера (Plan 56 Ф.2.7-revert).
 //   - 62.F complete: Fail[E] effect formally объявлен. См. версии
@@ -47,7 +47,7 @@ module std.prelude
 // Bottom-тип `never` НЕ re-export'ится: это строчный встроенный
 // примитив (Plan 76), известен компилятору напрямую — как `int`/`bool`,
 // примитивы не объявляются и не re-export'ятся через prelude.
-// Plan 91.8a (D183): Ordering/Less/Equal/Greater удалены (Comparable.compare -> int).
+// Plan 91.8a (D183): Ordering/Less/Equal/Greater удалены (Compare.compare -> int).
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.
@@ -114,18 +114,18 @@ export import std.collections.range.{Range, RangeIter}
 
 // Plan 62.E / 62.E.bis: re-export conversion / equality / hashing /
 // ordering / display protocols из std.prelude.protocols. 8 formal
-// protocol declarations: From/Into/TryFrom/TryInto/Hashable/Equatable/
-// Comparable/Display.
+// protocol declarations: From/Into/TryFrom/TryInto/Hash/Equal/
+// Compare/Display.
 // Декларации additive: auto-derive логика D73 (From/Into) и built-in
 // dispatch для Hash/Eq/Ord примитивов в codegen остаются неизменными.
-// Bound clauses `[T Hashable]` теперь могут резолвиться через cross-file
+// Bound clauses `[T Hash]` теперь могут резолвиться через cross-file
 // resolve (Plan 15 generic-bounds infrastructure).
 //
 // **62.E.bis (2026-05-20):** TryFrom/TryInto добавлены. Используют форму
 // `try_from(t T) -> Result[Self, E]` (D77, migration path b) — fallible
 // конверсия возвращает Result, вызывающий открывает через match. См.
 // std/prelude/protocols.nv.
-export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hashable, Equatable, Comparable, Printable, Cloneable}
+export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hash, Equal, Compare, Display, Clone}
 
 // Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
 // Formal declaration matches hardcoded codegen pre-registration

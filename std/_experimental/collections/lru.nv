@@ -1,7 +1,7 @@
 // stdlib/lru.nv — LRU (Least Recently Used) cache.
 //
 // API:
-//   Lru[K Hashable, V].new(capacity int) -> Lru[K, V]
+//   Lru[K Hash, V].new(capacity int) -> Lru[K, V]
 //   cache.get(k K) -> Option[V]      // moves to front (most recent)
 //   cache.put(k K, v V)               // evicts LRU if full
 //   cache.len -> int
@@ -30,7 +30,7 @@ import std.collections.hashmap.{HashMap}
 /// assert(cache.get("b") == Some(2))
 /// ```
 #stable(since = "0.1")
-export type Lru[K Hashable, V] {
+export type Lru[K Hash, V] {
     ro capacity int        // public config
     mut _order []K               // internal: index 0 = most recent
     mut _store HashMap[K, V]     // internal storage

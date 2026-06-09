@@ -41,15 +41,15 @@ export fn bool.new() -> Self => false
 // ─── Primitive @compare (Plan 91.8a.2 part 3, D183 amendment) ───
 //
 // Primitives имеют native operators (< > == etc.). @compare добавлен для
-// [T Comparable] bound satisfaction + synthesis chain.
+// [T Compare] bound satisfaction + synthesis chain.
 
-/// Comparable.compare для char (codepoint-based ordering).
+/// Compare.compare для char (codepoint-based ordering).
 export fn char @compare(other char) -> int =>
     if @ < other { -1 }
     else if @ > other { 1 }
     else { 0 }
 
-/// Comparable.compare для int (signum, overflow-safe).
+/// Compare.compare для int (signum, overflow-safe).
 export fn int @compare(other int) -> int =>
     if @ < other { -1 }
     else if @ > other { 1 }

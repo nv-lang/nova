@@ -24,22 +24,22 @@ module collections.hashmap
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
 
-// Plan 62.E (2026-05-18): `Hashable` мигрирован в `std/prelude/protocols.nv`
+// Plan 62.E (2026-05-18): `Hash` мигрирован в `std/prelude/protocols.nv`
 // как canonical prelude protocol per D109 split policy (hash-only; equality
-// вынесена в отдельный `Equatable`). Удалена local-декларация чтобы избежать
-// `duplicate top-level name Hashable` при загрузке prelude (R27 auto-import
-// делает prelude `Hashable` видимым в каждом module включая
+// вынесена в отдельный `Equal`). Удалена local-декларация чтобы избежать
+// `duplicate top-level name Hash` при загрузке prelude (R27 auto-import
+// делает prelude `Hash` видимым в каждом module включая
 // `std.collections.hashmap`).
 //
-// `HashMap[K Hashable, V]` ниже теперь резолвит `Hashable` через cross-file
-// resolve в prelude (`std.prelude.protocols.Hashable`). Структурное
+// `HashMap[K Hash, V]` ниже теперь резолвит `Hash` через cross-file
+// resolve в prelude (`std.prelude.protocols.Hash`). Структурное
 // требование `eq(other Self) -> bool` для key collision check сохраняется
 // implicitly через codegen lookup `key.eq(other_key)` — не объявлено
-// formally здесь, потому что split-policy D109: `[K Hashable + Equatable]`
+// formally здесь, потому что split-policy D109: `[K Hash + Equal]`
 // будет рекомендованной формой когда multi-bound syntax появится в
 // bootstrap parser (D72 ext).
 //
-// Документация моевого Hashable осталась в `std/prelude/protocols.nv`
+// Документация моевого Hash осталась в `std/prelude/protocols.nv`
 // (single source of truth для `nova doc`).
 
 // Slot — состояние ячейки в open-addressing-таблице.
@@ -56,7 +56,7 @@ type Slot[K, V]
 
 /// Hash map с открытой адресацией и линейным пробированием.
 ///
-/// Требует `K: Hashable` — структурный bound на `hash() -> u64`.
+/// Требует `K: Hash` — структурный bound на `hash() -> u64`.
 /// Автоматически растёт при достижении `load_factor` (по умолчанию 0.75).
 ///
 /// `map-literal` синтаксис `[k: v, ...]` десугарируется в `HashMap` через
@@ -81,7 +81,7 @@ type Slot[K, V]
 #stable(since = "0.1")
 #from_fields
 #from_pairs
-export type HashMap[K Hashable, V] {
+export type HashMap[K Hash, V] {
     // _buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`). Internal: layout может изменяться,
     // не обращайся напрямую. Используй @len() / @get() / @insert().
