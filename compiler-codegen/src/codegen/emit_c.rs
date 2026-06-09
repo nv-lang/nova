@@ -1343,6 +1343,7 @@ impl CEmitter {
             | Stmt::Reveal { span, .. }
             | Stmt::ConsumeScope { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
+            Stmt::TupleAssign { span, .. } => *span,
         }
     }
 
@@ -15773,6 +15774,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             Stmt::Reveal { .. } => {
                 // Ghost erasure.
             }
+            // Plan 136 Ф.3: tuple destructuring assignment codegen.
+            Stmt::TupleAssign { .. } => { todo!("plan136 Ф.3") }
         }
         Ok(())
     }
@@ -23019,6 +23022,11 @@ _cp++; \
             }
             // Ghost / unused-here statement kinds — no break possible.
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+            // Plan 136: tuple destructuring — check all lhs + rhs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                lhs.iter().any(Self::expr_has_break_in_scope)
+                    || rhs.iter().any(Self::expr_has_break_in_scope)
+            }
         }
     }
 

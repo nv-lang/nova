@@ -179,6 +179,11 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         }
         // Plan 33.9: reveal — ghost, no exprs to normalize.
         Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment — walk all lhs + rhs exprs.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { normalize_expr(e, sigs); }
+            for e in rhs { normalize_expr(e, sigs); }
+        }
     }
 }
 

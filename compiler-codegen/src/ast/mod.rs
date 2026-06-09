@@ -1655,6 +1655,13 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// Plan 136 (D236): `(a, b) = (expr1, expr2)` — tuple destructuring assignment.
+    /// Assigns multiple values simultaneously from a RHS tuple literal.
+    TupleAssign {
+        lhs: Vec<Expr>,
+        rhs: Vec<Expr>,
+        span: Span,
+    },
     Return {
         value: Option<Expr>,
         span: Span,

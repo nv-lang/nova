@@ -2323,6 +2323,8 @@ fn stmt_has_assignment(s: &Stmt) -> bool {
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_has_assignment(expr),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment — counts as assignment.
+        Stmt::TupleAssign { .. } => true,
     }
 }
 

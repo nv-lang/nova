@@ -898,6 +898,11 @@ fn explain_walk_stmt(
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
         Stmt::Let(_) => {} // handled above
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { explain_walk_expr(e, type_fields, info); }
+            for e in rhs { explain_walk_expr(e, type_fields, info); }
+        }
     }
 }
 
@@ -1627,6 +1632,11 @@ fn collect_writes_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_writes_expr(e, recv_type, writes, callees); }
+            for e in rhs { collect_writes_expr(e, recv_type, writes, callees); }
+        }
     }
 }
 
@@ -1832,6 +1842,11 @@ fn collect_reads_stmt(s: &Stmt, recv_type: &str, reads: &mut HashSet<String>, ca
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_reads_expr(e, recv_type, reads, callees); }
+            for e in rhs { collect_reads_expr(e, recv_type, reads, callees); }
+        }
     }
 }
 
@@ -2872,6 +2887,11 @@ fn count_field_reads_in_stmt_weighted(s: &Stmt, fname: &str, loop_mult: usize) -
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => 0,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().map(|e| count_field_reads_in_expr_weighted(e, fname, loop_mult)).sum::<usize>()
+                + rhs.iter().map(|e| count_field_reads_in_expr_weighted(e, fname, loop_mult)).sum::<usize>()
+        }
     }
 }
 
@@ -2994,6 +3014,7 @@ fn stmt_span(s: &Stmt) -> Option<crate::diag::Span> {
         Stmt::Apply { span, .. } => *span,
         Stmt::Calc { span, .. } => *span,
         Stmt::Reveal { span, .. } => *span,
+        Stmt::TupleAssign { span, .. } => *span,
     })
 }
 
@@ -3052,6 +3073,11 @@ fn stmt_contains_invalidating_call_for(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(|e| expr_contains_invalidating_call_for(e, fname, ipa))
+                || rhs.iter().any(|e| expr_contains_invalidating_call_for(e, fname, ipa))
+        }
     }
 }
 
@@ -3363,6 +3389,11 @@ fn stmt_contains_write_to(s: &Stmt, fname: &str) -> bool {
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(|e| expr_contains_write_to(e, fname))
+                || rhs.iter().any(|e| expr_contains_write_to(e, fname))
+        }
     }
 }
 
@@ -3524,6 +3555,11 @@ fn stmt_contains_call(s: &Stmt) -> bool {
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_contains_call(expr),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(expr_contains_call)
+                || rhs.iter().any(expr_contains_call)
+        }
     }
 }
 
@@ -3654,6 +3690,11 @@ fn count_field_reads_in_stmt(s: &Stmt, fname: &str) -> usize {
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => 0,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().map(|e| count_field_reads_in_expr(e, fname)).sum::<usize>()
+                + rhs.iter().map(|e| count_field_reads_in_expr(e, fname)).sum::<usize>()
+        }
     }
 }
 
@@ -3897,6 +3938,11 @@ fn analyze_stmt(s: &Stmt, fields: &HashMap<String, FieldKind>, a: &mut FnAnalysi
             analyze_expr(expr, fields, a);
         }
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { analyze_expr(e, fields, a); }
+            for e in rhs { analyze_expr(e, fields, a); }
+        }
     }
 }
 
@@ -4228,6 +4274,11 @@ fn scan_stmt(s: &Stmt, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { scan_expr(e, fields, out); }
+            for e in rhs { scan_expr(e, fields, out); }
+        }
     }
 }
 
@@ -4533,6 +4584,11 @@ fn collect_locals_stmt(s: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             collect_locals_expr(expr, out);
+        }
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_locals_expr(e, out); }
+            for e in rhs { collect_locals_expr(e, out); }
         }
     }
 }
@@ -5194,6 +5250,11 @@ fn descend_stmt_for_nested(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { descend_expr_for_nested(e, fname, cfg, ipa, local_names, seq, budget_left); }
+            for e in rhs { descend_expr_for_nested(e, fname, cfg, ipa, local_names, seq, budget_left); }
+        }
     }
 }
 
@@ -5472,6 +5533,11 @@ fn rewrite_stmt(s: &mut Stmt, replace_map: &HashMap<String, String>) {
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
             rewrite_expr(expr, replace_map);
+        }
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { rewrite_expr(e, replace_map); }
+            for e in rhs { rewrite_expr(e, replace_map); }
         }
     }
 }
@@ -5988,6 +6054,11 @@ fn licm_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
+            for e in rhs { licm_expr(e, fields, cfg, local_names, hoist_count, ipa); }
+        }
     }
 }
 
@@ -6316,6 +6387,11 @@ fn collect_closures_captures_in_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_closures_captures_in_expr(e, fields, out); }
+            for e in rhs { collect_closures_captures_in_expr(e, fields, out); }
+        }
     }
 }
 
@@ -6550,6 +6626,10 @@ fn stmt_contains_spawn(s: &Stmt) -> bool {
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => expr_contains_spawn(expr),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(expr_contains_spawn) || rhs.iter().any(expr_contains_spawn)
+        }
     }
 }
 
@@ -6697,6 +6777,11 @@ fn first_field_span_in_stmt(s: &Stmt, fname: &str) -> Option<crate::diag::Span> 
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => None,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().find_map(|e| first_field_span_in_expr(e, fname))
+                .or_else(|| rhs.iter().find_map(|e| first_field_span_in_expr(e, fname)))
+        }
     }
 }
 
@@ -7118,6 +7203,11 @@ fn capture_sample_args_in_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out); }
+            for e in rhs { capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out); }
+        }
     }
 }
 
@@ -7290,6 +7380,11 @@ fn rewrite_pure_calls_in_stmt_v31(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames); }
+            for e in rhs { rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames); }
+        }
     }
 }
 
@@ -7491,6 +7586,11 @@ fn collect_body_writes_stmt(s: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_body_writes_expr(e, out); }
+            for e in rhs { collect_body_writes_expr(e, out); }
+        }
     }
 }
 
@@ -7670,6 +7770,11 @@ fn stmt_has_any_self_field_write(s: &Stmt) -> bool {
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(expr_has_any_self_field_write)
+                || rhs.iter().any(expr_has_any_self_field_write)
+        }
     }
 }
 
@@ -7815,6 +7920,11 @@ fn count_pure_in_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+            for e in rhs { count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+        }
     }
 }
 
@@ -8224,6 +8334,11 @@ fn rewrite_pure_calls_in_stmt(s: &mut Stmt, renames: &HashMap<String, String>) {
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { rewrite_pure_calls_in_expr(e, renames); }
+            for e in rhs { rewrite_pure_calls_in_expr(e, renames); }
+        }
     }
 }
 
@@ -8906,6 +9021,11 @@ fn count_chains_in_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure); }
+            for e in rhs { count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure); }
+        }
     }
 }
 
@@ -9163,6 +9283,11 @@ fn rewrite_chains_in_stmt(s: &mut Stmt, name_map: &HashMap<Vec<String>, String>)
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { rewrite_chains_in_expr(e, name_map); }
+            for e in rhs { rewrite_chains_in_expr(e, name_map); }
+        }
     }
 }
 
