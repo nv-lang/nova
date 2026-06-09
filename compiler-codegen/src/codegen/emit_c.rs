@@ -15774,48 +15774,130 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             Stmt::Reveal { .. } => {
                 // Ghost erasure.
             }
-            // Plan 136 Ф.3: tuple destructuring assignment codegen.
-            // Conservative-tmp algorithm: for each rhs[i] that mentions any
-            // lhs root name, stash into a fresh tmp before the assignments.
-            // This prevents aliasing: `(a, b) = (b, a)` works correctly.
+            // Plan 136 Ф.3 / M-136-cycle-decomp V2: tuple destructuring assignment codegen.
+            // PART A: detect if rhs is a pure permutation of lhs lvalues.
+            //   If yes → cycle-decomposition (1 tmp per cycle, optimal).
+            //   If no  → conservative-tmp fallback (V1, unchanged).
             Stmt::TupleAssign { lhs, rhs, .. } => {
                 self.line("{");
                 self.indent += 1;
 
-                // Step 1: collect root ident names from all lhs targets.
-                let lhs_names: std::collections::HashSet<String> = lhs.iter()
-                    .flat_map(|e| Self::lvalue_root_names_ta(e))
-                    .collect();
+                let n = lhs.len();
 
-                // Step 2: for each rhs[i] that reads a lhs name, pre-compute
-                // into a typed tmp variable.
-                let n = rhs.len();
-                let mut tmps: Vec<Option<String>> = Vec::with_capacity(n);
+                // PART A: build perm_opt[i] = Some(j) if rhs[i] structurally equals lhs[j].
+                let mut perm_opt: Vec<Option<usize>> = Vec::with_capacity(n);
                 for i in 0..n {
-                    let r = rhs[i].clone();
-                    if Self::expr_reads_lhs_ta(&r, &lhs_names) {
-                        let tmp_name = self.fresh_tmp_named("ta");
-                        let c_ty = self.infer_expr_c_type(&r);
-                        let val = self.emit_expr(&r)?;
-                        self.line(&format!("{} {} = {};", c_ty, tmp_name, val));
-                        tmps.push(Some(tmp_name));
-                    } else {
-                        tmps.push(None);
+                    let mut found: Option<usize> = None;
+                    for j in 0..n {
+                        if Self::exprs_lvalue_eq_ta(&rhs[i], &lhs[j]) {
+                            found = Some(j);
+                            break;
+                        }
                     }
+                    perm_opt.push(found);
                 }
 
-                // Step 3: emit assignments lhs[i] = tmp_or_rhs[i].
-                for i in 0..n {
-                    let val = match &tmps[i] {
-                        Some(t) => t.clone(),
-                        None => {
-                            let r = rhs[i].clone();
-                            self.emit_expr(&r)?
+                // Check all rhs entries map to some lhs entry (all Some).
+                let is_pure_perm = perm_opt.iter().all(|x| x.is_some()) && {
+                    // Check bijection: no duplicate j values.
+                    let mut seen = vec![false; n];
+                    let mut ok = true;
+                    for opt in &perm_opt {
+                        let j = opt.unwrap();
+                        if seen[j] { ok = false; break; }
+                        seen[j] = true;
+                    }
+                    ok
+                };
+
+                if is_pure_perm {
+                    // PART B: cycle-decomposition — 1 tmp per non-trivial cycle.
+                    // perm[i] = j means: lhs[i] gets the value currently in lhs[j]
+                    // (since rhs[i] == lhs[j]).
+                    // Build the permutation array.
+                    let perm: Vec<usize> = perm_opt.iter().map(|x| x.unwrap()).collect();
+
+                    let mut visited = vec![false; n];
+                    for start in 0..n {
+                        if visited[start] { continue; }
+
+                        // Collect cycle starting at `start`.
+                        let mut cycle: Vec<usize> = vec![start];
+                        let mut cur = perm[start];
+                        while cur != start {
+                            cycle.push(cur);
+                            cur = perm[cur];
                         }
-                    };
-                    let l = lhs[i].clone();
-                    let target = self.emit_expr(&l)?;
-                    self.line(&format!("{} = {};", target, val));
+
+                        // Mark all in cycle as visited.
+                        for &idx in &cycle {
+                            visited[idx] = true;
+                        }
+
+                        // Fixed point: no-op.
+                        if cycle.len() == 1 {
+                            continue;
+                        }
+
+                        // Non-trivial cycle: save lhs[cycle[0]] into tmp,
+                        // then rotate: lhs[cycle[i]] = lhs[cycle[i+1]] for i in 0..len-1,
+                        // finally lhs[cycle[last]] = tmp.
+                        let c0 = cycle[0];
+                        let tmp_name = self.fresh_tmp_named("cd");
+                        let lhs_c0_clone = lhs[c0].clone();
+                        let c_ty = self.infer_expr_c_type(&lhs_c0_clone);
+                        let val0 = self.emit_expr(&lhs_c0_clone)?;
+                        self.line(&format!("{} {} = {};", c_ty, tmp_name, val0));
+
+                        for i in 0..cycle.len() - 1 {
+                            let dst = lhs[cycle[i]].clone();
+                            let src = lhs[cycle[i + 1]].clone();
+                            let dst_s = self.emit_expr(&dst)?;
+                            let src_s = self.emit_expr(&src)?;
+                            self.line(&format!("{} = {};", dst_s, src_s));
+                        }
+
+                        let last_dst = lhs[*cycle.last().unwrap()].clone();
+                        let last_dst_s = self.emit_expr(&last_dst)?;
+                        self.line(&format!("{} = {};", last_dst_s, tmp_name));
+                    }
+                } else {
+                    // PART C: V1 conservative fallback (verbatim).
+
+                    // Step 1: collect root ident names from all lhs targets.
+                    let lhs_names: std::collections::HashSet<String> = lhs.iter()
+                        .flat_map(|e| Self::lvalue_root_names_ta(e))
+                        .collect();
+
+                    // Step 2: for each rhs[i] that reads a lhs name, pre-compute
+                    // into a typed tmp variable.
+                    let mut tmps: Vec<Option<String>> = Vec::with_capacity(n);
+                    for i in 0..n {
+                        let r = rhs[i].clone();
+                        if Self::expr_reads_lhs_ta(&r, &lhs_names) {
+                            let tmp_name = self.fresh_tmp_named("ta");
+                            let c_ty = self.infer_expr_c_type(&r);
+                            let val = self.emit_expr(&r)?;
+                            self.line(&format!("{} {} = {};", c_ty, tmp_name, val));
+                            tmps.push(Some(tmp_name));
+                        } else {
+                            tmps.push(None);
+                        }
+                    }
+
+                    // Step 3: emit assignments lhs[i] = tmp_or_rhs[i].
+                    for i in 0..n {
+                        let val = match &tmps[i] {
+                            Some(t) => t.clone(),
+                            None => {
+                                let r = rhs[i].clone();
+                                self.emit_expr(&r)?
+                            }
+                        };
+                        let l = lhs[i].clone();
+                        let target = self.emit_expr(&l)?;
+                        self.line(&format!("{} = {};", target, val));
+                    }
                 }
 
                 self.indent -= 1;
@@ -31266,6 +31348,27 @@ _cp++; \
                 Self::expr_reads_lhs_ta(lhs, names) || Self::expr_reads_lhs_ta(rhs, names)
             }
             // Literals, Path, NullPtrLit, UnitLit → conservative false
+            _ => false,
+        }
+    }
+
+    /// Check if two Expr nodes are structurally equal as lvalue chains.
+    /// Used by M-136-cycle-decomp V2 pure-permutation detection.
+    fn exprs_lvalue_eq_ta(a: &Expr, b: &Expr) -> bool {
+        match (&a.kind, &b.kind) {
+            (ExprKind::Ident(na), ExprKind::Ident(nb)) => na == nb,
+            (ExprKind::SelfAccess, ExprKind::SelfAccess) => true,
+            (
+                ExprKind::Member { obj: oa, name: na },
+                ExprKind::Member { obj: ob, name: nb },
+            ) => na == nb && Self::exprs_lvalue_eq_ta(oa.as_ref(), ob.as_ref()),
+            (
+                ExprKind::Index { obj: oa, index: ia },
+                ExprKind::Index { obj: ob, index: ib },
+            ) => {
+                Self::exprs_lvalue_eq_ta(oa.as_ref(), ob.as_ref())
+                    && Self::exprs_lvalue_eq_ta(ia.as_ref(), ib.as_ref())
+            }
             _ => false,
         }
     }
