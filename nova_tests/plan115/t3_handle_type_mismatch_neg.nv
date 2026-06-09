@@ -5,13 +5,13 @@
 
 module plan115.t3_handle_type_mismatch_neg
 
-type SqHandle(ptr)
-type PngHandle(ptr)
+type SqHandle(*())
+type PngHandle(*())
 
 fn close_sqlite(h SqHandle) -> int => 0
 
 test "passing PngHandle to fn expecting SqHandle is a type error" {
-    ro png = PngHandle((0 as ptr))
+    ro png = PngHandle((0 as *()))
     ro result = close_sqlite(png)
     assert(result == 0)
 }

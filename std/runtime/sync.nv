@@ -1954,10 +1954,10 @@ export fn Once mut @try_start() -> Option[OnceGuard consume] {
 /// - `[Lazy]` — auto-init wrapper (poisons on panic)
 ///
 /// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type OnceCell[T]`
-/// to opaque-handle newtype `type OnceCell[T](ptr)`. C struct + per-T methods
+/// to opaque-handle newtype `type OnceCell[T](*(()))`. C struct + per-T methods
 /// continue to be emitted by codegen (emit_oncecell_instance); ABI unchanged.
 #stable(since = "0.1")
-export type OnceCell[T](ptr)
+export type OnceCell[T](*())
 
 /// Create an empty OnceCell.
 #realtime
@@ -2019,10 +2019,10 @@ export external fn OnceCell[T] @is_initialized() -> bool
 /// - `[Once]` — once-only execution without a value
 ///
 /// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type Lazy[T]`
-/// to opaque-handle newtype `type Lazy[T](ptr)`. C struct + per-T methods
+/// to opaque-handle newtype `type Lazy[T](*(()))`. C struct + per-T methods
 /// continue to be emitted by codegen (emit_lazy_instance); ABI unchanged.
 #stable(since = "0.1")
-export type Lazy[T](ptr)
+export type Lazy[T](*())
 
 /// Create a Lazy[T] with the given initializer closure.
 #realtime
@@ -2161,12 +2161,12 @@ export type WaitResult
 /// Unconditional runtime panic if not (Plan 103.3/103.4 pattern).
 ///
 /// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type Condvar`
-/// to opaque-handle newtype `type Condvar(ptr)`. C struct `Nova_Condvar`
+/// to opaque-handle newtype `type Condvar(*(()))`. C struct `Nova_Condvar`
 /// continues to live in `nova_rt/sync_condvar.h`; ABI unchanged. Codegen
 /// suppresses Nova-level `typedef nova_ptr Nova_Condvar` (would conflict
 /// with runtime header's struct typedef) — see emit_c.rs §RUNTIME_BACKED_NEWTYPES.
 #stable(since = "0.1")
-export type Condvar(ptr)
+export type Condvar(*())
 
 /// Create a new `Condvar`.
 #realtime

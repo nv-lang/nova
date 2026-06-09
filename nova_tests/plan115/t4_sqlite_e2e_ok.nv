@@ -12,8 +12,8 @@
 module plan115.t4_sqlite_e2e_ok
 
 // ─── Typed handles via D52 tuple newtype (Plan 115 D214) ──────────
-type Db(ptr)
-type Stmt(ptr)
+type Db(*())
+type Stmt(*())
 
 // SQLite-compatible return codes (subset).
 const SQLITE_OK   int = 0
@@ -21,13 +21,13 @@ const SQLITE_ROW  int = 100
 const SQLITE_DONE int = 101
 
 // ─── External fn declarations ────────────────────────────────────
-external fn mini_sqlite_open(path str) -> (ptr, int)
-external fn mini_sqlite_exec(db ptr, sql str) -> int
-external fn mini_sqlite_prepare(db ptr, sql str) -> (ptr, int)
-external fn mini_sqlite_step(stmt ptr) -> int
-external fn mini_sqlite_column_int(stmt ptr, col int) -> int
-external fn mini_sqlite_finalize(stmt ptr) -> int
-external fn mini_sqlite_close(db ptr) -> int
+external fn mini_sqlite_open(path str) -> (*(), int)
+external fn mini_sqlite_exec(db *(), sql str) -> int
+external fn mini_sqlite_prepare(db *(), sql str) -> (*(), int)
+external fn mini_sqlite_step(stmt *()) -> int
+external fn mini_sqlite_column_int(stmt *(), col int) -> int
+external fn mini_sqlite_finalize(stmt *()) -> int
+external fn mini_sqlite_close(db *()) -> int
 
 // ─── Tests ────────────────────────────────────────────────────────
 
@@ -105,13 +105,13 @@ test "distinct handle types — Db vs Stmt nominally distinct" {
     ro (raw_stmt, _) = mini_sqlite_prepare(db.0, "SELECT")
     ro stmt = Stmt(raw_stmt)
 
-    // db.0 and stmt.0 — both ptr at C ABI level, но Db ≠ Stmt в Nova
+    // db.0 and stmt.0 — both *() at C ABI level, но Db ≠ Stmt в Nova
     // (compile-time enforced via D52 tuple newtype). Демонстрируется
     // через successful unwrap (`.0` extracts inner ptr) — passing
     // wrong handle к fn(Db) или fn(Stmt) → E7301 (см.
     // t3_handle_type_mismatch_neg.nv).
-    assert(db.0 != (0 as ptr))
-    assert(stmt.0 != (0 as ptr))
+    assert(db.0 != (0 as *()))
+    assert(stmt.0 != (0 as *()))
 
     mini_sqlite_finalize(stmt.0)
     mini_sqlite_close(db.0)
