@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 136 — Tuple destructuring assignment
 
-> **Создан:** 2026-06-09.  **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-09.  **Статус:** ✅ ЗАКРЫТ 2026-06-09.
 > **Эстимат:** ~1 dev-day.  **Model:** Sonnet 4.6.
 > **Зависит от:** Plan 59 ✅ (tuple mono), Plan 120 ✅ (named tuples).
 

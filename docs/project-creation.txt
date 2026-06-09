@@ -34984,3 +34984,29 @@ Updated docs/typed-pointers.md:
   and dedicated ptr[i] paragraph with migration note.
 - Diagnostics: E_UNSAFE_REQUIRED description now lists ptr[i] explicitly.
 
+
+=== Plan 136: Tuple destructuring assignment — 2026-06-09 ===
+
+Tuple destructuring assignment `(lhs_0, ..., lhs_N) = (rhs_0, ..., rhs_N)` implemented.
+
+Parser (parser/mod.rs):
+- Lookahead `is_tuple_assign_lhs()` disambiguates tuple-lhs from tuple-expression.
+- `parse_tuple_assign_stmt` produces `Stmt::TupleAssign { lhs, rhs, span }`.
+
+Type-checker (types/mod.rs):
+- Arity check: lhs.len() == rhs.len() -> E_TUPLE_ASSIGN_ARITY_MISMATCH.
+- Mutability check per lhs element -> E_TUPLE_ASSIGN_LHS_NOT_MUT.
+- Consume-type ban per lhs element -> E_TUPLE_ASSIGN_CONSUME_TYPE.
+
+Codegen (emit_c.rs):
+- Conservative tmp-per-dependent-rhs algorithm (V1).
+- `lvalue_ident_set` + `expr_reads_any` helpers for dependency detection.
+- `emit_lvalue` for generating C lvalue expressions.
+
+Fixtures: 9 positive (swap, rotate, independent, partial-dep, field-swap, index-swap,
+double-swap, stdlib-reverse, identity) + 3 negative (arity/ro-lhs/nested-lhs).
+
+Stdlib migration: std/collections/vec_owned.nv reverse() swap -> tuple-assign.
+
+D236 NEW: spec/decisions/03-syntax.md.
+Followups: [M-136-cycle-decomp] [M-136-nested-tuple-lhs] [M-136-consume-tuple-assign].
