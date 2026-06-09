@@ -9350,7 +9350,8 @@ Example: (a, b) = (b, a) generates:
 { nova_int _nv_ta_0 = b; nova_int _nv_ta_1 = a; a = _nv_ta_0; b = _nv_ta_1; }
 ```
 
-Codegen V2 ([M-136-cycle-decomp]): cycle-decomposition for minimal tmp count.
+Codegen V2 (Plan 136.1 -- ACTIVE): pure permutation (all rhs[i] lvalue-equal to some
+lhs[j], mapping bijective) -> cycle-decomposition, 1 tmp/cycle. Otherwise: V1 fallback.
 
 Error codes:
 - E_TUPLE_ASSIGN_ARITY_MISMATCH  lhs.len() != rhs.len()
