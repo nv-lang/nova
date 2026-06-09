@@ -1,73 +1,73 @@
-// std/prelude/protocols.nv — file-based source of truth для prelude
+// std/prelude/protocols.nv вЂ” file-based source of truth РґР»СЏ prelude
 // conversion / equality / ordering / hashing / display protocols.
 // Plan 62 phase 62.E.
 //
-// Декларации добавлены в этот файл, чтобы:
-//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
+// Р”РµРєР»Р°СЂР°С†РёРё РґРѕР±Р°РІР»РµРЅС‹ РІ СЌС‚РѕС‚ С„Р°Р№Р», С‡С‚РѕР±С‹:
+//   1) `nova doc` РїРѕРєР°Р·С‹РІР°Р» canonical API РІ РѕРґРЅРѕРј РјРµСЃС‚Рµ (AI-readable),
+//   2) РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РјРѕРі shadow'РёС‚СЊ СЌС‚Рё names РІ СЃРІРѕС‘Рј РєРѕРґРµ СЃ warning'РѕРј
 //      (Plan 62.F W_PRELUDE_SHADOW),
-//   3) splittable prelude работал (`#prelude(protocols)` opt-in
-//      только protocols без core/runtime/errors/collections).
+//   3) splittable prelude СЂР°Р±РѕС‚Р°Р» (`#prelude(protocols)` opt-in
+//      С‚РѕР»СЊРєРѕ protocols Р±РµР· core/runtime/errors/collections).
 //
-// Архитектурные правила (Plan 62 §«Стратификация»):
-//   - **Один explicit import**: `std.prelude.core.{Ordering}` нужен для
+// РђСЂС…РёС‚РµРєС‚СѓСЂРЅС‹Рµ РїСЂР°РІРёР»Р° (Plan 62 В§В«РЎС‚СЂР°С‚РёС„РёРєР°С†РёСЏВ»):
+//   - **РћРґРёРЅ explicit import**: `std.prelude.core.{Ordering}` РЅСѓР¶РµРЅ РґР»СЏ
 //     signature `cmp(other Self) -> Ordering`. Auto-import `std.prelude`
-//     отключён внутри `std.prelude.*` (cycle protection,
-//     `is_prelude_self_module` в compiler-codegen/src/manifest.rs:314+),
-//     поэтому Ordering надо завезти explicitly. `std.prelude.core` не
-//     импортирует обратно `std.prelude.protocols` — cycle отсутствует.
+//     РѕС‚РєР»СЋС‡С‘РЅ РІРЅСѓС‚СЂРё `std.prelude.*` (cycle protection,
+//     `is_prelude_self_module` РІ compiler-codegen/src/manifest.rs:314+),
+//     РїРѕСЌС‚РѕРјСѓ Ordering РЅР°РґРѕ Р·Р°РІРµР·С‚Рё explicitly. `std.prelude.core` РЅРµ
+//     РёРјРїРѕСЂС‚РёСЂСѓРµС‚ РѕР±СЂР°С‚РЅРѕ `std.prelude.protocols` вЂ” cycle РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚.
 //
 // **Bootstrap status (Plan 62.E):**
 //
-// - **`From[T]` / `Into[U]`** — formal declarations (D73). Auto-derive
-//   логика для `Into[U]` из `From[Self]` живёт в compiler — declarations
-//   здесь дают canonical API + eligible как bound (`T From[X]`) per D72.
-//   Не ломают существующую D73 auto-derive (compiler продолжает работать
-//   независимо от protocol-declaration).
-// - **`TryFrom[T, E]` / `TryInto[U, E]`** — fallible-конверсии (D77).
-//   Аналогично D73 — declarations additive. Auto-derive не реализован
-//   в bootstrap'е (TryInto от TryFrom — Plan 62.E+).
-// - **`Hashable`** — `hash() -> u64` only (split из combined hash+eq в
-//   `std/collections/hashmap.nv` per D109 split policy). Совместимо с
-//   structural matching: type удовлетворяющий combined `Hashable`
-//   (hash+eq) автоматически удовлетворяет split `Hashable` (только hash).
-// - **`Equatable`** — `eq(other Self) -> bool` (split из combined per D109).
-// - **`Comparable`** — `cmp(other Self) -> Ordering` (D109 strict).
-//   Ordering импортирован explicitly из `std.prelude.core` (cycle prot).
+// - **`From[T]` / `Into[U]`** вЂ” formal declarations (D73). Auto-derive
+//   Р»РѕРіРёРєР° РґР»СЏ `Into[U]` РёР· `From[Self]` Р¶РёРІС‘С‚ РІ compiler вЂ” declarations
+//   Р·РґРµСЃСЊ РґР°СЋС‚ canonical API + eligible РєР°Рє bound (`T From[X]`) per D72.
+//   РќРµ Р»РѕРјР°СЋС‚ СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ D73 auto-derive (compiler РїСЂРѕРґРѕР»Р¶Р°РµС‚ СЂР°Р±РѕС‚Р°С‚СЊ
+//   РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ protocol-declaration).
+// - **`TryFrom[T, E]` / `TryInto[U, E]`** вЂ” fallible-РєРѕРЅРІРµСЂСЃРёРё (D77).
+//   РђРЅР°Р»РѕРіРёС‡РЅРѕ D73 вЂ” declarations additive. Auto-derive РЅРµ СЂРµР°Р»РёР·РѕРІР°РЅ
+//   РІ bootstrap'Рµ (TryInto РѕС‚ TryFrom вЂ” Plan 62.E+).
+// - **`Hash`** вЂ” `hash() -> u64` only (split РёР· combined hash+eq РІ
+//   `std/collections/hashmap.nv` per D109 split policy). РЎРѕРІРјРµСЃС‚РёРјРѕ СЃ
+//   structural matching: type СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№ combined `Hash`
+//   (hash+eq) Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ split `Hash` (С‚РѕР»СЊРєРѕ hash).
+// - **`Equal`** вЂ” `eq(other Self) -> bool` (split РёР· combined per D109).
+// - **`Compare`** вЂ” `cmp(other Self) -> Ordering` (D109 strict).
+//   Ordering РёРјРїРѕСЂС‚РёСЂРѕРІР°РЅ explicitly РёР· `std.prelude.core` (cycle prot).
 //
-// **NOT migrated (Plan 62.E scope — deferred / in-progress):**
+// **NOT migrated (Plan 62.E scope вЂ” deferred / in-progress):**
 //
-// - **`Display`** — `fmt(sb StringBuilder) -> ()` зависит от
-//   `StringBuilder` (opaque runtime type, hardcoded в type-checker
-//   builtins). До 62.D.bis (опаковые типы → `external type`) Display
-//   declaration не может ссылаться на StringBuilder через cross-file
-//   resolve. См. DEFER comment ниже.
+// - **`Display`** вЂ” `fmt(sb StringBuilder) -> ()` Р·Р°РІРёСЃРёС‚ РѕС‚
+//   `StringBuilder` (opaque runtime type, hardcoded РІ type-checker
+//   builtins). Р”Рѕ 62.D.bis (РѕРїР°РєРѕРІС‹Рµ С‚РёРїС‹ в†’ `external type`) Display
+//   declaration РЅРµ РјРѕР¶РµС‚ СЃСЃС‹Р»Р°С‚СЊСЃСЏ РЅР° StringBuilder С‡РµСЂРµР· cross-file
+//   resolve. РЎРј. DEFER comment РЅРёР¶Рµ.
 //
 // **NOT modified (Plan 62.E explicit non-goals):**
 //
-// - Auto-derive логика D73 (From/Into) в compiler-codegen — остаётся.
-// - Built-in dispatch Hash/Eq/Ord для примитивов (`int.hash()`,
-//   `str.eq()`, etc.) в codegen — остаётся.
-// - `lints.rs:565` `collect_protocol_names` HashSet — идемпотентно
-//   с этими declarations (HashSet de-dups; protocol resolution
-//   не ломается).
+// - Auto-derive Р»РѕРіРёРєР° D73 (From/Into) РІ compiler-codegen вЂ” РѕСЃС‚Р°С‘С‚СЃСЏ.
+// - Built-in dispatch Hash/Eq/Ord РґР»СЏ РїСЂРёРјРёС‚РёРІРѕРІ (`int.hash()`,
+//   `str.eq()`, etc.) РІ codegen вЂ” РѕСЃС‚Р°С‘С‚СЃСЏ.
+// - `lints.rs:565` `collect_protocol_names` HashSet вЂ” РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ
+//   СЃ СЌС‚РёРјРё declarations (HashSet de-dups; protocol resolution
+//   РЅРµ Р»РѕРјР°РµС‚СЃСЏ).
 
 module prelude.protocols
 
-// Plan 91.8a (D183): Ordering sum-type удалён; Comparable.compare возвращает int
-// (memcmp-style: < 0 / 0 / > 0). Никаких imports из core не требуется.
+// Plan 91.8a (D183): Ordering sum-type СѓРґР°Р»С‘РЅ; Compare.compare РІРѕР·РІСЂР°С‰Р°РµС‚ int
+// (memcmp-style: < 0 / 0 / > 0). РќРёРєР°РєРёС… imports РёР· core РЅРµ С‚СЂРµР±СѓРµС‚СЃСЏ.
 
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Conversion protocols (D73, D77)
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Конверсия `T → Self` (D73, spec/decisions/08-runtime.md#d73).
+/// РљРѕРЅРІРµСЂСЃРёСЏ `T в†’ Self` (D73, spec/decisions/08-runtime.md#d73).
 ///
-/// `from` — **статический** метод (D35: `fn Type.from(...)`); в
-/// protocol-теле помечается leading-точкой (Plan 97, резолв
-/// `Q-static-method-protocol`). Реализация: `fn Foo.from(t T) -> Foo => ...`.
-/// Auto-derive `Into[Self]` для `T` если `From[T]` объявлен на `Self`.
+/// `from` вЂ” **СЃС‚Р°С‚РёС‡РµСЃРєРёР№** РјРµС‚РѕРґ (D35: `fn Type.from(...)`); РІ
+/// protocol-С‚РµР»Рµ РїРѕРјРµС‡Р°РµС‚СЃСЏ leading-С‚РѕС‡РєРѕР№ (Plan 97, СЂРµР·РѕР»РІ
+/// `Q-static-method-protocol`). Р РµР°Р»РёР·Р°С†РёСЏ: `fn Foo.from(t T) -> Foo => ...`.
+/// Auto-derive `Into[Self]` РґР»СЏ `T` РµСЃР»Рё `From[T]` РѕР±СЉСЏРІР»РµРЅ РЅР° `Self`.
 ///
 /// # Examples
 ///
@@ -75,77 +75,77 @@ module prelude.protocols
 /// type Celsius { value f64 }
 /// fn Celsius.from(f Fahrenheit) -> Celsius =>
 ///     Celsius { value: (f.value - 32.0) * 5.0 / 9.0 }
-/// // Авто-доступно: Fahrenheit.into() -> Celsius
+/// // РђРІС‚Рѕ-РґРѕСЃС‚СѓРїРЅРѕ: Fahrenheit.into() -> Celsius
 /// ```
 #stable(since = "0.1")
 export type From[T] protocol {
     .from(t T) -> Self
 }
 
-/// Plan 91.8a.2 (D183 amendment): blanket identity From — каждый тип T
-/// можно сконструировать из себя через `T.from(t T) -> T`. Аналог Rust
+/// Plan 91.8a.2 (D183 amendment): blanket identity From вЂ” РєР°Р¶РґС‹Р№ С‚РёРї T
+/// РјРѕР¶РЅРѕ СЃРєРѕРЅСЃС‚СЂСѓРёСЂРѕРІР°С‚СЊ РёР· СЃРµР±СЏ С‡РµСЂРµР· `T.from(t T) -> T`. РђРЅР°Р»РѕРі Rust
 /// `impl<T> From<T> for T`.
 ///
-/// Override запрещён (Q4 strict, E_BLANKET_IDENTITY_OVERRIDE): identity
-/// is identity (D9 single canonical path). Реализация — синтезирована
-/// codegen'ом per concrete T при mono.
+/// Override Р·Р°РїСЂРµС‰С‘РЅ (Q4 strict, E_BLANKET_IDENTITY_OVERRIDE): identity
+/// is identity (D9 single canonical path). Р РµР°Р»РёР·Р°С†РёСЏ вЂ” СЃРёРЅС‚РµР·РёСЂРѕРІР°РЅР°
+/// codegen'РѕРј per concrete T РїСЂРё mono.
 ///
-/// Resolution order для `T.from(value)`:
-/// 1. Explicit `fn T.from(value_type)` — user impl wins
-/// 2. Blanket identity — matches только если value_type == T
-/// 3. D77 auto-derive из From[value_type] chain
+/// Resolution order РґР»СЏ `T.from(value)`:
+/// 1. Explicit `fn T.from(value_type)` вЂ” user impl wins
+/// 2. Blanket identity вЂ” matches С‚РѕР»СЊРєРѕ РµСЃР»Рё value_type == T
+/// 3. D77 auto-derive РёР· From[value_type] chain
 /// 4. Error E_NO_FROM_IMPL
 ///
-/// Identity Into auto-derived (D77): `t.into()` для `t: T` → `t`.
+/// Identity Into auto-derived (D77): `t.into()` РґР»СЏ `t: T` в†’ `t`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// let x int = int.from(42)             // identity blanket
 /// let m Money = Money.from(other_money) // identity blanket
-/// fn copy[T](x T) -> T => T.from(x)    // works для любого T
+/// fn copy[T](x T) -> T => T.from(x)    // works РґР»СЏ Р»СЋР±РѕРіРѕ T
 /// ```
 #stable(since = "0.1")
 export fn[T] T.from(t T) -> T => t
 
-/// Конверсия `Self → U` — instance method (D73).
+/// РљРѕРЅРІРµСЂСЃРёСЏ `Self в†’ U` вЂ” instance method (D73).
 ///
-/// Auto-derived из `From[Self]` если `From[U]` для `T=Self` существует
-/// (compiler синтезирует `into()` body как `U.from(self)`).
+/// Auto-derived РёР· `From[Self]` РµСЃР»Рё `From[U]` РґР»СЏ `T=Self` СЃСѓС‰РµСЃС‚РІСѓРµС‚
+/// (compiler СЃРёРЅС‚РµР·РёСЂСѓРµС‚ `into()` body РєР°Рє `U.from(self)`).
 ///
 /// # Examples
 ///
 /// ```nova
-/// let c Celsius = f.into()  // вызывает Celsius.from(f) автоматически
+/// let c Celsius = f.into()  // РІС‹Р·С‹РІР°РµС‚ Celsius.from(f) Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё
 /// ```
 #stable(since = "0.1")
 export type Into[U] protocol {
     @into() -> U
 }
 
-// TryFrom / TryInto — Result-форма по `try_`-prefix convention.
+// TryFrom / TryInto вЂ” Result-С„РѕСЂРјР° РїРѕ `try_`-prefix convention.
 //
-// Конвенция Nova: `try_X` ↔ `Result[T, E]`, `X` ↔ `Fail[E]`-эффект (см.
-// std/runtime/read_buffer.nv — пары `read_byte`/`try_read_byte` и т.д.).
-// `try_from`/`try_into` именованы под эту конвенцию → возвращают Result.
-// Fail-форма (`from`/`into` с `Fail[E]`) — auto-derived из Result-формы
-// механизмом **D77 4-way auto-derive** (`compiler-codegen/src/codegen/emit_c.rs`
-// — `try_from_targets` / `from_targets`); см. также spec D77.
+// РљРѕРЅРІРµРЅС†РёСЏ Nova: `try_X` в†” `Result[T, E]`, `X` в†” `Fail[E]`-СЌС„С„РµРєС‚ (СЃРј.
+// std/runtime/read_buffer.nv вЂ” РїР°СЂС‹ `read_byte`/`try_read_byte` Рё С‚.Рґ.).
+// `try_from`/`try_into` РёРјРµРЅРѕРІР°РЅС‹ РїРѕРґ СЌС‚Сѓ РєРѕРЅРІРµРЅС†РёСЋ в†’ РІРѕР·РІСЂР°С‰Р°СЋС‚ Result.
+// Fail-С„РѕСЂРјР° (`from`/`into` СЃ `Fail[E]`) вЂ” auto-derived РёР· Result-С„РѕСЂРјС‹
+// РјРµС…Р°РЅРёР·РјРѕРј **D77 4-way auto-derive** (`compiler-codegen/src/codegen/emit_c.rs`
+// вЂ” `try_from_targets` / `from_targets`); СЃРј. С‚Р°РєР¶Рµ spec D77.
 //
-// Note: Plan 56 Ф.2.7 (запрет эффектов в protocol-методах) **снят**
-// 2026-05-20 (D122 amended) — эффекты в protocol-методах теперь
-// разрешены. Result-форма у `TryFrom`/`TryInto` остаётся не как
-// workaround, а как естественная семантика `try_`-prefix convention.
+// Note: Plan 56 Р¤.2.7 (Р·Р°РїСЂРµС‚ СЌС„С„РµРєС‚РѕРІ РІ protocol-РјРµС‚РѕРґР°С…) **СЃРЅСЏС‚**
+// 2026-05-20 (D122 amended) вЂ” СЌС„С„РµРєС‚С‹ РІ protocol-РјРµС‚РѕРґР°С… С‚РµРїРµСЂСЊ
+// СЂР°Р·СЂРµС€РµРЅС‹. Result-С„РѕСЂРјР° Сѓ `TryFrom`/`TryInto` РѕСЃС‚Р°С‘С‚СЃСЏ РЅРµ РєР°Рє
+// workaround, Р° РєР°Рє РµСЃС‚РµСЃС‚РІРµРЅРЅР°СЏ СЃРµРјР°РЅС‚РёРєР° `try_`-prefix convention.
 
-/// Fallible конверсия `T → Self`, возвращает `Result[Self, E]`.
+/// Fallible РєРѕРЅРІРµСЂСЃРёСЏ `T в†’ Self`, РІРѕР·РІСЂР°С‰Р°РµС‚ `Result[Self, E]`.
 ///
-/// Имплементируйте на типах, которые могут быть построены из `T` с
-/// возможностью ошибки. Автоматически даёт `T.try_from(v)` (D77).
-/// `try_from` — **статический** метод (D35: `fn Type.try_from(...)`),
-/// в protocol-теле помечается leading-точкой (Plan 97).
+/// РРјРїР»РµРјРµРЅС‚РёСЂСѓР№С‚Рµ РЅР° С‚РёРїР°С…, РєРѕС‚РѕСЂС‹Рµ РјРѕРіСѓС‚ Р±С‹С‚СЊ РїРѕСЃС‚СЂРѕРµРЅС‹ РёР· `T` СЃ
+/// РІРѕР·РјРѕР¶РЅРѕСЃС‚СЊСЋ РѕС€РёР±РєРё. РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРё РґР°С‘С‚ `T.try_from(v)` (D77).
+/// `try_from` вЂ” **СЃС‚Р°С‚РёС‡РµСЃРєРёР№** РјРµС‚РѕРґ (D35: `fn Type.try_from(...)`),
+/// РІ protocol-С‚РµР»Рµ РїРѕРјРµС‡Р°РµС‚СЃСЏ leading-С‚РѕС‡РєРѕР№ (Plan 97).
 ///
-/// `Result[Self, E]`-возврат — по `try_`-prefix convention; Fail-форма
-/// (`fn Type.from(t T) Fail[E] -> Self`) auto-derive'ится через D77.
+/// `Result[Self, E]`-РІРѕР·РІСЂР°С‚ вЂ” РїРѕ `try_`-prefix convention; Fail-С„РѕСЂРјР°
+/// (`fn Type.from(t T) Fail[E] -> Self`) auto-derive'РёС‚СЃСЏ С‡РµСЂРµР· D77.
 ///
 /// # Examples
 ///
@@ -161,105 +161,76 @@ export type TryFrom[T, E] protocol {
     .try_from(t T) -> Result[Self, E]
 }
 
-/// Fallible конверсия `Self → U`, возвращает `Result[U, E]`.
+/// Fallible РєРѕРЅРІРµСЂСЃРёСЏ `Self в†’ U`, РІРѕР·РІСЂР°С‰Р°РµС‚ `Result[U, E]`.
 ///
-/// `try_into` — instance-метод (без leading-точки). Автоматически
-/// реализуется через `TryFrom`: если `U TryFrom[Self, E]`, то
-/// `v.try_into()` эквивалентен `U.try_from(v)` (D77).
+/// `try_into` вЂ” instance-РјРµС‚РѕРґ (Р±РµР· leading-С‚РѕС‡РєРё). РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРё
+/// СЂРµР°Р»РёР·СѓРµС‚СЃСЏ С‡РµСЂРµР· `TryFrom`: РµСЃР»Рё `U TryFrom[Self, E]`, С‚Рѕ
+/// `v.try_into()` СЌРєРІРёРІР°Р»РµРЅС‚РµРЅ `U.try_from(v)` (D77).
 #stable(since = "0.1")
 export type TryInto[U, E] protocol {
     @try_into() -> Result[U, E]
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Equality / Hashing / Ordering protocols (D109)
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Хэшируемые типы — для `HashMap[K, ...]` / `HashSet[K]` (D109,
-/// spec/decisions/04-effects.md).
+/// РҐСЌС€РёСЂСѓРµРјС‹Рµ С‚РёРїС‹ вЂ” РґР»СЏ `HashMap[K, ...]` / `HashSet[K]` (D109,
+/// spec/decisions/04-effects.md; D237 rename Hash в†’ Hash).
 ///
-/// **Split policy (D109):** `Hashable` определяет только `hash() -> u64`,
-/// equality вынесена в отдельный `Equatable`. Это упрощает структурную
-/// проверку: `[K Hashable]` означает "достаточно для хэш-таблицы lookup'а
-/// **до** collision check", `[K Hashable + Equatable]` — полный contract.
+/// **Split policy (D109):** `Hash` РѕРїСЂРµРґРµР»СЏРµС‚ С‚РѕР»СЊРєРѕ `hash() -> u64`,
+/// equality РІС‹РЅРµСЃРµРЅР° РІ РѕС‚РґРµР»СЊРЅС‹Р№ `Equal`. Р­С‚Рѕ СѓРїСЂРѕС‰Р°РµС‚ СЃС‚СЂСѓРєС‚СѓСЂРЅСѓСЋ
+/// РїСЂРѕРІРµСЂРєСѓ: `[K Hash]` РѕР·РЅР°С‡Р°РµС‚ "РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР»СЏ С…СЌС€-С‚Р°Р±Р»РёС†С‹ lookup'Р°
+/// **РґРѕ** collision check", `[K Hash + Equal]` вЂ” РїРѕР»РЅС‹Р№ contract.
 ///
-/// **Совместимость:** существующий `std/collections/hashmap.nv` declar'ит
-/// `Hashable` с двумя методами (combined hash+eq). Любой тип
-/// удовлетворяющий combined version автоматически удовлетворяет split
-/// version (структурное матчинг по подмножеству). Combined declaration
-/// в hashmap.nv останется до Plan 62.D.bis канонизации.
-///
-/// **Bootstrap:** примитивы (`int`/`str`/`bool`/`char`/числовые) — auto-
-/// hashable per type-checker special-case (emit_c.rs:5817). Именованные
-/// типы должны явно реализовать `fn T @hash() -> u64`.
+/// **Bootstrap:** РїСЂРёРјРёС‚РёРІС‹ (`int`/`str`/`bool`/`char`/С‡РёСЃР»РѕРІС‹Рµ) вЂ” auto-
+/// hashable per type-checker special-case (emit_c.rs:5817). РРјРµРЅРѕРІР°РЅРЅС‹Рµ
+/// С‚РёРїС‹ РґРѕР»Р¶РЅС‹ СЏРІРЅРѕ СЂРµР°Р»РёР·РѕРІР°С‚СЊ `fn T @hash() -> u64`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// type UserId { value u64 }
 /// fn UserId @hash() -> u64 => @value
-/// // UserId теперь удовлетворяет Hashable structurally.
+/// // UserId С‚РµРїРµСЂСЊ СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ Hash structurally.
 /// ```
 #stable(since = "0.1")
-export type Hashable protocol {
+export type Hash protocol {
     @hash() -> u64
 }
 
-/// Сравниваемые на равенство (D109).
+/// Р Р°РІРµРЅСЃС‚РІРѕ (D109; D237 rename Equal в†’ Equal, @equal в†’ @equal).
 ///
-/// `Self == Self` через явный метод (не оператор-equality для arbitrary
-/// types). Plan 91.8a.2 part 3 (D183): magic methods @eq/@lt/@le/@gt/@ge
-/// удалены. Implementer пишет @equals (для Equatable) или @compare (для
-/// Comparable); operators ==/!=/</<=/>/>= synthesized автоматически.
-///
-/// # Examples
-///
-/// ```nova
-/// type Point { x int, y int }
-/// fn Point @eq(other Point) -> bool => @x == other.x && @y == other.y
-/// ```
-/// Равенство (D109). Plan 91.8a.2 (D183 amendment): default body
-/// через coercion к Comparable — canonical form. Если тип satisfies
-/// Comparable, @equals auto-synthesized через compare; иначе
-/// implementer пишет @equals явно (e.g. Vector3, Complex без linear
-/// order).
-///
-/// Codegen devirtualization: при synthesis для concrete T, coercion
-/// `let cmp Comparable = @` становится type ascription (no fat ptr),
-/// `cmp.compare(other)` становится direct `Nova_T_method_compare`
-/// call. Zero runtime cost vs explicit @equals impl.
+/// `Self == Self` С‡РµСЂРµР· СЏРІРЅС‹Р№ РјРµС‚РѕРґ. Plan 91.8a.2 (D183 amendment):
+/// Р•СЃР»Рё С‚РёРї satisfies Compare, @equal auto-synthesized С‡РµСЂРµР· compare;
+/// РёРЅР°С‡Рµ implementer РїРёС€РµС‚ @equal СЏРІРЅРѕ (e.g. Vector3, Complex Р±РµР· linear
+/// order). Operators ==/!= synthesized Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё.
 ///
 /// # Examples
 ///
 /// ```nova
-/// // Type only Equatable (no order):
+/// // Type only Equal (no order):
 /// type Vector3 { x f64, y f64, z f64 }
-/// fn Vector3 @equals(other Vector3) -> bool =>
+/// fn Vector3 @equal(other Vector3) -> bool =>
 ///     @x == other.x && @y == other.y && @z == other.z
 ///
-/// // Type with Comparable — equals auto-derived from @compare:
+/// // Type with Compare вЂ” equal auto-derived from @compare:
 /// type Money { cents int }
 /// fn Money @compare(other Money) -> int => @cents - other.cents
-/// // @equals synthesized via Equatable.equals default body
+/// // @equal synthesized via Equal.equal default body
 /// ```
-/// Plan 91.8a.2 part 3 implementation note: default body использует direct
-/// form (=> @compare(other) == 0) для MVP synthesis. Canonical coercion
-/// form (let cmp Comparable = @; cmp.compare(other) == 0) — equivalent
-/// semantically (after devirtualization); реализована как direct для
-/// простоты codegen synthesis. Devirtualization-based coercion form
-/// поддержка — followup.
 #stable(since = "0.1")
-export type Equatable protocol {
-    @equals(other Self) -> bool => @compare(other) == 0
+export type Equal protocol {
+    @equal(other Self) -> bool => @compare(other) == 0
 }
 
-/// Полный порядок (D109, D183 amendment Plan 91.8a.2). Orthogonal с
-/// Equatable (no embed); Equatable получает default body через
-/// coercion к Comparable. Возвращает `int` (memcmp-style: < 0, 0, > 0).
+/// РџРѕР»РЅС‹Р№ РїРѕСЂСЏРґРѕРє (D109, D183 amendment Plan 91.8a.2; D237 rename Compare в†’ Compare).
+/// Orthogonal СЃ Equal (no embed); Equal РїРѕР»СѓС‡Р°РµС‚ default body С‡РµСЂРµР·
+/// coercion Рє Compare. Р’РѕР·РІСЂР°С‰Р°РµС‚ `int` (memcmp-style: < 0, 0, > 0).
 ///
-/// Транзитивность и antisymmetry — программистская обязанность (compiler
-/// не верифицирует). Для partial order — отдельный protocol (Plan 62.E+).
+/// РўСЂР°РЅР·РёС‚РёРІРЅРѕСЃС‚СЊ Рё antisymmetry вЂ” РїСЂРѕРіСЂР°РјРјРёСЃС‚СЃРєР°СЏ РѕР±СЏР·Р°РЅРЅРѕСЃС‚СЊ (compiler
+/// РЅРµ РІРµСЂРёС„РёС†РёСЂСѓРµС‚). Р”Р»СЏ partial order вЂ” РѕС‚РґРµР»СЊРЅС‹Р№ protocol (Plan 62.E+).
 ///
 /// # Examples
 ///
@@ -270,40 +241,40 @@ export type Equatable protocol {
 ///     else { 0 }
 /// ```
 #stable(since = "0.1")
-export type Comparable protocol {
+export type Compare protocol {
     @compare(other Self) -> int
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Plan 126 (D230) — Cloneable protocol
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Plan 137 (D237) вЂ” Clone protocol (renamed from Clone)
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Deep recursive copy (Plan 126, D230).
+/// Deep recursive copy (Plan 126, D230; D237 rename Clone в†’ Clone).
 ///
-/// Single-method protocol для глубокой копии value-record / heap-record /
-/// named tuple / sum-type. Auto-derive через `#impl(Cloneable)` на типе:
-/// compiler synthesize'ит memberwise рекурсивную копию каждого поля.
+/// Single-method protocol РґР»СЏ РіР»СѓР±РѕРєРѕР№ РєРѕРїРёРё value-record / heap-record /
+/// named tuple / sum-type. Auto-derive С‡РµСЂРµР· `#impl(Clone)` РЅР° С‚РёРїРµ:
+/// compiler synthesize'РёС‚ memberwise СЂРµРєСѓСЂСЃРёРІРЅСѓСЋ РєРѕРїРёСЋ РєР°Р¶РґРѕРіРѕ РїРѕР»СЏ.
 ///
 /// **Auto-derive rules:**
 /// - Primitive types (int/f64/bool/char/byte/str): copy semantics built-in;
-///   `str` clone = новая аллокация с тем же контентом.
-/// - `[]T`: new array с recursive clone элементов.
+///   `str` clone = РЅРѕРІР°СЏ Р°Р»Р»РѕРєР°С†РёСЏ СЃ С‚РµРј Р¶Рµ РєРѕРЅС‚РµРЅС‚РѕРј.
+/// - `[]T`: new array СЃ recursive clone СЌР»РµРјРµРЅС‚РѕРІ.
 /// - Record/NamedTuple: memberwise `field.clone()` chain.
-/// - Sum-type: match-arms, payload рекурсивно clone'ится.
-/// - Reference fields в value-record: clone underlying (`[]T` deep copy).
+/// - Sum-type: match-arms, payload СЂРµРєСѓСЂСЃРёРІРЅРѕ clone'РёС‚СЃСЏ.
+/// - Reference fields РІ value-record: clone underlying (`[]T` deep copy).
 ///
-/// **Cycle detection:** type `A` ссылающийся на `A` сам (через embed) →
-/// `E_AUTO_DERIVE_CYCLE` при попытке synthesize.
+/// **Cycle detection:** type `A` СЃСЃС‹Р»Р°СЋС‰РёР№СЃСЏ РЅР° `A` СЃР°Рј (С‡РµСЂРµР· embed) в†’
+/// `E_AUTO_DERIVE_CYCLE` РїСЂРё РїРѕРїС‹С‚РєРµ synthesize.
 ///
-/// **Field eligibility:** каждое поле type'а должно implement Cloneable
-/// (либо primitive, либо `#impl(Cloneable)`). Иначе →
+/// **Field eligibility:** РєР°Р¶РґРѕРµ РїРѕР»Рµ type'Р° РґРѕР»Р¶РЅРѕ implement Clone
+/// (Р»РёР±Рѕ primitive, Р»РёР±Рѕ `#impl(Clone)`). РРЅР°С‡Рµ в†’
 /// `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
 ///
 /// # Examples
 ///
 /// ```nova
-/// #impl(Cloneable)
+/// #impl(Clone)
 /// type Vec3 value {
 ///     x f64
 ///     y f64
@@ -321,34 +292,28 @@ export type Comparable protocol {
 ///     Vec3 { x: @x, y: @y, z: @z }   // shallow copy (primitives)
 /// ```
 #stable(since = "0.1")
-export type Cloneable protocol {
+export type Clone protocol {
     @clone() -> Self
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Display protocol (D109)
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Plan 137 (D237) вЂ” Display + Debug protocols (renamed from Display/Debug)
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Форматирование в строку (для println, str.from, etc).
+/// Р¤РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёРµ РІ СЃС‚СЂРѕРєСѓ (РґР»СЏ println, str.from, etc).
+/// D237 rename: Display в†’ Display, @display в†’ @display.
 ///
-/// Метод `fmt(sb)` пишет representation в `StringBuilder` (opaque runtime
-/// type — hardcoded в type-checker builtins HashSet до Plan 62.D.bis
-/// канонизации через `external type` D-block). Возвращает `()`; вся
-/// работа — побочный effect на `sb`.
-///
-/// **Bootstrap status:** `StringBuilder` известен type-checker'у через
-/// builtins HashSet (types/mod.rs:2000+). Cross-file reference сюда
-/// разрешим — type-checker распознаёт builtin name без declaration
-/// lookup. После 62.D.bis declaration переедет в `std/prelude/collections.nv`
-/// или отдельный модуль, и эта ссылка станет resolved через нормальный
-/// cross-file path.
+/// РњРµС‚РѕРґ `@display(sb)` РїРёС€РµС‚ representation РІ `StringBuilder` (opaque runtime
+/// type вЂ” hardcoded РІ type-checker builtins HashSet РґРѕ Plan 62.D.bis
+/// РєР°РЅРѕРЅРёР·Р°С†РёРё С‡РµСЂРµР· `external type` D-block). Р’РѕР·РІСЂР°С‰Р°РµС‚ `()`; РІСЃСЏ
+/// СЂР°Р±РѕС‚Р° вЂ” РїРѕР±РѕС‡РЅС‹Р№ effect РЅР° `sb`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// type Point { x int, y int }
-/// fn Point @fmt(sb StringBuilder) -> () {
+/// fn Point @display(mut sb StringBuilder) -> () {
 ///     sb.append("Point(")
 ///     sb.append_int(@x)
 ///     sb.append(", ")
@@ -356,56 +321,39 @@ export type Cloneable protocol {
 ///     sb.append(")")
 /// }
 /// ```
-/// Plan 91.8a.2 (D183 amendment): default body использует `str.from(@)`
-/// — primitive C function для primitives, или user-declared overload для
-/// custom types. Implementer пишет @fmt явно для perf (no intermediate
-/// string), либо предоставляет `fn str.from(MyType) -> str` overload.
+/// Plan 91.8a.2 (D183 amendment): default body РёСЃРїРѕР»СЊР·СѓРµС‚ `str.from(@)`
+/// вЂ” primitive C function РґР»СЏ primitives, РёР»Рё user-declared overload РґР»СЏ
+/// custom types. Implementer РїРёС€РµС‚ @display СЏРІРЅРѕ РґР»СЏ perf (no intermediate
+/// string), Р»РёР±Рѕ РїСЂРµРґРѕСЃС‚Р°РІР»СЏРµС‚ `fn str.from(MyType) -> str` overload.
 #stable(since = "0.1")
-export type Printable protocol {
-    @fmt(sb StringBuilder) {
+export type Display protocol {
+    @display(mut sb StringBuilder) {
         sb.append(str.from(@))
     }
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Plan 91.14 (D229) — DebugPrintable protocol + `${expr:?}` format spec
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Protocol для отладочного представления — sibling к Printable (D183).
+/// Protocol РґР»СЏ РѕС‚Р»Р°РґРѕС‡РЅРѕРіРѕ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёСЏ вЂ” sibling Рє Display (D229; D237 rename).
+/// D237 rename: Debug в†’ Debug, @debug в†’ @debug.
 ///
-/// **Distinction от Printable:**
-/// - `Printable.@fmt` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
-/// - `DebugPrintable.@debug_fmt` — diagnostic representation (e.g.,
-///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` с quote-escape), matches
+/// **Distinction РѕС‚ Display:**
+/// - `Display.@display` вЂ” user-facing display (e.g., `Point(1, 2)`, `"hello"`).
+/// - `Debug.@debug` вЂ” diagnostic representation (e.g.,
+///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` СЃ quote-escape), matches
 ///   Rust `#[derive(Debug)]` shape.
 ///
-/// **Trigger:** `${expr:?}` syntax inside Nova interp-strings (Plan 91.14 Ф.2).
-/// Bare `${expr}` (no `:?`) routes к Printable.@fmt (unchanged).
+/// **Trigger:** `${expr:?}` syntax inside Nova interp-strings (Plan 91.14 Р¤.2).
+/// Bare `${expr}` (no `:?`) routes Рє Display.@display (unchanged).
 ///
-/// **Hybrid default body synthesis** (Plan 91.14 Ф.4, design decision #1):
-/// Protocol decl ships БЕЗ default body — codegen synthesizes per-type:
-/// - Primitives (i*/u*/f*/bool/char/byte/str/ptr): shortcut к
-///   `str.from_debug(@)` C-primitive (Ф.4.3).
-/// - User types (records, sums, tuples): memberwise iteration через ALL
-///   fields including private (decision #3 — debug = diagnostic), output
-///   form `TypeName { field1: <debug_f1>, field2: <debug_f2> }`.
-///
-/// **Pointer integration** (Ф.5): `*T` impls DebugPrintable в unsafe
-/// context — emits `"0x7f8a..->Account"`. Bare `${p}` без `:?` остаётся
-/// `E_PTR_NO_DISPLAY_USE_DEBUG_STR` (D216 §17) — encourages explicit opt-in.
-///
-/// **Auto-derive** (Ф.4.2 default body, decision #4 implicit): synthesized
-/// on-demand при первом encounter `${x:?}` для type без manual impl.
-/// Cycle detection via Plan 91.8a.2 mechanism. Future explicit form
-/// `#impl(DebugPrintable)` — [M-91.14-derive-debug].
+/// **Auto-derive:** synthesized on-demand РїСЂРё РїРµСЂРІРѕРј encounter `${x:?}`.
+/// Future explicit form `#impl(Debug)` вЂ” [M-91.14-derive-debug].
 ///
 /// # Examples
 ///
 /// ```nova
 /// type Point { x int, y int }
 /// // Auto-synthesized:
-/// //   @debug_fmt(sb) := sb.append("Point { x: ${@x:?}, y: ${@y:?} }")
+/// //   @debug(sb) := sb.append("Point { x: ${@x:?}, y: ${@y:?} }")
 ///
 /// ro p = Point { x: 1, y: 2 }
 /// println("p = ${p:?}")  // "p = Point { x: 1, y: 2 }"
@@ -414,7 +362,7 @@ export type Printable protocol {
 /// Manual impl (override default):
 ///
 /// ```nova
-/// fn Point @debug_fmt(sb StringBuilder) -> () {
+/// fn Point @debug(mut sb StringBuilder) -> () {
 ///     sb.append("Point(")
 ///     sb.append_int(@x)
 ///     sb.append(", ")
@@ -423,33 +371,33 @@ export type Printable protocol {
 /// }
 /// ```
 #stable(since = "0.1")
-export type DebugPrintable protocol {
-    @debug_fmt(sb StringBuilder) {
+export type Debug protocol {
+    @debug(mut sb StringBuilder) {
         sb.append(str.from_debug(@))
     }
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Plan 110 (D188 / D192 / D194) — Consumable[E] + WithExitTimeout
-// ──────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Plan 110 (D188 / D192 / D194) вЂ” Consumable[E] + WithExitTimeout
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Plan 110 (D188): контракт ресурса для `consume X = expr { body }`
-/// scope-block'а. **Один** метод `on_exit` вызывается ровно один раз
-/// при выходе из body (success/throw/panic/cancel).
+/// Plan 110 (D188): РєРѕРЅС‚СЂР°РєС‚ СЂРµСЃСѓСЂСЃР° РґР»СЏ `consume X = expr { body }`
+/// scope-block'Р°. **РћРґРёРЅ** РјРµС‚РѕРґ `on_exit` РІС‹Р·С‹РІР°РµС‚СЃСЏ СЂРѕРІРЅРѕ РѕРґРёРЅ СЂР°Р·
+/// РїСЂРё РІС‹С…РѕРґРµ РёР· body (success/throw/panic/cancel).
 ///
-/// **`E`** — тип ошибок, которые `on_exit` сам может throw (commit
-/// failure, flush failure). Если ресурс infallible — используйте
-/// `Consumable[never]` (D194), это даёт caller'у право не объявлять
+/// **`E`** вЂ” С‚РёРї РѕС€РёР±РѕРє, РєРѕС‚РѕСЂС‹Рµ `on_exit` СЃР°Рј РјРѕР¶РµС‚ throw (commit
+/// failure, flush failure). Р•СЃР»Рё СЂРµСЃСѓСЂСЃ infallible вЂ” РёСЃРїРѕР»СЊР·СѓР№С‚Рµ
+/// `Consumable[never]` (D194), СЌС‚Рѕ РґР°С‘С‚ caller'Сѓ РїСЂР°РІРѕ РЅРµ РѕР±СЉСЏРІР»СЏС‚СЊ
 /// `Fail[E]` + codegen hot-path elision.
 ///
 /// **R-rules (D188):**
-/// - R1: если `init` throws — `on_exit` не вызывается (partial-construction).
+/// - R1: РµСЃР»Рё `init` throws вЂ” `on_exit` РЅРµ РІС‹Р·С‹РІР°РµС‚СЃСЏ (partial-construction).
 /// - R2: exactly-once invariant (runtime counter).
-/// - R3: cancel-shield by default внутри `on_exit` body.
+/// - R3: cancel-shield by default РІРЅСѓС‚СЂРё `on_exit` body.
 /// - R4: timeout resolution at scope-entry (3-level, D192).
-/// - R5: LIFO composition для вложенных consume{}.
-/// - R6: release-acquire memory ordering между body и on_exit.
+/// - R5: LIFO composition РґР»СЏ РІР»РѕР¶РµРЅРЅС‹С… consume{}.
+/// - R6: release-acquire memory ordering РјРµР¶РґСѓ body Рё on_exit.
 ///
 /// # Examples
 ///
@@ -468,7 +416,7 @@ export type DebugPrintable protocol {
 ///     consume tx = Db.begin() {
 ///         do_work()?
 ///     }
-///     // tx.on_exit вызван ровно один раз; commit/rollback по outcome.
+///     // tx.on_exit РІС‹Р·РІР°РЅ СЂРѕРІРЅРѕ РѕРґРёРЅ СЂР°Р·; commit/rollback РїРѕ outcome.
 /// }
 /// ```
 #stable(since = "0.1")
@@ -476,25 +424,25 @@ export type Consumable[E] protocol {
     consume @on_exit(outcome ScopeOutcome) Fail[E] -> ()
 }
 
-/// Plan 110 (D192): опциональный protocol для ресурсов с custom
-/// `exit_timeout`. **Не** часть Consumable — structural-match: любой
-/// тип с методом `exit_timeout_ms() -> int` автоматически satisfies.
+/// Plan 110 (D192): РѕРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ protocol РґР»СЏ СЂРµСЃСѓСЂСЃРѕРІ СЃ custom
+/// `exit_timeout`. **РќРµ** С‡Р°СЃС‚СЊ Consumable вЂ” structural-match: Р»СЋР±РѕР№
+/// С‚РёРї СЃ РјРµС‚РѕРґРѕРј `exit_timeout_ms() -> int` Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё satisfies.
 ///
-/// Используется codegen'ом `nv_resolve_exit_timeout` (3-level resolution):
-/// 1. WithExitTimeout impl (этот protocol) — если есть;
-/// 2. Application effect handler — `default_exit_timeout_ms()`;
-/// 3. Hardcoded fallback — 5000 ms.
+/// РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ codegen'РѕРј `nv_resolve_exit_timeout` (3-level resolution):
+/// 1. WithExitTimeout impl (СЌС‚РѕС‚ protocol) вЂ” РµСЃР»Рё РµСЃС‚СЊ;
+/// 2. Application effect handler вЂ” `default_exit_timeout_ms()`;
+/// 3. Hardcoded fallback вЂ” 5000 ms.
 ///
-/// `Mutex` / `Sem` / `Lock` намеренно **не** implement — для них
-/// hardcoded 5s достаточен (releases instant).
+/// `Mutex` / `Sem` / `Lock` РЅР°РјРµСЂРµРЅРЅРѕ **РЅРµ** implement вЂ” РґР»СЏ РЅРёС…
+/// hardcoded 5s РґРѕСЃС‚Р°С‚РѕС‡РµРЅ (releases instant).
 ///
-/// **Bootstrap:** `int` милисекунд вместо `Duration` (последний в std/time/,
-/// не prelude — избегаем cross-module import).
+/// **Bootstrap:** `int` РјРёР»РёСЃРµРєСѓРЅРґ РІРјРµСЃС‚Рѕ `Duration` (РїРѕСЃР»РµРґРЅРёР№ РІ std/time/,
+/// РЅРµ prelude вЂ” РёР·Р±РµРіР°РµРј cross-module import).
 ///
 /// # Examples
 ///
 /// ```nova
-/// fn Transaction @exit_timeout_ms() -> int => 30_000   // 30 секунд
+/// fn Transaction @exit_timeout_ms() -> int => 30_000   // 30 СЃРµРєСѓРЅРґ
 /// ```
 #stable(since = "0.1")
 export type WithExitTimeout protocol {
