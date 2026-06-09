@@ -1,0 +1,21 @@
+// Plan 136 Ф.4 T3 (POS): independent rhs — no lhs/rhs overlap.
+// `(x, y) = (100, 200)` — rhs elements are literals, no dependency on lhs.
+// No temps needed (A4: independent rhs → 0 tmp in C).
+
+module plan136.t3_independent_rhs
+
+test "assign independent values" {
+    mut x = 0
+    mut y = 0
+    (x, y) = (100, 200)
+    assert(x == 100)
+    assert(y == 200)
+}
+
+test "overwrite with new independent values" {
+    mut a = 5
+    mut b = 10
+    (a, b) = (99, 1)
+    assert(a == 99)
+    assert(b == 1)
+}

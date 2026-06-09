@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_ASSIGN_LHS_NOT_MUT
+//
+// Plan 136 Ф.4 NEG: ro binding on lhs of tuple assign.
+// `ro x = 1; ro y = 2; (x, y) = (y, x)` must produce E_TUPLE_ASSIGN_LHS_NOT_MUT
+// because x and y are readonly locals (D36: locals readonly by default).
+
+module neg.t_neg_ro_lhs
+
+fn main() {
+    ro x = 1
+    ro y = 2
+    (x, y) = (y, x)
+}

@@ -305,9 +305,7 @@ export fn Vec[T] mut @reverse() -> () {
     mut hi = @len - 1
     while lo < hi {
         unsafe {
-            ro tmp = @data[lo]
-            @data[lo] = @data[hi]
-            @data[hi] = tmp
+            (@data[lo], @data[hi]) = (@data[hi], @data[lo])
         }
         lo = lo + 1
         hi = hi - 1

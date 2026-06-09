@@ -1,0 +1,23 @@
+// Plan 136 Ф.4 T7 (POS): rhs are arbitrary expressions, not just identifiers.
+// `(x, y) = (1+2, 3*4)` — rhs contain arithmetic expressions.
+// rhs do not depend on lhs, so no temps are needed.
+
+module plan136.t7_expressions
+
+test "rhs are arithmetic expressions" {
+    mut x = 0
+    mut y = 0
+    (x, y) = (1+2, 3*4)
+    assert(x == 3)
+    assert(y == 12)
+}
+
+test "rhs mix of constants and arithmetic" {
+    mut a = 0
+    mut b = 0
+    mut c = 0
+    (a, b, c) = (10, 5+5, 2*5)
+    assert(a == 10)
+    assert(b == 10)
+    assert(c == 10)
+}

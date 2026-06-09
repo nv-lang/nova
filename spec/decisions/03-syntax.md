@@ -9325,3 +9325,53 @@ Rust-style narrow-fallback и **без** Java/C# silent widening / suffix.
   (boundary `127` для i8) + negative (`128` для i8 → error) —
   followup `[M-D227-literal-range-tests]`
 
+---
+
+**D236 — Tuple destructuring assignment**
+
+Syntax:
+```nova
+(lhs_0, lhs_1, ..., lhs_N) = (rhs_0, rhs_1, ..., rhs_N)
+```
+
+Semantics:
+- RHS is evaluated completely before any LHS assignment begins.
+- Each lhs_i must be a mutable lvalue: mut local binding, @field, arr[i], or chain.
+- LHS and RHS element counts must match exactly.
+- Consume types on lhs are banned in V1 ([M-136-consume-tuple-assign]).
+
+Codegen V1 — conservative tmp:
+1. Build lhs_names = set of root ident names from all lhs elements.
+2. For each rhs_i that reads any ident in lhs_names: emit C tmp variable.
+3. Assign lhs_i from tmp (or direct rhs_i if independent).
+
+Example: (a, b) = (b, a) generates:
+```c
+{ nova_int _nv_ta_0 = b; nova_int _nv_ta_1 = a; a = _nv_ta_0; b = _nv_ta_1; }
+```
+
+Codegen V2 ([M-136-cycle-decomp]): cycle-decomposition for minimal tmp count.
+
+Error codes:
+- E_TUPLE_ASSIGN_ARITY_MISMATCH  lhs.len() != rhs.len()
+- E_TUPLE_ASSIGN_LHS_NOT_MUT     lhs element is not a mutable lvalue
+- E_TUPLE_ASSIGN_CONSUME_TYPE    lhs element has consume type (V1 ban)
+
+Acceptance criteria:
+- A1: (a, b) = (b, a) compiles and executes correctly
+- A2: (a, b, c) = (b, c, a) rotate works correctly
+- A3: independent rhs (no lhs overlap) — 0 tmp in C
+- A4: E_TUPLE_ASSIGN_ARITY_MISMATCH fires on arity mismatch
+- A5: E_TUPLE_ASSIGN_LHS_NOT_MUT fires on ro-binding lhs
+- A6: 0 regressions in existing tests
+
+Followup markers:
+- [M-136-cycle-decomp] V2 codegen: cycle-decomposition
+- [M-136-nested-tuple-lhs] nested tuple lhs ((a,b),c) = ...
+- [M-136-consume-tuple-assign] consume types in tuple-assign
+
+Related: Plan 53 (let destructuring), Plan 59 (tuple mono), Plan 120 (named tuples), D215
+Added: 2026-06-09  Status: ACTIVE
+
+---
+

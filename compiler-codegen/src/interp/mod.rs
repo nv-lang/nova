@@ -2128,6 +2128,8 @@ impl Interpreter {
             Stmt::Calc { .. } => Ok(Flow::Value(Value::Unit)),
             // Plan 33.9 Ф.2: reveal — ghost statement.
             Stmt::Reveal { .. } => Ok(Flow::Value(Value::Unit)),
+            // Plan 136: tuple destructuring assignment — not implemented in interp yet.
+            Stmt::TupleAssign { .. } => { /* plan136 todo */ Ok(Flow::Value(Value::Unit)) }
         }
     }
 

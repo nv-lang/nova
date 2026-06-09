@@ -18,6 +18,12 @@
 
 ---
 
+### Plan 136 — Tuple destructuring assignment (2026-06-09)
+`(lhs_0, ..., lhs_N) = (rhs_0, ..., rhs_N)` implemented in parser/checker/codegen.
+Conservative tmp-per-dependent-rhs codegen (V1). Cycle-decomposition deferred to [M-136-cycle-decomp].
+Nested tuple lhs `((a,b),c)=...` deferred to [M-136-nested-tuple-lhs]. Consume-types in tuple-assign deferred to [M-136-consume-tuple-assign].
+stdlib: std/collections/vec_owned.nv reverse() swap migrated to tuple-assign.
+
 ### Plan 133 — Remove usize/isize (2026-06-09)
 int = intptr_t (address-sized signed integer) everywhere. Replaced usize/isize throughout.
 ~44 nova_tests sites + std/raw_mem.nv (7 params) + std/vec_owned.nv (2 casts) migrated.

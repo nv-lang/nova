@@ -1102,6 +1102,11 @@ fn collect_stmt(s: &Stmt, out: &mut HashSet<String>) {
                 collect_expr(&step.expr, out);
             }
         }
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_expr(e, out); }
+            for e in rhs { collect_expr(e, out); }
+        }
     }
 }
 
@@ -1701,6 +1706,11 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
         // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { walk_expr_lints(e, out); }
+            for e in rhs { walk_expr_lints(e, out); }
+        }
     }
 }
 

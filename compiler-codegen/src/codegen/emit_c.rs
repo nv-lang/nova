@@ -1343,6 +1343,7 @@ impl CEmitter {
             | Stmt::Reveal { span, .. }
             | Stmt::ConsumeScope { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
+            Stmt::TupleAssign { span, .. } => *span,
         }
     }
 
@@ -15773,6 +15774,53 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             Stmt::Reveal { .. } => {
                 // Ghost erasure.
             }
+            // Plan 136 Ф.3: tuple destructuring assignment codegen.
+            // Conservative-tmp algorithm: for each rhs[i] that mentions any
+            // lhs root name, stash into a fresh tmp before the assignments.
+            // This prevents aliasing: `(a, b) = (b, a)` works correctly.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                self.line("{");
+                self.indent += 1;
+
+                // Step 1: collect root ident names from all lhs targets.
+                let lhs_names: std::collections::HashSet<String> = lhs.iter()
+                    .flat_map(|e| Self::lvalue_root_names_ta(e))
+                    .collect();
+
+                // Step 2: for each rhs[i] that reads a lhs name, pre-compute
+                // into a typed tmp variable.
+                let n = rhs.len();
+                let mut tmps: Vec<Option<String>> = Vec::with_capacity(n);
+                for i in 0..n {
+                    let r = rhs[i].clone();
+                    if Self::expr_reads_lhs_ta(&r, &lhs_names) {
+                        let tmp_name = self.fresh_tmp_named("ta");
+                        let c_ty = self.infer_expr_c_type(&r);
+                        let val = self.emit_expr(&r)?;
+                        self.line(&format!("{} {} = {};", c_ty, tmp_name, val));
+                        tmps.push(Some(tmp_name));
+                    } else {
+                        tmps.push(None);
+                    }
+                }
+
+                // Step 3: emit assignments lhs[i] = tmp_or_rhs[i].
+                for i in 0..n {
+                    let val = match &tmps[i] {
+                        Some(t) => t.clone(),
+                        None => {
+                            let r = rhs[i].clone();
+                            self.emit_expr(&r)?
+                        }
+                    };
+                    let l = lhs[i].clone();
+                    let target = self.emit_expr(&l)?;
+                    self.line(&format!("{} = {};", target, val));
+                }
+
+                self.indent -= 1;
+                self.line("}");
+            }
         }
         Ok(())
     }
@@ -23019,6 +23067,11 @@ _cp++; \
             }
             // Ghost / unused-here statement kinds — no break possible.
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+            // Plan 136: tuple destructuring — check all lhs + rhs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                lhs.iter().any(Self::expr_has_break_in_scope)
+                    || rhs.iter().any(Self::expr_has_break_in_scope)
+            }
         }
     }
 
@@ -31158,6 +31211,77 @@ _cp++; \
             "nova_bool"  => "false",
             "nova_f64" | "nova_f32" => "0.0",
             _ => "((nova_int)0LL)",
+        }
+    }
+
+    // ---- Plan 136 Ф.3 helpers ----
+
+    /// Collect the root ident names from an lvalue expression.
+    /// For `a` → `["a"]`; for `a.b` or `a[i]` → `["a"]`;
+    /// for `@field` (SelfAccess-rooted) → `["@"]` (sentinel).
+    fn lvalue_root_names_ta(e: &Expr) -> Vec<String> {
+        match &e.kind {
+            ExprKind::Ident(name) => vec![name.clone()],
+            ExprKind::SelfAccess => vec!["@".to_string()],
+            ExprKind::Member { obj, .. } => Self::lvalue_root_names_ta(obj),
+            ExprKind::Index { obj, .. } => Self::lvalue_root_names_ta(obj),
+            ExprKind::TurboFish { base, .. } => Self::lvalue_root_names_ta(base),
+            _ => vec![],
+        }
+    }
+
+    /// Return true if expr `e` reads (mentions) any name in `names`.
+    /// Conservative: any sub-expression match → true.
+    fn expr_reads_lhs_ta(e: &Expr, names: &std::collections::HashSet<String>) -> bool {
+        match &e.kind {
+            ExprKind::Ident(name) => names.contains(name.as_str()),
+            ExprKind::SelfAccess => names.contains("@"),
+            ExprKind::Member { obj, .. } => Self::expr_reads_lhs_ta(obj, names),
+            ExprKind::Index { obj, index } => {
+                Self::expr_reads_lhs_ta(obj, names)
+                    || Self::expr_reads_lhs_ta(index, names)
+            }
+            ExprKind::TurboFish { base, .. } => Self::expr_reads_lhs_ta(base, names),
+            ExprKind::Call { func, args, .. } => {
+                if Self::expr_reads_lhs_ta(func, names) { return true; }
+                for a in args {
+                    let inner = match a {
+                        CallArg::Item(x) | CallArg::Spread(x) => x,
+                        CallArg::Named { value, .. } => value,
+                    };
+                    if Self::expr_reads_lhs_ta(inner, names) { return true; }
+                }
+                false
+            }
+            ExprKind::TupleLit(elems) => elems.iter().any(|x| Self::expr_reads_lhs_ta(x, names)),
+            ExprKind::ArrayLit(elems) => elems.iter().any(|ae| match ae {
+                ArrayElem::Item(x) | ArrayElem::Spread(x) => Self::expr_reads_lhs_ta(x, names),
+            }),
+            ExprKind::Binary { left, right, .. } => {
+                Self::expr_reads_lhs_ta(left, names) || Self::expr_reads_lhs_ta(right, names)
+            }
+            ExprKind::Unary { operand, .. } => Self::expr_reads_lhs_ta(operand, names),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => Self::expr_reads_lhs_ta(inner, names),
+            ExprKind::Coalesce(lhs, rhs) => {
+                Self::expr_reads_lhs_ta(lhs, names) || Self::expr_reads_lhs_ta(rhs, names)
+            }
+            // Literals, Path, NullPtrLit, UnitLit → conservative false
+            _ => false,
+        }
+    }
+
+    fn stmt_reads_lhs_ta(s: &Stmt, names: &std::collections::HashSet<String>) -> bool {
+        match s {
+            Stmt::Expr(e) => Self::expr_reads_lhs_ta(e, names),
+            Stmt::Let(decl) => Self::expr_reads_lhs_ta(&decl.value, names),
+            Stmt::Assign { target, value, .. } => {
+                Self::expr_reads_lhs_ta(target, names) || Self::expr_reads_lhs_ta(value, names)
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                lhs.iter().any(|e| Self::expr_reads_lhs_ta(e, names))
+                    || rhs.iter().any(|e| Self::expr_reads_lhs_ta(e, names))
+            }
+            _ => false,
         }
     }
 

@@ -1,0 +1,17 @@
+// Plan 136 Ф.4 T5 (POS): double swap via 4-element tuple assign.
+// `(a, b, c, d) = (b, a, d, c)` — two independent swaps in one statement.
+// Initial: 1 2 3 4. After: 2 1 4 3.
+
+module plan136.t5_double_swap
+
+test "double swap: two pairs exchanged" {
+    mut a = 1
+    mut b = 2
+    mut c = 3
+    mut d = 4
+    (a, b, c, d) = (b, a, d, c)
+    assert(a == 2)
+    assert(b == 1)
+    assert(c == 4)
+    assert(d == 3)
+}

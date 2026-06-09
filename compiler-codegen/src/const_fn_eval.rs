@@ -2354,6 +2354,11 @@ fn walk_stmt(
             walk_expr(expr, ev, errors);
         }
         Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment — walk all lhs + rhs exprs.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { walk_expr(e, ev, errors); }
+            for e in rhs { walk_expr(e, ev, errors); }
+        }
     }
 }
 
@@ -2917,6 +2922,11 @@ impl<'a, 'b> ValidateCtx<'a, 'b> {
                 self.visit_expr(expr);
             }
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment — walk all lhs + rhs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.visit_expr(e); }
+                for e in rhs { self.visit_expr(e); }
+            }
         }
     }
     /// Check if `value` is a bare Ident referring to const fn — emit

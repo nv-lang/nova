@@ -1,0 +1,21 @@
+// Plan 136 Ф.4 T1 (POS): basic swap via tuple destructuring assignment.
+// `(a, b) = (b, a)` — rhs evaluated fully before any assignment.
+// Verifies A1: swap executes correctly.
+
+module plan136.t1_swap_basic
+
+test "swap two ints" {
+    mut a = 10
+    mut b = 20
+    (a, b) = (b, a)
+    assert(a == 20)
+    assert(b == 10)
+}
+
+test "swap symmetric" {
+    mut x = 42
+    mut y = 0
+    (x, y) = (y, x)
+    assert(x == 0)
+    assert(y == 42)
+}

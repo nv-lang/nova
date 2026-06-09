@@ -586,6 +586,11 @@ impl<'a> CollectCtx<'a> {
                 self.visit_expr(expr);
             }
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment — walk all lhs + rhs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.visit_expr(e); }
+                for e in rhs { self.visit_expr(e); }
+            }
         }
     }
     fn visit_expr(&mut self, e: &Expr) {

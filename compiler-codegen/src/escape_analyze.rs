@@ -344,6 +344,11 @@ impl<'a> EscapeCtx<'a> {
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {
                 // Ghost / spec-only statements — no runtime escape effect.
             }
+            // Plan 136: tuple destructuring assignment — walk all lhs + rhs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e); }
+                for e in rhs { self.walk_expr(e); }
+            }
         }
     }
 

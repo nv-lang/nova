@@ -1524,6 +1524,15 @@ fn check_const_fn_block(
                     *span,
                 ));
             }
+            // Plan 136: tuple destructuring assignment — not supported in const fn V1.
+            Stmt::TupleAssign { span, .. } => {
+                return Err(Diagnostic::new(
+                    "[E_CONST_FN_EFFECT_IN_BODY] tuple destructuring assignment not \
+                     supported in const fn body V1 (Plan 136 followup)."
+                        .to_string(),
+                    *span,
+                ));
+            }
         }
     }
     // Trailing expression — финальное значение блока.
@@ -2431,6 +2440,11 @@ impl<'a> TypeCheckCtx<'a> {
             }
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. }
             | Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.check_consume_scopes_in_expr(e, errors); }
+                for e in rhs { self.check_consume_scopes_in_expr(e, errors); }
+            }
         }
     }
 
@@ -3647,6 +3661,11 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_expr(&step.expr, gs, errors);
                 }
             }
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, gs, errors); }
+                for e in rhs { self.walk_expr(e, gs, errors); }
+            }
         }
     }
 
@@ -4180,6 +4199,11 @@ impl<'a> TypeCheckCtx<'a> {
                 for step in steps {
                     self.f1_expr(&step.expr, gs, scope, errors);
                 }
+            }
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.f1_expr(e, gs, scope, errors); }
+                for e in rhs { self.f1_expr(e, gs, scope, errors); }
             }
         }
     }
@@ -6895,6 +6919,11 @@ impl<'a> BoundCtx<'a> {
             }
             // Plan 33.9 Ф.2: reveal — ghost, name resolution в pipeline.
             Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, scope, errors); }
+                for e in rhs { self.walk_expr(e, scope, errors); }
+            }
         }
     }
 
@@ -8254,6 +8283,11 @@ impl<'a> CapabilityCtx<'a> {
             Stmt::Calc { .. } => {}
             // Plan 33.9 Ф.2: reveal — ghost, нет capability-эффектов.
             Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, state, errors); }
+                for e in rhs { self.walk_expr(e, state, errors); }
+            }
         }
     }
 
@@ -9199,6 +9233,11 @@ impl NameResCtx {
             }
             // Plan 33.9 Ф.2: reveal — ghost, name resolution в pipeline.
             Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, file_id, scope, errors); }
+                for e in rhs { self.walk_expr(e, file_id, scope, errors); }
+            }
         }
     }
 
@@ -10050,6 +10089,10 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         Stmt::Calc { steps, .. } => steps.iter().any(|s| has_throw_in_expr(&s.expr)),
         // Plan 33.9 Ф.2: reveal — ghost, no throw inside.
         Stmt::Reveal { .. } => false,
+        // Plan 136: tuple destructuring assignment — check all lhs + rhs.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(has_throw_in_expr) || rhs.iter().any(has_throw_in_expr)
+        }
     }
 }
 
@@ -10880,6 +10923,11 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
                 for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, errors); }
             }
             Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { walk_expr_for_handler_lits(e, never_ops, errors); }
+                for e in rhs { walk_expr_for_handler_lits(e, never_ops, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
@@ -13698,6 +13746,81 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::Calc { steps, .. } => {
             for st in steps { consume_walk_expr(ctx, &st.expr, errors); }
         }
+        // Plan 136 Ф.2: tuple destructuring assignment — semantic validation.
+        Stmt::TupleAssign { lhs, rhs, span } => {
+            // 1. Arity check.
+            if lhs.len() != rhs.len() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_TUPLE_ASSIGN_ARITY_MISMATCH] tuple assign: {} lhs elements \
+                         but {} rhs elements — counts must match (Plan 136 D236).",
+                        lhs.len(), rhs.len()
+                    ),
+                    *span,
+                ));
+                // Still walk sub-expressions for further diagnostics.
+                for e in lhs { consume_walk_expr(ctx, e, errors); }
+                for e in rhs { consume_walk_expr(ctx, e, errors); }
+                return;
+            }
+            // 2. Per-lhs-element checks: mutability + consume-type ban.
+            for (i, lhs_expr) in lhs.iter().enumerate() {
+                if let Some(root) = lvalue_root_ident(lhs_expr) {
+                    let root = root.to_string();
+                    // (a) Mutability check via param_mut / local_mut.
+                    let is_param = ctx.param_mut.contains_key(&root);
+                    let is_local = ctx.local_mut.contains_key(&root);
+                    if is_param {
+                        let is_mut = ctx.param_mut[&root];
+                        if !is_mut {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_ASSIGN_LHS_NOT_MUT] tuple assign: lhs element {} \
+                                     (`{}`) is a param not marked `mut` — cannot assign \
+                                     (Plan 136 D236; D176 amend default-readonly params).",
+                                    i, root
+                                ),
+                                lhs_expr.span,
+                            ));
+                        }
+                    } else if is_local {
+                        let is_mut = ctx.local_mut[&root];
+                        if !is_mut {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_ASSIGN_LHS_NOT_MUT] tuple assign: lhs element {} \
+                                     (`{}`) is a local binding not marked `mut` — cannot assign \
+                                     (Plan 136 D236; D36 locals readonly by default).",
+                                    i, root
+                                ),
+                                lhs_expr.span,
+                            ));
+                        }
+                    }
+                    // (b) Consume-type ban: type of lhs element must not be consume.
+                    let ty_str = ctx.var_types.get(&ctx.canonical(&root))
+                        .or_else(|| ctx.var_types.get(&root))
+                        .cloned();
+                    if let Some(ref ty) = ty_str {
+                        if ctx.lin_reg.consume_types.contains(ty) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_TUPLE_ASSIGN_CONSUME_TYPE] tuple assign: lhs element {} \
+                                     (`{}`) has consume type `{}` — tuple destructuring assignment \
+                                     of consume types is not supported in V1 (Plan 136 D236). \
+                                     Use explicit consume binding or consume-method.",
+                                    i, root, ty
+                                ),
+                                lhs_expr.span,
+                            ));
+                        }
+                    }
+                }
+            }
+            // 3. Walk all sub-expressions (consume tracking, use-after-consume, etc).
+            for e in lhs { consume_walk_expr(ctx, e, errors); }
+            for e in rhs { consume_walk_expr(ctx, e, errors); }
+        }
     }
 }
 
@@ -14941,6 +15064,11 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
                 walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
             }
             Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { walk_expr_for_defers(e, fn_effects, current_fn_effects, errors); }
+                for e in rhs { walk_expr_for_defers(e, fn_effects, current_fn_effects, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing {
@@ -15444,6 +15572,11 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                 check_defer_body_block(body, kw, fn_effects, current_fn_effects, ctx, errors);
             }
             Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors); }
+                for e in rhs { check_defer_body_inner(e, kw, fn_effects, current_fn_effects, ctx, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing {
@@ -16350,6 +16483,11 @@ impl MapLitCtx {
             }
             // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, None, errors); }
+                for e in rhs { self.walk_expr(e, None, errors); }
+            }
         }
     }
 
@@ -17210,6 +17348,11 @@ impl MapLitAnnotator {
                 self.walk_expr(expr, None);
             }
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, None); }
+                for e in rhs { self.walk_expr(e, None); }
+            }
         }
     }
 

@@ -132,6 +132,11 @@ impl DesugarCtx {
             // Spec-only, не emit'ятся в codegen. Map-литералы внутри proof —
             // edge case, не покрываем (lemma body — spec, не runtime).
             Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+            // Plan 136: tuple destructuring assignment — desugar all lhs + rhs exprs.
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.desugar_expr(e); }
+                for e in rhs { self.desugar_expr(e); }
+            }
         }
     }
 

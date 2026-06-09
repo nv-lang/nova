@@ -219,6 +219,11 @@ fn normalize_chains_stmt(s: &mut Stmt, counter: &mut ChainCounter, registry: &Fl
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        // Plan 136: tuple destructuring assignment — walk all lhs + rhs exprs.
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { normalize_chains_expr(e, counter, registry); }
+            for e in rhs { normalize_chains_expr(e, counter, registry); }
+        }
     }
 }
 

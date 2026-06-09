@@ -1,0 +1,23 @@
+// Plan 136 Ф.4 T6 (POS): identity assignment — (a, b) = (a, b).
+// Each rhs reads its own lhs (self-dependency). Values should remain unchanged.
+// Verifies that the conservative tmp strategy handles self-dep correctly.
+
+module plan136.t6_identity
+
+test "identity assignment leaves values unchanged" {
+    mut a = 7
+    mut b = 13
+    (a, b) = (a, b)
+    assert(a == 7)
+    assert(b == 13)
+}
+
+test "identity 3-tuple unchanged" {
+    mut x = 100
+    mut y = 200
+    mut z = 300
+    (x, y, z) = (x, y, z)
+    assert(x == 100)
+    assert(y == 200)
+    assert(z == 300)
+}

@@ -1,0 +1,25 @@
+// Plan 136 Ф.4 T9 (POS): rhs are function calls.
+// `(x, y) = (get_ten(), get_twenty())` — each rhs is a function call.
+// Function calls are not lhs identifiers, so no temps needed.
+
+module plan136.t9_fn_call
+
+fn get_ten() -> int => 10
+fn get_twenty() -> int => 20
+fn add_one(n int) -> int => n + 1
+
+test "rhs are function calls" {
+    mut x = 0
+    mut y = 0
+    (x, y) = (get_ten(), get_twenty())
+    assert(x == 10)
+    assert(y == 20)
+}
+
+test "rhs function calls with arguments" {
+    mut a = 0
+    mut b = 0
+    (a, b) = (add_one(5), add_one(9))
+    assert(a == 6)
+    assert(b == 10)
+}

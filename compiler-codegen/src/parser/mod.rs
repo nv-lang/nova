@@ -8873,6 +8873,26 @@ impl Parser {
                     self.skip_newlines();
                     let value = self.parse_expr()?;
                     let span = expr.span.merge(value.span);
+                    // Plan 136 (D236): detect tuple destructuring assignment
+                    // `(a, b) = (expr1, expr2)` — only for plain `=`.
+                    if matches!(op, AssignOp::Assign) {
+                        if let ExprKind::TupleLit(ref lhs_exprs) = expr.kind {
+                            if let ExprKind::TupleLit(ref rhs_exprs) = value.kind {
+                                return Ok(StmtOrExpr::Stmt(Stmt::TupleAssign {
+                                    lhs: lhs_exprs.clone(),
+                                    rhs: rhs_exprs.clone(),
+                                    span,
+                                }));
+                            } else {
+                                return Err(Diagnostic::new(
+                                    "[E_TUPLE_ASSIGN_RHS] tuple destructuring assignment \
+                                     rhs must be a tuple literal: (a, b) = (expr1, expr2)"
+                                        .to_string(),
+                                    value.span,
+                                ));
+                            }
+                        }
+                    }
                     return Ok(StmtOrExpr::Stmt(Stmt::Assign {
                         target: expr,
                         op,

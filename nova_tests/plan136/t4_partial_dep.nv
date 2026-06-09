@@ -1,0 +1,21 @@
+// Plan 136 Ф.4 T4 (POS): partial dependency on lhs.
+// `(a, b) = (b, 1)` — R0=b reads L1, R1=1 is independent.
+// Verifies conservative tmp allocation for the dependent rhs element.
+
+module plan136.t4_partial_dep
+
+test "partial dependency: a gets old b, b gets constant" {
+    mut a = 5
+    mut b = 10
+    (a, b) = (b, 1)
+    assert(a == 10)
+    assert(b == 1)
+}
+
+test "partial dependency with expression" {
+    mut x = 3
+    mut y = 7
+    (x, y) = (y, 42)
+    assert(x == 7)
+    assert(y == 42)
+}

@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_ASSIGN_ARITY_MISMATCH
+//
+// Plan 136 Ф.4 NEG: arity mismatch — lhs has 2 elements, rhs has 3.
+// `(a, b) = (1, 2, 3)` must produce E_TUPLE_ASSIGN_ARITY_MISMATCH.
+
+module neg.t_neg_arity
+
+fn main() {
+    mut a = 0
+    mut b = 0
+    (a, b) = (1, 2, 3)
+}
