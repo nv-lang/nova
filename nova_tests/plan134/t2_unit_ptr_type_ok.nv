@@ -1,0 +1,32 @@
+// Plan 134 POS — `*()` (pointer-to-unit = void*) as opaque pointer type in a struct.
+//
+// Verifies that *() replaces the removed `ptr` builtin as the canonical
+// opaque pointer type: usable in type declarations, structs, and assignments.
+
+module plan134.t2_unit_ptr_type_ok
+
+type Handle { ro value *() }
+
+fn make_handle(raw int) -> Handle {
+    Handle { value: raw as *() }
+}
+
+fn handle_value(h Handle) -> int {
+    h.value as int
+}
+
+test "Handle wrapping *() round-trips integer value" {
+    ro h = make_handle(42)
+    assert(handle_value(h) == 42)
+}
+
+test "zero *() in Handle is valid" {
+    ro h = Handle { value: (0 as *()) }
+    assert(handle_value(h) == 0)
+}
+
+test "*() field survives copy through struct" {
+    ro h1 = make_handle(1234)
+    ro h2 = h1
+    assert(handle_value(h2) == 1234)
+}

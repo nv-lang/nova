@@ -1,9 +1,13 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Nova FFI Cookbook
 
-> **Plan 115 D214 (foundational FFI).** Status: 🆕 V1 — covers `ptr` type +
+> **Plan 115 D214 (foundational FFI).** Status: 🆕 V1 — covers opaque pointer +
 > tuple-by-value returns + opaque handle pattern. Future plans extend
 > (`*T` family — Plan 118; `nova bindgen` — `[M-115-bindgen-tool]`).
+>
+> ⚠️ **Plan 134 (2026-06-09): `ptr` built-in type removed.** Use `*()` (pointer
+> to unit type = `void*` in C) everywhere `ptr` appeared. Compiler emits
+> `E_TYPE_REMOVED_PTR_USE_UNIT_PTR` for `ptr` in type position.
 
 This cookbook shows how to bind Nova code to third-party C libraries —
 sqlite3, libpng, libcurl — using the foundational FFI primitives
@@ -13,9 +17,9 @@ introduced in Plan 115.
 
 | Need | Tool | Spec |
 |---|---|---|
-| Opaque pointer | `ptr` primitive type | [D214](../spec/decisions/02-types.md#d214) |
-| NULL literal | `null ptr` | D214 §1 |
-| Typed handle | `type X { ro value ptr }` record (V1) | D214 §3 |
+| Opaque pointer | `*()` (pointer to unit = `void*`) | [D214](../spec/decisions/02-types.md#d214) / [Plan 134](plans/134-remove-ptr-type.md) |
+| NULL literal | `0 as *()` | D214 amend Plan 134 |
+| Typed handle | `type X { ro value *() }` record | D214 §3 |
 | Multi-value return | `(T1, T2)` tuple-by-value | D214 §2 |
 | External fn declaration | `external fn name(args) -> ret` | [D82](../spec/decisions/03-syntax.md#d82) |
 | Resource cleanup | `consume close()` method + `defer` | [D90 / D131](../spec/decisions/03-syntax.md#d90) |
@@ -42,7 +46,7 @@ LAYER 1  Nova public API           Database.open(path)
 LAYER 2  Nova wrapper              construct typed handle from raw return
    ↓
 LAYER 3  external fn declaration   typed handle + tuple return
-            external fn nova_fn_sqlite3_open(path str) -> (ptr, int)
+            external fn nova_fn_sqlite3_open(path str) -> (*(), int)
    ↓
 LAYER 4  C shim                    ~5-10 lines, adapts out-param → struct
             _NovaTuple_2_8_nova_ptr_8_nova_int
@@ -54,7 +58,7 @@ LAYER 5  Actual C library          sqlite3_open(path, &db_out)
 ## Plan 115 V1 setup
 
 Nova V1 has these foundational pieces (commit `<plan-115-merge>`):
-- `ptr` primitive type emitted as `typedef void* nova_ptr` in C output.
+- `*()` (pointer to unit) emitted as `void*` in C output (Plan 134; previously `ptr` with `typedef void* nova_ptr`).
 - Tuple-by-value returns from external fn — leverages mono'd
   `_NovaTuple_<arity>_<L_i>_<T_i>...` typedefs (Plan 59 mechanism).
 - D82 amended (Plan 115): user-level `external fn` permitted in any
@@ -164,19 +168,18 @@ static inline nova_int nova_fn_sqlite3_finalize(nova_ptr stmt) {
 ```nova
 module my_app.sqlite3
 
-// Typed handles — V1 record form (tuple newtype `type X(ptr)`
-// в Plan 115.1).
-type Db { ro value ptr }
-type Stmt { ro value ptr }
+// Typed handles — V1 record form (tuple newtype `type X(*())`).
+type Db { ro value *() }
+type Stmt { ro value *() }
 
 // External declarations matching the C shim.
-external fn nova_fn_sqlite3_open(path str) -> (ptr, int)
-external fn nova_fn_sqlite3_close(db ptr) -> int
-external fn nova_fn_sqlite3_exec(db ptr, sql str) -> int
-external fn nova_fn_sqlite3_prepare(db ptr, sql str) -> (ptr, int)
-external fn nova_fn_sqlite3_step(stmt ptr) -> int
-external fn nova_fn_sqlite3_column_int(stmt ptr, col int) -> int
-external fn nova_fn_sqlite3_finalize(stmt ptr) -> int
+external fn nova_fn_sqlite3_open(path str) -> (*(), int)
+external fn nova_fn_sqlite3_close(db *()) -> int
+external fn nova_fn_sqlite3_exec(db *(), sql str) -> int
+external fn nova_fn_sqlite3_prepare(db *(), sql str) -> (*(), int)
+external fn nova_fn_sqlite3_step(stmt *()) -> int
+external fn nova_fn_sqlite3_column_int(stmt *(), col int) -> int
+external fn nova_fn_sqlite3_finalize(stmt *()) -> int
 
 // SQLite return codes (extract subset).
 const SQLITE_OK   int = 0
@@ -214,9 +217,9 @@ fn Db consume @close() -> () {
 
 ### Key patterns
 
-- **Typed handle.** `type Db { ro value ptr }` makes `Db` nominally
-  distinct from raw `ptr` — passing wrong handle is compile error.
-- **Tuple return.** `nova_fn_sqlite3_open` returns `(ptr, int)`. Nova
+- **Typed handle.** `type Db { ro value *() }` makes `Db` nominally
+  distinct from raw `*()` — passing wrong handle is compile error.
+- **Tuple return.** `nova_fn_sqlite3_open` returns `(*(), int)`. Nova
   destructures: `ro (raw, rc) = nova_fn_sqlite3_open(path)`.
 - **Cleanup.** `fn Db consume @close()` — invalidates handle, prevents
   use-after-close via consume bit (D131). Combine with `defer
@@ -229,20 +232,20 @@ fn Db consume @close() -> () {
 ```nova
 module my_app.png
 
-type PngFile { ro value ptr }
-type PngInfo { ro value ptr }
+type PngFile { ro value *() }
+type PngInfo { ro value *() }
 
-external fn nova_fn_png_create_read_struct() -> ptr
-external fn nova_fn_png_create_info_struct(png ptr) -> ptr
-external fn nova_fn_png_init_io(png ptr, fp ptr) -> int
-external fn nova_fn_png_read_info(png ptr, info ptr) -> int
-external fn nova_fn_png_get_image_width(png ptr, info ptr) -> int
-external fn nova_fn_png_get_image_height(png ptr, info ptr) -> int
-external fn nova_fn_png_destroy_read_struct(png ptr, info ptr) -> ()
+external fn nova_fn_png_create_read_struct() -> *()
+external fn nova_fn_png_create_info_struct(png *()) -> *()
+external fn nova_fn_png_init_io(png *(), fp *()) -> int
+external fn nova_fn_png_read_info(png *(), info *()) -> int
+external fn nova_fn_png_get_image_width(png *(), info *()) -> int
+external fn nova_fn_png_get_image_height(png *(), info *()) -> int
+external fn nova_fn_png_destroy_read_struct(png *(), info *()) -> ()
 
-fn PngFile.from_handle(p ptr) -> PngFile => PngFile { value: p }
+fn PngFile.from_handle(p *()) -> PngFile => PngFile { value: p }
 
-fn read_image_dimensions(file_handle ptr) -> (int, int) {
+fn read_image_dimensions(file_handle *()) -> (int, int) {
     ro png = nova_fn_png_create_read_struct()
     ro info = nova_fn_png_create_info_struct(png)
     nova_fn_png_init_io(png, file_handle)
@@ -261,14 +264,14 @@ fn read_image_dimensions(file_handle ptr) -> (int, int) {
 ```nova
 module my_app.curl
 
-type CurlHandle { ro value ptr }
+type CurlHandle { ro value *() }
 type CurlResult | Success | Failed(int)
 
-external fn nova_fn_curl_easy_init() -> ptr
-external fn nova_fn_curl_easy_setopt_url(h ptr, url str) -> int
-external fn nova_fn_curl_easy_setopt_write_to_buffer(h ptr) -> int
-external fn nova_fn_curl_easy_perform(h ptr) -> int
-external fn nova_fn_curl_easy_cleanup(h ptr) -> ()
+external fn nova_fn_curl_easy_init() -> *()
+external fn nova_fn_curl_easy_setopt_url(h *(), url str) -> int
+external fn nova_fn_curl_easy_setopt_write_to_buffer(h *()) -> int
+external fn nova_fn_curl_easy_perform(h *()) -> int
+external fn nova_fn_curl_easy_cleanup(h *()) -> ()
 external fn nova_fn_curl_get_response_body() -> str
 
 fn CurlHandle.new() -> CurlHandle {
@@ -296,10 +299,10 @@ For external fn tuple returns, the C ABI is determined by element layout:
 
 | Tuple | Sys V AMD64 | Windows x64 MSVC | macOS ARM64 |
 |---|---|---|---|
-| `(ptr, i32)` (12 bytes) | registers (`rax:rdx`) | hidden-out-ptr (`rcx`) | `X0:X1` |
-| `(ptr, int)` (16 bytes) | registers (`rax:rdx`) | hidden-out-ptr | `X0:X1` |
-| `(ptr, ptr)` (16 bytes) | registers | hidden-out-ptr | `X0:X1` |
-| `(ptr, int, int)` (24 bytes) | hidden-out-ptr | hidden-out-ptr | hidden-out-ptr |
+| `(*(), i32)` (12 bytes) | registers (`rax:rdx`) | hidden-out-ptr (`rcx`) | `X0:X1` |
+| `(*(), int)` (16 bytes) | registers (`rax:rdx`) | hidden-out-ptr | `X0:X1` |
+| `(*(), *())` (16 bytes) | registers | hidden-out-ptr | `X0:X1` |
+| `(*(), int, int)` (24 bytes) | hidden-out-ptr | hidden-out-ptr | hidden-out-ptr |
 | Larger | hidden-out-ptr | hidden-out-ptr | hidden-out-ptr |
 
 Nova does not override calling convention — the C compiler chooses based
@@ -309,14 +312,14 @@ guard ensures single definition).
 
 ## Safety considerations
 
-- **Ownership.** Nova GC does **not** track `ptr` values — these are
+- **Ownership.** Nova GC does **not** track `*()` values — these are
   FFI domain. Match every `_open()` / `_init()` / `_alloc()` with a
   `_close()` / `_destroy()` / `_free()`. Use `consume` methods and
   `defer` for leak resistance.
-- **Lifetime.** A `ptr` from a C library is valid only until the
+- **Lifetime.** A `*()` from a C library is valid only until the
   matching cleanup call. Nova compile-time cannot enforce this; rely on
   pattern (consume + defer).
-- **Null check.** Always check return values for `null ptr` before
+- **Null check.** Always check return values for null (`0 as *()`) before
   using. Many C libraries return NULL on allocation failure.
 - **Thread-safety.** Most C libraries have thread-safety contracts. If
   Nova spawns fibers that touch the handle, ensure handle is either
@@ -328,13 +331,13 @@ guard ensures single definition).
 > Full implementation through Ф.9 — in progress. Reference doc:
 > [`docs/typed-pointers.md`](typed-pointers.md). Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](plans/118-typed-pointers-and-unsafe.md).
 
-After Plan 118 lands, FFI patterns evolve from opaque `ptr` к typed
+After Plan 118 lands, FFI patterns evolve from opaque `*()` к typed
 pointer family `*T` для type-safe FFI с buffers / structs / nullable
 returns:
 
 ```nova
-// Plan 115 V1 (current — works today):
-external fn nova_sqlite3_open(path str) -> (ptr, int)
+// Plan 115 V1 / Plan 134 (current — works today):
+external fn nova_sqlite3_open(path str) -> (*(), int)
 
 ro (h, rc) = nova_sqlite3_open(path)
 if rc != 0 { Fail.throw(DbError.OpenFailed(rc)) }
@@ -354,20 +357,20 @@ unsafe {
 
 **Key improvements:**
 
-| | Plan 115 V1 (ptr) | Plan 118 V2 (*T family) |
+| | Plan 115 V1 / Plan 134 (`*()`) | Plan 118 V2 (*T family) |
 |---|---|---|
-| Type safety | ❌ opaque ptr cast вручную | ✓ compile-time pointee check |
+| Type safety | ❌ opaque `*()` cast вручную | ✓ compile-time pointee check |
 | Mutability | ❌ нет различия | ✓ `*ro T` / `*mut T` |
-| Null safety | ❌ `null ptr` runtime check | ✓ `Option[*T]` + NPO zero-cost |
-| FFI buffer | ❌ untyped `ptr` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
+| Null safety | ❌ `0 as *()` runtime check | ✓ `Option[*T]` + NPO zero-cost |
+| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
 | Callback registration | ❌ N/A | ✓ `*fn(Args) -> Ret` |
 
 **Migration path:**
-- Existing `ptr` usages — **no migration required** (D214 amend backward-
-  compatible)
-- `null ptr` literals — automated sed migration к `None` (Ф.5 task)
-- Record handle wrappers `type X { ro value ptr }` — migrate к tuple
-  newtype `type X(ptr)` или `type X(*T)` для zero-overhead ABI
+- `ptr` → `*()` (Plan 134 — compiler error on bare `ptr` in type position)
+- `0 as ptr` → `0 as *()`
+- `null ptr` literals (already retracted Plan 118 A23) → `0 as *()`
+- Record handle wrappers `type X { ro value *() }` → tuple
+  newtype `type X(*)()` или `type X(*T)` для zero-overhead ABI
 
 See [`docs/typed-pointers.md`](typed-pointers.md) для полной reference
 documentation и [`examples/typed_pointers/`](../examples/typed_pointers/)
@@ -468,4 +471,4 @@ unsafe {
 | `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
 | `[M-115-external-fn-method]` | receiver-method external fn | 🟢 CLOSED as not needed (free fn + Nova-side wrapper sufficient) |
 | `[M-115-examples-ffi-real-build]` | real libsqlite3 link через vcpkg | 🟡 deferred (V1 ships embedded mini-sqlite-equivalent в `nova_rt/sqlite_mini_ffi.h` — proves end-to-end FFI mechanism без external dependency; real link → CI step) |
-| `[M-115-null-ptr-to-option-after-npo]` | hard-retract `null ptr` после Plan 118 Option[*T] NPO | 🔴 plan ready, gated на Plan 118 V2 |
+| `[M-115-null-ptr-to-option-after-npo]` | hard-retract `null ptr` после Plan 118 Option[*T] NPO | ✅ CLOSED Plan 134 (2026-06-09) — `ptr` removed; use `*()` and `0 as *()` |
