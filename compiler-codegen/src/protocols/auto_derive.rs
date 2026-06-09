@@ -1,15 +1,17 @@
 // Plan 126 (D230) Ф.2: auto-derive synthesis infrastructure + cycle detection.
+// Plan 137 (D237): protocol rename — Equal/Hash/Clone/Compare/Display/Debug.
 //
 // Этот модуль предоставляет foundation для synthesis memberwise рекурсивного
 // AST FnDecl для built-in protocol methods. Per-protocol synthesizer bodies —
 // в Ф.3 (next commit).
 //
 // **Supported protocols** (built-in, Ф.3 implements):
-// - Equatable → `@equals(other Self) -> bool`
-// - Hashable → `@hash() -> u64`
-// - Cloneable → `@clone() -> Self` (D230 NEW)
-// - Comparable → `@compare(other Self) -> int`
-// - Printable → `@fmt(sb StringBuilder) -> ()`
+// - Equal   → `@equal(other Self) -> bool`
+// - Hash    → `@hash() -> u64`
+// - Clone   → `@clone() -> Self` (D230 NEW)
+// - Compare → `@compare(other Self) -> int`
+// - Display → `@display(sb StringBuilder) -> ()`
+// - Debug   → `@debug(sb StringBuilder) -> ()`
 //
 // **Field iteration (Ф.2):**
 // - `TypeDeclKind::Record(fields)` — for-each по `RecordField.name`.
@@ -35,18 +37,19 @@ use crate::ast::{
 };
 use crate::diag::Span;
 
-/// Имена built-in protocols, поддерживаемых auto-derive (Plan 126).
-pub const EQUATABLE: &str = "Equatable";
-pub const HASHABLE: &str = "Hashable";
-pub const CLONEABLE: &str = "Cloneable";
-pub const COMPARABLE: &str = "Comparable";
-pub const PRINTABLE: &str = "Printable";
+/// Имена built-in protocols, поддерживаемых auto-derive (Plan 126; D237 rename).
+pub const EQUAL:   &str = "Equal";
+pub const HASH:    &str = "Hash";
+pub const CLONE:   &str = "Clone";
+pub const COMPARE: &str = "Compare";
+pub const DISPLAY: &str = "Display";
+pub const DEBUG:   &str = "Debug";
 
 /// True если `proto_name` — один из known built-in protocols.
 pub fn is_builtin_protocol(proto_name: &str) -> bool {
     matches!(
         proto_name,
-        EQUATABLE | HASHABLE | CLONEABLE | COMPARABLE | PRINTABLE
+        EQUAL | HASH | CLONE | COMPARE | DISPLAY | DEBUG
     )
 }
 
@@ -54,11 +57,12 @@ pub fn is_builtin_protocol(proto_name: &str) -> bool {
 /// Returns None for unknown protocol.
 pub fn builtin_protocol_method(proto_name: &str) -> Option<&'static str> {
     match proto_name {
-        EQUATABLE => Some("equals"),
-        HASHABLE => Some("hash"),
-        CLONEABLE => Some("clone"),
-        COMPARABLE => Some("compare"),
-        PRINTABLE => Some("fmt"),
+        EQUAL   => Some("equal"),
+        HASH    => Some("hash"),
+        CLONE   => Some("clone"),
+        COMPARE => Some("compare"),
+        DISPLAY => Some("display"),
+        DEBUG   => Some("debug"),
         _ => None,
     }
 }
@@ -390,11 +394,12 @@ fn synthesize_method_inner<Q: DeriveQuery>(
 
     // Ф.3: dispatch к per-protocol synthesizer body builders.
     match protocol {
-        EQUATABLE => synthesize_equal(_ctx, type_decl),
-        HASHABLE => synthesize_hash(_ctx, type_decl),
-        CLONEABLE => synthesize_clone(_ctx, type_decl),
-        COMPARABLE => synthesize_compare(_ctx, type_decl),
-        PRINTABLE => synthesize_fmt(_ctx, type_decl),
+        EQUAL   => synthesize_equal(_ctx, type_decl),
+        HASH    => synthesize_hash(_ctx, type_decl),
+        CLONE   => synthesize_clone(_ctx, type_decl),
+        COMPARE => synthesize_compare(_ctx, type_decl),
+        DISPLAY => synthesize_display(_ctx, type_decl),
+        DEBUG   => synthesize_debug(_ctx, type_decl),
         _ => unreachable!("is_builtin_protocol guarded earlier"),
     }
 }
@@ -532,7 +537,7 @@ fn is_primitive_field(t: &TypeRef) -> bool {
 // Per-protocol synthesizers (Ф.3)
 // ────────────────────────────────────────────────────────────────────────
 
-/// Synthesize `@equals(other Self) -> bool` — memberwise && combine.
+/// Synthesize `@equal(other Self) -> bool` — memberwise && combine.
 ///
 /// Empty record/named-tuple → returns `true` (trivially equal).
 /// Sum-type → V1: identity-eq placeholder (rich match-arms — followup).
@@ -551,13 +556,13 @@ pub fn synthesize_equal<Q: DeriveQuery>(
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
             kind: type_decl_kind_name(type_decl).to_string(),
-            protocol: EQUATABLE.to_string(),
+            protocol: EQUAL.to_string(),
         });
     };
 
     Ok(make_synth_method(
         &type_decl.name,
-        "equals",
+        "equal",
         vec![make_param("other", type_ref_self())],
         Some(type_ref_named("bool")),
         FnBody::Expr(body_expr),
@@ -597,7 +602,7 @@ pub fn synthesize_hash<Q: DeriveQuery>(
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
             kind: type_decl_kind_name(type_decl).to_string(),
-            protocol: HASHABLE.to_string(),
+            protocol: HASH.to_string(),
         });
     };
 
@@ -659,7 +664,7 @@ pub fn synthesize_clone<Q: DeriveQuery>(
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
             kind: type_decl_kind_name(type_decl).to_string(),
-            protocol: CLONEABLE.to_string(),
+            protocol: CLONE.to_string(),
         });
     };
 
@@ -716,7 +721,7 @@ pub fn synthesize_compare<Q: DeriveQuery>(
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
             kind: type_decl_kind_name(type_decl).to_string(),
-            protocol: COMPARABLE.to_string(),
+            protocol: COMPARE.to_string(),
         });
     };
 
@@ -779,38 +784,71 @@ fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
     FnBody::Block(block_with_trailing(stmts, ex(ExprKind::IntLit(0))))
 }
 
-/// Synthesize `@fmt(sb StringBuilder) -> ()` — memberwise format.
+/// Synthesize `@display(sb StringBuilder) -> ()` — memberwise format.
+/// D237: renamed from synthesize_fmt (Printable → Display, @fmt → @display).
 ///
-/// Output form: `TypeName { f1: <fmt_f1>, f2: <fmt_f2> }`.
+/// Output form: `TypeName { f1: <display_f1>, f2: <display_f2> }`.
 /// Empty type-body → `sb.append("TypeName")`.
 /// Sum-type → V1 placeholder (appends type name).
-pub fn synthesize_fmt<Q: DeriveQuery>(
+pub fn synthesize_display<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
 ) -> Result<FnDecl, DeriveError> {
     let body = if let Some(fields) = iter_fields(type_decl) {
-        synth_fmt_record_body(&type_decl.name, &fields)
+        synth_display_record_body(&type_decl.name, &fields)
     } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type fmt — V1 placeholder. Followup [M-126-sum-fmt-rich].
-        FnBody::Block(simple_fmt_block(&type_decl.name))
+        // Sum-type display — V1 placeholder. Followup [M-126-sum-fmt-rich].
+        FnBody::Block(simple_display_block(&type_decl.name))
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
             kind: type_decl_kind_name(type_decl).to_string(),
-            protocol: PRINTABLE.to_string(),
+            protocol: DISPLAY.to_string(),
         });
     };
 
     Ok(make_synth_method(
         &type_decl.name,
-        "fmt",
+        "display",
         vec![make_param("sb", type_ref_named("StringBuilder"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
 }
 
-fn simple_fmt_block(type_name: &str) -> Block {
+/// Synthesize `@debug(sb StringBuilder) -> ()` — memberwise debug format.
+/// D237: renamed from synthesize_debug_fmt (DebugPrintable → Debug, @debug_fmt → @debug).
+///
+/// Output form: `TypeName { f1: <debug_f1>, f2: <debug_f2> }`.
+/// Empty type-body → `sb.append("TypeName")`.
+/// Sum-type → V1 placeholder (appends type name).
+pub fn synthesize_debug<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let body = if let Some(fields) = iter_fields(type_decl) {
+        synth_debug_record_body(&type_decl.name, &fields)
+    } else if iter_sum_variants(type_decl).is_some() {
+        // Sum-type debug — V1 placeholder.
+        FnBody::Block(simple_display_block(&type_decl.name))
+    } else {
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: type_decl_kind_name(type_decl).to_string(),
+            protocol: DEBUG.to_string(),
+        });
+    };
+
+    Ok(make_synth_method(
+        &type_decl.name,
+        "debug",
+        vec![make_param("sb", type_ref_named("StringBuilder"))],
+        Some(TypeRef::Unit(span_dummy())),
+        body,
+    ))
+}
+
+fn simple_display_block(type_name: &str) -> Block {
     Block {
         stmts: vec![Stmt::Expr(member_call(
             ident("sb"),
@@ -823,7 +861,7 @@ fn simple_fmt_block(type_name: &str) -> Block {
     }
 }
 
-fn synth_fmt_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
+fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
     let mut stmts: Vec<Stmt> = Vec::new();
     if fields.is_empty() {
         stmts.push(Stmt::Expr(member_call(
@@ -850,7 +888,7 @@ fn synth_fmt_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
             if is_primitive_field(&f.ty) {
-                // Primitive field: no `.fmt()` method on scalars — route via
+                // Primitive field: no `.display()` method on scalars — route via
                 // `sb.append(str.from(@field))` (Display path).
                 stmts.push(Stmt::Expr(member_call(
                     ident("sb"),
@@ -858,10 +896,65 @@ fn synth_fmt_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
                     vec![member_call(ident("str"), "from", vec![self_field(&f.name)])],
                 )));
             } else {
-                // Record / nested field: recurse into its synthesized @fmt.
+                // Record / nested field: recurse into its synthesized @display.
                 stmts.push(Stmt::Expr(member_call(
                     self_field(&f.name),
-                    "fmt",
+                    "display",
+                    vec![ident("sb")],
+                )));
+            }
+        }
+        stmts.push(Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(" }".to_string()))],
+        )));
+    }
+    FnBody::Block(Block {
+        stmts,
+        trailing: None,
+        span: span_dummy(),
+        is_unsafe: false,
+    })
+}
+
+fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
+    let mut stmts: Vec<Stmt> = Vec::new();
+    if fields.is_empty() {
+        stmts.push(Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(type_name.to_string()))],
+        )));
+    } else {
+        stmts.push(Stmt::Expr(member_call(
+            ident("sb"),
+            "append",
+            vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
+        )));
+        for (i, f) in fields.iter().enumerate() {
+            let prefix = if i == 0 {
+                format!("{}: ", f.name)
+            } else {
+                format!(", {}: ", f.name)
+            };
+            stmts.push(Stmt::Expr(member_call(
+                ident("sb"),
+                "append",
+                vec![ex(ExprKind::StrLit(prefix))],
+            )));
+            if is_primitive_field(&f.ty) {
+                // Primitive field: route via str.from_debug
+                stmts.push(Stmt::Expr(member_call(
+                    ident("sb"),
+                    "append",
+                    vec![member_call(ident("str"), "from_debug", vec![self_field(&f.name)])],
+                )));
+            } else {
+                // Record / nested field: recurse into its synthesized @debug.
+                stmts.push(Stmt::Expr(member_call(
+                    self_field(&f.name),
+                    "debug",
                     vec![ident("sb")],
                 )));
             }
@@ -1100,23 +1193,31 @@ mod tests {
     // ─── T01: built-in protocol detection ─────────────────────────────
     #[test]
     fn t01_builtin_protocol_detection() {
-        assert!(is_builtin_protocol("Equatable"));
-        assert!(is_builtin_protocol("Hashable"));
-        assert!(is_builtin_protocol("Cloneable"));
-        assert!(is_builtin_protocol("Comparable"));
-        assert!(is_builtin_protocol("Printable"));
+        assert!(is_builtin_protocol("Equal"));
+        assert!(is_builtin_protocol("Hash"));
+        assert!(is_builtin_protocol("Clone"));
+        assert!(is_builtin_protocol("Compare"));
+        assert!(is_builtin_protocol("Display"));
+        assert!(is_builtin_protocol("Debug"));
         assert!(!is_builtin_protocol("From"));
         assert!(!is_builtin_protocol("MyProtocol"));
+        // Old names no longer recognized:
+        assert!(!is_builtin_protocol("Equatable"));
+        assert!(!is_builtin_protocol("Hashable"));
+        assert!(!is_builtin_protocol("Cloneable"));
+        assert!(!is_builtin_protocol("Comparable"));
+        assert!(!is_builtin_protocol("Printable"));
     }
 
     // ─── T02: protocol → method name lookup ──────────────────────────
     #[test]
     fn t02_protocol_method_name_lookup() {
-        assert_eq!(builtin_protocol_method("Equatable"), Some("equals"));
-        assert_eq!(builtin_protocol_method("Hashable"), Some("hash"));
-        assert_eq!(builtin_protocol_method("Cloneable"), Some("clone"));
-        assert_eq!(builtin_protocol_method("Comparable"), Some("compare"));
-        assert_eq!(builtin_protocol_method("Printable"), Some("fmt"));
+        assert_eq!(builtin_protocol_method("Equal"), Some("equal"));
+        assert_eq!(builtin_protocol_method("Hash"), Some("hash"));
+        assert_eq!(builtin_protocol_method("Clone"), Some("clone"));
+        assert_eq!(builtin_protocol_method("Compare"), Some("compare"));
+        assert_eq!(builtin_protocol_method("Display"), Some("display"));
+        assert_eq!(builtin_protocol_method("Debug"), Some("debug"));
         assert_eq!(builtin_protocol_method("Unknown"), None);
     }
 
@@ -1137,11 +1238,11 @@ mod tests {
     fn t04_cycle_detection_marks_visited() {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
-        assert!(ctx.mark_visiting("A", "Cloneable"));
-        assert!(!ctx.mark_visiting("A", "Cloneable")); // duplicate
-        assert!(ctx.is_visiting("A", "Cloneable"));
-        ctx.unmark_visiting("A", "Cloneable");
-        assert!(!ctx.is_visiting("A", "Cloneable"));
+        assert!(ctx.mark_visiting("A", "Clone"));
+        assert!(!ctx.mark_visiting("A", "Clone")); // duplicate
+        assert!(ctx.is_visiting("A", "Clone"));
+        ctx.unmark_visiting("A", "Clone");
+        assert!(!ctx.is_visiting("A", "Clone"));
     }
 
     // ─── T05: cycle detection — cross-protocol independence ──────────
@@ -1149,11 +1250,11 @@ mod tests {
     fn t05_cycle_detection_protocols_independent() {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
-        assert!(ctx.mark_visiting("A", "Cloneable"));
+        assert!(ctx.mark_visiting("A", "Clone"));
         // Different protocol — should NOT collide.
-        assert!(ctx.mark_visiting("A", "Equatable"));
-        assert!(ctx.is_visiting("A", "Cloneable"));
-        assert!(ctx.is_visiting("A", "Equatable"));
+        assert!(ctx.mark_visiting("A", "Equal"));
+        assert!(ctx.is_visiting("A", "Clone"));
+        assert!(ctx.is_visiting("A", "Equal"));
     }
 
     // ─── T06: field eligibility — primitive passes ───────────────────
@@ -1161,9 +1262,9 @@ mod tests {
     fn t06_field_eligibility_primitive_passes() {
         let q = MockQuery::new();
         let f = type_ref_named("int");
-        assert!(check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(check_field_eligibility(&q, &f, "Clone", "clone"));
         let s = type_ref_named("str");
-        assert!(check_field_eligibility(&q, &s, "Cloneable", "clone"));
+        assert!(check_field_eligibility(&q, &s, "Clone", "clone"));
     }
 
     // ─── T07: field eligibility — missing protocol fails ─────────────
@@ -1172,16 +1273,16 @@ mod tests {
         let mut q = MockQuery::new();
         q.add_type(make_record_type("Inner", &[("a", "int")]));
         let f = type_ref_named("Inner");
-        assert!(!check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(!check_field_eligibility(&q, &f, "Clone", "clone"));
     }
 
     // ─── T08: field eligibility — with #impl passes ──────────────────
     #[test]
     fn t08_field_eligibility_with_impl_passes() {
         let mut q = MockQuery::new();
-        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Cloneable"));
+        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Clone"));
         let f = type_ref_named("Inner");
-        assert!(check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(check_field_eligibility(&q, &f, "Clone", "clone"));
     }
 
     // ─── T09: field eligibility — explicit method passes ─────────────
@@ -1191,16 +1292,16 @@ mod tests {
         q.add_type(make_record_type("Inner", &[("a", "int")]));
         q.add_method("Inner", "clone");
         let f = type_ref_named("Inner");
-        assert!(check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(check_field_eligibility(&q, &f, "Clone", "clone"));
     }
 
     // ─── T10: field eligibility — array recurses ─────────────────────
     #[test]
     fn t10_field_eligibility_array_recurses() {
         let mut q = MockQuery::new();
-        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Cloneable"));
+        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Clone"));
         let f = TypeRef::Array(Box::new(type_ref_named("Inner")), Span::dummy());
-        assert!(check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(check_field_eligibility(&q, &f, "Clone", "clone"));
     }
 
     // ─── T11: field eligibility — tuple recurses ─────────────────────
@@ -1211,7 +1312,7 @@ mod tests {
             vec![type_ref_named("int"), type_ref_named("f64")],
             Span::dummy(),
         );
-        assert!(check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(check_field_eligibility(&q, &f, "Clone", "clone"));
     }
 
     // ─── T12: field eligibility — tuple with bad elem fails ──────────
@@ -1223,7 +1324,7 @@ mod tests {
             vec![type_ref_named("int"), type_ref_named("Inner")],
             Span::dummy(),
         );
-        assert!(!check_field_eligibility(&q, &f, "Cloneable", "clone"));
+        assert!(!check_field_eligibility(&q, &f, "Clone", "clone"));
     }
 
     // ─── T13: unknown protocol rejected ──────────────────────────────
@@ -1351,8 +1452,8 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Vec3", &[("x", "f64"), ("y", "f64"), ("z", "f64")]);
-        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
-        assert_eq!(fd.name, "equals");
+        let fd = synthesize_method(&mut ctx, &td, EQUAL).unwrap();
+        assert_eq!(fd.name, "equal");
         assert_eq!(fd.params.len(), 1);
         assert_eq!(fd.params[0].name, "other");
         match &fd.body {
@@ -1370,7 +1471,7 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Empty", &[]);
-        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
+        let fd = synthesize_method(&mut ctx, &td, EQUAL).unwrap();
         match &fd.body {
             FnBody::Expr(e) => match &e.kind {
                 ExprKind::BoolLit(true) => {}
@@ -1386,7 +1487,7 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Wrapper", &[("v", "int")]);
-        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
+        let fd = synthesize_method(&mut ctx, &td, EQUAL).unwrap();
         match &fd.body {
             FnBody::Expr(e) => match &e.kind {
                 ExprKind::Binary { op: BinOp::Eq, .. } => {}
@@ -1402,7 +1503,7 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
-        let fd = synthesize_method(&mut ctx, &td, HASHABLE).unwrap();
+        let fd = synthesize_method(&mut ctx, &td, HASH).unwrap();
         assert_eq!(fd.name, "hash");
         assert_eq!(fd.params.len(), 0);
         match &fd.return_type {
@@ -1417,7 +1518,7 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Vec3", &[("x", "f64"), ("y", "f64"), ("z", "f64")]);
-        let fd = synthesize_method(&mut ctx, &td, CLONEABLE).unwrap();
+        let fd = synthesize_method(&mut ctx, &td, CLONE).unwrap();
         assert_eq!(fd.name, "clone");
         match &fd.return_type {
             Some(TypeRef::Named { path, .. }) => assert_eq!(path.last().unwrap(), "Self"),
@@ -1441,7 +1542,7 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Money", &[("cents", "int")]);
-        let fd = synthesize_method(&mut ctx, &td, COMPARABLE).unwrap();
+        let fd = synthesize_method(&mut ctx, &td, COMPARE).unwrap();
         assert_eq!(fd.name, "compare");
         assert_eq!(fd.params.len(), 1);
         match &fd.return_type {
@@ -1460,7 +1561,7 @@ mod tests {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Empty", &[]);
-        let fd = synthesize_method(&mut ctx, &td, COMPARABLE).unwrap();
+        let fd = synthesize_method(&mut ctx, &td, COMPARE).unwrap();
         match &fd.body {
             FnBody::Expr(e) => match &e.kind {
                 ExprKind::IntLit(0) => {}
@@ -1470,19 +1571,19 @@ mod tests {
         }
     }
 
-    // ─── T27: Ф.3 — synthesize_fmt ───────────────────────────────────
+    // ─── T27: Ф.3 — synthesize_display ───────────────────────────────
     #[test]
-    fn t27_synthesize_fmt_takes_stringbuilder() {
+    fn t27_synthesize_display_takes_stringbuilder() {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
-        let fd = synthesize_method(&mut ctx, &td, PRINTABLE).unwrap();
-        assert_eq!(fd.name, "fmt");
+        let fd = synthesize_method(&mut ctx, &td, DISPLAY).unwrap();
+        assert_eq!(fd.name, "display");
         assert_eq!(fd.params.len(), 1);
         assert_eq!(fd.params[0].name, "sb");
         match &fd.return_type {
             Some(TypeRef::Unit(_)) => {}
-            _ => panic!("expected unit return type for fmt"),
+            _ => panic!("expected unit return type for display"),
         }
     }
 
@@ -1493,7 +1594,7 @@ mod tests {
         q.add_type(make_record_type("Inner", &[("a", "int")]));
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Outer", &[("inner", "Inner")]);
-        let err = synthesize_method(&mut ctx, &td, CLONEABLE).unwrap_err();
+        let err = synthesize_method(&mut ctx, &td, CLONE).unwrap_err();
         match err {
             DeriveError::FieldLacksProtocol { type_name, field_name, .. } => {
                 assert_eq!(type_name, "Outer");
@@ -1529,18 +1630,18 @@ mod tests {
             span: Span::dummy(),
             ..TypeDecl::default()
         };
-        let fd = synthesize_method(&mut ctx, &td, EQUATABLE).unwrap();
-        assert_eq!(fd.name, "equals");
+        let fd = synthesize_method(&mut ctx, &td, EQUAL).unwrap();
+        assert_eq!(fd.name, "equal");
     }
 
     // ─── T30: Ф.3 — clone body uses .clone() for non-primitive ──────
     #[test]
     fn t30_synthesize_clone_calls_clone_on_non_primitive() {
         let mut q = MockQuery::new();
-        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Cloneable"));
+        q.add_type(make_record_with_impl("Inner", &[("a", "int")], "Clone"));
         let mut ctx = AutoDeriveCtx::new(&q);
-        let td = make_record_with_impl("Outer", &[("inner", "Inner")], "Cloneable");
-        let fd = synthesize_method(&mut ctx, &td, CLONEABLE).unwrap();
+        let td = make_record_with_impl("Outer", &[("inner", "Inner")], "Clone");
+        let fd = synthesize_method(&mut ctx, &td, CLONE).unwrap();
         match &fd.body {
             FnBody::Expr(e) => match &e.kind {
                 ExprKind::RecordLit { fields, .. } => {
@@ -1614,30 +1715,30 @@ mod tests {
         }
     }
 
-    // ─── T31: inject emits Nova_T_method_equals for #impl(Equatable) ──
+    // ─── T31: inject emits Nova_T_method_equal for #impl(Equal) ──
     #[test]
-    fn t31_inject_equatable_record() {
-        let td = make_record_with_impl("Vec3", &[("x", "f64"), ("y", "f64")], EQUATABLE);
+    fn t31_inject_equal_record() {
+        let td = make_record_with_impl("Vec3", &[("x", "f64"), ("y", "f64")], EQUAL);
         let mut m = module_with(vec![Item::Type(td)]);
         let n = inject_synthesized_methods(&mut m);
-        assert_eq!(n, 1, "exactly one method synthesized for Equatable");
+        assert_eq!(n, 1, "exactly one method synthesized for Equal");
         let injected = injected_methods(&m);
-        assert!(injected.contains(&("Vec3".to_string(), "equals".to_string())),
-            "expected synthesized Vec3.equals, got {:?}", injected);
+        assert!(injected.contains(&("Vec3".to_string(), "equal".to_string())),
+            "expected synthesized Vec3.equal, got {:?}", injected);
     }
 
-    // ─── T32: inject all five built-in protocols ─────────────────────
+    // ─── T32: inject all six built-in protocols ─────────────────────
     #[test]
     fn t32_inject_all_protocols() {
         let mut td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
-        for p in [EQUATABLE, HASHABLE, CLONEABLE, COMPARABLE, PRINTABLE] {
+        for p in [EQUAL, HASH, CLONE, COMPARE, DISPLAY, DEBUG] {
             td.impl_protocols.push(p.to_string());
         }
         let mut m = module_with(vec![Item::Type(td)]);
         let n = inject_synthesized_methods(&mut m);
-        assert_eq!(n, 5, "five built-in protocols → five methods");
+        assert_eq!(n, 6, "six built-in protocols → six methods");
         let injected = injected_methods(&m);
-        for meth in ["equals", "hash", "clone", "compare", "fmt"] {
+        for meth in ["equal", "hash", "clone", "compare", "display", "debug"] {
             assert!(injected.contains(&("Point".to_string(), meth.to_string())),
                 "missing synthesized Point.{}, got {:?}", meth, injected);
         }
@@ -1646,13 +1747,13 @@ mod tests {
     // ─── T33: user-explicit method wins — no synthesis ───────────────
     #[test]
     fn t33_inject_user_method_wins() {
-        let td = make_record_with_impl("Money", &[("cents", "int")], EQUATABLE);
+        let td = make_record_with_impl("Money", &[("cents", "int")], EQUAL);
         let mut m = module_with(vec![
             Item::Type(td),
-            Item::Fn(user_method("Money", "equals")),
+            Item::Fn(user_method("Money", "equal")),
         ]);
         let n = inject_synthesized_methods(&mut m);
-        assert_eq!(n, 0, "user-provided equals suppresses synthesis");
+        assert_eq!(n, 0, "user-provided equal suppresses synthesis");
         assert!(injected_methods(&m).is_empty(),
             "no compiler_generated method should be injected");
     }
@@ -1669,9 +1770,9 @@ mod tests {
     // ─── T35: field lacks protocol → synthesis skipped (diag elsewhere) ─
     #[test]
     fn t35_inject_skips_when_field_ineligible() {
-        // Outer #impl(Cloneable) with Inner field that lacks Cloneable.
+        // Outer #impl(Clone) with Inner field that lacks Clone.
         let inner = make_record_type("Inner", &[("a", "int")]);
-        let outer = make_record_with_impl("Outer", &[("inner", "Inner")], CLONEABLE);
+        let outer = make_record_with_impl("Outer", &[("inner", "Inner")], CLONE);
         let mut m = module_with(vec![Item::Type(inner), Item::Type(outer)]);
         let n = inject_synthesized_methods(&mut m);
         assert_eq!(n, 0, "ineligible field → synthesis skipped (no invalid C)");
@@ -1680,8 +1781,8 @@ mod tests {
     // ─── T36: nested eligible field → both synthesize ────────────────
     #[test]
     fn t36_inject_nested_eligible() {
-        let inner = make_record_with_impl("Inner", &[("a", "int")], CLONEABLE);
-        let outer = make_record_with_impl("Outer", &[("inner", "Inner")], CLONEABLE);
+        let inner = make_record_with_impl("Inner", &[("a", "int")], CLONE);
+        let outer = make_record_with_impl("Outer", &[("inner", "Inner")], CLONE);
         let mut m = module_with(vec![Item::Type(inner), Item::Type(outer)]);
         let n = inject_synthesized_methods(&mut m);
         assert_eq!(n, 2, "both Inner and Outer synthesize clone");
@@ -1693,7 +1794,7 @@ mod tests {
     // ─── T37: idempotent — second run does not double-inject ─────────
     #[test]
     fn t37_inject_idempotent_via_compiler_generated_guard() {
-        let td = make_record_with_impl("Vec3", &[("x", "f64")], EQUATABLE);
+        let td = make_record_with_impl("Vec3", &[("x", "f64")], EQUAL);
         let mut m = module_with(vec![Item::Type(td)]);
         let n1 = inject_synthesized_methods(&mut m);
         assert_eq!(n1, 1);
