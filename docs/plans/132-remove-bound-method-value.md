@@ -256,10 +256,10 @@ if matches!(obj.kind, ExprKind::SelfAccess) {
 - **A-132.1.c** — 0 regressions в `nova test plan132/`
 
 ### Итог 132.1
-- Ф.0: Root cause confirmed — Method{obj:SelfAccess} fallthrough to free_fn_c_name
-- Ф.1: Variant B implemented — SelfAccess early path in emit_call (~15 LOC)
-- Ф.2: pos_at_name_disambiguation fully restored; all plan132 fixtures PASS
-- Ф.3: spec/docs/plan updated
+- Ф.0: Root cause — двойной баг: `field_cache.rs` (threshold-hoisting ломал dispatch) + `emit_c.rs` (fallthrough к free_fn_c_name)
+- Ф.1: Fix в обоих: `field_cache.rs` — skip analyze/rewrite для `Member{SelfAccess,..}` в call-func; `emit_c.rs` — early SelfAccess guard в `emit_call`
+- Ф.2: `pos_at_name_disambiguation.nv` восстановлен (`@call_len()` + `@double_len()`); 8/8 PASS
+- Ф.3: spec/docs/plan обновлены; A-132.1.a/b/c ✅
 
 ---
 
