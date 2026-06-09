@@ -1,4 +1,4 @@
-// Plan 131 Ф.4 — Vec[T] Equatable: pairwise element comparison.
+// Plan 131 Р¤.4 вЂ” Vec[T] Equal: pairwise element comparison.
 // EXPECT_OUTPUT: true
 // false
 

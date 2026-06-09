@@ -1,15 +1,15 @@
-// Plan 126 — POS F14:
-// Multi-protocol + mut field combinator — auto-derive composes с D33 mut.
-// AC-126.13 (composability с mut field modifier).
+// Plan 126 вЂ” POS F14:
+// Multi-protocol + mut field combinator вЂ” auto-derive composes СЃ D33 mut.
+// AC-126.13 (composability СЃ mut field modifier).
 module plan126.p14_value_record_ok
 
-#impl(Hashable + Equatable)
+#impl(Hash + Equal)
 type Vector {
     mut x f64
     mut y f64
 }
 
-test "multi-protocol auto-derive composes с mut fields" {
+test "multi-protocol auto-derive composes СЃ mut fields" {
     ro v = Vector { x: 1.0, y: 2.0 }
     assert(v.x == 1.0)
 }

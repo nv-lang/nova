@@ -1,24 +1,24 @@
 module plan91_8a_2.interpolation_printable_test
 
-// Plan 91.8a.2 followup: "${m}" interpolation routes через Printable.fmt
+// Plan 91.8a.2 followup: "${m}" interpolation routes через Display.fmt
 // path. Three paths covered:
-//   Path 1: explicit `fn T @fmt(mut sb StringBuilder)` — direct fmt call.
+//   Path 1: explicit `fn T @display(mut sb StringBuilder)` — direct fmt call.
 //   Path 2: `fn str.from(T) -> str` overload — append result.
 //   Path 3: `fn T @into() -> str` — append result.
 
-#impl(Printable)
+#impl(Display)
 type Money { cents int }
 fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
-#impl(Printable)
+#impl(Display)
 type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
-// Point has explicit @fmt — `#impl(Printable)` not required (type-checker
+// Point has explicit @display — `#impl(Display)` not required (type-checker
 // finds method directly без synthesis). Annotation добавлен для verification.
-#impl(Printable)
+#impl(Display)
 type Point { x int, y int }
-fn Point @fmt(mut sb StringBuilder) -> () {
+fn Point @display(mut sb StringBuilder) -> () {
     sb.append("Point(")
     sb.append(str.from(@x))
     sb.append(", ")
@@ -38,7 +38,7 @@ test "\"${c}\" with fn Coin @into() -> str" {
     assert(s == "got Coin(7) pcs")
 }
 
-test "\"${p}\" with explicit fn Point @fmt" {
+test "\"${p}\" with explicit fn Point @display" {
     ro p = Point { x: 3, y: 4 }
     ro s = "loc=${p}"
     assert(s == "loc=Point(3, 4)")

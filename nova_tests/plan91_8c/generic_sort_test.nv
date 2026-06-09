@@ -2,7 +2,7 @@ module plan91_8c.generic_sort_test
 
 import std.sort
 
-// Plan 91.8c (D185): generic sort_of/binary_search_of для [T Comparable].
+// Plan 91.8c (D185): generic sort_of/binary_search_of РґР»СЏ [T Compare].
 
 test "sort_of []int" {
     mut xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
@@ -18,7 +18,7 @@ test "sort_of []str" {
     assert(xs[2] == "zebra")
 }
 
-test "sort_of empty array — no-op" {
+test "sort_of empty array вЂ” no-op" {
     mut xs []int = []
     xs.sort_of()
     assert(xs.len() == 0)

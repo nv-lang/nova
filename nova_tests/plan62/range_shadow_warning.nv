@@ -1,26 +1,26 @@
-// Plan 62.D non-opaque bis-1 Bug 4 closure — D29 user-shadow warning.
+// Plan 62.D non-opaque bis-1 Bug 4 closure вЂ” D29 user-shadow warning.
 //
-// До 62.D bis-1 + 62.A: re-export `Option` через prelude → `type Option`
-// локально declared в test → hard CODEGEN-FAIL «duplicate top-level name
-// Option» + redefinition C-struct'а NovaOpt_*. D29 spec явно требует
-// warning, не error, для user-shadow prelude items.
+// Р”Рѕ 62.D bis-1 + 62.A: re-export `Option` С‡РµСЂРµР· prelude в†’ `type Option`
+// Р»РѕРєР°Р»СЊРЅРѕ declared РІ test в†’ hard CODEGEN-FAIL В«duplicate top-level name
+// OptionВ» + redefinition C-struct'Р° NovaOpt_*. D29 spec СЏРІРЅРѕ С‚СЂРµР±СѓРµС‚
+// warning, РЅРµ error, РґР»СЏ user-shadow prelude items.
 //
 // Plan 62.D bis-1 Bug 4 fix:
-//   - types/mod.rs: `classify_dup` helper — prelude-visible → warning.
-//   - emit_c.rs: should_skip_type / should_skip_fn — user wins,
-//     merged duplicate skipped в codegen.
+//   - types/mod.rs: `classify_dup` helper вЂ” prelude-visible в†’ warning.
+//   - emit_c.rs: should_skip_type / should_skip_fn вЂ” user wins,
+//     merged duplicate skipped РІ codegen.
 //
-// Plan 91.8a (D183): Ordering удалён из prelude (Comparable.compare -> int).
-// Раньше этот test использовал `Ordering` как shadow target; теперь shadow
-// path для unit-variant sum-types покрыт через `nova_tests/plan62/d29_
-// user_shadow_*.nv` (W_PRELUDE_SHADOW тестируется отдельно). Этот test
-// сохранён как minimal local sum-type compile check после D183 cleanup.
+// Plan 91.8a (D183): Ordering СѓРґР°Р»С‘РЅ РёР· prelude (Compare.compare -> int).
+// Р Р°РЅСЊС€Рµ СЌС‚РѕС‚ test РёСЃРїРѕР»СЊР·РѕРІР°Р» `Ordering` РєР°Рє shadow target; С‚РµРїРµСЂСЊ shadow
+// path РґР»СЏ unit-variant sum-types РїРѕРєСЂС‹С‚ С‡РµСЂРµР· `nova_tests/plan62/d29_
+// user_shadow_*.nv` (W_PRELUDE_SHADOW С‚РµСЃС‚РёСЂСѓРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ). Р­С‚РѕС‚ test
+// СЃРѕС…СЂР°РЅС‘РЅ РєР°Рє minimal local sum-type compile check РїРѕСЃР»Рµ D183 cleanup.
 
 module plan62.range_shadow_warning
 
-// Local sum-type без collision с prelude — basic regression marker
-// что local sum-type declarations всё ещё compile after D183 prelude
-// cleanup (Ordering удалён, Comparable.compare -> int).
+// Local sum-type Р±РµР· collision СЃ prelude вЂ” basic regression marker
+// С‡С‚Рѕ local sum-type declarations РІСЃС‘ РµС‰С‘ compile after D183 prelude
+// cleanup (Ordering СѓРґР°Р»С‘РЅ, Compare.compare -> int).
 type Severity | Low | Medium | High
 
 test "local sum-type compiles + match works (D183 cleanup verified)" {

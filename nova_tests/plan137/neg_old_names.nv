@@ -1,0 +1,10 @@
+// Plan 137 (D237) — negative test: old protocol names produce E_PROTOCOL_RENAMED.
+// EXPECT_COMPILE_ERROR E_PROTOCOL_RENAMED
+
+module plan137.neg_old_names
+
+type Foo { x int }
+
+// Using old name Hashable should produce E_PROTOCOL_RENAMED
+#impl(Hashable)
+type Bar { y int }

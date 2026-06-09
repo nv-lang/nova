@@ -1,9 +1,9 @@
-// Plan 85.4 Ф.1 — Hashable протокол.
+// Plan 85.4 Ф.1 — Hash протокол.
 //
-// `Hashable` (D109): `hash() -> u64`. User-defined через instance-метод
-// `fn Type @hash() -> u64`. Примитивы (int/bool/char) — auto-hashable.
+// `Hash` (D109): `hash() -> u64`. User-defined через instance-метод
+// `fn Type @hash() -> u64`. Примитивы (int/bool/char) — auto-hash.
 
-module comparison.hashable
+module comparison.hash
 
 
 type Color { r u8, g u8, b u8 }
@@ -50,7 +50,7 @@ test "Color.hash — отличие в одном поле меняет хэш" 
 }
 
 
-// ── встроенные примитивы — auto-hashable (D109) ───────────────────
+// ── встроенные примитивы — auto-hash (D109) ───────────────────
 
 test "int.hash — детерминизм и различие" {
     assert((42).hash() == (42).hash())

@@ -1,4 +1,4 @@
-// Plan 131 Ф.4 — Vec[T] Cloneable: deep copy, original unchanged.
+// Plan 131 Р¤.4 вЂ” Vec[T] Clone: deep copy, original unchanged.
 // EXPECT_OUTPUT: 3
 // 1
 

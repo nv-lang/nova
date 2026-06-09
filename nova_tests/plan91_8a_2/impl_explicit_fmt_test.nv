@@ -1,27 +1,27 @@
 module plan91_8a_2.impl_explicit_fmt_test
 
-// Plan 91.9 acceptance: #impl(Printable) с explicit @fmt method (not via
-// default body). Verification finds @fmt directly, no default-body
+// Plan 91.9 acceptance: #impl(Display) с explicit @display method (not via
+// default body). Verification finds @display directly, no default-body
 // satisfiability check needed.
 
-#impl(Printable)
+#impl(Display)
 type Tag { name str }
 
-fn Tag @fmt(mut sb StringBuilder) -> () {
+fn Tag @display(mut sb StringBuilder) -> () {
     sb.append("Tag(")
     sb.append(@name)
     sb.append(")")
 }
 
-test "verified #impl(Printable) with explicit @fmt" {
+test "verified #impl(Display) with explicit @display" {
     ro t = Tag { name: "hello" }
     // Bare call works (explicit method, не synth)
     consume sb = StringBuilder.new()
-    t.fmt(sb)
+    t.display(sb)
     assert(sb.as_str() == "Tag(hello)")
 }
 
-test "explicit @fmt routes through interpolation directly" {
+test "explicit @display routes through interpolation directly" {
     ro t = Tag { name: "world" }
     ro s = "got ${t}"
     assert(s == "got Tag(world)")

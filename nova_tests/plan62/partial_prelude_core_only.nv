@@ -1,13 +1,13 @@
-// partial_prelude_core_only.nv — Plan 62.F Part 3 positive test.
+// partial_prelude_core_only.nv вЂ” Plan 62.F Part 3 positive test.
 //
-// Verifies что `#prelude(core, runtime)` auto-import'ит ТОЛЬКО
-// перечисленные sub-modules — Option/Result + assert доступны без
-// extra imports. Errors / collections / protocols / effects — НЕ
-// auto-import'ятся (нужен explicit import при использовании).
+// Verifies С‡С‚Рѕ `#prelude(core, runtime)` auto-import'РёС‚ РўРћР›Р¬РљРћ
+// РїРµСЂРµС‡РёСЃР»РµРЅРЅС‹Рµ sub-modules вЂ” Option/Result + assert РґРѕСЃС‚СѓРїРЅС‹ Р±РµР·
+// extra imports. Errors / collections / protocols / effects вЂ” РќР•
+// auto-import'СЏС‚СЃСЏ (РЅСѓР¶РµРЅ explicit import РїСЂРё РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё).
 //
-// Use-case: bootstrap уровни, prelude development, тонкая настройка
-// transitive deps. Negative coverage (panic в core-only) — отдельным
-// файлом partial_prelude_no_panic_in_core.nv.
+// Use-case: bootstrap СѓСЂРѕРІРЅРё, prelude development, С‚РѕРЅРєР°СЏ РЅР°СЃС‚СЂРѕР№РєР°
+// transitive deps. Negative coverage (panic РІ core-only) вЂ” РѕС‚РґРµР»СЊРЅС‹Рј
+// С„Р°Р№Р»РѕРј partial_prelude_no_panic_in_core.nv.
 //
 // D174 (Plan 107): syntax migrated from inline `module X partial_prelude(...)`
 // to `#prelude(...)` before `module` declaration.
@@ -18,19 +18,19 @@ module plan62.partial_prelude_core_only
 // core provides Option + Some + None + Ok + Err.
 // runtime provides assert (+ panic / exit / debug_assert).
 //
-// Plan 91.8a (D183): Ordering удалён из prelude (Comparable.compare -> int
-// больше не требует sum-type Less/Equal/Greater).
+// Plan 91.8a (D183): Ordering СѓРґР°Р»С‘РЅ РёР· prelude (Compare.compare -> int
+// Р±РѕР»СЊС€Рµ РЅРµ С‚СЂРµР±СѓРµС‚ sum-type Less/Equal/Greater).
 fn make_some() -> Option[int] {
     Some(7)
 }
 
-test "partial_prelude(core, runtime) — Option available" {
+test "partial_prelude(core, runtime) вЂ” Option available" {
     ro o = make_some()
     assert(o.is_some())
     assert(o.unwrap() == 7)
 }
 
-test "partial_prelude(core, runtime) — Result available" {
+test "partial_prelude(core, runtime) вЂ” Result available" {
     ro r Result[int, str] = Ok(99)
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 99)

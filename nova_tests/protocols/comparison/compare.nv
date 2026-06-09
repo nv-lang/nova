@@ -1,11 +1,11 @@
-// Plan 85.4 Ф.2 — Comparable протокол.
-// Plan 91.8a (D183): Comparable.compare возвращает int (memcmp-style).
+// Plan 85.4 Ф.2 — Compare протокол.
+// Plan 91.8a (D183): Compare.compare возвращает int (memcmp-style).
 // Sum-тип Ordering удалён; sign проверяется напрямую.
 //
-// `Comparable`: `compare(other Self) -> int`. User-defined через
+// `Compare`: `compare(other Self) -> int`. User-defined через
 // `fn Type @compare(other Type) -> int`. < 0 = less, 0 = equal, > 0 = greater.
 
-module comparison.comparable
+module comparison.compare
 
 
 type Priority { level int }

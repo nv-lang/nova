@@ -1,34 +1,34 @@
-// protocols_bound_resolution.nv — Plan 62.E.
+// protocols_bound_resolution.nv вЂ” Plan 62.E.
 //
-// Verifies что formal protocol declarations в std/prelude/protocols.nv
-// (re-export'нутые через std/prelude.nv facade) auto-available везде
-// через R27 auto-import, и что bound clauses `[T Hashable]`/`[T Equatable]`/
-// `[T Comparable]`/`[T From[X]]`/`[T Into[X]]`/`[T Printable]` резолвятся
-// через cross-file resolve без explicit import.
+// Verifies С‡С‚Рѕ formal protocol declarations РІ std/prelude/protocols.nv
+// (re-export'РЅСѓС‚С‹Рµ С‡РµСЂРµР· std/prelude.nv facade) auto-available РІРµР·РґРµ
+// С‡РµСЂРµР· R27 auto-import, Рё С‡С‚Рѕ bound clauses `[T Hash]`/`[T Equal]`/
+// `[T Compare]`/`[T From[X]]`/`[T Into[X]]`/`[T Display]` СЂРµР·РѕР»РІСЏС‚СЃСЏ
+// С‡РµСЂРµР· cross-file resolve Р±РµР· explicit import.
 //
-// Покрытие (6 из 8 protocols — TryFrom/TryInto deferred per Plan 56 Ф.2.7
+// РџРѕРєСЂС‹С‚РёРµ (6 РёР· 8 protocols вЂ” TryFrom/TryInto deferred per Plan 56 Р¤.2.7
 // effect-free enforcement):
-//   1. `Hashable` bound — generic fn принимает T удовлетворяющий
-//      `hash() -> u64`. User-defined type implementing структурно.
-//   2. `Equatable` bound — generic fn принимает T удовлетворяющий
+//   1. `Hash` bound вЂ” generic fn РїСЂРёРЅРёРјР°РµС‚ T СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№
+//      `hash() -> u64`. User-defined type implementing СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ.
+//   2. `Equal` bound вЂ” generic fn РїСЂРёРЅРёРјР°РµС‚ T СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№
 //      `equals(other Self) -> bool`. User-defined type implementing.
-//   3. `Comparable` bound — generic fn принимает T удовлетворяющий
+//   3. `Compare` bound вЂ” generic fn РїСЂРёРЅРёРјР°РµС‚ T СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№
 //      `compare(other Self) -> int`. D183 (Plan 91.8a): int-based
-//      memcmp convention; Ordering sum-type удалён.
-//   4. `From[X]` bound — type-decl c bound на conversion.
-//   5. `Into[X]` bound — bound на dual direction (D73 auto-derive).
-//   6. `Printable` bound — formatting protocol (StringBuilder dependency
-//      резолвится через type-checker builtins HashSet).
+//      memcmp convention; Ordering sum-type СѓРґР°Р»С‘РЅ.
+//   4. `From[X]` bound вЂ” type-decl c bound РЅР° conversion.
+//   5. `Into[X]` bound вЂ” bound РЅР° dual direction (D73 auto-derive).
+//   6. `Display` bound вЂ” formatting protocol (StringBuilder dependency
+//      СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· type-checker builtins HashSet).
 //
-// Acceptance: все 6 tests должны pass — type-check проходит при
-// satisfied bound'ах, runtime behavior корректный.
+// Acceptance: РІСЃРµ 6 tests РґРѕР»Р¶РЅС‹ pass вЂ” type-check РїСЂРѕС…РѕРґРёС‚ РїСЂРё
+// satisfied bound'Р°С…, runtime behavior РєРѕСЂСЂРµРєС‚РЅС‹Р№.
 
 module plan62.protocols_bound_resolution
 
 
-// User-defined тип, удовлетворяющий Hashable + Equatable + Comparable
-// структурно. Все три метода реализованы как @hash/@equals/@compare instance fns.
-// Plan 91.8a (D183): rename eq→equals, cmp→compare; Ordering→int.
+// User-defined С‚РёРї, СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№ Hash + Equal + Compare
+// СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ. Р’СЃРµ С‚СЂРё РјРµС‚РѕРґР° СЂРµР°Р»РёР·РѕРІР°РЅС‹ РєР°Рє @hash/@equal/@compare instance fns.
+// Plan 91.8a (D183): rename eqв†’equals, cmpв†’compare; Orderingв†’int.
 type Item {
     id u64
 }
@@ -37,7 +37,7 @@ fn Item.new(id u64) -> Item => { id }
 
 export fn Item @hash() -> u64 => @id
 
-export fn Item @equals(other Item) -> bool => @id == other.id
+export fn Item @equal(other Item) -> bool => @id == other.id
 
 export fn Item @compare(other Item) -> int =>
     if @id < other.id { -1 }
@@ -45,26 +45,26 @@ export fn Item @compare(other Item) -> int =>
     else { 0 }
 
 
-// ────────────────────────────────────────────────────────────────────
-// 1. Hashable bound — резолвится через prelude auto-import.
-// ────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// 1. Hash bound вЂ” СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude auto-import.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-fn hash_anything[T Hashable](v T) -> u64 => v.hash()
+fn hash_anything[T Hash](v T) -> u64 => v.hash()
 
-test "Hashable bound резолвится через prelude — Item.hash()" {
+test "Hash bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude вЂ” Item.hash()" {
     ro it = Item.new(42 as u64)
     ro h = hash_anything(it)
     assert(h == (42 as u64))
 }
 
 
-// ────────────────────────────────────────────────────────────────────
-// 2. Equatable bound — резолвится через prelude auto-import.
-// ────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// 2. Equal bound вЂ” СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude auto-import.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-fn eq_via_bound[T Equatable](a T, b T) -> bool => a.equals(b)
+fn eq_via_bound[T Equal](a T, b T) -> bool => a.equals(b)
 
-test "Equatable bound — Item.equals()" {
+test "Equal bound вЂ” Item.equals()" {
     ro a = Item.new(7 as u64)
     ro b = Item.new(7 as u64)
     ro c = Item.new(8 as u64)
@@ -73,15 +73,15 @@ test "Equatable bound — Item.equals()" {
 }
 
 
-// ────────────────────────────────────────────────────────────────────
-// 3. Comparable bound — резолвится через prelude auto-import.
-//    Plan 91.8a (D183): compare возвращает int (memcmp-style).
-// ────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// 3. Compare bound вЂ” СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude auto-import.
+//    Plan 91.8a (D183): compare РІРѕР·РІСЂР°С‰Р°РµС‚ int (memcmp-style).
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-fn min_of[T Comparable](a T, b T) -> T =>
+fn min_of[T Compare](a T, b T) -> T =>
     if a.compare(b) <= 0 { a } else { b }
 
-test "Comparable bound — Item.compare() с int-based check" {
+test "Compare bound вЂ” Item.compare() СЃ int-based check" {
     ro a = Item.new(3 as u64)
     ro b = Item.new(7 as u64)
     ro m = min_of(a, b)
@@ -89,75 +89,75 @@ test "Comparable bound — Item.compare() с int-based check" {
 }
 
 
-// ────────────────────────────────────────────────────────────────────
-// 4. From[X] bound — type-decl с bound на conversion.
-// ────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// 4. From[X] bound вЂ” type-decl СЃ bound РЅР° conversion.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 type Celsius { value f64 }
 type Fahrenheit { value f64 }
 
-// D73 `From[Fahrenheit]` impl: static factory, не instance method.
-// Syntax: `fn Type.from(...)` (без `@`) — see std/encoding/json.nv:627+.
+// D73 `From[Fahrenheit]` impl: static factory, РЅРµ instance method.
+// Syntax: `fn Type.from(...)` (Р±РµР· `@`) вЂ” see std/encoding/json.nv:627+.
 export fn Celsius.from(f Fahrenheit) -> Celsius =>
     { value: (f.value - 32.0) * 5.0 / 9.0 }
 
-// Generic fn с bound `[T From[X]]` — bootstrap limitation: generic
-// static method dispatch (`T.from(f)`) не monomorphизируется в
-// bootstrap codegen (Plan 14 limitation, см. Q-result-monomorphization).
-// Поэтому здесь тест проверяет direct call на concrete type — bound
-// parsed and resolution через prelude работает; full generic dispatch
-// — Plan 62.E+.
+// Generic fn СЃ bound `[T From[X]]` вЂ” bootstrap limitation: generic
+// static method dispatch (`T.from(f)`) РЅРµ monomorphРёР·РёСЂСѓРµС‚СЃСЏ РІ
+// bootstrap codegen (Plan 14 limitation, СЃРј. Q-result-monomorphization).
+// РџРѕСЌС‚РѕРјСѓ Р·РґРµСЃСЊ С‚РµСЃС‚ РїСЂРѕРІРµСЂСЏРµС‚ direct call РЅР° concrete type вЂ” bound
+// parsed and resolution С‡РµСЂРµР· prelude СЂР°Р±РѕС‚Р°РµС‚; full generic dispatch
+// вЂ” Plan 62.E+.
 
-test "From[X] bound — concrete Celsius.from(Fahrenheit) через prelude resolution" {
+test "From[X] bound вЂ” concrete Celsius.from(Fahrenheit) С‡РµСЂРµР· prelude resolution" {
     ro f = Fahrenheit { value: 212.0 }
     ro c = Celsius.from(f)
-    // 212°F == 100°C
+    // 212В°F == 100В°C
     assert(c.value > 99.9 && c.value < 100.1)
 }
 
-// Bound declaration parsed — type-checker eligibility check (без actual
-// call) проверяет что bound резолвится через prelude.
+// Bound declaration parsed вЂ” type-checker eligibility check (Р±РµР· actual
+// call) РїСЂРѕРІРµСЂСЏРµС‚ С‡С‚Рѕ bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude.
 fn _accepts_from[T From[Fahrenheit]](_v T) -> () => ()
 
 
-// ────────────────────────────────────────────────────────────────────
-// 5. Into[X] bound — dual direction, D73 auto-derive (BOOTSTRAP NOTE).
-// ────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// 5. Into[X] bound вЂ” dual direction, D73 auto-derive (BOOTSTRAP NOTE).
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-// D73 auto-derive `Into[U]` от `From[T]` в bootstrap'е НЕ реализован:
-// type-checker не синтезирует `Fahrenheit.to_str()` body из существующей
-// `Celsius.from(Fahrenheit)` декларации (см. plan doc §62.E + Plan 62.E+).
-// Поэтому здесь тест проверяет explicit `@into` impl: канонический
-// pattern для Into-удовлетворения до полной D73 реализации.
+// D73 auto-derive `Into[U]` РѕС‚ `From[T]` РІ bootstrap'Рµ РќР• СЂРµР°Р»РёР·РѕРІР°РЅ:
+// type-checker РЅРµ СЃРёРЅС‚РµР·РёСЂСѓРµС‚ `Fahrenheit.to_str()` body РёР· СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµР№
+// `Celsius.from(Fahrenheit)` РґРµРєР»Р°СЂР°С†РёРё (СЃРј. plan doc В§62.E + Plan 62.E+).
+// РџРѕСЌС‚РѕРјСѓ Р·РґРµСЃСЊ С‚РµСЃС‚ РїСЂРѕРІРµСЂСЏРµС‚ explicit `@into` impl: РєР°РЅРѕРЅРёС‡РµСЃРєРёР№
+// pattern РґР»СЏ Into-СѓРґРѕРІР»РµС‚РІРѕСЂРµРЅРёСЏ РґРѕ РїРѕР»РЅРѕР№ D73 СЂРµР°Р»РёР·Р°С†РёРё.
 
 type FahrToC { value f64 }
 
 export fn FahrToC @into() -> Celsius =>
     { value: (@value - 32.0) * 5.0 / 9.0 }
 
-// Generic fn с bound `[T Into[Celsius]]` — type-checker валидирует что
-// T имеет `into() -> Celsius` метод (структурно через prelude).
+// Generic fn СЃ bound `[T Into[Celsius]]` вЂ” type-checker РІР°Р»РёРґРёСЂСѓРµС‚ С‡С‚Рѕ
+// T РёРјРµРµС‚ `into() -> Celsius` РјРµС‚РѕРґ (СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ С‡РµСЂРµР· prelude).
 fn needs_into[T Into[Celsius]](v T) -> Celsius => v.to_str()
 
-test "Into[X] bound — explicit @into impl резолвится через prelude" {
+test "Into[X] bound вЂ” explicit @into impl СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude" {
     ro f = FahrToC { value: 32.0 }
     ro c = needs_into(f)
-    // 32°F == 0°C
+    // 32В°F == 0В°C
     assert(c.value > -0.1 && c.value < 0.1)
 }
 
 
-// ────────────────────────────────────────────────────────────────────
-// 6. Printable bound — StringBuilder dependency резолвится через builtins.
-//    Plan 91.8a (D183): renamed Printable → Printable.
-// ────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// 6. Display bound вЂ” StringBuilder dependency СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· builtins.
+//    Plan 91.8a (D183): renamed Display в†’ Display.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-// User-defined type с Printable impl. StringBuilder — opaque runtime type
-// (builtin HashSet), API: `append(s str)`, `into() -> str` (см.
-// std/runtime/string_builder.nv). `str.from(int)` для int → str.
+// User-defined type СЃ Display impl. StringBuilder вЂ” opaque runtime type
+// (builtin HashSet), API: `append(s str)`, `into() -> str` (СЃРј.
+// std/runtime/string_builder.nv). `str.from(int)` РґР»СЏ int в†’ str.
 type Pair { x int, y int }
 
-export fn Pair @fmt(mut sb StringBuilder) -> () {
+export fn Pair @display(mut sb StringBuilder) -> () {
     sb.append("(")
     sb.append(str.from(@x))
     sb.append(", ")
@@ -165,17 +165,17 @@ export fn Pair @fmt(mut sb StringBuilder) -> () {
     sb.append(")")
 }
 
-// Generic fn с Printable bound — caller-side проверка eligibility.
-// Note: `mut sb` — StringBuilder mutation в protocol-method вызывается
-// напрямую (бойлерплейт через bound dispatch — Plan 56 effect-free
-// разрешает mutating receiver через `mut @method`).
-fn fmt_to_string[T Printable](v T) -> str {
+// Generic fn СЃ Display bound вЂ” caller-side РїСЂРѕРІРµСЂРєР° eligibility.
+// Note: `mut sb` вЂ” StringBuilder mutation РІ protocol-method РІС‹Р·С‹РІР°РµС‚СЃСЏ
+// РЅР°РїСЂСЏРјСѓСЋ (Р±РѕР№Р»РµСЂРїР»РµР№С‚ С‡РµСЂРµР· bound dispatch вЂ” Plan 56 effect-free
+// СЂР°Р·СЂРµС€Р°РµС‚ mutating receiver С‡РµСЂРµР· `mut @method`).
+fn fmt_to_string[T Display](v T) -> str {
     consume sb = StringBuilder.new()
     v.fmt(sb)
     sb.as_str()
 }
 
-test "Printable bound — Pair.fmt() in StringBuilder" {
+test "Display bound вЂ” Pair.fmt() in StringBuilder" {
     ro p = Pair { x: 3, y: 7 }
     ro s = fmt_to_string(p)
     assert(s == "(3, 7)")

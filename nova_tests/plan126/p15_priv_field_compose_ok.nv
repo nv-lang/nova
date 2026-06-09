@@ -1,9 +1,9 @@
-// Plan 126 — POS F15:
-// `priv` field совместим с auto-derive — synthesizer = type-method scope.
-// AC-126.13 (composability с priv).
+// Plan 126 вЂ” POS F15:
+// `priv` field СЃРѕРІРјРµСЃС‚РёРј СЃ auto-derive вЂ” synthesizer = type-method scope.
+// AC-126.13 (composability СЃ priv).
 module plan126.p15_priv_field_compose_ok
 
-#impl(Equatable)
+#impl(Equal)
 type Secret {
     priv code int
     label str

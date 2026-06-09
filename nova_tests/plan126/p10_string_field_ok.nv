@@ -1,9 +1,9 @@
-// Plan 126 — POS F10:
-// `str` field eligible для auto-derive Equatable (primitive).
-// AC-126.2 — primitive str.
+// Plan 126 вЂ” POS F10:
+// `str` field eligible РґР»СЏ auto-derive Equal (primitive).
+// AC-126.2 вЂ” primitive str.
 module plan126.p10_string_field_ok
 
-#impl(Equatable)
+#impl(Equal)
 type Person {
     name str
     age int

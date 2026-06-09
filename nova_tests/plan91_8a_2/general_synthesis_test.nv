@@ -1,7 +1,7 @@
 module plan91_8a_2.general_synthesis_test
 
 // Plan 91.8a.2 [M-91.8a.2-default-body-general]: synthesis is generalized.
-// Defines a NEW protocol (not Equatable/Printable) with a default body that
+// Defines a NEW protocol (not Equal/Display) with a default body that
 // references a method available на T. Synthesis должна работать без hardcoded
 // special-case для этого protocol name.
 

@@ -1,7 +1,7 @@
-// Plan 91.14 Ф.6 POS T8 — nested struct debug.
+// Plan 91.14 Р¤.6 POS T8 вЂ” nested struct debug.
 //
-// Verify recursive @debug_fmt invocation — outer Container calls
-// inner Point's @debug_fmt via manual impl.
+// Verify recursive @debug invocation вЂ” outer Container calls
+// inner Point's @debug via manual impl.
 
 module plan91_14.t8_pos_debug_nested_struct
 
@@ -10,7 +10,7 @@ type Point {
     y int
 }
 
-fn Point @debug_fmt(mut sb StringBuilder) -> () {
+fn Point @debug(mut sb StringBuilder) -> () {
     sb.append("Point { x: ")
     sb.append(str.from(@x))
     sb.append(", y: ")
@@ -23,7 +23,7 @@ type Container {
     origin Point
 }
 
-fn Container @debug_fmt(mut sb StringBuilder) -> () {
+fn Container @debug(mut sb StringBuilder) -> () {
     sb.append("Container { label: \"")
     sb.append(@label)
     sb.append("\", origin: ")

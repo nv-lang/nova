@@ -21,17 +21,17 @@ test "verified #impl(Greetable) — bare call works" {
     assert(u.greet() == "Hello, World")
 }
 
-test "verified #impl multi: Equatable + Comparable + Printable" {
+test "verified #impl multi: Equal + Compare + Display" {
     ro a = Coin { value: 5 }
     ro b = Coin { value: 5 }
-    assert(a.equals(b))
+    assert(a.equal(b))
     assert(a.compare(b) == 0)
     consume sb = StringBuilder.new()
-    a.fmt(sb)
+    a.display(sb)
     assert(sb.as_str() == "Coin(5)")
 }
 
-#impl(Equatable + Comparable + Printable)
+#impl(Equal + Compare + Display)
 type Coin { value int }
 fn Coin @compare(other Self) -> int =>
     if @value < other.value { -1 }

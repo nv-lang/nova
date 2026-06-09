@@ -1,25 +1,25 @@
-// generic_bounds.nv — Plan 15 (D72): generic bounds enforcement.
+// generic_bounds.nv вЂ” Plan 15 (D72): generic bounds enforcement.
 //
-// `[T Hashable]` — bound на generic-параметре. Type-checker валидирует
-// что concrete-T удовлетворяет protocol-bound'у на use-site.
+// `[T Hash]` вЂ” bound РЅР° generic-РїР°СЂР°РјРµС‚СЂРµ. Type-checker РІР°Р»РёРґРёСЂСѓРµС‚
+// С‡С‚Рѕ concrete-T СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ protocol-bound'Сѓ РЅР° use-site.
 //
-// Тесты в этом файле проверяют что **type-check проходит** при satisfied
-// bound'ах — runtime-роль generic-erased функций здесь второстепенна.
-// (Codegen monomorphization для generic-fn с body — отдельная задача;
-// все тесты здесь конструируют value и передают в generic fn, но
-// результат ignore'ится.)
+// РўРµСЃС‚С‹ РІ СЌС‚РѕРј С„Р°Р№Р»Рµ РїСЂРѕРІРµСЂСЏСЋС‚ С‡С‚Рѕ **type-check РїСЂРѕС…РѕРґРёС‚** РїСЂРё satisfied
+// bound'Р°С… вЂ” runtime-СЂРѕР»СЊ generic-erased С„СѓРЅРєС†РёР№ Р·РґРµСЃСЊ РІС‚РѕСЂРѕСЃС‚РµРїРµРЅРЅР°.
+// (Codegen monomorphization РґР»СЏ generic-fn СЃ body вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р°;
+// РІСЃРµ С‚РµСЃС‚С‹ Р·РґРµСЃСЊ РєРѕРЅСЃС‚СЂСѓРёСЂСѓСЋС‚ value Рё РїРµСЂРµРґР°СЋС‚ РІ generic fn, РЅРѕ
+// СЂРµР·СѓР»СЊС‚Р°С‚ ignore'РёС‚СЃСЏ.)
 //
-// Negative tests (compile-error при non-satisfied bound) — отдельный
-// файл `tmp_*.nv`, проверяется вручную через `nova-codegen check`.
+// Negative tests (compile-error РїСЂРё non-satisfied bound) вЂ” РѕС‚РґРµР»СЊРЅС‹Р№
+// С„Р°Р№Р» `tmp_*.nv`, РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РІСЂСѓС‡РЅСѓСЋ С‡РµСЂРµР· `nova-codegen check`.
 
 module types.generic_bounds
 
 
-// Plan 15 D53 strict: protocol/effect разделены в AST. Codegen эмитит
-// vtable только для effect-kind; protocol — compile-time-only. Это
-// попутно фиксит pre-existing Self-bug — `Self` в protocol-методе
-// больше не ломает codegen потому что type_ref_to_c для protocol-
-// методов вообще не вызывается.
+// Plan 15 D53 strict: protocol/effect СЂР°Р·РґРµР»РµРЅС‹ РІ AST. Codegen СЌРјРёС‚РёС‚
+// vtable С‚РѕР»СЊРєРѕ РґР»СЏ effect-kind; protocol вЂ” compile-time-only. Р­С‚Рѕ
+// РїРѕРїСѓС‚РЅРѕ С„РёРєСЃРёС‚ pre-existing Self-bug вЂ” `Self` РІ protocol-РјРµС‚РѕРґРµ
+// Р±РѕР»СЊС€Рµ РЅРµ Р»РѕРјР°РµС‚ codegen РїРѕС‚РѕРјСѓ С‡С‚Рѕ type_ref_to_c РґР»СЏ protocol-
+// РјРµС‚РѕРґРѕРІ РІРѕРѕР±С‰Рµ РЅРµ РІС‹Р·С‹РІР°РµС‚СЃСЏ.
 
 type GbHashable protocol {
     @hash() -> u64
@@ -27,13 +27,13 @@ type GbHashable protocol {
 }
 
 
-// Второй protocol — методы с primitives.
+// Р’С‚РѕСЂРѕР№ protocol вЂ” РјРµС‚РѕРґС‹ СЃ primitives.
 type GbCountable protocol {
     @count() -> int
 }
 
 
-// Concrete тип с реализацией обоих required methods.
+// Concrete С‚РёРї СЃ СЂРµР°Р»РёР·Р°С†РёРµР№ РѕР±РѕРёС… required methods.
 type GbUser {
     id   u64
     name str
@@ -49,22 +49,22 @@ export fn GbUser @eq(other GbUser) -> bool => @id == other.id
 export fn GbUser @count() -> int => @id as int
 
 
-// Generic fn с bound. Bound-проверка в type-checker'е (Plan 15).
+// Generic fn СЃ bound. Bound-РїСЂРѕРІРµСЂРєР° РІ type-checker'Рµ (Plan 15).
 fn require_hashable[T GbHashable](x T) -> T => x
 
 
-test "bound satisfied — GbUser имеет hash() → type-check OK" {
+test "bound satisfied вЂ” GbUser РёРјРµРµС‚ hash() в†’ type-check OK" {
     ro user = GbUser { id: 42 as u64, name: "alice" }
-    ro _ = require_hashable(user)   // type-checker валидирует bound
+    ro _ = require_hashable(user)   // type-checker РІР°Р»РёРґРёСЂСѓРµС‚ bound
     assert(true)
 }
 
 
-// Multi-bound: два generic'а с одним и тем же bound.
+// Multi-bound: РґРІР° generic'Р° СЃ РѕРґРЅРёРј Рё С‚РµРј Р¶Рµ bound.
 fn require_two_hashable[A GbHashable, B GbHashable](a A, _b B) -> A => a
 
 
-test "multi-bound — оба satisfied" {
+test "multi-bound вЂ” РѕР±Р° satisfied" {
     ro u = GbUser { id: 7 as u64, name: "x" }
     ro v = GbUser { id: 8 as u64, name: "y" }
     ro _ = require_two_hashable(u, v)
@@ -72,25 +72,25 @@ test "multi-bound — оба satisfied" {
 }
 
 
-// No-bound generic — обычный generic, без D72-проверок.
+// No-bound generic вЂ” РѕР±С‹С‡РЅС‹Р№ generic, Р±РµР· D72-РїСЂРѕРІРµСЂРѕРє.
 fn identity_no_bound[T](x T) -> T => x
 
 
-test "no-bound generic — компилируется как раньше" {
+test "no-bound generic вЂ” РєРѕРјРїРёР»РёСЂСѓРµС‚СЃСЏ РєР°Рє СЂР°РЅСЊС€Рµ" {
     ro u = GbUser { id: 1 as u64, name: "n" }
     ro _ = identity_no_bound(u)
     assert(true)
 }
 
 
-// Mixed: один с bound (GbHashable), второй без.
+// Mixed: РѕРґРёРЅ СЃ bound (GbHashable), РІС‚РѕСЂРѕР№ Р±РµР·.
 fn lookup_or_bound[K GbHashable, V](_key K, fallback V) -> V => fallback
 
 
-test "mixed bound — один с bound, другой без" {
+test "mixed bound вЂ” РѕРґРёРЅ СЃ bound, РґСЂСѓРіРѕР№ Р±РµР·" {
     ro key = GbUser { id: 1 as u64, name: "k" }
     ro r = lookup_or_bound(key, 99)
-    // r — int (primitive), roundtrip через void* работает (intptr_t).
+    // r вЂ” int (primitive), roundtrip С‡РµСЂРµР· void* СЂР°Р±РѕС‚Р°РµС‚ (intptr_t).
     assert(r == 99)
 }
 
@@ -99,21 +99,21 @@ test "mixed bound — один с bound, другой без" {
 fn require_countable[T GbCountable](x T) -> T => x
 
 
-test "different bound — GbCountable vs GbHashable" {
+test "different bound вЂ” GbCountable vs GbHashable" {
     ro u = GbUser { id: 5 as u64, name: "o" }
-    ro _ = require_countable(u)   // GbUser имеет @count → OK
-    ro _ = require_hashable(u)    // GbUser имеет @hash → OK
+    ro _ = require_countable(u)   // GbUser РёРјРµРµС‚ @count в†’ OK
+    ro _ = require_hashable(u)    // GbUser РёРјРµРµС‚ @hash в†’ OK
     assert(true)
 }
 
 
-// Plan 15 Ф.4: forward-dependency bound — bound на V ссылается на
-// предыдущий generic-параметр K. Парсер принимает `[K Bound1, V
-// Bound2[K]]` (bound — обычный TypeRef через parse_type, который
-// допускает type-args). BoundCtx::check_satisfaction для
-// параметризованных bound'ов сейчас permissive (early-return для
-// non-single-name path) — это закрывается отдельной задачей. Тест
-// фиксирует что парсер + текущий чекер пропускают валидный код.
+// Plan 15 Р¤.4: forward-dependency bound вЂ” bound РЅР° V СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР°
+// РїСЂРµРґС‹РґСѓС‰РёР№ generic-РїР°СЂР°РјРµС‚СЂ K. РџР°СЂСЃРµСЂ РїСЂРёРЅРёРјР°РµС‚ `[K Bound1, V
+// Bound2[K]]` (bound вЂ” РѕР±С‹С‡РЅС‹Р№ TypeRef С‡РµСЂРµР· parse_type, РєРѕС‚РѕСЂС‹Р№
+// РґРѕРїСѓСЃРєР°РµС‚ type-args). BoundCtx::check_satisfaction РґР»СЏ
+// РїР°СЂР°РјРµС‚СЂРёР·РѕРІР°РЅРЅС‹С… bound'РѕРІ СЃРµР№С‡Р°СЃ permissive (early-return РґР»СЏ
+// non-single-name path) вЂ” СЌС‚Рѕ Р·Р°РєСЂС‹РІР°РµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕР№ Р·Р°РґР°С‡РµР№. РўРµСЃС‚
+// С„РёРєСЃРёСЂСѓРµС‚ С‡С‚Рѕ РїР°СЂСЃРµСЂ + С‚РµРєСѓС‰РёР№ С‡РµРєРµСЂ РїСЂРѕРїСѓСЃРєР°СЋС‚ РІР°Р»РёРґРЅС‹Р№ РєРѕРґ.
 type GbFromKey[T] protocol {
     @from_key(t T) -> Self
 }
@@ -141,7 +141,7 @@ export fn GbValue @from_key(k GbKey) -> GbValue => { derived: k.raw }
 fn pair_forward[K GbHashable, V GbFromKey[K]](k K, v V) -> V => v
 
 
-test "forward-dependency — bound[V] ссылается на K" {
+test "forward-dependency вЂ” bound[V] СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° K" {
     ro k = GbKey { raw: 100 as u64 }
     ro v = GbValue { derived: 0 as u64 }
     ro _ = pair_forward(k, v)

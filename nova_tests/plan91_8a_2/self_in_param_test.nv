@@ -5,7 +5,7 @@ module plan91_8a_2.self_in_param_test
 type Pt { x int, y int }
 
 // Self в param — раньше E7001; должно работать после fix.
-fn Pt @equals(other Self) -> bool => @x == other.x && @y == other.y
+fn Pt @equal(other Self) -> bool => @x == other.x && @y == other.y
 
 fn Pt @compare(other Self) -> int =>
     if @x < other.x { -1 }
@@ -14,12 +14,12 @@ fn Pt @compare(other Self) -> int =>
     else if @y > other.y { 1 }
     else { 0 }
 
-test "Self в param works для @equals" {
+test "Self в param works для @equal" {
     ro a = Pt { x: 1, y: 2 }
     ro b = Pt { x: 1, y: 2 }
     ro c = Pt { x: 3, y: 4 }
-    assert(a.equals(b))
-    assert(!a.equals(c))
+    assert(a.equal(b))
+    assert(!a.equal(c))
 }
 
 test "Self в param works для @compare" {

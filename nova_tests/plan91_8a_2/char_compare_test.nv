@@ -59,7 +59,7 @@ test "char.compare прямой вызов" {
     assert('a'.compare('a') == 0)
 }
 
-// [T Comparable] bound с примитивами — followup
+// [T Compare] bound с примитивами — followup
 // [M-91.8a.2-primitives-in-generic-bound] (mono dispatch resolution для
-// primitive types в generic Comparable bound; single-key method_receivers
+// primitive types в generic Compare bound; single-key method_receivers
 // fallback теряет obj-type discrimination).

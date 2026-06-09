@@ -2,9 +2,9 @@ module plan91_8c.generic_min_max_test
 
 import std.sort
 
-// Plan 91.8c (D185): generic min_of/max_of для [T Comparable].
+// Plan 91.8c (D185): generic min_of/max_of РґР»СЏ [T Compare].
 
-test "min_of/max_of для []int" {
+test "min_of/max_of РґР»СЏ []int" {
     ro xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
     match xs.min_of() {
         Some(m) => assert(m == 1)
@@ -16,7 +16,7 @@ test "min_of/max_of для []int" {
     }
 }
 
-test "min_of/max_of для []str" {
+test "min_of/max_of РґР»СЏ []str" {
     ro xs []str = ["zebra", "apple", "mango"]
     match xs.min_of() {
         Some(m) => assert(m == "apple")
@@ -28,7 +28,7 @@ test "min_of/max_of для []str" {
     }
 }
 
-test "min_of/max_of empty array → None" {
+test "min_of/max_of empty array в†’ None" {
     ro empty []int = []
     match empty.min_of() {
         Some(_) => assert(false)

@@ -1,7 +1,7 @@
 // EXPECT_COMPILE_ERROR E7320
 //
-// Plan 126.2 Ф.3 — NEG n1 (no-leak verification):
-// A record WITHOUT `#impl(Cloneable)` must NOT receive an auto-derived
+// Plan 126.2 Р¤.3 вЂ” NEG n1 (no-leak verification):
+// A record WITHOUT `#impl(Clone)` must NOT receive an auto-derived
 // `@clone()`. Calling `.clone()` therefore fails to resolve at compile time.
 // Confirms auto-derive synthesis is gated on the `#impl(...)` annotation and
 // does not leak into non-annotated types (default behavior unchanged).
@@ -12,7 +12,7 @@ type Plain {
     b int
 }
 
-test "no #impl(Cloneable) → .clone() does not resolve" {
+test "no #impl(Clone) в†’ .clone() does not resolve" {
     ro x = Plain { a: 1, b: 2 }
     ro y = x.clone()
     assert(y.a == 1)

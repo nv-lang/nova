@@ -1,15 +1,15 @@
 // EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
 //
-// Plan 126.2 Ф.3 — NEG n2:
-// `#impl(Equatable)` on a record whose field type does not implement
-// Equatable → auto-derive synthesis fails at compile time. AC-126.2 (negative).
+// Plan 126.2 Р¤.3 вЂ” NEG n2:
+// `#impl(Equal)` on a record whose field type does not implement
+// Equal в†’ auto-derive synthesis fails at compile time. AC-126.2 (negative).
 module plan126_2.n2_field_lacks_protocol_neg
 
 type BareInner {
     n int
 }
 
-#impl(Equatable)
+#impl(Equal)
 type WrapBare {
     inner BareInner
 }

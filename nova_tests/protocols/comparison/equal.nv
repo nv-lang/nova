@@ -1,49 +1,49 @@
-// Plan 85.4 Ф.1 — Equatable протокол.
+// Plan 85.4 Ф.1 — Equal протокол.
 // Plan 91.8a.2 part 3 (D183 amendment): magic methods @eq/@lt/@le/@gt/@ge
-// удалены. == operator synthesized через @equals OR @compare. Type-author
-// пишет только @equals (для Equatable) или @compare (Comparable bound).
+// удалены. == operator synthesized через @equal OR @compare. Type-author
+// пишет только @equal (для Equal) или @compare (Comparable bound).
 
-module comparison.equatable
+module comparison.equal
 
 
 type Point { x int, y int }
 
 // Single explicit method — operators ==/!= synthesized.
-fn Point @equals(other Point) -> bool => @x == other.x && @y == other.y
+fn Point @equal(other Point) -> bool => @x == other.x && @y == other.y
 
 
-test "equals — рефлексивность: x.equals(x)" {
+test "equals — рефлексивность: x.equal(x)" {
     ro p = Point { x: 3, y: 4 }
-    assert(p.equals(p))
+    assert(p.equal(p))
 }
 
 test "equals — равные значения" {
     ro a = Point { x: 1, y: 2 }
     ro b = Point { x: 1, y: 2 }
-    assert(a.equals(b))
+    assert(a.equal(b))
 }
 
 test "equals — неравенство" {
     ro a = Point { x: 1, y: 2 }
     ro b = Point { x: 9, y: 2 }
-    assert(!a.equals(b))
+    assert(!a.equal(b))
 }
 
-test "equals — симметрия: a.equals(b) == b.equals(a)" {
+test "equals — симметрия: a.equal(b) == b.equal(a)" {
     ro a = Point { x: 5, y: 5 }
     ro b = Point { x: 5, y: 5 }
     ro c = Point { x: 7, y: 1 }
-    assert(a.equals(b) == b.equals(a))
-    assert(a.equals(c) == c.equals(a))
+    assert(a.equal(b) == b.equal(a))
+    assert(a.equal(c) == c.equal(a))
 }
 
 test "equals — транзитивность: a==b, b==c => a==c" {
     ro a = Point { x: 2, y: 2 }
     ro b = Point { x: 2, y: 2 }
     ro c = Point { x: 2, y: 2 }
-    assert(a.equals(b))
-    assert(b.equals(c))
-    assert(a.equals(c))
+    assert(a.equal(b))
+    assert(b.equal(c))
+    assert(a.equal(c))
 }
 
 

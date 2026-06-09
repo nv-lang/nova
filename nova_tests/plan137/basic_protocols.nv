@@ -1,0 +1,114 @@
+// Plan 137 (D237) — basic protocol rename smoke test.
+// Verifies: Hash, Equal, Compare, Clone, Display, Debug all work.
+
+module plan137.basic_protocols
+
+
+// ── Hash ──────────────────────────────────────────────────────────
+
+type Color { r u8, g u8, b u8 }
+
+fn Color @hash() -> u64 =>
+    (@r as u64) * 65536 + (@g as u64) * 256 + (@b as u64)
+
+test "Hash — determinism" {
+    ro c = Color { r: 255, g: 0, b: 128 }
+    assert(c.hash() == c.hash())
+}
+
+test "Hash — different values differ" {
+    ro red = Color { r: 255, g: 0, b: 0 }
+    ro blue = Color { r: 0, g: 0, b: 255 }
+    assert(red.hash() != blue.hash())
+}
+
+
+// ── Equal ─────────────────────────────────────────────────────────
+
+type Point { x int, y int }
+
+fn Point @equal(other Point) -> bool => @x == other.x && @y == other.y
+
+test "Equal — basic equality" {
+    ro a = Point { x: 1, y: 2 }
+    ro b = Point { x: 1, y: 2 }
+    assert(a.equal(b))
+}
+
+test "Equal — inequality" {
+    ro a = Point { x: 1, y: 2 }
+    ro b = Point { x: 9, y: 2 }
+    assert(!a.equal(b))
+}
+
+test "Equal — operator == uses @equal" {
+    ro a = Point { x: 10, y: 20 }
+    ro b = Point { x: 10, y: 20 }
+    assert(a == b)
+}
+
+test "Equal — operator != uses @equal" {
+    ro a = Point { x: 1, y: 1 }
+    ro b = Point { x: 2, y: 2 }
+    assert(a != b)
+}
+
+
+// ── Compare ───────────────────────────────────────────────────────
+
+type Money { cents int }
+
+fn Money @compare(other Money) -> int => @cents - other.cents
+
+test "Compare — less returns negative" {
+    ro a = Money { cents: 10 }
+    ro b = Money { cents: 20 }
+    assert(a.compare(b) < 0)
+}
+
+test "Compare — equal returns zero" {
+    ro a = Money { cents: 50 }
+    ro b = Money { cents: 50 }
+    assert(a.compare(b) == 0)
+}
+
+test "Compare — greater returns positive" {
+    ro a = Money { cents: 100 }
+    ro b = Money { cents: 50 }
+    assert(a.compare(b) > 0)
+}
+
+test "Compare — operators < / > / <= / >=" {
+    ro a = Money { cents: 10 }
+    ro b = Money { cents: 20 }
+    assert(a < b)
+    assert(b > a)
+    assert(a <= a)
+    assert(b >= b)
+}
+
+
+// ── Display ───────────────────────────────────────────────────────
+
+type Pair { x int, y int }
+
+fn Pair @display(mut sb StringBuilder) -> () {
+    sb.append("(")
+    sb.append(str.from(@x))
+    sb.append(", ")
+    sb.append(str.from(@y))
+    sb.append(")")
+}
+
+test "Display — @display method works" {
+    ro p = Pair { x: 3, y: 4 }
+    consume sb = StringBuilder.new()
+    p.display(sb)
+    assert(sb.as_str() == "(3, 4)")
+}
+
+test "Display — interp-string uses @display" {
+    ro p = Pair { x: 7, y: 8 }
+    ro s = "${p}"
+    assert(s == "(7, 8)")
+}

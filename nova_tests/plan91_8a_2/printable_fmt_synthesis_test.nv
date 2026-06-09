@@ -1,34 +1,34 @@
 module plan91_8a_2.printable_fmt_synthesis_test
 
-// Plan 91.8a.2 followup: Printable.fmt default body synthesis (MVP).
-// Type T без explicit @fmt но с `fn str.from(T) -> str` overload или
-// `fn T @into() -> str` (D73/D77) satisfies Printable via default body
-// fallback. Codegen inline-synthesizes `obj.fmt(sb)` as
+// Plan 91.8a.2 followup: Display.fmt default body synthesis (MVP).
+// Type T без explicit @display но с `fn str.from(T) -> str` overload или
+// `fn T @into() -> str` (D73/D77) satisfies Display via default body
+// fallback. Codegen inline-synthesizes `obj.display(sb)` as
 // `Nova_StringBuilder_method_append(sb, str.from(obj))`.
-// Mirror of the Equatable.equals MVP synthesis pattern.
+// Mirror of the Equal.equals MVP synthesis pattern.
 
-#impl(Printable)
+#impl(Display)
 type Money { cents int }
 
 // Path 1: `fn str.from(T)` overload — canonical D183.
 fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
 
 // Path 2 (separate type): `fn T @into() -> str` — D73 conversion.
-#impl(Printable)
+#impl(Display)
 type Coin { value int }
 fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
-// Generic bound — body calls .fmt() которое synthesized из default body.
-fn show[T Printable](x T, sb StringBuilder) -> () => x.fmt(sb)
+// Generic bound — body calls .display() которое synthesized из default body.
+fn show[T Display](x T, sb StringBuilder) -> () => x.display(sb)
 
-test "Money satisfies Printable bound via str.from(T) overload" {
+test "Money satisfies Display bound via str.from(T) overload" {
     ro m = Money { cents: 1250 }
     consume sb = StringBuilder.new()
     show(m, sb)
     assert(sb.as_str() == "Money(1250)")
 }
 
-test "Coin satisfies Printable bound via @into → str chain" {
+test "Coin satisfies Display bound via @into → str chain" {
     ro c = Coin { value: 7 }
     consume sb = StringBuilder.new()
     show(c, sb)

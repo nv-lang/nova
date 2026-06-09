@@ -1,22 +1,22 @@
-// Plan 62.E — Hashable protocol regression marker.
+// Plan 62.E вЂ” Hash protocol regression marker.
 //
-// Plan 62.E (commit 05c74d4dd11) разнёс combined Hashable из
-// std/collections/hashmap.nv (hash + eq) в split: Hashable (hash-only)
-// + Equatable (eq-only) per D26/D109. Один источник истины — prelude.
+// Plan 62.E (commit 05c74d4dd11) СЂР°Р·РЅС‘СЃ combined Hash РёР·
+// std/collections/hashmap.nv (hash + eq) РІ split: Hash (hash-only)
+// + Equal (eq-only) per D26/D109. РћРґРёРЅ РёСЃС‚РѕС‡РЅРёРє РёСЃС‚РёРЅС‹ вЂ” prelude.
 //
-// Эта проверка: user может объявить protocol с тем же именем, что
-// prelude, и получает W_PRELUDE_SHADOW warning (per 62.D bis-1 +
-// 62.F.bis Ф.2 — structured lint), не CODEGEN-FAIL.
+// Р­С‚Р° РїСЂРѕРІРµСЂРєР°: user РјРѕР¶РµС‚ РѕР±СЉСЏРІРёС‚СЊ protocol СЃ С‚РµРј Р¶Рµ РёРјРµРЅРµРј, С‡С‚Рѕ
+// prelude, Рё РїРѕР»СѓС‡Р°РµС‚ W_PRELUDE_SHADOW warning (per 62.D bis-1 +
+// 62.F.bis Р¤.2 вЂ” structured lint), РЅРµ CODEGEN-FAIL.
 //
-// Positive path: locally-defined Hashable со structurally-different
-// signature не ломает компиляцию.
+// Positive path: locally-defined Hash СЃРѕ structurally-different
+// signature РЅРµ Р»РѕРјР°РµС‚ РєРѕРјРїРёР»СЏС†РёСЋ.
 
 module plan62.duplicate_hashable_protocol
 
-// User shadows prelude Hashable с другим required method (extra arg).
-// W_PRELUDE_SHADOW warning, не error. User-version wins для structural
-// matching внутри этого module'я.
-type Hashable protocol {
+// User shadows prelude Hash СЃ РґСЂСѓРіРёРј required method (extra arg).
+// W_PRELUDE_SHADOW warning, РЅРµ error. User-version wins РґР»СЏ structural
+// matching РІРЅСѓС‚СЂРё СЌС‚РѕРіРѕ module'СЏ.
+type Hash protocol {
     @hash_with_seed(seed u64) -> u64
 }
 
@@ -26,7 +26,7 @@ type Bucket {
 
 fn Bucket @hash_with_seed(seed u64) -> u64 => (@value as u64) ^ seed
 
-test "user-defined Hashable shadow — runs OK через user-version" {
+test "user-defined Hash shadow вЂ” runs OK С‡РµСЂРµР· user-version" {
     ro b = Bucket { value: 42 }
     ro h = b.hash_with_seed(7 as u64)
     assert(h != (0 as u64))

@@ -1,12 +1,12 @@
-// Plan 126 — POS F13:
-// NamedTuple (Plan 120 D215) auto-derive Equatable.
+// Plan 126 вЂ” POS F13:
+// NamedTuple (Plan 120 D215) auto-derive Equal.
 // AC-126.12.
 module plan126.p13_named_tuple_ok
 
-#impl(Equatable)
+#impl(Equal)
 type Pair(left int, right int)
 
-test "named tuple auto-derives Equatable" {
+test "named tuple auto-derives Equal" {
     ro p = Pair(1, 2)
     assert(p.left == 1)
 }

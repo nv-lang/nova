@@ -1,8 +1,8 @@
 module plan91_8a_2.coercion_equatable_test
 
-// Plan 91.8a.2 followup: Equatable coercion с Self-typed param.
-// `let x Equatable = m` works; `x.equals(y)` virtual dispatch where y is
-// also Equatable-typed; codegen lowers Self → void* в vtable struct,
+// Plan 91.8a.2 followup: Equal coercion с Self-typed param.
+// `let x Equal = m` works; `x.equal(y)` virtual dispatch where y is
+// also Equal-typed; codegen lowers Self → void* в vtable struct,
 // thunk casts to concrete, call site unwraps NovaBox arg к .data.
 
 type Score { value int }
@@ -11,24 +11,24 @@ fn Score @compare(other Self) -> int =>
     else if @value > other.value { 1 }
     else { 0 }
 
-test "Score coerced to Equatable, virtual equals() call" {
+test "Score coerced to Equal, virtual equals() call" {
     ro a = Score { value: 7 }
     ro b = Score { value: 7 }
     ro c = Score { value: 8 }
-    ro ea Equatable = a
-    ro eb Equatable = b
-    ro ec Equatable = c
-    assert(ea.equals(eb))
-    assert(!ea.equals(ec))
+    ro ea Equal = a
+    ro eb Equal = b
+    ro ec Equal = c
+    assert(ea.equal(eb))
+    assert(!ea.equal(ec))
 }
 
-test "Equatable coerced — equals with concrete RHS (auto-passthrough)" {
+test "Equal coerced — equals with concrete RHS (auto-passthrough)" {
     ro a = Score { value: 42 }
     ro b = Score { value: 42 }
-    ro ea Equatable = a
-    // Note: ea.equals(b) where b is concrete Score — codegen passes b
+    ro ea Equal = a
+    // Note: ea.equal(b) where b is concrete Score — codegen passes b
     // directly (not via .data unwrap). Type-checker accepts because
-    // Equatable.equals(other Self) — Self here resolved через ea's
+    // Equal.equal(other Self) — Self here resolved через ea's
     // erased type, but b is also Score (concrete impl).
-    assert(ea.equals(b))
+    assert(ea.equal(b))
 }

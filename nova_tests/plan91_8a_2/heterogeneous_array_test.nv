@@ -1,6 +1,6 @@
 module plan91_8a_2.heterogeneous_array_test
 
-// Plan 91.8a.2 followup: heterogeneous []Printable array.
+// Plan 91.8a.2 followup: heterogeneous []Display array.
 // Storage: NovaArray_void_p where each slot holds heap-alloc'd
 // NovaBox_Printable*. Iteration deref'ит к value, virtual dispatch
 // per element правильно резолвит концерт type через vtable.
@@ -14,35 +14,35 @@ fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 type Tag { name str }
 fn str.from(t Tag) -> str => "Tag(" + t.name + ")"
 
-test "[]Printable holds Money + Coin + Tag, iterate + fmt all" {
+test "[]Display holds Money + Coin + Tag, iterate + fmt all" {
     ro m = Money { cents: 10 }
     ro c = Coin { value: 5 }
     ro t = Tag { name: "x" }
-    ro xs []Printable = [m, c, t]
+    ro xs []Display = [m, c, t]
     consume sb = StringBuilder.new()
     for x in xs {
-        x.fmt(sb)
+        x.display(sb)
         sb.append("|")
     }
     assert(sb.as_str() == "Money(10)|Coin(5)|Tag(x)|")
 }
 
-test "[]Printable single element works" {
+test "[]Display single element works" {
     ro m = Money { cents: 42 }
-    ro xs []Printable = [m]
+    ro xs []Display = [m]
     consume sb = StringBuilder.new()
     for x in xs {
-        x.fmt(sb)
+        x.display(sb)
     }
     assert(sb.as_str() == "Money(42)")
 }
 
-test "[]Printable пустой массив — for-loop не выполняется" {
-    ro xs []Printable = []
+test "[]Display пустой массив — for-loop не выполняется" {
+    ro xs []Display = []
     consume sb = StringBuilder.new()
     sb.append("before")
     for x in xs {
-        x.fmt(sb)
+        x.display(sb)
     }
     sb.append("after")
     assert(sb.as_str() == "beforeafter")

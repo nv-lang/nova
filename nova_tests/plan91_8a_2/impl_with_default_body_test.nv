@@ -1,10 +1,10 @@
 module plan91_8a_2.impl_with_default_body_test
 
-// Plan 91.9 acceptance: #impl(Equatable + Comparable) с только @compare.
-// `equals` auto-derived из Equatable.equals default body (uses @compare).
+// Plan 91.9 acceptance: #impl(Equal + Compare) с только @compare.
+// `equals` auto-derived из Equal.equals default body (uses @compare).
 // Verification passes для обоих protocols.
 
-#impl(Equatable + Comparable)
+#impl(Equal + Compare)
 type Price { cents int }
 
 fn Price @compare(other Self) -> int {
@@ -17,9 +17,9 @@ test "verification passes with default-body derivation" {
     ro a = Price { cents: 100 }
     ro b = Price { cents: 100 }
     ro c = Price { cents: 200 }
-    // equals derived from Equatable.equals default body (uses @compare)
-    assert(a.equals(b))
-    assert(!a.equals(c))
+    // equals derived from Equal.equals default body (uses @compare)
+    assert(a.equal(b))
+    assert(!a.equal(c))
     // compare — explicit method
     assert(a.compare(c) < 0)
 }

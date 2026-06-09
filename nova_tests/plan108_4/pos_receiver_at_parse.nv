@@ -1,4 +1,4 @@
-// Plan 108.4 Ф.1: protocol method declarations require explicit receiver prefix.
+// Plan 108.4 Р¤.1: protocol method declarations require explicit receiver prefix.
 // This fixture verifies the parser accepts `@`, `mut @`, `consume @`, and `.` forms.
 
 module plan108_4.pos_receiver_at_parse
@@ -27,7 +27,7 @@ type Repository108 protocol {
 
 // Default body with @ prefix.
 type Printable108 protocol {
-    @fmt() -> str => "default"
+    @display() -> str => "default"
 }
 
 // Implement them for a concrete type.
@@ -37,7 +37,7 @@ fn Counter108b mut @push(x int) { @val = @val + x }
 fn Counter108b.create() -> int => 0
 fn Counter108b @get(id int) -> int => @val
 fn Counter108b mut @set(id int, val int) { @val = val }
-fn Counter108b @fmt() -> str => "counter"
+fn Counter108b @display() -> str => "counter"
 
 test "protocol declarations with @ receiver parse and work correctly" {
     mut c = Counter108b { val: 0 }

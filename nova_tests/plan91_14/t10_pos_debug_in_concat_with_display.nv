@@ -1,8 +1,8 @@
-// Plan 91.14 Ф.6 POS T10 — mixed ${x} (Printable) и ${x:?} (DebugPrintable)
-// в одной interp-string.
+// Plan 91.14 Р¤.6 POS T10 вЂ” mixed ${x} (Display) Рё ${x:?} (Debug)
+// РІ РѕРґРЅРѕР№ interp-string.
 //
-// Per D229: spec routes independently per-part. `"${x} vs ${x:?}"` для str
-// выдаёт `hello vs "hello"` — display + debug side-by-side.
+// Per D229: spec routes independently per-part. `"${x} vs ${x:?}"` РґР»СЏ str
+// РІС‹РґР°С‘С‚ `hello vs "hello"` вЂ” display + debug side-by-side.
 
 module plan91_14.t10_pos_debug_in_concat_with_display
 
@@ -15,6 +15,6 @@ test "mixed display + debug in same interp" {
 test "int mixed" {
     ro n = 42
     ro s = "${n} vs ${n:?}"
-    // int display и debug совпадают
+    // int display Рё debug СЃРѕРІРїР°РґР°СЋС‚
     assert(s == "42 vs 42")
 }

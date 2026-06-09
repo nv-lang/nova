@@ -1,26 +1,26 @@
-// Probe: protocols-as-value (D53 existential type) — что работает сейчас?
+// Probe: protocols-as-value (D53 existential type) вЂ” С‡С‚Рѕ СЂР°Р±РѕС‚Р°РµС‚ СЃРµР№С‡Р°СЃ?
 //
-// D53 example из spec:
-//   fn dump(x Hashable) -> u64 => x.hash()  // existential, dynamic dispatch
-//   fn dump2[T Hashable](x T) -> u64 => x.hash()  // universal, mono dispatch
+// D53 example РёР· spec:
+//   fn dump(x Hash) -> u64 => x.hash()  // existential, dynamic dispatch
+//   fn dump2[T Hash](x T) -> u64 => x.hash()  // universal, mono dispatch
 //
-// Plan 56 закрыл existential **partial** (D122 hybrid: field access
-// через прямую mono-context). **Truly erased dispatch** (method-call
-// на existential типе вне mono context) deferred → Plan 03 future
-// (multi-crate). См. Plan 56 plan-doc + plan-62-main commit c31ec3c1e36
-// Plan 48 followup §«Plan 62 followup — protocol-as-parameter mono
-// ergonomics».
+// Plan 56 Р·Р°РєСЂС‹Р» existential **partial** (D122 hybrid: field access
+// С‡РµСЂРµР· РїСЂСЏРјСѓСЋ mono-context). **Truly erased dispatch** (method-call
+// РЅР° existential С‚РёРїРµ РІРЅРµ mono context) deferred в†’ Plan 03 future
+// (multi-crate). РЎРј. Plan 56 plan-doc + plan-62-main commit c31ec3c1e36
+// Plan 48 followup В§В«Plan 62 followup вЂ” protocol-as-parameter mono
+// ergonomicsВ».
 //
-// Этот файл — **positive smoke** что **binding-level** existential
-// работает:
+// Р­С‚РѕС‚ С„Р°Р№Р» вЂ” **positive smoke** С‡С‚Рѕ **binding-level** existential
+// СЂР°Р±РѕС‚Р°РµС‚:
 //   let x Iterable[int] = concrete_implementer  // OK
 //
-// Что **НЕ работает** (silent miscompilation, см. Plan 56 deferred):
+// Р§С‚Рѕ **РќР• СЂР°Р±РѕС‚Р°РµС‚** (silent miscompilation, СЃРј. Plan 56 deferred):
 //   let mut x Iterable[int] = c; x.next()       // result wrong (silent)
 //   fn foo(x Iterable[int]) => x.next()         // same
-// Это **runtime bug**, не type-check; closures и method dispatch на
-// existential param выдают неправильный output без CC-FAIL. Strict
-// diagnostic — отдельный task (style Plan 70 «no silent fallback»).
+// Р­С‚Рѕ **runtime bug**, РЅРµ type-check; closures Рё method dispatch РЅР°
+// existential param РІС‹РґР°СЋС‚ РЅРµРїСЂР°РІРёР»СЊРЅС‹Р№ output Р±РµР· CC-FAIL. Strict
+// diagnostic вЂ” РѕС‚РґРµР»СЊРЅС‹Р№ task (style Plan 70 В«no silent fallbackВ»).
 
 module plan62.protocol_as_value_probe
 
@@ -45,11 +45,11 @@ fn IntCounter mut @next() -> Option[int] => {
 }
 
 
-// Positive: protocol-as-value coercion в let-annotation — compile OK.
-// Это existential binding — concrete тип converts к protocol-type
-// reference через void* erasure (Plan 56 D122 binding-level).
-test "let x: Iterable[int] = concrete — existential binding (coercion compiles)" {
+// Positive: protocol-as-value coercion РІ let-annotation вЂ” compile OK.
+// Р­С‚Рѕ existential binding вЂ” concrete С‚РёРї converts Рє protocol-type
+// reference С‡РµСЂРµР· void* erasure (Plan 56 D122 binding-level).
+test "let x: Iterable[int] = concrete вЂ” existential binding (coercion compiles)" {
     ro c = IntCounter.new(1, 4)
     ro _x Iterable[int] = c
-    assert(true)  // binding compiles + concrete value lives в x
+    assert(true)  // binding compiles + concrete value lives РІ x
 }

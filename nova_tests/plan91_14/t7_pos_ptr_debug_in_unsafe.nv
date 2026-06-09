@@ -1,8 +1,8 @@
-// Plan 91.14 Ф.5 POS T7 — ${ptr:?} в unsafe context emits hex address.
+// Plan 91.14 Р¤.5 POS T7 вЂ” ${ptr:?} РІ unsafe context emits hex address.
 //
-// Per D229 §«Pointer integration»: explicit `:?` opt-in allows debug-
-// format pointer printing. Output: "0x..." (16-hex on 64-bit) или
-// "0x0 (null)" для null pointer.
+// Per D229 В§В«Pointer integrationВ»: explicit `:?` opt-in allows debug-
+// format pointer printing. Output: "0x..." (16-hex on 64-bit) РёР»Рё
+// "0x0 (null)" РґР»СЏ null pointer.
 
 module plan91_14.t7_pos_ptr_debug_in_unsafe
 
@@ -13,9 +13,9 @@ type Acc {
 test "&value:? emits hex address" {
     ro a = Acc { id: 42 }
     unsafe {
-        // V1: explicit `&v:?` form — UnOp::AddrOf routes к
+        // V1: explicit `&v:?` form вЂ” UnOp::AddrOf routes Рє
         // nova_ptr_to_debug_str. Named *T binding ${p:?} requires manual
-        // `fn *T @debug_fmt` impl (auto-derive deferred к
+        // `fn *T @debug` impl (auto-derive deferred Рє
         // [M-91.14-ptr-auto-derive]).
         ro s = "ptr=${&a:?}"
         // Address is non-deterministic, just check format prefix.

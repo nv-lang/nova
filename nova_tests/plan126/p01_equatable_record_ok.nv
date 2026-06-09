@@ -1,16 +1,16 @@
-// Plan 126 (D109 amend, D230) — POS F01:
-// `#impl(Equatable)` на record с primitive fields → auto-derive @equals.
+// Plan 126 (D109 amend, D230) вЂ” POS F01:
+// `#impl(Equal)` РЅР° record СЃ primitive fields в†’ auto-derive @equal.
 // AC-126.2.
 module plan126.p01_equatable_record_ok
 
-#impl(Equatable)
+#impl(Equal)
 type Vec3 {
     x f64
     y f64
     z f64
 }
 
-test "Vec3 type-checks with auto-derived @equals" {
+test "Vec3 type-checks with auto-derived @equal" {
     ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
     assert(a.x == 1.0)
 }

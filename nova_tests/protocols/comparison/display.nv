@@ -1,7 +1,7 @@
-// Plan 85.4 Ф.3 — Printable протокол.
+// Plan 85.4 Ф.3 — Display протокол.
 //
-// `Printable` (D109): `fmt(sb StringBuilder) -> ()`. User-defined через
-// `fn Type @fmt(mut sb StringBuilder) -> ()` — пишет representation
+// `Display` (D109): `fmt(sb StringBuilder) -> ()`. User-defined через
+// `fn Type @display(mut sb StringBuilder) -> ()` — пишет representation
 // в переданный StringBuilder. Результат читается через `sb.as_str()`.
 
 module comparison.display
@@ -9,7 +9,7 @@ module comparison.display
 
 type Point { x int, y int }
 
-fn Point @fmt(mut sb StringBuilder) -> () {
+fn Point @display(mut sb StringBuilder) -> () {
     sb.append("(")
     sb.append(str.from(@x))
     sb.append(", ")
@@ -18,60 +18,60 @@ fn Point @fmt(mut sb StringBuilder) -> () {
 }
 
 
-test "Point @fmt — пишет representation в StringBuilder" {
+test "Point @display — пишет representation в StringBuilder" {
     ro p = Point { x: 3, y: 4 }
     consume sb = StringBuilder.new()
-    p.fmt(sb)
+    p.display(sb)
     assert(sb.as_str() == "(3, 4)")
 }
 
-test "Point @fmt — отрицательные координаты" {
+test "Point @display — отрицательные координаты" {
     ro p = Point { x: -1, y: -20 }
     consume sb = StringBuilder.new()
-    p.fmt(sb)
+    p.display(sb)
     assert(sb.as_str() == "(-1, -20)")
 }
 
-test "Point @fmt — в непустой буфер дописывает" {
+test "Point @display — в непустой буфер дописывает" {
     ro p = Point { x: 0, y: 0 }
     consume sb = StringBuilder.new()
     sb.append("origin: ")
-    p.fmt(sb)
+    p.display(sb)
     assert(sb.as_str() == "origin: (0, 0)")
 }
 
 
-// ── вложенный Printable: тип содержит другой Printable-тип ────────────
+// ── вложенный Display: тип содержит другой Display-тип ────────────
 
 type Segment { a Point, b Point }
 
-fn Segment @fmt(mut sb StringBuilder) -> () {
+fn Segment @display(mut sb StringBuilder) -> () {
     sb.append("[")
-    @a.fmt(sb)
+    @a.display(sb)
     sb.append(" -> ")
-    @b.fmt(sb)
+    @b.display(sb)
     sb.append("]")
 }
 
-test "вложенный Printable — Segment делегирует Point.fmt" {
+test "вложенный Display — Segment делегирует Point.fmt" {
     ro seg = Segment {
         a: Point { x: 1, y: 1 },
         b: Point { x: 5, y: 9 },
     }
     consume sb = StringBuilder.new()
-    seg.fmt(sb)
+    seg.display(sb)
     assert(sb.as_str() == "[(1, 1) -> (5, 9)]")
 }
 
 
 // ── два fmt подряд в один буфер ───────────────────────────────────
 
-test "Printable — несколько объектов в один буфер" {
+test "Display — несколько объектов в один буфер" {
     ro p1 = Point { x: 1, y: 2 }
     ro p2 = Point { x: 3, y: 4 }
     consume sb = StringBuilder.new()
-    p1.fmt(sb)
+    p1.display(sb)
     sb.append(" ")
-    p2.fmt(sb)
+    p2.display(sb)
     assert(sb.as_str() == "(1, 2) (3, 4)")
 }

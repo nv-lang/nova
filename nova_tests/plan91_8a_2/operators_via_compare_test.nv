@@ -1,7 +1,7 @@
 module plan91_8a_2.operators_via_compare_test
 
 // Plan 91.8a.2 part 3 (D183 amendment): operators `==`/`!=`/`<`/`<=`/`>`/`>=`
-// dispatch через @compare если type satisfies Comparable. Raньше fallback
+// dispatch через @compare если type satisfies Compare. Raньше fallback
 // на (a < b) — pointer comparison, semantically broken.
 
 type Money { cents int }
@@ -36,7 +36,7 @@ test "<= и >= через @compare synthesis" {
     assert(c >= a)
 }
 
-test "== / != через @compare synthesis (no explicit @equals)" {
+test "== / != через @compare synthesis (no explicit @equal)" {
     ro a = Money { cents: 100 }
     ro b = Money { cents: 100 }
     ro c = Money { cents: 200 }

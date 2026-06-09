@@ -1,10 +1,10 @@
-// Plan 126.2 Ф.3 — RUNTIME POS p5:
-// `#impl(Printable)` auto-derive synthesizes `@fmt(sb) -> ()` producing
+// Plan 126.2 Р¤.3 вЂ” RUNTIME POS p5:
+// `#impl(Display)` auto-derive synthesizes `@display(sb) -> ()` producing
 // `TypeName { field: value, ... }`. Verify rendered string via StringBuilder.
 // AC-126.2.7.
 module plan126_2.p5_printable_runtime_ok
 
-#impl(Printable)
+#impl(Display)
 type Vec3 {
     x int
     y int

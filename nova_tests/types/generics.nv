@@ -1,8 +1,8 @@
-// 19_generics.nv — generic-параметры функций и типов.
+// 19_generics.nv вЂ” generic-РїР°СЂР°РјРµС‚СЂС‹ С„СѓРЅРєС†РёР№ Рё С‚РёРїРѕРІ.
 //
-// Bootstrap'е generics — runtime erasure: тип-параметр игнорируется
-// в проверке, значение проходит как есть. Этого достаточно чтобы
-// убедиться что синтаксис парсится и интерпретатор не путает контексты.
+// Bootstrap'Рµ generics вЂ” runtime erasure: С‚РёРї-РїР°СЂР°РјРµС‚СЂ РёРіРЅРѕСЂРёСЂСѓРµС‚СЃСЏ
+// РІ РїСЂРѕРІРµСЂРєРµ, Р·РЅР°С‡РµРЅРёРµ РїСЂРѕС…РѕРґРёС‚ РєР°Рє РµСЃС‚СЊ. Р­С‚РѕРіРѕ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ С‡С‚РѕР±С‹
+// СѓР±РµРґРёС‚СЊСЃСЏ С‡С‚Рѕ СЃРёРЅС‚Р°РєСЃРёСЃ РїР°СЂСЃРёС‚СЃСЏ Рё РёРЅС‚РµСЂРїСЂРµС‚Р°С‚РѕСЂ РЅРµ РїСѓС‚Р°РµС‚ РєРѕРЅС‚РµРєСЃС‚С‹.
 
 module types.generics
 
@@ -31,25 +31,25 @@ type Pair[A, B] {
     snd B
 }
 
-test "generic identity на int" {
+test "generic identity РЅР° int" {
     assert(identity(42) == 42)
 }
 
-test "generic identity на str" {
+test "generic identity РЅР° str" {
     assert(identity("hi") == "hi")
 }
 
-test "generic identity на bool" {
+test "generic identity РЅР° bool" {
     assert(identity(true) == true)
 }
 
-test "generic с двумя параметрами" {
+test "generic СЃ РґРІСѓРјСЏ РїР°СЂР°РјРµС‚СЂР°РјРё" {
     ro p = pair(1, "x")
     assert(p.0 == 1)
     assert(p.1 == "x")
 }
 
-test "generic с одинаковыми T для всех аргументов" {
+test "generic СЃ РѕРґРёРЅР°РєРѕРІС‹РјРё T РґР»СЏ РІСЃРµС… Р°СЂРіСѓРјРµРЅС‚РѕРІ" {
     assert(first_of_three(10, 20, 30) == 10)
     assert(first_of_three("a", "b", "c") == "a")
 }
@@ -59,59 +59,59 @@ test "generic record type" {
     assert(box_get(b) == 42)
 }
 
-test "generic record на разных типах" {
+test "generic record РЅР° СЂР°Р·РЅС‹С… С‚РёРїР°С…" {
     ro b1 = Box { value: 100 }
     ro b2 = Box { value: "world" }
     assert(b1.value == 100)
     assert(b2.value == "world")
 }
 
-test "generic record с двумя параметрами" {
+test "generic record СЃ РґРІСѓРјСЏ РїР°СЂР°РјРµС‚СЂР°РјРё" {
     ro p = Pair { fst: 1, snd: "k" }
     assert(p.fst == 1)
     assert(p.snd == "k")
 }
 
-test "generic функция возвращает generic record" {
+test "generic С„СѓРЅРєС†РёСЏ РІРѕР·РІСЂР°С‰Р°РµС‚ generic record" {
     ro b = Box { value: identity(7) }
     assert(b.value == 7)
 }
 
-// ─── D72 generic-bounds: парсятся и игнорируются (smoke) ───
-// Spec D72 разрешает `type X[T Bound, U Other]` — bound это identifier
-// (имя protocol'а) после имени параметра. Bootstrap парсит и игнорирует
-// (нет typecheck'а на satisfaction). Production type-checker (D72)
-// проверит что T реально удовлетворяет Bound.
+// в”Ђв”Ђв”Ђ D72 generic-bounds: РїР°СЂСЃСЏС‚СЃСЏ Рё РёРіРЅРѕСЂРёСЂСѓСЋС‚СЃСЏ (smoke) в”Ђв”Ђв”Ђ
+// Spec D72 СЂР°Р·СЂРµС€Р°РµС‚ `type X[T Bound, U Other]` вЂ” bound СЌС‚Рѕ identifier
+// (РёРјСЏ protocol'Р°) РїРѕСЃР»Рµ РёРјРµРЅРё РїР°СЂР°РјРµС‚СЂР°. Bootstrap РїР°СЂСЃРёС‚ Рё РёРіРЅРѕСЂРёСЂСѓРµС‚
+// (РЅРµС‚ typecheck'Р° РЅР° satisfaction). Production type-checker (D72)
+// РїСЂРѕРІРµСЂРёС‚ С‡С‚Рѕ T СЂРµР°Р»СЊРЅРѕ СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ Bound.
 
-type WithBound[T Hashable] {
+type WithBound[T Hash] {
     value T
 }
 
-type TwoBounds[K Hashable, V Eq] {
+type TwoBounds[K Hash, V Eq] {
     key   K
     value V
 }
 
-test "D72 bound: type-decl с одним bound parsed" {
+test "D72 bound: type-decl СЃ РѕРґРЅРёРј bound parsed" {
     ro w = WithBound { value: 42 }
     assert(w.value == 42)
 }
 
-test "D72 bound: type-decl с двумя bound'ами parsed" {
+test "D72 bound: type-decl СЃ РґРІСѓРјСЏ bound'Р°РјРё parsed" {
     ro t = TwoBounds { key: "k", value: 7 }
     assert(t.key == "k")
     assert(t.value == 7)
 }
 
-// ─── D38 turbofish: `func[T](args)`, `Type[T].method(...)` ───
-// Bootstrap monomorphization идёт по call-site/receiver, поэтому type-args
-// в turbofish — explicit hint, который codegen прозрачно делегирует в base.
-// Грамматика: `Имя[T1, T2, ...]` активируется как turbofish только когда
-// за `]` идёт `(` (call), `.IDENT(` (method-call) или `?` (Try).
+// в”Ђв”Ђв”Ђ D38 turbofish: `func[T](args)`, `Type[T].method(...)` в”Ђв”Ђв”Ђ
+// Bootstrap monomorphization РёРґС‘С‚ РїРѕ call-site/receiver, РїРѕСЌС‚РѕРјСѓ type-args
+// РІ turbofish вЂ” explicit hint, РєРѕС‚РѕСЂС‹Р№ codegen РїСЂРѕР·СЂР°С‡РЅРѕ РґРµР»РµРіРёСЂСѓРµС‚ РІ base.
+// Р“СЂР°РјРјР°С‚РёРєР°: `РРјСЏ[T1, T2, ...]` Р°РєС‚РёРІРёСЂСѓРµС‚СЃСЏ РєР°Рє turbofish С‚РѕР»СЊРєРѕ РєРѕРіРґР°
+// Р·Р° `]` РёРґС‘С‚ `(` (call), `.IDENT(` (method-call) РёР»Рё `?` (Try).
 //
-// Static-method-call с turbofish (`Type[T].method(...)`) проверяется в
-// std/* через HashMap[K, V].new() — там же где этот синтаксис реально
-// используется.
+// Static-method-call СЃ turbofish (`Type[T].method(...)`) РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РІ
+// std/* С‡РµСЂРµР· HashMap[K, V].new() вЂ” С‚Р°Рј Р¶Рµ РіРґРµ СЌС‚РѕС‚ СЃРёРЅС‚Р°РєСЃРёСЃ СЂРµР°Р»СЊРЅРѕ
+// РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ.
 
 fn parse_one[T](x T) -> T {
     x
@@ -128,8 +128,8 @@ test "D38 turbofish: function call with two type-args" {
     assert(p.1 == "hi")
 }
 
-test "D38 turbofish не ломает обычный Index" {
-    // arr[i] остаётся Index'ом — за `]` идёт `;` / EOL / op, не `(`/`.IDENT(`/`?`.
+test "D38 turbofish РЅРµ Р»РѕРјР°РµС‚ РѕР±С‹С‡РЅС‹Р№ Index" {
+    // arr[i] РѕСЃС‚Р°С‘С‚СЃСЏ Index'РѕРј вЂ” Р·Р° `]` РёРґС‘С‚ `;` / EOL / op, РЅРµ `(`/`.IDENT(`/`?`.
     ro xs = [10, 20, 30]
     assert(xs[0] == 10)
     assert(xs[1] == 20)
@@ -137,8 +137,8 @@ test "D38 turbofish не ломает обычный Index" {
     assert(mid == 50)
 }
 
-test "D38 turbofish: arr[i].field остаётся Index→Member (не turbofish)" {
-    // post-`]` token — `.field` без `(` после; это НЕ turbofish.
+test "D38 turbofish: arr[i].field РѕСЃС‚Р°С‘С‚СЃСЏ Indexв†’Member (РЅРµ turbofish)" {
+    // post-`]` token вЂ” `.field` Р±РµР· `(` РїРѕСЃР»Рµ; СЌС‚Рѕ РќР• turbofish.
     ro bs = [Box { value: 1 }, Box { value: 2 }]
     assert(bs[0].value == 1)
     assert(bs[1].value == 2)

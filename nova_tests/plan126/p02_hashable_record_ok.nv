@@ -1,9 +1,9 @@
-// Plan 126 — POS F02:
-// `#impl(Hashable)` на record → auto-derive @hash().
+// Plan 126 вЂ” POS F02:
+// `#impl(Hash)` РЅР° record в†’ auto-derive @hash().
 // AC-126.3.
 module plan126.p02_hashable_record_ok
 
-#impl(Hashable)
+#impl(Hash)
 type UserId {
     value int
 }

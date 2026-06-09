@@ -1,7 +1,7 @@
 module plan91_8a.protocol_renames_test
 
-// Plan 91.8a (D183): protocol renames — Iter→Iterable, Display→Printable,
-// Equatable.eq→equals, Comparable.cmp→compare -> int.
+// Plan 91.8a (D183): protocol renames вЂ” Iterв†’Iterable, Displayв†’Display,
+// Equal.eqв†’equals, Compare.cmpв†’compare -> int.
 
 type Counter { mut cur int, end int }
 fn Counter mut @next() -> Option[int] {
@@ -14,7 +14,7 @@ fn Counter mut @next() -> Option[int] {
     }
 }
 
-test "Iterable[T] bound резолвится" {
+test "Iterable[T] bound СЂРµР·РѕР»РІРёС‚СЃСЏ" {
     mut c = Counter { cur: 0, end: 3 }
     mut sum = 0
     for x in c {
@@ -25,9 +25,9 @@ test "Iterable[T] bound резолвится" {
 
 type Pt { x int, y int }
 
-fn Pt @equals(other Pt) -> bool => @x == other.x && @y == other.y
+fn Pt @equal(other Pt) -> bool => @x == other.x && @y == other.y
 
-test "Equatable.equals — instance dispatch" {
+test "Equal.equals вЂ” instance dispatch" {
     ro a = Pt { x: 1, y: 2 }
     ro b = Pt { x: 1, y: 2 }
     ro c = Pt { x: 3, y: 4 }
@@ -40,9 +40,9 @@ fn Money @compare(other Money) -> int =>
     if @cents < other.cents { -1 }
     else if @cents > other.cents { 1 }
     else { 0 }
-fn Money @equals(other Money) -> bool => @compare(other) == 0
+fn Money @equal(other Money) -> bool => @compare(other) == 0
 
-test "Comparable.compare — int convention (D183)" {
+test "Compare.compare вЂ” int convention (D183)" {
     ro a = Money { cents: 100 }
     ro b = Money { cents: 200 }
     ro c = Money { cents: 100 }
@@ -52,25 +52,25 @@ test "Comparable.compare — int convention (D183)" {
     assert(a.equals(c))
 }
 
-test "Comparable bound на T" {
+test "Compare bound РЅР° T" {
     ro a = Money { cents: 50 }
     ro b = Money { cents: 75 }
     ro m = min_money(a, b)
     assert(m.cents == 50)
 }
 
-fn min_money[T Comparable](a T, b T) -> T =>
+fn min_money[T Compare](a T, b T) -> T =>
     if a.compare(b) <= 0 { a } else { b }
 
 
 type Buffer { data str }
-fn Buffer @fmt(mut sb StringBuilder) -> () {
+fn Buffer @display(mut sb StringBuilder) -> () {
     sb.append("Buffer(")
     sb.append(@data)
     sb.append(")")
 }
 
-test "Printable.fmt — StringBuilder formatting" {
+test "Display.fmt вЂ” StringBuilder formatting" {
     mut b = Buffer { data: "hello" }
     consume sb = StringBuilder.new()
     b.fmt(sb)

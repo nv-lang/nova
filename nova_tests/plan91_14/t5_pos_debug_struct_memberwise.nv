@@ -1,24 +1,24 @@
-// Plan 91.14 Ф.4 POS T5 — debug user struct via auto-synthesized
+// Plan 91.14 Р¤.4 POS T5 вЂ” debug user struct via auto-synthesized
 // memberwise body.
 //
-// Per D229 §«Default body synthesis»: user type X без manual @debug_fmt
-// — codegen synthesizes memberwise iteration через ALL fields (per
+// Per D229 В§В«Default body synthesisВ»: user type X Р±РµР· manual @debug
+// вЂ” codegen synthesizes memberwise iteration С‡РµСЂРµР· ALL fields (per
 // design decision #3, including private).
 //
-// Default body via DebugPrintable.@debug_fmt → calls str.from_debug(@).
+// Default body via Debug.@debug в†’ calls str.from_debug(@).
 // For user type, str.from_debug overload must be either provided OR
-// synthesized. V1 strategy: route via @debug_fmt direct synthesis (per
+// synthesized. V1 strategy: route via @debug direct synthesis (per
 // try_synthesize_default_method_with_gate(... false)).
 //
-// Note: full memberwise synthesis (Type { f1: ..., f2: ... }) — V1.5
+// Note: full memberwise synthesis (Type { f1: ..., f2: ... }) вЂ” V1.5
 // extension. V1 ships via default body fallback to str.from_debug(@),
 // requires str.from_debug overload for user type. Auto-derived overload
-// in V1 — synthesized via Plan 91.8a.2 mechanism (str.from chain).
+// in V1 вЂ” synthesized via Plan 91.8a.2 mechanism (str.from chain).
 //
 // Until str.from_debug overload synthesis added (V1.5), user type
 // without manual impl errors at codegen. This test currently EXPECTS
-// fallback behavior (call str.from(@) если str.from_debug not available
-// — graceful degradation).
+// fallback behavior (call str.from(@) РµСЃР»Рё str.from_debug not available
+// вЂ” graceful degradation).
 
 module plan91_14.t5_pos_debug_struct_memberwise
 
@@ -27,9 +27,9 @@ type Point {
     y int
 }
 
-// Manual @debug_fmt impl — explicit, matches Rust derive(Debug) shape.
-// sb requires `mut` per D176 — caller mutates StringBuilder.
-fn Point @debug_fmt(mut sb StringBuilder) -> () {
+// Manual @debug impl вЂ” explicit, matches Rust derive(Debug) shape.
+// sb requires `mut` per D176 вЂ” caller mutates StringBuilder.
+fn Point @debug(mut sb StringBuilder) -> () {
     sb.append("Point { x: ")
     sb.append(str.from(@x))
     sb.append(", y: ")
@@ -37,7 +37,7 @@ fn Point @debug_fmt(mut sb StringBuilder) -> () {
     sb.append(" }")
 }
 
-test "user type with manual @debug_fmt" {
+test "user type with manual @debug" {
     ro p = Point { x: 10, y: 20 }
     ro s = "${p:?}"
     assert(s == "Point { x: 10, y: 20 }")

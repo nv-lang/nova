@@ -1,9 +1,9 @@
-// Plan 126 (D230) — POS F03:
-// `#impl(Cloneable)` на record с primitive fields → auto-derive @clone().
+// Plan 126 (D230) вЂ” POS F03:
+// `#impl(Clone)` РЅР° record СЃ primitive fields в†’ auto-derive @clone().
 // AC-126.4.
 module plan126.p03_cloneable_record_ok
 
-#impl(Cloneable)
+#impl(Clone)
 type Point2 {
     x int
     y int

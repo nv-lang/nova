@@ -1,16 +1,16 @@
-// Plan 91.14 Ф.6 POS T12 — 3-level nested struct debug recursion.
-// Verifies AC.f «nested struct (2+ levels)».
+// Plan 91.14 Р¤.6 POS T12 вЂ” 3-level nested struct debug recursion.
+// Verifies AC.f В«nested struct (2+ levels)В».
 module plan91_14.t12_pos_3_level_nested
 
 type Inner { v int }
-fn Inner @debug_fmt(mut sb StringBuilder) -> () {
+fn Inner @debug(mut sb StringBuilder) -> () {
     sb.append("Inner { v: ")
     sb.append(str.from(@v))
     sb.append(" }")
 }
 
 type Middle { id int, inner Inner }
-fn Middle @debug_fmt(mut sb StringBuilder) -> () {
+fn Middle @debug(mut sb StringBuilder) -> () {
     sb.append("Middle { id: ")
     sb.append(str.from(@id))
     sb.append(", inner: ")
@@ -19,7 +19,7 @@ fn Middle @debug_fmt(mut sb StringBuilder) -> () {
 }
 
 type Outer { label str, middle Middle }
-fn Outer @debug_fmt(mut sb StringBuilder) -> () {
+fn Outer @debug(mut sb StringBuilder) -> () {
     sb.append("Outer { label: \"")
     sb.append(@label)
     sb.append("\", middle: ")

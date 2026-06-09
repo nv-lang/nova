@@ -17,7 +17,7 @@ type Greetable protocol {
 type User { display_name str }
 fn User @name() -> str => @display_name
 
-#impl(Equatable + Comparable + Printable)
+#impl(Equal + Compare + Display)
 type Coin { value int }
 fn Coin @compare(other Self) -> int =>
     if @value < other.value { -1 }
@@ -34,14 +34,14 @@ test "#impl(A + B + C): multi-protocol opt-in" {
     ro a = Coin { value: 5 }
     ro b = Coin { value: 5 }
     ro c = Coin { value: 9 }
-    // Equatable.equals via @compare default — opted in
-    assert(a.equals(b))
-    assert(!a.equals(c))
-    // Comparable.compare — explicit method (always works)
+    // Equal.equals via @compare default — opted in
+    assert(a.equal(b))
+    assert(!a.equal(c))
+    // Compare.compare — explicit method (always works)
     assert(a.compare(c) < 0)
-    // Printable.fmt via str.from(Coin) default — opted in
+    // Display.fmt via str.from(Coin) default — opted in
     consume sb = StringBuilder.new()
-    a.fmt(sb)
+    a.display(sb)
     assert(sb.as_str() == "Coin(5)")
 }
 

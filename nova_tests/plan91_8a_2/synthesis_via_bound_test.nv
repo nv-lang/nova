@@ -1,10 +1,10 @@
 module plan91_8a_2.synthesis_via_bound_test
 
 // Plan 91.8a.2 part 3 MVP: full lifecycle test.
-// Type with only @compare → @equals synthesized → используется через
+// Type with only @compare → @equal synthesized → используется через
 // generic bound → produces correct result.
 
-#impl(Equatable)
+#impl(Equal)
 type Score { value int }
 
 fn Score @compare(other Self) -> int =>
@@ -12,10 +12,10 @@ fn Score @compare(other Self) -> int =>
     else if @value > other.value { 1 }
     else { 0 }
 
-// Generic bound — body вызывает .equals() который synthesized из default body.
-fn any_equal[T Equatable](xs []T, target T) -> bool {
+// Generic bound — body вызывает .equal() который synthesized из default body.
+fn any_equal[T Equal](xs []T, target T) -> bool {
     for x in xs {
-        if x.equals(target) { return true }
+        if x.equal(target) { return true }
     }
     false
 }

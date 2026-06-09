@@ -1,9 +1,9 @@
-// Plan 126 — POS F04:
-// `#impl(Comparable)` на record → auto-derive @compare() (lexicographic).
+// Plan 126 вЂ” POS F04:
+// `#impl(Compare)` РЅР° record в†’ auto-derive @compare() (lexicographic).
 // AC-126.5.
 module plan126.p04_comparable_record_ok
 
-#impl(Comparable)
+#impl(Compare)
 type Money {
     cents int
 }

@@ -1,4 +1,4 @@
-// Plan 91 Ф.4 conformance: Timestamp deadline + elapsed realistic scenario.
+// Plan 91 Р¤.4 conformance: Timestamp deadline + elapsed realistic scenario.
 //
 // Request-deadline use-case (pure Timestamp/Duration arithmetic):
 //   * a request arrives at a known Unix time,
@@ -22,18 +22,18 @@ test "request deadline, elapsed, and remaining budget" {
     // Request arrives at Unix second 1_700_000_000.
     ro arrived = Timestamp.from_unix_secs(1_700_000_000)
 
-    // Server policy: 30-second timeout → compute the deadline.
+    // Server policy: 30-second timeout в†’ compute the deadline.
     ro timeout = 30.seconds()
     ro deadline = arrived + timeout
 
-    // Deadline must be strictly after arrival (Comparable `>` via @compare).
+    // Deadline must be strictly after arrival (Compare `>` via @compare).
     assert(deadline > arrived, "deadline must be after arrival")
     assert(deadline.as_unix_secs() == 1_700_000_030, "deadline = arrived + 30s")
 
     // Request completes 12 seconds after arrival.
     ro completed = Timestamp.from_unix_secs(1_700_000_012)
 
-    // Elapsed = completed - arrived  → a Duration (Timestamp - Timestamp).
+    // Elapsed = completed - arrived  в†’ a Duration (Timestamp - Timestamp).
     ro elapsed = completed - arrived
     assert(elapsed.as_secs() == 12, "elapsed should be 12 whole seconds")
     assert(elapsed.as_millis() == 12_000, "elapsed in milliseconds")
@@ -54,7 +54,7 @@ test "request that overruns its deadline" {
     ro timeout = 250.millis()
     ro deadline = arrived + timeout
 
-    // Completes 400ms after arrival → 150ms past the deadline.
+    // Completes 400ms after arrival в†’ 150ms past the deadline.
     ro completed = arrived + 400.millis()
 
     ro elapsed = completed - arrived

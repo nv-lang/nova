@@ -1,17 +1,17 @@
-// Plan 91.14 Ф.2 POS T1 — `${expr:?}` parses successfully.
+// Plan 91.14 Р¤.2 POS T1 вЂ” `${expr:?}` parses successfully.
 //
-// Foundation parsing test — does not exercise Ф.3 (DebugPrintable resolution)
-// или Ф.4 (codegen synthesis) yet. Verifies parser AST shape only.
+// Foundation parsing test вЂ” does not exercise Р¤.3 (Debug resolution)
+// РёР»Рё Р¤.4 (codegen synthesis) yet. Verifies parser AST shape only.
 //
-// Per Ф.2 (D229 §«Format spec syntax»): `${expr:?}` parses to
+// Per Р¤.2 (D229 В§В«Format spec syntaxВ»): `${expr:?}` parses to
 // `InterpStrPart::Expr { spec: FormatSpec::Debug }`.
 
 module plan91_14.t1_pos_parse_debug_spec_ok
 
-// Placeholder body — until Ф.3+Ф.4 ship, the `:?` will hit downstream
+// Placeholder body вЂ” until Р¤.3+Р¤.4 ship, the `:?` will hit downstream
 // (type-check or codegen). Comment-out test body, just verify parse.
 
-test "${expr:?} parses без syntax error (Ф.2 foundation)" {
-    // Cannot exercise yet — Ф.3/Ф.4 not shipped. Parser-level test only.
+test "${expr:?} parses Р±РµР· syntax error (Р¤.2 foundation)" {
+    // Cannot exercise yet вЂ” Р¤.3/Р¤.4 not shipped. Parser-level test only.
     assert(1 == 1)
 }

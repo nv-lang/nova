@@ -1,16 +1,16 @@
-// Plan 126 — POS F09:
-// User explicit `fn T @method(...)` wins над auto-derive.
+// Plan 126 вЂ” POS F09:
+// User explicit `fn T @method(...)` wins РЅР°Рґ auto-derive.
 // AC-126.10 (manual override).
 module plan126.p09_explicit_method_override_ok
 
-#impl(Equatable)
+#impl(Equal)
 type Custom {
     a int
     b int
 }
 
-// User-provided explicit equals — overrides auto-derive.
-fn Custom @equals(other Custom) -> bool =>
+// User-provided explicit equals вЂ” overrides auto-derive.
+fn Custom @equal(other Custom) -> bool =>
     @a == other.a
 
 test "explicit equals method satisfies #impl" {
