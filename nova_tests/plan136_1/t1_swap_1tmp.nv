@@ -1,0 +1,21 @@
+// Plan 136.1 F2 T1 (POS): swap (a,b)=(b,a) produces correct result.
+// Uses 1 tmp variable in the cycle-decomp codegen (cycle length 2).
+// A1: single 2-cycle swap.
+
+module plan136_1.t1_swap_1tmp
+
+test "swap 10 and 20" {
+    mut a = 10
+    mut b = 20
+    (a, b) = (b, a)
+    assert(a == 20)
+    assert(b == 10)
+}
+
+test "swap 99 and 1" {
+    mut x = 99
+    mut y = 1
+    (x, y) = (y, x)
+    assert(x == 1)
+    assert(y == 99)
+}

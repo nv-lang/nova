@@ -35010,3 +35010,25 @@ Stdlib migration: std/collections/vec_owned.nv reverse() swap -> tuple-assign.
 
 D236 NEW: spec/decisions/03-syntax.md.
 Followups: [M-136-cycle-decomp] [M-136-nested-tuple-lhs] [M-136-consume-tuple-assign].
+
+
+=== Plan 136.1: Tuple assign V2 cycle-decomp codegen — 2026-06-09 ===
+
+V2 cycle-decomposition algorithm for Stmt::TupleAssign codegen. Closes [M-136-cycle-decomp].
+
+Algorithm (emit_c.rs `emit_tuple_assign`):
+- `is_pure_permutation(lhs, rhs) -> Option<Vec<usize>>`: checks lvalue-identity
+  (same root ident + same .field/[idx] chain) + bijectivity of the mapping.
+- If pure permutation: `emit_cycle_decomp(lhs, perm, ctx)` — standard cycle-following,
+  1 tmp per non-trivial cycle, 0 tmp for identity elements.
+- If not pure permutation: V1 fallback (conservative tmp-per-dependent-rhs).
+
+Results:
+- (a,b)=(b,a): 2 tmp -> 1 tmp (1 cycle of length 2).
+- (a,b,c)=(b,c,a): 3 tmp -> 1 tmp (1 cycle of length 3).
+- (a,b,c,d)=(b,a,d,c): 4 tmp -> 2 tmp (2 cycles of length 2).
+- (a,b)=(a,b): 0 tmp (identity).
+- (a,b)=(b+1,0): V1 fallback, 1 tmp (non-pure).
+
+Fixtures: nova_tests/plan136_1/ 7/7 PASS + plan136 11/11 PASS (regression).
+Followups: [M-136.1-mixed-partial-cycles].

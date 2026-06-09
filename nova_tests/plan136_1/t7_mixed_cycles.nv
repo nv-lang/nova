@@ -1,0 +1,19 @@
+// Plan 136.1 F2 T7 (POS): swap(a,b) + rotate(c,d,e) in one tuple assign.
+// (a,b,c,d,e)=(b,a,d,e,c): two independent cycles, each needs 1 tmp.
+// A7+A3: mixed cycle decomposition — a 2-cycle and a 3-cycle.
+
+module plan136_1.t7_mixed_cycles
+
+test "swap ab and rotate cde: 1,2,10,20,30 -> 2,1,20,30,10" {
+    mut a = 1
+    mut b = 2
+    mut c = 10
+    mut d = 20
+    mut e = 30
+    (a, b, c, d, e) = (b, a, d, e, c)
+    assert(a == 2)
+    assert(b == 1)
+    assert(c == 20)
+    assert(d == 30)
+    assert(e == 10)
+}

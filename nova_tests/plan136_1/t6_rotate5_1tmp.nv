@@ -1,0 +1,19 @@
+// Plan 136.1 F2 T6 (POS): 5-element rotation single cycle.
+// (a,b,c,d,e)=(b,c,d,e,a) — one 5-cycle, needs only 1 tmp.
+// A7: large single cycle uses exactly 1 tmp (Knuth algorithm).
+
+module plan136_1.t6_rotate5_1tmp
+
+test "rotate5 left: 1,2,3,4,5 -> 2,3,4,5,1" {
+    mut a = 1
+    mut b = 2
+    mut c = 3
+    mut d = 4
+    mut e = 5
+    (a, b, c, d, e) = (b, c, d, e, a)
+    assert(a == 2)
+    assert(b == 3)
+    assert(c == 4)
+    assert(d == 5)
+    assert(e == 1)
+}
