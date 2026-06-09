@@ -18,6 +18,11 @@
 
 ---
 
+### Plan 137 — Protocol rename: drop -able suffix (2026-06-09)
+Hashable→Hash, Equatable→Equal, Comparable→Compare, Cloneable→Clone, Printable→Display, DebugPrintable→Debug.
+Method renames: @equals→@equal, @fmt→@display, @debug_fmt→@debug.
+E_PROTOCOL_RENAMED diagnostic with hint for old names. 4/4 plan137 tests PASS.
+
 ### Plan 136 — Tuple destructuring assignment (2026-06-09)
 `(lhs_0, ..., lhs_N) = (rhs_0, ..., rhs_N)` implemented in parser/checker/codegen.
 Conservative tmp-per-dependent-rhs codegen (V1). Cycle-decomposition deferred to [M-136-cycle-decomp].
