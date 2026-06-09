@@ -34888,3 +34888,14 @@ Plan 132 — Remove bound method value obj.@method (CLOSED) — 2026-06-09
 
 2026-06-09: Plan 132.1 — Fix codegen bug: @name() self-call when field/method share name.
 Variant B fix in emit_call (SelfAccess early path). pos_at_name_disambiguation fully restored.
+
+2026-06-09: Plan 135 — recv-mut overload dispatch ✅ ЗАКРЫТ.
+Реализован dispatch по receiver-mutability для одноимённых методов (аналог C++ const-overloading).
+Ф.1: C-name mangling — fn T @m() → Nova_T_method_m (ro), fn T mut @m() → Nova_T_method_m__mut.
+Ф.2: Call-site dispatch — тай-брейк по mutability receiver'а: ro a → ro overload, mut b → mut overload.
+  Добавлено поле current_receiver_is_mut в CEmitter; mangle_fn тай-брейк в двух путях.
+Ф.3: 8 POS + 2 NEG fixtures (nova_tests/plan135/). Все PASS.
+КЛЮЧЕВОЕ РЕШЕНИЕ: первая перегрузка сохраняет base_c_name; вторая с теми же param-типами
+  получает __mut суффикс (mut receiver) или __ro (ro receiver при коллизии).
+  Fallback: нет mut overload → ro overload используется для любого receiver.
+D84 (10-overloading.md) обновлён: ось «receiver-mutability» теперь ✅ ACTIVE.
