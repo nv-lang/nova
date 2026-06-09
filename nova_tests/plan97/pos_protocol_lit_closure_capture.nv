@@ -8,7 +8,7 @@ module plan97.pos_protocol_lit_closure_capture
 
 
 export type Incrementer protocol {
-    advance() -> int
+    @advance() -> int
 }
 
 

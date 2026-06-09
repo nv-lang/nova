@@ -4,7 +4,7 @@
 module plan81.bound_lib
 
 export type Showable protocol {
-    show() -> str
+    @show() -> str
 }
 
 test "bound_lib self-check" {

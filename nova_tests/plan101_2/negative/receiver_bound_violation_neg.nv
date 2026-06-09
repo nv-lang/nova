@@ -7,7 +7,7 @@ module negative.receiver_bound_violation_neg
 
 
 type Showable_ protocol {
-    show() -> str
+    @show() -> str
 }
 
 

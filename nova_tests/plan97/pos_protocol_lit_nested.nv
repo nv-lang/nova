@@ -8,12 +8,12 @@ module plan97.pos_protocol_lit_nested
 
 
 export type Maker protocol {
-    make(x int) -> int
+    @make(x int) -> int
 }
 
 
 export type Adder protocol {
-    apply(y int) -> int
+    @apply(y int) -> int
 }
 
 

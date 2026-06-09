@@ -7,8 +7,8 @@ module plan97.neg_protocol_lit_missing_method
 
 
 type TwoMethod protocol {
-    foo() -> ()
-    bar() -> ()
+    @foo() -> ()
+    @bar() -> ()
 }
 
 

@@ -21,7 +21,7 @@ export type Counter effect {
 ///
 /// #stable
 export type Eq protocol {
-    equals(other Eq) -> bool
+    @equals(other Eq) -> bool
 }
 
 /// Alias над int — semantic clarity.

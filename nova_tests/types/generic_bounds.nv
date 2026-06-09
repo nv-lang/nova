@@ -22,14 +22,14 @@ module types.generic_bounds
 // методов вообще не вызывается.
 
 type GbHashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @eq(other Self) -> bool
 }
 
 
 // Второй protocol — методы с primitives.
 type GbCountable protocol {
-    count() -> int
+    @count() -> int
 }
 
 
@@ -115,7 +115,7 @@ test "different bound — GbCountable vs GbHashable" {
 // non-single-name path) — это закрывается отдельной задачей. Тест
 // фиксирует что парсер + текущий чекер пропускают валидный код.
 type GbFromKey[T] protocol {
-    from_key(t T) -> Self
+    @from_key(t T) -> Self
 }
 
 

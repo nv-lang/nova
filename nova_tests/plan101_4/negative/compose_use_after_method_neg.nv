@@ -6,11 +6,11 @@
 module negative.compose_use_after_method_neg
 
 type SomeProto protocol {
-    other() -> int
+    @other() -> int
 }
 
 type BadProto protocol {
-    m() -> int
+    @m() -> int
     use SomeProto
 }
 

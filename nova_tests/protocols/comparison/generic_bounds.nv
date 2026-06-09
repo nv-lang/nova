@@ -66,8 +66,8 @@ test "generic [T Comparable] — instance-dispatch возвращает int (D18
 // несколько методов — работает.
 
 type HashEq protocol {
-    hash() -> u64
-    equals(other Self) -> bool
+    @hash() -> u64
+    @equals(other Self) -> bool
 }
 
 fn hash_eq_match[T HashEq](a T, b T) -> bool =>

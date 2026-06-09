@@ -7,7 +7,7 @@ module plan91_8a_2.impl_missing_methods_err
 // @name → E_IMPL_MISSING_METHODS в точке type декларации.
 
 type Greetable protocol {
-    greet() -> str {
+    @greet() -> str {
         "Hello, " + @name()
     }
 }

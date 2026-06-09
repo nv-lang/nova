@@ -6,7 +6,7 @@ module plan91_8a_2.impl_verification_test
 // Missing → E_IMPL_MISSING_METHODS at type-decl site (не при использовании).
 
 type Greetable protocol {
-    greet() -> str {
+    @greet() -> str {
         "Hello, " + @name()
     }
 }

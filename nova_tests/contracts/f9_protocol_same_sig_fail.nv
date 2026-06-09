@@ -6,6 +6,6 @@
 module contracts.f9_protocol_same_sig_fail
 
 type Store protocol {
-    get(key str) -> int
-    get(key str) -> int
+    @get(key str) -> int
+    @get(key str) -> int
 }

@@ -11,8 +11,8 @@ module negative_capability.bound_not_satisfied_rejected
 
 
 type BnsHashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @eq(other Self) -> bool
 }
 
 

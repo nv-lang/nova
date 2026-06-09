@@ -7,7 +7,7 @@ module plan97.pos_protocol_lit_dispatch
 
 
 export type Counter protocol {
-    incr() -> int
+    @incr() -> int
 }
 
 

@@ -6,12 +6,12 @@ module plan101_4.compose_transitive
 
 
 type Reader protocol {
-    read() -> str
+    @read() -> str
 }
 
 type Closeable protocol {
     use Reader
-    close() -> bool
+    @close() -> bool
 }
 
 // CloseableReader композирует Closeable (который уже включает Reader).

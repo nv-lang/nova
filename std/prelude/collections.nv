@@ -104,14 +104,11 @@ import std.prelude.core.{Option}
 /// `ValuesIter`/`Counter` (см. nova_tests/syntax/for_iter*.nv)
 /// автоматически удовлетворяют `Iterable[T]` без `impl`-блока.
 ///
-/// **Note on `mut` receiver**: bootstrap parser (`parse_effect_methods`,
-/// compiler-codegen/src/parser/mod.rs:2244+) НЕ поддерживает `mut`-
-/// модификатор перед именем метода в protocol-declaration. Имплементации
-/// (`fn RangeIter mut @next() -> ...`, `fn HashMapIter[K,V] mut @next()
-/// -> ...`) объявляют receiver mutability в свободной форме, на стороне
-/// implementer'а. Protocol-declaration описывает только signature
-/// (`name(params) -> ret`), mutability подразумевается use-case'ом
-/// (итератор хранит cursor → state-mutating call).
+/// **Note on `mut @` receiver**: Plan 108.4 Ф.1 (D175 amend) добавляет
+/// обязательный `@`-префикс для instance-методов в protocol-declarations.
+/// `mut @next()` = mutable receiver (итератор хранит cursor → state-mutating).
+/// Все implementers (`fn RangeIter mut @next() -> ...` и т.д.) уже используют
+/// `mut @next()` — declaration теперь это enforce'ит явно (Plan 108.4 Ф.2).
 ///
 /// **Note on effects**: bound (protocol) methods обязаны быть pure
 /// per types/mod.rs:404-420 (vtable dispatch не propagates effect
@@ -120,17 +117,17 @@ import std.prelude.core.{Option}
 /// # Examples
 ///
 /// ```nova
-/// // Custom iterator — implements Iter[int] структурно.
+/// // Custom iterator — implements Iterable[int] структурно.
 /// type Counter { mut cur int, end int }
 /// fn Counter mut @next() -> Option[int] {
-///     if @cur >= @end { None } else { let v = @cur; @cur += 1; Some(v) }
+///     if @cur >= @end { None } else { ro v = @cur; @cur += 1; Some(v) }
 /// }
-/// let mut c = Counter { cur: 0, end: 3 }
+/// mut c = Counter { cur: 0, end: 3 }
 /// for x in c { /* yields 0, 1, 2 */ }
 /// ```
 #stable(since = "0.1")
 export type Iterable[T] protocol {
-    next() -> Option[T]
+    mut @next() -> Option[T]
 }
 
 // ──────────────────────────────────────────────────────────────────────────

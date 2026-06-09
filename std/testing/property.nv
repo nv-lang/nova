@@ -90,8 +90,8 @@ export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () {
 /// `shrink(v)` — итератор «меньших» вариантов для бисекции при failure.
 #stable(since = "0.1")
 export type Generator[T] protocol {
-    generate() Random -> T
-    shrink(value T) -> Iter[T]
+    @generate() Random -> T
+    @shrink(value T) -> Iter[T]
 }
 
 

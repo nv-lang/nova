@@ -6,11 +6,11 @@
 module negative.compose_duplicate_neg
 
 type ProtoA protocol {
-    same(x int) -> int
+    @same(x int) -> int
 }
 
 type ProtoB protocol {
-    same(x int) -> int
+    @same(x int) -> int
 }
 
 type Combined protocol {

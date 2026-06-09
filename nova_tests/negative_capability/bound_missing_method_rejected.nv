@@ -12,7 +12,7 @@ module negative_capability.bound_missing_method_rejected
 
 
 type BmmCountable protocol {
-    count() -> int
+    @count() -> int
 }
 
 

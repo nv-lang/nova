@@ -9,7 +9,7 @@ module plan97.pos_protocol_lit_basic
 
 
 export type Runnable protocol {
-    run() -> ()
+    @run() -> ()
 }
 
 

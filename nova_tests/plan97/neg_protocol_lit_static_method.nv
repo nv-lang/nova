@@ -9,7 +9,7 @@ module plan97.neg_protocol_lit_static_method
 
 type WithStatic protocol {
     .make(x int) -> Self
-    run() -> ()
+    @run() -> ()
 }
 
 

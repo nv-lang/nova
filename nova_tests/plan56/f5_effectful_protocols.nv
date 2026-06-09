@@ -9,18 +9,18 @@ module plan56.f5_effectful_protocols
 
 // Protocol с Fail-эффектом — раньше это был EXPECT_COMPILE_ERROR D122.
 type Checked protocol {
-    check(n int) Fail[str] -> int
+    @check(n int) Fail[str] -> int
 }
 
 // Protocol с Io-эффектом.
 type Logged protocol {
-    emit(msg str) Io -> ()
+    @emit(msg str) Io -> ()
 }
 
 // Буквальный мотивирующий пример: generic protocol с effectful
 // static-методом — должен компилироваться (регрессия для D122 amend).
 type TryFrom[T, E] protocol {
-    try_from(t T) Fail[E] -> Self
+    @try_from(t T) Fail[E] -> Self
 }
 
 type Validator {

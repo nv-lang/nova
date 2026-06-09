@@ -6,7 +6,7 @@ module negative.compose_unknown_neg
 
 type BadProto protocol {
     use NonExistentType
-    m() -> int
+    @m() -> int
 }
 
 test "should error" {

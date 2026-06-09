@@ -12,7 +12,7 @@ module micro.protocol_lit
 
 
 type Counter protocol {
-    bump() -> int
+    @bump() -> int
 }
 
 

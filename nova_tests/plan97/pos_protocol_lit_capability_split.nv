@@ -9,11 +9,11 @@ module plan97.pos_protocol_lit_capability_split
 
 
 export type Reader protocol {
-    read() -> int
+    @read() -> int
 }
 
 export type Writer protocol {
-    write(v int) -> ()
+    @write(v int) -> ()
 }
 
 

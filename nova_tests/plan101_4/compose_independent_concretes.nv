@@ -6,11 +6,11 @@ module plan101_4.compose_independent_concretes
 
 
 type Hashable_ protocol {
-    hash() -> int
+    @hash() -> int
 }
 
 type Sized_ protocol {
-    size() -> int
+    @size() -> int
 }
 
 // HashSize = Hashable_ + Sized_.

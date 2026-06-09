@@ -6,5 +6,5 @@ module plan124_8.zero_on_move_on_protocol_neg
 
 #zero_on_move
 type FooProto protocol {
-    hash() -> int
+    @hash() -> int
 }

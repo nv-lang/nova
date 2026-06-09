@@ -120,7 +120,7 @@ export fn[T] T.from(t T) -> T => t
 /// ```
 #stable(since = "0.1")
 export type Into[U] protocol {
-    into() -> U
+    @into() -> U
 }
 
 // TryFrom / TryInto — Result-форма по `try_`-prefix convention.
@@ -168,7 +168,7 @@ export type TryFrom[T, E] protocol {
 /// `v.try_into()` эквивалентен `U.try_from(v)` (D77).
 #stable(since = "0.1")
 export type TryInto[U, E] protocol {
-    try_into() -> Result[U, E]
+    @try_into() -> Result[U, E]
 }
 
 
@@ -203,7 +203,7 @@ export type TryInto[U, E] protocol {
 /// ```
 #stable(since = "0.1")
 export type Hashable protocol {
-    hash() -> u64
+    @hash() -> u64
 }
 
 /// Сравниваемые на равенство (D109).
@@ -251,7 +251,7 @@ export type Hashable protocol {
 /// поддержка — followup.
 #stable(since = "0.1")
 export type Equatable protocol {
-    equals(other Self) -> bool => @compare(other) == 0
+    @equals(other Self) -> bool => @compare(other) == 0
 }
 
 /// Полный порядок (D109, D183 amendment Plan 91.8a.2). Orthogonal с
@@ -271,7 +271,7 @@ export type Equatable protocol {
 /// ```
 #stable(since = "0.1")
 export type Comparable protocol {
-    compare(other Self) -> int
+    @compare(other Self) -> int
 }
 
 
@@ -322,7 +322,7 @@ export type Comparable protocol {
 /// ```
 #stable(since = "0.1")
 export type Cloneable protocol {
-    clone() -> Self
+    @clone() -> Self
 }
 
 
@@ -362,7 +362,7 @@ export type Cloneable protocol {
 /// string), либо предоставляет `fn str.from(MyType) -> str` overload.
 #stable(since = "0.1")
 export type Printable protocol {
-    fmt(sb StringBuilder) {
+    @fmt(sb StringBuilder) {
         sb.append(str.from(@))
     }
 }
@@ -424,7 +424,7 @@ export type Printable protocol {
 /// ```
 #stable(since = "0.1")
 export type DebugPrintable protocol {
-    debug_fmt(sb StringBuilder) {
+    @debug_fmt(sb StringBuilder) {
         sb.append(str.from_debug(@))
     }
 }
@@ -473,7 +473,7 @@ export type DebugPrintable protocol {
 /// ```
 #stable(since = "0.1")
 export type Consumable[E] protocol {
-    on_exit(outcome ScopeOutcome) Fail[E] -> ()
+    consume @on_exit(outcome ScopeOutcome) Fail[E] -> ()
 }
 
 /// Plan 110 (D192): опциональный protocol для ресурсов с custom
@@ -498,5 +498,5 @@ export type Consumable[E] protocol {
 /// ```
 #stable(since = "0.1")
 export type WithExitTimeout protocol {
-    exit_timeout_ms() -> int
+    @exit_timeout_ms() -> int
 }

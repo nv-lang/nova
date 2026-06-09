@@ -5,8 +5,8 @@ module plan91_8a.default_body_parsed_test
 
 // Probe: protocol с default body парсится без ошибок.
 type MyProtocol protocol {
-    abstract_method() -> int
-    default_method() -> int => 42
+    @abstract_method() -> int
+    @default_method() -> int => 42
 }
 
 // Реализующий тип — задаёт оба явно (т.к. codegen synthesis отложен).

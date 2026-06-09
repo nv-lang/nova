@@ -5,11 +5,11 @@ module plan101_4.compose_comma_separated
 
 
 type ReaderC protocol {
-    read() -> str
+    @read() -> str
 }
 
 type WriterC protocol {
-    write(s str) -> int
+    @write(s str) -> int
 }
 
 // Composition через одну `use`-строку с comma-list.

@@ -6,8 +6,8 @@
 module contracts.f9_overloaded_ops_in_protocol_positive
 
 type Store protocol {
-    get(key str) -> int
-    get(key int) -> int
+    @get(key str) -> int
+    @get(key int) -> int
 }
 
 test "overloaded ops in protocol type-check" {
