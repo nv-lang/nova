@@ -18,6 +18,19 @@
 
 ---
 
+### Plan 133 — Remove usize/isize (2026-06-09)
+int = intptr_t (address-sized signed integer) everywhere. Replaced usize/isize throughout.
+~44 nova_tests sites + std/raw_mem.nv (7 params) + std/vec_owned.nv (2 casts) migrated.
+nova_int: int64_t → intptr_t. nova_uint: uint64_t → uintptr_t. i64/u64 now separate from int/uint.
+
+### Plan 134 — Remove ptr builtin, use *() (2026-06-09)
+*() (pointer-to-unit) replaces ptr builtin. *() = void* in C codegen.
+Removes nova_ptr typedef, ptr special-case. Also fixed 4 codegen bugs discovered during migration:
+void* in tuple monomorphization, sqlite_mini_ffi.h nova_ptr usage, .0 field on void* newtype.
+20 files migrated (plan115×10, sync.nv, examples/ffi, plan118/plan91/plan127).
+
+---
+
 ## Codegen (emit_c.rs)
 
 ### [C1] Массивы — только nova_int, нет полиморфизма

@@ -34856,3 +34856,8 @@ Plan 131 — Vec[T] in Nova (CLOSED) — 2026-06-08
 
 МЕТОД: 6-phase sequential workflow. Probe -> alloc -> codegen fix -> Nova impl ->
 protocols -> spec. Полная регрессия 0 новых FAIL.
+
+[2026-06-09] Plan 133: Remove usize/isize. int = intptr_t (signed address-sized).
+             nova_int: int64_t→intptr_t; nova_uint: uintptr_t added; i64 separate from int.
+[2026-06-09] Plan 134: Remove ptr builtin. *() = void* (pointer-to-unit = void*).
+             nova_ptr typedef removed. 4 codegen bugs fixed (tuple mono + .0 on void* newtype).
