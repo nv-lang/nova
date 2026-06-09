@@ -154,7 +154,7 @@ Unbound `Type.@method` не создаёт аналогичных проблем
 
 ## Plan 132.1 — Codegen bug: `@name()` self-call when field/method share name
 
-> **Создан:** 2026-06-09. **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-09. **Статус:** ✅ ЗАКРЫТ 2026-06-09.
 > **Эстимат:** ~0.5 dev-day. **Model:** Sonnet 4.6.
 
 ### Проблема
@@ -255,6 +255,12 @@ if matches!(obj.kind, ExprKind::SelfAccess) {
 - **A-132.1.b** — `pos_at_name_disambiguation.nv` с `@call_len()` и `@double_len()` → PASS
 - **A-132.1.c** — 0 regressions в `nova test plan132/`
 
+### Итог 132.1
+- Ф.0: Root cause confirmed — Method{obj:SelfAccess} fallthrough to free_fn_c_name
+- Ф.1: Variant B implemented — SelfAccess early path in emit_call (~15 LOC)
+- Ф.2: pos_at_name_disambiguation fully restored; all plan132 fixtures PASS
+- Ф.3: spec/docs/plan updated
+
 ---
 
 ## Итог
@@ -271,6 +277,6 @@ Acceptance criteria:
 - A-132.b ✅ `obj.@method(args)` → E_BOUND_METHOD_REMOVED с hint
 - A-132.c ✅ `Type.@method` (unbound) → компилируется, fn-pointer
 - A-132.d ✅ поле `len` и метод `@len()` на одном типе → PASS
-- A-132.e ✅ `@len` в теле = поле; `@len()` = метод
+- A-132.e ✅ `@len` в теле = поле; `@len()` = метод (включая cross-method: `@len()` из `@call_len()` → корректный C-символ `Nova_T_method_len`)
 - A-132.f ✅ nova_tests/syntax/method_values.nv — PASS
 - A-132.g ✅ 0 regressions

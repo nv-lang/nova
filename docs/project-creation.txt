@@ -34885,3 +34885,6 @@ Plan 132 — Remove bound method value obj.@method (CLOSED) — 2026-06-09
 
 ТЕСТЫ: plan132/ — 4 PASS (2 NEG + 1 POS unbound + 2 POS field-method-same-name
 + 1 POS disambiguation). nova_tests/syntax/method_values.nv — PASS.
+
+2026-06-09: Plan 132.1 — Fix codegen bug: @name() self-call when field/method share name.
+Variant B fix in emit_call (SelfAccess early path). pos_at_name_disambiguation fully restored.
