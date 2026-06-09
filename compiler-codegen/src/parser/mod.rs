@@ -3294,7 +3294,8 @@ impl Parser {
             TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods()?;
+                // Effect bodies use bare-ident syntax (no `@` receiver prefix).
+                let methods = self.parse_effect_methods(false)?;
                 effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Effect(methods)
@@ -3951,7 +3952,16 @@ impl Parser {
         Ok(variants)
     }
 
-    fn parse_effect_methods(&mut self) -> Result<Vec<EffectMethod>, Diagnostic> {
+    /// Plan 108.4 Ф.1 (D175 amend): parse method signatures from effect or
+    /// protocol body.
+    ///
+    /// `is_protocol = false` (effect mode): bare-ident syntax `name(...)` —
+    ///   no receiver, no `@` prefix, no mut/consume qualifier. Backwards-compat.
+    ///
+    /// `is_protocol = true` (protocol mode): methods MUST declare their receiver
+    ///   kind explicitly via leading `@`, `mut @`, `consume @` or `.` (static).
+    ///   Bare-ident without preceding `@` / `.` → E_PROTO_METHOD_NEEDS_AT error.
+    fn parse_effect_methods(&mut self, is_protocol: bool) -> Result<Vec<EffectMethod>, Diagnostic> {
         let mut methods = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
@@ -3994,14 +4004,102 @@ impl Parser {
             } else {
                 EffectOpKind::Operation
             };
-            // Plan 97 (Q-static-method-protocol resolved): leading `.` в
-            // protocol-теле помечает метод **статическим** (симметрично D35
-            // `fn Type.name`). Bare-имя остаётся instance (backwards-compat —
-            // `Iter.next()`, `Hashable.hash()` и пр. без изменений).
-            // Для effect-методов leading `.` тоже парсится, но семантически
-            // некорректен — type-checker отвергнёт (followup); парсер
-            // принимает универсально.
-            let is_static = self.eat(&TokenKind::Dot).is_some();
+
+            // Plan 108.4 Ф.1 (D175 amend): receiver-qualifier dispatch.
+            //
+            // Protocol mode: leading token determines receiver kind.
+            //   `.`            → static method (no receiver)
+            //   `@`            → instance method, read-only receiver
+            //   `mut @`        → instance method, mutable receiver
+            //   `consume @`    → instance method, consuming receiver
+            //   bare-ident     → [E_PROTO_METHOD_NEEDS_AT] error
+            //
+            // Effect mode (is_protocol = false): bare-ident parsing only —
+            //   no `@` prefix, no mut/consume qualifier. Backwards-compat.
+            let is_static: bool;
+            let receiver_mut: bool;
+            let receiver_consume: bool;
+
+            if is_protocol {
+                // Static: leading `.`
+                if matches!(self.peek().kind, TokenKind::Dot) {
+                    self.bump(); // consume `.`
+                    is_static = true;
+                    receiver_mut = false;
+                    receiver_consume = false;
+                } else {
+                    is_static = false;
+                    // Optional `mut` / `consume` receiver qualifier.
+                    let mod_span = self.peek().span;
+                    let has_mut = self.eat(&TokenKind::KwMut).is_some();
+                    let has_consume = if !has_mut {
+                        self.eat(&TokenKind::KwConsume).is_some()
+                    } else {
+                        false
+                    };
+                    // Conflict: `mut consume @` or `consume mut @` — impossible
+                    // with single eat, but guard `mut consume` ordering.
+                    if has_mut && matches!(self.peek().kind, TokenKind::KwConsume) {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "[E_PROTO_METHOD_MOD_CONFLICT] protocol method receiver cannot \
+                             have both `mut` and `consume` qualifiers — they are mutually \
+                             exclusive (D131): `consume` transfers ownership, `mut` mutates \
+                             in place. Use one: `mut @method(...)` or `consume @method(...)`.",
+                            mod_span.merge(sp),
+                        ));
+                    }
+                    if has_consume && matches!(self.peek().kind, TokenKind::KwMut) {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "[E_PROTO_METHOD_MOD_CONFLICT] protocol method receiver cannot \
+                             have both `consume` and `mut` qualifiers — they are mutually \
+                             exclusive (D131): `consume` transfers ownership, `mut` mutates \
+                             in place. Use one: `mut @method(...)` or `consume @method(...)`.",
+                            mod_span.merge(sp),
+                        ));
+                    }
+                    // Expect `@` for instance protocol methods.
+                    if self.eat(&TokenKind::At).is_none() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_PROTO_METHOD_NEEDS_AT] protocol method declaration must \
+                                 start with `@` (instance) or `.` (static). \
+                                 Write `@{}(...)` for a read-only receiver, \
+                                 `mut @{}(...)` for a mutable receiver, or \
+                                 `consume @{}(...)` for a consuming receiver.",
+                                match &self.peek().kind {
+                                    TokenKind::Ident(n) => n.clone(),
+                                    _ => "method_name".to_string(),
+                                },
+                                match &self.peek().kind {
+                                    TokenKind::Ident(n) => n.clone(),
+                                    _ => "method_name".to_string(),
+                                },
+                                match &self.peek().kind {
+                                    TokenKind::Ident(n) => n.clone(),
+                                    _ => "method_name".to_string(),
+                                },
+                            ),
+                            sp,
+                        ));
+                    }
+                    receiver_mut = has_mut;
+                    receiver_consume = has_consume;
+                }
+            } else {
+                // Effect mode: Plan 97 (Q-static-method-protocol resolved):
+                // leading `.` в effect-теле помечает метод **статическим**.
+                // Bare-имя остаётся instance (backwards-compat).
+                // Для effect-методов leading `.` тоже парсится, но семантически
+                // некорректен — type-checker отвергнёт (followup); парсер
+                // принимает универсально.
+                is_static = self.eat(&TokenKind::Dot).is_some();
+                receiver_mut = false;
+                receiver_consume = false;
+            }
+
             let (name, name_span) = self.parse_ident()?;
             // Plan 15 (D72): generics — declaration form с optional bounds.
             let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
@@ -4090,6 +4188,8 @@ impl Parser {
                 kind: op_kind,
                 contracts,
                 is_static,
+                receiver_mut,
+                receiver_consume,
                 default_body,
             });
             self.skip_newlines();
@@ -4133,7 +4233,9 @@ impl Parser {
             }
             break;
         }
-        let methods = self.parse_effect_methods()?;
+        // Plan 108.4 Ф.1: protocol methods require `@` / `mut @` / `consume @`
+        // / `.` receiver syntax — pass is_protocol = true.
+        let methods = self.parse_effect_methods(true)?;
         // Forbid `use` after methods — for clarity.
         self.skip_newlines();
         if matches!(self.peek().kind, TokenKind::KwUse) {
@@ -5245,12 +5347,14 @@ impl Parser {
             }
             // Plan 97 Ф.2 (D53 §628 / D142): анонимный protocol-тип в
             // позиции типа — `protocol { method-sig* }`. Body парсится
-            // тем же `parse_effect_methods`, что и named-protocol — это
-            // даёт `.method` static-dot из Ф.1 "автоматом".
+            // тем же `parse_effect_methods` с is_protocol = true, что
+            // enforce'ит `@` / `mut @` / `consume @` / `.` syntax.
             TokenKind::KwProtocol => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods()?;
+                // Plan 108.4 Ф.1: anonymous protocol types also require `@`
+                // receiver prefix — pass is_protocol = true.
+                let methods = self.parse_effect_methods(true)?;
                 let end = self.expect(&TokenKind::RBrace)?.span;
                 Ok(TypeRef::Protocol {
                     methods,

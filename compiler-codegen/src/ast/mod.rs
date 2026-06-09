@@ -1068,6 +1068,23 @@ pub struct EffectMethod {
     /// handler-actions через runtime stack). Hard-enforcement static↔
     /// instance mismatch — followup (см. plan97/Ф.0.4).
     pub is_static: bool,
+    /// Plan 108.4 Ф.1 (D175 amend): receiver mutability qualifier в
+    /// protocol-method-declaration. Параллельно с `Receiver.mutable` в FnDecl.
+    ///
+    /// Синтаксис в protocol-теле:
+    ///   `@method(...)` — read-only receiver (default, `receiver_mut = false`)
+    ///   `mut @method(...)` — mutable receiver
+    ///
+    /// Для effect-методов всегда `false` (у эффектов нет receiver).
+    pub receiver_mut: bool,
+    /// Plan 108.4 Ф.1 (D175 amend): consuming receiver qualifier в
+    /// protocol-method-declaration. Параллельно с `Receiver.consume` в FnDecl.
+    ///
+    /// Синтаксис в protocol-теле:
+    ///   `consume @method(...)` — consuming receiver (ownership transfer)
+    ///
+    /// Взаимоисключающий с `receiver_mut`. Для effect-методов всегда `false`.
+    pub receiver_consume: bool,
     /// Plan 91.8a (D183): default body для protocol method. `None` =
     /// abstract method (тип-implementer ОБЯЗАН реализовать). `Some(body)` =
     /// default — implementer может override; если не задал явно, codegen
