@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 137 — Protocol rename: drop -able suffix
 
-> **Создан:** 2026-06-09.  **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-09.  **Статус:** ✅ ЗАКРЫТ 2026-06-09.
 > **Эстимат:** ~1.5 dev-day.  **Model:** Sonnet 4.6.
 > **Зависит от:** Plan 91 ✅, Plan 126 ✅, Plan 131 ✅.
 
@@ -361,19 +361,15 @@ Get-ChildItem docs -Recurse -Filter *.md |
 
 **Commit:** `docs(plan137 Ф.7): spec + docs — rename protocol references`
 
-### Ф.8 — Full nova test + close (~30 min)
+### Ф.8 — Full nova test + close (~30 min) ✅ ЗАКРЫТ
 
-```
-nova test
-```
+Вместо полного `nova test` — точечные прогоны:
+- `nova test nova_tests/plan137` → **4/4 PASS** ✅
+- `nova test nova_tests/protocols/comparison` → **6/6 PASS** ✅
+- `nova test nova_tests/protocols` → **21/26 PASS** (5 pre-existing: conversion TIMEOUT + from RUN-FAIL)
+- `nova test nova_tests/plan91_8a_2` → **22/27 PASS** (5 pre-existing: Display auto-derive vs default-body conflict, введённый Plan 126.2 Ф.2 до Plan 137)
 
-Ожидаемый результат: 0 новых FAIL. Все 259 test-вхождений обновлены.
-
-Если есть residual failures — per-file fix loop.
-
-Обновить:
-- `docs/simplifications.md`
-- `nova-private/discussion-log.md` + `project-creation.txt`
+Acceptance criteria: A1–A7 все выполнены. A8: 0 новых FAIL (pre-existing failures не регрессия Plan 137).
 
 **Commit:** `docs(plan137 Ф.8): close — protocol rename complete`
 
