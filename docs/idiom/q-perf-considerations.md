@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
+﻿// SPDX-License-Identifier: MIT OR Apache-2.0
 # Q-perf-considerations — Performance Trade-offs of `consume{}` Cleanup
 
 > **Plan 110 Ф.14.2 Q-block.** Q-perf-considerations: overhead analysis
@@ -31,7 +31,7 @@ ConsumeScope** в current Plan 110.1.4 + 110.1.6 implementation
 (without 110.1.7 hot-path elision, without 110.2 cancel-shield).
 
 **With 110.1.7 hot-path elision** (Consumable[never] + no
-WithExitTimeout): **~15-30 ns** — comparable to raw lock+unlock.
+WithExitTimeout): **~15-30 ns** — Compare to raw lock+unlock.
 
 **With 110.2 cancel-shield**: +5-15 ns shield enter/leave +
 deadline-check at suspend points.

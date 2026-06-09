@@ -1,7 +1,7 @@
-# Auto-derive Guide (Plan 126, D109 amend + D230)
+﻿# Auto-derive Guide (Plan 126, D109 amend + D230)
 
 > **Status:** ✅ landed 2026-06-05.
-> **D-blocks:** [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1).
+> **D-blocks:** [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1).
 
 Nova поддерживает **auto-derive** для пяти built-in протоколов через
 `#impl(P)` annotation на пользовательском типе. Аналог Rust `#[derive(...)]`
@@ -34,7 +34,7 @@ ro cmp = a.compare(b)      // auto-derived @compare
 |--------------|--------------------------------|---------------------------------------------|
 | `Equal`  | `@equal(other) -> bool`       | memberwise `&&` chain                       |
 | `Hash`   | `@hash() -> u64`               | XOR + rotate FxHash-style combine           |
-| `Clone`  | `@clone() -> Self` ([D230](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
+| `Clone`  | `@clone() -> Self` ([D230](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
 | `Compare` | `@compare(other) -> int`       | lexicographic if-chain (memcmp-style)       |
 | `Display`  | `@display(sb) -> ()`               | `sb.append("TypeName { f: v, ... }")` chain |
 
@@ -266,7 +266,7 @@ V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_
   весь roadmap, design rationale, AC list.
 - [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
   — auto-derive rules.
-- [D230 NEW](../spec/decisions/02-types.md#d230-new--cloneable-protocol-plan-126-ф1) —
+- [D230 NEW](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1) —
   Clone protocol semantics.
 - [D186 — `#impl(P)` annotation](../spec/decisions/02-types.md#d186) —
   foundation infrastructure.

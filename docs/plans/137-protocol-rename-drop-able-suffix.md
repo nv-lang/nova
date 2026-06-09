@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+﻿<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 137 — Protocol rename: drop -able suffix
 
 > **Создан:** 2026-06-09.  **Статус:** ✅ ЗАКРЫТ 2026-06-09.
@@ -62,7 +62,7 @@ fn Foo @equal(other Foo) -> bool => @x == other.x
 ### Компилятор (`compiler-codegen/src/`)
 
 **`protocols/auto_derive.rs`** — центральное место:
-- Константы `EQUATABLE`/`HASHABLE`/`CLONEABLE`/`COMPARABLE`/`PRINTABLE`
+- Константы `Equal`/`Hash`/`Clone`/`Compare`/`Display`
   → `EQUAL`/`HASH`/`CLONE`/`COMPARE`/`DISPLAY` (+ новая `DEBUG`)
 - `builtin_protocol_method`: `"equals"` → `"equal"`, `"fmt"` → `"display"`
 - `synthesize_equal` / `synthesize_fmt` — имена внутренних функций, method_name в синтезе
@@ -106,7 +106,7 @@ fn Foo @equal(other Foo) -> bool => @x == other.x
 
 Группы:
 - `nova_tests/protocols/comparison/` — переименовать файлы
-  (`hashable.nv` → `hash.nv`, `equatable.nv` → `equal.nv` и т.д.)
+  (`Hash.nv` → `hash.nv`, `Equal.nv` → `equal.nv` и т.д.)
 - `nova_tests/plan91_8a_2/` — синтез `equals`/`fmt` — обновить ожидания
 - `nova_tests/plan126/` — `#impl(Hash, Equal, ...)` → новые имена
 - `nova_tests/plan131/` — `Vec[T Display]` → `Vec[T Display]`
@@ -213,7 +213,7 @@ DEBUG   => Some("debug"),
 - Добавить `synthesize_debug` (был `synthesize_debug_fmt`) → `method_name = "debug"`
 
 Шаг 5 — юнит-тесты в файле: обновить все строки `"equals"`/`"fmt"` +
-`EQUATABLE`/`PRINTABLE` → новые константы.
+`Equal`/`Display` → новые константы.
 
 **Commit:** `feat(plan137 Ф.2): auto_derive.rs — rename protocol constants + method names`
 
@@ -332,9 +332,9 @@ Get-ChildItem nova_tests -Recurse -Filter *.nv |
 
 Переименовать fixture-файлы в `nova_tests/protocols/comparison/`:
 ```
-hashable.nv    → hash.nv
-equatable.nv   → equal.nv
-comparable.nv  → compare.nv
+Hash.nv    → hash.nv
+Equal.nv   → equal.nv
+Compare.nv  → compare.nv
 display.nv     — уже правильное имя
 ```
 

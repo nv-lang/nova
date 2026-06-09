@@ -19,8 +19,8 @@
 ---
 
 ### Plan 137 — Protocol rename: drop -able suffix (2026-06-09)
-Hashable→Hash, Equatable→Equal, Comparable→Compare, Cloneable→Clone, Printable→Display, DebugPrintable→Debug.
-Method renames: @equals→@equal, @fmt→@display, @debug_fmt→@debug.
+Hash→Hash, Equal→Equal, Compare→Compare, Clone→Clone, Display→Display, Debug→Debug.
+Method renames: @equal→@equal, @display→@display, @debug→@debug.
 E_PROTOCOL_RENAMED diagnostic with hint for old names. 4/4 plan137 tests PASS.
 
 ### Plan 136 — Tuple destructuring assignment (2026-06-09)

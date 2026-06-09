@@ -1,4 +1,4 @@
-# Plan 42: Folder-modules (Go-style peers) — production-grade
+﻿# Plan 42: Folder-modules (Go-style peers) — production-grade
 
 > **Создан 2026-05-12, ревизия 2026-05-13** (Этап 95 + audit с чистого
 > листа против Go/Rust production-практик).
@@ -306,7 +306,7 @@ note: did you mean `audit::log_event`? defined at:
 Используется FileId через Plan 36.A Span — error точно указывает
 **module** + **peer-файл** + line. Lists all peers, suggests
 similar names. **Better than Go** (Go показывает только filename),
-**comparable to Rust** (Rust имеет good diagnostics через rustc).
+**Compare to Rust** (Rust имеет good diagnostics через rustc).
 
 ---
 
