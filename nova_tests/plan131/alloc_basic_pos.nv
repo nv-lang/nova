@@ -9,7 +9,7 @@ import std.runtime.raw_mem.{RawMem}
 fn main() -> () {
     unsafe {
         // Allocate 8 bytes of GC-tracked zeroed memory.
-        mut p = RawMem.alloc(8 as usize)
+        mut p = RawMem.alloc(8)
         // Write a value through the *mut u8 pointer.
         *p = 42 as u8
         // Read back and verify.

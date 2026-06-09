@@ -9,7 +9,7 @@ import std.runtime.raw_mem.{RawMem}
 fn main() -> () {
     unsafe {
         // Allocate 8 bytes — should be zeroed by nova_alloc.
-        ro p = RawMem.alloc(8 as usize)
+        ro p = RawMem.alloc(8)
         // Read the first byte — must be zero.
         ro v = *p
         assert(v as int == 0)

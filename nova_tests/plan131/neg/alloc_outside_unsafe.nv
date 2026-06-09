@@ -12,11 +12,11 @@ module neg.alloc_outside_unsafe
 
 // Local #unsafe external fn declaration to exercise checker enforcement.
 // Same semantic contract as RawMem.alloc — allocate n bytes, return raw ptr.
-#unsafe external fn local_alloc(n usize) -> mut * u8
+#unsafe external fn local_alloc(n int) -> mut * u8
 
 fn main() -> () {
     // Missing unsafe {} wrap — should fail at type-checker with
     // E_UNSAFE_CALL_REQUIRES_WRAP.
-    ro _p = local_alloc(8 as usize)
+    ro _p = local_alloc(8)
     println("should not reach here")
 }

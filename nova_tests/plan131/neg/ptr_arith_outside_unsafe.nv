@@ -8,7 +8,7 @@ import std.runtime.raw_mem.{RawMem}
 
 fn main() -> () {
     unsafe {
-        ro p = RawMem.alloc(8 as usize) as *mut int
+        ro p = RawMem.alloc(8) as *mut int
     }
     // Pointer deref/arith outside unsafe block — should fail with E_UNSAFE_REQUIRED.
     // Note: we need p in scope, so use a local #unsafe-fn style to get a pointer.

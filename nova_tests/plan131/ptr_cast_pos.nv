@@ -8,7 +8,7 @@ import std.runtime.raw_mem.{RawMem}
 fn main() -> () {
     unsafe {
         // Alloc returns mut * u8 — cast to *mut u8 (same type, no-op).
-        ro p = RawMem.alloc(1 as usize) as *mut u8
+        ro p = RawMem.alloc(1) as *mut u8
         *p = 255 as u8
         ro v = *p
         println(v as int)

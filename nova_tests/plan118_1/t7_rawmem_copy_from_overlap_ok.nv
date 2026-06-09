@@ -15,7 +15,7 @@ test "RawMem.copy forward overlap shifts correctly" {
     unsafe {
         ro src_view = buf[0..4]
         mut dst_view = buf[1..5]
-        RawMem.copy(src_view.as_ptr(), dst_view.as_mut_ptr(), 4 as usize)
+        RawMem.copy(src_view.as_ptr(), dst_view.as_mut_ptr(), 4)
     }
     assert(buf[0] == (1 as u8))
     assert(buf[1] == (1 as u8))
