@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 135 — Dispatch по receiver-mutability для одноимённых методов
 
-> **Создан:** 2026-06-09.  **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-09.  **Статус:** ✅ ЗАКРЫТ 2026-06-09.
 > **Эстимат:** ~1 dev-day.  **Model:** Sonnet 4.6.
 > **Зависит от:** Plan 128 ✅ (recv_mutable в MethodSig уже хранится).
 
@@ -198,3 +198,26 @@ Nova_Value_method_as_ptr__mut(b)  // → uint8_t*
   receiver (3-way: ro / mut / consume). Ожидается редко.
 - `[M-135-as-ptr-pattern-vec]` — обновить `Vec[T].as_ptr()` /
   `Vec[T].as_mut_ptr()` на единое имя `as_ptr()` когда Plan 135 ready.
+
+---
+
+## Итог (2026-06-09)
+
+Реализован полный recv-mut overload dispatch (Ф.1 + Ф.2 + Ф.3).
+
+**Ф.1 — Mangling.** В `emit_c.rs` при регистрации перегрузки: если
+`existing_count > 0` и suffix пустой (param-типы одинаковые), добавляется
+суффикс `__mut` (recv.mutable == true) или `__ro` (false). В `mangle_fn` —
+двухпроходное разрешение: сначала exact match по `param_c_types + recv_mutable`,
+затем fallback по `param_c_types` только.
+
+**Ф.2 — Call-site dispatch.** Добавлено поле `current_receiver_is_mut: bool`
+в `CEmitter` (выставляется на входе в метод). Добавлен helper `is_obj_mutable`
+(ident → `var_mutable`, SelfAccess → `current_receiver_is_mut`). Тай-брейк
+добавлен в три dispatch-пути: primitive extension, section 5 (основной путь
+user-defined структур), и SelfAccess early-dispatch. Также исправлен
+duplicate-check в `mod.rs` (ro / mut overloads — не дубликаты) и добавлена
+`ro_methods` в `ConsumeRegistry` (подавление ложных `E_LOCAL_NOT_MUT`).
+
+**Ф.3 — Fixtures.** 8/8 тестов PASS. Acceptance criteria A-135.a – A-135.e
+подтверждены. A-135.f (0 regressions) — ожидается при merge в main.

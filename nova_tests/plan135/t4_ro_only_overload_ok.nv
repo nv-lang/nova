@@ -1,0 +1,22 @@
+// Plan 135 Ф.3 T4 (POS): method has only a ro overload, called from ro binding.
+// Works fine — single overload, no dispatch ambiguity.
+// Verifies A-135.e.
+
+module plan135.t4_ro_only_overload_ok
+
+type Gauge { priv reading int }
+
+fn Gauge.new(v int) -> Self => { reading: v }
+
+// Only the ro overload exists — no mut counterpart.
+fn Gauge @get() -> int => @reading
+
+test "ro binding calls single ro overload" {
+    ro g = Gauge.new(55)
+    assert(g.get() == 55)
+}
+
+test "second ro binding" {
+    ro g = Gauge.new(100)
+    assert(g.get() == 100)
+}

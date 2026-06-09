@@ -1,0 +1,22 @@
+// Plan 135 Ф.3 T5 (POS): method has only a mut overload, called from mut binding.
+// Works fine — single overload, no dispatch ambiguity.
+// Verifies A-135.e.
+
+module plan135.t5_mut_only_overload_ok
+
+type Tank { priv mut volume int }
+
+fn Tank.new(v int) -> Self => { volume: v }
+
+// Only the mut overload exists — no ro counterpart.
+fn Tank mut @fill(amount int) { @volume = @volume + amount }
+fn Tank mut @drain(amount int) { @volume = @volume - amount }
+fn Tank @level() -> int => @volume
+
+test "mut binding calls single mut overload" {
+    mut t = Tank.new(0)
+    t.fill(50)
+    t.fill(30)
+    t.drain(20)
+    assert(t.level() == 60)
+}

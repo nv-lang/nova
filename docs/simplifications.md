@@ -34168,6 +34168,22 @@ plan65/f11a_timer_metrics RUN-FAIL pre-existing supervised-гонка — док
 
 **Error code:** `E_BOUND_METHOD_REMOVED` with hints for migration.
 
+## [2026-06-09] Plan 135 — recv-mut overload dispatch
+
+**Что:** `fn T @m()` и `fn T mut @m()` (одинаковые param-типы, разный receiver-mut) теперь
+диспатчатся по мутабельности receiver'а на call-site. C-name mangling: первая перегрузка
+(ro) — `Nova_T_method_m`, mut-перегрузка — `Nova_T_method_m__mut` (`__mut` суффикс).
+
+**Тай-брейк:** двухпроходный resolve — сначала exact match по `param_c_types + recv_mutable`,
+затем fallback по `param_c_types` только (backward-compat с одиночными перегрузками).
+
+**Что упрощено:** `__ro` суффикс добавляется только при конкурентной регистрации
+(когда уже есть другая перегрузка с теми же params). Первая зарегистрированная
+перегрузка всегда использует базовое имя (без суффикса) — backward-compat.
+
+**Followups:** `[M-135-consume-overload]` — 3-way ro/mut/consume dispatch (редкий сценарий);
+`[M-135-as-ptr-pattern-vec]` — migrate `Vec[T].as_mut_ptr()` → `as_ptr()` с recv-mut overload.
+
 ## [2026-06-09] Plan 132.1 — Fix @name() self-call codegen bug (field/method same name)
 
 **Bug:** When a type T has both field `x` and method `@x()`, calling `@x()` from

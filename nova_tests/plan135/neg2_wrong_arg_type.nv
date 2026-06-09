@@ -1,0 +1,20 @@
+// EXPECT_CC_ERROR incompatible type
+//
+// Plan 135 Ф.3 NEG2: calling a method overload with wrong argument type.
+// `Counter @add(n int)` expects int, but `str` is passed.
+// The Nova checker propagates a str-typed argument into a C call expecting nova_int
+// → CC-FAIL with incompatible type error.
+// Verifies that overload resolution does not coerce mismatched argument types.
+
+module plan135.neg2_wrong_arg_type
+
+type Counter { priv mut n int }
+
+fn Counter.new() -> Self => { n: 0 }
+fn Counter @add(n int) -> int => @n + n
+fn Counter mut @inc(n int) { @n = @n + n }
+
+test "wrong arg type on ro overload" {
+    ro c = Counter.new()
+    ro _ = c.add("not-an-int")   // str passed where int expected
+}

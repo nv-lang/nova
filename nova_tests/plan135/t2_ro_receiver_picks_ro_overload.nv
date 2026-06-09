@@ -1,0 +1,23 @@
+// Plan 135 Ф.3 T2 (POS): ro binding calling a method with both ro and mut overloads.
+// Must dispatch to the ro overload (returns 0).
+// Verifies A-135.b.
+
+module plan135.t2_ro_receiver_picks_ro_overload
+
+type Sensor { priv val int }
+
+fn Sensor.new(v int) -> Self => { val: v }
+
+fn Sensor @read() -> int => 0        // ro overload: marker 0
+fn Sensor mut @read() -> int => 1    // mut overload: marker 1
+
+test "ro binding dispatches to ro overload" {
+    ro s = Sensor.new(5)
+    assert(s.read() == 0)
+}
+
+test "ro binding via explicit ro keyword — ro overload" {
+    ro s = Sensor.new(99)
+    ro result = s.read()
+    assert(result == 0)
+}

@@ -176,6 +176,13 @@ param-types suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
 - ✅ **Disambiguation через `as fn(...)`** для overloaded method values —
   Plan 11 Ф.5. Annotation на cast или на let-binding type определяет,
   какой overload выбрать.
+- ✅ **Receiver-mutability overload** (`fn T @m()` vs `fn T mut @m()` —
+  одинаковые param-типы, разный receiver-mut) — Plan 135 (2026-06-09):
+  `fn T @m()` получает C-имя `Nova_T_method_m` (первая perегрузка),
+  `fn T mut @m()` — `Nova_T_method_m__mut`. Call-site dispatch по
+  мутабельности receiver'а: `ro a; a.m()` → ro overload,
+  `mut b; b.m()` → mut overload. Аналог C++ `const`-overloading.
+  Тесты: `nova_tests/plan135/` (8/8 PASS).
 
 #### Strict matching типов
 

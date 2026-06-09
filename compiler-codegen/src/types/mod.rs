@@ -304,7 +304,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                 // receiver-type, который уже включён в `key`). Если хоть одна
                 // ось различается — overload валиден.
                 let new_arg_tys: Vec<&TypeRef> = fd.params.iter().map(|p| &p.ty).collect();
+                // Plan 135: receiver-mutability is a valid overload axis.
+                // `fn T @m()` and `fn T mut @m()` are distinct overloads.
+                let new_recv_mut = fd.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
                 let dup_existing = entry.iter().find(|existing| {
+                    // Plan 135: if receiver-mutability differs, NOT a duplicate.
+                    let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                    if existing_recv_mut != new_recv_mut { return false; }
                     // Arity + arg-types одинаковы?
                     let args_equal = existing.params.len() == fd.params.len()
                         && existing.params.iter().zip(new_arg_tys.iter())
@@ -324,6 +330,8 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     // in both user file and the merged-via-prelude
                     // std/collections/range.nv. User wins.
                     let dup_pos = entry.iter().position(|existing| {
+                        let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                        if existing_recv_mut != new_recv_mut { return false; }
                         let args_equal = existing.params.len() == fd.params.len()
                             && existing.params.iter().zip(new_arg_tys.iter())
                                 .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
@@ -11390,6 +11398,11 @@ struct ConsumeRegistry {
     /// методов с `mut`-receiver (`fn T mut @method(...)`).  Вызов такого
     /// метода на параметре без `mut` → E_PARAM_NOT_MUT.
     mut_methods: HashSet<(String, String)>,
+    /// Plan 135: `(receiver_type, method_name)` для методов с ro-receiver
+    /// (`fn T @method(...)`).  Если метод присутствует и в `mut_methods`,
+    /// и в `ro_methods` — это recv-mut overload пара; вызов на ro-binding
+    /// диспатчится на ro-overload → НЕ E_LOCAL_NOT_MUT/E_PARAM_NOT_MUT.
+    ro_methods: HashSet<(String, String)>,
     /// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
     /// free-fn name → indices of `mut`-params.  Используется при call
     /// site: если arg в этой позиции имеет тип `readonly T` (или
@@ -11423,6 +11436,8 @@ impl ConsumeRegistry {
         let mut method_return_types: HashMap<(String, String), String> = HashMap::new();
         // Plan 108.1 (D176 amend): mut-receiver methods registry.
         let mut mut_methods: HashSet<(String, String)> = HashSet::new();
+        // Plan 135: ro-receiver methods registry (for recv-mut overload pairs).
+        let mut ro_methods: HashSet<(String, String)> = HashSet::new();
         // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
         let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
@@ -11491,6 +11506,9 @@ impl ConsumeRegistry {
                         // Plan 108.1 (D176 amend): mut-receiver methods registry.
                         if r.mutable {
                             mut_methods.insert((r.type_name.clone(), fd.name.clone()));
+                        } else if matches!(r.kind, ReceiverKind::Instance) {
+                            // Plan 135: track ro-receiver instance methods.
+                            ro_methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
                         if !mut_idx.is_empty() {
                             method_mut_params.insert(
@@ -11601,7 +11619,7 @@ impl ConsumeRegistry {
 
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
-            fn_view_params, method_return_types, mut_methods,
+            fn_view_params, method_return_types, mut_methods, ro_methods,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
         }
@@ -13964,9 +13982,15 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // Это может изредка дать over-rejection для chain'ов
                             // с omonимными pure-методами, но soundness важнее.
                             // (Plan 128.2 §1.3 — acceptable trade-off.)
+                            // Plan 135: если recv-mut overload pair (и ro и mut),
+                            // то ro-binding может вызывать через chain — не ошибка.
                             let is_registered_mut_any = ctx.reg.mut_methods.iter()
                                 .any(|(_, m)| m == method.as_str());
-                            let is_mut_method = is_registered_mut_any
+                            // Plan 135: check if there's a ro-overload for ANY type
+                            // with this method name (conservative mirror of mut check).
+                            let has_any_ro_overload = ctx.reg.ro_methods.iter()
+                                .any(|(_, m)| m == method.as_str());
+                            let is_mut_method = (is_registered_mut_any && !has_any_ro_overload)
                                 || is_builtin_mut_method(method.as_str());
                             if is_mut_method {
                                 // (a) Param check — E_PARAM_NOT_MUT.
@@ -14052,6 +14076,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 let registered = recv_ty.as_ref()
                                     .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
                                     .unwrap_or(false);
+                                // Plan 135: ro-binding may call ro-overload of a
+                                // recv-mut pair — not a param-not-mut error.
+                                let has_ro_overload = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.ro_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
                                 let builtin_mut_method = matches!(
                                     method.as_str(),
                                     "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
@@ -14063,7 +14092,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     // internal pointer — requires mut binding.
                                     | "as_mut_ptr"
                                 );
-                                if registered || builtin_mut_method {
+                                if (registered && !has_ro_overload) || builtin_mut_method {
                                     let ty_str = recv_ty.as_deref().unwrap_or("?");
                                     errors.push(Diagnostic::new(
                                         format!(
@@ -14095,6 +14124,12 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 let registered = recv_ty.as_ref()
                                     .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
                                     .unwrap_or(false);
+                                // Plan 135: if there is also a ro-overload for this
+                                // (type, method) pair, a ro-binding call dispatches
+                                // to the ro-overload — NOT an error.
+                                let has_ro_overload = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.ro_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
                                 let builtin_mut_method = matches!(
                                     method.as_str(),
                                     "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
@@ -14106,7 +14141,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     // internal pointer — requires mut binding.
                                     | "as_mut_ptr"
                                 );
-                                if registered || builtin_mut_method {
+                                if (registered && !has_ro_overload) || builtin_mut_method {
                                     let ty_str = recv_ty.as_deref().unwrap_or("?");
                                     errors.push(Diagnostic::new(
                                         format!(
