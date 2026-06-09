@@ -4,13 +4,13 @@ module plan56.f6_pure_bound_protocols
 
 
 type MyHashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @eq(other Self) -> bool
 }
 
 
 type MyDisplay protocol {
-    show() -> str
+    @show() -> str
 }
 
 

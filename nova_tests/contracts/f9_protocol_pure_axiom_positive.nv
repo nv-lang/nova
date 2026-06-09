@@ -6,7 +6,7 @@
 module contracts.f9_protocol_pure_axiom_positive
 
 type Storage protocol {
-    #pure size() -> int
+    #pure @size() -> int
     axiom non_negative() => size() >= 0
 }
 

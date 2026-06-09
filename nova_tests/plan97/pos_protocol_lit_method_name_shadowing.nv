@@ -15,7 +15,7 @@ module plan97.pos_protocol_lit_method_name_shadowing
 // Имя метода `next` НАМЕРЕННО совпадает с stdlib `Iter.next`.
 // Семантика разная: наш next возвращает int, не Option[int].
 export type CounterPlain protocol {
-    next() -> int
+    @next() -> int
 }
 
 

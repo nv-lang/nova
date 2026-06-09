@@ -5,7 +5,7 @@
 module negative.multibound_dangling_plus_neg
 
 type HasA protocol {
-    a() -> int
+    @a() -> int
 }
 
 

@@ -34904,3 +34904,54 @@ Variant B fix in emit_call (SelfAccess early path). pos_at_name_disambiguation f
   получает __mut суффикс (mut receiver) или __ro (ro receiver при коллизии).
   Fallback: нет mut overload → ro overload используется для любого receiver.
 D84 (10-overloading.md) обновлён: ось «receiver-mutability» теперь ✅ ACTIVE.
+
+================================================================================
+Plan 108.4 — Protocol method @ + receiver mutability (CLOSED) — 2026-06-09
+================================================================================
+
+МОТИВАЦИЯ: После Plan 108.1/108.2/108.3 (default-ro для params/locals/loops/
+patterns), protocol method declarations остались единственной позицией с implicit
+default-mut. Двойная inconsistency: нет @, нет mut modifier. After Plan 108.x
+семантика была: params/locals/loops/patterns — всё default-ro, но в protocol
+declaration ни @ ни modifier. Plan 108.4 closes both gaps.
+
+СДЕЛАНО:
+Ф.1 Parser: @ required in protocol methods; ReceiverMutability (Ro/Mut/Consume)
+  field in EffectMethod AST; parse_effect_methods(is_protocol: bool) — protocol
+  mode requires @; E_PROTO_METHOD_NEEDS_AT (bare ident без @) +
+  E_PROTO_METHOD_MOD_CONFLICT (mut consume @foo() и другие конфликты).
+Ф.2 Type-checker: check_receiver_mut_match() в verify_impl_protocols; 4 errors:
+  E_PROTO_IMPL_RO_FOR_MUT, E_PROTO_IMPL_MUT_FOR_RO, E_PROTO_IMPL_MUT_FOR_CONSUME,
+  E_PROTO_IMPL_CONSUME_FOR_MUT. emit_c.rs: synthesized default-protocol-method
+  bodies используют m.receiver_mut (было hardcoded false).
+Ф.3 Stdlib migration: std/prelude/collections.nv (Iterable → mut @next()),
+  std/prelude/protocols.nv (Into/TryInto/Hashable/Equatable/Comparable/Cloneable/
+  Printable/DebugPrintable/Consumable/WithExitTimeout), std/testing/property.nv
+  (Generator @generate()/@shrink()). 57 nova_tests/ files migrated.
+  Bootstrap parser comment удалён из collections.nv.
+Ф.4 Tests: 13/13 PASS в nova_tests/plan108_4/:
+  6 POS (pos_mut_next_match, pos_ro_hash_match, pos_consume_close_match,
+         pos_default_ro_match, pos_impl_annotation_match, pos_recv_mut_match,
+         pos_receiver_at_parse)
+  6 NEG type-checker (neg_ro_for_mut, neg_mut_for_ro, neg_mut_for_consume,
+                      neg_consume_for_mut)
+  2 NEG parser (neg_method_needs_at, neg_mod_conflict_mut_consume)
+Ф.5 Spec/docs: D209 NEW в 04-effects.md; D58/D72/D186 amends.
+
+КЛЮЧЕВЫЕ РЕШЕНИЯ:
+- @ обязателен в protocol — mirrors impl syntax (fn T @method()); visual distinction
+  от effect { } blocks (нет receiver → нет @)
+- Default receiver = ro (consistent с Plan 108.x default-ro family)
+- Effect { } blocks без изменений — функции без receiver, нет @
+- Static methods в protocol: .method() (leading dot) — без изменений
+
+НОВЫЕ ERROR CODES (8 total):
+Parser: E_PROTO_METHOD_NEEDS_AT, E_PROTO_METHOD_MOD_CONFLICT
+Checker: E_PROTO_IMPL_RO_FOR_MUT, E_PROTO_IMPL_MUT_FOR_RO,
+         E_PROTO_IMPL_MUT_FOR_CONSUME, E_PROTO_IMPL_CONSUME_FOR_MUT
+
+COMMITS: e620a09d94a (Ф.1) + e7cdbd8f83c (Ф.2 + Ф.3 migration) +
+         abc25d196c6 (Ф.4) + bbbeb9ce6bd (Ф.5)
+
+SPEC: D209 NEW (04-effects.md); D58 amend (03-syntax.md); D72 amend (02-types.md);
+      D186 amend (02-types.md). Plan 108 family complete: 108→108.1→108.2→108.3→108.4.

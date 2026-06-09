@@ -14,9 +14,9 @@ type Doc {
 fn Doc @close() -> () => ()
 
 
-// Анонимный protocol-тип `protocol { close() -> () }` — параметр должен
+// Анонимный protocol-тип `protocol { @close() -> () }` — параметр должен
 // иметь метод `close`. `Doc` структурно совместим.
-fn use_closer(c protocol { close() -> () }) -> () => c.close()
+fn use_closer(c protocol { @close() -> () }) -> () => c.close()
 
 
 test "анонимный protocol-тип в параметре, structural match" {

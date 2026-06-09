@@ -1,14 +1,14 @@
 // Plan 97.1 Ф.4.4 (D142) — cross-test Ф.2 (anon-protocol type)
 // + Ф.4 (protocol-literal value).
 //
-// fn принимает анонимный protocol-type `c protocol { close() -> () }`
+// fn принимает анонимный protocol-type `c protocol { @close() -> () }`
 // (Plan 97 Ф.2). Caller передаёт protocol-литерал значение.
 
 module plan97.pos_protocol_lit_with_anon_param
 
 
 export type Resource protocol {
-    close() -> ()
+    @close() -> ()
 }
 
 

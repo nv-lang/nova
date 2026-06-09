@@ -8,7 +8,7 @@ module plan97.pos_protocol_lit_gc_stress
 
 
 export type Increment protocol {
-    apply(x int) -> int
+    @apply(x int) -> int
 }
 
 

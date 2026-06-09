@@ -6,7 +6,7 @@ module plan91_8a_2.general_synthesis_test
 // special-case для этого protocol name.
 
 type Greetable protocol {
-    greet() -> str {
+    @greet() -> str {
         "Hello, " + @name()
     }
 }

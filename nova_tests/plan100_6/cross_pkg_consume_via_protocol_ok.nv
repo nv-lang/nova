@@ -6,7 +6,7 @@ module plan100_6.cross_pkg_consume_via_protocol_ok
 
 // "Package A" — protocol definition:
 export type Resource protocol {
-    cleanup() -> ()
+    @cleanup() -> ()
 }
 
 // "Package B" — consume-type that satisfies Resource protocol:

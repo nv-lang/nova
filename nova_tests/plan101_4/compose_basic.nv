@@ -6,11 +6,11 @@ module plan101_4.compose_basic
 
 
 type Reader protocol {
-    read() -> str
+    @read() -> str
 }
 
 type Writer protocol {
-    write(s str) -> int
+    @write(s str) -> int
 }
 
 // Composition: ReadWriter = Reader + Writer (без своих методов).

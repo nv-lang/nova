@@ -4456,11 +4456,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         c_name: canonical_c_name.to_string(),
                         variadic_last: false,
                         param_defaults: vec![None; param_c_tys.len()],
-                        // Plan 128 Ф.1: synthesized default-protocol-method body —
-                        // EffectMethod AST has no `mutable` flag yet. Default false;
-                        // Ф.2 may need to extend EffectMethod with mutability if
-                        // protocol receivers ever need mut-receiver dispatch.
-                        recv_mutable: false,
+                        // Plan 108.4 Ф.1: EffectMethod now has `receiver_mut` field.
+                        // Using it here for correctness; checker enforcement (Ф.2)
+                        // will wire full mut-receiver dispatch for protocol methods.
+                        recv_mutable: m.receiver_mut,
                     };
                     self.method_overloads
                         .entry((t_name.to_string(), method_name.to_string()))

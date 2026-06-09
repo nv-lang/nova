@@ -3504,6 +3504,14 @@ D72 принимает это как формальное решение, рас
 (structural check, existential-vs-universal через позицию, multiple
 bounds через анонимный protocol).
 
+> ⚠️ **D72 AMENDED by Plan 108.4 (2026-06-09)** — When a type participates as
+> bound `[T Iterable[U]]` or any protocol bound, the type-checker now verifies
+> **receiver_mut consistency** for all protocol methods at the use-site. A type
+> that declares `@method()` (ro) does not satisfy a protocol requiring
+> `mut @method()`. Errors: `E_PROTO_IMPL_RO_FOR_MUT`, `E_PROTO_IMPL_MUT_FOR_RO`,
+> `E_PROTO_IMPL_MUT_FOR_CONSUME`, `E_PROTO_IMPL_CONSUME_FOR_MUT`.
+> See [D209](04-effects.md#d209--protocol-method--syntax--receiver-mutability-plan-1084-2026-06-09).
+
 ---
 
 ## D110. Ghost state — spec-only bindings
@@ -6795,6 +6803,15 @@ auto-derive `str.from(@)` pattern).
   synthesis (что gate'ится).
 - [D109 split policy](#d109-split-policy).
 - Plan 101.3 — multi-bound `+` syntax.
+
+> ⚠️ **D186 AMENDED by Plan 108.4 (2026-06-09)** — `#impl(P)` annotation now
+> checks **receiver_mut** in addition to method signature. If the protocol declares
+> `mut @method()` and the implementing type declares `fn T @method()` (ro receiver),
+> type-checker emits `E_PROTO_IMPL_RO_FOR_MUT` at the type-declaration site (where
+> `#impl(P)` appears). The 4 new error codes are:
+> `E_PROTO_IMPL_RO_FOR_MUT`, `E_PROTO_IMPL_MUT_FOR_RO`,
+> `E_PROTO_IMPL_MUT_FOR_CONSUME`, `E_PROTO_IMPL_CONSUME_FOR_MUT`.
+> See [D209](04-effects.md#d209--protocol-method--syntax--receiver-mutability-plan-1084-2026-06-09).
 
 ---
 

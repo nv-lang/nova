@@ -10,7 +10,7 @@ module plan101_2.receiver_bound_smoke
 
 
 type Showable_ protocol {
-    show() -> str
+    @show() -> str
 }
 
 

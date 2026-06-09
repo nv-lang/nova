@@ -6,12 +6,12 @@ module negative.compose_cycle_neg
 
 type Alpha protocol {
     use Beta
-    a() -> int
+    @a() -> int
 }
 
 type Beta protocol {
     use Alpha
-    b() -> int
+    @b() -> int
 }
 
 test "should error" {

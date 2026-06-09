@@ -5,11 +5,11 @@ module plan101_3.multibound_with_default
 
 
 type Show_ protocol {
-    show() -> str
+    @show() -> str
 }
 
 type Sized_ protocol {
-    size() -> int
+    @size() -> int
 }
 
 

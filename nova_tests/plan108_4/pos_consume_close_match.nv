@@ -1,0 +1,21 @@
+// Plan 108.4 Ф.4: POS — protocol consume @close() + impl consume @close() → OK
+// Verifies that a consuming receiver in protocol and impl both match.
+
+module plan108_4.pos_consume_close_match
+
+type Closeable108 protocol {
+    consume @close() -> int
+}
+
+#impl(Closeable108)
+type Handle { fd int }
+
+fn Handle consume @close() -> int {
+    @fd
+}
+
+test "consume @close protocol impl compiles and works" {
+    ro h = Handle { fd: 42 }
+    ro result = h.close()
+    assert(result == 42)
+}

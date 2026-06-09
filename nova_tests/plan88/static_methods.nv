@@ -6,7 +6,7 @@ module plan88.static_methods
 
 
 // --- T.new() — user-defined static-метод через protocol ---
-type Buildable protocol { new() -> Self }
+type Buildable protocol { @new() -> Self }
 
 type Counter { n int }
 fn Counter.new() -> Counter => { n: 0 }

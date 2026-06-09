@@ -4,15 +4,15 @@ module plan101_3.multibound_three
 
 
 type HasA protocol {
-    a() -> int
+    @a() -> int
 }
 
 type HasB protocol {
-    b() -> int
+    @b() -> int
 }
 
 type HasC protocol {
-    c() -> int
+    @c() -> int
 }
 
 

@@ -16,7 +16,7 @@ fn Box @show() -> str => "Box(${@value})"
 // `T` ограничен inline-protocol'ом `{ show() -> str }`. `Box` структурно
 // удовлетворяет. Type-checker должен принять. Bare-форма (без `@`) —
 // в protocol-теле метод всегда instance (D53 Plan 17 Ф.1).
-fn print_one[T protocol { show() -> str }](x T) -> str => x.show()
+fn print_one[T protocol { @show() -> str }](x T) -> str => x.show()
 
 
 test "inline-protocol bound удовлетворён структурно" {

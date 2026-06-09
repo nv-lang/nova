@@ -5345,6 +5345,9 @@ impl<'a> TypeCheckCtx<'a> {
             // param types / return type vs protocol declaration.
             let mut missing: Vec<String> = Vec::new();
             let mut wrong_sig: Vec<(String, String, String)> = Vec::new();
+            // Plan 108.4 Ф.2: receiver mutability mismatch errors.
+            // Each entry: (method_name, error_code, proto_qualifier, fix_hint).
+            let mut wrong_recv: Vec<(String, &'static str, String, String)> = Vec::new();
             // Plan 126 (D230) Ф.4: built-in protocol auto-derive eligibility.
             // Если protocol auto-derive-able AND user не предоставил explicit
             // method AND нет default body — пытаемся synthesize. Synth-success
@@ -5369,6 +5372,10 @@ impl<'a> TypeCheckCtx<'a> {
                                 render_method_sig(&m.name, &m.params, &m.return_type),
                                 reason,
                             ));
+                        }
+                        // Plan 108.4 Ф.2: receiver mutability match check.
+                        if let Some(recv_err) = check_receiver_mut_match(t_method, m, proto_name, &td.name) {
+                            wrong_recv.push(recv_err);
                         }
                     }
                 } else if !has_default {
@@ -5420,6 +5427,19 @@ impl<'a> TypeCheckCtx<'a> {
                          note: protocol method signatures must match exactly \
                          (arity, param types, return type — modulo Self ↔ {}).",
                         td.name, name, proto_name, expected, reason, td.name,
+                    ),
+                    td.span,
+                ));
+            }
+            // Plan 108.4 Ф.2: emit receiver-mutability mismatch errors.
+            for (mname, error_code, proto_qual, fix_hint) in &wrong_recv {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[{}] type `{}` implements `{}` but method `{}` has wrong \
+                         receiver mutability. Protocol `{}` declares `{} @{}(...)`. \
+                         {}",
+                        error_code, td.name, proto_name, mname,
+                        proto_name, proto_qual, mname, fix_hint,
                     ),
                     td.span,
                 ));
@@ -9768,6 +9788,91 @@ fn check_signature_match(
         )),
     }
     None
+}
+
+/// Plan 108.4 Ф.2: Check receiver-mutability match between T's implementation method
+/// and the protocol's method declaration.
+///
+/// Returns Some((method_name, error_code, proto_qualifier, fix_hint)) on mismatch, None on match.
+///
+/// Match rules (proto → impl):
+///   ro       (receiver_mut=false, receiver_consume=false) → impl ro   → OK
+///   mut      (receiver_mut=true,  receiver_consume=false) → impl mut  → OK
+///   consume  (receiver_mut=false, receiver_consume=true)  → impl consume → OK
+///   All other combinations → mismatch → one of the 4 E_PROTO_IMPL_* errors.
+fn check_receiver_mut_match(
+    t_method: &FnDecl,
+    proto_method: &crate::ast::EffectMethod,
+    _proto_name: &str,
+    _type_name: &str,
+) -> Option<(String, &'static str, String, String)> {
+    // Determine proto receiver qualifier.
+    let proto_consume = proto_method.receiver_consume;
+    let proto_mut     = proto_method.receiver_mut;
+    // Determine impl receiver qualifier from FnDecl.receiver.
+    let (impl_mut, impl_consume) = t_method.receiver.as_ref()
+        .map(|r| (r.mutable, r.consume))
+        .unwrap_or((false, false));
+    // Build a string describing the protocol's declared qualifier (for messages).
+    let proto_qual = if proto_consume {
+        "consume".to_string()
+    } else if proto_mut {
+        "mut".to_string()
+    } else {
+        "ro".to_string()  // default (no prefix = ro)
+    };
+    // Match table:
+    if proto_consume {
+        // Protocol requires consume receiver.
+        if impl_consume {
+            return None; // OK
+        }
+        // impl is mut or ro — wrong; both cases use E_PROTO_IMPL_MUT_FOR_CONSUME
+        // (plan: "protocol `consume @m()`, impl mut/ro" → same error code).
+        let tname_c = t_method.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("T");
+        let impl_qual = if impl_mut { "mut " } else { "" };
+        let (code, fix) = (
+            "E_PROTO_IMPL_MUT_FOR_CONSUME",
+            format!("Change `fn {} {}@{}(...)` to `fn {} consume @{}(...)`.",
+                    tname_c, impl_qual, t_method.name, tname_c, t_method.name),
+        );
+        return Some((t_method.name.clone(), code, proto_qual, fix));
+    }
+    if proto_mut {
+        // Protocol requires mut receiver.
+        if impl_mut {
+            return None; // OK
+        }
+        // impl is consume → E_PROTO_IMPL_CONSUME_FOR_MUT
+        // impl is ro      → E_PROTO_IMPL_RO_FOR_MUT
+        let tname = t_method.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("T");
+        let (code, fix) = if impl_consume {
+            ("E_PROTO_IMPL_CONSUME_FOR_MUT",
+             format!("Change `fn {} consume @{}(...)` to `fn {} mut @{}(...)`.",
+                     tname, t_method.name, tname, t_method.name))
+        } else {
+            ("E_PROTO_IMPL_RO_FOR_MUT",
+             format!("Change `fn {} @{}(...)` to `fn {} mut @{}(...)`.",
+                     tname, t_method.name, tname, t_method.name))
+        };
+        return Some((t_method.name.clone(), code, proto_qual, fix));
+    }
+    // Protocol requires ro receiver (default).
+    if !impl_mut && !impl_consume {
+        return None; // OK — both ro
+    }
+    let tname = t_method.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("T");
+    let (code, fix) = if impl_mut {
+        ("E_PROTO_IMPL_MUT_FOR_RO",
+         format!("Change `fn {} mut @{}(...)` to `fn {} @{}(...)`.",
+                 tname, t_method.name, tname, t_method.name))
+    } else {
+        // impl_consume — protocol says ro but impl is consume; treat as MUT_FOR_RO variant
+        ("E_PROTO_IMPL_MUT_FOR_RO",
+         format!("Change `fn {} consume @{}(...)` to `fn {} @{}(...)`.",
+                 tname, t_method.name, tname, t_method.name))
+    };
+    Some((t_method.name.clone(), code, proto_qual, fix))
 }
 
 /// Two TypeRefs are equivalent if textually equal, OR one is `Self`

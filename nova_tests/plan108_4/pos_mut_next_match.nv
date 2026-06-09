@@ -1,0 +1,33 @@
+// Plan 108.4 Ф.4: POS — protocol mut @next() + impl mut @next() → OK
+// Verifies that a custom iterator with mutable receiver compiles and runs.
+
+module plan108_4.pos_mut_next_match
+
+type CounterIter protocol {
+    mut @next() -> Option[int]
+}
+
+#impl(CounterIter)
+type Counter { mut cur int, end int }
+
+fn Counter mut @next() -> Option[int] {
+    if @cur >= @end {
+        None
+    } else {
+        ro v = @cur
+        @cur = @cur + 1
+        Some(v)
+    }
+}
+
+test "mut @next protocol impl compiles and yields values" {
+    mut c = Counter { cur: 0, end: 3 }
+    mut results = []
+    for x in c {
+        results.push(x)
+    }
+    assert(results.len() == 3)
+    assert(results[0] == 0)
+    assert(results[1] == 1)
+    assert(results[2] == 2)
+}

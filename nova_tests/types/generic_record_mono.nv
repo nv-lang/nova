@@ -105,7 +105,7 @@ test "Result2[str] Ok2" {
 // в мономорфном теле должен диспетчиться на конкретный тип.
 
 type GrmEq protocol {
-    eq(other Self) -> bool
+    @eq(other Self) -> bool
 }
 
 type GrmPoint {

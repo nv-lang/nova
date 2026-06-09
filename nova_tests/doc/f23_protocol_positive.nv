@@ -7,12 +7,12 @@ module doc.f23_protocol_positive
 
 /// Describable protocol — types with string description.
 export type Describable protocol {
-    describe() -> str
+    @describe() -> str
 }
 
 /// Measurable protocol — types with a size measure.
 export type Measurable protocol {
-    size() -> int
+    @size() -> int
 }
 
 /// Box type — implements both protocols.

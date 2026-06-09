@@ -11,7 +11,7 @@ type Record1 {
 
 type BadProto protocol {
     use Record1
-    m() -> int
+    @m() -> int
 }
 
 test "should error" {

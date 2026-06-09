@@ -6,18 +6,18 @@ module plan101_4.compose_mix_direct
 
 
 type Reader protocol {
-    read() -> str
+    @read() -> str
 }
 
 type Closeable protocol {
-    close() -> bool
+    @close() -> bool
 }
 
 // ReadCloseLogger = Reader + Closeable + собственный log-метод.
 type ReadCloseLogger protocol {
     use Reader
     use Closeable
-    log(msg str) -> int
+    @log(msg str) -> int
 }
 
 

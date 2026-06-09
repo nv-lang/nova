@@ -7,11 +7,11 @@ module plan97.pos_protocol_lit_multi_method
 
 
 export type Storage protocol {
-    get(key str) -> int
-    put(key str, value int) -> ()
-    has(key str) -> bool
-    size() -> int
-    clear() -> ()
+    @get(key str) -> int
+    @put(key str, value int) -> ()
+    @has(key str) -> bool
+    @size() -> int
+    @clear() -> ()
 }
 
 

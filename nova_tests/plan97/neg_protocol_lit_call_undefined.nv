@@ -9,7 +9,7 @@ module plan97.neg_protocol_lit_call_undefined
 
 
 type Single protocol {
-    only() -> int
+    @only() -> int
 }
 
 

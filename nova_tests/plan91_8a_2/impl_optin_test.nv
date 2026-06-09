@@ -8,7 +8,7 @@ module plan91_8a_2.impl_optin_test
 //   - multi-protocol #impl(A + B) works
 
 type Greetable protocol {
-    greet() -> str {
+    @greet() -> str {
         "Hello, " + @name()
     }
 }

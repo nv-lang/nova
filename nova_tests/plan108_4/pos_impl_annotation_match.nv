@@ -1,0 +1,25 @@
+// Plan 108.4 Ф.4: POS — #impl(P) with correct receiver mutability → OK
+// Tests that #impl annotation with matching mut/ro/consume receivers works.
+
+module plan108_4.pos_impl_annotation_match
+
+type Growable108g protocol {
+    mut @push(x int)
+    @len() -> int
+}
+
+#impl(Growable108g)
+type Stack108 { mut size int }
+
+fn Stack108 mut @push(x int) {
+    @size = @size + 1
+}
+
+fn Stack108 @len() -> int => @size
+
+test "#impl annotation with correct mut/ro receivers compiles and runs" {
+    mut s = Stack108 { size: 0 }
+    s.push(10)
+    s.push(20)
+    assert(s.len() == 2)
+}

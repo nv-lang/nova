@@ -34203,3 +34203,24 @@ of correct `Nova_T_method_x(nova_self, ...)`.
 - `emit_c.rs`: added early SelfAccess guard in `emit_call` Member arm — emit `Nova_{T}_method_{name}(nova_self, args)` directly.
 
 **Tests:** `pos_at_name_disambiguation.nv` fully restored with `@call_len()` + `@double_len()` — 8/8 PASS.
+
+## Plan 108.4 — Protocol method @ + receiver mutability (2026-06-09)
+
+### Deferred / Out of scope
+
+- **`[M-108.4-effect-tracking-in-proto]`** — Effect-list tracking in protocol method
+  (e.g. `mut @next() Fail[Error] -> ...`). Plan 108.4 не трогает effect-tracking. Future plan.
+- **`[M-108.4-protocol-extends]`** — Protocol inheritance (`type B protocol extends A { ... }`).
+  Orthogonal feature; deferred.
+- **`[M-108.4-default-methods]`** — Default method bodies в protocol declaration (generic, beyond
+  Plan 91.8a's specific auto-derive patterns). Future plan.
+- **`[M-108.4-protocol-conformance-table-export]`** — `nova info --protocol-conformance` CLI
+  introspection. Tooling enhancement, post-0.1.
+
+### What was implemented
+
+Parser: `@` required in protocol instance-method declarations.
+Type-checker: receiver_mut mismatch → `E_PROTO_IMPL_*` errors.
+Stdlib migration: 3 std/ files + 57 nova_tests/ files migrated.
+13/13 plan108_4 fixtures PASS. D209 NEW + D58/D72/D186 amends.
+Plan 108 family complete: 108 → 108.1 → 108.2 → 108.3 → 108.4.

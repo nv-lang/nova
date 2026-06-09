@@ -1,0 +1,22 @@
+// Plan 108.4 Ф.4: POS — protocol @hash() (ro default) + impl @hash() → OK
+// Verifies that a read-only receiver (default @ prefix) compiles and runs.
+
+module plan108_4.pos_ro_hash_match
+
+type Hashable108h protocol {
+    @hash() -> u64
+}
+
+#impl(Hashable108h)
+type Point { x int, y int }
+
+fn Point @hash() -> u64 {
+    ro hx = @x * 31
+    ro hy = @y * 17
+    (hx + hy)
+}
+
+test "ro @hash protocol impl compiles and returns value" {
+    ro p = Point { x: 3, y: 4 }
+    assert(p.hash() == 3 * 31 + 4 * 17)
+}
