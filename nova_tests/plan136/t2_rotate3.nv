@@ -1,0 +1,25 @@
+// Plan 136 Ф.4 T2 (POS): three-element rotate via tuple destructuring assignment.
+// `(a, b, c) = (b, c, a)` — rotate-left by one position.
+// Verifies that 3-tuple lhs/rhs works correctly.
+
+module plan136.t2_rotate3
+
+test "rotate three ints left" {
+    mut a = 1
+    mut b = 2
+    mut c = 3
+    (a, b, c) = (b, c, a)
+    assert(a == 2)
+    assert(b == 3)
+    assert(c == 1)
+}
+
+test "rotate again" {
+    mut a = 10
+    mut b = 20
+    mut c = 30
+    (a, b, c) = (b, c, a)
+    assert(a == 20)
+    assert(b == 30)
+    assert(c == 10)
+}

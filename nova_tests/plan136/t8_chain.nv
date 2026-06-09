@@ -1,0 +1,27 @@
+// Plan 136 Ф.4 T8 (POS): multiple tuple assigns in sequence.
+// Two separate tuple assigns, each correct independently.
+// Verifies that sequential tuple assigns compose correctly.
+
+module plan136.t8_chain
+
+test "sequential tuple assigns" {
+    mut a = 0
+    mut b = 0
+    mut c = 0
+    (a, b) = (1, 2)
+    (b, c) = (3, 4)
+    assert(a == 1)
+    assert(b == 3)
+    assert(c == 4)
+}
+
+test "swap then overwrite" {
+    mut x = 10
+    mut y = 20
+    (x, y) = (y, x)
+    assert(x == 20)
+    assert(y == 10)
+    (x, y) = (0, 0)
+    assert(x == 0)
+    assert(y == 0)
+}
