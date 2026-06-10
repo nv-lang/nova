@@ -4019,6 +4019,31 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
+    /// Plan 138.1 Ф.3 (D239): is this C type a raw `*mut T` storage pointer —
+    /// i.e. a typed pointer that supports direct `ptr[i]` indexing (no `->data`
+    /// indirection)? True for `Nova_Point**`, `nova_int*`, `nova_f64*`, `void*`,
+    /// etc. False for the collection wrapper structs (`NovaArray_*`,
+    /// `Nova_Vec____*`) — those carry a `data`/`len`/`cap` header and must be
+    /// indexed via their element-access path. Also false for `nova_str` (it is a
+    /// `{ptr,len}` value struct, indexed by codepoint via a runtime helper).
+    fn is_raw_pointer_storage_c(ty: &str) -> bool {
+        let t = ty.trim();
+        if !t.ends_with('*') {
+            return false;
+        }
+        // A single-pointer collection wrapper (`NovaArray_<T>*` / `Nova_Vec____<T>*`)
+        // is a VALUE handle indexed via its `data` header — not raw storage.
+        // But a DOUBLE pointer to one (`Nova_Vec____<T>**` = `*mut Vec[T]`, the
+        // backing buffer of a `Vec[Vec[T]]`) IS raw `*mut T` storage and must be
+        // indexed directly.
+        if (t.starts_with("NovaArray_") || t.starts_with("Nova_Vec____"))
+            && !t.ends_with("**")
+        {
+            return false;
+        }
+        true
+    }
+
     /// Plan 72 P3-B (updated): generate vtable struct typedef, NovaBox typedef,
     /// thunk functions, and vtable instance for a protocol-typed binding.
     /// Returns (vtable_instance_name, box_c_type) on success, None on failure.
@@ -15424,7 +15449,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         // Plan 138 Ф.2 (D240): `v[i] = val` on Vec[T] — inline bounds-checked write.
                         // Vec[T] layout: { T* data; nova_int len; nova_int cap }.
                         // Emit: { _v->data[_i] = val; } with bounds check + panic.
-                        if arr_obj_ty.starts_with("Nova_Vec____") {
+                        // Plan 138.1 Ф.3: guard against `Nova_Vec____<T>**` —
+                        // a `*mut Vec[T]` field (the buffer of a `Vec[Vec[T]]`)
+                        // is a RAW pointer, not a Vec value; it must fall through
+                        // to the raw-pointer-index write below.
+                        if arr_obj_ty.starts_with("Nova_Vec____")
+                            && !arr_obj_ty.trim_end().ends_with("**") {
                             let arr_c = self.emit_expr(arr_obj)?;
                             let idx_c = self.emit_expr(index)?;
                             let val_c = self.emit_expr(value)?;
@@ -15439,6 +15469,22 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
 (({arr})->data)[_wi] = ({ty})({val}); }}",
                                 arr = arr_c, idx = idx_c, val = val_c, ty = elem_ty
                             ));
+                            return Ok(());
+                        }
+                        // Plan 138.1 Ф.3 (D239): raw `*mut T` pointer-index write
+                        // — `@data[i] = v` inside Vec method bodies, where
+                        // `@data` is the typed `*mut T` buffer (`Nova_Point**`,
+                        // `nova_int*`, ...), NOT a NovaArray/Vec. Index the
+                        // pointer directly: `(ptr)[i] = v`. Must precede the
+                        // NovaArray boxed-element (`->data[i]`) path below, which
+                        // assumes a `->data` field that a raw pointer lacks.
+                        // Identified by: ends with `*`, and is not a NovaArray /
+                        // Vec / str / known struct collection type.
+                        if Self::is_raw_pointer_storage_c(&arr_obj_ty) {
+                            let arr_c = self.emit_expr(arr_obj)?;
+                            let idx_c = self.emit_expr(index)?;
+                            let val = self.emit_expr(value)?;
+                            self.line(&format!("({})[{}] = ({});", arr_c, idx_c, val));
                             return Ok(());
                         }
                         let elem_ty = self.infer_expr_c_type(target);
@@ -18201,16 +18247,25 @@ _cp++; \
                 // Inline bounds-checked access — avoids needing the @index method to be
                 // separately monomorphized (same approach as NovaArray_ dispatch).
                 // Statement-expr: evaluate obj once, bounds-check, then data[i].
-                if obj_ty.starts_with("Nova_Vec____") {
+                // Plan 138.1 Ф.3: a `Nova_Vec____<T>**` is a `*mut Vec[T]` raw
+                // buffer (e.g. the `data` field of `Vec[Vec[T]]`), NOT a Vec
+                // value — exclude it so it falls through to raw-pointer indexing.
+                if obj_ty.starts_with("Nova_Vec____") && !obj_ty.trim_end().ends_with("**") {
                     let o = self.emit_expr(obj)?;
-                    // Extract element C type from the Vec monomorphization name.
-                    // `Nova_Vec____nova_int*` → elem_ty = `nova_int`
-                    // `Nova_Vec____nova_str*` → elem_ty = `nova_str`
-                    let elem_ty = obj_ty
-                        .strip_prefix("Nova_Vec____")
-                        .unwrap_or("nova_int")
-                        .trim_end_matches('*')
-                        .trim();
+                    // Recover the element C type robustly from the instance
+                    // registry (handles pointer element types like
+                    // `Vec[Vec[int]]` whose element is `Nova_Vec____nova_int*`,
+                    // which naive `trim_end_matches('*')` mangles). Fall back to
+                    // de-sanitizing the mangled suffix.
+                    let mangled = obj_ty.trim_end_matches('*').trim().to_string();
+                    let elem_ty = self.generic_type_instance_info.borrow()
+                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        .unwrap_or_else(|| obj_ty
+                            .strip_prefix("Nova_Vec____")
+                            .unwrap_or("nova_int")
+                            .trim_end_matches('*')
+                            .trim()
+                            .to_string());
                     // Use statement-expr for lvalue-compatible bounds-checked access:
                     // ({ T* _vd = _v->data; if (idx < 0 || idx >= _v->len) panic; _vd[idx]; })
                     let tmp_v = self.fresh_tmp_named("vec");
@@ -25494,8 +25549,30 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                     let mut type_args_c: Vec<String> = template.generics.iter()
                         .map(|_| "nova_int".to_string())
                         .collect();
+                    // Plan 138.1 Ф.3 (D239): in a monomorphized context (e.g. the
+                    // body of `Vec[T].new()` being emitted for `T = Nova_Point*`),
+                    // each generic param is already bound in `current_type_subst`.
+                    // Prefer that — it is authoritative and, crucially, works when
+                    // the param appears only inside a non-`Named` field type such
+                    // as `data *mut T` (a `TypeRef::Pointer`), which the
+                    // field-value inference below cannot see. Without this,
+                    // `Vec { data: ..., len: 0, cap: 0 }` defaulted every arg to
+                    // `nova_int` → `Nova_Vec____nova_int` regardless of T.
+                    for (i, g) in template.generics.iter().enumerate() {
+                        if let Some(c) = self.current_type_subst.get(&g.name) {
+                            if !c.is_empty() && c != "void*" {
+                                type_args_c[i] = c.clone();
+                            }
+                        }
+                    }
                     if let TypeDeclKind::Record(field_decls) = &template.kind {
                         for (i, g) in template.generics.iter().enumerate() {
+                            // Skip params already resolved via current_type_subst.
+                            if type_args_c[i] != "nova_int"
+                                || self.current_type_subst.contains_key(&g.name)
+                            {
+                                continue;
+                            }
                             for f_decl in field_decls {
                                 if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
                                     if fgens.is_empty() && path.join("_") == g.name {
@@ -30061,14 +30138,24 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 // `Nova_Vec____nova_int*` → `nova_int`
                 // `Nova_Vec____Nova_Foo__*` → `Nova_Foo__*`
                 // Pattern: `Nova_Vec____<T>*` where `<T>` is the monomorphized element type.
-                if let Some(inner) = obj_ty_pre.strip_prefix("Nova_Vec____") {
-                    let elem = inner.trim_end_matches('*').trim();
-                    // The element type is the part after `Nova_Vec____`.
-                    // For pointer-typed elements the `*` is part of the C type.
-                    // Re-check if element is a pointer (ends with `_p` in nova naming, or `*`).
-                    // In mono'd format: `Nova_Vec____nova_int*` → elem = `nova_int`.
-                    // Edge: `Nova_Vec____Nova_Foo_p*` → elem = `Nova_Foo_p` → needs `Nova_Foo*`
-                    // For now return the raw element string — mono pipeline handles correctly.
+                // Plan 138.1 Ф.3: exclude `Nova_Vec____<T>**` (a `*mut Vec[T]`
+                // raw buffer, e.g. the `data` field of `Vec[Vec[T]]`) — that is
+                // a typed pointer, so indexing yields a `Vec[T]` value
+                // (`Nova_Vec____<T>*`), handled by the raw-pointer-deref arm
+                // below. Recover the precise element C type from the registry.
+                if obj_ty_pre.starts_with("Nova_Vec____")
+                    && !obj_ty_pre.trim_end().ends_with("**")
+                {
+                    let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
+                    if let Some(elem) = self.generic_type_instance_info.borrow()
+                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                    {
+                        if !elem.is_empty() {
+                            return elem;
+                        }
+                    }
+                    let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
+                        .unwrap_or("").trim_end_matches('*').trim();
                     if !elem.is_empty() {
                         return elem.to_string();
                     }
