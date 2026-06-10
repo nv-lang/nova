@@ -10607,6 +10607,80 @@ error[E_PROTOCOL_RENAMED]: protocol `Hash` was renamed to `Hash`
 - [D230](#d230-new--Clone-protocol-plan-126-ф1) — Clone protocol (was Clone)
 - Plan 137 — home plan
 
+### D230 amend (Plan 138.3, 2026-06-10) — `Clone` = deep/recursive; collections element-wise
+
+**Status:** ACTIVE
+
+Фиксирует семантический контракт `Clone` и отделяет его от shallow value-copy.
+Триггер: ревью `Vec.clone` (Plan 138.2 design-cleanup) — текущая реализация была
+shallow (bitwise `RawMem.copy`), что нарушает протокол-контракт `Clone`.
+
+#### Контракт: `Clone` — DEEP / рекурсивный
+
+`@clone()` возвращает **полностью независимую** копию. Мутация клона **никогда**
+не должна затрагивать оригинал (и наоборот). Для композитных типов `@clone`
+рекурсивно клонирует каждый член через его собственный `@clone()`:
+
+```nova
+// memberwise рекурсия (auto-derive, см. D230 §Auto-derive выше):
+Self { f1: @f1.clone(), f2: @f2.clone(), ... }
+```
+
+Primitive-поля (`int`/`f64`/`bool`/`char`/`byte`/`u*`/`i*`) копируются по значению
+(`@field` без `.clone()` — для них deep == shallow). `str.clone` = новая аллокация
+с тем же содержимым. User-type / `[]T` поля — рекурсивный deep-clone.
+
+#### Collections (Vec / HashMap / Set) — element-wise deep + conditional bound
+
+Коллекции клонируются **поэлементно** через `@clone()` каждого элемента, с
+conditional bound на параметре типа (зеркало Rust `impl<T: Clone> Clone for Vec<T>`):
+
+| Тип | Сигнатура `@clone` | Семантика |
+|---|---|---|
+| `Vec[T]` | `Vec[T Clone] @clone() -> Self` | per-element `out.push(@data[i].clone())` |
+| `HashMap[K,V]` | `HashMap[K Clone, V Clone] @clone() -> Self` | per-entry `copy.insert_new(k.clone(), v.clone())` |
+| `Set[T]` | `Set[T Clone] @clone() -> Self` | делегирует `@map.clone()` (deep `HashMap[T, ()]`) |
+
+Bound `[T Clone]` означает: `Vec[T].clone()` компилируется **только** если `T`
+сам реализует `Clone` (примитивы — всегда; records — через `#impl(Clone)` или
+manual `fn T @clone`; см. D230 §Field-eligibility). Это намеренно: коллекция
+non-Clone-типа не может дать deep-копию.
+
+#### SHALLOW value-copy — ОТДЕЛЬНАЯ операция (не `@clone`)
+
+Следующие операции — **shallow** value-copy: bit-copy значений элементов, **любой
+T** (без `Clone`-bound). Для ref-типовых элементов копия **разделяет** pointee с
+источником (это корректно для move/переноса/построения буфера, **не** для clone):
+
+| Операция | Bound | Назначение |
+|---|---|---|
+| `Vec.from(items)` / `@extend` / `@push` | любой T | построение буфера, move-перенос |
+| `@copy_from` / `@copy_within` / `@insert` / `@remove` / `@append` | любой T | сдвиг/перенос значений в буфере |
+| `@realloc_to` | любой T | рост capacity (перенос байт) |
+| `HashMap.from_iter` / `Set.from_iter` | любой T | построение из итератора (per-element insert) |
+
+`RawMem.copy` / `RawMem.copy_nonoverlapping` (bitwise) — **только** для этих
+shallow-контекстов. **Никогда** не для `@clone` (bitwise-копия pointer'ов = aliasing-баг:
+shallow-clone коллекции ref-типов тихо разделяет вложенные объекты, мутация «копии»
+бьёт оригинал — ровно класс багов, который закрывает этот amend).
+
+#### Различие deep vs shallow (резюме)
+
+| | `@clone()` | `from`/`extend`/`push`/`copy_from`/`realloc` |
+|---|---|---|
+| Семантика | **deep** — рекурсивный клон via element `@clone()` | **shallow** value-copy (bit-copy) |
+| Bound | `[T Clone]` (conditional) | любой T |
+| ref-T элементы | независимый pointee (рекурсия) | **разделяет** pointee |
+| Реализация | per-element `.clone()` loop | `RawMem.copy` / per-element push |
+| Назначение | независимая копия | move / перенос / построение |
+
+#### Cross-refs
+
+- [Q31](../open-questions.md#q31) — conditional `[T Clone]` bound на generic instance-методе (design clarification)
+- Plan 138.3 — home plan (deep-clone collections)
+- `[M-138-rawmem-bulk-ops]` — clone→`RawMem.copy` был shallow-баг; этот amend фиксирует контракт
+- Plan 90.1 — `[]T` deep-copy infrastructure (used для array-field clone)
+
 ---
 
 ## D231. RawMem allocator API — nova_alloc / nova_alloc_uncollectable / nova_free_uncollectable

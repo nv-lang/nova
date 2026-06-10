@@ -7223,3 +7223,59 @@ circle.set_radius(5)  // сеттер — именовая конвенция
 - Plan 138 — `@index` / `mut @index` (write indexing) — родственный механизм
 - Q29 — safe references (альтернативный путь к in-place мутации)
 
+---
+
+## Q31. Conditional protocol bound (`[T Clone]`) на generic instance-методе
+
+**Вопрос:** должен ли язык поддерживать **conditional bound** на параметре типа,
+объявленный **на уровне отдельного метода**, более узкий чем bound на самом типе?
+
+### Контекст (Plan 138.3, 2026-06-10)
+
+`Clone` зафиксирован как deep/recursive ([D230 amend](decisions/02-types.md#d230-amend-plan-1383-2026-06-10--clone--deeprecursive-collections-element-wise)).
+Коллекции клонируются поэлементно, и `Vec[T].clone()` имеет смысл **только** если
+`T` реализует `Clone`. Желаемая форма — зеркало Rust `impl<T: Clone> Clone for Vec<T>`:
+
+```nova
+type Vec[T] { ... }                       // сам тип — без Clone-bound (хранит любой T)
+export fn Vec[T Clone] @clone() -> Self {  // метод — добавляет Clone-bound на T
+    mut out = Vec[T].with_capacity(@len)
+    mut i = 0
+    while i < @len {
+        out.push(unsafe { @data[i] }.clone())
+        i = i + 1
+    }
+    out
+}
+```
+
+Тип `Vec[T]` хранит **любой** `T` (`push`/`from`/`extend` — без bound). Но `@clone`
+требует `T Clone`. То есть bound на методе **уже** bound на типе.
+
+### Открытые места
+
+1. **Поддерживает ли bootstrap-checker** narrowing-bound `[T Clone]` на instance-методе,
+   когда сам тип объявлен как `Vec[T]` (без bound)? (R1 риск Plan 138.3 — проверяется в Ф.2.)
+   - Если **да** — `Vec[non-Clone-T].clone()` корректно даёт ошибку bound на call-site.
+   - Если **нет** — fallback: отдельный free-fn `vec_clone[T Clone](v) -> Vec[T]`,
+     либо bound на весь тип (ломает `Vec[T]` без Clone), либо document gap.
+2. **Сообщение об ошибке** на call-site `Vec[Widget].clone()` где `Widget` не Clone:
+   должно указывать на отсутствие `#impl(Clone)` у `Widget`, не на сам `Vec`.
+3. **Взаимодействие с auto-derive `#impl(Clone)`** для records: `Vec[Record].clone()`
+   компилируется только если у `Record` есть `#impl(Clone)` (D230 §Field-eligibility).
+   Bare records без аннотации → bound-ошибка. Нужно ли расширить auto-derive
+   (followup `[M-138.3-autoclone-records]`)?
+
+### Статус
+
+Открыт. Реализация Plan 138.3 Ф.2 проверяет (1) на практике; результат
+зафиксировать здесь. Если bootstrap не принимает method-level narrowing-bound —
+выбрать fallback и задокументировать gap (VERIFY-OR-KEEP).
+
+### Cross-refs
+
+- [D230 amend (Plan 138.3)](decisions/02-types.md#d230-amend-plan-1383-2026-06-10--clone--deeprecursive-collections-element-wise) — Clone = deep, collection element-wise
+- D237 — protocol naming (Clone, метод `@clone`)
+- Plan 138.3 — home plan
+- `[M-138.3-autoclone-records]` — auto-derive Clone для records (если bound-audit вскроет gap)
+
