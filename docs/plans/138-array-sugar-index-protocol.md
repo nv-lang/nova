@@ -507,7 +507,7 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 
 ## Followups
 
-- `[M-138-array-sugar-alias]` — Ф.5-Ф.6 deferred: `[]T` → `Vec[T]` type alias + stdlib migration (risky refactor, separate plan)
+- `[M-138-array-sugar-alias]` ✅ ДЕКОМПОЗИРОВАН → **Plan 138.1** (`docs/plans/138.1-array-sugar-alias.md`): `[]T` → pure-Nova `Vec[T]` sugar, NovaArray retired, typed-storage gap closed. 8 фаз, Opus+Thinking, worktree nova-p138-1.
 - `[M-138-mutindex-range]` — `Vec[T] mut @index(r Range, val []T)` — write по range (bulk replace)
 - `[M-138-hashmap-index]` — `HashMap[K,V]` implements `Index[K, V]` (panic на missing key)
 - `[M-138-nova-array-decl-rename]` — NOVA_ARRAY_DECL → NOVA_VEC_DECL C-macro rename
