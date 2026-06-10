@@ -1,0 +1,31 @@
+// Plan 138 Ф.4 — t8: v[1..3].push(99) → silent detach, original unchanged
+// A3: push on view → realloc → silent detach from parent
+
+module plan138.t8_view_detach
+
+import std.collections.vec_owned.{Vec}
+
+test "push on range view detaches from parent" {
+    mut v = Vec[int].from([10, 20, 30, 40, 50])
+    mut view = v[1..3]
+    assert(view.len() == 2)
+    assert(view.get(0) == Some(20))
+    // push triggers realloc in view → view detaches from parent's buffer
+    view.push(99)
+    assert(view.len() == 3)
+    assert(view.get(2) == Some(99))
+    // parent is unchanged
+    assert(v.len() == 5)
+    assert(v.get(1) == Some(20))
+    assert(v.get(2) == Some(30))
+}
+
+test "writes to view before push affect parent" {
+    // Since view shares data pointer (no copy), writes through view DO affect parent
+    // until view is grown (cap == len for views).
+    mut v = Vec[int].from([10, 20, 30, 40, 50])
+    mut view = v[1..3]
+    // cap == len == 2, so write in-bounds goes through to parent's buffer
+    view[0] = 999
+    assert(v.get(1) == Some(999))   // parent sees the write
+}

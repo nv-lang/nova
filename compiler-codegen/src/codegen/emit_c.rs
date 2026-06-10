@@ -17851,6 +17851,43 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                     let o = self.emit_expr(obj)?;
                     // Plan 96 Ф.4.4 — emit_range_bounds: open-ended → подставить
                     // (0, len) / (start, len) / (0, end) / (start, end[+1]).
+                    // Plan 138 Ф.2: Vec[T] range-slice — inline zero-copy view.
+                    // Layout: { T* data; nova_int len; nova_int cap }.
+                    // Allocate a new Vec struct pointing interior into parent's data.
+                    if obj_ty.starts_with("Nova_Vec____") {
+                        let vec_ty = obj_ty.trim_end_matches('*').trim();
+                        let elem_ty = obj_ty
+                            .strip_prefix("Nova_Vec____")
+                            .unwrap_or("nova_int")
+                            .trim_end_matches('*')
+                            .trim();
+                        let from_expr = match start.as_deref() {
+                            Some(s) => self.emit_expr(s)?,
+                            None => "((nova_int)0LL)".to_string(),
+                        };
+                        let to_expr_inner = match (end.as_deref(), *inclusive) {
+                            (Some(e), false) => self.emit_expr(e)?,
+                            (Some(e), true) => {
+                                let e_str = self.emit_expr(e)?;
+                                format!("(({}) + ((nova_int)1LL))", e_str)
+                            }
+                            (None, _) => format!("({})->len", o),
+                        };
+                        // Statement-expr: bounds-check, then build view struct.
+                        return Ok(format!(
+                            "(({{ {vty}* _sv = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); \
+if (_sf < 0 || _st < _sf || _st > _sv->len) {{ char _sbuf[96]; \
+int _sn = snprintf(_sbuf, 96, \"Vec: slice [%lld..%lld] out of bounds for length %lld\", \
+(long long)_sf, (long long)_st, (long long)_sv->len); \
+if (_sn < 0) _sn = 0; if (_sn > 95) _sn = 95; \
+nv_panic((nova_str){{.ptr=_sbuf,.len=(size_t)_sn}}); }} \
+nova_int _sl = _st - _sf; \
+{vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
+_sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
+_sr; }}))",
+                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_ty
+                        ));
+                    }
                     let len_expr = if obj_ty == "nova_str" {
                         // Для str у нас len в кодпоинтах; nova_str_slice_panic
                         // считает их сам. Для open-ended здесь подставим SIZE_MAX-
