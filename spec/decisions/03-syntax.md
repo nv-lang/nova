@@ -37,7 +37,8 @@
 | [D102](#d102-именованные-аргументы-и-значения-параметров-по-умолчанию) | Именованные аргументы `f(name: val)` и значения параметров по умолчанию `fn f(x int = 0)`; параметр с дефолтом — keyword-only |
 | [D108](#d108-map-литерал-k-v) | Map-литерал `[k: v]` — конструирование `HashMap[K, V]` (D104-D107 зарезервированы Plan 45) |
 | [D126](#d126-external-type--opaque-типы-без-body) | `external type X[Generics]` — opaque типы с runtime backing, без body (D109-D125 заняты другими планами) |
-| [D238](#d238-indexk-v-protocol---akey-magic) | `Index[K, V]` protocol: `@index(key K) -> V` — magic для `a[key]` |
+| [D238](#d238-indexk-v-protocol---akey-magic) | `Index[K, V]` protocol: `@index(key K) -> V` — magic для `a[key]`; Range overload = slice mechanism |
+| [D239](#d239-t-сахар-над-vect) | `[]T` как сахар над `Vec[T]` — type alias, literal desugaring, migration |
 | [D240](#d240-mutindexk-v-protocol---akey--val-magic) | `MutIndex[K, V]` protocol: `mut @index(key K, val V)` — magic для `a[key] = val` |
 
 ---
@@ -753,6 +754,14 @@ fn classify(x int) -> str =>
 ---
 
 ## D27. Синтаксис массивов: `[]T` префикс, `[N]T` фиксированные
+
+> **Amended (Plan 138 D239, 2026-06-10):** `[]T` теперь синтаксический
+> псевдоним `Vec[T]` (D239). Синтаксис записи не меняется, семантика —
+> меняется: `[]T ≡ Vec[T]` на уровне типов.
+>
+> `arr[i]` для типов реализующих `Index[K, V]` (D238) — десугаринг в
+> `arr.index(i)` вместо compiler built-in. `[]T` / `Vec[T]` реализует
+> `Index[int, T]` и `Index[Range, Vec[T]]` (zero-copy slicing).
 
 ### Что
 Массивы записываются **префиксом** (Go-стиль): `[]T` динамический,
@@ -9431,11 +9440,51 @@ assert(mymap["hello"])  // → mymap.index("hello")
 | `Vec[T]` | `int` | `T` |
 | `Vec[T]` | `Range` | `Vec[T]` (zero-copy view) |
 | `str` | `int` | `char` (panic OOB) |
+| `str` | `Range` | `str` (byte-range view, panic OOB) |
+
+### Slicing: `Index[Range]`
+
+`v[a..b]` и `v[..]` — **механизм среза (slice)** в Nova. Нет
+отдельного slice-протокола: Range — просто другой тип ключа `K` в `Index[K, V]`.
+
+Компилятор опускает `a[key]` в `a.index(key)`. Для `a[range]` ключ —
+значение `Range`. Пример:
+
+```nova
+mut v []int = [10, 20, 30, 40, 50]   // []int = Vec[int] (D239)
+
+v[1..4]       // → v.index(Range { start: 1, end: 4 })   // [20, 30, 40]
+v[1..4][0]    // → [20]   (цепочка: сначала срез, потом скалярный index)
+v.get(1..4)   // → Option[Vec[int]]  (safe-версия, None если OOB)
+```
+
+**Open-ended bounds** (`v[1..]`, `v[..3]`, `v[..]`) — компилятор подставляет
+`0` или `arr.len()` перед вызовом `@index`, так что пользовательские
+реализации всегда получают **полностью заполненный `Range`**:
+
+```nova
+v[2..]   // → v.index(Range { start: 2, end: v.len() })
+v[..3]   // → v.index(Range { start: 0, end: 3 })
+v[..]    // → v.index(Range { start: 0, end: v.len() })  // полная копия/view
+```
+
+Open-ended формы допустимы **только** в index-context (`a[range]`).
+В for-loop / материализации — compile-error (нужна bounded форма), см. D58.
+
+**Zero-copy semantics** (для `Vec[T]`): `v[a..b]` возвращает новый
+`Vec[T]`-заголовок (pointer + len + cap), указывающий внутрь того же
+GC-tracked буфера. Мутации view (`push`) вызывают realloc → silent detach
+от родителя. Backing-буфер защищён `GC_set_all_interior_pointers`.
+
+`str` реализует `Index[Range, str]` — slice по байтам (panic при
+разрезании посередине кодпоинта не предусмотрен в V1; планируется D239+).
 
 ### Почему
 
 - Устраняет compiler magic для `a[i]` — пользователь может реализовать
   indexing для своего типа (Map, Matrix, etc.)
+- Нет отдельного `Slice`-протокола — Range как K достаточен; перегрузка
+  по типу ключа обеспечивает и скалярный, и range доступ
 - Выравнивает с Python `__getitem__`, C++ `operator[]`, Rust `Index`
 - Совместно с `MutIndex[K, V]` (D240) покрывает полный read/write API
 
@@ -9445,10 +9494,13 @@ assert(mymap["hello"])  // → mymap.index("hello")
   версией (safe access). `@index` — panic-версия, явно иная семантика.
 - **`[T Index[K, V]]` обязательный bound** — структурная типизация достаточна,
   никаких `impl`-блоков.
+- **Отдельный `Slice[T]` протокол** — излишен: `Index[Range, Vec[T]]`
+  выражает то же самое через обычный перегруженный `@index`.
 
 ### Связь
 
-- D58 — `for x in c` implicit iter (аналогичный sugar-паттерн)
+- D58 — `for x in c` implicit iter (аналогичный sugar-паттерн); open-ended bounds в for-loop запрещены
+- D239 — `[]T` как сахар над `Vec[T]`; `v[a..b]` возможен потому что `[]T = Vec[T]` реализует `Index[Range, Vec[T]]`
 - D240 — `MutIndex[K, V]` write magic
 - Plan 138 — `[]T` sugar over `Vec[T]` + Index protocol
 
@@ -9495,6 +9547,67 @@ assert(v[0] == 99)
 - Plan 138 — `[]T` sugar over `Vec[T]` + Index protocol
 
 Added: 2026-06-10  Status: ACTIVE
+
+---
+
+## D239. `[]T` как сахар над `Vec[T]`
+
+### Что
+
+`[]T` — **синтаксический псевдоним** `Vec[T]`. После миграции (Plan 138 Ф.5)
+компилятор разворачивает любое `[]T` в `Vec[T]` на уровне type resolution.
+
+```nova
+// Эти объявления эквивалентны:
+mut a []int = [1, 2, 3]
+mut b Vec[int] = [1, 2, 3]
+
+// Литерал desugars в Vec[T]:
+[1, 2, 3]  →  Vec[int].with_capacity(3); push 1; push 2; push 3
+
+// []T.new() = Vec[T].new()
+mut v []int = []int.new()
+```
+
+### Зачем
+
+До D239 `[]T` — встроенный C-макро тип (`NovaArray_T`), `Vec[T]` — чистая
+Nova-реализация с тем же layout (`{ data *T, len int, cap int }`, 24 байта).
+Объединение:
+
+- Закрывает typed-storage gap: `[]Option[int]`, `[]Record` получают
+  правильное typed хранение вместо int64-erasure
+- Убирает дублирование логики между `[]T` и `Vec[T]`
+- `v[a..b]` работает потому что `Vec[T]` реализует `Index[Range, Vec[T]]` (D238)
+- Все методы `Vec[T]` (`push`, `pop`, `len`, `get`, `iter` и т.д.)
+  доступны через `[]T`-синтаксис
+
+### Статус
+
+> **Plan 138 Ф.1-Ф.4 (2026-06-10):** D239 частично активен — `[]T → Vec[T]` flip
+> работает в единицах компиляции, которые явно импортируют `Vec` (т.е. имеют
+> `Vec`-шаблон в `generic_type_templates`). Примитивные единицы без `Vec`-импорта
+> продолжают использовать `NovaArray_T` C-backing.
+>
+> **Plan 138.2 [M-138.1-vec-in-prelude]:** сделать `Vec` частью prelude —
+> тогда D239 включится для всех единиц и `NovaArray_T` можно будет убрать.
+
+### Правила
+
+- `[]T` = `Vec[T]` на уровне типов: `fn f(a []int)` принимает `Vec[int]`
+- Литерал `[e1, e2, ...]` в позиции `[]T` строит `Vec[T]`
+- Spread-литерал `[...xs]` → итерация с push (D60)
+- `[]T.new()` и `Vec[T].new()` — одно и то же
+
+### Связь
+
+- D238 — `Index[K, V]`; `v[a..b]` через `Index[Range, Vec[T]]`
+- D240 — `MutIndex[K, V]`; `v[i] = x` через `MutIndex[int, T]`
+- D27 — синтаксис `[]T` (формат записи сохраняется, семантика меняется)
+- D144 (02-types.md) — migration path: «`[]T` may become sugar over `Vec[T]`» — закрывается D239
+- Plan 138 — полный план миграции
+
+Added: 2026-06-10  Status: ACTIVE (partial — gated on Vec-in-prelude)
 
 ---
 

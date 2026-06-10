@@ -5769,10 +5769,13 @@ Capture-rules:
 
 ## D144. Sub-slice views для `[]T` и `str` — `arr[a..b]` / `s[a..b]`
 
-> **Amended (Plan 138 D238, 2026-06-10):** `arr[i]` для user-типов (`Vec[T]`,
-> `HashMap[K,V]` и т.д.) теперь через `@index` protocol (D238). Builtin `[]T`
-> и `str` — через compiler built-in path (неизменно). Range-slicing `v[2..5]`
-> для `Vec[T]` — через `@index(Range)` overload.
+> **Amended (Plan 138 D238+D239, 2026-06-10):** `arr[i]` для user-типов
+> (`Vec[T]`, `HashMap[K,V]` и т.д.) теперь через `@index` protocol (D238).
+> `[]T` = `Vec[T]` (D239); typed-storage gap закрыт — `[]Option[int]`,
+> `[]Record` и другие exotic-element типы получают правильное typed хранение.
+> Range-slicing `v[2..5]` для `Vec[T]` — через `@index(Range)` overload.
+> Предложение «future language version» из D232 Migration path снято: D239
+> фиксирует `[]T` ≡ `Vec[T]` как текущую спецификацию.
 
 > **Источник:** Plan 96 (2026-05-23). Закрывает Q-array-slicing,
 > Q-array-api.5, D27 §1663 drift («Слайсинг отложен»), D27 §1632 drift
@@ -10744,25 +10747,39 @@ the C backend. This means:
 
 - `Vec[Option[int]]` stores each `NovaOpt_nova_int` struct inline (16 bytes/element).
 - `Vec[MyRecord]` stores record pointers (`Nova_MyRecord*` 8 bytes/element).
-- **No int64-slot erasure** — unlike `[]T` built-in slice which uses
-  `NOVA_ARRAY_DECL(T)` macro with int64 element slots.
+- **No int64-slot erasure** — pre-D239 `[]T` built-in used `NOVA_ARRAY_DECL(T)`
+  macro with int64 element slots; after D239 `[]T ≡ Vec[T]` so this gap is closed.
 
-### When to use Vec[T] vs []T
+### `[]T` = `Vec[T]` — D239
 
-| Criterion | `[]T` (built-in) | `Vec[T]` (library) |
-|-----------|------------------|--------------------|
-| Default choice | ✅ yes | ❌ not by default |
-| Primitives (int, f64, str, …) | ✅ typed | ✅ typed |
-| Records (heap pointer) | ✅ pointer-in-slot | ✅ pointer-in-slot |
-| Value-struct T (Option[U], tuple, >8-byte value-record) | ❌ int64-erasure | ✅ typed |
-| `for x in` loop | ✅ built-in | ✅ via VecIter |
-| Compiler magic needed | yes (NOVA_ARRAY_DECL) | no (pure Nova) |
+`[]T` — **синтаксический псевдоним** `Vec[T]` (D239). Typed-storage gap
+закрыт: элементы хранятся по реальному C-типу `T` в буфере `T*`. Никакого
+int64-erasure.
 
-**Migration path:** In a future language version, `[]T` may become sugar
-over `Vec[T]` once the typed-storage gap is closed for all T.
+| Criterion | `[]T` / `Vec[T]` (unified, D239) |
+|-----------|----------------------------------|
+| Default choice | ✅ yes |
+| Primitives (int, f64, str, …) | ✅ typed |
+| Records (heap pointer) | ✅ pointer-in-slot |
+| Value-struct T (Option[U], tuple, >8-byte value-record) | ✅ typed (gap closed) |
+| `for x in` loop | ✅ via VecIter |
+| Compiler magic needed | no (pure Nova) |
+
+`[]T` и `Vec[T]` взаимозаменяемы: `fn f(a []int)` принимает `Vec[int]`
+и наоборот. Лексически предпочтительна краткая форма `[]T`; `Vec[T]`
+используется там где явность важна (generic bounds, type params).
+
+> **Note (Plan 138.2):** в единицах компиляции без явного `Vec`-импорта
+> компилятор временно использует `NovaArray_T` C-backing для примитивных
+> типов (`[]int`, `[]str`, `[]u8`). После того как `Vec` войдёт в prelude
+> (Plan 138.2 [M-138.1-vec-in-prelude]), `NovaArray` будет удалён полностью.
+> Поведение идентично — layout `{ data*, len, cap }` совпадает.
 
 ### Protocols implemented
 
+- `Index[int, T]` (via `@index(i int) -> T`, panic OOB) — powers `v[i]` (D238)
+- `Index[Range, Vec[T]]` (via `@index(r Range) -> Vec[T]`) — powers `v[a..b]` zero-copy (D238)
+- `MutIndex[int, T]` (via `mut @index(i int, val T)`) — powers `v[i] = val` (D240)
 - `Iter[VecIter[T]]` (via `@iter()`) + `Next[T]` на `VecIter[T]` (via `@next()`)
 - `Equal` (element-wise via `@equal`)
 - `Clone` (deep copy via `@clone`)
@@ -10771,6 +10788,9 @@ over `Vec[T]` once the typed-storage gap is closed for all T.
 
 ### Cross-refs
 
+- [D239](#d239-t--vecialt---синтаксический-псевдоним) — `[]T` = `Vec[T]`; этот D232-тип является backing-типом `[]T`.
+- [D238](03-syntax.md#d238-indexk-v-protocol--akey-magic) — `Index[K,V]` protocol; `v[i]` и `v[a..b]` через `@index`.
+- [D240](03-syntax.md#d240-mutindexk-v-protocol--akey--val-magic) — `MutIndex[K,V]`; `v[i] = val` через `mut @index`.
 - [D231](#d231-rawmem-allocator-api--nova_alloc--nova_alloc_uncollectable--nova_free_uncollectable) — allocator used by Vec[T].
 - [D199](09-tooling.md) — `size_of[T]()` const fn used in buffer size calc.
 - [D216 §6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — ptr arithmetic (`data + i` C-scaled).
@@ -10778,3 +10798,87 @@ over `Vec[T]` once the typed-storage gap is closed for all T.
 - [D228](#d228-value-record-allocation-contract) — value-records are valid T (stored by value in buffer).
 - `std/collections/vec_owned.nv` — implementation.
 - Plan 131 — home plan.
+
+---
+
+## D239. `[]T` — синтаксический псевдоним `Vec[T]`
+
+**Status:** ACTIVE (Plan 138, 2026-06-10)
+
+**Added:** Plan 138 Ф.1–Ф.4 (D239 NEW, 2026-06-10). **Closes:** D144 «future
+language version» wording; amends D27 (arr[i] now through `@index`). **Depends
+on:** [D232](#d232-vect--nova-native-generic-growable-array) (Vec[T]
+implementation); [D238](03-syntax.md#d238-indexk-v-protocol--akey-magic)
+(Index protocol).
+
+### Что
+
+`[]T` — **синтаксический псевдоним** `Vec[T]`. Компилятор разворачивает
+любое использование `[]T` в `Vec[T]` на уровне type-resolution.
+
+```nova
+// Эти объявления полностью эквивалентны:
+mut a []int = [1, 2, 3]
+mut b Vec[int] = [1, 2, 3]
+
+// Передача по типу:
+fn process(xs []int) { ... }
+mut v Vec[int] = [4, 5, 6]
+process(v)                // OK — []int = Vec[int]
+
+// Литерал строит Vec[T]:
+[1, 2, 3]  →  Vec[int] { push 1, push 2, push 3 }
+```
+
+### Typed storage — gap закрыт
+
+До D239 `[]T` использовал `NOVA_ARRAY_DECL(T)` C-макрос с int64-slot erasure.
+`Vec[T]` хранит элементы по реальному C-типу `T` в буфере `*mut T`:
+
+| Элемент T | `[]T` до D239 | `Vec[T]` / `[]T` после D239 |
+|-----------|--------------|------------------------------|
+| `int`, `f64`, `bool` | ✅ типизировано | ✅ типизировано |
+| `str`, указатель на record | ✅ pointer-in-slot | ✅ pointer-in-slot |
+| `Option[int]` (16 байт) | ❌ int64-erasure → UB | ✅ `NovaOpt_nova_int` inline |
+| `(int, str)` tuple | ❌ int64-erasure | ✅ typed tuple inline |
+| value-record > 8 байт | ❌ int64-erasure | ✅ typed by-pointer |
+
+### Индексация через `@index` (D238)
+
+После D239 `v[i]` и `v[a..b]` работают через `Index[K, V]` protocol (D238),
+а не через compiler built-in magic:
+
+```nova
+mut v []int = [10, 20, 30]
+v[1]       // → v.index(1)      → 20 (panic OOB)
+v.get(1)   // → Some(20)        (safe)
+v[0..2]    // → v.index(Range { start: 0, end: 2 })  // [10, 20] zero-copy view
+v[1] = 99  // → v.index_set(1, 99)   через MutIndex (D240)
+```
+
+### Статус реализации
+
+> **Plan 138 Ф.1–Ф.4 (2026-06-10):** `[]T → Vec[T]` flip активен в единицах
+> компиляции, которые импортируют `Vec` (явно или транзитивно). Примитивные
+> единицы без `Vec`-импорта продолжают временно использовать `NovaArray_T`
+> C-backing с идентичным layout.
+>
+> **Plan 138.2 [M-138.1-vec-in-prelude]:** добавить `Vec` в prelude →
+> flip включится для всех единиц → `NovaArray` (NOVA_ARRAY_DECL/IMPL) удаляется.
+
+### NovaArray retirement
+
+После того как `Vec` войдёт в prelude (Plan 138.2):
+
+- `NovaArray_T` C-макрос и `array.h` NOVA_ARRAY_DECL/IMPL — удаляются
+- `nova_array_*` runtime helpers для примитивов — заменяются `Vec`-методами
+- Строковый слой (`nova_str_to_bytes`, `nova_str_to_chars`, `split`, `string_builder.h`) — мигрирует на `Nova_Vec____nova_byte*`
+
+### Связь
+
+- [D232](#d232-vect--nova-native-generic-growable-array) — `Vec[T]` — backing тип для `[]T`
+- [D238](03-syntax.md#d238-indexk-v-protocol--akey-magic) — `Index[K,V]`; `v[i]` и `v[a..b]` через `@index`
+- [D240](03-syntax.md#d240-mutindexk-v-protocol--akey--val-magic) — `MutIndex[K,V]`; `v[i] = val` через `mut @index`
+- [D144](#d144-sub-slice-views-для-t-и-str--arra-b--sa-b) — sub-slice views; D144 «future language version» снято D239
+- [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[]T` синтаксис сохраняется; семантика меняется: `[]T ≡ Vec[T]`
+- Plan 138 — полный план миграции; Plan 138.2 — NovaArray retirement

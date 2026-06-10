@@ -35062,3 +35062,100 @@ Q30: computed properties @name()/@name(val) зафиксированы в open-q
 
 СЛЕДУЮЩИЕ ШАГИ: Ф.0.1 (iter()->Self sweep stdlib) → Ф.0.3 (Range value) →
 Ф.1 (protocols в prelude) → Ф.2 (Vec[T] API) → Ф.3 (str) → Ф.4 (тесты).
+
+
+================================================================================
+Plan 138.1 — []T -> Vec[T] pure-Nova sugar (D239) — 2026-06-10
+================================================================================
+
+ЦЕЛЬ: Сделать []T чистым синтаксическим сахаром над Vec[T] — без int-erasure,
+без NOVA_ARRAY_DECL/IMPL C-macro для пользовательских типов. Typed-storage gap
+закрыт: []Option[int], [][]T, []Point хранятся как *mut T (без boxing).
+
+СДЕЛАНО (Ф.1-Ф.6):
+
+Ф.1 — type_ref_to_c flip (D239):
+  emit_c.rs type_ref_to_c arm для TypeRef::Array: добавлен ранний guard
+  generic_type_templates.contains_key("Vec") — при наличии Vec-шаблона []T
+  резолвится в Nova_Vec____<T>* вместо NovaArray_<T>*.
+  infer_expr_c_type::ArrayLit: аналогичный guard — возвращает Nova_Vec____<T>*.
+  Флип ГЕЙТОВАН на импорт Vec, чтобы не сломать Vec-free юниты (primitives).
+
+Ф.2 — typed Vec-literal (emit_array_lit):
+  try_emit_typed_vec_literal: построение Vec через
+    Nova_Vec____<T>_static_with_capacity(n) + Vec____<T>_method_push.
+  Пустой литерал: Nova_Vec____<T>_static_new().
+  Spread-элемент: iterate-push loop.
+  Vec == Vec: маршрут через @equal вместо ->tag compare.
+
+Ф.3 — typed-storage element access:
+  (a) emit_record_lit: derive generic record type-args из current_type_subst
+      в mono-контексте — фиксирует Vec[Point].new() mono -> nova_int (T лежал
+      в `data *mut T`, невидимый для field-value inference).
+  (b) is_raw_pointer_storage_c: raw *mut T pointer indexing для @data[i] /
+      @data[i]=v вместо bogus ->data header.
+  (c) double-pointer guard: Nova_Vec____<T>** (буфер *mut Vec[T] в Vec[Vec[T]])
+      трактуется как raw storage в emit И infer; element type восстанавливается
+      через generic_type_instance_info.
+
+  ФИКСЫ baseline FAILs: plan131 23/5 -> 27/1.
+    vec_eq_pos: @equal dispatch.
+    vec_nested_pos, vec_record_elem_pos, vec_tuple_elem_pos: typed storage.
+
+Ф.4 — targeted regression (промежуточная проверка):
+  plan138(10/0), plan90_1(20/0), plan91_8c(6/0), plan108_3(14/0) — все зелёные.
+  Regression sweep: plan90, plan91, plan96, plan99, plan101_*, plan114, plan120
+  и ещё ~20 dirs — 0 новых FAIL.
+
+Ф.5 — анализ NovaArray removal (BLOCKED):
+  Полное исследование показало, что удаление NOVA_ARRAY_DECL/IMPL невозможно
+  на текущем этапе. Причина: флип гейтован на Vec-шаблон, который есть ТОЛЬКО
+  в юнитах с transitive импортом std/collections/vec_owned.nv. Vec НЕ в prelude.
+  Следствие: ~1390 []T аннотаций / 319 файлов (sort_basic, plan90_1, весь
+  []int/[]str/[]u8 корпус) по-прежнему маршрутятся в NovaArray_*.
+  НАГРУЗОЧНЫЕ зависимости (must keep):
+    - String layer: nova_str_to_bytes/to_chars/as_bytes/split + string_builder.h
+      возвращают/потребляют NovaArray_nova_byte* — в КАЖДОМ юните.
+    - Parallel-for: emit_c.rs:7037/7085 материализует src+result как NovaArray_nova_int*.
+    - Closure-array []fn -> NovaArray_void_p* (out of scope).
+    - Vec->NovaArray bridge emit_c.rs:21999 для bulk-ops/FFI (layout-identical cast).
+  Вывод: removal деком в отдельный Plan 138.2 (Vec-in-prelude + строковый слой
+  + parfor). В Ф.5 только документация; ничего не удалено. Baseline не изменён.
+
+Ф.6 — broad regression, iterate-to-green:
+  t3_nested_vec ([][]int): фикс emit_for non-tuple branch (~24770):
+    loop-var C type брался из sanitized ident (Nova_Vec____nova_int_p как строка);
+    fix: desanitize_c_from_ident перед использованием как C-тип переменной.
+    NovaOpt_<X>.value уже объявлен как указатель — assign идентичен.
+  t4_vec_of_tuple ([](int,str)): добавлен `import std.collections.vec_owned.{Vec}`
+    (без него D239 flip не срабатывал, юнит падал в NovaArray с tuple-struct
+    вместо nova_int).
+  plan138_1: 8/2 -> 10/0.
+  Широкий sweep (27+ dirs): 0 новых FAIL vs baseline.
+
+КЛЮЧЕВЫЕ РЕШЕНИЯ:
+- Flip гейтован на generic_type_templates["Vec"]: безопасно — Vec-free юниты
+  продолжают использовать NovaArray без изменений; типизированные юниты получают
+  typed storage. Это избегает circular bootstrap (vec_owned.nv сам использует
+  []T внутри).
+- desanitize_c_from_ident в emit_for: ident-mangle кодирует `*` как `_p`; при
+  использовании как C-тип нужен обратный перевод. Идемпотентно для non-pointer.
+- NOVA_ARRAY_DECL/IMPL НЕ удалены: это правильно. Layout-идентичность
+  (Nova_Vec____T == NovaArray_T = {T* data; i64 len; i64 cap}) позволяет
+  сосуществовать двум путям без ABI-коллизии.
+- emit_record_lit type-args: current_type_subst предпочтительнее field-value
+  inference в mono-контексте (T в `data *mut T` не виден через поля).
+
+OPEN FOLLOWUPS:
+  [M-138.1-vec-in-prelude]: Plan 138.2 — сделать Vec implicit (prelude export),
+    мигрировать string layer + parfor, удалить NOVA_ARRAY_DECL/IMPL.
+  [M-138.1-nested-vec-forin]: for row in grid над Vec[Vec[T]] — iter() return-type
+    mono inference over-strips Vec element (string-munge vs registry). Flat for-in
+    и grid[i][j] работают; только for-in по внешнему Vec[Vec[T]] затронут.
+  [M-138.1-closure-array]: []fn -> NovaArray_void_p* (out of scope, не затронут).
+  [M-138.1-comprehensive-negatives]: дополнительные neg-фикстуры для []T sugar.
+
+РЕЗУЛЬТАТ: plan131 27/1 (vec_debug_pos — pre-existing debug_fmt formatting,
+  не связан с array sugar), plan138 10/10, plan138_1 10/10. Широкий sweep
+  plan90_1(20/0), plan91(2/0), plan96(23/0), plan101_*(37/0), plan137(16/0),
+  plan120(8/0) и др. — 0 регрессий. Typed-storage gap ЗАКРЫТ.

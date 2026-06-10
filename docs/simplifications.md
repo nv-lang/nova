@@ -34303,3 +34303,57 @@ Updated user-facing `docs/typed-pointers.md`:
   входа, без двух проверок (сначала next, потом iter).
 - NovaTuple_ prefix fix: named tuples как итераторы работают в for-in.
   Value records работали и раньше.
+
+## Plan 138.1 — `[]T` = `Vec[T]` sugar + typed-storage gap closed (2026-06-10)
+
+### Что упрощено / решено
+
+**`[]T` — чистый синтаксический сахар над `Vec[T]` (D239).**
+`fn f(a []int)` и `fn f(a Vec[int])` принимают один тип. Array-литерал `[1, 2, 3]`
+строит `Vec[int]` — типизированно, без int-erasure. Компилятор резолвит `[]T` в
+`Vec[T]` на уровне codegen (flip гейтирован на `generic_type_templates["Vec"]`;
+без Vec-import юниты продолжают использовать NovaArray до Plan 138.2).
+
+**Typed-storage gap закрыт (vec_nested_pos / vec_record_elem_pos / vec_tuple_elem_pos
+/ vec_eq_pos — all PASS).**
+До 138.1 элементы не-примитивных `[]T` хранились в `nova_int`-слотах (type
+erasure + ручной debox в for-in). Теперь `Vec[T]` хранит `*mut T` типизированно:
+
+- `[]Option[int]`, `[][]int`, `[]Point`, `[](int,str)` — без boxing, без erasure.
+- Raw-pointer storage path (`is_raw_pointer_storage_c`) для `@data[i]` /
+  `@data[i]=v` вместо фиктивного `->data` header.
+- Double-pointer guard для `Nova_Vec____<T>**` (буфер внутри `Vec[Vec[T]]`):
+  тип элемента восстанавливается из registry, а не из string-mangle.
+
+**`as_slice` удалён из `Vec[T]` API.**
+Получить view: `v[..]` (срез, тип `[]T`). Получить копию: `v.clone()`.
+Было: `v.as_slice()` — отдельный метод с неочевидной семантикой view-vs-copy.
+
+**`@index(Range)` — Nova-уровень.**
+Операция среза `v[a..b]` / `v[a..=b]` реализована как метод `@index(Range)`
+на `Vec[T]` (pure Nova), а не специальный случай в codegen. `Range` нормализован
+через `a..b` / `a..=b` синтаксис (`.inclusive` / `.exclusive` поля убраны в Ф.0).
+
+**Emit-for `desanitize_c_from_ident` fix (Ф.6).**
+`for x in vec_of_vecs` не ломался бы на элементе-типе с `*` (mangled как `_p`):
+loop-var C-тип теперь десанитируется обратно в реальный C-указатель перед
+`NovaOpt_<X>.value`, что корректно для любого for-in над Vec-of-pointer-element.
+
+### Что НЕ сделано (deferred → Plan 138.2)
+
+- Универсальный Vec-in-prelude flip: примитивные `[]int`/`[]str`/`[]u8`
+  в Vec-free юнитах ещё используют `NovaArray_*` (flip гейтирован).
+- `NOVA_ARRAY_DECL`/`NOVA_ARRAY_IMPL` C-macro — НЕ удалены: string-layer
+  (`nova_str_to_bytes`, `string_builder.h`), parfor result-storage и
+  closure-array `[]fn` по-прежнему зависят от NovaArray layout.
+- `[]T` combinator receivers (`map`/`filter`/`fold` в `vec.nv`,
+  `sort`/`binary_search` в `sort.nv`) — receiver-mangling unification
+  отложена, работает только через явный `Vec` import.
+
+### Коммиты
+
+| SHA | Что |
+|---|---|
+| `94c6ee2a2b2` | Ф.2 (typed Vec literal) + Ф.3 (typed-storage element access) |
+| `6374279e2ab` | Ф.5 investigation doc (NovaArray load-bearing analysis) |
+| `f77175c6228` | Ф.6 (emit_for desanitize fix + t4 Vec import fix) |

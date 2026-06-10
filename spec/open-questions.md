@@ -2227,6 +2227,21 @@ v1.0).
 > - 🟡 NEW `[M-91.1-value-struct-array-elem]` (P2) — `[]Option[T]`/`[]tuple`-by-value (value-struct элементы, не
 >   pointer): erasure не вмещает >8 байт, side-channel readback не покрывает. Требует typed-storage именно для
 >   value-struct (узкий случай) ИЛИ box-to-pointer. Pre-existing лимит (падал и на baseline), не регрессия.
+>
+> **Update 2026-06-10 (Plan 138.1 Ф.0-Ф.6 CLOSED, D239 partial):**
+> - ✅ `[M-91.1-value-struct-array-elem]` — **ЗАКРЫТ** через Plan 138.1 typed-storage:
+>   в юнитах с `import std.collections.vec_owned.{Vec}` массив-литерал `[...]` и
+>   тип `[]Option[int]`/`[]tuple` резолвятся в `Vec[T]` (typed `*mut T` storage,
+>   без int64-erasure). `vec_nested_pos`, `vec_record_elem_pos`, `vec_tuple_elem_pos`,
+>   `vec_option_elem_pos`, `vec_mutate_pos` — all PASS (plan131 27/1 vs baseline 23/5).
+>   Универсальный flip (Vec-free юниты) → Plan 138.2.
+> - ✅ `as_slice()` **удалён** из `Vec[T]` API (Plan 138.1 Ф.0.1a): view → `v[..]`
+>   (через `Index[Range, Vec[T]]`), копия → `clone()`. `to_array()` также не добавлен
+>   (при `[]T`≡`Vec[T]` это `clone()`). API таблица `[]T` ниже остаётся валидной для
+>   компилятор-встроенных методов (NovaArray путь); `Vec[T]` методы — в vec_owned.nv.
+> - ✅ `xs[a..b]` slicing — **ЗАКРЫТО**: `@index(Range)` как Nova-метод (`Index[Range, Vec[T]]`),
+>   panic на OOB. `xs.get(r Range) -> Option[Vec[T]]` — safe вариант. Zero-copy view:
+>   interior pointer в GC-tracked буфере; `push` на view → silent detach от родителя.
 
 **Контекст.** `[]T` — встроенная конструкция языка ([D27](decisions/03-syntax.md#d27)).
 По [D32](decisions/02-types.md#d32) runtime-представление —
@@ -6989,15 +7004,38 @@ fn check_health() -> RuntimeStats {
 
 ### Путь миграции
 
-В будущем `[]T` может стать сахаром над `Vec[T]`, когда typed-storage gap
-будет закрыт для всех T. Пока — используй `Vec[T]` только там где это
-необходимо (см. D141 для текущего статуса `[]T` value-struct gap).
+> **Update 2026-06-10 (Plan 138.1 Ф.1-Ф.6 CLOSED, D239 partial):**
+> `[]T` теперь резолвится в `Vec[T]` в единицах трансляции, которые
+> импортируют `std.collections.vec_owned.{Vec}` (typed-storage gap закрыт
+> для value-struct элементов именно в таких юнитах). Универсальный flip
+> (для Vec-free / primitive-only юнитов) — следующий шаг: **Plan 138.2**
+> (`[M-138.1-vec-in-prelude]`), добавляющий `Vec` в prelude.
+>
+> Таблица решений обновляется: при явном импорте `Vec` (или после Plan 138.2)
+> `[]Option[int]`, `[]tuple`, `[]value-record` хранятся типизированно через
+> `Vec[T]`. `NOVA_ARRAY_DECL` остаётся load-bearing до завершения Plan 138.2.
+>
+> Строки из таблицы ниже со статусом ❌ для `[]T` корректны для Vec-free юнитов
+> (текущее состояние до Plan 138.2). После Plan 138.2 все строки станут ✅.
+
+В будущем `[]T` станет сахаром над `Vec[T]` для всех юнитов (Plan 138.2 +
+universalization). Пока для value-struct элементов без явного Vec-импорта —
+используй `Vec[T]` напрямую (см. D141 для текущего статуса `[]T` gap).
+
+### `[]fn` и `[N]T` — вне scope
+
+- **`[]fn(...) -> T`** (closure-array, `NovaArray_void_p*`) — **вне scope**
+  Plan 138.1 и 138.2. Followup: `[M-138.1-closure-array]`.
+- **`[N]T`** (FixedArray, stack allocation) — **вне scope**, отдельное решение
+  нужно для stack-vs-heap contract. Followup: `[M-138.1-fixed-array]`.
 
 ### Cross-refs
 
 - [D232](decisions/02-types.md#d232-vect--nova-native-generic-growable-array) — Vec[T] spec.
+- [D239](decisions/02-types.md) — `[]T` as sugar over `Vec[T]` (Plan 138.1).
 - [D141](decisions/08-runtime.md#d141) — `[]T` bulk slice API + value-struct limitation.
 - [M-91.1-value-struct-array-elem] — исходный gap marker (закрыт через Vec[T] Plan 131).
+- Plan 138.2 — universalization: Vec в prelude, NovaArray retirement.
 
 ---
 
