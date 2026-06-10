@@ -176,24 +176,6 @@ export fn Vec[T] mut @reserve(additional int) -> () {
     @realloc_to(new_cap)
 }
 
-/// Reduce capacity to `max(len, min_cap)`. Never drops live elements.
-export fn Vec[T] mut @shrink_to(min_cap int) -> () {
-    mut target = if min_cap < @len { @len } else { min_cap }
-    if target < 0 {
-        target = 0
-    }
-    if target < @cap {
-        @realloc_to(target)
-    }
-}
-
-/// Reduce capacity to exactly the current length.
-export fn Vec[T] mut @shrink_to_fit() -> () {
-    if @len < @cap {
-        @realloc_to(@len)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Element operations
 // ──────────────────────────────────────────────────────────────────────────
@@ -860,13 +842,12 @@ test "push / pop / len / is_empty" {
     assert(v.pop() == None)
 }
 
-test "with_capacity / reserve / shrink_to_fit" {
+test "with_capacity / reserve" {
     mut v = Vec[int].with_capacity(16)
     assert(v.cap() >= 16)
     assert(v.len() == 0)
     for i in 0..10 { v.push(i) }
-    v.shrink_to_fit()
-    assert(v.cap() == 10)
+    assert(v.len() == 10)
     v.reserve(20)
     assert(v.cap() >= 30)
 }

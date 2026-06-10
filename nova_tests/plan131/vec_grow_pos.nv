@@ -21,13 +21,3 @@ test "push 1000 ints, verify len and every value" {
     assert(v.get(0) == Some(0))
     assert(v.get(999) == Some(1998))
 }
-
-test "grow then shrink_to_fit keeps data" {
-    mut v = Vec[int].new()
-    for i in 0..500 { v.push(i) }
-    v.shrink_to_fit()
-    assert(v.cap() == 500)
-    assert(v.len() == 500)
-    assert(v.get(250) == Some(250))
-    assert(v.get(499) == Some(499))
-}

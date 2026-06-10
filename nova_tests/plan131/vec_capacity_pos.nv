@@ -1,5 +1,4 @@
-// Plan 131 Ф.3 — capacity management: with_capacity/reserve/shrink_to/
-// shrink_to_fit/cap.
+// Plan 131 Ф.3 — capacity management: with_capacity/reserve/cap.
 
 module plan131.vec_capacity_pos
 
@@ -10,24 +9,6 @@ test "with_capacity reserves up front" {
     assert(v.cap() >= 16)
     assert(v.len() == 0)
     assert(v.is_empty())
-}
-
-test "shrink_to_fit reduces cap to len" {
-    mut v = Vec[int].with_capacity(64)
-    for i in 0..10 { v.push(i) }
-    assert(v.cap() >= 64)
-    v.shrink_to_fit()
-    assert(v.cap() == 10)
-    assert(v.len() == 10)
-}
-
-test "shrink_to keeps at least len" {
-    mut v = Vec[int].with_capacity(64)
-    for i in 0..10 { v.push(i) }
-    v.shrink_to(5)              // min_cap < len → clamps to len
-    assert(v.cap() == 10)
-    v.shrink_to(32)            // 32 < current cap (==10)? no → no-op
-    assert(v.cap() == 10)
 }
 
 test "reserve grows capacity" {
