@@ -35060,5 +35060,25 @@ Q30: computed properties @name()/@name(val) зафиксированы в open-q
   Iter[I] generic: I = тип итератора. Vec[T] impl Iter[VecIter[T]], итераторы
   impl Iter[Self] (trivial => self).
 
-СЛЕДУЮЩИЕ ШАГИ: Ф.0.1 (iter()->Self sweep stdlib) → Ф.0.3 (Range value) →
-Ф.1 (protocols в prelude) → Ф.2 (Vec[T] API) → Ф.3 (str) → Ф.4 (тесты).
+СДЕЛАНО (Ф.1-Ф.4, CLOSED 2026-06-10):
+Ф.1 DONE: Index[K,V] + MutIndex[K,V] в prelude/protocols.nv + spec D238+D240.
+Ф.2 DONE: Vec[T] @index(int)/mut @index(int,val)/@index(Range)/get(int)/get(Range)
+  — inline codegen dispatch в emit_c.rs для Nova_Vec____T*. Range → zero-copy
+  interior-pointer view. get() → Option[T].
+Ф.3 DONE: str[i] → nova_char panic (nova_str_index_panic в array.h). str.get(i)
+  → Option[char]. spec 08-runtime.md обновлён.
+Ф.4 DONE: 10/10 fixtures PASS (t1-t8 + 2 neg). Ветка plan-138, worktree nova-p138.
+Ф.0.2 DONE: fix => self → => @ в RangeIter/@iter (bare @ = SelfAccess = nova_self).
+Ф.5-Ф.6 DEFERRED → [M-138-array-sugar-alias] (risky, отдельный план).
+
+КЛЮЧЕВЫЕ РЕШЕНИЯ:
+- Range value record (не named tuple) — Nova_ prefix работает без fix. NovaTuple_
+  fix покрывает будущие named-tuple iterables.
+- Next[T] (не MutNext[T]) — mut это receiver modifier, не часть имени протокола.
+  Аналогично Equal/Clone/Hash где receiver ro, но без префикса.
+- Нет протокола для @iter() отдельного? Неверно — Iter[I] IS этот протокол.
+  Iter[I] generic: I = тип итератора. Vec[T] impl Iter[VecIter[T]], итераторы
+  impl Iter[Self] (trivial => self).
+- => @ (bare SelfAccess) вместо => self в @iter() методах — "self" — это Ident,
+  emits "return self" в C (undeclared), "@" = SelfAccess → "return nova_self" ✓.
+- Vec inline codegen (не Nova-body @index) — проще монофизации, один C statement-expr.

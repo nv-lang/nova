@@ -34282,16 +34282,22 @@ Updated user-facing `docs/typed-pointers.md`:
   required inside unsafe, and `ptr[i]` explanation paragraph.
 - `E_UNSAFE_REQUIRED` in diagnostics section: now explicitly lists `p[i]`.
 
-## Plan 138 Ф.0 — Index/Next/Iter protocols + D58 iter-first (2026-06-10)
+## Plan 138 Ф.0-Ф.4 — Index[K,V] protocol + Vec[T] indexing + str[i] (CLOSED 2026-06-10)
 
 ### Что упрощено / решено
-- `Iterable[T]` удалён — путаное имя («iterable» звучит как коллекция, а не
-  итератор). Заменён двумя: `Next[T]` (`mut @next()`) + `Iter[I]` (`@iter()`).
-  Конвенция: имя протокола = магический метод, как `Index`, `Equal`, `Hash`.
-- `Range.exclusive` + `Range.inclusive` + `OverflowError` удалены — синтаксис
-  `a..b` и `a..=b` покрывает все случаи. Compiler нормализует `a..=b` в
-  `Range{start, end+1}`. OverflowError для int.MAX — runtime panic.
-- D58 iter-first: `for x in c` всегда через `iter()` первым — единая точка
-  входа, без двух проверок (сначала next, потом iter).
+- `Iterable[T]` удалён — путаное имя. Заменён `Next[T]` (`mut @next()`) + `Iter[I]`
+  (`@iter()`). Конвенция: имя протокола = магический метод (Index, Equal, Hash).
+- `Range.exclusive` + `Range.inclusive` + `OverflowError` удалены — `a..b`/`a..=b`
+  покрывает всё. OverflowError для int.MAX → runtime panic.
+- D58 iter-first: `for x in c` всегда через `iter()` — единая точка входа.
 - NovaTuple_ prefix fix: named tuples как итераторы работают в for-in.
-  Value records работали и раньше.
+- `Index[K,V]` + `MutIndex[K,V]` — протоколы для `a[key]` и `a[key]=val`.
+  D238+D240. Регистрация в prelude/protocols.nv + re-export.
+- `Vec[T] @index(int)` + `mut @index(int, val)` — inline codegen dispatch в emit_c.rs
+  через statement-expr с bounds-check. Нет новых методов для монофизации.
+- `Vec[T] @index(Range)` — zero-copy interior-pointer view; `get(Range)→Option[Vec[T]]`.
+- `str[i]` → `char`, panic OOB (`nova_str_index_panic` в array.h). Было Option[char].
+  `str.get(i)` → `Option[char]` safe.
+- `=> @` вместо `=> self` в @iter() методах: `self` парсится как Ident → C `return self`
+  (undeclared); `@` = SelfAccess → `return nova_self` ✓. Тихий баг обнаружен на тестах.
+- 10/10 fixtures PASS. Ф.5 ([]T→Vec[T] alias) deferred → `[M-138-array-sugar-alias]`.
