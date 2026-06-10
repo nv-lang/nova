@@ -56,7 +56,10 @@ pub enum WithResultCategory {
 }
 
 /// D109: встроенные методы примитивных типов.
-enum PrimBuiltin { Fn(&'static str), BinOp(&'static str) }
+/// Plan 138.4 Ф.1 G-C: `Identity` — built-in `.clone()` на примитиве/POD =
+/// bitwise self-copy (примитивы immutable / value-семантика). Эмитится как
+/// receiver-выражение без изменений; return-type = тип receiver'а.
+enum PrimBuiltin { Fn(&'static str), BinOp(&'static str), Identity }
 
 /// Plan 39 Issue A: walk handler expression (typically a ClosureLight /
 /// ClosureFull / HandlerLit) и найти первый `interrupt VAL` — вернуть
@@ -21206,7 +21209,41 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             } else { "0".into() };
                             format!("({} {} {})", obj_c, op, arg_c)
                         }
+                        // Plan 138.4 Ф.1 G-C: identity clone — receiver as-is.
+                        PrimBuiltin::Identity => obj_c,
                     });
+                }
+                // Plan 138.4 Ф.1 G-C: record/heap `.clone()` with NO user `@clone`.
+                // A generic `Vec[T Clone].clone()` body does `@data[i].clone()`;
+                // for a record element `T` that declares no `@clone` (and has no
+                // synthesizable protocol default body — see Clone protocol, which
+                // has no `default_body`), the *single-key* `method_receivers["clone"]`
+                // fallback (~22159, last-wins) used to mis-route to an UNRELATED
+                // type's clone (e.g. `Nova_WriteBuffer_method_clone(Nova_Point*)`),
+                // passing the wrong pointer type → runtime crash
+                // ([M-138.3-clone-bound-unsupported]). Resolve such a `.clone()` to
+                // an IDENTITY copy (shallow self): correct value semantics for POD /
+                // value-records, and the documented bootstrap behaviour for heap
+                // records (clone shares the element pointee — the shallow guarantee
+                // the 138.3 fixtures assert). A real user/synthesized `@clone`
+                // (present in `all_methods`, incl. Vec/HashMap/Set/StringBuilder/
+                // WriteBuffer/#impl(Clone) records) takes precedence: this arm only
+                // fires when no such method exists for the receiver's concrete type.
+                if method == "clone" && args.is_empty()
+                    && obj_ty.starts_with("Nova_")
+                    && obj_ty.ends_with('*')
+                    && obj_ty != "void*"
+                {
+                    let recv_nova = Self::nova_type_name_from_c(&obj_ty);
+                    let has_user_clone = self.all_methods
+                        .contains(&(recv_nova.clone(), "clone".to_string()));
+                    // Skip mono'd generic-instance receivers (Vec/HashMap/Set/…):
+                    // they carry their own `@clone` via generic_type_methods and
+                    // must fall through to the generic-method dispatch below.
+                    let is_mono_instance = recv_nova.contains("____");
+                    if !has_user_clone && !is_mono_instance {
+                        return self.emit_expr(obj);
+                    }
                 }
                 // Plan 54 Ф.2: user-defined extension methods на primitives
                 // (`fn int @millis() -> Duration`, `fn str @len() -> int`, etc).
@@ -28371,6 +28408,17 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             ("nova_int" | "nova_f64" | "nova_char", "le") => Some(PrimBuiltin::BinOp("<=")),
             ("nova_int" | "nova_f64" | "nova_char", "gt") => Some(PrimBuiltin::BinOp(">")),
             ("nova_int" | "nova_f64" | "nova_char", "ge") => Some(PrimBuiltin::BinOp(">=")),
+            // Plan 138.4 Ф.1 G-C: `.clone()` на примитиве = identity (bitwise self).
+            // Примитивы immutable/value → deep-clone тривиален. Без этой ветки
+            // generic `Vec[T Clone]` тело `@data[i].clone()` для primitive T (нет
+            // user-@clone) мис-диспатчилось на неродственный user-метод clone →
+            // crash ([M-138.3-clone-bound-unsupported]). `nova_str` тоже identity:
+            // str immutable, copy указателя на неизменяемые байты безопасен.
+            ("nova_int" | "nova_bool" | "nova_f64" | "nova_f32"
+                | "nova_char" | "nova_str" | "nova_byte" | "nova_unit"
+                | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t", "clone")
+                => Some(PrimBuiltin::Identity),
             _ => None,
         }
     }
@@ -30901,6 +30949,22 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         }
                     }
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Plan 138.4 Ф.1 G-C: identity `.clone()` on a record/heap type
+                    // with no user `@clone` returns the receiver type (mirrors the
+                    // emit-side identity fallback ~21215). Without this the mono'd
+                    // generic body's `@data[i].clone()` could infer a foreign type.
+                    if method == "clone" && args.is_empty()
+                        && obj_ty.starts_with("Nova_")
+                        && obj_ty.ends_with('*')
+                        && obj_ty != "void*"
+                    {
+                        let recv_nova = Self::nova_type_name_from_c(&obj_ty);
+                        let has_user_clone = self.all_methods
+                            .contains(&(recv_nova.clone(), "clone".to_string()));
+                        if !has_user_clone && !recv_nova.contains("____") {
+                            return obj_ty;
+                        }
+                    }
                     // Plan 48: если obj_ty — монотип вида "Nova_X____A__B*",
                     // вычислить return-type метода через generic_type_methods["X"]
                     // с подстановкой type-аргументов. Это исправляет случаи вроде
@@ -30960,6 +31024,8 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                     // в generic-теле с T=nova_int ломает strict bool-check.
                     if let Some(prim) = Self::prim_builtin_method(&obj_ty, method) {
                         return match prim {
+                            // Plan 138.4 Ф.1 G-C: identity clone preserves receiver type.
+                            PrimBuiltin::Identity => obj_ty.clone(),
                             PrimBuiltin::BinOp("==") | PrimBuiltin::BinOp("<")
                             | PrimBuiltin::BinOp("<=") | PrimBuiltin::BinOp(">")
                             | PrimBuiltin::BinOp(">=") => "nova_bool".into(),
@@ -31453,6 +31519,8 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         return match builtin {
                             PrimBuiltin::Fn(_) => "nova_int".into(), // hash → u64 = nova_int
                             PrimBuiltin::BinOp(_) => "nova_bool".into(),
+                            // Plan 138.4 Ф.1 G-C: identity clone preserves receiver type.
+                            PrimBuiltin::Identity => obj_ty.clone(),
                         };
                     }
                     // D74 math methods on int.
