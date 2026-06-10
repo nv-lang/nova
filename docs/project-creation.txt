@@ -35032,3 +35032,33 @@ Results:
 
 Fixtures: nova_tests/plan136_1/ 7/7 PASS + plan136 11/11 PASS (regression).
 Followups: [M-136.1-mixed-partial-cycles].
+
+================================================================================
+Plan 138 — []T sugar over Vec[T] + Index protocol (PLANNED) — 2026-06-10
+================================================================================
+
+МОТИВАЦИЯ: []T — built-in с C-macro дублирующий Vec[T]. Index[K,V] разрешает
+v[i] для user-типов. Next[T]+Iter[I] заменяют путаный Iterable[T].
+
+СДЕЛАНО (Ф.0 частично):
+Ф.0.2 DONE: NovaTuple_ prefix fix в emit_for — named tuples как итераторы теперь
+  работают. Value records уже работали. Одна строка: starts_with("NovaTuple_").
+D238+D240: Index[K,V] + MutIndex[K,V] протоколы зафиксированы в плане + spec.
+D241+D242: Next[T] + Iter[I] — замена Iterable[T] по конвенции «имя=метод».
+  Iterable[T] удалён, std/prelude/collections.nv обновлён.
+D58 amend: iter-first rule — for x in c всегда через iter() первым.
+range.nv: убраны Range.exclusive, Range.inclusive, OverflowError — синтаксис
+  a..b и a..=b достаточен. Compiler нормализует a..=b → Range{start,end+1}.
+Q30: computed properties @name()/@name(val) зафиксированы в open-questions.md.
+
+КЛЮЧЕВЫЕ РЕШЕНИЯ:
+- Range value record (не named tuple) — Nova_ prefix работает без fix. NovaTuple_
+  fix покрывает будущие named-tuple iterables.
+- Next[T] (не MutNext[T]) — mut это receiver modifier, не часть имени протокола.
+  Аналогично Equal/Clone/Hash где receiver ro, но без префикса.
+- Нет протокола для @iter() отдельного? Неверно — Iter[I] IS этот протокол.
+  Iter[I] generic: I = тип итератора. Vec[T] impl Iter[VecIter[T]], итераторы
+  impl Iter[Self] (trivial => self).
+
+СЛЕДУЮЩИЕ ШАГИ: Ф.0.1 (iter()->Self sweep stdlib) → Ф.0.3 (Range value) →
+Ф.1 (protocols в prelude) → Ф.2 (Vec[T] API) → Ф.3 (str) → Ф.4 (тесты).

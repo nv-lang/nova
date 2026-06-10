@@ -34281,3 +34281,17 @@ Updated user-facing `docs/typed-pointers.md`:
 - `## unsafe { } block` section: added `p[i]` to code example, table of ops
   required inside unsafe, and `ptr[i]` explanation paragraph.
 - `E_UNSAFE_REQUIRED` in diagnostics section: now explicitly lists `p[i]`.
+
+## Plan 138 Ф.0 — Index/Next/Iter protocols + D58 iter-first (2026-06-10)
+
+### Что упрощено / решено
+- `Iterable[T]` удалён — путаное имя («iterable» звучит как коллекция, а не
+  итератор). Заменён двумя: `Next[T]` (`mut @next()`) + `Iter[I]` (`@iter()`).
+  Конвенция: имя протокола = магический метод, как `Index`, `Equal`, `Hash`.
+- `Range.exclusive` + `Range.inclusive` + `OverflowError` удалены — синтаксис
+  `a..b` и `a..=b` покрывает все случаи. Compiler нормализует `a..=b` в
+  `Range{start, end+1}`. OverflowError для int.MAX — runtime panic.
+- D58 iter-first: `for x in c` всегда через `iter()` первым — единая точка
+  входа, без двух проверок (сначала next, потом iter).
+- NovaTuple_ prefix fix: named tuples как итераторы работают в for-in.
+  Value records работали и раньше.
