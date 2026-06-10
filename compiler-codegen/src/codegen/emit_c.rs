@@ -24162,8 +24162,15 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
         //
         // Case 1 ниже; Case 2 — see "Plan 06 Ф.3: implicit `.iter()`" блок.
         // Case 3 — final error message в конце функции (улучшенный).
-        let iter_struct = arr_ty.strip_prefix("Nova_").unwrap_or("")
-            .trim_end_matches('*').trim().to_string();
+        // Plan 138 Ф.0.2: named tuples have "NovaTuple_" prefix, not "Nova_".
+        // "NovaTuple_Range".strip_prefix("Nova_") returns None → "" → empty iter_struct → error.
+        let iter_struct = if arr_ty.starts_with("NovaTuple_") {
+            arr_ty.strip_prefix("NovaTuple_").unwrap_or("")
+                .trim_end_matches('*').trim().to_string()
+        } else {
+            arr_ty.strip_prefix("Nova_").unwrap_or("")
+                .trim_end_matches('*').trim().to_string()
+        };
         // For monomorphized iterator types like `KeysIter____nova_str__nova_int`,
         // `all_methods` only has the base `KeysIter` entry. Extract the base by
         // splitting on the mono separator `____` and check both.

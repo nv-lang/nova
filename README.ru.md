@@ -1,6 +1,23 @@
-[English](README.md) | **Русский**
+<div align="center">
+  <img src="img/nova-logo.png" alt="Nova" width="120" />
 
-# Nova
+  <h1>Nova</h1>
+
+  <p><strong>Язык программирования для эпохи ИИ</strong></p>
+
+  <p>
+    <a href="https://nv-lang.org">Сайт</a> |
+    <a href="#быстрый-старт">Быстрый старт</a> |
+    <a href="spec/overview.md">Документация</a> |
+    <a href="CONTRIBUTING.md">Участие в проекте</a>
+  </p>
+
+  <p><a href="README.md">English</a> | <strong>Русский</strong></p>
+
+  <img src="img/og-image.png" alt="Nova — A language for the AI era" />
+</div>
+
+---
 
 ```nova
 fn process_order(o Order) Db Net Time Fail -> Receipt

@@ -85,49 +85,49 @@ import std.prelude.core.{Option}
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Iter[T] protocol (D58)
+// Next[T] + Iter[I] protocols (D241+D242, Plan 138)
 // ──────────────────────────────────────────────────────────────────────────
+//
+// Конвенция: имя протокола = магический метод который он требует.
+//   Next[T]  → mut @next() -> Option[T]   (итератор)
+//   Iter[I]  → @iter() -> I               (источник итератора)
+//
+// Заменяет Iterable[T] (удалён).
 
-/// Структурный протокол итератора по элементам типа `T`.
+/// Протокол итератора. Тип имеет `mut @next()` → является итератором.
 ///
-/// Тип удовлетворяет `Iterable[T]` если у него есть метод
-/// `mut next() -> Option[T]`. `Some(v)` — следующий элемент, `None` —
-/// итерация завершена (idempotent: повторные вызовы продолжают
-/// возвращать `None`).
-///
-/// **D58 (spec/decisions/03-syntax.md)**: for-in loop dispatch'ит на
-/// `Iterable[T]` через duck-typing — declaring `type Iter[T] protocol`
-/// канонизирует имя для `nova doc` и use-as-bound (`T Iter`) per D72,
-/// но НЕ меняет structural for-in dispatch (codegen продолжает искать
-/// метод `next` напрямую). Existing types `Range`/`RangeIter`/
-/// `StepRangeIter`/`ReverseRangeIter`/`HashMapIter`/`KeysIter`/
-/// `ValuesIter`/`Counter` (см. nova_tests/syntax/for_iter*.nv)
-/// автоматически удовлетворяют `Iterable[T]` без `impl`-блока.
-///
-/// **Note on `mut @` receiver**: Plan 108.4 Ф.1 (D175 amend) добавляет
-/// обязательный `@`-префикс для instance-методов в protocol-declarations.
-/// `mut @next()` = mutable receiver (итератор хранит cursor → state-mutating).
-/// Все implementers (`fn RangeIter mut @next() -> ...` и т.д.) уже используют
-/// `mut @next()` — declaration теперь это enforce'ит явно (Plan 108.4 Ф.2).
-///
-/// **Note on effects**: bound (protocol) methods обязаны быть pure
-/// per types/mod.rs:404-420 (vtable dispatch не propagates effect
-/// handlers). `next()` — pure — OK.
+/// `Some(v)` — следующий элемент, `None` — исчерпан (idempotent).
+/// Итераторы также реализуют `Iter[Self]` через `@iter() -> Self => self`.
 ///
 /// # Examples
 ///
 /// ```nova
-/// // Custom iterator — implements Iterable[int] структурно.
 /// type Counter { mut cur int, end int }
 /// fn Counter mut @next() -> Option[int] {
 ///     if @cur >= @end { None } else { ro v = @cur; @cur += 1; Some(v) }
 /// }
-/// mut c = Counter { cur: 0, end: 3 }
-/// for x in c { /* yields 0, 1, 2 */ }
+/// fn Counter @iter() -> Counter => self
+/// for x in Counter { cur: 0, end: 3 } { /* 0, 1, 2 */ }
 /// ```
 #stable(since = "0.1")
-export type Iterable[T] protocol {
+export type Next[T] protocol {
     mut @next() -> Option[T]
+}
+
+/// Протокол источника итератора. Тип имеет `@iter()` → можно передать в
+/// for-in или convert в итератор.
+///
+/// `I` — конкретный тип итератора (реализует `Next[T]` для некоторого T).
+/// Итераторы реализуют `Iter[Self]` (trivial `=> self`).
+/// Коллекции реализуют `Iter[SomeIter]` где `SomeIter` реализует `Next[T]`.
+///
+/// Generic bound для «принять любой iterable»:
+/// ```nova
+/// fn collect[C Iter[I], I Next[T], T](c C) -> Vec[T]
+/// ```
+#stable(since = "0.1")
+export type Iter[I] protocol {
+    @iter() -> I
 }
 
 // ──────────────────────────────────────────────────────────────────────────
