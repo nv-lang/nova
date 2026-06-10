@@ -448,3 +448,58 @@ export type Consumable[E] protocol {
 export type WithExitTimeout protocol {
     @exit_timeout_ms() -> int
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 138 (D238 / D240) — Index[K, V] + MutIndex[K, V] protocols
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Индексный доступ `a[key]` — magic-метод `@index` для `a[key]` выражений
+/// на user-типах. Паникует при invalid key (OOB, missing key etc).
+///
+/// Встроенные `[]T` и `str` удовлетворяют через built-in codegen path;
+/// user-типы (`Vec[T]`, `HashMap[K,V]` и т.д.) реализуют явно.
+///
+/// # D238 (spec/decisions/03-syntax.md)
+///
+/// `a[key]` десугаринг в `a.index(key)` для любого типа реализующего
+/// `Index[K, V]`. `K` — тип ключа, `V` — тип возвращаемого значения.
+///
+/// # Examples
+///
+/// ```nova
+/// // Vec[T] implements Index[int, T]:
+/// mut v = Vec[int].new()
+/// v.push(10); v.push(20)
+/// assert(v[0] == 10)  // v.index(0)
+///
+/// // Custom map implementing Index[str, int]:
+/// type MyMap { ... }
+/// fn MyMap @index(key str) -> int { ... }
+/// ```
+#stable(since = "0.1")
+export type Index[K, V] protocol {
+    @index(key K) -> V
+}
+
+/// Индексная запись `a[key] = val` — magic-метод `mut @index` для assignment
+/// lhs. Read-only типы реализуют только `Index`. Мутабельные — оба.
+///
+/// # D240 (spec/decisions/03-syntax.md)
+///
+/// `a[key] = val` десугаринг в `a.index_set(key, val)` для типов реализующих
+/// `MutIndex[K, V]`.
+///
+/// # Examples
+///
+/// ```nova
+/// // Vec[T] implements MutIndex[int, T]:
+/// mut v = Vec[int].new()
+/// v.push(10)
+/// v[0] = 99  // v.index_set(0, 99)
+/// assert(v[0] == 99)
+/// ```
+#stable(since = "0.1")
+export type MutIndex[K, V] protocol {
+    mut @index(key K, val V)
+}

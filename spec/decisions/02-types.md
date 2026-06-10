@@ -5769,6 +5769,11 @@ Capture-rules:
 
 ## D144. Sub-slice views для `[]T` и `str` — `arr[a..b]` / `s[a..b]`
 
+> **Amended (Plan 138 D238, 2026-06-10):** `arr[i]` для user-типов (`Vec[T]`,
+> `HashMap[K,V]` и т.д.) теперь через `@index` protocol (D238). Builtin `[]T`
+> и `str` — через compiler built-in path (неизменно). Range-slicing `v[2..5]`
+> для `Vec[T]` — через `@index(Range)` overload.
+
 > **Источник:** Plan 96 (2026-05-23). Закрывает Q-array-slicing,
 > Q-array-api.5, D27 §1663 drift («Слайсинг отложен»), D27 §1632 drift
 > (raw `arr[i]` без bounds-check). **Зависит от** [D6](05-memory.md#d6)

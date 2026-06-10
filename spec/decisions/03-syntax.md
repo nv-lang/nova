@@ -37,6 +37,8 @@
 | [D102](#d102-именованные-аргументы-и-значения-параметров-по-умолчанию) | Именованные аргументы `f(name: val)` и значения параметров по умолчанию `fn f(x int = 0)`; параметр с дефолтом — keyword-only |
 | [D108](#d108-map-литерал-k-v) | Map-литерал `[k: v]` — конструирование `HashMap[K, V]` (D104-D107 зарезервированы Plan 45) |
 | [D126](#d126-external-type--opaque-типы-без-body) | `external type X[Generics]` — opaque типы с runtime backing, без body (D109-D125 заняты другими планами) |
+| [D238](#d238-indexk-v-protocol---akey-magic) | `Index[K, V]` protocol: `@index(key K) -> V` — magic для `a[key]` |
+| [D240](#d240-mutindexk-v-protocol---akey--val-magic) | `MutIndex[K, V]` protocol: `mut @index(key K, val V)` — magic для `a[key] = val` |
 
 ---
 
@@ -9373,6 +9375,111 @@ Followup markers:
 
 Related: Plan 53 (let destructuring), Plan 59 (tuple mono), Plan 120 (named tuples), D215
 Added: 2026-06-09  Status: ACTIVE
+
+---
+
+## D238. `Index[K, V]` protocol — `a[key]` magic
+
+### Что
+
+`@index(key K) -> V` — протокол для `a[key]` доступа на user-типах.
+`K` — тип ключа (int для массивов, Range для slicing, str для maps).
+`V` — тип возвращаемого значения.
+
+### Семантика
+
+`a[key]` десугаринг в `a.index(key)` для любого типа реализующего
+`Index[K, V]`. Паникует при invalid key (OOB, missing key etc.).
+
+Builtin пути (`[]T`, `str`, `NovaArray_*`) продолжают работать через
+compiler built-in dispatch. User-типы реализуют через `@index` метод.
+
+### Примеры
+
+```nova
+// Vec[T] implements Index[int, T]:
+assert(v[i])          // → v.index(i)
+
+// Vec[T] implements Index[Range, Vec[T]]:
+assert(v[2..5].len() == 3)  // → v.index(Range { start: 2, end: 5 })
+
+// Custom map implements Index[K, V]:
+type MyMap[K, V] { ... }
+fn MyMap[K, V] @index(key K) -> V { ... }
+assert(mymap["hello"])  // → mymap.index("hello")
+```
+
+### Стандартные реализации
+
+| Тип | K | V |
+|---|---|---|
+| `Vec[T]` | `int` | `T` |
+| `Vec[T]` | `Range` | `Vec[T]` (zero-copy view) |
+| `str` | `int` | `char` (panic OOB) |
+
+### Почему
+
+- Устраняет compiler magic для `a[i]` — пользователь может реализовать
+  indexing для своего типа (Map, Matrix, etc.)
+- Выравнивает с Python `__getitem__`, C++ `operator[]`, Rust `Index`
+- Совместно с `MutIndex[K, V]` (D240) покрывает полный read/write API
+
+### Что отвергнуто
+
+- **`@get(key)` вместо `@index(key)`** — имя `get` занято `Option`-возвращающей
+  версией (safe access). `@index` — panic-версия, явно иная семантика.
+- **`[T Index[K, V]]` обязательный bound** — структурная типизация достаточна,
+  никаких `impl`-блоков.
+
+### Связь
+
+- D58 — `for x in c` implicit iter (аналогичный sugar-паттерн)
+- D240 — `MutIndex[K, V]` write magic
+- Plan 138 — `[]T` sugar over `Vec[T]` + Index protocol
+
+Added: 2026-06-10  Status: ACTIVE
+
+---
+
+## D240. `MutIndex[K, V]` protocol — `a[key] = val` magic
+
+### Что
+
+`mut @index(key K, val V)` — протокол для `a[key] = val` записи.
+Read-only типы реализуют только `Index[K, V]`.
+Мутабельные типы реализуют оба.
+
+### Семантика
+
+`a[key] = val` десугаринг в `a.index_set(key, val)` для типов реализующих
+`MutIndex[K, V]`. Паникует при invalid key (OOB, etc.).
+
+### Примеры
+
+```nova
+// Vec[T] implements MutIndex[int, T]:
+mut v []int = [1, 2, 3]
+v[0] = 99   // → v.index_set(0, 99)
+assert(v[0] == 99)
+```
+
+### Стандартные реализации
+
+| Тип | K | V |
+|---|---|---|
+| `Vec[T]` | `int` | `T` |
+
+### Followup
+
+- `[M-138-index-set]` — compiler dispatch для `a[key] = val` через
+  `@index_set` (пока LHS assignment через builtin path)
+
+### Связь
+
+- D238 — `Index[K, V]` read magic (парный протокол)
+- Plan 138 — `[]T` sugar over `Vec[T]` + Index protocol
+
+Added: 2026-06-10  Status: ACTIVE
 
 ---
 
