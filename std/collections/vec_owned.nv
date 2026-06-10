@@ -56,14 +56,14 @@ external fn panic(msg str) -> never
 /// assert(v.len() == 3)
 /// assert(v.get(1) == Some(2))
 /// ```
-export type Vec[T] {
+export type Vec[T] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
     // Never read/written outside `unsafe` blocks in this module.
-    priv mut data *mut T
+    mut data *mut T
     // Number of live (initialised) elements.
-    priv mut len int
+    mut len int
     // Number of allocated element slots (`data` capacity).
-    priv mut cap int
+    mut cap int
 }
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
