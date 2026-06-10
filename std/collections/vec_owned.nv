@@ -103,6 +103,16 @@ export fn Vec[T].from(items []T) -> Vec[T] {
     v.extend(items)
     v
 }
+// NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
+// bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
+// by the caller and may carry a *different element C-width* than `T` — most
+// commonly `Vec[u8].from([1, 2, 3])`, where the array literal is built as a
+// `Vec[int]` (8-byte slots) and only narrowed to `u8` element-by-element. A
+// byte-wise memcpy would read the wrong bytes (`size_of[T]()` is the *target*
+// stride, not the source's). The `@extend` loop performs a per-element typed
+// assignment, which applies the implicit numeric conversion correctly. The
+// in-module same-`T` bulk ops (`@realloc_to`/`@append`/`@clone`/`@insert`/
+// `@remove`/`@copy_from`/`@copy_within`) have matching strides and stay bulk.
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // Size / introspection
@@ -144,12 +154,13 @@ fn Vec[T] mut @realloc_to(new_cap int) -> () {
         return
     }
     ro dst = alloc_buf[T](new_cap)
+    // Bulk-copy the live prefix. Source (old `@data`) and destination (fresh
+    // `dst`) are distinct GC-tracked buffers, so `copy_nonoverlapping` (memcpy)
+    // is safe and faster than a per-element loop. Pointer-valued elements move
+    // bitwise; both buffers are reachable during the copy so the GC keeps every
+    // referent alive.
     unsafe {
-        mut i = 0
-        while i < @len {
-            dst[i] = @data[i]
-            i = i + 1
-        }
+        RawMem.copy_nonoverlapping(@data as *u8, dst as *mut u8, @len * size_of[T]())
     }
     @data = dst
     @cap = new_cap
@@ -211,10 +222,12 @@ export fn Vec[T] mut @insert(i int, v T) -> () {
     }
     @ensure_capacity(1)
     unsafe {
-        mut j = @len
-        while j > i {
-            @data[j] = @data[j - 1]
-            j = j - 1
+        // Shift the suffix `[i, len)` one slot right with a single overlap-safe
+        // memmove, then drop `v` into the hole. `RawMem.copy` (memmove) handles
+        // the dst/src overlap correctly.
+        ro tail = @len - i
+        if tail > 0 {
+            RawMem.copy((@data + i) as *u8, (@data + (i + 1)) as *mut u8, tail * size_of[T]())
         }
         @data[i] = v
     }
@@ -229,10 +242,11 @@ export fn Vec[T] mut @remove(i int) -> T {
     }
     ro removed = unsafe { @data[i] }
     unsafe {
-        mut j = i
-        while j < @len - 1 {
-            @data[j] = @data[j + 1]
-            j = j + 1
+        // Shift the suffix `(i, len)` one slot left with a single overlap-safe
+        // memmove, closing the gap left by the removed element.
+        ro tail = @len - 1 - i
+        if tail > 0 {
+            RawMem.copy((@data + (i + 1)) as *u8, (@data + i) as *mut u8, tail * size_of[T]())
         }
     }
     @len = @len - 1
@@ -285,7 +299,25 @@ export fn Vec[T] @get(i int) -> Option[T] {
     Some(v)
 }
 
-/// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex` magic).
+/// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
+/// magic).
+///
+/// NAMING ([M-138-mutindex-rename], Plan 138.2): the MutIndex protocol method
+/// is `mut @index(key, val)`, but renaming this to a 3rd `@index` overload
+/// (alongside read `@index(i) -> T` and range `@index(r Range) -> Vec`) is
+/// **blocked by a generic-type-method overload codegen limitation**: the
+/// `Vec[T]` mono-method emission keys overloads by *leading param type* (see
+/// `register_vec_mono_method` / `vec_method_call` in emit_c.rs, which look the
+/// method up by bare name, and the worklist forward-decl emission), so a write
+/// `@index(i int, val T)` produces a duplicate C definition colliding with the
+/// scalar read `@index(i int) -> T` (both → `Nova_Vec____<elem>_method_index`).
+/// The range overload only escapes because its leading param type differs
+/// (`Range`). `v[i] = val` is codegen-inlined (emit_c.rs `Stmt::Assign` +
+/// `ExprKind::Index`) and never dispatches to a named method, so `@index_set`
+/// stays an internal name with no behavioural impact; the D240 spec prose was
+/// corrected to describe the protocol-level `a.@index(key, val)` contract.
+/// Properly conforming the name needs full-signature overload mangling for
+/// generic-type methods (cross-cutting codegen change, out of scope here).
 export fn Vec[T] mut @index_set(i int, val T) -> () {
     if i < 0 || i >= @len {
         panic("Vec: index out of bounds")
@@ -373,12 +405,18 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> () {
 /// Move every element of `other` onto the end of `self`, leaving `other`
 /// empty.
 export fn Vec[T] mut @append(mut other Vec[T]) -> () {
-    @reserve(other.len())
-    mut i = 0
-    while i < other.len() {
-        ro v = unsafe { other.data[i] }
-        @push(v)
-        i = i + 1
+    ro m = other.len()
+    if m > 0 {
+        @reserve(m)
+        // Bulk-copy `other`'s elements onto the end of `self` in one move.
+        // `RawMem.copy` (memmove) is used rather than `copy_nonoverlapping` so a
+        // self-append (`v.append(v)`) — where `other.data == @data` after the
+        // reserve — is still correct (the `[0,m)` and `[len,len+m)` regions are
+        // distinct, but memmove is robust to any layout).
+        unsafe {
+            RawMem.copy(other.data as *u8, (@data + @len) as *mut u8, m * size_of[T]())
+        }
+        @len = @len + m
     }
     other.clear()
 }
@@ -401,6 +439,157 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
         read = read + 1
     }
     @len = write
+}
+
+// в”Ђв”Ђв”Ђ []T extend-family parity (Plan 90.1 / D141; [M-138-vec-bulk-parity]) в”Ђв”Ђ
+//
+// These mirror the bulk operations that were C-builtins on the retired
+// `NovaArray` runtime (memcpy/memmove/memset/memcmp in `NOVA_ARRAY_IMPL`).
+// At `[]T ≡ Vec[T]` (D239) the `[]T` API must still offer them — now as
+// RawMem-backed Nova-body methods. Semantics match the old `nova_array_*`
+// helpers exactly (see compiler-codegen/nova_rt/array.h).
+
+/// Overwrite every live element of `self` from `other`, which must have the
+/// **same length**. Overlap-safe (memmove). Panics on length mismatch.
+///
+/// Mirrors the old `[]T @copy_from` (Plan 90.1): the strict equal-length
+/// contract avoids silent truncation — use `self[..n].copy_from(other[..n])`
+/// for a partial copy.
+///
+/// # Examples
+///
+/// ```nova
+/// mut dst = Vec[int].from([0, 0, 0])
+/// let src = Vec[int].from([1, 2, 3])
+/// dst.copy_from(src)
+/// assert(dst.equal(src))
+/// ```
+export fn Vec[T] mut @copy_from(other Vec[T]) -> () {
+    if @len != other.len() {
+        panic("Vec.copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)")
+    }
+    if @len > 0 {
+        unsafe {
+            RawMem.copy(other.data as *u8, @data as *mut u8, @len * size_of[T]())
+        }
+    }
+}
+
+/// Copy `len` elements within the same buffer from `src_from` to `dst_from`.
+/// Overlap-safe (memmove). Panics if either range falls outside `[0, len)`.
+///
+/// Mirrors the old `[]T @copy_within` (Plan 90.1).
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// v.copy_within(0, 2, 2)   // [1,2,3,4,5] -> [1,2,1,2,5]
+/// assert(v.equal(Vec[int].from([1, 2, 1, 2, 5])))
+/// ```
+export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> () {
+    if len < 0 || src_from < 0 || dst_from < 0 ||
+       src_from + len > @len || dst_from + len > @len {
+        panic("Vec.copy_within: range out of bounds")
+    }
+    if len > 0 {
+        unsafe {
+            RawMem.copy((@data + src_from) as *u8, (@data + dst_from) as *mut u8, len * size_of[T]())
+        }
+    }
+}
+
+/// Set every live element to `v`. Element-wise for the general case; the
+/// single-byte element types (`u8`/`i8`/`bool`) take a `RawMem.fill` (memset)
+/// fast-path since a 1-byte memset *is* an element fill.
+///
+/// Mirrors the old `[]T @fill` (Plan 90.1; its `sizeof(T)==1 -> memset` path).
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 3])
+/// v.fill(7)
+/// assert(v.equal(Vec[int].from([7, 7, 7])))
+/// ```
+export fn Vec[T] mut @fill(v T) -> () {
+    if @len <= 0 {
+        return
+    }
+    if size_of[T]() == 1 {
+        // A 1-byte element fill is exactly a byte-pattern memset over the live
+        // prefix. `v` is reinterpreted as its single storage byte via the cast.
+        unsafe {
+            RawMem.fill(@data as *mut u8, v as u8, @len)
+        }
+    } else {
+        mut i = 0
+        while i < @len {
+            unsafe {
+                @data[i] = v
+            }
+            i = i + 1
+        }
+    }
+}
+
+/// Extend `self` by `n` zero-initialised elements (`memset 0` over the new
+/// tail). Polymorphic over `T` (zero bytes = `0`/`NULL`/`false`/`0.0`), unlike
+/// `fill` which is element-typed. Panics on negative `n`; `n == 0` is a no-op.
+///
+/// Mirrors the old `[]T @append_zero` (Plan 90.1). Use-case: reserve a
+/// write-window in encoders, padding, length-prefix patching.
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2])
+/// v.append_zero(3)
+/// assert(v.equal(Vec[int].from([1, 2, 0, 0, 0])))
+/// ```
+export fn Vec[T] mut @append_zero(n int) -> () {
+    if n < 0 {
+        panic("Vec.append_zero: n must be >= 0")
+    }
+    if n == 0 {
+        return
+    }
+    @ensure_capacity(n)
+    unsafe {
+        RawMem.fill((@data + @len) as *mut u8, 0 as u8, n * size_of[T]())
+    }
+    @len = @len + n
+}
+
+/// Lexicographic byte-compare against `other`, returning `-1`/`0`/`+1`.
+///
+/// Mirrors the old `[]u8 @compare` (Plan 90.1): a `memcmp`-class operation
+/// intended for **byte** vectors (`Vec[u8]`). It compares `min(len_a, len_b)`
+/// elements byte-wise, then breaks ties by length. For multi-byte element
+/// types the byte order is endianness-dependent, so callers should restrict
+/// this to `Vec[u8]` (matching the original `[]u8`-only C builtin).
+///
+/// # Examples
+///
+/// ```nova
+/// let a = Vec[u8].from([1, 2, 3])
+/// let b = Vec[u8].from([1, 2, 4])
+/// assert(a.compare(b) == -1)
+/// assert(a.compare(a) == 0)
+/// ```
+export fn Vec[T] @compare(other Vec[T]) -> int {
+    ro la = @len
+    ro lb = other.len()
+    ro n = if la < lb { la } else { lb }
+    if n > 0 {
+        ro c = unsafe { RawMem.compare(@data as *u8, other.data as *u8, n * size_of[T]()) }
+        if c != 0 {
+            return c
+        }
+    }
+    if la < lb { return -1 }
+    if la > lb { return 1 }
+    0
 }
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -541,14 +730,16 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 /// assert(b.len() == 4)
 /// ```
 export fn Vec[T] @clone() -> Vec[T] {
-    mut out = Vec[T].with_capacity(@len)
-    mut i = 0
-    while i < @len {
-        ro v = unsafe { @data[i] }
-        out.push(v)
-        i = i + 1
+    if @len <= 0 {
+        return Vec[T].new()
     }
-    out
+    // Bulk-copy the live prefix into a fresh distinct buffer (non-overlapping).
+    ro n = @len
+    ro dst = alloc_buf[T](n)
+    unsafe {
+        RawMem.copy_nonoverlapping(@data as *u8, dst as *mut u8, n * size_of[T]())
+    }
+    Vec { data: dst, len: n, cap: n }
 }
 
 

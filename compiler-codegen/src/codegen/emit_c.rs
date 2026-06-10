@@ -21003,33 +21003,20 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
+                    let _ = &vec_elem_ty;
                     match method.as_str() {
-                        // Plan 90/D141 bulk ops — C-runtime only (no Vec method).
-                        "append_zero" | "copy_from" | "copy_within" | "fill" => {
-                            let obj_c = self.emit_expr(obj)?;
-                            let mut arg_strs =
-                                vec![format!("(NovaArray_{}*)({})", vec_elem_ty, obj_c)];
-                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
-                            self.line(&format!("nova_array_{}_{}({});",
-                                method, vec_elem_ty, arg_strs.join(", ")));
-                            // D181 fluent: mut methods return `@` (receiver ptr).
-                            return Ok(obj_c);
-                        }
-                        // memcmp-class — only `[]u8` (nova_byte) is defined.
-                        "compare" if vec_elem_ty == "nova_byte" => {
-                            let obj_c = self.emit_expr(obj)?;
-                            let mut arg_strs =
-                                vec![format!("(NovaArray_{}*)({})", vec_elem_ty, obj_c)];
-                            for a in args {
-                                let ac = self.emit_expr(a.expr())?;
-                                // The other operand is also a Vec[byte] — cast too.
-                                arg_strs.push(format!("(NovaArray_nova_byte*)({})", ac));
-                            }
-                            return Ok(format!("nova_array_compare_nova_byte({})",
-                                arg_strs.join(", ")));
-                        }
+                        // Plan 138.2 [M-138-vec-bulk-parity]: the bulk ops
+                        // `append_zero`/`copy_from`/`copy_within`/`fill`/`compare`
+                        // are now RawMem-backed Nova-body methods on `Vec[T]`
+                        // (std/collections/vec_owned.nv), so the old
+                        // `nova_array_*` C-builtin bridge for them is RETIRED —
+                        // they fall through to normal generic Vec-method dispatch
+                        // below (which mono'ises the Nova body per element type).
+                        //
                         // Plan 118.2 FFI internal data-pointer access — emit the
-                        // `data` field directly (Vec has the same field).
+                        // `data` field directly (Vec has the same field). This is
+                        // the only bridge that stays: there is no `as_ptr`/
+                        // `as_mut_ptr` Nova method on Vec.
                         "as_ptr" | "as_mut_ptr" if args.is_empty() => {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("(({})->data)", obj_c));

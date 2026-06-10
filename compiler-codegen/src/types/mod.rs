@@ -17883,11 +17883,33 @@ pub(crate) fn check_unsafe_context_in_module(
     // Plan 118 A25: pre-collect fn names that have Fail effect — cast к
     // *fn → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     let mut unsafe_fns: HashSet<String> = HashSet::new();
+    // Plan 138.2 [M-138-vec-bulk-parity] sharper A11 precision (the Ф.3.5
+    // receiver-aware-lookup followup noted at the match site below): unsafe
+    // STATIC methods (`fn Type.m()` — e.g. `RawMem.fill` / `RawMem.compare`)
+    // are keyed by `(type_name, method)` rather than bare method name. Without
+    // this, a same-named *instance* method on another type (e.g. `Vec[T] @fill`
+    // / `Vec[T] @compare`) would falsely require an `unsafe { }` wrap at its
+    // call site whenever `RawMem` is in scope (it is transitively, via
+    // `vec_owned.nv`). Static-method calls write the receiver type literally
+    // (`RawMem.fill(...)`), so receiver-name matching is exact and introduces
+    // no false negatives.
+    let mut unsafe_static_methods: HashSet<(String, String)> = HashSet::new();
     let mut fail_fns: HashSet<String> = HashSet::new();
-    let collect_from = |item: &Item, unsafe_fns: &mut HashSet<String>, fail_fns: &mut HashSet<String>| {
+    let collect_from = |item: &Item,
+                        unsafe_fns: &mut HashSet<String>,
+                        unsafe_static_methods: &mut HashSet<(String, String)>,
+                        fail_fns: &mut HashSet<String>| {
         if let Item::Fn(fd) = item {
             if fd.unsafe_attr {
-                unsafe_fns.insert(fd.name.clone());
+                match &fd.receiver {
+                    Some(r) if r.kind == crate::ast::ReceiverKind::Static => {
+                        unsafe_static_methods
+                            .insert((r.type_name.clone(), fd.name.clone()));
+                    }
+                    _ => {
+                        unsafe_fns.insert(fd.name.clone());
+                    }
+                }
             }
             // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
             // где last segment == "Fail". Fn с Fail effect = throwable —
@@ -17903,16 +17925,17 @@ pub(crate) fn check_unsafe_context_in_module(
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut fail_fns);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut fail_fns);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns);
         }
     }
     let mut state = UnsafeCtx {
         depth: 0,
         unsafe_fns,
+        unsafe_static_methods,
         fail_fns,
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
@@ -17979,9 +18002,17 @@ pub(crate) fn check_unsafe_context_in_module(
 
 struct UnsafeCtx {
     depth: usize,
-    /// Plan 118 A11 enforcement: names of #unsafe fns в текущем module.
-    /// Call с этим именем outside unsafe context → E_UNSAFE_CALL_REQUIRES_WRAP.
+    /// Plan 118 A11 enforcement: names of #unsafe free-fns + #unsafe instance
+    /// methods в текущем module. Call с этим именем outside unsafe context →
+    /// E_UNSAFE_CALL_REQUIRES_WRAP.
     unsafe_fns: HashSet<String>,
+    /// Plan 138.2 [M-138-vec-bulk-parity]: #unsafe STATIC methods keyed by
+    /// `(receiver_type_name, method_name)` — e.g. `(RawMem, fill)`. Matched
+    /// only when the call's receiver is literally that type (`RawMem.fill(...)`),
+    /// so a same-named instance method on another type (`v.fill(...)` on Vec)
+    /// is NOT falsely gated. Closes the "receiver-type-aware lookup" V1 gap
+    /// noted at the A11 match site.
+    unsafe_static_methods: HashSet<(String, String)>,
     /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
     /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     fail_fns: HashSet<String>,
@@ -18391,15 +18422,32 @@ impl UnsafeCtx {
                 //   - Ident (free fn) — lookup в unsafe_fns
                 //   - Member receiver (method call) — Plan 118.1.5 closeout
                 //     (2026-06-06): lookup method name в unsafe_fns. Note:
-                //     unsafe_fns HashSet stores ВСЕ #unsafe fn names, including
-                //     methods (parser stores в fd.unsafe_attr uniformly). Name
-                //     collision risk acceptable for V1 — sharper precision
-                //     (Ф.3.5: receiver-type-aware lookup) followup.
+                //     unsafe_fns HashSet stores #unsafe free-fns + instance
+                //     method names. Plan 138.2 [M-138-vec-bulk-parity]: #unsafe
+                //     STATIC methods are now keyed `(type, method)` and matched
+                //     only when the receiver is literally that type — closing
+                //     the V1 bare-name collision (a `Vec[T] @fill`/`@compare`
+                //     instance method no longer collides with `RawMem.fill`/
+                //     `RawMem.compare` static externs).
                 if self.depth == 0 {
                     let unsafe_callee_name: Option<String> = match &func.kind {
                         ExprKind::Ident(fname) if self.unsafe_fns.contains(fname) => {
                             Some(fname.clone())
                         }
+                        // Static unsafe-method call `Type.m(...)`: receiver is
+                        // the literal type identifier. Match the (type, method)
+                        // pair exactly.
+                        ExprKind::Member { obj, name: mname, .. }
+                            if matches!(&obj.kind, ExprKind::Ident(tn)
+                                if self.unsafe_static_methods
+                                    .contains(&(tn.clone(), mname.clone()))) =>
+                        {
+                            Some(mname.clone())
+                        }
+                        // Instance unsafe-method call (or free-fn used as
+                        // method): bare-name lookup in unsafe_fns. Static
+                        // methods are intentionally excluded here (handled
+                        // above by exact receiver match).
                         ExprKind::Member { name: mname, .. } if self.unsafe_fns.contains(mname) => {
                             Some(mname.clone())
                         }
