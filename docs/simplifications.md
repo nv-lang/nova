@@ -18,6 +18,22 @@
 
 ---
 
+### Plan 138.2 Ф.0 — Universal []T->Vec[T] flip: BLOCKED (2026-06-10)
+Цель Ф.0: снять gate `contains_key("Vec")` (emit_c.rs:2055/4938/26100/31637) чтобы
+`[]T` лоуэрился в `Vec[T]` в КАЖДОМ юните (не только где Vec упомянут).
+ИСХОД: 🔴 BLOCKED — попытка приземления, откат по HIGH-RISK протоколу. Механика
+доказана (Option A: prelude-export vec_owned + #prelude директива; флип ON давал
+`Nova_Vec____nova_int*` × 32 для Vec-free юнита), но универсальный флип архитектурно
+неотделим от Ф.2-Ф.4 (NovaArray-API reconciliation) — каскадит в 40+ регрессий
+(insert/append API divergence plan90_1, []u8 literal stride, Vec-of-record `_p`
+typedef bug, map_literals каскад, user-Vec shadow collision). Option B (codegen-seed
+template) ОТКЛОНЁН после spike (template без struct-def+methods → dangling
+`Nova_Vec____<T>` CC-FAIL). Дерево оставлено GREEN (0 tracked изменений). C1 не
+достигнут; B6/Ф.3 (retire NOVA_ARRAY_DECL/IMPL) остаётся заблокированным.
+Как чинить: приземлять Ф.0+Ф.2+Ф.3+Ф.4 как один атомарный multi-day unit; сначала
+`[M-138.2-vec-u8-literal-stride]` + Vec-of-record `_p` typedef bug, потом флип.
+Приоритет: H.
+
 ### Plan 138 — Index[K,V] + MutIndex[K,V] protocols + str[i] fix (2026-06-10)
 Index[K,V] (@index) + MutIndex[K,V] (@index_set) protocols declared in prelude.
 Vec[T] @index + @index_set implemented (inline C dispatch in emit_c.rs).

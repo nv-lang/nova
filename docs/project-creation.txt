@@ -35159,3 +35159,58 @@ OPEN FOLLOWUPS:
   не связан с array sugar), plan138 10/10, plan138_1 10/10. Широкий sweep
   plan90_1(20/0), plan91(2/0), plan96(23/0), plan101_*(37/0), plan137(16/0),
   plan120(8/0) и др. — 0 регрессий. Typed-storage gap ЗАКРЫТ.
+
+================================================================================
+Plan 138.2 Ф.0 — Universal []T->Vec[T] flip (2026-06-10) — 🔴 BLOCKED (REVERTED)
+================================================================================
+
+ЦЕЛЬ: снять gate generic_type_templates.contains_key("Vec") (emit_c.rs
+  :2055/4938/26100/31637) чтобы []T лоуэрился в Vec[T] в КАЖДОМ юните, а не
+  только там где Vec упомянут (закрыть [M-138.1-vec-in-prelude], разблокировать
+  B6/Ф.3 retire NOVA_ARRAY_DECL/IMPL).
+
+ИСХОД: попытка приземления, откат по HIGH-RISK протоколу. Дерево GREEN,
+  0 tracked-file изменений, ничего не закоммичено в код. C1 НЕ достигнут.
+
+МЕХАНИКА (доказана, потом откатана):
+  Option A (prelude integration) — ЕДИНСТВЕННЫЙ жизнеспособный механизм:
+    1. std/prelude.nv: export import std.collections.vec_owned.{Vec, VecIter}
+       сразу после Range re-export (строка 114; порядок важен — vec_owned зависит
+       от Range).
+    2. std/collections/vec_owned.nv: #prelude(core, runtime, collections, protocols)
+       перед module + явный import std.collections.range.{Range} (Range живёт
+       только в facade, не в prelude-submodule → прямой import; range.nv свой
+       #prelude(core,runtime,errors) останавливает re-cycle).
+    3. 4 gate-сайта НЕ удалять — проходят универсально для prelude-юнитов,
+       graceful-degrade для #no_prelude.
+    4. Rust-rebuild НЕ нужен (std .nv читаются с диска в runtime).
+  Acceptance MET при флипе ON: Vec-free юнит mut x []int=[1,2,3]; x.push(4)
+    лоуэрился в Nova_Vec____nova_int* (32 вхождения), residual NovaArray = 2
+    (намеренный Vec.from([]T) literal-bridge).
+
+  Option B (codegen-seed template) — ОТКЛОНЁН после spike: seeding только template
+    в generic_type_templates НЕ достаточно. 4 gate-сайта зависят от полного STRUCT
+    DEFINITION + всех method-bodies (generic_type_methods["Vec"]), приходящих только
+    через import-merge pipeline. Seed только template → dangling Nova_Vec____<T> +
+    undefined Nova_Vec____<T>_method_push → CC-FAIL. Spec-фрейминг "B легче"
+    основан на ложной предпосылке.
+
+ПОЧЕМУ ОТКАТ (5 классов регрессий при флипе ON — требуют Ф.2-Ф.4, НЕ codegen-фикса):
+  1. insert/append API divergence (plan90_1 20->10): []T extend-family (D141)
+     dst.insert(i, src_ARRAY)=bulk, Vec insert(i, v T)=single-elem. Одно имя,
+     несовместимая семантика.
+  2. []u8 literal int64-stride (plan118_1 11->6, buffers): известный
+     [M-138.2-vec-u8-literal-stride].
+  3. Vec-of-record write-index _p typedef bug (plan138_1 10->9): v[i]=Point{...}
+     эмитит (Nova_Point_p)(tmp) — typedef нет, должно (Nova_Point*). Narrow codegen-баг.
+  4. map_literals каскад (28->9): map-литералы строят []T-backed bucket-arrays.
+  5. SHADOW collision (plan123_3_1 E7310): user type Vec {x,y} коллизит с prelude
+     Vec[T]; prelude-методы выживают и arity-check'аются против non-generic user-Vec.
+
+РЕКОМЕНДАЦИЯ: приземлять Ф.0+Ф.2+Ф.3+Ф.4 как ОДИН атомарный multi-day unit;
+  сначала [M-138.2-vec-u8-literal-stride] + Vec-of-record _p typedef bug, потом флип.
+  Re-create nova_tests/plan138_2/t3_universal_novec_unit.nv когда флип приземлится.
+
+РЕЗУЛЬТАТ (флип OFF, baseline confirmed): plan138_2 2/0, plan138 10/0,
+  plan90_1 20/0, plan131 27/1 (vec_debug_pos pre-existing). Vec-free юнит ->
+  NovaArray_nova_int* (флип OFF, корректное reverted-состояние).
