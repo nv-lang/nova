@@ -308,23 +308,18 @@ export fn Vec[T] @get(i int) -> Option[T] {
 /// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
 /// magic).
 ///
-/// NAMING ([M-138-mutindex-rename], Plan 138.2): the MutIndex protocol method
-/// is `mut @index(key, val)`, but renaming this to a 3rd `@index` overload
-/// (alongside read `@index(i) -> T` and range `@index(r Range) -> Vec`) is
-/// **blocked by a generic-type-method overload codegen limitation**: the
-/// `Vec[T]` mono-method emission keys overloads by *leading param type* (see
-/// `register_vec_mono_method` / `vec_method_call` in emit_c.rs, which look the
-/// method up by bare name, and the worklist forward-decl emission), so a write
-/// `@index(i int, val T)` produces a duplicate C definition colliding with the
-/// scalar read `@index(i int) -> T` (both → `Nova_Vec____<elem>_method_index`).
-/// The range overload only escapes because its leading param type differs
-/// (`Range`). `v[i] = val` is codegen-inlined (emit_c.rs `Stmt::Assign` +
-/// `ExprKind::Index`) and never dispatches to a named method, so `@index_set`
-/// stays an internal name with no behavioural impact; the D240 spec prose was
-/// corrected to describe the protocol-level `a.@index(key, val)` contract.
-/// Properly conforming the name needs full-signature overload mangling for
-/// generic-type methods (cross-cutting codegen change, out of scope here).
-export fn Vec[T] mut @index_set(i int, val T) -> () {
+/// NAMING ([M-138-mutindex-rename], Plan 138.4 Ф.2): this is the third `@index`
+/// overload — a `mut @index(key, val)` write that coexists with the scalar read
+/// `@index(i) -> T` and the range read `@index(r Range) -> Vec`. Full-signature
+/// overload mangling for generic-type methods (emit_c.rs `mangle_fn` +
+/// `register_vec_mono_method` / `vec_method_call`) gives each overload a
+/// distinct C symbol (read scalar → `…_method_index`, write →
+/// `…_method_index__nova_int_void_p`, range → `…_method_index__Nova_Range_p`),
+/// so the prior collision is resolved. `v[i] = val` is still codegen-inlined
+/// (emit_c.rs `Stmt::Assign` + `ExprKind::Index`) and does not dispatch through
+/// this method, but the name now conforms to the D240 `a.@index(key, val)`
+/// protocol contract.
+export fn Vec[T] mut @index(i int, val T) -> () {
     if i < 0 || i >= @len {
         panic("Vec: index out of bounds")
     }

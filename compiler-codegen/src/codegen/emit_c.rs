@@ -9711,6 +9711,40 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 138.4 Ф.2 (G-A): compute the param C-type vector used to match a
+    /// method `FnDecl` against its registered overload signatures, replicating
+    /// the registration pre-pass (~2507-2539). For generic-receiver types
+    /// (`generic_types` membership) and `[]T` array-extension receivers, params
+    /// are erased via `erased_type_ref_c` (bare type-param → `void*`) exactly as
+    /// stored in `method_overloads`; for concrete receivers it is the strict
+    /// `type_ref_to_c` translation. Keeping these two computations in lockstep is
+    /// what lets multiple same-name overloads on a generic type resolve to their
+    /// distinct mangled C symbols.
+    fn mangle_want_params(&self, recv: &crate::ast::Receiver, f: &FnDecl) -> Vec<String> {
+        let is_array_ext = recv.type_name.starts_with("[]");
+        let is_generic_recv = self.generic_types.contains(&recv.type_name) || is_array_ext;
+        if is_generic_recv {
+            let recv_type_params: HashSet<String> = {
+                let from_recv = recv.generics.iter().filter_map(|tr| {
+                    if let TypeRef::Named { path, .. } = tr { path.first().cloned() } else { None }
+                });
+                let from_fn = if is_array_ext {
+                    f.generics.iter().map(|g| g.name.clone()).collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                from_recv.chain(from_fn.into_iter()).collect()
+            };
+            f.params.iter()
+                .map(|p| self.erased_type_ref_c(&Some(p.ty.clone()), &recv_type_params))
+                .collect()
+        } else {
+            f.params.iter()
+                .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+                .collect()
+        }
+    }
+
     fn mangle_fn(&self, f: &FnDecl) -> String {
         if let Some(recv) = &f.receiver {
             // Plan 11 Ф.3: если есть multi-overload registry для (type, name),
@@ -9719,10 +9753,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             if let Some(overloads) = self.method_overloads.get(&key) {
                 if overloads.len() > 1 {
                     // Резолвим по param C-типам этого FnDecl'а.
-                    let want_params: Vec<String> = f.params.iter()
-                        .map(|p| self.type_ref_to_c(&p.ty)
-                            .unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
+                    //
+                    // Plan 138.4 Ф.2 (G-A): for generic-receiver types (Vec[T],
+                    // HashMap[K,V], `[]T` array-ext) the overload registry stored
+                    // `param_c_types` via `erased_type_ref_c` (type-param → `void*`),
+                    // see the pre-pass at ~2530. `type_ref_to_c` would lower a bare
+                    // type-param `T` to the `nova_int` fallback instead, so a write
+                    // overload `mut @index(i int, val T)` whose registered sig is
+                    // `[nova_int, void*]` failed to match `[nova_int, nova_int]` and
+                    // fell through to the un-suffixed base name — colliding in C with
+                    // the read `@index(i int) -> T`. Mirror the registration erasure
+                    // here so each full signature resolves to its distinct C symbol.
+                    let want_params = self.mangle_want_params(recv, f);
                     // Plan 135 Ф.1: tiebreak по recv_mutable когда params совпадают.
                     let want_recv_mut = recv.mutable;
                     // First pass: exact match on both params + recv_mutable.
