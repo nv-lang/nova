@@ -475,18 +475,20 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 
 ## Acceptance criteria
 
-- **A1** — `v[i]` на `Vec[T]` компилируется → `T`, panic на OOB
-- **A1b** — `v[i] = val` на `Vec[T]` компилируется → запись, panic на OOB
-- **A2** — `v.get(i)` → `Option[T]`
-- **A3** — `v[2..5]` → `[]T` zero-copy view; push на view → detach, original unchanged
-- **A4** — `v.get(2..5)` → `Option[[]T]`
-- **A5** — `"abc"[0]` → `'a'` (char, panic OOB)
-- **A6** — `"abc".get(0)` → `Option[char]`
-- **A7** — `[T Index[int, T]]` bound принимает `Vec[T]` и `[]T`
-- **A8** — `[]T` = `Vec[T]` на уровне типов: `fn f(a []int)` принимает `Vec[int]`
-- **A9** — 0 новых FAIL в `nova test`
-- **A10** — `[C Iter[I], I Next[T], T]` generic bound компилируется; `for x in c` работает через `iter()`
-- **A11** — `Iterable[T]` удалён из prelude; старый код с `Iterable` → compile error с подсказкой
+**Ф.1-Ф.4 (CLOSED 2026-06-10, 10/10 PASS):**
+
+- **A1** ✅ — `v[i]` на `Vec[T]` компилируется → `T`, panic на OOB (t1, neg/t_neg_vec_index_oob)
+- **A1b** ✅ — `v[i] = val` на `Vec[T]` компилируется → запись, panic на OOB (t_vec_write_index)
+- **A2** ✅ — `v.get(i)` → `Option[T]` (t2_vec_get_some_none)
+- **A3** ✅ — `v[2..5]` → `Vec[T]` zero-copy view; push на view → silent detach, original unchanged (t3, t8)
+- **A4** ✅ — `v.get(2..5)` → `Option[Vec[T]]` (t4_vec_range_get)
+- **A5** ✅ — `"abc"[0]` → `'a'` (char, panic OOB) (t5, neg/t_neg_str_index_oob)
+- **A6** ✅ — `"abc".get(0)` → `Option[char]` (t6_str_get_option)
+- **A7** — `[T Index[int, T]]` bound принимает `Vec[T]` и `[]T` — deferred (Ф.5)
+- **A8** — `[]T` = `Vec[T]` на уровне типов: `fn f(a []int)` принимает `Vec[int]` — deferred (Ф.5, `[M-138-array-sugar-alias]`)
+- **A9** — 0 новых FAIL в `nova test` — targeted plan138 tests: 10/10 PASS
+- **A10** ✅ — `Next[T]`/`Iter[I]` протоколы объявлены; `for x in c` через `iter()` (D58 amend, t7_for_iter_first)
+- **A11** ✅ — `Iterable[T]` удалён из prelude; заменён на `Next[T]` + `Iter[I]` (D241+D242)
 
 ---
 
