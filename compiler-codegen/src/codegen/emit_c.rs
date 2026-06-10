@@ -16170,10 +16170,21 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 }
             }
         }
-        // When target is NovaArray_X* and expr is an array literal, set hint so
-        // emit_array_lit uses X element type instead of defaulting to nova_int.
-        // Handles empty `[]` in typed contexts: `let xs []str = []` or `{ items: [] }`.
+        // When target is NovaArray_X* or (Plan 138.1 Ф.2) the flipped
+        // Vec[X] (`Nova_Vec____<X>*`) and expr is an array literal, set hint so
+        // emit_array_lit / try_emit_typed_vec_literal uses X as the element
+        // type instead of defaulting to nova_int. Handles empty `[]` in typed
+        // contexts: `let xs []str = []` or `{ items: [] }`.
         if let ExprKind::ArrayLit(_) = &expr.kind {
+            // Recover the element C type of a flipped `[]X` ≡ `Vec[X]` target.
+            let vec_elem = self.vec_or_array_elem_c(target_ty_c)
+                .filter(|_| target_ty_c.starts_with("Nova_Vec____"));
+            if let Some(hint_elem) = vec_elem {
+                let prev = self.current_array_elem_hint.replace(hint_elem);
+                let result = self.emit_expr(expr);
+                self.current_array_elem_hint = prev;
+                return result;
+            }
             if let Some(inner) = target_ty_c.strip_prefix("NovaArray_") {
                 let hint_elem = inner.trim_end_matches('*').to_string();
                 let prev = self.current_array_elem_hint.replace(hint_elem);
@@ -16628,6 +16639,33 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                         BinOp::Neq => Ok("(0)".into()),
                         _ => Err(format!("unsupported operator {:?} on nova_unit", op)),
                     };
+                }
+                // Plan 138.1 Ф.3 (D239): `Vec[T] == Vec[T]` — element-wise via
+                // the `@equal` Nova-body method. Must come BEFORE the generic
+                // `Nova_*` sum-pointer arm below, which would otherwise misfire
+                // and emit a bogus `(l)->tag == (r)->tag` comparison (Vec has no
+                // `tag` field). `[]T` ≡ `Vec[T]`, so this also handles the old
+                // `arr == arr` element-wise comparison sites.
+                {
+                    let vec_ty = if lty.starts_with("Nova_Vec____") {
+                        Some(lty.clone())
+                    } else if rty.starts_with("Nova_Vec____") {
+                        Some(rty.clone())
+                    } else { None };
+                    if matches!(op, BinOp::Eq | BinOp::Neq) {
+                        if let Some(vty) = vec_ty {
+                            let mangled = vty.trim_end_matches('*').to_string();
+                            if let Some(call) =
+                                self.vec_method_call(&mangled, "equal", &[l.clone(), r.clone()])
+                            {
+                                return match op {
+                                    BinOp::Eq  => Ok(format!("({})", call)),
+                                    BinOp::Neq => Ok(format!("(!({}))", call)),
+                                    _ => unreachable!(),
+                                };
+                            }
+                        }
+                    }
                 }
                 // NovaArray_* is a pointer — pointer equality compares identity, not contents.
                 // Nova's `==` on arrays means element-wise; emit a runtime call if available,
@@ -25971,6 +26009,31 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 tmp.clone(), format!("{}*", box_c_type));
             return Ok(tmp);
         }
+        // Plan 138.1 Ф.2 (D239): array literal builds a TYPED `Vec[T]` value —
+        // no `nova_int` erasure. `[]` → `Vec[T].new()`, `[a, b, c]` →
+        // `with_capacity(n)` + serial typed `push`, `[..xs, y]` →
+        // `clone(xs)` (or empty + push) + push. Storage is always the typed
+        // `*mut T` Vec buffer.
+        //
+        // Guarded by `generic_type_templates.contains_key("Vec")` — units that
+        // do NOT pull `std/collections/vec_owned.nv` fall through to the legacy
+        // NovaArray path below (graceful, matches the Ф.1 type-flip guard).
+        // Closure-element arrays (`[|x| ...]`) and `[]Protocol` boxes still go
+        // through the legacy path (closure-array is followup
+        // [M-138.1-closure-array]; protocol-box handled above).
+        if self.generic_type_templates.contains_key("Vec") {
+            let any_closure = elems.iter().any(|e| {
+                if let ArrayElem::Item(expr) = e {
+                    matches!(expr.kind,
+                        ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_))
+                } else { false }
+            });
+            if !any_closure {
+                if let Some(tmp) = self.try_emit_typed_vec_literal(elems)? {
+                    return Ok(tmp);
+                }
+            }
+        }
         // Infer element type from first item (best-effort default: nova_int).
         // For Spread-only arrays (например, variadic-fn вызван с `...arr`)
         // — derive elem type из spread'нутого NovaArray_<T>*.
@@ -26121,6 +26184,209 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             self.array_element_types.insert(tmp.clone(), stored_ty);
         }
         Ok(tmp)
+    }
+
+    /// Plan 138.1 Ф.2 (D239): build a typed `Vec[T]` from an array literal.
+    ///
+    /// Emits typed construction — `[]` → `Vec[T].new()`, `[a, b, c]` →
+    /// `with_capacity(n)` + serial typed `push`, `[..xs, y]` → empty/clone +
+    /// per-element typed `push`. Elements are stored in the `*mut T` buffer
+    /// with their natural per-element C representation (no `nova_int` slot
+    /// erasure). Returns the C expression (a `Nova_Vec____<T>*` lvalue) of the
+    /// constructed vector.
+    ///
+    /// Returns `Ok(None)` (fall through to the legacy NovaArray path) when the
+    /// element C type cannot be resolved to anything more specific than the
+    /// erased `nova_int` default AND there is no element to infer from (so the
+    /// legacy hint machinery can still apply); this keeps maximal compatibility
+    /// while the rest of the pipeline migrates.
+    fn try_emit_typed_vec_literal(
+        &mut self,
+        elems: &[ArrayElem],
+    ) -> Result<Option<String>, String> {
+        // 1) Resolve the element C type. Priority:
+        //    a. first direct Item → its inferred C type;
+        //    b. first Spread → element type of the spread source (Vec[T] /
+        //       NovaArray_<T>);
+        //    c. element hint from a typed context (`let xs []T = []`): the hint
+        //       arrives either as a bare elem C name (`nova_str`) — see
+        //       emit_expr_with_target_type — or, post-flip, the caller may have
+        //       stashed the elem of a `Nova_Vec____<elem>` target.
+        let elem_c: String = if let Some(c) = elems.iter().find_map(|e| {
+            if let ArrayElem::Item(expr) = e {
+                Some(self.infer_expr_c_type(expr))
+            } else { None }
+        }) {
+            c
+        } else if let Some(c) = elems.iter().find_map(|e| {
+            if let ArrayElem::Spread(expr) = e {
+                let t = self.infer_expr_c_type(expr);
+                self.vec_or_array_elem_c(&t)
+            } else { None }
+        }) {
+            c
+        } else {
+            // Empty (or spread-of-unknown) literal — use the element hint.
+            match self.current_array_elem_hint.clone() {
+                Some(h) if h != "void_p" => h,
+                _ => "nova_int".into(),
+            }
+        };
+        // void_p / closure element storage stays on the legacy path.
+        if elem_c == "void*" || elem_c == "void_p" {
+            return Ok(None);
+        }
+
+        // 2) Monomorphize `Vec[elem_c]`: compute the mangled C name and register
+        //    the type instance (struct + methods) on the worklist — exactly the
+        //    path `type_ref_to_c(TypeRef::Array)` uses.
+        let type_args_c = vec![elem_c.clone()];
+        let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push(("Vec".to_string(), type_args_c.clone(), mangled.clone()));
+            }
+        }
+        self.generic_type_instance_info
+            .borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| ("Vec".to_string(), type_args_c.clone()));
+
+        // 3) Register the mono method instances we are about to call
+        //    (`new`/`with_capacity` static ctors, `push` and — for spread —
+        //    `clone`/`iter`/`next`). Reuse the same machinery the regular
+        //    `Vec[T].method()` dispatch uses (register_mono_method_instance).
+        let rt_trimmed = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
+        let type_subst: Vec<(String, String)> = {
+            let tmpl = self.generic_type_templates.get("Vec");
+            match tmpl.and_then(|t| t.generics.first()) {
+                Some(g) => vec![(g.name.clone(), elem_c.clone())],
+                None => return Ok(None), // Vec template has no generic param — bail.
+            }
+        };
+        let direct_count = elems.iter()
+            .filter(|e| matches!(e, ArrayElem::Item(_))).count();
+
+        // Static constructor: `new` for empty/spread-prefixed, `with_capacity`
+        // for a known direct count.
+        let ctor_method = if direct_count > 0 { "with_capacity" } else { "new" };
+        let ctor_c = format!("{}_static_{}", mangled, ctor_method);
+        self.register_vec_mono_method(ctor_method, &type_subst, &ctor_c, &rt_trimmed)?;
+
+        let push_c = format!("{}_method_push", rt_trimmed);
+        self.register_vec_mono_method("push", &type_subst, &push_c, &rt_trimmed)?;
+
+        // 4) Emit the construction.
+        let tmp = self.fresh_tmp();
+        if direct_count > 0 {
+            self.line(&format!(
+                "{ty}* {tmp} = {ctor}((nova_int){n}LL);",
+                ty = mangled, tmp = tmp, ctor = ctor_c, n = direct_count));
+        } else {
+            self.line(&format!(
+                "{ty}* {tmp} = {ctor}();",
+                ty = mangled, tmp = tmp, ctor = ctor_c));
+        }
+        self.var_types.insert(tmp.clone(), format!("{}*", mangled));
+
+        for elem in elems {
+            match elem {
+                ArrayElem::Item(expr) => {
+                    // Emit each element with the element type as the target so
+                    // typed-integer / None / nested-array literals coerce
+                    // correctly into the `*mut T` slot.
+                    let v = self.emit_expr_with_target_type(expr, &elem_c)?;
+                    self.line(&format!("(void){}({}, {});", push_c, tmp, v));
+                }
+                ArrayElem::Spread(expr) => {
+                    // `[..xs]` — append every element of the spread source.
+                    // The source is itself a `Vec[T]` (post-flip) or, in legacy
+                    // mixed code, a `NovaArray_<T>`. Iterate by index over the
+                    // shared {data,len} layout and push each element typed.
+                    let src = self.emit_expr(expr)?;
+                    let i = self.fresh_tmp();
+                    self.line(&format!(
+                        "{{ nova_int {i} = 0; while ({i} < {src}->len) {{ \
+                         (void){push}({dst}, ({elem})({src}->data[{i}])); {i}++; }} }}",
+                        i = i, src = src, push = push_c, dst = tmp, elem = elem_c));
+                }
+            }
+        }
+        Ok(Some(tmp))
+    }
+
+    /// Plan 138.1 Ф.2: register a single mono'd `Vec[T]` method instance by
+    /// name, looking the FnDecl up in `generic_type_methods["Vec"]`. No-op if
+    /// already registered. Errors if the method is missing from the template
+    /// (would indicate a vec_owned.nv / dispatch-name drift).
+    fn register_vec_mono_method(
+        &mut self,
+        method_name: &str,
+        type_subst: &[(String, String)],
+        mono_c_name: &str,
+        rt_trimmed: &str,
+    ) -> Result<(), String> {
+        let fn_decl = self.generic_type_methods.get("Vec")
+            .and_then(|ms| ms.iter().find(|m| m.name == method_name))
+            .cloned();
+        match fn_decl {
+            Some(fd) => {
+                self.register_mono_method_instance(
+                    &fd, type_subst.to_vec(), mono_c_name, rt_trimmed);
+                Ok(())
+            }
+            None => Err(format!(
+                "plan138.1 Ф.2: Vec method `{}` not found in generic_type_methods \
+                 (vec_owned.nv drift?)", method_name)),
+        }
+    }
+
+    /// Plan 138.1 Ф.3: register (if needed) and build a C call to a `Vec[T]`
+    /// instance method on an already-emitted receiver expression `recv`.
+    /// `mangled` is the mono'd Vec type name (`Nova_Vec____<elem>`). The first
+    /// element of `args` is the receiver C-expression; the rest are method
+    /// args. Returns `None` if the element type or method can't be resolved
+    /// (caller should fall through).
+    fn vec_method_call(
+        &mut self,
+        mangled: &str,
+        method_name: &str,
+        args: &[String],
+    ) -> Option<String> {
+        let elem_c = self.generic_type_instance_info.borrow()
+            .get(mangled).map(|(_, a)| a.first().cloned()).flatten()
+            .or_else(|| mangled.strip_prefix("Nova_Vec____").map(|s| s.to_string()))?;
+        let tmpl_gen = self.generic_type_templates.get("Vec")
+            .and_then(|t| t.generics.first().map(|g| g.name.clone()))?;
+        let type_subst = vec![(tmpl_gen, elem_c)];
+        let rt_trimmed = mangled.strip_prefix("Nova_").unwrap_or(mangled).to_string();
+        let mono_c = format!("{}_method_{}", rt_trimmed, method_name);
+        if self.register_vec_mono_method(method_name, &type_subst, &mono_c, &rt_trimmed).is_err() {
+            return None;
+        }
+        Some(format!("{}({})", mono_c, args.join(", ")))
+    }
+
+    /// Given a C type string, return the element C type if it is a `Vec[T]`
+    /// (`Nova_Vec____<elem>*`) or a legacy `NovaArray_<elem>*`. `None` for
+    /// anything else.
+    fn vec_or_array_elem_c(&self, c_ty: &str) -> Option<String> {
+        let trimmed = c_ty.trim_end_matches('*').trim();
+        if let Some(rest) = trimmed.strip_prefix("Nova_Vec____") {
+            // Mono'd Vec instance: recover the element C type from the registry
+            // (robust against sanitization) and fall back to the raw suffix.
+            if let Some((_, args)) = self.generic_type_instance_info
+                .borrow().get(trimmed).cloned()
+            {
+                return args.into_iter().next();
+            }
+            return Some(rest.to_string());
+        }
+        if let Some(rest) = trimmed.strip_prefix("NovaArray_") {
+            return Some(rest.to_string());
+        }
+        None
     }
 
     /// Plan 53: `let { tx, rx } = expr` / `let Pair { tx, rx } = expr` —
@@ -31276,6 +31542,45 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 }
             }
             ExprKind::ArrayLit(elems) => {
+                // Plan 138.1 Ф.2 (D239): an array literal is a typed `Vec[T]`
+                // value. Mirror `emit_array_lit`'s typed-Vec construction so the
+                // inferred C type matches the emitted storage
+                // (`Nova_Vec____<T>*`). Guarded by the Vec template being
+                // present — units without `std/collections/vec_owned.nv`
+                // degrade to the legacy NovaArray inference below.
+                if self.generic_type_templates.contains_key("Vec") {
+                    let any_closure = elems.iter().any(|e| {
+                        if let ArrayElem::Item(x) = e {
+                            matches!(x.kind,
+                                ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_))
+                        } else { false }
+                    });
+                    if !any_closure {
+                        // Element C type: first Item, else first Spread's elem,
+                        // else the array elem hint, else nova_int.
+                        let elem_c: Option<String> = elems.iter().find_map(|e| {
+                            if let ArrayElem::Item(x) = e {
+                                Some(self.infer_expr_c_type(x))
+                            } else { None }
+                        }).or_else(|| elems.iter().find_map(|e| {
+                            if let ArrayElem::Spread(x) = e {
+                                self.vec_or_array_elem_c(&self.infer_expr_c_type(x))
+                            } else { None }
+                        })).or_else(|| {
+                            match self.current_array_elem_hint.clone() {
+                                Some(h) if h != "void_p" && h != "void*" => Some(h),
+                                _ => None,
+                            }
+                        });
+                        if let Some(ec) = elem_c {
+                            if ec != "void*" && ec != "void_p" {
+                                let mangled = Self::compute_generic_type_c_name(
+                                    "Vec", &[ec]);
+                                return format!("{}*", mangled);
+                            }
+                        }
+                    }
+                }
                 // Infer element type from first element to handle []str literals
                 for e in elems {
                     let inner = match e { ArrayElem::Item(x) | ArrayElem::Spread(x) => x };
