@@ -109,11 +109,7 @@ export fn Vec[T].with_capacity(n int) -> Self {
 /// with method-level generics do not propagate the type-arg substitution into
 /// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
 /// `@extend` (an instance method) does not hit this gap and IS converted.
-export fn Vec[T].from(items []T) -> Self {
-    mut v = Vec[T].with_capacity(items.len())
-    v.extend(items)
-    v
-}
+export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).extend(items)
 // NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
 // bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
 // by the caller and may carry a *different element C-width* than `T` — most
