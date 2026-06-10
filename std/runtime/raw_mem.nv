@@ -16,7 +16,7 @@
 // Rust precedents:
 //   - ptr::copy (memmove)              -> RawMem.copy
 //   - ptr::copy_nonoverlapping (memcpy) -> RawMem.copy_nonoverlapping
-//   - ptr::write_bytes (memset)        -> RawMem.write_bytes / RawMem.fill
+//   - ptr::write_bytes (memset)        -> RawMem.fill
 //
 // Zig precedents:
 //   - @memcpy(dst, src) -> RawMem.copy_nonoverlapping
@@ -54,15 +54,9 @@ export external unsafe fn RawMem.copy_nonoverlapping(src *u8, dst mut * u8, n in
 /// memset — fill `n` bytes at `dst` с byte-pattern `val`.
 ///
 /// Single-byte fill. For typed-element fill (e.g., u32 array filled с
-/// specific i32 value), iterate manually OR use `write_bytes` (alias)
-/// для clarity того что byte-pattern semantic.
+/// specific i32 value), iterate manually. Mirrors both `@memset` (Zig) and
+/// `ptr::write_bytes` (Rust) — one canonical name (`fill`), no alias.
 export external unsafe fn RawMem.fill(dst mut * u8, val u8, n int) -> ()
-
-/// memset alias — Rust `ptr::write_bytes` precedent.
-///
-/// Identical semantic к `fill`. Provided для discoverability — when
-/// reader expects Rust idiom `write_bytes(dst, 0, n)` для zero-init.
-export external unsafe fn RawMem.write_bytes(dst mut * u8, val u8, n int) -> ()
 
 /// memcmp — compare `n` bytes at `a` и `b`. Returns -1/0/+1.
 ///

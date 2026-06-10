@@ -512,11 +512,6 @@ static inline void Nova_RawMem_static_copy_nonoverlapping(const void* src, void*
 static inline void Nova_RawMem_static_fill(void* dst, nova_byte val, uint64_t n) {
     memset(dst, (int)val, (size_t)n);
 }
-static inline void Nova_RawMem_static_write_bytes(void* dst, nova_byte val, uint64_t n) {
-    /* Identical semantic к fill (libc memset takes byte-pattern val).
-     * Provided для Rust ptr::write_bytes naming parity. */
-    memset(dst, (int)val, (size_t)n);
-}
 static inline nova_int Nova_RawMem_static_compare(const void* a, const void* b, uint64_t n) {
     int r = memcmp(a, b, (size_t)n);
     /* Normalize libc memcmp's implementation-defined non-zero к -1/+1. */

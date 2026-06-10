@@ -437,7 +437,6 @@ unsafe {
     RawMem.copy(src, dst, n_bytes)              // memmove-safe
     RawMem.copy_nonoverlapping(src, dst, n)     // memcpy fast-path
     RawMem.fill(dst, byte_value, n)             // memset
-    RawMem.write_bytes(dst, byte_value, n)      // alias
     ro cmp = RawMem.compare(a, b, n)            // memcmp
 }
 ```
