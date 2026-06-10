@@ -1,0 +1,88 @@
+// Plan 138.3 Ф.3 — HashMap.clone / Set.clone independence (table-level).
+//
+// INTENT (D230 amend): `Clone` is DEEP. `HashMap[K Clone, V Clone].clone()` and
+// `Set[T Clone].clone()` should recurse element-wise (`k.clone()` / `v.clone()`
+// / `elem.clone()`) so the clone shares no pointee with the original.
+//
+// GAP ([M-138.3-clone-bound-unsupported]): the bootstrap codegen mis-dispatches
+// the per-element generic `K.@clone()` / `V.@clone()` / `T.@clone()` for
+// PRIMITIVE K/V/T (no `int.@clone()` / `str.@clone()`; the monomorphizer routes
+// the unbound `.clone()` to an arbitrary unrelated `@clone`). Verified for F3:
+// the deep `HashMap[str,int].clone()` form CC-FAILs with
+//   `passing 'nova_str' to parameter of incompatible type ...`
+// in `map_literals/positive_clone_merge`. So `HashMap.clone` / `Set.clone` are
+// kept SHALLOW (table-level value-copy) until the dispatch gap is fixed. This
+// test verifies only the guarantees the shallow form DOES provide:
+//   - HashMap clone is a separate table — insert/remove on the clone never
+//     touches the original, and vice-versa,
+//   - primitive K/V/T element independence (shallow == deep for primitives),
+//   - Set clone (delegating @map.clone()) is likewise table-independent.
+// It does NOT assert field-level deep-pointee independence for record K/V/T
+// (the documented gap — would FAIL under the shallow form because the clone
+// shares the element pointers).
+
+module plan138_3.t2_map_set_clone
+
+import std.collections.hashmap.{HashMap}
+import std.collections.set.{Set}
+
+test "HashMap[str,int].clone — table independence: insert on clone does not touch original" {
+    mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
+    mut c = m.clone()
+    assert(c.len() == 2)
+    assert(c.get("a") == Some(1))
+    assert(c.get("b") == Some(2))
+
+    // mutate the clone — original must be untouched (separate table)
+    c.insert("c", 3)
+    assert(c.len() == 3)
+    assert(m.len() == 2)            // original table unchanged
+    assert(m.get("c") == None)
+}
+
+test "HashMap[str,int].clone — remove on clone does not touch original" {
+    mut m = HashMap[str, int].from([("x", 10), ("y", 20)])
+    mut c = m.clone()
+    c.remove("x")
+    assert(c.get("x") == None)
+    assert(m.get("x") == Some(10))  // original still has it
+    assert(m.len() == 2)
+}
+
+test "HashMap[int,int].clone — empty map clones to empty" {
+    ro m = HashMap[int, int].new()
+    ro c = m.clone()
+    assert(c.len() == 0)
+    assert(c.is_empty())
+}
+
+test "Set[int].clone — table independence: insert on clone does not touch original" {
+    mut s = Set[int].from_iter([1, 2, 3])
+    mut c = s.clone()
+    assert(c.len() == 3)
+    assert(c.contains(1))
+    assert(c.contains(2))
+    assert(c.contains(3))
+
+    c.insert(4)
+    assert(c.contains(4))
+    assert(c.len() == 4)
+    assert(s.len() == 3)            // original set unchanged
+    assert(!s.contains(4))
+}
+
+test "Set[str].clone — remove on clone does not touch original" {
+    mut s = Set[str].from_iter(["alice", "bob"])
+    mut c = s.clone()
+    c.remove("alice")
+    assert(!c.contains("alice"))
+    assert(s.contains("alice"))     // original still has it
+    assert(s.len() == 2)
+}
+
+test "Set[int].clone — empty set clones to empty" {
+    ro s = Set[int].new()
+    ro c = s.clone()
+    assert(c.len() == 0)
+    assert(c.is_empty())
+}

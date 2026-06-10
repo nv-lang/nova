@@ -270,7 +270,36 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 }
 
 
-/// Создать независимую глубокую копию map.
+/// Создать независимую копию map (на уровне таблицы; см. CONTRACT GAP ниже).
+///
+/// CONTRACT GAP (Plan 138.3, [M-138.3-clone-bound-unsupported]): по D230 amend
+/// `Clone` — **глубокий / рекурсивный** протокол; `clone()` должен клонировать
+/// поэлементно через `K.@clone()` / `V.@clone()`, с conditional bound
+/// `[K Clone, V Clone]` (Rust `impl<K: Clone, V: Clone> Clone for HashMap<K,V>`).
+/// Предполагаемое тело:
+/// ```nova
+/// export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
+///     mut copy = HashMap[K, V].with_capacity(@_count)
+///     for (k, v) in @iter() { copy.insert_new(k.clone(), v.clone()) }
+///     copy
+/// }
+/// ```
+/// **Оставлено shallow (value-copy bucket'ов) пока** — bootstrap codegen
+/// мис-диспатчит поэлементный generic `K.@clone()` / `V.@clone()` для
+/// *примитивного* K/V (нет `int.@clone()` / `str.@clone()`; монформизатор
+/// резолвит unbound generic `.clone()` в произвольный неродственный `@clone` —
+/// тот же класс бага, что Vec.clone в Ф.2). Проверено эмпирически: глубокая
+/// форма даёт CC-FAIL `passing 'nova_str' to parameter of incompatible type`
+/// в `map_literals/positive_clone_merge` (`HashMap[str,int].clone()`). Bound
+/// `[K Clone, V Clone]` парсится/type-check'ается, но dispatch для примитивных
+/// K/V сломан. Пока монформизатор не научится роутить generic-`.clone()` в
+/// built-in copy для примитивов (или синтезировать per-type `@clone`),
+/// глубокая форма не доходит до per-commit-green и удержана.
+///
+/// Для **примитивных** K/V (`HashMap[str,int]` и т.п.) shallow == deep
+/// (значения копируются bit-wise, нет общего pointee). Расхождение видно
+/// только для ref-типов K/V (record-ключи/значения): клон разделяет их
+/// pointee — это документируемый gap.
 ///
 /// # Examples
 ///
