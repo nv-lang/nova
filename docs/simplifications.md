@@ -18,6 +18,14 @@
 
 ---
 
+### Plan 138 — Index[K,V] + MutIndex[K,V] protocols + str[i] fix (2026-06-10)
+Index[K,V] (@index) + MutIndex[K,V] (@index_set) protocols declared in prelude.
+Vec[T] @index + @index_set implemented (inline C dispatch in emit_c.rs).
+str[i] → char (panic OOB) via nova_str_index_panic(); str.get(i) alias for @char_at.
+7 fixtures PASS (t1/t2/t5/t6/t_vec_write_index + 2 neg OOB).
+Ф.5 ([]T → Vec[T] alias) deferred → [M-138-array-sugar-alias] (high-risk).
+D238 + D240 NEW; D144 amend.
+
 ### Plan 137 — Protocol rename: drop -able suffix (2026-06-09)
 Hash→Hash, Equal→Equal, Compare→Compare, Clone→Clone, Display→Display, Debug→Debug.
 Method renames: @equal→@equal, @display→@display, @debug→@debug.

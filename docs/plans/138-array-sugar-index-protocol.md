@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 138 — `[]T` sugar over `Vec[T]` + `Index` protocol
 
-> **Создан:** 2026-06-10.  **Статус:** 📋 PLANNED.
+> **Создан:** 2026-06-10.  **Статус:** ✅ ЗАКРЫТ (Ф.1-Ф.4, 2026-06-10). Ф.5-Ф.6 deferred → `[M-138-array-sugar-alias]`.
 > **Эстимат:** ~4-5 dev-day (Ф.1-Ф.4 = ~2d; Ф.5-Ф.7 = ~2-3d).
 > **Model:** Sonnet 4.6 HIGH (Ф.1-Ф.4) + Opus + Thinking (Ф.5-Ф.7).
 > **Зависит от:** Plan 131 ✅ (Vec[T] Nova impl), Plan 137 ✅ (protocol rename).
@@ -358,10 +358,12 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 
 ## Followups
 
+- `[M-138-array-sugar-alias]` — Ф.5-Ф.6 deferred: `[]T` → `Vec[T]` type alias + stdlib migration (risky refactor, separate plan)
 - `[M-138-index-set]` — `a[i] = v` через `@index_set(key K, val V) -> ()` (write magic)
 - `[M-138-hashmap-index]` — `HashMap[K,V]` implements `Index[K, V]` (panic на missing key)
 - `[M-138-nova-array-decl-rename]` — NOVA_ARRAY_DECL → NOVA_VEC_DECL C-macro rename
 - `[M-138-char-at-deprecate]` — убрать `str.char_at` после migration period
+- `[M-138-vec-range-index]` — `v[2..5]` → `[]T` zero-copy view (Vec range-index, Ф.2 deferred)
 
 ---
 
