@@ -2034,6 +2034,83 @@ impl CEmitter {
                 }
             }
         }
+
+        // Plan 138.1 Ф.1 (D239): `[]T` ≡ `Vec[T]`. Record/sum fields and fn
+        // signatures that mention `[]T` now resolve (via type_ref_to_c) to
+        // `Nova_Vec____<elem_c>*`. Those record struct DEFINITIONS are emitted
+        // in step 1 (emit_type_decl) — BEFORE the generic-type mono pass — so
+        // the `Vec[elem]` forward typedef must already be present in
+        // `user_type_fwd_decls` (spliced into the early preamble marker), else
+        // clang reports `unknown type name 'Nova_Vec____<elem>'` for fields
+        // like `MultiError.suppressed []str`.
+        //
+        // This MUST run AFTER both the module.items AND peer_files template
+        // registration above (the Vec template lives in
+        // std/collections/vec_owned.nv — a peer file), so the
+        // `generic_type_templates.contains_key("Vec")` guard is satisfied and
+        // type_ref_to_c resolves `[]T` to the Vec mono. We scan both
+        // module.items and peer_files (prelude types like MultiError carry
+        // `[]str` fields). Graceful no-op if Vec template is absent (matches
+        // the type_ref_to_c legacy fallback).
+        if self.generic_type_templates.contains_key("Vec") {
+            let mut array_elems: Vec<crate::ast::TypeRef> = Vec::new();
+            let mut scan_item = |item: &Item, acc: &mut Vec<crate::ast::TypeRef>| {
+                match item {
+                    Item::Type(t) =>
+                        Self::collect_array_elem_typerefs_in_typedecl(t, acc),
+                    Item::Fn(f) => {
+                        for p in &f.params {
+                            Self::collect_array_elem_typerefs(&p.ty, acc);
+                        }
+                        if let Some(r) = &f.return_type {
+                            Self::collect_array_elem_typerefs(r, acc);
+                        }
+                    }
+                    _ => {}
+                }
+            };
+            for item in &module.items {
+                scan_item(item, &mut array_elems);
+            }
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    scan_item(item, &mut array_elems);
+                }
+            }
+            let mut seen_vec_mono: HashSet<String> = HashSet::new();
+            for elem in &array_elems {
+                // Resolve elem → C type. As a side effect this also enqueues the
+                // Vec[elem] instance (the Array arm of type_ref_to_c).
+                let Ok(elem_c) = self.type_ref_to_c(elem) else { continue; };
+                // Skip genuine type-param placeholders (`Nova_K*` etc.) — generic
+                // stubs with no concrete struct definition (their forward-decl
+                // would dangle). A mono'd instance name (e.g.
+                // `Nova_Vec____nova_int*` from a nested `[][]int`) contains
+                // `____` and IS concrete — do NOT skip it. Mirrors the
+                // `x.contains("____")` carve-out in the Option/Named arms.
+                if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
+                    continue;
+                }
+                let type_args_c = vec![elem_c];
+                let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+                if !seen_vec_mono.insert(mangled.clone()) { continue; }
+                if self.emitted_generic_type_instances.contains(&mangled) { continue; }
+                self.user_type_fwd_decls.push_str(&format!(
+                    "typedef struct {0} {0};\n", mangled));
+                // Ensure the full struct definition is emitted by the mono pass
+                // (type_ref_to_c above already enqueued it; guard idempotently).
+                {
+                    let mut wl = self.generic_type_worklist.borrow_mut();
+                    if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                        wl.push(("Vec".to_string(), type_args_c.clone(), mangled.clone()));
+                    }
+                }
+                self.generic_type_instance_info
+                    .borrow_mut()
+                    .entry(mangled.clone())
+                    .or_insert_with(|| ("Vec".to_string(), type_args_c));
+            }
+        }
         // 1a1b. Plan 103.5: register type_decls from ExternalRegistry (sync.nv etc.).
         //
         // sync.nv declares:
@@ -4813,9 +4890,55 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Plan 55 Ф.1: `[]fn(...) -> T` → array of closure pointers.
                 // Storage = NovaArray_void_p* (typedef void* void_p).
                 // Element call goes through NovaClosBase dispatch.
+                // Plan 138.1 Ф.1: closure-array (`[]fn(...)`) is EXPLICITLY
+                // out of scope of the `[]T → Vec[T]` flip (followup
+                // [M-138.1-closure-array]) — stays NovaArray_void_p*.
                 if matches!(inner.as_ref(), TypeRef::Func { .. }) {
                     return Ok("NovaArray_void_p*".into());
                 }
+                // Plan 138.1 Ф.1 (D239): `[]T` resolves to `Vec[T]`. Instead
+                // of the legacy `NovaArray_<elem>*` (int64-erasure for non-
+                // primitive T), resolve `elem` → its C type and emit the
+                // `Vec[elem]` monomorphization `Nova_Vec____<elem_c>*` —
+                // typed storage (`*mut T`), no boxing. We reuse the EXACT
+                // worklist-registration path of `TypeRef::Named{path:["Vec"],
+                // generics:[elem]}` (see the `_` arm above): compute the
+                // mangled name, enqueue the instance, and record instance
+                // info for method dispatch.
+                //
+                // Guarded by `generic_type_templates.contains_key("Vec")` so
+                // compilation units that do NOT pull `std/collections/
+                // vec_owned.nv` (Vec template absent) degrade gracefully to
+                // the legacy NovaArray path below — no regression.
+                if self.generic_type_templates.contains_key("Vec") {
+                    // Resolve the element C type (recurses: nested `[][]T`
+                    // becomes Vec[Vec[T]]; records → Nova_X*; primitives →
+                    // nova_*). On error, fall through to the legacy path.
+                    if let Ok(elem_c) = self.type_ref_to_c(inner) {
+                        let type_args_c = vec![elem_c];
+                        let mangled =
+                            Self::compute_generic_type_c_name("Vec", &type_args_c);
+                        // Enqueue instance if not yet registered (via RefCell —
+                        // allows &self), mirroring the Named-arm path.
+                        if !self.emitted_generic_type_instances.contains(&mangled) {
+                            let mut wl = self.generic_type_worklist.borrow_mut();
+                            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                                wl.push((
+                                    "Vec".to_string(),
+                                    type_args_c.clone(),
+                                    mangled.clone(),
+                                ));
+                            }
+                        }
+                        // Register instance info for emit_call method dispatch.
+                        self.generic_type_instance_info
+                            .borrow_mut()
+                            .entry(mangled.clone())
+                            .or_insert_with(|| ("Vec".to_string(), type_args_c));
+                        return Ok(format!("{}*", mangled));
+                    }
+                }
+                // ---- Legacy fallback (Vec template absent / elem unresolved).
                 // Мономорфизация по primitive elem-type. Каждый primitive
                 // type имеет собственный NovaArray_T с реальным packed
                 // storage (не int64-erasure). Для byte это критично:
@@ -9802,6 +9925,84 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         }
                         SumVariantKind::Record(fields) => {
                             for f in fields { Self::collect_typeref_names(&f.ty, out, vtable_out); }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Plan 138.1 Ф.1 (D239): collect the element `TypeRef` of every `[]T`
+    /// occurrence (recursively) so the corresponding `Vec[T]` mono instance
+    /// can be forward-declared (`typedef struct Nova_Vec____<elem> ...;`)
+    /// before any record/sum struct that embeds `[]T` as a field. Mirrors
+    /// `collect_typeref_names` but yields the array element TypeRefs.
+    ///
+    /// Excludes `[]fn(...)` (closure-array — stays NovaArray_void_p*, out of
+    /// scope per [M-138.1-closure-array]) and `[N]T` FixedArray (separate
+    /// built-in). For nested `[][]T` it pushes BOTH the inner `[]T` and the
+    /// outer element so the recursive Vec[Vec[T]] forward-decl is complete.
+    fn collect_array_elem_typerefs(ty: &crate::ast::TypeRef, out: &mut Vec<crate::ast::TypeRef>) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Array(inner, _) => {
+                // Closure-array stays NovaArray — do NOT treat as Vec.
+                if matches!(inner.as_ref(), TypeRef::Func { .. }) {
+                    return;
+                }
+                out.push((**inner).clone());
+                // Recurse into the element to catch nested `[][]T`.
+                Self::collect_array_elem_typerefs(inner, out);
+            }
+            // FixedArray `[N]T` is a separate built-in — out of scope.
+            TypeRef::FixedArray(_, inner, _) => {
+                Self::collect_array_elem_typerefs(inner, out);
+            }
+            TypeRef::Named { generics, .. } => {
+                for g in generics { Self::collect_array_elem_typerefs(g, out); }
+            }
+            TypeRef::Tuple(items, _) => {
+                for it in items { Self::collect_array_elem_typerefs(it, out); }
+            }
+            TypeRef::Func { params, return_type, .. } => {
+                for p in params { Self::collect_array_elem_typerefs(p, out); }
+                if let Some(r) = return_type { Self::collect_array_elem_typerefs(r, out); }
+            }
+            TypeRef::Protocol { methods, .. } => {
+                for m in methods {
+                    for p in &m.params { Self::collect_array_elem_typerefs(&p.ty, out); }
+                    if let Some(rt) = &m.return_type { Self::collect_array_elem_typerefs(rt, out); }
+                }
+            }
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => Self::collect_array_elem_typerefs(inner, out),
+            TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// Plan 138.1 Ф.1: `[]T` element TypeRefs referenced in a type
+    /// declaration's fields/variants (for Vec mono forward-decl).
+    fn collect_array_elem_typerefs_in_typedecl(
+        t: &crate::ast::TypeDecl,
+        out: &mut Vec<crate::ast::TypeRef>,
+    ) {
+        use crate::ast::{TypeDeclKind, SumVariantKind};
+        match &t.kind {
+            TypeDeclKind::Record(fields) => {
+                for f in fields { Self::collect_array_elem_typerefs(&f.ty, out); }
+            }
+            TypeDeclKind::Sum(variants) => {
+                for v in variants {
+                    match &v.kind {
+                        SumVariantKind::Unit => {}
+                        SumVariantKind::Tuple(tys) => {
+                            for ty in tys { Self::collect_array_elem_typerefs(ty, out); }
+                        }
+                        SumVariantKind::Record(fields) => {
+                            for f in fields { Self::collect_array_elem_typerefs(&f.ty, out); }
                         }
                     }
                 }
@@ -20686,6 +20887,63 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 }
                 // 2. Array methods: `arr.get(i)` → `nova_array_get_nova_int(arr, i)`
                 let obj_ty = self.infer_expr_c_type(obj);
+                // Plan 138.1 Ф.1 (D239) BRIDGE: `[]T` ≡ `Vec[T]`. A handful of
+                // C-runtime-only array helpers (Plan 90/D141 bulk ops + FFI
+                // pointer access) have NO `Vec[T]` Nova-body method (see
+                // vec_owned.nv) but ARE used by prelude/std on `[]byte`/`[]str`
+                // (WriteBuffer.append_zero, StringBuilder slice .compare,
+                // CStr bytes.as_ptr). After the type-flip those receivers infer
+                // as `Nova_Vec____<elem>*` and would otherwise fall through to
+                // a struct member-call (`buf->append_zero(...)`, invalid C).
+                // Vec and NovaArray are layout-identical
+                // (`{T* data; i64 len; i64 cap}`), so we route these specific
+                // helpers to the existing `nova_array_*_<elem>` C functions via
+                // a cast to `NovaArray_<elem>*`. The remaining methods
+                // (push/pop/len/get/insert/append/reserve/truncate/...) DO have
+                // Vec Nova-body methods and must fall through to the normal
+                // generic-method dispatch below — NOT be intercepted here.
+                // [F23: replace these with Vec Nova-body methods or drop them.]
+                if obj_ty.starts_with("Nova_Vec____") {
+                    let vec_elem_ty = obj_ty
+                        .strip_prefix("Nova_Vec____")
+                        .unwrap_or("nova_int")
+                        .trim_end_matches('*')
+                        .trim()
+                        .to_string();
+                    match method.as_str() {
+                        // Plan 90/D141 bulk ops — C-runtime only (no Vec method).
+                        "append_zero" | "copy_from" | "copy_within" | "fill" => {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut arg_strs =
+                                vec![format!("(NovaArray_{}*)({})", vec_elem_ty, obj_c)];
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                            self.line(&format!("nova_array_{}_{}({});",
+                                method, vec_elem_ty, arg_strs.join(", ")));
+                            // D181 fluent: mut methods return `@` (receiver ptr).
+                            return Ok(obj_c);
+                        }
+                        // memcmp-class — only `[]u8` (nova_byte) is defined.
+                        "compare" if vec_elem_ty == "nova_byte" => {
+                            let obj_c = self.emit_expr(obj)?;
+                            let mut arg_strs =
+                                vec![format!("(NovaArray_{}*)({})", vec_elem_ty, obj_c)];
+                            for a in args {
+                                let ac = self.emit_expr(a.expr())?;
+                                // The other operand is also a Vec[byte] — cast too.
+                                arg_strs.push(format!("(NovaArray_nova_byte*)({})", ac));
+                            }
+                            return Ok(format!("nova_array_compare_nova_byte({})",
+                                arg_strs.join(", ")));
+                        }
+                        // Plan 118.2 FFI internal data-pointer access — emit the
+                        // `data` field directly (Vec has the same field).
+                        "as_ptr" | "as_mut_ptr" if args.is_empty() => {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("(({})->data)", obj_c));
+                        }
+                        _ => { /* fall through to normal Vec method dispatch */ }
+                    }
+                }
                 if obj_ty.starts_with("NovaArray_") {
                     let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
                         .trim_end_matches('*').trim();
@@ -30660,6 +30918,27 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         }
                         if let Some(target_type) = self.into_targets.get(&recv_type) {
                             return format!("Nova_{}*", target_type);
+                        }
+                    }
+                    // Plan 138.1 Ф.1 (D239) BRIDGE: C-runtime-only array helpers
+                    // on a `Vec[T]` receiver (no Vec Nova-body method). Must mirror
+                    // the emission-side bridge return types exactly; all other
+                    // methods fall through to the normal Vec generic-method
+                    // inference below. [F23: replace with Vec Nova-body methods.]
+                    if obj_ty.starts_with("Nova_Vec____") {
+                        let vec_elem_ty = obj_ty
+                            .strip_prefix("Nova_Vec____")
+                            .unwrap_or("nova_int")
+                            .trim_end_matches('*')
+                            .trim();
+                        match method.as_str() {
+                            "append_zero" | "copy_from" | "copy_within" | "fill"
+                                => return obj_ty.clone(),
+                            "compare" if vec_elem_ty == "nova_byte"
+                                => return "nova_int".into(),
+                            "as_ptr" | "as_mut_ptr"
+                                => return format!("{}*", vec_elem_ty),
+                            _ => { /* fall through to normal Vec method inference */ }
                         }
                     }
                     // Array method calls

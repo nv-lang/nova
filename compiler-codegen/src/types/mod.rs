@@ -7950,7 +7950,13 @@ impl<'a> BoundCtx<'a> {
         }
         let concrete_name = match concrete {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
-            // Array/Tuple/Func — пока пропускаем (не обрабатываем составные T).
+            // Plan 138.1 Ф.1 (D239): `[]T` ≡ `Vec[T]` — align the array
+            // receiver with the Vec named type so bound-resolution checks
+            // Vec's method_table (iter/next/len/...). Without this, `[]T`
+            // passed where an `Iter`-bound type-param is expected would be
+            // silently skipped; now it genuinely satisfies via Vec's methods.
+            TypeRef::Array(_, _) => "Vec".to_string(),
+            // Tuple/Func — пока пропускаем (не обрабатываем составные T).
             _ => return,
         };
         // Built-in primitives автоматически удовлетворяют ничему — у нас
@@ -7997,6 +8003,8 @@ impl<'a> BoundCtx<'a> {
     ) {
         let concrete_name = match concrete {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            // Plan 138.1 Ф.1 (D239): `[]T` ≡ `Vec[T]` — see check_satisfaction.
+            TypeRef::Array(_, _) => "Vec".to_string(),
             _ => return,
         };
         if matches!(concrete_name.as_str(),
