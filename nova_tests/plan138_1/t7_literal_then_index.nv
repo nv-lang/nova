@@ -1,0 +1,18 @@
+// Plan 138.1 — t7: array literal then immediate index
+// []T is sugar for Vec[T]; [10,20,30][1] must yield 20
+
+module plan138_1.t7_literal_then_index
+
+test "[10,20,30][1] == 20" {
+    assert([10, 20, 30][1] == 20)
+}
+
+test "[10,20,30][0] == 10 and [2] == 30" {
+    assert([10, 20, 30][0] == 10)
+    assert([10, 20, 30][2] == 30)
+}
+
+test "literal bound to local then indexed" {
+    ro xs = [10, 20, 30]
+    assert(xs[1] == 20)
+}

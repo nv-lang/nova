@@ -1,0 +1,64 @@
+// Plan 138.1 Ф.4 — t4: [](int, str) tuple elements
+// B3: []T with tuple element type stores typed (no int-erasure on str field).
+// Exercises: push tuples, index via [i], destructure tuple binding, .get().
+
+module plan138_1.t4_vec_of_tuple
+
+test "[](int, str) push and index via [i]" {
+    mut v [](int, str) = []
+    v.push((1, "one"))
+    v.push((2, "two"))
+    v.push((3, "three"))
+    assert(v.len() == 3)
+    assert(v[0].0 == 1)
+    assert(v[0].1 == "one")
+    assert(v[1].0 == 2)
+    assert(v[1].1 == "two")
+    assert(v[2].0 == 3)
+    assert(v[2].1 == "three")
+}
+
+test "[](int, str) destructure tuple from [i]" {
+    mut v [](int, str) = []
+    v.push((10, "alpha"))
+    v.push((20, "beta"))
+    ro (n0, s0) = v[0]
+    assert(n0 == 10)
+    assert(s0 == "alpha")
+    ro (n1, s1) = v[1]
+    assert(n1 == 20)
+    assert(s1 == "beta")
+}
+
+test "[](int, str) literal construction and index" {
+    ro v [](int, str) = [(100, "x"), (200, "y"), (300, "z")]
+    assert(v.len() == 3)
+    assert(v[0].0 == 100)
+    assert(v[0].1 == "x")
+    assert(v[2].0 == 300)
+    assert(v[2].1 == "z")
+}
+
+test "[](int, str) safe access via get()" {
+    mut v [](int, str) = []
+    v.push((7, "seven"))
+    v.push((8, "eight"))
+    ro t0 = match v.get(0) { Some(t) => t, None => (0, "") }
+    assert(t0.0 == 7)
+    assert(t0.1 == "seven")
+    ro t1 = match v.get(1) { Some(t) => t, None => (0, "") }
+    assert(t1.0 == 8)
+    assert(t1.1 == "eight")
+    assert(v.get(2) == None)
+}
+
+test "[](int, str) grows and preserves str fields" {
+    mut v [](int, str) = []
+    for i in 0..16 {
+        v.push((i, "item"))
+    }
+    assert(v.len() == 16)
+    assert(v[0].0 == 0)
+    assert(v[15].0 == 15)
+    assert(v[15].1 == "item")
+}

@@ -1,0 +1,47 @@
+// Plan 138.1 Ф.4 — t2: []Point (record element type)
+// B3: []Record stores typed; [i] = val → index_set; field access on element.
+
+module plan138_1.t2_vec_of_record
+
+type Point { x int, y int }
+
+test "[]Point push and field access via [i]" {
+    mut v []Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]
+    assert(v[0].x == 1)
+    assert(v[0].y == 2)
+    assert(v[1].x == 3)
+    assert(v[1].y == 4)
+    assert(v[2].x == 5)
+    assert(v[2].y == 6)
+}
+
+test "[]Point index_set via v[i] = val, mutation observed" {
+    mut v []Point = [Point { x: 10, y: 20 }, Point { x: 30, y: 40 }]
+    v[0] = Point { x: 99, y: 88 }
+    assert(v[0].x == 99)
+    assert(v[0].y == 88)
+    // other element unchanged
+    assert(v[1].x == 30)
+    assert(v[1].y == 40)
+}
+
+test "[]Point overwrite last element, length preserved" {
+    mut v []Point = [Point { x: 1, y: 1 }, Point { x: 2, y: 2 }, Point { x: 3, y: 3 }]
+    assert(v.len() == 3)
+    v[2] = Point { x: 100, y: 200 }
+    assert(v.len() == 3)
+    assert(v[2].x == 100)
+    assert(v[2].y == 200)
+}
+
+test "[]Point push and field access via get()" {
+    mut v []Point = []
+    v.push(Point { x: 7, y: 8 })
+    v.push(Point { x: 9, y: 10 })
+    ro p0 = match v.get(0) { Some(p) => p, None => Point { x: 0, y: 0 } }
+    assert(p0.x == 7)
+    assert(p0.y == 8)
+    ro p1 = match v.get(1) { Some(p) => p, None => Point { x: 0, y: 0 } }
+    assert(p1.x == 9)
+    assert(p1.y == 10)
+}

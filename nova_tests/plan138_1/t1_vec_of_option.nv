@@ -1,0 +1,78 @@
+// Plan 138.1 Ф.4 — t1: []Option[int] typed storage; v[i] -> Option[int]
+// B3: []Option[int] stores typed (no int-erasure); [i] returns exact Option[int].
+// []T is sugar for Vec[T] — declarations use [] syntax, indexing returns sum type.
+
+module plan138_1.t1_vec_of_option
+
+import std.collections.vec_owned.{Vec}
+
+test "[]Option[int] literal stores Some/None; v[i] returns Option[int]" {
+    mut v []Option[int] = [Some(1), None, Some(3)]
+    assert(v.len() == 3)
+    assert(v[0] == Some(1))
+    assert(v[1] == None)
+    assert(v[2] == Some(3))
+}
+
+test "[]Option[int] push then index returns exact payload" {
+    mut v []Option[int] = []
+    v.push(Some(42))
+    v.push(None)
+    v.push(Some(-7))
+    assert(v.len() == 3)
+    assert(v[0] == Some(42))
+    assert(v[1] == None)
+    assert(v[2] == Some(-7))
+}
+
+test "[]Option[int] get wraps in outer Option; [i] returns inner Option[int]" {
+    ro v []Option[int] = [Some(10), None, Some(30)]
+    // .get(i) is Option[Option[int]]: Some(elem) in-bounds, None out-of-bounds
+    assert(v.get(0) == Some(Some(10)))
+    assert(v.get(1) == Some(None))
+    assert(v.get(2) == Some(Some(30)))
+    assert(v.get(3) == None)
+    // v[i] returns the element directly as Option[int] (no extra wrapping)
+    assert(v[0] == Some(10))
+    assert(v[1] == None)
+    assert(v[2] == Some(30))
+}
+
+test "[]Option[int] mutate element via index assignment" {
+    mut v []Option[int] = [Some(1), Some(2), Some(3)]
+    v[1] = None
+    assert(v[0] == Some(1))
+    assert(v[1] == None)
+    assert(v[2] == Some(3))
+}
+
+test "[]Option[int] survives growth; typed storage preserved" {
+    mut v []Option[int] = []
+    for i in 0..50 {
+        if i % 2 == 0 { v.push(Some(i)) } else { v.push(None) }
+    }
+    assert(v.len() == 50)
+    assert(v[0] == Some(0))
+    assert(v[1] == None)
+    assert(v[48] == Some(48))
+    assert(v[49] == None)
+}
+
+test "[]Option[int] count Some elements via if-let" {
+    ro v []Option[int] = [Some(1), None, Some(3), None, Some(5)]
+    mut count = 0
+    for elem in v {
+        if Some(n) = elem { count = count + 1 }
+    }
+    assert(count == 3)
+}
+
+test "Vec[Option[int]] and []Option[int] are the same type" {
+    // []T is sugar for Vec[T]; a Vec[Option[int]] can be used wherever []Option[int] expected
+    ro src = Vec[Option[int]].from([Some(7), None, Some(9)])
+    ro v []Option[int] = src
+    assert(v.len() == 3)
+    assert(v[0] == Some(7))
+    assert(v[1] == None)
+    assert(v[2] == Some(9))
+}

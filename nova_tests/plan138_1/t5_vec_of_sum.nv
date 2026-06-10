@@ -1,0 +1,94 @@
+// Plan 138.1 Ф.4 — t5: []Result[int, str] typed storage (sum type element).
+// After the []T = Vec[T] flip, []Result[int, str] stores *mut Result[int,str]
+// (pointer-semantic sum), not int64-erased slots.  Match on element must see
+// the exact Ok/Err payload without corruption.
+
+module plan138_1.t5_vec_of_sum
+
+test "[]Result[int,str] — match on element extracts Ok value" {
+    ro rs []Result[int, str] = [Ok(1), Err("oops"), Ok(3), Ok(8)]
+    mut sum = 0
+    for r in rs {
+        match r {
+            Ok(v) => { sum = sum + v }
+            Err(_) => {}
+        }
+    }
+    assert(sum == 12)
+}
+
+test "[]Result[int,str] — count Ok and Err with match" {
+    ro rs []Result[int, str] = [Ok(10), Err("bad"), Ok(5), Err("also bad"), Ok(1)]
+    mut oks = 0
+    mut errs = 0
+    for r in rs {
+        match r {
+            Ok(_) => { oks = oks + 1 }
+            Err(_) => { errs = errs + 1 }
+        }
+    }
+    assert(oks == 3)
+    assert(errs == 2)
+}
+
+test "[]Result[int,str] — get(i) returns Some(Result) with correct payload" {
+    mut v []Result[int, str] = [Ok(42), Err("e"), Ok(7)]
+    assert(v.len() == 3)
+    ro r0 = match v.get(0) { Some(r) => r, None => Err("missing") }
+    ro r1 = match v.get(1) { Some(r) => r, None => Ok(0) }
+    ro r2 = match v.get(2) { Some(r) => r, None => Err("missing") }
+    assert(r0.is_ok())
+    assert(r1.is_err())
+    assert(r2.is_ok())
+    ro v0 = match r0 { Ok(x) => x, Err(_) => -1 }
+    assert(v0 == 42)
+    ro v2 = match r2 { Ok(x) => x, Err(_) => -1 }
+    assert(v2 == 7)
+}
+
+test "[]Result[int,str] — push and pop preserve sum payload" {
+    mut v []Result[int, str] = []
+    v.push(Ok(100))
+    v.push(Err("nope"))
+    v.push(Ok(200))
+    assert(v.len() == 3)
+    ro popped = match v.pop() { Some(r) => r, None => Err("empty") }
+    assert(popped.is_ok())
+    ro popped_val = match popped { Ok(x) => x, Err(_) => -1 }
+    assert(popped_val == 200)
+    assert(v.len() == 2)
+}
+
+test "[]Result[int,str] — all-Err yields sum zero" {
+    ro rs []Result[int, str] = [Err("a"), Err("b"), Err("c")]
+    mut sum = 0
+    for r in rs {
+        match r {
+            Ok(v) => { sum = sum + v }
+            Err(_) => {}
+        }
+    }
+    assert(sum == 0)
+}
+
+test "[]Result[int,str] — survives growth past initial capacity" {
+    mut v []Result[int, str] = []
+    for i in 0..32 {
+        if i % 3 == 0 {
+            v.push(Err("mod3"))
+        } else {
+            v.push(Ok(i))
+        }
+    }
+    assert(v.len() == 32)
+    mut total = 0
+    for r in v {
+        match r {
+            Ok(x) => { total = total + x }
+            Err(_) => {}
+        }
+    }
+    // Sum of i in 0..32 where i%3 != 0:
+    // 0..32 total = 496; exclude 0,3,6,9,12,15,18,21,24,27,30 = 0+3+6+9+12+15+18+21+24+27+30 = 165
+    assert(total == 331)
+}

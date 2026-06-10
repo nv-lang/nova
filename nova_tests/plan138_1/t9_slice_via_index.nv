@@ -1,0 +1,71 @@
+// Plan 138.1 Ф.4 — t9: slice API via @index(Range) (B10)
+// B10: as_slice/to_array removed; slices via v[a..b] / v[..] (Index[Range]);
+//      owned copy via clone(). Mutation through view visible in parent before push-detach.
+
+module plan138_1.t9_slice_via_index
+
+import std.collections.vec_owned.{Vec}
+
+test "v[1..3] zero-copy 2-element view" {
+    ro v = Vec[int].from([10, 20, 30, 40, 50])
+    ro view = v[1..3]
+    assert(view.len() == 2)
+    assert(view.get(0) == Some(20))
+    assert(view.get(1) == Some(30))
+}
+
+test "v[..] full-range view shares parent buffer" {
+    mut v = Vec[int].from([1, 2, 3, 4])
+    ro full = v[..]
+    assert(full.len() == 4)
+    assert(full.get(0) == Some(1))
+    assert(full.get(3) == Some(4))
+    // write through view at index 0 is visible in parent (cap==len, no push yet)
+    v[0] = 99
+    assert(full.get(0) == Some(99))
+}
+
+test "clone() produces independent owned copy" {
+    ro v = Vec[int].from([10, 20, 30])
+    mut copy = v.clone()
+    copy.push(40)
+    // original is unaffected
+    assert(v.len() == 3)
+    assert(v.get(0) == Some(10))
+    assert(copy.len() == 4)
+    assert(copy.get(3) == Some(40))
+}
+
+test "write through v[a..b] view affects parent before push-detach" {
+    mut v = Vec[int].from([10, 20, 30, 40, 50])
+    mut view = v[1..3]
+    // view.cap == view.len == 2; write at view[0] goes to v's buffer slot 1
+    view[0] = 999
+    assert(v.get(1) == Some(999))
+    // after push the view reallocs and detaches; parent is unchanged from then on
+    view.push(77)
+    assert(view.len() == 3)
+    assert(view.get(2) == Some(77))
+    // parent slot 1 still holds the write made before push
+    assert(v.get(1) == Some(999))
+    // parent's other slots are intact
+    assert(v.get(2) == Some(30))
+    assert(v.len() == 5)
+}
+
+test "v[..] view length equals parent length" {
+    ro v = Vec[int].from([7, 8, 9])
+    ro full = v[..]
+    assert(full.len() == v.len())
+    assert(full.get(0) == Some(7))
+    assert(full.get(2) == Some(9))
+}
+
+test "clone() then mutate original does not affect copy" {
+    mut v = Vec[int].from([1, 2, 3])
+    ro copy = v.clone()
+    v[0] = 100
+    // copy is independent — still sees original value
+    assert(copy.get(0) == Some(1))
+    assert(v.get(0) == Some(100))
+}

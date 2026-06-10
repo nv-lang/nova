@@ -1,0 +1,36 @@
+// Plan 138.1 Ф.4 — t6: empty array literal [] builds an empty Vec[T],
+// then push fills it; verify len and element values via []T sugar.
+// Tests: B2 ([]T sugar → Vec[T]), Ф.2 empty-literal path.
+
+module plan138_1.t6_empty_literal
+
+test "empty literal [] then push two ints" {
+    mut v []int = []
+    assert(v.len() == 0)
+    assert(v.is_empty())
+    v.push(1)
+    v.push(2)
+    assert(v.len() == 2)
+    assert(!v.is_empty())
+    assert(v.get(0) == Some(1))
+    assert(v.get(1) == Some(2))
+}
+
+test "empty literal [] push then index" {
+    mut v []int = []
+    v.push(10)
+    v.push(20)
+    assert(v[0] == 10)
+    assert(v[1] == 20)
+    assert(v.len() == 2)
+}
+
+test "empty literal for str vec" {
+    mut v []str = []
+    assert(v.is_empty())
+    v.push("hello")
+    v.push("world")
+    assert(v.len() == 2)
+    assert(v.get(0) == Some("hello"))
+    assert(v.get(1) == Some("world"))
+}

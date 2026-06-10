@@ -1,0 +1,71 @@
+// Plan 138.1 Ф.4 — t3: [][]int (nested vector element type)
+// B3: [][]int stores typed (no pointer-stomp); grid[1][0] → int; push inner.
+
+module plan138_1.t3_nested_vec
+
+import std.collections.vec_owned.{Vec}
+
+test "[][]int push rows and access grid[r][c]" {
+    mut grid [][]int = []
+    grid.push([1, 2, 3])
+    grid.push([4, 5, 6])
+    grid.push([7, 8, 9])
+    assert(grid.len() == 3)
+    assert(grid[0][0] == 1)
+    assert(grid[0][1] == 2)
+    assert(grid[0][2] == 3)
+    assert(grid[1][0] == 4)
+    assert(grid[1][1] == 5)
+    assert(grid[1][2] == 6)
+    assert(grid[2][0] == 7)
+    assert(grid[2][1] == 8)
+    assert(grid[2][2] == 9)
+}
+
+test "grid[1][0] after push inner" {
+    mut grid [][]int = []
+    mut row0 []int = [10, 20]
+    row0.push(30)
+    grid.push(row0)
+    mut row1 []int = []
+    row1.push(100)
+    row1.push(200)
+    grid.push(row1)
+    assert(grid[0][0] == 10)
+    assert(grid[0][1] == 20)
+    assert(grid[0][2] == 30)
+    assert(grid[1][0] == 100)
+    assert(grid[1][1] == 200)
+}
+
+test "[][]int via Vec[int].from rows" {
+    mut grid [][]int = []
+    grid.push(Vec[int].from([0, 1]))
+    grid.push(Vec[int].from([2, 3]))
+    assert(grid[0][0] == 0)
+    assert(grid[0][1] == 1)
+    assert(grid[1][0] == 2)
+    assert(grid[1][1] == 3)
+}
+
+test "nested iteration sums all elements" {
+    mut grid [][]int = [[1, 2], [3, 4], [5, 6]]
+    mut sum = 0
+    for row in grid {
+        for x in row {
+            sum = sum + x
+        }
+    }
+    assert(sum == 21)
+}
+
+test "empty outer and inner vecs" {
+    mut grid [][]int = []
+    assert(grid.len() == 0)
+    grid.push([])
+    assert(grid.len() == 1)
+    assert(grid[0].len() == 0)
+    grid[0].push(42)
+    assert(grid[0].len() == 1)
+    assert(grid[0][0] == 42)
+}
