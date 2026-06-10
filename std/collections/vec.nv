@@ -122,27 +122,13 @@ export fn[T] []T @all(pred fn(T) -> bool) -> bool {
     true
 }
 
-/// Первый элемент через `Option[T]`. `None` если пусто.
-///
-/// # Examples
-/// ```nova
-/// let v []int = [10, 20, 30]
-/// assert(v.first() == Some(10))
-/// ```
-#stable(since = "0.1")
-export fn[T] []T @first() -> Option[T] =>
-    if @len() == 0 { None } else { Some(@[0]) }
-
-/// Последний элемент через `Option[T]`. `None` если пусто.
-///
-/// # Examples
-/// ```nova
-/// let v []int = [10, 20, 30]
-/// assert(v.last() == Some(30))
-/// ```
-#stable(since = "0.1")
-export fn[T] []T @last() -> Option[T] =>
-    if @len() == 0 { None } else { Some(@[@len() - 1]) }
+// Plan 138.1 Ф.0.2 (dedup): `@first` / `@last` were declared here on `[]T`
+// AND in vec_owned.nv on `Vec[T]`. After the D239 flip `[]T` ≡ `Vec[T]`, so
+// both would define `Vec[T] @first` → E_DUPLICATE_METHOD. Removed here; the
+// canonical versions live in vec_owned.nv (`Vec[T] @first` / `@last`).
+// The remaining combinators (`@map`/`@filter`/`@fold`/`@any`/`@all`) are
+// generic `[T]` and do NOT collide with vec_owned.nv → they auto-attach to
+// `Vec[T]` after the flip without edits (verified in Ф.6).
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -177,15 +163,10 @@ test "any/all on empty array" {
     assert(v.all(|x| x > 0))               // вакуумная истина → true
 }
 
-test "first/last" {
-    ro v []int = [10, 20, 30]
-    assert(v.first() == Some(10))
-    assert(v.last() == Some(30))
-
-    ro empty []int = []
-    assert(empty.first() == None)
-    assert(empty.last() == None)
-}
+// Plan 138.1 Ф.0.2: the `first/last` self-test was removed together with the
+// `[]T @first` / `@last` methods (deduped against vec_owned.nv `Vec[T]`).
+// `@first` / `@last` are covered by vec_owned.nv "get / first / last" and
+// nova_tests/plan131/vec_access_pos.nv.
 
 test "for-loop over array uses implicit iter (D58)" {
     ro v []int = [1, 2, 3]

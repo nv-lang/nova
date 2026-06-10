@@ -13,10 +13,10 @@ test "Vec[Vec[int]] push inner vectors and read back" {
     assert(outer.len() == 3)
 
     ro inner0 = match outer.get(0) { Some(v) => v, None => Vec[int].new() }
-    assert(inner0.as_slice() == [1, 2, 3])
+    assert(inner0.equal(Vec[int].from([1, 2, 3])))
 
     ro inner1 = match outer.get(1) { Some(v) => v, None => Vec[int].new() }
-    assert(inner1.as_slice() == [4, 5])
+    assert(inner1.equal(Vec[int].from([4, 5])))
 
     ro inner2 = match outer.get(2) { Some(v) => v, None => Vec[int].from([9]) }
     assert(inner2.is_empty())
@@ -29,5 +29,5 @@ test "Vec[Vec[int]] grows preserving inner contents" {
     }
     assert(outer.len() == 16)
     ro last = match outer.get(15) { Some(v) => v, None => Vec[int].new() }
-    assert(last.as_slice() == [15, 16])
+    assert(last.equal(Vec[int].from([15, 16])))
 }
