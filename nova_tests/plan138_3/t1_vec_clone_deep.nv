@@ -1,0 +1,64 @@
+// Plan 138.3 Ф.2 — Vec.clone independence (buffer-level).
+//
+// INTENT (D230 amend): `Vec[T Clone].clone()` should be DEEP — recursing
+// element-wise via `T.@clone()` so mutating a cloned element's field does not
+// alias the original.
+//
+// GAP ([M-138.3-clone-bound-unsupported]): the bootstrap codegen mis-dispatches
+// the per-element generic `T.@clone()` for PRIMITIVE `T` (no `int.@clone()`;
+// the monomorphizer routes the unbound `.clone()` to an arbitrary unrelated
+// `@clone`, e.g. `WriteBuffer.clone`, → runtime crash). So `Vec.clone()` is
+// kept SHALLOW (bitwise) until the dispatch gap is fixed. This test therefore
+// verifies only the guarantees shallow clone DOES provide:
+//   - buffer-level independence (length/push/pop on the clone never touch the
+//     original — separate backing buffer),
+//   - value-`T` element independence (`Vec[int]`, where shallow == deep).
+// It does NOT assert field-level deep-pointee independence for `Vec[Point]`
+// (that is the documented gap — would FAIL under the shallow form because the
+// clone shares the element `Point` pointers).
+
+module plan138_3.t1_vec_clone_deep
+
+import std.collections.vec_owned.{Vec}
+
+type Point {
+    mut x int
+    mut y int
+}
+
+test "Vec[Point].clone — buffer independence: pushing to clone does not grow original" {
+    mut v = Vec[Point].new()
+    v.push(Point { x: 10, y: 20 })
+
+    mut c = v.clone()
+    assert(c.len() == 1)
+    c.push(Point { x: 30, y: 40 })
+
+    assert(v.len() == 1)   // original buffer unchanged
+    assert(c.len() == 2)
+    assert(v[0].x == 10)
+    assert(c[0].x == 10)   // shallow: shares the same element value
+    assert(c[1].x == 30)
+}
+
+test "Vec[int].clone — value element type, independent length and elements" {
+    ro v = Vec[int].from([1, 2, 3])
+    mut c = v.clone()
+    assert(c.len() == 3)
+    assert(c[0] == 1)
+    assert(c[1] == 2)
+    assert(c[2] == 3)
+
+    // shrink the clone; original stays intact (separate buffer + value-T)
+    c.pop()
+    assert(c.len() == 2)
+    assert(v.len() == 3)
+    assert(v[2] == 3)
+}
+
+test "Vec[int].clone — empty vec clones to empty" {
+    ro v = Vec[int].new()
+    ro c = v.clone()
+    assert(c.len() == 0)
+    assert(c.is_empty())
+}

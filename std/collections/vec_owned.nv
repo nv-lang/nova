@@ -746,12 +746,36 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 
 // ─── Clone ────────────────────────────────────────────────────────────
 
-/// Deep copy вЂ” allocate a new `Vec[T]` and copy every element.
+/// Copy — allocate a new `Vec[T]` and copy every element into a fresh buffer.
 ///
-/// For element types that are themselves heap-allocated values (records,
-/// sum-types, arrays) the GC ensures the originals stay alive; the copy
-/// shares the same element values (shallow copy of pointers). For primitive
-/// element types this is a true value copy.
+/// CONTRACT GAP (Plan 138.3, [M-138.3-clone-bound-unsupported]): per D230 amend
+/// `Clone` is a **deep / recursive** protocol — `clone()` should recurse
+/// element-wise via each element's own `@clone()`, with a conditional bound
+/// `[T Clone]` (Rust `impl<T: Clone> Clone for Vec<T>`). The intended body is:
+/// ```nova
+/// export fn Vec[T Clone] @clone() -> Self {
+///     mut out = Vec[T].with_capacity(@len)
+///     mut i = 0
+///     while i < @len { out.push(unsafe { @data[i] }.clone()); i = i + 1 }
+///     out
+/// }
+/// ```
+/// This is **kept shallow (bitwise) for now** because the bootstrap codegen
+/// mis-dispatches the per-element generic `T.@clone()` call for *primitive* `T`
+/// (no `int.@clone()` exists; the monomorphizer resolves the unbound generic
+/// `.clone()` to an arbitrary unrelated `@clone` — e.g. `WriteBuffer.clone` —
+/// passing an `int` where a `WriteBuffer*` is expected → runtime crash; verified
+/// empirically, `Vec[int].clone()` RUN-FAILs, `plan131/vec_clone_pos`
+/// regresses). The `[T Clone]` *bound* parses & type-checks fine for record
+/// element types (`Vec[Point].clone()` emits correct `Point.@clone()` recursion),
+/// but the primitive-`T` dispatch gap is not isolatable here. Until the
+/// monomorphizer routes a generic-`T` `.clone()` to the built-in copy for
+/// primitives (or a synthesized per-type `@clone`), the deep form cannot reach
+/// per-commit-green and is held back.
+///
+/// `RawMem.copy_nonoverlapping` here is a same-`T` bit-copy into a distinct
+/// fresh buffer (correct for value-`T`; for reference-`T` it *shares* the
+/// pointee — the shallow semantics this gap documents).
 ///
 /// # Examples
 ///
