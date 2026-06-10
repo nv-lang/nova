@@ -22,9 +22,8 @@
 //
 // Unsafe model (D216 В§8). Every raw-pointer operation (alloc, `data + i`,
 // deref read/write) is wrapped in an `unsafe { }` block. The *public* API is
-// fully safe вЂ” no `unsafe`, no `*mut T`, no pointer escapes to callers
-// (`get_mut` returns `Option[*mut T]`, the single intentional raw-pointer
-// surface, behind `unsafe` at the call site).
+// fully safe вЂ” no `unsafe`, no `*mut T`, no pointer escapes to callers.
+// In-place element mutation is the safe `v[i] = val` (D240 `MutIndex` write).
 
 module collections.vec_owned
 
@@ -312,20 +311,6 @@ export fn Vec[T] mut @index(i int, val T) -> () {
     unsafe {
         @data[i] = val
     }
-}
-
-/// Raw mutable pointer to the slot at `i`, or `None` if out of bounds.
-///
-/// The returned `*mut T` is the single intentional raw-pointer surface вЂ” the
-/// caller must deref it inside an `unsafe { }` block. It is valid only until
-/// the next operation that may reallocate the buffer (`push`, `insert`,
-/// `reserve`, вЂ¦).
-export fn Vec[T] mut @get_mut(i int) -> Option[*mut T] {
-    if i < 0 || i >= @len {
-        return None
-    }
-    ro p = unsafe { @data + i }
-    Some(p)
 }
 
 /// First element by value, or `None` if empty.
