@@ -1,0 +1,11 @@
+// Plan 138 Ф.4 NEG — v[i] panics on OOB
+// EXPECT_RUNTIME_PANIC array: index
+
+module neg.t_neg_vec_index_oob
+
+import std.collections.vec_owned.{Vec}
+
+test "v[3] on length-3 vec panics" {
+    ro v = Vec[int].from([10, 20, 30])
+    ro _ = v[3]
+}

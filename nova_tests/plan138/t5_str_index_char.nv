@@ -1,0 +1,16 @@
+// Plan 138 Ф.4 — t5: s[i] → char, panic on OOB
+// A5: "abc"[0] → 'a' (char, panic OOB)
+
+module plan138.t5_str_index_char
+
+test "str[0] gives first char" {
+    ro s = "abc"
+    assert(s[0] == 'a')
+    assert(s[1] == 'b')
+    assert(s[2] == 'c')
+}
+
+test "str literal direct index" {
+    assert("hello"[0] == 'h')
+    assert("hello"[4] == 'o')
+}

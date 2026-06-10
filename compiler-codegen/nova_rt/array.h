@@ -949,6 +949,28 @@ static inline void nv_panic_index_oob(nova_int idx, nova_int len) {
     nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
 }
 
+/* Plan 138 Ф.3 (D238): str[i] → char — panicking codepoint accessor.
+ * Wraps nova_str_char_at; panics с nv_panic_index_oob если idx OOB или
+ * невалидный UTF-8. O(idx) — линейная итерация по UTF-8. */
+static inline nova_char nova_str_index_panic(nova_str s, nova_int idx) {
+    NovaOpt_nova_char r = nova_str_char_at(s, idx);
+    if (r.tag == NOVA_TAG_Option_None) {
+        /* Determine char_len for OOB message — iterate to count codepoints */
+        nova_int char_len = 0;
+        for (size_t i = 0; i < s.len; ) {
+            unsigned char b = (unsigned char)s.ptr[i];
+            if (b < 0x80) { i += 1; }
+            else if ((b & 0xE0) == 0xC0) { i += 2; }
+            else if ((b & 0xF0) == 0xE0) { i += 3; }
+            else if ((b & 0xF8) == 0xF0) { i += 4; }
+            else { i += 1; }
+            char_len++;
+        }
+        nv_panic_index_oob(idx, char_len);
+    }
+    return r.value;
+}
+
 /* Plan 96 Ф.4 — bounds-check для slice creation (arr[a..b]).
  * Отдельное сообщение от raw-index OOB — диапазон вместо одного индекса. */
 static inline void nv_panic_slice_oob(nova_int from, nova_int to, nova_int len) {

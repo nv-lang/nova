@@ -15219,6 +15219,27 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Instead emit: raw_arr->data[idx] = (nova_int)(intptr_t)val.
                 if *op == AssignOp::Assign {
                     if let ExprKind::Index { obj: arr_obj, index } = &target.kind {
+                        let arr_obj_ty = self.infer_expr_c_type(arr_obj);
+                        // Plan 138 Ф.2 (D240): `v[i] = val` on Vec[T] — inline bounds-checked write.
+                        // Vec[T] layout: { T* data; nova_int len; nova_int cap }.
+                        // Emit: { _v->data[_i] = val; } with bounds check + panic.
+                        if arr_obj_ty.starts_with("Nova_Vec____") {
+                            let arr_c = self.emit_expr(arr_obj)?;
+                            let idx_c = self.emit_expr(index)?;
+                            let val_c = self.emit_expr(value)?;
+                            let elem_ty = arr_obj_ty
+                                .strip_prefix("Nova_Vec____")
+                                .unwrap_or("nova_int")
+                                .trim_end_matches('*')
+                                .trim();
+                            self.line(&format!(
+                                "{{ nova_int _wi = ({idx}); \
+if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
+(({arr})->data)[_wi] = ({ty})({val}); }}",
+                                arr = arr_c, idx = idx_c, val = val_c, ty = elem_ty
+                            ));
+                            return Ok(());
+                        }
                         let elem_ty = self.infer_expr_c_type(target);
                         if elem_ty.ends_with('*') && elem_ty != "nova_int*" {
                             let arr_c = self.emit_expr(arr_obj)?;
@@ -17924,6 +17945,12 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
 {v}[{i}]; }}))",
                         ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i
                     ));
+                }
+                // Plan 138 Ф.3 (D238): `str[i]` → `char`, panic on OOB or invalid UTF-8.
+                // nova_str_index_panic(s, idx) is declared in array.h (Plan 138).
+                if obj_ty == "nova_str" {
+                    let o = self.emit_expr(obj)?;
+                    return Ok(format!("nova_str_index_panic({o}, ({i}))"));
                 }
                 if obj_ty.starts_with("NovaArray_") {
                     let o = self.emit_expr(obj)?;
@@ -29457,6 +29484,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
                     let elem = elem.trim_end_matches('*').trim();
                     return elem.to_string();
+                }
+                // Plan 138 Ф.3 (D238): str[i] → char.
+                if obj_ty_pre == "nova_str" {
+                    return "nova_char".to_string();
                 }
                 // Plan 138 Ф.2 (D238): Vec[T] indexing — `Nova_Vec____<T>*[i]` → element type T.
                 // `Nova_Vec____nova_int*` → `nova_int`

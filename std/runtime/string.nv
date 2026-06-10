@@ -48,6 +48,10 @@ export external fn str @rfind(needle str) -> Option[int]
 // Codepoint по индексу (codepoint-indexed). None при OOB.
 export external fn str @char_at(idx int) -> Option[char]
 
+// Plan 138 Ф.3 (D238): str.get(i) → Option[char]. Alias для @char_at — safe доступ.
+// Поддерживает Protocol Index[int, char] для str.
+export fn str @get(idx int) -> Option[char] => @char_at(idx)
+
 // Убирает whitespace с начала и конца.
 export external fn str @trim() -> str
 

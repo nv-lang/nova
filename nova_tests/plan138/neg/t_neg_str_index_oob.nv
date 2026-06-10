@@ -1,0 +1,9 @@
+// Plan 138 Ф.4 NEG — str[i] panics on OOB
+// EXPECT_RUNTIME_PANIC array: index
+
+module neg.t_neg_str_index_oob
+
+test "str[5] on length-3 string panics" {
+    ro s = "abc"
+    ro _ = s[5]
+}

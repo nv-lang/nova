@@ -1,0 +1,23 @@
+// Plan 138 Ф.4 — t6: str.get(i) → Option[char]
+// A6: "abc".get(0) → Option[char]
+
+module plan138.t6_str_get_option
+
+test "str.get in-bounds returns Some" {
+    ro s = "abc"
+    assert(s.get(0) == Some('a'))
+    assert(s.get(1) == Some('b'))
+    assert(s.get(2) == Some('c'))
+}
+
+test "str.get out-of-bounds returns None" {
+    ro s = "abc"
+    assert(s.get(3) == None)
+    assert(s.get(9) == None)
+    assert(s.get(-1) == None)
+}
+
+test "str.get on empty string" {
+    ro s = ""
+    assert(s.get(0) == None)
+}
