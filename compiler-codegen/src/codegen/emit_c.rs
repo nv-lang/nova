@@ -26302,12 +26302,43 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
         //       arrives either as a bare elem C name (`nova_str`) — see
         //       emit_expr_with_target_type — or, post-flip, the caller may have
         //       stashed the elem of a `Nova_Vec____<elem>` target.
+        //
+        // [M-138.2-vec-u8-literal-stride] Plan 138.2 C2: an int literal always
+        // infers the erased `nova_int` default — it does NOT carry the
+        // annotated `[]u8`/`[]i32`/… element type. If we monomorphized
+        // `Vec[nova_int]` from the literal, the buffer would store 8-byte
+        // (`nova_int`) slots while a sibling `Vec[u8]` built via `push(_ as u8)`
+        // stores 1-byte slots — byte-accurate ops (`RawMem.compare`,
+        // `.as_ptr()`) then read mismatched strides. So when the first item
+        // resolves to the bare `nova_int` default BUT the typed context supplied
+        // a more specific sized-int / typed element hint, the hint wins. This
+        // mirrors the legacy `emit_array_lit` path, where a `nova_int`
+        // `first_item_ty` falls through to the `current_array_elem_hint`.
+        let hint_overrides_int = |h: &str| -> bool {
+            // Only sized-int / typed-numeric element hints override the erased
+            // `nova_int` default. (`nova_str`/records/etc. never produce a
+            // `nova_int` first-item type, so they are irrelevant here; `void_p`
+            // stays on the legacy path.)
+            matches!(h,
+                "nova_byte" | "nova_char"
+                | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t")
+        };
         let elem_c: String = if let Some(c) = elems.iter().find_map(|e| {
             if let ArrayElem::Item(expr) = e {
                 Some(self.infer_expr_c_type(expr))
             } else { None }
         }) {
-            c
+            // First item drove the type. Promote to the sized-int element hint
+            // when the item collapsed to the erased `nova_int` default.
+            if c == "nova_int" {
+                match self.current_array_elem_hint.as_deref() {
+                    Some(h) if hint_overrides_int(h) => h.to_string(),
+                    _ => c,
+                }
+            } else {
+                c
+            }
         } else if let Some(c) = elems.iter().find_map(|e| {
             if let ArrayElem::Spread(expr) = e {
                 let t = self.infer_expr_c_type(expr);
@@ -31662,6 +31693,24 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             if let ArrayElem::Item(x) = e {
                                 Some(self.infer_expr_c_type(x))
                             } else { None }
+                        }).map(|c| {
+                            // [M-138.2-vec-u8-literal-stride] keep symmetric with
+                            // `try_emit_typed_vec_literal`: an int literal infers
+                            // the erased `nova_int` default and drops the annotated
+                            // `[]u8`/`[]i32`/… element type. Promote to the
+                            // sized-int element hint so the inferred Vec mono name
+                            // (`Nova_Vec____nova_byte*`) matches the emitted
+                            // storage instead of `Nova_Vec____nova_int*`.
+                            if c == "nova_int" {
+                                match self.current_array_elem_hint.as_deref() {
+                                    Some(h) if matches!(h,
+                                        "nova_byte" | "nova_char"
+                                        | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+                                        | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t")
+                                        => h.to_string(),
+                                    _ => c,
+                                }
+                            } else { c }
                         }).or_else(|| elems.iter().find_map(|e| {
                             if let ArrayElem::Spread(x) = e {
                                 self.vec_or_array_elem_c(&self.infer_expr_c_type(x))

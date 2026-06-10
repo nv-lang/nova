@@ -1,0 +1,65 @@
+// Plan 138.2 C2 — t5: sized-int array literal honors element stride.
+// [M-138.2-vec-u8-literal-stride]
+//
+// `mut a []u8 = [1, 2, 4]` used to monomorphize `Vec[nova_int]` (8-byte
+// stride) because an int literal infers the erased `nova_int` default and the
+// annotated `[]u8` element type was dropped. A sibling `Vec[u8]` built via
+// `push(_ as u8)` stores 1-byte slots, so byte-accurate ops over the literal's
+// `.as_ptr()` read mismatched strides (`RawMem.compare` saw 0x00 padding).
+//
+// The typed-Vec literal path now promotes the erased `nova_int` first-item
+// type to the sized-int element hint from the annotation, so the literal is
+// built as `Vec[u8]` (`Nova_Vec____nova_byte`, 1-byte stride) — byte-identical
+// to the push-built vector.
+
+module plan138_2.t5_u8_literal_stride
+
+import std.runtime.raw_mem
+import std.collections.vec_owned.{Vec}
+
+test "u8 literal has 1-byte stride: compare against push-built equals" {
+    // LITERAL-built `[]u8` — the path under test.
+    ro a []u8 = [1, 2, 4]
+    // PUSH-built equivalent — known-good 1-byte stride.
+    mut b = Vec[u8].new()
+    b.push(1 as u8)
+    b.push(2 as u8)
+    b.push(4 as u8)
+    assert(a.len() == 3)
+    assert(b.len() == 3)
+    // Byte-wise memcmp over both buffers must see identical bytes.
+    ro r = unsafe {
+        RawMem.compare(a.as_ptr(), b.as_ptr(), 3)
+    }
+    assert(r == 0)
+}
+
+test "u8 literal byte-access reads the literal values, not int64-padded slots" {
+    ro a []u8 = [10, 20, 30, 40]
+    // Element read-back: with int64 stride these would be wrong.
+    assert(a[0] == 10 as u8)
+    assert(a[1] == 20 as u8)
+    assert(a[2] == 30 as u8)
+    assert(a[3] == 40 as u8)
+}
+
+test "u8 literal differs from a literal with a flipped middle byte" {
+    ro a []u8 = [1, 2, 3, 4]
+    ro b []u8 = [1, 2, 9, 4]
+    ro r = unsafe {
+        RawMem.compare(a.as_ptr(), b.as_ptr(), 4)
+    }
+    // a < b at byte index 2 (3 < 9) → normalized -1.
+    assert(r == -1)
+}
+
+test "i32 literal index read-back honors 4-byte stride" {
+    // Same root cause for any sized-int annotation: with the erased nova_int
+    // (8-byte) stride these reads would land on the wrong slot.
+    ro a []i32 = [100, 200, 300, 400]
+    assert(a.len() == 4)
+    assert(a[0] == 100 as i32)
+    assert(a[1] == 200 as i32)
+    assert(a[2] == 300 as i32)
+    assert(a[3] == 400 as i32)
+}
