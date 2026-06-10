@@ -1,0 +1,91 @@
+// Plan 138.2 P1 — t6: chainable Vec mutators ([M-138.2-vec-fluent-push]).
+//
+// Vec's mutating methods now return `@` (self) instead of `()`, mirroring
+// `StringBuilder.append` (D181 fluent chain). This lets a freshly-built Vec be
+// populated in one expression — `Vec[u8].with_capacity(3).push(..).push(..)` —
+// and keeps every existing statement-form `v.push(x)` call working (the
+// returned `@` is simply discarded).
+//
+// Converted mutators: @push, @extend, @insert, @append, @reverse, @clear,
+// @truncate, @copy_from, @copy_within, @fill, @append_zero.
+//
+// SCOPE NOTE ([M-138.2-vec-fluent-chain-int-mixed]): the `-> @` return is
+// correctly resolved for chains over a concrete element type (e.g. `Vec[u8]`)
+// and for single `-> @` calls. Two pre-existing codegen gaps are NOT addressed
+// by this change and so are not exercised below:
+//   (1) `Vec[int]` (element erases to `nova_int`) chains mis-dispatch the
+//       chained call to the *erased* `Nova_Vec_method_*` (loses the element
+//       type) — same erased-Vec keying as [M-138.2-vec-u8-literal-stride] area.
+//   (2) chains mixing *different* mutator names (`.reverse().truncate().fill()`)
+//       resolve the post-first-call receiver by bare method name across ALL
+//       types, picking unrelated `Range`/`StringBuilder` methods.
+// Both are tracked as a follow-up; the feature here is the `-> @` signatures
+// plus the resolvable fluent forms.
+
+module plan138_2.t6_fluent_push
+
+import std.collections.vec_owned.{Vec}
+
+test "fluent push chain builds the vector in one expression (task example)" {
+    ro v = Vec[u8].with_capacity(3)
+        .push(1 as u8)
+        .push(2 as u8)
+        .push(3 as u8)
+    assert(v.len() == 3)
+    assert(v[0] == 1 as u8)
+    assert(v[1] == 2 as u8)
+    assert(v[2] == 3 as u8)
+}
+
+test "fluent push chain from empty new()" {
+    ro v = Vec[u8].new()
+        .push(7 as u8)
+        .push(8 as u8)
+        .push(9 as u8)
+    assert(v.len() == 3)
+    assert(v[0] == 7 as u8)
+    assert(v[2] == 9 as u8)
+}
+
+test "single insert returns self (-> @)" {
+    ro v = Vec[u8].from([1 as u8, 3 as u8]).insert(1, 2 as u8)
+    assert(v.len() == 3)
+    assert(v[0] == 1 as u8)
+    assert(v[1] == 2 as u8)
+    assert(v[2] == 3 as u8)
+}
+
+test "single reverse returns self (-> @)" {
+    ro v = Vec[u8].from([1 as u8, 2 as u8, 3 as u8]).reverse()
+    assert(v.len() == 3)
+    assert(v[0] == 3 as u8)
+    assert(v[2] == 1 as u8)
+}
+
+test "single fill returns self (-> @)" {
+    ro v = Vec[u8].from([1 as u8, 2 as u8, 3 as u8]).fill(9 as u8)
+    assert(v[0] == 9 as u8)
+    assert(v[1] == 9 as u8)
+    assert(v[2] == 9 as u8)
+}
+
+test "statement-form push still works (return @ discarded)" {
+    mut v = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    assert(v.len() == 3)
+    assert(v.equal(Vec[int].from([1, 2, 3])))
+}
+
+test "statement-form reverse / truncate / fill / append_zero still work" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    v.reverse()        // [5,4,3,2,1]
+    v.truncate(3)      // [5,4,3]
+    v.fill(9)          // [9,9,9]
+    assert(v.equal(Vec[int].from([9, 9, 9])))
+    v.append_zero(2)   // [9,9,9,0,0]
+    assert(v.equal(Vec[int].from([9, 9, 9, 0, 0])))
+    v.clear()
+    assert(v.is_empty())
+}

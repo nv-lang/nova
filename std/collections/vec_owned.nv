@@ -196,12 +196,18 @@ export fn Vec[T] mut @shrink_to_fit() -> () {
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Append `v` to the end, growing if necessary.
-export fn Vec[T] mut @push(v T) -> () {
+///
+/// Returns `@` (self) so calls chain fluently
+/// ([M-138.2-vec-fluent-push], precedent: `StringBuilder.append`):
+/// `Vec[u8].with_capacity(3).push(1 as u8).push(2 as u8)`. A bare statement
+/// call `v.push(x)` still works — the returned `@` is simply ignored.
+export fn Vec[T] mut @push(v T) -> @ {
     @ensure_capacity(1)
     unsafe {
         @data[@len] = v
     }
     @len = @len + 1
+    @
 }
 
 /// Remove and return the last element, or `None` if empty.
@@ -216,7 +222,7 @@ export fn Vec[T] mut @pop() -> Option[T] {
 
 /// Insert `v` at index `i`, shifting later elements right. Panics if
 /// `i > len` (i == len is an append).
-export fn Vec[T] mut @insert(i int, v T) -> () {
+export fn Vec[T] mut @insert(i int, v T) -> @ {
     if i < 0 || i > @len {
         panic("Vec.insert: index out of bounds")
     }
@@ -232,6 +238,7 @@ export fn Vec[T] mut @insert(i int, v T) -> () {
         @data[i] = v
     }
     @len = @len + 1
+    @
 }
 
 /// Remove and return the element at `i`, shifting later elements left.
@@ -357,19 +364,21 @@ export fn Vec[T] @last() -> Option[T] {
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Drop all elements (set len = 0). The buffer is retained for reuse.
-export fn Vec[T] mut @clear() -> () {
+export fn Vec[T] mut @clear() -> @ {
     @len = 0
+    @
 }
 
 /// If `n < len`, shorten to exactly `n` elements. Larger `n` is a no-op.
-export fn Vec[T] mut @truncate(n int) -> () {
+export fn Vec[T] mut @truncate(n int) -> @ {
     if n >= 0 && n < @len {
         @len = n
     }
+    @
 }
 
 /// Reverse the live elements in place.
-export fn Vec[T] mut @reverse() -> () {
+export fn Vec[T] mut @reverse() -> @ {
     mut lo = 0
     mut hi = @len - 1
     while lo < hi {
@@ -379,6 +388,7 @@ export fn Vec[T] mut @reverse() -> () {
         lo = lo + 1
         hi = hi - 1
     }
+    @
 }
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -396,15 +406,24 @@ export fn Vec[T] mut @reverse() -> () {
 ///
 /// No `reserve` pre-pass: a generic `Iter[T]` has no `len()` in general, so
 /// each element is appended via `@push` (amortised ×2 growth).
-export fn Vec[T] mut @extend[S Iter[T]](items S) -> () {
+///
+/// Returns `@` for fluent chaining ([M-138.2-vec-fluent-push]) — but NOTE
+/// ([M-138.2-vec-extend-generic-fluent-return]): because `@extend` is a
+/// *method-level generic* (`[S Iter[T]]`), the `@` return is not yet inferred
+/// through the generic-method emission path. A *chained* result
+/// (`v.extend(xs).push(y)`) currently mis-types the receiver to `void*` and
+/// mis-dispatches the next call. Statement-form (`v.extend(xs)`, return
+/// discarded) works correctly; chained use is the open followup.
+export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
     for x in items {
         @push(x)
     }
+    @
 }
 
 /// Move every element of `other` onto the end of `self`, leaving `other`
 /// empty.
-export fn Vec[T] mut @append(mut other Vec[T]) -> () {
+export fn Vec[T] mut @append(mut other Vec[T]) -> @ {
     ro m = other.len()
     if m > 0 {
         @reserve(m)
@@ -419,6 +438,7 @@ export fn Vec[T] mut @append(mut other Vec[T]) -> () {
         @len = @len + m
     }
     other.clear()
+    @
 }
 
 /// Keep only the elements for which `pred(elem)` returns `true`, preserving
@@ -464,7 +484,7 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
 /// dst.copy_from(src)
 /// assert(dst.equal(src))
 /// ```
-export fn Vec[T] mut @copy_from(other Vec[T]) -> () {
+export fn Vec[T] mut @copy_from(other Vec[T]) -> @ {
     if @len != other.len() {
         panic("Vec.copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)")
     }
@@ -473,6 +493,7 @@ export fn Vec[T] mut @copy_from(other Vec[T]) -> () {
             RawMem.copy(other.data as *u8, @data as *mut u8, @len * size_of[T]())
         }
     }
+    @
 }
 
 /// Copy `len` elements within the same buffer from `src_from` to `dst_from`.
@@ -487,7 +508,7 @@ export fn Vec[T] mut @copy_from(other Vec[T]) -> () {
 /// v.copy_within(0, 2, 2)   // [1,2,3,4,5] -> [1,2,1,2,5]
 /// assert(v.equal(Vec[int].from([1, 2, 1, 2, 5])))
 /// ```
-export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> () {
+export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @ {
     if len < 0 || src_from < 0 || dst_from < 0 ||
        src_from + len > @len || dst_from + len > @len {
         panic("Vec.copy_within: range out of bounds")
@@ -497,6 +518,7 @@ export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> () {
             RawMem.copy((@data + src_from) as *u8, (@data + dst_from) as *mut u8, len * size_of[T]())
         }
     }
+    @
 }
 
 /// Set every live element to `v`. Element-wise for the general case; the
@@ -512,9 +534,9 @@ export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> () {
 /// v.fill(7)
 /// assert(v.equal(Vec[int].from([7, 7, 7])))
 /// ```
-export fn Vec[T] mut @fill(v T) -> () {
+export fn Vec[T] mut @fill(v T) -> @ {
     if @len <= 0 {
-        return
+        return @
     }
     if size_of[T]() == 1 {
         // A 1-byte element fill is exactly a byte-pattern memset over the live
@@ -531,6 +553,7 @@ export fn Vec[T] mut @fill(v T) -> () {
             i = i + 1
         }
     }
+    @
 }
 
 /// Extend `self` by `n` zero-initialised elements (`memset 0` over the new
@@ -547,18 +570,19 @@ export fn Vec[T] mut @fill(v T) -> () {
 /// v.append_zero(3)
 /// assert(v.equal(Vec[int].from([1, 2, 0, 0, 0])))
 /// ```
-export fn Vec[T] mut @append_zero(n int) -> () {
+export fn Vec[T] mut @append_zero(n int) -> @ {
     if n < 0 {
         panic("Vec.append_zero: n must be >= 0")
     }
     if n == 0 {
-        return
+        return @
     }
     @ensure_capacity(n)
     unsafe {
         RawMem.fill((@data + @len) as *mut u8, 0 as u8, n * size_of[T]())
     }
     @len = @len + n
+    @
 }
 
 /// Lexicographic byte-compare against `other`, returning `-1`/`0`/`+1`.
