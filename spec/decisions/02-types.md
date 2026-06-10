@@ -6409,7 +6409,7 @@ compiler принимает обе формы; canonical форма докуме
 
 | Было | Стало | Файл |
 |---|---|---|
-| `Iter[T]` | `Iterable[T]` | `std/prelude/collections.nv` |
+| `Iter[T]` | `Iterable[T]` → `Next[T]` + `Iter[I]` (Plan 138 D241+D242) | `std/prelude/collections.nv` |
 | `Display` | `Display` | `std/prelude/protocols.nv` |
 | `Equal.eq(other Self) -> bool` | `Equal.equals(other Self) -> bool` | `std/prelude/protocols.nv` |
 | `Compare.cmp(other Self) -> Ordering` | `Compare.compare(other Self) -> int` | `std/prelude/protocols.nv` |
@@ -10758,7 +10758,7 @@ over `Vec[T]` once the typed-storage gap is closed for all T.
 
 ### Protocols implemented
 
-- `Iterable[T]` (via `VecIter[T]` — `@iter()` / `@next()`)
+- `Iter[VecIter[T]]` (via `@iter()`) + `Next[T]` на `VecIter[T]` (via `@next()`)
 - `Equal` (element-wise via `@equal`)
 - `Clone` (deep copy via `@clone`)
 - `Display` (via `@display`)

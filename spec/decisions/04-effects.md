@@ -5714,9 +5714,12 @@ Static methods используют `.method()` (leading dot, без измен�
 Effect `effect { }` blocks — без изменений, нет `@`.
 
 ```nova
-type Iterable[T] protocol {
+type Next[T] protocol {
     mut @next() -> Option[T]               // mut receiver
-    @len() -> int                           // ro receiver (default, no prefix)
+}
+
+type Iter[I] protocol {
+    @iter() -> I                           // ro receiver
 }
 
 type Closeable protocol {
@@ -5780,7 +5783,7 @@ All existing protocol declarations updated (Plan 108.4 Ф.3 sweep):
 
 | Protocol | Старый метод | Новый метод |
 |---|---|---|
-| `Iterable[T]` | `next() -> Option[T]` | `mut @next() -> Option[T]` |
+| `Next[T]` (ex `Iterable[T]`, Plan 138) | `next() -> Option[T]` | `mut @next() -> Option[T]` |
 | `Hash` | `hash() -> u64` | `@hash() -> u64` |
 | `Equal` | `equals(other Self) -> bool` | `@equal(other Self) -> bool` |
 | `Compare[T]` | `compare(other Self) -> int` | `@compare(other Self) -> int` |
@@ -5799,9 +5802,9 @@ has been removed — parser now fully supports `@`-prefix.
 ### Связь
 
 - [D58 amend](03-syntax.md#d58-range-литерал-itert-protocol-for-x-in-c-implicit-iter) —
-  Iterable signature → `mut @next()` (explicit receiver).
+  `Next[T]` signature → `mut @next()` (explicit receiver); `Iterable[T]` удалён.
 - [D72 amend](02-types.md#d72-generic-bounds-через-t-protocol--protocol-как-тип) —
-  `[T Iterable[U]]` bound: mut consistency check at use-site.
+  `[T Next[U]]` bound: mut consistency check at use-site.
 - [D186 amend](02-types.md#d186--impip1--p2---opt-in-annotation-для-protocols) —
   `#impl(P)` annotation now checks receiver_mut in addition to method signature.
 - Plan 108.1/108.2/108.3 — consistency story (default-ro everywhere).

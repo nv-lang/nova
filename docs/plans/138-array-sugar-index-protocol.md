@@ -55,9 +55,10 @@ compiler magic. `Vec[T]` — чистая Nova реализация. Они ABI-
 | Вызов | Тип | Семантика |
 |---|---|---|
 | `v[i]` | `T` | `@index(i)` — panic на OOB |
+| `v[i] = val` | `()` | `mut @index(i, val)` — panic на OOB |
 | `v.get(i)` | `Option[T]` | safe |
-| `v[2..5]` | `[]T` | `@index(Range)` — zero-copy view, panic OOB |
-| `v.get(2..5)` | `Option[[]T]` | safe zero-copy view |
+| `v[2..5]` | `Vec[T]` | `@index(Range)` — zero-copy view, panic OOB |
+| `v.get(2..5)` | `Option[Vec[T]]` | safe zero-copy view |
 | `s[i]` | `char` | `@index(i)` — panic на OOB |
 | `s.get(i)` | `Option[char]` | safe (было `char_at`) |
 | `s[2..5]` | `str` | уже работает, panic OOB |
@@ -67,33 +68,179 @@ compiler magic. `Vec[T]` — чистая Nova реализация. Они ABI-
 ## D-блоки
 
 - **D238 NEW** — `Index[K, V]` protocol: `@index(key K) -> V` — magic для `a[key]`
+- **D240 NEW** — `MutIndex[K, V]` protocol: `mut @index(key K, val V)` — magic для `a[key] = val`
+- **D241 NEW** — `Next[T]` protocol: `mut @next() -> Option[T]` — замена `Iterable[T]`
+- **D242 NEW** — `Iter[I]` protocol: `@iter() -> I` — источник итератора
 - **D239 NEW** — `[]T` как сахар над `Vec[T]`: type alias, literal desugaring, migration
 - **D27 AMEND** — `arr[i]` теперь через `@index` protocol (не compiler built-in)
 - **D144 AMEND** — sugar migration выполнена (закрыть «future language version» пункт)
 - **D27/08-runtime AMEND** — `str[i]` → `char` (panic), не `Option[char]` (spec fix)
+- **D58 AMEND** — `Iterable[T]` → `Next[T]` + `Iter[I]`; iter-first rule
 
 ---
 
 ## Фазы
 
-### Ф.1 — `Index[K, V]` protocol + spec (~1h)
+### Ф.0 — Prerequisite: `for x in c` двухфазный + D58 amend (~2h)
+
+**Два связанных изменения (D58 amend, Plan 138):**
+
+#### Ф.0.1 — D241+D242: `Next[T]` + `Iter[I]` протоколы + rename + iter-first sweep
+
+**Два новых протокола (D241, D242) по конвенции «имя = магический метод»:**
+
+```nova
+// std/prelude/collections.nv
+
+/// Протокол итератора. Тип реализует @next() → является итератором.
+/// Конвенция: названо по магическому методу, как Index, Equal, Hash.
+export type Next[T] protocol {
+    mut @next() -> Option[T]
+}
+
+/// Протокол источника итератора. Тип реализует @iter() → может быть
+/// передан в for-in или convert в итератор.
+/// I — конкретный тип итератора (реализует Next[T]).
+export type Iter[I] protocol {
+    @iter() -> I
+}
+```
+
+**Удалить** `Iterable[T]` — заменяется на `Next[T]` (D241).
+
+Как складывается:
+
+| Тип | Реализует |
+|---|---|
+| `RangeIter` | `Next[int]` + `Iter[RangeIter]` |
+| `VecIter[T]` | `Next[T]` + `Iter[VecIter[T]]` |
+| `Range` | `Iter[RangeIter]` только |
+| `Vec[T]` | `Iter[VecIter[T]]` только |
+
+Generic bound для «принять любой iterable»:
+```nova
+fn collect[C Iter[I], I Next[T], T](c C) -> Vec[T]
+```
+
+**`@iter() -> Self` sweep** — добавить на каждый итератор в stdlib
+(итератор реализует `Iter[Self]` — trivial `=> self`):
+```nova
+export fn RangeIter @iter() -> RangeIter => self
+export fn StepRangeIter @iter() -> StepRangeIter => self
+export fn ReverseRangeIter @iter() -> ReverseRangeIter => self
+// + VecIter, LinesIter, KeysIter, ValuesIter и др.
+```
+
+**Правило `for x in c`** (D58 amend, iter-first):
+1. Если `c` имеет `@iter()` → `_it = c.iter()` → `_it.next()` в loop
+2. Иначе если `c` имеет `@next()` напрямую → backward-compat (итератор без `@iter()`)
+3. Иначе — compile error
+
+**Commit:** `feat(D241+D242): Next[T] + Iter[I] protocols; Iterable[T] removed; iter-first D58`
+
+#### Ф.0.2 — Codegen: `NovaTuple_` prefix fix в `emit_for` ✅ DONE
+
+**Анализ C-типов по форме Range:**
+
+| Форма | C-тип | `strip_prefix("Nova_")` | iter_struct | Работает? |
+|---|---|---|---|---|
+| `type Range { ... }` (record) | `Nova_Range*` | `"Range*"` → `"Range"` | `"Range"` | ✅ |
+| `type Range value { ... }` | `Nova_Range` | `"Range"` | `"Range"` | ✅ |
+| `type Range(start, end)` (named tuple) | `NovaTuple_Range` | `None → ""` | `""` | ❌ |
+
+**Value record уже работает** — `strip_prefix("Nova_")` корректно извлекает имя типа.
+Compiler fix нужен **только для named tuples**.
+
+**Проблема:** `"NovaTuple_Range".starts_with("Nova_")` = false (5-й символ `T`, не `_`)
+→ `unwrap_or("")` → `iter_struct = ""` → `iter_struct.is_empty()` = true → весь
+iter-dispatch пропускается → error.
+
+**Применённый fix** (`compiler-codegen/src/codegen/emit_c.rs` ~24075):
+```rust
+// Plan 138 Ф.0.2: named tuples have "NovaTuple_" prefix, not "Nova_".
+let iter_struct = if arr_ty.starts_with("NovaTuple_") {
+    arr_ty.strip_prefix("NovaTuple_").unwrap_or("")
+        .trim_end_matches('*').trim().to_string()
+} else {
+    arr_ty.strip_prefix("Nova_").unwrap_or("")
+        .trim_end_matches('*').trim().to_string()
+};
+```
+
+`all_methods` использует Nova-имена (`"Range"`, не `"NovaTuple_Range"`), поэтому
+после извлечения `"Range"` lookup `all_methods.contains(("Range", "iter"))` работает ✓.
+
+**Commit:** `fix(plan138 Ф.0.2): NovaTuple_ prefix в emit_for iter_struct extraction`
+
+#### Ф.0.3 — Migrate `Range` → value record (~30min)
+
+После того как Ф.0.1 sweep + Ф.0.2 fix применены и тесты PASS.
+
+Value record выбран вместо named tuple — не требует дополнительных compiler изменений
+(Ф.0.2 уже покрыл named tuples для будущих типов, но Range конкретно проще как value record).
+
+**`std/collections/range.nv`:**
+```nova
+// было:
+export type Range {
+    ro start int
+    ro end   int
+}
+
+// стало:
+export type Range value {
+    ro start int
+    ro end   int      // half-open: end НЕ включён
+}
+```
+
+Конструкторов **нет** — убрать `Range.exclusive` и `Range.inclusive` (уже удалены).
+Синтаксис `a..b` и `a..=b` достаточен. `OverflowError` — убрать.
+
+D58 spec-пример: убрать `inclusive bool` из описания Range.
+
+**Commit:** `refactor(plan138 Ф.0.3): Range → value record; remove exclusive/inclusive ctors`
+
+---
+
+### Ф.1 — `Index[K, V]` + `MutIndex[K, V]` protocols + spec (~1h)
 
 **`std/prelude/protocols.nv`** — добавить:
 
 ```nova
 /// Индексный доступ `a[key]` — десугаринг `ExprKind::Index` для user-типов.
 /// Паникует при invalid key (OOB, missing key etc).
-/// Встроенные `[]T` и `str` удовлетворяют через built-in path; до Ф.5
-/// только user-типы (Vec[T], HashMap[K,V] etc) используют protocol-path.
+///
+/// Один протокол, два типичных варианта реализации:
+///   `Index[int, T]`        — скалярный доступ `v[i]`
+///   `Index[Range, Vec[T]]` — slice `v[2..5]` (zero-copy view)
+///
+/// Отдельного Slice-протокола нет: Range — просто другой тип ключа K.
+/// Компилятор диспатчит по типу index-выражения.
+///
+/// Open-ended bounds (`arr[1..]`, `arr[..3]`, `arr[..]`) — компилятор
+/// подставляет 0 / arr.len() до вызова @index; user-реализации
+/// всегда получают полностью заполненный Range.
 #stable(since = "0.1")
 export type Index[K, V] protocol {
     @index(key K) -> V
 }
+
+/// Индексная запись `a[key] = val` — десугаринг assignment lhs.
+/// Read-only типы реализуют только `Index`.
+/// Мутабельные типы реализуют оба.
+#stable(since = "0.1")
+export type MutIndex[K, V] protocol {
+    mut @index(key K, val V)
+}
 ```
 
-Spec D238 в `spec/decisions/03-syntax.md`.
+Протоколы раздельны: read-only slice реализует только `Index`,
+`Vec[T]` реализует оба.
 
-**Commit:** `spec(D238): Index[K,V] protocol — magic @index for a[key]`
+Spec D238 + D240 в `spec/decisions/03-syntax.md`.
+
+**Commit:** `spec(D238+D240): Index[K,V] + MutIndex[K,V] protocols — @index magic`
 
 ### Ф.2 — `Vec[T]` новый API (~2h)
 
@@ -120,46 +267,29 @@ export fn Vec[T] @get(i int) -> Option[T] {
 **Range (zero-copy view):**
 
 ```nova
-/// Zero-copy view `v[from..to]` as `[]T`.
-/// Interior pointer into Vec's GC-tracked buffer.
-/// cap == len == to - from: push on view → realloc → silent detach.
-export fn Vec[T] @index(r Range) -> []T {
-    ro from = r.start
-    ro to   = r.end
-    if from < 0 || to < from || to > @len {
-        panic("Vec: slice [${from}..${to}] out of bounds for length ${@len}")
+/// Zero-copy view `v[from..to]` — реализует `Index[Range, Vec[T]]`.
+/// Interior pointer в GC-tracked буфере Vec.
+/// cap == len == to - from: push на view → realloc → silent detach от родителя.
+export fn Vec[T] @index(r Range) -> Vec[T] {
+    if r.start < 0 || r.end < r.start || r.end > @len {
+        panic("Vec: slice [${r.start}..${r.end}] out of bounds for length ${@len}")
     }
-    unsafe {
-        nova_vec_slice[T](@data, from, to)
-    }
+    ro len = r.end - r.start
+    // pointer arithmetic — unsafe: @data + r.start сдвигает *mut T
+    unsafe { Vec[T] { data: @data + r.start, len, cap: len } }
 }
 
 /// Safe range access, `None` if out of bounds.
-export fn Vec[T] @get(r Range) -> Option[[]T] {
-    ro from = r.start
-    ro to   = r.end
-    if from < 0 || to < from || to > @len { return None }
-    Some(unsafe { nova_vec_slice[T](@data, from, to) })
+export fn Vec[T] @get(r Range) -> Option[Vec[T]] {
+    if r.start < 0 || r.end < r.start || r.end > @len { return None }
+    ro len = r.end - r.start
+    Some(unsafe { Vec[T] { data: @data + r.start, len, cap: len } })
 }
 ```
 
-`nova_vec_slice[T](data *mut T, from int, to int) -> []T` — C-helper:
-выделяет `NovaArray_T` header с `data = data + from`, `len = cap = to - from`.
-Добавить в `compiler-codegen/nova_rt/array.h`:
-
-```c
-// nova_vec_slice_T: zero-copy view into *mut T buffer.
-// Returns NovaArray_T* with interior pointer data+from.
-// GC: backing kept alive via GC_set_all_interior_pointers.
-#define NOVA_VEC_SLICE_DECL(T) \
-    static NovaArray_##T* nova_vec_slice_##T(T* data, int64_t from, int64_t to) { \
-        NovaArray_##T* v = (NovaArray_##T*)nova_alloc(sizeof(NovaArray_##T)); \
-        v->data = data + from; \
-        v->len  = to - from; \
-        v->cap  = to - from; \
-        return v; \
-    }
-```
+Чистая Nova-реализация: никакого C-хелпера. `unsafe` нужен только для
+pointer arithmetic (`*mut T + offset`). GC видит interior pointer через
+`GC_set_all_interior_pointers` — backing-буфер не собирается.
 
 **Убрать `@as_slice()`** — заменяется на `v[..]` (zero-copy) или
 `Vec[T].to_vec()` / `v.to_array()` если нужна копия. Оставить `@to_array()`:
@@ -169,7 +299,21 @@ export fn Vec[T] @get(r Range) -> Option[[]T] {
 export fn Vec[T] @to_array() -> []T { ... }   // было @as_slice()
 ```
 
-**Commit:** `feat(plan138 Ф.2): Vec[T] @index + @get + Range zero-copy + @to_array`
+**Write magic (`MutIndex`):**
+
+```nova
+/// Write `v[i] = val` — panics on OOB.
+export fn Vec[T] mut @index(i int, val T) {
+    if i < 0 || i >= @len {
+        panic("Vec: index ${i} out of bounds for length ${@len}")
+    }
+    unsafe { @data[i] = val }
+}
+```
+
+`str` не реализует `MutIndex` — строки immutable.
+
+**Commit:** `feat(plan138 Ф.2): Vec[T] @index + @get + Range zero-copy + @to_array + mut @index`
 
 ### Ф.3 — `str.get(i)` + `str[i]` spec fix (~1h)
 
@@ -332,6 +476,7 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 ## Acceptance criteria
 
 - **A1** — `v[i]` на `Vec[T]` компилируется → `T`, panic на OOB
+- **A1b** — `v[i] = val` на `Vec[T]` компилируется → запись, panic на OOB
 - **A2** — `v.get(i)` → `Option[T]`
 - **A3** — `v[2..5]` → `[]T` zero-copy view; push на view → detach, original unchanged
 - **A4** — `v.get(2..5)` → `Option[[]T]`
@@ -340,6 +485,8 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 - **A7** — `[T Index[int, T]]` bound принимает `Vec[T]` и `[]T`
 - **A8** — `[]T` = `Vec[T]` на уровне типов: `fn f(a []int)` принимает `Vec[int]`
 - **A9** — 0 новых FAIL в `nova test`
+- **A10** — `[C Iter[I], I Next[T], T]` generic bound компилируется; `for x in c` работает через `iter()`
+- **A11** — `Iterable[T]` удалён из prelude; старый код с `Iterable` → compile error с подсказкой
 
 ---
 
@@ -358,7 +505,7 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 
 ## Followups
 
-- `[M-138-index-set]` — `a[i] = v` через `@index_set(key K, val V) -> ()` (write magic)
+- `[M-138-mutindex-range]` — `Vec[T] mut @index(r Range, val []T)` — write по range (bulk replace)
 - `[M-138-hashmap-index]` — `HashMap[K,V]` implements `Index[K, V]` (panic на missing key)
 - `[M-138-nova-array-decl-rename]` — NOVA_ARRAY_DECL → NOVA_VEC_DECL C-macro rename
 - `[M-138-char-at-deprecate]` — убрать `str.char_at` после migration period
@@ -375,4 +522,7 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 | D144 AMEND | sugar migration выполнена |
 | D238 NEW | `Index[K,V]` protocol |
 | D239 NEW | `[]T` as sugar over `Vec[T]` |
-| `[M-138-index-set]` | write magic `a[i] = v` |
+| D240 NEW | `MutIndex[K,V]` protocol |
+| D241 NEW | `Next[T]` protocol — замена `Iterable[T]` |
+| D242 NEW | `Iter[I]` protocol — источник итератора |
+| D58 AMEND | iter-first rule + `Iterable[T]` → `Next[T]` + `Iter[I]` |

@@ -85,7 +85,8 @@ export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfB
 // (D26 prose-only); теперь auto-available через prelude (no explicit
 // `import std.prelude.collections.{StringBuilder}` required). Methods
 // продолжают жить в `std/runtime/<name>.nv` (external fn, D82).
-export import std.prelude.collections.{Iter, StringBuilder, WriteBuffer, ReadBuffer}
+// Plan 138 D241+D242: Iterable[T] → Next[T] + Iter[I]
+export import std.prelude.collections.{Next, Iter, StringBuilder, WriteBuffer, ReadBuffer}
 
 // Plan 62.D non-opaque bis-1 (2026-05-18): re-export Range / RangeIter из
 // std.collections.range. Раньше (Plan 62.D non-opaque) эта строка

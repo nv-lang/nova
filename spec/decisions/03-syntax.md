@@ -3318,6 +3318,9 @@ D44, D52). D54 фиксирует семантику явно: `as` — compile-
 
 ## D58. Range-литерал, `Iter[T]` protocol, `for x in c` implicit iter
 
+> **Amend (Plan 138):** правило `for x in c` изменено — `iter()` всегда первым.
+> Итераторы обязаны реализовывать `iter() -> Self` (trivial).
+
 ### Что
 Три связанных правила, объединённых одним D-блоком, потому что они
 взаимно поддерживают друг друга:
@@ -3330,17 +3333,17 @@ D44, D52). D54 фиксирует семантику явно: `as` — compile-
 2. **`Iter[T]`** — структурный protocol в prelude (D26):
    `protocol { mut next() -> Option[T] }`. Любой тип с таким методом
    — итератор.
-3. **`for x in c` без `.iter()`** — implicit-iter. Если `c` уже
-   итератор, используется напрямую; если есть метод `iter()`,
-   компилятор подставляет вызов.
+3. **`for x in c`** — всегда через `iter()`. Десугаринг:
+   `{ mut _it = c.iter(); loop { match _it.next() { Some(x) => body, None => break } } }`.
+   Итераторы реализуют `iter() -> Self` (trivial) — единая точка входа.
 
 ### Правило
 
 #### Range-литералы
 
 ```nova
-ro r1 = 0..5             // Range { start: 0, end: 5, inclusive: false }
-ro r2 = 0..=5            // Range { start: 0, end: 5, inclusive: true }
+ro r1 = 0..5             // Range { start: 0, end: 5 }   half-open [0, 5)
+ro r2 = 0..=5            // Range { start: 0, end: 6 }   нормализован компилятором
 
 ro r Range = 1..10       // в ro-binding'е работает
 fn count(r Range) -> int => r.end - r.start
@@ -3350,58 +3353,64 @@ ro ranges []Range = [0..5, 10..20, 100..200]   // в массиве
 ```
 
 `a..b` — синтаксический сахар, разворачивается компилятором в
-`Range { start: a, end: b, inclusive: false }`. `a..=b` →
-`inclusive: true`.
+`Range { start: a, end: b }`. `a..=b` → `Range { start: a, end: b+1 }`
+(нормализуется, `inclusive` не хранится).
 
-**Range — обычный тип** ([08-runtime.md → D26](08-runtime.md#d26) prelude):
+Конструкторов `Range.exclusive`/`Range.inclusive` нет — лишний API.
+
+**Range — value record** (Plan 138 Ф.0.3):
 
 ```nova
-type Range {
+export type Range value {
     ro start int
-    ro end int
-    ro inclusive bool
+    ro end   int      // half-open: end НЕ включён
 }
 ```
 
-Имеет методы `@iter()`, `@contains(x)`, `@len()`, `@is_empty()`.
-Подробно — `examples/stdlib_range.nv`.
+Stack-allocated, 16 bytes. Методы: `@iter()`, `@contains(x)`, `@len()`, `@is_empty()`.
 
-#### `Iter[T]` protocol
+#### `Next[T]` + `Iter[I]` протоколы (D241+D242)
+
+Конвенция: имя протокола = магический метод.
 
 ```nova
-type Iter[T] protocol {
-    mut next() -> Option[T]
+// Итератор — умеет выдавать следующий элемент.
+export type Next[T] protocol {
+    mut @next() -> Option[T]
+}
+
+// Источник итератора — умеет превращаться в итератор.
+// I — конкретный тип итератора (реализует Next[T] для некоторого T).
+export type Iter[I] protocol {
+    @iter() -> I
 }
 ```
 
-Любой тип с структурно-совместимым методом `mut next() -> Option[T]`
-— итератор по [D42](02-types.md#d42)/[D53](02-types.md#d53).
-
-Примеры реализаций (структурно автоматические):
+Итераторы реализуют **оба** протокола: `Next[T]` + `Iter[Self]` (trivial `=> self`).
+Коллекции реализуют только `Iter[SomeIter]`.
 
 ```nova
-type RangeIter { ... }
-fn RangeIter mut @next() -> Option[int] => ...      // Iter[int]
+// Итераторы:
+fn RangeIter mut @next() -> Option[int] => ...
+fn RangeIter @iter() -> RangeIter => self        // Iter[RangeIter]
 
-type VecIter[T] { ... }
-fn VecIter[T] mut @next() -> Option[T] => ...        // Iter[T]
+fn VecIter[T] mut @next() -> Option[T] => ...
+fn VecIter[T] @iter() -> VecIter[T] => self      // Iter[VecIter[T]]
 
-type LinesIter { ... }
-fn LinesIter mut @next() -> Option[str] => ...       // Iter[str]
+// Коллекции — только @iter():
+fn Range @iter() -> RangeIter => ...             // Iter[RangeIter]
+fn Vec[T] @iter() -> VecIter[T] => ...          // Iter[VecIter[T]]
 ```
 
-В сигнатурах функций можно использовать как параметр:
+Generic bound для «принять любой iterable»:
 
 ```nova
-fn count_items[T](it Iter[T]) -> int {
-    mut n = 0
-    for _ in it { n += 1 }
-    n
+fn collect[C Iter[I], I Next[T], T](c C) -> Vec[T] {
+    mut result = Vec.new()
+    for x in c { result.push(x) }
+    result
 }
 ```
-
-Структурная типизация — никаких `impl Iter for ...`-блоков, любой
-`mut next() -> Option[T]` подходит.
 
 #### `for x in c` — implicit iter
 
@@ -3412,28 +3421,34 @@ fn count_items[T](it Iter[T]) -> int {
 for x in c { body }
 ```
 
-компилируется как:
+десугарится компилятором **двухфазно** (как Rust `IntoIterator` + `Iterator`):
 
-1. Если `c` имеет `mut next() -> Option[T]` — используется напрямую
-   как итератор.
-2. Иначе если `c` имеет `iter() -> Iter[T]` — компилятор вставляет
-   `c.iter()`.
+```
+Фаза 1: mut _it = c.iter()          // всегда вызвать iter() один раз
+Фаза 2: loop { match _it.next() { Some(x) => body, None => break } }
+```
+
+Правило:
+1. Если `c` имеет `iter()` — вызвать, получить итератор, перейти к фазе 2.
+2. Если `c` не имеет `iter()` но имеет `next()` — fallback: использовать
+   напрямую (backward compat; рекомендуется добавить `iter() -> Self`).
 3. Иначе — ошибка компиляции.
 
-Это означает, что **программист пишет `for x in c`** для коллекций
-(используется `c.iter()` под капотом), и **то же самое для
-итераторов** напрямую (без двойного `.iter()`).
+Итераторы реализуют `iter() -> Self` — поэтому `for x in iter_obj` тоже
+работает через единый путь: `iter_obj.iter()` возвращает тот же объект,
+фаза 2 вызывает `next()`. Нет бесконечного цикла: компилятор вызывает
+`iter()` ровно один раз (фаза 1), дальше только `next()`.
 
 ```nova
 ro v []int = [1, 2, 3]
-for x in v { ... }                   // []T.iter() автоматически
+for x in v { ... }                   // v.iter() → VecIter → next()
 
 ro r = 0..5
-for x in r { ... }                   // Range.iter() автоматически
-for x in 0..5 { ... }                // тот же
+for x in r { ... }                   // r.iter() → RangeIter → next()
+for x in 0..5 { ... }                // то же
 
-ro it = v.iter()
-for x in it { ... }                  // it уже Iter[T], без двойного iter()
+mut it = v.iter()
+for x in it { ... }                  // it.iter() → self → next() (trivial)
 ```
 
 ### Почему
