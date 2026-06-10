@@ -1,0 +1,42 @@
+// Plan 138.2 [M-138-mutindex-rename] — t2: Vec MutIndex write magic `v[i] = val`.
+//
+// `v[i] = val` is the MutIndex[K,V] write (D240). It is codegen-inlined
+// (emit_c.rs `Stmt::Assign` + `ExprKind::Index`) — it does NOT dispatch to a
+// named method, so the write coexists with the two read `@index` overloads
+// (scalar `@index(i) -> T`, range `@index(r Range) -> Vec`).
+//
+// NOTE: renaming the internal `@index_set` to a 3rd `mut @index` overload is
+// blocked by a generic-type-method overload-mangling limitation (a write
+// `@index(i, val)` C-collides with the scalar read `@index(i)`); see the
+// blocker doc on `Vec[T] mut @index_set` in std/collections/vec_owned.nv. The
+// observable `v[i] = val` write semantics below are unaffected.
+
+module plan138_2.t2_vec_mut_index
+
+import std.collections.vec_owned.{Vec}
+
+test "v[i] = val writes through (MutIndex), reads back via scalar @index" {
+    mut v = Vec[int].from([10, 20, 30])
+    v[0] = 99
+    v[2] = 77
+    assert(v[0] == 99)   // scalar read @index(i)
+    assert(v[1] == 20)
+    assert(v[2] == 77)
+}
+
+test "write magic coexists with scalar read and range read overloads" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    v[1] = 20                       // write : MutIndex magic (inlined)
+    assert(v[1] == 20)              // read  : @index(i) -> T
+    ro mid = v[1..4]                // range : @index(Range) -> Vec
+    assert(mid.len() == 3)
+    assert(mid[0] == 20)
+    assert(mid[2] == 4)
+}
+
+test "write magic on Vec[u8]" {
+    mut v = Vec[u8].from([0, 0, 0])
+    v[1] = (0x42 as u8)
+    assert(v[0] == (0 as u8))
+    assert(v[1] == (0x42 as u8))
+}

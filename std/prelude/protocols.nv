@@ -487,8 +487,8 @@ export type Index[K, V] protocol {
 ///
 /// # D240 (spec/decisions/03-syntax.md)
 ///
-/// `a[key] = val` десугаринг в `a.index_set(key, val)` для типов реализующих
-/// `MutIndex[K, V]`.
+/// `a[key] = val` десугаринг в `a.@index(key, val)` (write-overload `@index`
+/// с `mut`-receiver) для типов реализующих `MutIndex[K, V]`.
 ///
 /// # Examples
 ///
@@ -496,7 +496,7 @@ export type Index[K, V] protocol {
 /// // Vec[T] implements MutIndex[int, T]:
 /// mut v = Vec[int].new()
 /// v.push(10)
-/// v[0] = 99  // v.index_set(0, 99)
+/// v[0] = 99  // v.@index(0, 99)
 /// assert(v[0] == 99)
 /// ```
 #stable(since = "0.1")

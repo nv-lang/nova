@@ -10853,7 +10853,7 @@ mut v []int = [10, 20, 30]
 v[1]       // → v.index(1)      → 20 (panic OOB)
 v.get(1)   // → Some(20)        (safe)
 v[0..2]    // → v.index(Range { start: 0, end: 2 })  // [10, 20] zero-copy view
-v[1] = 99  // → v.index_set(1, 99)   через MutIndex (D240)
+v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 ```
 
 ### Статус реализации

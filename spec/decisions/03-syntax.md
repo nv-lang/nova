@@ -9518,15 +9518,17 @@ Read-only типы реализуют только `Index[K, V]`.
 
 ### Семантика
 
-`a[key] = val` десугаринг в `a.index_set(key, val)` для типов реализующих
-`MutIndex[K, V]`. Паникует при invalid key (OOB, etc.).
+`a[key] = val` десугаринг в `a.@index(key, val)` (write-overload `@index`
+с `mut`-receiver) для типов реализующих `MutIndex[K, V]`. Паникует при invalid
+key (OOB, etc.). Запись-`@index` отличается от чтения-`@index` арностью
+(2 аргумента vs 1) и `mut`-receiver'ом.
 
 ### Примеры
 
 ```nova
 // Vec[T] implements MutIndex[int, T]:
 mut v []int = [1, 2, 3]
-v[0] = 99   // → v.index_set(0, 99)
+v[0] = 99   // → v.@index(0, 99)
 assert(v[0] == 99)
 ```
 
@@ -9539,7 +9541,9 @@ assert(v[0] == 99)
 ### Followup
 
 - `[M-138-index-set]` — compiler dispatch для `a[key] = val` через
-  `@index_set` (пока LHS assignment через builtin path)
+  write-overload `mut @index(key, val)` (пока LHS assignment через builtin path —
+  codegen инлайнит `v[i] = val` напрямую, см. emit_c.rs `Stmt::Assign` +
+  `ExprKind::Index`; протокол-метод declared для конформанса MutIndex D240)
 
 ### Связь
 
