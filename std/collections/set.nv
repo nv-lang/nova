@@ -125,22 +125,19 @@ export fn Set[T] mut @remove(item T) -> bool =>
 #stable(since = "0.1")
 export fn Set[T] mut @clear() -> () => @map.clear()
 
-/// Создать независимую копию множества (на уровне таблицы; см. CONTRACT GAP).
+/// Создать независимую копию множества (deep — каждый элемент клонируется).
 ///
-/// CONTRACT GAP (Plan 138.3, [M-138.3-clone-bound-unsupported]): по D230 amend
-/// `Clone` — глубокий протокол; `clone()` должен клонировать каждый элемент
-/// через `T.@clone()`, с bound `[T Clone]`. Set делегирует backing-`HashMap`,
-/// поэтому наследует тот же gap: для *примитивного* T (`Set[int]` / `Set[str]`)
-/// per-element generic `T.@clone()` мис-диспатчится в bootstrap codegen (нет
-/// `int.@clone()` / `str.@clone()`), как у `HashMap.@clone` / `Vec.@clone` в
-/// Ф.2-Ф.3. Поэтому здесь — **shallow** делегирование `@map.clone()` (table-level
-/// независимая копия: insert/remove на клоне не трогают оригинал). Для
-/// примитивного T shallow == deep; расхождение видно только для ref-типов T
-/// (record-элементы делят pointee). Глубокая форма (`Set[T Clone] @clone()` →
-/// `{ map: @map.clone() }` поверх deep HashMap.clone) удержана до фикса
-/// монформизатора (см. `HashMap.@clone`).
+/// По D230 amend `Clone` — глубокий протокол: `clone()` клонирует каждый
+/// элемент через `T.@clone()`, под bound `[T Clone]`. Set делегирует
+/// backing-`HashMap` (`{ map: @map.clone() }`), поэтому deep-семантика
+/// наследуется от `HashMap.@clone` (per-element `k.clone()`).
+///
+/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): per-element
+/// generic `T.@clone()` теперь диспатчится корректно (примитивный T → built-in
+/// identity, record T → `T.@clone()`), так что делегирование даёт полноценную
+/// глубокую копию.
 #stable(since = "0.1")
-export fn Set[T] @clone() -> Self =>
+export fn Set[T Clone] @clone() -> Self =>
     { map: @map.clone() }
 
 

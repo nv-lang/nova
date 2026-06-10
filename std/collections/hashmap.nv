@@ -270,36 +270,19 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 }
 
 
-/// Создать независимую копию map (на уровне таблицы; см. CONTRACT GAP ниже).
+/// Создать независимую копию map (deep / рекурсивно поэлементно).
 ///
-/// CONTRACT GAP (Plan 138.3, [M-138.3-clone-bound-unsupported]): по D230 amend
-/// `Clone` — **глубокий / рекурсивный** протокол; `clone()` должен клонировать
-/// поэлементно через `K.@clone()` / `V.@clone()`, с conditional bound
-/// `[K Clone, V Clone]` (Rust `impl<K: Clone, V: Clone> Clone for HashMap<K,V>`).
-/// Предполагаемое тело:
-/// ```nova
-/// export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
-///     mut copy = HashMap[K, V].with_capacity(@_count)
-///     for (k, v) in @iter() { copy.insert_new(k.clone(), v.clone()) }
-///     copy
-/// }
-/// ```
-/// **Оставлено shallow (value-copy bucket'ов) пока** — bootstrap codegen
-/// мис-диспатчит поэлементный generic `K.@clone()` / `V.@clone()` для
-/// *примитивного* K/V (нет `int.@clone()` / `str.@clone()`; монформизатор
-/// резолвит unbound generic `.clone()` в произвольный неродственный `@clone` —
-/// тот же класс бага, что Vec.clone в Ф.2). Проверено эмпирически: глубокая
-/// форма даёт CC-FAIL `passing 'nova_str' to parameter of incompatible type`
-/// в `map_literals/positive_clone_merge` (`HashMap[str,int].clone()`). Bound
-/// `[K Clone, V Clone]` парсится/type-check'ается, но dispatch для примитивных
-/// K/V сломан. Пока монформизатор не научится роутить generic-`.clone()` в
-/// built-in copy для примитивов (или синтезировать per-type `@clone`),
-/// глубокая форма не доходит до per-commit-green и удержана.
+/// По D230 amend `Clone` — **глубокий / рекурсивный** протокол: `clone()`
+/// клонирует поэлементно через `K.@clone()` / `V.@clone()`, под conditional
+/// bound `[K Clone, V Clone]` (Rust `impl<K: Clone, V: Clone> Clone for
+/// HashMap<K,V>`).
 ///
-/// Для **примитивных** K/V (`HashMap[str,int]` и т.п.) shallow == deep
-/// (значения копируются bit-wise, нет общего pointee). Расхождение видно
-/// только для ref-типов K/V (record-ключи/значения): клон разделяет их
-/// pointee — это документируемый gap.
+/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): поэлементный
+/// generic `k.clone()` / `v.clone()` теперь диспатчится корректно для любого
+/// K/V. Раньше примитивный K/V (нет `int.@clone()` / `str.@clone()`) мис-роутил
+/// unbound `.clone()` в произвольный неродственный `@clone` → CC-FAIL/crash.
+/// Codegen теперь резолвит примитивный `.clone()` в built-in identity-copy, а
+/// record K/V — в `K.@clone()` (либо identity, если у record нет `@clone`).
 ///
 /// # Examples
 ///
@@ -309,10 +292,10 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// assert(m2.get("a") == Some(1))
 /// ```
 #stable(since = "0.1")
-export fn HashMap[K, V] @clone() -> HashMap[K, V] {
+export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
     mut copy = HashMap[K, V].with_capacity(@_count)
     for (k, v) in @iter() {
-        copy.insert_new(k, v)
+        copy.insert_new(k.clone(), v.clone())
     }
     copy
 }

@@ -748,34 +748,17 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 
 /// Copy — allocate a new `Vec[T]` and copy every element into a fresh buffer.
 ///
-/// CONTRACT GAP (Plan 138.3, [M-138.3-clone-bound-unsupported]): per D230 amend
-/// `Clone` is a **deep / recursive** protocol — `clone()` should recurse
-/// element-wise via each element's own `@clone()`, with a conditional bound
-/// `[T Clone]` (Rust `impl<T: Clone> Clone for Vec<T>`). The intended body is:
-/// ```nova
-/// export fn Vec[T Clone] @clone() -> Self {
-///     mut out = Vec[T].with_capacity(@len)
-///     mut i = 0
-///     while i < @len { out.push(unsafe { @data[i] }.clone()); i = i + 1 }
-///     out
-/// }
-/// ```
-/// This is **kept shallow (bitwise) for now** because the bootstrap codegen
-/// mis-dispatches the per-element generic `T.@clone()` call for *primitive* `T`
-/// (no `int.@clone()` exists; the monomorphizer resolves the unbound generic
-/// `.clone()` to an arbitrary unrelated `@clone` — e.g. `WriteBuffer.clone` —
-/// passing an `int` where a `WriteBuffer*` is expected → runtime crash; verified
-/// empirically, `Vec[int].clone()` RUN-FAILs, `plan131/vec_clone_pos`
-/// regresses). The `[T Clone]` *bound* parses & type-checks fine for record
-/// element types (`Vec[Point].clone()` emits correct `Point.@clone()` recursion),
-/// but the primitive-`T` dispatch gap is not isolatable here. Until the
-/// monomorphizer routes a generic-`T` `.clone()` to the built-in copy for
-/// primitives (or a synthesized per-type `@clone`), the deep form cannot reach
-/// per-commit-green and is held back.
+/// Per D230 amend, `Clone` is a **deep / recursive** protocol — `clone()`
+/// recurses element-wise via each element's own `@clone()`, under a conditional
+/// bound `[T Clone]` (Rust `impl<T: Clone> Clone for Vec<T>`).
 ///
-/// `RawMem.copy_nonoverlapping` here is a same-`T` bit-copy into a distinct
-/// fresh buffer (correct for value-`T`; for reference-`T` it *shares* the
-/// pointee — the shallow semantics this gap documents).
+/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): the
+/// per-element generic `@data[i].clone()` now dispatches correctly for **every**
+/// `T`. Previously primitive `T` (no `int.@clone()` exists) mis-routed the
+/// unbound `.clone()` to an arbitrary unrelated `@clone` (e.g. `WriteBuffer.clone`)
+/// → runtime crash. The codegen now resolves a primitive `.clone()` to a built-in
+/// **identity copy** (bitwise self) — so `Vec[int].clone()` is a value-faithful
+/// deep copy, and `Vec[Point].clone()` recurses through `Point.@clone()`.
 ///
 /// # Examples
 ///
@@ -786,17 +769,14 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 /// assert(a.len() == 3)   // original unchanged
 /// assert(b.len() == 4)
 /// ```
-export fn Vec[T] @clone() -> Self {
-    if @len <= 0 {
-        return Vec[T].new()
+export fn Vec[T Clone] @clone() -> Self {
+    mut out = Vec[T].with_capacity(@len)
+    mut i = 0
+    while i < @len {
+        out.push(unsafe { @data[i] }.clone())
+        i = i + 1
     }
-    // Bulk-copy the live prefix into a fresh distinct buffer (non-overlapping).
-    ro n = @len
-    ro dst = alloc_buf[T](n)
-    unsafe {
-        RawMem.copy_nonoverlapping(@data as *u8, dst as *mut u8, n * size_of[T]())
-    }
-    Self { data: dst, len: n, cap: n }
+    out
 }
 
 
