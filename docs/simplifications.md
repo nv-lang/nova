@@ -34,6 +34,42 @@ template) ОТКЛОНЁН после spike (template без struct-def+methods 
 `[M-138.2-vec-u8-literal-stride]` + Vec-of-record `_p` typedef bug, потом флип.
 Приоритет: H.
 
+### Plan 138.2 — Phase-A de-risk (2026-06-10)
+Подготовка к атомарному capstone (Ф.0+Ф.2+Ф.3+Ф.4): узкие codegen-фиксы приземлены ПЕРЕД
+флипом отдельными per-commit-green коммитами на ветке `plan-138.1`, сужая поверхность
+будущего multi-day unit'а. Из 5 регрессионных классов Ф.0 §«5 классов» — #2 и #3 **pre-fixed**.
+- **DONE** `[M-138.2-vec-u8-literal-stride]` (commit 5c41f72a6e9) = класс #2: `[]u8 = [1,2,3]`
+  литерал хранил int64-страйд вместо 1-байтового u8. Fix в emit (`try_emit_typed_vec_literal`
+  ~26305) + infer (`infer_expr_c_type::ArrayLit` ~31692): sized-int element-hint (из `[]u8`/`[]iNN`
+  annotation) выигрывает над erased `nova_int` дефолтом первого item'а. Fixture t5_u8_literal_stride.nv.
+- **DONE** Vec-of-record write-index `_p` typedef bug (commit c7a8f365aa3) = класс #3: `v[i]=Point{...}`
+  эмитил `(Nova_Point_p)(tmp)` (несуществующий typedef, т.к. `*` элемента кодируется как `_p` и
+  `trim_end_matches('*')` ничего не делал). Write-path (`Stmt::Assign`+`ExprKind::Index` ~15461) теперь
+  использует registry-based element-type recovery (как read-path) → `(Nova_Point*)`. Fixture
+  t4_vec_record_write_index.nv.
+- **DONE** `[M-138.2-vec-fluent-push]` (commit d22c96f7423): все 11 chainable Vec[T] мутаторов в
+  `std/collections/vec_owned.nv` → `-> @` (return self), зеркало StringBuilder.append D181. std .nv
+  читается с диска (no rebuild). Statement-form callsites (`v.push(x)`) работают (return discard).
+  Fixture t6_fluent_push.nv. Вскрыты 3 PRE-EXISTING gap'а при fluent-chaining (candidate followups):
+  `[M-138.2-vec-fluent-chain-int-mixed]` (erased nova_int Vec chains мис-диспатч), mixed-method chains
+  (post-first receiver резолвится по голому имени метода через все типы), `[M-138.2-vec-extend-generic-fluent-return]`.
+- **BLOCKED+REVERTED** `[M-138-getmut-rename]` (`@get_mut`→`mut @get`): `infer_expr_c_type` не tiebreak'ает
+  return-тип method-call по receiver mutability (ExprKind::Call multi-overload фильтрует только по arg
+  param-types, возвращает `pool.first()`) + dispatch-footgun (mut-receiver всегда выбрал бы mut-overload,
+  ломая read-by-value из mutable Vec). Эмпирически: rename → CC-FAIL 'indirection requires pointer operand
+  (nova_int)'. `@get_mut` оставлен (Rust get/get_mut precedent, no footgun).
+- **BLOCKED+REVERTED** `[M-138-mutindex-rename]` (`@index_set`→`mut @index`): хард C duplicate-definition
+  `conflicting types for 'Nova_Vec_method_index'` — Vec[T]-методы эмитятся через generic-template путь
+  (НЕ multi-overload mangler), mono/template имя строится голым `Nova_Vec_method_<name>` (emit_c.rs:26485)
+  без param-type/recv-mut суффикса. `@index_set` оставлен (call-sites = 0; `v[i]=val` всегда инлайн через
+  ExprKind::Index, никогда не диспатчит именованный метод).
+- **Корень обоих BLOCKED:** generic-type (Vec[T]) методы НЕ имеют full-signature overload mangling
+  (param-types + recv_mutable суффикс) на template-fwd-decl + `register_vec_mono_method` (lookup по голому
+  имени `m.name==method_name`). **Почему так:** Phase-A — атомарные per-commit-green фиксы; rename'ы требуют
+  cross-cutting codegen-change (вне scope атомарного std-флипа), отложены до capstone.
+- **Как чинить (capstone):** после Phase-A осталось 3 регрессионных класса (#1 insert/append API divergence,
+  #4 map_literals, #5 SHADOW collision) + full-signature mangling для generic-type методов. Приоритет: H.
+
 ### Plan 138 — Index[K,V] + MutIndex[K,V] protocols + str[i] fix (2026-06-10)
 Index[K,V] (@index) + MutIndex[K,V] (@index_set) protocols declared in prelude.
 Vec[T] @index + @index_set implemented (inline C dispatch in emit_c.rs).

@@ -35214,3 +35214,86 @@ Plan 138.2 Ф.0 — Universal []T->Vec[T] flip (2026-06-10) — 🔴 BLOCKED (RE
 РЕЗУЛЬТАТ (флип OFF, baseline confirmed): plan138_2 2/0, plan138 10/0,
   plan90_1 20/0, plan131 27/1 (vec_debug_pos pre-existing). Vec-free юнит ->
   NovaArray_nova_int* (флип OFF, корректное reverted-состояние).
+
+
+== Plan 138.2 Phase-A — de-risk перед атомарным capstone (2026-06-10) ==
+
+После BLOCKED-исхода Ф.0 (флип неотделим от Ф.2-Ф.4) Phase-A приземлила узкие
+codegen-фиксы ОТДЕЛЬНЫМИ per-commit-green коммитами на ветке plan-138.1, ДО флипа,
+сужая поверхность будущего атомарного multi-day unit'а. Из 5 регрессионных классов
+Ф.0 §«5 классов» — #2 и #3 теперь pre-fixed.
+
+DONE [M-138.2-vec-u8-literal-stride] (commit 5c41f72a6e9) = класс #2:
+  []u8 = [1,2,3] литерал хранил int64-страйд вместо 1-байтового u8. Root: element C
+  type брался из infer_expr_c_type первого item'а, int-литерал коллапсит в erased
+  nova_int и не несёт annotated []u8/[]iNN element-тип. Fix в двух симметричных сайтах:
+  emit (try_emit_typed_vec_literal ~26305) + infer (infer_expr_c_type::ArrayLit ~31692) —
+  когда первый item collapse'ит в nova_int дефолт, но присутствует sized-int element-hint
+  (nova_byte/nova_char/intNN_t/uintNN_t, set из []u8/[]iNN annotation через
+  emit_expr_with_target_type -> vec_or_array_elem_c), hint выигрывает → литерал
+  монорфизирует Vec[u8]/Vec[i32] с корректным страйдом. Verified в C:
+  Nova_Vec____nova_byte_static_with_capacity вместо ____nova_int. Fixture
+  t5_u8_literal_stride.nv (4 теста). Discovered (отдельный, НЕ тронут): Vec[i32].new()
+  эмитит undeclared Nova_Vec____Nova_i32_p (explicit sized-int Vec instantiation boxes
+  i32 как Nova_i32* вместо int32_t) → candidate followup.
+
+DONE Vec-of-record write-index _p typedef bug (commit c7a8f365aa3) = класс #3:
+  v[i]=Point{...} эмитил (Nova_Point_p)(tmp) — несуществующий typedef. Root: в write-path
+  (Stmt::Assign + ExprKind::Index ~15461) element C type восстанавливался наивным
+  arr_obj_ty.strip_prefix("Nova_Vec____").trim_end_matches('*'); для record-элемента
+  mangle = Nova_Vec____Nova_Point_p — '*' элемента кодируется как _p, потому
+  trim_end_matches('*') ничего не делал. Fix: зеркалить registry-based recovery read-path'а
+  (generic_type_instance_info -> реальный Nova_Point*, fallback desanitize_c_from_ident).
+  Теперь ((v)->data)[_wi] = (Nova_Point*)(tmp). Fixture t4_vec_record_write_index.nv.
+
+DONE [M-138.2-vec-fluent-push] (commit d22c96f7423):
+  все 11 chainable Vec[T] мутаторов в std/collections/vec_owned.nv → -> @ (return self),
+  зеркало StringBuilder.append D181: @push, @extend, @insert, @append, @reverse, @clear,
+  @truncate, @copy_from, @copy_within, @fill, @append_zero. std .nv читается с диска —
+  no rebuild. Statement-form callsites (v.push(x)) работают (return discard). Fixture
+  t6_fluent_push.nv (7 тестов). Вскрыты 3 PRE-EXISTING gap'а fluent-chaining (candidate
+  followups, НЕ этой фазы): (A) [M-138.2-vec-fluent-chain-int-mixed] — Vec[int] (erased
+  nova_int) chains мис-диспатчат на erased Nova_Vec_method_push; (B) mixed-method chains
+  (.reverse().truncate().fill()) резолвят post-first-call receiver по голому имени метода
+  через ВСЕ типы (picked Range::reverse / StringBuilder::truncate); (C)
+  [M-138.2-vec-extend-generic-fluent-return] — @extend (method-level generic [S Iter[T]])
+  chained -> @ мис-типизирует возврат в void*.
+
+BLOCKED+REVERTED [M-138-getmut-rename] (@get_mut(i)->Option[*mut T] => mut @get(i)):
+  требует ДВУХ codegen-изменений, не std-флипа. (1) infer-side gap: infer_expr_c_type НЕ
+  tiebreak'ает RETURN-тип method-call по receiver mutability — ExprKind::Call multi-overload
+  путь (~30248-30571) фильтрует кандидатов только по arg param_c_types, возвращает
+  pool.first(); zero hits recv_mutable/is_obj_mutable во всём теле infer. Read
+  @get(i)->Option[T] и mut @get(i)->Option[*mut T] делят param-types [nova_int] → возврат
+  всегда первый-объявленный (read) overload. Эмпирически: rename + if Some(p)=v.get(1) на
+  mut v → nova_int p=...value; затем *p=99 → CC-FAIL vec_access_pos.c:3231 'indirection
+  requires pointer operand (nova_int)'. (2) dispatch-side footgun: call-mangle tiebreak'ает
+  recv_mutable к CALLER mutability → на mut receiver plain read v.get(1) ВСЕГДА диспатчит
+  mut-overload, делая read-by-value невозможным → ломает plan131 assert(v.get(1)==Some(99)).
+  DECISION: @get_mut оставлен (Rust get/get_mut precedent, no footgun).
+
+BLOCKED+REVERTED [M-138-mutindex-rename] (mut @index_set(i,val) => mut @index(i,val)):
+  хард C duplicate-definition 'conflicting types for Nova_Vec_method_index'. Vec[T]-методы
+  эмитятся через generic-template путь (НЕ multi-overload mangler emit_c.rs:2566-2607);
+  mono/template имя строится голым Nova_Vec_method_<name> (emit_c.rs:26485) без
+  param-type/recv-mut суффикса, register_vec_mono_method резолвит FnDecl по голому имени
+  (emit_c.rs:26452) → scalar read @index(i)->T и write @index(i,val)->() коллизят в один
+  C-символ (t2_vec_mut_index.c:559 vs :561). Range-overload @index(r Range) уцелел только
+  потому что v[a..b] codegen-инлайнится (ExprKind::Index emit_c.rs:18142). Call-sites: ZERO
+  .index_set( в корпусе — v[i]=val всегда инлайн, не диспатчит именованный метод, потому
+  3-й overload чисто декларативно-косметический. @index_set оставлен. D240 prose уже
+  исправлен (94d39606d6a), Vec удовлетворяет MutIndex поведенчески через инлайн.
+
+КОРЕНЬ ОБОИХ BLOCKED: generic-type (Vec[T]) методы НЕ имеют full-signature overload
+  mangling (param-types + recv_mutable суффикс) на template-fwd-decl +
+  register_vec_mono_method (lookup m.name==method_name). Закрывается единым .rs-изменением
+  (требует rebuild) — вне scope атомарного std-флипа, отложено до capstone.
+
+CAPSTONE (после Phase-A): осталось 3 регрессионных класса — #1 insert/append API divergence
+  (plan90_1 D141 bulk vs Vec single-elem), #4 map_literals []T-backed buckets, #5 SHADOW
+  collision (user type Vec) — + full-signature mangling для generic-type методов.
+
+РЕЗУЛЬТАТ Phase-A (worktree binary + env, branch plan-138.1): plan138_1 10/0,
+  plan138_2 5/0 (с 2/0; +t4/+t5/+t6), plan90_1 20/0, plan131 27/1 (pre-existing
+  vec_debug_pos cosmetic), plan118_1 11/0. 0 регрессий. Коммиты: c7a8f365aa3 (C3),
+  5c41f72a6e9 (C2), d22c96f7423 (P1). P2/P3 REVERTED (ничего не закоммичено).
