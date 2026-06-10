@@ -200,8 +200,7 @@ export fn Vec[T] mut @pop() -> Option[T] {
         return None
     }
     @len = @len - 1
-    ro v = unsafe { @data[@len] }
-    Some(v)
+    Some(unsafe { @data[@len] })
 }
 
 /// Insert `v` at index `i`, shifting later elements right. Panics if
@@ -286,8 +285,7 @@ export fn Vec[T] @get(i int) -> Option[T] {
     if i < 0 || i >= @len {
         return None
     }
-    ro v = unsafe { @data[i] }
-    Some(v)
+    Some(unsafe { @data[i] })
 }
 
 /// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
@@ -791,8 +789,7 @@ export fn Vec[T Display] @display(mut sb StringBuilder) -> () {
     mut i = 0
     while i < @len {
         if i > 0 { sb.append(", ") }
-        ro elem = unsafe { @data[i] }
-        elem.display(sb)
+        (unsafe { @data[i] }).display(sb)
         i = i + 1
     }
     sb.append("]")
@@ -806,8 +803,7 @@ export fn Vec[T Debug] @debug(mut sb StringBuilder) -> () {
     mut i = 0
     while i < @len {
         if i > 0 { sb.append(", ") }
-        ro elem = unsafe { @data[i] }
-        elem.debug(sb)
+        (unsafe { @data[i] }).debug(sb)
         i = i + 1
     }
     sb.append("]")
