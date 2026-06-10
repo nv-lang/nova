@@ -10674,10 +10674,43 @@ shallow-clone коллекции ref-типов тихо разделяет вл
 | Реализация | per-element `.clone()` loop | `RawMem.copy` / per-element push |
 | Назначение | независимая копия | move / перенос / построение |
 
+#### KNOWN GAP — статус реализации (Plan 138.3 Ф.2-Ф.4, 2026-06-10)
+
+**Контракт выше — целевой.** Деталь auto-derive для **records** (memberwise
+`field.clone()` recursion) **РЕАЛИЗОВАНА и работает** (`#impl(Clone)` —
+plan126/plan126_2 `p3_cloneable_runtime_ok` + `p7_nested_record_clone_deep_ok`
+PASS; record `@clone()` корректно эмитит рекурсию по полям).
+
+**Однако deep element-wise clone для коллекций (`Vec`/`HashMap`/`Set`) пока
+НЕ реализован** — все три остались **shallow** (`@clone()` с bound «любой T»,
+без `[T Clone]`): bit-copy / per-(k,v) value-copy. Блокер —
+**`[M-138.3-clone-bound-unsupported]`**: bootstrap-монформизатор мис-диспатчит
+per-element generic `T.@clone()` / `K.@clone()` / `V.@clone()` для **примитивного**
+`T`/`K`/`V` (нет `int.@clone()` / `str.@clone()` — примитивы copy-built-in per
+этому D), резолвя unbound generic `.clone()` в произвольный неродственный
+`@clone`. Эмпирика: deep `Vec[int].clone()` → runtime crash + регрессия
+`plan131/vec_clone_pos`; deep `HashMap[str,int].clone()` → CC-FAIL
+`passing 'nova_str' to parameter of incompatible type`. Bound `[T Clone]` сам по
+себе **парсится и type-check'ается** (R1 Plan 138.3 — подтверждено), и для
+**record** element-типов emit корректен (`Vec[Point].clone()` даёт верную
+`Point.@clone()` рекурсию); сломан только primitive-`T` dispatch.
+
+**Следствие для bound-audit (G5):** так как collection-clone остались shallow
+(`@clone()` любой T, **без** `T: Clone`-требования), нового нарушения bound на
+call-site'ах **нет** — deep-направление, требующее `T: Clone`, удержано. Для
+**примитивных** элементов shallow == deep (нет разделяемого pointee), для record
+элементов расхождение — задокументированный gap.
+
+**Снять gap:** монформизатор должен (a) роутить generic-`T` `.clone()` в
+built-in copy когда `T` примитив, ЛИБО (b) синтезировать per-type `@clone` для
+примитивов, ЛИБО (c) гейтить deep-цикл так, чтобы примитивный `T` падал в
+bit-copy. После фикса — переделать Vec+HashMap+Set deep одним проходом.
+
 #### Cross-refs
 
 - [Q31](../open-questions.md#q31) — conditional `[T Clone]` bound на generic instance-методе (design clarification)
 - Plan 138.3 — home plan (deep-clone collections)
+- `[M-138.3-clone-bound-unsupported]` — primitive-`T` generic `.clone()` мис-диспатч; блокирует deep collection-clone
 - `[M-138-rawmem-bulk-ops]` — clone→`RawMem.copy` был shallow-баг; этот amend фиксирует контракт
 - Plan 90.1 — `[]T` deep-copy infrastructure (used для array-field clone)
 

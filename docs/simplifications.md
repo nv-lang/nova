@@ -18,6 +18,39 @@
 
 ---
 
+### Plan 138.3 — `Clone` = deep/recursive; collection-clone УДЕРЖАН shallow (2026-06-10, ✅ CLOSED spec / 🟡 impl-blocked)
+
+- **Где** — `std/collections/vec_owned.nv` (`@clone`), `std/collections/hashmap.nv`
+  (`@clone`), `std/collections/set.nv` (`@clone` NEW), `spec/decisions/02-types.md`
+  (D230 amend), `spec/open-questions.md` (Q31), `std/prelude/protocols.nv` (Clone D-блок).
+- **Что упрощено** — `Clone` зафиксирован как **deep/recursive** (Rust-семантика) в
+  спеке; auto-derive `#impl(Clone)` для **records** работает (memberwise рекурсия —
+  plan126_2 p3/p7 PASS). **Но deep element-wise clone для коллекций (Vec/HashMap/Set)
+  НЕ реализован** — все три остались **shallow** (`@clone()` любой T, без `[T Clone]`):
+  bit-copy / per-(k,v) value-copy. Set.@clone — NEW (shallow-делегат `{ map: @map.clone() }`).
+- **Почему** — `[M-138.3-clone-bound-unsupported]`: bootstrap-монформизатор мис-диспатчит
+  per-element generic `T.@clone()`/`K.@clone()`/`V.@clone()` для **примитивного** T/K/V
+  (нет `int.@clone()`/`str.@clone()`, примитивы copy-built-in), резолвя unbound generic
+  `.clone()` в произвольный неродственный `@clone`. Deep `Vec[int].clone()` → runtime crash
+  + регрессия plan131/vec_clone_pos; deep `HashMap[str,int].clone()` → CC-FAIL `passing
+  'nova_str' to incompatible type`. Bound `[T Clone]` сам парсится/type-check'ается; для
+  **record** element-типов emit корректен (`Vec[Point]` → `Point.@clone()` рекурсия).
+  VERIFY-OR-KEEP → откат к shallow, gap задокументирован в docstring + spec §KNOWN GAP.
+- **Bound-audit (Ф.4 / G5)** — т.к. clone остались shallow (без `T: Clone`-требования),
+  нового нарушения bound на call-site'ах **нет**. Единственный collection-clone call-site
+  в std — `set.nv @map.clone()` (internal, работает); `markdown_minimal.nv` (experimental,
+  вне test-path). Для примитивных элементов shallow == deep; расхождение — только для
+  record-элементов коллекций (задокументированный gap). **0 регрессий.**
+- **Как чинить** — монформизатор должен (a) роутить generic-`T` `.clone()` в built-in copy
+  когда T примитив, ЛИБО (b) синтезировать per-type `@clone` для примитивов, ЛИБО
+  (c) гейтить deep-цикл так, чтобы примитивный T падал в bit-copy. После фикса — переделать
+  Vec+HashMap+Set deep одним проходом (deep-формы лежат в docstring'ах @clone).
+- **Приоритет** — M (корректность: shallow-clone коллекции ref-типов разделяет pointee;
+  для примитивов — безопасно). Маркеры: `[M-138.3-clone-bound-unsupported]` (главный),
+  `[M-138.3-autoclone-records]` (followup).
+- **Коммиты** — `c3bc69da8f3` (Ф.1 spec), `7f61ba2692e` (Ф.2 Vec kept shallow),
+  `9f353b5b29a` (Ф.3 HashMap kept shallow + Set.@clone NEW), Ф.4 docs (this).
+
 ### Plan 138.2 Ф.0 — Universal []T->Vec[T] flip: BLOCKED (2026-06-10)
 Цель Ф.0: снять gate `contains_key("Vec")` (emit_c.rs:2055/4938/26100/31637) чтобы
 `[]T` лоуэрился в `Vec[T]` в КАЖДОМ юните (не только где Vec упомянут).

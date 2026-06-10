@@ -35347,3 +35347,61 @@ SPAWNED GAP-MARKERS (OPEN, codegen, требуют .rs + rebuild — НЕ workab
   plan90_1 20/0, plan131 27/1 (pre-existing vec_debug_pos cosmetic), plan118_1 11/0,
   hashmap.nv inline 1/0. 0 регрессий. Коммиты: 1e8bdcc147f (N1), 6e1ac8ace72 (N2),
   af6b0b59718 (N3), 2e57e3d701b (N4).
+
+=== Plan 138.3 — Clone = deep/recursive; collection-clone УДЕРЖАН shallow (2026-06-10) ===
+
+Решение (user-confirmed): Clone — deep/рекурсивный (Rust-семантика). Коллекции
+должны клонировать поэлементно через T.@clone() с conditional bound [T Clone]
+(зеркало Rust impl<T: Clone> Clone for Vec<T>). Закрывает класс aliasing-багов:
+shallow-clone коллекции ref-типов тихо разделяет вложенные объекты.
+
+Ф.1 DONE (c3bc69da8f3): spec — D230 amend (02-types.md) фиксирует Clone = deep,
+  collection element-wise [T Clone], shallow value-copy (from/extend/push/copy_from/
+  realloc) отделён как ОТДЕЛЬНАЯ операция (любой T, bit-copy via RawMem.copy — только
+  shallow-контексты, НИКОГДА не @clone). Q31 (open-questions) — conditional [T Clone]
+  bound на generic instance-методе.
+
+Ф.2 KEPT-SHALLOW (7f61ba2692e): попытка deep Vec[T Clone] @clone() с per-element
+  out.push(@data[i].clone()). R1 RESULT: bound [T Clone] ПАРСИТСЯ + type-check'ается;
+  для RECORD element-типов emit КОРРЕКТЕН (Vec[Point] → Point.@clone() рекурсия,
+  проверено в gen-C). НО bootstrap-монформизатор МИС-ДИСПАТЧИТ generic per-element
+  T.@clone() для ПРИМИТИВНОГО T: нет int.@clone() (примитивы copy-built-in per D230),
+  unbound generic .clone() резолвится в произвольный неродственный @clone (эмпирически
+  Nova_WriteBuffer_method_clone) → runtime crash. Vec[int].clone() RUN-FAIL + регрессия
+  plan131/vec_clone_pos. VERIFY-OR-KEEP → откат к shallow (bitwise RawMem.copy_nonoverlapping
+  в distinct-буфер; executable body == baseline, изменён только docstring). Маркер
+  [M-138.3-clone-bound-unsupported]. Тест plan138_3/t1_vec_clone_deep.nv (3, PASS) —
+  buffer-level + value-T element независимость (НЕ field-level deep для record — gap).
+
+Ф.3 KEPT-SHALLOW + Set.@clone NEW (9f353b5b29a): тот же gap для коллекций. Deep
+  HashMap[K Clone, V Clone] @clone() с copy.insert_new(k.clone(), v.clone()) → CC-FAIL
+  `passing 'nova_str' to incompatible type` (HashMap[str,int], map_literals/positive_clone_merge).
+  HashMap.@clone откачен к shallow (per-(k,v) value-copy; body == baseline, изменён docstring).
+  Set ранее НЕ имел @clone — ДОБАВЛЕН shallow-делегат `Set[T] @clone() => { map: @map.clone() }`
+  (NEW, additive, green). Тест plan138_3/t2_map_set_clone.nv (6, PASS) — table-level
+  независимость HashMap[str,int]/HashMap[int,int]/Set[int]/Set[str] + empty-clone.
+
+Ф.4 DONE (this): bound-implication audit + close. Так как ВСЕ ТРИ collection-clone
+  остались shallow (@clone() любой T, без T: Clone-требования), нового нарушения bound
+  на call-site'ах НЕТ — deep-направление (требующее T: Clone) удержано целиком. Аудит
+  всех .clone() call-site'ов в std/ + nova_tests/: единственный collection-clone call-site
+  в std — set.nv @map.clone() (internal, работает); markdown_minimal.nv (_experimental,
+  вне test-path). @first/.first() в plan91_fe1 CC-FAIL (vec_combinators_pos, neg/vec_edge_paths)
+  — PRE-EXISTING (slice []T не имеет .first(); @first untouched since baseline c0250bc;
+  unrelated к clone). Record auto-derive #impl(Clone) РАБОТАЕТ (plan126_2 p3/p7 PASS) —
+  закрывает R2. Spec не overclaim'ит: добавлен §KNOWN GAP в D230 amend + обновлён Q31
+  status (R1 эмпирически: bound принимается parser/checker, codegen-dispatch broken для
+  primitive-T). Plan-файл: G1✅ G3✅ G5✅, G2/G4 🟡 BLOCKED, статус CLOSED (spec) / impl-blocked.
+
+G1 ✅ Clone = deep задокументирован (D230 amend + protocols.nv D-блок + Q31).
+G2 🟡 Vec.clone deep НАПИСАН но удержан shallow ([M-138.3-clone-bound-unsupported]).
+G3 ✅ @clone использует distinct-буфер; RawMem.copy bitwise оставлен в bulk-ops (shallow).
+G4 🟡 HashMap.clone deep удержан shallow; Set.@clone NEW (shallow-делегат).
+G5 ✅ bound-audit: 0 нарушений (clone shallow → нет T: Clone-требования); 0 регрессий.
+
+РЕЗУЛЬТАТ (worktree binary + env, branch plan-138.1): plan138_1 10/0, plan138_2 5/0,
+  plan138_3 2/0, plan90_1 20/0, plan131 27/1 (pre-existing vec_debug_pos), plan118_1 11/0,
+  plan126_2 9/1 (pre-existing p5 Printable), hashmap.nv + set.nv inline PASS. 0 регрессий.
+  Коммиты: c3bc69da8f3 (Ф.1), 7f61ba2692e (Ф.2), 9f353b5b29a (Ф.3), Ф.4 docs.
+  Рекомендация: сначала фикс монформизатора primitive-T .clone() dispatch, затем
+  Vec+HashMap+Set deep одним проходом (deep-формы сохранены в docstring'ах @clone).

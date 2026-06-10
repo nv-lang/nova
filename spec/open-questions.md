@@ -7268,9 +7268,27 @@ export fn Vec[T Clone] @clone() -> Self {  // метод — добавляет 
 
 ### Статус
 
-Открыт. Реализация Plan 138.3 Ф.2 проверяет (1) на практике; результат
-зафиксировать здесь. Если bootstrap не принимает method-level narrowing-bound —
-выбрать fallback и задокументировать gap (VERIFY-OR-KEEP).
+**Частично отвечен эмпирически (Plan 138.3 Ф.2-Ф.4, 2026-06-10).**
+
+1. **Method-level narrowing-bound `[T Clone]` — ПРИНИМАЕТСЯ** bootstrap-парсером и
+   type-checker'ом (нет CC-FAIL на самой сигнатуре). Для **record** element-типов
+   emit корректен: `Vec[Point].clone()` даёт верную `Point.@clone()` рекурсию.
+2. **НО codegen-dispatch сломан для примитивного `T`** —
+   `[M-138.3-clone-bound-unsupported]`: per-element generic `T.@clone()` для
+   примитива (нет `int.@clone()`/`str.@clone()`) мис-резолвится в произвольный
+   неродственный `@clone`. Deep `Vec[int].clone()` → runtime crash; deep
+   `HashMap[str,int].clone()` → CC-FAIL `passing 'nova_str' to incompatible type`.
+3. **Решение (VERIFY-OR-KEEP):** все три collection-`@clone` **удержаны shallow**
+   (любой T, без `[T Clone]`) до фикса монформизатора. Spec-контракт (D230 amend)
+   — целевой; impl отстаёт, расхождение задокументировано там в §«KNOWN GAP».
+4. **Auto-derive `#impl(Clone)` для records — работает** (plan126_2 p3/p7 PASS),
+   так что (3) Q31 для records закрыт; bare-record без `#impl(Clone)` → bound-error
+   (не наблюдалось в audit'е, т.к. deep-форма не активна). `[M-138.3-autoclone-records]`
+   остаётся открытым followup на случай расширения покрытия.
+
+Остаётся открытым в части **языкового дизайна** (нужен ли method-level
+narrowing-bound как first-class фича) — но практический блокер сместился в
+codegen (`[M-138.3-clone-bound-unsupported]`), не в parser/checker.
 
 ### Cross-refs
 
