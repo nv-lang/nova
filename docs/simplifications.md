@@ -70,6 +70,36 @@ template) ОТКЛОНЁН после spike (template без struct-def+methods 
 - **Как чинить (capstone):** после Phase-A осталось 3 регрессионных класса (#1 insert/append API divergence,
   #4 map_literals, #5 SHADOW collision) + full-signature mangling для generic-type методов. Приоритет: H.
 
+### Plan 138.2 — Design-cleanup batch N1-N4 (2026-06-10)
+Пакет осознанных std-уровневых cleanup'ов поверх Phase-A (все per-commit-green; std `.nv`
+читается с диска — rebuild не требовался). Branch `plan-138.1`.
+- **DONE** `[M-138.2-next-pow2-branchless]` (commit `1e8bdcc147f`): приватный `next_pow2` в
+  `std/collections/hashmap.nv` (~стр.570) O(log n) цикл → O(1) branchless bit-smear
+  (`x=n-1; x|=x>>1; >>2; >>4; >>8; >>16; >>32; x+1`), guard `if n<=1 { return 1 }`. Equivalence-тест
+  inline в hashmap.nv (fn приватная, внешний тест не вызовет). hashmap.nv inline 1/0.
+- **DONE part (a)** `[M-138.2-vec-type-priv]` (commit `6e1ac8ace72`): type-level `priv` flip на
+  `Vec[T]` в `std/collections/vec_owned.nv` (Plan 124 V2 / 02-types.md §1) — `export type Vec[T] priv {`,
+  сняты 3 per-field `priv`. Effective visibility идентична. **Part (b)** (`*mut T`→`*T`) BLOCKED →
+  `[M-138.2-v2-propagation-impl-gap]`.
+- **DONE return-subset** `[M-138.2-vec-self-return]` (commit `af6b0b59718`): return-типы `-> Vec[T]`
+  == receiver → `-> Self` (Plan 51 / D182 / D66); конструктор-литералы де-типизированы (`new()` → bare
+  arrow `=> {…}`; multi-stmt тела → `Self {…}`, 02-types.md:3078). **Param-position `Self`** BLOCKED →
+  `[M-138.2-self-in-param]`.
+- **DONE** `[M-138.2-stdlib-separator-mojibake]` (commit `2e57e3d701b`): box-drawing separator mojibake
+  (double-encoded U+2500 `d0 b2 e2 80 9d d0 82` → рендер `в"Ђ`) в std-комментах — ровно 2 файла
+  (`vec_owned.nv` 29 строк, `prelude/protocols.nv` 10 строк; examples/ 0 hits). Byte-precise transform
+  только на `^\s*//`, run-длины сохранены → корректный `─`. 39 ins == 39 del, ни одной non-`//` строки.
+- **Spawned codegen-gaps (OPEN, требуют `.rs`+rebuild):** `[M-138.2-v2-propagation-impl-gap]` — generic-поле
+  `data *T` (без inline `mut`) лоуэрит pointee в `Nova_any` (D216 V2 §V2.1 right-binding не реализован в
+  codegen; тот же [M-118.5-right-binding-migration]); `[M-138.2-self-in-param]` — `Self` в param-позиции
+  generic-метода даёт `conflicting types for 'Nova_Vec_method_append'` (нет param-type substitution в
+  emit_c.rs). Приоритет: M.
+- **DISTINCT REMAINING (НЕ в scope этого batch):** `std/prelude/protocols.nv` (и др. std) содержат
+  ВТОРОЙ паттерн mojibake — double-encoded кириллица в `///` doc-комментах (`РќРёРєР°РєРёС…` и т.п.).
+  Это русская prose-порча, НЕ box-drawing separator — оставлено. Future cleanup → отдельный marker
+  `[M-138.2-stdlib-cyrillic-doccomment-mojibake]` (byte-signature другой, real prose, riskier, нужен
+  human review намеренного текста). Приоритет: L.
+
 ### Plan 138 — Index[K,V] + MutIndex[K,V] protocols + str[i] fix (2026-06-10)
 Index[K,V] (@index) + MutIndex[K,V] (@index_set) protocols declared in prelude.
 Vec[T] @index + @index_set implemented (inline C dispatch in emit_c.rs).
