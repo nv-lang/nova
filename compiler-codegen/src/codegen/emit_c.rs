@@ -15458,11 +15458,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             let arr_c = self.emit_expr(arr_obj)?;
                             let idx_c = self.emit_expr(index)?;
                             let val_c = self.emit_expr(value)?;
-                            let elem_ty = arr_obj_ty
-                                .strip_prefix("Nova_Vec____")
-                                .unwrap_or("nova_int")
-                                .trim_end_matches('*')
-                                .trim();
+                            // Plan 138.2 C3: recover the element C type robustly
+                            // from the instance registry (mirrors the read path at
+                            // `ExprKind::Index`). For a record element like
+                            // `Vec[Point]` the mangle is `Nova_Vec____Nova_Point_p`
+                            // (the `*` of `Point*` element encoded as `_p`). The
+                            // naive `trim_end_matches('*')` leaves `Nova_Point_p`,
+                            // a NON-EXISTENT typedef, producing an illegal cast
+                            // `(Nova_Point_p)(...)`. Use the registry (gives the
+                            // real `Nova_Point*`); fall back to de-sanitizing the
+                            // mangled suffix (`Nova_X_p` -> `Nova_X*`).
+                            let mangled = arr_obj_ty.trim_end_matches('*').trim().to_string();
+                            let elem_ty = self.generic_type_instance_info.borrow()
+                                .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                                .unwrap_or_else(|| Self::desanitize_c_from_ident(
+                                    arr_obj_ty
+                                        .strip_prefix("Nova_Vec____")
+                                        .unwrap_or("nova_int")
+                                        .trim()
+                                ));
                             self.line(&format!(
                                 "{{ nova_int _wi = ({idx}); \
 if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
