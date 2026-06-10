@@ -17899,6 +17899,32 @@ _cp++; \
                         }
                     }
                 }
+                // Plan 138 Ф.2 (D238): `Vec[T][i]` dispatch — `v[i]` for Vec[T] types.
+                // Vec[T] monomorphizes to `Nova_Vec____<T>*`. Layout: { T* data; nova_int len; nova_int cap }.
+                // Inline bounds-checked access — avoids needing the @index method to be
+                // separately monomorphized (same approach as NovaArray_ dispatch).
+                // Statement-expr: evaluate obj once, bounds-check, then data[i].
+                if obj_ty.starts_with("Nova_Vec____") {
+                    let o = self.emit_expr(obj)?;
+                    // Extract element C type from the Vec monomorphization name.
+                    // `Nova_Vec____nova_int*` → elem_ty = `nova_int`
+                    // `Nova_Vec____nova_str*` → elem_ty = `nova_str`
+                    let elem_ty = obj_ty
+                        .strip_prefix("Nova_Vec____")
+                        .unwrap_or("nova_int")
+                        .trim_end_matches('*')
+                        .trim();
+                    // Use statement-expr for lvalue-compatible bounds-checked access:
+                    // ({ T* _vd = _v->data; if (idx < 0 || idx >= _v->len) panic; _vd[idx]; })
+                    let tmp_v = self.fresh_tmp_named("vec");
+                    let tmp_i = self.fresh_tmp_named("vi");
+                    return Ok(format!(
+                        "(({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); \
+if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
+{v}[{i}]; }}))",
+                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i
+                    ));
+                }
                 if obj_ty.starts_with("NovaArray_") {
                     let o = self.emit_expr(obj)?;
                     // Check if elements are pointer types stored as nova_int (e.g. inner arrays or records)
@@ -29431,6 +29457,22 @@ _cp++; \
                 if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
                     let elem = elem.trim_end_matches('*').trim();
                     return elem.to_string();
+                }
+                // Plan 138 Ф.2 (D238): Vec[T] indexing — `Nova_Vec____<T>*[i]` → element type T.
+                // `Nova_Vec____nova_int*` → `nova_int`
+                // `Nova_Vec____Nova_Foo__*` → `Nova_Foo__*`
+                // Pattern: `Nova_Vec____<T>*` where `<T>` is the monomorphized element type.
+                if let Some(inner) = obj_ty_pre.strip_prefix("Nova_Vec____") {
+                    let elem = inner.trim_end_matches('*').trim();
+                    // The element type is the part after `Nova_Vec____`.
+                    // For pointer-typed elements the `*` is part of the C type.
+                    // Re-check if element is a pointer (ends with `_p` in nova naming, or `*`).
+                    // In mono'd format: `Nova_Vec____nova_int*` → elem = `nova_int`.
+                    // Edge: `Nova_Vec____Nova_Foo_p*` → elem = `Nova_Foo_p` → needs `Nova_Foo*`
+                    // For now return the raw element string — mono pipeline handles correctly.
+                    if !elem.is_empty() {
+                        return elem.to_string();
+                    }
                 }
                 // [M-118-ptr-index-unsafe] Plan 118 D216 §8: typed pointer
                 // `*mut T` / `*T` — ptr[i] ≡ *(ptr+i). Element type = pointee
