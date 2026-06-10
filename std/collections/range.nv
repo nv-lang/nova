@@ -111,7 +111,7 @@ export fn RangeIter mut @next() -> Option[int] {
 }
 
 // D58 amend: итератор реализует iter() -> Self (trivial) — единая точка входа.
-export fn RangeIter @iter() -> RangeIter => self
+export fn RangeIter @iter() -> RangeIter => @
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ export fn StepRangeIter mut @next() -> Option[int] {
     Some(v)
 }
 
-export fn StepRangeIter @iter() -> StepRangeIter => self
+export fn StepRangeIter @iter() -> StepRangeIter => @
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ export fn Range @reverse() -> ReverseRangeIter {
     ReverseRangeIter { @start, _cur, _done }
 }
 
-export fn ReverseRangeIter @iter() -> ReverseRangeIter => self
+export fn ReverseRangeIter @iter() -> ReverseRangeIter => @
 
 export fn ReverseRangeIter mut @next() -> Option[int] {
     if @_done { return None }
