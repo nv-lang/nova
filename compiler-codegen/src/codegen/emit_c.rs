@@ -24757,9 +24757,21 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                     }
                     self.pattern_destructure_tuple(pattern, &binding, false)?;
                 } else {
+                    // Plan 138.1 Ф.6: `elem_c_ty` is the *sanitized* element
+                    // name extracted from the `NovaOpt_<X>` mangle (where a
+                    // trailing `*` was encoded as `_p`). When the iterator
+                    // element is itself a pointer type (e.g. `[][]int` → outer
+                    // `Vec[Vec[int]]` whose element is `Nova_Vec____nova_int*`),
+                    // the mangle is `Nova_Vec____nova_int_p`. As a *C variable
+                    // type* it must be the pointer spelling, so de-sanitize the
+                    // `_p` suffix back to `*`. The `NovaOpt_<X>.value` field is
+                    // declared as the pointer type, so the assignment is exact.
+                    // Idempotent for non-pointer element types (`nova_int`,
+                    // value records) where there is no `_p` suffix.
+                    let binding_c_ty = Self::desanitize_c_from_ident(&elem_c_ty);
                     self.line(&format!(
-                        "{} {} = {}.value;", elem_c_ty, binding, opt_tmp));
-                    self.var_types.insert(binding.clone(), elem_c_ty);
+                        "{} {} = {}.value;", binding_c_ty, binding, opt_tmp));
+                    self.var_types.insert(binding.clone(), binding_c_ty);
                 }
 
                 // Plan 20 Ф.4/Ф.8: for-in-iter (Iter[T] protocol) body
