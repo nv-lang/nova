@@ -8221,6 +8221,16 @@ implementation effort, ~1-2 dev-day:
 
 ### §V2.6 — backward compatibility
 
+> **Codegen-status UPDATE (Plan 138.4 Ф.4, 2026-06-11, commit `38360c30d80`):** binding-mut rule
+> для record-полей с pointer-типом реализован в codegen. Для **mutable** поля `mut p *T` codegen
+> применяет `mut p *T ≡ mut p *mut T` (D33 §2 binding propagation): immediate `Pointer(pointee)`
+> (non-Mut/non-Unsafe) переписывается в `Pointer(Mut(pointee))` через
+> `field_type_with_binding_mut`/`promote_pointer_pointee_mut` — transparent над Readonly/Mut/Unsafe
+> wrappers, поэтому generic pointee `T` сохраняется через monomorphization (НЕ лоуэрится в `Nova_any`).
+> Это позволило `std/collections/vec_owned.nv` использовать `mut data *T` (вместо legacy `*mut T`)
+> writable. Закрыт `[M-138.2-v2-propagation-impl-gap]`. Полная parser-level prefix-migration
+> (`[M-118.5-right-binding-migration]`) остаётся отдельным effort'ом.
+
 В V2 grace period:
 - `*ro T` / `*mut T` parsed как legacy syntax — emit `W_DEPRECATED_POINTER_INLINE_MODIFIER`,
   internally rewritten к `Readonly(Pointer(T))` / `Mut(Pointer(T))`
@@ -10674,17 +10684,28 @@ shallow-clone коллекции ref-типов тихо разделяет вл
 | Реализация | per-element `.clone()` loop | `RawMem.copy` / per-element push |
 | Назначение | независимая копия | move / перенос / построение |
 
-#### KNOWN GAP — статус реализации (Plan 138.3 Ф.2-Ф.4, 2026-06-10)
+#### KNOWN GAP — ✅ ЗАКРЫТ (Plan 138.4 Ф.1, 2026-06-11)
+
+> **UPDATE (2026-06-11):** этот gap **ЗАКРЫТ** — impl догнал prose. Deep element-wise clone
+> для `Vec`/`HashMap`/`Set` теперь **РЕАЛИЗОВАН и GREEN** (Plan 138.4 Ф.1 G-C, commits
+> `88432dd6f02` + `363f4b53788`). Блокер `[M-138.3-clone-bound-unsupported]` CLOSED. ROOT CAUSE
+> отличался от гипотезы ниже: НЕ «монформизатор мис-диспатчит», а single-key last-wins
+> `method_receivers["clone"]` instance-fallback (lookup ТОЛЬКО по имени метода, игнорируя
+> receiver-тип) роутил unbound primitive-`T` `.clone()` в произвольный неродственный `@clone`.
+> FIX: `PrimBuiltin::Identity` variant — `.clone()` на любом primitive-C-типе = bitwise self
+> (вариант (a)/(c) рекомендации ниже) + record/heap identity-clone arm + зеркало в
+> `infer_expr_c_type`. Реальный user/synthesized `@clone` сохраняет precedence. Текст ниже —
+> историческое описание gap'а до фикса.
 
 **Контракт выше — целевой.** Деталь auto-derive для **records** (memberwise
 `field.clone()` recursion) **РЕАЛИЗОВАНА и работает** (`#impl(Clone)` —
 plan126/plan126_2 `p3_cloneable_runtime_ok` + `p7_nested_record_clone_deep_ok`
 PASS; record `@clone()` корректно эмитит рекурсию по полям).
 
-**Однако deep element-wise clone для коллекций (`Vec`/`HashMap`/`Set`) пока
-НЕ реализован** — все три остались **shallow** (`@clone()` с bound «любой T»,
+**(ИСТОРИЧЕСКОЕ, до 138.4) deep element-wise clone для коллекций (`Vec`/`HashMap`/`Set`)
+НЕ был реализован** — все три были **shallow** (`@clone()` с bound «любой T»,
 без `[T Clone]`): bit-copy / per-(k,v) value-copy. Блокер —
-**`[M-138.3-clone-bound-unsupported]`**: bootstrap-монформизатор мис-диспатчит
+**`[M-138.3-clone-bound-unsupported]`**: bootstrap-монформизатор мис-диспатчил
 per-element generic `T.@clone()` / `K.@clone()` / `V.@clone()` для **примитивного**
 `T`/`K`/`V` (нет `int.@clone()` / `str.@clone()` — примитивы copy-built-in per
 этому D), резолвя unbound generic `.clone()` в произвольный неродственный
@@ -10693,18 +10714,14 @@ per-element generic `T.@clone()` / `K.@clone()` / `V.@clone()` для **прим
 `passing 'nova_str' to parameter of incompatible type`. Bound `[T Clone]` сам по
 себе **парсится и type-check'ается** (R1 Plan 138.3 — подтверждено), и для
 **record** element-типов emit корректен (`Vec[Point].clone()` даёт верную
-`Point.@clone()` рекурсию); сломан только primitive-`T` dispatch.
+`Point.@clone()` рекурсию); сломан был только primitive-`T` dispatch.
 
-**Следствие для bound-audit (G5):** так как collection-clone остались shallow
+**Следствие для bound-audit (G5):** так как collection-clone оставались shallow
 (`@clone()` любой T, **без** `T: Clone`-требования), нового нарушения bound на
-call-site'ах **нет** — deep-направление, требующее `T: Clone`, удержано. Для
+call-site'ах **не было** — deep-направление, требующее `T: Clone`, удерживалось. Для
 **примитивных** элементов shallow == deep (нет разделяемого pointee), для record
-элементов расхождение — задокументированный gap.
-
-**Снять gap:** монформизатор должен (a) роутить generic-`T` `.clone()` в
-built-in copy когда `T` примитив, ЛИБО (b) синтезировать per-type `@clone` для
-примитивов, ЛИБО (c) гейтить deep-цикл так, чтобы примитивный `T` падал в
-bit-copy. После фикса — переделать Vec+HashMap+Set deep одним проходом.
+элементов расхождение было gap'ом. **После 138.4 deep-форма с `[T Clone]` активна** —
+collection-clone теперь требует `T: Clone`, recursion корректна для record-элементов.
 
 #### Cross-refs
 

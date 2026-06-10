@@ -34472,3 +34472,71 @@ loop-var C-тип теперь десанитируется обратно в р
 | `94c6ee2a2b2` | Ф.2 (typed Vec literal) + Ф.3 (typed-storage element access) |
 | `6374279e2ab` | Ф.5 investigation doc (NovaArray load-bearing analysis) |
 | `f77175c6228` | Ф.6 (emit_for desanitize fix + t4 Vec import fix) |
+
+## Plan 138.4 — Generic-method codegen hardening: 4-marker cluster unblocked (2026-06-11)
+
+### Что решено / разблокировано
+
+**Один codegen-effort закрыл 4 заблокированных downstream-маркера сессии 138.x.**
+Все четыре имели корень в codegen-инфраструктуре generic-методов (emit_c.rs:
+clone-dispatch, overload-mangling, infer return-tiebreak, binding-mut pointee).
+В каждом случае реальный root cause отличался от prose-уровневой гипотезы плана
+(проверено эмпирически, не теоретизировано):
+
+**G-C: primitive/POD generic `.clone()` = identity (commits `88432dd6f02` + `363f4b53788`).**
+Root: НЕ монформизатор, а single-key last-wins `method_receivers["clone"]` instance-fallback
+(emit_c.rs ~22159, lookup ТОЛЬКО по имени метода, игнорируя receiver-тип) роутил unbound
+primitive-`T` `.clone()` в произвольный неродственный `@clone`. Fix: `PrimBuiltin::Identity`
+variant — `.clone()` на любом primitive-C-типе (nova_int/bool/f64/f32/char/str/byte/unit +
+int8_t..uint64_t) = bitwise self; + record/heap identity-clone arm (Nova_*-pointer без
+`(type,"clone")` в all_methods → receiver unchanged); + зеркало в `infer_expr_c_type`. Real
+user/synthesized `@clone` сохраняет precedence. **Разблокировало deep Vec/HashMap/Set clone**
+(восстановлены per-element `.clone()`-формы; plan138_3 теперь exercises РЕАЛЬНЫЙ deep clone).
+Закрыт `[M-138.3-clone-bound-unsupported]`.
+
+**G-A: full-signature overload mangling для generic-type методов (commit `14e6da56175`).**
+Root: collision в ERASED-template пути (`Nova_Vec_method_*`), НЕ в mono. `mangle_fn`
+`want_params` (via `type_ref_to_c`, bare T → `nova_int`) расходился с registry pre-pass
+`erased_type_ref_c` (bare T → `void*`). Fix: helper `mangle_want_params(recv, f)` реплицирует
+erasure точно. 3 `@index` overload'а (read scalar / read range / write) → distinct C-символы.
+Single-overload методы сохраняют base C-name → **zero mass regression**. Разблокировало
+`[M-138-mutindex-rename]` (`mut @index_set` → 3-way `mut @index`).
+
+**G-B: infer return-type tiebreak по recv-mut (commit `7c82ff2061c`).**
+`infer_expr_c_type` теперь tiebreak'ает RETURN-тип method-call по receiver mutability
+(widened `recv_and_method` до 4-эл, multi-overload pool предпочитает `recv_mutable == recv_mut`
+BEFORE `pool.first()`, guarded `pool.len()>1`) — зеркало `mangle_fn` recv-mut tiebreak'а на
+emit-стороне. INFRA-готовность для differing-return recv-mut overloads вообще.
+
+**G-D: generic-pointee type preservation под right-binding (`*T`) (commit `38360c30d80`).**
+Root: НЕ generic-T → Nova_any (subst работал), а binding-mut `const`-pointee для DEAD
+prelude-induced `Vec[any]` инстанса (из variadic `...items []any` в print/println), который
+ломал И writable store И forward-typedef (`const Nova_any` не проходил `starts_with("Nova_")`).
+Fix: `field_type_with_binding_mut` + `promote_pointer_pointee_mut` — для mut-поля `*T ≡ *mut T`
+(D33 §2 binding propagation / D216 §V2.6), applied на bare-template И mono-path. `mut data *mut T`
+→ `mut data *T` в vec_owned.nv. Закрыт `[M-138.2-v2-propagation-impl-gap]`.
+
+### Что осознанно НЕ сделано (won't-fix по дизайну)
+
+**`[M-138-getmut-rename]` — `@get_mut` остаётся distinct (НЕ переименован в `mut @get`).**
+Infra-gap (G-B return-tiebreak) закрыт, но dispatch-footgun остаётся: call-mangle tiebreak'ает
+recv_mutable к CALLER mutability, поэтому на `mut` receiver plain read `v.get(1)` ВСЕГДА
+диспатчил бы mut/pointer-overload `Option[*mut T]`, ломая read-by-value (`assert(v.get(1)==Some(99))`).
+Решение — оставить `@get_mut` distinct (Rust get/get_mut precedent, no footgun). Re-attempt
+только если mut-recv read-intent дизамбигуируется отдельно.
+
+### Коммиты
+
+| SHA | Фаза | Что |
+|---|---|---|
+| `88432dd6f02` | Ф.1 G-C | `PrimBuiltin::Identity` + record identity-clone arm |
+| `363f4b53788` | Ф.1 G-C | deep Vec/HashMap/Set clone restore |
+| `14e6da56175` | Ф.2 G-A | full-signature generic-method overload mangling + mut @index |
+| `7c82ff2061c` | Ф.3 G-B | infer return-type tiebreak by recv-mut |
+| `38360c30d80` | Ф.4 G-D | binding-mut generic pointee preservation; `*T` enabled |
+
+**Регрессии: 0.** plan138_1 10/0, plan138_2 5/0, plan138_3 2/0 (deep), plan131 27/1
+(pre-existing vec_debug_pos), plan90_1 20/0, plan118_1 11/0, plan126_2 9/1 (pre-existing
+p5_printable) + generic-method-heavy dirs (plan101_*, plan135, plan99, plan137, plan56,
+plan90, plan77, sort) clean. R2 (mangling) verify через stash+rebuild подтвердил все non-baseline
+fails (plan62 prelude, plan59 tuple-mangle) pre-existing.

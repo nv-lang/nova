@@ -35405,3 +35405,63 @@ G5 ✅ bound-audit: 0 нарушений (clone shallow → нет T: Clone-тр
   Коммиты: c3bc69da8f3 (Ф.1), 7f61ba2692e (Ф.2), 9f353b5b29a (Ф.3), Ф.4 docs.
   Рекомендация: сначала фикс монформизатора primitive-T .clone() dispatch, затем
   Vec+HashMap+Set deep одним проходом (deep-формы сохранены в docstring'ах @clone).
+
+=== Plan 138.4 — Generic-method codegen hardening (4-marker cluster unblock) — 2026-06-11 ===
+Ветка plan-138.1 (worktree nova-p138). Opus + Thinking ON. ИТОГ: 4/4 codegen-gap landed,
+0 регрессий. Один codegen-effort закрыл 4 заблокированных downstream-маркера сессии 138.x;
+в каждом случае реальный root cause ОТЛИЧАЛСЯ от prose-гипотезы плана (проверено эмпирически).
+
+Ф.1 G-C DONE (88432dd6f02 + 363f4b53788): primitive/POD generic .clone() = identity.
+  ROOT (уточнён): НЕ монформизатор, а single-key last-wins method_receivers["clone"]
+  instance-fallback (emit_c.rs ~22159, lookup ТОЛЬКО по имени метода) роутил unbound
+  primitive-T .clone() в неродственный @clone (Nova_WriteBuffer_method_clone etc) → crash.
+  FIX: PrimBuiltin::Identity variant (.clone() на любом primitive-C-типе = bitwise self:
+  nova_int/bool/f64/f32/char/str/byte/unit + int8_t..uint64_t) + record/heap identity-clone
+  arm (Nova_*-pointer без (type,"clone") в all_methods → receiver unchanged) + зеркало в
+  infer_expr_c_type. Real user @clone сохраняет precedence. Разблокировало deep Vec/HashMap/Set
+  clone (восстановлены per-element формы; plan138_3 теперь РЕАЛЬНЫЙ deep, не shallow).
+  ЗАКРЫЛ [M-138.3-clone-bound-unsupported] + 138.3 G2/G4.
+
+Ф.2 G-A DONE (14e6da56175): full-signature overload mangling для generic-type методов.
+  ROOT (уточнён): collision в ERASED-template пути (Nova_Vec_method_*), НЕ mono. mangle_fn
+  want_params (via type_ref_to_c, bare T → nova_int) расходился с registry pre-pass
+  erased_type_ref_c (bare T → void*). FIX: helper mangle_want_params(recv,f) реплицирует
+  erasure точно. 3 @index overload'а (read scalar / read range / write) → distinct C-символы
+  (Nova_Vec_method_index / _index__nova_int_void_p / _index__Nova_Range_p). Single-overload
+  методы сохраняют base C-name → ZERO mass regression. Разблокировало [M-138-mutindex-rename]
+  (@index_set → 3-way mut @index).
+
+Ф.3 G-B DONE (7c82ff2061c): infer return-type tiebreak по recv-mut.
+  infer_expr_c_type теперь tiebreak'ает RETURN-тип method-call по receiver mutability
+  (widened recv_and_method до 4-эл с call-site recv-mut via is_obj_mutable; multi-overload
+  pool предпочитает recv_mutable==recv_mut BEFORE pool.first(), guarded pool.len()>1) —
+  зеркало mangle_fn recv-mut tiebreak'а на emit-стороне. INFRA-готовность. getmut-rename
+  ([M-138-getmut-rename]) = WON'T-FIX-FOOTGUN: на mut receiver plain read v.get(1) диспатчил
+  бы mut-overload Option[*mut T], ломая read-by-value; @get_mut остаётся distinct (Rust
+  precedent). Re-attempt только если mut-recv read-intent дизамбигуируется отдельно.
+
+Ф.4 G-D DONE (38360c30d80): generic-pointee type preservation под right-binding (*T).
+  ROOT (уточнён): НЕ generic-T → Nova_any (subst работал), а binding-mut const-pointee для
+  DEAD prelude-induced Vec[any] инстанса (из variadic ...items []any в print/println) ломал
+  И writable store И forward-typedef (const Nova_any не проходил starts_with("Nova_")). FIX:
+  field_type_with_binding_mut + promote_pointer_pointee_mut — для mut-поля *T ≡ *mut T
+  (D33 §2 / D216 §V2.6), applied на bare-template И mono-path. mut data *mut T → mut data *T
+  в vec_owned.nv. ЗАКРЫЛ [M-138.2-v2-propagation-impl-gap] + 138.2-vec-type-priv part-b.
+
+Ф.5 DONE (docs): обновлены 138.4 (H1-H5 + gap-table + Итог), 138.2 (mutindex/getmut/v2-prop
+  markers), 138.3 (G2/G4 + Followups + Итог), spec D230 §KNOWN GAP помечен ЗАКРЫТ + §V2.6
+  codegen-status note (binding-mut pointee) + Q31 dispatch-fixed; simplifications.md + этот
+  файл + nova-private/discussion-log.md + memory.
+
+H1 ✅ primitive-T .clone() identity + deep collection clone landed.
+H2 ✅ mut @index 3-way overload mangling.
+H3 ✅ infer recv-mut return-tiebreak.
+H4 ✅ mut data *T writable (binding-mut pointee).
+H5 ✅ 0 регрессий vs baseline.
+
+РЕЗУЛЬТАТ (worktree binary + env, branch plan-138.1): plan138_1 10/0, plan138_2 5/0,
+  plan138_3 2/0 (deep), plan131 27/1 (pre-existing vec_debug_pos), plan90_1 20/0,
+  plan118_1 11/0, plan126_2 9/1 (pre-existing p5_printable), plan101_1 18/0, plan101_2 2/0,
+  plan101_3 6/0, plan101_4 11/0, plan135 11/0, sort PASS. 0 регрессий.
+  Коммиты: 88432dd6f02 + 363f4b53788 (Ф.1), 14e6da56175 (Ф.2), 7c82ff2061c (Ф.3),
+  38360c30d80 (Ф.4), Ф.5 docs.

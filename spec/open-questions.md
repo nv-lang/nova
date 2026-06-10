@@ -7268,32 +7268,34 @@ export fn Vec[T Clone] @clone() -> Self {  // метод — добавляет 
 
 ### Статус
 
-**Частично отвечен эмпирически (Plan 138.3 Ф.2-Ф.4, 2026-06-10).**
+**Отвечен эмпирически (Plan 138.3 Ф.2-Ф.4, 2026-06-10; codegen-dispatch ЗАКРЫТ Plan 138.4 Ф.1, 2026-06-11).**
 
 1. **Method-level narrowing-bound `[T Clone]` — ПРИНИМАЕТСЯ** bootstrap-парсером и
    type-checker'ом (нет CC-FAIL на самой сигнатуре). Для **record** element-типов
    emit корректен: `Vec[Point].clone()` даёт верную `Point.@clone()` рекурсию.
-2. **НО codegen-dispatch сломан для примитивного `T`** —
-   `[M-138.3-clone-bound-unsupported]`: per-element generic `T.@clone()` для
-   примитива (нет `int.@clone()`/`str.@clone()`) мис-резолвится в произвольный
-   неродственный `@clone`. Deep `Vec[int].clone()` → runtime crash; deep
-   `HashMap[str,int].clone()` → CC-FAIL `passing 'nova_str' to incompatible type`.
-3. **Решение (VERIFY-OR-KEEP):** все три collection-`@clone` **удержаны shallow**
-   (любой T, без `[T Clone]`) до фикса монформизатора. Spec-контракт (D230 amend)
-   — целевой; impl отстаёт, расхождение задокументировано там в §«KNOWN GAP».
-4. **Auto-derive `#impl(Clone)` для records — работает** (plan126_2 p3/p7 PASS),
-   так что (3) Q31 для records закрыт; bare-record без `#impl(Clone)` → bound-error
-   (не наблюдалось в audit'е, т.к. deep-форма не активна). `[M-138.3-autoclone-records]`
+2. **Codegen-dispatch для примитивного `T` — ✅ ИСПРАВЛЕН** (был
+   `[M-138.3-clone-bound-unsupported]`, CLOSED в Plan 138.4 Ф.1 G-C, commits
+   `88432dd6f02` + `363f4b53788`). ROOT CAUSE: НЕ монформизатор — single-key last-wins
+   `method_receivers["clone"]` instance-fallback роутил unbound primitive-`T` `.clone()`
+   в неродственный `@clone`. FIX: `PrimBuiltin::Identity` — `.clone()` на примитиве =
+   bitwise self + record/heap identity-clone arm. Deep `Vec[int].clone()` / deep
+   `HashMap[str,int].clone()` теперь GREEN.
+3. **Deep collection-`@clone` с `[T Clone]` — АКТИВНА** (восстановлена в Plan 138.4 после
+   первоначального VERIFY-OR-KEEP shallow в 138.3). Spec-контракт (D230 amend) — impl
+   догнал prose; §«KNOWN GAP» помечен закрытым.
+4. **Auto-derive `#impl(Clone)` для records — работает** (plan126_2 p3/p7 PASS);
+   bare-record без `#impl(Clone)` → bound-error. `[M-138.3-autoclone-records]`
    остаётся открытым followup на случай расширения покрытия.
 
-Остаётся открытым в части **языкового дизайна** (нужен ли method-level
-narrowing-bound как first-class фича) — но практический блокер сместился в
-codegen (`[M-138.3-clone-bound-unsupported]`), не в parser/checker.
+Остаётся открытым только в части **языкового дизайна** (нужен ли method-level
+narrowing-bound как first-class фича) — практический блокер (codegen-dispatch)
+закрыт в Plan 138.4.
 
 ### Cross-refs
 
 - [D230 amend (Plan 138.3)](decisions/02-types.md#d230-amend-plan-1383-2026-06-10--clone--deeprecursive-collections-element-wise) — Clone = deep, collection element-wise
 - D237 — protocol naming (Clone, метод `@clone`)
-- Plan 138.3 — home plan
+- Plan 138.3 — home plan; Plan 138.4 Ф.1 — codegen-dispatch fix (G-C)
+- `[M-138.3-clone-bound-unsupported]` — ✅ CLOSED (Plan 138.4 Ф.1, `88432dd6f02` + `363f4b53788`)
 - `[M-138.3-autoclone-records]` — auto-derive Clone для records (если bound-audit вскроет gap)
 
