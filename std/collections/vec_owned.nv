@@ -169,6 +169,7 @@ export fn Vec[T] mut @reserve(additional int) -> () {
         return
     }
     mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
+    // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
     while new_cap < needed {
         new_cap = new_cap * 2
     }
@@ -369,6 +370,7 @@ export fn Vec[T] mut @truncate(n int) -> @ {
 export fn Vec[T] mut @reverse() -> @ {
     mut lo = 0
     mut hi = @len - 1
+    // KEEP as while: two-pointer converge (lo++ / hi--), not a forward `0..@len` loop.
     while lo < hi {
         unsafe {
             (@data[lo], @data[hi]) = (@data[hi], @data[lo])
@@ -443,8 +445,7 @@ export fn Vec[T] mut @append(mut other Vec[T]) -> @ {
 /// relative order. O(n).
 export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
     mut write = 0
-    mut read = 0
-    while read < @len {
+    for read in 0..@len {
         ro v = unsafe { @data[read] }
         if pred(v) {
             if write != read {
@@ -454,7 +455,6 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
             }
             write = write + 1
         }
-        read = read + 1
     }
     @len = write
 }
@@ -543,12 +543,10 @@ export fn Vec[T] mut @fill(v T) -> @ {
             RawMem.fill(@data as *mut u8, v as u8, @len)
         }
     } else {
-        mut i = 0
-        while i < @len {
+        for i in 0..@len {
             unsafe {
                 @data[i] = v
             }
-            i = i + 1
         }
     }
     @
@@ -721,13 +719,11 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
     if @len != other.len() {
         return false
     }
-    mut i = 0
-    while i < @len {
+    for i in 0..@len {
         ro a = unsafe { @data[i] }
         if a != other[i] {
             return false
         }
-        i = i + 1
     }
     true
 }
@@ -760,10 +756,8 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 /// ```
 export fn Vec[T Clone] @clone() -> Self {
     mut out = Vec[T].with_capacity(@len)
-    mut i = 0
-    while i < @len {
+    for i in 0..@len {
         out.push(unsafe { @data[i] }.clone())
-        i = i + 1
     }
     out
 }
@@ -786,11 +780,9 @@ export fn Vec[T Clone] @clone() -> Self {
 /// ```
 export fn Vec[T Display] @display(mut sb StringBuilder) -> () {
     sb.append("Vec[")
-    mut i = 0
-    while i < @len {
+    for i in 0..@len {
         if i > 0 { sb.append(", ") }
         (unsafe { @data[i] }).display(sb)
-        i = i + 1
     }
     sb.append("]")
 }
@@ -800,11 +792,9 @@ export fn Vec[T Display] @display(mut sb StringBuilder) -> () {
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
 export fn Vec[T Debug] @debug(mut sb StringBuilder) -> () {
     sb.append("Vec[")
-    mut i = 0
-    while i < @len {
+    for i in 0..@len {
         if i > 0 { sb.append(", ") }
         (unsafe { @data[i] }).debug(sb)
-        i = i + 1
     }
     sb.append("]")
 }
