@@ -35465,3 +35465,50 @@ H5 ✅ 0 регрессий vs baseline.
   plan101_3 6/0, plan101_4 11/0, plan135 11/0, sort PASS. 0 регрессий.
   Коммиты: 88432dd6f02 + 363f4b53788 (Ф.1), 14e6da56175 (Ф.2), 7c82ff2061c (Ф.3),
   38360c30d80 (Ф.4), Ф.5 docs.
+
+=== Plan 138.2 — Vec std-cleanup batch (C1-C8) — 2026-06-11 ===
+Ветка plan-138.1 (worktree nova-p138). Пакет атомарных std-уровневых cleanup'ов на
+std/collections/vec_owned.nv поверх Plan 138.4 (post-138.4 baseline HEAD de71fd1). Все
+per-commit-green; std .nv читается с диска — rebuild не требовался. Pointer-model —
+финальная 138.5 (postfix pointee-mut *ro T/*mut T, binding-mut через mut перед именем).
+Каждый — один marker = один коммит (+ migrated fixtures).
+
+C1 [M-138.2-vec-reserve-dedup] (60030e09106): слиты @reserve + приватный @ensure_capacity
+  в единый public @reserve(additional) (×2 growth, initial cap 8, доублинг до needed,
+  делегат @realloc_to). 3 внутренних вызова repointed (@push/@insert/@append_zero).
+C2 [M-138.2-vec-drop-shrink] (4a187b966fa): удалены @shrink_to + @shrink_to_fit (GC-niche,
+  0 потребителей — GC реклеймит старые буферы). @realloc_to сохранён (нужен @reserve).
+  3 теста migrated (vec_capacity_pos/vec_grow_pos/inline).
+C3 [M-138.2-vec-getmut-reconsider] (3434c58d868): удалён @get_mut -> Option[*mut T]
+  (неидиоматичный raw-pointer API; Rust = safe Option<&mut T>, у Nova нет). Единственный
+  потребитель (plan131/vec_access_pos) migrated на safe v[i]=val (D240 MutIndex write).
+C4 [M-138.2-vec-as-ptr] (6a7965806b7): добавлен @as_ptr (recv-mut overload -> *ro T на
+  ro-receiver / mut -> *mut T на mut-receiver, оба => @data). Fixture t7_vec_as_ptr (5).
+  Известный gap: call-site dispatch перехватывается pre-existing Nova_Vec____ as_ptr-bridge
+  (emit_c.rs:21143 emit / :31537 infer), ro/mut distinction НЕ enforced (ro-recv write
+  ошибочно разрешён) → followup [M-138.2-vec-as-ptr-recv-mut-dispatch]. Functional GREEN.
+C5 [M-138.2-vec-from-fluent] (8a95a23f59e): Vec[T].from(items) → fluent one-liner
+  => Vec[T].with_capacity(items.len()).extend(items) — shallow value-copy (любой T, без
+  Clone bound), НЕ clone. Chain терминируется на .extend → не бьётся в fluent-return gap.
+C6 [M-138.2-vec-inline-unsafe-elem] (229047a854f): инлайнены 4 single-use unsafe{@data[i]}
+  temps — @pop/@get (Some-wrap), @display/@debug ((unsafe{@data[i]}).method(sb)). Подтверждено:
+  postfix-method-on-unsafe-block парсится+лоуэрится корректно (паренты делимитят unsafe-блок).
+C7 [M-138.2-vec-while-to-for] (98c57e3a9ac): 6 forward unit-step while i<@len → for i in
+  0..@len (@fill else / @equal / @clone / @display / @debug / @retain dual-cursor). 2 KEPT
+  as-while с комментами (@reserve ×2-step non-unit, @reverse two-pointer lo++/hi--).
+C8 [M-138.2-vec-type-priv] part-b — VERIFIED + SUPERSEDED (этот коммит): поле data возвращено
+  к mut data *mut T под финальной 138.5 моделью. ИСТОРИЯ: Plan 138.4 Ф.4 G-D (38360c30d80)
+  флипнул *mut T → *T, опираясь на binding-mut auto-mutate (mut data *T ≡ *mut T через
+  field_type_with_binding_mut/promote_pointer_pointee_mut). 138.5 РЕТИРИТ это auto-mutate-
+  сцепление: голый *T под 138.5 = read-only pointee → дал бы WRONG const-буфер (нечем @data[i]
+  =val); pointee-mut теперь задаётся явным postfix *mut T, binding-mut (mut перед именем) —
+  только reassign-ability поля (@data=dst в @realloc_to). Блокер [M-138.2-v2-propagation-impl-gap]
+  (закрытый в 138.4 как enabler *T-флипа) под 138.5 MOOT — auto-mutate-путь этим полем не
+  используется. C8 подтвердил GREEN после возврата к *mut T.
+
+РЕЗУЛЬТАТ (final targeted, worktree binary + env, branch plan-138.1, 0 новых FAIL vs
+  post-138.4 baseline): plan138_1 10/0, plan138_2 6/0, plan138_3 2/0 (deep clone),
+  plan131 27/1 (pre-existing vec_debug_pos ${v:?} interp gap), plan90_1 20/0, plan118_1 11/0,
+  plan126_2 9/1 (pre-existing p5_printable), inline std/collections/vec_owned.nv 1/0.
+  Коммиты: 60030e09106 (C1), 4a187b966fa (C2), 3434c58d868 (C3), 6a7965806b7 (C4),
+  8a95a23f59e (C5), 229047a854f (C6), 98c57e3a9ac (C7), C8 docs (этот коммит).

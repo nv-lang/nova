@@ -133,6 +133,39 @@ template) ОТКЛОНЁН после spike (template без struct-def+methods 
   `[M-138.2-stdlib-cyrillic-doccomment-mojibake]` (byte-signature другой, real prose, riskier, нужен
   human review намеренного текста). Приоритет: L.
 
+### Plan 138.2 — Vec std-cleanup batch (C1-C8, 2026-06-11)
+Пакет атомарных std-уровневых cleanup'ов на `std/collections/vec_owned.nv` поверх Plan 138.4
+(post-138.4 baseline HEAD `de71fd1`). Все per-commit-green; std `.nv` читается с диска — rebuild
+не требовался. Branch `plan-138.1`. Pointer-model — финальная **138.5** (postfix pointee-mut
+`*ro T`/`*mut T`, binding-mut через `mut` перед именем).
+- **DONE** `[M-138.2-vec-reserve-dedup]` (commit `60030e09106`): слиты `@reserve` + приватный
+  `@ensure_capacity` в единый public `@reserve(additional)` (×2 growth, initial cap 8). 3 callers repointed.
+- **DONE** `[M-138.2-vec-drop-shrink]` (commit `4a187b966fa`): удалены `@shrink_to` + `@shrink_to_fit`
+  (GC-niche, 0 потребителей — GC реклеймит старые буферы). `@realloc_to` сохранён (нужен `@reserve`).
+  3 теста migrated.
+- **DONE** `[M-138.2-vec-getmut-reconsider]` (commit `3434c58d868`): удалён `@get_mut -> Option[*mut T]`
+  (неидиоматичный raw-pointer API). Единственный потребитель migrated на safe `v[i]=val` (D240 MutIndex).
+- **DONE** `[M-138.2-vec-as-ptr]` (commit `6a7965806b7`): добавлен `@as_ptr` (recv-mut overload
+  `-> *ro T` / `mut -> *mut T`, оба `=> @data`). Fixture t7_vec_as_ptr.nv (5). **Известный gap:**
+  call-site dispatch перехватывается pre-existing `Nova_Vec____` as_ptr-bridge (emit_c.rs:21143/31537),
+  ro/mut distinction НЕ enforced → followup `[M-138.2-vec-as-ptr-recv-mut-dispatch]`. Functional GREEN.
+- **DONE** `[M-138.2-vec-from-fluent]` (commit `8a95a23f59e`): `Vec[T].from(items)` → fluent one-liner
+  `=> Vec[T].with_capacity(items.len()).extend(items)` — shallow value-copy (любой T, без Clone bound).
+- **DONE** `[M-138.2-vec-inline-unsafe-elem]` (commit `229047a854f`): инлайнены 4 single-use
+  `unsafe {@data[i]}` temps (`@pop`/`@get` Some-wrap; `@display`/`@debug` `(unsafe{...}).m(sb)`).
+- **DONE** `[M-138.2-vec-while-to-for]` (commit `98c57e3a9ac`): 6 forward unit-step `while i<@len` →
+  `for i in 0..@len`; 2 KEPT-as-while (`@reserve` ×2-step, `@reverse` two-pointer) с комментами.
+- **DONE + SUPERSESSION** `[M-138.2-vec-type-priv]` **part-b** (C8, commit `<C8-DOCS-COMMIT>`): поле
+  `data` возвращено к **`mut data *mut T`** под финальной 138.5 моделью. Plan 138.4 Ф.4 G-D флипнул
+  `*mut T`→`*T` (commit `38360c30d80`), опираясь на binding-mut auto-mutate (`mut data *T ≡ *mut T`).
+  **138.5 РЕТИРИТ это auto-mutate-сцепление:** голый `*T` под 138.5 = ro-pointee → дал бы WRONG
+  const-буфер (нечем `@data[i]=val`); pointee-mut теперь задаётся явным postfix `*mut T`, binding-mut
+  только reassign-ability поля (`@data=dst`). Блокер `[M-138.2-v2-propagation-impl-gap]` (закрытый в
+  138.4 как enabler `*T`-флипа) под 138.5 **MOOT** — auto-mutate-путь этим полем не используется.
+- **Final targeted regression (0 новых FAIL):** plan138_1 10/0, plan138_2 6/0, plan138_3 2/0,
+  plan131 27/1 (pre-existing vec_debug_pos), plan90_1 20/0, plan118_1 11/0, plan126_2 9/1
+  (pre-existing p5_printable), inline vec_owned 1/0. Приоритет: — (cleanup, не tech-debt).
+
 ### Plan 138 — Index[K,V] + MutIndex[K,V] protocols + str[i] fix (2026-06-10)
 Index[K,V] (@index) + MutIndex[K,V] (@index_set) protocols declared in prelude.
 Vec[T] @index + @index_set implemented (inline C dispatch in emit_c.rs).

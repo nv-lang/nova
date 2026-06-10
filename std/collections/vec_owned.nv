@@ -63,15 +63,23 @@ export type Vec[T] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
     // Never read/written outside `unsafe` blocks in this module.
     //
-    // Declared `mut data *T` (canonical pointer, D216 §1) rather than the
-    // explicit `*mut T`: the D33 §2 / D216 V2 binding-mut rule
-    // ([M-138.2-vec-type-priv] part-b, Plan 138.4 Ф.4) makes a `mut`-bound
-    // pointer field's pointee mutable automatically — `mut data *T`
-    // ≡ `mut data *mut T`. So `@data[i] = val` (push/index-set) stays a
-    // writable store; codegen lowers the pointee to the live element C type
-    // `Nova_T*` (no `const`), preserving the generic `T` through
-    // monomorphization (no `Nova_any*` pointee erasure).
-    mut data *T
+    // Declared `mut data *mut T` under the FINAL 138.5 pointer model:
+    // binding-mut (`mut` before the name) makes the *field* reassignable
+    // (`@data = dst` in @realloc_to), and the POSTFIX pointee-mut (`*mut T`)
+    // makes the *pointee* writable so `@data[i] = val` (push / index-set) is a
+    // valid store. Both axes are required: a writable, reassignable buffer.
+    //
+    // SUPERSEDED: the earlier D216 V2 form `mut data *T` ([M-138.2-vec-type-priv]
+    // part-b, Plan 138.4 Ф.4) relied on a binding-mut auto-mutate rule that made
+    // a `mut`-bound pointer field's pointee mutable from `*T` alone. Plan 138.5
+    // RETIRES that auto-mutate coupling: under 138.5 a bare `*T` is a *read-only*
+    // pointee (ro-pointee), so `*T` here would WRONGLY yield a const buffer. The
+    // pointee-mut must now be stated explicitly as the postfix `*mut T`.
+    //
+    // Codegen lowers the pointee to the live element C type `Nova_T*` (no
+    // `const`), preserving the generic `T` through monomorphization (no
+    // `Nova_any*` pointee erasure).
+    mut data *mut T
     // Number of live (initialised) elements.
     mut len int
     // Number of allocated element slots (`data` capacity).
