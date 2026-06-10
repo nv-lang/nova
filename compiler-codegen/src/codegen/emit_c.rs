@@ -4678,6 +4678,60 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.box_value_for_protocol(val, &concrete_c, &proto, &type_args)
     }
 
+    /// D33 §2 / D216 V2 binding-mut rule (Plan 138.4 Ф.4 G-D): a `mut`-bound
+    /// record field whose declared type is a bare `*T` (canonical *readonly*
+    /// pointer per D216 §1) carries the binding's mutability into the pointer
+    /// pointee — `mut data *T` ≡ `mut data *mut T`. At C-codegen level the
+    /// distinction is `const T*` (ro) vs `T*` (mut): a `const` pointee makes
+    /// `@data[i] = val` an illegal write, AND breaks the forward-`typedef`
+    /// emission for an erased pointee (`const Nova_any**` does not start with
+    /// `Nova_`, so the struct never forward-declares `Nova_any`). Applying the
+    /// binding-mut rule yields `Nova_T*` / `Nova_any*` — writable and
+    /// forward-declarable.
+    ///
+    /// Transparent over the outer modifier wrappers (`Readonly`/`Mut`/`Unsafe`)
+    /// so the pointee `T` (which may itself be a generic param resolved through
+    /// `current_type_subst`) is preserved through monomorphization. Only the
+    /// *immediate* pointer's pointee is promoted; nested pointers and an
+    /// already-`Mut`/`Unsafe` pointee are left untouched.
+    fn field_type_with_binding_mut(ty: &TypeRef, field_mutable: bool) -> TypeRef {
+        if !field_mutable {
+            return ty.clone();
+        }
+        Self::promote_pointer_pointee_mut(ty)
+    }
+
+    fn promote_pointer_pointee_mut(ty: &TypeRef) -> TypeRef {
+        match ty {
+            // Outer binding-level modifier wrappers are transparent — recurse
+            // into the wrapped type so `mut * T` / `ro * T` etc. still reach
+            // the immediate `Pointer`.
+            TypeRef::Readonly(inner, span) => {
+                TypeRef::Readonly(Box::new(Self::promote_pointer_pointee_mut(inner)), *span)
+            }
+            TypeRef::Mut(inner, span) => {
+                TypeRef::Mut(Box::new(Self::promote_pointer_pointee_mut(inner)), *span)
+            }
+            TypeRef::Unsafe(inner, span) => {
+                TypeRef::Unsafe(Box::new(Self::promote_pointer_pointee_mut(inner)), *span)
+            }
+            // Immediate pointer: a bare (canonical-ro) pointee is promoted to
+            // `Mut(pointee)`. An already-`Mut`/`Unsafe` pointee is left as-is
+            // (explicit modifier wins over the binding default).
+            TypeRef::Pointer(pointee, span) => {
+                match pointee.as_ref() {
+                    TypeRef::Mut(..) | TypeRef::Unsafe(..) => ty.clone(),
+                    TypeRef::Unit(_) => ty.clone(), // *() = void*, mutability irrelevant
+                    inner => TypeRef::Pointer(
+                        Box::new(TypeRef::Mut(Box::new(inner.clone()), inner.span())),
+                        *span,
+                    ),
+                }
+            }
+            other => other.clone(),
+        }
+    }
+
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
         // Plan 48: type parameter substitution (monomorphization context)
         if let TypeRef::Named { path, generics, .. } = ty {
@@ -8791,7 +8845,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // translate successfully. Earlier arms catch generic-param erasure
                         // patterns (void* / NovaArray_nova_int*); this fall-through is for
                         // non-generic-param types where translation fail = compiler bug.
-                        _ => self.type_ref_to_c(&f.ty).map_err(|e|
+                        // Plan 138.4 Ф.4 G-D: apply the D33 §2 binding-mut rule so a
+                        // `mut data *T` pointer field's pointee is mutable (no `const`).
+                        _ => self.type_ref_to_c(
+                                &Self::field_type_with_binding_mut(&f.ty, f.mutable),
+                            ).map_err(|e|
                                 self.err_no_int_fallback(
                                     &format!("field `{}` в type `{}`", f.name, t.name),
                                     &e,
@@ -12835,7 +12893,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // that may be instantiated later in generic_type_defs_buf.
                 // Plan 70 PhaseA3: strict — mono'd generic type instance fields.
                 let field_ctys: Vec<String> = fields.iter()
-                    .map(|f| self.type_ref_to_c(&f.ty).map_err(|e| self.err_no_int_fallback(
+                    .map(|f| self.type_ref_to_c(
+                        // Plan 138.4 Ф.4 G-D: apply the D33 §2 binding-mut rule so a
+                        // `mut data *T` field's pointee is mutable (no `const`) —
+                        // keeps `@data[i] = val` writable AND lets the pointee
+                        // forward-`typedef` fire (see field_type_with_binding_mut).
+                        &Self::field_type_with_binding_mut(&f.ty, f.mutable),
+                    ).map_err(|e| self.err_no_int_fallback(
                         &format!("mono'd generic type instance field `{}`", f.name),
                         &e,
                     )))
