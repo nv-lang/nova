@@ -71,17 +71,16 @@ export type Vec[T] priv {
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 /// Create an empty `Vec[T]` вЂ” no allocation, cap = 0.
-export fn Vec[T].new() -> Vec[T] {
-    Vec { data: null_buf[T](), len: 0, cap: 0 }
-}
+export fn Vec[T].new() -> Self =>
+    { data: null_buf[T](), len: 0, cap: 0 }
 
 /// Create an empty `Vec[T]` pre-allocated to hold at least `n` elements
 /// without reallocating.
-export fn Vec[T].with_capacity(n int) -> Vec[T] {
+export fn Vec[T].with_capacity(n int) -> Self {
     if n <= 0 {
         return Vec[T].new()
     }
-    Vec { data: alloc_buf[T](n), len: 0, cap: n }
+    Self { data: alloc_buf[T](n), len: 0, cap: n }
 }
 
 /// Build a `Vec[T]` by copying every element of an iterable source.
@@ -98,7 +97,7 @@ export fn Vec[T].with_capacity(n int) -> Vec[T] {
 /// with method-level generics do not propagate the type-arg substitution into
 /// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
 /// `@extend` (an instance method) does not hit this gap and IS converted.
-export fn Vec[T].from(items []T) -> Vec[T] {
+export fn Vec[T].from(items []T) -> Self {
     mut v = Vec[T].with_capacity(items.len())
     v.extend(items)
     v
@@ -421,6 +420,16 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
     @
 }
 
+// NOTE ([M-138.2-vec-self-return] / [M-138.2-self-in-param]): the receiver-typed
+// params below (`@append`, `@copy_from`, `@compare`, `@equal`) keep the explicit
+// `Vec[T]` form rather than `Self`. Flipping the *return* types to `Self` (D182)
+// and using `Self { ... }` constructor literals (D66) works, but `Self` in
+// *param* position on a generic-type method is a codegen gap: it lowers the
+// param's C type without the receiver substitution, emitting a forward-decl that
+// conflicts with the definition (`conflicting types for 'Nova_Vec_method_append'`
+// — verified empirically, all of plan138_1 CC-FAIL). Param-`Self` stays `Vec[T]`
+// until the generic-method param-type substitution lands in codegen.
+
 /// Move every element of `other` onto the end of `self`, leaving `other`
 /// empty.
 export fn Vec[T] mut @append(mut other Vec[T]) -> @ {
@@ -641,22 +650,22 @@ export fn Vec[T] @compare(other Vec[T]) -> int {
 /// method. The method is present (and overloads with `@index(i int)`) so the
 /// `Index[Range, Vec[T]]` contract is satisfied as a real Nova body; routing
 /// `v[range]` through it replaces the codegen magic in a later phase.
-export fn Vec[T] @index(r Range) -> Vec[T] {
+export fn Vec[T] @index(r Range) -> Self {
     if r.start < 0 || r.end < r.start || r.end > @len {
         panic("Vec: slice out of bounds")
     }
     ro n = r.end - r.start
-    Vec { data: unsafe { @data + r.start }, len: n, cap: n }
+    Self { data: unsafe { @data + r.start }, len: n, cap: n }
 }
 
 /// Safe zero-copy sub-range view вЂ” `Some(view)` when `[r.start, r.end)` is in
 /// bounds, `None` otherwise. The non-panicking counterpart of `@index(Range)`.
-export fn Vec[T] @get(r Range) -> Option[Vec[T]] {
+export fn Vec[T] @get(r Range) -> Option[Self] {
     if r.start < 0 || r.end < r.start || r.end > @len {
         return None
     }
     ro n = r.end - r.start
-    Some(Vec { data: unsafe { @data + r.start }, len: n, cap: n })
+    Some(Self { data: unsafe { @data + r.start }, len: n, cap: n })
 }
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -753,7 +762,7 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 /// assert(a.len() == 3)   // original unchanged
 /// assert(b.len() == 4)
 /// ```
-export fn Vec[T] @clone() -> Vec[T] {
+export fn Vec[T] @clone() -> Self {
     if @len <= 0 {
         return Vec[T].new()
     }
@@ -763,7 +772,7 @@ export fn Vec[T] @clone() -> Vec[T] {
     unsafe {
         RawMem.copy_nonoverlapping(@data as *u8, dst as *mut u8, n * size_of[T]())
     }
-    Vec { data: dst, len: n, cap: n }
+    Self { data: dst, len: n, cap: n }
 }
 
 
