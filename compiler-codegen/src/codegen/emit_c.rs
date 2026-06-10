@@ -30460,7 +30460,13 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 // call на known receiver-type, ищем в method_overloads. Это
                 // решает single-key last-wins для одноимённых методов.
                 {
-                    let recv_and_method: Option<(String, String, bool)> = match &func.kind {
+                    // Plan 138.4 Ф.3 (G-B): 4th tuple element = receiver mutability
+                    // at the call-site (`is_obj_mutable`). Used to tiebreak two
+                    // same-name+same-params overloads that differ only by
+                    // `recv_mutable` + return type (mirrors mangle_fn's recv-mut
+                    // tiebreak so `let a = v.get(0)` infers the ro-overload return
+                    // and `mut w; let b = w.get(0)` infers the mut-overload return).
+                    let recv_and_method: Option<(String, String, bool, bool)> = match &func.kind {
                         ExprKind::Path(parts) => {
                             // Self → current_receiver_type
                             let parts: Vec<String> = if !parts.is_empty() && parts[0] == "Self" {
@@ -30475,7 +30481,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 parts.clone()
                             };
                             if parts.len() == 2 {
-                                Some((parts[0].clone(), parts[1].clone(), false))
+                                Some((parts[0].clone(), parts[1].clone(), false, false))
                             } else {
                                 None
                             }
@@ -30485,13 +30491,13 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             match &obj.kind {
                                 ExprKind::Ident(n) if n == "Self" => {
                                     if let Some(r) = &self.current_receiver_type {
-                                        Some((r.clone(), name.clone(), false))
+                                        Some((r.clone(), name.clone(), false, false))
                                     } else {
                                         None
                                     }
                                 }
                                 ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
-                                    Some((n.clone(), name.clone(), false))
+                                    Some((n.clone(), name.clone(), false, false))
                                 }
                                 _ => {
                                     let obj_ty = self.infer_expr_c_type(obj);
@@ -30510,7 +30516,9 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                             "nova_byte" => "u8".to_string(),
                                             other       => other.to_string(),
                                         };
-                                        Some((nova_name, name.clone(), true))
+                                        // Plan 138.4 Ф.3 (G-B): receiver mutability at
+                                        // the call-site for the recv-mut return-type tiebreak.
+                                        Some((nova_name, name.clone(), true, self.is_obj_mutable(obj)))
                                     } else {
                                         None
                                     }
@@ -30519,7 +30527,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         }
                         _ => None,
                     };
-                    if let Some((rt, mn, want_inst)) = recv_and_method {
+                    if let Some((rt, mn, want_inst, recv_mut)) = recv_and_method {
                         let key = (rt.clone(), mn.clone());
                         // Plan 101 [M-fn-prefix-int-only-mono] fix: для array-ext
                         // методов с собственными method-level generics (e.g.
@@ -30651,6 +30659,27 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                         .copied().collect();
                                     if !owns.is_empty() { owns } else { strict }
                                 };
+                                // Plan 138.4 Ф.3 (G-B): recv-mut return-type tiebreak.
+                                // When ≥2 overloads survive the param-type filter and
+                                // differ by `recv_mutable` + return type, the bare
+                                // `pool.first()` would always pick the first-declared
+                                // overload's return type — wrong for the mut/ro pair.
+                                // Mirror mangle_fn (~9772): prefer the overload whose
+                                // `recv_mutable` matches the call-site receiver
+                                // mutability so `let a = v.get(0)` (ro recv) infers the
+                                // ro-overload return and `mut w; let b = w.get(0)`
+                                // infers the mut-overload return. Only fires when ≥2
+                                // overloads tie on params (otherwise pool.first() is
+                                // already unambiguous), so legit single-overload and
+                                // distinct-param cases are unchanged.
+                                if pool.len() > 1 {
+                                    if let Some(sig) = pool.iter()
+                                        .find(|s| s.recv_mutable == recv_mut
+                                            && !self.is_generic_stub_c(&s.return_c_type))
+                                    {
+                                        return sig.return_c_type.clone();
+                                    }
+                                }
                                 if let Some(sig) = pool.first() {
                                     if !self.is_generic_stub_c(&sig.return_c_type) {
                                         return sig.return_c_type.clone();
