@@ -1,0 +1,59 @@
+// Plan 138.post [M-138.2-vec-as-ptr] — t7: Vec @as_ptr buffer accessor with
+// the recv-mut overload (ro receiver -> *ro T, mut receiver -> *mut T).
+//
+// `@as_ptr()` returns the raw element-buffer pointer (`@data`) for FFI /
+// (ptr, len) interop. It is SAFE to call — extracting the pointer value is not
+// a dereference — but every deref (`*p`, `p.read()`, `p.write(v)`, `p + i`)
+// needs an `unsafe { }` block.
+//
+// The recv-mut overload dispatch (Plan 138.4 G-A mangling + G-B infer
+// tiebreak) selects:
+//   - `@as_ptr() -> *ro T`     on a `ro`-bound receiver  (read-only buffer ptr)
+//   - `mut @as_ptr() -> *mut T` on a `mut`-bound receiver (writable buffer ptr)
+
+module plan138_2.t7_vec_as_ptr
+
+import std.collections.vec_owned.{Vec}
+
+test "ro vec as_ptr deref-read under unsafe" {
+    ro v = Vec[int].from([10, 20, 30])
+    ro p = v.as_ptr()
+    ro first = unsafe { *p }
+    assert(first == 10)
+}
+
+test "ro vec as_ptr + pointer arithmetic reads element i" {
+    ro v = Vec[int].from([100, 200, 300])
+    ro p = v.as_ptr()
+    ro third = unsafe { *(p + 2) }
+    assert(third == 300)
+}
+
+test "mut vec as_ptr picks *mut T overload — write under unsafe" {
+    mut v = Vec[int].from([1, 2, 3])
+    unsafe {
+        // recv-mut overload: mut receiver -> *mut T, so write() is permitted.
+        v.as_ptr().write(99)
+    }
+    assert(v[0] == 99)
+    assert(v[1] == 2)
+    assert(v[2] == 3)
+}
+
+test "mut vec as_ptr write via *p = v through pointer arithmetic" {
+    mut v = Vec[int].from([5, 6, 7])
+    unsafe {
+        ro p = v.as_ptr()
+        *(p + 1) = 60
+    }
+    assert(v[0] == 5)
+    assert(v[1] == 60)
+    assert(v[2] == 7)
+}
+
+test "as_ptr on Vec[u8] yields byte buffer ptr" {
+    ro v = Vec[u8].from([0x41, 0x42, 0x43])
+    ro p = v.as_ptr()
+    ro b0 = unsafe { *p }
+    assert(b0 == (0x41 as u8))
+}

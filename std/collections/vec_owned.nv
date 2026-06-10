@@ -21,9 +21,13 @@
 // the conservative scan over the buffer.
 //
 // Unsafe model (D216 В§8). Every raw-pointer operation (alloc, `data + i`,
-// deref read/write) is wrapped in an `unsafe { }` block. The *public* API is
-// fully safe вЂ” no `unsafe`, no `*mut T`, no pointer escapes to callers.
-// In-place element mutation is the safe `v[i] = val` (D240 `MutIndex` write).
+// deref read/write) is wrapped in an `unsafe { }` block. The element-access
+// API is fully safe вЂ” no `unsafe` to *use*; in-place element mutation is the
+// safe `v[i] = val` (D240 `MutIndex` write). The lone deliberate escape is the
+// FFI accessor `@as_ptr()` (recv-mut overload: `*ro T` on a `ro` receiver,
+// `*mut T` on a `mut` receiver) вЂ” calling it is safe (a pointer-value copy,
+// not a deref), but *dereferencing* the returned pointer is the caller's
+// `unsafe` obligation.
 
 module collections.vec_owned
 
@@ -323,6 +327,31 @@ export fn Vec[T] @last() -> Option[T] {
     }
     @get(@len - 1)
 }
+
+/// Raw read-only pointer to the element buffer, for FFI / interop with C
+/// `(ptr, len)` APIs. The `ro` receiver yields a `*ro T` (ABI `const T*`).
+///
+/// SAFE to call — extracting the pointer *value* is not a dereference.
+/// Dereferencing the returned pointer (`*p`, `p.read()`, `p + i`) needs an
+/// `unsafe { }` block, and the caller owns these invariants:
+///   - Only `[0, len())` element slots are live; never read past `len()`.
+///   - The pointer is INVALIDATED by any reallocating mutation
+///     (`push`/`reserve`/`insert`/`with_capacity` growth). Re-fetch after such.
+///   - On an empty `Vec` (`cap == 0`) `@data` is the `null_buf` placeholder —
+///     non-null but a single never-live slot; do not dereference it.
+///
+/// The recv-mut companion `mut @as_ptr() -> *mut T` (below) yields a writable
+/// `*mut T` when called on a `mut`-bound receiver (Plan 138.4 recv-mut
+/// overload dispatch).
+export fn Vec[T] @as_ptr() -> *ro T => @data
+
+/// Raw mutable pointer to the element buffer — the writable recv-mut overload
+/// of `@as_ptr`. Selected when the receiver is `mut`-bound; yields `*mut T`
+/// (ABI `T*`) so a `p.write(v)` / `*p = v` store is permitted under `unsafe`.
+///
+/// SAFE to call; same dereference-needs-unsafe and realloc-invalidation /
+/// empty-`Vec` caveats as the `ro` overload above.
+export fn Vec[T] mut @as_ptr() -> *mut T => @data
 
 // ──────────────────────────────────────────────────────────────────────────
 // Mutation
