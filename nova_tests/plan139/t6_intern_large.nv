@@ -1,0 +1,29 @@
+// Plan 139 Ф.6 — many distinct literals build cleanly, no symbol collisions.
+// Content-hash-based symbol names (FNV-1a) must stay unique across a large set
+// of distinct literals; repeats must dedup. The build succeeding (no duplicate
+// C symbol definition) is itself the key assertion (R15: no symbol collision).
+module plan139.t6_intern_large
+
+test "many distinct literals + repeats compile and behave correctly" {
+    ro l0 = "alpha"
+    ro l1 = "beta"
+    ro l2 = "gamma"
+    ro l3 = "delta"
+    ro l4 = "epsilon"
+    ro l5 = "zeta"
+    ro l6 = "eta"
+    ro l7 = "theta"
+    ro l8 = "iota"
+    ro l9 = "kappa"
+    // Repeats of earlier literals -> must dedup to the same buffer.
+    ro r0 = "alpha"
+    ro r4 = "epsilon"
+    ro r9 = "kappa"
+    assert(l0 == r0, "alpha repeat equal")
+    assert(l4 == r4, "epsilon repeat equal")
+    assert(l9 == r9, "kappa repeat equal")
+    assert(l0 != l1, "distinct stay distinct")
+    assert(l7 != l8, "distinct stay distinct 2")
+    assert(l0.len() == 5, "alpha len 5")
+    assert(l6.len() == 3, "eta len 3")
+}

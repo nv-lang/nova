@@ -681,6 +681,20 @@ pub struct CEmitter {
     /// equivalent: build fails with detailed diagnostic; user sees all E7001s
     /// в одном compile pass (better UX чем fail-fast).
     strict_errors: std::cell::RefCell<Vec<String>>,
+    /// Plan 139 Ф.6: literal interning. Maps a string-literal's raw content
+    /// → the C symbol name of its single shared `static const uint8_t[]`
+    /// rodata buffer. Identical literals (same bytes) reuse one buffer +
+    /// one `static const nova_str` value, so `"abc"` appearing N times
+    /// references one buffer (rodata dedup, size/perf win, identity-stable
+    /// ptr). Semantically invisible: str eq/hash are byte-content (Ф.3), so
+    /// pointer-identity coincidence cannot be observed by programs. The
+    /// symbol name is content-hash-based (stable, collision-resistant; R15).
+    interned_str_literals: HashMap<String, String>,
+    /// Plan 139 Ф.6: insertion-ordered list of interned literals to emit at
+    /// the `/*__INTERNED_STR_LITERALS__*/` preamble marker. Each entry =
+    /// (symbol, escaped_c_string, byte_len). Ordered (not just the HashMap)
+    /// for deterministic emitted-C output.
+    interned_str_emit: Vec<(String, String, usize)>,
     /// Plan 70.1: set of imported-module prefix names visible в this module
     /// (alias + last-segment of import path). Used в emit_call Member dispatch
     /// чтобы распознать `<alias>.func(args)` или `<module>.func(args)` pattern
@@ -1096,6 +1110,8 @@ impl CEmitter {
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
+            interned_str_literals: HashMap::new(),
+            interned_str_emit: Vec::new(),
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
@@ -3214,6 +3230,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let per_e_decls = self.render_per_e_fail_decls();
         self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
 
+        // Plan 139 Ф.6: interned string-literal statics splice. Collected
+        // during body emission (intern_str_literal), emitted at the preamble
+        // marker as one shared rodata buffer + one nova_str value per content.
+        let interned = self.render_interned_str_literals();
+        self.out = self.out.replace("/*__INTERNED_STR_LITERALS__*/", &interned);
+
         // Plan 70 Ф.B0 (session 2): strict-error finalization gate.
         // Cascade-blocked sites (infer_expr_c_type, register_mono_instance,
         // register_mono_method_instance, infer_mono_method_ret_with_args, etc.)
@@ -3594,6 +3616,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // ДО NovaOpt маркера (file position Y) — fwd-decl там → CC-fail
         // `incomplete type`. См. `builtin_sum_method_fwd_decls`.
         self.line("/*__BUILTIN_SUM_METHOD_FWD_DECLS__*/");
+        // Plan 139 Ф.6: interned string-literal statics splice marker.
+        // Replaced in finalize with one shared `static const uint8_t[]` +
+        // `static const nova_str` per distinct literal content. Placed at
+        // file scope AFTER the nova_rt.h include (nova_str/uint8_t in scope).
+        self.line("/*__INTERNED_STR_LITERALS__*/");
         self.line("");
     }
 
@@ -16665,12 +16692,15 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
             // Plan 134: `null ptr` literal → C `((void*)0)` (*() = void*).
             ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
             ExprKind::StrLit(s)   => {
-                let escaped = Self::escape_c_str(s);
-                // Plan 139 Ф.0: str is the value-record `{ ptr *ro u8, len int }`;
-                // its C ABI image `nova_str` now has a `const uint8_t* ptr` field.
-                // Cast the `const char*` string literal → `const uint8_t*` so the
-                // compound-literal init is warning-free (-Wpointer-sign clean).
-                Ok(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, s.len()))
+                // Plan 139 Ф.6: literal interning. Identical string literals
+                // share one `static const uint8_t[]` rodata buffer + one
+                // `static const nova_str` value (see intern_str_literal). The
+                // expression evaluates to that shared value. Semantically
+                // invisible: str eq/hash are byte-content (Ф.3), so the shared
+                // pointer identity cannot be observed; the buffer is `*ro`
+                // immutable so sharing is sound (R14). Falls back to an inline
+                // compound literal only for the empty string (no buffer needed).
+                Ok(self.intern_str_literal(s))
             }
             ExprKind::InterpolatedStr { parts } => {
                 self.emit_interpolated_str(parts)
@@ -32633,6 +32663,77 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             }
             _ => false,
         }
+    }
+
+    /// Plan 139 Ф.6: intern a string literal. Returns a C expression that
+    /// evaluates to the literal's `nova_str` value. Identical literals (same
+    /// bytes) share ONE `static const uint8_t[]` rodata buffer + ONE
+    /// `static const nova_str` value, deduped by content. The shared statics
+    /// are emitted at the `/*__INTERNED_STR_LITERALS__*/` preamble marker in
+    /// `finalize`. The empty string keeps an inline compound literal (no
+    /// buffer to dedup; `.ptr=""` already shares one rodata byte).
+    ///
+    /// Symbol naming is content-hash-based (FNV-1a over the raw bytes,
+    /// rendered hex) → stable across compilations and collision-resistant
+    /// (R15). On the astronomically-unlikely hash collision between two
+    /// DIFFERENT contents we would alias them; to make that impossible the
+    /// dedup map is keyed by the FULL content, and a collision would attempt
+    /// to register two contents under one symbol — we disambiguate by
+    /// appending a sequence suffix when the hash-derived base is already
+    /// taken by a different content.
+    fn intern_str_literal(&mut self, s: &str) -> String {
+        // Empty string: no rodata buffer needed; inline compound literal with
+        // a shared empty-string literal pointer. Keeps parity with prior code.
+        if s.is_empty() {
+            return "(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into();
+        }
+        if let Some(sym) = self.interned_str_literals.get(s) {
+            return sym.clone();
+        }
+        // FNV-1a 64-bit over the raw UTF-8 bytes → stable hex symbol base.
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in s.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        let mut sym = format!("_nova_strlit_{:016x}", hash);
+        // Collision guard: if this symbol is already bound to a DIFFERENT
+        // content, append a disambiguating sequence suffix until unique.
+        if self.interned_str_emit.iter().any(|(existing, _, _)| existing == &sym) {
+            let mut seq = 1usize;
+            loop {
+                let candidate = format!("_nova_strlit_{:016x}_{}", hash, seq);
+                if !self.interned_str_emit.iter().any(|(existing, _, _)| existing == &candidate) {
+                    sym = candidate;
+                    break;
+                }
+                seq += 1;
+            }
+        }
+        let escaped = Self::escape_c_str(s);
+        self.interned_str_emit.push((sym.clone(), escaped, s.len()));
+        self.interned_str_literals.insert(s.to_string(), sym.clone());
+        sym
+    }
+
+    /// Plan 139 Ф.6: render all interned string-literal statics for the
+    /// `/*__INTERNED_STR_LITERALS__*/` preamble marker. Each literal becomes
+    /// one shared rodata buffer + one shared `static const nova_str` value.
+    fn render_interned_str_literals(&self) -> String {
+        if self.interned_str_emit.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        out.push_str("/* Plan 139 Ф.6: interned string literals (rodata dedup). */\n");
+        for (sym, escaped, len) in &self.interned_str_emit {
+            // One shared immutable byte buffer + one shared nova_str value.
+            // `static const` → internal linkage, no cross-TU symbol clash.
+            out.push_str(&format!(
+                "static const uint8_t {sym}_buf[] = \"{escaped}\";\n\
+                 static const nova_str {sym} = {{ .ptr = {sym}_buf, .len = {len} }};\n"
+            ));
+        }
+        out
     }
 
     fn escape_c_str(s: &str) -> String {
