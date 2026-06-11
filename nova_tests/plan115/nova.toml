@@ -1,0 +1,34 @@
+# nova.toml — scoped FFI manifest for the Plan 115 sqlite example.
+#
+# Plan 83-go-cmn: extracted из package-wide nova_tests/nova.toml. Раньше
+# sqlite-shim force-include'ился во ВСЕ ~1000 тестов (ломал net-тесты под
+# MSVC + архитектурно хрупко). Теперь [ffi] заскоуплен сюда: find_manifest
+# (test_runner) идёт вверх от тест-файла и находит ЭТОТ манифест для
+# plan115/* раньше родительского — так sqlite-пример не задевает др. тесты.
+#
+# package name = "plan115" (НЕ меняет module-identity: plan115-тесты
+# объявляют `module plan115.<file>`, что совпадает с package="plan115" +
+# src=".", как mathlib → `module mathlib.calc`; D78 не нарушается).
+#
+# Реальный потребитель shim — только t4_sqlite_e2e_ok.nv (вызывает external
+# fn'ы из sqlite_mini_ffi.h). Header — `static inline`, dead-code-eliminated
+# в остальных plan115-тестах (zero cost). t3 — neg-тест (fail на type-check,
+# shim не нужен).
+
+[package]
+name = "plan115"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Plan 115 FFI tests (ptr/tuple/opaque-handle/sqlite e2e)"
+
+[lib]
+src = "."
+
+[dependencies]
+
+# Plan 115 D214 [M-115-ffi-build-pipeline]: sqlite shim force-included в
+# каждый TU этого пакета. Path относительно этого nova.toml.
+[ffi]
+c_shims      = ["../../examples/ffi/sqlite_mini_ffi.h"]
+include_dirs = []
+libs         = []
