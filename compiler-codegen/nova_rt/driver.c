@@ -371,10 +371,10 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
              * After this, alloc_slot can reuse the slot for a new fiber safely. */
             if (sst && sl >= 0 && sl < sst->capacity) {
                 bool exp_t = true;
-                __atomic_compare_exchange_n((volatile bool*)&sst->parked[sl],
+                __atomic_compare_exchange_n((volatile bool*)nova_sched_parked_at(sst, sl),
                     &exp_t, false, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
-                if (sst->pending_wake && sl < sst->capacity)
-                    __atomic_store_n(&sst->pending_wake[sl], 0, __ATOMIC_RELEASE);
+                if (sl < sst->capacity)
+                    __atomic_store_n(nova_sched_pending_wake_at(sst, sl), 0, __ATOMIC_RELEASE);
             }
             /* Invalidate expected_co's slot record so its epilogue does NOT call
              * nova_scope_free_slot (the slot is unowned now — no new fiber took it

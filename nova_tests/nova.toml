@@ -29,16 +29,13 @@ src = "."
 
 [dependencies]
 
-# Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim files declared
-# в [ffi] секции автоматически force-include'аются (для header .h) или
-# линкуются (для .c) в каждом тестовом TU. Paths относительно этого
-# nova.toml. Plan 115 V1 объявляет user-side sqlite shim из examples/ffi/ —
-# тесты в `nova_tests/plan115/t4_sqlite_e2e_ok.nv` exerc'ируют его через
-# external fn declarations.
+# Plan 83-go-cmn: НЕТ package-wide [ffi] секции.
 #
-# Header sqlite_mini_ffi.h это `static inline` функции — dead-code-eliminated
-# linker'ом в тестах которые их не используют. Zero runtime cost.
-[ffi]
-c_shims      = ["../examples/ffi/sqlite_mini_ffi.h"]
-include_dirs = []
-libs         = []
+# Ранее здесь жил package-wide `[ffi] c_shims = [sqlite_mini_ffi.h]`, который
+# force-include'ил sqlite-shim в КАЖДЫЙ тестовый TU (~1000 тестов). Это
+# ломало все net-зависимые тесты под MSVC (cl.exe C1083 на shim-пути) и было
+# архитектурно хрупким (один сломанный shim ронял весь suite).
+#
+# FFI-конфиг теперь ЗАСКОУПЛЕН на конкретный пример, которому он нужен:
+# `nova_tests/plan115/nova.toml` (единственный реальный потребитель —
+# `plan115/t4_sqlite_e2e_ok.nv`). Так sqlite-пример не мешает другим тестам.

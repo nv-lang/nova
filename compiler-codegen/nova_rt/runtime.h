@@ -26,7 +26,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "minicoro.h"   /* для mco_coro в API signatures */
-#include "deque.h"      /* Plan 44.5: Chase-Lev work-stealing deque */
+#include "deque.h"      /* Plan 44.5: Chase-Lev deque (Ф.1: kept, unused) */
+#include "runq.h"       /* Plan 83-go-cmn Ф.1: fixed-size per-worker ring */
 
 /* Forward — full definition в runtime.c (opaque to API users). */
 typedef struct NovaWorker NovaWorker;

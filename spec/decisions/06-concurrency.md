@@ -5917,5 +5917,78 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
 - Должен ли `pending_driver_jobs` counter экспонироваться через
   `nova runtime introspect` / sysmon для observability long-running
   cancel storms? — **Q27**.
+- (Plan 83-go-cmn Ф.1b / D243) Должен ли guard `slot < st->capacity` читать
+  capacity ACQUIRE-load'ом? На x86 TSO plain-load достаточен; на weak-memory
+  (ARM) — теоретическое NULL-окно (chunk-ptr ACQUIRE спекулируется вперёд
+  plain capacity-read). Hardening дёшев; ARM-CI нет для валидации. —
+  **Q28** (`[M-83.11-f1b-acquire-capacity]`).
+- (Plan 83-go-cmn Ф.4) Должен ли `runnext` (LIFO fast-slot) быть stealable под
+  устойчивым дисбалансом (Go делает stealable после grace-tick) или остаться
+  non-stealable (Tokio-parity, текущий выбор Nova)? — **Q29**.
 
 ---
+
+## D243 — M:N run/park storage: fixed-size ring + chunked stable-address park-state (Plan 83-go-cmn Ф.1)
+
+> **Создан:** 2026-06-11 (Plan 83-go-cmn Ф.1a+Ф.1b). Закрывает `[M-83.11-grow-vs-wake-race]`.
+> Порт принципа Go 1.4 (fixed `P.runq[256]` never-realloc). D-нумерация: D241/D242 заняты
+> Plan 138 (Iterable/Next/Iter) — семейство 83-go-cmn перенумеровано на D243+.
+
+### Контракт
+
+Любое хранилище, к которому конкурентно обращаются worker-owner и driver/peer-потоки на
+hot-path планировщика (run queue + park/wake state), **ОБЯЗАНО иметь стабильные адреса
+элементов** — никаких realloc-с-перестановкой-указателя под конкурентным доступом.
+Перестановка базового указателя массива (realloc) гонится с читателем другого потока →
+torn/orphaned base → потерянный wake → вечный hang. Это был root cause grow-vs-wake.
+
+**1. Per-worker run queue — fixed-size inline ring (`runq.h`).**
+- `mco_coro* runq[NOVA_RUNQ_CAP]` инлайн в `NovaWorker`; `CAP` = степень двойки (4096 в
+  Nova; Go = 256 — Nova больше, т.к. `nova test` ставит MAXPROCS=1 → все fiber'ы на одном
+  worker). Базовый адрес стабилен всю жизнь worker'а.
+- monotonic `uint32` head/tail (маска только при доступе; len=tail-head; full=tail-head>=CAP).
+- **single-producer tail** (owner: store-release, без CAS); **multi-consumer head** (owner
+  `runq_get` + воры `runq_grab`/`runq_steal`: каждый advance — CAS).
+- Overflow → spill HALF (`runq_put_slow`) в ОДНУ глобальную overflow-очередь
+  (`NovaGlobalRunq`, intrusive singly-linked через `SpawnCtxBase.schedlink`, под spinlock).
+- Consumer overflow ОБЯЗАН быть в find-work loop (`globrunq_get_one` после local+yielded,
+  до steal) + shutdown drain + pump_scope — иначе spilled fiber'ы strand → hang.
+- Memory-ordering как PPoPP-2013 deque: значение слота, прочитанное до head-CAS, стабильно
+  до reuse (reuse требует CAP put'ов) → pre-CAS read race-free.
+- Заменяет растущий Chase-Lev deque (`deque.h`, ретайрнут).
+
+**2. Park/wake state — chunked stable-address (`NovaSchedState`, `nova_sched.h`).**
+- 4 параллельных массива (`parked[]`, `pending_handle[]`, `pending_stop_cb[]`,
+  `pending_wake[]`), индексируемые (scope,slot), **бэкаются директориями фиксированных
+  chunk'ов** (`X_chunks[MAX_CHUNKS]`, chunk = `NOVA_SCHED_CHUNK`=64 элементов).
+- **Chunk'и аллоцируются РАЗ и НИКОГДА не двигаются/освобождаются/realloc'атся** →
+  `&parked[slot]` стабилен навсегда → torn-pointer структурно невозможен.
+- `nova_sched_grow_state` больше НЕ realloc'ит — **CAS-публикует** chunk'и
+  (`X_chunks[c]` NULL→chunk, RELEASE/ACQUIRE; проигравший CAS отбрасывает свой chunk, GC
+  соберёт). grow НЕ single-writer (spawn_into/get_state/register_pending растят без
+  slot_lock) → CAS-публикация обязательна. `capacity` публикуется RELEASE'ом ПОСЛЕДНИМ,
+  после всех chunk-публикаций.
+- Доступ: `*accessor(st,slot)` = `&X_chunks[slot>>6][slot&63]` (accessor ACQUIRE-загружает
+  chunk-ptr). Все атомарные операции (SEQ_CST parked store, t1-t4 pending_wake CAS,
+  register_pending SEQ_CST piggy-back, wake deliver-then-CAS) — **байт-идентичны** (меняется
+  только lvalue, не `__ATOMIC_*` аргумент).
+- `pending_handle`/`pending_stop_cb` в РАЗНЫХ директориях — register_pending SEQ_CST всё
+  равно глобально упорядочивает их (store-buffer drain, не per-array). НЕ колоцировать.
+- Потолок: `MAX_CHUNKS`=1024 ⇒ 65536 slots/scope (abort при превышении). На практике
+  раньше упирается в Plan 82 fiber-arena (~16384 одновр. fiber'ов/worker).
+
+### Альтернатива отклонена
+Перенос park-state на `SpawnCtxBase` (per-fiber, Option A) — ставил бы slot_lock + 
+mco_get_user_data в lock-free wake-путь И переоткрывал lost-wake при slot-reuse (wake
+резолвит NEW ctx переиспользованного слота). Chunked (Option C) сохраняет slot-индексацию
+→ fences не пере-доказываются. См. plan 83-study-go-c-mn §9.4.
+
+### Followup
+`[M-83.11-f1b-acquire-capacity]`: `slot < st->capacity` guards читают capacity PLAIN; на
+weak-memory (ARM) не парится с RELEASE-store capacity → теоретическое NULL-окно (clean
+crash, НЕ torn-pointer; non-regression; x86 TSO не затронут). Hardening: ACQUIRE-load capacity.
+
+### Validation
+grow_vs_wake_explicit 100/100 (MP=1) + 66/66 (MP=16); stress_iso_3e 66/66; semaphore_batch_n
+30/30 armed; ring_overflow_drain 10/10 (5000 fibers overflow, exact-count); 1k 30/30, 10k 10/10;
+concurrency suite 105/4. adversarial diff-review: fence_hazards VERIFIED CLEAN, verdict safe-to-commit.

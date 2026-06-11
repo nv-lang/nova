@@ -2,7 +2,9 @@
 //
 // acquire_n(3) / release_n(3); verify atomicity and correct permit accounting.
 //
-// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
+// Plan 83-go-cmn Ф.1b (2026-06-11): AUTOARM=0 gate REMOVED — grow-vs-wake closed
+// structurally (NovaSchedState chunked stable-address storage). Verified armed via
+// stress_bisect.sh (raw exe runs armed): 30/30 PASS. Runs in armed M:N by default.
 //
 // EXPECT_TIMEOUT_MS 30000
 

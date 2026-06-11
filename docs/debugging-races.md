@@ -383,12 +383,37 @@ scripts/stress_bisect.sh nova_tests/<plan>/<repro>.nv [stress_n=15]
 
 **Built-in stats:** prints `[stress-bisect] PASS=X FAIL=Y / N`.
 
+**⚠ ALWAYS use this for stress — NEVER loop `nova test` in a shell `for`.**
+`nova test <file>` is the suite runner: each invocation recompiles the WHOLE
+runtime C (~10 .c files, ~16 parallel clang) from scratch — there is no .o
+cache across invocations. Looping it N times = N full runtime recompiles
+(~5-10 s each → 100 runs ≈ 15-25 min, and it *looks* like a hang). By contrast
+`stress_bisect.sh` runs `nova test --keep-artifacts` **ONCE** to build the test
+`.exe`, then re-runs that `.exe` N times directly (each run = the test's own
+~tens-of-ms runtime). 100 runs ≈ seconds. (Lesson from Plan 83-go-cmn Ф.1b
+closure: a `nova test` stress loop was mistaken for a runtime hang — it was just
+the recompile cost.)
+
+**Runs the `.exe` ARMED.** Because it executes the raw `.exe` directly (not via
+`nova test`), it does NOT honour a fixture's `// ENV NOVA_AUTOARM=0` directive —
+the exe runs in armed M:N (default). This is exactly what you want for verifying
+that an AUTOARM=0-gated fixture is safe to un-gate (run it armed N times; if
+PASS=N, the gate can go). It also means a fixture with its OWN non-atomic shared
+mutation (`x += 1` from parallel fibers) will FAIL here for a test-level data
+race, NOT a runtime bug — distinguish the two before blaming the runtime.
+
+**No per-run timeout.** The exe is run directly, so a genuine runtime HANG
+(lost-wake) blocks the iteration forever. Run under an outer timeout (Bash tool
+`timeout`, or `timeout 300 bash scripts/stress_bisect.sh ...`) so a hang is
+caught instead of wedging the harness.
+
 **Stress count selection:**
 ```
 n = ceil(-ln(0.01) / p)
 ```
 Where `p` is observed repro rate. Default 15 is fine at `p ≥ 0.30`;
-bump up for rarer races.
+bump up for rarer races. For a near-DETERMINISTIC pre-fix hang (repro ≈100%),
+n=30-100 clean is strong closure evidence.
 
 ### 3.4 Bisect over commit range
 
