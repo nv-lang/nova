@@ -1,0 +1,32 @@
+// Plan 139 Ф.4 — str → C-string (NUL-terminated) for an FFI call.
+//
+// `s.as_cstr()` wraps the str buffer pointer (zero-copy after an O(n)
+// embedded-NUL scan) into a CStr. The CStr marshals to `const char*` at the
+// ABI; the C fn runs strlen. This works because the D26 null-term invariant
+// guarantees a full (non-sliced) str's buffer is NUL-terminated, so strlen
+// terminates exactly at .len. Shim: nova_fn_p139_cstr_strlen.
+module plan139.t4_to_cstr_ffi
+
+import std.ffi.cstr.{CStr}
+
+external fn p139_cstr_strlen(c CStr) -> int
+external fn p139_str_byte_sum(s str) -> int
+
+test "str -> CStr -> C strlen matches str byte length" {
+    ro s = "hello"
+    ro c = s.as_cstr()
+    assert(p139_cstr_strlen(c) == 5)
+    assert(p139_cstr_strlen(c) == s.len())
+}
+
+test "str passed BY VALUE to C reads .ptr/.len (byte sum)" {
+    // 'a'+'b'+'c' = 97+98+99 = 294
+    assert(p139_str_byte_sum("abc") == 294)
+    assert(p139_str_byte_sum("") == 0)
+}
+
+test "built (non-literal) str also as_cstr-able" {
+    ro s = "foo".concat("bar")
+    ro c = s.as_cstr()
+    assert(p139_cstr_strlen(c) == 6)
+}

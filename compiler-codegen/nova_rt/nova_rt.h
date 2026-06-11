@@ -86,6 +86,36 @@ static inline nova_str nova_str_from_cstr(const char* s) {
     return (nova_str){ (const uint8_t*)s, (int64_t)strlen(s) };
 }
 
+/* Plan 139 Ф.4 — str → C-string pointer per D26 §3 (Nul-termination).
+ *
+ * Returns a `const char*` guaranteed NUL-terminated at offset `s.len`, suitable
+ * for direct use as a C `const char*`:
+ *   - Full str / slice ending at parent's len → `s.ptr[s.len] == '\0'` already;
+ *     return `s.ptr` ZERO-COPY.
+ *   - Mid-buffer slice (`s.ptr[s.len] != '\0'`) → allocate `len + 1` GC-tracked
+ *     bytes, copy + write the terminator, return the fresh buffer (copy
+ *     fallback, == @to_cstr semantics).
+ *
+ * Reading `s.ptr[s.len]` is always safe (D26 §2): a full str owns `len + 1`
+ * bytes (terminator), and a slice view's parent owns `parent.len + 1` bytes with
+ * `view.len <= parent.len`, so the byte at `view.ptr[view.len]` is in-bounds of
+ * the parent buffer. Embedded-NUL validation stays Nova-side in @as_cstr().
+ *
+ * Irreducible C primitive: str owns no allocator in Nova, and the one-past-end
+ * terminator peek (`s.ptr[s.len]`) requires raw buffer access not expressible on
+ * the `ro []u8` view (cap == len). Recorded in simplifications.md. */
+static inline const uint8_t* nova_fn_nova_str_terminated_ptr(nova_str s) {
+    if (s.ptr[s.len] == 0) {
+        return s.ptr;  /* already NUL-terminated — zero-copy */
+    }
+    uint8_t* buf = (uint8_t*)nova_alloc((size_t)s.len + 1);
+    if (s.len > 0) {
+        memcpy(buf, s.ptr, (size_t)s.len);
+    }
+    buf[s.len] = 0;
+    return buf;
+}
+
 /* Plan 90: O(1) доступ к байту строки. bounds-checked → panic.
  * Неустранимый примитив для str-алгоритмов на Nova (lexer/find/trim). */
 static inline nova_byte nova_str_byte_at(nova_str s, int64_t i) {
