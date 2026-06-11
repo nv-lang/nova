@@ -6995,6 +6995,25 @@ fn make_buf(n int) -> []u8                  // -> mutable []u8 by default
 fn read_view(s str) -> ro []u8              // explicit ro в возврате
 ```
 
+**Pointer-returns (D216 amend, Plan 138.5).** Для возвращаемого
+**указателя** return-mut-default ставит мутируемость **pointee** (target),
+не самого указателя: `-> *T` (= `-> *ro T`) возвращает указатель на
+**read-only** target; чтобы вернуть writable target — explicit `-> *mut T`.
+Никакого «outer pointer-mut в типе» нет (retracted). Перепривязываемость
+самого результата (`p = other_ptr`) — это **bind-site** (`ro`/`mut`, D36),
+а не часть возвращаемого типа.
+
+```nova
+fn alloc_cell() -> *mut int                 // writable target (pointee mut)
+fn peek_head(buf []u8) -> *u8               // ≡ -> *ro u8 — ro target
+ro p *mut int = alloc_cell()                // p фиксирован (binding ro), target writable
+mut q *u8 = peek_head(buf)                  // q reassignable (binding mut), target ro
+```
+
+Это снимает прежнюю двусмысленность «двух mut» в return-позиции
+(см. [D216 §V2.6/§V3.3](02-types.md#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class)):
+в типе — только pointee-mut (постфикс), reassignability — только binding.
+
 **`-> @` (self-return, D181)** наследует мутируемость от receiver:
 
 | Receiver | Return `-> @` |

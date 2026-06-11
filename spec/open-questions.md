@@ -7078,6 +7078,10 @@ p.* = v     // vs *p = v
 
 - Plan 118 — типизированные указатели `*T` / `*mut T`
 - Q-ptr-deref: если принять `p.*`, то `*T` type syntax остаётся prefix (тип vs выражение — разные позиции)
+- Plan 138.5 — FINAL pointer model: модификатор мутируемости в **типе** — это
+  **pointee** постфиксом (`*mut T` / `*ro T`), а реассайнабельность указателя —
+  **binding** (`ro`/`mut`). Это про **type syntax** (тип значения), ортогонально
+  deref-выражению `*p` этого Q28.
 
 ---
 
@@ -7124,11 +7128,25 @@ fn mutate(x ref mut BigStruct)       // мутация caller-значения
 
 Не реализовано. Отложено — добавить проще чем убрать. Вернуться после Plan 118 / Plan 127 / Plan 120 stable.
 
+**Update (Plan 138.5, 2026-06-11):** raw-pointer mut-модель **финализирована**
+и больше не двусмысленна — таблица соответствия выше актуальна. В **типе**
+указателя мутируемость относится к **pointee** (target) и пишется постфиксом:
+`*T` ≡ `*ro T` (ro target), `*mut T` (writable target); перепривязываемость
+самого указателя — это **binding** (`ro`/`mut`, D36), не часть типа. Prefix-
+модификаторы перед `*` (`mut * T` / `ro * T` / `unsafe * T`) запрещены
+(`E_POINTER_PREFIX_MODIFIER`), `Unsafe(Pointer)` retired, nullable = `Option[*T]`
+(NPO). Right-binding propagation через Pointer (D216 §V3.3) и `safe`-стоппер
+(§V3.4) **отозваны** — пропагировать нечего. Это снимает мотивацию «`ref T`
+как способ избежать путаницы raw-pointer mut»: путаницы больше нет; остаётся
+лишь чистый эргономический вопрос safe in-place мутации без `unsafe`.
+
 ### Cross-refs
 
 - Plan 118 — `*T` / `*mut T` raw pointers
 - Plan 127 — value record heap promotion
 - Plan 120 — named tuples (stack allocation)
+- Plan 138.5 — FINAL pointer model (pointee-mut postfix; reassignability = binding;
+  nullable = `Option[*T]`; §V3.3 propagation + `safe`-stopper retired)
 - Q28 — postfix deref `p.*`
 
 ---
