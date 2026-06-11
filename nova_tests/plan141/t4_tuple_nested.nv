@@ -1,0 +1,31 @@
+// Plan 141 — A3: nested-tuple structural eq.
+// `((1,2), 3)` recurses into the inner `(1,2)` tuple field. The prior
+// memcmp would (incidentally) work for all-int nested tuples, but the
+// field-by-field path is what makes nested composites correct in general.
+module plan141.t4_tuple_nested
+
+test "((1,2),3) == ((1,2),3) → true" {
+    ro a = ((1, 2), 3)
+    ro b = ((1, 2), 3)
+    assert(a == b)
+}
+
+test "((1,2),3) == ((1,9),3) → false (inner tuple differs)" {
+    ro a = ((1, 2), 3)
+    ro b = ((1, 9), 3)
+    assert(a != b)
+}
+
+test "((1,2),3) == ((1,2),4) → false (outer field differs)" {
+    ro a = ((1, 2), 3)
+    ro b = ((1, 2), 4)
+    assert(a != b)
+}
+
+test "nested tuple with float inner — IEEE recurse" {
+    ro a = ((1.0, 2.0), 3)
+    ro b = ((1.0, 2.0), 3)
+    assert(a == b)
+    ro c = ((1.0, 5.0), 3)
+    assert(a != c)
+}

@@ -1,0 +1,21 @@
+// Plan 141 — A1: NaN tuple equality by IEEE semantics.
+// `(nan, 1) == (nan, 1)` must be FALSE: IEEE `NaN != NaN`.
+// The prior memcmp gave TRUE (bit-identical NaN compares equal).
+module plan141.t2_tuple_nan
+
+fn make_nan(z f64) -> f64 => z / z
+
+test "(nan, 1) == (nan, 1) → false (IEEE NaN != NaN)" {
+    ro zero = 0.0
+    ro nan = make_nan(zero)
+    ro a = (nan, 1)
+    ro b = (nan, 1)
+    assert(a != b)
+    assert(!(a == b))
+}
+
+test "(1.0, 2) == (1.0, 2) → true (sanity, non-NaN float tuple)" {
+    ro a = (1.0, 2)
+    ro b = (1.0, 2)
+    assert(a == b)
+}

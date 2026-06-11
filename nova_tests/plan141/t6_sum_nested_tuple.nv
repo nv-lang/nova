@@ -1,0 +1,42 @@
+// Plan 141 — A3: sum variant whose payload is a TUPLE type `(int, int)`.
+// Pre-fix, the per-field sum dispatch emitted a struct `==` on the tuple
+// payload → C compile error ("invalid operands to binary =="). The
+// field-by-field path recurses into the tuple element types instead, so
+// this both COMPILES and is structurally correct.
+module plan141.t6_sum_nested_tuple
+
+type Wrap
+    | T((int, int))
+    | E
+
+fn wrap(a int, b int) -> Wrap => T((a, b))
+
+test "T((int,int)) payload eq compiles + is structural" {
+    ro a = wrap(1, 2)
+    ro b = wrap(1, 2)
+    assert(a == b)
+}
+
+test "T((int,int)) differing inner tuple → not equal" {
+    ro a = wrap(1, 2)
+    ro c = wrap(1, 9)
+    assert(a != c)
+}
+
+test "T vs E → not equal (tag differs)" {
+    ro a = wrap(1, 2)
+    ro e = E
+    assert(a != e)
+}
+
+test "float tuple payload — IEEE recurse through sum + tuple" {
+    ro a = TF((1.0, 2.0))
+    ro b = TF((1.0, 2.0))
+    assert(a == b)
+    ro c = TF((1.0, 5.0))
+    assert(a != c)
+}
+
+type FWrap
+    | TF((f64, f64))
+    | FE

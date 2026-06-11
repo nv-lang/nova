@@ -1,0 +1,39 @@
+// Plan 141 — sibling fix: Option payloads that are composite (tuple, str)
+// compare structurally via emit_field_eq, not memcmp. memcmp on
+// Option[(f64,int)] would be unsound for -0.0/NaN; on Option[str] it would
+// compare {ptr,len} bits instead of string value.
+module plan141.t8_option_composite
+
+fn some_tuple(a int, b int) -> Option[(int, int)] => Some((a, b))
+fn make_nan(z f64) -> f64 => z / z
+
+test "Option[(int,int)] structural eq" {
+    ro a = some_tuple(1, 2)
+    ro b = some_tuple(1, 2)
+    ro c = some_tuple(1, 9)
+    assert(a == b)
+    assert(a != c)
+}
+
+test "Option[(int,int)] None vs Some" {
+    ro a = some_tuple(1, 2)
+    ro n Option[(int, int)] = None
+    assert(a != n)
+    ro n2 Option[(int, int)] = None
+    assert(n == n2)
+}
+
+test "Option[(f64,int)] NaN payload — IEEE NaN != NaN" {
+    ro zero = 0.0
+    ro nan = make_nan(zero)
+    ro a Option[(f64, int)] = Some((nan, 1))
+    ro b Option[(f64, int)] = Some((nan, 1))
+    assert(a != b)
+}
+
+test "Option[(f64,int)] -0.0 payload — IEEE -0.0 == +0.0" {
+    ro nz = 0.0 - 0.0
+    ro a Option[(f64, int)] = Some((0.0, 1))
+    ro b Option[(f64, int)] = Some((nz, 1))
+    assert(a == b)
+}

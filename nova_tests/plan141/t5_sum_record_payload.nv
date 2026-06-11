@@ -1,0 +1,36 @@
+// Plan 141 — A3: sum variant with a record payload compares STRUCTURALLY,
+// not by pointer identity. Each `Leaf(Point{...})` heap-allocates a fresh
+// Point, so the two values are distinct pointers with equal content. The
+// prior per-field dispatch emitted a pointer `==` for the record payload
+// (identity) — this proves it is now structural via the record's @equal.
+module plan141.t5_sum_record_payload
+
+#impl(Equal)
+type Point {
+    x int
+    y int
+}
+
+type Node
+    | Leaf(Point)
+    | Empty
+
+fn leaf(px int, py int) -> Node => Leaf(Point { x: px, y: py })
+
+test "Leaf(Point) eq is structural, not pointer identity" {
+    ro a = leaf(1, 2)
+    ro b = leaf(1, 2)   // distinct Point allocation, equal content
+    assert(a == b)
+}
+
+test "Leaf(Point) differing field → not equal" {
+    ro a = leaf(1, 2)
+    ro c = leaf(1, 9)
+    assert(a != c)
+}
+
+test "Leaf vs Empty → not equal (tag differs)" {
+    ro a = leaf(1, 2)
+    ro e = Empty
+    assert(a != e)
+}

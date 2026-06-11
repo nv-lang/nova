@@ -1,0 +1,15 @@
+// Plan 141 — A1: float tuple equality by IEEE semantics.
+// `(0.0, 1) == (-0.0, 1)` must be true: IEEE `-0.0 == +0.0`.
+// The prior memcmp gave FALSE here (different bit patterns).
+module plan141.t1_tuple_float_neg_zero
+
+fn make_neg_zero(x f64) -> f64 => 0.0 - x
+
+test "(0.0, 1) == (-0.0, 1) → true (IEEE -0.0 == +0.0)" {
+    ro pos = (0.0, 1)
+    // produce -0.0 at runtime so the compiler can't fold it to +0.0
+    ro nz = make_neg_zero(0.0)
+    ro neg_zero = (nz, 1)
+    assert(pos == neg_zero)
+    assert(!(pos != neg_zero))
+}

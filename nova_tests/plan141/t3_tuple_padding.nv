@@ -1,0 +1,23 @@
+// Plan 141 — A2: mixed-size tuple eq independent of struct padding.
+// `(1 as u8, 2) == (1 as u8, 2)` → true regardless of indeterminate
+// padding bytes between the u8 and the int. The prior memcmp could
+// compare uninitialized padding and report inequality.
+module plan141.t3_tuple_padding
+
+test "(1 as u8, 2) == (1 as u8, 2) → true (padding-independent)" {
+    ro a = (1 as u8, 2)
+    ro b = (1 as u8, 2)
+    assert(a == b)
+}
+
+test "(1 as u8, 2) == (1 as u8, 3) → false (differs in int field)" {
+    ro a = (1 as u8, 2)
+    ro b = (1 as u8, 3)
+    assert(a != b)
+}
+
+test "(1 as u8, 2) == (9 as u8, 2) → false (differs in u8 field)" {
+    ro a = (1 as u8, 2)
+    ro b = (9 as u8, 2)
+    assert(a != b)
+}

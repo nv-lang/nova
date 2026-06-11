@@ -11119,6 +11119,191 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 141: structural equality field-by-field, dispatched **by C-type**.
+    /// Returns a C boolean expression that is true iff the two operands (given
+    /// as already-emitted C l-value/expression strings `l` and `r`) are equal.
+    ///
+    /// Replaces the prior `memcmp`-based tuple equality (unsound for float
+    /// `-0.0`/`NaN`, struct padding, nested composites) and extends the
+    /// str-only sum-payload dispatch.
+    ///
+    /// Dispatch:
+    /// - scalar / int-like / float (`nova_int`/`bool`/`byte`/`char`/sized
+    ///   ints/`nova_f32`/`nova_f64`) → `(l == r)`. For float this is the
+    ///   correct IEEE comparison (`-0.0 == +0.0`, `NaN != NaN`), unlike
+    ///   `memcmp`.
+    /// - raw pointer (`void*`/`nova_ptr` and other `*`-suffixed C pointers that
+    ///   are NOT a single `Nova_X*` value) → `(l == r)` (identity is the only
+    ///   meaningful comparison for an opaque pointer).
+    /// - `nova_str` → `nova_str_eq(l, r)`.
+    /// - mono'd tuple `_NovaTuple_<arity>_...` → recursive field-by-field over
+    ///   the parsed element C-types on `(l).f{i}` / `(r).f{i}`, joined with
+    ///   `&&`.
+    /// - legacy `_NovaTupleN` (arities 1..=8, all `nova_int` slots) → per-slot
+    ///   `.f{i} == .f{i}` (all slots scalar — sound).
+    /// - single `Nova_X*` value (record or sum): structural — reuse the
+    ///   user/derived `@equal`/`@eq` method if present, else `@compare == 0`,
+    ///   else recurse over the sum tag + payload via `sum_schemas`. Never a
+    ///   pointer `==` (that would compare identity, not structure).
+    ///
+    /// `depth` guards against unbounded recursion on (unsupported) cyclic
+    /// composite schemas — see R2 in the plan (record-cycle eq is out-of-scope
+    /// for V1). On hitting the cap we fall back to `(l == r)` so codegen always
+    /// terminates and produces *some* expression; non-cyclic schemas are finite
+    /// and never reach the cap.
+    fn emit_field_eq(&self, c_type: &str, l: &str, r: &str, depth: usize) -> String {
+        const MAX_EQ_DEPTH: usize = 32;
+        let cty = c_type.trim();
+        // Recursion guard (R2): cyclic record schema → bail to identity.
+        if depth >= MAX_EQ_DEPTH {
+            return format!("(({}) == ({}))", l, r);
+        }
+        // nova_str — struct {ptr,len}; needs the runtime helper.
+        if cty == "nova_str" {
+            return format!("nova_str_eq({}, {})", l, r);
+        }
+        // Scalar / int-like / float → C `==`. Float `==` is the intended IEEE
+        // semantics (per the plan); do NOT memcmp.
+        if matches!(
+            cty,
+            "nova_int" | "nova_bool" | "bool" | "nova_byte" | "nova_char"
+                | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+                | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
+                | "nova_f32" | "nova_f64" | "nova_unit"
+        ) {
+            return format!("(({}) == ({}))", l, r);
+        }
+        // Nested Option payload (`NovaOpt_<inner>`, a by-value struct) —
+        // delegate to its generated `nova_opt_eq_<sani>` helper rather than
+        // a struct `==` (C error) or memcmp (float/padding unsoundness on the
+        // inner payload). The eq fn for a struct `NovaOpt_<innerSani>` is named
+        // `nova_opt_eq_<innerSani>`, where `innerSani` =
+        // `sanitize_for_novaopt(inner_c_ty)`. The C-type `cty` IS the struct
+        // name `NovaOpt_<innerSani>`, so the suffix after the `NovaOpt_` prefix
+        // is exactly `innerSani` — use it directly. NB: `NovaOpt_` does not
+        // start with the `Nova_` prefix used for the sum/record branch below,
+        // so this is order-safe.
+        if let Some(inner_sani) = cty.strip_prefix("NovaOpt_") {
+            if !cty.ends_with('*') {
+                return format!("nova_opt_eq_{}({}, {})", inner_sani, l, r);
+            }
+        }
+        // mono'd tuple — recurse field-by-field over parsed element C-types.
+        if let Some(elems) = Self::parse_mono_tuple_elements(cty) {
+            if elems.is_empty() {
+                // Unit-like tuple — vacuously equal.
+                return "(1)".to_string();
+            }
+            let conds: Vec<String> = elems
+                .iter()
+                .enumerate()
+                .map(|(i, ety)| {
+                    let li = format!("({}).f{}", l, i);
+                    let ri = format!("({}).f{}", r, i);
+                    self.emit_field_eq(ety, &li, &ri, depth + 1)
+                })
+                .collect();
+            return format!("({})", conds.join(" && "));
+        }
+        // legacy _NovaTupleN (no `_` after NovaTuple) — arities 1..=8, all slots
+        // are `nova_int`; per-slot scalar `==` is sound.
+        if cty.starts_with("_NovaTuple") {
+            let arity_str = &cty["_NovaTuple".len()..];
+            if let Ok(arity) = arity_str.parse::<usize>() {
+                if arity == 0 {
+                    return "(1)".to_string();
+                }
+                let conds: Vec<String> = (0..arity)
+                    .map(|i| format!("(({}).f{} == ({}).f{})", l, i, r, i))
+                    .collect();
+                return format!("({})", conds.join(" && "));
+            }
+        }
+        // Single `Nova_X*` value (record or sum) — structural eq.
+        let is_single_nova_ptr =
+            cty.starts_with("Nova_") && cty.ends_with('*') && !cty.ends_with("**");
+        if is_single_nova_ptr {
+            let type_name = cty
+                .strip_prefix("Nova_")
+                .unwrap_or("")
+                .trim_end_matches('*')
+                .to_string();
+            // (1) user/derived @equal then @eq (D237 Equal.equal / Plan 126).
+            for method_name in &["equal", "eq"] {
+                let key = (type_name.clone(), method_name.to_string());
+                if let Some(sigs) = self.method_overloads.get(&key) {
+                    if let Some(sig) = sigs
+                        .iter()
+                        .find(|s| s.is_instance && s.param_c_types.len() == 1)
+                    {
+                        return format!("{}({}, {})", sig.c_name, l, r);
+                    }
+                }
+            }
+            // (2) synthesis via @compare (Equal.equal default = compare == 0).
+            if self
+                .all_methods
+                .contains(&(type_name.clone(), "compare".to_string()))
+            {
+                return format!(
+                    "(Nova_{}_method_compare({}, {}) == 0)",
+                    Self::sanitize_c_for_ident(&type_name),
+                    l,
+                    r
+                );
+            }
+            // (3) sum-type recursion over tag + payload via sum_schemas. Records
+            // without a tag never reach here in practice (they always get an
+            // auto-derived @equal), so this path is for tagged sum payloads.
+            if let Some(variants) = self.sum_schemas.get(&type_name).cloned() {
+                let mut field_conds: Vec<String> = Vec::new();
+                for (var_name, field_types) in &variants {
+                    if field_types.is_empty() {
+                        continue;
+                    }
+                    let var_fields: Vec<String> = field_types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, fty)| {
+                            let li = format!("({})->payload.{}._{}", l, var_name, i);
+                            let ri = format!("({})->payload.{}._{}", r, var_name, i);
+                            self.emit_field_eq(fty, &li, &ri, depth + 1)
+                        })
+                        .collect();
+                    field_conds.push(format!(
+                        "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
+                        l = l,
+                        ty = type_name,
+                        v = var_name,
+                        fields = var_fields.join(" && ")
+                    ));
+                }
+                let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
+                return if field_conds.is_empty() {
+                    tag_eq
+                } else {
+                    format!("({} && {})", tag_eq, field_conds.join(" && "))
+                };
+            }
+            // No structural info available — fall back to pointer identity.
+            return format!("(({}) == ({}))", l, r);
+        }
+        // Any other pointer (void*/nova_ptr/double-ptr/typed raw ptr) — opaque,
+        // identity comparison is the only meaningful equality.
+        if cty.ends_with('*') {
+            return format!("(({}) == ({}))", l, r);
+        }
+        // Unknown by-value composite C-type with no structural schema
+        // (e.g. NovaRes_<..>, NovaArray_<..> by value, runtime structs). A
+        // struct `==` is a C error, so fall back to `memcmp` — exactly the
+        // prior behavior for these. This is NOT one of the unsound float/
+        // padding cases that Plan 141 targets (tuple/sum/record/str/Option are
+        // all handled structurally above); it only triggers for value-structs
+        // we have no field schema for, where byte-compare is the best available
+        // and keeps codegen total.
+        format!("(memcmp(&{}, &{}, sizeof({})) == 0)", l, r, cty)
+    }
+
     /// Plan 49 Ф.6 cross-type cascade helper: C-type string → Nova type name
     /// (для lookup в from_targets и user-friendly diagnostic messages).
     /// "nova_int"  → "int"
@@ -16889,14 +17074,24 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                         _ => Err(format!("unsupported operator {:?} on option", op)),
                     };
                 }
-                // _NovaTupleN is a struct — can't use == directly; use memcmp
+                // _NovaTupleN is a struct — can't use == directly.
+                // Plan 141: structural field-by-field eq via emit_field_eq.
+                // The prior `memcmp` was unsound for float (`-0.0`/`NaN`),
+                // struct padding и nested composite элементов; field-by-field
+                // dispatch-по-типу его исправляет (см. emit_field_eq).
                 if lty.starts_with("_NovaTuple") || rty.starts_with("_NovaTuple") {
-                    let struct_ty = if lty.starts_with("_NovaTuple") { &lty } else { &rty };
-                    return match op {
-                        BinOp::Eq  => Ok(format!("(memcmp(&{}, &{}, sizeof({})) == 0)", l, r, struct_ty)),
-                        BinOp::Neq => Ok(format!("(memcmp(&{}, &{}, sizeof({})) != 0)", l, r, struct_ty)),
-                        _ => Err(format!("unsupported operator {:?} on tuple", op)),
-                    };
+                    let struct_ty = if lty.starts_with("_NovaTuple") { lty.clone() } else { rty.clone() };
+                    match op {
+                        BinOp::Eq | BinOp::Neq => {
+                            let eq = self.emit_field_eq(&struct_ty, &l, &r, 0);
+                            return Ok(match op {
+                                BinOp::Eq  => format!("({})", eq),
+                                BinOp::Neq => format!("(!({}))", eq),
+                                _ => unreachable!(),
+                            });
+                        }
+                        _ => return Err(format!("unsupported operator {:?} on tuple", op)),
+                    }
                 }
                 // Nova_T* sum type pointer equality: compare tag + payload fields.
                 // Plan 131 Ф.3: a sum/record *value* is a single pointer
@@ -17067,44 +17262,15 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                         }
                     }
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        let type_name = type_name_sum;
-                        // Build equality: tags equal AND for each variant matching, all fields equal
-                        // Simplified: tags equal AND bitwise memcmp of payload (works for int fields)
-                        // Full: (l->tag == r->tag) && (l->tag != VarA || l->payload.A._0 == r->payload.A._0) && ...
-                        let variants = self.sum_schemas.get(&type_name).cloned().unwrap_or_default();
-                        let mut field_conds: Vec<String> = Vec::new();
-                        for (var_name, field_types) in &variants {
-                            if !field_types.is_empty() {
-                                let mut var_fields: Vec<String> = Vec::new();
-                                for i in 0..field_types.len() {
-                                    // Plan 91 Ф.3 / [M-91.13-codegen-none-arm-nested-generic-mismatch]
-                                    // (2026-06-05): field-eq dispatch by C-type — `nova_str`
-                                    // не сравнивается через `==` (это struct {ptr,len}).
-                                    // Used когда sum-variant имеет StrTok(str)-like payload
-                                    // и code делает `tok == OtherVariant` — structural-eq
-                                    // обходит все variants включая Str-payload, и без
-                                    // nova_str_eq C compiler фейлит на binary `==` на struct.
-                                    let field_ty = field_types.get(i).map(|s| s.as_str()).unwrap_or("");
-                                    let cmp = if field_ty == "nova_str" {
-                                        format!("nova_str_eq(({l})->payload.{v}._{i}, ({r})->payload.{v}._{i})",
-                                            l = l, r = r, v = var_name, i = i)
-                                    } else {
-                                        format!("({l})->payload.{v}._{i} == ({r})->payload.{v}._{i}",
-                                            l = l, r = r, v = var_name, i = i)
-                                    };
-                                    var_fields.push(cmp);
-                                }
-                                field_conds.push(format!("(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
-                                    l = l, ty = type_name, v = var_name,
-                                    fields = var_fields.join(" && ")));
-                            }
-                        }
-                        let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
-                        let eq = if field_conds.is_empty() {
-                            tag_eq
-                        } else {
-                            format!("({} && {})", tag_eq, field_conds.join(" && "))
-                        };
+                        // Plan 141: structural tag + payload eq via emit_field_eq
+                        // (dispatch-по-C-типу). Раньше per-field dispatch знал
+                        // только `nova_str`; для вложенных композит-payload'ов
+                        // (record `Nova_X*`, tuple `_NovaTupleN`, sum `Nova_Y*`)
+                        // эмитился `==`/struct-`==` → pointer-identity / C-error.
+                        // emit_field_eq на полном `Nova_X*` пройдёт ту же
+                        // tag+payload рекурсию (см. helper), reusing @equal/@eq/
+                        // @compare когда они есть на самом sum-типе.
+                        let eq = self.emit_field_eq(&sty, &l, &r, 0);
                         return match op {
                             BinOp::Eq  => Ok(format!("({})", eq)),
                             BinOp::Neq => Ok(format!("(!({}))", eq)),
@@ -29095,10 +29261,15 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             | "nova_f32" | "nova_f64");
         // Plan 134: nova_ptr removed; void* already ends_with('*').
         let is_pointer = c_ty.ends_with('*');
+        // Plan 141: composite Option payloads (tuple/record/sum/nova_str) must
+        // compare structurally, NOT via memcmp — same float/padding/identity
+        // unsoundness as the old tuple/sum eq. Route the payload comparison
+        // through emit_field_eq (which handles scalar/float/str/tuple/record/
+        // sum by C-type). Scalars/pointers keep the direct `==` fast path.
         let cmp_body = if is_scalar || is_pointer {
             "a.value == b.value".to_string()
         } else {
-            format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
+            self.emit_field_eq(c_ty, "a.value", "b.value", 0)
         };
         let eq_fn = if force_npo {
             format!(
@@ -29193,10 +29364,13 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
             | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
             | "nova_f32" | "nova_f64");
+        // Plan 141: composite Option payloads (tuple/record/sum/nova_str)
+        // compare structurally via emit_field_eq, not memcmp (float/padding/
+        // identity unsoundness). Scalars/pointers keep the direct `==`.
         let cmp_body = if is_scalar || is_pointer || is_newtype_ptr {
             "a.value == b.value".to_string()
         } else {
-            format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
+            self.emit_field_eq(c_ty, "a.value", "b.value", 0)
         };
         let eq_fn = if is_npo {
             // NPO eq: value-based identity (NULL == NULL = None equal;

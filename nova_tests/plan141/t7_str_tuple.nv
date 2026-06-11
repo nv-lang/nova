@@ -1,0 +1,28 @@
+// Plan 141 — str element in tuple eq dispatches through nova_str_eq,
+// not a struct `==` (nova_str is a {ptr,len} struct).
+// `("a", 1) == ("a", 1)` → true (value equality, not pointer identity).
+module plan141.t7_str_tuple
+
+fn dup(s str) -> str => s
+
+test "(\"a\", 1) == (\"a\", 1) → true (str value eq in tuple)" {
+    ro a = ("a", 1)
+    ro b = ("a", 1)
+    assert(a == b)
+}
+
+test "distinct str instances with equal content → true" {
+    // Force two distinct nova_str values with the same content so the
+    // comparison cannot be a pointer-identity shortcut.
+    ro x = dup("hello")
+    ro y = dup("hel") + "lo"
+    ro a = (x, 1)
+    ro b = (y, 1)
+    assert(a == b)
+}
+
+test "(\"a\", 1) == (\"b\", 1) → false" {
+    ro a = ("a", 1)
+    ro b = ("b", 1)
+    assert(a != b)
+}
