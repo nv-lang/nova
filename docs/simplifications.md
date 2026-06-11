@@ -34695,3 +34695,52 @@ vec_owned.nv `check` ok.
 - `=> @` вместо `=> self` в @iter() методах: `self` парсится как Ident → C `return self`
   (undeclared); `@` = SelfAccess → `return nova_self` ✓. Тихий баг обнаружен на тестах.
 - 10/10 fixtures PASS. Ф.5 ([]T→Vec[T] alias) deferred → `[M-138-array-sugar-alias]`.
+
+## Plan 139 Ф.0 — `str` value-record ABI + literal-lowering cast (GATE PASSED 2026-06-11)
+
+**Цель Ф.0 (GATE):** `str` становится Nova value-record `{ ptr *ro u8, len int }`.
+Ф.0 закладывает ABI-фундамент: C-typedef `nova_str` переопределён в layout-идентичный
+образ value-record `{const uint8_t* ptr; int64_t len;}` (был `{const char*; size_t;}`).
+На x64 `const char*` ≡ `const uint8_t*` (тот же 8-байт указатель), `size_t` ≡ `int64_t`
+→ все ~354 рантайм-C-вхождения остаются source-compatible (риск-лимитер). sizeof = 16.
+
+**Что сделано (ABI-safe core = the GATE):**
+- typedef переопределён в 2 сайтах: `compiler-codegen/nova_rt/nova_rt.h:56` +
+  `compiler-codegen/nova_rt/vtables.h:42` → `{const uint8_t* ptr; int64_t len;}`.
+- literal-lowering: все codegen-сайты `(nova_str){.ptr="...", ...}` теперь эмитят
+  `(nova_str){.ptr=(const uint8_t*)"...", ...}` (cast → -Wpointer-sign clean).
+  Сайты в emit_c.rs: StrLit (16669), TaggedTemplate empty/parts (18384/18390/18399/18413),
+  typed-err throw (×2: 17922/18034), cancel reason (19934), unwrap-None (20317),
+  try_from parse-err (23063), char.try_from (23092), StringBuilder append (24435),
+  field-key str (25801), макрос Err_typed (29688), static-const str (3628 — был
+  `(const char*)`, стал `(const uint8_t*)`), Vec slice-panic `_sbuf` (18468:
+  `(const uint8_t*)_sbuf` + `.len=(nova_int)_sn`).
+- `nova_str_from_cstr` (nova_rt.h:84) — ptr-cast `(const uint8_t*)s` + `(int64_t)strlen`.
+- sizeof `"nova_str" => 16` (emit_c.rs:11413) НЕ тронут — остаётся 16.
+
+**GATE acceptance:** A0.1 ✓ (`ro s="abc"; println(s); ro t=s+"d"; println(t)` компилируется
+RELEASE-бинарём + печатает `abc`/`abcd`). A0.2 ✓ (typedef обновлён в обоих сайтах;
+ZERO pointer-sign warnings в сгенерированном `.c`-теле; все 59 остаточных -Wpointer-sign
+warnings — ТОЛЬКО в рантайм-C-хедерах array.h/conv.h/effects.h/nova_rt.h, подавлены
+build-флагами `-w`/`-Wno-everything`). A0.4 ✓ (sizeof 16). A0.5 ✓ (0 new FAIL).
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 6/0 PASS: t0_str_literal (D26 byte-len, multibyte "é"=2),
+t0_str_concat_gate, t0_str_interp (${}), t0_str_pass_byvalue (copy semantics), t0_str_empty,
+neg_t0_str_len_field (`.len` field → E_SIZE_ACCESSOR_FIELD fires). Регрессии: 0 — plan138_1 10/0,
+plan138_2 6/0, plan138_3 2/0, plan131 27/1 (pre-existing vec_debug_pos), plan90_1 20/0,
+plan91_fe1 8/2 (pre-existing 'first'), plan126 21/0, plan108_4 12/1 (pre-existing
+pos_receiver_at_parse), plan62 29/7 (5 pre-existing CC-FAIL), plan77 7/0.
+
+**DEFERRED (extracted, NOT silently dropped):**
+- `[M-139-f0-lang-item-decl]` — полная Nova-декларация `type str value priv { ptr *ro u8, len int }`
+  как lang-item + privacy-enforcement (`s.ptr` → E_PRIV_FIELD, direct-construct forbidden,
+  `*ro u8` write → E_RO_POINTER_WRITE). Требует НОВОЙ checker-инфраструктуры lang-item
+  (сегодня `str` — чистый compiler-builtin, нет type-decl, нет privacy-гейта для builtin
+  member-access; `s.ptr` резолвится без ошибки). GATE этого НЕ требует (A0.1 + 0 new FAIL).
+  Neg-фикстуры neg_t0_str_priv_field/neg_t0_str_ptr_write/neg_t0_str_construct_direct
+  будут добавлены когда lang-item-decl приземлится. Home: Plan 139 (Ф.0 followup / Ф.1).
+- `[M-139-f0-rt-header-ptr-sign-casts]` — 59 -Wpointer-sign warnings в рантайм-C-хедерах
+  (array.h panic-литералы ×41, conv.h ×8, effects.h ×5, nova_rt.h byte_at-литерал и др.).
+  Source-compatible (компилируются), подавлены `-w` в build. Каст `(const uint8_t*)` на
+  string-литералы в этих хедерах — массовая правка (часть из 354-site работы),
+  отложена из Ф.0 (риск-граница ABI-стратегии). Home: Plan 139 Ф.5 (runtime reconciliation).

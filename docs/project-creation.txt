@@ -35691,3 +35691,31 @@ plan59, plan101_1, plan137 — все FAIL pre-existing/known: vec_debug_pos, t2
 
 КОММИТЫ: d6b209b8e63 (Ф.1 enforcement + 10 fixtures), 2d85fff2175 (Ф.2 spec acceptance),
 Ф.3 docs.
+
+=== Plan 139 Ф.0 — str как Nova value-record {ptr *ro u8, len int} (GATE) — 2026-06-11 ===
+
+ЦЕЛЬ: ретайр последнего C-примитива-коллекции nova_str → Nova value-record `str`.
+Ф.0 = GATE: ABI-фундамент. C-typedef nova_str переопределён в layout-идентичный образ
+value-record `{const uint8_t* ptr; int64_t len;}` (был `{const char*; size_t;}`). На x64
+const char* ≡ const uint8_t* (8-байт ptr), size_t ≡ int64_t → все ~354 рантайм-C-вхождения
+остаются source-compatible (риск-лимитер ABI-стратегии). sizeof = 16.
+
+СДЕЛАНО (ABI-safe core = GATE):
+- typedef в 2 сайтах: nova_rt.h:56 + vtables.h:42 → {const uint8_t* ptr; int64_t len;}.
+- literal-lowering cast: все codegen-сайты `(nova_str){.ptr="..."}` → `.ptr=(const uint8_t*)"..."`
+  (-Wpointer-sign clean). ~15 сайтов в emit_c.rs (StrLit/TaggedTemplate/throw/cancel/unwrap/
+  try_from/StringBuilder/field-key/Err_typed-макрос/static-const/Vec-slice-panic).
+- nova_str_from_cstr: ptr-cast + (int64_t)strlen. sizeof "nova_str" => 16 не тронут.
+
+GATE ACCEPTANCE: A0.1 ✓ (trivial program компилируется RELEASE + печатает abc/abcd).
+A0.2 ✓ (typedef в обоих; ZERO pointer-sign warnings в сген. .c-теле; 59 остаточных —
+только в рантайм-хедерах, подавлены -w). A0.4 ✓ (sizeof 16). A0.5 ✓ (0 new FAIL).
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan139/ 6/0 PASS (5 pos + 1 neg). Регрессии: 0 — plan138_1/2/3,
+plan131 (pre-existing vec_debug_pos), plan90_1, plan91_fe1 (pre-existing 'first'), plan126,
+plan108_4 (pre-existing receiver_at), plan62 (5 pre-existing CC-FAIL), plan77 — все совпали
+с baseline FAIL-set.
+
+DEFERRED (extracted): [M-139-f0-lang-item-decl] (полная Nova-декл type str + privacy —
+требует новой lang-item checker-инфры; GATE этого не требует), [M-139-f0-rt-header-ptr-sign-casts]
+(59 warnings в рантайм-хедерах → Ф.5).
