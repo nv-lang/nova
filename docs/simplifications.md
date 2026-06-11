@@ -35182,3 +35182,45 @@ plan126 21/0, plan137 16/0, map_literals 28/1 (positive_const_map pre-existing),
 protocol-system (verified via stash-rebuild, идентичны на baseline vec_owned): plan91_8a 0/2
 (`equals` E7320), plan91_14 12/2 (`debug_fmt` E7320), plan91_8a_2 22/5 (Display-synthesis),
 str_builder 0/9 (`E_CONSUME_KEYWORD_MISSING` — unrelated to @append).
+
+## Plan 138.2 Ф.0-final — универсальный флип `[]T ≡ Vec[T]` (Vec-in-prelude) 🔴 BLOCKED + откат (HIGH-RISK протокол)
+
+**Где.** `std/prelude.nv`, `std/collections/vec_owned.nv`, `compiler-codegen/src/codegen/emit_c.rs`,
+`nova_tests/plan90_1/insert_*.nv` — всё **reverted к HEAD `cb6c8ea5077`** (Ф.0d baseline).
+
+**Что попытано (Option A — prelude-integration, единственный жизнеспособный per Ф.0 spike).** Полная
+реализация флипа: `export import std.collections.vec_owned.{Vec, VecIter}` в prelude (PRELUDE_VERSION
+13→14); `#prelude(core, runtime, collections, protocols)` + `import range.{Range}` на vec_owned.nv
+(разрыв цикла, зеркало range.nv); +188 LOC в emit_c.rs (3 codegen-патча для erased `[]T`-extension
+Vec-routing); `insert`→`splice` rename в 6 plan90_1 фикстурах (под флипом bulk-insert = `@splice`).
+
+**Почему НЕ прошёл (3 остаточных codegen-класса).** Флип вскрыл **новый** слой codegen-багов в
+erased-template path для `[]T`-extension методов (D141 extend-family) — невидимый до флипа, т.к.
+value-position `[]T` лоуэрился в NovaArray, не Vec. Spike залатал все три (emit_c.rs +188), и механика
+**доказана** (Vec-free юнит → `Nova_Vec____nova_int*`, plan138_1/3 + splice-migrated plan90_1 собирались),
+НО залатанная поверхность была слишком широкой/хрупкой для производственного порога «один coherent
+per-commit-green commit без half-states». Три класса → 3 followup-маркера:
+1. `[M-138.2-flip-erased-base-body-mono]` — erased base-body type-param → dangling `Nova_<T>*`;
+   нужна принципиальная erased-element-mono для Vec (как у NovaArray). Spike-fix = heuristic string-инспекция.
+2. `[M-138.2-flip-value-pos-arraylit-vec-gate]` (= ранее `[M-138.2-value-pos-arraylit-vec-gate]` из Ф.0b) —
+   value-position `[]T.with_capacity`/`.new`/literal/`.push` НЕ Vec-gate-aware (D38 dispatch
+   emit_c.rs:19863-19925 безусловно → NovaArray); под флипом универсально.
+3. `[M-138.2-flip-array-ext-vec-recv-routing]` — `[]T`-extension sentinel под `("[]T", method)`, НЕ под
+   Vec C-именем → Vec-receiver промахивается, `__mono_method__` утекает undefined в линкер.
+
+**Решение (VERIFY-OR-DOCUMENT, HIGH-RISK).** Spike откатан целиком (`git restore` 8 tracked files →
+HEAD); orphaned flip-acceptance фикстуры t3/t17/t18 (были untracked) удалены (re-create при реальном
+приземлении); binary пересобран против reverted emit_c.rs. Дерево GREEN, Ф.0a-d gains сохранены.
+**НЕ упрощение** — это документированный откат HIGH-RISK фазы; механизм корректен, блокер = незавершённая
+erased-template Vec-routing инфраструктура (отдельный codegen-план, аналог 138.4 G-A/G-B). Capstone
+закрыт-на-Ф.0-final как PARTIAL.
+
+**Следствие.** Ф.2/Ф.3/Ф.4/Ф.5 (retire NovaArray) **deferred** — блокируются Ф.0-final (нельзя ретирить
+NovaArray, пока value-position `[]T` лоуэрит в него). D239 PARTIAL (gated on Vec-in-prelude), D144 OPEN.
+
+**Результат.** Final broad regression **0 NEW FAIL** (reverted/GREEN, RELEASE binary пересобран):
+plan138_1 10/0, plan138_2 **15/0** (orphaned t3/t17/t18 удалены, committed t1-t16 GREEN; было 17/1 с
+untracked-fixtures), plan138_3 2/0, plan131 27/1 (vec_debug_pos pre-existing), plan90_1 21/0, plan91_fe1
+8/2 (pre-existing NovaArray-erasure flip-targets), map_literals 28/1 (positive_const_map pre-existing),
+plan101_1 18/0, plan126 21/0, plan126_2 9/1 (p5_printable pre-existing), str 13/0 (StringBuilder
+@append=copy GREEN), plan137 16/0. **190 pass / 8 fail — все pre-existing.**
