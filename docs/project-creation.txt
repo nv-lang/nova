@@ -35937,3 +35937,52 @@ D26 (08-runtime.md): «Дедупликация / interning» секция amend
 компилятором (per-CU, Q139-intern-scope resolved); семантически невидимо.
 
 КОММИТ: b460273688d (feat: emit_c.rs + 4 fixtures).
+
+=== Plan 139 Ф.7 — spec finalization + close (Plan 139 CLOSED) — 2026-06-11 ===
+(doc-фаза Ф.7 «Full regression + docs/close». Оркестратор пометил задачу «Ф.6-Ф.7».)
+
+ЧТО: финализация spec'а + закрытие всего umbrella-плана 139. Docs-only задача —
+0 .rs/.h/.nv-stdlib изменений → бинарь НЕ пересобирается → регрессия логически
+тождественна baseline.
+
+SPEC FINALIZATION:
+  - D26 MAJOR AMEND (08-runtime.md, у канонического str-representation-якоря):
+    str = Nova value-record lang-item `type str value priv {ptr *ro u8, len int}`;
+    консолидирует layout/ABI (354-сайт typedef-алиас)/методы-Nova-body/eq-hash-clone
+    content/GC-stack-scan/interning. Блок Q139-* resolved (gc-stack-scan,
+    literal-buffer-lifetime, utf8-cursor-primitive, str-eq-override,
+    cstr-nul-termination, intern-scope) / extracted (as-bytes-aliasing →
+    [M-139-f2-ptr-field-producers]).
+  - D216 §1 (02-types.md): str.ptr — flagship `*ro u8` use-case (immutability
+    через тип указателя → safe shallow-clone + invisible literal-interning).
+  - D228 (02-types.md): str — канонический reference-field value-record
+    (value-семантика 16-байт + shared-immutable heap-буфер); content-eq override
+    уже был из Ф.3, дополнен.
+  - D52 (02-types.md, value/reference таксономия-таблица): строка `str`
+    реклассифицирована из «managed heap / by reference» → «value type, несущий
+    heap-backed буфер» (16-байт stack value, copy-семантика, buffer на heap/rodata).
+
+PLAN STATUS: docs/plans/139-str-as-nova-value-type.md помечен ✅ CLOSED + добавлен
+§«Итог / acceptance audit» (фазовый исход Ф.0-Ф.7, E1-E9 audit, spec-сводка,
+открытые [M-139-*] followups, финальная регрессия, 138.2 Ф.1 SUBSUMED).
+
+ОТКРЫТЫЕ FOLLOWUPS (никогда не silently dropped, в backlog + simplifications):
+  [M-139-f0-lang-item-decl] (корневой — гейтит literal-формы E1/E4),
+  [M-139-f1-trim-view], [M-139-f2-ptr-field-producers], [M-139-f0-rt-header-ptr-sign-casts],
+  [M-139-f3-bare-return-type-str], [M-139-f6-vec-mut-local-enforcement],
+  [M-139-f4-to-cstr-owning] (= [M-118.1-cstr-to-cstr-distinct-copy], Plan 118.2).
+
+ФАЗОВЫЙ ИТОГ: Ф.0 GATE ✅ (740eec6df02), Ф.1 ✅ (dd0808ef66a), Ф.2 ✅ достижимый
+scope (80e5fa3c7c5), Ф.3 ✅ (00af7120235), Ф.4 ✅ + as_cstr over-read fix
+(b633ab02dc8), Ф.5 ✅ verification (typedef Ф.0/Ф.4), Ф.6 ✅ landed in full
+(b460273688d), Ф.7 ✅ THIS (docs).
+
+РЕГРЕССИЯ: representative-прогон — plan139 37/0; plan138_1/2/3 10/6/2; plan131
+27/1; plan90_1 20/0; plan126 21/0; plan108 5/0; plan108_4 12/1; plan62 29/7;
+plan77 7/0; str 13/0; plan141 8/0. Baseline-FAIL set неизменён (все pre-existing:
+plan131/vec_debug_pos, plan108_4/pos_receiver_at_parse, plan62 StringBuilder/
+Iterable/protocol, map_literals/positive_const_map, plan126_2/p5_printable,
+plan55 ×2). 0 NEW FAIL.
+
+КОММИТ: docs(plan139 Ф.7 D26): str as Nova value type — complete (этот файл +
+plan-doc + spec/decisions/{08-runtime,02-types}.md + simplifications + backlog).

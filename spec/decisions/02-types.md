@@ -2426,7 +2426,18 @@ Receiver mut-ABI column added Plan 128 Ф.5, 2026-06-05):**
 | Value records | `type X value { ... }` | **stack** | by value (копия) | `NovaValue_<X>*` pointer (D228) — `&v`/hoist+`&temp` call-site |
 | Records | `type X { ... }` | **managed heap** | by reference (указатель) | `Nova_<X>*` pointer (unchanged — already by-reference) |
 | Sum types | `type X \| A \| B` | managed heap | by reference | `Nova_<X>*` pointer |
-| Arrays, strings | `[]T`, `str` | managed heap | by reference | `Nova_<X>*` pointer |
+| Arrays | `[]T` | managed heap (handle inline) | by reference | `Nova_<X>*` pointer |
+| **`str`** (Plan 139) | `str` | **stack** (16-байт value `{ptr,len}`; буфер на heap/rodata) | **by value (копия)** | `nova_str` value — handle-copy |
+
+> **`str` reclassified (Plan 139, 2026-06-11):** ранее `str` стоял в одной
+> строке с `[]T` как «managed heap / by reference». Теперь `str` — **value
+> type, несущий heap-backed буфер**: само значение — 16-байт stack-value
+> `type str value priv { ptr *ro u8, len int }` с copy-семантикой (как
+> примитив/tuple/value-record), а UTF-8 байты живут в heap (RawMem,
+> GC-tracked) либо rodata (литералы). Поэтому передача str — by-value
+> копия 16-байт handle'а (НЕ pointer-to-heap-object), а buffer разделяется
+> immutably через `*ro u8`. См. [D26 MAJOR AMEND](08-runtime.md#d26-базовая-stdlib-и-prelude)
+> + [D228](#d228) «str — канонический reference-field value-record».
 
 Bracket choice **явно кодирует** size/lifetime semantics: `()` =
 stack, `{}` = heap. Tuple value types (D123): zero GC pressure,
@@ -7497,6 +7508,17 @@ Plan 118 family scope:
 
 - `*T` (≡ `*ro T`) — readonly typed pointer (default) — **pointee** ro
 - `*ro T` / `*mut T` — explicit **pointee** mutability (postfix only)
+
+> **Flagship `*ro u8` use-case (Plan 139, 2026-06-11):** `str` — Nova
+> value-record lang-item `type str value priv { ptr *ro u8, len int }`. Поле
+> `ptr *ro u8` — указатель на **иммутабельный** UTF-8 буфер (immutability
+> строки выражена типом указателя, не отдельной меткой). `*ro` гарантирует:
+> нет write-path сквозь `str.ptr`, поэтому `clone` = shallow 16-байт handle-copy
+> с общим буфером безопасен, а compile-time interning литералов (один общий
+> rodata-буфер на distinct content) семантически невидим. ABI поля — `T*` в C
+> (`const uint8_t*`), layout-идентично старому `nova_str`. См.
+> [D26 MAJOR AMEND](08-runtime.md#d26-базовая-stdlib-и-prelude) +
+> [D228](#d228) content-eq override.
 - `*unsafe T` — pointer к possibly-uninit T (pointee init/layout contracts off);
   также degraded-форма после арифметики (alignment/bounds gone)
 - **Size:** pointer-width (8 bytes на 64-bit; bootstrap = 64-bit only)
@@ -10184,6 +10206,16 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
   без temp hoist (mutation flows к original slot).
 - **Reference fields:** handles inline (ptr+len+cap для `[]T`,
   ptr+len для `str`); data on heap (GC-tracked).
+- **`str` — канонический reference-field value-record (Plan 139, 2026-06-11).**
+  `type str value priv { ptr *ro u8, len int }` — 16-байт stack-значение,
+  inline handle (`ptr+len`) над иммутабельным heap/rodata UTF-8 буфером.
+  Это flagship-пример паттерна «value-record несёт shared-immutable
+  reference-поле»: copy-семантика значения (16 байт), но буфер разделяется
+  через `*ro u8` (нет write-path → sharing безопасен → clone shallow,
+  literal-interning невидим). Все остальные value-record-правила (D228) к
+  `str` применяются единообразно; единственный opt-out — content-eq (ниже),
+  потому что field-by-field над reference-полем сравнил бы pointer-identity.
+  См. [D26 MAJOR AMEND](08-runtime.md#d26-базовая-stdlib-и-prelude).
 - **Equality of reference-field value-records (Plan 139 Ф.3, content-eq
   override).** Default value-record `==` is **field-by-field** (Plan 141:
   `emit_field_eq` recurses each field). For a reference field whose pointee

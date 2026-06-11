@@ -34968,3 +34968,35 @@ defined ровно 1× при 4 использованиях; alpha/epsilon/kapp
 project-creation.txt Ф.6). NB: plan108_2 9/4 (E_LOCAL_NOT_MUT NEG-NO-ERROR на
 Vec push/pop/clear/truncate) — pre-existing на plan-138.1 (138.x Vec-миграция
 gap), вне зоны literal-lowering diff.
+
+## Plan 139 Ф.7 — spec finalization + CLOSE (2026-06-11)
+
+**ЗАКРЫТИЕ umbrella-плана 139.** Docs/spec-only задача (0 .rs/.h/.nv-stdlib
+изменений → бинарь не пересобирается, регрессия тождественна baseline).
+
+**SPEC ФИНАЛИЗИРОВАН:** D26 MAJOR AMEND (08-runtime.md — str = Nova value-record
+lang-item, консолидирует layout/ABI/методы/eq-hash-clone/GC/interning + Q139-блоки
+resolved/extracted), D216 §1 (str.ptr flagship `*ro u8`), D228 (str канонический
+reference-field value-record), D52 (таксономия — str реклассифицирован «managed
+heap/by reference» → «value type, несущий heap-backed буфер»).
+
+**ОСТАТОК (gated, никогда не silently dropped) — всё на корневом
+`[M-139-f0-lang-item-decl]`** (новая lang-item checker-инфра: полная Nova-декл
+`type str value priv {...}` + privacy-gate + `@ptr` member-access). До её
+приземления:
+- `s.ptr`→type-error (нет privacy-gate, нет field-resolution); поэтому
+  literal-формы Ф.1 (`@ptr[i]`) и Ф.2 (`as_bytes`/`split`/`from_bytes_*` в
+  pure-Nova zero-copy через `@ptr`-поле) недостижимы — `[M-139-f2-ptr-field-producers]`.
+- `@trim()` Nova-body аллоцирует копию (а не view) — `[M-139-f1-trim-view]`.
+- C-формы (as_bytes/split/from_bytes_*/byte_at) КОРРЕКТНЫ и production-grade
+  (C as_bytes уже zero-copy `ro Vec` над `*ro u8`), контракт сохранён до lang-item.
+
+**Прочие открытые [M-139-*]:** `[M-139-f0-rt-header-ptr-sign-casts]` (59
+-Wpointer-sign warnings, source-compatible, `-w`-suppressed),
+`[M-139-f3-bare-return-type-str]` (parser bare-return-type, use `->`),
+`[M-139-f6-vec-mut-local-enforcement]` (138.x Vec-mut gap, orthogonal),
+`[M-139-f4-to-cstr-owning]` (= [M-118.1-cstr-to-cstr-distinct-copy], Plan 118.2).
+
+**E1/E4 — 🟡 ЧАСТИЧНО** (literal-формы gated на lang-item); E2/E3/E5/E6/E7/E8/E9
+— ✅. Plan CLOSED с честным acceptance audit (см. plan-doc §«Итог»).
+138.2 Ф.1 (string-layer) — SUBSUMED.

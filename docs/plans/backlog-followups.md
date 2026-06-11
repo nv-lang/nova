@@ -111,6 +111,7 @@
 | Маркер | План-дом |
 |---|---|
 | `[M-140-contract-message]` | Plan 140 (опц. `, "message"` на `requires`/`ensures`/`invariant`) |
+| **Plan 139 — ✅ CLOSED 2026-06-11** | umbrella str=value-record закрыт Ф.0-Ф.7; spec финализирован (D26 MAJOR AMEND + D216 §1 + D228 + D52); 0 new FAIL. Маркеры ниже — gated followups (корень `[M-139-f0-lang-item-decl]`), не блокеры закрытия. |
 | `[M-139-f0-lang-item-decl]` | Plan 139 Ф.0 followup / Ф.1 — Nova-декл `type str value priv {...}` как lang-item + privacy-enforcement (`s.ptr`→E_PRIV_FIELD, direct-construct forbidden, `*ro u8` write→E_RO_POINTER_WRITE); требует новой lang-item checker-инфры; 3 neg-фикстуры ждут |
 | `[M-139-f0-rt-header-ptr-sign-casts]` | Plan 139 Ф.5 — 59 -Wpointer-sign warnings в рантайм-C-хедерах (array.h/conv.h/effects.h/nova_rt.h) после typedef→`const uint8_t*`; source-compatible, подавлены `-w`; cast string-литералов отложен (часть 354-site работы) |
 | `[M-139-f1-trim-view]` | Plan 139 Ф.1 followup — `str @trim()` Nova-body возвращает аллоцированную копию (byte-loop + from_bytes_unchecked); бывшая C `nova_str_trim` возвращала zero-copy slice-view без alloc. View-форма требует `@ptr` field-access (`*ro u8` slice) → gated на `[M-139-f0-lang-item-decl]`. Контент идентичен, разница только перф (alloc vs view) |
