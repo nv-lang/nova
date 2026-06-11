@@ -34887,3 +34887,48 @@ neg_t4_raw_ptr_to_ffi_unsafe [as_cstr_unchecked без unsafe{} →
 E_UNSAFE_CALL_REQUIRES_WRAP], neg_t4_cstr_embedded_nul [interior NUL → panic]).
 Регрессии 0 new FAIL vs baseline (plan118_1_cstr_nul 2/0, plan115 11/0,
 plan118_1 11/0, str 13/0, plan118 37/3 NPO pre-existing подтверждено git-stash).
+
+## Plan 139 Ф.3 — str structural eq / hash / clone (content-eq override) (2026-06-11)
+
+**ВЕРИФИКАЦИЯ + FIXTURE-COVERAGE фаза — 0 .rs/.h/.nv-stdlib изменений.** Doc-Ф.3
+(eq/hash/clone) уже де-факто реализована Plan 141 + предыдущими сессиями. Задача
+этой фазы — доказать инварианты fixture'ами и задокументировать механизм
+override'а; никаких compiler/runtime правок не потребовалось.
+
+**МЕХАНИЗМ (почему R10 НЕ live):**
+- Прямой `==`/`!=`/`<`/`<=`/`>`/`>=` на str → emit_c.rs:16985-16996 →
+  `nova_str_eq`/`_lt`/`_le`/`_gt`/`_ge` (content, memcmp/byte-cmp).
+- str-в-tuple/sum/record: `emit_field_eq` (emit_c.rs:11161-11164) спец-кейзит
+  `cty == "nova_str"` → `nova_str_eq` **ПЕРЕД** field-by-field веткой Plan 141.
+  → composite eq над str-полем = content-eq, НЕ pointer-eq. R10 «Plan 141 делает
+  str pointer-eq» нейтрализован этим спец-кейзом. Подтверждено probe:
+  `("ab"+"c", 1) == ("abc", 1)` → true.
+- str-keyed HashMap: `@hash`/`@eq` через str_method_to_rt (emit_c.rs:28911/28916)
+  → `nova_str_eq`/`nova_str_hash` (SipHash-1-3 над байтами, nova_rt.h:339).
+  Подтверждено: insert built-key `"ab"+"c"`, get literal `"abc"` → hit;
+  dup-content-key → overwrite (len остаётся 1).
+- clone = 16-байт value-copy handle над immutable (`*ro u8`) shared буфером;
+  deep-copy НЕ нужен. Подтверждено: copy валиден после rebind источника.
+
+**D228 amend (02-types.md):** добавлена заметка «Equality of reference-field
+value-records» — value-record carrying shared-immutable pointer field
+регистрирует content-eq для этого поля вместо наследования pointer-identity от
+field-by-field default. str = flagship use-case.
+
+**NEW [M-139-f3-bare-return-type-str]:** обнаружен pre-existing compiler-баг
+(НЕ связан с Ф.3, НЕ введён этой фазой): top-level `fn f(x str) str` (return-type
+БЕЗ `->`) лоуэрит return-тип как `nova_unit` → CC-FAIL «returning 'nova_str' from
+a function with incompatible result type 'nova_unit'». Канонический `-> str`
+работает (см. t0_str_pass_byvalue, t3_clone_independent). Вынесено в backlog.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 33/0 PASS (+7 vs Ф.4-baseline 26/0):
+t3_eq_distinct_buffers [R10 regression guard: built `"ab"+""` == literal `"ab"`,
+`"ab"+"c"` == `"a"+"bc"`, empty-slice == empty-literal], t3_eq_literal_vs_built,
+t3_hash_eq_consistency [equal strings → equal hash, distinct buffers],
+t3_hashmap_str_key [built-key insert / literal-lookup hit; dup-content overwrite],
+t3_clone_independent [value-copy valid after source rebind], neg_t3_ne_different_bytes,
+neg_t3_hashmap_miss [absent/case-different/removed content-keys miss]. Регрессии
+0 new FAIL vs baseline: str 13/0, plan138_1/2/3 10/6/2, plan131 27/1, plan90_1 20/0,
+plan126 21/0, plan108 5/0, plan108_4 12/1, plan62 29/7, plan77 7/0, map_literals 28/1,
+plan126_2 9/1, plan141 8/0 (eq-integration clean), plan48_1 2/0. Все FAIL'ы —
+pre-existing (0 .rs/.h изменений → regression невозможна).

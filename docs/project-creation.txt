@@ -35832,3 +35832,51 @@ neg_t4_cstr_embedded_nul [interior NUL → panic, defined behavior]). Регре
 str 13/0, plan138_1/2/3 10/6/2, plan131 27/1, plan90_1 20/0, plan91 2/0,
 plan126 21/0, plan108 5/0, plan108_4 12/1, plan62 29/7, plan77 7/0, plan118
 37/3 (NPO pre-existing, подтверждено git-stash), plan118_4 4/0, plan118_5 14/0.
+
+=== Plan 139 Ф.3 — str structural eq / hash / clone (content-eq override) — 2026-06-11 ===
+(doc-фаза Ф.3. Оркестратор пометил задачу «F4».)
+
+ЧТО: ВЕРИФИКАЦИЯ + FIXTURE-COVERAGE фазы — никаких compiler/runtime/stdlib
+правок не потребовалось (0 .rs/.h/.nv-stdlib изменений; только +7 fixture .nv).
+Фаза де-факто уже реализована Plan 141 + предыдущими сессиями; Ф.3 закрыта
+тем, что str eq/hash/clone УЖЕ структурно-по-байтам:
+
+  1. Прямой оператор `==`/`!=`/`<`/`<=`/`>`/`>=` на str → emit_c.rs:16985-16996
+     лоуэрится в nova_str_eq/_lt/_le/_gt/_ge (НЕ field-by-field).
+  2. R10 (Plan 141 field-by-field eq → pointer-eq) НЕ live: emit_field_eq
+     (emit_c.rs:11161-11164) спец-кейзит `cty == "nova_str"` → nova_str_eq
+     ПЕРЕД любым field-by-field путём. → str-в-tuple/sum/record eq использует
+     content-eq автоматически. Эмпирически подтверждено probe'ом:
+     `("ab"+"c", 1) == ("abc", 1)` → true.
+  3. nova_str_eq (nova_rt.h:238) = `a.len==b.len && memcmp==0` (content).
+     nova_str_hash (nova_rt.h:339) = SipHash-1-3 над байтами (content).
+  4. str-keyed HashMap: @hash/@eq роутятся через str_method_to_rt
+     (emit_c.rs:28911/28916) → nova_str_eq/_hash. Эмпирически: insert built-key
+     `"ab"+"c"`, get literal `"abc"` → hit; dup-content-key → overwrite (len 1).
+  5. clone = 16-байт value-copy handle над immutable (*ro u8) shared буфером;
+     deep-copy не нужен. Подтверждено: copy валиден после rebind источника.
+
+D228 (02-types.md) — добавлена заметка: value-record default eq = field-by-field
+(Plan 141), но str ОПТ-АУТ с content-eq (pointer-поля с shared immutable
+pointee требуют content-eq); механизм override = emit_field_eq nova_str
+спец-кейз ПЕРЕД field-by-field.
+
+ACCEPTANCE: A3.1 ✓ (distinct-buffer byte-eq, НЕ pointer-eq). A3.2 ✓ (hash/eq
+consistency). A3.3 ✓ (str-HashMap built-key insert / literal-lookup hit).
+A3.4 ✓ (clone handle-shallow, immutable buffer shared, валиден). A3.5 ✓
+(0 new FAIL).
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan139/ 33/0 PASS (+7: t3_eq_distinct_buffers
+[R10 regression guard], t3_eq_literal_vs_built, t3_hash_eq_consistency,
+t3_hashmap_str_key, t3_clone_independent, neg_t3_ne_different_bytes,
+neg_t3_hashmap_miss). Регрессии 0 new FAIL vs baseline: str 13/0, plan138_1/2/3
+10/6/2, plan131 27/1, plan90_1 20/0, plan126 21/0, plan108 5/0, plan108_4 12/1,
+plan62 29/7, plan77 7/0, map_literals 28/1, plan126_2 9/1, plan141 8/0
+(eq-integration clean), plan48_1 2/0, plan91_fe1/fe5 (FAILs все pre-existing —
+0 .rs/.h изменений, regression невозможна).
+
+NB: t3_clone_independent изначально CC-FAIL'ил из-за bare-return-type синтаксиса
+`fn f(x str) str` (return-type без `->` лоуэрится как nova_unit — отдельный
+pre-existing compiler-баг). Fixture исправлен на канонический `-> str`
+(совпадает с t0_str_pass_byvalue). Баг bare-return-type вынесен в
+[M-139-f3-bare-return-type-str] backlog.
