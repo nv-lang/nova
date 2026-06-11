@@ -1,0 +1,10 @@
+// Plan 138.5 NEG — the `safe` type-modifier is retired.
+//
+// `safe T` was a no-op propagation-stopper; in type position it is now a
+// hard error with a migration hint (just drop `safe`).
+//
+// EXPECT_COMPILE_ERROR E_SAFE_RETIRED
+
+module plan138_5.neg_safe_retired_standalone
+
+external fn p(x safe int) -> ()

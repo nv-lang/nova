@@ -1,0 +1,21 @@
+// Plan 138.5 POS — postfix pointer CHAINS compile (the modifier always sits
+// after a `*`, on its pointee level).
+//
+// `*mut *ro Node` — writable-target ptr to (read-only-target ptr to Node).
+// `*unsafe ro T` — ptr to a possibly-uninit, read-only pointee (postfix
+// pointee modifier chain on the SAME pointee, axes commute on value-T).
+
+module plan138_5.pos_postfix_pointer_chain
+
+type Node {
+    id i64
+}
+
+external fn p_chain(x *mut *ro Node) -> ()
+external fn p_chain2(x *ro *mut Node) -> ()
+
+test "postfix pointer chains parse + uniform 8-byte layout" {
+    assert(size_of[*mut *ro Node]() == 8)
+    assert(size_of[*ro *mut Node]() == 8)
+    assert(size_of[* * Node]() == 8)
+}

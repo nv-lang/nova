@@ -1,0 +1,11 @@
+// Plan 138.5 NEG — `ro * unsafe T` (prefix `ro` before `*`) is forbidden.
+//
+// Under the retired V3 model this was an E_MODIFIER_ORDER case; under the
+// final model the leading `ro` before `*` trips E_POINTER_PREFIX_MODIFIER
+// first. Migrate → `*ro unsafe T` (postfix pointee chain).
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module plan138_5.neg_ro_prefix_ptr_unsafe_pointee
+
+external fn p(x ro * unsafe int) -> ()

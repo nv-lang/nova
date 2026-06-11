@@ -1,14 +1,13 @@
-// Plan 118.5 Ф.4 T3 — `* unsafe T` (Pointer wrapping Unsafe) syntactic form.
+// Plan 118.5 Ф.4 T3 — `*unsafe T` (Pointer wrapping Unsafe pointee) form.
+// MIGRATED by Plan 138.5 (2026-06-11): the prefix `unsafe * T` outer form
+// (`Unsafe(Pointer(T))`, possibly-null ptr) is RETIRED — nullable ptr is now
+// `Option[*T]`. Only the postfix pointee-unsafe form `*unsafe T` survives.
 //
-// V2 new orthogonal axis: pointer-to-uninit-pointee. Distinct from
-// `unsafe * T` (possibly-null pointer к valid T) — different AST shapes,
-// different semantic axes.
+//   *unsafe T  → Pointer(Unsafe(T))   — valid ptr to possibly-uninit T
+//   *mut unsafe T → Pointer(Mut(Unsafe(T))) — writable ptr to uninit T
+//   *unsafe * T → Pointer(Unsafe(Pointer(T))) — ptr to (uninit ptr to T)
 //
-//   * unsafe T  → Pointer(Unsafe(T))   — valid ptr к possibly-uninit T
-//   unsafe * T  → Unsafe(Pointer(T))   — possibly-null/dangling ptr к valid T
-//
-// C ABI for both: T* (transparent). Semantic differentiation enforced at
-// type-check level (read of unsafe-T binding requires unsafe block).
+// C ABI: T* (transparent). Read of an unsafe-T binding requires unsafe block.
 
 module plan118_5.t3_ptr_to_uninit_ok
 
@@ -17,7 +16,7 @@ type Buf {
 }
 
 external fn p118_5_t3_a(p * unsafe Buf) -> ()
-external fn p118_5_t3_b(p mut * unsafe Buf) -> ()
+external fn p118_5_t3_b(p *mut unsafe Buf) -> ()
 external fn p118_5_t3_c(p * unsafe * Buf) -> ()
 
 test "parses pointer-to-uninit forms" {

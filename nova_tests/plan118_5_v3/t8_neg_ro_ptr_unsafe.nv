@@ -1,10 +1,11 @@
-// Plan 118.5 V3 Ф.3 NEG T8 — `ro * unsafe T` chain → E_MODIFIER_ORDER
-// (transitive через Pointer wrapper).
+// Plan 118.5 V3 T8 → RECODED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.2: ro contains unsafe-in-chain → error. The chain
-// Readonly(Pointer(Unsafe(int))) is ro-wraps-unsafe violation.
+// `ro * unsafe int` — the leading `ro` before `*` is a prefix pointer
+// modifier, now forbidden. (Under the retired V3 model this was
+// E_MODIFIER_ORDER; the prefix-pointer ban now fires first.) Migrate →
+// `*ro unsafe int` (postfix pointee chain).
 //
-// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
 
 module plan118_5_v3.t8_neg_ro_ptr_unsafe
 

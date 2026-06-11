@@ -78,16 +78,43 @@ pub struct Parser {
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** parser-emitted lint
     /// warnings collected during parsing. Drained by the driver via
     /// `into_warnings()` and merged with post-parse lint_module() output.
-    /// Currently emits W_DEPRECATED_POINTER_INLINE_MODIFIER and
-    /// W_BREAKING_UNSAFE_PTR_MEANING for legacy pointer syntax during
-    /// grace period.
+    /// (Plan 138.5: the legacy pointer-syntax grace-period warnings were
+    /// dropped — prefix pointer modifiers are now hard errors.)
     pub warnings: Vec<crate::diag::Diagnostic>,
-    /// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** spans of `safe`
-    /// keyword occurrences encountered during parse_type. Each Span covers
-    /// the `safe` token + the inner type следующий за ним. Used by V3 rules
-    /// V3.2 (modifier order) and V3.4 (E_REDUNDANT_TYPE_MODIFIER) к skip
-    /// the error when `safe` explicitly broke the propagation chain.
-    safe_stoppers: Vec<crate::diag::Span>,
+    /// **Plan 138.5 (2026-06-11):** set true by the `*` (Star) arm of
+    /// `parse_type` immediately before it parses its pointee, then captured
+    /// (and cleared) at the very start of the recursive `parse_type` call.
+    /// When a `ro`/`mut`/`unsafe` modifier arm runs with this captured flag
+    /// set, the modifier is the POSTFIX pointee modifier of an enclosing `*`
+    /// (`*mut T`, `*ro *mut T`, …) → allowed even if it wraps a pointer.
+    /// When the flag is clear, the modifier is a PREFIX modifier in plain
+    /// type position (`mut * T`) → forbidden if it wraps a pointer
+    /// (`E_POINTER_PREFIX_MODIFIER`).
+    pointee_ctx: bool,
+}
+
+/// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** build the
+/// `E_POINTER_PREFIX_MODIFIER` diagnostic emitted when a `ro`/`mut`/`unsafe`
+/// token appears in type position immediately before `*` (e.g. `mut * T`,
+/// `ro * T`, `unsafe * T`). Pointer modifiers live on the pointee (postfix
+/// `*mut T` / `*ro T` / `*unsafe T`) or on the binding (`mut x *T`); prefix
+/// forms are not allowed. Extends the `E_INVALID_POINTER_MODIFIER` family
+/// (D216 §1). `modifier` is the offending leading keyword spelling.
+fn pointer_prefix_modifier_error(modifier: &str, span: Span) -> Diagnostic {
+    Diagnostic::new(
+        format!(
+            "[E_POINTER_PREFIX_MODIFIER] `{m} *` is not allowed — pointer \
+             modifiers go on the pointee (after `*`: `*mut T` / `*ro T` / \
+             `*unsafe T`) or on the binding (`mut x *T`); a modifier before \
+             `*` is forbidden (Plan 138.5 / D216 §1). \
+             Migrate: `{m} * T` → `*{m} T` (modifier describes the pointee), \
+             and pointer reassignability is expressed by the binding \
+             (`let p *T` = fixed, `mut p *T` = rebindable, D36). Nullable \
+             pointers use `Option[*T]` only (NPO).",
+            m = modifier,
+        ),
+        span,
+    )
 }
 
 impl Parser {
@@ -103,23 +130,8 @@ impl Parser {
             no_trailing_block: false,
             src,
             warnings: Vec::new(),
-            safe_stoppers: Vec::new(),
+            pointee_ctx: false,
         }
-    }
-
-    /// **Plan 118.5 V3 §V3.4 (2026-06-04):** check if any `safe` stopper
-    /// occurred between `outer_span` (modifier emission point) and
-    /// `inner_span` (potential redundant/conflict point). Used by Ф.3/Ф.4
-    /// rule checks к suppress diagnostic when user explicitly broke
-    /// propagation via `safe`.
-    pub(crate) fn is_safe_stopped_between(
-        &self,
-        outer_span: crate::diag::Span,
-        inner_span: crate::diag::Span,
-    ) -> bool {
-        self.safe_stoppers.iter().any(|s| {
-            s.start >= outer_span.start && s.end <= inner_span.end
-        })
     }
 
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** consume the parser
@@ -5071,6 +5083,14 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<TypeRef, Diagnostic> {
         let start = self.peek().span;
+        // **Plan 138.5 (2026-06-11):** capture-and-clear the pointee context.
+        // Only an immediately-enclosing `*` (Star arm) sets `pointee_ctx`
+        // just before this call; we read it once and reset, so any FURTHER
+        // recursion (a modifier arm parsing its own inner) defaults to the
+        // non-pointee (prefix) context — `*mut mut * T` still errors on the
+        // inner doubled prefix.
+        let is_pointee = self.pointee_ctx;
+        self.pointee_ctx = false;
         match self.peek().kind {
             // Plan 114 (D184) Ф.1.5: `readonly T` renamed to `ro T`.
             TokenKind::KwReadonly => {
@@ -5089,45 +5109,25 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
-                // **Plan 118.5 V3 Ф.3 / §V3.2 (2026-06-04):** modifier
-                // ordering — safety modifier (`unsafe`) must wrap mutability
-                // modifier (`ro`/`mut`), NOT reverse. If inner contains
-                // `unsafe` in chain → E_MODIFIER_ORDER. Safe stopper
-                // suppresses (§V3.4 exception).
-                if inner.contains_unsafe_in_chain()
-                    && !self.is_safe_stopped_between(span, inner.span())
-                {
-                    return Err(Diagnostic::new(
-                        "[E_MODIFIER_ORDER] `ro` cannot wrap `unsafe` — \
-                         safety modifier (`unsafe`) must be outer, mutability \
-                         modifier (`ro`/`mut`) must be inner (Plan 118.5 V3 / \
-                         D216 V3 §V3.2). Write `unsafe ro T` (correct order) \
-                         instead of `ro unsafe T`. Rationale: safety wraps \
-                         mutability — «unsafe ro T» means «possibly-uninit \
-                         T that, if valid, is readonly»; the reverse \
-                         interpretation is not meaningful."
-                            .to_string(),
-                        span,
-                    ));
+                // **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):**
+                // FORBID prefix pointer modifier `ro *` — pointer modifiers
+                // go on the pointee (postfix `*ro T`) or the binding
+                // (`mut x *T`), never before `*`. Skip when `is_pointee`:
+                // here `ro` is the POSTFIX pointee modifier of an enclosing
+                // `*` (e.g. `*ro *mut T`), which is allowed even if its inner
+                // is itself a pointer.
+                if !is_pointee && inner.is_pointer_or_wraps_pointer() {
+                    return Err(pointer_prefix_modifier_error("ro", span));
                 }
-                // **Plan 118.5 V3 Ф.4 / §V3.4 (2026-06-04):** same-class
-                // modifier repetition в chain → E_REDUNDANT_TYPE_MODIFIER.
-                // Outer ro already propagates; inner ro redundant. Use
-                // `safe` keyword к break propagation explicitly.
-                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Readonly)
-                    && !self.is_safe_stopped_between(span, inner.span())
-                {
-                    return Err(Diagnostic::new(
-                        "[E_REDUNDANT_TYPE_MODIFIER] outer `ro` already \
-                         propagates through nested wrappers — inner `ro` \
-                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
-                         Hint: use `safe` keyword к break propagation \
-                         intentionally — e.g., `ro * safe ro T` makes inner \
-                         ro a fresh wrapper independent of outer propagation."
-                            .to_string(),
-                        span,
-                    ));
-                }
+                // **Plan 138.5 §V3.2 flip / §V3.3-§V3.4 retire (2026-06-11):**
+                // value-type modifier ORDER (`ro unsafe T` vs `unsafe ro T`)
+                // is now free — safety and mutability axes commute on a
+                // value-T (`Unsafe(Readonly(T))` ≡ `Readonly(Unsafe(T))`).
+                // The old §V3.2 E_MODIFIER_ORDER + §V3.4 E_REDUNDANT_TYPE_MODIFIER
+                // checks were scaffolding around prefix-pointer propagation;
+                // with prefix forbidden above there is nothing to propagate,
+                // so they are retired. ro+mut value-T conflict (§V3.1) is
+                // still enforced downstream in types/mod.rs.
                 return Ok(TypeRef::Readonly(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.1 / D216 V2 §V2.1 (2026-06-04):** universal
@@ -5140,35 +5140,16 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
-                // **Plan 118.5 V3 Ф.3 / §V3.2 (2026-06-04):** modifier
-                // ordering — same rule as KwRo arm. `mut` cannot wrap
-                // `unsafe`; safety must be outer.
-                if inner.contains_unsafe_in_chain()
-                    && !self.is_safe_stopped_between(span, inner.span())
-                {
-                    return Err(Diagnostic::new(
-                        "[E_MODIFIER_ORDER] `mut` cannot wrap `unsafe` — \
-                         safety modifier (`unsafe`) must be outer, mutability \
-                         modifier (`ro`/`mut`) must be inner (Plan 118.5 V3 / \
-                         D216 V3 §V3.2). Write `unsafe mut T` (correct order) \
-                         instead of `mut unsafe T`."
-                            .to_string(),
-                        span,
-                    ));
+                // **Plan 138.5 (2026-06-11):** FORBID prefix pointer modifier
+                // `mut *` — see KwRo arm. NOTE: binding-level `mut x *T`
+                // (pre-name `mut` consumed by parse_param) is unaffected —
+                // that `mut` never reaches this type-position arm. `is_pointee`
+                // allows the postfix pointee form `*mut *ro T`.
+                if !is_pointee && inner.is_pointer_or_wraps_pointer() {
+                    return Err(pointer_prefix_modifier_error("mut", span));
                 }
-                // Plan 118.5 V3 Ф.4 / §V3.4: outer mut + inner mut redundant.
-                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Mut)
-                    && !self.is_safe_stopped_between(span, inner.span())
-                {
-                    return Err(Diagnostic::new(
-                        "[E_REDUNDANT_TYPE_MODIFIER] outer `mut` already \
-                         propagates through nested wrappers — inner `mut` \
-                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
-                         Hint: use `safe` keyword к break propagation."
-                            .to_string(),
-                        span,
-                    ));
-                }
+                // **Plan 138.5 §V3.2 flip / §V3.3-§V3.4 retire (2026-06-11):**
+                // value-T modifier order/redundancy checks retired (see KwRo).
                 return Ok(TypeRef::Mut(Box::new(inner), span));
             }
             // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04):** universal
@@ -5183,46 +5164,48 @@ impl Parser {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
-                // Plan 118.5 V3 Ф.4 / §V3.4: outer unsafe + inner unsafe
-                // redundant (outer already propagates через chain).
-                if inner.contains_same_class_in_chain(crate::ast::ModifierClass::Unsafe)
-                    && !self.is_safe_stopped_between(span, inner.span())
-                {
-                    return Err(Diagnostic::new(
-                        "[E_REDUNDANT_TYPE_MODIFIER] outer `unsafe` already \
-                         propagates through nested wrappers — inner `unsafe` \
-                         redundant (Plan 118.5 V3 / D216 V3 §V3.4). \
-                         Hint: use `safe` keyword к break propagation \
-                         intentionally (e.g., `unsafe * safe unsafe T` makes \
-                         inner unsafe a fresh wrapper)."
-                            .to_string(),
-                        span,
-                    ));
+                // **Plan 138.5 (2026-06-11):** FORBID prefix `unsafe *`
+                // (= `Unsafe(Pointer(..))`). This RETIRES the
+                // `Unsafe(Pointer)` construction path entirely — the
+                // outer-unsafe-pointer form is gone. Rationale (138.5 §1):
+                // (1) std usage = 0; (2) it collided with `Option[*T]` as a
+                // second "nullable mut ptr" spelling; (3) `Option[unsafe * T]`
+                // lost NPO → 16B footgun. Nullable is now ONLY `Option[*T]`
+                // (NPO); FFI nullable-uninit is `Option[*unsafe T]`.
+                // KEPT: postfix `*unsafe T` (= `Pointer(Unsafe(T))`, valid
+                // ptr to possibly-uninit T) and the `unsafe T` value-wrapper
+                // (§V2.3) — both bottom out at a non-pointer base, so they do
+                // NOT trip is_pointer_or_wraps_pointer(). `is_pointee` allows
+                // the postfix pointee form `*unsafe *mut T`.
+                if !is_pointee && inner.is_pointer_or_wraps_pointer() {
+                    return Err(pointer_prefix_modifier_error("unsafe", span));
                 }
+                // **Plan 138.5 §V3.4 retire (2026-06-11):** unsafe-unsafe
+                // redundancy check retired (was prefix-chain scaffolding).
                 return Ok(TypeRef::Unsafe(Box::new(inner), span));
             }
-            // **Plan 118.5 V3 Ф.1 / D216 V3 §V3.4 (2026-06-04):** `safe`
-            // keyword as explicit propagation stopper. Behavior-only — emits
-            // inner TypeRef unchanged but records the safe-stopper span в
-            // parser state. Downstream V3 rule checks (§V3.2 modifier order +
-            // §V3.4 E_REDUNDANT_TYPE_MODIFIER) consult `is_safe_stopped_between`
-            // к suppress error при presence of safe stopper between outer
-            // modifier и inner same-class repetition.
-            //
-            // Examples:
-            //   `safe T`            → inner T transparent; safe registers stopper
-            //   `unsafe * safe T`   → Unsafe(Pointer(T)); deref pointee SAFE
-            //   `ro * safe mut T`   → Readonly(Pointer(Mut(T))); safe stops
-            //                          ro propagation, mut is independent
+            // **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** the
+            // `safe` type-modifier (propagation-stopper, §V3.4) is RETIRED.
+            // It only ever made sense as a stopper for outer-`unsafe`
+            // propagation inside `unsafe * safe T`; with prefix `unsafe *`
+            // now forbidden there is no propagation to stop, and standalone
+            // `safe T` ≡ `T` was already a no-op. Emit a hard error with a
+            // migration hint. The `safe` token is still produced by the
+            // lexer so the diagnostic is precise (vs "expected type").
             TokenKind::KwSafe => {
-                self.bump();
-                let inner = self.parse_type()?;
-                let span = start.merge(inner.span());
-                // Register safe-stopper covering the parsed inner span — V3
-                // rule checks downstream consult this register.
-                self.safe_stoppers.push(span);
-                // Emit inner unchanged (transparent at AST level).
-                return Ok(inner);
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_SAFE_RETIRED] the `safe` type-modifier is retired \
+                     (Plan 138.5 / D216 V2/V3 simplification). It was a \
+                     propagation-stopper for the now-forbidden `unsafe *` \
+                     prefix pointer form; with prefix pointer modifiers \
+                     removed there is nothing to stop. Standalone `safe T` \
+                     was always equivalent to `T` — just drop it. Pointer \
+                     pointee-safety is expressed by `*unsafe T` (postfix) and \
+                     nullability by `Option[*T]`."
+                        .to_string(),
+                    span,
+                ));
             }
             // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
             // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
@@ -5245,26 +5228,30 @@ impl Parser {
                         span,
                     ));
                 }
-                // **Plan 118.5 / D216 V2 §V2.2 (2026-06-04):** Star is a pure
-                // pointer constructor — NO inline modifier consumption. The
-                // recursive parse_type() call below picks up any modifier
-                // (ro/mut/unsafe) via its own right-binding arms, producing:
-                //   `*T`        → Pointer(T)              (default canonical)
-                //   `*ro T`     → Pointer(Readonly(T))    (ptr к ro T)
-                //   `*mut T`    → Pointer(Mut(T))         (ptr к mut T)
-                //   `*unsafe T` → Pointer(Unsafe(T))      (ptr к uninit T)
+                // **Plan 138.5 / D216 V2/V3 final model (2026-06-11):** Star
+                // is a pure pointer constructor — NO inline modifier
+                // consumption. The recursive parse_type() call below picks up
+                // the (postfix) pointee modifier via its own right-binding
+                // arms, producing the CANONICAL forms:
+                //   `*T`        → Pointer(T)              (default ≡ ro target)
+                //   `*ro T`     → Pointer(Readonly(T))    (ro target)
+                //   `*mut T`    → Pointer(Mut(T))         (writable target)
+                //   `*unsafe T` → Pointer(Unsafe(T))      (ptr to uninit T)
                 //
-                // Canonical V2 forms for the rev-1 «modifier on pointer» meanings
-                // use left-side modifier instead:
-                //   `ro * T`     → Readonly(Pointer(T))   (ro ptr к T)
-                //   `mut * T`    → Mut(Pointer(T))        (mut ptr к T)
-                //   `unsafe * T` → Unsafe(Pointer(T))     (unsafe ptr к T)
+                // The pointee modifier (`ro`/`mut`/`unsafe`) is parsed by the
+                // KwRo/KwMut/KwUnsafe arms as the recursive `inner`; since
+                // that `inner` bottoms out at a non-pointer base it does NOT
+                // trip the prefix-pointer guard there. The PREFIX forms
+                // (`ro * T` / `mut * T` / `unsafe * T`) are now hard errors
+                // (`E_POINTER_PREFIX_MODIFIER`) — pointer reassignability is
+                // a binding concern (`let`/`mut` before the name, D36), not a
+                // type wrapper, and nullability is `Option[*T]` (NPO) only.
                 //
-                // **Migration note:** rev-1 code that wrote `*mut T` expecting
-                // «mut ptr к T» now parses as `Pointer(Mut(T))` («ptr к mut T»)
-                // under V2 rules. This is a silent semantic shift; Plan 118.5
-                // Ф.5 migration sweep explicitly rewrites such code to preserve
-                // original intent.
+                // Mark the immediately-following type as the POSTFIX pointee:
+                // a leading `ro`/`mut`/`unsafe` here is the pointee modifier
+                // (allowed even if the pointee is itself a pointer, e.g.
+                // `*mut *ro T`), NOT a forbidden prefix.
+                self.pointee_ctx = true;
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
                 return Ok(TypeRef::Pointer(Box::new(inner), span));

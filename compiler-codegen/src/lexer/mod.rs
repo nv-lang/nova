@@ -622,12 +622,12 @@ impl<'a> Lexer<'a> {
             //   - `unsafe { ... }` block (Ф.3),
             //   - `#unsafe` attribute on fn declarations (Ф.3).
             "unsafe" => TokenKind::KwUnsafe,
-            // Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04): `safe`
-            // keyword as explicit propagation stopper. Used в type position:
-            // `unsafe * safe T` (outer unsafe applies к pointer ops; T
-            // pointee explicitly safe — propagation stopped). Behavior-only
-            // semantic — parser tracks safe_stoppers Vec<Span>; transparent
-            // в AST (parser-side check, no TypeRef variant).
+            // Plan 118.5 V3 §V3.4 → RETIRED in Plan 138.5 (2026-06-11):
+            // `safe` was a type-position propagation-stopper (`unsafe * safe
+            // T`). With prefix `unsafe *` now forbidden there is nothing to
+            // stop, so the parser rejects `safe` in type position with
+            // `E_SAFE_RETIRED`. The keyword is still tokenized (so the
+            // diagnostic is precise rather than "expected type").
             "safe" => TokenKind::KwSafe,
             // Plan 124 (D220): per-field private visibility modifier +
             // type-level default flip (`type X priv { ... }`). Compile-time

@@ -1,0 +1,15 @@
+// Plan 138.5 POS — `unsafe fn` declaration + `*unsafe fn(...)` pointer remain
+// valid (only the PREFIX-before-`*` is forbidden). `*unsafe fn(...)` is the
+// postfix pointee-unsafe form applied to a fn-pointer.
+
+module plan138_5.pos_unsafe_fn
+
+unsafe fn risky(x i64) -> i64 {
+    x + 100
+}
+
+test "unsafe fn decl + *unsafe fn ptr + unsafe-block indirect call" {
+    ro p *unsafe fn(i64) -> i64 = risky
+    ro v = unsafe { p(42) }
+    assert(v == 142)
+}

@@ -1,10 +1,10 @@
-// Plan 118.5 V3 Ф.4 NEG T11 — `ro * ro T` redundant inner ro.
+// Plan 118.5 V3 T11 → RECODED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.4: outer `ro` propagates через nested wrappers; writing
-// `ro` again inside same chain is redundant. Hint: use `safe` to break
-// propagation если действительно нужен независимый readonly layer.
+// The §V3.4 redundancy check (`ro * ro` inner ro redundant) is retired —
+// the leading prefix `ro` before `*` now fails first with
+// E_POINTER_PREFIX_MODIFIER. Migrate → `*ro Acc` (single postfix pointee).
 //
-// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
 
 module plan118_5_v3.t11_neg_ro_redundant_chain
 

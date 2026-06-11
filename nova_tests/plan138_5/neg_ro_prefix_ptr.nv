@@ -1,0 +1,9 @@
+// Plan 138.5 NEG — prefix `ro *` pointer modifier is forbidden.
+//
+// Migrate `ro * T` → `*ro T` (pointee read-only).
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module plan138_5.neg_ro_prefix_ptr
+
+external fn p(x ro * int) -> ()

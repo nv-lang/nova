@@ -1,0 +1,20 @@
+// Plan 138.5 POS — value-T modifier ORDER is now free (§V3.2 flip / §V3.3
+// retire). Safety and read-only axes commute on a value-T:
+// `Unsafe(Readonly(T))` ≡ `Readonly(Unsafe(T))`. Both `ro unsafe T` and
+// `unsafe ro T` compile (the retired V3 model rejected `ro unsafe T` with
+// E_MODIFIER_ORDER; that check is gone).
+//
+// NOTE: these are pointee/value modifier chains with NO `*` before a
+// modifier, so they do not trip E_POINTER_PREFIX_MODIFIER. The only
+// surviving value-T conflict is ro+mut (§V3.1), tested elsewhere.
+
+module plan138_5.pos_value_t_modifier_order
+
+external fn p_ro_unsafe(x ro unsafe int) -> ()
+external fn p_unsafe_ro(x unsafe ro int) -> ()
+external fn p_mut_unsafe(x mut unsafe int) -> ()
+external fn p_unsafe_mut(x unsafe mut int) -> ()
+
+test "value-T safety/mutability axes commute" {
+    assert(1 == 1)
+}

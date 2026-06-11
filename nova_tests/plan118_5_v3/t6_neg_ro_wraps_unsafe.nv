@@ -1,10 +1,14 @@
-// Plan 118.5 V3 Ф.3 NEG T6 — `ro unsafe T` → E_MODIFIER_ORDER.
+// Plan 118.5 V3 T6 → FLIPPED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.2: safety modifier (`unsafe`) must wrap mutability
-// modifier (`ro`/`mut`), NOT reverse.
-//
-// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// Under the retired §V3.2 model `ro unsafe T` was E_MODIFIER_ORDER. Plan
+// 138.5 flips ordering to mutability-outer / unsafe-inner and, since the
+// axes commute on a value-T (`Readonly(Unsafe(T))` ≡ `Unsafe(Readonly(T))`),
+// the order check is retired entirely — `ro unsafe T` now COMPILES.
 
 module plan118_5_v3.t6_neg_ro_wraps_unsafe
 
-external fn p(x ro unsafe int) -> ()
+external fn t6_p(x ro unsafe int) -> ()
+
+test "ro unsafe T value-T order now accepted (§V3.2 retired)" {
+    assert(1 == 1)
+}

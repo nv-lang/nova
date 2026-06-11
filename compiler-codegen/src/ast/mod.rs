@@ -1268,15 +1268,10 @@ pub struct BenchCase {
     pub span: Span,
 }
 
-/// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** modifier classes
-/// used by V3 redundancy check. Each TypeRef wrapper variant belongs к
-/// exactly one class. Same-class repetition в chain → E_REDUNDANT_TYPE_MODIFIER.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ModifierClass {
-    Readonly,
-    Mut,
-    Unsafe,
-}
+// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** the
+// `ModifierClass` enum (§V3.4 redundancy classes) was removed together with
+// the `contains_same_class_in_chain` helper — same-class redundancy is no
+// longer enforced (prefix pointer modifiers are hard errors; `safe` retired).
 
 /// Plan 118 (D216 §1-3, rev-1): pointer modifier in `*T` / `*ro T` / `*mut T` /
 /// `*unsafe T` family. Default = `Ro` (omitted modifier ≡ `*ro T`).
@@ -1293,12 +1288,13 @@ pub enum ModifierClass {
 /// collapsed semantic (embedded modifier).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PointerModifier {
-    /// `*T` (default) — readonly typed pointer
+    /// `*T` ≡ `*ro T` (default) — read-only target typed pointer
     Ro,
-    /// `mut * T` (canonical) — mutable typed pointer
+    /// `*mut T` — writable-target typed pointer
     Mut,
-    /// `unsafe * T` (canonical) — pointer with weakened safety contract
-    /// (may be null/dangling/misaligned); deref требует unsafe block
+    /// `*unsafe T` — pointer to a possibly-uninit pointee; deref requires
+    /// an unsafe block. (Plan 138.5: the prefix `unsafe * T` outer form is
+    /// retired — only the postfix pointee form `*unsafe T` remains.)
     Unsafe,
 }
 
@@ -1347,8 +1343,12 @@ pub enum TypeRef {
     /// mutation) and from binding-level `mut x T` (Plan 108 binding rule);
     /// here it's the **type** that carries the modifier.
     ///
-    /// Example: `mut * T` → `Mut(Pointer(T, span_inner), span_outer)`.
-    /// Combined: `unsafe * mut T` → `Unsafe(Pointer(Mut(T, ...), ...), ...)`.
+    /// Example (POSTFIX pointee, canonical): `*mut T` →
+    /// `Pointer(Mut(T, span_inner), span_outer)`. (Plan 138.5: the PREFIX
+    /// outer form `mut * T` = `Mut(Pointer(T))` is retired — it is now a
+    /// parse error `E_POINTER_PREFIX_MODIFIER`; the `Mut` wrapper around a
+    /// `Pointer` can no longer be constructed from surface syntax. `Mut`
+    /// still wraps value-T, e.g. `mut x mut T` binding sugar.)
     Mut(Box<TypeRef>, Span),
     /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04):** `unsafe T` — first-class
     /// MaybeUninit-like type wrapper. Inner T's safety contracts off:
@@ -1360,21 +1360,25 @@ pub enum TypeRef {
     /// Write safe (transitions к valid). `T → unsafe T` implicit widen
     /// allowed; `unsafe T → T` narrow requires `unsafe { }` + explicit cast.
     ///
-    /// Examples (two orthogonal safety axes):
-    ///   - `unsafe * T` → `Unsafe(Pointer(T))` — possibly-null/dangling ptr к valid T
-    ///   - `* unsafe T` → `Pointer(Unsafe(T))` — valid ptr к possibly-uninit T
-    ///   - `unsafe * unsafe T` → `Unsafe(Pointer(Unsafe(T)))` — worst case
+    /// Plan 138.5 (2026-06-11): the PREFIX outer form `unsafe * T` =
+    /// `Unsafe(Pointer(T))` is RETIRED (parse error `E_POINTER_PREFIX_MODIFIER`).
+    /// Nullable pointers are `Option[*T]` (NPO) only; FFI nullable-uninit is
+    /// `Option[*unsafe T]`. The surviving uses of this wrapper:
+    ///   - `*unsafe T` → `Pointer(Unsafe(T))` — valid ptr to possibly-uninit T
+    ///   - `unsafe T` (value-wrapper, §V2.3) — maybe-uninit value
     Unsafe(Box<TypeRef>, Span),
     /// Plan 118 (D216 §1-3): typed pointer family `*T`.
     ///
-    /// **Plan 118.5 / D216 V2 (2026-06-04):** Pure constructor — NO inline
-    /// modifier field. Modifiers expressed as outer wrappers per universal
-    /// right-binding rule:
-    ///   - `*T` (default) → `Pointer(T, span)` (canonical readonly)
-    ///   - `mut * T` → `Mut(Pointer(T, ...), ...)`
-    ///   - `unsafe * T` → `Unsafe(Pointer(T, ...), ...)`
-    ///   - `* unsafe T` → `Pointer(Unsafe(T, ...), ...)` (valid ptr к uninit T)
-    ///   - `mut * ro * T` → `Mut(Pointer(Readonly(Pointer(T))))`
+    /// **Plan 118.5 / D216 V2 (2026-06-04), Plan 138.5 (2026-06-11):** Pure
+    /// constructor — NO inline modifier field. The pointee modifier is the
+    /// (postfix) inner wrapper; pointer reassignability is a binding concern
+    /// (`let`/`mut` before the name, D36), NOT a type wrapper:
+    ///   - `*T` ≡ `*ro T` (default) → `Pointer(T)` / `Pointer(Readonly(T))`
+    ///   - `*mut T` → `Pointer(Mut(T))` (writable target)
+    ///   - `*unsafe T` → `Pointer(Unsafe(T))` (ptr to possibly-uninit T)
+    ///   - `*mut *ro T` → `Pointer(Mut(Pointer(Readonly(T))))` (ptr chain)
+    /// The PREFIX outer forms (`mut * T` / `ro * T` / `unsafe * T`) are
+    /// retired parse errors (`E_POINTER_PREFIX_MODIFIER`).
     Pointer(Box<TypeRef>, Span),
 }
 
@@ -1439,51 +1443,14 @@ impl TypeRef {
         matches!(self, TypeRef::Unsafe(..))
     }
 
-    /// **Plan 118.5 V3 §V3.2 (D216 V3 amend, 2026-06-04):** does this
-    /// TypeRef contain an `Unsafe` wrapper anywhere в the chain of
-    /// `Readonly`/`Mut`/`Pointer`/`Unsafe` wrappers (stopping at first
-    /// non-wrapper: Named/Array/Tuple/Func/Protocol)?
-    ///
-    /// Used by V3 modifier-order check (safety-outer/mutability-inner rule):
-    /// `Readonly` или `Mut` wrapping ANY type that contains `Unsafe` через
-    /// the wrapper chain violates §V3.2.
-    pub fn contains_unsafe_in_chain(&self) -> bool {
-        match self {
-            TypeRef::Unsafe(..) => true,
-            TypeRef::Readonly(inner, _)
-            | TypeRef::Mut(inner, _)
-            | TypeRef::Pointer(inner, _) => inner.contains_unsafe_in_chain(),
-            _ => false,
-        }
-    }
-
-    /// **Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04):** does this
-    /// TypeRef contain the same modifier class в chain (recurses через
-    /// Readonly/Mut/Unsafe/Pointer wrappers, stops at first non-wrapper)?
-    ///
-    /// Returns true if outer-Readonly contains inner Readonly, outer-Mut
-    /// contains inner Mut, или outer-Unsafe contains inner Unsafe — same-
-    /// class repetition. Used by V3 §V3.4 redundancy check.
-    pub fn contains_same_class_in_chain(&self, class: ModifierClass) -> bool {
-        // Direct match: self IS the class.
-        let self_matches = matches!(
-            (self, class),
-            (TypeRef::Readonly(..), ModifierClass::Readonly)
-                | (TypeRef::Mut(..), ModifierClass::Mut)
-                | (TypeRef::Unsafe(..), ModifierClass::Unsafe)
-        );
-        if self_matches {
-            return true;
-        }
-        // Recurse into wrapper inner.
-        match self {
-            TypeRef::Readonly(inner, _)
-            | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
-            | TypeRef::Pointer(inner, _) => inner.contains_same_class_in_chain(class),
-            _ => false,
-        }
-    }
+    // **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** the helpers
+    // `contains_unsafe_in_chain` (§V3.2 modifier-order) and
+    // `contains_same_class_in_chain` (§V3.4 redundancy) + the `ModifierClass`
+    // enum they consumed were removed: prefix pointer modifiers are now a
+    // hard error (`E_POINTER_PREFIX_MODIFIER`), the `safe` stopper is retired,
+    // and value-T modifier order/redundancy are no longer enforced (axes
+    // commute on a value-T). The only surviving modifier-conflict rule is
+    // §V3.1 ro+mut on value-T, enforced in `types::check_v3_ro_mut_conflict`.
 
     /// **Plan 118.5 / D216 V2 §V2.4 (2026-06-04):** does this TypeRef
     /// contain an Unsafe wrapper at the OUTERMOST position (before any
@@ -1509,6 +1476,36 @@ impl TypeRef {
     /// wrapping). Strips outer Readonly/Mut/Unsafe wrappers first.
     pub fn is_pointer(&self) -> bool {
         matches!(self.strip_modifiers(), TypeRef::Pointer(..))
+    }
+
+    /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** does the
+    /// OUTER modifier-wrapper chain of this TypeRef reach a `Pointer` before
+    /// hitting any base (non-modifier) type? Walks only the outer
+    /// `Readonly`/`Mut`/`Unsafe` wrappers; stops at the first node that is
+    /// neither a modifier wrapper nor a `Pointer`.
+    ///
+    /// Used by the parser to FORBID prefix pointer modifiers
+    /// (`ro */mut */unsafe *`) — a `KwRo`/`KwMut`/`KwUnsafe` arm whose
+    /// recursively-parsed `inner` satisfies this predicate is a prefix
+    /// modifier on a pointer (`E_POINTER_PREFIX_MODIFIER`).
+    ///
+    /// Returns true for: `Pointer(..)`, `Mut(Pointer(..))` (= `mut * T`),
+    /// `Readonly(Pointer(..))` (= `ro * T`), `Unsafe(Pointer(..))`
+    /// (= `unsafe * T`), `Mut(Readonly(Pointer(..)))` (= `mut * ro * T`).
+    /// Returns false for: `Named(..)`, `Unsafe(Named(..))` (= `unsafe T`
+    /// value-wrapper), `Mut(Named(..))` — anything whose modifier chain
+    /// bottoms out at a non-pointer base. NOTE: the POSTFIX form `*mut T`
+    /// = `Pointer(Mut(Named))` is inspected by the Star arm AFTER the Mut
+    /// arm already returned `Mut(Named)` (false) — so postfix never trips
+    /// this predicate.
+    pub fn is_pointer_or_wraps_pointer(&self) -> bool {
+        match self {
+            TypeRef::Pointer(..) => true,
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => inner.is_pointer_or_wraps_pointer(),
+            _ => false,
+        }
     }
 
     /// **Plan 118.1.6 (2026-06-08):** detect an "unsafe fn-pointer" type

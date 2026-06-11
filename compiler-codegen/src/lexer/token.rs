@@ -85,12 +85,9 @@ pub enum TokenKind {
     /// Used: `*unsafe T` modifier (Ф.1), `unsafe { ... }` block (Ф.3),
     /// `#unsafe` attribute on fn declarations (Ф.3).
     KwUnsafe,
-    /// Plan 118.5 V3 §V3.4 (D216 V3 amend, 2026-06-04): `safe` keyword
-    /// as explicit propagation stopper. Used в type position:
-    /// `unsafe * safe T` — outer unsafe propagation stopped at safe;
-    /// T pointee explicitly safe. Behavior-only at AST level (no TypeRef
-    /// variant); parser records safe_stoppers Vec<Span> для downstream
-    /// rule checks (E_MODIFIER_ORDER / E_REDUNDANT_TYPE_MODIFIER skip).
+    /// Plan 118.5 V3 §V3.4 → RETIRED in Plan 138.5 (2026-06-11): the `safe`
+    /// type-position propagation-stopper is gone. Token still produced so the
+    /// parser can emit a precise `E_SAFE_RETIRED` diagnostic in type position.
     KwSafe,
     /// Plan 124 (D220): per-field private visibility modifier.
     /// `priv mut money f64` — field accessible только из методов own type'а.

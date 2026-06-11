@@ -1,14 +1,10 @@
-// Plan 118.5 V3 Ф.4 POS T15 — `safe` keyword breaks unsafe redundancy.
+// Plan 118.5 V3 T15 → RETIRED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.4: `unsafe * safe unsafe int` — outer unsafe pointer,
-// safe-stop, inner unsafe is intentional fresh layer (e.g., FFI pattern
-// где нужно явно пометить inner T как possibly-uninit независимо от
-// outer pointer-safety).
+// `safe` (the §V3.4 stopper for an unsafe chain) is retired; `* safe unsafe
+// int` errors at the `safe` token. Kept as a regression guard.
+//
+// EXPECT_COMPILE_ERROR E_SAFE_RETIRED
 
 module plan118_5_v3.t15_safe_breaks_unsafe_chain_ok
 
-external fn t15_p(x unsafe * safe unsafe int) -> ()
-
-test "safe stopper allows unsafe-unsafe chain" {
-    assert(1 == 1)
-}
+external fn t15_p(x * safe unsafe int) -> ()

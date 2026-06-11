@@ -1,0 +1,20 @@
+// Plan 138.5 POS — binding-`mut` on a pointer (the `mut` BEFORE the name) is
+// the one valid way to mark a pointer reassignable. It is distinct from the
+// (forbidden) prefix type-modifier `mut *`.
+//
+// `mut p *mut T` — binding mut (p can be rebound) + pointee mut (target
+// writable). `let q *ro T` — fixed binding + read-only target.
+
+module plan138_5.pos_binding_mut_pointer
+
+test "binding-mut pointer local + reassign" {
+    mut buf *mut u8 = unsafe { RawMem.alloc(4) }
+    // binding-mut: rebind the pointer itself to a fresh allocation
+    buf = unsafe { RawMem.alloc(8) }
+    assert(size_of[*mut u8]() == 8)
+}
+
+test "let-fixed read-only-target pointer binding" {
+    ro p *ro u8 = unsafe { RawMem.alloc(2) as *ro u8 }
+    assert(size_of[*ro u8]() == 8)
+}

@@ -1,10 +1,12 @@
-// Plan 118.5 V3 Ф.3 NEG T7 — `mut unsafe T` → E_MODIFIER_ORDER.
+// Plan 118.5 V3 T7 → FLIPPED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.2: `mut` cannot wrap `unsafe`. Use `unsafe mut T`
-// (safety-outer / mutability-inner).
-//
-// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// `mut unsafe T` was E_MODIFIER_ORDER under the retired §V3.2 model; the
+// order check is retired (axes commute on a value-T), so it now COMPILES.
 
 module plan118_5_v3.t7_neg_mut_wraps_unsafe
 
-external fn p() -> mut unsafe int
+external fn t7_p() -> mut unsafe int
+
+test "mut unsafe T value-T order now accepted (§V3.2 retired)" {
+    assert(1 == 1)
+}

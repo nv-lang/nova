@@ -1,8 +1,10 @@
-// Plan 118.5 V3 Ф.4 NEG T12 — `mut * mut T` redundant inner mut.
+// Plan 118.5 V3 T12 → RECODED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.4: outer `mut` already propagates через chain.
+// The §V3.4 redundancy check (`mut * mut`) is retired — the leading prefix
+// `mut` before `*` now fails first with E_POINTER_PREFIX_MODIFIER. Migrate
+// → `*mut Acc`. Return position forces the type-position arm.
 //
-// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
 
 module plan118_5_v3.t12_neg_mut_redundant_chain
 
@@ -10,6 +12,4 @@ type Acc {
     id i64
 }
 
-// Use return type to force type-level Mut(...) shape (param post-name
-// `mut` would be eaten as binding modifier per D6 legacy form).
 external fn t12_p() -> mut * mut Acc

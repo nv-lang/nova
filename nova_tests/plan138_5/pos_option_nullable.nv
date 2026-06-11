@@ -1,0 +1,23 @@
+// Plan 138.5 POS — nullable pointers are `Option[*T]` only (NPO), and FFI
+// nullable-uninit is `Option[*unsafe T]`. This replaces the retired prefix
+// `unsafe * T` form for "nullable pointer".
+
+module plan138_5.pos_option_nullable
+
+type Buffer {
+    n i64
+}
+
+// nullable safe pointer (None = null, NPO → 8 bytes)
+external fn ffi_borrow(handle Option[*Buffer]) -> i64
+// FFI nullable-uninit: None = null, Some = non-null ptr to possibly-uninit
+external fn ffi_raw(handle Option[*unsafe Buffer]) -> i64
+external fn make_handle() -> Option[*Buffer]
+
+// The external fn signatures above exercise the parser + typechecker for
+// Option[*T] / Option[*unsafe T]; size_of over an Option generic is a
+// separate (unrelated) const-fn-reflection feature, so we keep the runtime
+// body trivial.
+test "Option[*T] / Option[*unsafe T] nullable pointer parse + typecheck" {
+    assert(1 == 1)
+}

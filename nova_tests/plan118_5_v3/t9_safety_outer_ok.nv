@@ -1,7 +1,13 @@
-// Plan 118.5 V3 Ф.3 POS T9 — safety-outer / mutability-inner valid forms.
+// Plan 118.5 V3 T9 → MIGRATED by Plan 138.5 (2026-06-11).
 //
-// Per D216 V3 §V3.2: `unsafe ro T` / `unsafe mut T` / `unsafe * ro T` /
-// `unsafe * mut T` — all valid (safety wraps mutability).
+// The retired §V3.2 "safety-outer" forms split two ways under the final
+// model:
+//   - value-T (`unsafe ro int` / `unsafe mut int`): order is free — both
+//     these and the flipped `ro unsafe` / `mut unsafe` compile.
+//   - pointer pointee-safety: the prefix `unsafe * ro Acc` form is retired
+//     (E_POINTER_PREFIX_MODIFIER); the canonical postfix forms are
+//     `*unsafe ro Acc` / `*unsafe mut Acc` (ptr to a possibly-uninit Acc
+//     whose pointee is ro / mut). FFI nullable-uninit is `Option[*unsafe Acc]`.
 
 module plan118_5_v3.t9_safety_outer_ok
 
@@ -9,18 +15,14 @@ type Acc {
     id i64
 }
 
-// unsafe wrapping ro — value-level uninit + readonly contract
+// value-level uninit + readonly / mutable contract (order free)
 external fn p1(x unsafe ro int) -> ()
-
-// unsafe wrapping mut — value-level uninit + mutable contract
 external fn p2(x unsafe mut int) -> ()
 
-// unsafe pointer outer + ro pointee inner — Rust *const T analog
-external fn p3(x unsafe * ro Acc) -> ()
+// postfix pointee-unsafe pointer forms (canonical, replacing `unsafe * …`)
+external fn p3(x *unsafe ro Acc) -> ()
+external fn p4(x *unsafe mut Acc) -> ()
 
-// unsafe pointer outer + mut pointee inner
-external fn p4(x unsafe * mut Acc) -> ()
-
-test "safety-outer modifier order accepted" {
+test "value-T safety order + postfix pointee-unsafe pointer accepted" {
     assert(1 == 1)
 }

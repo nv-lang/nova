@@ -1,0 +1,11 @@
+// Plan 138.5 NEG — prefix `unsafe *` pointer modifier is forbidden.
+//
+// This RETIRES the `Unsafe(Pointer(..))` outer form. Nullable pointers use
+// `Option[*T]` (NPO); FFI nullable-uninit uses `Option[*unsafe T]`. The
+// valid postfix pointee form is `*unsafe T`.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module plan138_5.neg_unsafe_prefix_ptr
+
+external fn p(x unsafe * int) -> ()
