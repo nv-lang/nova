@@ -11162,6 +11162,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         if cty == "nova_str" {
             return format!("nova_str_eq({}, {})", l, r);
         }
+        // nova_unit / void / empty — vacuously equal. Unit carries no data and
+        // its C type is a zero/opaque struct, so `==` on it is invalid C
+        // (regression: Set[T] = HashMap[T, ()] payload eq hit this). All unit
+        // values are equal: evaluate both operands (avoid unused) and yield 1.
+        if cty == "nova_unit" || cty == "void" || cty.is_empty() {
+            return format!("((void)({}), (void)({}), 1)", l, r);
+        }
         // Scalar / int-like / float → C `==`. Float `==` is the intended IEEE
         // semantics (per the plan); do NOT memcmp.
         if matches!(
@@ -11169,7 +11176,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             "nova_int" | "nova_bool" | "bool" | "nova_byte" | "nova_char"
                 | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
                 | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
-                | "nova_f32" | "nova_f64" | "nova_unit"
+                | "nova_f32" | "nova_f64"
         ) {
             return format!("(({}) == ({}))", l, r);
         }
