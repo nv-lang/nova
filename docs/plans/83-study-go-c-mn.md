@@ -336,4 +336,35 @@ inconsistent-snapshot path реально сработал и обработан
 rewire `_worker_main`/`_worker_dispatch_ready`/spawn paths; флаг `NOVA_RUNQ_FIXED` →
 валидация под stress → atomic cut-over + удаление `deque.h`/`nova_sched_grow_state`.
 
+### 9.2 Build env + pre-Ф.1 baseline (2026-06-11)
+
+**Решение (user): «сборка + baseline на двух toolchain, потом стоп» — cut-over НЕ
+активировать.** runq CAP по решению user → **4096** (под 10k-fiber/MAXPROCS=1 workload).
+
+**Build env worktree:** libuv submodule скопирован из main (`.git` удалён); GC env vars
+→ main `vcpkg_installed/x64-windows-static`; `nova-cli` собран release (1m33s, exit 0).
+`runq.h`/`test_runq.c` присутствуют, но НИГДЕ не включены — на сборку не влияют (dormant).
+
+**Baseline concurrency (clang) — ✅ ВАЛИДЕН: PASS 102 / FAIL 6.**
+Pre-existing FAIL (НЕ от этой работы — runq dormant):
+- runtime-релевантные: `condvar_wait_cancel` (TIMEOUT 53s), `deep_spawn` (RUN-FAIL),
+  `time_handler` (RUN-FAIL) — кандидаты на race/flaky, цель улучшить интеграцией.
+- codegen/CC (от других планов на main, не рантайм): `detach_test` (E_READONLY_FIELD),
+  `fn_array_collect_test` (undefined `copy`), `sleep_real_clock` (SLACK_MS undeclared).
+
+**Baseline MSVC — ⚠ ЗАБЛОКИРОВАН worktree-env (НЕ код):** harness MSVC-путь падает на
+сборке libuv/net.c (`C1083`), т.к. в copied-libuv нет собранного `libuv.lib` и сборка
+libuv под MSVC в worktree не проходит. В main MSVC работает (Plan 82: 1049/16) → это
+worktree setup-issue. **Next-session prerequisite:** собрать/скопировать `libuv.lib` под
+MSVC в worktree ИЛИ выполнять MSVC-валидацию интеграции в main-репо.
+
+**Не сделано осознанно (per «потом стоп»):** полный `nova test` baseline (concurrency
+достаточно как relevant-срез; full baseline снимать в начале integration-сессии — иначе
+устареет от merge'ей main); struct-scaffold за флагом (NovaRunq в NovaWorker, schedlink в
+SpawnCtxBase) — делать в начале cut-over, когда flag-ON сборка верифицируема на двух toolchain.
+
+**Первые шаги integration-сессии:** (1) починить worktree MSVC libuv; (2) снять свежий full
+baseline clang+MSVC; (3) struct-scaffold за `NOVA_RUNQ_FIXED` (OFF→зелёная сборка обоих,
+ON→компилируется); (4) cut-over park-state→SpawnCtxBase + deque→runq; (5) stress 66/66.
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
