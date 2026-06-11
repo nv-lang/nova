@@ -1,0 +1,28 @@
+// ring_overflow_drain.nv — Plan 83-go-cmn Ф.1a positive regression guard.
+//
+// Spawns MORE fibers than the per-worker ring capacity (NOVA_RUNQ_CAP = 4096)
+// into a single supervised scope. Under NOVA_MAXPROCS=1 all of them land on one
+// worker's ring → it overflows → nova_runq_put_slow spills HALF to the global
+// overflow queue → the find-work loop must drain the global queue
+// (nova_globrunq_get_one) or fibers strand. Exact completion count (AtomicInt,
+// no += data race) asserts NO FIBER IS LOST across the ring→global→drain path.
+//
+// Pre-Ф.1a: growable Chase-Lev deque (no fixed cap, no global overflow).
+// Post-Ф.1a: fixed ring[4096] + global overflow; THIS is the path that would
+// strand fibers if the global-queue drain (the FATAL-#1 review fix) were missing.
+//
+// 5000 < ~16384 fiber-arena cap, so it does not hit the Plan 82 arena limit.
+
+module concurrency.ring_overflow_drain
+
+test "5000 fibers (> ring cap 4096) — overflow to global queue, none lost" {
+    mut done = AtomicInt.new(0)
+    supervised {
+        for _ in 0..5000 {
+            spawn { done.fetch_add(1) }
+        }
+    }
+    // A lost fiber (overflow not drained) → done < 5000. A double-run (dup) →
+    // done > 5000. Exactly 5000 = ring overflow + global drain are correct.
+    assert(done.load() == 5000)
+}
